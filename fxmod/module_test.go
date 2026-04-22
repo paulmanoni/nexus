@@ -9,7 +9,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
-	"nexus"
+	"github.com/paulmanoni/nexus"
 )
 
 func TestModule_StartsAndStops(t *testing.T) {

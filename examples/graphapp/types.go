@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"nexus/db"
-	"nexus/multi"
+	"github.com/paulmanoni/nexus/db"
+	"github.com/paulmanoni/nexus/multi"
 )
 
 // DB is a project-local alias for nexus/db.Manager, so resolver code and

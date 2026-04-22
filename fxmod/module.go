@@ -10,7 +10,7 @@ import (
 
 	"go.uber.org/fx"
 
-	"nexus"
+	"github.com/paulmanoni/nexus"
 )
 
 // Config controls how the nexus App is built. Supply it via fx.Supply(cfg)

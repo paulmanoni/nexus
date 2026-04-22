@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"nexus/middleware"
-	"nexus/resource"
+	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/resource"
 )
 
 type Transport string

@@ -8,8 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"nexus/registry"
-	"nexus/trace"
+	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 type ConnectFunc func(c *gin.Context, conn *websocket.Conn) error
@@ -27,6 +27,7 @@ type Builder struct {
 	onConnect       ConnectFunc
 	onMessage       MessageFunc
 	onClose         CloseFunc
+	hub             *Hub
 	middleware      []gin.HandlerFunc
 	middlewareNames []string
 	tags            map[string]string
@@ -59,6 +60,13 @@ func (b *Builder) OnMessage(fn MessageFunc) *Builder      { b.onMessage = fn; re
 func (b *Builder) OnClose(fn CloseFunc) *Builder          { b.onClose = fn; return b }
 func (b *Builder) Tag(k, v string) *Builder               { b.tags[k] = v; return b }
 
+// WithHub hands connection management to a Hub: rooms, user/client-targeted
+// events, broadcast, worker-pool fan-out, slow-client backpressure, and the
+// default subscribe/authenticate/ping message protocol all become available.
+// When a hub is set, OnConnect/OnMessage/OnClose on the Builder are ignored —
+// install hooks on the Hub instead (hub.OnMessage, hub.OnConnect, ...).
+func (b *Builder) WithHub(h *Hub) *Builder { b.hub = h; return b }
+
 // Mount attaches the WebSocket endpoint to Gin and records it in the registry. Terminal.
 func (b *Builder) Mount() {
 	endpoint := "WS " + b.path
@@ -81,6 +89,10 @@ func (b *Builder) Mount() {
 }
 
 func (b *Builder) serve(c *gin.Context) {
+	if b.hub != nil {
+		b.hub.serve(c, b.upgrader)
+		return
+	}
 	conn, err := b.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return

@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"nexus/dashboard"
-	"nexus/registry"
-	"nexus/resource"
-	"nexus/trace"
+	"github.com/paulmanoni/nexus/dashboard"
+	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 const defaultDashboardName = "Nexus"

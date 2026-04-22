@@ -10,10 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
-	"nexus"
-	"nexus/fxmod"
-	"nexus/resource"
-	"nexus/trace"
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/fxmod"
+	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // --- Pets domain ---------------------------------------------------------
