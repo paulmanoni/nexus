@@ -151,6 +151,22 @@ func ServeAt(service, path string, opts ...Opt) fx.Option {
 	})
 }
 
+// Enrich walks every query/mutation/subscription field in the Bundle and
+// patches the nexus registry with per-resolver introspection data (return
+// type, arg validators, middleware names, deprecation). Use this when you
+// mount the schema yourself — e.g. you need a UserDetailsFn that depends on
+// an Fx-provided service and so can't go through graphfx.ServeAt's options.
+//
+//	fx.Invoke(func(app *nexus.App, b *graphfx.Bundle, u *pkg.UserMiddleware) {
+//	    schema, _ := b.Builder.Build()
+//	    app.Service("graph").MountGraphQL("/graphql", &schema,
+//	        gql.WithUserDetailsFn(u.Fetch))
+//	    graphfx.Enrich(app.Registry(), "graph", b)
+//	})
+func Enrich(reg *registry.Registry, service string, b *Bundle) {
+	enrichFromIntrospection(reg, service, b)
+}
+
 // enrichFromIntrospection walks every query/mutation field, pulls its
 // FieldInfo via graph.Inspect, and patches the corresponding nexus registry
 // endpoint. Any middleware name it sees is also registered so the /middlewares
