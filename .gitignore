@@ -1,0 +1,19 @@
+# Binaries
+/graphapp
+*.test
+*.out
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/
+
+# Node / Vite (dashboard UI)
+dashboard/ui/node_modules/
+dashboard/ui/.vite/
