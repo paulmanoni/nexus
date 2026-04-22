@@ -8,8 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"nexus"
-	"nexus/trace"
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 func main() {

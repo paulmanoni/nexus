@@ -3,7 +3,7 @@ package main
 import (
 	"go.uber.org/fx"
 
-	"nexus/graphfx"
+	"github.com/paulmanoni/nexus/graphfx"
 )
 
 // advertsModule wires the adverts domain. Per-resolver middleware names, arg

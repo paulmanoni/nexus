@@ -13,8 +13,8 @@ package main
 import (
 	"go.uber.org/fx"
 
-	"nexus/fxmod"
-	"nexus/graphfx"
+	"github.com/paulmanoni/nexus/fxmod"
+	"github.com/paulmanoni/nexus/graphfx"
 )
 
 func main() {

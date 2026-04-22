@@ -3,9 +3,9 @@ package main
 import (
 	"go.uber.org/fx"
 
-	"nexus"
-	"nexus/multi"
-	"nexus/resource"
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/multi"
+	"github.com/paulmanoni/nexus/resource"
 )
 
 // ProvideDBs wires the multi-DB router into the Fx graph. It constructs both

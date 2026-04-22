@@ -5,8 +5,8 @@ package rest
 import (
 	"github.com/gin-gonic/gin"
 
-	"nexus/registry"
-	"nexus/trace"
+	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 type Builder struct {

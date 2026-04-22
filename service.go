@@ -3,11 +3,11 @@ package nexus
 import (
 	"github.com/graphql-go/graphql"
 
-	"nexus/registry"
-	"nexus/resource"
-	"nexus/transport/gql"
-	"nexus/transport/rest"
-	"nexus/transport/ws"
+	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/transport/gql"
+	"github.com/paulmanoni/nexus/transport/rest"
+	"github.com/paulmanoni/nexus/transport/ws"
 )
 
 // Service is a named group of endpoints. Services are the nodes the dashboard
@@ -36,9 +36,10 @@ func (s *Service) WebSocket(path string) *ws.Builder {
 }
 
 // MountGraphQL attaches schema (assembled by go-graph or graphql-go) and
-// auto-registers every operation into the nexus registry.
-func (s *Service) MountGraphQL(path string, schema *graphql.Schema) {
-	gql.Mount(s.app.engine, s.app.registry, s.app.bus, s.name, path, schema)
+// auto-registers every operation into the nexus registry. Pass gql.With*
+// options for auth (UserDetailsFn), Playground, Pretty, and DEBUG.
+func (s *Service) MountGraphQL(path string, schema *graphql.Schema, opts ...gql.Option) {
+	gql.Mount(s.app.engine, s.app.registry, s.app.bus, s.name, path, schema, opts...)
 }
 
 // Attach links a resource to this service so the dashboard draws an edge.

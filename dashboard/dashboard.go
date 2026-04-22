@@ -10,8 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"nexus/registry"
-	"nexus/trace"
+	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 const Prefix = "/__nexus"

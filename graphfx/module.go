@@ -29,8 +29,9 @@ import (
 	graph "github.com/paulmanoni/go-graph"
 	"go.uber.org/fx"
 
-	"nexus"
-	"nexus/registry"
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/transport/gql"
 )
 
 // Module provides *Bundle into the fx graph. A Bundle holds both the assembled
@@ -92,6 +93,7 @@ type mountConfig struct {
 	description string
 	useNames    []string
 	useDefaults bool
+	gqlOpts     []gql.Option
 }
 
 // Opt configures a ServeAt call.
@@ -107,6 +109,16 @@ func Use(names ...string) Opt {
 
 // UseDefaults attaches the default database, cache, and queue (if registered).
 func UseDefaults() Opt { return func(c *mountConfig) { c.useDefaults = true } }
+
+// WithGQL forwards gql.Option values (UserDetailsFn, Playground, Pretty,
+// DEBUG) to the underlying MountGraphQL call. Typical use:
+//
+//	graphfx.ServeAt("adverts", "/graphql",
+//	    graphfx.WithGQL(gql.WithUserDetailsFn(auth.Fetch)),
+//	)
+func WithGQL(opts ...gql.Option) Opt {
+	return func(c *mountConfig) { c.gqlOpts = append(c.gqlOpts, opts...) }
+}
 
 // ServeAt returns an fx.Option that, once fx.Start runs:
 //  1. builds the schema from the injected *Bundle
@@ -133,7 +145,7 @@ func ServeAt(service, path string, opts ...Opt) fx.Option {
 		if len(cfg.useNames) > 0 {
 			svc.Using(cfg.useNames...)
 		}
-		svc.MountGraphQL(path, &schema)
+		svc.MountGraphQL(path, &schema, cfg.gqlOpts...)
 
 		enrichFromIntrospection(app.Registry(), service, b)
 	})
