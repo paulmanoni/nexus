@@ -40,6 +40,12 @@ type UserDetailsFn func(ctx context.Context, token string) (context.Context, any
 // service hasn't called AtGraphQL.
 const DefaultGraphQLPath = "/graphql"
 
+// defaultServiceName is the name the auto-mount gives its synthesized
+// service when the app has zero services but still registered handlers
+// via AsQuery / AsMutation. Keeps the dashboard's service column populated
+// for minimal single-service apps.
+const defaultServiceName = "app"
+
 func (a *App) Service(name string) *Service {
 	a.registry.RegisterService(registry.Service{Name: name})
 	return &Service{app: a, name: name, graphqlPath: DefaultGraphQLPath}
