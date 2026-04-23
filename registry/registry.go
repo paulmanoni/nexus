@@ -31,6 +31,33 @@ type Endpoint struct {
 	Tags         map[string]string
 	RegisteredAt time.Time
 
+	// Resources is the list of named resources this endpoint touches,
+	// derived at mount time from the handler's dep list (each dep that
+	// implements NexusResourceProvider contributes its NexusResources()
+	// entries). Surfaces on the dashboard as per-op chips so a reader
+	// can see, for each resolver, exactly which DB/cache/queue it hits
+	// without tracing through Go code.
+	Resources []string `json:",omitempty"`
+
+	// ServiceDeps is the list of OTHER services this endpoint calls into,
+	// derived from any handler dep that unwraps to a *Service (e.g. a
+	// *UsersService embedded wrapper). Drives per-op service→service
+	// edges on the dashboard. The owning service itself is excluded —
+	// no self-loops.
+	ServiceDeps []string `json:",omitempty"`
+
+	// ServiceAutoRouted is true when the handler didn't explicitly name
+	// its owning service (no service-wrapper dep, no OnService option)
+	// and the auto-mount adopted it into the app's single service at
+	// startup. The dashboard renders an owner chip on rows where this is
+	// true so readers can tell implicit placement from explicit.
+	ServiceAutoRouted bool `json:",omitempty"`
+
+	// RateLimit is the declared rate limit for this endpoint, if any.
+	// Dashboard surfaces RPM/burst/per-IP as a chip; operators can
+	// override the effective limit live via /__nexus/ratelimits.
+	RateLimit *RateLimitInfo `json:",omitempty"`
+
 	// GraphQL-specific metadata, populated when Transport == GraphQL.
 	Args       []GraphQLArg `json:",omitempty"`
 	ReturnType string       `json:",omitempty"`
@@ -38,6 +65,17 @@ type Endpoint struct {
 	// Deprecation flows from graph.WithDeprecated on the underlying resolver.
 	Deprecated        bool   `json:",omitempty"`
 	DeprecationReason string `json:",omitempty"`
+}
+
+// RateLimitInfo is the registry-serializable shape of a rate limit for
+// dashboard display. Mirrors ratelimit.Limit but JSON-tagged for the UI
+// plus an Overridden flag so a single GET can surface both "what the
+// code says" and "what the operator tuned it to."
+type RateLimitInfo struct {
+	RPM        int  `json:"rpm"`
+	Burst      int  `json:"burst,omitempty"`
+	PerIP      bool `json:"perIP,omitempty"`
+	Overridden bool `json:"overridden,omitempty"`
 }
 
 // GraphQLArg describes one argument on a GraphQL field. Used by the dashboard
@@ -95,7 +133,12 @@ type Registry struct {
 	endpoints   []Endpoint
 	resources   map[string]resource.Resource
 	attached    map[string][]string // resource name -> service names
-	middlewares map[string]middleware.Middleware
+	middlewares map[string]middleware.Info
+	// globalMiddlewares is the ordered list of middleware names
+	// installed on the engine root (app-wide). Every request goes
+	// through these before per-endpoint stacks. Dashboard renders them
+	// as a strip so operators see the global pre-gate at a glance.
+	globalMiddlewares []string
 }
 
 func New() *Registry {
@@ -103,7 +146,7 @@ func New() *Registry {
 		services:    map[string]Service{},
 		resources:   map[string]resource.Resource{},
 		attached:    map[string][]string{},
-		middlewares: map[string]middleware.Middleware{},
+		middlewares: map[string]middleware.Info{},
 	}
 	for _, m := range middleware.Builtins {
 		r.middlewares[m.Name] = m
@@ -182,7 +225,7 @@ func (r *Registry) AttachResource(serviceName, resourceName string) {
 
 // RegisterMiddleware adds or overwrites a middleware entry. Safe to call at
 // any time; the dashboard reflects the latest on its next poll.
-func (r *Registry) RegisterMiddleware(m middleware.Middleware) {
+func (r *Registry) RegisterMiddleware(m middleware.Info) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.middlewares[m.Name] = m
@@ -201,14 +244,43 @@ func (r *Registry) EnsureMiddleware(name string) {
 	if _, ok := r.middlewares[name]; ok {
 		return
 	}
-	r.middlewares[name] = middleware.Middleware{Name: name, Kind: middleware.KindCustom}
+	r.middlewares[name] = middleware.Info{Name: name, Kind: middleware.KindCustom}
+}
+
+// RegisterGlobalMiddleware marks name as installed at engine root.
+// Order matters — same order as Config.GlobalMiddleware + built-in
+// extras — so the dashboard strip reads left-to-right as the request
+// encounters them. Safe to call multiple times with the same name;
+// later calls become no-ops.
+func (r *Registry) RegisterGlobalMiddleware(name string) {
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, existing := range r.globalMiddlewares {
+		if existing == name {
+			return
+		}
+	}
+	r.globalMiddlewares = append(r.globalMiddlewares, name)
+}
+
+// GlobalMiddlewares returns the ordered list of global middleware
+// names. Dashboard reads this to render the top-of-canvas strip.
+func (r *Registry) GlobalMiddlewares() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, len(r.globalMiddlewares))
+	copy(out, r.globalMiddlewares)
+	return out
 }
 
 // Middlewares returns the middleware metadata snapshot, sorted by name.
-func (r *Registry) Middlewares() []middleware.Middleware {
+func (r *Registry) Middlewares() []middleware.Info {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]middleware.Middleware, 0, len(r.middlewares))
+	out := make([]middleware.Info, 0, len(r.middlewares))
 	for _, m := range r.middlewares {
 		out = append(out, m)
 	}
@@ -259,6 +331,90 @@ func (r *Registry) SetEndpointMiddlewares(service string, transport Transport, n
 			r.endpoints[i].Middleware = append([]string(nil), names...)
 		}
 	}
+}
+
+// SetEndpointResources records the resources a specific endpoint touches.
+// Dedupes and sorts so chip rendering is deterministic. Match is on
+// (service, name) — unique per GraphQL op, and per method+path for REST.
+func (r *Registry) SetEndpointResources(service, name string, resources []string) {
+	uniq := dedupeSort(resources)
+	if len(uniq) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.endpoints {
+		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
+			r.endpoints[i].Resources = uniq
+			return
+		}
+	}
+}
+
+// SetEndpointServiceDeps records the OTHER services this endpoint calls
+// into. Shape-parallel with SetEndpointResources so the dashboard can
+// draw per-op edges to services the same way it draws resource edges.
+func (r *Registry) SetEndpointServiceDeps(service, name string, services []string) {
+	uniq := dedupeSort(services)
+	if len(uniq) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.endpoints {
+		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
+			r.endpoints[i].ServiceDeps = uniq
+			return
+		}
+	}
+}
+
+// SetEndpointServiceAutoRouted flags an endpoint as having been auto-adopted
+// into its service by the auto-mount (the handler didn't declare the
+// owning service). Dashboard uses it to render an owner chip only on
+// implicitly-routed rows.
+func (r *Registry) SetEndpointServiceAutoRouted(service, name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.endpoints {
+		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
+			r.endpoints[i].ServiceAutoRouted = true
+			return
+		}
+	}
+}
+
+// SetEndpointRateLimit attaches rate-limit info to an endpoint. Called
+// after mount when an op declared RateLimit(...); subsequent dashboard
+// overrides are reflected separately via the ratelimit.Store snapshot.
+func (r *Registry) SetEndpointRateLimit(service, name string, info RateLimitInfo) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.endpoints {
+		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
+			r.endpoints[i].RateLimit = &info
+			return
+		}
+	}
+}
+
+// dedupeSort returns the unique entries of xs sorted ascending. Empty
+// input returns a nil slice so callers can skip the registry lock.
+func dedupeSort(xs []string) []string {
+	if len(xs) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(xs))
+	for _, x := range xs {
+		if _, ok := seen[x]; ok {
+			continue
+		}
+		seen[x] = struct{}{}
+		out = append(out, x)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // FindResource looks a resource up by name. Returns nil if unknown.

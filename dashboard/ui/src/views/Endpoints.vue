@@ -36,6 +36,16 @@ function tagLabel(e) {
   return 'WS'
 }
 
+// epLabel decides what renders as the primary identifier in the
+// sidebar list. For REST + WebSocket the URL path is what operators
+// recognise; for GraphQL every op sits at the same mount path, so
+// the field name (query/mutation/subscription) is the meaningful
+// identifier — "/graphql" N times in a row is useless.
+function epLabel(e) {
+  if (e.Transport === 'graphql') return e.Name
+  return e.Path || e.Name
+}
+
 function mwKind(name) {
   const m = middlewares.value[name]
   if (!m) return 'unknown'
@@ -71,7 +81,7 @@ function mwDesc(name) {
             @click="selected = e"
           >
             <span class="tag">{{ tagLabel(e) }}</span>
-            <span class="ep-name">{{ e.Path || e.Name }}</span>
+            <span class="ep-name">{{ epLabel(e) }}</span>
             <ChevronRight :size="14" class="chev" />
           </button>
         </div>

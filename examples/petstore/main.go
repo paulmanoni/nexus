@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -44,6 +45,19 @@ func main() {
 			return conn.WriteMessage(t, data)
 		}).
 		Mount()
+
+	app.Cron("refresh-inventory", "@every 30s").
+		Describe("Refresh the pet cache from upstream").
+		Service("pets").
+		Handler(func(ctx context.Context) error {
+			time.Sleep(40 * time.Millisecond)
+			return nil
+		})
+
+	app.Cron("daily-report", "0 9 * * *").
+		Describe("Email the daily sales report at 09:00").
+		Service("pets").
+		Handler(func(ctx context.Context) error { return nil })
 
 	for _, e := range app.Registry().Endpoints() {
 		fmt.Printf("registered: %-10s %s %s\n", e.Transport, e.Method, e.Path)

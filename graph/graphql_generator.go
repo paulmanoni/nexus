@@ -1,0 +1,719 @@
+package graph
+
+import (
+	"fmt"
+	"reflect"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/graphql-go/graphql"
+)
+
+// Note: Object types use the unified typeRegistry from graphql_unified_resolver.go
+// to prevent duplicate type creation across top-level and nested types
+
+// graphqlNameRegex validates GraphQL names: must match /^[_a-zA-Z][_a-zA-Z0-9]*$/
+var graphqlNameRegex = regexp.MustCompile(`^[_a-zA-Z][_a-zA-Z0-9]*$`)
+
+// sanitizeTypeName cleans a Go type name to be a valid GraphQL type name.
+// Go adds identifiers like "·91" to types defined in function scope;
+// this removes any invalid characters to produce a valid GraphQL name.
+func sanitizeTypeName(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	// Fast path: if already valid, return as-is
+	if graphqlNameRegex.MatchString(name) {
+		return name
+	}
+
+	// Remove any character that's not alphanumeric or underscore
+	var result strings.Builder
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' {
+			result.WriteRune(r)
+		} else if r >= '0' && r <= '9' {
+			// Only allow digits after the first character
+			if i > 0 {
+				result.WriteRune(r)
+			}
+		}
+		// Skip any other characters (like · and numeric suffixes)
+	}
+
+	return result.String()
+}
+
+type FieldGenerator[T any] struct {
+	typeCache       map[reflect.Type]graphql.Output
+	processingTypes map[reflect.Type]bool
+	objectTypeName  *string
+}
+
+func NewFieldGenerator[T any]() *FieldGenerator[T] {
+	return &FieldGenerator[T]{
+		typeCache:       make(map[reflect.Type]graphql.Output),
+		processingTypes: make(map[reflect.Type]bool),
+	}
+}
+
+func GenerateGraphQLFields[T any]() graphql.Fields {
+	gen := NewFieldGenerator[T]()
+	var instance T
+	return gen.generateFields(reflect.TypeOf(instance))
+}
+
+func GenerateGraphQLObject[T any](name string) *graphql.Object {
+	gen := NewFieldGenerator[T]()
+	var instance T
+	fields := gen.generateFields(reflect.TypeOf(instance))
+
+	return graphql.NewObject(graphql.ObjectConfig{
+		Name:   name,
+		Fields: fields,
+	})
+}
+
+func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
+
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		return graphql.Fields{}
+	}
+
+	fields := graphql.Fields{}
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+
+		// Handle embedded (anonymous) fields by flattening them
+		if field.Anonymous {
+			embeddedType := field.Type
+			if embeddedType.Kind() == reflect.Ptr {
+				embeddedType = embeddedType.Elem()
+			}
+
+			// Recursively get fields from embedded struct
+			embeddedFields := g.generateFields(embeddedType)
+			for name, embeddedField := range embeddedFields {
+				// Only add if not already present (child fields take precedence)
+				if _, exists := fields[name]; !exists {
+					fields[name] = embeddedField
+				}
+			}
+			continue
+		}
+
+		if field.PkgPath != "" {
+			continue
+		}
+
+		fieldName := g.getFieldName(field)
+		if fieldName == "-" {
+			continue
+		}
+		graphqlType := g.getGraphQLType(field.Type, field)
+		if graphqlType == nil {
+			continue
+		}
+
+		description := field.Tag.Get("description")
+		fields[fieldName] = &graphql.Field{
+			Type:        graphqlType,
+			Description: description,
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				source := reflect.ValueOf(p.Source)
+				if source.Kind() == reflect.Ptr {
+					source = source.Elem()
+				}
+
+				if source.Kind() != reflect.Struct {
+					return nil, fmt.Errorf("expected struct, got %v", source.Kind())
+				}
+
+				fieldValue := source.FieldByName(field.Name)
+				if !fieldValue.IsValid() {
+					return nil, nil
+				}
+
+				return fieldValue.Interface(), nil
+			},
+		}
+	}
+
+	return fields
+}
+
+func (g *FieldGenerator[T]) getGraphQLType(t reflect.Type, field reflect.StructField) graphql.Output {
+	isRequired := strings.Contains(field.Tag.Get("graphql"), "required")
+
+	baseType := g.getBaseGraphQLType(t, g.objectTypeName)
+
+	if baseType == nil {
+		return nil
+	}
+
+	if isRequired {
+		return graphql.NewNonNull(baseType)
+	}
+
+	return baseType
+}
+
+func (g *FieldGenerator[T]) getBaseGraphQLType(t reflect.Type, objectTypeName *string) graphql.Output {
+	g.objectTypeName = objectTypeName
+	switch t.Kind() {
+	case reflect.Ptr:
+		return g.getBaseGraphQLType(t.Elem(), objectTypeName)
+
+	case reflect.String:
+		return graphql.String
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return graphql.Int
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return graphql.Int
+
+	case reflect.Float32, reflect.Float64:
+		return graphql.Float
+
+	case reflect.Bool:
+		return graphql.Boolean
+
+	case reflect.Slice, reflect.Array:
+		elemType := g.getBaseGraphQLType(t.Elem(), objectTypeName)
+		if elemType == nil {
+			return nil
+		}
+		return graphql.NewList(elemType)
+
+	case reflect.Map:
+		return graphql.NewScalar(graphql.ScalarConfig{
+			Name: fmt.Sprintf("Map_%s", t.String()),
+			Serialize: func(value interface{}) interface{} {
+				return value
+			},
+		})
+
+	case reflect.Struct:
+		if t == reflect.TypeOf(time.Time{}) {
+			return DateTime
+		} else if t == reflect.TypeOf(JSONTime{}) {
+			return DateTime
+		}
+		// Use just the type name for named structs (not anonymous)
+		// This ensures consistent type names across the schema
+		// Anonymous structs (t.Name() == "") get prefixed with parent type name
+		// Sanitize the name to remove Go runtime identifiers (e.g., "Interview·91" -> "Interview")
+		nameObject := sanitizeTypeName(t.Name())
+		if nameObject == "" && g.objectTypeName != nil {
+			// Only prefix anonymous structs with parent type name
+			nameObject = fmt.Sprintf("%s_Anonymous", *g.objectTypeName)
+		} else if nameObject == "" {
+			nameObject = "Anonymous"
+		}
+		if t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+			elemType := g.getBaseGraphQLType(t.Elem(), objectTypeName)
+			if elemType == nil {
+				return nil
+			}
+			return graphql.NewList(elemType)
+		} else {
+			// Use the unified type registry from graphql_unified_resolver.go
+			// to prevent duplicate type creation across top-level and nested types
+			typeRegistryMu.RLock()
+			if existingType, exists := typeRegistry[nameObject]; exists {
+				typeRegistryMu.RUnlock()
+				return existingType
+			}
+			typeRegistryMu.RUnlock()
+
+			// Create new object type - must register BEFORE creating fields
+			// to handle recursive types and avoid deadlocks
+			typeRegistryMu.Lock()
+
+			// Double-check in case another goroutine created it
+			if existingType, exists := typeRegistry[nameObject]; exists {
+				typeRegistryMu.Unlock()
+				return existingType
+			}
+
+			// Create the object type with a FieldsThunk for lazy field generation
+			// We need to capture t in the closure
+			capturedType := t
+			newObjectType := graphql.NewObject(graphql.ObjectConfig{
+				Name: nameObject,
+				Fields: (graphql.FieldsThunk)(func() graphql.Fields {
+					fields := g.generateFields(capturedType)
+					if len(fields) == 0 {
+						// Add a placeholder field if no fields generated
+						fields = graphql.Fields{
+							"id": &graphql.Field{
+								Type:        graphql.String,
+								Description: "Placeholder field for " + nameObject,
+							},
+						}
+					}
+					return fields
+				}),
+			})
+
+			// Register the new object type in the unified registry
+			typeRegistry[nameObject] = newObjectType
+			typeRegistryMu.Unlock()
+
+			return newObjectType
+		}
+	case reflect.Interface:
+		return graphql.NewScalar(graphql.ScalarConfig{
+			Name: "Interface",
+			Serialize: func(value interface{}) interface{} {
+				return value
+			},
+		})
+
+	default:
+		return nil
+	}
+}
+
+func (g *FieldGenerator[T]) getFieldName(field reflect.StructField) string {
+	jsonTag := field.Tag.Get("json")
+	if jsonTag != "" {
+		parts := strings.Split(jsonTag, ",")
+		if parts[0] != "" {
+			return parts[0]
+		}
+	}
+
+	graphqlTag := field.Tag.Get("graphql")
+	if graphqlTag != "" {
+		parts := strings.Split(graphqlTag, ",")
+		for _, part := range parts {
+			if !strings.Contains(part, "=") && part != "required" {
+				return part
+			}
+		}
+	}
+
+	return g.toGraphQLFieldName(field.Name)
+}
+
+func (g *FieldGenerator[T]) toGraphQLFieldName(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	runes := []rune(name)
+	runes[0] = []rune(strings.ToLower(string(runes[0])))[0]
+	return string(runes)
+}
+
+func GenerateInputObject[T any](name string) *graphql.InputObject {
+	gen := NewFieldGenerator[T]()
+	var instance T
+	fields := gen.generateInputFields(reflect.TypeOf(instance))
+
+	return graphql.NewInputObject(graphql.InputObjectConfig{
+		Name:   name,
+		Fields: fields,
+	})
+}
+
+func (g *FieldGenerator[T]) generateInputFields(t reflect.Type) graphql.InputObjectConfigFieldMap {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		return graphql.InputObjectConfigFieldMap{}
+	}
+
+	fields := graphql.InputObjectConfigFieldMap{}
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+
+		// Handle embedded (anonymous) fields by flattening them
+		if field.Anonymous {
+			embeddedType := field.Type
+			if embeddedType.Kind() == reflect.Ptr {
+				embeddedType = embeddedType.Elem()
+			}
+
+			// Recursively get fields from embedded struct
+			embeddedFields := g.generateInputFields(embeddedType)
+			for name, embeddedField := range embeddedFields {
+				// Only add if not already present (child fields take precedence)
+				if _, exists := fields[name]; !exists {
+					fields[name] = embeddedField
+				}
+			}
+			continue
+		}
+
+		if field.PkgPath != "" {
+			continue
+		}
+
+		fieldName := g.getFieldName(field)
+		if fieldName == "-" {
+			continue
+		}
+
+		graphqlType := g.getInputType(field.Type, field)
+		if graphqlType == nil {
+			continue
+		}
+
+		description := field.Tag.Get("description")
+		defaultValue := field.Tag.Get("default")
+
+		fieldConfig := &graphql.InputObjectFieldConfig{
+			Type:        graphqlType,
+			Description: description,
+		}
+
+		if defaultValue != "" {
+			fieldConfig.DefaultValue = defaultValue
+		}
+
+		fields[fieldName] = fieldConfig
+	}
+
+	return fields
+}
+
+func (g *FieldGenerator[T]) getInputType(t reflect.Type, field reflect.StructField) graphql.Input {
+	isRequired := strings.Contains(field.Tag.Get("graphql"), "required")
+
+	baseType := g.getBaseInputType(t, field.Name)
+
+	if baseType == nil {
+		return nil
+	}
+
+	if isRequired {
+		return graphql.NewNonNull(baseType)
+	}
+
+	return baseType
+}
+
+func (g *FieldGenerator[T]) getInputTypeWithContext(t reflect.Type, field reflect.StructField, parentTypeName string) graphql.Input {
+	isRequired := strings.Contains(field.Tag.Get("graphql"), "required")
+
+	baseType := g.getBaseInputTypeWithContext(t, field.Name, parentTypeName)
+
+	if baseType == nil {
+		return nil
+	}
+
+	if isRequired {
+		return graphql.NewNonNull(baseType)
+	}
+
+	return baseType
+}
+
+func (g *FieldGenerator[T]) getBaseInputType(t reflect.Type, fieldName string) graphql.Input {
+	return g.getBaseInputTypeWithContext(t, fieldName, "")
+}
+
+func (g *FieldGenerator[T]) getBaseInputTypeWithContext(t reflect.Type, fieldName string, parentTypeName string) graphql.Input {
+	switch t.Kind() {
+	case reflect.Ptr:
+		return g.getBaseInputTypeWithContext(t.Elem(), fieldName, parentTypeName)
+
+	case reflect.String:
+		return graphql.String
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return graphql.Int
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return graphql.Int
+
+	case reflect.Float32, reflect.Float64:
+		return graphql.Float
+
+	case reflect.Bool:
+		return graphql.Boolean
+
+	case reflect.Slice, reflect.Array:
+		elemType := g.getBaseInputTypeWithContext(t.Elem(), fieldName, parentTypeName)
+		if elemType == nil {
+			return nil
+		}
+		return graphql.NewList(elemType)
+
+	case reflect.Struct:
+		// Use parent type name for anonymous structs, otherwise use the field name
+		var inputTypeName string
+		if t.Name() == "" && parentTypeName != "" {
+			// Anonymous struct - use parent type name
+			inputTypeName = parentTypeName + "Input"
+		} else {
+			// Named struct - use getInputTypeName
+			inputTypeName = getInputTypeName(t, fieldName)
+		}
+
+		// Check if input type already exists in the global registry (from unified resolver)
+		inputTypeRegistryMu.RLock()
+		if existingType, exists := inputTypeRegistry[inputTypeName]; exists {
+			inputTypeRegistryMu.RUnlock()
+			return existingType
+		}
+		inputTypeRegistryMu.RUnlock()
+
+		// Create new input type - must register BEFORE creating fields
+		// to handle recursive types and avoid deadlocks
+		inputTypeRegistryMu.Lock()
+
+		// Double-check in case another goroutine created it
+		if existingType, exists := inputTypeRegistry[inputTypeName]; exists {
+			inputTypeRegistryMu.Unlock()
+			return existingType
+		}
+
+		// Capture t for the closure
+		capturedType := t
+		newInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+			Name: inputTypeName,
+			Fields: (graphql.InputObjectConfigFieldMapThunk)(func() graphql.InputObjectConfigFieldMap {
+				return g.generateInputFields(capturedType)
+			}),
+		})
+
+		// Register the new input type
+		inputTypeRegistry[inputTypeName] = newInputType
+		inputTypeRegistryMu.Unlock()
+
+		return newInputType
+
+	default:
+		return nil
+	}
+}
+
+type FieldConfig struct {
+	Resolver          graphql.FieldResolveFn
+	Description       string
+	Args              graphql.FieldConfigArgument
+	DeprecationReason string
+}
+
+func GenerateArgsFromStruct[T any]() graphql.FieldConfigArgument {
+	gen := NewFieldGenerator[T]()
+	var instance T
+	t := reflect.TypeOf(instance)
+
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		return graphql.FieldConfigArgument{}
+	}
+
+	args := graphql.FieldConfigArgument{}
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+
+		// Handle embedded (anonymous) fields by flattening them
+		if field.Anonymous {
+			embeddedType := field.Type
+			if embeddedType.Kind() == reflect.Ptr {
+				embeddedType = embeddedType.Elem()
+			}
+
+			// Recursively process embedded struct fields
+			embeddedGen := NewFieldGenerator[T]()
+			embeddedArgs := processStructArgs(embeddedGen, embeddedType)
+			for name, embeddedArg := range embeddedArgs {
+				// Only add if not already present (child fields take precedence)
+				if _, exists := args[name]; !exists {
+					args[name] = embeddedArg
+				}
+			}
+			continue
+		}
+
+		if field.PkgPath != "" {
+			continue
+		}
+
+		fieldName := gen.getFieldName(field)
+		if fieldName == "-" {
+			continue
+		}
+
+		graphqlType := gen.getInputType(field.Type, field)
+		if graphqlType == nil {
+			continue
+		}
+
+		description := field.Tag.Get("description")
+		defaultValue := field.Tag.Get("default")
+
+		argConfig := &graphql.ArgumentConfig{
+			Type:        graphqlType,
+			Description: description,
+		}
+
+		if defaultValue != "" {
+			argConfig.DefaultValue = defaultValue
+		}
+
+		args[fieldName] = argConfig
+	}
+
+	return args
+}
+
+// Helper function to process struct fields for args
+func processStructArgs[T any](gen *FieldGenerator[T], t reflect.Type) graphql.FieldConfigArgument {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		return graphql.FieldConfigArgument{}
+	}
+
+	args := graphql.FieldConfigArgument{}
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+
+		// Handle embedded fields recursively
+		if field.Anonymous {
+			embeddedType := field.Type
+			if embeddedType.Kind() == reflect.Ptr {
+				embeddedType = embeddedType.Elem()
+			}
+
+			embeddedArgs := processStructArgs[T](gen, embeddedType)
+			for name, embeddedArg := range embeddedArgs {
+				if _, exists := args[name]; !exists {
+					args[name] = embeddedArg
+				}
+
+			}
+			continue
+		}
+
+		if field.PkgPath != "" {
+			continue
+		}
+
+		fieldName := gen.getFieldName(field)
+		if fieldName == "-" {
+			continue
+		}
+
+		graphqlType := gen.getInputType(field.Type, field)
+		if graphqlType == nil {
+			continue
+		}
+
+		description := field.Tag.Get("description")
+		defaultValue := field.Tag.Get("default")
+
+		argConfig := &graphql.ArgumentConfig{
+			Type:        graphqlType,
+			Description: description,
+		}
+
+		if defaultValue != "" {
+			argConfig.DefaultValue = defaultValue
+		}
+
+		args[fieldName] = argConfig
+	}
+
+	return args
+}
+
+// isWrapperType detects if a type is a wrapper like Response[T] that should be handled specially
+func (g *FieldGenerator[T]) isWrapperType(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+
+	// Check for Response-like pattern: has Status, Code, Data fields
+	hasStatus := false
+	hasData := false
+	hasCode := false
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		switch field.Name {
+		case "Status":
+			hasStatus = true
+		case "Code":
+			hasCode = true
+		case "Data":
+			hasData = true
+		}
+	}
+
+	return hasStatus && hasData && hasCode
+}
+
+// createWrapperObject creates a GraphQL object for wrapper types with safe field handling
+func (g *FieldGenerator[T]) createWrapperObject(t reflect.Type, typeName string) *graphql.Object {
+	return graphql.NewObject(graphql.ObjectConfig{
+		Name: typeName,
+		Fields: (graphql.FieldsThunk)(func() graphql.Fields {
+			fields := graphql.Fields{}
+
+			for i := 0; i < t.NumField(); i++ {
+				field := t.Field(i)
+
+				if field.PkgPath != "" { // Skip unexported fields
+					continue
+				}
+
+				fieldName := g.getFieldName(field)
+				if fieldName == "-" {
+					continue
+				}
+
+				// Handle wrapper fields differently to prevent deep recursion
+				var graphqlType graphql.Output
+				dataType := field.Type
+				graphqlType = g.getBaseGraphQLType(dataType, &typeName)
+
+				description := field.Tag.Get("description")
+				fields[fieldName] = &graphql.Field{
+					Type:        graphqlType,
+					Description: description,
+					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+						source := reflect.ValueOf(p.Source)
+						if source.Kind() == reflect.Ptr {
+							source = source.Elem()
+						}
+
+						if source.Kind() == reflect.Struct {
+							fieldValue := source.FieldByName(field.Name)
+							if fieldValue.IsValid() && fieldValue.CanInterface() {
+								return fieldValue.Interface(), nil
+							}
+						}
+						return nil, nil
+					},
+				}
+			}
+
+			return fields
+		}),
+	})
+}

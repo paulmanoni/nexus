@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"context"
+
 	"github.com/graphql-go/graphql"
 
 	"github.com/paulmanoni/nexus/registry"
@@ -12,14 +14,88 @@ import (
 
 // Service is a named group of endpoints. Services are the nodes the dashboard
 // draws in the architecture view.
+//
+// A Service also carries the GraphQL mount path for reflective controllers
+// registered via nexus.AsQuery / AsMutation. The auto-mount step inside
+// fxmod.Module reads this path at fx.Start and wires the schema onto the
+// engine. Default is "/graphql"; override via (*Service).AtGraphQL.
 type Service struct {
-	app  *App
-	name string
+	app         *App
+	name        string
+	graphqlPath string
+
+	// Per-service GraphQL knob. Playground / Debug / Pretty live on
+	// nexus.Config because they're environment-level; Auth is per-service
+	// because different services often differ (admin vs public).
+	graphqlUserDetFn UserDetailsFn
 }
+
+// UserDetailsFn, when set on a service, routes GraphQL requests through
+// graph.NewHTTP so resolvers can read the authenticated user via
+// graph.GetRootInfo(p, "details", &user). Returning an error aborts the
+// request with the framework's standard unauthenticated shape.
+type UserDetailsFn func(ctx context.Context, token string) (context.Context, any, error)
+
+// DefaultGraphQLPath is the mount path nexus.AsQuery / AsMutation use when a
+// service hasn't called AtGraphQL.
+const DefaultGraphQLPath = "/graphql"
 
 func (a *App) Service(name string) *Service {
 	a.registry.RegisterService(registry.Service{Name: name})
-	return &Service{app: a, name: name}
+	return &Service{app: a, name: name, graphqlPath: DefaultGraphQLPath}
+}
+
+// AtGraphQL overrides the GraphQL mount path for this service. Most apps
+// keep the default ("/graphql") — override only when you need a
+// per-service path (e.g. "/admin/graphql") or want to unify multiple
+// nexus apps behind the same reverse proxy.
+//
+//	app.Service("admin").AtGraphQL("/admin/graphql").Describe("Admin ops")
+func (s *Service) AtGraphQL(path string) *Service {
+	if path == "" {
+		path = DefaultGraphQLPath
+	}
+	s.graphqlPath = path
+	return s
+}
+
+// Name returns the service's identifier (same string used on the dashboard
+// and passed to *App.Service). Exposed so framework internals (the auto-
+// mount Invoke, service wrappers) can identify a service without reaching
+// into the private field.
+func (s *Service) Name() string { return s.name }
+
+// GraphQLPath returns the mount path set via AtGraphQL (or the default).
+// Read by the auto-mount Invoke; users rarely need this.
+func (s *Service) GraphQLPath() string { return s.graphqlPath }
+
+// Auth wires a Bearer-token → user hook. Resolvers read the user via
+// graph.GetRootInfo(p, "details", &user) after successful authentication.
+// Per-service because different services often use different auth
+// mechanisms (admin vs public).
+func (s *Service) Auth(fn UserDetailsFn) *Service { s.graphqlUserDetFn = fn; return s }
+
+// graphqlOptions returns the gql.Option slice representing this service's
+// current flags combined with the app-wide knobs in cfg. Called by the
+// auto-mount.
+func (s *Service) graphqlOptions(cfg Config) []gql.Option {
+	var out []gql.Option
+	if !cfg.DisablePlayground {
+		out = append(out, gql.WithPlayground(true))
+	}
+	if cfg.GraphQLDebug {
+		out = append(out, gql.WithDEBUG(true))
+	}
+	if cfg.GraphQLPretty {
+		out = append(out, gql.WithPretty(true))
+	}
+	if s.graphqlUserDetFn != nil {
+		fn := s.graphqlUserDetFn
+		out = append(out, gql.WithUserDetailsFn(func(ctx context.Context, token string) (context.Context, any, error) {
+			return fn(ctx, token)
+		}))
+	}
+	return out
 }
 
 func (s *Service) Describe(desc string) *Service {

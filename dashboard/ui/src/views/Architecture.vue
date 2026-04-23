@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, markRaw, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, markRaw, nextTick, provide, watch } from 'vue'
 import { VueFlow, useVueFlow, Position, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -7,23 +7,70 @@ import dagre from 'dagre'
 
 import ServiceNode from '../components/ServiceNode.vue'
 import ResourceNode from '../components/ResourceNode.vue'
-import { fetchEndpoints, fetchResources } from '../lib/api.js'
+import InternetNode from '../components/InternetNode.vue'
+import BoundaryNode from '../components/BoundaryNode.vue'
+import ErrorDialog from '../components/ErrorDialog.vue'
+import PacketOverlay from '../components/PacketOverlay.vue'
+import GlobalMiddlewareBar from '../components/GlobalMiddlewareBar.vue'
+import { fetchEndpoints, fetchResources, fetchStats, subscribeEvents } from '../lib/api.js'
 
 const nodes = ref([])
 const edges = ref([])
 const nodeTypes = {
   service: markRaw(ServiceNode),
-  resource: markRaw(ResourceNode)
+  resource: markRaw(ResourceNode),
+  internet: markRaw(InternetNode),
+  boundary: markRaw(BoundaryNode),
 }
 
-const { fitView, onNodesInitialized } = useVueFlow()
+// INTERNET_ID is the fixed id of the single "Clients" node. Keep it a
+// constant so edge-builders and the traffic animator agree on naming.
+const INTERNET_ID = 'internet'
+
+// Per-op selection store. ServiceNode writes here on click; ResourceNode
+// + edge-styling read from it. Single source of truth means no props need
+// to thread through the VueFlow custom-node API.
+const opSelection = ref(null)  // { service, op, resources: string[] }
+function setOp(sel) { opSelection.value = sel }
+function clearOp() { opSelection.value = null }
+provide('nexus.opSelection', opSelection)
+provide('nexus.setOp', setOp)
+provide('nexus.clearOp', clearOp)
+
+// Error-dialog state. Dialog lazy-loads events via the per-op endpoint
+// when opened — keeps /stats hot-path lean, and supports thousands of
+// events via virtualized scrolling.
+const errorDialog = ref({ open: false, service: '', op: '' })
+function openErrors(payload) {
+  errorDialog.value = {
+    open: true,
+    service: payload.service,
+    op: payload.op,
+  }
+}
+function closeErrors() { errorDialog.value = { ...errorDialog.value, open: false } }
+provide('nexus.openErrors', openErrors)
+
+const { fitView, onNodesInitialized, onPaneClick } = useVueFlow()
 onNodesInitialized(() => fitView({ padding: 0.2, maxZoom: 1 }))
+// Click the empty canvas → clear op selection. Lets users reset without
+// having to find the card header.
+onPaneClick(() => clearOp())
 
 function estimateServiceHeight(data) {
-  const eps = Math.min(data.endpoints?.length || 0, 6)
+  const eps = (data.endpoints || []).slice(0, 6)
   const hidden = (data.endpoints?.length || 0) > 6 ? 1 : 0
   const desc = data.description ? 32 : 0
-  return 54 + desc + (eps + hidden) * 22
+  // Each op row is the op line (22px) plus, when chips are rendered, a
+  // second line (~20px). Chips show when the op has resource deps or
+  // declares the owning service as a dep (chip present when NOT auto-routed).
+  let rows = 0
+  for (const e of eps) {
+    const hasOwnerChip = !e.ServiceAutoRouted
+    const hasResChips = Array.isArray(e.Resources) && e.Resources.length > 0
+    rows += (hasOwnerChip || hasResChips) ? 2 : 1
+  }
+  return 54 + desc + (rows + hidden) * 22
 }
 
 function estimateResourceHeight(data) {
@@ -45,8 +92,10 @@ function dagreLayout(ns, es) {
   const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
   g.setGraph({ rankdir: 'LR', nodesep: 50, ranksep: 140 })
   ns.forEach(n => {
-    const w = n.type === 'resource' ? NODE_WIDTH_RESOURCE : NODE_WIDTH_SERVICE
-    const h = n.type === 'resource' ? estimateResourceHeight(n.data) : estimateServiceHeight(n.data)
+    let w, h
+    if (n.type === 'internet') { w = 160; h = 90 }
+    else if (n.type === 'resource') { w = NODE_WIDTH_RESOURCE; h = estimateResourceHeight(n.data) }
+    else { w = NODE_WIDTH_SERVICE; h = estimateServiceHeight(n.data) }
     g.setNode(n.id, { width: w, height: h })
   })
   es.forEach(e => g.setEdge(e.source, e.target))
@@ -87,10 +136,22 @@ function gridLayout(ns) {
 }
 
 async function load() {
-  const [epData, rsData] = await Promise.all([fetchEndpoints(), fetchResources()])
+  const [epData, rsData, statsData] = await Promise.all([
+    fetchEndpoints(),
+    fetchResources(),
+    fetchStats().catch(() => ({ stats: [] })), // graceful if stats endpoint absent
+  ])
+  // Index stats by "service.op" so we can attach each endpoint's
+  // counters before grouping into service cards.
+  const statsByKey = {}
+  for (const s of statsData.stats || []) statsByKey[s.key] = s
+  const withStats = (e) => ({
+    ...e,
+    Stats: statsByKey[`${e.Service}.${e.Name}`] || null,
+  })
   const grouped = {}
   for (const e of epData.endpoints || []) {
-    (grouped[e.Service] ||= []).push(e)
+    (grouped[e.Service] ||= []).push(withStats(e))
   }
   const svcNodes = (epData.services || []).map(s => ({
     id: `svc:${s.Name}`,
@@ -102,6 +163,14 @@ async function load() {
       endpoints: grouped[s.Name] || []
     }
   }))
+  // Single "Clients" node representing external traffic sources. Lives
+  // on the far-left of the dagre layout because it has no incoming edges.
+  const internetNode = {
+    id: INTERNET_ID,
+    type: 'internet',
+    position: { x: 0, y: 0 },
+    data: {},
+  }
   const rsNodes = (rsData.resources || []).map(r => ({
     id: `res:${r.name}`,
     type: 'resource',
@@ -109,35 +178,316 @@ async function load() {
     data: r
   }))
 
+  // Build edges at three granularities:
+  //  1. Per-op resource edges — one per (op, resource) listed in
+  //     op.Resources. Source handle "op:<opName>" pins the line to the
+  //     specific row on the service card.
+  //  2. Per-op service edges — one per (op, otherService) listed in
+  //     op.ServiceDeps. Same row handle, target is another service node.
+  //     These draw the "adverts.createAdvert calls into users" topology.
+  //  3. Fallback aggregated edges — for resources attached at runtime
+  //     (OnResourceUse) that no op statically claims. Prevents orphan
+  //     attachments from disappearing.
   const edgeList = []
-  for (const r of rsData.resources || []) {
-    for (const svc of r.attachedTo || []) {
+  const claimed = new Set()
+  for (const e of epData.endpoints || []) {
+    const opName = e.Name || `${e.Method} ${e.Path}`
+    // Resource edges.
+    for (const rName of e.Resources || []) {
       edgeList.push({
-        id: `e:${svc}->${r.name}`,
-        source: `svc:${svc}`,
-        target: `res:${r.name}`,
+        id: `e:${e.Service}.${opName}->res:${rName}`,
+        source: `svc:${e.Service}`,
+        sourceHandle: `op:${opName}`,
+        target: `res:${rName}`,
         markerEnd: MarkerType.ArrowClosed,
-        style: { stroke: 'var(--border-strong)', strokeWidth: 1.5 }
+        data: { service: e.Service, target: rName, targetKind: 'resource', op: opName },
+      })
+      claimed.add(`${e.Service}|res:${rName}`)
+    }
+    // Service-to-service edges.
+    for (const sName of e.ServiceDeps || []) {
+      edgeList.push({
+        id: `e:${e.Service}.${opName}->svc:${sName}`,
+        source: `svc:${e.Service}`,
+        sourceHandle: `op:${opName}`,
+        target: `svc:${sName}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: e.Service, target: sName, targetKind: 'service', op: opName },
       })
     }
   }
+  // Aggregated fallback for runtime-attached resources no op claims.
+  for (const r of rsData.resources || []) {
+    for (const svc of r.attachedTo || []) {
+      if (claimed.has(`${svc}|res:${r.name}`)) continue
+      edgeList.push({
+        id: `e:svc.${svc}->res:${r.name}`,
+        source: `svc:${svc}`,
+        sourceHandle: 'svc',
+        target: `res:${r.name}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: svc, target: r.name, targetKind: 'resource', op: null },
+      })
+    }
+  }
+  // Internet → service edges. One per service so external traffic has
+  // a visible lane into each domain; the animator pulses these when a
+  // request lands on that service.
+  for (const s of epData.services || []) {
+    edgeList.push({
+      id: `e:internet->svc:${s.Name}`,
+      source: INTERNET_ID,
+      target: `svc:${s.Name}`,
+      markerEnd: MarkerType.ArrowClosed,
+      data: { service: s.Name, target: s.Name, targetKind: 'service', op: null, inbound: true },
+    })
+  }
 
-  const all = [...svcNodes, ...rsNodes]
-  nodes.value = layout(all, edgeList)
-  edges.value = edgeList
+  const all = [internetNode, ...svcNodes, ...rsNodes]
+  const laid = layout(all, edgeList)
+  // Build the system boundary AFTER layout so we can size it to the
+  // bounding box of all non-Internet nodes. Padding leaves a soft
+  // margin between the border and the outermost cards.
+  const boundary = buildBoundaryNode(laid)
+  // Render boundary first so VueFlow paints it beneath real nodes.
+  // Explicit zIndex keeps it safely behind even under future refactors.
+  nodes.value = boundary ? [{ ...boundary, zIndex: -1 }, ...laid] : laid
+  rawEdges.value = edgeList
+  indexEndpointEdges(edgeList)
+  edges.value = restyleEdges(edgeList, opSelection.value, flashedEdges.value)
   nextTick(() => fitView({ padding: 0.2, maxZoom: 1 }))
 }
 
+function buildBoundaryNode(laid) {
+  const BBOX_PAD = 28
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  let hits = 0
+  for (const n of laid) {
+    // Enclose only the "inside-the-system" nodes — services +
+    // resources. Internet is an outside caller, boundary shouldn't
+    // ring around it.
+    if (n.type !== 'service' && n.type !== 'resource') continue
+    const w = n.type === 'resource' ? NODE_WIDTH_RESOURCE : NODE_WIDTH_SERVICE
+    const h = n.type === 'resource' ? estimateResourceHeight(n.data) : estimateServiceHeight(n.data)
+    minX = Math.min(minX, n.position.x)
+    minY = Math.min(minY, n.position.y)
+    maxX = Math.max(maxX, n.position.x + w)
+    maxY = Math.max(maxY, n.position.y + h)
+    hits++
+  }
+  if (hits === 0) return null
+  const x = minX - BBOX_PAD
+  const y = minY - BBOX_PAD
+  const width  = (maxX - minX) + BBOX_PAD * 2
+  const height = (maxY - minY) + BBOX_PAD * 2
+  return {
+    id: 'boundary',
+    type: 'boundary',
+    position: { x, y },
+    data: { width, height },
+    // Boundary is purely decorative — no handles, no interactivity.
+    selectable: false,
+    draggable: false,
+  }
+}
+
+// restyleEdges returns a fresh edges array with styling applied based on
+// the current op selection + live-traffic flash state. Baseline shows
+// every per-op line softly; selecting an op highlights that op's lines
+// and dims the rest; a flashed edge id temporarily overrides both.
+function restyleEdges(list, sel, flashed) {
+  return list.map(e => {
+    const base = { ...e }
+    const isAggregated = e.data.op === null
+    const isInbound = !!e.data.inbound
+
+    // Flashed edges (live traffic) — brightest, always animated. Color
+    // reflects request outcome: accent on success, red when the request
+    // was stopped (rate-limited, auth-failed, validation-failed, etc.).
+    if (flashed && flashed.has(e.id)) {
+      const state = flashed.get(e.id)
+      const stroke = state === 'error' ? 'var(--error)' : 'var(--accent)'
+      base.style = { stroke, strokeWidth: 2.6, opacity: 1 }
+      base.animated = true
+      return base
+    }
+    if (!sel) {
+      if (isInbound) {
+        // Inbound lanes sit gray by default — they only come alive
+        // when traffic actually flows, via the flashed branch above.
+        base.style = { stroke: 'var(--border-strong)', strokeWidth: 1.5, opacity: 0.8 }
+      } else if (isAggregated) {
+        base.style = { stroke: 'var(--border-strong)', strokeWidth: 1.5, opacity: 1 }
+      } else {
+        base.style = { stroke: 'var(--accent)', strokeWidth: 1.4, opacity: 0.55 }
+      }
+      base.animated = false
+    } else if (sel.service === e.data.service && sel.op === e.data.op) {
+      base.style = { stroke: 'var(--accent)', strokeWidth: 2.4, opacity: 1 }
+      base.animated = true
+    } else {
+      base.style = (isAggregated || isInbound)
+        ? { stroke: 'var(--border-strong)', strokeWidth: 1.5, opacity: 0.12 }
+        : { stroke: 'var(--accent)', strokeWidth: 1.4, opacity: 0.12 }
+      base.animated = false
+    }
+    return base
+  })
+}
+
+// rawEdges holds the un-styled edge list so restyle calls don't stack
+// styling on top of styling. flashedEdges is the map of edge id → state
+// ('ok' | 'error') that should render in the bright "live-traffic"
+// style right now; entries clear themselves via setTimeout.
+const rawEdges = ref([])
+const flashedEdges = ref(new Map())
+watch([opSelection, flashedEdges], () => {
+  edges.value = restyleEdges(rawEdges.value, opSelection.value, flashedEdges.value)
+}, { deep: true })
+
+// flashEdges triggers the live-traffic pulse: adds ids to the flashed
+// map with state, schedules their removal after FLASH_MS. Subsequent
+// flashes of the same id overwrite state + reset the timer — most
+// recent event wins.
+const FLASH_MS = 900
+const flashTimers = new Map()
+function flashEdges(ids, state) {
+  if (!ids.length) return
+  const s = state === 'error' ? 'error' : 'ok'
+  const next = new Map(flashedEdges.value)
+  for (const id of ids) {
+    next.set(id, s)
+    const prev = flashTimers.get(id)
+    if (prev) clearTimeout(prev)
+    flashTimers.set(id, setTimeout(() => {
+      const m = new Map(flashedEdges.value)
+      m.delete(id)
+      flashedEdges.value = m
+      flashTimers.delete(id)
+    }, FLASH_MS))
+  }
+  flashedEdges.value = next
+}
+
+// onTraceEvent maps an incoming request.start event to the edges that
+// should light up: inbound lane Internet→service, plus any per-op edges
+// the handler declared (resources / other services). We stash the
+// endpoint → edge map at load time so lookups are constant-time here.
+const endpointEdgeIdx = new Map() // "svc.opName" → [edge id, ...]
+function indexEndpointEdges(edgeList) {
+  endpointEdgeIdx.clear()
+  for (const e of edgeList) {
+    if (!e.data.op || e.data.inbound) continue
+    const k = `${e.data.service}.${e.data.op}`
+    const arr = endpointEdgeIdx.get(k) || []
+    arr.push(e.id)
+    endpointEdgeIdx.set(k, arr)
+  }
+}
+function onTraceEvent(ev) {
+  // request.op carries the specific op name in Endpoint (emitted by the
+  // metrics middleware per handler exit). request.start from the
+  // framework trace layer only carries the HTTP path — too coarse to
+  // identify a GraphQL operation — so we drive the per-op UI off
+  // request.op exclusively. Result: packets land on the right row.
+  if (ev.kind !== 'request.op') return
+  if (!ev.service) return
+  // Skip events we're replaying from the /events backlog on initial
+  // subscribe — they're older than this mount so animating them would
+  // misrepresent "live" state.
+  if (ev.timestamp) {
+    const evTime = new Date(ev.timestamp).getTime()
+    if (evTime && evTime < mountedAtMs) return
+  }
+  const failed = typeof ev.status === 'number' ? ev.status >= 400 : !!ev.error
+  const inboundId = `e:internet->svc:${ev.service}`
+
+  // On error we ONLY light up the inbound lane — downstream resource/
+  // service-dep edges never ran, so animating them would falsely
+  // suggest the mutation reached the DB. The packet's red "stop" mark
+  // at the op row makes the rejection visible.
+  const outboundIds = []
+  if (ev.endpoint) {
+    const opKey = `${ev.service}.${ev.endpoint}`
+    for (const id of endpointEdgeIdx.get(opKey) || []) outboundIds.push(id)
+  }
+  const flashIds = failed ? [inboundId] : [inboundId, ...outboundIds]
+  flashEdges(flashIds, failed ? 'error' : 'ok')
+  spawnPacketsForEdges(flashIds, ev.endpoint, failed ? 'error' : 'ok')
+}
+
+const mountedAtMs = Date.now()
+
+// spawnPacketsForEdges reads the CURRENT screen positions of the
+// involved source/target nodes and asks the overlay to shoot a dot
+// from one to the other. For edges that target a specific op row
+// (inbound Internet → service for the endpoint being hit, OR the
+// per-op row's outbound edges), we aim at the row's exact y so the
+// dot visibly lands on the endpoint the operator is interested in.
+function spawnPacketsForEdges(ids, opName, state) {
+  if (!packetOverlay.value) return
+  const canvas = canvasEl.value
+  if (!canvas) return
+  const cr = canvas.getBoundingClientRect()
+  const opts = { state: state === 'error' ? 'error' : 'ok' }
+  ids.forEach((edgeId, i) => {
+    const edge = rawEdges.value.find(e => e.id === edgeId)
+    if (!edge) return
+    const fromEl = canvas.querySelector(`.vue-flow__node[data-id="${CSS.escape(edge.source)}"]`)
+    const toEl   = canvas.querySelector(`.vue-flow__node[data-id="${CSS.escape(edge.target)}"]`)
+    if (!fromEl || !toEl) return
+    const fr = fromEl.getBoundingClientRect()
+    const tr = toEl.getBoundingClientRect()
+
+    // Source y: if the source is a service card with a per-op handle,
+    // aim from that row's right edge (matches where the line actually
+    // leaves the card). Otherwise use the card vertical center.
+    let fromY = fr.top + fr.height / 2
+    if (edge.sourceHandle && edge.sourceHandle.startsWith('op:') && fromEl.matches('.vue-flow__node[data-type="service"]')) {
+      const rowOp = edge.sourceHandle.slice(3)
+      const row = fromEl.querySelector(`.row[data-op="${CSS.escape(rowOp)}"]`)
+      if (row) fromY = row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2
+    }
+
+    // Target y: inbound edges (Internet → service) aim at the row of
+    // the endpoint the request actually hit so the packet lands ON
+    // the endpoint, not just "in the card somewhere".
+    let toY = tr.top + tr.height / 2
+    if (edge.data?.inbound && opName && toEl.matches('.vue-flow__node[data-type="service"]')) {
+      const row = toEl.querySelector(`.row[data-op="${CSS.escape(opName)}"]`)
+      if (row) toY = row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2
+    }
+
+    const from = { x: fr.right - cr.left, y: fromY - cr.top }
+    const to   = { x: tr.left  - cr.left, y: toY   - cr.top }
+    const stagger = i * 120 // ms; entry dot first, then downstream hops
+    setTimeout(() => packetOverlay.value?.spawn(from, to, opts), stagger)
+  })
+}
+
+const packetOverlay = ref(null)
+const canvasEl = ref(null)
+
 let pollTimer = null
+let traceSub = null
 onMounted(() => {
   load()
   pollTimer = setInterval(load, 5000) // refresh health
+  // Subscribe to the request trace stream so the graph lights up on
+  // live traffic. Same socket the Traces tab uses; it multiplexes
+  // fine — backlog replay is harmless because each flash has its own
+  // short timeout.
+  traceSub = subscribeEvents(onTraceEvent, null, 0)
 })
-onUnmounted(() => pollTimer && clearInterval(pollTimer))
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  if (traceSub) traceSub.close()
+  flashTimers.forEach(t => clearTimeout(t))
+})
 </script>
 
 <template>
-  <div class="arch">
+  <div class="arch" ref="canvasEl">
     <VueFlow
       :nodes="nodes"
       :edges="edges"
@@ -148,9 +498,17 @@ onUnmounted(() => pollTimer && clearInterval(pollTimer))
       <Background pattern-color="#d1d5db" :gap="22" :size="1.3" />
       <Controls :show-interactive="false" />
     </VueFlow>
+    <GlobalMiddlewareBar />
+    <PacketOverlay ref="packetOverlay" />
     <div v-if="!nodes.length" class="empty">
       No services registered yet.
     </div>
+    <ErrorDialog
+      :open="errorDialog.open"
+      :service="errorDialog.service"
+      :op="errorDialog.op"
+      @close="closeErrors"
+    />
   </div>
 </template>
 

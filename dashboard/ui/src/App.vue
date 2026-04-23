@@ -1,21 +1,57 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import { Network, Plug, Activity, Box } from 'lucide-vue-next'
+import { ref, onMounted, watch } from 'vue'
+import { Network, Plug, Activity, Box, Clock, Gauge } from 'lucide-vue-next'
 import Architecture from './views/Architecture.vue'
 import Endpoints from './views/Endpoints.vue'
 import Traces from './views/Traces.vue'
+import Crons from './views/Crons.vue'
+import RateLimits from './views/RateLimits.vue'
 import { fetchConfig } from './lib/api.js'
-
-const tab = ref('architecture')
-const brand = ref('Nexus')
 
 const tabs = [
   { id: 'architecture', label: 'Architecture', icon: Network },
   { id: 'endpoints', label: 'Endpoints', icon: Plug },
+  { id: 'crons', label: 'Crons', icon: Clock },
+  { id: 'ratelimits', label: 'Rate limits', icon: Gauge },
   { id: 'traces', label: 'Traces', icon: Activity }
 ]
 
+// Persist the selected tab via the URL ?tab= query param. Shareable,
+// bookmarkable, works with browser back/forward without the weight of
+// a full router. Defensive validation falls back to the first tab
+// when the URL carries an unknown id.
+function readTabFromURL() {
+  try {
+    const id = new URL(window.location.href).searchParams.get('tab')
+    if (id && tabs.some(t => t.id === id)) return id
+  } catch { /* SSR or weird URL */ }
+  return tabs[0].id
+}
+function writeTabToURL(id) {
+  try {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('tab') === id) return
+    url.searchParams.set('tab', id)
+    window.history.replaceState(null, '', url)
+  } catch { /* no-op */ }
+}
+const tab = ref(readTabFromURL())
+watch(tab, writeTabToURL)
+// Sync in when user navigates with the browser back/forward buttons.
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', () => {
+    const id = readTabFromURL()
+    if (id !== tab.value) tab.value = id
+  })
+}
+
+const brand = ref('Nexus')
+
 onMounted(async () => {
+  // Make sure the URL always reflects the active tab, even on a fresh
+  // visit with no ?tab= param — copy/paste the URL and the receiver
+  // lands on the same tab.
+  writeTabToURL(tab.value)
   const cfg = await fetchConfig()
   if (cfg && cfg.Name) {
     brand.value = cfg.Name
@@ -46,6 +82,8 @@ onMounted(async () => {
     <main>
       <Architecture v-show="tab === 'architecture'" />
       <Endpoints v-show="tab === 'endpoints'" />
+      <Crons v-show="tab === 'crons'" />
+      <RateLimits v-show="tab === 'ratelimits'" />
       <Traces v-show="tab === 'traces'" />
     </main>
   </div>

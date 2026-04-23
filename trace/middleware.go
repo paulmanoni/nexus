@@ -50,6 +50,12 @@ func newTraceID() string {
 	return strconv.FormatInt(traceCounter.Add(1), 36)
 }
 
+// NewTraceID mints the next short, monotonic trace ID in the same format the
+// request middleware uses. Exposed for code paths that emit events outside the
+// HTTP request lifecycle (e.g. the cron scheduler) so trace IDs stay uniform
+// across the dashboard.
+func NewTraceID() string { return newTraceID() }
+
 // Middleware emits request.start and request.end events bracketing the handler
 // chain, and stashes a *Span and the bus in gin.Context so Record() can attach
 // downstream events to the same trace.

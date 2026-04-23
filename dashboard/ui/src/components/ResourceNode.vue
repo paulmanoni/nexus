@@ -1,9 +1,18 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { Database, HardDrive, Radio as RadioIcon } from 'lucide-vue-next'
 
 const props = defineProps(['data'])
+
+// When an op is selected in a service card, resources not in the op's
+// resource list dim. Provided by Architecture via provide/inject.
+const selection = inject('nexus.opSelection', { value: null })
+const inSelection = computed(() => {
+  const sel = selection.value
+  if (!sel) return true   // no selection → everything visible
+  return Array.isArray(sel.resources) && sel.resources.includes(props.data.name)
+})
 
 const icon = computed(() => {
   if (props.data.kind === 'cache') return HardDrive
@@ -41,7 +50,7 @@ const detailKeys = computed(() => {
 </script>
 
 <template>
-  <div class="resource-node" :class="{ unhealthy: !data.healthy }">
+  <div class="resource-node" :class="{ unhealthy: !data.healthy, dim: !inSelection }">
     <Handle type="target" :position="Position.Left" />
     <div class="head">
       <component :is="icon" :size="13" :stroke-width="2" class="icon" />
@@ -72,6 +81,7 @@ const detailKeys = computed(() => {
   font-family: var(--font-sans);
 }
 .resource-node.unhealthy { border-color: var(--error); }
+.resource-node.dim { opacity: 0.3; transition: opacity 120ms; }
 .head {
   display: flex;
   align-items: center;

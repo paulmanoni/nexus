@@ -1,5 +1,5 @@
 // Package gql mounts a GraphQL schema (typically assembled by
-// github.com/paulmanoni/go-graph) onto Gin and introspects its operations
+// github.com/paulmanoni/nexus/graph) onto Gin and introspects its operations
 // into the nexus registry. nexus does NOT own schema assembly — the caller
 // keeps using go-graph (or graphql-go directly) and hands nexus the finished *graphql.Schema.
 package gql
@@ -11,8 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
-	graph "github.com/paulmanoni/go-graph"
+	graph "github.com/paulmanoni/nexus/graph"
 
+	"github.com/paulmanoni/nexus/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -70,6 +71,16 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 	if bus != nil {
 		handlers = append(handlers, trace.Middleware(bus, service, "POST "+path, string(registry.GraphQL)))
 	}
+	// Stash the caller IP in the request context so per-op middleware
+	// downstream (rate-limit, metrics error recorder) can attribute the
+	// request without the gql adapter leaking gin.Context into graph.
+	// Runs whether the underlying handler is the simple path or graph's
+	// Playground-capable NewHTTP.
+	handlers = append(handlers, func(c *gin.Context) {
+		ctx := ratelimit.WithClientIP(c.Request.Context(), c.ClientIP())
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
 	handlers = append(handlers, h)
 	e.POST(path, handlers...)
 	e.GET(path, handlers...)
@@ -96,6 +107,10 @@ func simpleHandler(schema *graphql.Schema) gin.HandlerFunc {
 				return
 			}
 		}
+		// Caller IP is already stashed in the request context by a
+		// route-level middleware in Mount, so any downstream reader
+		// (rate-limit, metrics error recorder) sees it via
+		// ratelimit.ClientIPFromCtx(ctx).
 		result := graphql.Do(graphql.Params{
 			Schema:         *schema,
 			RequestString:  req.Query,
