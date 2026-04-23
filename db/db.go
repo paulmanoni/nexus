@@ -231,6 +231,15 @@ func (m *Manager) GetDB() *gorm.DB {
 	return m.db
 }
 
+// GetCtx returns the manager's internal context. It's canceled by Stop(),
+// so goroutines that should die alongside the manager can bind to it:
+//
+//	go func() {
+//	    <-mgr.GetCtx().Done()
+//	    // manager has stopped; unwind our side here
+//	}()
+func (m *Manager) GetCtx() context.Context { return m.ctx }
+
 // ConnectionString returns the DSN for this manager's configured driver
 // (same string the Dialector is built from). Useful for diagnostics and
 // for tooling that needs to reconnect outside GORM — migration CLIs,
