@@ -71,6 +71,25 @@ type Config struct {
 	// RateLimitStore — explicit wins over Cache-driven defaults.
 	MetricsStore metrics.Store
 
+	// DashboardMiddleware gates the /__nexus surface behind user-supplied
+	// middleware — typically auth + permission checks. Each bundle's
+	// Gin realization runs in registration order on the /__nexus route
+	// group BEFORE any dashboard handler, covering the JSON API,
+	// WebSocket events, and the embedded Vue UI in one pass.
+	//
+	//	nexus.Config{
+	//	    EnableDashboard: true,
+	//	    DashboardMiddleware: []middleware.Middleware{
+	//	        {Name: "auth",  Gin: bearerAuth},
+	//	        {Name: "admin", Gin: requireAdminRole},
+	//	    },
+	//	}
+	//
+	// Bundles whose Gin field is nil are ignored for the dashboard (no
+	// graph-only protection makes sense here — the dashboard itself
+	// isn't GraphQL).
+	DashboardMiddleware []middleware.Middleware
+
 	// Cache is an optional nexus cache.Manager. When set, nexus uses it
 	// as the default backing for metrics + rate-limit stores so counters
 	// and overrides benefit from the app's cache tier (Redis when

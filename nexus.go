@@ -19,6 +19,7 @@ import (
 	"github.com/paulmanoni/nexus/cron"
 	"github.com/paulmanoni/nexus/dashboard"
 	"github.com/paulmanoni/nexus/metrics"
+	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
@@ -41,6 +42,10 @@ type App struct {
 	cacheMgr      *cache.Manager
 	dashboardOn   bool
 	dashboardName string
+	// dashboardMw is the ordered list of gin.HandlerFunc realizations
+	// that guard /__nexus. WithDashboardMiddleware + Config.DashboardMiddleware
+	// populate it; Mount applies them to the route group.
+	dashboardMw []gin.HandlerFunc
 }
 
 // AppOption is the functional-option type for nexus.New. Named AppOption
@@ -97,6 +102,27 @@ func WithCache(m *cache.Manager) AppOption {
 	return func(a *App) { a.cacheMgr = m }
 }
 
+// WithDashboardMiddleware gates the /__nexus surface behind one or
+// more middleware bundles. Each bundle's Gin realization runs in
+// registration order before any dashboard handler. Typical use:
+//
+//	nexus.WithDashboardMiddleware(
+//	    middleware.Middleware{Name: "auth",  Gin: bearerAuth},
+//	    middleware.Middleware{Name: "admin", Gin: requireAdminRole},
+//	)
+//
+// Bundles without a Gin realization are skipped silently — the
+// dashboard is an HTTP surface, so graph-only bundles don't apply.
+func WithDashboardMiddleware(bundles ...middleware.Middleware) AppOption {
+	return func(a *App) {
+		for _, b := range bundles {
+			if b.Gin != nil {
+				a.dashboardMw = append(a.dashboardMw, b.Gin)
+			}
+		}
+	}
+}
+
 func New(opts ...AppOption) *App {
 	a := &App{dashboardName: defaultDashboardName}
 	for _, opt := range opts {
@@ -123,7 +149,10 @@ func New(opts ...AppOption) *App {
 		a.metricsStore = metrics.NewCacheStore(a.cacheMgr)
 	}
 	if a.dashboardOn {
-		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, dashboard.Config{Name: a.dashboardName})
+		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, dashboard.Config{
+			Name:       a.dashboardName,
+			Middleware: a.dashboardMw,
+		})
 	}
 	return a
 }
