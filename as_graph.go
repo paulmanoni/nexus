@@ -85,6 +85,12 @@ type gqlConfig struct {
 	// handlers whose signature intentionally omits the service wrapper.
 	serviceType reflect.Type
 
+	// module is stamped by nexus.Module("name", ...) when this option
+	// is a direct child of a module. Populates GqlField.Module at ctor
+	// time so the registry ends up with the endpoint → module mapping
+	// the dashboard needs for the architecture view.
+	module string
+
 	// rateLimit, when set, declares the baseline rate limit for this
 	// op. The auto-mount registers it with the app's Store and wires an
 	// enforcement middleware. Operators can override the effective limit
@@ -98,6 +104,18 @@ type gqlConfig struct {
 	// for dashboard metadata.
 	bundles []middleware.Middleware
 }
+
+// gqlFieldOption is the Option returned by AsQuery/AsMutation. It keeps
+// a pointer to the shared gqlConfig so Module(...) can stamp the module
+// name on it after the option is created — the constructor closure
+// reads the same pointer at fx.Start time, so stamping takes effect.
+type gqlFieldOption struct {
+	o   fx.Option
+	cfg *gqlConfig
+}
+
+func (g *gqlFieldOption) nexusOption() fx.Option { return g.o }
+func (g *gqlFieldOption) setModule(name string)  { g.cfg.module = name }
 
 type namedMw struct {
 	name, description string
@@ -210,9 +228,12 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	if sh.returnType == nil {
 		return rawOption{o: fx.Error(fmt.Errorf("nexus: %s handler %s needs a (T, error) return", kind, sh.funcType))}
 	}
-	cfg := gqlConfig{}
+	// Pointer cfg so nexus.Module(...) can stamp cfg.module on us AFTER
+	// this call returns but BEFORE fx.Start runs the ctor closure below.
+	// The closure captures cfg by reference, so late writes are picked up.
+	cfg := &gqlConfig{}
 	for _, o := range opts {
-		o.applyToGql(&cfg)
+		o.applyToGql(cfg)
 	}
 	if cfg.opName == "" {
 		cfg.opName = opNameFromFunc(fn, string(kind))
@@ -365,6 +386,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 			Kind:        kind,
 			ServiceType: svcType,
 			Service:     svc,
+			Module:      cfg.module,
 			Field:       built,
 			DepTypes:    sh.depTypes,
 			Deps:        append([]reflect.Value(nil), deps...),
@@ -373,9 +395,12 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		return []reflect.Value{reflect.ValueOf(entry)}
 	})
 
-	return rawOption{o: fx.Provide(
-		fx.Annotate(ctor.Interface(), fx.ResultTags(`group:"`+GqlFieldGroup+`"`)),
-	)}
+	return &gqlFieldOption{
+		o: fx.Provide(
+			fx.Annotate(ctor.Interface(), fx.ResultTags(`group:"`+GqlFieldGroup+`"`)),
+		),
+		cfg: cfg,
+	}
 }
 
 // GqlField is the shared-group payload that AsQuery / AsMutation produce and
@@ -385,6 +410,7 @@ type GqlField struct {
 	Kind        graph.FieldKind
 	ServiceType reflect.Type
 	Service     *Service        // nil if dep[0] didn't unwrap (misuse)
+	Module      string          // nexus.Module name this field was declared under; "" if unscoped
 	Field       any             // graph.QueryField or graph.MutationField
 	DepTypes    []reflect.Type  // for resource auto-attach
 	Deps        []reflect.Value // for resource auto-attach (NexusResourceProvider)

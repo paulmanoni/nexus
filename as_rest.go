@@ -40,9 +40,11 @@ import (
 //	    nexus.AsRest("GET", "/pets/:id", NewGetPet),
 //	)
 func AsRest(method, path string, fn any, opts ...RestOption) Option {
-	cfg := restConfig{}
+	// Pointer cfg so nexus.Module(...) can stamp cfg.module after this
+	// call returns — the invoke closure below reads it at fx.Start.
+	cfg := &restConfig{}
 	for _, o := range opts {
-		o.applyToRest(&cfg)
+		o.applyToRest(cfg)
 	}
 	sh, err := inspectHandler(fn)
 	if err != nil {
@@ -55,7 +57,23 @@ type restConfig struct {
 	description string
 	service     string                  // optional explicit service name; auto-derived if empty
 	bundles     []middleware.Middleware // attached via nexus.Use
+	// module is stamped by nexus.Module("name", ...) when this option
+	// is a direct child of a module. Emitted into the registry entry
+	// so the dashboard groups REST endpoints under their module.
+	module string
 }
+
+// restOption is the Option returned by AsRest. Parallels gqlFieldOption —
+// keeps a pointer to the restConfig so Module(...) can stamp the module
+// name on it after construction, and the fx.Invoke closure picks it up
+// at Start time.
+type restOption struct {
+	o   fx.Option
+	cfg *restConfig
+}
+
+func (r *restOption) nexusOption() fx.Option { return r.o }
+func (r *restOption) setModule(name string)  { r.cfg.module = name }
 
 // RestOption tunes an AsRest registration. Interface (not a func) so
 // nexus.Use can satisfy both GqlOption and RestOption from a single
@@ -75,7 +93,7 @@ func Description(s string) RestOption {
 // (*App, deps...) and registers the handler on the Gin engine + the registry.
 // We build its signature via reflect.FuncOf so any dep type the handler named
 // flows through fx's dependency resolution unchanged.
-func asRestInvoke(method, path string, cfg restConfig, sh handlerShape) Option {
+func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option {
 	appType := reflect.TypeOf((*App)(nil))
 
 	in := make([]reflect.Type, 0, len(sh.depTypes)+1)
@@ -118,6 +136,7 @@ func asRestInvoke(method, path string, cfg restConfig, sh handlerShape) Option {
 		app.engine.Handle(method, path, chain...)
 		app.registry.RegisterEndpoint(registry.Endpoint{
 			Service:     service,
+			Module:      cfg.module,
 			Name:        opName,
 			Transport:   registry.REST,
 			Method:      method,
@@ -127,7 +146,7 @@ func asRestInvoke(method, path string, cfg restConfig, sh handlerShape) Option {
 		})
 		return nil
 	})
-	return rawOption{o: fx.Invoke(invokeFn.Interface())}
+	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
 }
 
 // serviceNameFromDeps returns the Service.Name() of the first dep that

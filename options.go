@@ -18,7 +18,10 @@ func (r rawOption) nexusOption() fx.Option { return r.o }
 
 // Module groups options under a name. Mirrors fx.Module's logging — the
 // group name appears in startup/shutdown logs and in error messages, which
-// helps when several modules touch the same service or resource.
+// helps when several modules touch the same service or resource. The name
+// is also stamped onto every AsQuery/AsMutation/AsRest registration inside
+// the module so the dashboard's architecture view can group endpoints by
+// module container.
 //
 //	var advertsModule = nexus.Module("adverts",
 //	    nexus.Provide(NewAdvertsService),
@@ -26,7 +29,25 @@ func (r rawOption) nexusOption() fx.Option { return r.o }
 //	    nexus.AsMutation(NewCreateAdvert, …),
 //	)
 func Module(name string, opts ...Option) Option {
+	// Stamp the module name onto every child registration option that
+	// cares. Options produced by nested Module(...) don't implement
+	// moduleAnnotator (they return a rawOption wrapping fx.Module), so
+	// inner-most wins automatically — the inner Module() already
+	// annotated its own children before we see it.
+	for _, o := range opts {
+		if ma, ok := o.(moduleAnnotator); ok {
+			ma.setModule(name)
+		}
+	}
 	return rawOption{o: fx.Module(name, unwrap(opts)...)}
+}
+
+// moduleAnnotator is implemented by options that participate in the
+// nexus.Module grouping — specifically AsQuery/AsMutation/AsRest. The
+// Module() function walks its direct children and calls setModule on
+// each implementer so the registered endpoint knows its module.
+type moduleAnnotator interface {
+	setModule(name string)
 }
 
 // Provide registers one or more constructor functions with the dep graph.

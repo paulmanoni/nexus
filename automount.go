@@ -82,11 +82,19 @@ func autoMountGraphQL(in autoMountIn) error {
 	// Stash per-op resource/service-dep lists during the walk; applied
 	// AFTER mountOne so the registry.Set* helpers have endpoints to match.
 	type pending struct {
-		service, op  string
-		resources    []string
-		serviceDeps  []string
+		service, op string
+		resources   []string
+		serviceDeps []string
 	}
 	var pendingEdges []pending
+
+	// pendingModules tracks (service, op, module) triples gathered during
+	// the walk. Applied AFTER mountOne so endpoints exist in the registry.
+	// Collected here (not in a separate pass) because f.Service is filled
+	// by resolveUnresolved inside this loop — a second pass would see the
+	// pre-resolution nil for zero-service fallback fields.
+	type pendingModule struct{ service, op, module string }
+	var pendingModules []pendingModule
 
 	// autoRouted tracks (service, op) pairs whose service was filled in by
 	// resolveUnresolved — these get an owner chip on the dashboard.
@@ -149,6 +157,13 @@ func autoMountGraphQL(in autoMountIn) error {
 			if wasUnresolved {
 				autoRouted[opKey{service: f.Service.Name(), op: info.Name}] = true
 			}
+			if f.Module != "" {
+				pendingModules = append(pendingModules, pendingModule{
+					service: f.Service.Name(),
+					op:      info.Name,
+					module:  f.Module,
+				})
+			}
 		}
 	}
 
@@ -170,6 +185,14 @@ func autoMountGraphQL(in autoMountIn) error {
 	}
 	for k := range autoRouted {
 		in.App.Registry().SetEndpointServiceAutoRouted(k.service, k.op)
+	}
+
+	// Stamp the module name onto each endpoint so the architecture view
+	// can group endpoints by module container. Collected during the main
+	// field walk (see pendingModules) so the service name reflects the
+	// resolveUnresolved outcome rather than the pre-resolution f.Service.
+	for _, pm := range pendingModules {
+		in.App.Registry().SetEndpointModule(pm.service, pm.op, pm.module)
 	}
 
 	// Publish declared rate limits to the registry so the dashboard can
