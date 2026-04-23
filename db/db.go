@@ -231,6 +231,13 @@ func (m *Manager) GetDB() *gorm.DB {
 	return m.db
 }
 
+// ConnectionString returns the DSN for this manager's configured driver
+// (same string the Dialector is built from). Useful for diagnostics and
+// for tooling that needs to reconnect outside GORM — migration CLIs,
+// ad-hoc shell scripts, etc. Contains credentials in the Postgres/MySQL
+// forms; don't log it in production.
+func (m *Manager) ConnectionString() string { return m.cfg.DSN() }
+
 // IsConnected returns true if a live connection is currently held.
 func (m *Manager) IsConnected() bool {
 	m.mu.RLock()
