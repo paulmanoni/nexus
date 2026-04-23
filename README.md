@@ -270,6 +270,25 @@ Tab selection persists via `?tab=` in the URL — shareable, bookmarkable, survi
 
 ![Traces tab](docs/traces.png)
 
+### Gating the dashboard
+
+Opt the whole `/__nexus/*` surface (JSON APIs, WebSocket events, embedded UI) into your own auth / permission chain by passing middleware bundles:
+
+```go
+nexus.Run(
+    nexus.Config{
+        EnableDashboard: true,
+        DashboardMiddleware: []middleware.Middleware{
+            {Name: "auth",  Kind: middleware.KindBuiltin, Gin: bearerAuthGin},
+            {Name: "admin", Kind: middleware.KindCustom,  Gin: requireAdminGin},
+        },
+    },
+    // ...
+)
+```
+
+Middleware runs on the `/__nexus` route group before any dashboard handler, so one chain covers every dashboard request. Bundles with a nil `Gin` realization are ignored (the dashboard is HTTP-only). `nexus.WithDashboardMiddleware(...)` is the equivalent `AppOption` for callers using `nexus.New`.
+
 HTTP surface:
 
 | Route | Returns |

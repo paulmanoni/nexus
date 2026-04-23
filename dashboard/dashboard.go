@@ -20,10 +20,12 @@ import (
 
 const Prefix = "/__nexus"
 
-// Config is what the dashboard client fetches at startup. Extend with more
-// fields (version, environment, etc.) as needed.
+// Config carries the dashboard's runtime knobs: the brand the client
+// fetches at startup + any gin middleware that should guard the
+// /__nexus surface (auth, permission, allowlist, etc.).
 type Config struct {
-	Name string `json:"Name"`
+	Name       string            `json:"Name"`
+	Middleware []gin.HandlerFunc `json:"-"`
 }
 
 // Mount attaches:
@@ -47,6 +49,16 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 		cfg.Name = "Nexus"
 	}
 	g := e.Group(Prefix)
+	// User-supplied gate (typically auth + permission). Applied to the
+	// entire /__nexus group BEFORE any route registers, so it covers
+	// the JSON API, the WebSocket event stream, and the embedded UI in
+	// one stroke. Registration order is preserved — the first
+	// middleware that aborts stops the chain.
+	for _, mw := range cfg.Middleware {
+		if mw != nil {
+			g.Use(mw)
+		}
+	}
 	g.GET("/config", func(c *gin.Context) {
 		c.JSON(http.StatusOK, cfg)
 	})
