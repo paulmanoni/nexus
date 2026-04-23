@@ -119,19 +119,24 @@ type Manager struct {
 	isRedisConnected bool
 }
 
-// NewManager constructs a Manager with the in-memory store initialized. In
-// "production" it also kicks off a Redis connect attempt. Call Start() to
-// run the reconnect loop (NewManager alone doesn't spawn goroutines).
+// NewManager constructs a Manager with the in-memory store initialized.
+// Redis connection, when enabled via "production" mode, is attempted
+// asynchronously in Start() so an unreachable Redis never delays boot.
+// Call Start() to kick off the connect + reconnect loop.
 func NewManager(cfg *Config, logger *zap.Logger) *Manager {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Only 2 retries with a tight backoff on the initial connect — boot
+	// shouldn't spend minutes thrashing against a down Redis. The long-
+	// lived reconnect loop (maintainConnection) picks up availability
+	// on its ReconnectInterval cadence.
 	retry := retryPolicy.NewBuilder[*redis.Client]().
 		WithDelay(500*time.Millisecond).
-		WithBackoff(2, 5*time.Second).
-		WithMaxRetries(5).
+		WithBackoff(2, 2*time.Second).
+		WithMaxRetries(2).
 		WithJitter(25).
 		OnRetry(func(e failsafe.ExecutionEvent[*redis.Client]) {
 			logger.Warn("redis connect retrying",
@@ -160,14 +165,14 @@ func NewManager(cfg *Config, logger *zap.Logger) *Manager {
 		cancel:       cancel,
 	}
 	m.setupMemoryCache()
-	if cfg.Environment == "production" {
-		m.connectToRedis()
-	}
 	return m
 }
 
-// Start kicks off the background reconnect/health loop. Safe to call once;
-// subsequent calls are no-ops. Skipped entirely outside production mode.
+// Start kicks off the background reconnect/health loop and fires the
+// first Redis connect attempt asynchronously. Safe to call once; the
+// whole path is skipped outside production mode. Callers never block on
+// Redis availability — the manager serves from memory until Redis comes
+// up, then flips atomically under the mutex.
 func (m *Manager) Start() {
 	if m.config.Environment != "production" {
 		return
@@ -257,10 +262,16 @@ func (m *Manager) connectToRedis() {
 			Addr:     m.config.RedisAddress(),
 			Password: m.config.RedisPassword,
 			DB:       m.config.RedisDB,
+			// Keep the pool tight on failed attempts so its own reconnect
+			// loop doesn't spam pool.go logs between our retry ticks.
+			MaxRetries: -1,
 		})
 		ctx, cancel := context.WithTimeout(context.Background(), m.config.ConnectTimeout)
 		defer cancel()
 		if _, err := c.Ping(ctx).Result(); err != nil {
+			// Close the client so its background pool stops dialing —
+			// otherwise the orphaned goroutines keep logging until GC.
+			_ = c.Close()
 			m.logger.Error("cache: redis ping failed", zap.Error(err))
 			return nil, err
 		}
@@ -289,6 +300,13 @@ func (m *Manager) switchToMemoryCache() {
 	m.isRedisConnected = false
 	m.cacheStore = m.goCacheStore
 	m.marshaler = marshaler.New(gcache.New[any](m.goCacheStore))
+	// Close the stale client so its background pool stops dialing; a
+	// fresh client will be built on the next connectToRedis attempt.
+	if m.redisClient != nil {
+		_ = m.redisClient.Close()
+		m.redisClient = nil
+		m.redisStore = nil
+	}
 	m.logger.Warn("cache: redis unavailable, switched to memory")
 }
 
@@ -297,6 +315,10 @@ func (m *Manager) maintainConnection() {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
+	// Kick off the first connect attempt immediately so a reachable Redis
+	// is picked up without waiting a full ReconnectInterval. Runs in this
+	// goroutine — the caller already launched us in the background.
+	m.connectToRedis()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
