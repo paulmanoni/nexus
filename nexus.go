@@ -4,7 +4,7 @@
 // — notably the Vue dashboard.
 //
 // nexus does NOT replace the caller's GraphQL layer: hand it a *graphql.Schema
-// (typically built with github.com/paulmanoni/go-graph) and it mounts + introspects.
+// (typically built with github.com/paulmanoni/nexus/graph) and it mounts + introspects.
 package nexus
 
 import (
@@ -13,7 +13,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"go.uber.org/zap"
+
+	"github.com/paulmanoni/nexus/cache"
+	"github.com/paulmanoni/nexus/cron"
 	"github.com/paulmanoni/nexus/dashboard"
+	"github.com/paulmanoni/nexus/metrics"
+	"github.com/paulmanoni/nexus/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/trace"
@@ -25,37 +31,73 @@ type App struct {
 	engine        *gin.Engine
 	registry      *registry.Registry
 	bus           *trace.Bus
+	cronSched     *cron.Scheduler
+	rlStore       ratelimit.Store
+	metricsStore  metrics.Store
+	// cacheMgr is always non-nil — created by New() with a default
+	// memory-only config when the user doesn't supply one. Downstream
+	// stores (metrics, rate-limit overrides) can rely on it and Redis
+	// takes over automatically when env vars enable it.
+	cacheMgr      *cache.Manager
 	dashboardOn   bool
 	dashboardName string
 }
 
-type Option func(*App)
+// AppOption is the functional-option type for nexus.New. Named AppOption
+// (not Option) so nexus.Option can be reserved for the top-level
+// fx-wrapping builder type used by nexus.Provide / Module / Invoke / Run.
+type AppOption func(*App)
 
 // WithEngine supplies a pre-configured Gin engine. Without it, nexus builds a
 // bare engine with just Recovery so the caller can bring their own logger.
-func WithEngine(e *gin.Engine) Option {
+func WithEngine(e *gin.Engine) AppOption {
 	return func(a *App) { a.engine = e }
 }
 
 // WithTracing enables per-request trace events, buffered in a ring of the given
 // capacity. Required for the dashboard's event stream to show anything.
-func WithTracing(capacity int) Option {
+func WithTracing(capacity int) AppOption {
 	return func(a *App) { a.bus = trace.NewBus(capacity) }
 }
 
 // WithDashboard mounts /__nexus/endpoints (always) and /__nexus/events (if tracing is on).
-func WithDashboard() Option {
+func WithDashboard() AppOption {
 	return func(a *App) { a.dashboardOn = true }
 }
 
 // WithDashboardName sets the brand shown in the dashboard header and the
 // browser tab title. Defaults to "Nexus". The name is served over
 // /__nexus/config so the client picks it up without a rebuild.
-func WithDashboardName(name string) Option {
+func WithDashboardName(name string) AppOption {
 	return func(a *App) { a.dashboardName = name }
 }
 
-func New(opts ...Option) *App {
+// WithRateLimitStore swaps the default in-memory rate-limit store for a
+// custom implementation — typically ratelimit.NewRedisStore(...) in a
+// multi-replica deploy. Pass this to nexus.New / via nexus.Config when
+// you want limit state (counters, overrides) to survive restarts or be
+// shared across processes.
+func WithRateLimitStore(s ratelimit.Store) AppOption {
+	return func(a *App) { a.rlStore = s }
+}
+
+// WithMetricsStore swaps the default cache-backed metrics store. Useful
+// when you want a Prometheus- or StatsD-backed implementation; the
+// built-in dashboard /__nexus/stats endpoint reads from whichever
+// Store is installed.
+func WithMetricsStore(s metrics.Store) AppOption {
+	return func(a *App) { a.metricsStore = s }
+}
+
+// WithCache installs a user-provided cache.Manager instead of the
+// default one nexus creates. Pass the same Manager users' app code
+// receives from fx (e.g. via cache.Module) so every cache consumer —
+// user code, metrics, rate-limit overrides — hits one store.
+func WithCache(m *cache.Manager) AppOption {
+	return func(a *App) { a.cacheMgr = m }
+}
+
+func New(opts ...AppOption) *App {
 	a := &App{dashboardName: defaultDashboardName}
 	for _, opt := range opts {
 		opt(a)
@@ -65,8 +107,23 @@ func New(opts ...Option) *App {
 		a.engine.Use(gin.Recovery())
 	}
 	a.registry = registry.New()
+	a.cronSched = cron.NewScheduler(a.bus, 0)
+	// Cache is non-optional: if the caller didn't inject one, we build
+	// a memory-backed Manager so downstream stores never need to
+	// branch on "is there a cache". Redis kicks in automatically when
+	// env vars ask for it (see cache.NewConfig / cache.NewManager).
+	if a.cacheMgr == nil {
+		a.cacheMgr = cache.NewManager(cache.NewConfig(), zap.NewNop())
+		a.cacheMgr.Start()
+	}
+	if a.rlStore == nil {
+		a.rlStore = ratelimit.NewMemoryStore()
+	}
+	if a.metricsStore == nil {
+		a.metricsStore = metrics.NewCacheStore(a.cacheMgr)
+	}
 	if a.dashboardOn {
-		dashboard.Mount(a.engine, a.registry, a.bus, dashboard.Config{Name: a.dashboardName})
+		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, dashboard.Config{Name: a.dashboardName})
 	}
 	return a
 }
@@ -74,7 +131,14 @@ func New(opts ...Option) *App {
 func (a *App) Engine() *gin.Engine          { return a.engine }
 func (a *App) Registry() *registry.Registry { return a.registry }
 func (a *App) Bus() *trace.Bus              { return a.bus }
-func (a *App) Run(addr string) error        { return a.engine.Run(addr) }
+func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
+func (a *App) RateLimiter() ratelimit.Store { return a.rlStore }
+func (a *App) Metrics() metrics.Store       { return a.metricsStore }
+func (a *App) Cache() *cache.Manager        { return a.cacheMgr }
+func (a *App) Run(addr string) error {
+	a.cronSched.Start()
+	return a.engine.Run(addr)
+}
 
 // Register adds a resource (database, cache, queue) to the app so its health
 // shows up on the dashboard. Use Service.Attach(r) to also draw an edge

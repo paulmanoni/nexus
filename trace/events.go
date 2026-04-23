@@ -10,8 +10,15 @@ type Kind string
 const (
 	KindRequestStart Kind = "request.start"
 	KindRequestEnd   Kind = "request.end"
-	KindDownstream   Kind = "downstream"
-	KindLog          Kind = "log"
+	// KindRequestOp is emitted by the metrics middleware AFTER the
+	// handler returns, carrying the specific op name in Endpoint so
+	// UI consumers can drive per-endpoint visualisations (packet
+	// animations, per-op trace rows). request.start from the trace
+	// middleware uses the HTTP path — too coarse to identify a
+	// GraphQL operation; request.op fills that gap.
+	KindRequestOp  Kind = "request.op"
+	KindDownstream Kind = "downstream"
+	KindLog        Kind = "log"
 )
 
 type Event struct {

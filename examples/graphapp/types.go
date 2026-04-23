@@ -6,29 +6,86 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/db"
-	"github.com/paulmanoni/nexus/multi"
+	"github.com/paulmanoni/nexus/resource"
 )
 
-// DB is a project-local alias for nexus/db.Manager, so resolver code and
-// wiring use a domain name ("DB") while the underlying type is the full
-// multi-driver manager with GORM + failsafe circuit breaker + retry.
+// DB is a project-local alias for nexus/db.Manager. Typed wrappers below
+// (MainDB, QuestionsDB) embed it so resolvers can call .GetDB() / .Driver()
+// / .IsConnected without unwrapping.
 type DB = db.Manager
 
-// DBManager wraps a multi.Registry[*DB] AND embeds the current default *DB
-// as a field so callers that don't care about routing can skip .Using(...):
-//
-//	dbs.GetDB().Create(advert)                   // default DB (promoted from *DB)
-//	dbs.Using("questions").GetDB().Find(&qs)     // routed explicitly
-//
-// Because DB is an alias for db.Manager, .GetDB() returns *gorm.DB; from
-// there you run normal GORM queries.
-type DBManager struct {
-	*multi.Registry[*DB] // .Using, .Default, .Names, .Each
-	*DB                  // promoted: GetDB, IsConnected, Driver, Start, Stop, Ping
+// MainDB is the typed handle for the primary DB. Resolvers that touch it
+// take `*MainDB` by type — fx routes the right instance, and it's
+// impossible to typo a string name to something that doesn't exist.
+type MainDB struct{ *DB }
+
+// NewMainDB seeds an in-memory SQLite with a couple of adverts. Its
+// NexusResources method below declares the dashboard entry; the handler's
+// *MainDB dep triggers the attachment edge.
+func NewMainDB() *MainDB {
+	m, err := db.Open(db.Config{Driver: db.SQLite, Database: ":memory:"})
+	if err != nil {
+		panic("main db: " + err.Error())
+	}
+	m.Start()
+	g := m.GetDB()
+	if err := g.AutoMigrate(&Advert{}); err != nil {
+		panic("main migrate: " + err.Error())
+	}
+	g.Create(&[]Advert{
+		{Title: "Software Engineer", EmployerName: "Acme"},
+		{Title: "DevOps Lead", EmployerName: "Globex"},
+	})
+	return &MainDB{DB: m}
 }
 
-func newDBManager(r *multi.Registry[*DB]) *DBManager {
-	return &DBManager{Registry: r, DB: r.Default()}
+// NexusResources advertises this DB as the default database on the
+// dashboard. fxmod's auto-mount registers it at boot; the resolver-dep
+// scan attaches it to any service that takes *MainDB as a parameter.
+func (m *MainDB) NexusResources() []resource.Resource {
+	driver := string(m.Driver())
+	return []resource.Resource{
+		resource.NewDatabase(
+			"main", "GORM — "+driver,
+			map[string]any{"engine": driver, "schema": "main"},
+			m.IsConnected,
+			resource.AsDefault(),
+		),
+	}
+}
+
+// QuestionsDB holds the non-default DB so resolvers that touch it name it
+// explicitly. Swapping it for a Postgres-backed manager later is a matter
+// of changing this constructor — every caller stays compile-time identical.
+type QuestionsDB struct{ *DB }
+
+func NewQuestionsDB() *QuestionsDB {
+	m, err := db.Open(db.Config{Driver: db.SQLite, Database: ":memory:"})
+	if err != nil {
+		panic("questions db: " + err.Error())
+	}
+	m.Start()
+	g := m.GetDB()
+	if err := g.AutoMigrate(&Question{}); err != nil {
+		panic("questions migrate: " + err.Error())
+	}
+	g.Create(&[]Question{
+		{Text: "What is the time complexity of hash lookup?"},
+		{Text: "Explain CAP theorem in one sentence."},
+		{Text: "Why prefer composition over inheritance?"},
+	})
+	return &QuestionsDB{DB: m}
+}
+
+func (q *QuestionsDB) NexusResources() []resource.Resource {
+	driver := string(q.Driver())
+	return []resource.Resource{
+		resource.NewDatabase(
+			"questions", "GORM — "+driver,
+			map[string]any{"engine": driver, "schema": "questions"},
+			q.IsConnected,
+		),
+	}
 }
 
 // Models ---------------------------------------------------------------------
@@ -76,47 +133,6 @@ func okQuestions(data []Question, msg string) *QuestionsResponse {
 	return &QuestionsResponse{Status: "SUCCESS", Message: msg, Data: data}
 }
 
-// DB constructors ------------------------------------------------------------
-//
-// Real SQLite via github.com/glebarez/sqlite (pure Go; no CGO). Each .Open
-// call creates a separate in-memory database because the DSNs share no
-// cache — "main" rows never leak into "questions".
-
-func NewMainDB() *DB {
-	m, err := db.Open(db.Config{Driver: db.SQLite, Database: ":memory:"})
-	if err != nil {
-		panic("main db: " + err.Error())
-	}
-	m.Start()
-	g := m.GetDB()
-	if err := g.AutoMigrate(&Advert{}); err != nil {
-		panic("main migrate: " + err.Error())
-	}
-	g.Create(&[]Advert{
-		{Title: "Software Engineer", EmployerName: "Acme"},
-		{Title: "DevOps Lead", EmployerName: "Globex"},
-	})
-	return m
-}
-
-func NewQuestionsDB() *DB {
-	m, err := db.Open(db.Config{Driver: db.SQLite, Database: ":memory:"})
-	if err != nil {
-		panic("questions db: " + err.Error())
-	}
-	m.Start()
-	g := m.GetDB()
-	if err := g.AutoMigrate(&Question{}); err != nil {
-		panic("questions migrate: " + err.Error())
-	}
-	g.Create(&[]Question{
-		{Text: "What is the time complexity of hash lookup?"},
-		{Text: "Explain CAP theorem in one sentence."},
-		{Text: "Why prefer composition over inheritance?"},
-	})
-	return m
-}
-
 // CacheManager ---------------------------------------------------------------
 
 type CacheManager struct {
@@ -127,6 +143,28 @@ type CacheManager struct {
 
 func NewCacheManager() *CacheManager {
 	return &CacheManager{items: map[string]any{}, exp: map[string]time.Time{}}
+}
+
+// NexusResources returns this manager's session cache as a full
+// resource.Resource — with health probing + dynamic details (backend
+// flipping between redis/memory based on connectivity). nexus.ProvideResources
+// uses the slice for boot registration and service-edge attachment alike.
+func (c *CacheManager) NexusResources() []resource.Resource {
+	return []resource.Resource{
+		resource.NewCache(
+			"session", "Redis + in-memory fallback",
+			map[string]any{"ttl": "30m"},
+			c.IsRedisConnected,
+			resource.AsDefault(),
+			resource.WithDetails(func() map[string]any {
+				backend := "memory"
+				if c.IsRedisConnected() {
+					backend = "redis"
+				}
+				return map[string]any{"backend": backend, "ttl": "30m"}
+			}),
+		),
+	}
 }
 
 func (c *CacheManager) IsRedisConnected() bool { return false }

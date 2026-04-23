@@ -1,6 +1,6 @@
-// An example showing nexus integrated with go.uber.org/fx in the style of the
-// oats_admin_backend / applicant services: per-domain fx.Module, fx.Provide for
-// the service struct, fx.Invoke to register endpoints against *nexus.App.
+// An example showing nexus's top-level builder: nexus.Run composes modules,
+// nexus.Provide / Invoke / Module replace fx.Provide / Invoke / Module —
+// no go.uber.org/fx import in user code.
 package main
 
 import (
@@ -8,10 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/fxmod"
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -33,9 +31,9 @@ func (s *PetService) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
 }
 
-var petsModule = fx.Module("pets",
-	fx.Provide(NewPetService),
-	fx.Invoke(func(app *nexus.App, svc *PetService) {
+var petsModule = nexus.Module("pets",
+	nexus.Provide(NewPetService),
+	nexus.Invoke(func(app *nexus.App, svc *PetService) {
 		pets := app.Service("pets").Describe("Pet inventory")
 		pets.REST("GET", "/pets").Describe("List all pets").Handler(svc.List)
 		pets.REST("POST", "/pets").Describe("Create a pet").Handler(svc.Create)
@@ -52,9 +50,9 @@ func (s *OwnerService) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"owners": []string{"Amara", "Juma"}})
 }
 
-var ownersModule = fx.Module("owners",
-	fx.Provide(NewOwnerService),
-	fx.Invoke(func(app *nexus.App, svc *OwnerService) {
+var ownersModule = nexus.Module("owners",
+	nexus.Provide(NewOwnerService),
+	nexus.Invoke(func(app *nexus.App, svc *OwnerService) {
 		owners := app.Service("owners").Describe("Pet owners")
 		owners.REST("GET", "/owners").Describe("List owners").Handler(svc.List)
 	}),
@@ -62,18 +60,14 @@ var ownersModule = fx.Module("owners",
 
 // --- Graph domain (GraphQL, schema defined in schema.go) ---
 
-var graphModule = fx.Module("graph",
-	fx.Invoke(func(app *nexus.App) {
+var graphModule = nexus.Module("graph",
+	nexus.Invoke(func(app *nexus.App) {
 		graph := app.Service("graph").Describe("GraphQL demo")
 		graph.MountGraphQL("/graphql", buildSchema())
 	}),
 )
 
 // --- Resources (databases + cache) ---
-//
-// In a real app you'd wrap your existing DBManager / CacheManager — the
-// healthy func is typically `dbm.IsConnected` or `cache.IsRedisConnected`.
-// Here we fake it with package-level vars.
 
 var (
 	mainDBHealthy = true
@@ -81,8 +75,8 @@ var (
 	sessionHealth = true
 )
 
-var resourceModule = fx.Module("resources",
-	fx.Invoke(func(app *nexus.App) {
+var resourceModule = nexus.Module("resources",
+	nexus.Invoke(func(app *nexus.App) {
 		mainDB := resource.NewDatabase("main-db", "Primary PostgreSQL",
 			map[string]any{"engine": "postgres", "host": "localhost:5432", "schema": "app"},
 			func() bool { return mainDBHealthy },
@@ -96,7 +90,6 @@ var resourceModule = fx.Module("resources",
 			func() bool { return sessionHealth },
 		)
 
-		// Attach links resource to services for the Architecture edge view.
 		app.Service("pets").Attach(mainDB).Attach(session)
 		app.Service("owners").Attach(mainDB).Attach(session)
 		app.Service("graph").Attach(mainDB).Attach(uaaDB)
@@ -106,17 +99,16 @@ var resourceModule = fx.Module("resources",
 // --- Boot ----------------------------------------------------------------
 
 func main() {
-	fx.New(
-		fx.Supply(fxmod.Config{
+	nexus.Run(
+		nexus.Config{
 			Addr:            ":8080",
 			DashboardName:   "Fx Petstore",
 			TraceCapacity:   1000,
 			EnableDashboard: true,
-		}),
-		fxmod.Module,
+		},
 		petsModule,
 		ownersModule,
 		graphModule,
 		resourceModule,
-	).Run()
+	)
 }

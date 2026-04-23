@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 
-	graph "github.com/paulmanoni/go-graph"
+	graph "github.com/paulmanoni/nexus/graph"
 )
 
 // AuthMiddleware is the shape every resolver attaches. In oats it validates a

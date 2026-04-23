@@ -1,43 +1,42 @@
-// Example: a complete GraphQL service built with github.com/paulmanoni/go-graph
-// and registered into a nexus dashboard. Mirrors oats_admin_backend controllers:
+// Example: a complete GraphQL service wired with nexus's reflective
+// controller API. Per-resolver middleware names, arg validators, and
+// deprecation flow automatically from nexus/graph introspection.
 //
-//   - per-domain fx.Module (advertsModule)
-//   - resources declared ONCE at the top (resourcesModule) and referenced by
-//     name via Service.Using(...) or UsingDefaults()
-//   - resolvers built with graph.NewResolver[...].WithMiddleware(...).BuildQuery()
-//   - fields collected via Fx value groups and assembled by graph.SchemaBuilder
+//   - per-domain nexus.Module (advertsModule)
+//   - managers (DBManager, CacheManager) describe their resources via
+//     NexusResources(); nexus.ProvideResources registers + auto-attaches
+//     them — no resourcesModule boilerplate
+//   - resolvers are plain Go functions; nexus.AsQuery / AsMutation reflect
+//     on them and build the typed graph.Resolver under the hood
+//   - rate-limit bundles built once (init.go#createRateLimit) and attached
+//     via nexus.Use — same value works on REST or GraphQL
+//   - nexus owns the full boot story — no go.uber.org/fx import visible
 //
 // Run:  go run ./examples/graphapp  →  http://localhost:8080/__nexus/
 package main
 
 import (
-	"go.uber.org/fx"
-
-	"github.com/paulmanoni/nexus/fxmod"
-	"github.com/paulmanoni/nexus/graphfx"
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/ratelimit"
 )
 
 func main() {
-	fx.New(
-		fx.Supply(fxmod.Config{
+	nexus.Run(
+		nexus.Config{
 			Addr:            ":8080",
 			DashboardName:   "GraphApp",
 			TraceCapacity:   1000,
 			EnableDashboard: true,
-		}),
-
-		// Shared infra providers — two named DBManagers + a CacheManager.
-		// Fx distinguishes the two DBManager instances by constructor identity
-		// (NewMainDB vs NewQuestionsDB); both land in the multi.Registry via
-		// ProvideDBs so resolvers say dbs.Using("main") / .Using("questions").
-		fx.Provide(
-			ProvideDBs,       // multi.Registry[*DBManager] with "main" + "questions"
-			NewCacheManager,
-		),
-
-		fxmod.Module,
-		graphfx.Module,  // provides *graphfx.Bundle from grouped fields
-		resourcesModule, // registers nexus.Resources — runs before domain invokes
-		advertsModule,   // domain: Using("") resolves to the default DB registered above
-	).Run()
+			// Share one store between the app (dashboard reads this via
+			// /__nexus/ratelimits and operator overrides land here) and
+			// the middleware bundle built in init.go — otherwise two
+			// stores would drift. A single store via Config closes the loop.
+			RateLimitStore: defaultStore,
+			// Optional app-wide ceiling: rejects any caller exceeding
+			// 600 rpm across all endpoints. Per-op limits layer on top.
+			GlobalRateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
+		},
+		nexus.ProvideResources(NewMainDB, NewQuestionsDB, NewCacheManager),
+		advertsModule,
+	)
 }
