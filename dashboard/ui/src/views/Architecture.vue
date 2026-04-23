@@ -6,6 +6,7 @@ import { Controls } from '@vue-flow/controls'
 import dagre from 'dagre'
 
 import ServiceNode from '../components/ServiceNode.vue'
+import ServiceDepNode from '../components/ServiceDepNode.vue'
 import ResourceNode from '../components/ResourceNode.vue'
 import InternetNode from '../components/InternetNode.vue'
 import BoundaryNode from '../components/BoundaryNode.vue'
@@ -16,8 +17,12 @@ import { fetchEndpoints, fetchResources, fetchStats, subscribeEvents } from '../
 
 const nodes = ref([])
 const edges = ref([])
+// Node types: "service" now renders the module/group card (name retained
+// for back-compat with packet animator CSS selectors); "serviceDep" is
+// the small dep-node on the right for services consumed by endpoints.
 const nodeTypes = {
   service: markRaw(ServiceNode),
+  serviceDep: markRaw(ServiceDepNode),
   resource: markRaw(ResourceNode),
   internet: markRaw(InternetNode),
   boundary: markRaw(BoundaryNode),
@@ -95,6 +100,7 @@ function dagreLayout(ns, es) {
     let w, h
     if (n.type === 'internet') { w = 160; h = 90 }
     else if (n.type === 'resource') { w = NODE_WIDTH_RESOURCE; h = estimateResourceHeight(n.data) }
+    else if (n.type === 'serviceDep') { w = NODE_WIDTH_RESOURCE; h = estimateServiceDepHeight(n.data) }
     else { w = NODE_WIDTH_SERVICE; h = estimateServiceHeight(n.data) }
     g.setNode(n.id, { width: w, height: h })
   })
@@ -111,12 +117,19 @@ function dagreLayout(ns, es) {
   })
 }
 
+function estimateServiceDepHeight(data) {
+  return (data.description ? 60 : 40)
+}
+
 function gridLayout(ns) {
   const cols = Math.min(ns.length, 3)
   const rowHeights = []
   ns.forEach((n, i) => {
     const row = Math.floor(i / cols)
-    const h = n.type === 'resource' ? estimateResourceHeight(n.data) : estimateServiceHeight(n.data)
+    let h
+    if (n.type === 'resource') h = estimateResourceHeight(n.data)
+    else if (n.type === 'serviceDep') h = estimateServiceDepHeight(n.data)
+    else h = estimateServiceHeight(n.data)
     rowHeights[row] = Math.max(rowHeights[row] || 0, h)
   })
   const rowY = [0]
@@ -141,28 +154,86 @@ async function load() {
     fetchResources(),
     fetchStats().catch(() => ({ stats: [] })), // graceful if stats endpoint absent
   ])
-  // Index stats by "service.op" so we can attach each endpoint's
-  // counters before grouping into service cards.
+  // Index stats by "service.op". The stats key stays service-scoped
+  // even after the UI regroups by module, because the metrics
+  // middleware keys its counters by the owning service name.
   const statsByKey = {}
   for (const s of statsData.stats || []) statsByKey[s.key] = s
   const withStats = (e) => ({
     ...e,
     Stats: statsByKey[`${e.Service}.${e.Name}`] || null,
   })
-  const grouped = {}
+
+  // ---------------------------------------------------------------
+  // Grouping: by MODULE (the nexus.Module("name", ...) wrapper), with
+  // the owning service name as a fallback for endpoints registered
+  // outside any module. This is the core of the architecture-view
+  // shift — modules own endpoints; services become dep nodes.
+  // ---------------------------------------------------------------
+  const groups = new Map() // groupKey -> { key, name, isModule, service, endpoints[], description }
+  const serviceIndex = {}
+  for (const s of epData.services || []) serviceIndex[s.Name] = s
   for (const e of epData.endpoints || []) {
-    (grouped[e.Service] ||= []).push(withStats(e))
+    const moduleName = e.Module || ''
+    const groupKey = moduleName ? `mod:${moduleName}` : `svc:${e.Service}`
+    let g = groups.get(groupKey)
+    if (!g) {
+      g = {
+        key: groupKey,
+        name: moduleName || e.Service,
+        isModule: !!moduleName,
+        // service: the single owning service for this group, if every
+        // endpoint in the group shares one. When endpoints from
+        // multiple services land in one module (rare), this stays ''
+        // so the owner chip resolves row-by-row via e.Service
+        // (handled by a per-row fallback in ServiceNode).
+        service: e.Service,
+        endpoints: [],
+        description: serviceIndex[e.Service]?.Description || '',
+      }
+      groups.set(groupKey, g)
+    }
+    if (g.service && g.service !== e.Service) g.service = ''
+    g.endpoints.push(withStats(e))
   }
-  const svcNodes = (epData.services || []).map(s => ({
-    id: `svc:${s.Name}`,
+  const groupNodes = [...groups.values()].map(g => ({
+    id: g.key,
     type: 'service',
     position: { x: 0, y: 0 },
     data: {
-      name: s.Name,
-      description: s.Description,
-      endpoints: grouped[s.Name] || []
-    }
+      groupKey: g.key,
+      name: g.name,
+      isModule: g.isModule,
+      service: g.service,
+      description: g.description,
+      endpoints: g.endpoints,
+    },
   }))
+
+  // ---------------------------------------------------------------
+  // Service-as-dep nodes: one per distinct service that some endpoint
+  // takes as a handler dependency (the owning service when the handler
+  // declared it, plus any services in ServiceDeps). These live on the
+  // right of the canvas alongside resources.
+  // ---------------------------------------------------------------
+  const depServices = new Map() // name -> { Name, Description }
+  const markDep = (name) => {
+    if (!name) return
+    if (!depServices.has(name)) {
+      depServices.set(name, serviceIndex[name] || { Name: name, Description: '' })
+    }
+  }
+  for (const e of epData.endpoints || []) {
+    if (!e.ServiceAutoRouted) markDep(e.Service) // owning, if declared
+    for (const s of e.ServiceDeps || []) markDep(s)
+  }
+  const svcDepNodes = [...depServices.values()].map(s => ({
+    id: `dep:${s.Name}`,
+    type: 'serviceDep',
+    position: { x: 0, y: 0 },
+    data: { name: s.Name, description: s.Description || '' },
+  }))
+
   // Single "Clients" node representing external traffic sources. Lives
   // on the far-left of the dagre layout because it has no incoming edges.
   const internetNode = {
@@ -178,25 +249,44 @@ async function load() {
     data: r
   }))
 
-  // Build edges at three granularities:
-  //  1. Per-op resource edges — one per (op, resource) listed in
-  //     op.Resources. Source handle "op:<opName>" pins the line to the
-  //     specific row on the service card.
-  //  2. Per-op service edges — one per (op, otherService) listed in
-  //     op.ServiceDeps. Same row handle, target is another service node.
-  //     These draw the "adverts.createAdvert calls into users" topology.
-  //  3. Fallback aggregated edges — for resources attached at runtime
-  //     (OnResourceUse) that no op statically claims. Prevents orphan
-  //     attachments from disappearing.
+  // ---------------------------------------------------------------
+  // Edges. In the module-first model:
+  //   1. Per-op row → resource   (unchanged — endpoint uses resource)
+  //   2. Per-op row → serviceDep (NEW — endpoint uses another service)
+  //   3. Per-op row → owningDep  (NEW — endpoint declared its own
+  //      service wrapper as a dep; auto-routed endpoints omitted)
+  //   4. Aggregated fallback for runtime-only resource attachments.
+  //   5. Internet → module group (inbound traffic lane).
+  // ---------------------------------------------------------------
   const edgeList = []
   const claimed = new Set()
+  // Map each service name → the GROUP key that owns endpoints for that
+  // service. Used by the aggregated fallback and the Internet inbound
+  // lanes so edges land on the right module card even when grouping
+  // differs from the service name.
+  const serviceToGroup = {}
+  for (const g of groups.values()) {
+    for (const e of g.endpoints) {
+      serviceToGroup[e.Service] = g.key
+    }
+  }
+  // Build a per-endpoint lookup so we can locate the owning group by
+  // (service, op) — needed to source edges from the right group card.
+  const endpointGroup = {}
+  for (const g of groups.values()) {
+    for (const e of g.endpoints) {
+      endpointGroup[`${e.Service}.${e.Name || `${e.Method} ${e.Path}`}`] = g.key
+    }
+  }
   for (const e of epData.endpoints || []) {
     const opName = e.Name || `${e.Method} ${e.Path}`
+    const groupKey = endpointGroup[`${e.Service}.${opName}`]
+    if (!groupKey) continue
     // Resource edges.
     for (const rName of e.Resources || []) {
       edgeList.push({
-        id: `e:${e.Service}.${opName}->res:${rName}`,
-        source: `svc:${e.Service}`,
+        id: `e:${groupKey}.${opName}->res:${rName}`,
+        source: groupKey,
         sourceHandle: `op:${opName}`,
         target: `res:${rName}`,
         markerEnd: MarkerType.ArrowClosed,
@@ -204,13 +294,26 @@ async function load() {
       })
       claimed.add(`${e.Service}|res:${rName}`)
     }
-    // Service-to-service edges.
+    // Owning-service dep edge: the handler took *ServiceType itself as
+    // a dep. Auto-routed endpoints skip this since the handler didn't
+    // declare the wrapper.
+    if (!e.ServiceAutoRouted && depServices.has(e.Service)) {
+      edgeList.push({
+        id: `e:${groupKey}.${opName}->dep:${e.Service}`,
+        source: groupKey,
+        sourceHandle: `op:${opName}`,
+        target: `dep:${e.Service}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true },
+      })
+    }
+    // Other-service dep edges.
     for (const sName of e.ServiceDeps || []) {
       edgeList.push({
-        id: `e:${e.Service}.${opName}->svc:${sName}`,
-        source: `svc:${e.Service}`,
+        id: `e:${groupKey}.${opName}->dep:${sName}`,
+        source: groupKey,
         sourceHandle: `op:${opName}`,
-        target: `svc:${sName}`,
+        target: `dep:${sName}`,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: e.Service, target: sName, targetKind: 'service', op: opName },
       })
@@ -220,9 +323,11 @@ async function load() {
   for (const r of rsData.resources || []) {
     for (const svc of r.attachedTo || []) {
       if (claimed.has(`${svc}|res:${r.name}`)) continue
+      const groupKey = serviceToGroup[svc]
+      if (!groupKey) continue
       edgeList.push({
-        id: `e:svc.${svc}->res:${r.name}`,
-        source: `svc:${svc}`,
+        id: `e:${groupKey}->res:${r.name}`,
+        source: groupKey,
         sourceHandle: 'svc',
         target: `res:${r.name}`,
         markerEnd: MarkerType.ArrowClosed,
@@ -230,20 +335,19 @@ async function load() {
       })
     }
   }
-  // Internet → service edges. One per service so external traffic has
-  // a visible lane into each domain; the animator pulses these when a
-  // request lands on that service.
-  for (const s of epData.services || []) {
+  // Internet → group edges. One per module-group, since modules are
+  // the thing external traffic now "enters" in the visual model.
+  for (const g of groups.values()) {
     edgeList.push({
-      id: `e:internet->svc:${s.Name}`,
+      id: `e:internet->${g.key}`,
       source: INTERNET_ID,
-      target: `svc:${s.Name}`,
+      target: g.key,
       markerEnd: MarkerType.ArrowClosed,
-      data: { service: s.Name, target: s.Name, targetKind: 'service', op: null, inbound: true },
+      data: { service: g.service, target: g.name, targetKind: 'module', op: null, inbound: true, groupKey: g.key },
     })
   }
 
-  const all = [internetNode, ...svcNodes, ...rsNodes]
+  const all = [internetNode, ...groupNodes, ...svcDepNodes, ...rsNodes]
   const laid = layout(all, edgeList)
   // Build the system boundary AFTER layout so we can size it to the
   // bounding box of all non-Internet nodes. Padding leaves a soft
@@ -254,6 +358,7 @@ async function load() {
   nodes.value = boundary ? [{ ...boundary, zIndex: -1 }, ...laid] : laid
   rawEdges.value = edgeList
   indexEndpointEdges(edgeList)
+  indexEndpointGroups(groupNodes)
   edges.value = restyleEdges(edgeList, opSelection.value, flashedEdges.value)
   nextTick(() => fitView({ padding: 0.2, maxZoom: 1 }))
 }
@@ -263,12 +368,14 @@ function buildBoundaryNode(laid) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   let hits = 0
   for (const n of laid) {
-    // Enclose only the "inside-the-system" nodes — services +
-    // resources. Internet is an outside caller, boundary shouldn't
-    // ring around it.
-    if (n.type !== 'service' && n.type !== 'resource') continue
-    const w = n.type === 'resource' ? NODE_WIDTH_RESOURCE : NODE_WIDTH_SERVICE
-    const h = n.type === 'resource' ? estimateResourceHeight(n.data) : estimateServiceHeight(n.data)
+    // Enclose only the "inside-the-system" nodes — module groups,
+    // service-deps, resources. Internet is an outside caller, so
+    // the boundary shouldn't ring around it.
+    if (n.type !== 'service' && n.type !== 'resource' && n.type !== 'serviceDep') continue
+    const w = (n.type === 'resource' || n.type === 'serviceDep') ? NODE_WIDTH_RESOURCE : NODE_WIDTH_SERVICE
+    const h = n.type === 'resource' ? estimateResourceHeight(n.data)
+           : n.type === 'serviceDep' ? estimateServiceDepHeight(n.data)
+           : estimateServiceHeight(n.data)
     minX = Math.min(minX, n.position.x)
     minY = Math.min(minY, n.position.y)
     maxX = Math.max(maxX, n.position.x + w)
@@ -289,6 +396,19 @@ function buildBoundaryNode(laid) {
     selectable: false,
     draggable: false,
   }
+}
+
+// selectedMatches reports whether edge `e` belongs to the currently-
+// selected op on the currently-selected module group. Edge ids are
+// formatted `e:<groupKey>.<op>-><target>` so we compare against the
+// selection's groupKey + op to decide whether to highlight.
+function selectedMatches(sel, e) {
+  if (!sel) return false
+  if (sel.op !== e.data.op) return false
+  // Source is the group that owns this edge — it's encoded as the
+  // edge's source field (e.g. "mod:adverts"). Match against the
+  // selection's groupKey for a direct hit.
+  return e.source === sel.groupKey
 }
 
 // restyleEdges returns a fresh edges array with styling applied based on
@@ -322,7 +442,7 @@ function restyleEdges(list, sel, flashed) {
         base.style = { stroke: 'var(--accent)', strokeWidth: 1.4, opacity: 0.55 }
       }
       base.animated = false
-    } else if (sel.service === e.data.service && sel.op === e.data.op) {
+    } else if (selectedMatches(sel, e)) {
       base.style = { stroke: 'var(--accent)', strokeWidth: 2.4, opacity: 1 }
       base.animated = true
     } else {
@@ -370,8 +490,8 @@ function flashEdges(ids, state) {
 }
 
 // onTraceEvent maps an incoming request.start event to the edges that
-// should light up: inbound lane Internet→service, plus any per-op edges
-// the handler declared (resources / other services). We stash the
+// should light up: inbound lane Internet→module-group, plus any per-op
+// edges the handler declared (resources / other services). We stash the
 // endpoint → edge map at load time so lookups are constant-time here.
 const endpointEdgeIdx = new Map() // "svc.opName" → [edge id, ...]
 function indexEndpointEdges(edgeList) {
@@ -384,6 +504,20 @@ function indexEndpointEdges(edgeList) {
     endpointEdgeIdx.set(k, arr)
   }
 }
+// endpointGroupIdx maps "<service>.<op>" → module-group node id so the
+// trace-event handler can locate the right inbound lane (Internet →
+// group) after the module-first regrouping.
+const endpointGroupIdx = new Map()
+function indexEndpointGroups(groupNodes) {
+  endpointGroupIdx.clear()
+  for (const n of groupNodes) {
+    for (const e of n.data.endpoints || []) {
+      const op = e.Name || `${e.Method} ${e.Path}`
+      endpointGroupIdx.set(`${e.Service}.${op}`, n.id)
+    }
+  }
+}
+
 function onTraceEvent(ev) {
   // request.op carries the specific op name in Endpoint (emitted by the
   // metrics middleware per handler exit). request.start from the
@@ -400,7 +534,13 @@ function onTraceEvent(ev) {
     if (evTime && evTime < mountedAtMs) return
   }
   const failed = typeof ev.status === 'number' ? ev.status >= 400 : !!ev.error
-  const inboundId = `e:internet->svc:${ev.service}`
+  // Locate the module-group that owns this endpoint so the inbound
+  // lane lands on the correct card. Falls back to the old svc: id
+  // shape when the endpoint hasn't been grouped yet (rare race).
+  const groupId = ev.endpoint
+    ? endpointGroupIdx.get(`${ev.service}.${ev.endpoint}`)
+    : null
+  const inboundId = groupId ? `e:internet->${groupId}` : `e:internet->svc:${ev.service}`
 
   // On error we ONLY light up the inbound lane — downstream resource/
   // service-dep edges never ran, so animating them would falsely

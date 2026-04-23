@@ -22,6 +22,12 @@ const (
 
 type Endpoint struct {
 	Service      string
+	// Module is the nexus.Module("name", ...) this endpoint was declared
+	// inside. Empty when registered outside any module (top-level opt to
+	// Run/New). Drives the architecture-view grouping: module containers
+	// enclose their endpoints; services are depicted as separate dep
+	// nodes the endpoints connect to.
+	Module       string `json:",omitempty"`
 	Name         string
 	Transport    Transport
 	Method       string // REST verb; GraphQL "query"/"mutation"/"subscription"; unused for WS
@@ -364,6 +370,24 @@ func (r *Registry) SetEndpointServiceDeps(service, name string, services []strin
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].ServiceDeps = uniq
+			return
+		}
+	}
+}
+
+// SetEndpointModule records the nexus.Module name this endpoint was
+// declared inside. Called by the auto-mount (GraphQL) and by the REST
+// invoke path after an endpoint is registered. A later call overwrites
+// an earlier one so nested Module(...) wrappers resolve innermost-wins.
+func (r *Registry) SetEndpointModule(service, name, module string) {
+	if module == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.endpoints {
+		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
+			r.endpoints[i].Module = module
 			return
 		}
 	}

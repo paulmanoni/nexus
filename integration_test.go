@@ -139,6 +139,32 @@ func NewNoSvcQuery() func(ctx context.Context, a noSvcArgs) (string, error) {
 	}
 }
 
+func TestAutoMount_StampsModuleName(t *testing.T) {
+	// nexus.Module("adverts", AsQuery(...)) must propagate "adverts" to
+	// the endpoint's Module field in the registry.
+	var app *App
+	mod := Module("adverts",
+		AsQuery(NewNoSvcQuery()),
+	)
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		mod.nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	endpoints := app.Registry().Endpoints()
+	if len(endpoints) == 0 {
+		t.Fatal("expected an endpoint registered")
+	}
+	for _, e := range endpoints {
+		if e.Module != "adverts" {
+			t.Errorf("endpoint %q: Module = %q; want %q", e.Name, e.Module, "adverts")
+		}
+	}
+}
+
 func TestAutoMount_ZeroServiceFallback(t *testing.T) {
 	// Handler takes neither *Service nor OnService — with 0 services
 	// registered, auto-mount should synthesize a default one rather than

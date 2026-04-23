@@ -1,12 +1,22 @@
 <script setup>
 import { computed, inject } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
-import { Globe, Zap, Radio, Database, Box, Activity, AlertTriangle, Shield } from 'lucide-vue-next'
+import { Globe, Zap, Radio, Database, Box, Activity, AlertTriangle, Shield, Layers } from 'lucide-vue-next'
 
-// ServiceNode renders one service card on the Architecture canvas. Each
-// op row carries its own VueFlow source handle (id "op:<opName>") so
-// edges can fan out from the specific row that uses a resource — the
-// viewer sees, row by row, where each op's lines go.
+// ServiceNode (a.k.a the module/group card) renders one nexus.Module as
+// a container of endpoint rows. Module is the outer grouping unit; each
+// row is an endpoint. Services appear as separate "dep" nodes on the
+// right, reached via edges from the specific row that takes them as a
+// handler dependency.
+//
+// data.name is the group title (module name, or the service name when
+// the endpoint was registered outside any nexus.Module). data.service,
+// when set, is the OWNING service — used only for the owner chip so the
+// row still surfaces which service wrapper the handler declared.
+//
+// Each op row carries its own VueFlow source handle (id "op:<opName>")
+// so edges fan out from the specific row that uses a resource or
+// service — the viewer sees, row by row, where each op's lines go.
 const props = defineProps(['data'])
 
 // Selection store lives in Architecture; used to highlight the active
@@ -70,9 +80,15 @@ function tooltipForStats(e) {
   return parts.join('\n')
 }
 
+// group uniquely identifies this card's op selection. In module-based
+// grouping, the owning service alone isn't enough to disambiguate
+// (two services could share a module name across apps), so selection
+// key is (groupKey, op) where groupKey is the card's id.
+function groupKey() { return props.data.groupKey || props.data.name }
+
 function isActive(e) {
   const sel = selection.value
-  return sel && sel.service === props.data.name && sel.op === opKey(e)
+  return sel && sel.groupKey === groupKey() && sel.op === opKey(e)
 }
 
 function onRowClick(e) {
@@ -80,27 +96,34 @@ function onRowClick(e) {
     clearOp()
     return
   }
-  // Selection payload carries both resource and service targets so the
-  // canvas can dim non-matching nodes of either kind.
+  // Selection payload: groupKey pins the active row; owningService
+  // surfaces the *Service wrapper the handler declared (for chip /
+  // service-dep dimming); resources & serviceDeps drive dep-node
+  // highlighting on the right side of the canvas.
   setOp({
-    service: props.data.name,
+    groupKey: groupKey(),
+    owningService: props.data.service || '',
     op: opKey(e),
     resources: resources(e),
     serviceDeps: serviceDeps(e),
+    // autoRouted: handler took no service dep. Relevant for dep-edge
+    // styling — auto-routed ops don't draw an edge to the owning service.
+    autoRouted: !!e.ServiceAutoRouted,
   })
 }
 
 const hasSelection = computed(() => !!selection.value)
 
-// When the canvas has an op selected, non-owning service cards dim unless
-// they're in the selected op's ServiceDeps.
-const cardDimmed = computed(() => {
-  const sel = selection.value
-  if (!sel) return false
-  if (sel.service === props.data.name) return false          // owning
-  const deps = Array.isArray(sel.serviceDeps) ? sel.serviceDeps : []
-  return !deps.includes(props.data.name)
-})
+// Module cards don't dim — they're the primary grouping, always
+// relevant. Dimming applies only to service-dep and resource nodes
+// when an op is selected.
+const cardDimmed = computed(() => false)
+
+// Header label + icon. Modules get a Layers icon; service-named groups
+// (registered outside any nexus.Module) get a Box icon so operators
+// can tell at a glance which is which.
+const isModule = computed(() => !!props.data.isModule)
+const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
 </script>
 
 <template>
@@ -109,6 +132,8 @@ const cardDimmed = computed(() => {
          reserved for future service→service topology). -->
     <Handle type="target" :position="Position.Left" />
     <div class="header" @click.stop="clearOp">
+      <component :is="HeaderIcon" :size="13" :stroke-width="2" class="hdr-icon" />
+      <span class="kind">{{ isModule ? 'module' : 'service' }}</span>
       <span class="name">{{ data.name }}</span>
       <span class="total">{{ total }}</span>
     </div>
@@ -149,12 +174,12 @@ const cardDimmed = computed(() => {
                adopted the op without the handler declaring the service
                — do NOT get a chip, because the function didn't name it. -->
           <span
-            v-if="!e.ServiceAutoRouted"
+            v-if="!e.ServiceAutoRouted && data.service"
             class="chip owner"
-            :title="'Handler declares *' + data.name + 'Service as a dep'"
+            :title="'Handler declares *' + data.service + 'Service as a dep'"
           >
             <Box :size="9" :stroke-width="2.2" />
-            {{ data.name }}
+            {{ data.service }}
           </span>
           <span
             v-for="r in resources(e)"
@@ -213,8 +238,7 @@ const cardDimmed = computed(() => {
 .header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   padding: 9px 14px;
   background: #111827;
   color: #f9fafb;
@@ -227,6 +251,18 @@ const cardDimmed = computed(() => {
   border-top-right-radius: 10px;
 }
 .header:hover { background: #1f2937; }
+.hdr-icon { color: #a5b4fc; flex-shrink: 0; }
+.kind {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a5b4fc;
+  background: rgba(165, 180, 252, 0.12);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .total {
   background: rgba(255, 255, 255, 0.14);
   padding: 1px 8px;
