@@ -40,9 +40,11 @@ func autoMountGraphQL(in autoMountIn) error {
 	var distinctType reflect.Type
 	var distinctService *Service
 	distinctCount := 0
+	hasUnresolved := false
 	seenTypes := map[reflect.Type]bool{}
 	for _, f := range in.Fields {
 		if f.ServiceType == nil || f.Service == nil {
+			hasUnresolved = true
 			continue
 		}
 		if !seenTypes[f.ServiceType] {
@@ -51,6 +53,15 @@ func autoMountGraphQL(in autoMountIn) error {
 			distinctType = f.ServiceType
 			distinctService = f.Service
 		}
+	}
+	// Zero-service fallback: when the app registered no services but has
+	// handlers without a *Service dep, synthesize a default service so the
+	// schema still mounts. Lets minimal apps skip service modeling entirely
+	// (single /graphql endpoint, handlers are plain funcs with deps).
+	if hasUnresolved && distinctCount == 0 {
+		distinctService = in.App.Service(defaultServiceName)
+		distinctType = reflect.TypeFor[*Service]()
+		distinctCount = 1
 	}
 	resolveUnresolved := func(f GqlField) (GqlField, error) {
 		if f.ServiceType != nil && f.Service != nil {

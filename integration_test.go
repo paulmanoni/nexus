@@ -125,3 +125,45 @@ func TestRaw_AcceptsFxOption(t *testing.T) {
 		t.Errorf("got %d", got)
 	}
 }
+
+// noSvcArgs is a minimal args struct for the zero-service handler test.
+type noSvcArgs struct {
+	Q string `graphql:"q"`
+}
+
+// NewNoSvcQuery is a handler with no *Service dep and no OnService option —
+// the case the zero-service fallback must cover.
+func NewNoSvcQuery() func(ctx context.Context, a noSvcArgs) (string, error) {
+	return func(ctx context.Context, a noSvcArgs) (string, error) {
+		return "hello " + a.Q, nil
+	}
+}
+
+func TestAutoMount_ZeroServiceFallback(t *testing.T) {
+	// Handler takes neither *Service nor OnService — with 0 services
+	// registered, auto-mount should synthesize a default one rather than
+	// failing. Proves the minimal-app case boots.
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		AsQuery(NewNoSvcQuery()).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	endpoints := app.Registry().Endpoints()
+	if len(endpoints) == 0 {
+		t.Fatal("expected at least one endpoint registered; got none")
+	}
+	found := false
+	for _, e := range endpoints {
+		if e.Service == defaultServiceName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected endpoint on default service %q; endpoints=%+v", defaultServiceName, endpoints)
+	}
+}
