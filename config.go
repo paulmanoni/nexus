@@ -29,6 +29,17 @@ type Config struct {
 	// GraphQL — environment-level flags that apply to every service's
 	// mounted schema. Set once on the app, not per-service.
 
+	// GraphQLPath overrides the default mount path for auto-generated
+	// GraphQL services. Empty falls back to "/graphql". Per-service
+	// paths via (*Service).AtGraphQL(p) still win over this default;
+	// use this Config field to change where the auto-mount fallback
+	// service (the one created when no *Service dep is present on a
+	// handler) and any other service that doesn't call AtGraphQL
+	// will mount their schema.
+	//
+	//    nexus.Config{GraphQLPath: "/api/graphql"}
+	GraphQLPath string
+
 	// DisablePlayground turns OFF the GraphQL Playground served on GET
 	// <service>/<path>. Default is enabled. Flip in prod wiring to hide
 	// the interactive console.

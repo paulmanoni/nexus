@@ -30,16 +30,20 @@ func NewMiddleware(store Store, key string) middleware.Middleware {
 	}
 }
 
-// ginRecorder runs the next handler and records the outcome. Status >= 500
-// counts as a server error; everything else as a success. Gin's
-// c.ClientIP() honors trusted-proxy headers so it's the right source
-// for the IP we surface in the error dialog.
+// ginRecorder runs the next handler and records the outcome. Any 4xx /
+// 5xx status counts as a failure for dashboard animation purposes
+// (red pulse + error count increment); 4xx failures also carry their
+// status through to the request.op event so operators can tell
+// "client-error rejection" from "server-error meltdown" in the
+// Traces tab. Gin's c.ClientIP() honors trusted-proxy headers so
+// it's the right source for the IP surfaced in the error dialog.
 func ginRecorder(store Store, key string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
 		ip := c.ClientIP()
+		status := c.Writer.Status()
 		var recErr error
-		if status := c.Writer.Status(); status >= 500 {
+		if status >= 400 {
 			if len(c.Errors) > 0 {
 				recErr = c.Errors.Last().Err
 			} else {
@@ -47,7 +51,7 @@ func ginRecorder(store Store, key string) gin.HandlerFunc {
 			}
 		}
 		store.Record(key, ip, recErr)
-		publishOpEvent(c.Request.Context(), key, "rest", ip, recErr)
+		publishOpEventWithStatus(c.Request.Context(), key, "rest", ip, status, recErr)
 	}
 }
 
@@ -70,7 +74,22 @@ func graphRecorder(store Store, key string) graph.FieldMiddleware {
 // consumers (packet animations, per-endpoint trace filters) see the
 // specific op name, not the coarse HTTP path. No-op when the context
 // carries no bus (tests, non-traced apps).
+//
+// Kept for the GraphQL recorder's binary "ok / error" case — REST
+// goes through publishOpEventWithStatus so the actual HTTP status
+// surfaces unchanged.
 func publishOpEvent(ctx context.Context, key, transport, ip string, err error) {
+	status := 200
+	if err != nil {
+		status = 500
+	}
+	publishOpEventWithStatus(ctx, key, transport, ip, status, err)
+}
+
+// publishOpEventWithStatus publishes a request.op event carrying the
+// exact HTTP status. Lets REST 4xx failures (bad-request, not-found)
+// register as failures on the dashboard distinctly from 5xx meltdowns.
+func publishOpEventWithStatus(ctx context.Context, key, transport, ip string, status int, err error) {
 	bus, ok := trace.BusFromCtx(ctx)
 	if !ok || bus == nil {
 		return
@@ -81,15 +100,13 @@ func publishOpEvent(ctx context.Context, key, transport, ip string, err error) {
 		Service:   service,
 		Endpoint:  op,
 		Transport: transport,
+		Status:    status,
 	}
 	if ip != "" {
 		ev.Meta = map[string]any{"ip": ip}
 	}
 	if err != nil {
 		ev.Error = err.Error()
-		ev.Status = 500
-	} else {
-		ev.Status = 200
 	}
 	bus.Publish(ev)
 }

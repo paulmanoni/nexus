@@ -26,6 +26,9 @@ func newApp(cfg Config) *App {
 	if cfg.DashboardName != "" {
 		opts = append(opts, WithDashboardName(cfg.DashboardName))
 	}
+	if cfg.GraphQLPath != "" {
+		opts = append(opts, WithGraphQLPath(cfg.GraphQLPath))
+	}
 	// Explicit stores always win. Config.Cache (when set) replaces the
 	// auto-created cache.Manager so the user's app and nexus's internal
 	// stores share one cache tier.
