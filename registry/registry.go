@@ -119,6 +119,18 @@ type GraphQLUpdate struct {
 type Service struct {
 	Name        string
 	Description string
+	// ResourceDeps is the set of resource names the service's
+	// CONSTRUCTOR depends on — i.e. NewXService(app, db *DBManager,
+	// ...) records "db"'s NexusResources here. These drive
+	// service-level architecture edges (service → resource) in the
+	// dashboard, separate from per-endpoint edges which come from
+	// each handler's own deps.
+	ResourceDeps []string `json:",omitempty"`
+	// ServiceDeps is the set of OTHER service names the constructor
+	// depends on — detected when the constructor takes another
+	// service wrapper as a parameter. Renders as service → service
+	// edges on the architecture graph.
+	ServiceDeps []string `json:",omitempty"`
 }
 
 // ResourceSnapshot is the serializable view of a resource at a point in time.
@@ -164,10 +176,33 @@ func (r *Registry) RegisterService(s Service) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	existing, ok := r.services[s.Name]
-	if ok && s.Description == "" {
-		s.Description = existing.Description
+	if ok {
+		if s.Description == "" {
+			s.Description = existing.Description
+		}
+		if len(s.ResourceDeps) == 0 {
+			s.ResourceDeps = existing.ResourceDeps
+		}
+		if len(s.ServiceDeps) == 0 {
+			s.ServiceDeps = existing.ServiceDeps
+		}
 	}
 	r.services[s.Name] = s
+}
+
+// SetServiceDeps records the resource + service dependencies of a
+// service's constructor. Called by nexus.ProvideService after fx has
+// resolved the constructor's params, so we know which resources
+// (NexusResourceProvider) and services (service-wrapper types) were
+// injected. Replaces any previously-recorded deps for the service.
+func (r *Registry) SetServiceDeps(name string, resourceDeps, serviceDeps []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := r.services[name]
+	s.Name = name
+	s.ResourceDeps = dedupeSort(resourceDeps)
+	s.ServiceDeps = dedupeSort(serviceDeps)
+	r.services[name] = s
 }
 
 func (r *Registry) RegisterEndpoint(e Endpoint) {

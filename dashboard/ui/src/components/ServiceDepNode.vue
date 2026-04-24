@@ -31,6 +31,10 @@ const inSelection = computed(() => {
       <span class="tag">service</span>
     </div>
     <div v-if="data.description" class="desc">{{ data.description }}</div>
+    <!-- Source handle so the service-level dep edges (constructed
+         from the service's constructor deps — resources + other
+         services) can originate from this node. -->
+    <Handle type="source" :position="Position.Right" />
   </div>
 </template>
 

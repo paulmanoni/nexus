@@ -8,6 +8,9 @@ import (
 
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
+
+	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/resource"
 )
 
 // Users go through nexus.Run; tests poke at the private fxBootOptions so
@@ -162,6 +165,59 @@ func TestAutoMount_StampsModuleName(t *testing.T) {
 		if e.Module != "adverts" {
 			t.Errorf("endpoint %q: Module = %q; want %q", e.Name, e.Module, "adverts")
 		}
+	}
+}
+
+// fakeDB is a minimal NexusResourceProvider for the ProvideService test.
+type fakeDB struct{}
+
+func (f *fakeDB) NexusResources() []resource.Resource {
+	return []resource.Resource{resource.NewDatabase("main", "test", nil, func() bool { return true })}
+}
+
+// UsersService is a service wrapper used to prove ProvideService
+// detects service-to-service deps at the constructor level.
+type UsersService struct{ *Service }
+
+// AdvertsService takes another service + a resource provider — exactly
+// the pattern the user flagged ("NewAdvertsService(app, users, db)").
+type AdvertsService struct{ *Service }
+
+func NewUsersService(app *App) *UsersService {
+	return &UsersService{Service: app.Service("users")}
+}
+func NewAdvertsService(app *App, users *UsersService, db *fakeDB) *AdvertsService {
+	return &AdvertsService{Service: app.Service("adverts")}
+}
+
+func TestProvideService_RecordsConstructorDeps(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
+		ProvideService(NewUsersService).nexusOption(),
+		ProvideService(NewAdvertsService).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	var adverts *registry.Service
+	for _, s := range app.Registry().Services() {
+		if s.Name == "adverts" {
+			adverts = &s
+		}
+	}
+	if adverts == nil {
+		t.Fatal("adverts service not registered")
+	}
+	// ResourceDeps comes from fakeDB.NexusResources() — "main".
+	if len(adverts.ResourceDeps) != 1 || adverts.ResourceDeps[0] != "main" {
+		t.Errorf("expected ResourceDeps=[main]; got %v", adverts.ResourceDeps)
+	}
+	// ServiceDeps comes from *UsersService param.
+	if len(adverts.ServiceDeps) != 1 || adverts.ServiceDeps[0] != "users" {
+		t.Errorf("expected ServiceDeps=[users]; got %v", adverts.ServiceDeps)
 	}
 }
 
