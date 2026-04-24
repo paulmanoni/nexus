@@ -105,6 +105,98 @@ func ProvideResources(fns ...any) Option {
 	return rawOption{o: fx.Options(opts...)}
 }
 
+// ProvideService is like Provide but inspects the constructor's
+// parameters for resources (NexusResourceProvider) and other services
+// (service-wrapper types — pointer to a struct that anonymously
+// embeds *nexus.Service) and records them onto the service's
+// registry entry. The dashboard uses those records to draw
+// architecture edges at the SERVICE layer:
+//
+//	func NewAdvertsService(app *nexus.App, users *UsersService, db *DBManager) *AdvertsService {
+//	    return &AdvertsService{Service: app.Service("adverts")}
+//	}
+//
+//	nexus.ProvideService(NewAdvertsService)
+//	// → registry sees: adverts.ServiceDeps = ["users"]
+//	//                  adverts.ResourceDeps = [<whatever db.NexusResources() returns>]
+//
+// The constructed service still flows into fx's dep graph the same
+// way fx.Provide would wire it, so downstream consumers (other
+// services, resolvers) get it injected normally. The ONLY side effect
+// is the registry metadata that feeds the architecture view — nothing
+// observable happens at runtime.
+//
+// Only the first return value is inspected; trailing (T, error)
+// returns are supported. Constructors that don't return a service
+// wrapper are still Provide'd (same as plain Provide), but no service
+// deps are recorded — the option gracefully no-ops in that case.
+func ProvideService(fn any) Option {
+	opts := []fx.Option{fx.Provide(fn)}
+	if inv := serviceDepsRegisterInvoke(fn); inv != nil {
+		opts = append(opts, inv)
+	}
+	return rawOption{o: fx.Options(opts...)}
+}
+
+// serviceDepsRegisterInvoke synthesizes an fx.Invoke that takes the
+// constructed service + ALL of the constructor's original params,
+// walks them for NexusResourceProvider / service-wrapper values, and
+// calls registry.SetServiceDeps with the resulting name lists.
+// Returns nil when fn isn't a function or its return isn't a
+// service wrapper — letting ProvideService degrade to a plain
+// Provide without failing boot.
+func serviceDepsRegisterInvoke(fn any) fx.Option {
+	rt := reflect.TypeOf(fn)
+	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
+		return nil
+	}
+	serviceType := rt.Out(0)
+	if !isServiceWrapperType(serviceType) {
+		return nil
+	}
+	// Invoke signature: (serviceType, param0, param1, ...) — fx will
+	// resolve each from the graph the same way it resolved them for
+	// the constructor itself.
+	in := make([]reflect.Type, 0, rt.NumIn()+1)
+	in = append(in, serviceType)
+	for i := 0; i < rt.NumIn(); i++ {
+		in = append(in, rt.In(i))
+	}
+	invokeType := reflect.FuncOf(in, nil, false)
+	invokeFn := reflect.MakeFunc(invokeType, func(args []reflect.Value) []reflect.Value {
+		svc, ok := unwrapService(args[0], serviceType)
+		if !ok || svc == nil {
+			return nil
+		}
+		owning := svc.Name()
+
+		var resourceDeps []string
+		var serviceDeps []string
+		// args[0] is the constructed service itself; args[1:] mirror
+		// the constructor's declared params in order.
+		for i := 1; i < len(args); i++ {
+			argType := rt.In(i - 1)
+			argVal := args[i]
+			if !argVal.IsValid() {
+				continue
+			}
+			if provider, ok := argVal.Interface().(NexusResourceProvider); ok {
+				for _, r := range provider.NexusResources() {
+					resourceDeps = append(resourceDeps, r.Name())
+				}
+			}
+			if isServiceWrapperType(argType) {
+				if depSvc, ok := unwrapService(argVal, argType); ok && depSvc != nil && depSvc.Name() != owning {
+					serviceDeps = append(serviceDeps, depSvc.Name())
+				}
+			}
+		}
+		svc.app.Registry().SetServiceDeps(owning, resourceDeps, serviceDeps)
+		return nil
+	})
+	return fx.Invoke(invokeFn.Interface())
+}
+
 // resourceAutoRegisterInvoke synthesizes an fx.Invoke(func(app *App, instance T))
 // that, at boot, registers resources and wires OnResourceUse for the instance.
 // Returns nil when fn isn't a single-return constructor.

@@ -216,21 +216,37 @@ async function load() {
   // declared it, plus any services in ServiceDeps). These live on the
   // right of the canvas alongside resources.
   // ---------------------------------------------------------------
-  const depServices = new Map() // name -> { Name, Description }
+  const depServices = new Map() // name -> { Name, Description, ResourceDeps, ServiceDeps }
   const markDep = (name) => {
     if (!name) return
     if (!depServices.has(name)) {
-      depServices.set(name, serviceIndex[name] || { Name: name, Description: '' })
+      const s = serviceIndex[name] || { Name: name, Description: '' }
+      depServices.set(name, {
+        Name: s.Name,
+        Description: s.Description || '',
+        ResourceDeps: Array.isArray(s.ResourceDeps) ? s.ResourceDeps : [],
+        ServiceDeps: Array.isArray(s.ServiceDeps) ? s.ServiceDeps : [],
+      })
     }
   }
   for (const e of epData.endpoints || []) {
-    // Every endpoint's owning service becomes a dep node, even when
-    // the handler was auto-routed (didn't name *Service as a Go dep).
-    // The service is still a conceptual dependency: the op is mounted
-    // under its schema and accounted for in its metrics bucket. Drawing
-    // the edge makes that ownership visible on the architecture graph.
-    markDep(e.Service)
+    // Only endpoints whose handler explicitly took *Service as a Go
+    // dep add the service as a per-row architecture dep. Auto-routed
+    // endpoints (adopted into a service without declaring it) skip
+    // this — they're conceptually owned by the service via metrics
+    // accounting, but they don't depend on the service wrapper value.
+    if (!e.ServiceAutoRouted) markDep(e.Service)
     for (const s of e.ServiceDeps || []) markDep(s)
+  }
+  // Service-level dep edges (populated below) also create dep nodes
+  // for any resource / service the SERVICE CONSTRUCTOR names, even
+  // if no individual endpoint row uses them. This reflects the
+  // "service depends on X" relationship at the service layer.
+  for (const s of epData.services || []) {
+    if (Array.isArray(s.ServiceDeps) && s.ServiceDeps.length > 0) {
+      markDep(s.Name) // make sure the originating service appears
+      for (const d of s.ServiceDeps) markDep(d)
+    }
   }
   const svcDepNodes = [...depServices.values()].map(s => ({
     id: `dep:${s.Name}`,
@@ -299,26 +315,18 @@ async function load() {
       })
       claimed.add(`${e.Service}|res:${rName}`)
     }
-    // Owning-service dep edge — every endpoint gets one (the op is
-    // mounted under that service's schema + metrics bucket regardless
-    // of whether the handler took *Service as a Go dep). The
-    // `autoRouted` flag travels on the edge so dimming / styling can
-    // tell explicit declarations from implicit ownership later.
-    if (depServices.has(e.Service)) {
+    // Owning-service dep edge — ONLY when the handler explicitly took
+    // *Service as a Go dep. Auto-routed endpoints skip this because
+    // they don't actually depend on the service wrapper value; they
+    // were adopted into the service for schema/metrics routing only.
+    if (!e.ServiceAutoRouted && depServices.has(e.Service)) {
       edgeList.push({
         id: `e:${groupKey}.${opName}->dep:${e.Service}`,
         source: groupKey,
         sourceHandle: `op:${opName}`,
         target: `dep:${e.Service}`,
         markerEnd: MarkerType.ArrowClosed,
-        data: {
-          service: e.Service,
-          target: e.Service,
-          targetKind: 'service',
-          op: opName,
-          owning: true,
-          autoRouted: !!e.ServiceAutoRouted,
-        },
+        data: { service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true },
       })
     }
     // Other-service dep edges.
@@ -346,6 +354,37 @@ async function load() {
         target: `res:${r.name}`,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: svc, target: r.name, targetKind: 'resource', op: null },
+      })
+    }
+  }
+
+  // Service-level dep edges: edges originating at a service-dep node
+  // (not at an endpoint row) that point to resources / other services
+  // the SERVICE CONSTRUCTOR depends on. Backend populates these via
+  // nexus.ProvideService(NewXService) — e.g. NewAdvertsService(app,
+  // users *UsersService, db *DBManager) records (users, db) as deps
+  // of AdvertsService, which the UI then draws as dep-node→dep-node
+  // lines so the service layer's architecture is visible even when
+  // no individual endpoint touches those dependencies directly.
+  for (const s of epData.services || []) {
+    if (!depServices.has(s.Name)) continue
+    for (const res of s.ResourceDeps || []) {
+      edgeList.push({
+        id: `e:dep:${s.Name}->res:${res}`,
+        source: `dep:${s.Name}`,
+        target: `res:${res}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: s.Name, target: res, targetKind: 'resource', op: null, serviceLevel: true },
+      })
+    }
+    for (const other of s.ServiceDeps || []) {
+      if (!depServices.has(other)) continue
+      edgeList.push({
+        id: `e:dep:${s.Name}->dep:${other}`,
+        source: `dep:${s.Name}`,
+        target: `dep:${other}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: s.Name, target: other, targetKind: 'service', op: null, serviceLevel: true },
       })
     }
   }
