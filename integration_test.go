@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
@@ -188,6 +189,56 @@ func NewUsersService(app *App) *UsersService {
 }
 func NewAdvertsService(app *App, users *UsersService, db *fakeDB) *AdvertsService {
 	return &AdvertsService{Service: app.Service("adverts")}
+}
+
+// testRestHandlerCtrl is the minimal factory-consumable dep for the
+// AsRestHandler smoke test. Real controllers (DeviceController,
+// DeploymentController) are the use-case this shape targets.
+type testRestHandlerCtrl struct{ counter *int }
+
+func (c *testRestHandlerCtrl) Ping(gc *gin.Context) {
+	*c.counter++
+	gc.JSON(200, gin.H{"ok": true})
+}
+
+func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
+	var counter int
+	ctrl := &testRestHandlerCtrl{counter: &counter}
+
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		Supply(ctrl).nexusOption(),
+		AsRestHandler("GET", "/ping",
+			func(c *testRestHandlerCtrl) gin.HandlerFunc { return c.Ping },
+			Description("ping"),
+		).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	// Verify the endpoint landed in the registry with REST transport
+	// and a metrics middleware chip (the dashboard-animation enabler).
+	found := false
+	for _, e := range app.Registry().Endpoints() {
+		if e.Transport != "rest" || e.Path != "/ping" {
+			continue
+		}
+		found = true
+		var sawMetrics bool
+		for _, m := range e.Middleware {
+			if m == "metrics" {
+				sawMetrics = true
+			}
+		}
+		if !sawMetrics {
+			t.Errorf("rest endpoint missing metrics middleware; chain=%v", e.Middleware)
+		}
+	}
+	if !found {
+		t.Fatal("AsRestHandler did not register the endpoint")
+	}
 }
 
 func TestProvideService_RecordsConstructorDeps(t *testing.T) {

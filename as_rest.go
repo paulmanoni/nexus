@@ -53,6 +53,134 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	return asRestInvoke(method, path, cfg, sh)
 }
 
+// AsRestHandler registers a REST endpoint whose handler is a plain
+// gin.HandlerFunc supplied by a *factory* function. The factory is
+// the fx-resolved piece: its parameters are the deps needed to build
+// the handler (controllers, resources, other services), its single
+// return is the gin.HandlerFunc that serves requests.
+//
+// Use this when the handler already manages its own request binding
+// and response shaping (typical for code migrated from ad-hoc Gin
+// routes) but you still want module annotation, metrics, and the
+// dashboard packet-animation treatment AsRest provides:
+//
+//	nexus.Module("oats-rest",
+//	    nexus.AsRestHandler("POST", "/api/devices/register",
+//	        func(d *DeviceController) gin.HandlerFunc { return d.RegisterDevice },
+//	        nexus.Description("Register a device"),
+//	        auth.Required(),
+//	    ),
+//	)
+//
+// Factory signature requirements:
+//   - Zero or more parameters (fx-injected deps).
+//   - Exactly one return value of type gin.HandlerFunc.
+//
+// On the dashboard this endpoint appears under its enclosing
+// nexus.Module (same grouping as AsRest / AsQuery), with metrics +
+// trace middleware attached so request.op events drive the live
+// packet animation.
+func AsRestHandler(method, path string, factory any, opts ...RestOption) Option {
+	cfg := &restConfig{}
+	for _, o := range opts {
+		o.applyToRest(cfg)
+	}
+	rt := reflect.TypeOf(factory)
+	ginHandlerType := reflect.TypeOf(gin.HandlerFunc(nil))
+	if rt == nil || rt.Kind() != reflect.Func {
+		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsRestHandler factory must be a function"))}
+	}
+	if rt.NumOut() != 1 || rt.Out(0) != ginHandlerType {
+		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsRestHandler factory must return exactly gin.HandlerFunc (got %s)", rt))}
+	}
+	return asRestHandlerInvoke(method, path, cfg, factory)
+}
+
+// asRestHandlerInvoke synthesizes the fx.Invoke for AsRestHandler.
+// Parallel to asRestInvoke but simpler: instead of building a
+// reflective per-request handler, we resolve the factory's deps once
+// at boot, call the factory to get the gin.HandlerFunc, and mount
+// it directly. The middleware chain (trace → metrics → user .Use()
+// bundles → handler) mirrors asRestInvoke's so the dashboard sees
+// the same shape either way.
+func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Option {
+	rt := reflect.TypeOf(factory)
+	appType := reflect.TypeOf((*App)(nil))
+
+	in := make([]reflect.Type, 0, rt.NumIn()+1)
+	in = append(in, appType)
+	depTypes := make([]reflect.Type, rt.NumIn())
+	for i := 0; i < rt.NumIn(); i++ {
+		depTypes[i] = rt.In(i)
+		in = append(in, rt.In(i))
+	}
+	invokeSig := reflect.FuncOf(in, nil, false)
+
+	invokeFn := reflect.MakeFunc(invokeSig, func(args []reflect.Value) []reflect.Value {
+		app := args[0].Interface().(*App)
+		deps := args[1:]
+
+		// Resolve service name from deps — any service-wrapper dep
+		// (first match wins), same convention AsRest uses.
+		service := cfg.service
+		if service == "" {
+			service = serviceNameFromDeps(deps, depTypes)
+		}
+		opName := opNameFromFactory(factory, method+" "+path)
+
+		// Invoke the factory once to extract the gin.HandlerFunc.
+		out := reflect.ValueOf(factory).Call(deps)
+		userHandler := out[0].Interface().(gin.HandlerFunc)
+
+		// Chain: trace → metrics → user bundles → handler.
+		var chain []gin.HandlerFunc
+		var mwNames []string
+		if app.bus != nil {
+			chain = append(chain, trace.Middleware(app.bus, service, method+" "+path, string(registry.REST)))
+		}
+		metricsBundle := metrics.NewMiddleware(app.metricsStore, service+"."+opName)
+		chain = append(chain, metricsBundle.Gin)
+		mwNames = append(mwNames, metricsBundle.Name)
+		app.registry.RegisterMiddleware(metricsBundle.AsInfo())
+
+		for _, b := range cfg.bundles {
+			app.registry.RegisterMiddleware(b.AsInfo())
+			mwNames = append(mwNames, b.Name)
+			if b.Gin != nil {
+				chain = append(chain, b.Gin)
+			}
+		}
+		chain = append(chain, userHandler)
+		app.engine.Handle(method, path, chain...)
+
+		app.registry.RegisterEndpoint(registry.Endpoint{
+			Service:     service,
+			Module:      cfg.module,
+			Name:        method + " " + path,
+			Transport:   registry.REST,
+			Method:      method,
+			Path:        path,
+			Description: cfg.description,
+			Middleware:  mwNames,
+		})
+		return nil
+	})
+	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
+}
+
+// opNameFromFactory derives a dashboard op name for a factory-style
+// handler registration. Tries the factory's own runtime name (e.g. a
+// closure literal) first; falls back to "<method> <path>" when the
+// factory is anonymous — same fallback opNameFromFunc uses for
+// anonymous reflective handlers.
+func opNameFromFactory(factory any, fallback string) string {
+	name := opNameFromFunc(factory, "")
+	if name == "" {
+		return fallback
+	}
+	return name
+}
+
 type restConfig struct {
 	description string
 	service     string                  // optional explicit service name; auto-derived if empty
