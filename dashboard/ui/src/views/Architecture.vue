@@ -118,7 +118,10 @@ function dagreLayout(ns, es) {
 }
 
 function estimateServiceDepHeight(data) {
-  return (data.description ? 60 : 40)
+  const r = Array.isArray(data.resourceDeps) ? data.resourceDeps.length : 0
+  const s = Array.isArray(data.serviceDeps) ? data.serviceDeps.length : 0
+  const depsH = (r + s) > 0 ? 16 + (r + s) * 16 : 0
+  return (data.description ? 60 : 40) + depsH
 }
 
 function gridLayout(ns) {
@@ -252,7 +255,16 @@ async function load() {
     id: `dep:${s.Name}`,
     type: 'serviceDep',
     position: { x: 0, y: 0 },
-    data: { name: s.Name, description: s.Description || '' },
+    // Pass constructor-level deps through so the node itself can list
+    // them inline (belt-and-braces for cases where the edges are hard
+    // to spot visually). The edges still encode the same info for the
+    // graph layout; this just surfaces it on the card.
+    data: {
+      name: s.Name,
+      description: s.Description || '',
+      resourceDeps: s.ResourceDeps || [],
+      serviceDeps: s.ServiceDeps || [],
+    },
   }))
 
   // Single "Clients" node representing external traffic sources. Lives
@@ -401,6 +413,18 @@ async function load() {
   }
 
   const all = [internetNode, ...groupNodes, ...svcDepNodes, ...rsNodes]
+  // Diagnostic: surface the built graph to window so operators can
+  // verify service-level edges from DevTools without re-reading this
+  // file. Cheap (single assignment per poll) and invaluable when an
+  // expected dep edge doesn't render.
+  if (typeof window !== 'undefined') {
+    window.__nexusArch = {
+      groupNodes: groupNodes.map(n => n.id),
+      svcDepNodes: svcDepNodes.map(n => n.id),
+      resourceNodes: rsNodes.map(n => n.id),
+      edges: edgeList.map(e => ({ id: e.id, source: e.source, target: e.target, op: e.data?.op ?? null, serviceLevel: !!e.data?.serviceLevel })),
+    }
+  }
   const laid = layout(all, edgeList)
   // Build the system boundary AFTER layout so we can size it to the
   // bounding box of all non-Internet nodes. Padding leaves a soft
