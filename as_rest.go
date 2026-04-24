@@ -126,7 +126,8 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		if service == "" {
 			service = serviceNameFromDeps(deps, depTypes)
 		}
-		opName := opNameFromFactory(factory, method+" "+path)
+		finalPath := cfg.pathPrefix + path
+		opName := opNameFromFactory(factory, method+" "+finalPath)
 
 		// Invoke the factory once to extract the gin.HandlerFunc.
 		out := reflect.ValueOf(factory).Call(deps)
@@ -136,7 +137,7 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		var chain []gin.HandlerFunc
 		var mwNames []string
 		if app.bus != nil {
-			chain = append(chain, trace.Middleware(app.bus, service, method+" "+path, string(registry.REST)))
+			chain = append(chain, trace.Middleware(app.bus, service, method+" "+finalPath, string(registry.REST)))
 		}
 		metricsBundle := metrics.NewMiddleware(app.metricsStore, service+"."+opName)
 		chain = append(chain, metricsBundle.Gin)
@@ -151,21 +152,53 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 			}
 		}
 		chain = append(chain, userHandler)
-		app.engine.Handle(method, path, chain...)
+		app.engine.Handle(method, finalPath, chain...)
 
+		endpointName := method + " " + finalPath
 		app.registry.RegisterEndpoint(registry.Endpoint{
 			Service:     service,
 			Module:      cfg.module,
-			Name:        method + " " + path,
+			Name:        endpointName,
 			Transport:   registry.REST,
 			Method:      method,
-			Path:        path,
+			Path:        finalPath,
 			Description: cfg.description,
 			Middleware:  mwNames,
 		})
+		// Same dep tracking as AsRest — surfaces the service→resource
+		// + service→service edges on the Architecture dashboard.
+		attachRestResources(app, service, deps, depTypes)
+		if resources := collectResourceNames(deps); len(resources) > 0 {
+			app.registry.SetEndpointResources(service, endpointName, resources)
+		}
+		if svcDeps := collectServiceDeps(deps, depTypes, service); len(svcDeps) > 0 {
+			app.registry.SetEndpointServiceDeps(service, endpointName, svcDeps)
+		}
 		return nil
 	})
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
+}
+
+// attachRestResources attaches every NexusResourceProvider dep to the
+// endpoint's service so the dashboard draws a service→resource edge
+// for the aggregate relationship. Mirrors automount.go's
+// attachDeclaredResources for the GraphQL path.
+func attachRestResources(app *App, service string, deps []reflect.Value, depTypes []reflect.Type) {
+	if service == "" {
+		return
+	}
+	for i, dep := range deps {
+		if i >= len(depTypes) || !dep.IsValid() {
+			continue
+		}
+		provider, ok := dep.Interface().(NexusResourceProvider)
+		if !ok {
+			continue
+		}
+		for _, r := range provider.NexusResources() {
+			app.registry.AttachResource(service, r.Name())
+		}
+	}
 }
 
 // opNameFromFactory derives a dashboard op name for a factory-style
@@ -189,6 +222,12 @@ type restConfig struct {
 	// is a direct child of a module. Emitted into the registry entry
 	// so the dashboard groups REST endpoints under their module.
 	module string
+	// pathPrefix is prepended to the route's path before the endpoint
+	// is mounted on Gin. Set either per-endpoint via nexus.RoutePrefix
+	// as a RestOption, or module-wide by passing nexus.RoutePrefix as
+	// an opt to nexus.Module — the framework stamps it on every REST
+	// child of that module.
+	pathPrefix string
 }
 
 // restOption is the Option returned by AsRest. Parallels gqlFieldOption —
@@ -200,8 +239,55 @@ type restOption struct {
 	cfg *restConfig
 }
 
-func (r *restOption) nexusOption() fx.Option { return r.o }
-func (r *restOption) setModule(name string)  { r.cfg.module = name }
+func (r *restOption) nexusOption() fx.Option    { return r.o }
+func (r *restOption) setModule(name string)     { r.cfg.module = name }
+func (r *restOption) setRestPrefix(p string)    { r.cfg.pathPrefix = p + r.cfg.pathPrefix }
+
+// restPrefixAnnotator is implemented by options whose path can be
+// prefixed by an enclosing nexus.Module(..., nexus.RoutePrefix("/api"))
+// declaration. Only AsRest / AsRestHandler registrations implement it —
+// GraphQL / worker options ignore the prefix.
+type restPrefixAnnotator interface {
+	setRestPrefix(p string)
+}
+
+// routePrefixOption carries a prefix string. Can be used two ways:
+//
+//   1. Inside nexus.Module's opts list — Module picks it up and stamps
+//      the prefix onto every REST child option.
+//   2. As a per-endpoint option to AsRest / AsRestHandler — applied
+//      directly via applyToRest.
+//
+// Always safe to include; GraphQL / worker opts silently ignore it.
+type routePrefixOption struct{ prefix string }
+
+func (routePrefixOption) nexusOption() fx.Option { return fx.Options() }
+func (r routePrefixOption) applyToRest(c *restConfig) {
+	c.pathPrefix = r.prefix + c.pathPrefix
+}
+
+// RoutePrefix prepends a string to the paths of the REST endpoints it
+// applies to. Two usage patterns:
+//
+//	// Module-wide: every AsRest / AsRestHandler in the module sees "/api/v1".
+//	nexus.Module("adverts", nexus.RoutePrefix("/api/v1"),
+//	    nexus.AsRest("GET", "/adverts", NewListAdverts),  // → /api/v1/adverts
+//	    nexus.AsRest("POST", "/adverts", NewCreateAdvert),
+//	)
+//
+//	// Per-endpoint:
+//	nexus.AsRest("GET", "/health", NewHealth, nexus.RoutePrefix("/ops"))
+//
+// The prefix is stored verbatim — include (or omit) the leading slash
+// yourself; nexus does not normalize. Stacking within a single Module
+// concatenates left-to-right, so `Module(..., RoutePrefix("/a"),
+// RoutePrefix("/b"), AsRest("GET", "/x", ...))` mounts at /a/b/x.
+// Prefixes do NOT stack across nested Module calls — the inner module
+// already stamped its children before the outer sees them. If you
+// need stacking, compose the prefix string explicitly.
+func RoutePrefix(p string) routePrefixOption {
+	return routePrefixOption{prefix: p}
+}
 
 // RestOption tunes an AsRest registration. Interface (not a func) so
 // nexus.Use can satisfy both GqlOption and RestOption from a single
@@ -238,8 +324,11 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 			service = serviceNameFromDeps(deps, sh.depTypes)
 		}
 
-		opName := opNameFromFunc(sh.funcVal.Interface(), method+" "+path)
-		handler := buildGinHandler(method, sh, deps, app.bus, service, path)
+		// Resolve the final mounted path by prefixing — module-level
+		// or per-endpoint RoutePrefix stamped cfg.pathPrefix for us.
+		finalPath := cfg.pathPrefix + path
+		opName := opNameFromFunc(sh.funcVal.Interface(), method+" "+finalPath)
+		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath)
 
 		// Stack any Use-attached middleware bundles in registration order
 		// in front of the handler; the auto-attached metrics recorder
@@ -261,17 +350,28 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 			}
 		}
 		chain = append(chain, handler)
-		app.engine.Handle(method, path, chain...)
+		app.engine.Handle(method, finalPath, chain...)
 		app.registry.RegisterEndpoint(registry.Endpoint{
 			Service:     service,
 			Module:      cfg.module,
 			Name:        opName,
 			Transport:   registry.REST,
 			Method:      method,
-			Path:        path,
+			Path:        finalPath,
 			Description: cfg.description,
 			Middleware:  mwNames,
 		})
+		// Attach per-op dep metadata so the dashboard draws the same
+		// service→resource + service→service edges REST endpoints
+		// deserve, not just GraphQL ops. Mirrors what automount.go
+		// does for GqlField.
+		attachRestResources(app, service, deps, sh.depTypes)
+		if resources := collectResourceNames(deps); len(resources) > 0 {
+			app.registry.SetEndpointResources(service, opName, resources)
+		}
+		if svcDeps := collectServiceDeps(deps, sh.depTypes, service); len(svcDeps) > 0 {
+			app.registry.SetEndpointServiceDeps(service, opName, svcDeps)
+		}
 		return nil
 	})
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
