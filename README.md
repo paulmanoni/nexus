@@ -46,9 +46,29 @@ No fx import. No schema assembly. No middleware plumbing. The handler is plain G
 
 ```bash
 go get github.com/paulmanoni/nexus
+go install github.com/paulmanoni/nexus/cmd/nexus@latest   # optional CLI
 ```
 
 Requires Go 1.25+.
+
+## CLI
+
+The `nexus` binary is a thin convenience wrapper — everything it does is
+reachable through plain `go` commands, but having one entry-point for the
+common-case loop keeps muscle memory short.
+
+```bash
+nexus new my-app          # scaffold main.go + module.go + go.mod + .gitignore
+cd my-app
+go mod tidy
+nexus dev                 # go run . + auto-open http://localhost:8080/__nexus/
+```
+
+| Command | What it does |
+|---|---|
+| `nexus new <dir>` | Creates a minimal app (reflective `AsRest` + dashboard). `-module <path>` overrides the go.mod path. |
+| `nexus dev [dir]` | Runs `go run <dir>` (default `.`), probes `:8080`, opens the dashboard as soon as it responds. `-addr host:port` to change the probe target, `-no-open` to skip the browser. |
+| `nexus version` | Prints the CLI version. |
 
 ## Quick start
 
