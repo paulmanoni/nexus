@@ -110,7 +110,7 @@ func (s *Service) Describe(desc string) *Service {
 }
 
 func (s *Service) REST(method, path string) *rest.Builder {
-	return rest.New(s.app.engine, s.app.registry, s.app.bus, s.name, method, path)
+	return rest.New(s.app.engine, s.app.registry, s.app.bus, s.app.metricsStore, s.name, method, path)
 }
 
 func (s *Service) WebSocket(path string) *ws.Builder {
