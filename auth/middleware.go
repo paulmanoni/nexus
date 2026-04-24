@@ -9,6 +9,7 @@ import (
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // ginAuthMiddleware is the global Gin middleware installed by Module.
@@ -152,6 +153,7 @@ func graphRequires(perms []string) graph.FieldMiddleware {
 // if the hook returned without aborting (misconfigured hooks must
 // not accidentally let a request through).
 func rejectUnauthenticated(c *gin.Context, err error) {
+	emitReject(c.Request.Context(), "unauthenticated", http.StatusUnauthorized, err)
 	if s, ok := stateFrom(c.Request.Context()); ok && s.cfg.OnUnauthenticated != nil {
 		s.cfg.OnUnauthenticated(c, err)
 		if !c.IsAborted() {
@@ -163,6 +165,7 @@ func rejectUnauthenticated(c *gin.Context, err error) {
 }
 
 func rejectForbidden(c *gin.Context, err error) {
+	emitReject(c.Request.Context(), "forbidden", http.StatusForbidden, err)
 	if s, ok := stateFrom(c.Request.Context()); ok && s.cfg.OnForbidden != nil {
 		s.cfg.OnForbidden(c, err)
 		if !c.IsAborted() {
@@ -175,12 +178,62 @@ func rejectForbidden(c *gin.Context, err error) {
 
 // wrapGraphErr routes the auth sentinels through Config.GraphQLErrorWrap
 // when set so the GraphQL errors array carries whatever shape the app
-// expects. Pass-through when no wrap is configured.
+// expects. Pass-through when no wrap is configured. Emits the same
+// auth.reject trace event the Gin reject path does so the dashboard
+// sees GraphQL denials too.
 func wrapGraphErr(ctx context.Context, err error) error {
+	status := http.StatusUnauthorized
+	reason := "unauthenticated"
+	if err == ErrForbidden {
+		status = http.StatusForbidden
+		reason = "forbidden"
+	}
+	emitReject(ctx, reason, status, err)
 	if s, ok := stateFrom(ctx); ok && s.cfg.GraphQLErrorWrap != nil {
 		return s.cfg.GraphQLErrorWrap(err)
 	}
 	return err
+}
+
+// emitReject publishes an auth.reject trace event on the request's
+// trace bus. First preference: the bus stashed on ctx by the per-route
+// trace.Middleware (carries a live span so events land on the right
+// endpoint row). Fallback: the app-level bus captured on moduleState
+// at Module wire time — needed because AsRest installs trace.Middleware
+// AFTER the auth bundles in the handler chain, so ctx lookup misses
+// on the reject path.
+func emitReject(ctx context.Context, reason string, status int, err error) {
+	bus, _ := trace.BusFromCtx(ctx)
+	if bus == nil {
+		if s, ok := stateFrom(ctx); ok {
+			bus = s.bus
+		}
+	}
+	if bus == nil {
+		return
+	}
+	span, _ := trace.SpanFromCtx(ctx)
+	ev := trace.Event{
+		Kind:   "auth.reject",
+		Status: status,
+	}
+	if span != nil {
+		ev.TraceID = span.TraceID
+		ev.Service = span.Service
+		ev.Endpoint = span.Endpoint
+	}
+	if err != nil {
+		ev.Error = err.Error()
+	}
+	meta := map[string]any{"reason": reason}
+	if id, ok := IdentityFrom(ctx); ok && id != nil {
+		// When we reject an authenticated identity (403), include its
+		// ID so admins can tie dashboard rows back to a real user.
+		// Unauthenticated rejects have no identity — meta stays lean.
+		meta["identity"] = id.ID
+	}
+	ev.Meta = meta
+	bus.Publish(ev)
 }
 
 // checkPermissions runs the configured PermissionFn if the moduleState
