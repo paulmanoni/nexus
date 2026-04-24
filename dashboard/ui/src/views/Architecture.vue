@@ -224,7 +224,12 @@ async function load() {
     }
   }
   for (const e of epData.endpoints || []) {
-    if (!e.ServiceAutoRouted) markDep(e.Service) // owning, if declared
+    // Every endpoint's owning service becomes a dep node, even when
+    // the handler was auto-routed (didn't name *Service as a Go dep).
+    // The service is still a conceptual dependency: the op is mounted
+    // under its schema and accounted for in its metrics bucket. Drawing
+    // the edge makes that ownership visible on the architecture graph.
+    markDep(e.Service)
     for (const s of e.ServiceDeps || []) markDep(s)
   }
   const svcDepNodes = [...depServices.values()].map(s => ({
@@ -294,17 +299,26 @@ async function load() {
       })
       claimed.add(`${e.Service}|res:${rName}`)
     }
-    // Owning-service dep edge: the handler took *ServiceType itself as
-    // a dep. Auto-routed endpoints skip this since the handler didn't
-    // declare the wrapper.
-    if (!e.ServiceAutoRouted && depServices.has(e.Service)) {
+    // Owning-service dep edge — every endpoint gets one (the op is
+    // mounted under that service's schema + metrics bucket regardless
+    // of whether the handler took *Service as a Go dep). The
+    // `autoRouted` flag travels on the edge so dimming / styling can
+    // tell explicit declarations from implicit ownership later.
+    if (depServices.has(e.Service)) {
       edgeList.push({
         id: `e:${groupKey}.${opName}->dep:${e.Service}`,
         source: groupKey,
         sourceHandle: `op:${opName}`,
         target: `dep:${e.Service}`,
         markerEnd: MarkerType.ArrowClosed,
-        data: { service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true },
+        data: {
+          service: e.Service,
+          target: e.Service,
+          targetKind: 'service',
+          op: opName,
+          owning: true,
+          autoRouted: !!e.ServiceAutoRouted,
+        },
       })
     }
     // Other-service dep edges.

@@ -80,6 +80,28 @@ export async function resetRateLimit(service, op) {
 // error counts, and the last error's text/time. Architecture polls this
 // so its per-op badges stay live. RecentErrors are NOT included; call
 // fetchErrorEvents(service, op) on demand (dialog opens).
+// fetchAuth returns { identities: [...], cachingEnabled: bool }, or null
+// when auth isn't wired (the /__nexus/auth route returns 404). Null lets
+// the Auth tab render a "not configured" state rather than flash an error.
+export async function fetchAuth() {
+  const r = await fetch('/__nexus/auth')
+  if (r.status === 404) return null
+  if (!r.ok) throw new Error(`auth: ${r.status}`)
+  return r.json()
+}
+
+// invalidateAuth calls POST /__nexus/auth/invalidate with {id} or {token}.
+// Returns { dropped: N } so the UI can confirm "logged out 3 sessions".
+export async function invalidateAuth(body) {
+  const r = await fetch('/__nexus/auth/invalidate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) throw new Error(`invalidate: ${r.status}`)
+  return r.json()
+}
+
 export async function fetchStats() {
   const r = await fetch('/__nexus/stats')
   if (!r.ok) throw new Error(`stats: ${r.status}`)

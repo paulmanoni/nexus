@@ -1,11 +1,12 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { Network, Plug, Activity, Box, Clock, Gauge } from 'lucide-vue-next'
+import { Network, Plug, Activity, Box, Clock, Gauge, ShieldCheck } from 'lucide-vue-next'
 import Architecture from './views/Architecture.vue'
 import Endpoints from './views/Endpoints.vue'
 import Traces from './views/Traces.vue'
 import Crons from './views/Crons.vue'
 import RateLimits from './views/RateLimits.vue'
+import Auth from './views/Auth.vue'
 import { fetchConfig } from './lib/api.js'
 
 const tabs = [
@@ -13,6 +14,7 @@ const tabs = [
   { id: 'endpoints', label: 'Endpoints', icon: Plug },
   { id: 'crons', label: 'Crons', icon: Clock },
   { id: 'ratelimits', label: 'Rate limits', icon: Gauge },
+  { id: 'auth', label: 'Auth', icon: ShieldCheck },
   { id: 'traces', label: 'Traces', icon: Activity }
 ]
 
@@ -84,6 +86,7 @@ onMounted(async () => {
       <Endpoints v-show="tab === 'endpoints'" />
       <Crons v-show="tab === 'crons'" />
       <RateLimits v-show="tab === 'ratelimits'" />
+      <Auth v-show="tab === 'auth'" />
       <Traces v-show="tab === 'traces'" />
     </main>
   </div>
