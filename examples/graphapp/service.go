@@ -13,6 +13,6 @@ type AdvertsService struct {
 // AtGraphQL (default "/graphql") and no Using(...) — fxmod's auto-mount
 // attaches resources declared by dep managers (via NexusResourceProvider)
 // and mounts the schema automatically.
-func NewAdvertsService(app *nexus.App) *AdvertsService {
+func NewAdvertsService(app *nexus.App, db *MainDB) *AdvertsService {
 	return &AdvertsService{Service: app.Service("adverts").Describe("Job adverts + question bank")}
 }

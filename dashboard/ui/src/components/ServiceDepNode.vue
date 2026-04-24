@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
-import { Box } from 'lucide-vue-next'
+import { Box, Database, Link2 } from 'lucide-vue-next'
 
 // ServiceDepNode represents a nexus.Service as a DEPENDENCY that one or
 // more endpoints consume. Visual parity with ResourceNode: a small pill
@@ -20,6 +20,12 @@ const inSelection = computed(() => {
   if (sel.owningService === props.data.name) return true
   return Array.isArray(sel.serviceDeps) && sel.serviceDeps.includes(props.data.name)
 })
+
+const hasDeps = computed(() => {
+  const r = props.data.resourceDeps || []
+  const s = props.data.serviceDeps || []
+  return r.length + s.length > 0
+})
 </script>
 
 <template>
@@ -31,6 +37,20 @@ const inSelection = computed(() => {
       <span class="tag">service</span>
     </div>
     <div v-if="data.description" class="desc">{{ data.description }}</div>
+    <!-- Inline dep list — surfaces ProvideService's constructor deps
+         on the node itself in addition to the graph edges. Helps when
+         the dagre layout routes an edge behind another node and makes
+         the relationship hard to eyeball. -->
+    <div v-if="hasDeps" class="deps">
+      <div v-for="r in data.resourceDeps || []" :key="'r:' + r" class="dep">
+        <Database :size="10" :stroke-width="2" class="dep-ico" />
+        <span class="dep-name">{{ r }}</span>
+      </div>
+      <div v-for="s in data.serviceDeps || []" :key="'s:' + s" class="dep svc">
+        <Link2 :size="10" :stroke-width="2" class="dep-ico" />
+        <span class="dep-name">{{ s }}</span>
+      </div>
+    </div>
     <!-- Source handle so the service-level dep edges (constructed
          from the service's constructor deps — resources + other
          services) can originate from this node. -->
@@ -79,4 +99,23 @@ const inSelection = computed(() => {
   margin-top: 4px;
   line-height: 1.4;
 }
+.deps {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dep {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.dep-ico { color: var(--accent); flex-shrink: 0; }
+.dep.svc .dep-ico { color: #7c3aed; }
+.dep-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
