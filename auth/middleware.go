@@ -102,7 +102,7 @@ func Optional() nexus.MiddlewareOption {
 
 func ginRequired(c *gin.Context) {
 	if _, ok := IdentityFrom(c.Request.Context()); !ok {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrUnauthenticated.Error()})
+		rejectUnauthenticated(c, ErrUnauthenticated)
 		return
 	}
 	c.Next()
@@ -111,7 +111,7 @@ func ginRequired(c *gin.Context) {
 func graphRequired(next graph.FieldResolveFn) graph.FieldResolveFn {
 	return func(p graph.ResolveParams) (any, error) {
 		if _, ok := IdentityFrom(p.Context); !ok {
-			return nil, ErrUnauthenticated
+			return nil, wrapGraphErr(p.Context, ErrUnauthenticated)
 		}
 		return next(p)
 	}
@@ -121,11 +121,11 @@ func ginRequires(perms []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, ok := IdentityFrom(c.Request.Context())
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrUnauthenticated.Error()})
+			rejectUnauthenticated(c, ErrUnauthenticated)
 			return
 		}
 		if !checkPermissions(c.Request.Context(), id, perms) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": ErrForbidden.Error()})
+			rejectForbidden(c, ErrForbidden)
 			return
 		}
 		c.Next()
@@ -137,14 +137,50 @@ func graphRequires(perms []string) graph.FieldMiddleware {
 		return func(p graph.ResolveParams) (any, error) {
 			id, ok := IdentityFrom(p.Context)
 			if !ok {
-				return nil, ErrUnauthenticated
+				return nil, wrapGraphErr(p.Context, ErrUnauthenticated)
 			}
 			if !checkPermissions(p.Context, id, perms) {
-				return nil, ErrForbidden
+				return nil, wrapGraphErr(p.Context, ErrForbidden)
 			}
 			return next(p)
 		}
 	}
+}
+
+// rejectUnauthenticated writes the 401 response. If the app supplied
+// Config.OnUnauthenticated, we defer to it and force a 401 fallback
+// if the hook returned without aborting (misconfigured hooks must
+// not accidentally let a request through).
+func rejectUnauthenticated(c *gin.Context, err error) {
+	if s, ok := stateFrom(c.Request.Context()); ok && s.cfg.OnUnauthenticated != nil {
+		s.cfg.OnUnauthenticated(c, err)
+		if !c.IsAborted() {
+			c.AbortWithStatus(http.StatusUnauthorized)
+		}
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+}
+
+func rejectForbidden(c *gin.Context, err error) {
+	if s, ok := stateFrom(c.Request.Context()); ok && s.cfg.OnForbidden != nil {
+		s.cfg.OnForbidden(c, err)
+		if !c.IsAborted() {
+			c.AbortWithStatus(http.StatusForbidden)
+		}
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
+}
+
+// wrapGraphErr routes the auth sentinels through Config.GraphQLErrorWrap
+// when set so the GraphQL errors array carries whatever shape the app
+// expects. Pass-through when no wrap is configured.
+func wrapGraphErr(ctx context.Context, err error) error {
+	if s, ok := stateFrom(ctx); ok && s.cfg.GraphQLErrorWrap != nil {
+		return s.cfg.GraphQLErrorWrap(err)
+	}
+	return err
 }
 
 // checkPermissions runs the configured PermissionFn if the moduleState
