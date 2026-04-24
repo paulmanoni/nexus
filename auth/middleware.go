@@ -1,0 +1,169 @@
+package auth
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/graph"
+	"github.com/paulmanoni/nexus/middleware"
+)
+
+// ginAuthMiddleware is the global Gin middleware installed by Module.
+// Per request:
+//   - Stash moduleState on ctx so per-op bundles read the right config
+//   - Extract token (if any). Absent token → anonymous request; let
+//     Required/Requires at the per-op layer decide whether that's OK.
+//   - Resolve (and cache) → attach Identity to ctx.
+//   - On resolver failure we do NOT 401 here — that's per-op Required's
+//     job. A public endpoint on the same app should stay accessible
+//     even if a bogus Authorization header comes along.
+func ginAuthMiddleware(state *moduleState) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := withState(c.Request.Context(), state)
+
+		token, hasToken := state.cfg.Extract.Extract(c.Request)
+		if hasToken {
+			id, err := state.resolve(ctx, token)
+			if err != nil {
+				if state.cfg.OnFail != nil {
+					state.cfg.OnFail(ctx, token, err)
+				}
+			} else if id != nil {
+				ctx = WithIdentity(ctx, id)
+				if state.cfg.OnResolve != nil {
+					state.cfg.OnResolve(ctx, id)
+				}
+			}
+		}
+
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
+
+// Required returns a cross-transport middleware bundle that rejects any
+// request lacking a resolved Identity on ctx. 401 on REST, a graphql-
+// native error on GraphQL — same bundle attaches cleanly to both.
+//
+//	nexus.AsMutation(NewCreateAdvert, auth.Required())
+func Required() nexus.MiddlewareOption {
+	return nexus.Use(middleware.Middleware{
+		Name:        "auth:required",
+		Description: "Requires an authenticated identity on ctx",
+		Kind:        middleware.KindBuiltin,
+		Gin:         ginRequired,
+		Graph:       graphRequired,
+	})
+}
+
+// Requires returns a cross-transport bundle that rejects requests whose
+// Identity doesn't satisfy every listed permission (roles / scopes).
+// Implies authentication — attaching Requires without Required still
+// 401s on anonymous requests, because you can't evaluate permissions
+// on a nil identity.
+//
+//	nexus.AsMutation(NewCreateAdvert, auth.Requires("ROLE_CREATE_ADVERT"))
+func Requires(perms ...string) nexus.MiddlewareOption {
+	name := "auth:requires"
+	if len(perms) > 0 {
+		name = "auth:requires:" + joinPerms(perms)
+	}
+	return nexus.Use(middleware.Middleware{
+		Name:        name,
+		Description: "Requires one or more permissions on the identity",
+		Kind:        middleware.KindBuiltin,
+		Gin:         ginRequires(perms),
+		Graph:       graphRequires(perms),
+	})
+}
+
+// Optional is a no-op bundle that exists purely as dashboard signal —
+// it labels the endpoint as auth-aware without enforcing presence.
+// Useful for public endpoints that still personalize when a user is
+// logged in, so the UI surfaces "this endpoint reads identity".
+func Optional() nexus.MiddlewareOption {
+	noop := func(c *gin.Context) { c.Next() }
+	graphNoop := func(next graph.FieldResolveFn) graph.FieldResolveFn {
+		return func(p graph.ResolveParams) (any, error) { return next(p) }
+	}
+	return nexus.Use(middleware.Middleware{
+		Name:        "auth:optional",
+		Description: "Reads identity when present; does not enforce it",
+		Kind:        middleware.KindBuiltin,
+		Gin:         noop,
+		Graph:       graphNoop,
+	})
+}
+
+// --- per-op enforcement primitives --------------------------------------
+
+func ginRequired(c *gin.Context) {
+	if _, ok := IdentityFrom(c.Request.Context()); !ok {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrUnauthenticated.Error()})
+		return
+	}
+	c.Next()
+}
+
+func graphRequired(next graph.FieldResolveFn) graph.FieldResolveFn {
+	return func(p graph.ResolveParams) (any, error) {
+		if _, ok := IdentityFrom(p.Context); !ok {
+			return nil, ErrUnauthenticated
+		}
+		return next(p)
+	}
+}
+
+func ginRequires(perms []string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, ok := IdentityFrom(c.Request.Context())
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrUnauthenticated.Error()})
+			return
+		}
+		if !checkPermissions(c.Request.Context(), id, perms) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": ErrForbidden.Error()})
+			return
+		}
+		c.Next()
+	}
+}
+
+func graphRequires(perms []string) graph.FieldMiddleware {
+	return func(next graph.FieldResolveFn) graph.FieldResolveFn {
+		return func(p graph.ResolveParams) (any, error) {
+			id, ok := IdentityFrom(p.Context)
+			if !ok {
+				return nil, ErrUnauthenticated
+			}
+			if !checkPermissions(p.Context, id, perms) {
+				return nil, ErrForbidden
+			}
+			return next(p)
+		}
+	}
+}
+
+// checkPermissions runs the configured PermissionFn if the moduleState
+// is on ctx, otherwise falls back to the package default. The ctx
+// fallback keeps unit tests that skip auth.Module useful.
+func checkPermissions(ctx context.Context, id *Identity, perms []string) bool {
+	if s, ok := stateFrom(ctx); ok && s.permissions != nil {
+		return s.permissions(id, perms)
+	}
+	return DefaultPermissions(id, perms)
+}
+
+func joinPerms(perms []string) string {
+	if len(perms) == 0 {
+		return ""
+	}
+	out := perms[0]
+	for _, p := range perms[1:] {
+		out += "," + p
+	}
+	return out
+}
