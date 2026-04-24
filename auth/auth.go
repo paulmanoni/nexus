@@ -59,6 +59,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // Identity is the resolved authenticated user. Roles and Scopes are the
@@ -201,6 +202,12 @@ type moduleState struct {
 	resolve     Resolver
 	permissions PermissionFn
 	cache       *identityCache // nil when Cache.TTL == 0
+	// bus is the app-level trace bus captured at Module wire time.
+	// We grab it here because the per-route trace.Middleware in AsRest
+	// runs AFTER auth bundles in the handler chain — so by the time
+	// Required/Requires reject a request, trace.BusFromCtx is still
+	// empty. Falling back to this field keeps reject events flowing.
+	bus *trace.Bus
 }
 
 // Manager is the runtime handle for auth state. fx.Provide'd by Module
@@ -237,6 +244,21 @@ func (m *Manager) InvalidateAll() {
 		return
 	}
 	m.state.cache.clear()
+}
+
+// InvalidateByIdentity removes every cache entry whose Identity.ID
+// matches the argument. Use for "force-logout user X" flows when the
+// caller knows the stable identity but not the tokens (users may
+// have multiple active sessions). Returns the number of entries
+// dropped so the caller can distinguish "forced logout of 3 sessions"
+// from "no cached sessions to drop".
+func (m *Manager) InvalidateByIdentity(id string) int {
+	if m.state.cache == nil || id == "" {
+		return 0
+	}
+	return m.state.cache.deleteWhere(func(e cacheEntry) bool {
+		return e.id != nil && e.id.ID == id
+	})
 }
 
 // CachedIdentity is a redacted snapshot of a cache entry for dashboard
@@ -305,7 +327,9 @@ func Module(cfg Config) nexus.Option {
 	return nexus.Raw(fx.Options(
 		fx.Supply(manager),
 		fx.Invoke(func(app *nexus.App) {
+			state.bus = app.Bus()
 			app.Engine().Use(ginAuthMiddleware(state))
+			mountDashboardRoutes(app.Engine(), manager)
 		}),
 	))
 }
@@ -361,6 +385,23 @@ func (c *identityCache) clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = make(map[string]cacheEntry)
+}
+
+// deleteWhere removes every entry whose predicate returns true.
+// Returns the count of dropped entries. Locked for the whole sweep
+// so a concurrent set() can't reintroduce an entry we just decided
+// to drop.
+func (c *identityCache) deleteWhere(pred func(cacheEntry) bool) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for k, e := range c.entries {
+		if pred(e) {
+			delete(c.entries, k)
+			n++
+		}
+	}
+	return n
 }
 
 // snapshot returns redacted cache entries. Token keys are truncated
