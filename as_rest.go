@@ -120,12 +120,7 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		app := args[0].Interface().(*App)
 		deps := args[1:]
 
-		// Resolve service name from deps — any service-wrapper dep
-		// (first match wins), same convention AsRest uses.
-		service := cfg.service
-		if service == "" {
-			service = serviceNameFromDeps(deps, depTypes)
-		}
+		service := resolveRestService(cfg, deps, depTypes, app)
 		finalPath := cfg.pathPrefix + path
 		opName := opNameFromFactory(factory, method+" "+finalPath)
 
@@ -177,6 +172,39 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		return nil
 	})
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
+}
+
+// resolveRestService decides which service a REST endpoint is
+// attributed to, in priority order:
+//
+//   1. cfg.service — explicit via an option (reserved for future use).
+//   2. The first *Service-wrapper dep in the handler's deps —
+//      same convention AsQuery / AsMutation use.
+//   3. cfg.module — the enclosing nexus.Module name. This catches
+//      the common "REST handlers have no service-wrapper deps"
+//      pattern so metrics events still carry a non-empty service
+//      (the dashboard filters empty-service events out).
+//   4. defaultServiceName — ultimate fallback for handlers that
+//      live outside any module. Registers the default service on
+//      the app so the registry stays consistent.
+//
+// Always returns a non-empty string; callers don't need to guard.
+func resolveRestService(cfg *restConfig, deps []reflect.Value, depTypes []reflect.Type, app *App) string {
+	if cfg.service != "" {
+		return cfg.service
+	}
+	if svc := serviceNameFromDeps(deps, depTypes); svc != "" {
+		return svc
+	}
+	if cfg.module != "" {
+		// Make sure the registry has an entry for the module-as-
+		// service so the dashboard's services list includes it and
+		// per-op edges to it resolve cleanly.
+		app.registry.RegisterService(registry.Service{Name: cfg.module})
+		return cfg.module
+	}
+	app.Service(defaultServiceName)
+	return defaultServiceName
 }
 
 // attachRestResources attaches every NexusResourceProvider dep to the
@@ -319,10 +347,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		app := args[0].Interface().(*App)
 		deps := args[1:]
 
-		service := cfg.service
-		if service == "" {
-			service = serviceNameFromDeps(deps, sh.depTypes)
-		}
+		service := resolveRestService(cfg, deps, sh.depTypes, app)
 
 		// Resolve the final mounted path by prefixing — module-level
 		// or per-endpoint RoutePrefix stamped cfg.pathPrefix for us.
