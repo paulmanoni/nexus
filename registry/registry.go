@@ -145,6 +145,24 @@ type ResourceSnapshot struct {
 	AttachedTo  []string       `json:"attachedTo,omitempty"`
 }
 
+// Worker describes a long-lived background task registered via
+// nexus.AsWorker. The Dashboard renders workers as a separate node
+// kind on the architecture view — like a service, they have
+// resource/service deps (inferred from the worker func's params),
+// but they don't handle HTTP traffic. Status reflects the current
+// lifecycle stage; LastError carries the message from a panic or a
+// non-nil error return.
+type Worker struct {
+	Name         string
+	Status       string // "starting" | "running" | "stopped" | "failed"
+	Description  string `json:",omitempty"`
+	StartedAt    time.Time
+	StoppedAt    time.Time `json:",omitempty"`
+	LastError    string    `json:",omitempty"`
+	ResourceDeps []string  `json:",omitempty"`
+	ServiceDeps  []string  `json:",omitempty"`
+}
+
 type Registry struct {
 	mu          sync.RWMutex
 	services    map[string]Service
@@ -152,6 +170,7 @@ type Registry struct {
 	resources   map[string]resource.Resource
 	attached    map[string][]string // resource name -> service names
 	middlewares map[string]middleware.Info
+	workers     map[string]Worker
 	// globalMiddlewares is the ordered list of middleware names
 	// installed on the engine root (app-wide). Every request goes
 	// through these before per-endpoint stacks. Dashboard renders them
@@ -165,6 +184,7 @@ func New() *Registry {
 		resources:   map[string]resource.Resource{},
 		attached:    map[string][]string{},
 		middlewares: map[string]middleware.Info{},
+		workers:     map[string]Worker{},
 	}
 	for _, m := range middleware.Builtins {
 		r.middlewares[m.Name] = m
@@ -188,6 +208,68 @@ func (r *Registry) RegisterService(s Service) {
 		}
 	}
 	r.services[s.Name] = s
+}
+
+// RegisterWorker records a new worker entry. If a worker with the
+// same name already exists, its metadata (deps, description) is
+// preserved but its Status is reset — typically called when fx
+// constructs a new instance on app restart within a test.
+func (r *Registry) RegisterWorker(w Worker) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	existing := r.workers[w.Name]
+	if w.Description == "" {
+		w.Description = existing.Description
+	}
+	if len(w.ResourceDeps) == 0 {
+		w.ResourceDeps = existing.ResourceDeps
+	}
+	if len(w.ServiceDeps) == 0 {
+		w.ServiceDeps = existing.ServiceDeps
+	}
+	if w.Status == "" {
+		w.Status = "starting"
+	}
+	r.workers[w.Name] = w
+}
+
+// UpdateWorkerStatus sets a worker's Status and optional LastError.
+// Timestamps (StartedAt / StoppedAt) are filled in based on
+// status transitions so the dashboard can surface runtime durations.
+func (r *Registry) UpdateWorkerStatus(name, status, lastError string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w, ok := r.workers[name]
+	if !ok {
+		return
+	}
+	prev := w.Status
+	w.Status = status
+	if lastError != "" {
+		w.LastError = lastError
+	}
+	now := time.Now()
+	switch status {
+	case "running":
+		if prev != "running" {
+			w.StartedAt = now
+		}
+	case "stopped", "failed":
+		w.StoppedAt = now
+	}
+	r.workers[name] = w
+}
+
+// Workers returns a snapshot of registered workers sorted by name.
+func (r *Registry) Workers() []Worker {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Worker, 0, len(r.workers))
+	for _, w := range r.workers {
+		out = append(out, w)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // SetServiceDeps records the resource + service dependencies of a

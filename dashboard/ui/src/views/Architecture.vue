@@ -7,13 +7,14 @@ import dagre from 'dagre'
 
 import ServiceNode from '../components/ServiceNode.vue'
 import ServiceDepNode from '../components/ServiceDepNode.vue'
+import WorkerNode from '../components/WorkerNode.vue'
 import ResourceNode from '../components/ResourceNode.vue'
 import InternetNode from '../components/InternetNode.vue'
 import BoundaryNode from '../components/BoundaryNode.vue'
 import ErrorDialog from '../components/ErrorDialog.vue'
 import PacketOverlay from '../components/PacketOverlay.vue'
 import GlobalMiddlewareBar from '../components/GlobalMiddlewareBar.vue'
-import { fetchEndpoints, fetchResources, fetchStats, subscribeEvents } from '../lib/api.js'
+import { fetchEndpoints, fetchResources, fetchStats, fetchWorkers, subscribeEvents } from '../lib/api.js'
 
 const nodes = ref([])
 const edges = ref([])
@@ -23,6 +24,7 @@ const edges = ref([])
 const nodeTypes = {
   service: markRaw(ServiceNode),
   serviceDep: markRaw(ServiceDepNode),
+  worker: markRaw(WorkerNode),
   resource: markRaw(ResourceNode),
   internet: markRaw(InternetNode),
   boundary: markRaw(BoundaryNode),
@@ -101,6 +103,7 @@ function dagreLayout(ns, es) {
     if (n.type === 'internet') { w = 160; h = 90 }
     else if (n.type === 'resource') { w = NODE_WIDTH_RESOURCE; h = estimateResourceHeight(n.data) }
     else if (n.type === 'serviceDep') { w = NODE_WIDTH_RESOURCE; h = estimateServiceDepHeight(n.data) }
+    else if (n.type === 'worker') { w = NODE_WIDTH_RESOURCE; h = estimateWorkerHeight(n.data) }
     else { w = NODE_WIDTH_SERVICE; h = estimateServiceHeight(n.data) }
     g.setNode(n.id, { width: w, height: h })
   })
@@ -124,6 +127,14 @@ function estimateServiceDepHeight(data) {
   return (data.description ? 60 : 40) + depsH
 }
 
+function estimateWorkerHeight(data) {
+  const r = Array.isArray(data.resourceDeps) ? data.resourceDeps.length : 0
+  const s = Array.isArray(data.serviceDeps) ? data.serviceDeps.length : 0
+  const depsH = (r + s) > 0 ? 16 + (r + s) * 16 : 0
+  const errH = data.lastError ? 16 : 0
+  return 68 + depsH + errH
+}
+
 function gridLayout(ns) {
   const cols = Math.min(ns.length, 3)
   const rowHeights = []
@@ -132,6 +143,7 @@ function gridLayout(ns) {
     let h
     if (n.type === 'resource') h = estimateResourceHeight(n.data)
     else if (n.type === 'serviceDep') h = estimateServiceDepHeight(n.data)
+    else if (n.type === 'worker') h = estimateWorkerHeight(n.data)
     else h = estimateServiceHeight(n.data)
     rowHeights[row] = Math.max(rowHeights[row] || 0, h)
   })
@@ -152,10 +164,11 @@ function gridLayout(ns) {
 }
 
 async function load() {
-  const [epData, rsData, statsData] = await Promise.all([
+  const [epData, rsData, statsData, wkData] = await Promise.all([
     fetchEndpoints(),
     fetchResources(),
     fetchStats().catch(() => ({ stats: [] })), // graceful if stats endpoint absent
+    fetchWorkers().catch(() => ({ workers: [] })),
   ])
   // Index stats by "service.op". The stats key stays service-scoped
   // even after the UI regroups by module, because the metrics
@@ -251,6 +264,11 @@ async function load() {
       for (const d of s.ServiceDeps) markDep(d)
     }
   }
+  // Workers may reference services that no endpoint uses — mark them
+  // here so the dep node exists by the time workerNodes renders.
+  for (const w of wkData.workers || []) {
+    for (const s of w.ServiceDeps || []) markDep(s)
+  }
   const svcDepNodes = [...depServices.values()].map(s => ({
     id: `dep:${s.Name}`,
     type: 'serviceDep',
@@ -280,6 +298,25 @@ async function load() {
     type: 'resource',
     position: { x: 0, y: 0 },
     data: r
+  }))
+
+  // Workers — long-lived background tasks registered via nexus.AsWorker.
+  // They're peers of services: they have dep nodes (resources + other
+  // services) but no HTTP traffic. Each worker becomes one card on
+  // the graph; edges to/from their deps share the same service-level
+  // styling so the "background worker uses X" relationship is
+  // visually consistent with "service uses X".
+  const workerNodes = (wkData.workers || []).map(w => ({
+    id: `wk:${w.Name}`,
+    type: 'worker',
+    position: { x: 0, y: 0 },
+    data: {
+      name: w.Name,
+      status: w.Status || 'unknown',
+      lastError: w.LastError || '',
+      resourceDeps: w.ResourceDeps || [],
+      serviceDeps: w.ServiceDeps || [],
+    },
   }))
 
   // ---------------------------------------------------------------
@@ -370,6 +407,32 @@ async function load() {
     }
   }
 
+  // Worker-level dep edges — one line per (worker, resource) and
+  // (worker, service) tuple, styled as service-level so the same
+  // packet-animation rules apply. Workers get pulses on their
+  // resource edges whenever the worker reports activity (phase 4+).
+  for (const w of wkData.workers || []) {
+    for (const res of w.ResourceDeps || []) {
+      edgeList.push({
+        id: `e:wk:${w.Name}->res:${res}`,
+        source: `wk:${w.Name}`,
+        target: `res:${res}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: w.Name, target: res, targetKind: 'resource', op: null, serviceLevel: true, worker: true },
+      })
+    }
+    for (const other of w.ServiceDeps || []) {
+      if (!depServices.has(other)) continue
+      edgeList.push({
+        id: `e:wk:${w.Name}->dep:${other}`,
+        source: `wk:${w.Name}`,
+        target: `dep:${other}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: w.Name, target: other, targetKind: 'service', op: null, serviceLevel: true, worker: true },
+      })
+    }
+  }
+
   // Service-level dep edges: edges originating at a service-dep node
   // (not at an endpoint row) that point to resources / other services
   // the SERVICE CONSTRUCTOR depends on. Backend populates these via
@@ -412,7 +475,7 @@ async function load() {
     })
   }
 
-  const all = [internetNode, ...groupNodes, ...svcDepNodes, ...rsNodes]
+  const all = [internetNode, ...groupNodes, ...svcDepNodes, ...workerNodes, ...rsNodes]
   // Diagnostic: surface the built graph to window so operators can
   // verify service-level edges from DevTools without re-reading this
   // file. Cheap (single assignment per poll) and invaluable when an
@@ -448,10 +511,11 @@ function buildBoundaryNode(laid) {
     // Enclose only the "inside-the-system" nodes — module groups,
     // service-deps, resources. Internet is an outside caller, so
     // the boundary shouldn't ring around it.
-    if (n.type !== 'service' && n.type !== 'resource' && n.type !== 'serviceDep') continue
-    const w = (n.type === 'resource' || n.type === 'serviceDep') ? NODE_WIDTH_RESOURCE : NODE_WIDTH_SERVICE
+    if (n.type !== 'service' && n.type !== 'resource' && n.type !== 'serviceDep' && n.type !== 'worker') continue
+    const w = (n.type === 'resource' || n.type === 'serviceDep' || n.type === 'worker') ? NODE_WIDTH_RESOURCE : NODE_WIDTH_SERVICE
     const h = n.type === 'resource' ? estimateResourceHeight(n.data)
            : n.type === 'serviceDep' ? estimateServiceDepHeight(n.data)
+           : n.type === 'worker' ? estimateWorkerHeight(n.data)
            : estimateServiceHeight(n.data)
     minX = Math.min(minX, n.position.x)
     minY = Math.min(minY, n.position.y)
@@ -571,9 +635,20 @@ function flashEdges(ids, state) {
 // edges the handler declared (resources / other services). We stash the
 // endpoint → edge map at load time so lookups are constant-time here.
 const endpointEdgeIdx = new Map() // "svc.opName" → [edge id, ...]
+const serviceEdgeIdx = new Map()  // svc name → [service-level edge id, ...]
 function indexEndpointEdges(edgeList) {
   endpointEdgeIdx.clear()
+  serviceEdgeIdx.clear()
   for (const e of edgeList) {
+    if (e.data.serviceLevel && e.data.service) {
+      // Service-level edges (dep:svc → res / dep:svc → dep) are
+      // keyed by the originating service so a request.op against
+      // any endpoint in that service can flash these too.
+      const arr = serviceEdgeIdx.get(e.data.service) || []
+      arr.push(e.id)
+      serviceEdgeIdx.set(e.data.service, arr)
+      continue
+    }
     if (!e.data.op || e.data.inbound) continue
     const k = `${e.data.service}.${e.data.op}`
     const arr = endpointEdgeIdx.get(k) || []
@@ -628,7 +703,13 @@ function onTraceEvent(ev) {
     const opKey = `${ev.service}.${ev.endpoint}`
     for (const id of endpointEdgeIdx.get(opKey) || []) outboundIds.push(id)
   }
-  const flashIds = failed ? [inboundId] : [inboundId, ...outboundIds]
+  // Service-level edges (dep:svc → its constructor deps) also pulse
+  // on any op activity for that service — so operators can see the
+  // service "using" its declared deps, not just the ops that
+  // explicitly touch them.
+  const serviceIds = []
+  for (const id of serviceEdgeIdx.get(ev.service) || []) serviceIds.push(id)
+  const flashIds = failed ? [inboundId] : [inboundId, ...outboundIds, ...serviceIds]
   flashEdges(flashIds, failed ? 'error' : 'ok')
   spawnPacketsForEdges(flashIds, ev.endpoint, failed ? 'error' : 'ok')
 }
