@@ -29,14 +29,30 @@ func (r rawOption) nexusOption() fx.Option { return r.o }
 //	    nexus.AsMutation(NewCreateAdvert, …),
 //	)
 func Module(name string, opts ...Option) Option {
-	// Stamp the module name onto every child registration option that
+	// Collect any RoutePrefix declarations among the direct children
+	// so we can stamp them on REST registrations. Multiple prefixes
+	// in the same Module concatenate left-to-right:
+	//   Module("x", RoutePrefix("/a"), RoutePrefix("/b"), ...) → "/a/b".
+	var prefix string
+	for _, o := range opts {
+		if rp, ok := o.(routePrefixOption); ok {
+			prefix += rp.prefix
+		}
+	}
+
+	// Stamp module name + route prefix onto every child option that
 	// cares. Options produced by nested Module(...) don't implement
-	// moduleAnnotator (they return a rawOption wrapping fx.Module), so
-	// inner-most wins automatically — the inner Module() already
-	// annotated its own children before we see it.
+	// these annotator interfaces (they return a rawOption wrapping
+	// fx.Module), so inner-most wins automatically — the inner
+	// Module() already annotated its own children before we see it.
 	for _, o := range opts {
 		if ma, ok := o.(moduleAnnotator); ok {
 			ma.setModule(name)
+		}
+		if prefix != "" {
+			if rp, ok := o.(restPrefixAnnotator); ok {
+				rp.setRestPrefix(prefix)
+			}
 		}
 	}
 	return rawOption{o: fx.Module(name, unwrap(opts)...)}
