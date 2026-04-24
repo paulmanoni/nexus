@@ -71,6 +71,9 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 	g.GET("/resources", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"resources": reg.Resources()})
 	})
+	g.GET("/workers", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"workers": reg.Workers()})
+	})
 	g.GET("/middlewares", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"middlewares": reg.Middlewares(),

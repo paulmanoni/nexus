@@ -80,6 +80,14 @@ export async function resetRateLimit(service, op) {
 // error counts, and the last error's text/time. Architecture polls this
 // so its per-op badges stay live. RecentErrors are NOT included; call
 // fetchErrorEvents(service, op) on demand (dialog opens).
+// fetchWorkers returns { workers: [...] } — one entry per AsWorker
+// registration. Empty slice when no workers are wired.
+export async function fetchWorkers() {
+  const r = await fetch('/__nexus/workers')
+  if (!r.ok) return { workers: [] }
+  return r.json()
+}
+
 // fetchAuth returns { identities: [...], cachingEnabled: bool }, or null
 // when auth isn't wired (the /__nexus/auth route returns 404). Null lets
 // the Auth tab render a "not configured" state rather than flash an error.
