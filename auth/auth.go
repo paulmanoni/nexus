@@ -55,6 +55,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -139,6 +140,27 @@ type Config struct {
 	// passed so handlers can log prefixes for diagnostics; do NOT log
 	// the full token in production.
 	OnFail func(ctx context.Context, token string, err error)
+
+	// OnUnauthenticated customizes the REST 401 response. Default:
+	// AbortWithStatusJSON(401, {"error": err.Error()}). Override to
+	// match your app's error envelope (e.g. pkg.Response-style
+	// success:false payload).
+	//
+	// The handler is responsible for calling c.Abort* — return without
+	// aborting and auth falls back to its default 401 so a misconfigured
+	// hook never accidentally authorizes a request.
+	OnUnauthenticated func(c *gin.Context, err error)
+
+	// OnForbidden customizes the REST 403 response. Same contract as
+	// OnUnauthenticated.
+	OnForbidden func(c *gin.Context, err error)
+
+	// GraphQLErrorWrap transforms ErrUnauthenticated / ErrForbidden
+	// before they're returned from a resolver. Default: pass through
+	// so the standard "auth: unauthenticated" / "auth: forbidden"
+	// messages appear in the GraphQL errors array. Override to wrap
+	// in a typed error the client expects.
+	GraphQLErrorWrap func(err error) error
 }
 
 // CacheOption configures how resolved identities are memoized in-memory.
@@ -181,6 +203,70 @@ type moduleState struct {
 	cache       *identityCache // nil when Cache.TTL == 0
 }
 
+// Manager is the runtime handle for auth state. fx.Provide'd by Module
+// so application code can inject it wherever it needs to invalidate
+// cached identities (logout flows) or inspect current auth state
+// (admin dashboards).
+//
+//	func NewLogoutHandler(am *auth.Manager) func(ctx, p Params[Args]) (...) {
+//	    return func(ctx context.Context, p Params[Args]) (..., error) {
+//	        am.Invalidate(p.Args.Token)
+//	        return ok, nil
+//	    }
+//	}
+type Manager struct {
+	state *moduleState
+}
+
+// Invalidate drops the cached identity for the given token. The next
+// request bearing that token will re-run Resolve. No-op when the cache
+// is disabled.
+func (m *Manager) Invalidate(token string) {
+	if m.state.cache == nil {
+		return
+	}
+	m.state.cache.delete(token)
+}
+
+// InvalidateAll flushes the entire identity cache. Use sparingly —
+// every active session will pay a Resolve round-trip on its next
+// request. Intended for credential-schema migrations or incident
+// response.
+func (m *Manager) InvalidateAll() {
+	if m.state.cache == nil {
+		return
+	}
+	m.state.cache.clear()
+}
+
+// CachedIdentity is a redacted snapshot of a cache entry for dashboard
+// / admin display. TokenPrefix is the first 8 characters of the raw
+// token followed by "…"; the full token never leaves the cache.
+type CachedIdentity struct {
+	TokenPrefix string
+	Identity    *Identity
+	ExpiresAt   time.Time
+}
+
+// Identities returns a snapshot of every currently-cached identity.
+// Safe to call on a disabled cache (returns empty slice). Token
+// prefixes are truncated to 8 chars — never log or return the full
+// token back to clients.
+func (m *Manager) Identities() []CachedIdentity {
+	if m.state.cache == nil {
+		return nil
+	}
+	return m.state.cache.snapshot()
+}
+
+// Resolve is a direct synchronous resolution path for code that has a
+// token in hand outside the HTTP request cycle — background jobs,
+// WS message handlers, CLI tools bolted onto the same app. Honors the
+// configured cache.
+func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) {
+	return m.state.resolve(ctx, token)
+}
+
 // Module wires auth into the nexus app:
 //
 //  1. Installs a global middleware that extracts + (optionally caches)
@@ -214,10 +300,14 @@ func Module(cfg Config) nexus.Option {
 		state.cache = newIdentityCache(cfg.Cache)
 		state.resolve = wrapWithCache(cfg.Resolve, state.cache)
 	}
+	manager := &Manager{state: state}
 
-	return nexus.Raw(fx.Invoke(func(app *nexus.App) {
-		app.Engine().Use(ginAuthMiddleware(state))
-	}))
+	return nexus.Raw(fx.Options(
+		fx.Supply(manager),
+		fx.Invoke(func(app *nexus.App) {
+			app.Engine().Use(ginAuthMiddleware(state))
+		}),
+	))
 }
 
 // --- in-memory identity cache -------------------------------------------
@@ -259,6 +349,44 @@ func (c *identityCache) get(token string) (*Identity, bool) {
 		return nil, false
 	}
 	return e.id, true
+}
+
+func (c *identityCache) delete(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, token)
+}
+
+func (c *identityCache) clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]cacheEntry)
+}
+
+// snapshot returns redacted cache entries. Token keys are truncated
+// to an 8-char prefix + "…" so the result is safe to serialize onto
+// the dashboard without leaking credentials. Expired entries are
+// filtered out at read time to avoid reporting stale rows.
+func (c *identityCache) snapshot() []CachedIdentity {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]CachedIdentity, 0, len(c.entries))
+	now := time.Now()
+	for tok, e := range c.entries {
+		if now.After(e.expiresAt) {
+			continue
+		}
+		prefix := tok
+		if len(prefix) > 8 {
+			prefix = prefix[:8] + "…"
+		}
+		out = append(out, CachedIdentity{
+			TokenPrefix: prefix,
+			Identity:    e.id,
+			ExpiresAt:   e.expiresAt,
+		})
+	}
+	return out
 }
 
 func (c *identityCache) set(token string, id *Identity) {
