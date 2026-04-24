@@ -54,6 +54,26 @@ func (b *Bus) Publish(e Event) {
 	}
 }
 
+// SnapshotByTrace returns every event currently in the ring whose TraceID
+// matches, in publish order. Backs the dashboard's per-trace waterfall view.
+// Returns nil when no events match.
+func (b *Bus) SnapshotByTrace(traceID string) []Event {
+	if traceID == "" {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	start := (b.next - b.size + b.capacity) % b.capacity
+	var out []Event
+	for i := 0; i < b.size; i++ {
+		e := b.buf[(start+i)%b.capacity]
+		if e.TraceID == traceID {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Subscribe atomically captures the backlog (events with ID > sinceID) and
 // registers a channel for future events. Doing both under one lock guarantees
 // a reconnecting client sees every event exactly once — no gap, no duplicate.

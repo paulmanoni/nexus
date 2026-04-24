@@ -2,8 +2,8 @@ package trace
 
 import (
 	"context"
-	"strconv"
-	"sync/atomic"
+	"crypto/rand"
+	"encoding/hex"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,9 +17,10 @@ const (
 type spanCtxKey struct{}
 type busCtxKey struct{}
 
-// SpanFromCtx reads the current request's Span from any context.Context.
-// Use this from code paths that don't have a *gin.Context — GraphQL resolvers
-// (via p.Context), GORM callbacks, downstream HTTP clients.
+// SpanFromCtx reads the current span from any context.Context — root or child,
+// whichever was pushed last. Use this from code paths that don't have a
+// *gin.Context (GraphQL resolvers via p.Context, GORM callbacks, worker code
+// called from a request).
 func SpanFromCtx(ctx context.Context) (*Span, bool) {
 	if ctx == nil {
 		return nil, false
@@ -37,35 +38,44 @@ func BusFromCtx(ctx context.Context) (*Bus, bool) {
 	return b, ok
 }
 
-type Span struct {
-	TraceID  string
-	Service  string
-	Endpoint string
-	Start    time.Time
-}
-
-var traceCounter atomic.Int64
-
+// newTraceID mints a random 16-byte (32 hex char) trace ID, matching the W3C
+// traceparent format so we can emit inter-op headers and honor inbound ones.
 func newTraceID() string {
-	return strconv.FormatInt(traceCounter.Add(1), 36)
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
-// NewTraceID mints the next short, monotonic trace ID in the same format the
-// request middleware uses. Exposed for code paths that emit events outside the
-// HTTP request lifecycle (e.g. the cron scheduler) so trace IDs stay uniform
-// across the dashboard.
+// NewTraceID mints the next trace ID in the same format the request middleware
+// uses. Exposed for code paths that emit events outside the HTTP request
+// lifecycle (e.g. the cron scheduler) so trace IDs stay uniform across the
+// dashboard.
 func NewTraceID() string { return newTraceID() }
 
 // Middleware emits request.start and request.end events bracketing the handler
-// chain, and stashes a *Span and the bus in gin.Context so Record() can attach
-// downstream events to the same trace.
+// chain, and stashes a *Span and the bus in gin.Context so child spans and
+// Record() attach to the same trace.
+//
+// If the inbound request carries a valid W3C traceparent header, the root
+// span reuses its TraceID (and records ParentID from the upstream span) so
+// the trace is stitched across services. Otherwise a fresh TraceID is minted.
 func Middleware(bus *Bus, service, endpoint, transport string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		traceID, parentSpanID, remote := parseTraceparent(c.Request.Header.Get("traceparent"))
+		if !remote {
+			traceID = newTraceID()
+			parentSpanID = ""
+		}
 		span := &Span{
-			TraceID:  newTraceID(),
+			TraceID:  traceID,
+			SpanID:   newSpanID(),
+			ParentID: parentSpanID,
+			Name:     endpoint,
 			Service:  service,
 			Endpoint: endpoint,
 			Start:    time.Now(),
+			Remote:   remote,
+			bus:      bus,
 		}
 		c.Set(spanKey, span)
 		c.Set(busKey, bus)
@@ -78,12 +88,17 @@ func Middleware(bus *Bus, service, endpoint, transport string) gin.HandlerFunc {
 		c.Request = c.Request.WithContext(ctx)
 		bus.Publish(Event{
 			TraceID:   span.TraceID,
+			SpanID:    span.SpanID,
+			ParentID:  span.ParentID,
 			Kind:      KindRequestStart,
+			Name:      endpoint,
 			Service:   service,
 			Endpoint:  endpoint,
 			Transport: transport,
 			Method:    c.Request.Method,
 			Path:      c.Request.URL.Path,
+			Remote:    span.Remote,
+			Timestamp: span.Start,
 		})
 		c.Next()
 		var errStr string
@@ -92,7 +107,10 @@ func Middleware(bus *Bus, service, endpoint, transport string) gin.HandlerFunc {
 		}
 		bus.Publish(Event{
 			TraceID:    span.TraceID,
+			SpanID:     span.SpanID,
+			ParentID:   span.ParentID,
 			Kind:       KindRequestEnd,
+			Name:       endpoint,
 			Service:    service,
 			Endpoint:   endpoint,
 			Transport:  transport,
@@ -123,12 +141,18 @@ func BusFrom(c *gin.Context) (*Bus, bool) {
 	return b, ok
 }
 
-// Record attaches a downstream event (DB call, MQ publish, external HTTP, etc.)
-// to the current request's trace. Typical use:
+// Record attaches a timed sub-operation (DB call, MQ publish, external HTTP)
+// to the current request's trace as a leaf span. It emits a span.start /
+// span.end pair using the caller-supplied start time so the waterfall places
+// the bar at the right offset.
 //
 //	start := time.Now()
 //	err := db.Query(...)
 //	trace.Record(c, "db.users.get", start, err)
+//
+// Prefer trace.In / trace.StartSpan for new code — they compose with ctx
+// instead of needing *gin.Context. Record remains for handlers already
+// written against gin.
 func Record(c *gin.Context, name string, start time.Time, err error) {
 	span, ok := SpanFrom(c)
 	if !ok {
@@ -138,17 +162,32 @@ func Record(c *gin.Context, name string, start time.Time, err error) {
 	if !ok {
 		return
 	}
+	spanID := newSpanID()
 	var errStr string
 	if err != nil {
 		errStr = err.Error()
 	}
+	end := time.Now()
+	bus.Publish(Event{
+		TraceID:   span.TraceID,
+		SpanID:    spanID,
+		ParentID:  span.SpanID,
+		Kind:      KindSpanStart,
+		Name:      name,
+		Service:   span.Service,
+		Endpoint:  span.Endpoint,
+		Timestamp: start,
+	})
 	bus.Publish(Event{
 		TraceID:    span.TraceID,
-		Kind:       KindDownstream,
+		SpanID:     spanID,
+		ParentID:   span.SpanID,
+		Kind:       KindSpanEnd,
+		Name:       name,
 		Service:    span.Service,
 		Endpoint:   span.Endpoint,
-		Message:    name,
-		DurationMs: time.Since(start).Milliseconds(),
+		DurationMs: end.Sub(start).Milliseconds(),
 		Error:      errStr,
+		Timestamp:  end,
 	})
 }

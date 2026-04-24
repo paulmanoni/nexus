@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { Search, Trash2, CheckCircle2, XCircle, ArrowRight, ChevronDown } from 'lucide-vue-next'
 import { subscribeEvents } from '../lib/api.js'
+import TraceWaterfall from '../components/TraceWaterfall.vue'
 
 const events = ref([])
 const MAX = 500
@@ -42,6 +43,20 @@ function fmtTime(t) {
 function shortKind(k) {
   return k.replace('request.', '').replace('.', ' ')
 }
+
+// Waterfall dialog: click a #traceId chip to open the span tree for
+// that trace. Truncating the displayed id keeps the list readable while
+// the full id rides along on the click handler for the fetch.
+const selectedTraceId = ref(null)
+function openTrace(id, ev) {
+  if (ev) { ev.stopPropagation() }
+  if (!id) return
+  selectedTraceId.value = id
+}
+function shortTrace(id) {
+  if (!id) return ''
+  return id.length > 8 ? id.slice(0, 8) : id
+}
 </script>
 
 <template>
@@ -78,7 +93,7 @@ function shortKind(k) {
         :class="[e.kind.replace('.', '-'), { err: e.error }]"
       >
         <span class="ts">{{ fmtTime(e.timestamp) }}</span>
-        <span class="trace">#{{ e.traceId }}</span>
+        <button class="trace" :title="e.traceId" @click="openTrace(e.traceId, $event)">#{{ shortTrace(e.traceId) }}</button>
         <span class="kind">{{ shortKind(e.kind) }}</span>
         <span v-if="e.method" class="method">{{ e.method }}</span>
         <span v-if="e.path" class="path">{{ e.path }}</span>
@@ -92,6 +107,11 @@ function shortKind(k) {
       </div>
       <div v-if="!filtered.length" class="empty">No events yet. Trigger a request to see traces here.</div>
     </div>
+    <TraceWaterfall
+      :open="!!selectedTraceId"
+      :trace-id="selectedTraceId"
+      @close="selectedTraceId = null"
+    />
   </div>
 </template>
 
@@ -172,9 +192,22 @@ header {
 .trace {
   color: var(--accent);
   font-weight: 600;
-  width: 48px;
+  width: 96px;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.trace:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: var(--accent-hover);
 }
 .kind {
   color: var(--text-dim);

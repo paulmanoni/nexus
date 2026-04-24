@@ -6,6 +6,7 @@ package dashboard
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -103,8 +104,106 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 	}
 	if bus != nil {
 		g.GET("/events", streamEvents(bus))
+		g.GET("/traces/:id", traceByID(bus))
 	}
 	mountUI(g)
+}
+
+// traceSpan is one node in the waterfall. Times are relative to the trace's
+// earliest event so the UI can render bars without knowing absolute clock.
+type traceSpan struct {
+	SpanID     string         `json:"spanId"`
+	ParentID   string         `json:"parentId,omitempty"`
+	Name       string         `json:"name"`
+	Kind       string         `json:"kind"`
+	Service    string         `json:"service,omitempty"`
+	Endpoint   string         `json:"endpoint,omitempty"`
+	Transport  string         `json:"transport,omitempty"`
+	StartMs    int64          `json:"startMs"`
+	DurationMs int64          `json:"durationMs"`
+	Status     int            `json:"status,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	Remote     bool           `json:"remote,omitempty"`
+	Attrs      map[string]any `json:"attrs,omitempty"`
+}
+
+// traceByID reconstructs a span tree from the ring buffer. Merges
+// request.start / request.end (the root) and span.start / span.end (children)
+// into one node per SpanID. Events without a SpanID (e.g. KindDownstream
+// markers) are skipped — they'd have no bar to render.
+func traceByID(bus *trace.Bus) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		events := bus.SnapshotByTrace(id)
+		if len(events) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "trace not found"})
+			return
+		}
+		base := events[0].Timestamp
+		for _, e := range events {
+			if !e.Timestamp.IsZero() && e.Timestamp.Before(base) {
+				base = e.Timestamp
+			}
+		}
+		spans := map[string]*traceSpan{}
+		for _, e := range events {
+			if e.SpanID == "" {
+				continue
+			}
+			node, ok := spans[e.SpanID]
+			if !ok {
+				node = &traceSpan{
+					SpanID:   e.SpanID,
+					ParentID: e.ParentID,
+					Service:  e.Service,
+					Endpoint: e.Endpoint,
+					Remote:   e.Remote,
+				}
+				spans[e.SpanID] = node
+			}
+			if e.Name != "" {
+				node.Name = e.Name
+			}
+			if e.Transport != "" {
+				node.Transport = e.Transport
+			}
+			switch e.Kind {
+			case trace.KindRequestStart, trace.KindSpanStart:
+				node.Kind = string(e.Kind)
+				if !e.Timestamp.IsZero() {
+					node.StartMs = e.Timestamp.Sub(base).Milliseconds()
+				}
+				if e.Meta != nil {
+					node.Attrs = e.Meta
+				}
+			case trace.KindRequestEnd, trace.KindSpanEnd:
+				node.DurationMs = e.DurationMs
+				if e.Error != "" {
+					node.Error = e.Error
+				}
+				if e.Status != 0 {
+					node.Status = e.Status
+				}
+				if e.Meta != nil {
+					node.Attrs = e.Meta
+				}
+			}
+			if node.Name == "" {
+				node.Name = e.Endpoint
+			}
+		}
+		out := make([]*traceSpan, 0, len(spans))
+		for _, s := range spans {
+			out = append(out, s)
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].StartMs != out[j].StartMs {
+				return out[i].StartMs < out[j].StartMs
+			}
+			return out[i].SpanID < out[j].SpanID
+		})
+		c.JSON(http.StatusOK, gin.H{"traceId": id, "spans": out})
+	}
 }
 
 // mountRateLimits serves the rate-limit introspection + override surface:

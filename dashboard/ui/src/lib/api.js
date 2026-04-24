@@ -110,6 +110,18 @@ export async function invalidateAuth(body) {
   return r.json()
 }
 
+// fetchTrace returns { traceId, spans: [...] } for a single trace. Spans
+// carry { spanId, parentId, name, kind, service, endpoint, startMs,
+// durationMs, status, error, remote, attrs } — startMs is relative to the
+// trace's earliest event so the waterfall renders without knowing absolute
+// clock. 404 ⇒ the trace has aged out of the ring buffer.
+export async function fetchTrace(traceId) {
+  const r = await fetch(`/__nexus/traces/${encodeURIComponent(traceId)}`)
+  if (r.status === 404) return null
+  if (!r.ok) throw new Error(`trace ${traceId}: ${r.status}`)
+  return r.json()
+}
+
 export async function fetchStats() {
   const r = await fetch('/__nexus/stats')
   if (!r.ok) throw new Error(`stats: ${r.status}`)
