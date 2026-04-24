@@ -1888,7 +1888,7 @@ func (r *UnifiedResolver[T]) generatePaginatedType() *graphql.Object {
 }
 
 func (r *UnifiedResolver[T]) generateInputObject(inputType interface{}, name string) *graphql.InputObject {
-	// Check if input type already exists in registry
+	// Fast path: already registered.
 	inputTypeRegistryMu.RLock()
 	if existingType, exists := inputTypeRegistry[name]; exists {
 		inputTypeRegistryMu.RUnlock()
@@ -1896,29 +1896,34 @@ func (r *UnifiedResolver[T]) generateInputObject(inputType interface{}, name str
 	}
 	inputTypeRegistryMu.RUnlock()
 
-	// Create new input type
-	inputTypeRegistryMu.Lock()
-	defer inputTypeRegistryMu.Unlock()
-
-	// Double-check in case another goroutine created it
-	if existingType, exists := inputTypeRegistry[name]; exists {
-		return existingType
-	}
-
 	t := reflect.TypeOf(inputType)
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 
+	// Build the InputObject with a Fields thunk so nested struct
+	// lookups happen lazily — crucially, OUTSIDE any write lock we
+	// hold. Calling generateInputFields under the write lock
+	// dead-locks when the struct contains a nested struct/slice-of-
+	// struct, because that nested lookup takes a read lock on the
+	// same mutex.
 	gen := NewFieldGenerator[any]()
-	fields := gen.generateInputFields(t)
-
+	capturedType := t
 	newInputType := graphql.NewInputObject(graphql.InputObjectConfig{
-		Name:   name,
-		Fields: fields,
+		Name: name,
+		Fields: (graphql.InputObjectConfigFieldMapThunk)(func() graphql.InputObjectConfigFieldMap {
+			return gen.generateInputFields(capturedType)
+		}),
 	})
 
-	// Register the input type
+	// Register under the write lock. If a concurrent caller beat us
+	// to it, discard ours and return the established entry so every
+	// caller sees the same *graphql.InputObject pointer.
+	inputTypeRegistryMu.Lock()
+	defer inputTypeRegistryMu.Unlock()
+	if existingType, exists := inputTypeRegistry[name]; exists {
+		return existingType
+	}
 	inputTypeRegistry[name] = newInputType
 	return newInputType
 }
