@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
 )
 
@@ -18,12 +19,19 @@ type callInput struct {
 	Ctx    context.Context
 	Source any
 	Info   graphql.ResolveInfo
+	// GinCtx is set by the REST transport for handlers that take a
+	// *gin.Context parameter — lets them reach body / path / query /
+	// header parsing helpers (multipart file upload, custom status
+	// codes, c.Param("...") etc.) while still participating in the
+	// reflective registration shape.
+	GinCtx *gin.Context
 }
 
 // Special parameter types recognized by the reflective handler shape. These
 // are filled in by the framework at call time rather than fx-injected.
 var (
 	contextType      = reflect.TypeOf((*context.Context)(nil)).Elem()
+	ginContextType   = reflect.TypeOf((*gin.Context)(nil))
 	paramsMarkerType = reflect.TypeOf((*nexusParamsMarker)(nil)).Elem()
 )
 
@@ -48,6 +56,7 @@ const (
 	paramCtx
 	paramArgs
 	paramParams
+	paramGinCtx // filled from callInput.GinCtx (REST transport only)
 )
 
 type paramSlot struct {
@@ -134,6 +143,12 @@ func inspectHandler(fn any) (handlerShape, error) {
 		case sh.funcType.In(i) == contextType:
 			sh.slots[i] = paramSlot{kind: paramCtx}
 			sh.hasCtx = true
+		case sh.funcType.In(i) == ginContextType:
+			// *gin.Context — REST-only. GraphQL resolvers don't have
+			// a Gin context available; callHandler leaves the slot nil
+			// in that case which would panic on first use, which is the
+			// right signal to the author that the handler is REST-only.
+			sh.slots[i] = paramSlot{kind: paramGinCtx}
 		default:
 			sh.slots[i] = paramSlot{kind: paramDep, depPos: len(sh.depTypes)}
 			sh.depTypes = append(sh.depTypes, sh.funcType.In(i))
@@ -209,6 +224,15 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 			in[i] = args
 		case paramParams:
 			in[i] = paramsVal
+		case paramGinCtx:
+			if ci.GinCtx == nil {
+				// REST wasn't the caller — hand a typed nil so the
+				// handler can guard with `if c == nil { ... }` rather
+				// than panic on an unexpected invalid reflect.Value.
+				in[i] = reflect.Zero(ginContextType)
+			} else {
+				in[i] = reflect.ValueOf(ci.GinCtx)
+			}
 		}
 	}
 	out := sh.funcVal.Call(in)

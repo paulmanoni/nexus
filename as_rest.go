@@ -353,9 +353,19 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			args = ptr.Elem()
 		}
 
-		result, err := sh.callHandler(callInput{Ctx: c.Request.Context()}, deps, args)
+		result, err := sh.callHandler(callInput{
+			Ctx:    c.Request.Context(),
+			GinCtx: c, // available to handlers that take *gin.Context as a param
+		}, deps, args)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		// A handler that takes *gin.Context may have already written the
+		// response itself (custom status codes, streamed body, etc.).
+		// Skip the automatic success write in that case to avoid clobbering
+		// the handler's own reply.
+		if c.Writer.Written() {
 			return
 		}
 		if sh.resultIdx < 0 {
