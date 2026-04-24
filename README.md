@@ -9,15 +9,18 @@ func main() {
     nexus.Run(
         nexus.Config{Addr: ":8080", EnableDashboard: true},
         nexus.ProvideResources(NewMainDB, NewCacheManager),
+        auth.Module(auth.Config{Resolve: resolveBearer}),
         advertsModule,
+        nexus.AsWorker("cache-invalidation", NewCacheInvalidationWorker),
     )
 }
 
 var advertsModule = nexus.Module("adverts",
-    nexus.Provide(NewAdvertsService),
+    nexus.ProvideService(NewAdvertsService),
     nexus.AsQuery(NewGetAllAdverts),
     nexus.AsMutation(NewCreateAdvert,
-        nexus.Middleware("auth", "Bearer token", AuthMiddleware),
+        auth.Required(),
+        auth.Requires("ROLE_CREATE_ADVERT"),
         nexus.Use(ratelimit.NewMiddleware(store, "adverts.createAdvert",
             ratelimit.Limit{RPM: 30, Burst: 5})),
     ),
@@ -29,8 +32,11 @@ No fx import. No schema assembly. No middleware plumbing. The handler is plain G
 ## Highlights
 
 - **Reflective controllers** — write `func(svc, deps..., args) (*T, error)`; nexus's `AsRest` / `AsQuery` / `AsMutation` introspect the signature and wire the transport. No `graph.NewResolver[T](...).With...` boilerplate.
+- **Module-first architecture view** — `nexus.Module("name", opts...)` groups endpoints as one card on the dashboard; services appear as typed *dependency nodes* that both handlers and service constructors can point at. `nexus.ProvideService` inspects the constructor's params and draws service → resource / service → service edges automatically.
+- **Built-in auth** — `auth.Module` ships a pluggable authentication surface (bearer / cookie / api-key extraction, cached identity resolution, per-op `auth.Required` / `auth.Requires(perms)` bundles, admin invalidation + live `auth.reject` trace events on the dashboard's Auth tab).
+- **Background workers** — `nexus.AsWorker` wraps long-lived listeners (DB LISTEN/NOTIFY, queue consumers, sweepers) with framework-owned lifecycle, ctx cancellation, panic recovery, and a card on the architecture view that shows their dep graph.
 - **One middleware API for three transports** — `middleware.Middleware` bundles a `gin.HandlerFunc` + `graph.FieldMiddleware` from a single definition; `nexus.Use(mw)` attaches it to any kind of endpoint.
-- **Live dashboard** — Architecture, Endpoints, Crons, Rate limits, Traces tabs. Traffic animations pulse on real requests. Error dialog shows recent errors with IP + timestamp (scales to 1000 events via virtualized scrolling).
+- **Live dashboard** — Architecture, Endpoints, Crons, Rate limits, Auth, Traces tabs. Traffic animations pulse on real requests — inbound lanes, per-op resource edges, and service-level edges all light up in sync. Error dialog shows recent errors with IP + timestamp (scales to 1000 events via virtualized scrolling).
 - **Per-op observability, free** — every handler gets a request + error counter and streams a `request.op` event, all without any user code.
 - **Layered rate limiting** — global (engine-root gin middleware) + per-op (graph field middleware), hot-swappable from the dashboard at runtime.
 - **Cross-transport cron jobs** — schedule bare handlers; control (pause/resume/trigger-now) lives on the dashboard.
@@ -122,14 +128,17 @@ Option builders:
 
 | Option | Produces |
 |---|---|
-| `nexus.Module(name, opts...)` | Named group of options. Ordered group in fx logs. |
+| `nexus.Module(name, opts...)` | Named group of options. Stamps module name onto every endpoint for the architecture view. |
 | `nexus.Provide(fns...)` | Constructor(s) into the dep graph. |
+| `nexus.ProvideService(fn)` | Provide + introspect: detects resource / service deps from the constructor's params and records them for the Architecture view. |
+| `nexus.ProvideResources(fns...)` | Like Provide, but auto-registers resources via `NexusResourceProvider`. |
 | `nexus.Supply(vals...)` | Ready-made values into the dep graph. |
 | `nexus.Invoke(fn)` | Side-effect at start-up; receives deps via function params. |
-| `nexus.ProvideResources(fns...)` | Like Provide, but auto-registers resources via `NexusResourceProvider`. |
 | `nexus.AsRest(method, path, fn, opts...)` | REST endpoint from a reflective handler. |
 | `nexus.AsQuery(fn, opts...)` / `AsMutation(fn, opts...)` | GraphQL op, auto-mounted by the framework. |
+| `nexus.AsWorker(name, fn)` | Long-lived background task; framework manages lifecycle + records status. |
 | `nexus.Use(middleware.Middleware)` | Cross-transport middleware — works on REST + GraphQL. |
+| `auth.Module(auth.Config{Resolve: ...})` | Built-in auth surface: extraction + cached resolution + per-op enforcement bundles. |
 
 ### Reflective handlers
 
@@ -233,6 +242,109 @@ Every op automatically gets:
 
 The Architecture tab shows `⚡N` (request count) and `⚠N` (errors) chips per op. Click the error chip → paginated dialog with filter over IP/message + virtualized scrolling that stays snappy at thousands of events.
 
+### Auth (built-in)
+
+`auth.Module` owns the plumbing — token extraction, identity caching, per-op enforcement, context propagation — and leaves *resolution* (token → Identity) as the single plug you wire:
+
+```go
+import "github.com/paulmanoni/nexus/auth"
+
+nexus.Run(nexus.Config{...},
+    auth.Module(auth.Config{
+        // Required: turn a raw token into an Identity.
+        Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {
+            u, err := myAPI.ValidateToken(ctx, tok)
+            if err != nil { return nil, err }
+            return &auth.Identity{
+                ID:    u.ID,
+                Roles: u.Roles,
+                Extra: u,   // user-defined payload, typed-accessible later
+            }, nil
+        },
+        Cache: auth.CacheFor(15 * time.Minute),
+
+        // Optional: match your existing error envelope
+        OnUnauthenticated: func(c *gin.Context, err error) {
+            c.AbortWithStatusJSON(401, pkg.Response[any]{Success: false, Message: "UnAuthorized"})
+        },
+    }),
+    advertsModule,
+)
+```
+
+Per-op gating (cross-transport):
+
+```go
+nexus.AsMutation(NewCreateAdvert,
+    auth.Required(),                         // 401 if no identity
+    auth.Requires("ROLE_CREATE_ADVERT"),     // 403 if missing permission
+)
+```
+
+Resolver access:
+
+```go
+func NewListAdverts(db *MainDB, p nexus.Params[struct{}]) (*Response, error) {
+    user, ok := auth.User[MyUser](p.Context)
+    if !ok {
+        // Required() would have caught this earlier, but a direct
+        // check is idiomatic for handlers using auth.Optional().
+    }
+    return fetch(p.Context, db, user.ID)
+}
+```
+
+Token extraction strategies ship ready-made — `auth.Bearer()`, `auth.Cookie(name)`, `auth.APIKey(header)`, `auth.Chain(...)` — plus the typed `auth.User[T]` generic accessor, `auth.AnyOf`/`auth.AllOf` permission helpers, and a `*auth.Manager` handle (fx-injected) for logout flows:
+
+```go
+func NewLogoutHandler(am *auth.Manager) func(context.Context, nexus.Params[TokenArgs]) (OK, error) {
+    return func(ctx context.Context, p nexus.Params[TokenArgs]) (OK, error) {
+        am.Invalidate(p.Args.Token)         // single-session logout
+        // or am.InvalidateByIdentity(userID) → sweeps every cached session for that user
+        return OK{}, nil
+    }
+}
+```
+
+Dashboard's Auth tab renders the cached identity table, recent 401/403 rejections (live via `auth.reject` trace events), and per-row "invalidate" buttons — all driven off `GET /__nexus/auth` + `POST /__nexus/auth/invalidate`.
+
+### Workers
+
+`nexus.AsWorker` wraps long-lived background tasks (DB `LISTEN`/`NOTIFY` loops, queue consumers, sweepers) with framework-owned lifecycle:
+
+```go
+nexus.AsWorker("cache-invalidation",
+    func(ctx context.Context, db *OatsDB, cache *CacheManager, logger *zap.Logger) error {
+        // Wait for dependencies to come up
+        for !db.IsConnected() {
+            select {
+            case <-ctx.Done(): return ctx.Err()
+            case <-time.After(time.Second):
+            }
+        }
+
+        listener := pq.NewListener(db.ConnectionString(), 10*time.Second, time.Minute, nil)
+        defer listener.Close()
+        if err := listener.Listen("cache_invalidation"); err != nil { return err }
+
+        for {
+            select {
+            case <-ctx.Done():
+                return nil                  // clean stop on fx.Stop
+            case n := <-listener.Notify:
+                handleInvalidation(ctx, cache, n)
+            }
+        }
+    })
+```
+
+The framework starts the function on its own goroutine at `fx.Start`, cancels `ctx` at `fx.Stop`, recovers panics, and records `Status` / `LastError` on the registry. The worker appears as a dedicated card on the Architecture view with its dep graph (resources + services it took as params) drawn as outgoing edges — same visual language as services.
+
+Signature requirements:
+- First param MUST be `context.Context`.
+- Remaining params are fx-injected deps (resources, services, loggers, whatever's in the graph).
+- Optional `error` return sets `LastError` on the registry; `context.Canceled` / `nil` is a clean stop.
+
 ### Cron jobs
 
 ```go
@@ -256,14 +368,15 @@ _ = mgr.Set(ctx, "k", value, 5*time.Minute)
 
 ## Dashboard
 
-Mounted at `/__nexus/` when `EnableDashboard: true`. Five tabs:
+Mounted at `/__nexus/` when `EnableDashboard: true`. Six tabs:
 
 | Tab | What it shows |
 |---|---|
-| **Architecture** | Service topology with external "Clients" node, dashed system boundary, per-op edges with resource + middleware chips. Packets fly from Clients to the specific op row on live traffic (green for success, red ✕ for rejections). |
+| **Architecture** | Module containers + endpoints, service-dep nodes, worker cards, resource nodes, external "Clients" node, dashed system boundary. Per-op and service-level edges both pulse on live traffic (green for success, red ✕ for rejections). |
 | **Endpoints** | REST path and GraphQL op-name list; per-endpoint tester (curl + Playground for GraphQL), arg validators rendered as chips. |
 | **Crons** | Schedule table, pause/resume, trigger-now. |
 | **Rate limits** | Declared vs effective limit per endpoint, inline edit (RPM/burst/perIP) with save/reset. |
+| **Auth** | Cached identities (redacted tokens), live 401/403 stream, per-identity invalidation. Renders a "not configured" prompt when `auth.Module` isn't wired. |
 | **Traces** | WebSocket stream of request events, filterable. |
 
 Tab selection persists via `?tab=` in the URL — shareable, bookmarkable, survives refresh.
@@ -294,8 +407,9 @@ HTTP surface:
 | Route | Returns |
 |---|---|
 | `GET  /__nexus/` | Embedded Vue UI |
-| `GET  /__nexus/endpoints` | Services + endpoints |
+| `GET  /__nexus/endpoints` | Services + endpoints (services carry `ResourceDeps` / `ServiceDeps` from `ProvideService`) |
 | `GET  /__nexus/resources` | Resource snapshots (health probed live) |
+| `GET  /__nexus/workers` | `AsWorker` registrations + live Status / LastError / deps |
 | `GET  /__nexus/middlewares` | `{ middlewares: [...], global: [ordered names] }` |
 | `GET  /__nexus/stats` | Per-endpoint counters (RecentErrors stripped) |
 | `GET  /__nexus/stats/:service/:op/errors` | Full error ring for one endpoint |
@@ -303,7 +417,9 @@ HTTP surface:
 | `POST /__nexus/ratelimits/:service/:op` | Override a limit |
 | `DELETE /__nexus/ratelimits/:service/:op` | Reset to declared |
 | `GET  /__nexus/crons`, `POST /.../:name/{trigger,pause,resume}` | Cron control |
-| `GET  /__nexus/events` | WebSocket: trace + `request.op` events |
+| `GET  /__nexus/auth` | `{ identities, cachingEnabled }` — cached auth state |
+| `POST /__nexus/auth/invalidate` | Body `{id?|token?}` → drops cache entries (`{dropped: N}`) |
+| `GET  /__nexus/events` | WebSocket: trace + `request.op` + `auth.reject` events |
 
 ### Developing the UI
 
@@ -356,9 +472,10 @@ go run ./examples/graphapp
 ## Package layout
 
 ```
-nexus/                top-level App, Run, Module, Provide, Use, Cron, options
+nexus/                top-level App, Run, Module, Provide, ProvideService, AsWorker, Use, Cron, options
+├── auth/             built-in authentication surface (extractors, identity cache, per-op bundles, dashboard routes)
 ├── graph/            absorbed go-graph resolver builder + validators
-├── registry/         services, endpoints, resources, middleware metadata
+├── registry/         services, endpoints, resources, workers, middleware metadata
 ├── resource/         Database/Cache/Queue abstractions + health probing
 ├── trace/            ring-buffer bus + per-request middleware + op events
 ├── transport/
@@ -371,7 +488,7 @@ nexus/                top-level App, Run, Module, Provide, Use, Cron, options
 ├── cron/             scheduler, dashboard HTTP, event emission
 ├── cache/            Redis + in-memory hybrid (nexus uses it as a default)
 ├── multi/            N named instances behind .Using(name) (legacy pattern)
-├── db/               opinionated GORM helpers
+├── db/               opinionated GORM helpers (Manager.DB(ctx), ConnectionString, GetCtx)
 ├── dashboard/        /__nexus HTTP surface + embedded Vue UI
 └── examples/         runnable demos
 ```
