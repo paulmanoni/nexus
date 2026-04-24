@@ -42,6 +42,11 @@ type App struct {
 	cacheMgr      *cache.Manager
 	dashboardOn   bool
 	dashboardName string
+	// graphqlPath is the default mount path used by (*App).Service
+	// when AtGraphQL isn't called on the returned *Service. Empty
+	// means "/graphql" (the DefaultGraphQLPath const). Config.GraphQLPath
+	// and the WithGraphQLPath app option both write here.
+	graphqlPath string
 	// dashboardMw is the ordered list of gin.HandlerFunc realizations
 	// that guard /__nexus. WithDashboardMiddleware + Config.DashboardMiddleware
 	// populate it; Mount applies them to the route group.
@@ -75,6 +80,13 @@ func WithDashboard() AppOption {
 // /__nexus/config so the client picks it up without a rebuild.
 func WithDashboardName(name string) AppOption {
 	return func(a *App) { a.dashboardName = name }
+}
+
+// WithGraphQLPath overrides the default GraphQL mount path used by
+// services that don't call (*Service).AtGraphQL themselves. Empty
+// falls back to DefaultGraphQLPath ("/graphql").
+func WithGraphQLPath(path string) AppOption {
+	return func(a *App) { a.graphqlPath = path }
 }
 
 // WithRateLimitStore swaps the default in-memory rate-limit store for a

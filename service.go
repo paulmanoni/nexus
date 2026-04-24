@@ -48,7 +48,11 @@ const defaultServiceName = "app"
 
 func (a *App) Service(name string) *Service {
 	a.registry.RegisterService(registry.Service{Name: name})
-	return &Service{app: a, name: name, graphqlPath: DefaultGraphQLPath}
+	path := a.graphqlPath
+	if path == "" {
+		path = DefaultGraphQLPath
+	}
+	return &Service{app: a, name: name, graphqlPath: path}
 }
 
 // AtGraphQL overrides the GraphQL mount path for this service. Most apps
