@@ -497,12 +497,55 @@ monolith, deploy as N services with a single command. The lessons from
 Weaver's archival shape what nexus is *not* doing: no `Implements[T]`
 mixin, no rewrite tax, untagged modules stay exactly as they are today.
 
-**Currently shipping** (v0.9): `DeployAs` annotation, Config.Deployment +
-Version, dashboard surfaces.
-**Coming next**: codegen'd cross-module clients (`nexus gen clients`), a
-`nexus dev --split` runner that boots each tagged module as a localhost
-subprocess for testing the distributed semantics, peer-version skew
-warnings on first call.
+**Currently shipping** (v0.10): codegen'd cross-module clients via
+`nexus gen clients`, plus the `LocalInvoker` / `RemoteCaller` runtime
+they target. Generate one typed client per `DeployAs`-tagged module
+and consume it from any other module — the framework picks the
+local in-process path or the HTTP path at construction time based on
+the running binary's deployment.
+
+```go
+// users module — handlers as today
+nexus.AsRest("GET", "/users/:id", NewGet)
+
+// run codegen → users/zz_users_client_gen.go
+//   defines: type UsersClient interface { Get(ctx, args) (*User, error); ... }
+
+// checkout module — consume the typed client
+func NewCheckout(svc *Svc, u users.UsersClient, p Params[Args]) (...) {
+    user, err := u.Get(p.Context, users.GetArgs{ID: p.Args.UserID})
+    ...
+}
+```
+
+In monolith mode (no `NEXUS_DEPLOYMENT` set) the call routes through
+`LocalInvoker` — synthesizes an httptest request against the same Gin
+engine, so auth/rate-limit/metrics/trace all run identically to a
+real HTTP call. In split mode (`NEXUS_DEPLOYMENT=checkout-svc`) the
+generated client uses `RemoteCaller`, reading `USERS_SVC_URL` for the
+peer's base URL and stitching traces via W3C `traceparent` automatically.
+
+```bash
+# regenerate after handler-signature changes; idempotent
+nexus gen clients ./...
+
+# run the example
+go run ./examples/microsplit
+curl -X POST localhost:8080/checkout \
+     -H 'content-type: application/json' \
+     -d '{"userId":"u1","orderId":"o1"}'
+# → {"orderId":"o1","userId":"u1","display":"Alice"}
+```
+
+Failures from the peer surface as `*nexus.RemoteError` either way, so
+caller error handling doesn't fork by deployment shape. Add
+`//go:generate nexus gen clients ./...` at your project root to fold
+regeneration into `go generate ./...`.
+
+**Coming next**: a `nexus dev --split` runner that boots each tagged
+module as a localhost subprocess (testing distributed semantics
+without K8s), peer-version skew warnings on first call, GraphQL +
+WebSocket clients via the same generator.
 
 ## Dashboard
 
@@ -602,6 +645,7 @@ vegeta attack -rate=10000 -duration=30s -targets=targets.txt | vegeta report
 | `examples/graphapp` | GraphQL via reflective AsQuery/AsMutation, typed DB wrappers, rate limits, validators, metrics. |
 | `examples/wstest` | WebSocket echo playground (imperative `(*Service).WebSocket(...)` path). |
 | `examples/wsecho` | Typed WebSocket via `AsWS` — two message types on one path, envelope protocol, session fan-out. |
+| `examples/microsplit` | Two-module demo (`users` + `checkout`) showing cross-module calls via the generated client. Same code runs as monolith or split. |
 
 Run any example:
 ```bash

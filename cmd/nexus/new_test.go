@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-// TestScaffoldAndBuild exercises the scaffolder end-to-end: we generate a
-// fresh project into a temp dir, point it at the in-repo nexus via a replace
-// directive, run `go mod tidy`, and `go build .` to prove the generated
-// template compiles against the current framework. If this test breaks, it
-// means the scaffold is drifting away from the framework's public API.
+// TestScaffoldAndBuild exercises the scaffolder end-to-end: we generate
+// a fresh project into a temp dir, point it at the in-repo nexus via a
+// replace directive, run `go mod tidy`, and `go build .` to prove the
+// generated template compiles against the current framework. If this
+// test breaks, the scaffold is drifting from the public API.
 func TestScaffoldAndBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping build test in -short mode")
@@ -22,36 +22,29 @@ func TestScaffoldAndBuild(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not on PATH")
 	}
-
-	// Find the repo root (three dirs up from cmd/nexus/new_test.go) so the
-	// replace directive can point at a stable absolute path.
 	_, here, _, _ := runtime.Caller(0)
 	repoRoot, err := filepath.Abs(filepath.Join(filepath.Dir(here), "..", ".."))
 	if err != nil {
 		t.Fatalf("repo root: %v", err)
 	}
-	// Sanity: the repo root should contain nexus.go.
 	if _, err := os.Stat(filepath.Join(repoRoot, "nexus.go")); err != nil {
 		t.Fatalf("expected nexus.go at %s: %v", repoRoot, err)
 	}
 
 	dir := filepath.Join(t.TempDir(), "myapp")
-	var stdout, stderr bytes.Buffer
-	if err := cmdNew([]string{dir}, &stdout, &stderr); err != nil {
-		t.Fatalf("cmdNew: %v\nstderr: %s", err, stderr.String())
+	var stdout bytes.Buffer
+	if err := scaffold(dir, "", &stdout); err != nil {
+		t.Fatalf("scaffold: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Scaffolded") {
 		t.Fatalf("expected Scaffolded message, got: %q", stdout.String())
 	}
-
-	// Expected files must all land.
 	for _, name := range []string{"go.mod", "main.go", "module.go", ".gitignore", "README.md"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
 	}
 
-	// Point the scaffolded project at our in-repo nexus.
 	addReplace := exec.Command("go", "mod", "edit",
 		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
 		"-require", "github.com/paulmanoni/nexus@v0.0.0",
@@ -60,8 +53,6 @@ func TestScaffoldAndBuild(t *testing.T) {
 	if out, err := addReplace.CombinedOutput(); err != nil {
 		t.Fatalf("go mod edit: %v\n%s", err, out)
 	}
-
-	// `go mod tidy` then `go build` — the real compile-time contract test.
 	for _, step := range [][]string{
 		{"go", "mod", "tidy"},
 		{"go", "build", "."},
@@ -79,8 +70,8 @@ func TestScaffold_RejectsNonEmptyDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	err := cmdNew([]string{dir}, &stdout, &stderr)
+	var stdout bytes.Buffer
+	err := scaffold(dir, "", &stdout)
 	if err == nil {
 		t.Fatal("expected error for non-empty dir, got nil")
 	}
@@ -91,27 +82,35 @@ func TestScaffold_RejectsNonEmptyDir(t *testing.T) {
 
 func TestScaffold_InvalidModulePath(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "app")
-	var stdout, stderr bytes.Buffer
-	err := cmdNew([]string{"-module", "has a space", dir}, &stdout, &stderr)
+	var stdout bytes.Buffer
+	err := scaffold(dir, "has a space", &stdout)
 	if err == nil {
 		t.Fatal("expected error for bad module path, got nil")
 	}
 }
 
-func TestRun_Unknown(t *testing.T) {
+// TestCobra_VersionCommand asserts the cobra wiring routes the
+// `version` subcommand to its handler — guards against accidental
+// reorganization of the command tree dropping the brand line.
+func TestCobra_VersionCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := run([]string{"whatever"}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for unknown command")
-	}
-}
-
-func TestRun_Version(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"version"}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
+	root := newRootCmd(&stdout, &stderr)
+	root.SetArgs([]string{"version"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "nexus") {
 		t.Fatalf("version output missing brand: %q", stdout.String())
+	}
+}
+
+// TestCobra_UnknownCommand confirms cobra surfaces an error for typos.
+// This covers the same contract the old TestRun_Unknown test did.
+func TestCobra_UnknownCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	root := newRootCmd(&stdout, &stderr)
+	root.SetArgs([]string{"whatever"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("expected error for unknown command")
 	}
 }

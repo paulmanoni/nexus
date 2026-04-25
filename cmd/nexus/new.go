@@ -1,38 +1,41 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
-// cmdNew scaffolds a minimal nexus app in the given directory. The generated
-// project uses the reflective API (`nexus.AsRest` + module composition) so
-// running `go mod tidy && go run .` produces a working app with the dashboard
-// already mounted.
-func cmdNew(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("new", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	module := fs.String("module", "", "go.mod module path (default: derived from dir basename)")
-	if err := fs.Parse(args); err != nil {
-		return err
+// newNewCmd builds the `nexus new` subcommand. The cobra wrapper is
+// thin — all the real work lives in scaffold(), which is also driven
+// directly by the tests.
+func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
+	var modulePath string
+	cmd := &cobra.Command{
+		Use:   "new <dir>",
+		Short: "Scaffold a minimal nexus app",
+		Long: `Scaffold a runnable nexus app in <dir>.
+
+The generated project uses the reflective API (nexus.AsRest +
+nexus.Module) so 'go mod tidy && go run .' produces a working app
+with the dashboard already mounted at /__nexus/.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return scaffold(args[0], modulePath, stdout)
+		},
 	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: nexus new [-module path] <dir>")
-	}
-	dir := fs.Arg(0)
-	if err := scaffold(dir, *module, stdout); err != nil {
-		return err
-	}
-	return nil
+	cmd.Flags().StringVar(&modulePath, "module", "",
+		"go.mod module path (default: derived from <dir>'s basename)")
+	return cmd
 }
 
-// scaffold writes the skeleton files into dir. It refuses to touch an existing
-// non-empty directory — a misaimed `nexus new .` in someone's repo could clobber
-// live code otherwise.
+// scaffold writes the skeleton files into dir. It refuses to touch an
+// existing non-empty directory — a misaimed `nexus new .` in someone's
+// repo could clobber live code otherwise.
 func scaffold(dir, modulePath string, stdout io.Writer) error {
 	if dir == "" {
 		return fmt.Errorf("directory is required")
@@ -82,9 +85,9 @@ func scaffold(dir, modulePath string, stdout io.Writer) error {
 	return nil
 }
 
-// isValidModulePath is a loose check — enough to catch typos ("my app" with
-// spaces) without replicating the full spec. `go mod init` will still reject
-// anything subtly wrong; this is a pre-flight guard.
+// isValidModulePath is a loose check — enough to catch typos ("my app"
+// with spaces) without replicating the full spec. `go mod init` will
+// still reject anything subtly wrong; this is a pre-flight guard.
 func isValidModulePath(p string) bool {
 	if p == "" || strings.ContainsAny(p, " \t\n") {
 		return false
@@ -97,9 +100,9 @@ func isValidModulePath(p string) bool {
 	return true
 }
 
-// tmplGoMod writes a minimal go.mod with no pinned dependencies. The nexus
-// require lands when the user runs `go mod tidy` — this avoids baking in a
-// version that may not be published yet.
+// tmplGoMod writes a minimal go.mod with no pinned dependencies. The
+// nexus require lands when the user runs `go mod tidy` — this avoids
+// baking in a version that may not be published yet.
 func tmplGoMod(module string) string {
 	return fmt.Sprintf(`module %s
 
@@ -173,7 +176,7 @@ const tmplGitignore = `/bin/
 func tmplReadme(name string) string {
 	return fmt.Sprintf(`# %s
 
-Generated with ` + "`nexus new`" + `.
+Generated with `+"`nexus new`"+`.
 
 ## Run
 

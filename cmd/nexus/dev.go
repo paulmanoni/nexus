@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -13,59 +12,95 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
-// cmdDev boots the user's app with `go run`, prints a startup banner, and
-// opens the dashboard once the configured port responds. It's a niceness
-// wrapper — the user can always just `go run .` directly; `nexus dev` exists
-// so the common-case loop (run → open tab) is one command.
-func cmdDev(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("dev", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	addr := fs.String("addr", ":8080", "dashboard address to probe and open")
-	noOpen := fs.Bool("no-open", false, "don't auto-open the browser")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	target := "."
-	if fs.NArg() > 0 {
-		target = fs.Arg(0)
-	}
+// newDevCmd builds `nexus dev` — runs `go run` on the target package
+// with a startup banner and auto-opens the dashboard once the configured
+// port responds. Cobra wraps the runner.
+func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
+	var addr string
+	var noOpen bool
+	cmd := &cobra.Command{
+		Use:   "dev [dir]",
+		Short: "Run the app with go run + auto-open the dashboard",
+		Long: `Boot the user's app via 'go run', print a friendly banner, and
+auto-open the dashboard once the listen port responds.
 
-	fmt.Fprintf(stdout, "nexus dev: running %q (dashboard → %s)\n", target, dashboardURL(*addr))
+Use this instead of 'go run .' when you want one-command iteration. The
+dev runner kills the entire process group on SIGINT/SIGTERM so the
+compiled binary doesn't survive Ctrl-C as a zombie.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			target := "."
+			if len(args) > 0 {
+				target = args[0]
+			}
+			return runDev(target, addr, !noOpen, stdout, stderr)
+		},
+	}
+	cmd.Flags().StringVar(&addr, "addr", ":8080",
+		"dashboard address to probe and open")
+	cmd.Flags().BoolVar(&noOpen, "no-open", false,
+		"don't auto-open the browser when the port responds")
+	return cmd
+}
 
-	// Wire SIGINT/SIGTERM to the subprocess so Ctrl-C shuts the server down
-	// cleanly (otherwise `go run` receives the signal but the child binary
-	// it spawned keeps running until its own handler fires).
+// runDev is the dev-loop body. Separated from the cobra wrapper so the
+// happy path (start child → race signal vs natural exit → clean kill)
+// reads top-to-bottom without being interleaved with flag parsing.
+func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) error {
+	fmt.Fprintf(stdout, "nexus dev: running %q (dashboard → %s)\n", target, dashboardURL(addr))
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cmd := exec.CommandContext(ctx, "go", "run", target)
+	// We deliberately do NOT use exec.CommandContext: that cancels by
+	// killing only the direct child PID — the `go` process — leaving
+	// the compiled binary `go run` exec'd as an orphan that keeps the
+	// listening port bound. Instead we manage shutdown explicitly via
+	// the process group below so the binary actually dies on Ctrl-C.
+	cmd := exec.Command("go", "run", target)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
-	// Propagate signals to the whole process group so gin's own shutdown
-	// handlers run (Darwin + Linux only; harmless no-op elsewhere).
 	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start `go run %s`: %w", target, err)
 	}
 
-	// Probe the port in the background; open the browser as soon as we
-	// get a TCP handshake. Give up after 30s to avoid hanging forever on
-	// a handler-less app.
-	if !*noOpen {
-		go waitAndOpen(ctx, *addr, stdout)
+	if openOnReady {
+		go waitAndOpen(ctx, addr, stdout)
 	}
 
-	err := cmd.Wait()
-	// Exit code 0 on clean shutdown (SIGINT/SIGTERM is expected here),
-	// non-zero on a real crash.
-	if err != nil && ctx.Err() == nil {
-		return fmt.Errorf("app exited: %w", err)
+	// Wait in a goroutine so the main goroutine can race the user's
+	// signal against the child's natural exit.
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	select {
+	case err := <-exited:
+		// Child terminated on its own (build error, panic, normal exit).
+		if err != nil {
+			return fmt.Errorf("app exited: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		// User interrupted — kill the whole process group so the
+		// compiled binary dies along with the `go` wrapper. SIGTERM
+		// first to give shutdown handlers (HTTP graceful close, fx
+		// hooks) a chance, then SIGKILL after a short grace period.
+		_ = killProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+			_ = killProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+			<-exited
+		}
+		return nil
 	}
-	return nil
 }
 
 // waitAndOpen polls addr every 200ms until it accepts a connection, then

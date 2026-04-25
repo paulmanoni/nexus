@@ -1,77 +1,71 @@
-// Command nexus is the developer CLI for the nexus framework. It is a thin
-// wrapper around a few common tasks — scaffolding a project, booting it with
-// a friendly banner — that don't warrant pulling in a heavy CLI library.
+// Command nexus is the developer CLI for the nexus framework. The
+// command surface is built on spf13/cobra so subcommand help, flag
+// parsing, completion, and grouping behave the way Go developers
+// expect from kubectl/hugo/cobra-using tools they already know.
 //
 // Install:
 //
 //	go install github.com/paulmanoni/nexus/cmd/nexus@latest
 //
-// Commands:
+// Subcommands:
 //
-//	nexus new <dir>   Scaffold a minimal nexus app (go.mod + main.go + a module).
-//	nexus dev [dir]   Run `go run` on the target package and open the dashboard.
-//	nexus version     Print the CLI version.
+//	nexus new <dir>       Scaffold a minimal nexus app.
+//	nexus dev [dir]       Run `go run` on the target package, open the dashboard.
+//	nexus gen clients     Generate cross-module client stubs (DeployAs-tagged modules).
+//	nexus version         Print the CLI version.
 package main
 
 import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
-// Version is stamped in at release time via -ldflags. Defaults to "dev" so
-// unreleased builds (`go run ./cmd/nexus ...`) still produce meaningful output.
+// Version is stamped in at release time via -ldflags. Defaults to "dev"
+// so unreleased builds (`go run ./cmd/nexus ...`) still produce
+// meaningful output.
 var Version = "dev"
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "nexus:", err)
+	if err := newRootCmd(os.Stdout, os.Stderr).Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-// run is the entry point separated from main() so tests can drive the
-// CLI without shelling out (they pass custom argv + stdout/stderr).
-func run(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		printUsage(stderr)
-		return fmt.Errorf("missing command")
+// newRootCmd builds the cobra command tree. Factored out so tests can
+// drive the CLI in-process with their own stdout/stderr; main() just
+// wires it to os.* and runs.
+func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
+	root := &cobra.Command{
+		Use:   "nexus",
+		Short: "Developer CLI for the nexus framework",
+		Long: `nexus is a developer CLI for the nexus Go framework.
+
+Run a single binary as a monolith or split it into independent services
+with the same commands. Each subcommand is documented under nexus help <cmd>.`,
+		SilenceUsage:  true, // cobra already prints errors; no double-printing usage on every error
+		SilenceErrors: false,
 	}
-	switch args[0] {
-	case "new":
-		return cmdNew(args[1:], stdout, stderr)
-	case "dev":
-		return cmdDev(args[1:], stdout, stderr)
-	case "version", "--version", "-v":
-		fmt.Fprintln(stdout, "nexus", Version)
-		return nil
-	case "help", "--help", "-h":
-		printUsage(stdout)
-		return nil
-	default:
-		printUsage(stderr)
-		return fmt.Errorf("unknown command %q", args[0])
-	}
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+
+	root.AddCommand(
+		newVersionCmd(stdout),
+		newNewCmd(stdout, stderr),
+		newDevCmd(stdout, stderr),
+		newGenCmd(stdout, stderr),
+	)
+	return root
 }
 
-func printUsage(w io.Writer) {
-	fmt.Fprint(w, `nexus — developer CLI for the nexus framework.
-
-Usage:
-  nexus <command> [args]
-
-Commands:
-  new <dir>      Scaffold a minimal nexus app in <dir>.
-  dev [dir]      Run the app (go run) with a boot banner and open the dashboard.
-                 <dir> defaults to the current directory.
-  version        Print the CLI version.
-  help           Show this help.
-
-Flags (scoped per command):
-  nexus new  -module <path>     Override the go.mod module path
-                                (default: derived from <dir>'s basename).
-  nexus dev  -addr <host:port>  Dashboard address to probe and open
-                                (default: :8080).
-             -no-open           Don't auto-open the browser.
-`)
+func newVersionCmd(stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the CLI version",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintln(stdout, "nexus", Version)
+		},
+	}
 }
