@@ -22,12 +22,18 @@ type UsersClient interface {
 // running binary:
 //   - In-process LocalInvoker when this binary owns the "users-svc"
 //     deployment, OR when no deployment is set (monolith mode).
-//   - HTTP RemoteCaller reading USERS_SVC_URL otherwise.
+//   - HTTP RemoteCaller reading USERS_SVC_URL otherwise. The local
+//     binary's version is threaded in so RemoteCaller can detect
+//     peer-version skew on the first call (single warning line, no
+//     fail-fast).
 func NewUsersClient(app *nexus.App) UsersClient {
 	if dep := app.Deployment(); dep == "" || dep == "users-svc" {
 		return &usersClientLocal{inv: nexus.NewLocalInvoker(app)}
 	}
-	return &usersClientRemote{r: nexus.NewRemoteCallerFromEnv("USERS_SVC_URL")}
+	return &usersClientRemote{r: nexus.NewRemoteCallerFromEnv(
+		"USERS_SVC_URL",
+		nexus.WithLocalVersion(app.Version()),
+	)}
 }
 
 type usersClientLocal struct{ inv *nexus.LocalInvoker }

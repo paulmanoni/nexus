@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,8 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -102,8 +106,14 @@ func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) err
 	// listening port bound. Instead we manage shutdown explicitly via
 	// the process group below so the binary actually dies on Ctrl-C.
 	cmd := exec.Command("go", "run", target)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	// Tee stdout/stderr through addrFinder so we can detect the
+	// actual bind address from gin's "Listening and serving HTTP on
+	// :PORT" line. The user's own Config.Addr trumps our --addr flag
+	// — without this scan, the banner would point at the flag's
+	// guess (default :8080) when the user wrote :8083.
+	detectedCh := make(chan string, 1)
+	cmd.Stdout = newAddrFinder(stdout, detectedCh)
+	cmd.Stderr = newAddrFinder(stderr, detectedCh)
 	cmd.Stdin = os.Stdin
 	setProcessGroup(cmd)
 
@@ -114,7 +124,7 @@ func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) err
 	// waitAndOpen runs even when --no-open is set so the user still
 	// gets the green "ready" line — only the browser launch is gated
 	// on openOnReady.
-	go waitAndOpen(ctx, addr, openOnReady, stdout)
+	go waitAndOpen(ctx, addr, openOnReady, stdout, detectedCh)
 
 	// Wait in a goroutine so the main goroutine can race the user's
 	// signal against the child's natural exit.
@@ -144,31 +154,134 @@ func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) err
 	}
 }
 
-// waitAndOpen polls addr every 200ms until it accepts a connection, then
-// opens the dashboard. Bounded by timeout so a broken app doesn't hang
-// this goroutine forever.
-func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady bool, stdout io.Writer) {
-	deadline := time.Now().Add(30 * time.Second)
-	probe := normalizeProbeAddr(addr)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return
-		default:
+// waitAndOpen produces the "ready" line and (optionally) opens the
+// dashboard once the app is up. Two signals race:
+//
+//  1. The user's Config.Addr — captured by addrFinder from gin's
+//     "Listening and serving HTTP on :PORT" log line. Authoritative.
+//  2. A periodic probe of the --addr flag value. Fallback for apps
+//     that don't print a recognizable listen line (custom routers,
+//     fasthttp, etc.).
+//
+// If detection fires and the address differs from what the user passed
+// as --addr, we surface a correction line — a misleading banner is
+// the symptom that drove this code, so making the discrepancy
+// visible is part of the fix.
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady bool, stdout io.Writer, detectedCh <-chan string) {
+	flagAddr := normalizeProbeAddr(addr)
+
+	probeOnce := func(target string) bool {
+		conn, err := net.DialTimeout("tcp", target, 200*time.Millisecond)
+		if err != nil {
+			return false
 		}
-		conn, err := net.DialTimeout("tcp", probe, 200*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			url := dashboardURL(addr)
-			printReadyLine(stdout, url, openBrowserOnReady)
-			if openBrowserOnReady {
-				_ = openBrowser(url)
+		conn.Close()
+		return true
+	}
+	probeFlagAddr := func() bool {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-ticker.C:
+				if probeOnce(flagAddr) {
+					return true
+				}
 			}
+		}
+		return false
+	}
+
+	flagDone := make(chan bool, 1)
+	go func() { flagDone <- probeFlagAddr() }()
+
+	var ready string
+	select {
+	case <-ctx.Done():
+		return
+	case detected := <-detectedCh:
+		ready = detected
+	case ok := <-flagDone:
+		if !ok {
 			return
 		}
-		time.Sleep(200 * time.Millisecond)
+		ready = addr
+	}
+
+	// If gin reported a bind that doesn't match --addr, surface the
+	// difference once so the user knows the banner's --addr was just
+	// a guess. Default flag values are intentionally suppressed
+	// — only print when a real mismatch shows up.
+	if normalizeProbeAddr(ready) != flagAddr {
+		fmt.Fprintf(stdout, "\n  %s→ %sbound on %s%s%s %s(--addr was %s)%s\n",
+			ansiDim, ansiReset, ansiBold, ready, ansiReset, ansiDim, addr, ansiReset)
+	}
+
+	url := dashboardURL(ready)
+	printReadyLine(stdout, url, openBrowserOnReady)
+	if openBrowserOnReady {
+		_ = openBrowser(url)
 	}
 }
+
+// addrFinder wraps an io.Writer to scan child output line-by-line
+// for gin's "Listening and serving HTTP on :PORT" message. On first
+// match, sends the address (e.g. ":8083") on ch and stops scanning;
+// every subsequent write passes through verbatim.
+type addrFinder struct {
+	w    io.Writer
+	ch   chan<- string
+	mu   sync.Mutex
+	buf  []byte
+	done atomic.Bool
+}
+
+func newAddrFinder(w io.Writer, ch chan<- string) *addrFinder {
+	return &addrFinder{w: w, ch: ch}
+}
+
+func (a *addrFinder) Write(p []byte) (int, error) {
+	n, err := a.w.Write(p)
+	if a.done.Load() {
+		return n, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.buf = append(a.buf, p...)
+	for {
+		i := bytes.IndexByte(a.buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := a.buf[:i]
+		a.buf = a.buf[i+1:]
+		if m := ginListenRE.FindSubmatch(line); m != nil {
+			if !a.done.Swap(true) {
+				select {
+				case a.ch <- string(m[1]):
+				default:
+				}
+			}
+			a.buf = nil
+			break
+		}
+	}
+	return n, err
+}
+
+// ginListenRE matches the framework's own startup announcement plus
+// gin's debug- and release-mode listening lines:
+//
+//	nexus: listening on :8080                       ← framework (preferred)
+//	[GIN-debug] Listening and serving HTTP on :8080 ← bare-gin user
+//	[GIN] Listening and serving HTTPS on :443
+//
+// First match wins — the framework line lands earlier and reports
+// the actual bound address even when the user passed :0.
+var ginListenRE = regexp.MustCompile(`(?:nexus: listening on|Listening and serving (?:HTTP|HTTPS) on) (\S+)`)
 
 // --- terminal styling ---
 //
@@ -215,18 +328,28 @@ func printReadyLine(w io.Writer, url string, openingBrowser bool) {
 	}
 }
 
-// normalizeProbeAddr turns a Gin-style listen spec (":8080") into a dialable
-// host:port. Bare ports get "localhost" prefixed so net.Dial doesn't reject.
+// normalizeProbeAddr turns a listen spec into a dialable host:port.
+// Empty hosts (":8080"), IPv6 wildcard ("[::]:8080"), and IPv4
+// wildcard ("0.0.0.0:8080") all become "localhost:8080" so probes
+// from within the dev runner connect to a loopback the OS actually
+// routes.
 func normalizeProbeAddr(addr string) string {
 	if strings.HasPrefix(addr, ":") {
 		return "localhost" + addr
+	}
+	if strings.HasPrefix(addr, "[::]:") {
+		return "localhost:" + strings.TrimPrefix(addr, "[::]:")
+	}
+	if strings.HasPrefix(addr, "0.0.0.0:") {
+		return "localhost:" + strings.TrimPrefix(addr, "0.0.0.0:")
 	}
 	return addr
 }
 
 // dashboardURL renders the full dashboard URL for the banner. Mirrors
-// normalizeProbeAddr's localhost rewrite so the printed link works when
-// addr is just ":8080".
+// normalizeProbeAddr's localhost rewrite so the printed link is
+// always clickable — `http://[::]:8080/...` would resolve as the
+// IPv6 wildcard, which most terminal-based URL openers reject.
 func dashboardURL(addr string) string {
 	host := normalizeProbeAddr(addr)
 	return "http://" + host + "/__nexus/"

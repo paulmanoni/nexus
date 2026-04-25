@@ -1,10 +1,12 @@
 package nexus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	stdlog "log"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -202,6 +204,107 @@ func TestRemoteCaller_NonOK_ReturnsRemoteError(t *testing.T) {
 	}
 	if re.Message != "missing id" {
 		t.Fatalf("message: %q", re.Message)
+	}
+}
+
+// versionLogCapture rewires the standard logger to a buffer for the
+// duration of a test. Returns the captured output and a restore
+// function. Used by the version-skew tests below — the warning is
+// emitted via log.Printf (we don't want to add a logger interface
+// for a single one-shot warning).
+func versionLogCapture(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := stdlog.Writer()
+	stdlog.SetOutput(buf)
+	return buf, func() { stdlog.SetOutput(prev) }
+}
+
+func TestRemoteCaller_VersionSkew_LogsOnce(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__nexus/config" {
+			hits++
+			_, _ = w.Write([]byte(`{"Name":"users","Version":"v2.0.0"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	buf, restore := versionLogCapture(t)
+	defer restore()
+
+	c := NewRemoteCaller(srv.URL, WithLocalVersion("v1.0.0"))
+	for i := 0; i < 3; i++ {
+		_ = c.Call(context.Background(), "GET", "/anything", nil, nil)
+	}
+	if hits != 1 {
+		t.Fatalf("expected exactly 1 config probe, got %d", hits)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "v2.0.0") || !strings.Contains(out, "v1.0.0") {
+		t.Fatalf("expected skew warning to mention both versions, got: %q", out)
+	}
+}
+
+func TestRemoteCaller_VersionMatch_NoLog(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__nexus/config" {
+			_, _ = w.Write([]byte(`{"Version":"v1.0.0"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	buf, restore := versionLogCapture(t)
+	defer restore()
+
+	c := NewRemoteCaller(srv.URL, WithLocalVersion("v1.0.0"))
+	_ = c.Call(context.Background(), "GET", "/x", nil, nil)
+	if got := buf.String(); strings.Contains(got, "skew") || strings.Contains(got, "version") {
+		t.Fatalf("matching versions should not log: %q", got)
+	}
+}
+
+func TestRemoteCaller_NoLocalVersion_SkipsProbe(t *testing.T) {
+	probes := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__nexus/config" {
+			probes++
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := NewRemoteCaller(srv.URL) // no WithLocalVersion
+	_ = c.Call(context.Background(), "GET", "/x", nil, nil)
+	if probes != 0 {
+		t.Fatalf("probe should be skipped when local version unset, got %d hits", probes)
+	}
+}
+
+func TestRemoteCaller_PeerHasNoConfigEndpoint_Silent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 404 every config probe (peer is some non-nexus service).
+		if r.URL.Path == "/__nexus/config" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	buf, restore := versionLogCapture(t)
+	defer restore()
+
+	c := NewRemoteCaller(srv.URL, WithLocalVersion("v1.0.0"))
+	if err := c.Call(context.Background(), "GET", "/x", nil, nil); err != nil {
+		t.Fatalf("user call should succeed even when probe fails: %v", err)
+	}
+	if got := buf.String(); got != "" {
+		t.Fatalf("probe failures should be silent, got log: %q", got)
 	}
 }
 
