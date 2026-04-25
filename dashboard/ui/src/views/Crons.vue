@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { Search, Clock, Play, Pause, Zap, CheckCircle2, XCircle, History } from 'lucide-vue-next'
 import { fetchCrons, triggerCron, setCronPaused } from '../lib/api.js'
 import { usePoll } from '../lib/usePoll.js'
+import { formatAbsolute as fmtAbs, formatRelative as fmtRel } from '../lib/time.js'
 
 const crons = ref([])
 const selectedName = ref(null)
@@ -29,20 +30,6 @@ const filtered = computed(() => {
 })
 
 const selected = computed(() => crons.value.find(c => c.name === selectedName.value) || null)
-
-function fmtAbs(t) {
-  if (!t) return '—'
-  try { return new Date(t).toLocaleString([], { hour12: false }) } catch { return String(t) }
-}
-
-function fmtRel(t) {
-  if (!t) return ''
-  const d = new Date(t).getTime() - Date.now()
-  const abs = Math.abs(d)
-  const s = Math.round(abs / 1000)
-  const label = s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s/60)}m` : s < 86400 ? `${Math.round(s/3600)}h` : `${Math.round(s/86400)}d`
-  return d >= 0 ? `in ${label}` : `${label} ago`
-}
 
 async function onTrigger(name) {
   if (busy.value) return

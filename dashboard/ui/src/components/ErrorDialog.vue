@@ -2,6 +2,7 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { X, AlertTriangle, Search, Loader2 } from 'lucide-vue-next'
 import { fetchErrorEvents } from '../lib/api.js'
+import { formatAbsolute as fmt } from '../lib/time.js'
 
 // ErrorDialog shows the recent-error ring for one endpoint, lazily
 // fetched on open so the /stats hot path stays lean. Scales to thousands
@@ -99,9 +100,6 @@ watch(scrollEl, (el) => {
 }, { flush: 'post' })
 onBeforeUnmount(() => { if (ro) ro.disconnect() })
 
-function fmt(t) {
-  try { return new Date(t).toLocaleString([], { hour12: false }) } catch { return String(t) }
-}
 function onBackdrop(e) { if (e.target.classList.contains('backdrop')) emit('close') }
 const title = computed(() => `${props.service || ''}.${props.op || ''}`)
 </script>

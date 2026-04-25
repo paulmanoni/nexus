@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { Search, Trash2, CheckCircle2, XCircle, ArrowRight, ChevronDown } from 'lucide-vue-next'
 import { subscribeEvents } from '../lib/api.js'
+import { formatTime as fmtTime } from '../lib/time.js'
 import TraceWaterfall from '../components/TraceWaterfall.vue'
 
 const events = ref([])
@@ -35,10 +36,6 @@ const filtered = computed(() => {
 })
 
 function clear() { events.value = [] }
-
-function fmtTime(t) {
-  try { return new Date(t).toLocaleTimeString([], { hour12: false }) } catch { return '' }
-}
 
 function shortKind(k) {
   return k.replace('request.', '').replace('.', ' ')
