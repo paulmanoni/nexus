@@ -73,3 +73,22 @@ func resolveEndpointService(explicit, module string, deps []reflect.Value, depTy
 	app.Service(defaultServiceName)
 	return defaultServiceName
 }
+
+// recordEndpointDeps writes the dep edges for a REST or WebSocket
+// endpoint registration: aggregate service→resource attachments, plus
+// per-endpoint resource and other-service lists. Identical for REST
+// and WS — both walk the handler's deps for NexusResourceProvider
+// implementations and *Service-wrapper types.
+//
+// AsQuery / AsMutation handle the same thing through automount.go
+// (attachDeclaredResources + the pendingResources batch) because they
+// can't know the service at registration time.
+func recordEndpointDeps(app *App, service, endpointName string, deps []reflect.Value, depTypes []reflect.Type) {
+	attachRestResources(app, service, deps, depTypes)
+	if resources := collectResourceNames(deps); len(resources) > 0 {
+		app.registry.SetEndpointResources(service, endpointName, resources)
+	}
+	if svcDeps := collectServiceDeps(deps, depTypes, service); len(svcDeps) > 0 {
+		app.registry.SetEndpointServiceDeps(service, endpointName, svcDeps)
+	}
+}
