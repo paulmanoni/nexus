@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ShieldCheck, ShieldOff, Users, Trash2, RefreshCw, AlertCircle } from 'lucide-vue-next'
 import { fetchAuth, invalidateAuth, subscribeEvents } from '../lib/api.js'
+import { usePoll } from '../lib/usePoll.js'
 
 // state.snapshot holds the latest { identities, cachingEnabled } payload.
 // state.kind is one of:
@@ -17,7 +18,6 @@ const state = ref({ kind: 'loading', snapshot: null, error: '' })
 const rejects = ref([])
 const REJECT_CAP = 50
 
-let pollTimer = null
 let traceSub = null
 
 async function refresh() {
@@ -35,8 +35,6 @@ async function refresh() {
 
 onMounted(() => {
   refresh()
-  // Poll every 5s so new sessions / expired entries stay reflected.
-  pollTimer = setInterval(refresh, 5000)
   traceSub = subscribeEvents(ev => {
     if (ev.kind !== 'auth.reject') return
     rejects.value.unshift({
@@ -54,8 +52,9 @@ onMounted(() => {
   }, null, 0)
 })
 
+// Poll every 5s so new sessions / expired entries stay reflected.
+usePoll(refresh, 5000)
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
   if (traceSub) traceSub.close()
 })
 
