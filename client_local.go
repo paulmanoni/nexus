@@ -1,9 +1,7 @@
 package nexus
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,34 +64,12 @@ func WithLocalAuthPropagator(p AuthPropagator) LocalInvokerOption {
 // Non-2xx responses become *RemoteError, same shape as the remote
 // path; callers can type-assert and react identically.
 func (li *LocalInvoker) Invoke(ctx context.Context, method, path string, args, out any) error {
-	expanded, err := expandPath(path, args)
+	finalPath, body, contentType, err := encodeRequest(method, path, args)
 	if err != nil {
 		return err
 	}
 
-	url := expanded
-	var body io.Reader
-	contentType := ""
-	if methodHasBody(method) {
-		b, err := encodeJSONBody(args)
-		if err != nil {
-			return fmt.Errorf("nexus: encode body: %w", err)
-		}
-		if b != nil {
-			body = bytes.NewReader(b)
-			contentType = "application/json"
-		}
-	} else {
-		qs, err := encodeQuery(args)
-		if err != nil {
-			return fmt.Errorf("nexus: encode query: %w", err)
-		}
-		if qs != "" {
-			url += "?" + qs
-		}
-	}
-
-	req := httptest.NewRequest(strings.ToUpper(method), url, body).WithContext(ctx)
+	req := httptest.NewRequest(strings.ToUpper(method), finalPath, body).WithContext(ctx)
 	req.Header.Set("Accept", "application/json")
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -110,35 +86,7 @@ func (li *LocalInvoker) Invoke(ctx context.Context, method, path string, args, o
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		re := &RemoteError{
-			Status:     resp.StatusCode,
-			RawBody:    respBody,
-			Method:     method,
-			TargetPath: path,
-			TargetURL:  "local://" + expanded,
-		}
-		var env struct {
-			Error   string `json:"error"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(respBody, &env) == nil {
-			if env.Error != "" {
-				re.Message = env.Error
-			} else if env.Message != "" {
-				re.Message = env.Message
-			}
-		}
-		return re
-	}
-
-	if out == nil || len(respBody) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(respBody, out); err != nil {
-		return fmt.Errorf("nexus: decode local response: %w", err)
-	}
-	return nil
+	return decodeResponse(resp.StatusCode, respBody, method, path, "local://"+finalPath, out)
 }
 
 // silence the http import unused-warning on builds that don't reach
