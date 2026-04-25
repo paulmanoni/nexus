@@ -84,11 +84,34 @@ func resolveEndpointService(explicit, module string, deps []reflect.Value, depTy
 // (attachDeclaredResources + the pendingResources batch) because they
 // can't know the service at registration time.
 func recordEndpointDeps(app *App, service, endpointName string, deps []reflect.Value, depTypes []reflect.Type) {
-	attachRestResources(app, service, deps, depTypes)
+	attachEndpointResources(app, service, deps, depTypes)
 	if resources := collectResourceNames(deps); len(resources) > 0 {
 		app.registry.SetEndpointResources(service, endpointName, resources)
 	}
 	if svcDeps := collectServiceDeps(deps, depTypes, service); len(svcDeps) > 0 {
 		app.registry.SetEndpointServiceDeps(service, endpointName, svcDeps)
+	}
+}
+
+// attachEndpointResources attaches every NexusResourceProvider dep to
+// the endpoint's service so the dashboard draws a service→resource
+// edge for the aggregate relationship. Used by both REST and WS via
+// recordEndpointDeps. The GraphQL path goes through automount.go's
+// attachDeclaredResources, which does the same thing post-mount.
+func attachEndpointResources(app *App, service string, deps []reflect.Value, depTypes []reflect.Type) {
+	if service == "" {
+		return
+	}
+	for i, dep := range deps {
+		if i >= len(depTypes) || !dep.IsValid() {
+			continue
+		}
+		provider, ok := dep.Interface().(NexusResourceProvider)
+		if !ok {
+			continue
+		}
+		for _, r := range provider.NexusResources() {
+			app.registry.AttachResource(service, r.Name())
+		}
 	}
 }
