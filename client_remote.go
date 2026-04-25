@@ -1,7 +1,6 @@
 package nexus
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -137,32 +136,11 @@ func (r *RemoteCaller) Invoke(ctx context.Context, method, path string, args, ou
 func (r *RemoteCaller) Call(ctx context.Context, method, path string, args, out any) error {
 	r.checkPeerVersion(ctx)
 
-	expanded, err := expandPath(path, args)
+	finalPath, body, contentType, err := encodeRequest(method, path, args)
 	if err != nil {
 		return err
 	}
-
-	fullURL := r.baseURL + expanded
-	var body io.Reader
-	contentType := ""
-	if methodHasBody(method) {
-		b, err := encodeJSONBody(args)
-		if err != nil {
-			return fmt.Errorf("nexus: encode body: %w", err)
-		}
-		if b != nil {
-			body = bytes.NewReader(b)
-			contentType = "application/json"
-		}
-	} else {
-		qs, err := encodeQuery(args)
-		if err != nil {
-			return fmt.Errorf("nexus: encode query: %w", err)
-		}
-		if qs != "" {
-			fullURL += "?" + qs
-		}
-	}
+	fullURL := r.baseURL + finalPath
 
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, body)
 	if err != nil {
@@ -185,38 +163,7 @@ func (r *RemoteCaller) Call(ctx context.Context, method, path string, args, out 
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		re := &RemoteError{
-			Status:     resp.StatusCode,
-			RawBody:    respBody,
-			TargetURL:  fullURL,
-			TargetPath: path,
-			Method:     method,
-		}
-		// Best-effort decode of the server's error envelope. Most nexus
-		// handlers return {"error": "..."} on non-2xx; we surface that
-		// as Message when present.
-		var env struct {
-			Error   string `json:"error"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(respBody, &env) == nil {
-			if env.Error != "" {
-				re.Message = env.Error
-			} else if env.Message != "" {
-				re.Message = env.Message
-			}
-		}
-		return re
-	}
-
-	if out == nil || len(respBody) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(respBody, out); err != nil {
-		return fmt.Errorf("nexus: decode response from %s: %w", fullURL, err)
-	}
-	return nil
+	return decodeResponse(resp.StatusCode, respBody, method, path, fullURL, out)
 }
 
 // checkPeerVersion runs the one-shot version probe. The atomic flag
