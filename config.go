@@ -147,4 +147,4 @@ type Config struct {
 //	        // ...
 //	    }, allModules...)
 //	}
-func DeploymentFromEnv() string { return os.Getenv("NEXUS_DEPLOYMENT") }
+func DeploymentFromEnv() string { return os.Getenv(nexusDeploymentEnv) }

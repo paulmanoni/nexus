@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"os"
 	"reflect"
 
 	"go.uber.org/fx"
@@ -46,6 +47,22 @@ func Module(name string, opts ...Option) Option {
 		}
 	}
 
+	// Split-mode filter: when NEXUS_DEPLOYMENT names a tag, modules
+	// declaring a different DeployAs(...) are skipped wholesale —
+	// their Provide/AsRest/AsQuery/AsWS calls never reach the fx
+	// graph, so duplicate-provider errors disappear and the
+	// in-process service stays scoped to the active deployment.
+	// Untagged modules (libraries, shared middleware) are always
+	// local and run in every deployment. Cross-module callers
+	// reach skipped peers through the codegen'd remote client,
+	// which is registered separately.
+	if active := os.Getenv(nexusDeploymentEnv); active != "" && deployment != "" && deployment != active {
+		// Use an empty fx.Module so the name still shows up in
+		// fx's startup logs (helps the user confirm the filter
+		// fired) but no providers run.
+		return rawOption{o: fx.Module(name + " (skipped: " + deployment + ")")}
+	}
+
 	// Stamp module name + route prefix + deployment tag onto every
 	// child option that cares. Options produced by nested Module(...)
 	// don't implement these annotator interfaces (they return a
@@ -69,6 +86,11 @@ func Module(name string, opts ...Option) Option {
 	}
 	return rawOption{o: fx.Module(name, unwrap(opts)...)}
 }
+
+// nexusDeploymentEnv is the env var the splitter sets per subprocess.
+// Mirrored from DeploymentFromEnv() in config.go so options.go can
+// consult it without an import cycle.
+const nexusDeploymentEnv = "NEXUS_DEPLOYMENT"
 
 // moduleAnnotator is implemented by options that participate in the
 // nexus.Module grouping — specifically AsQuery/AsMutation/AsRest. The
@@ -278,8 +300,17 @@ func Raw(opt fx.Option) Option {
 //	        advertsModule,
 //	    )
 //	}
+//
+// When NEXUS_FX_QUIET=1 is set in the environment, fx's startup log
+// (PROVIDE/INVOKE/HOOK lines) is suppressed. The splitter sets this
+// in subprocesses so the prefixed log streams don't drown in fx
+// scaffolding noise; users hitting framework-level issues can unset
+// it for full diagnostics.
 func Run(cfg Config, opts ...Option) {
 	all := append([]fx.Option{fxBootOptions(cfg)}, unwrap(opts)...)
+	if os.Getenv("NEXUS_FX_QUIET") == "1" {
+		all = append(all, fx.NopLogger)
+	}
 	fx.New(all...).Run()
 }
 

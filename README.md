@@ -606,9 +606,21 @@ endpoints by request count, with errors highlighted. The probe
 target updates from the framework's "nexus: listening on …" line so
 the pane stays accurate even when the user picks a non-default port.
 
+**Patch in v0.13.1**: split mode now properly filters fx providers
+by deployment tag. Modules with a `DeployAs(...)` that doesn't match
+`NEXUS_DEPLOYMENT` are skipped wholesale — their `Provide` /
+`AsRest` / `AsQuery` / `AsWS` calls don't reach the fx graph, so
+duplicate-provider errors disappear when two modules touch the same
+service constructor. Untagged modules stay always-local. Split mode
+also pre-checks every assigned port before spawning, so port
+conflicts surface as a single clear line instead of buried in fx
+stack traces. The splitter sets `NEXUS_FX_QUIET=1` in subprocess
+env to silence fx's verbose `[Fx] PROVIDE/INVOKE/HOOK` chatter,
+keeping prefixed log streams scannable.
+
 **Still coming**: WebSocket clients in the codegen (deferred —
 proper streaming Subscribe semantics need their own design round),
-shell-completion polish.
+shell-completion polish, fx error reformatting.
 
 ## Dashboard
 
