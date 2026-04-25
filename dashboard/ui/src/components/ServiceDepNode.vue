@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject } from 'vue'
-import { Handle, Position } from '@vue-flow/core'
 import { Box, Database, Link2 } from 'lucide-vue-next'
+import BaseNodeCard from './BaseNodeCard.vue'
 
 // ServiceDepNode represents a nexus.Service as a DEPENDENCY that one or
 // more endpoints consume. Visual parity with ResourceNode: a small pill
@@ -29,14 +29,13 @@ const hasDeps = computed(() => {
 </script>
 
 <template>
-  <div class="svc-dep-node" :class="{ dim: !inSelection }">
-    <Handle type="target" :position="Position.Left" />
-    <div class="head">
+  <BaseNodeCard :dim="!inSelection" source>
+    <template #head>
       <Box :size="13" :stroke-width="2" class="icon" />
       <span class="name">{{ data.name }}</span>
       <span class="tag">service</span>
-    </div>
-    <div v-if="data.description" class="desc">{{ data.description }}</div>
+    </template>
+    <template v-if="data.description" #description>{{ data.description }}</template>
     <!-- Inline dep list — surfaces ProvideService's constructor deps
          on the node itself in addition to the graph edges. Helps when
          the dagre layout routes an edge behind another node and makes
@@ -51,34 +50,10 @@ const hasDeps = computed(() => {
         <span class="dep-name">{{ s }}</span>
       </div>
     </div>
-    <!-- Source handle so the service-level dep edges (constructed
-         from the service's constructor deps — resources + other
-         services) can originate from this node. -->
-    <Handle type="source" :position="Position.Right" />
-  </div>
+  </BaseNodeCard>
 </template>
 
 <style scoped>
-.svc-dep-node {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  min-width: 200px;
-  max-width: 240px;
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-  font-family: var(--font-sans);
-}
-.svc-dep-node.dim { opacity: 0.3; transition: opacity 120ms; }
-.head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-}
 .icon { color: #7c3aed; flex-shrink: 0; }
 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag {
@@ -92,12 +67,6 @@ const hasDeps = computed(() => {
   text-transform: lowercase;
   letter-spacing: 0.02em;
   flex-shrink: 0;
-}
-.desc {
-  color: var(--text-dim);
-  font-size: 11px;
-  margin-top: 4px;
-  line-height: 1.4;
 }
 .deps {
   margin-top: 8px;
