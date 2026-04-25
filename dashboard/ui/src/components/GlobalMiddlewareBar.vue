@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Shield, Activity } from 'lucide-vue-next'
 import { fetchMiddlewares } from '../lib/api.js'
+import { usePoll } from '../lib/usePoll.js'
 
 // GlobalMiddlewareBar shows the app-wide middleware chain at the top of
 // the Architecture tab — left-to-right in the order a request traverses
@@ -9,7 +10,6 @@ import { fetchMiddlewares } from '../lib/api.js'
 // (kind=builtin/custom + description) for a tooltip; metrics overlay
 // (when available) can decorate them later with per-middleware counters.
 const entries = ref([])  // [{ name, info }]  (null info when unknown)
-let pollId = null
 
 async function load() {
   try {
@@ -24,13 +24,10 @@ async function load() {
   }
 }
 
-onMounted(() => {
-  load()
-  // Middleware set changes only at boot + rare dynamic adds — slow poll
-  // is plenty.
-  pollId = setInterval(load, 10_000)
-})
-onUnmounted(() => { if (pollId) clearInterval(pollId) })
+onMounted(load)
+// Middleware set changes only at boot + rare dynamic adds — slow poll
+// is plenty.
+usePoll(load, 10_000)
 
 const empty = computed(() => entries.value.length === 0)
 </script>
