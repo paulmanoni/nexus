@@ -27,6 +27,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		noOpen   bool
 		split    bool
 		basePort int
+		tui      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -51,8 +52,14 @@ examples/microsplit for the convention.`,
 			if len(args) > 0 {
 				target = args[0]
 			}
+			if split && tui {
+				return errSplitTUI
+			}
 			if split {
 				return runDevSplit(target, basePort, stdout, stderr)
+			}
+			if tui {
+				return runDevTUI(target, addr, stdout, stderr)
 			}
 			return runDev(target, addr, !noOpen, stdout, stderr)
 		},
@@ -65,8 +72,20 @@ examples/microsplit for the convention.`,
 		"boot one subprocess per nexus.DeployAs tag (split mode)")
 	cmd.Flags().IntVar(&basePort, "base-port", 8080,
 		"first port to assign in --split mode (subsequent units take +1, +2, ...)")
+	cmd.Flags().BoolVar(&tui, "tui", false,
+		"interactive Bubble Tea UI: log pane + restart hotkey + ready indicator")
 	return cmd
 }
+
+// errSplitTUI surfaces when both --tui and --split are passed. The
+// TUI takes over the whole terminal and assumes one child stream;
+// driving N subprocesses through it would shred the layout. Refuse
+// up front rather than silently degrading.
+var errSplitTUI = &userError{"--tui and --split are mutually exclusive (try --split alone with the prefixed log streams)"}
+
+type userError struct{ msg string }
+
+func (e *userError) Error() string { return e.msg }
 
 // runDev is the dev-loop body. Separated from the cobra wrapper so the
 // happy path (start child → race signal vs natural exit → clean kill)
