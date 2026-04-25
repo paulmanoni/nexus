@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
-import { Handle, Position } from '@vue-flow/core'
 import { Cog, Database, Link2, AlertTriangle } from 'lucide-vue-next'
+import BaseNodeCard from './BaseNodeCard.vue'
 
 // WorkerNode renders a nexus.AsWorker entry on the architecture graph.
 // Workers are long-lived background tasks (DB listeners, queue
@@ -21,13 +21,12 @@ const hasDeps = computed(() => {
 </script>
 
 <template>
-  <div class="worker-node" :class="statusClass">
-    <Handle type="target" :position="Position.Left" />
-    <div class="head">
+  <BaseNodeCard :status="statusClass" source>
+    <template #head>
       <Cog :size="13" :stroke-width="2" class="icon" />
       <span class="name">{{ data.name }}</span>
       <span class="tag">worker</span>
-    </div>
+    </template>
     <div class="row">
       <span class="status-dot" :class="statusClass" :title="data.status"></span>
       <span class="status-text">{{ data.status || 'unknown' }}</span>
@@ -46,33 +45,10 @@ const hasDeps = computed(() => {
         <span class="dep-name">{{ s }}</span>
       </div>
     </div>
-    <Handle type="source" :position="Position.Right" />
-  </div>
+  </BaseNodeCard>
 </template>
 
 <style scoped>
-.worker-node {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  min-width: 200px;
-  max-width: 240px;
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-  font-family: var(--font-sans);
-}
-.worker-node.failed  { border-color: var(--error); }
-.worker-node.stopped { opacity: 0.65; }
-
-.head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-}
 .icon { color: #059669; flex-shrink: 0; }
 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag {
