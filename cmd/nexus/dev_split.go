@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -49,6 +50,17 @@ func runDevSplit(target string, basePort int, stdout, stderr io.Writer) error {
 	}
 
 	units := planUnits(tags, basePort)
+
+	// Pre-flight: probe every assigned port. A subprocess that
+	// can't bind dies with a generic "address already in use"
+	// buried in fx logs — surfacing the conflict here lets the
+	// user fix it (or pass --base-port) without parsing stack
+	// traces.
+	if busy := portsInUse(units); len(busy) > 0 {
+		return fmt.Errorf("split mode: ports already in use: %s — pass --base-port to shift the assignment",
+			strings.Join(busy, ", "))
+	}
+
 	printSplitBanner(stdout, units)
 
 	// Build the binary once up front. Cheaper than `go run` per unit
@@ -123,6 +135,23 @@ func planUnits(tags []string, basePort int) []unit {
 	return units
 }
 
+// portsInUse returns the host:port strings for every unit whose
+// port already has a listener. The probe is cheap (50ms TCP dial);
+// false positives from a third-party scanner racing the dial are
+// vanishingly rare and not worth defending against in a dev tool.
+func portsInUse(units []unit) []string {
+	var busy []string
+	for _, u := range units {
+		addr := fmt.Sprintf("localhost:%d", u.Port)
+		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			busy = append(busy, fmt.Sprintf("%d (%s)", u.Port, u.Tag))
+		}
+	}
+	return busy
+}
+
 // scanPattern turns a target path into a recursive Go pattern. If the
 // caller already passed a "..." pattern we honor it verbatim;
 // otherwise we extend a plain path to include subpackages so module
@@ -181,6 +210,12 @@ func startUnit(_ context.Context, bin string, u unit, all []unit, stdout, stderr
 	env = append(env,
 		"NEXUS_DEPLOYMENT="+u.Tag,
 		fmt.Sprintf("PORT=%d", u.Port),
+		// Silence fx's PROVIDE/INVOKE/HOOK chatter in subprocess
+		// stdout — split mode already prefixes every line with a
+		// colored tag, doubling that with fx's banner makes the
+		// terminal hard to scan. Users hitting framework-level
+		// issues can unset this in their env.
+		"NEXUS_FX_QUIET=1",
 	)
 	for _, peer := range all {
 		if peer.Tag == u.Tag {
