@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject } from 'vue'
-import { Handle, Position } from '@vue-flow/core'
 import { Database, HardDrive, Radio as RadioIcon } from 'lucide-vue-next'
+import BaseNodeCard from './BaseNodeCard.vue'
 
 const props = defineProps(['data'])
 
@@ -50,46 +50,24 @@ const detailKeys = computed(() => {
 </script>
 
 <template>
-  <div class="resource-node" :class="{ unhealthy: !data.healthy, dim: !inSelection }">
-    <Handle type="target" :position="Position.Left" />
-    <div class="head">
+  <BaseNodeCard :dim="!inSelection" :unhealthy="!data.healthy">
+    <template #head>
       <component :is="icon" :size="13" :stroke-width="2" class="icon" />
       <span class="name">{{ data.name }}</span>
       <span v-if="pillLabel" class="pill" :class="pillClass">{{ pillLabel }}</span>
       <span class="dot" :class="{ on: data.healthy }" :title="data.healthy ? 'Healthy' : 'Unhealthy'"></span>
-    </div>
-    <div v-if="data.description" class="desc">{{ data.description }}</div>
+    </template>
+    <template v-if="data.description" #description>{{ data.description }}</template>
     <div v-if="detailKeys.length" class="details">
       <div v-for="k in detailKeys" :key="k" class="row">
         <span class="k">{{ k }}</span>
         <span class="v">{{ data.details[k] }}</span>
       </div>
     </div>
-  </div>
+  </BaseNodeCard>
 </template>
 
 <style scoped>
-.resource-node {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  min-width: 200px;
-  max-width: 240px;
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-  font-family: var(--font-sans);
-}
-.resource-node.unhealthy { border-color: var(--error); }
-.resource-node.dim { opacity: 0.3; transition: opacity 120ms; }
-.head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-}
 .icon { color: var(--accent); flex-shrink: 0; }
 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot {
@@ -119,12 +97,6 @@ const detailKeys = computed(() => {
 .pill.kafka     { background: #e9d5ff; color: #6b21a8; }
 .pill.neutral   { background: var(--bg-hover); color: var(--text-muted); }
 
-.desc {
-  color: var(--text-dim);
-  font-size: 11px;
-  margin-top: 4px;
-  line-height: 1.4;
-}
 .details {
   margin-top: 8px;
   padding-top: 8px;
