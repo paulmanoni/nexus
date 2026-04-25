@@ -68,7 +68,7 @@ examples/microsplit for the convention.`,
 			return runDev(target, addr, !noOpen, stdout, stderr)
 		},
 	}
-	cmd.Flags().StringVar(&addr, "addr", ":8080",
+	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
 		"dashboard address to probe and open (single-process mode)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false,
 		"don't auto-open the browser when the port responds")
@@ -80,6 +80,13 @@ examples/microsplit for the convention.`,
 		"interactive Bubble Tea UI: log pane + restart hotkey + ready indicator")
 	return cmd
 }
+
+// defaultDevAddr is the --addr flag's default and the probe target
+// when the user doesn't override it. We rely on the framework's
+// "nexus: listening on …" output to discover the real bind, so the
+// flag is mostly a fallback for non-nexus apps; users running plain
+// nexus apps don't need to set it.
+const defaultDevAddr = ":8080"
 
 // errSplitTUI surfaces when both --tui and --split are passed. The
 // TUI takes over the whole terminal and assumes one child stream;
@@ -95,7 +102,7 @@ func (e *userError) Error() string { return e.msg }
 // happy path (start child → race signal vs natural exit → clean kill)
 // reads top-to-bottom without being interleaved with flag parsing.
 func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) error {
-	printDevBanner(stdout, target, addr)
+	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -211,11 +218,11 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady bool, stdo
 		ready = addr
 	}
 
-	// If gin reported a bind that doesn't match --addr, surface the
-	// difference once so the user knows the banner's --addr was just
-	// a guess. Default flag values are intentionally suppressed
-	// — only print when a real mismatch shows up.
-	if normalizeProbeAddr(ready) != flagAddr {
+	// If the user passed an explicit --addr that doesn't match the
+	// actual bind, surface the gap. Default --addr (":8080") is
+	// suppressed — we never claimed it on the banner anyway, so
+	// there's nothing to "correct" for the user.
+	if addr != defaultDevAddr && normalizeProbeAddr(ready) != flagAddr {
 		fmt.Fprintf(stdout, "\n  %s→ %sbound on %s%s%s %s(--addr was %s)%s\n",
 			ansiDim, ansiReset, ansiBold, ready, ansiReset, ansiDim, addr, ansiReset)
 	}
@@ -300,17 +307,18 @@ const (
 	ansiYellow = "\033[33m"
 )
 
-// printDevBanner writes a 5-line block that survives the gin debug
-// firehose: a clear title, the target + dashboard URL, and the
-// keybind hint. Spacing above and below sets it apart from the
-// child's first lines of output.
-func printDevBanner(w io.Writer, target, addr string) {
-	url := dashboardURL(addr)
+// printDevBanner writes a compact intro block that survives gin's
+// debug firehose. We deliberately omit the dashboard URL: at this
+// point we don't yet know what address the user's Config.Addr picked
+// — printing a guess (the --addr flag's default) and "correcting"
+// it later left a stale URL pinned at the top of the terminal even
+// after the right one rendered below. The URL appears once, on the
+// ready line, after the child binds.
+func printDevBanner(w io.Writer, target string) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  %snexus dev%s\n", ansiBold, ansiReset)
 	fmt.Fprintf(w, "  %s──────────%s\n", ansiDim, ansiReset)
 	fmt.Fprintf(w, "  target     %s%s%s\n", ansiBold, target, ansiReset)
-	fmt.Fprintf(w, "  dashboard  %s%s%s\n", ansiCyan, url, ansiReset)
 	fmt.Fprintf(w, "  %s%s starting · ctrl-c to stop%s\n\n", ansiDim, ansiYellow+"●"+ansiDim, ansiReset)
 }
 

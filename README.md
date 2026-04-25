@@ -584,9 +584,31 @@ nexus: peer at http://users:8080 reports version "v2.0.0";
 this binary is on "v1.4.2" — possible deployment skew
 ```
 
-**Coming next**: GraphQL + WebSocket clients via the same generator,
-request-counter pane in the TUI mode driven by live `/__nexus/stats`
-polling.
+**Also in v0.13**: GraphQL ops join the codegen. Every `AsQuery` /
+`AsMutation` handler in a `DeployAs`-tagged module becomes a typed
+method on the generated client, dispatched through the same
+`ClientCallable` interface as REST. The runtime helper builds the
+query string from the handler signature (args inlined as GraphQL
+literals; selection set walked from the return type's exported
+fields). Same call site, monolith or split:
+
+```go
+// In users module:
+nexus.AsQuery(NewSearch)  // func(svc, p Params[SearchArgs]) ([]*User, error)
+
+// In checkout module:
+hits, err := users.Search(ctx, users.SearchArgs{Prefix: "A"})
+```
+
+The TUI mode (`nexus dev --tui`) now polls `/__nexus/stats` once a
+second and renders a "stats" pane above the log area: top 5
+endpoints by request count, with errors highlighted. The probe
+target updates from the framework's "nexus: listening on …" line so
+the pane stays accurate even when the user picks a non-default port.
+
+**Still coming**: WebSocket clients in the codegen (deferred —
+proper streaming Subscribe semantics need their own design round),
+shell-completion polish.
 
 ## Dashboard
 

@@ -110,6 +110,15 @@ func WithLocalVersion(v string) RemoteCallerOption {
 	return func(r *RemoteCaller) { r.localVersion = v }
 }
 
+// Invoke is an alias for Call exposed so RemoteCaller satisfies the
+// same ClientCallable interface as LocalInvoker. New code should
+// prefer Invoke for shape consistency across the in-process and HTTP
+// paths; Call stays for backward compatibility with already-generated
+// client files.
+func (r *RemoteCaller) Invoke(ctx context.Context, method, path string, args, out any) error {
+	return r.Call(ctx, method, path, args, out)
+}
+
 // Call serializes args into the appropriate place (path, body, query),
 // dispatches the request, and decodes the JSON response into out.
 // Pointer-to-pointer is fine — ListUsers returns *[]*User, so callers

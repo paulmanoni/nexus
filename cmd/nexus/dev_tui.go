@@ -3,10 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -57,9 +61,9 @@ func runDevTUI(target, addr string, stdout, stderr io.Writer) error {
 // --- Model ---
 
 type tuiModel struct {
-	target string
-	addr   string
-	url    string
+	target  string
+	addr    string // --addr flag value; the initial probe target
+	bindURL string // resolved HTTP base, populated once we detect "nexus: listening on…"
 
 	width, height int
 	state         tuiState
@@ -69,11 +73,24 @@ type tuiModel struct {
 	logsMu  sync.Mutex
 	maxLogs int
 
+	stats     []endpointStat
+	statsMu   sync.Mutex
+	statsErr  string // last poll error, displayed dim if set
+
 	childMu  sync.Mutex
 	child    *exec.Cmd
 	childGen int // increments on every restart so stale goroutines bail out
 
 	prog *tea.Program // back-reference for goroutines that need to .Send()
+}
+
+// endpointStat is the trimmed shape of metrics.EndpointStats we
+// render in the TUI. Pulled into our own type so we don't import
+// the metrics package's heavier deps for one struct.
+type endpointStat struct {
+	Key    string `json:"key"`
+	Count  int64  `json:"count"`
+	Errors int64  `json:"errors"`
 }
 
 type tuiState int
@@ -90,10 +107,19 @@ func newTUIModel(target, addr string) *tuiModel {
 	return &tuiModel{
 		target:  target,
 		addr:    addr,
-		url:     dashboardURL(addr),
 		state:   tuiStarting,
 		maxLogs: 2000,
 	}
+}
+
+// dashURL returns the URL to render in the header: the resolved
+// bind once we've seen one, otherwise the --addr probe target as a
+// best-effort guess.
+func (m *tuiModel) dashURL() string {
+	if m.bindURL != "" {
+		return m.bindURL + "/__nexus/"
+	}
+	return dashboardURL(m.addr)
 }
 
 // --- Tea messages ---
@@ -104,6 +130,11 @@ type stateChangeMsg struct {
 	note  string
 }
 type tickMsg time.Time
+type addrDetectedMsg string // bare address from "nexus: listening on …"
+type statsMsg struct {
+	stats []endpointStat
+	err   error
+}
 
 // --- Init / Update / View ---
 
@@ -130,7 +161,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}()
 			return m, nil
 		case "o":
-			_ = openBrowser(m.url)
+			_ = openBrowser(m.dashURL())
 			return m, nil
 		case "c":
 			m.logsMu.Lock()
@@ -148,6 +179,29 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stateMsg = msg.note
 		return m, nil
 
+	case addrDetectedMsg:
+		// Framework printed "nexus: listening on <addr>". Resolve to
+		// a clickable HTTP base + kick off the stats poller. We
+		// don't probe the port here — readiness has already been
+		// established (the framework only prints this line after
+		// net.Listen succeeded).
+		host := normalizeProbeAddr(string(msg))
+		m.bindURL = "http://" + host
+		m.state = tuiReady
+		go m.pollStats()
+		return m, nil
+
+	case statsMsg:
+		m.statsMu.Lock()
+		if msg.err != nil {
+			m.statsErr = msg.err.Error()
+		} else {
+			m.stats = msg.stats
+			m.statsErr = ""
+		}
+		m.statsMu.Unlock()
+		return m, nil
+
 	case tickMsg:
 		// Drive periodic re-renders so timestamps / ready probes
 		// surface without waiting for the next log line.
@@ -162,22 +216,33 @@ func (m *tuiModel) View() string {
 	}
 	header := m.renderHeader()
 	footer := m.renderFooter()
+	stats := m.renderStats()
 
-	// Reserve fixed rows for header (3) + spacer (1) + footer (1) =
-	// 5; the rest goes to the log pane. Cap at width so logs don't
-	// shred-wrap on narrow terminals.
-	logHeight := m.height - 5
+	// Reserve rows for header (3), spacer (1), stats (variable),
+	// spacer (1), footer (1). Whatever is left goes to the log
+	// pane. Stats height is the lesser of (top-N+2) and the actual
+	// number of lines we'd render — when there are no stats we
+	// don't reserve space at all.
+	statsLines := lipgloss.Height(stats)
+	if stats == "" {
+		statsLines = 0
+	}
+	overhead := 3 + 1 + statsLines + 1
+	if statsLines > 0 {
+		overhead++ // spacer between stats and logs
+	}
+	logHeight := m.height - overhead
 	if logHeight < 3 {
 		logHeight = 3
 	}
 	logs := m.renderLogs(logHeight)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		"",
-		logs,
-		footer,
-	)
+	parts := []string{header, ""}
+	if stats != "" {
+		parts = append(parts, stats, "")
+	}
+	parts = append(parts, logs, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 // --- Renderers ---
@@ -196,7 +261,7 @@ func (m *tuiModel) renderHeader() string {
 	state := m.renderState()
 	left := styleTitle.Render("nexus dev")
 	mid := styleDim.Render("· " + m.target)
-	right := styleCyan.Render(m.url)
+	right := styleCyan.Render(m.dashURL())
 	row1 := strings.Join([]string{left, mid, right}, "  ")
 	row2 := state
 	return lipgloss.JoinVertical(lipgloss.Left, row1, row2)
@@ -250,6 +315,49 @@ func (m *tuiModel) renderLogs(height int) string {
 	}
 	body := strings.Join(clipped, "\n")
 	return stylePane.Width(m.width - 2).Height(height).Render(body)
+}
+
+// renderStats renders the top-N busiest endpoints as a single pane.
+// Sorted by request count desc; ties broken by error count desc, then
+// by key for stability. Empty when no stats have arrived (avoids an
+// awkward empty box during the first second of operation).
+func (m *tuiModel) renderStats() string {
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+	if len(m.stats) == 0 {
+		return ""
+	}
+	const topN = 5
+	sorted := make([]endpointStat, len(m.stats))
+	copy(sorted, m.stats)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Count != sorted[j].Count {
+			return sorted[i].Count > sorted[j].Count
+		}
+		if sorted[i].Errors != sorted[j].Errors {
+			return sorted[i].Errors > sorted[j].Errors
+		}
+		return sorted[i].Key < sorted[j].Key
+	})
+	if len(sorted) > topN {
+		sorted = sorted[:topN]
+	}
+	rows := make([]string, 0, len(sorted))
+	for _, s := range sorted {
+		errPart := ""
+		if s.Errors > 0 {
+			errPart = "  " + styleRed.Render(fmt.Sprintf("%d err", s.Errors))
+		}
+		rows = append(rows, fmt.Sprintf("%-32s %s%s",
+			s.Key,
+			styleDim.Render(fmt.Sprintf("%d req", s.Count)),
+			errPart,
+		))
+	}
+	body := strings.Join(rows, "\n")
+	return stylePane.Width(m.width - 2).Render(
+		styleDim.Render("stats")+"\n"+body,
+	)
 }
 
 func (m *tuiModel) renderFooter() string {
@@ -359,12 +467,15 @@ func (m *tuiModel) killChild() {
 	}
 }
 
-// streamLines reads child output line-by-line and forwards each one
-// as a logLineMsg. The gen check guards against late writes from a
-// prior restart's pipes leaking into the new run's view.
+// streamLines reads child output line-by-line, scans each line for
+// the framework's "nexus: listening on …" startup announcement, and
+// forwards every line as a logLineMsg. The gen check guards against
+// late writes from a prior restart's pipes leaking into the new
+// run's view.
 func (m *tuiModel) streamLines(r io.Reader, gen int) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	addrSent := false
 	for scanner.Scan() {
 		m.childMu.Lock()
 		current := m.childGen
@@ -372,22 +483,77 @@ func (m *tuiModel) streamLines(r io.Reader, gen int) {
 		if current != gen {
 			return
 		}
-		m.send(logLineMsg(scanner.Text()))
+		line := scanner.Text()
+		if !addrSent {
+			if match := ginListenRE.FindStringSubmatch(line); match != nil {
+				addrSent = true
+				m.send(addrDetectedMsg(match[1]))
+			}
+		}
+		m.send(logLineMsg(line))
 	}
 }
 
-// watchReady polls the listen address until it accepts a connection,
-// then flips state to ready. Bounded by 60s — after that the user
-// owes a restart (`r`) for the probe to retry.
+// pollStats fetches /__nexus/stats once a second and pushes a
+// statsMsg into the program. Continues until the program ends —
+// we deliberately don't keep a context here; goroutine exits
+// naturally when prog.Send returns (post-Quit).
+func (m *tuiModel) pollStats() {
+	if m.bindURL == "" {
+		return
+	}
+	url := m.bindURL + "/__nexus/stats"
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	for {
+		stats, err := fetchStats(client, url)
+		m.send(statsMsg{stats: stats, err: err})
+		time.Sleep(time.Second)
+	}
+}
+
+// fetchStats does the HTTP round-trip and decode for one poll. The
+// server returns `{"stats": [...]}`; we descend into that wrapper.
+func fetchStats(client *http.Client, url string) ([]endpointStat, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("stats: %s", resp.Status)
+	}
+	var body struct {
+		Stats []endpointStat `json:"stats"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	return body.Stats, nil
+}
+
+// watchReady polls the --addr fallback until it accepts a connection
+// OR the addrDetectedMsg path flips state to ready first. Bounded by
+// 60s — after that the user owes a restart (`r`) for the probe to
+// retry. Used as a backstop for apps that don't print the
+// framework's "nexus: listening on …" line (bare gin, etc.).
 func (m *tuiModel) watchReady() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	probe := normalizeProbeAddr(m.addr)
 	for ctx.Err() == nil {
+		// If the addrDetectedMsg path already populated bindURL,
+		// we're done — the dispatch in Update() already set state
+		// to ready and started the stats poller.
+		if m.bindURL != "" {
+			return
+		}
 		conn, err := net.DialTimeout("tcp", probe, 200*time.Millisecond)
 		if err == nil {
 			conn.Close()
-			m.send(stateChangeMsg{state: tuiReady})
+			// Synthesize an addrDetectedMsg so the rest of the
+			// pipeline (state flip, stats poller) runs the same
+			// path as a framework-announced bind.
+			m.send(addrDetectedMsg(m.addr))
 			return
 		}
 		select {

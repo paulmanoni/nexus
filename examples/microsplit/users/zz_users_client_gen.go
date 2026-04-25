@@ -10,12 +10,13 @@ import (
 )
 
 // UsersClient is the typed client surface for the "users" module.
-// One method per AsRest handler in that module's declaration. The
-// implementation is selected at construction time based on the running
-// binary's deployment.
+// One method per AsRest / AsQuery / AsMutation handler in that
+// module's declaration. The implementation is selected at construction
+// time based on the running binary's deployment.
 type UsersClient interface {
 	Get(ctx context.Context, args GetArgs) (*User, error)
 	List(ctx context.Context, args ListArgs) ([]*User, error)
+	Search(ctx context.Context, args SearchArgs) ([]*User, error)
 }
 
 // NewUsersClient returns the appropriate implementation for the
@@ -28,38 +29,52 @@ type UsersClient interface {
 //     fail-fast).
 func NewUsersClient(app *nexus.App) UsersClient {
 	if dep := app.Deployment(); dep == "" || dep == "users-svc" {
-		return &usersClientLocal{inv: nexus.NewLocalInvoker(app)}
+		return &usersClientLocal{call: nexus.NewLocalInvoker(app)}
 	}
-	return &usersClientRemote{r: nexus.NewRemoteCallerFromEnv(
+	return &usersClientRemote{call: nexus.NewRemoteCallerFromEnv(
 		"USERS_SVC_URL",
 		nexus.WithLocalVersion(app.Version()),
 	)}
 }
 
-type usersClientLocal struct{ inv *nexus.LocalInvoker }
+type usersClientLocal struct{ call nexus.ClientCallable }
 
 func (c *usersClientLocal) Get(ctx context.Context, args GetArgs) (*User, error) {
 	var out *User
-	err := c.inv.Invoke(ctx, "GET", "/users/:id", args, &out)
+	err := c.call.Invoke(ctx, "GET", "/users/:id", args, &out)
 	return out, err
+
 }
 
 func (c *usersClientLocal) List(ctx context.Context, args ListArgs) ([]*User, error) {
 	var out []*User
-	err := c.inv.Invoke(ctx, "GET", "/users", args, &out)
+	err := c.call.Invoke(ctx, "GET", "/users", args, &out)
 	return out, err
+
 }
 
-type usersClientRemote struct{ r *nexus.RemoteCaller }
+func (c *usersClientLocal) Search(ctx context.Context, args SearchArgs) ([]*User, error) {
+	return nexus.GqlCall[[]*User](ctx, c.call, "query", "search", args, nexus.GqlOptions{})
+
+}
+
+type usersClientRemote struct{ call nexus.ClientCallable }
 
 func (c *usersClientRemote) Get(ctx context.Context, args GetArgs) (*User, error) {
 	var out *User
-	err := c.r.Call(ctx, "GET", "/users/:id", args, &out)
+	err := c.call.Invoke(ctx, "GET", "/users/:id", args, &out)
 	return out, err
+
 }
 
 func (c *usersClientRemote) List(ctx context.Context, args ListArgs) ([]*User, error) {
 	var out []*User
-	err := c.r.Call(ctx, "GET", "/users", args, &out)
+	err := c.call.Invoke(ctx, "GET", "/users", args, &out)
 	return out, err
+
+}
+
+func (c *usersClientRemote) Search(ctx context.Context, args SearchArgs) ([]*User, error) {
+	return nexus.GqlCall[[]*User](ctx, c.call, "query", "search", args, nexus.GqlOptions{})
+
 }
