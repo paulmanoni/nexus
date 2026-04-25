@@ -10,7 +10,6 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/metrics"
-	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -244,18 +243,8 @@ func opNameFromFactory(factory any, fallback string) string {
 }
 
 type restConfig struct {
-	description string
-	service     string                  // optional explicit service name; auto-derived if empty
-	bundles     []middleware.Middleware // attached via nexus.Use
-	// module is stamped by nexus.Module("name", ...) when this option
-	// is a direct child of a module. Emitted into the registry entry
-	// so the dashboard groups REST endpoints under their module.
-	module string
-	// deployment is stamped by nexus.DeployAs inside the enclosing
-	// Module. Empty for always-local modules. Surfaces on the
-	// registry entry so the dashboard can render deployment-tag
-	// chips and (eventually) federation views.
-	deployment string
+	baseEndpointConfig
+	service string // optional explicit service name; auto-derived if empty
 	// pathPrefix is prepended to the route's path before the endpoint
 	// is mounted on Gin. Set either per-endpoint via nexus.RoutePrefix
 	// as a RestOption, or module-wide by passing nexus.RoutePrefix as
