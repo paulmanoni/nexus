@@ -51,7 +51,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 // happy path (start child → race signal vs natural exit → clean kill)
 // reads top-to-bottom without being interleaved with flag parsing.
 func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) error {
-	fmt.Fprintf(stdout, "nexus dev: running %q (dashboard → %s)\n", target, dashboardURL(addr))
+	printDevBanner(stdout, target, addr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -71,9 +71,10 @@ func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) err
 		return fmt.Errorf("failed to start `go run %s`: %w", target, err)
 	}
 
-	if openOnReady {
-		go waitAndOpen(ctx, addr, stdout)
-	}
+	// waitAndOpen runs even when --no-open is set so the user still
+	// gets the green "ready" line — only the browser launch is gated
+	// on openOnReady.
+	go waitAndOpen(ctx, addr, openOnReady, stdout)
 
 	// Wait in a goroutine so the main goroutine can race the user's
 	// signal against the child's natural exit.
@@ -106,7 +107,7 @@ func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) err
 // waitAndOpen polls addr every 200ms until it accepts a connection, then
 // opens the dashboard. Bounded by timeout so a broken app doesn't hang
 // this goroutine forever.
-func waitAndOpen(ctx context.Context, addr string, stdout io.Writer) {
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady bool, stdout io.Writer) {
 	deadline := time.Now().Add(30 * time.Second)
 	probe := normalizeProbeAddr(addr)
 	for time.Now().Before(deadline) {
@@ -119,11 +120,58 @@ func waitAndOpen(ctx context.Context, addr string, stdout io.Writer) {
 		if err == nil {
 			conn.Close()
 			url := dashboardURL(addr)
-			fmt.Fprintf(stdout, "nexus dev: opening %s\n", url)
-			_ = openBrowser(url)
+			printReadyLine(stdout, url, openBrowserOnReady)
+			if openBrowserOnReady {
+				_ = openBrowser(url)
+			}
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// --- terminal styling ---
+//
+// We don't pull in a TUI library for the static banner — bubbletea
+// would take over the whole terminal and conflict with the child's
+// own stdout streaming. Plain ANSI escapes suffice; on non-tty
+// stdout (`nexus dev | tee log`) the escapes appear as harmless
+// noise around otherwise-readable text.
+
+const (
+	ansiReset  = "\033[0m"
+	ansiBold   = "\033[1m"
+	ansiDim    = "\033[2m"
+	ansiCyan   = "\033[36m"
+	ansiGreen  = "\033[32m"
+	ansiYellow = "\033[33m"
+)
+
+// printDevBanner writes a 5-line block that survives the gin debug
+// firehose: a clear title, the target + dashboard URL, and the
+// keybind hint. Spacing above and below sets it apart from the
+// child's first lines of output.
+func printDevBanner(w io.Writer, target, addr string) {
+	url := dashboardURL(addr)
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  %snexus dev%s\n", ansiBold, ansiReset)
+	fmt.Fprintf(w, "  %s──────────%s\n", ansiDim, ansiReset)
+	fmt.Fprintf(w, "  target     %s%s%s\n", ansiBold, target, ansiReset)
+	fmt.Fprintf(w, "  dashboard  %s%s%s\n", ansiCyan, url, ansiReset)
+	fmt.Fprintf(w, "  %s%s starting · ctrl-c to stop%s\n\n", ansiDim, ansiYellow+"●"+ansiDim, ansiReset)
+}
+
+// printReadyLine is the matching tail to the banner: a single green
+// dot announces the port is live. Renders even when the browser
+// auto-open is disabled so the user has an unambiguous "go ahead"
+// signal in either mode.
+func printReadyLine(w io.Writer, url string, openingBrowser bool) {
+	if openingBrowser {
+		fmt.Fprintf(w, "\n  %s●%s ready · %s%s%s %s· opening browser%s\n\n",
+			ansiGreen, ansiReset, ansiCyan, url, ansiReset, ansiDim, ansiReset)
+	} else {
+		fmt.Fprintf(w, "\n  %s●%s ready · %s%s%s\n\n",
+			ansiGreen, ansiReset, ansiCyan, url, ansiReset)
 	}
 }
 
