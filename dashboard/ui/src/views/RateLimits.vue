@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Search, Gauge, Save, RotateCcw, AlertCircle } from 'lucide-vue-next'
 import { fetchEndpoints, fetchRateLimits, configureRateLimit, resetRateLimit } from '../lib/api.js'
+import { usePoll } from '../lib/usePoll.js'
 
 // Rate limits view joins registry endpoints with the live store snapshot.
 // - Endpoints give us the declared baseline + the set of keys known at boot.
@@ -13,7 +14,6 @@ const endpoints = ref([])
 const records = ref([])  // []Record from store snapshot
 const filter = ref('')
 const saving = ref(null) // key currently saving
-let pollId = null
 
 async function load() {
   const [ep, rl] = await Promise.all([fetchEndpoints(), fetchRateLimits()])
@@ -21,12 +21,9 @@ async function load() {
   records.value = rl.limits || []
 }
 
-onMounted(() => {
-  load()
-  // Poll so other operators' overrides show up live.
-  pollId = setInterval(load, 3000)
-})
-onUnmounted(() => { if (pollId) clearInterval(pollId) })
+onMounted(load)
+// Poll so other operators' overrides show up live.
+usePoll(load, 3000)
 
 // Drafts live in a map keyed by "<service>.<op>". While a row is being
 // edited we hold the in-progress values here so rerenders from polling

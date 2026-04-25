@@ -1,13 +1,13 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Search, Clock, Play, Pause, Zap, CheckCircle2, XCircle, History } from 'lucide-vue-next'
 import { fetchCrons, triggerCron, setCronPaused } from '../lib/api.js'
+import { usePoll } from '../lib/usePoll.js'
 
 const crons = ref([])
 const selectedName = ref(null)
 const filter = ref('')
 const busy = ref(false)
-let pollId = null
 
 async function load() {
   try {
@@ -19,11 +19,8 @@ async function load() {
   }
 }
 
-onMounted(() => {
-  load()
-  pollId = setInterval(load, 2000)
-})
-onUnmounted(() => { if (pollId) clearInterval(pollId) })
+onMounted(load)
+usePoll(load, 2000)
 
 const filtered = computed(() => {
   const f = filter.value.toLowerCase()
