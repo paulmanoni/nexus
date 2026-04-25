@@ -138,15 +138,11 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 		// Per-op registry entry — one row per (path, type) so the
 		// dashboard's Endpoints tab lists each handler separately.
 		endpointName := "WS " + path + " " + msgType
-		app.registry.RegisterEndpoint(registry.Endpoint{
-			Service:     service,
-			Module:      cfg.module,
-			Deployment:  cfg.deployment,
-			Name:        endpointName,
-			Transport:   registry.WebSocket,
-			Method:      msgType,
-			Path:        path,
-			Description: cfg.description,
+		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
+			Name:      endpointName,
+			Transport: registry.WebSocket,
+			Method:    msgType,
+			Path:      path,
 		})
 		recordEndpointDeps(app, service, endpointName, deps, sh.depTypes)
 		return nil
