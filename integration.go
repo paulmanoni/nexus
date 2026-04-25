@@ -44,6 +44,12 @@ func newApp(cfg Config) *App {
 	if len(cfg.DashboardMiddleware) > 0 {
 		opts = append(opts, WithDashboardMiddleware(cfg.DashboardMiddleware...))
 	}
+	if cfg.Deployment != "" {
+		opts = append(opts, WithDeployment(cfg.Deployment))
+	}
+	if cfg.Version != "" {
+		opts = append(opts, WithVersion(cfg.Version))
+	}
 	// When the user didn't set MetricsStore explicitly, New() already
 	// defaults to metrics.NewCacheStore(a.cacheMgr) using whatever cache
 	// is active — the user-supplied one or nexus's own. metrics is kept

@@ -10,6 +10,7 @@ package nexus
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 
@@ -51,6 +52,23 @@ type App struct {
 	// that guard /__nexus. WithDashboardMiddleware + Config.DashboardMiddleware
 	// populate it; Mount applies them to the route group.
 	dashboardMw []gin.HandlerFunc
+
+	// deployment is the unit name this binary boots as (from
+	// Config.Deployment / NEXUS_DEPLOYMENT). "" = monolith. Today only
+	// surfaced on /__nexus/config; future codegen'd clients will
+	// consult it to choose local-shortcut vs HTTP for cross-module calls.
+	deployment string
+	// version is stamped on /__nexus/config so peer services in a split
+	// deployment can detect version skew. Defaults to "dev" via newApp
+	// when the user doesn't pass one.
+	version string
+
+	// wsEndpoints holds the per-path WebSocket state created by AsWS.
+	// Multiple AsWS calls on the same path share one endpoint — the first
+	// one mounts the HTTP upgrade route and starts the hub; subsequent
+	// ones just add handlers to the type-dispatch table.
+	wsMu        sync.Mutex
+	wsEndpoints map[string]*wsEndpoint
 }
 
 // AppOption is the functional-option type for nexus.New. Named AppOption
@@ -114,6 +132,20 @@ func WithCache(m *cache.Manager) AppOption {
 	return func(a *App) { a.cacheMgr = m }
 }
 
+// WithDeployment names the deployment unit this binary runs as. Empty =
+// monolith. Mirrors Config.Deployment for callers using the lower-level
+// nexus.New(...) entry point.
+func WithDeployment(name string) AppOption {
+	return func(a *App) { a.deployment = name }
+}
+
+// WithVersion stamps the binary's version onto /__nexus/config. Used by
+// generated clients to detect peer-version skew across services in a
+// split deployment.
+func WithVersion(v string) AppOption {
+	return func(a *App) { a.version = v }
+}
+
 // WithDashboardMiddleware gates the /__nexus surface behind one or
 // more middleware bundles. Each bundle's Gin realization runs in
 // registration order before any dashboard handler. Typical use:
@@ -136,7 +168,7 @@ func WithDashboardMiddleware(bundles ...middleware.Middleware) AppOption {
 }
 
 func New(opts ...AppOption) *App {
-	a := &App{dashboardName: defaultDashboardName}
+	a := &App{dashboardName: defaultDashboardName, version: "dev"}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -164,6 +196,8 @@ func New(opts ...AppOption) *App {
 		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, dashboard.Config{
 			Name:       a.dashboardName,
 			Middleware: a.dashboardMw,
+			Deployment: a.deployment,
+			Version:    a.version,
 		})
 	}
 	return a
@@ -174,6 +208,15 @@ func (a *App) Registry() *registry.Registry { return a.registry }
 func (a *App) Bus() *trace.Bus              { return a.bus }
 func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
 func (a *App) RateLimiter() ratelimit.Store { return a.rlStore }
+
+// Deployment is the deployment-unit name this binary boots as, or "" for
+// monolith. Read by future cross-module clients to choose the in-process
+// shortcut over HTTP.
+func (a *App) Deployment() string { return a.deployment }
+
+// Version is the binary's release tag, defaulting to "dev". Surfaced on
+// /__nexus/config so generated clients can detect peer-version skew.
+func (a *App) Version() string { return a.version }
 func (a *App) Metrics() metrics.Store       { return a.metricsStore }
 func (a *App) Cache() *cache.Manager        { return a.cacheMgr }
 func (a *App) Run(addr string) error {

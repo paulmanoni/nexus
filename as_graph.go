@@ -90,6 +90,10 @@ type gqlConfig struct {
 	// time so the registry ends up with the endpoint → module mapping
 	// the dashboard needs for the architecture view.
 	module string
+	// deployment is stamped by nexus.DeployAs in the enclosing module.
+	// Empty for always-local ops; populated only when the parent
+	// Module declares a deployment tag.
+	deployment string
 
 	// rateLimit, when set, declares the baseline rate limit for this
 	// op. The auto-mount registers it with the app's Store and wires an
@@ -114,8 +118,9 @@ type gqlFieldOption struct {
 	cfg *gqlConfig
 }
 
-func (g *gqlFieldOption) nexusOption() fx.Option { return g.o }
-func (g *gqlFieldOption) setModule(name string)  { g.cfg.module = name }
+func (g *gqlFieldOption) nexusOption() fx.Option   { return g.o }
+func (g *gqlFieldOption) setModule(name string)    { g.cfg.module = name }
+func (g *gqlFieldOption) setDeployment(tag string) { g.cfg.deployment = tag }
 
 type namedMw struct {
 	name, description string
@@ -387,6 +392,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 			ServiceType: svcType,
 			Service:     svc,
 			Module:      cfg.module,
+			Deployment:  cfg.deployment,
 			Field:       built,
 			DepTypes:    sh.depTypes,
 			Deps:        append([]reflect.Value(nil), deps...),
@@ -409,11 +415,15 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 type GqlField struct {
 	Kind        graph.FieldKind
 	ServiceType reflect.Type
-	Service     *Service        // nil if dep[0] didn't unwrap (misuse)
-	Module      string          // nexus.Module name this field was declared under; "" if unscoped
-	Field       any             // graph.QueryField or graph.MutationField
-	DepTypes    []reflect.Type  // for resource auto-attach
-	Deps        []reflect.Value // for resource auto-attach (NexusResourceProvider)
+	Service     *Service // nil if dep[0] didn't unwrap (misuse)
+	Module      string   // nexus.Module name this field was declared under; "" if unscoped
+	// Deployment is the DeployAs tag of the enclosing module; "" when
+	// the module is always-local. Forwarded to the registry entry so
+	// dashboard consumers can group by deployment unit.
+	Deployment string
+	Field      any             // graph.QueryField or graph.MutationField
+	DepTypes   []reflect.Type  // for resource auto-attach
+	Deps       []reflect.Value // for resource auto-attach (NexusResourceProvider)
 	// RateLimit is the baseline rate limit this op declared. Auto-mount
 	// publishes it to the registry so the dashboard can render it and
 	// — once operator overrides land — show the effective limit beside

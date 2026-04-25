@@ -52,3 +52,11 @@ func (m MiddlewareOption) applyToGql(c *gqlConfig) {
 func (m MiddlewareOption) applyToRest(c *restConfig) {
 	c.bundles = append(c.bundles, m.mw)
 }
+
+// applyToWS wires this middleware into an AsWS registration. Only the
+// first AsWS call for a given path actually installs middleware on the
+// upgrade route — subsequent registrations' bundles are ignored (with a
+// warning log).
+func (m MiddlewareOption) applyToWS(c *wsConfig) {
+	c.bundles = append(c.bundles, m.mw)
+}

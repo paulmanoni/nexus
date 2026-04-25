@@ -88,12 +88,13 @@ func autoMountGraphQL(in autoMountIn) error {
 	}
 	var pendingEdges []pending
 
-	// pendingModules tracks (service, op, module) triples gathered during
-	// the walk. Applied AFTER mountOne so endpoints exist in the registry.
-	// Collected here (not in a separate pass) because f.Service is filled
-	// by resolveUnresolved inside this loop — a second pass would see the
-	// pre-resolution nil for zero-service fallback fields.
-	type pendingModule struct{ service, op, module string }
+	// pendingModules tracks (service, op, module, deployment) tuples
+	// gathered during the walk. Applied AFTER mountOne so endpoints
+	// exist in the registry. Collected here (not in a separate pass)
+	// because f.Service is filled by resolveUnresolved inside this
+	// loop — a second pass would see the pre-resolution nil for
+	// zero-service fallback fields.
+	type pendingModule struct{ service, op, module, deployment string }
 	var pendingModules []pendingModule
 
 	// autoRouted tracks (service, op) pairs whose service was filled in by
@@ -157,11 +158,12 @@ func autoMountGraphQL(in autoMountIn) error {
 			if wasUnresolved {
 				autoRouted[opKey{service: f.Service.Name(), op: info.Name}] = true
 			}
-			if f.Module != "" {
+			if f.Module != "" || f.Deployment != "" {
 				pendingModules = append(pendingModules, pendingModule{
-					service: f.Service.Name(),
-					op:      info.Name,
-					module:  f.Module,
+					service:    f.Service.Name(),
+					op:         info.Name,
+					module:     f.Module,
+					deployment: f.Deployment,
 				})
 			}
 		}
@@ -193,6 +195,7 @@ func autoMountGraphQL(in autoMountIn) error {
 	// resolveUnresolved outcome rather than the pre-resolution f.Service.
 	for _, pm := range pendingModules {
 		in.App.Registry().SetEndpointModule(pm.service, pm.op, pm.module)
+		in.App.Registry().SetEndpointDeployment(pm.service, pm.op, pm.deployment)
 	}
 
 	// Publish declared rate limits to the registry so the dashboard can

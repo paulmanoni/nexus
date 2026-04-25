@@ -27,6 +27,14 @@ const Prefix = "/__nexus"
 type Config struct {
 	Name       string            `json:"Name"`
 	Middleware []gin.HandlerFunc `json:"-"`
+	// Deployment is the unit name this binary boots as ("" = monolith).
+	// Surfaced over /__nexus/config so the dashboard can render the
+	// active deployment, and so peer services in a split deployment
+	// can introspect it via federation.
+	Deployment string `json:"Deployment,omitempty"`
+	// Version is the binary's release tag (defaults to "dev"). Used by
+	// generated cross-service clients to detect version skew.
+	Version string `json:"Version,omitempty"`
 }
 
 // Mount attaches:

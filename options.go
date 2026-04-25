@@ -34,17 +34,24 @@ func Module(name string, opts ...Option) Option {
 	// in the same Module concatenate left-to-right:
 	//   Module("x", RoutePrefix("/a"), RoutePrefix("/b"), ...) → "/a/b".
 	var prefix string
+	// DeployAs is at-most-once per Module; last write wins. Empty
+	// string keeps the module untagged (always-local).
+	var deployment string
 	for _, o := range opts {
 		if rp, ok := o.(routePrefixOption); ok {
 			prefix += rp.prefix
 		}
+		if dt, ok := o.(deployTagOption); ok {
+			deployment = dt.tag
+		}
 	}
 
-	// Stamp module name + route prefix onto every child option that
-	// cares. Options produced by nested Module(...) don't implement
-	// these annotator interfaces (they return a rawOption wrapping
-	// fx.Module), so inner-most wins automatically — the inner
-	// Module() already annotated its own children before we see it.
+	// Stamp module name + route prefix + deployment tag onto every
+	// child option that cares. Options produced by nested Module(...)
+	// don't implement these annotator interfaces (they return a
+	// rawOption wrapping fx.Module), so inner-most wins automatically
+	// — the inner Module() already annotated its own children before
+	// we see it.
 	for _, o := range opts {
 		if ma, ok := o.(moduleAnnotator); ok {
 			ma.setModule(name)
@@ -52,6 +59,11 @@ func Module(name string, opts ...Option) Option {
 		if prefix != "" {
 			if rp, ok := o.(restPrefixAnnotator); ok {
 				rp.setRestPrefix(prefix)
+			}
+		}
+		if deployment != "" {
+			if da, ok := o.(deploymentAnnotator); ok {
+				da.setDeployment(deployment)
 			}
 		}
 	}
