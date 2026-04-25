@@ -140,7 +140,7 @@ func gqlArgsLiteral(args any) string {
 		if fv.IsZero() {
 			continue
 		}
-		name := gqlArgName(f)
+		name := gqlClientName(f)
 		if name == "" || name == "-" {
 			continue
 		}
@@ -172,33 +172,6 @@ func gqlValueLiteral(v reflect.Value) string {
 	}
 }
 
-// gqlArgName picks the graphql > json > lowercased-Go-name in that
-// order. Mirrors how the framework's resolver builder reads the
-// same args struct, so client and server agree on the wire name.
-func gqlArgName(f reflect.StructField) string {
-	if tag := f.Tag.Get("graphql"); tag != "" {
-		name, _, _ := strings.Cut(tag, ",")
-		return name
-	}
-	if tag := f.Tag.Get("json"); tag != "" {
-		name, _, _ := strings.Cut(tag, ",")
-		return name
-	}
-	if f.Name == "" {
-		return ""
-	}
-	r := []rune(f.Name)
-	r[0] = lowerRune(r[0])
-	return string(r)
-}
-
-func lowerRune(r rune) rune {
-	if r >= 'A' && r <= 'Z' {
-		return r + ('a' - 'A')
-	}
-	return r
-}
-
 // buildGqlSelection walks t (skipping pointer/slice indirection) and
 // returns "{ field1 field2 nested { sub } }" suitable for splicing
 // into a GraphQL document. Returns "" for non-struct types — the
@@ -219,7 +192,7 @@ func buildGqlSelection(t reflect.Type) string {
 		if !f.IsExported() {
 			continue
 		}
-		name := gqlFieldName(f)
+		name := gqlClientName(f)
 		if name == "" || name == "-" {
 			continue
 		}
@@ -243,10 +216,17 @@ func buildGqlSelection(t reflect.Type) string {
 	return "{ " + strings.Join(parts, " ") + " }"
 }
 
-// gqlFieldName mirrors gqlArgName for the response side. graphql tag
-// wins over json (some types use both); falls back to the
-// lowercased-first-letter Go name.
-func gqlFieldName(f reflect.StructField) string {
+// gqlClientName picks the wire name a client should use for a struct
+// field — both for inlining args into a query and for naming fields
+// in the selection set. Priority: graphql tag → json tag → lower-
+// cased Go name. Mirrors how the framework's resolver builder reads
+// the same struct so client and server agree on the wire name.
+//
+// The json fallback is client-only: server-side parseGraphQLTag does
+// not honor it. Structs that mix tag conventions can drift if the
+// json name disagrees with what graphql-go derived for the schema —
+// declare graphql tags explicitly when in doubt.
+func gqlClientName(f reflect.StructField) string {
 	if tag := f.Tag.Get("graphql"); tag != "" {
 		name, _, _ := strings.Cut(tag, ",")
 		return name
@@ -255,12 +235,7 @@ func gqlFieldName(f reflect.StructField) string {
 		name, _, _ := strings.Cut(tag, ",")
 		return name
 	}
-	if f.Name == "" {
-		return ""
-	}
-	r := []rune(f.Name)
-	r[0] = lowerRune(r[0])
-	return string(r)
+	return lowerFirst(f.Name)
 }
 
 // silenceErrorsImport keeps the errors package referenced for future
