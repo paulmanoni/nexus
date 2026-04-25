@@ -10,9 +10,9 @@ import (
 )
 
 // CheckoutClient is the typed client surface for the "checkout" module.
-// One method per AsRest handler in that module's declaration. The
-// implementation is selected at construction time based on the running
-// binary's deployment.
+// One method per AsRest / AsQuery / AsMutation handler in that
+// module's declaration. The implementation is selected at construction
+// time based on the running binary's deployment.
 type CheckoutClient interface {
 	Submit(ctx context.Context, args SubmitArgs) (*Receipt, error)
 }
@@ -27,26 +27,28 @@ type CheckoutClient interface {
 //     fail-fast).
 func NewCheckoutClient(app *nexus.App) CheckoutClient {
 	if dep := app.Deployment(); dep == "" || dep == "checkout-svc" {
-		return &checkoutClientLocal{inv: nexus.NewLocalInvoker(app)}
+		return &checkoutClientLocal{call: nexus.NewLocalInvoker(app)}
 	}
-	return &checkoutClientRemote{r: nexus.NewRemoteCallerFromEnv(
+	return &checkoutClientRemote{call: nexus.NewRemoteCallerFromEnv(
 		"CHECKOUT_SVC_URL",
 		nexus.WithLocalVersion(app.Version()),
 	)}
 }
 
-type checkoutClientLocal struct{ inv *nexus.LocalInvoker }
+type checkoutClientLocal struct{ call nexus.ClientCallable }
 
 func (c *checkoutClientLocal) Submit(ctx context.Context, args SubmitArgs) (*Receipt, error) {
 	var out *Receipt
-	err := c.inv.Invoke(ctx, "POST", "/checkout", args, &out)
+	err := c.call.Invoke(ctx, "POST", "/checkout", args, &out)
 	return out, err
+
 }
 
-type checkoutClientRemote struct{ r *nexus.RemoteCaller }
+type checkoutClientRemote struct{ call nexus.ClientCallable }
 
 func (c *checkoutClientRemote) Submit(ctx context.Context, args SubmitArgs) (*Receipt, error) {
 	var out *Receipt
-	err := c.r.Call(ctx, "POST", "/checkout", args, &out)
+	err := c.call.Invoke(ctx, "POST", "/checkout", args, &out)
 	return out, err
+
 }

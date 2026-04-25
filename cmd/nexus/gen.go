@@ -140,15 +140,29 @@ type modInfo struct {
 	Endpoints  []endpointInfo // resolved AsRest registrations
 }
 
-// endpointInfo is one AsRest call whose handler we resolved.
+// transportKind tags an endpoint's wire shape so the renderer picks
+// the right body template (REST vs GraphQL vs WebSocket).
+type transportKind int
+
+const (
+	transportREST transportKind = iota
+	transportGqlQuery
+	transportGqlMutation
+	transportWS
+)
+
+// endpointInfo is one AsRest / AsQuery / AsMutation / AsWS call whose
+// handler we resolved.
 type endpointInfo struct {
-	Method   string // HTTP verb literal
-	Path     string // path literal
-	OpName   string // exported method name on the generated client
-	ArgsType string // Go syntax for the args type, qualified for the destination package
-	HasArgs  bool   // false → method takes only ctx
-	Return   string // Go syntax for the return type (T from Params[T] handler)
-	HasReturn bool  // false → handler returned only error → method returns just error
+	Transport transportKind
+	Method    string // HTTP verb literal (REST); message type (WS); empty for GraphQL
+	Path      string // REST/WS path; empty for GraphQL (uses the framework's mount)
+	OpName    string // exported method name on the generated client
+	GqlName   string // GraphQL field name (lowercased opName) — used in query string
+	ArgsType  string // Go syntax for the args type, qualified for the destination package
+	HasArgs   bool   // false → method takes only ctx
+	Return    string // Go syntax for the return type (T from Params[T] handler)
+	HasReturn bool   // false → handler returned only error → method returns just error
 }
 
 // discoverDeployTags is a thin wrapper around scanModules that returns
@@ -269,6 +283,21 @@ func parseModuleCall(p *packages.Package, call *ast.CallExpr) *modInfo {
 			if ep != nil {
 				m.Endpoints = append(m.Endpoints, *ep)
 			}
+		case isNexusCall(opCall.Fun, "AsQuery"):
+			ep := parseAsGqlCall(p, opCall, transportGqlQuery)
+			if ep != nil {
+				m.Endpoints = append(m.Endpoints, *ep)
+			}
+		case isNexusCall(opCall.Fun, "AsMutation"):
+			ep := parseAsGqlCall(p, opCall, transportGqlMutation)
+			if ep != nil {
+				m.Endpoints = append(m.Endpoints, *ep)
+			}
+		case isNexusCall(opCall.Fun, "AsWS"):
+			ep := parseAsWSCall(p, opCall)
+			if ep != nil {
+				m.Endpoints = append(m.Endpoints, *ep)
+			}
 		}
 	}
 	return &m
@@ -300,13 +329,93 @@ func parseAsRestCall(p *packages.Package, call *ast.CallExpr) *endpointInfo {
 		return nil
 	}
 	ep := endpointInfo{
-		Method: strings.ToUpper(method),
-		Path:   path,
-		OpName: opNameFromGoIdent(fn.Name()),
+		Transport: transportREST,
+		Method:    strings.ToUpper(method),
+		Path:      path,
+		OpName:    opNameFromGoIdent(fn.Name()),
 	}
-	// Walk params: the framework recognizes Params[T] anywhere; flat
-	// args (last param is a struct) is the legacy form. v1 codegen
-	// supports both.
+	fillSignature(p, sig, &ep)
+	return &ep
+}
+
+// parseAsGqlCall extracts (handler) from one AsQuery / AsMutation
+// call and returns it as an endpointInfo with the matching transport
+// kind. Args + return type are reflected from the handler signature
+// the same way parseAsRestCall does — same conventions, same
+// constraints (top-level handler, no closures).
+//
+// AsQuery/AsMutation share their first arg as the handler:
+//
+//	nexus.AsQuery(NewListPets, opts...)
+//
+// — no method/path string. The op name comes from the handler's Go
+// identifier (matching the runtime's opNameFromFunc).
+func parseAsGqlCall(p *packages.Package, call *ast.CallExpr, kind transportKind) *endpointInfo {
+	if len(call.Args) < 1 {
+		return nil
+	}
+	fn := resolveFunc(p, call.Args[0])
+	if fn == nil {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	op := opNameFromGoIdent(fn.Name())
+	ep := endpointInfo{
+		Transport: kind,
+		OpName:    op,
+		GqlName:   lowerFirst(op),
+	}
+	fillSignature(p, sig, &ep)
+	return &ep
+}
+
+// parseAsWSCall extracts (path, msgType, handler) from one AsWS call.
+// The generated client method is named after the handler with the
+// same exported-camelCase rules as the other transports; the path +
+// msgType land on Path/Method so the runtime helper knows what
+// envelope to send.
+//
+//	nexus.AsWS("/events", "chat.send", NewChatSend, opts...)
+func parseAsWSCall(p *packages.Package, call *ast.CallExpr) *endpointInfo {
+	if len(call.Args) < 3 {
+		return nil
+	}
+	path, ok := stringLit(call.Args[0])
+	if !ok {
+		return nil
+	}
+	msgType, ok := stringLit(call.Args[1])
+	if !ok {
+		return nil
+	}
+	fn := resolveFunc(p, call.Args[2])
+	if fn == nil {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	ep := endpointInfo{
+		Transport: transportWS,
+		Method:    msgType,
+		Path:      path,
+		OpName:    opNameFromGoIdent(fn.Name()),
+	}
+	fillSignature(p, sig, &ep)
+	return &ep
+}
+
+// fillSignature is the args/return type extraction shared by AsRest,
+// AsQuery, AsMutation, and AsWS parsers. Looks for Params[T] anywhere
+// in the params list (preferred); falls back to a trailing struct
+// param for legacy handlers. Picks the first non-error return as the
+// result type.
+func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) {
+	q := makeQualifier(p)
 	var argsType types.Type
 	for i := 0; i < sig.Params().Len(); i++ {
 		pt := sig.Params().At(i).Type()
@@ -321,12 +430,10 @@ func parseAsRestCall(p *packages.Package, call *ast.CallExpr) *endpointInfo {
 			argsType = last
 		}
 	}
-	q := makeQualifier(p)
 	if argsType != nil {
 		ep.HasArgs = true
 		ep.ArgsType = types.TypeString(argsType, q)
 	}
-	// Return: pick the first non-error return as the result type.
 	for i := 0; i < sig.Results().Len(); i++ {
 		rt := sig.Results().At(i).Type()
 		if isErrorType(rt) {
@@ -336,7 +443,19 @@ func parseAsRestCall(p *packages.Package, call *ast.CallExpr) *endpointInfo {
 		ep.HasReturn = true
 		break
 	}
-	return &ep
+}
+
+// lowerFirst returns s with its first ASCII rune lowercased. Used
+// to derive the GraphQL field name ("ListPets" → "listPets") matching
+// the runtime's opNameFromFunc convention.
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	if c := s[0]; c >= 'A' && c <= 'Z' {
+		return string(c+('a'-'A')) + s[1:]
+	}
+	return s
 }
 
 // resolveFunc walks an expression to a *types.Func declaration. Today
@@ -454,9 +573,9 @@ import (
 )
 
 // {{.ClientType}} is the typed client surface for the {{printf "%q" .ModuleName}} module.
-// One method per AsRest handler in that module's declaration. The
-// implementation is selected at construction time based on the running
-// binary's deployment.
+// One method per AsRest / AsQuery / AsMutation handler in that
+// module's declaration. The implementation is selected at construction
+// time based on the running binary's deployment.
 type {{.ClientType}} interface {
 {{- range .Endpoints}}
 	{{.OpName}}(ctx context.Context{{if .HasArgs}}, args {{.ArgsType}}{{end}}) {{methodReturn .}}
@@ -473,36 +592,24 @@ type {{.ClientType}} interface {
 //     fail-fast).
 func New{{.ClientType}}(app *nexus.App) {{.ClientType}} {
 	if dep := app.Deployment(); dep == "" || dep == {{printf "%q" .Tag}} {
-		return &{{.LocalImpl}}{inv: nexus.NewLocalInvoker(app)}
+		return &{{.LocalImpl}}{call: nexus.NewLocalInvoker(app)}
 	}
-	return &{{.RemoteImpl}}{r: nexus.NewRemoteCallerFromEnv(
+	return &{{.RemoteImpl}}{call: nexus.NewRemoteCallerFromEnv(
 		{{printf "%q" .EnvVar}},
 		nexus.WithLocalVersion(app.Version()),
 	)}
 }
 
-type {{.LocalImpl}} struct{ inv *nexus.LocalInvoker }
+type {{.LocalImpl}} struct{ call nexus.ClientCallable }
 {{range .Endpoints}}
 func (c *{{$.LocalImpl}}) {{.OpName}}(ctx context.Context{{if .HasArgs}}, args {{.ArgsType}}{{end}}) {{methodReturn .}} {
-{{- if .HasReturn}}
-	var out {{.Return}}
-	err := c.inv.Invoke(ctx, {{printf "%q" .Method}}, {{printf "%q" .Path}}, {{argExpr .}}, &out)
-	return out, err
-{{- else}}
-	return c.inv.Invoke(ctx, {{printf "%q" .Method}}, {{printf "%q" .Path}}, {{argExpr .}}, nil)
-{{- end}}
+{{- methodBody . "c.call" }}
 }
 {{end}}
-type {{.RemoteImpl}} struct{ r *nexus.RemoteCaller }
+type {{.RemoteImpl}} struct{ call nexus.ClientCallable }
 {{range .Endpoints}}
 func (c *{{$.RemoteImpl}}) {{.OpName}}(ctx context.Context{{if .HasArgs}}, args {{.ArgsType}}{{end}}) {{methodReturn .}} {
-{{- if .HasReturn}}
-	var out {{.Return}}
-	err := c.r.Call(ctx, {{printf "%q" .Method}}, {{printf "%q" .Path}}, {{argExpr .}}, &out)
-	return out, err
-{{- else}}
-	return c.r.Call(ctx, {{printf "%q" .Method}}, {{printf "%q" .Path}}, {{argExpr .}}, nil)
-{{- end}}
+{{- methodBody . "c.call" }}
 }
 {{end}}
 `
@@ -547,6 +654,7 @@ func renderClient(m modInfo) ([]byte, error) {
 			}
 			return "nil"
 		},
+		"methodBody": renderMethodBody,
 	}).Parse(clientTpl))
 	var buf bytes.Buffer
 	if err := tpl.Execute(&buf, data); err != nil {
@@ -560,6 +668,66 @@ func renderClient(m modInfo) ([]byte, error) {
 		return buf.Bytes(), fmt.Errorf("gofmt: %w (raw output retained)", err)
 	}
 	return formatted, nil
+}
+
+// renderMethodBody emits the per-method body. Dispatches on the
+// endpoint's transport so REST goes through ClientCallable.Invoke,
+// GraphQL ops go through nexus.GqlCall[T], and WS — once supported —
+// will get its own branch. Returns a string spliced into the
+// generated source; gofmt cleans up indentation afterwards.
+//
+// recv is the receiver expression used inside the method (e.g.
+// "c.call"). Different impls share the same template by passing
+// their own.
+func renderMethodBody(e endpointInfo, recv string) string {
+	switch e.Transport {
+	case transportGqlQuery:
+		return renderGqlBody(e, recv, "query")
+	case transportGqlMutation:
+		return renderGqlBody(e, recv, "mutation")
+	case transportWS:
+		// WS clients are deferred to v2 — generate a clear runtime
+		// error so the call site fails loud rather than silently
+		// degrading. The shape is still emitted so consumers can
+		// implement against the interface today and only need to
+		// regenerate when WS support lands.
+		if e.HasReturn {
+			return "\n\tvar zero " + e.Return + "\n\treturn zero, " +
+				"nexusErrWSNotImplemented(" + strconv.Quote(e.Method) + ")\n"
+		}
+		return "\n\treturn nexusErrWSNotImplemented(" + strconv.Quote(e.Method) + ")\n"
+	default: // transportREST
+		return renderRestBody(e, recv)
+	}
+}
+
+func renderRestBody(e endpointInfo, recv string) string {
+	method := strconv.Quote(e.Method)
+	path := strconv.Quote(e.Path)
+	args := "nil"
+	if e.HasArgs {
+		args = "args"
+	}
+	if e.HasReturn {
+		return "\n\tvar out " + e.Return + "\n\terr := " + recv +
+			".Invoke(ctx, " + method + ", " + path + ", " + args + ", &out)\n\treturn out, err\n"
+	}
+	return "\n\treturn " + recv + ".Invoke(ctx, " + method + ", " + path + ", " + args + ", nil)\n"
+}
+
+func renderGqlBody(e endpointInfo, recv, opType string) string {
+	args := "nil"
+	if e.HasArgs {
+		args = "args"
+	}
+	gqlName := strconv.Quote(e.GqlName)
+	if e.HasReturn {
+		return "\n\treturn nexus.GqlCall[" + e.Return + "](ctx, " + recv +
+			", " + strconv.Quote(opType) + ", " + gqlName + ", " + args + ", nexus.GqlOptions{})\n"
+	}
+	// GraphQL ops with no return value are unusual; emit a discard.
+	return "\n\t_, err := nexus.GqlCall[any](ctx, " + recv +
+		", " + strconv.Quote(opType) + ", " + gqlName + ", " + args + ", nexus.GqlOptions{})\n\treturn err\n"
 }
 
 // envVarFromTag turns "users-svc" into "USERS_SVC_URL". Convention:

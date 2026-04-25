@@ -79,6 +79,32 @@ func NewList(svc *Service, p nexus.Params[ListArgs]) ([]*User, error) {
 	return out, nil
 }
 
+// SearchArgs is the typed input for a GraphQL query — `nexus gen
+// clients` uses the same Params[T] pattern AsRest does.
+type SearchArgs struct {
+	Prefix string `graphql:"prefix" json:"prefix"`
+}
+
+// NewSearch is a GraphQL Query handler returning users whose names
+// begin with prefix. Demonstrates the codegen emitting a typed
+// GraphQL method on the generated client.
+func NewSearch(svc *Service, p nexus.Params[SearchArgs]) ([]*User, error) {
+	svc.mu.RLock()
+	defer svc.mu.RUnlock()
+	out := make([]*User, 0, len(svc.users))
+	for _, u := range svc.users {
+		if p.Args.Prefix == "" || startsWith(u.Name, p.Args.Prefix) {
+			uu := u
+			out = append(out, &uu)
+		}
+	}
+	return out, nil
+}
+
+func startsWith(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
 // Module is the wired declaration. DeployAs("users-svc") is the
 // hint that drives codegen — without it, this module is "always
 // local" and no client stub is emitted.
@@ -87,4 +113,5 @@ var Module = nexus.Module("users",
 	nexus.Provide(NewService),
 	nexus.AsRest("GET", "/users/:id", NewGet),
 	nexus.AsRest("GET", "/users", NewList),
+	nexus.AsQuery(NewSearch),
 )
