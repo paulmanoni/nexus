@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"reflect"
 	"strings"
@@ -269,4 +270,75 @@ func preferredJSONKey(f reflect.StructField) string {
 		}
 	}
 	return ""
+}
+
+// encodeRequest expands path parameters and serializes args into the
+// right place — body for POST/PUT/PATCH, query string otherwise.
+// Returns the final path (with query string already attached when
+// applicable), the body reader (nil when there's nothing to send),
+// and the content type to put on the request ("" when there's no
+// body).
+//
+// LocalInvoker and RemoteCaller share this helper so the same args
+// produce the same wire shape regardless of whether the call goes
+// through httptest in-process or over real HTTP.
+func encodeRequest(method, path string, args any) (finalPath string, body io.Reader, contentType string, err error) {
+	finalPath, err = expandPath(path, args)
+	if err != nil {
+		return "", nil, "", err
+	}
+	if methodHasBody(method) {
+		b, err := encodeJSONBody(args)
+		if err != nil {
+			return "", nil, "", fmt.Errorf("nexus: encode body: %w", err)
+		}
+		if b != nil {
+			return finalPath, bytes.NewReader(b), "application/json", nil
+		}
+		return finalPath, nil, "", nil
+	}
+	qs, err := encodeQuery(args)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("nexus: encode query: %w", err)
+	}
+	if qs != "" {
+		finalPath += "?" + qs
+	}
+	return finalPath, nil, "", nil
+}
+
+// decodeResponse turns a status-code + body pair into the call's
+// final return: nil when 2xx (after JSON-decoding into out, if out is
+// non-nil), or a *RemoteError carrying the status + best-effort
+// message when not. Shared by LocalInvoker and RemoteCaller so the
+// error envelope is identical from either path.
+func decodeResponse(statusCode int, respBody []byte, method, targetPath, targetURL string, out any) error {
+	if statusCode >= 400 {
+		re := &RemoteError{
+			Status:     statusCode,
+			RawBody:    respBody,
+			Method:     method,
+			TargetPath: targetPath,
+			TargetURL:  targetURL,
+		}
+		var env struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(respBody, &env) == nil {
+			if env.Error != "" {
+				re.Message = env.Error
+			} else if env.Message != "" {
+				re.Message = env.Message
+			}
+		}
+		return re
+	}
+	if out == nil || len(respBody) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(respBody, out); err != nil {
+		return fmt.Errorf("nexus: decode response from %s: %w", targetURL, err)
+	}
+	return nil
 }
