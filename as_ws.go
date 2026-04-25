@@ -148,13 +148,7 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 			Path:        path,
 			Description: cfg.description,
 		})
-		attachRestResources(app, service, deps, sh.depTypes)
-		if resources := collectResourceNames(deps); len(resources) > 0 {
-			app.registry.SetEndpointResources(service, endpointName, resources)
-		}
-		if svcDeps := collectServiceDeps(deps, sh.depTypes, service); len(svcDeps) > 0 {
-			app.registry.SetEndpointServiceDeps(service, endpointName, svcDeps)
-		}
+		recordEndpointDeps(app, service, endpointName, deps, sh.depTypes)
 		return nil
 	})
 	return &wsOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
