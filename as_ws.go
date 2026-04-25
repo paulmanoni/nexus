@@ -12,7 +12,6 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/metrics"
-	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 	"github.com/paulmanoni/nexus/transport/ws"
@@ -74,13 +73,8 @@ func AsWS(path, msgType string, fn any, opts ...WSOption) Option {
 type WSOption interface{ applyToWS(*wsConfig) }
 
 type wsConfig struct {
-	description string
-	service     string
-	bundles     []middleware.Middleware
-	module      string
-	// deployment is stamped by nexus.DeployAs in the enclosing module.
-	// Empty for always-local AsWS registrations.
-	deployment string
+	baseEndpointConfig
+	service string
 }
 
 // wsOption is the Option returned by AsWS. Implements moduleAnnotator so
