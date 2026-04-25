@@ -12,7 +12,6 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/ratelimit"
 )
 
@@ -74,8 +73,8 @@ type gqlOptionFn func(*gqlConfig)
 func (f gqlOptionFn) applyToGql(c *gqlConfig) { f(c) }
 
 type gqlConfig struct {
+	baseEndpointConfig
 	opName            string
-	description       string
 	middlewares       []namedMw
 	deprecated        bool
 	deprecationReason string
@@ -85,28 +84,11 @@ type gqlConfig struct {
 	// handlers whose signature intentionally omits the service wrapper.
 	serviceType reflect.Type
 
-	// module is stamped by nexus.Module("name", ...) when this option
-	// is a direct child of a module. Populates GqlField.Module at ctor
-	// time so the registry ends up with the endpoint → module mapping
-	// the dashboard needs for the architecture view.
-	module string
-	// deployment is stamped by nexus.DeployAs in the enclosing module.
-	// Empty for always-local ops; populated only when the parent
-	// Module declares a deployment tag.
-	deployment string
-
 	// rateLimit, when set, declares the baseline rate limit for this
 	// op. The auto-mount registers it with the app's Store and wires an
 	// enforcement middleware. Operators can override the effective limit
 	// live via the dashboard without touching code.
 	rateLimit *ratelimit.Limit
-
-	// bundles holds the full middleware.Middleware values attached via
-	// nexus.Use — the registry uses AsInfo() from each to label the
-	// endpoint's middleware list. The Graph realizations are already
-	// copied into `middlewares` at option-apply time; bundles is just
-	// for dashboard metadata.
-	bundles []middleware.Middleware
 }
 
 // gqlFieldOption is the Option returned by AsQuery/AsMutation. It keeps
