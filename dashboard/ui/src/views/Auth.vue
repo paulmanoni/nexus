@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ShieldCheck, ShieldOff, Users, Trash2, RefreshCw, AlertCircle } from 'lucide-vue-next'
 import { fetchAuth, invalidateAuth, subscribeEvents } from '../lib/api.js'
 import { usePoll } from '../lib/usePoll.js'
+import { formatRelative as relative } from '../lib/time.js'
 
 // state.snapshot holds the latest { identities, cachingEnabled } payload.
 // state.kind is one of:
@@ -60,26 +61,6 @@ onUnmounted(() => {
 
 const identities = computed(() => state.value.snapshot?.identities || [])
 const cachingEnabled = computed(() => !!state.value.snapshot?.cachingEnabled)
-
-// Format a Go/JSON time string as "in 12m" / "3s ago" relative to now,
-// so the table stays scannable without a separate absolute column.
-function relative(iso) {
-  if (!iso) return ''
-  const t = new Date(iso).getTime()
-  if (!t) return iso
-  const delta = Math.round((t - Date.now()) / 1000)
-  if (delta > 0) return `in ${formatSpan(delta)}`
-  return `${formatSpan(-delta)} ago`
-}
-
-function formatSpan(seconds) {
-  if (seconds < 60) return `${seconds}s`
-  const m = Math.round(seconds / 60)
-  if (m < 60) return `${m}m`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h}h`
-  return `${Math.round(h / 24)}d`
-}
 
 async function forceLogout(id) {
   if (!id) return
