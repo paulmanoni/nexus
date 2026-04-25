@@ -74,6 +74,21 @@ func resolveEndpointService(explicit, module string, deps []reflect.Value, depTy
 	return defaultServiceName
 }
 
+// registerEndpoint fills the shared fields (Service, Module, Deployment,
+// Description) on e from cfg + service, then writes the entry to the
+// app's registry. Each transport's mounting code supplies the
+// transport-specific fields (Transport, Method, Path, Name, Middleware)
+// on the entry it passes in. Centralizing the shared-field stamping
+// means a future column (Tags, AuditHook, etc.) is one edit instead of
+// three.
+func registerEndpoint(app *App, cfg *baseEndpointConfig, service string, e registry.Endpoint) {
+	e.Service = service
+	e.Module = cfg.module
+	e.Deployment = cfg.deployment
+	e.Description = cfg.description
+	app.registry.RegisterEndpoint(e)
+}
+
 // recordEndpointDeps writes the dep edges for a REST or WebSocket
 // endpoint registration: aggregate service→resource attachments, plus
 // per-endpoint resource and other-service lists. Identical for REST

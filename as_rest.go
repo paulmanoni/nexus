@@ -136,16 +136,12 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		app.engine.Handle(method, finalPath, chain...)
 
 		endpointName := method + " " + finalPath
-		app.registry.RegisterEndpoint(registry.Endpoint{
-			Service:     service,
-			Module:      cfg.module,
-			Deployment:  cfg.deployment,
-			Name:        endpointName,
-			Transport:   registry.REST,
-			Method:      method,
-			Path:        finalPath,
-			Description: cfg.description,
-			Middleware:  mwNames,
+		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
+			Name:       endpointName,
+			Transport:  registry.REST,
+			Method:     method,
+			Path:       finalPath,
+			Middleware: mwNames,
 		})
 		recordEndpointDeps(app, service, endpointName, deps, depTypes)
 		return nil
@@ -286,16 +282,12 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 			cfg.bundles, handler,
 		)
 		app.engine.Handle(method, finalPath, chain...)
-		app.registry.RegisterEndpoint(registry.Endpoint{
-			Service:     service,
-			Module:      cfg.module,
-			Deployment:  cfg.deployment,
-			Name:        opName,
-			Transport:   registry.REST,
-			Method:      method,
-			Path:        finalPath,
-			Description: cfg.description,
-			Middleware:  mwNames,
+		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
+			Name:       opName,
+			Transport:  registry.REST,
+			Method:     method,
+			Path:       finalPath,
+			Middleware: mwNames,
 		})
 		recordEndpointDeps(app, service, opName, deps, sh.depTypes)
 		return nil
