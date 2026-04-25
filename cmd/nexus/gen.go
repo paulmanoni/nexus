@@ -467,12 +467,18 @@ type {{.ClientType}} interface {
 // running binary:
 //   - In-process LocalInvoker when this binary owns the {{printf "%q" .Tag}}
 //     deployment, OR when no deployment is set (monolith mode).
-//   - HTTP RemoteCaller reading {{.EnvVar}} otherwise.
+//   - HTTP RemoteCaller reading {{.EnvVar}} otherwise. The local
+//     binary's version is threaded in so RemoteCaller can detect
+//     peer-version skew on the first call (single warning line, no
+//     fail-fast).
 func New{{.ClientType}}(app *nexus.App) {{.ClientType}} {
 	if dep := app.Deployment(); dep == "" || dep == {{printf "%q" .Tag}} {
 		return &{{.LocalImpl}}{inv: nexus.NewLocalInvoker(app)}
 	}
-	return &{{.RemoteImpl}}{r: nexus.NewRemoteCallerFromEnv({{printf "%q" .EnvVar}})}
+	return &{{.RemoteImpl}}{r: nexus.NewRemoteCallerFromEnv(
+		{{printf "%q" .EnvVar}},
+		nexus.WithLocalVersion(app.Version()),
+	)}
 }
 
 type {{.LocalImpl}} struct{ inv *nexus.LocalInvoker }

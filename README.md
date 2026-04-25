@@ -572,9 +572,21 @@ restart, `o` open browser, `c` clear). Stays opt-in because a TUI
 takes over the whole terminal — the static-banner mode remains the
 default.
 
-**Coming next**: peer-version skew warnings on first call, GraphQL +
-WebSocket clients via the same generator, request-counter pane in
-the TUI mode driven by live `/__nexus/stats` polling.
+**Also in v0.12**: peer-version skew warnings. Generated remote
+clients now thread `app.Version()` into a `RemoteCaller`, which
+fetches the peer's `/__nexus/config` once on first call and logs a
+single warning line if `peerVersion != localVersion`. Catches the
+"service A is on v2, service B on v1" rollout gap early without
+fail-fast (skew is sometimes intentional during a deploy).
+
+```
+nexus: peer at http://users:8080 reports version "v2.0.0";
+this binary is on "v1.4.2" — possible deployment skew
+```
+
+**Coming next**: GraphQL + WebSocket clients via the same generator,
+request-counter pane in the TUI mode driven by live `/__nexus/stats`
+polling.
 
 ## Dashboard
 

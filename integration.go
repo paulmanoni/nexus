@@ -2,8 +2,11 @@ package nexus
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 
 	"go.uber.org/fx"
 
@@ -108,6 +111,16 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 				return err
 			}
 			srv.Addr = ln.Addr().String()
+			// One-line startup announcement. Recognizable format that
+			// nexus dev's addrFinder parses to surface the actual
+			// bind in its banner — and a useful signal for anyone
+			// scraping logs in plain `go run` use too. Skipped when
+			// the bound port is :0 (test harness) since the
+			// fx-managed listener is meaningful but not where users
+			// would actually connect.
+			if !strings.HasSuffix(srv.Addr, ":0") {
+				fmt.Fprintf(os.Stdout, "nexus: listening on %s\n", srv.Addr)
+			}
 			app.cronSched.Start()
 			go func() { _ = srv.Serve(ln) }()
 			return nil
