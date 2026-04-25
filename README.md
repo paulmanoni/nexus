@@ -542,10 +542,32 @@ caller error handling doesn't fork by deployment shape. Add
 `//go:generate nexus gen clients ./...` at your project root to fold
 regeneration into `go generate ./...`.
 
-**Coming next**: a `nexus dev --split` runner that boots each tagged
-module as a localhost subprocess (testing distributed semantics
-without K8s), peer-version skew warnings on first call, GraphQL +
-WebSocket clients via the same generator.
+**Also shipping in v0.10**: `nexus dev --split` boots one localhost
+subprocess per `DeployAs` tag with auto-wired `*_URL` env vars between
+them, so the codegen'd cross-module clients exercise the real HTTP
+path (not just the local shortcut). Distributed semantics on your
+laptop, no K8s required.
+
+```bash
+$ nexus dev --split ./examples/microsplit
+
+  nexus dev (split mode)
+  ──────────
+  checkout-svc  port 8080  →  http://localhost:8080
+  users-svc     port 8081  →  http://localhost:8081
+  ● starting · ctrl-c to stop all
+
+[checkout-svc] [GIN] Listening on :8080
+[users-svc]    [GIN] Listening on :8081
+```
+
+Ctrl-C kills every subprocess group cleanly. Your `main()` must read
+`PORT` to honor the assigned port — `examples/microsplit/main.go`
+shows the convention. `--base-port` shifts the assignment.
+
+**Coming next**: peer-version skew warnings on first call, GraphQL +
+WebSocket clients via the same generator, a Bubble Tea TUI mode for
+`nexus dev` with a live request counter and restart hotkey.
 
 ## Dashboard
 
