@@ -147,15 +147,7 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 			Description: cfg.description,
 			Middleware:  mwNames,
 		})
-		// Same dep tracking as AsRest — surfaces the service→resource
-		// + service→service edges on the Architecture dashboard.
-		attachRestResources(app, service, deps, depTypes)
-		if resources := collectResourceNames(deps); len(resources) > 0 {
-			app.registry.SetEndpointResources(service, endpointName, resources)
-		}
-		if svcDeps := collectServiceDeps(deps, depTypes, service); len(svcDeps) > 0 {
-			app.registry.SetEndpointServiceDeps(service, endpointName, svcDeps)
-		}
+		recordEndpointDeps(app, service, endpointName, deps, depTypes)
 		return nil
 	})
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
@@ -327,17 +319,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 			Description: cfg.description,
 			Middleware:  mwNames,
 		})
-		// Attach per-op dep metadata so the dashboard draws the same
-		// service→resource + service→service edges REST endpoints
-		// deserve, not just GraphQL ops. Mirrors what automount.go
-		// does for GqlField.
-		attachRestResources(app, service, deps, sh.depTypes)
-		if resources := collectResourceNames(deps); len(resources) > 0 {
-			app.registry.SetEndpointResources(service, opName, resources)
-		}
-		if svcDeps := collectServiceDeps(deps, sh.depTypes, service); len(svcDeps) > 0 {
-			app.registry.SetEndpointServiceDeps(service, opName, svcDeps)
-		}
+		recordEndpointDeps(app, service, opName, deps, sh.depTypes)
 		return nil
 	})
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
