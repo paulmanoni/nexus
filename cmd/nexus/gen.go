@@ -151,6 +151,38 @@ type endpointInfo struct {
 	HasReturn bool  // false → handler returned only error → method returns just error
 }
 
+// discoverDeployTags is a thin wrapper around scanModules that returns
+// just the unique, non-empty DeployAs tags discovered under pattern.
+// `nexus dev --split` uses it to enumerate the deployment units it
+// needs to launch as subprocesses without otherwise caring about the
+// AsRest signatures that gen clients reads.
+func discoverDeployTags(pattern string) ([]string, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps |
+			packages.NeedImports,
+		Tests: false,
+	}
+	pkgs, err := packages.Load(cfg, pattern)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	for _, m := range scanModules(pkgs) {
+		if m.Tag == "" {
+			continue
+		}
+		if _, dup := seen[m.Tag]; dup {
+			continue
+		}
+		seen[m.Tag] = struct{}{}
+		out = append(out, m.Tag)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // scanModules walks every package's AST and collects nexus.Module(...)
 // calls with their DeployAs tag and AsRest endpoints. Returns a flat
 // slice; the caller groups by tag if needed.

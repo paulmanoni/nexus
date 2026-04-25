@@ -56,10 +56,12 @@ func NewSubmit(svc *Service, p nexus.Params[SubmitArgs]) (*Receipt, error) {
 	}, nil
 }
 
-// Module declares one POST endpoint. checkout has no DeployAs tag of
-// its own in the demo — the split here is "users out, checkout local".
-// Tag it the same way to make it splittable on its own.
+// Module declares one POST endpoint. DeployAs makes checkout its own
+// deployment unit so `nexus dev --split` boots it as a separate
+// subprocess from users, exercising the real HTTP path between them
+// via the codegen'd users.UsersClient.
 var Module = nexus.Module("checkout",
+	nexus.DeployAs("checkout-svc"),
 	nexus.Provide(NewService),
 	nexus.Provide(users.NewUsersClient),
 	nexus.AsRest("POST", "/checkout", NewSubmit),

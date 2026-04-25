@@ -18,10 +18,16 @@ import (
 
 // newDevCmd builds `nexus dev` — runs `go run` on the target package
 // with a startup banner and auto-opens the dashboard once the configured
-// port responds. Cobra wraps the runner.
+// port responds. With --split, boots one subprocess per nexus.DeployAs
+// tag instead, wiring peer URLs between them so cross-module calls go
+// over real HTTP. Cobra wraps the runner.
 func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
-	var addr string
-	var noOpen bool
+	var (
+		addr     string
+		noOpen   bool
+		split    bool
+		basePort int
+	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
 		Short: "Run the app with go run + auto-open the dashboard",
@@ -30,20 +36,35 @@ auto-open the dashboard once the listen port responds.
 
 Use this instead of 'go run .' when you want one-command iteration. The
 dev runner kills the entire process group on SIGINT/SIGTERM so the
-compiled binary doesn't survive Ctrl-C as a zombie.`,
+compiled binary doesn't survive Ctrl-C as a zombie.
+
+With --split: discover every nexus.DeployAs(tag) declaration and boot
+one subprocess per tag. Each subprocess gets a unique PORT and an
+NEXUS_DEPLOYMENT env var; peer URLs are auto-wired via <TAG>_URL so
+the codegen'd cross-module clients hit the right peer over real HTTP.
+
+Your main() must read PORT to honor the assignment — see
+examples/microsplit for the convention.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			target := "."
 			if len(args) > 0 {
 				target = args[0]
 			}
+			if split {
+				return runDevSplit(target, basePort, stdout, stderr)
+			}
 			return runDev(target, addr, !noOpen, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":8080",
-		"dashboard address to probe and open")
+		"dashboard address to probe and open (single-process mode)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false,
 		"don't auto-open the browser when the port responds")
+	cmd.Flags().BoolVar(&split, "split", false,
+		"boot one subprocess per nexus.DeployAs tag (split mode)")
+	cmd.Flags().IntVar(&basePort, "base-port", 8080,
+		"first port to assign in --split mode (subsequent units take +1, +2, ...)")
 	return cmd
 }
 
