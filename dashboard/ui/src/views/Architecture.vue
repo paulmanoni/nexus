@@ -15,6 +15,7 @@ import ErrorDialog from '../components/ErrorDialog.vue'
 import PacketOverlay from '../components/PacketOverlay.vue'
 import GlobalMiddlewareBar from '../components/GlobalMiddlewareBar.vue'
 import { fetchEndpoints, fetchResources, fetchStats, fetchWorkers, subscribeEvents } from '../lib/api.js'
+import { usePoll } from '../lib/usePoll.js'
 
 const nodes = ref([])
 const edges = ref([])
@@ -766,19 +767,17 @@ function spawnPacketsForEdges(ids, opName, state) {
 const packetOverlay = ref(null)
 const canvasEl = ref(null)
 
-let pollTimer = null
 let traceSub = null
 onMounted(() => {
   load()
-  pollTimer = setInterval(load, 5000) // refresh health
   // Subscribe to the request trace stream so the graph lights up on
   // live traffic. Same socket the Traces tab uses; it multiplexes
   // fine — backlog replay is harmless because each flash has its own
   // short timeout.
   traceSub = subscribeEvents(onTraceEvent, null, 0)
 })
+usePoll(load, 5000) // refresh health
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
   if (traceSub) traceSub.close()
   flashTimers.forEach(t => clearTimeout(t))
 })
