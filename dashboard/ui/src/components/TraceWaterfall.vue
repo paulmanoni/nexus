@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { X, Activity, Loader2, CheckCircle2, XCircle, Globe } from 'lucide-vue-next'
 import { fetchTrace } from '../lib/api.js'
+import { formatDuration as fmtDur } from '../lib/time.js'
 
 // TraceWaterfall renders one trace's span tree as a Gantt-style chart.
 // Each row is a span; bar width is durationMs / totalMs, bar offset is
@@ -102,13 +103,6 @@ watch(() => [props.open, props.traceId], ([open]) => {
 
 function onBackdrop(e) {
   if (e.target.classList.contains('backdrop')) emit('close')
-}
-
-function fmtDur(ms) {
-  if (ms == null) return ''
-  if (ms < 1) return '<1ms'
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(2)}s`
 }
 
 function toggleSelect(spanId) {
