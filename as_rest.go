@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
-	"github.com/paulmanoni/nexus/metrics"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -127,25 +126,13 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		out := reflect.ValueOf(factory).Call(deps)
 		userHandler := out[0].Interface().(gin.HandlerFunc)
 
-		// Chain: trace → metrics → user bundles → handler.
-		var chain []gin.HandlerFunc
-		var mwNames []string
-		if app.bus != nil {
-			chain = append(chain, trace.Middleware(app.bus, service, method+" "+finalPath, string(registry.REST)))
-		}
-		metricsBundle := metrics.NewMiddleware(app.metricsStore, service+"."+opName)
-		chain = append(chain, metricsBundle.Gin)
-		mwNames = append(mwNames, metricsBundle.Name)
-		app.registry.RegisterMiddleware(metricsBundle.AsInfo())
-
-		for _, b := range cfg.bundles {
-			app.registry.RegisterMiddleware(b.AsInfo())
-			mwNames = append(mwNames, b.Name)
-			if b.Gin != nil {
-				chain = append(chain, b.Gin)
-			}
-		}
-		chain = append(chain, userHandler)
+		chain, mwNames := buildEndpointChain(
+			app, service,
+			service+"."+opName,
+			string(registry.REST),
+			method+" "+finalPath,
+			cfg.bundles, userHandler,
+		)
 		app.engine.Handle(method, finalPath, chain...)
 
 		endpointName := method + " " + finalPath
@@ -351,26 +338,16 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		opName := opNameFromFunc(sh.funcVal.Interface(), method+" "+finalPath)
 		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath)
 
-		// Stack any Use-attached middleware bundles in registration order
-		// in front of the handler; the auto-attached metrics recorder
-		// runs first so the counter captures every request regardless of
-		// whether a later bundle aborts.
-		chain := make([]gin.HandlerFunc, 0, len(cfg.bundles)+2)
-		mwNames := make([]string, 0, len(cfg.bundles)+1)
-
-		metricsBundle := metrics.NewMiddleware(app.metricsStore, service+"."+opName)
-		chain = append(chain, metricsBundle.Gin)
-		mwNames = append(mwNames, metricsBundle.Name)
-		app.registry.RegisterMiddleware(metricsBundle.AsInfo())
-
-		for _, b := range cfg.bundles {
-			app.registry.RegisterMiddleware(b.AsInfo())
-			mwNames = append(mwNames, b.Name)
-			if b.Gin != nil {
-				chain = append(chain, b.Gin)
-			}
-		}
-		chain = append(chain, handler)
+		// AsRest's reflective path threads tracing inside buildGinHandler
+		// (so the handler can read the span back); pass an empty
+		// traceEndpoint here to skip the chain-level trace prefix.
+		chain, mwNames := buildEndpointChain(
+			app, service,
+			service+"."+opName,
+			string(registry.REST),
+			"",
+			cfg.bundles, handler,
+		)
 		app.engine.Handle(method, finalPath, chain...)
 		app.registry.RegisterEndpoint(registry.Endpoint{
 			Service:     service,

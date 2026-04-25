@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
-	"github.com/paulmanoni/nexus/metrics"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 	"github.com/paulmanoni/nexus/transport/ws"
@@ -210,26 +209,14 @@ func mountWSEndpoint(app *App, lc fx.Lifecycle, ep *wsEndpoint, cfg *wsConfig, f
 		},
 	})
 
-	// Middleware chain: trace → metrics → user bundles → hub serve.
 	endpointName := "WS " + ep.path
-	chain := []gin.HandlerFunc{}
-	mwNames := []string{}
-	if app.bus != nil {
-		chain = append(chain, trace.Middleware(app.bus, ep.service, endpointName, string(registry.WebSocket)))
-	}
-	metricsBundle := metrics.NewMiddleware(app.metricsStore, ep.service+".ws."+firstMsgType)
-	chain = append(chain, metricsBundle.Gin)
-	mwNames = append(mwNames, metricsBundle.Name)
-	app.registry.RegisterMiddleware(metricsBundle.AsInfo())
-
-	for _, b := range cfg.bundles {
-		app.registry.RegisterMiddleware(b.AsInfo())
-		mwNames = append(mwNames, b.Name)
-		if b.Gin != nil {
-			chain = append(chain, b.Gin)
-		}
-	}
-	chain = append(chain, hub.ServeGin)
+	chain, _ := buildEndpointChain(
+		app, ep.service,
+		ep.service+".ws."+firstMsgType,
+		string(registry.WebSocket),
+		endpointName,
+		cfg.bundles, hub.ServeGin,
+	)
 	app.engine.GET(ep.path, chain...)
 }
 
