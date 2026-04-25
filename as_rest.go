@@ -153,28 +153,6 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
 }
 
-// attachRestResources attaches every NexusResourceProvider dep to the
-// endpoint's service so the dashboard draws a service→resource edge
-// for the aggregate relationship. Mirrors automount.go's
-// attachDeclaredResources for the GraphQL path.
-func attachRestResources(app *App, service string, deps []reflect.Value, depTypes []reflect.Type) {
-	if service == "" {
-		return
-	}
-	for i, dep := range deps {
-		if i >= len(depTypes) || !dep.IsValid() {
-			continue
-		}
-		provider, ok := dep.Interface().(NexusResourceProvider)
-		if !ok {
-			continue
-		}
-		for _, r := range provider.NexusResources() {
-			app.registry.AttachResource(service, r.Name())
-		}
-	}
-}
-
 // opNameFromFactory derives a dashboard op name for a factory-style
 // handler registration. Tries the factory's own runtime name (e.g. a
 // closure literal) first; falls back to "<method> <path>" when the
