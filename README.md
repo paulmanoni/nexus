@@ -565,9 +565,16 @@ Ctrl-C kills every subprocess group cleanly. Your `main()` must read
 `PORT` to honor the assigned port — `examples/microsplit/main.go`
 shows the convention. `--base-port` shifts the assignment.
 
+**Also in v0.11**: `nexus dev --tui` opens a Bubble Tea interactive
+UI — fixed header with the dashboard URL + ready state, log pane
+streaming the child's stdout/stderr, and hotkeys (`q` quit, `r`
+restart, `o` open browser, `c` clear). Stays opt-in because a TUI
+takes over the whole terminal — the static-banner mode remains the
+default.
+
 **Coming next**: peer-version skew warnings on first call, GraphQL +
-WebSocket clients via the same generator, a Bubble Tea TUI mode for
-`nexus dev` with a live request counter and restart hotkey.
+WebSocket clients via the same generator, request-counter pane in
+the TUI mode driven by live `/__nexus/stats` polling.
 
 ## Dashboard
 
