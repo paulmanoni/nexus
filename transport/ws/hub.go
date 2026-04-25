@@ -155,10 +155,10 @@ type Hub struct {
 	started    atomic.Bool
 
 	// Hooks.
-	identify   IdentifyFunc
-	onConnect  OnConnectFunc
-	onMessage  OnMessageFunc
-	onClose    OnDisconnectFunc
+	identify  IdentifyFunc
+	onConnect OnConnectFunc
+	onMessage OnMessageFunc
+	onClose   OnDisconnectFunc
 }
 
 type sendJob struct {
@@ -196,10 +196,10 @@ func NewHub(opts ...HubOption) *Hub {
 }
 
 // Hooks — fluent setters.
-func (h *Hub) OnIdentify(fn IdentifyFunc) *Hub         { h.identify = fn; return h }
-func (h *Hub) OnConnect(fn OnConnectFunc) *Hub         { h.onConnect = fn; return h }
-func (h *Hub) OnMessage(fn OnMessageFunc) *Hub         { h.onMessage = fn; return h }
-func (h *Hub) OnDisconnect(fn OnDisconnectFunc) *Hub   { h.onClose = fn; return h }
+func (h *Hub) OnIdentify(fn IdentifyFunc) *Hub       { h.identify = fn; return h }
+func (h *Hub) OnConnect(fn OnConnectFunc) *Hub       { h.onConnect = fn; return h }
+func (h *Hub) OnMessage(fn OnMessageFunc) *Hub       { h.onMessage = fn; return h }
+func (h *Hub) OnDisconnect(fn OnDisconnectFunc) *Hub { h.onClose = fn; return h }
 
 // Start spins up the hub's main loop and the broadcast worker pool. Safe to
 // call repeatedly — only the first call starts goroutines.
@@ -253,6 +253,18 @@ func (h *Hub) EmitToClients(eventType string, data any, clientIDs ...string) {
 
 func (h *Hub) EmitToRoom(eventType string, data any, room string) {
 	h.Emit(NewEvent(eventType, data).ToRoom(room))
+}
+
+// BroadcastRaw queues a raw byte payload to every connection without wrapping
+// it in an Event envelope. Intended for higher-level APIs (e.g. AsWS) that
+// manage their own envelope — drop an already-marshalled message straight onto
+// the fan-out worker pool. Drops silently if the broadcast channel is full.
+func (h *Hub) BroadcastRaw(data []byte) {
+	select {
+	case h.broadcast <- data:
+	default:
+		h.cfg.logf("broadcast channel full, dropping raw message (%d bytes)", len(data))
+	}
 }
 
 // --- Room membership -------------------------------------------------------
@@ -467,6 +479,25 @@ func (h *Hub) fanoutEvent(e *Event) {
 
 // --- Upgrade path ----------------------------------------------------------
 
+// Serve handles one HTTP upgrade request using the supplied upgrader: it
+// upgrades the connection, runs the identify hook, registers the conn with
+// the hub, and starts the read/write pumps. Exposed for callers (notably
+// the nexus.AsWS path) that mount the hub on their own gin route and need
+// the upgrade behavior without going through ws.Builder.
+//
+// For the no-op upgrader default (AllowAll origins), see ServeGin — a
+// zero-config sibling.
+func (h *Hub) Serve(gctx *gin.Context, upgrader websocket.Upgrader) {
+	h.serve(gctx, upgrader)
+}
+
+// ServeGin is Serve with the hub's default upgrader (CheckOrigin: always
+// true). Convenient for callers that don't need to customize upgrade
+// behavior — matches the upgrader the Builder installs.
+func (h *Hub) ServeGin(gctx *gin.Context) {
+	h.Serve(gctx, websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }})
+}
+
 // serve is what the Builder wires into Gin when WithHub is used. It upgrades
 // the HTTP connection, runs the identify hook, registers the conn, and starts
 // the read/write pumps.
@@ -643,7 +674,7 @@ func defaultHubConfig() hubConfig {
 // HubOption configures a Hub at construction.
 type HubOption func(*hubConfig)
 
-func WithWorkers(n int) HubOption { return func(c *hubConfig) { c.workers = n } }
+func WithWorkers(n int) HubOption     { return func(c *hubConfig) { c.workers = n } }
 func WithEventBuffer(n int) HubOption { return func(c *hubConfig) { c.eventBuffer = n } }
 func WithMaxConnections(n int) HubOption {
 	return func(c *hubConfig) { c.maxConnections = n }

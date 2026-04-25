@@ -27,7 +27,13 @@ type Endpoint struct {
 	// Run/New). Drives the architecture-view grouping: module containers
 	// enclose their endpoints; services are depicted as separate dep
 	// nodes the endpoints connect to.
-	Module       string `json:",omitempty"`
+	Module string `json:",omitempty"`
+	// Deployment is the nexus.DeployAs(tag) marker on the enclosing
+	// module — it names the unit a future split would peel off. Empty
+	// for modules that are always local. Surfaces on the dashboard so
+	// readers can see which endpoints belong to a planned (or current)
+	// deployment unit.
+	Deployment   string `json:",omitempty"`
 	Name         string
 	Transport    Transport
 	Method       string // REST verb; GraphQL "query"/"mutation"/"subscription"; unused for WS
@@ -119,6 +125,10 @@ type GraphQLUpdate struct {
 type Service struct {
 	Name        string
 	Description string
+	// Deployment carries the DeployAs tag of the module that owns this
+	// service (if any). When the service has no owning module — or
+	// the module isn't tagged — this is empty.
+	Deployment string `json:",omitempty"`
 	// ResourceDeps is the set of resource names the service's
 	// CONSTRUCTOR depends on — i.e. NewXService(app, db *DBManager,
 	// ...) records "db"'s NexusResources here. These drive
@@ -505,6 +515,23 @@ func (r *Registry) SetEndpointModule(service, name, module string) {
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].Module = module
+			return
+		}
+	}
+}
+
+// SetEndpointDeployment records the nexus.DeployAs tag for an endpoint.
+// Called by the auto-mount path (GraphQL) — REST/WS invokes stamp the
+// field directly at RegisterEndpoint time. Empty tag is a no-op.
+func (r *Registry) SetEndpointDeployment(service, name, deployment string) {
+	if deployment == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.endpoints {
+		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
+			r.endpoints[i].Deployment = deployment
 			return
 		}
 	}

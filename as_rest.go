@@ -153,6 +153,7 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		app.registry.RegisterEndpoint(registry.Endpoint{
 			Service:     service,
 			Module:      cfg.module,
+			Deployment:  cfg.deployment,
 			Name:        endpointName,
 			Transport:   registry.REST,
 			Method:      method,
@@ -250,6 +251,11 @@ type restConfig struct {
 	// is a direct child of a module. Emitted into the registry entry
 	// so the dashboard groups REST endpoints under their module.
 	module string
+	// deployment is stamped by nexus.DeployAs inside the enclosing
+	// Module. Empty for always-local modules. Surfaces on the
+	// registry entry so the dashboard can render deployment-tag
+	// chips and (eventually) federation views.
+	deployment string
 	// pathPrefix is prepended to the route's path before the endpoint
 	// is mounted on Gin. Set either per-endpoint via nexus.RoutePrefix
 	// as a RestOption, or module-wide by passing nexus.RoutePrefix as
@@ -267,9 +273,10 @@ type restOption struct {
 	cfg *restConfig
 }
 
-func (r *restOption) nexusOption() fx.Option    { return r.o }
-func (r *restOption) setModule(name string)     { r.cfg.module = name }
-func (r *restOption) setRestPrefix(p string)    { r.cfg.pathPrefix = p + r.cfg.pathPrefix }
+func (r *restOption) nexusOption() fx.Option   { return r.o }
+func (r *restOption) setModule(name string)    { r.cfg.module = name }
+func (r *restOption) setRestPrefix(p string)   { r.cfg.pathPrefix = p + r.cfg.pathPrefix }
+func (r *restOption) setDeployment(tag string) { r.cfg.deployment = tag }
 
 // restPrefixAnnotator is implemented by options whose path can be
 // prefixed by an enclosing nexus.Module(..., nexus.RoutePrefix("/api"))
@@ -379,6 +386,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		app.registry.RegisterEndpoint(registry.Endpoint{
 			Service:     service,
 			Module:      cfg.module,
+			Deployment:  cfg.deployment,
 			Name:        opName,
 			Transport:   registry.REST,
 			Method:      method,

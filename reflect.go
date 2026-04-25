@@ -25,6 +25,10 @@ type callInput struct {
 	// codes, c.Param("...") etc.) while still participating in the
 	// reflective registration shape.
 	GinCtx *gin.Context
+	// WS is set by the WebSocket transport (AsWS) for handlers that
+	// take a *WSSession — gives them a typed handle for Send / Emit /
+	// room ops tied to the current connection.
+	WS *WSSession
 }
 
 // Special parameter types recognized by the reflective handler shape. These
@@ -32,6 +36,7 @@ type callInput struct {
 var (
 	contextType      = reflect.TypeOf((*context.Context)(nil)).Elem()
 	ginContextType   = reflect.TypeOf((*gin.Context)(nil))
+	wsSessionType    = reflect.TypeOf((*WSSession)(nil))
 	paramsMarkerType = reflect.TypeOf((*nexusParamsMarker)(nil)).Elem()
 )
 
@@ -57,6 +62,7 @@ const (
 	paramArgs
 	paramParams
 	paramGinCtx // filled from callInput.GinCtx (REST transport only)
+	paramWS     // filled from callInput.WS (AsWS transport only)
 )
 
 type paramSlot struct {
@@ -149,6 +155,11 @@ func inspectHandler(fn any) (handlerShape, error) {
 			// in that case which would panic on first use, which is the
 			// right signal to the author that the handler is REST-only.
 			sh.slots[i] = paramSlot{kind: paramGinCtx}
+		case sh.funcType.In(i) == wsSessionType:
+			// *WSSession — AsWS only. REST/GraphQL paths pass a typed
+			// nil so the handler can guard with `if s == nil`; all
+			// WSSession methods already nil-check the receiver.
+			sh.slots[i] = paramSlot{kind: paramWS}
 		default:
 			sh.slots[i] = paramSlot{kind: paramDep, depPos: len(sh.depTypes)}
 			sh.depTypes = append(sh.depTypes, sh.funcType.In(i))
@@ -232,6 +243,12 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 				in[i] = reflect.Zero(ginContextType)
 			} else {
 				in[i] = reflect.ValueOf(ci.GinCtx)
+			}
+		case paramWS:
+			if ci.WS == nil {
+				in[i] = reflect.Zero(wsSessionType)
+			} else {
+				in[i] = reflect.ValueOf(ci.WS)
 			}
 		}
 	}

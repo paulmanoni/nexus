@@ -156,6 +156,7 @@ Option builders:
 | `nexus.Invoke(fn)` | Side-effect at start-up; receives deps via function params. |
 | `nexus.AsRest(method, path, fn, opts...)` | REST endpoint from a reflective handler. |
 | `nexus.AsQuery(fn, opts...)` / `AsMutation(fn, opts...)` | GraphQL op, auto-mounted by the framework. |
+| `nexus.AsWS(path, type, fn, opts...)` | WebSocket endpoint scoped to one envelope message type; multiple AsWS on the same path share one hub. |
 | `nexus.AsWorker(name, fn)` | Long-lived background task; framework manages lifecycle + records status. |
 | `nexus.Use(middleware.Middleware)` | Cross-transport middleware — works on REST + GraphQL. |
 | `auth.Module(auth.Config{Resolve: ...})` | Built-in auth surface: extraction + cached resolution + per-op enforcement bundles. |
@@ -377,6 +378,78 @@ app.Cron("refresh-cache", "*/5 * * * *").
 
 Dashboard Crons tab: schedule, last run, last result, pause/resume, trigger-now.
 
+### WebSocket (AsWS)
+
+`AsWS(path, messageType, fn)` registers a reflective WebSocket handler scoped
+to one inbound envelope type. Multiple `AsWS` calls for the same path share
+one connection pool — the framework dispatches by the envelope's `type` field.
+
+```go
+type ChatPayload struct {
+    Text string `json:"text"`
+}
+
+func NewChatSend(svc *ChatService, sess *nexus.WSSession,
+                 p nexus.Params[ChatPayload]) error {
+    sess.EmitToRoom("chat.message",
+        map[string]string{"text": p.Args.Text, "user": sess.UserID()},
+        "lobby")
+    return nil
+}
+
+var chat = nexus.Module("chat",
+    nexus.Provide(NewChatService),
+    nexus.AsWS("/events", "chat.send",   NewChatSend,   auth.Required()),
+    nexus.AsWS("/events", "chat.typing", NewChatTyping),
+)
+```
+
+**Wire protocol** — every message is wrapped in the envelope:
+
+```json
+{ "type": "chat.send", "data": { "text": "hello" }, "timestamp": 1700000000 }
+```
+
+The built-in types `ping`, `authenticate`, `subscribe`, `unsubscribe` are
+handled by the framework hub and never reach user handlers. Custom types
+dispatch to the matching `AsWS` registration; unknown types are dropped
+silently.
+
+**Session API** (`*nexus.WSSession`) mirrors the fan-out semantics of the
+oats_applicant hub pattern:
+
+| Call | Scope |
+|---|---|
+| `sess.Send(type, data)` | Unicast back to the originating connection. |
+| `sess.Emit(type, data)` | Broadcast to every connection on this endpoint. |
+| `sess.EmitToUser(type, data, userID...)` | Every connection authed as one of the listed users. |
+| `sess.EmitToRoom(type, data, room)` | Every connection subscribed to the room. |
+| `sess.EmitToClient(type, data, clientID...)` | Specific ClientIDs. |
+| `sess.JoinRoom(room)` / `sess.LeaveRoom(room)` | Server-side room membership (client can also use the built-in `subscribe`/`unsubscribe` protocol messages). |
+| `sess.ClientID()` / `sess.UserID()` / `sess.Metadata()` / `sess.Context()` | Connection-scoped accessors. |
+| `sess.SendRaw(bytes)` | Escape hatch for non-envelope payloads. |
+
+**Identity** at upgrade time: the framework picks `?userId=` from the URL
+or an auth-middleware-set `user` value in `gin.Context` (anything satisfying
+`interface{ GetID() string }`). Handlers read it via `sess.UserID()`;
+`auth.Required()` and friends work as middleware on the upgrade route.
+
+**Middleware rule** — `nexus.Use(mw)`, `auth.Required()`, etc. on the *first*
+`AsWS` call for a path install on the HTTP upgrade route. Middleware on
+later calls for the same path is ignored with a warning log (every dispatch
+shares one upgrade route).
+
+Handler errors come back as an `error` envelope on the same connection and
+keep the socket open:
+
+```json
+{ "type": "error", "data": { "type": "chat.send", "message": "too long" }, "timestamp": ... }
+```
+
+For the full hub API (custom upgrader, typed event envelopes, connection
+worker-pool sizing), the imperative builder is still available:
+`(*Service).WebSocket(path).WithHub(hub).Mount()`.
+
 ### Cache
 
 `cache.Manager` is go-cache in-memory by default; switches to Redis when env is configured. Always present on `App` — nexus uses it for metrics persistence automatically.
@@ -385,6 +458,51 @@ Dashboard Crons tab: schedule, last run, last result, pause/resume, trigger-now.
 mgr := app.Cache()
 _ = mgr.Set(ctx, "k", value, 5*time.Minute)
 ```
+
+### Deployment-ready modules (preview)
+
+`nexus.DeployAs(tag)` marks a module as a candidate deployment unit — the
+seam a future split would peel off. In monolith mode (the default,
+unchanged) the tag is metadata only: every endpoint registered under the
+module gets a `Deployment` field on the registry, surfaced on
+`/__nexus/endpoints` so the dashboard can render the planned topology
+before any splitting actually happens.
+
+```go
+var users = nexus.Module("users",
+    nexus.DeployAs("users-svc"),
+    nexus.Provide(NewUsersService),
+    nexus.AsRest("GET", "/users/:id", NewGetUser),
+)
+
+func main() {
+    nexus.Run(nexus.Config{
+        Addr:       ":8080",
+        Deployment: nexus.DeploymentFromEnv(), // reads NEXUS_DEPLOYMENT
+        Version:    version,                    // -ldflags-stamped
+    }, users, billing, checkout)
+}
+```
+
+`Config.Deployment` and `Config.Version` are surfaced on `/__nexus/config`.
+The version is what cross-service generated clients will check on first
+call to detect peer-version skew (a major source of "weird microservice
+bugs"). `DeploymentFromEnv()` reads `NEXUS_DEPLOYMENT` so a single
+compiled binary boots as different units in different environments
+without rebuilding.
+
+The deployable-module direction is the same as
+[Service Weaver](https://github.com/ServiceWeaver/weaver) — write a
+monolith, deploy as N services with a single command. The lessons from
+Weaver's archival shape what nexus is *not* doing: no `Implements[T]`
+mixin, no rewrite tax, untagged modules stay exactly as they are today.
+
+**Currently shipping** (v0.9): `DeployAs` annotation, Config.Deployment +
+Version, dashboard surfaces.
+**Coming next**: codegen'd cross-module clients (`nexus gen clients`), a
+`nexus dev --split` runner that boots each tagged module as a localhost
+subprocess for testing the distributed semantics, peer-version skew
+warnings on first call.
 
 ## Dashboard
 
@@ -482,7 +600,8 @@ vegeta attack -rate=10000 -duration=30s -targets=targets.txt | vegeta report
 | `examples/petstore` | Minimal REST + WebSocket + tracing. |
 | `examples/fxapp` | Multi-domain app wired via `nexus.Module` (fx hidden). |
 | `examples/graphapp` | GraphQL via reflective AsQuery/AsMutation, typed DB wrappers, rate limits, validators, metrics. |
-| `examples/wstest` | WebSocket echo playground. |
+| `examples/wstest` | WebSocket echo playground (imperative `(*Service).WebSocket(...)` path). |
+| `examples/wsecho` | Typed WebSocket via `AsWS` — two message types on one path, envelope protocol, session fan-out. |
 
 Run any example:
 ```bash

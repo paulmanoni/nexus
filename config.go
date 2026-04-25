@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"os"
+
 	"github.com/paulmanoni/nexus/cache"
 	"github.com/paulmanoni/nexus/metrics"
 	"github.com/paulmanoni/nexus/middleware"
@@ -109,4 +111,40 @@ type Config struct {
 	// Explicit RateLimitStore / MetricsStore settings still win — this
 	// is just the default when those are nil.
 	Cache *cache.Manager
+
+	// Deployment names the deployment unit this binary runs as. Empty
+	// = monolith mode (every module is local — current behavior).
+	// When set, the framework knows which DeployAs-tagged modules are
+	// "local" vs "remote" so future codegen'd clients can pick the
+	// in-process or HTTP path accordingly. Today this field is
+	// metadata only — surfaced on /__nexus/config so the dashboard
+	// can render the active deployment.
+	//
+	// Convention: pass DeploymentFromEnv() in main() so a single
+	// binary can boot as different units across environments without
+	// recompiling.
+	Deployment string
+
+	// Version stamps the binary's version on /__nexus/config. Used by
+	// generated clients to detect peer-version skew across services
+	// in a split deployment ("service A is on v2, service B on v1"
+	// is the source of most weird microservice bugs). Defaults to
+	// "dev" when unset. Stamp via -ldflags at release:
+	//
+	//    go build -ldflags "-X main.version=$GIT_SHA"
+	//    nexus.Config{Version: version}
+	Version string
 }
+
+// DeploymentFromEnv reads NEXUS_DEPLOYMENT. The single-binary, multi-shape
+// pattern: the same compiled binary boots as different deployment units
+// based on the env var alone — no rebuild, no flags. Returns "" when
+// unset, which the framework treats as monolith mode.
+//
+//	func main() {
+//	    nexus.Run(nexus.Config{
+//	        Deployment: nexus.DeploymentFromEnv(),
+//	        // ...
+//	    }, allModules...)
+//	}
+func DeploymentFromEnv() string { return os.Getenv("NEXUS_DEPLOYMENT") }
