@@ -1,6 +1,11 @@
 package nexus
 
-import "github.com/paulmanoni/nexus/middleware"
+import (
+	"reflect"
+
+	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/registry"
+)
 
 // baseEndpointConfig holds the fields every transport-specific config
 // (gqlConfig, restConfig, wsConfig) shares: dashboard description, the
@@ -37,3 +42,34 @@ type baseEndpointConfig struct {
 
 func (b *baseEndpointConfig) setModule(name string)    { b.module = name }
 func (b *baseEndpointConfig) setDeployment(tag string) { b.deployment = tag }
+
+// resolveEndpointService picks the service name a REST or WebSocket
+// endpoint registers under. Priority:
+//
+//  1. explicit — set via a per-endpoint option (reserved for future use).
+//  2. The first *Service-wrapper dep in the handler's deps — same
+//     convention AsQuery / AsMutation use, just resolved into a name
+//     instead of a value-group key.
+//  3. module — the enclosing nexus.Module name. Catches the common
+//     "REST/WS handler has no service-wrapper dep" case so metrics
+//     events still carry a non-empty service.
+//  4. defaultServiceName — ultimate fallback for handlers outside any
+//     module. Registers the default service on the app so the
+//     registry stays consistent.
+//
+// AsQuery / AsMutation route by service *type* via the fx value-group
+// (see asGqlField), not by name, so they don't go through this helper.
+func resolveEndpointService(explicit, module string, deps []reflect.Value, depTypes []reflect.Type, app *App) string {
+	if explicit != "" {
+		return explicit
+	}
+	if svc := serviceNameFromDeps(deps, depTypes); svc != "" {
+		return svc
+	}
+	if module != "" {
+		app.registry.RegisterService(registry.Service{Name: module})
+		return module
+	}
+	app.Service(defaultServiceName)
+	return defaultServiceName
+}

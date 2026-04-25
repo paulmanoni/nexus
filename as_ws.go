@@ -108,7 +108,7 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 		lc := args[1].Interface().(fx.Lifecycle)
 		deps := args[2:]
 
-		service := resolveWSService(cfg, deps, sh.depTypes, app)
+		service := resolveEndpointService(cfg.service, cfg.module, deps, sh.depTypes, app)
 		opName := opNameFromFunc(rawFn, service+"."+msgType)
 
 		handler := wsTypedHandler{
@@ -310,21 +310,3 @@ func identifyFromGin(c *gin.Context) (string, map[string]any) {
 	return "", meta
 }
 
-// resolveWSService mirrors resolveRestService but ignores path prefix and
-// module-as-service fallback semantics that don't apply to a WebSocket
-// endpoint. Priority: cfg.service → service-wrapper dep → cfg.module →
-// defaultServiceName.
-func resolveWSService(cfg *wsConfig, deps []reflect.Value, depTypes []reflect.Type, app *App) string {
-	if cfg.service != "" {
-		return cfg.service
-	}
-	if svc := serviceNameFromDeps(deps, depTypes); svc != "" {
-		return svc
-	}
-	if cfg.module != "" {
-		app.registry.RegisterService(registry.Service{Name: cfg.module})
-		return cfg.module
-	}
-	app.Service(defaultServiceName)
-	return defaultServiceName
-}
