@@ -149,9 +149,13 @@ func renderStrippedFile(m modInfo, originalPath string) ([]byte, error) {
 			if !ok {
 				continue
 			}
-			if !ts.Name.IsExported() {
-				continue
-			}
+			// Service is always replaced by the synthesized stub.
+			// Everything else — exported AND unexported types —
+			// is preserved verbatim. Unexported types are package-
+			// internal but still part of the package's identity,
+			// and the shadow stub (also in this package) may
+			// reference them in its method signatures (e.g. an
+			// AsRest handler whose args type starts lowercase).
 			if ts.Name.Name == "Service" {
 				continue
 			}
