@@ -51,15 +51,17 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 	fmt.Fprintf(&b, "// This file is overlay-added at compile time and is not on disk.\n\n")
 	fmt.Fprintln(&b, "package main")
 	fmt.Fprintln(&b)
-	// Peer.Auth's signature is `func(ctx context.Context) (string, error)`,
-	// so the import block needs `context` only when at least one peer
-	// declared auth in the manifest. Computed below by peeking at the
-	// generated body. We render in two passes — first compute the body,
-	// then emit imports knowing what's needed — but for the spike it's
-	// cheap to rerun the peer scan separately.
+	// Conditionally import only what the generated body actually
+	// references. `os` is always needed (fmt_addr / envOr use it).
+	// `time` is referenced in the Topology block only when a peer
+	// declares a Timeout. `context` is referenced only when a peer
+	// declares Auth. Without conditional emission, projects with
+	// no peer timeouts hit "imported and not used" build errors.
 	fmt.Fprintln(&b, "import (")
 	fmt.Fprintln(&b, `	"os"`)
-	fmt.Fprintln(&b, `	"time"`)
+	if anyPeerHasTimeout(manifest) {
+		fmt.Fprintln(&b, `	"time"`)
+	}
 	if anyPeerHasAuth(manifest) {
 		fmt.Fprintln(&b, `	"context"`)
 	}
@@ -283,6 +285,20 @@ func tokenExpr(token string) (string, error) {
 func anyPeerHasAuth(manifest *DeployManifest) bool {
 	for _, p := range manifest.Peers {
 		if p.Auth != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// anyPeerHasTimeout reports whether any peer declared a non-zero
+// timeout. Drives whether the generated zz_deploy_gen.go needs to
+// import `time` (Timeout: N * time.Nanosecond is the only reference).
+// Without this guard, projects whose peers omit timeouts hit
+// "time imported and not used".
+func anyPeerHasTimeout(manifest *DeployManifest) bool {
+	for _, p := range manifest.Peers {
+		if p.Timeout > 0 {
 			return true
 		}
 	}
