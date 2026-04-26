@@ -131,6 +131,16 @@ func runBuild(opts buildOptions) error {
 		return fmt.Errorf("nexus build: no nexus.Module(...) declarations found under %s", projectRoot)
 	}
 
+	// Cross-validate manifest ↔ source. A common silent bug: a module's
+	// nexus.DeployAs("foo-srv") doesn't match any manifest deployment
+	// name (manifest says "foo-svc"), so under nexus dev --split the
+	// runtime filter skips the local module wholesale and the dashboard
+	// shows nothing for it. Surface the mismatch as a build error rather
+	// than producing a half-broken binary.
+	if err := validateManifestSourceTags(mods, manifest, opts.Stderr); err != nil {
+		return err
+	}
+
 	// Generate shadows for every module the target deployment doesn't
 	// own. A module without a DeployAs tag has no peer URL to resolve
 	// — those stay local in every deployment by construction (the
@@ -253,6 +263,110 @@ func writeOverlay(path string, ov overlayJSON) error {
 		return fmt.Errorf("write overlay %s: %w", path, err)
 	}
 	return nil
+}
+
+// validateManifestSourceTags fails the build when source-side
+// nexus.DeployAs(...) tags reference deployment names that don't
+// exist in the manifest. The most common case: a typo like
+// DeployAs("foo-srv") in source vs `foo-svc:` in the manifest —
+// the runtime module filter then skips the local module entirely
+// under nexus dev --split, with no error and no dashboard signal.
+//
+// Modules without a DeployAs (manifest-driven via owns) skip the
+// check; their tag is inferred from the manifest by definition.
+//
+// Reports every offender at once so the user sees the full picture
+// in one build attempt rather than one mismatch per run.
+func validateManifestSourceTags(mods []modInfo, manifest *DeployManifest, stderr io.Writer) error {
+	if manifest == nil {
+		return nil
+	}
+	deployNames := map[string]bool{}
+	for name := range manifest.Deployments {
+		deployNames[name] = true
+	}
+	var problems []string
+	for _, m := range mods {
+		if m.Tag == "" {
+			continue // manifest-driven (auto-inject) — skip
+		}
+		if !deployNames[m.Tag] {
+			// Surface near-misses (Levenshtein distance ≤ 2) as a
+			// hint — typical typos like "srv" vs "svc" land here.
+			suggestion := nearestDeploymentName(m.Tag, deployNames)
+			line := fmt.Sprintf("module %q in source declares nexus.DeployAs(%q), but no deployment named %q exists in the manifest",
+				m.Name, m.Tag, m.Tag)
+			if suggestion != "" {
+				line += fmt.Sprintf(" — did you mean %q?", suggestion)
+			}
+			problems = append(problems, line)
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	msg := "nexus build: manifest / source mismatch detected:"
+	for _, p := range problems {
+		msg += "\n  - " + p
+	}
+	msg += "\n\nFix: rename either the source DeployAs tag or the manifest deployment so they match. Without a match, nexus dev --split's module filter silently skips the local module and the dashboard shows nothing for it."
+	return fmt.Errorf("%s", msg)
+}
+
+// nearestDeploymentName picks the manifest deployment name whose
+// edit-distance to want is smallest, or "" when every candidate is
+// further than the typo-tolerance threshold. Catches "srv" vs "svc"
+// (distance 1) without flagging genuinely-different names.
+func nearestDeploymentName(want string, candidates map[string]bool) string {
+	best := ""
+	bestDist := 3 // ≥3 = treat as unrelated
+	for name := range candidates {
+		d := levenshtein(want, name)
+		if d < bestDist {
+			bestDist = d
+			best = name
+		}
+	}
+	return best
+}
+
+// levenshtein computes the standard edit distance between a and b.
+// Used by the typo-suggestion logic; small inputs (deployment names),
+// no need for the optimized two-row variant.
+func levenshtein(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	curr := make([]int, len(b)+1)
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = minInt(curr[j-1]+1, minInt(prev[j]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func hasGoSuffix(name string) bool {
