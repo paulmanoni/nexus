@@ -72,6 +72,12 @@ type endpointInfo struct {
 	HasArgs   bool   // false → method takes only ctx
 	Return    string // Go syntax for the return type (T from Params[T] handler)
 	HasReturn bool   // false → handler returned only error → method returns just error
+
+	// Imports lists package paths the ArgsType and Return reference
+	// (excluding the module's own package). The shadow stub
+	// aggregates these into its import block so qualified type names
+	// like `pkg.Response` resolve. Sorted, unique.
+	Imports []string
 }
 
 // discoverDeployTags is a thin wrapper around scanModules that returns
@@ -322,9 +328,18 @@ func parseAsWSCall(p *packages.Package, call *ast.CallExpr) *endpointInfo {
 // AsQuery, AsMutation, and AsWS parsers. Looks for Params[T] anywhere
 // in the params list (preferred); falls back to a trailing struct
 // param for legacy handlers. Picks the first non-error return as the
-// result type.
+// result type. Also collects every external package path the
+// args/return types reference so the shadow stub can include them in
+// its import block — without this, qualified types like
+// `pkg.Response` would compile to "undefined: pkg" in the stub.
 func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) {
 	q := makeQualifier(p)
+	imports := map[string]bool{}
+	var dest *types.Package
+	if p != nil {
+		dest = p.Types
+	}
+
 	var argsType types.Type
 	for i := 0; i < sig.Params().Len(); i++ {
 		pt := sig.Params().At(i).Type()
@@ -342,6 +357,7 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 	if argsType != nil {
 		ep.HasArgs = true
 		ep.ArgsType = types.TypeString(argsType, q)
+		collectPackagePaths(argsType, dest, imports)
 	}
 	for i := 0; i < sig.Results().Len(); i++ {
 		rt := sig.Results().At(i).Type()
@@ -350,7 +366,54 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 		}
 		ep.Return = types.TypeString(rt, q)
 		ep.HasReturn = true
+		collectPackagePaths(rt, dest, imports)
 		break
+	}
+
+	if len(imports) > 0 {
+		out := make([]string, 0, len(imports))
+		for path := range imports {
+			out = append(out, path)
+		}
+		sort.Strings(out)
+		ep.Imports = out
+	}
+}
+
+// collectPackagePaths walks a types.Type recursively and stamps every
+// referenced package's import path into out (excluding dest, the
+// module's own package). Recursion covers pointers, slices, arrays,
+// maps, channels, struct fields, and generic type arguments —
+// everything an exported handler signature can mention.
+func collectPackagePaths(t types.Type, dest *types.Package, out map[string]bool) {
+	if t == nil {
+		return
+	}
+	switch tt := t.(type) {
+	case *types.Named:
+		if obj := tt.Obj(); obj != nil && obj.Pkg() != nil && obj.Pkg() != dest {
+			out[obj.Pkg().Path()] = true
+		}
+		if tas := tt.TypeArgs(); tas != nil {
+			for i := 0; i < tas.Len(); i++ {
+				collectPackagePaths(tas.At(i), dest, out)
+			}
+		}
+	case *types.Pointer:
+		collectPackagePaths(tt.Elem(), dest, out)
+	case *types.Slice:
+		collectPackagePaths(tt.Elem(), dest, out)
+	case *types.Array:
+		collectPackagePaths(tt.Elem(), dest, out)
+	case *types.Map:
+		collectPackagePaths(tt.Key(), dest, out)
+		collectPackagePaths(tt.Elem(), dest, out)
+	case *types.Chan:
+		collectPackagePaths(tt.Elem(), dest, out)
+	case *types.Struct:
+		for i := 0; i < tt.NumFields(); i++ {
+			collectPackagePaths(tt.Field(i).Type(), dest, out)
+		}
 	}
 }
 
