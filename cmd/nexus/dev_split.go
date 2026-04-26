@@ -77,12 +77,15 @@ func runDevSplitWithManifest(manifestPath, target string, basePort int, stdout, 
 		tagSet[t] = true
 	}
 
-	// Split units = manifest deployments whose name matches a DeployAs
-	// tag. The "monolith" deployment owns every module by convention
-	// — it's never a split unit; skip it.
+	// Split units = deployments whose name matches a DeployAs tag in
+	// source OR whose manifest entry has a non-empty owns list (the
+	// auto-inject path: manifest declares the unit, codegen registers
+	// the tag on every owned module's nexus.Module call). Monolith
+	// (empty owns) is never a split unit.
 	var splitDeployments []string
-	for name := range manifest.Deployments {
-		if tagSet[name] {
+	for name, spec := range manifest.Deployments {
+		isSplit := tagSet[name] || len(spec.Owns) > 0
+		if isSplit {
 			splitDeployments = append(splitDeployments, name)
 		}
 	}

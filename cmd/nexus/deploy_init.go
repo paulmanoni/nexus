@@ -22,21 +22,12 @@ import (
 // file mapped to a logical path inside the main package directory.
 // go build sees it and includes it in the binary; the user's source
 // tree is untouched.
-func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoot, mainPackage, shadowDir string, mods []modInfo) (string, error) {
+func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoot, mainPackage, shadowDir string) (string, error) {
 	spec, ok := manifest.Deployments[deployment]
 	if !ok {
 		return "", nil
 	}
 
-	// Map module name → DeployAs tag → port. Modules without ports
-	// in the manifest skip the URL default, falling back to env-var
-	// resolution at boot.
-	tagByModule := map[string]string{}
-	for _, m := range mods {
-		if m.Tag != "" {
-			tagByModule[m.Name] = m.Tag
-		}
-	}
 	portByTag := map[string]int{}
 	for depName, depSpec := range manifest.Deployments {
 		if depSpec.Port == 0 {
@@ -80,21 +71,29 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 	fmt.Fprintf(&b, "// framework before main() runs. The generated init() runs once\n")
 	fmt.Fprintf(&b, "// per binary; nexus.Run consults these when Config fields are\n")
 	fmt.Fprintf(&b, "// zero.\n")
-	// A deployment whose name doesn't match any module's DeployAs
-	// tag is the "monolith" — it owns every module and isn't a
-	// peer in the topology. Setting Deployment to its name would
-	// trip validateTopology (which expects the deployment name to
-	// be a Peers key); leave Deployment empty so the framework
-	// treats this binary as plain local mode.
-	isSplitUnit := false
-	for _, t := range tagByModule {
-		if t == deployment {
-			isSplitUnit = true
-			break
-		}
-	}
+	// A deployment is a "split unit" iff its manifest owns list is
+	// non-empty. Empty owns means monolith (owns every module, no
+	// tagging). The previous version of this check looked at
+	// source-side DeployAs tags, but auto-inject means source can
+	// omit the tag entirely — so consult the manifest, which is the
+	// source of truth either way.
+	isSplitUnit := len(spec.Owns) > 0
+
+	// Module → deployment tag inference. Each non-monolith deployment
+	// (one with a non-empty owns list) means "this binary's split
+	// unit owns these modules"; emit a registration so those modules'
+	// nexus.Module(...) calls auto-pick up DeployAs(<unit>) without
+	// the user having to type it. Skipped when the deployment is
+	// the monolith (empty owns), since monoliths don't tag anything.
+	moduleTagRegistrations := buildModuleTagRegistrations(manifest)
 
 	fmt.Fprintln(&b, "func init() {")
+	for _, line := range moduleTagRegistrations {
+		fmt.Fprintln(&b, "\t"+line)
+	}
+	if len(moduleTagRegistrations) > 0 {
+		fmt.Fprintln(&b)
+	}
 	fmt.Fprintln(&b, "\tdefaults := nexus.DeploymentDefaults{")
 	if isSplitUnit {
 		fmt.Fprintf(&b, "\t\tDeployment: %q,\n", deployment)
@@ -288,6 +287,61 @@ func anyPeerHasAuth(manifest *DeployManifest) bool {
 		}
 	}
 	return false
+}
+
+// buildModuleTagRegistrations turns the manifest's deployments into
+// nexus.RegisterModuleDeployment(name, tag) calls, one per (split
+// deployment, module) pair. A deployment is a "split unit" iff its
+// owns list is non-empty — empty owns means monolith (owns
+// everything, no tagging). Returns the lines stably sorted so
+// re-runs produce identical output.
+//
+// When the same module appears in two split deployments (a
+// configuration that doesn't make sense — a module can't be local
+// in two binaries), the lexically-first deployment wins. The
+// duplicate is silently dropped; if this becomes an issue in
+// practice, surface it as a build error here.
+func buildModuleTagRegistrations(manifest *DeployManifest) []string {
+	if manifest == nil {
+		return nil
+	}
+	// First pass: dedupe by module name, deterministic by sorting
+	// deployment names. So if two deployments claim the same module,
+	// the lexically-earlier deployment's tag is the one that lands.
+	deploymentNames := make([]string, 0, len(manifest.Deployments))
+	for name := range manifest.Deployments {
+		deploymentNames = append(deploymentNames, name)
+	}
+	sort.Strings(deploymentNames)
+
+	tagByModule := map[string]string{}
+	for _, dep := range deploymentNames {
+		spec := manifest.Deployments[dep]
+		if len(spec.Owns) == 0 {
+			continue // monolith — owns everything, tags nothing
+		}
+		for _, mod := range spec.Owns {
+			if _, claimed := tagByModule[mod]; claimed {
+				continue
+			}
+			tagByModule[mod] = dep
+		}
+	}
+	if len(tagByModule) == 0 {
+		return nil
+	}
+
+	modules := make([]string, 0, len(tagByModule))
+	for m := range tagByModule {
+		modules = append(modules, m)
+	}
+	sort.Strings(modules)
+
+	out := make([]string, 0, len(modules))
+	for _, m := range modules {
+		out = append(out, fmt.Sprintf("nexus.RegisterModuleDeployment(%q, %q)", m, tagByModule[m]))
+	}
+	return out
 }
 
 // mainPackageDir resolves the absolute directory of the named main
