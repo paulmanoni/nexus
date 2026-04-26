@@ -19,9 +19,33 @@ import (
 // Private because nexus.Run is the public entry point; direct fx users
 // would previously have called fxmod.NewApp.
 func newApp(cfg Config) *App {
+	// Manifest-derived defaults (set by a codegen'd init() block when
+	// `nexus build --deployment X` ran). Explicit Config fields win;
+	// defaults fill the gaps. Reading happens once so the rest of
+	// this function works against a single resolved Config copy.
+	if defaults, ok := loadDeploymentDefaults(); ok {
+		if cfg.Addr == "" {
+			cfg.Addr = defaults.Addr
+		}
+		if cfg.Deployment == "" {
+			cfg.Deployment = defaults.Deployment
+		}
+		if cfg.Topology.Peers == nil && defaults.Topology.Peers != nil {
+			cfg.Topology = defaults.Topology
+		}
+	}
 	var opts []AppOption
-	if cfg.TraceCapacity > 0 {
-		opts = append(opts, WithTracing(cfg.TraceCapacity))
+	// Default trace capacity when the dashboard is on. Without the
+	// bus, /__nexus/events isn't mounted and the dashboard's request
+	// view (plus `nexus dev --split`'s per-request log) stays empty.
+	// 1024 events covers a few hundred requests in a typical dev
+	// session; user can override with an explicit Config.TraceCapacity.
+	traceCapacity := cfg.TraceCapacity
+	if traceCapacity == 0 && cfg.EnableDashboard {
+		traceCapacity = 1024
+	}
+	if traceCapacity > 0 {
+		opts = append(opts, WithTracing(traceCapacity))
 	}
 	if cfg.EnableDashboard {
 		opts = append(opts, WithDashboard())
@@ -47,11 +71,22 @@ func newApp(cfg Config) *App {
 	if len(cfg.DashboardMiddleware) > 0 {
 		opts = append(opts, WithDashboardMiddleware(cfg.DashboardMiddleware...))
 	}
-	if cfg.Deployment != "" {
-		opts = append(opts, WithDeployment(cfg.Deployment))
+	// Deployment: explicit Config wins, otherwise fall back to the
+	// NEXUS_DEPLOYMENT env var so main.go doesn't have to call
+	// nexus.DeploymentFromEnv() just to thread it through. Empty in
+	// both places = monolith.
+	deployment := cfg.Deployment
+	if deployment == "" {
+		deployment = os.Getenv(nexusDeploymentEnv)
+	}
+	if deployment != "" {
+		opts = append(opts, WithDeployment(deployment))
 	}
 	if cfg.Version != "" {
 		opts = append(opts, WithVersion(cfg.Version))
+	}
+	if cfg.Topology.Peers != nil {
+		opts = append(opts, WithTopology(cfg.Topology))
 	}
 	// When the user didn't set MetricsStore explicitly, New() already
 	// defaults to metrics.NewCacheStore(a.cacheMgr) using whatever cache

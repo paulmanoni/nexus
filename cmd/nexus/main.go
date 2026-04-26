@@ -10,8 +10,9 @@
 // Subcommands:
 //
 //	nexus new <dir>       Scaffold a minimal nexus app.
+//	nexus init [dir]      Add nexus.deploy.yaml to an existing project.
 //	nexus dev [dir]       Run `go run` on the target package, open the dashboard.
-//	nexus gen clients     Generate cross-module client stubs (DeployAs-tagged modules).
+//	nexus build           Build a deployment binary using overlay-driven shadow code.
 //	nexus version         Print the CLI version.
 package main
 
@@ -54,8 +55,9 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 	root.AddCommand(
 		newVersionCmd(stdout),
 		newNewCmd(stdout, stderr),
+		newInitCmd(stdout, stderr),
 		newDevCmd(stdout, stderr),
-		newGenCmd(stdout, stderr),
+		newBuildCmd(stdout, stderr),
 	)
 	return root
 }

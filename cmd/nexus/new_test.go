@@ -39,9 +39,21 @@ func TestScaffoldAndBuild(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Scaffolded") {
 		t.Fatalf("expected Scaffolded message, got: %q", stdout.String())
 	}
-	for _, name := range []string{"go.mod", "main.go", "module.go", ".gitignore", "README.md"} {
+	for _, name := range []string{"go.mod", "main.go", "module.go", ".gitignore", "README.md", "nexus.deploy.yaml"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+	// Sanity-check the manifest looks like a manifest, not an empty
+	// stub — catches a future template that accidentally writes ""
+	// past the test for file-existence.
+	manifest, err := os.ReadFile(filepath.Join(dir, "nexus.deploy.yaml"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	for _, want := range []string{"deployments:", "monolith:", "port: 8080"} {
+		if !strings.Contains(string(manifest), want) {
+			t.Fatalf("manifest missing %q:\n%s", want, manifest)
 		}
 	}
 

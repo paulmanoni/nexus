@@ -52,14 +52,29 @@ func expandPath(path string, args any) (string, error) {
 			if end < len(out) && isPathTokenChar(out[end]) {
 				continue
 			}
+			// Empty values silently produce malformed URLs like
+			// "/users/" that Gin's trailing-slash redirect can route
+			// to a different handler entirely (e.g. /users LIST
+			// instead of /users/:id GET). Fail loud at the call site
+			// so the binding bug surfaces here instead of as a
+			// confusing decode error after the wrong endpoint
+			// responds.
+			if val == "" {
+				return "", &UserError{
+					Op:   "path expand",
+					Msg:  fmt.Sprintf("parameter %q in path %q is empty", name, path),
+					Hint: "check the args struct: the field with `uri:\"" + name + "\"` was zero-valued — most often a missing JSON binding upstream (verify Content-Type and the field's `json:` tag)",
+				}
+			}
 			out = out[:idx] + url.PathEscape(val) + out[end:]
 		}
 	}
 	if hasUnsubstitutedToken(out) {
-		// Better to fail loud than send a garbage path. Most likely
-		// cause: missing `uri:"foo"` tag on args, or args itself is
-		// nil/wrong type for a path that needs parameters.
-		return "", fmt.Errorf("nexus: path %q has unsubstituted parameters; check `uri:` tags on args", path)
+		return "", &UserError{
+			Op:   "path expand",
+			Msg:  fmt.Sprintf("path %q has unsubstituted parameters", path),
+			Hint: "args struct is missing a `uri:\"name\"`-tagged field for one of the path placeholders, or args is nil/wrong type",
+		}
 	}
 	return out, nil
 }
@@ -313,6 +328,17 @@ func encodeRequest(method, path string, args any) (finalPath string, body io.Rea
 // message when not. Shared by LocalInvoker and RemoteCaller so the
 // error envelope is identical from either path.
 func decodeResponse(statusCode int, respBody []byte, method, targetPath, targetURL string, out any) error {
+	if statusCode >= 300 && statusCode < 400 {
+		// 3xx surfaces as a UserError because RemoteCaller now disables
+		// auto-redirect (so a malformed URL or peer-side rewrite fails
+		// loud rather than silently landing on the wrong handler).
+		return &UserError{
+			Op:  "remote call",
+			Msg: fmt.Sprintf("%s %s → %d redirect from %s", method, targetPath, statusCode, targetURL),
+			Hint: "the peer issued a redirect — check the request URL for stray trailing slashes or path-param typos; " +
+				"the framework deliberately doesn't follow 3xx so the wrong-endpoint case fails loud",
+		}
+	}
 	if statusCode >= 400 {
 		re := &RemoteError{
 			Status:     statusCode,
@@ -338,7 +364,17 @@ func decodeResponse(statusCode int, respBody []byte, method, targetPath, targetU
 		return nil
 	}
 	if err := json.Unmarshal(respBody, out); err != nil {
-		return fmt.Errorf("nexus: decode response from %s: %w", targetURL, err)
+		// Include a body snippet + the target URL so the developer
+		// sees what shape actually came back. Most common cause:
+		// the wrong handler responded (e.g. a redirect landed on a
+		// LIST endpoint when the client expected a single record).
+		return &UserError{
+			Op:    "remote call",
+			Msg:   fmt.Sprintf("%s %s: peer responded but the JSON didn't fit the client's return type", method, targetPath),
+			Notes: []string{fmt.Sprintf("url:  %s", targetURL), fmt.Sprintf("body: %s", truncate(string(respBody), 200))},
+			Hint:  "verify the peer's handler return type matches the client's expected shape; if the URL above looks wrong, check the args struct for empty path params",
+			Cause: err,
+		}
 	}
 	return nil
 }

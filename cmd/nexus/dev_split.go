@@ -10,30 +10,152 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
 
-// runDevSplit boots one subprocess per nexus.DeployAs tag discovered in
-// target. Each subprocess gets its own port and a NEXUS_DEPLOYMENT env
-// var; the framework's existing Config.Deployment + DeploymentFromEnv()
-// pattern in user code reads the variable and selects the matching
-// modules. Cross-module clients in each subprocess find their peers via
-// auto-injected `<TAG>_URL` environment variables — same convention
-// the generated RemoteCaller already reads.
+// runDevSplit boots one subprocess per deployment unit. Detects the
+// deploy manifest under target's directory:
 //
-// The user's main() must read PORT (or whatever knob it exposes) and
-// pass it into Config.Addr. The microsplit example shows the
-// convention; nothing forces it, but a binary that ignores PORT will
-// have all subprocesses fight for :8080 and crash all but one.
+//   - With a manifest (Path 3): builds a separate binary per unit
+//     using `nexus build --deployment X` so each subprocess has the
+//     right shadow code compiled in. checkout-svc's binary contains
+//     the HTTP-stub *users.Service; users-svc's contains the real one.
+//   - Without a manifest: builds one binary, runs N subprocesses with
+//     NEXUS_DEPLOYMENT env vars and runtime module filtering — the
+//     pre-Path-3 behavior, kept so projects that haven't migrated
+//     still work.
+//
+// Either way, peer URLs are auto-wired via <TAG>_URL env vars (which
+// main.go threads into Config.Topology.Peers), so cross-module calls
+// reach the right subprocess.
 func runDevSplit(target string, basePort int, stdout, stderr io.Writer) error {
-	// Discovery has to walk every subpackage — modules typically live
-	// under foo/users, foo/checkout, etc. — but `go build` should still
-	// receive the user's literal target (so `./examples/microsplit`
-	// builds main, not main + everything below). Append /... only for
-	// the AST scan.
+	if manifestPath := findManifest(target); manifestPath != "" {
+		return runDevSplitWithManifest(manifestPath, target, basePort, stdout, stderr)
+	}
+	return runDevSplitLegacy(target, basePort, stdout, stderr)
+}
+
+// findManifest looks for nexus.deploy.yaml next to target (or in target
+// itself when target is a directory). Returns "" when no manifest
+// is found — the caller falls back to the legacy single-binary path.
+func findManifest(target string) string {
+	candidates := []string{
+		filepath.Join(target, "nexus.deploy.yaml"),
+		filepath.Join(filepath.Dir(target), "nexus.deploy.yaml"),
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
+
+// runDevSplitWithManifest is the Path-3-aware splitter. Reads the
+// manifest, picks every deployment whose name matches a DeployAs tag
+// (the monolith deployment is skipped — it owns everything and isn't
+// a split unit by definition), and builds one binary per unit via
+// `runBuild` so each gets the right shadow code.
+func runDevSplitWithManifest(manifestPath, target string, basePort int, stdout, stderr io.Writer) error {
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+	tags, err := discoverDeployTags(scanPattern(target))
+	if err != nil {
+		return fmt.Errorf("discover DeployAs tags: %w", err)
+	}
+	if len(tags) == 0 {
+		return fmt.Errorf("no nexus.DeployAs(...) tags found in %s — split mode needs at least one tagged module", target)
+	}
+	tagSet := map[string]bool{}
+	for _, t := range tags {
+		tagSet[t] = true
+	}
+
+	// Split units = manifest deployments whose name matches a DeployAs
+	// tag. The "monolith" deployment owns every module by convention
+	// — it's never a split unit; skip it.
+	var splitDeployments []string
+	for name := range manifest.Deployments {
+		if tagSet[name] {
+			splitDeployments = append(splitDeployments, name)
+		}
+	}
+	if len(splitDeployments) < 2 {
+		return fmt.Errorf("split mode needs ≥ 2 deployments whose names match DeployAs tags in %s (found %d) — add deployment entries for each unit",
+			manifestPath, len(splitDeployments))
+	}
+	sort.Strings(splitDeployments)
+
+	// Use manifest-defined ports when present; fall back to
+	// --base-port auto-assignment for tags that don't declare one.
+	units := planUnitsFromManifest(splitDeployments, manifest, basePort)
+
+	if busy := portsInUse(units); len(busy) > 0 {
+		return fmt.Errorf("split mode: ports already in use: %s — pass --base-port to shift the assignment",
+			strings.Join(busy, ", "))
+	}
+
+	printSplitBanner(stdout, units)
+
+	// Build one binary per unit via the overlay path. Each unit's
+	// binary has its non-owned modules shadowed — so checkout-svc
+	// gets the HTTP-stub *users.Service even though both source
+	// trees are the same on disk.
+	tmpRoot, err := os.MkdirTemp("", "nexus-split-")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpRoot)
+
+	binByTag := map[string]string{}
+	for _, u := range units {
+		binPath := filepath.Join(tmpRoot, u.Tag)
+		fmt.Fprintf(stdout, "  %sbuilding %s%s\n", ansiDim, u.Tag, ansiReset)
+		err := runBuild(buildOptions{
+			Deployment:   u.Tag,
+			ManifestPath: manifestPath,
+			Output:       binPath,
+			MainPackage:  target,
+			// Suppress the per-build overlay/shadow chatter so the
+			// dev banner stays scannable. Errors still flow through
+			// stderr so build failures surface.
+			Stdout: io.Discard,
+			Stderr: stderr,
+		})
+		if err != nil {
+			return fmt.Errorf("build %s: %w", u.Tag, err)
+		}
+		binByTag[u.Tag] = binPath
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var procs []*exec.Cmd
+	for _, u := range units {
+		cmd := startUnit(ctx, binByTag[u.Tag], u, units, stdout, stderr)
+		if err := cmd.Start(); err != nil {
+			killAll(procs)
+			return fmt.Errorf("start %s: %w", u.Tag, err)
+		}
+		procs = append(procs, cmd)
+	}
+
+	return waitForSplit(ctx, procs, units, stderr)
+}
+
+// runDevSplitLegacy is the pre-Path-3 splitter — kept so projects
+// without a deploy manifest still get split mode. Builds one binary
+// containing every module; subprocesses use NEXUS_DEPLOYMENT for
+// runtime module filtering and pre-codegen RemoteCaller env-var
+// peer wiring.
+func runDevSplitLegacy(target string, basePort int, stdout, stderr io.Writer) error {
 	tags, err := discoverDeployTags(scanPattern(target))
 	if err != nil {
 		return fmt.Errorf("discover DeployAs tags: %w", err)
@@ -42,20 +164,11 @@ func runDevSplit(target string, basePort int, stdout, stderr io.Writer) error {
 		return fmt.Errorf("no nexus.DeployAs(...) tags found in %s — split mode needs at least one tagged module", target)
 	}
 	if len(tags) == 1 {
-		// One tag = one process = exactly the same as `nexus dev`.
-		// Tell the user explicitly so they don't think split mode
-		// silently degraded; the explicit error nudges them to either
-		// add a second tag or drop the flag.
 		return fmt.Errorf("split mode needs ≥ 2 DeployAs tags (found 1: %q) — use `nexus dev` for a single deployment", tags[0])
 	}
 
 	units := planUnits(tags, basePort)
 
-	// Pre-flight: probe every assigned port. A subprocess that
-	// can't bind dies with a generic "address already in use"
-	// buried in fx logs — surfacing the conflict here lets the
-	// user fix it (or pass --base-port) without parsing stack
-	// traces.
 	if busy := portsInUse(units); len(busy) > 0 {
 		return fmt.Errorf("split mode: ports already in use: %s — pass --base-port to shift the assignment",
 			strings.Join(busy, ", "))
@@ -63,9 +176,6 @@ func runDevSplit(target string, basePort int, stdout, stderr io.Writer) error {
 
 	printSplitBanner(stdout, units)
 
-	// Build the binary once up front. Cheaper than `go run` per unit
-	// (it would compile N times) and gives clearer errors: a build
-	// failure surfaces here, before any subprocess starts.
 	bin, cleanup, err := buildBinary(target, stdout, stderr)
 	if err != nil {
 		return err
@@ -75,8 +185,6 @@ func runDevSplit(target string, basePort int, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Start every unit. If any fails to start, kill the ones we
-	// already started — partial-launch states are confusing.
 	var procs []*exec.Cmd
 	for _, u := range units {
 		cmd := startUnit(ctx, bin, u, units, stdout, stderr)
@@ -86,6 +194,21 @@ func runDevSplit(target string, basePort int, stdout, stderr io.Writer) error {
 		}
 		procs = append(procs, cmd)
 	}
+
+	return waitForSplit(ctx, procs, units, stderr)
+}
+
+// waitForSplit is the shared shutdown loop both splitter variants
+// use: race a SIGINT against any unit's natural exit; either signal
+// kills the rest so the user isn't left with a half-running topology.
+//
+// Also kicks off per-unit readiness probes — when each unit's port
+// responds, prints a green dot with the URL so the user has an
+// unambiguous "go ahead" signal even when the subprocess output is
+// quiet (e.g. with GIN_MODE=release). Once every unit is ready, a
+// summary line lands so the user can hit Enter and start curling.
+func waitForSplit(ctx context.Context, procs []*exec.Cmd, units []unit, stderr io.Writer) error {
+	go awaitReady(ctx, units, stderr)
 
 	// Wait for any unit to exit, OR signal. Either is the cue to
 	// shut everyone down — the user expects all-or-none in dev.
@@ -135,6 +258,30 @@ func planUnits(tags []string, basePort int) []unit {
 	return units
 }
 
+// planUnitsFromManifest uses each deployment's manifest port when
+// non-zero; otherwise falls back to basePort auto-assignment for that
+// unit. The fallback runs through the same +i offset logic so two
+// unported tags don't collide.
+func planUnitsFromManifest(tags []string, manifest *DeployManifest, basePort int) []unit {
+	units := make([]unit, len(tags))
+	for i, t := range tags {
+		port := 0
+		if spec, ok := manifest.Deployments[t]; ok && spec.Port > 0 {
+			port = spec.Port
+		}
+		if port == 0 {
+			port = basePort + i
+		}
+		units[i] = unit{
+			Tag:    t,
+			Port:   port,
+			URL:    fmt.Sprintf("http://localhost:%d", port),
+			EnvVar: tagToURLEnv(t),
+		}
+	}
+	return units
+}
+
 // portsInUse returns the host:port strings for every unit whose
 // port already has a listener. The probe is cheap (50ms TCP dial);
 // false positives from a third-party scanner racing the dial are
@@ -166,10 +313,11 @@ func scanPattern(target string) string {
 	return strings.TrimSuffix(target, "/") + "/..."
 }
 
-// tagToURLEnv mirrors the convention the codegen bakes in via
-// envVarFromTag — keep them in lockstep so a freshly-generated
-// RemoteCaller picks up the var the splitter sets. ("users-svc" →
-// "USERS_SVC_URL")
+// tagToURLEnv is the convention the splitter uses to wire peer URLs:
+// "users-svc" → "USERS_SVC_URL". The same convention is mirrored by
+// the deploy-init codegen (cmd/nexus/deploy_init.go:tagToURLEnvVar)
+// so a binary built via `nexus build` reads the same env var the
+// splitter sets.
 func tagToURLEnv(tag string) string {
 	out := strings.ToUpper(tag)
 	out = strings.ReplaceAll(out, "-", "_")
@@ -216,6 +364,12 @@ func startUnit(_ context.Context, bin string, u unit, all []unit, stdout, stderr
 		// terminal hard to scan. Users hitting framework-level
 		// issues can unset this in their env.
 		"NEXUS_FX_QUIET=1",
+		// Switch gin to release mode so the per-subprocess route
+		// table dump (~20 [GIN-debug] lines per unit, multiplied by
+		// N units in split mode) doesn't drown the banner. The user
+		// still sees nexus's own "listening on" line and any
+		// per-request logs the app installs explicitly.
+		"GIN_MODE=release",
 	)
 	for _, peer := range all {
 		if peer.Tag == u.Tag {
@@ -279,6 +433,76 @@ func killAll(procs []*exec.Cmd) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// awaitReady polls each unit's /__nexus/config endpoint until it
+// responds 200, printing a per-unit ready line as soon as it does.
+// When every unit is up, prints a single summary line (`● all ready
+// · N units`) so the user has a clear "you can curl now" signal.
+//
+// Polls with 100ms cadence and a 30s overall ceiling. If a unit is
+// still not responding after the ceiling, no message is printed for
+// it — the subprocess's own logs (or an exit) tell the rest of the
+// story.
+func awaitReady(ctx context.Context, units []unit, w io.Writer) {
+	ready := make(chan int, len(units))
+	for i, u := range units {
+		i, u := i, u
+		go func() {
+			if probeUntilReady(ctx, u, 30*time.Second) {
+				color := tagColor(i)
+				fmt.Fprintf(w, "  %s●%s %s%-12s%s ready · %s%s%s\n",
+					ansiGreen, ansiReset, color, u.Tag, ansiReset, ansiCyan, u.URL, ansiReset)
+				// Once the port answers, subscribe to the unit's
+				// trace-event stream so per-request lines and
+				// cross-service span markers flow into the terminal.
+				// The goroutine runs until ctx is cancelled — same
+				// lifetime as the splitter overall.
+				go streamUnitEvents(ctx, u, i, w)
+				ready <- i
+			} else {
+				ready <- -1
+			}
+		}()
+	}
+	got := 0
+	for i := 0; i < len(units); i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case idx := <-ready:
+			if idx >= 0 {
+				got++
+			}
+		}
+	}
+	if got == len(units) {
+		fmt.Fprintf(w, "\n  %s●%s all ready · %d units · %sctrl-c to stop%s\n\n",
+			ansiGreen, ansiReset, got, ansiDim, ansiReset)
+	}
+}
+
+// probeUntilReady returns true when the unit's port answers a TCP
+// dial (the cheapest "is anything listening" probe). Any HTTP-level
+// error means the listener is up — that's what we care about for
+// the ready signal.
+func probeUntilReady(ctx context.Context, u unit, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	addr := fmt.Sprintf("localhost:%d", u.Port)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
 }
 
 // drainExits consumes the remaining exit messages from the children

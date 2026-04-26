@@ -63,6 +63,12 @@ type App struct {
 	// when the user doesn't pass one.
 	version string
 
+	// topology is the peer table consulted by codegen'd remote clients
+	// to resolve URL/Timeout/Auth/MinVersion/Retries by DeployAs tag.
+	// Populated from Config.Topology (or WithTopology). Empty Peers
+	// map = monolith — no peer lookups happen.
+	topology Topology
+
 	// wsEndpoints holds the per-path WebSocket state created by AsWS.
 	// Multiple AsWS calls on the same path share one endpoint — the first
 	// one mounts the HTTP upgrade route and starts the hub; subsequent
@@ -146,6 +152,14 @@ func WithVersion(v string) AppOption {
 	return func(a *App) { a.version = v }
 }
 
+// WithTopology installs the peer table consulted by codegen'd remote
+// clients. Mirrors Config.Topology for callers using the lower-level
+// nexus.New(...) entry point. Each entry binds a DeployAs tag to a
+// Peer with URL / Timeout / Auth / MinVersion / Retries.
+func WithTopology(t Topology) AppOption {
+	return func(a *App) { a.topology = t }
+}
+
 // WithDashboardMiddleware gates the /__nexus surface behind one or
 // more middleware bundles. Each bundle's Gin realization runs in
 // registration order before any dashboard handler. Typical use:
@@ -217,6 +231,25 @@ func (a *App) Deployment() string { return a.deployment }
 // Version is the binary's release tag, defaulting to "dev". Surfaced on
 // /__nexus/config so generated clients can detect peer-version skew.
 func (a *App) Version() string { return a.version }
+
+// Peer returns the topology binding for the given DeployAs tag.
+// Generated remote clients call this at construction time to resolve
+// the peer's URL/Timeout/Auth/MinVersion/Retries. The second return is
+// false when the tag isn't declared in Config.Topology — codegen'd
+// factories use that signal to fail fast with a precise error message.
+func (a *App) Peer(tag string) (Peer, bool) {
+	if a.topology.Peers == nil {
+		return Peer{}, false
+	}
+	p, ok := a.topology.Peers[tag]
+	return p, ok
+}
+
+// Topology returns the configured peer table. Read-only — modifying
+// the returned map would not retroactively rewire already-constructed
+// clients. Used by the dashboard and by health-check loops that probe
+// every declared peer.
+func (a *App) Topology() Topology { return a.topology }
 func (a *App) Metrics() metrics.Store       { return a.metricsStore }
 func (a *App) Cache() *cache.Manager        { return a.cacheMgr }
 func (a *App) Run(addr string) error {

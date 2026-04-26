@@ -1,9 +1,10 @@
 // Package checkout demonstrates a module that *consumes* another
-// module via its generated typed client. The same Go call —
-// `users.Get(ctx, users.GetArgs{ID: ...})` — works in monolith mode
-// (in-process LocalInvoker) and in split mode (HTTP RemoteCaller),
-// with no edits to checkout's handler code when you decide to peel
-// users out into its own binary.
+// module by importing its *Service directly. The same Go call —
+// `svc.users.Get(ctx, users.GetArgs{ID: ...})` — works in monolith
+// mode (direct method call) and in split mode (HTTP via the shadow
+// generator's stub *users.Service), with no edits to this file when
+// you peel users out into its own binary. The transport switch
+// happens at compile time via `nexus build --deployment X`.
 package checkout
 
 import (
@@ -14,15 +15,16 @@ import (
 )
 
 // Service is checkout's service wrapper. Its constructor takes a
-// users.UsersClient — the framework injects either the local or
-// remote variant depending on the running binary's deployment, but
-// the type the consumer sees is identical.
+// *users.Service — the build tool decides at compile time whether
+// that's the real local struct (monolith / users-svc binaries) or
+// an HTTP-stub redefinition emitted by the shadow generator
+// (checkout-svc binary). The type identifier is identical in both.
 type Service struct {
 	*nexus.Service
-	users users.UsersClient
+	users *users.Service
 }
 
-func NewService(app *nexus.App, u users.UsersClient) *Service {
+func NewService(app *nexus.App, u *users.Service) *Service {
 	return &Service{
 		Service: app.Service("checkout").Describe("Order checkout"),
 		users:   u,
@@ -63,6 +65,5 @@ func NewSubmit(svc *Service, p nexus.Params[SubmitArgs]) (*Receipt, error) {
 var Module = nexus.Module("checkout",
 	nexus.DeployAs("checkout-svc"),
 	nexus.Provide(NewService),
-	nexus.Provide(users.NewUsersClient),
 	nexus.AsRest("POST", "/checkout", NewSubmit),
 )

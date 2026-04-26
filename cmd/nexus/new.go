@@ -65,11 +65,12 @@ func scaffold(dir, modulePath string, stdout io.Writer) error {
 	}
 
 	files := map[string]string{
-		"go.mod":     tmplGoMod(modulePath),
-		"main.go":    tmplMainGo,
-		"module.go":  tmplModuleGo,
-		".gitignore": tmplGitignore,
-		"README.md":  tmplReadme(filepath.Base(abs)),
+		"go.mod":            tmplGoMod(modulePath),
+		"main.go":           tmplMainGo,
+		"module.go":         tmplModuleGo,
+		".gitignore":        tmplGitignore,
+		"README.md":         tmplReadme(filepath.Base(abs)),
+		"nexus.deploy.yaml": tmplDeployYaml,
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(abs, name), []byte(content), 0o644); err != nil {
@@ -81,7 +82,13 @@ func scaffold(dir, modulePath string, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "Next:\n")
 	fmt.Fprintf(stdout, "  cd %s\n", dir)
 	fmt.Fprintf(stdout, "  go mod tidy\n")
-	fmt.Fprintf(stdout, "  nexus dev        # then open http://localhost:8080/__nexus/\n")
+	fmt.Fprintf(stdout, "  nexus dev                          # one process, dashboard at http://localhost:8080/__nexus/\n")
+	fmt.Fprintf(stdout, "  nexus build --deployment monolith  # produce ./bin/monolith\n")
+	fmt.Fprintf(stdout, "\n")
+	fmt.Fprintf(stdout, "Edit nexus.deploy.yaml to add split deployments — the file's\n")
+	fmt.Fprintf(stdout, "comments walk through tagging a module DeployAs(...), declaring a\n")
+	fmt.Fprintf(stdout, "unit + port, and wiring peers. Then `nexus dev --split` boots\n")
+	fmt.Fprintf(stdout, "every unit as a subprocess with cross-service HTTP between them.\n")
 	return nil
 }
 
@@ -173,20 +180,137 @@ const tmplGitignore = `/bin/
 .DS_Store
 `
 
+// tmplDeployYaml is the starter manifest. It declares a single
+// monolith deployment and embeds a hand-walkthrough showing how to
+// split modules into independent services. The user edits this file
+// (not main.go) when topology changes.
+const tmplDeployYaml = `# nexus.deploy.yaml — deployment topology for this app.
+#
+# 'nexus build --deployment NAME' reads this file to decide which
+# modules compile locally and which become HTTP-stub shadows.
+# 'nexus dev --split' reads it to launch one subprocess per split
+# unit. Application code (main.go, modules) stays
+# deployment-agnostic; everything per-environment lives here.
+#
+# ── Concepts ──────────────────────────────────────────────────────
+#
+# deployments:    map of unit name → { owns: [...], port: N }
+#                 Empty 'owns' = "owns every module" (the monolith).
+#                 Listed 'owns' = real split unit; modules NOT
+#                 listed get replaced by HTTP-stub shadows in this
+#                 unit's binary.
+# peers:          map of DeployAs-tag → transport config (URL,
+#                 timeout, retries, min_version, auth). Codegen bakes
+#                 this into the binary as Config.Topology defaults.
+
+deployments:
+  # Monolith owns every module by default. Run with:
+  #     nexus build --deployment monolith
+  #     ./bin/monolith
+  monolith:
+    port: 8080
+
+# ── How to split a module out ─────────────────────────────────────
+#
+# 1. Tag the module's declaration with DeployAs:
+#
+#        var Module = nexus.Module("orders",
+#            nexus.DeployAs("orders-svc"),  // names the deployment unit
+#            nexus.Provide(NewService),
+#            nexus.AsRest("GET", "/orders/:id", NewGet),
+#        )
+#
+# 2. Add a deployment for it here, and add it to monolith's owns
+#    list (or leave monolith empty so it auto-includes everything):
+#
+#        deployments:
+#          monolith:
+#            port: 8080
+#          orders-svc:
+#            owns: [orders]
+#            port: 8081
+#
+# 3. Add a peer entry so other services can reach it. URL defaults
+#    to http://localhost:<port> for local dev — override with an
+#    env var in prod:
+#
+#        peers:
+#          orders-svc:
+#            timeout: 2s
+#            # url: ${ORDERS_SVC_URL}     # interpolated at boot
+#            # min_version: v0.9          # warn on peer-version skew
+#            # retries: 1                 # idempotent retries only
+#            # auth:                      # bearer-token credential
+#            #   type: bearer
+#            #   token: ${ORDERS_SVC_TOKEN}
+#
+# 4. Cross-module call sites stay unchanged — checkout's struct
+#    field is *orders.Service in every binary; the build tool
+#    swaps the body at compile time:
+#
+#        type Service struct {
+#            *nexus.Service
+#            orders *orders.Service   // local in monolith, HTTP in split
+#        }
+#
+# 5. Build (or run) per deployment:
+#
+#        nexus build --deployment orders-svc   # ./bin/orders-svc
+#        nexus build --deployment monolith     # ./bin/monolith
+#        nexus dev --split                     # all units, one terminal
+
+# ── Example split topology (uncomment to enable) ──────────────────
+#
+# deployments:
+#   monolith:
+#     port: 8080
+#   orders-svc:
+#     owns: [orders]
+#     port: 8081
+#   billing-svc:
+#     owns: [billing]
+#     port: 8082
+#
+# peers:
+#   orders-svc:
+#     timeout: 2s
+#   billing-svc:
+#     timeout: 2s
+#     auth:
+#       type: bearer
+#       token: ${BILLING_SVC_TOKEN}
+`
+
 func tmplReadme(name string) string {
 	return fmt.Sprintf(`# %s
 
 Generated with `+"`nexus new`"+`.
 
-## Run
+## Run (single process)
 
     go mod tidy
     nexus dev
 
-Then open http://localhost:8080/__nexus/ to see the dashboard.
-
-Hit the REST endpoint:
+Then open http://localhost:8080/__nexus/ for the dashboard, and:
 
     curl 'http://localhost:8080/hello?name=Paul'
+
+## Build a deployable binary
+
+    nexus build --deployment monolith
+    ./bin/monolith
+
+## Split into microservices
+
+Edit `+"`nexus.deploy.yaml`"+` to declare additional deployments and tag
+your modules with `+"`nexus.DeployAs(\"...\")`"+`. The manifest comments
+walk through each step. Then:
+
+    nexus dev --split           # all units in one terminal
+    nexus build --deployment orders-svc
+
+Application code stays unchanged — the framework swaps cross-module
+*Service struct bodies between the local impl and HTTP-stub shadows
+at compile time, based on the active deployment.
 `, name)
 }

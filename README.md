@@ -58,7 +58,7 @@ reachable through plain `go` commands, but having one entry-point for the
 common-case loop keeps muscle memory short.
 
 ```bash
-nexus new my-app          # scaffold main.go + module.go + go.mod + .gitignore
+nexus new my-app          # scaffold main.go + module.go + go.mod + nexus.deploy.yaml
 cd my-app
 go mod tidy
 nexus dev                 # go run . + auto-open http://localhost:8080/__nexus/
@@ -66,8 +66,10 @@ nexus dev                 # go run . + auto-open http://localhost:8080/__nexus/
 
 | Command | What it does |
 |---|---|
-| `nexus new <dir>` | Creates a minimal app (reflective `AsRest` + dashboard). `-module <path>` overrides the go.mod path. |
-| `nexus dev [dir]` | Runs `go run <dir>` (default `.`), probes `:8080`, opens the dashboard as soon as it responds. `-addr host:port` to change the probe target, `-no-open` to skip the browser. |
+| `nexus new <dir>` | Scaffolds a minimal app (reflective `AsRest` + dashboard + a heavily-commented `nexus.deploy.yaml`). `--module <path>` overrides the go.mod path. |
+| `nexus init [dir]` | Adds `nexus.deploy.yaml` to an existing project. Scans for `nexus.DeployAs(...)` tags and pre-populates a deployments + peers block. `--force` overwrites; refuses by default. |
+| `nexus dev [dir]` | Runs `go run <dir>` (default `.`), probes `:8080`, opens the dashboard as soon as it responds. With `--split` boots one subprocess per deployment unit (per-unit binary built via the overlay path), streams trace events with cross-service spans, prints a per-unit ready dot. `--addr host:port`, `--no-open`, `--base-port`. |
+| `nexus build` | Builds one deployment binary using `go build -overlay`. `--deployment <name>` (required) names the unit from `nexus.deploy.yaml`. The framework generates per-deployment shadow source (HTTP-stub `Service` for non-owned modules) and a deploy-init file that bakes the manifest's port + peer table into the binary — main.go contains zero deployment code. |
 | `nexus version` | Prints the CLI version. |
 
 ## Quick start
@@ -459,97 +461,85 @@ mgr := app.Cache()
 _ = mgr.Set(ctx, "k", value, 5*time.Minute)
 ```
 
-### Deployment-ready modules (preview)
+### Deployment-ready modules
 
-`nexus.DeployAs(tag)` marks a module as a candidate deployment unit — the
-seam a future split would peel off. In monolith mode (the default,
-unchanged) the tag is metadata only: every endpoint registered under the
-module gets a `Deployment` field on the registry, surfaced on
-`/__nexus/endpoints` so the dashboard can render the planned topology
-before any splitting actually happens.
+Write the application as a monolith; ship as N independent services with no source changes. The framework swaps cross-module `*Service` struct bodies between the local impl and an HTTP-stub shadow at compile time, driven by a single declarative file:
+
+```yaml
+# nexus.deploy.yaml
+deployments:
+  monolith:                       # owns every module by default
+    port: 8080
+  users-svc:
+    owns: [users]
+    port: 8081
+  checkout-svc:
+    owns: [checkout]
+    port: 8080
+
+peers:
+  users-svc:
+    timeout: 2s
+    auth:
+      type: bearer
+      token: ${USERS_SVC_TOKEN}
+  checkout-svc:
+    timeout: 2s
+```
+
+#### Module declaration — unchanged across deployments
 
 ```go
-var users = nexus.Module("users",
+var Module = nexus.Module("users",
     nexus.DeployAs("users-svc"),
-    nexus.Provide(NewUsersService),
-    nexus.AsRest("GET", "/users/:id", NewGetUser),
+    nexus.Provide(NewService),
+    nexus.AsRest("GET", "/users/:id", NewGet),
+    nexus.AsRest("GET", "/users",     NewList),
+    nexus.AsQuery(NewSearch),
 )
-
-func main() {
-    nexus.Run(nexus.Config{
-        Addr:       ":8080",
-        Deployment: nexus.DeploymentFromEnv(), // reads NEXUS_DEPLOYMENT
-        Version:    version,                    // -ldflags-stamped
-    }, users, billing, checkout)
-}
 ```
 
-`Config.Deployment` and `Config.Version` are surfaced on `/__nexus/config`.
-The version is what cross-service generated clients will check on first
-call to detect peer-version skew (a major source of "weird microservice
-bugs"). `DeploymentFromEnv()` reads `NEXUS_DEPLOYMENT` so a single
-compiled binary boots as different units in different environments
-without rebuilding.
+`DeployAs("users-svc")` names the deployment unit; the manifest decides whether this module's source is compiled locally or replaced with an HTTP stub for a given binary.
 
-The deployable-module direction is the same as
-[Service Weaver](https://github.com/ServiceWeaver/weaver) — write a
-monolith, deploy as N services with a single command. The lessons from
-Weaver's archival shape what nexus is *not* doing: no `Implements[T]`
-mixin, no rewrite tax, untagged modules stay exactly as they are today.
-
-**Currently shipping** (v0.10): codegen'd cross-module clients via
-`nexus gen clients`, plus the `LocalInvoker` / `RemoteCaller` runtime
-they target. Generate one typed client per `DeployAs`-tagged module
-and consume it from any other module — the framework picks the
-local in-process path or the HTTP path at construction time based on
-the running binary's deployment.
+#### Consumer — same Go in every binary
 
 ```go
-// users module — handlers as today
-nexus.AsRest("GET", "/users/:id", NewGet)
+type Service struct {
+    *nexus.Service
+    users *users.Service          // local in monolith / users-svc, HTTP stub in checkout-svc
+}
 
-// run codegen → users/zz_users_client_gen.go
-//   defines: type UsersClient interface { Get(ctx, args) (*User, error); ... }
+func NewService(app *nexus.App, u *users.Service) *Service {
+    return &Service{Service: app.Service("checkout"), users: u}
+}
 
-// checkout module — consume the typed client
-func NewCheckout(svc *Svc, u users.UsersClient, p Params[Args]) (...) {
-    user, err := u.Get(p.Context, users.GetArgs{ID: p.Args.UserID})
-    ...
+func NewSubmit(svc *Service, p nexus.Params[SubmitArgs]) (*Receipt, error) {
+    u, err := svc.users.Get(p.Context, users.GetArgs{ID: p.Args.UserID})
+    if err != nil { return nil, fmt.Errorf("lookup user: %w", err) }
+    return &Receipt{...}, nil
 }
 ```
 
-In monolith mode (no `NEXUS_DEPLOYMENT` set) the call routes through
-`LocalInvoker` — synthesizes an httptest request against the same Gin
-engine, so auth/rate-limit/metrics/trace all run identically to a
-real HTTP call. In split mode (`NEXUS_DEPLOYMENT=checkout-svc`) the
-generated client uses `RemoteCaller`, reading `USERS_SVC_URL` for the
-peer's base URL and stitching traces via W3C `traceparent` automatically.
+Cross-module calls read like normal struct-method calls. No `Client` interface, no per-deployment branching, no env-var lookups in user code. The framework auto-Provides `*users.Service` via an `init()`-time registry so consumers don't need a manual `Provide` line either.
+
+#### Build per deployment
 
 ```bash
-# regenerate after handler-signature changes; idempotent
-nexus gen clients ./...
-
-# run the example
-go run ./examples/microsplit
-curl -X POST localhost:8080/checkout \
-     -H 'content-type: application/json' \
-     -d '{"userId":"u1","orderId":"o1"}'
-# → {"orderId":"o1","userId":"u1","display":"Alice"}
+nexus build --deployment monolith       # ./bin/monolith   — every module local
+nexus build --deployment users-svc      # ./bin/users-svc  — checkout shadowed
+nexus build --deployment checkout-svc   # ./bin/checkout-svc — users shadowed
 ```
 
-Failures from the peer surface as `*nexus.RemoteError` either way, so
-caller error handling doesn't fork by deployment shape. Add
-`//go:generate nexus gen clients ./...` at your project root to fold
-regeneration into `go generate ./...`.
+Each command:
+1. Reads `nexus.deploy.yaml`, scans modules for `DeployAs` tags, computes which to shadow.
+2. For every non-owned module, parses each `.go` file in the package, preserves exported types verbatim, and synthesizes a `zz_shadow_gen.go` containing an HTTP-stub `Service` whose plain methods route through `nexus.PeerCaller`. Multi-file modules (`types.go + service.go + handlers.go + module.go`) are handled the same way as single-file ones.
+3. Generates a `zz_deploy_gen.go` whose `init()` calls `nexus.SetDeploymentDefaults(...)` with the manifest's port + peer table baked in (URL, timeout, auth closure for bearer tokens, retries, min-version skew floor).
+4. Writes everything under `.nexus/build/<deployment>/` (gitignored), then runs `go build -overlay=overlay.json` so the compiler picks up shadow + deploy-init files without touching the source tree.
 
-**Also shipping in v0.10**: `nexus dev --split` boots one localhost
-subprocess per `DeployAs` tag with auto-wired `*_URL` env vars between
-them, so the codegen'd cross-module clients exercise the real HTTP
-path (not just the local shortcut). Distributed semantics on your
-laptop, no K8s required.
+#### Run all units locally with one command
 
 ```bash
-$ nexus dev --split ./examples/microsplit
+$ nexus dev --split
 
   nexus dev (split mode)
   ──────────
@@ -557,70 +547,53 @@ $ nexus dev --split ./examples/microsplit
   users-svc     port 8081  →  http://localhost:8081
   ● starting · ctrl-c to stop all
 
-[checkout-svc] [GIN] Listening on :8080
-[users-svc]    [GIN] Listening on :8081
+  building checkout-svc
+  building users-svc
+checkout-svc nexus: listening on [::]:8080
+  ● checkout-svc ready · http://localhost:8080
+users-svc    nexus: listening on [::]:8081
+  ● users-svc    ready · http://localhost:8081
+
+  ● all ready · 2 units · ctrl-c to stop
+
+checkout-svc → POST /checkout                              [9c9090]
+checkout-svc   ↳ remote GET /users/:id ok 5ms → http://localhost:8081  [9c9090]
+users-svc    → GET /users/u1                               [9c9090]
+users-svc    ← GET /users/u1 200 1ms                       [9c9090]
+checkout-svc ← POST /checkout 200 7ms                      [9c9090]
 ```
 
-Ctrl-C kills every subprocess group cleanly. Your `main()` must read
-`PORT` to honor the assigned port — `examples/microsplit/main.go`
-shows the convention. `--base-port` shifts the assignment.
+Each unit is built via the overlay path (real production binary, not `go run`), gets a per-unit ready dot when its port responds, and the trace bus on each subprocess streams into the dev terminal — request lines plus colored cross-service spans threaded by 6-char trace ID so you can read concurrent requests at a glance. `Ctrl-C` kills every subprocess cleanly.
 
-**Also in v0.11**: `nexus dev --tui` opens a Bubble Tea interactive
-UI — fixed header with the dashboard URL + ready state, log pane
-streaming the child's stdout/stderr, and hotkeys (`q` quit, `r`
-restart, `o` open browser, `c` clear). Stays opt-in because a TUI
-takes over the whole terminal — the static-banner mode remains the
-default.
+#### Friendly framework errors
 
-**Also in v0.12**: peer-version skew warnings. Generated remote
-clients now thread `app.Version()` into a `RemoteCaller`, which
-fetches the peer's `/__nexus/config` once on first call and logs a
-single warning line if `peerVersion != localVersion`. Catches the
-"service A is on v2, service B on v1" rollout gap early without
-fail-fast (skew is sometimes intentional during a deploy).
+Every framework error is a `*nexus.UserError` with `op` / `hint` / `notes` / `cause` fields, formatted multi-line with a hint section:
 
 ```
-nexus: peer at http://users:8080 reports version "v2.0.0";
-this binary is on "v1.4.2" — possible deployment skew
+nexus error [remote call]: GET /users/:id: peer responded but the JSON didn't fit the client's return type
+  url:  http://localhost:8081/users/
+  body: [{"id":"u1","Name":"Alice"},{"id":"u2","Name":"Bob"}]
+  cause: json: cannot unmarshal array into Go value of type users.User
+  hint: verify the peer's handler return type matches the client's expected shape; if the URL above looks wrong, check the args struct for empty path params
 ```
 
-**Also in v0.13**: GraphQL ops join the codegen. Every `AsQuery` /
-`AsMutation` handler in a `DeployAs`-tagged module becomes a typed
-method on the generated client, dispatched through the same
-`ClientCallable` interface as REST. The runtime helper builds the
-query string from the handler signature (args inlined as GraphQL
-literals; selection set walked from the return type's exported
-fields). Same call site, monolith or split:
+Status-specific hints fire for 401/403/404/405/408/429/5xx. 3xx redirects from the peer surface as fail-fast errors (the remote client deliberately doesn't auto-follow so wrong-endpoint cases land loud, not as a confusing decode error). Path-expansion catches empty parameters before any HTTP request. Boot-time topology validation runs before fx spins up. All error fields propagate to the dashboard waterfall as span attrs (`error.op`, `error.hint`, etc.) so the UI can render them as separate elements.
 
-```go
-// In users module:
-nexus.AsQuery(NewSearch)  // func(svc, p Params[SearchArgs]) ([]*User, error)
+#### Two ways to start
 
-// In checkout module:
-hits, err := users.Search(ctx, users.SearchArgs{Prefix: "A"})
-```
+| Starting from | Command |
+|---|---|
+| Empty directory | `nexus new myapp` — full scaffold with `nexus.deploy.yaml` already in place |
+| Existing nexus codebase | `nexus init` — drops a manifest, pre-populates from discovered `DeployAs` tags |
 
-The TUI mode (`nexus dev --tui`) now polls `/__nexus/stats` once a
-second and renders a "stats" pane above the log area: top 5
-endpoints by request count, with errors highlighted. The probe
-target updates from the framework's "nexus: listening on …" line so
-the pane stays accurate even when the user picks a non-default port.
+The manifest is heavily commented as a learning artifact: anyone reading it can see exactly how to add a new deployment, wire a peer, configure auth, etc.
 
-**Patch in v0.13.1**: split mode now properly filters fx providers
-by deployment tag. Modules with a `DeployAs(...)` that doesn't match
-`NEXUS_DEPLOYMENT` are skipped wholesale — their `Provide` /
-`AsRest` / `AsQuery` / `AsWS` calls don't reach the fx graph, so
-duplicate-provider errors disappear when two modules touch the same
-service constructor. Untagged modules stay always-local. Split mode
-also pre-checks every assigned port before spawning, so port
-conflicts surface as a single clear line instead of buried in fx
-stack traces. The splitter sets `NEXUS_FX_QUIET=1` in subprocess
-env to silence fx's verbose `[Fx] PROVIDE/INVOKE/HOOK` chatter,
-keeping prefixed log streams scannable.
+#### Design notes
 
-**Still coming**: WebSocket clients in the codegen (deferred —
-proper streaming Subscribe semantics need their own design round),
-shell-completion polish, fx error reformatting.
+- **Path 3 architecture.** The transport switch lives at compile time, not runtime. There's no `if dep == "users-svc"` branch in user code; the type's body is genuinely different per binary, enforced by Go's compiler. A method that exists on the local impl but not on the remote stub fails the split build immediately — no silent runtime degradation.
+- **`-overlay` not source rewriting.** Original source on disk never changes. Per-deployment shadows live in `.nexus/build/<deployment>/` and feed `go build -overlay=overlay.json`. Same Go toolchain, same debugger story, no custom build pipeline to maintain.
+- **No more `nexus gen clients`.** The previous codegen path that produced `UsersClient` interfaces and `usersClientLocal/Remote` impls is gone. The new flow has fewer concepts (just `*Service`) and removes the regenerate-after-each-handler-change friction.
+- **Scope vs Service Weaver.** Same goal — write monolith, deploy as N — without Weaver's `Implements[T]` mixin or rewrite tax. Untagged modules stay exactly as they are today; the deployment story is opt-in per module via `DeployAs`.
 
 ## Dashboard
 
@@ -720,7 +693,7 @@ vegeta attack -rate=10000 -duration=30s -targets=targets.txt | vegeta report
 | `examples/graphapp` | GraphQL via reflective AsQuery/AsMutation, typed DB wrappers, rate limits, validators, metrics. |
 | `examples/wstest` | WebSocket echo playground (imperative `(*Service).WebSocket(...)` path). |
 | `examples/wsecho` | Typed WebSocket via `AsWS` — two message types on one path, envelope protocol, session fan-out. |
-| `examples/microsplit` | Two-module demo (`users` + `checkout`) showing cross-module calls via the generated client. Same code runs as monolith or split. |
+| `examples/microsplit` | Two-module demo (`users` + `checkout`) showing manifest-driven deployments. `users` is split across `types.go + service.go + handlers.go + module.go` to exercise the multi-file shadow path. `nexus build --deployment X` produces three different binaries from the same source. |
 
 Run any example:
 ```bash
