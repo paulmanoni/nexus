@@ -15,6 +15,7 @@ package main
 // gone.
 
 import (
+	"fmt"
 	"go/ast"
 	"go/types"
 	"path/filepath"
@@ -78,6 +79,14 @@ type endpointInfo struct {
 	// aggregates these into its import block so qualified type names
 	// like `pkg.Response` resolve. Sorted, unique.
 	Imports []string
+
+	// Skip is set when the endpoint's signature uses unexported type
+	// names — a cross-module client can't reference those anyway, so
+	// the shadow stub omits the method and emits a one-line comment
+	// in its place. SkipReason carries the human-readable cause for
+	// the comment + a build-time stderr line.
+	Skip       bool
+	SkipReason string
 }
 
 // discoverDeployTags is a thin wrapper around scanModules that returns
@@ -358,6 +367,10 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 		ep.HasArgs = true
 		ep.ArgsType = types.TypeString(argsType, q)
 		collectPackagePaths(argsType, dest, imports)
+		if name := unexportedTypeName(argsType); name != "" {
+			ep.Skip = true
+			ep.SkipReason = fmt.Sprintf("args type references unexported %q", name)
+		}
 	}
 	for i := 0; i < sig.Results().Len(); i++ {
 		rt := sig.Results().At(i).Type()
@@ -367,6 +380,12 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 		ep.Return = types.TypeString(rt, q)
 		ep.HasReturn = true
 		collectPackagePaths(rt, dest, imports)
+		if !ep.Skip {
+			if name := unexportedTypeName(rt); name != "" {
+				ep.Skip = true
+				ep.SkipReason = fmt.Sprintf("return type references unexported %q", name)
+			}
+		}
 		break
 	}
 
@@ -378,6 +397,48 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 		sort.Strings(out)
 		ep.Imports = out
 	}
+}
+
+// unexportedTypeName walks a types.Type and returns the name of the
+// first unexported *types.Named it finds, or "" when every named
+// type in the tree is exported. Used to gate cross-module shadow
+// methods: an endpoint whose signature mentions an unexported type
+// can't be called from another package anyway, so the stub omits
+// the method rather than generate a definition that won't compile.
+//
+// Returns the unqualified name (e.g. "saveResponsesArgs") so the
+// build's stderr warning matches what the user sees in source.
+func unexportedTypeName(t types.Type) string {
+	if t == nil {
+		return ""
+	}
+	switch tt := t.(type) {
+	case *types.Named:
+		if obj := tt.Obj(); obj != nil && !obj.Exported() {
+			return obj.Name()
+		}
+		if tas := tt.TypeArgs(); tas != nil {
+			for i := 0; i < tas.Len(); i++ {
+				if n := unexportedTypeName(tas.At(i)); n != "" {
+					return n
+				}
+			}
+		}
+	case *types.Pointer:
+		return unexportedTypeName(tt.Elem())
+	case *types.Slice:
+		return unexportedTypeName(tt.Elem())
+	case *types.Array:
+		return unexportedTypeName(tt.Elem())
+	case *types.Map:
+		if n := unexportedTypeName(tt.Key()); n != "" {
+			return n
+		}
+		return unexportedTypeName(tt.Elem())
+	case *types.Chan:
+		return unexportedTypeName(tt.Elem())
+	}
+	return ""
 }
 
 // collectPackagePaths walks a types.Type recursively and stamps every
