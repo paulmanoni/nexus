@@ -129,6 +129,12 @@ type Service struct {
 	// service (if any). When the service has no owning module — or
 	// the module isn't tagged — this is empty.
 	Deployment string `json:",omitempty"`
+	// Remote marks a service that lives in a different deployment
+	// unit. Set by the shadow generator's RemoteService option so
+	// the dashboard can render peer services distinctively (a
+	// "remote" badge, ghosted card style) rather than mixing them
+	// with the locally-owned services.
+	Remote bool `json:",omitempty"`
 	// ResourceDeps is the set of resource names the service's
 	// CONSTRUCTOR depends on — i.e. NewXService(app, db *DBManager,
 	// ...) records "db"'s NexusResources here. These drive
@@ -216,6 +222,13 @@ func (r *Registry) RegisterService(s Service) {
 		if len(s.ServiceDeps) == 0 {
 			s.ServiceDeps = existing.ServiceDeps
 		}
+		// A later local registration must not silently demote an
+		// already-registered remote placeholder back to local; let
+		// whichever side called LAST win on the Remote bit, but keep
+		// the local-side wins-on-name semantics for everything else.
+		// In practice the shadow's RemoteService Invoke runs at fx
+		// boot — same time as local registrations — so the explicit
+		// new-value semantic is right.
 	}
 	r.services[s.Name] = s
 }

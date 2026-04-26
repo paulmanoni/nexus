@@ -173,3 +173,26 @@ func (m *DeployManifest) Owns(deployment, module string) bool {
 	}
 	return false
 }
+
+// DeploymentOf returns the name of the split-unit deployment that
+// owns the given module, or "" when the module isn't claimed by any
+// non-monolith deployment. Used by the build tool as a fallback for
+// modules whose source omits nexus.DeployAs(...) — the manifest's
+// owns list is the secondary source of truth (auto-inject path).
+//
+// Monolith deployments (empty owns) are skipped here: they own
+// every module, so they'd match every query and aren't a useful
+// "split tag" answer.
+func (m *DeployManifest) DeploymentOf(module string) string {
+	for name, spec := range m.Deployments {
+		if len(spec.Owns) == 0 {
+			continue
+		}
+		for _, n := range spec.Owns {
+			if n == module {
+				return name
+			}
+		}
+	}
+	return ""
+}
