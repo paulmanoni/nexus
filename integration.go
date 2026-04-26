@@ -96,6 +96,13 @@ func newApp(cfg Config) *App {
 	_ = metrics.NewCacheStore
 	app := New(opts...)
 
+	// Flush remote-service placeholders registered by codegen'd
+	// init() blocks (zz_shadow_gen.go) into the live registry. Has
+	// to run AFTER New() so app.registry exists; before fx start so
+	// the dashboard's first /__nexus/endpoints poll already includes
+	// every peer module.
+	app.applyRemoteServicePlaceholders()
+
 	// Declare the global rate limit now so the store is primed before any
 	// op runs. Per-op declarations land later via the auto-mount.
 	if !cfg.GlobalRateLimit.Zero() {
