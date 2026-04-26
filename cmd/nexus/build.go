@@ -81,64 +81,103 @@ type buildOptions struct {
 	MainPackage  string // single main package to compile
 	Stdout       io.Writer
 	Stderr       io.Writer
+
+	// Preloaded lets a caller (typically nexus dev --split, which
+	// builds N deployments in a row) share a single packages.Load +
+	// manifest read across all builds. When nil, runBuild does its
+	// own load. When set, the load is skipped and the cached scan
+	// reused, which dominates wall-clock for cold builds on real
+	// projects.
+	Preloaded *buildPreload
 }
 
-// runBuild orchestrates manifest read → module scan → shadow
-// generation → overlay write → go build invocation. Separated from
-// the cobra glue so tests can drive it in-process.
-func runBuild(opts buildOptions) error {
-	manifest, err := LoadManifest(opts.ManifestPath)
-	if err != nil {
-		return err
-	}
-	if _, ok := manifest.Deployments[opts.Deployment]; !ok {
-		return fmt.Errorf("nexus build: deployment %q not in %s — declared: %v",
-			opts.Deployment, opts.ManifestPath, manifest.Names())
-	}
+// buildPreload bundles the expensive shared inputs (manifest + AST
+// scan results) so multiple deployments can be built without
+// re-paying the load cost each time. Produced by preloadBuild and
+// passed via buildOptions.Preloaded.
+type buildPreload struct {
+	Manifest    *DeployManifest
+	ProjectRoot string
+	Mods        []modInfo
+}
 
-	projectRoot, err := filepath.Abs(filepath.Dir(opts.ManifestPath))
+// preloadBuild does the manifest read + recursive packages.Load +
+// scanModules + cross-validation once, returning a result that
+// can be threaded through several runBuild calls. Splitter mode
+// uses this to avoid running the slow type-check N times for N
+// deployments. Direct nexus build callers don't need it; runBuild
+// falls back to its own load when Preloaded is nil.
+func preloadBuild(manifestPath string, stderr io.Writer) (*buildPreload, error) {
+	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
-		return fmt.Errorf("resolve project root: %w", err)
+		return nil, err
 	}
-
-	// Scan every nexus.Module(...) declaration so we know each
-	// module's name, DeployAs tag, source file path, and endpoints.
+	projectRoot, err := filepath.Abs(filepath.Dir(manifestPath))
+	if err != nil {
+		return nil, fmt.Errorf("resolve project root: %w", err)
+	}
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps |
 			packages.NeedImports,
 		Tests: false,
+		Dir:   projectRoot,
 	}
-	// Scan recursively from the project root regardless of the
-	// build target — modules can live in any subpackage; the build
-	// target is just one main package among many.
-	scanCfg := *cfg
-	scanCfg.Dir = projectRoot
-	pkgs, err := packages.Load(&scanCfg, "./...")
+	pkgs, err := packages.Load(cfg, "./...")
 	if err != nil {
-		return fmt.Errorf("load packages: %w", err)
+		return nil, fmt.Errorf("load packages: %w", err)
 	}
 	if hasErrors(pkgs) {
 		for _, p := range pkgs {
 			for _, e := range p.Errors {
-				fmt.Fprintf(opts.Stderr, "warn: %s\n", e)
+				fmt.Fprintf(stderr, "warn: %s\n", e)
 			}
 		}
 	}
-
 	mods := scanModules(pkgs)
 	if len(mods) == 0 {
-		return fmt.Errorf("nexus build: no nexus.Module(...) declarations found under %s", projectRoot)
+		return nil, fmt.Errorf("nexus build: no nexus.Module(...) declarations found under %s", projectRoot)
 	}
+	if err := validateManifestSourceTags(mods, manifest, stderr); err != nil {
+		return nil, err
+	}
+	return &buildPreload{
+		Manifest:    manifest,
+		ProjectRoot: projectRoot,
+		Mods:        mods,
+	}, nil
+}
 
-	// Cross-validate manifest ↔ source. A common silent bug: a module's
-	// nexus.DeployAs("foo-srv") doesn't match any manifest deployment
-	// name (manifest says "foo-svc"), so under nexus dev --split the
-	// runtime filter skips the local module wholesale and the dashboard
-	// shows nothing for it. Surface the mismatch as a build error rather
-	// than producing a half-broken binary.
-	if err := validateManifestSourceTags(mods, manifest, opts.Stderr); err != nil {
-		return err
+// runBuild orchestrates manifest read → module scan → shadow
+// generation → overlay write → go build invocation. Separated from
+// the cobra glue so tests can drive it in-process.
+//
+// When opts.Preloaded is non-nil, the manifest + packages.Load
+// results are reused from the caller's earlier preloadBuild call.
+// nexus dev --split uses this so the slow type-check runs once
+// across all deployments instead of N times.
+func runBuild(opts buildOptions) error {
+	var (
+		manifest    *DeployManifest
+		projectRoot string
+		mods        []modInfo
+	)
+	if opts.Preloaded != nil {
+		manifest = opts.Preloaded.Manifest
+		projectRoot = opts.Preloaded.ProjectRoot
+		mods = opts.Preloaded.Mods
+	} else {
+		pre, err := preloadBuild(opts.ManifestPath, opts.Stderr)
+		if err != nil {
+			return err
+		}
+		manifest = pre.Manifest
+		projectRoot = pre.ProjectRoot
+		mods = pre.Mods
+	}
+	if _, ok := manifest.Deployments[opts.Deployment]; !ok {
+		return fmt.Errorf("nexus build: deployment %q not in %s — declared: %v",
+			opts.Deployment, opts.ManifestPath, manifest.Names())
 	}
 
 	// Generate shadows for every module the target deployment doesn't
