@@ -66,19 +66,35 @@ onNodesInitialized(() => fitView({ padding: 0.2, maxZoom: 1 }))
 onPaneClick(() => clearOp())
 
 function estimateServiceHeight(data) {
-  const eps = (data.endpoints || []).slice(0, 6)
-  const hidden = (data.endpoints?.length || 0) > 6 ? 1 : 0
+  // Every endpoint renders — no MAX_VISIBLE cap. The chip row's
+  // visual height grows with chip count (chips wrap to 2-3 lines
+  // when many resources / middlewares pile on); approximate by
+  // bucketing into 0/1/2 extra rows, which keeps cards from
+  // overlapping in dagre's layout without measuring post-render.
+  const eps = data.endpoints || []
   const desc = data.description ? 32 : 0
-  // Each op row is the op line (22px) plus, when chips are rendered, a
-  // second line (~20px). Chips show when the op has resource deps or
-  // declares the owning service as a dep (chip present when NOT auto-routed).
   let rows = 0
   for (const e of eps) {
     const hasOwnerChip = !e.ServiceAutoRouted
-    const hasResChips = Array.isArray(e.Resources) && e.Resources.length > 0
-    rows += (hasOwnerChip || hasResChips) ? 2 : 1
+    const resCount = Array.isArray(e.Resources) ? e.Resources.length : 0
+    const mwCount = Array.isArray(e.Middleware)
+      ? e.Middleware.filter(m => m !== 'metrics').length
+      : 0
+    const chipCount = (hasOwnerChip ? 1 : 0) + resCount + mwCount
+    if (chipCount === 0) {
+      rows += 1            // single op line
+    } else if (chipCount <= 3) {
+      rows += 2            // op line + one chip line
+    } else if (chipCount <= 6) {
+      rows += 3            // op line + two chip lines
+    } else {
+      rows += 4            // op line + three chip lines
+    }
   }
-  return 54 + desc + (rows + hidden) * 22
+  // Header (38) + description + rows × 22 + bottom padding (16) +
+  // small safety margin (12) so cards never butt against each
+  // other under variable chip wrapping.
+  return 38 + desc + rows*22 + 16 + 12
 }
 
 function estimateResourceHeight(data) {
@@ -98,7 +114,12 @@ function layout(ns, es) {
 
 function dagreLayout(ns, es) {
   const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: 'LR', nodesep: 50, ranksep: 140 })
+  // nodesep controls vertical gap between cards in the same rank,
+  // ranksep the horizontal gap between ranks. Bumped from
+  // (50, 140) so module cards with many endpoints — which can be
+  // ~600-800px tall in real projects — still have visible air
+  // between them.
+  g.setGraph({ rankdir: 'LR', nodesep: 80, ranksep: 160 })
   ns.forEach(n => {
     let w, h
     if (n.type === 'internet') { w = 160; h = 90 }
