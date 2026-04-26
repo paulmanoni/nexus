@@ -173,7 +173,7 @@ func runBuild(opts buildOptions) error {
 	// the right port and peer table without main.go declaring
 	// anything. Overlay-added (logical path doesn't exist on disk)
 	// so it doesn't pollute the source tree.
-	if depFile, err := writeDeployInitFile(opts.Deployment, manifest, projectRoot, opts.MainPackage, shadowDir, mods); err != nil {
+	if depFile, err := writeDeployInitFile(opts.Deployment, manifest, projectRoot, opts.MainPackage, shadowDir); err != nil {
 		return err
 	} else if depFile != "" {
 		// Overlay an additional file by mapping a logical

@@ -39,12 +39,27 @@ func Module(name string, opts ...Option) Option {
 	// DeployAs is at-most-once per Module; last write wins. Empty
 	// string keeps the module untagged (always-local).
 	var deployment string
+	var explicitDeploy bool
 	for _, o := range opts {
 		if rp, ok := o.(routePrefixOption); ok {
 			prefix += rp.prefix
 		}
 		if dt, ok := o.(deployTagOption); ok {
 			deployment = dt.tag
+			explicitDeploy = true
+		}
+	}
+
+	// Manifest fallback: if the user didn't write nexus.DeployAs(...)
+	// in source, consult the inferred-tag registry populated from
+	// nexus.deploy.yaml's `deployments[X].owns: [name]` entries by
+	// the codegen'd init() in zz_deploy_gen.go. Lets the manifest be
+	// the single source of truth for deployment tagging when the
+	// developer prefers manifest-driven config; explicit DeployAs
+	// still wins above when present.
+	if !explicitDeploy {
+		if t := inferredDeployTag(name); t != "" {
+			deployment = t
 		}
 	}
 
