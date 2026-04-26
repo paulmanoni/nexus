@@ -102,6 +102,12 @@ func newApp(cfg Config) *App {
 	// the dashboard's first /__nexus/endpoints poll already includes
 	// every peer module.
 	app.applyRemoteServicePlaceholders()
+	// Apply cross-module dep registrations (consumer-module → peer
+	// module) detected by the build's static AST scan and emitted
+	// in zz_deploy_gen.go's init(). Runs after the placeholder pass
+	// so the consumer service exists in the registry when its
+	// ServiceDeps slice is appended.
+	app.applyCrossModuleDeps()
 
 	// Declare the global rate limit now so the store is primed before any
 	// op runs. Per-op declarations land later via the auto-mount.

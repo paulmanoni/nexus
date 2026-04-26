@@ -258,9 +258,25 @@ async function load() {
   // declared it, plus any services in ServiceDeps). These live on the
   // right of the canvas alongside resources.
   // ---------------------------------------------------------------
+  // moduleCardsByName: every name that has a module-typed group on
+  // the canvas. When a service name is ALSO the name of a module
+  // card (the common case — local module "users" with service
+  // "users"; remote module placeholder also shares the name), the
+  // module card represents the dep — no separate small dep node is
+  // needed, and edges should land on the card. Built before
+  // depServices so the markDep guard below can consult it.
+  const moduleCardsByName = {}
+  for (const g of groups.values()) {
+    if (g.isModule) moduleCardsByName[g.name] = g.key
+  }
+
   const depServices = new Map() // name -> { Name, Description, ResourceDeps, ServiceDeps }
   const markDep = (name) => {
     if (!name) return
+    // Skip names already represented by a module card. The card
+    // carries the service identity (header shows the name); a
+    // separate dep node would just duplicate it on the canvas.
+    if (moduleCardsByName[name]) return
     if (!depServices.has(name)) {
       const s = serviceIndex[name] || { Name: name, Description: '' }
       depServices.set(name, {
@@ -271,6 +287,11 @@ async function load() {
       })
     }
   }
+
+  // resolveDepTarget returns the canvas node ID an edge should target
+  // when pointing at "service X". Module cards win over plain dep
+  // nodes; falls back to dep:X when no card claims the name.
+  const resolveDepTarget = (name) => moduleCardsByName[name] || `dep:${name}`
   for (const e of epData.endpoints || []) {
     // Only endpoints whose handler explicitly took *Service as a Go
     // dep add the service as a per-row architecture dep. Auto-routed
@@ -394,23 +415,28 @@ async function load() {
     // *Service as a Go dep. Auto-routed endpoints skip this because
     // they don't actually depend on the service wrapper value; they
     // were adopted into the service for schema/metrics routing only.
-    if (!e.ServiceAutoRouted && depServices.has(e.Service)) {
+    if (!e.ServiceAutoRouted && (depServices.has(e.Service) || moduleCardsByName[e.Service])) {
+      const tgt = resolveDepTarget(e.Service)
       edgeList.push({
-        id: `e:${groupKey}.${opName}->dep:${e.Service}`,
+        id: `e:${groupKey}.${opName}->${tgt}`,
         source: groupKey,
         sourceHandle: `op:${opName}`,
-        target: `dep:${e.Service}`,
+        target: tgt,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true },
       })
     }
-    // Other-service dep edges.
+    // Other-service dep edges. resolveDepTarget routes to the module
+    // card when one exists (cross-module dep — the dep IS another
+    // module on the canvas) and falls back to the small dep node
+    // otherwise (purely service-level dep).
     for (const sName of e.ServiceDeps || []) {
+      const tgt = resolveDepTarget(sName)
       edgeList.push({
-        id: `e:${groupKey}.${opName}->dep:${sName}`,
+        id: `e:${groupKey}.${opName}->${tgt}`,
         source: groupKey,
         sourceHandle: `op:${opName}`,
-        target: `dep:${sName}`,
+        target: tgt,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: e.Service, target: sName, targetKind: 'service', op: opName },
       })
@@ -448,11 +474,12 @@ async function load() {
       })
     }
     for (const other of w.ServiceDeps || []) {
-      if (!depServices.has(other)) continue
+      if (!depServices.has(other) && !moduleCardsByName[other]) continue
+      const tgt = resolveDepTarget(other)
       edgeList.push({
-        id: `e:wk:${w.Name}->dep:${other}`,
+        id: `e:wk:${w.Name}->${tgt}`,
         source: `wk:${w.Name}`,
-        target: `dep:${other}`,
+        target: tgt,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: w.Name, target: other, targetKind: 'service', op: null, serviceLevel: true, worker: true },
       })
@@ -465,25 +492,28 @@ async function load() {
   // nexus.ProvideService(NewXService) — e.g. NewAdvertsService(app,
   // users *UsersService, db *DBManager) records (users, db) as deps
   // of AdvertsService, which the UI then draws as dep-node→dep-node
-  // lines so the service layer's architecture is visible even when
-  // no individual endpoint touches those dependencies directly.
+  // (or module-card→module-card when both names resolve to module
+  // cards) lines so the service layer's architecture is visible even
+  // when no individual endpoint touches those dependencies directly.
   for (const s of epData.services || []) {
-    if (!depServices.has(s.Name)) continue
+    const sourceID = moduleCardsByName[s.Name] || (depServices.has(s.Name) ? `dep:${s.Name}` : '')
+    if (!sourceID) continue
     for (const res of s.ResourceDeps || []) {
       edgeList.push({
-        id: `e:dep:${s.Name}->res:${res}`,
-        source: `dep:${s.Name}`,
+        id: `e:${sourceID}->res:${res}`,
+        source: sourceID,
         target: `res:${res}`,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: s.Name, target: res, targetKind: 'resource', op: null, serviceLevel: true },
       })
     }
     for (const other of s.ServiceDeps || []) {
-      if (!depServices.has(other)) continue
+      if (!depServices.has(other) && !moduleCardsByName[other]) continue
+      const tgt = resolveDepTarget(other)
       edgeList.push({
-        id: `e:dep:${s.Name}->dep:${other}`,
-        source: `dep:${s.Name}`,
-        target: `dep:${other}`,
+        id: `e:${sourceID}->${tgt}`,
+        source: sourceID,
+        target: tgt,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: s.Name, target: other, targetKind: 'service', op: null, serviceLevel: true },
       })

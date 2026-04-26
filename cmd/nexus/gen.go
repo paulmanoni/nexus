@@ -48,6 +48,12 @@ type modInfo struct {
 	PackageDir string         // filesystem path of the destination package
 	PackagePath string        // import path of the destination package
 	Endpoints  []endpointInfo // resolved AsRest registrations
+
+	// Pkg carries the loaded *packages.Package containing the
+	// nexus.Module(...) declaration, kept so later passes (e.g. the
+	// cross-module dep scanner) can walk type info without
+	// re-loading. Populated by scanModules; not serialized.
+	Pkg *packages.Package `json:"-"`
 }
 
 // transportKind tags an endpoint's wire shape so the renderer picks
@@ -186,6 +192,7 @@ func parseModuleCall(p *packages.Package, call *ast.CallExpr) *modInfo {
 		Name:        name,
 		Package:     p.Name,
 		PackagePath: p.PkgPath,
+		Pkg:         p,
 	}
 	if len(p.GoFiles) > 0 {
 		m.PackageDir = filepath.Dir(p.GoFiles[0])

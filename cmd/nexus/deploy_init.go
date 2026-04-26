@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/types"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,7 +23,7 @@ import (
 // file mapped to a logical path inside the main package directory.
 // go build sees it and includes it in the binary; the user's source
 // tree is untouched.
-func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoot, mainPackage, shadowDir string) (string, error) {
+func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoot, mainPackage, shadowDir string, mods []modInfo) (string, error) {
 	spec, ok := manifest.Deployments[deployment]
 	if !ok {
 		return "", nil
@@ -89,11 +90,26 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 	// the monolith (empty owns), since monoliths don't tag anything.
 	moduleTagRegistrations := buildModuleTagRegistrations(manifest)
 
+	// Cross-module dep registrations — every (consumer, peer) pair
+	// where the consumer's package has a struct field of type
+	// *<peer>.Service. The dashboard reads these as
+	// service-level edges between module cards, drawing the
+	// "checkout calls users" topology line that's invisible
+	// otherwise (handlers don't take peer Services directly;
+	// they go through svc.peer).
+	crossDepRegistrations := buildCrossModuleDepRegistrations(manifest, mods)
+
 	fmt.Fprintln(&b, "func init() {")
 	for _, line := range moduleTagRegistrations {
 		fmt.Fprintln(&b, "\t"+line)
 	}
 	if len(moduleTagRegistrations) > 0 {
+		fmt.Fprintln(&b)
+	}
+	for _, line := range crossDepRegistrations {
+		fmt.Fprintln(&b, "\t"+line)
+	}
+	if len(crossDepRegistrations) > 0 {
 		fmt.Fprintln(&b)
 	}
 	fmt.Fprintln(&b, "\tdefaults := nexus.DeploymentDefaults{")
@@ -303,6 +319,96 @@ func anyPeerHasTimeout(manifest *DeployManifest) bool {
 		}
 	}
 	return false
+}
+
+// buildCrossModuleDepRegistrations scans each owned module's package
+// for struct fields whose type is *<peer>.Service where <peer> is
+// another known module. Emits one
+// nexus.RegisterCrossModuleDep("consumer", "peer") line per detected
+// dep so the registry's ServiceDeps slice is populated at app boot
+// — the dashboard then draws module-card → module-card edges for
+// the cross-module dependency.
+//
+// The scan looks at every top-level struct in the package, which
+// captures the common case (consumer's own *Service struct holding
+// peer client fields) plus any auxiliary structs that hold them.
+// Fields named "Service" are skipped — that's the embedded
+// *nexus.Service field, never a peer reference.
+func buildCrossModuleDepRegistrations(manifest *DeployManifest, mods []modInfo) []string {
+	if manifest == nil || len(mods) == 0 {
+		return nil
+	}
+	// Reverse lookup: import path → module name. Used to resolve a
+	// field type's package path back to the peer module's name.
+	moduleByPath := map[string]string{}
+	for _, m := range mods {
+		if m.PackagePath != "" {
+			moduleByPath[m.PackagePath] = m.Name
+		}
+	}
+
+	type pair struct{ Consumer, Dep string }
+	seen := map[pair]bool{}
+	var out []string
+
+	for _, m := range mods {
+		if m.Pkg == nil || m.Pkg.Types == nil {
+			continue
+		}
+		scope := m.Pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			obj := scope.Lookup(name)
+			if obj == nil {
+				continue
+			}
+			named, ok := obj.Type().(*types.Named)
+			if !ok {
+				continue
+			}
+			st, ok := named.Underlying().(*types.Struct)
+			if !ok {
+				continue
+			}
+			for i := 0; i < st.NumFields(); i++ {
+				f := st.Field(i)
+				peer := peerServiceName(f.Type(), moduleByPath)
+				if peer == "" || peer == m.Name {
+					continue // not a peer reference
+				}
+				p := pair{Consumer: m.Name, Dep: peer}
+				if seen[p] {
+					continue
+				}
+				seen[p] = true
+				out = append(out, fmt.Sprintf(`nexus.RegisterCrossModuleDep(%q, %q)`, p.Consumer, p.Dep))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// peerServiceName returns the peer module's Name if t is a pointer
+// to a Named type whose package path matches a known module, AND
+// the Named type is called "Service". Otherwise returns "".
+//
+// This matches the convention every nexus module uses: the
+// cross-module client field is `peer *peer.Service`. Catches the
+// 99% case without needing to track every type name in the project.
+func peerServiceName(t types.Type, moduleByPath map[string]string) string {
+	ptr, ok := t.(*types.Pointer)
+	if !ok {
+		return ""
+	}
+	named, ok := ptr.Elem().(*types.Named)
+	if !ok {
+		return ""
+	}
+	obj := named.Obj()
+	if obj == nil || obj.Name() != "Service" || obj.Pkg() == nil {
+		return ""
+	}
+	return moduleByPath[obj.Pkg().Path()]
 }
 
 // buildModuleTagRegistrations turns the manifest's deployments into
