@@ -367,9 +367,9 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 		ep.HasArgs = true
 		ep.ArgsType = types.TypeString(argsType, q)
 		collectPackagePaths(argsType, dest, imports)
-		if name := unexportedTypeName(argsType); name != "" {
+		if name := unexportedNonLocalTypeName(argsType, dest); name != "" {
 			ep.Skip = true
-			ep.SkipReason = fmt.Sprintf("args type references unexported %q", name)
+			ep.SkipReason = fmt.Sprintf("args type references unexported %q from another package", name)
 		}
 	}
 	for i := 0; i < sig.Results().Len(); i++ {
@@ -381,9 +381,9 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 		ep.HasReturn = true
 		collectPackagePaths(rt, dest, imports)
 		if !ep.Skip {
-			if name := unexportedTypeName(rt); name != "" {
+			if name := unexportedNonLocalTypeName(rt, dest); name != "" {
 				ep.Skip = true
-				ep.SkipReason = fmt.Sprintf("return type references unexported %q", name)
+				ep.SkipReason = fmt.Sprintf("return type references unexported %q from another package", name)
 			}
 		}
 		break
@@ -399,44 +399,55 @@ func fillSignature(p *packages.Package, sig *types.Signature, ep *endpointInfo) 
 	}
 }
 
-// unexportedTypeName walks a types.Type and returns the name of the
-// first unexported *types.Named it finds, or "" when every named
-// type in the tree is exported. Used to gate cross-module shadow
-// methods: an endpoint whose signature mentions an unexported type
-// can't be called from another package anyway, so the stub omits
-// the method rather than generate a definition that won't compile.
+// unexportedNonLocalTypeName walks a types.Type and returns the
+// name of the first unexported *types.Named whose package is NOT
+// dest (the module's own package). Returns "" when every named
+// type is either exported or local.
 //
-// Returns the unqualified name (e.g. "saveResponsesArgs") so the
-// build's stderr warning matches what the user sees in source.
-func unexportedTypeName(t types.Type) string {
+// The non-local check is what lets us *keep* shadow methods whose
+// signatures reference unexported types in the SAME package as the
+// shadow itself: the stripped originals preserve those types, the
+// shadow stub lives in the same package, and same-package access
+// works regardless of casing. Cross-package unexported types
+// genuinely can't be referenced by any caller, so those endpoints
+// remain skipped.
+//
+// Returns the unqualified name so the build's stderr warning
+// matches what the user sees in source.
+func unexportedNonLocalTypeName(t types.Type, dest *types.Package) string {
 	if t == nil {
 		return ""
 	}
 	switch tt := t.(type) {
 	case *types.Named:
-		if obj := tt.Obj(); obj != nil && !obj.Exported() {
-			return obj.Name()
+		obj := tt.Obj()
+		if obj != nil && !obj.Exported() {
+			// Only flag if the type lives outside the module's
+			// own package — same-package unexported types are fine.
+			if obj.Pkg() != nil && obj.Pkg() != dest {
+				return obj.Name()
+			}
 		}
 		if tas := tt.TypeArgs(); tas != nil {
 			for i := 0; i < tas.Len(); i++ {
-				if n := unexportedTypeName(tas.At(i)); n != "" {
+				if n := unexportedNonLocalTypeName(tas.At(i), dest); n != "" {
 					return n
 				}
 			}
 		}
 	case *types.Pointer:
-		return unexportedTypeName(tt.Elem())
+		return unexportedNonLocalTypeName(tt.Elem(), dest)
 	case *types.Slice:
-		return unexportedTypeName(tt.Elem())
+		return unexportedNonLocalTypeName(tt.Elem(), dest)
 	case *types.Array:
-		return unexportedTypeName(tt.Elem())
+		return unexportedNonLocalTypeName(tt.Elem(), dest)
 	case *types.Map:
-		if n := unexportedTypeName(tt.Key()); n != "" {
+		if n := unexportedNonLocalTypeName(tt.Key(), dest); n != "" {
 			return n
 		}
-		return unexportedTypeName(tt.Elem())
+		return unexportedNonLocalTypeName(tt.Elem(), dest)
 	case *types.Chan:
-		return unexportedTypeName(tt.Elem())
+		return unexportedNonLocalTypeName(tt.Elem(), dest)
 	}
 	return ""
 }
