@@ -1,0 +1,35 @@
+# Single source of truth for microsplit's deployment topology:
+# which modules each deployment owns locally, which port it listens
+# on, and per-peer transport settings. `nexus build --deployment X`
+# bakes all of this into the binary via a generated zz_deploy_gen.go,
+# so main.go contains zero deployment-specific code.
+
+deployments:
+  # Monolith owns every module by default; omit `owns` to mean "all".
+  monolith:
+    port: 8080
+
+  users-svc:
+    owns: [users]
+    port: 8081
+
+  checkout-svc:
+    owns: [checkout]
+    port: 8080
+
+# Per-peer transport settings. URL defaults to
+# http://localhost:<peer-port> when omitted; override with an env var
+# (USERS_SVC_URL / CHECKOUT_SVC_URL) per environment.
+peers:
+  users-svc:
+    timeout: 2s
+    # Bearer-token auth wired declaratively. ${USERS_SVC_TOKEN} is
+    # read from the environment at boot — never commit real secrets.
+    # Demo only: works without USERS_SVC_TOKEN set (closure produces
+    # "Bearer " literally; the peer's auth middleware rejects).
+    auth:
+      type: bearer
+      token: ${USERS_SVC_TOKEN}
+
+  checkout-svc:
+    timeout: 2s

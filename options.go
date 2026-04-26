@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 
@@ -307,11 +308,68 @@ func Raw(opt fx.Option) Option {
 // scaffolding noise; users hitting framework-level issues can unset
 // it for full diagnostics.
 func Run(cfg Config, opts ...Option) {
-	all := append([]fx.Option{fxBootOptions(cfg)}, unwrap(opts)...)
+	// Resolve manifest-driven defaults the same way newApp does, so
+	// validateTopology operates on the final Config the rest of the
+	// stack will see. Explicit Config fields still win.
+	if defaults, ok := loadDeploymentDefaults(); ok {
+		if cfg.Addr == "" {
+			cfg.Addr = defaults.Addr
+		}
+		if cfg.Deployment == "" {
+			cfg.Deployment = defaults.Deployment
+		}
+		if cfg.Topology.Peers == nil && defaults.Topology.Peers != nil {
+			cfg.Topology = defaults.Topology
+		}
+	}
+	if err := validateTopology(cfg); err != nil {
+		// Boot-time misconfiguration — fail before fx spins up so the
+		// operator sees a single clean line instead of an fx stack
+		// trace. Mirrors how net.Listen errors surface today.
+		panic(err)
+	}
+	all := append([]fx.Option{fxBootOptions(cfg), autoClientOptions()}, unwrap(opts)...)
 	if os.Getenv("NEXUS_FX_QUIET") == "1" {
 		all = append(all, fx.NopLogger)
 	}
 	fx.New(all...).Run()
+}
+
+// validateTopology cross-checks Config.Deployment against
+// Config.Topology.Peers when both are set. The active deployment must
+// be a key in Peers — that's the operator's promise that they've
+// declared the unit they're booting as. Empty Topology means "no peer
+// table" which is fine in monolith and as a back-compat path; it
+// short-circuits the check.
+//
+// The fallback to NEXUS_DEPLOYMENT mirrors newApp so the validation
+// considers the same deployment the rest of the framework will see.
+func validateTopology(cfg Config) error {
+	if len(cfg.Topology.Peers) == 0 {
+		return nil
+	}
+	deployment := cfg.Deployment
+	if deployment == "" {
+		deployment = os.Getenv(nexusDeploymentEnv)
+	}
+	if deployment == "" {
+		// Monolith run with a populated Topology is permitted —
+		// the table is unused but keeping it doesn't break anything.
+		return nil
+	}
+	if _, ok := cfg.Topology.Peers[deployment]; !ok {
+		keys := make([]string, 0, len(cfg.Topology.Peers))
+		for k := range cfg.Topology.Peers {
+			keys = append(keys, k)
+		}
+		return &UserError{
+			Op:    "topology",
+			Msg:   fmt.Sprintf("Deployment %q is not declared in Config.Topology.Peers", deployment),
+			Notes: []string{fmt.Sprintf("declared peers: %v", keys)},
+			Hint:  fmt.Sprintf(`add Topology.Peers[%q] in main.go's nexus.Config — URL may be empty for the active unit`, deployment),
+		}
+	}
+	return nil
 }
 
 // unwrap flattens a []Option into the []fx.Option fx needs internally.

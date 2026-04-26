@@ -1,7 +1,14 @@
 # Binaries
 /graphapp
+/microsplit
+/nexus
 *.test
 *.out
+
+# nexus build cache (per-deployment shadow source + overlay.json)
+.nexus/build/
+examples/*/.nexus/
+examples/*/bin/
 
 # Editor / IDE
 .idea/

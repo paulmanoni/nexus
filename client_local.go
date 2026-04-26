@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // LocalInvoker is the in-process variant of a generated cross-module
@@ -63,7 +65,21 @@ func WithLocalAuthPropagator(p AuthPropagator) LocalInvokerOption {
 //
 // Non-2xx responses become *RemoteError, same shape as the remote
 // path; callers can type-assert and react identically.
-func (li *LocalInvoker) Invoke(ctx context.Context, method, path string, args, out any) error {
+func (li *LocalInvoker) Invoke(ctx context.Context, method, path string, args, out any) (rerr error) {
+	// Open a child span so the in-process cross-module call shows up
+	// as its own bar on the dashboard waterfall — same shape as a
+	// remote HTTP call. Status + error land on the span via attrs +
+	// span.End(err) so the bar colors red on failure.
+	ctx, span := trace.StartSpan(ctx, "local "+method+" "+path,
+		trace.Str("transport", "local"),
+		trace.Str("method", method),
+		trace.Str("path", path),
+	)
+	defer func() {
+		attachUserErrorAttrs(span, rerr)
+		span.End(rerr)
+	}()
+
 	finalPath, body, contentType, err := encodeRequest(method, path, args)
 	if err != nil {
 		return err
@@ -85,6 +101,7 @@ func (li *LocalInvoker) Invoke(ctx context.Context, method, path string, args, o
 	resp := rec.Result()
 	defer resp.Body.Close()
 
+	span.Set("status", resp.StatusCode)
 	respBody, _ := io.ReadAll(resp.Body)
 	return decodeResponse(resp.StatusCode, respBody, method, path, "local://"+finalPath, out)
 }

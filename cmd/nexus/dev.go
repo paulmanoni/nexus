@@ -305,6 +305,7 @@ const (
 	ansiCyan   = "\033[36m"
 	ansiGreen  = "\033[32m"
 	ansiYellow = "\033[33m"
+	ansiRed    = "\033[31m"
 )
 
 // printDevBanner writes a compact intro block that survives gin's
