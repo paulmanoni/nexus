@@ -302,7 +302,17 @@ func renderShadowStub(m modInfo) ([]byte, error) {
 // writeShadowMethod emits one stub method on Service for an endpoint.
 // REST endpoints route through ClientCallable.Invoke; GraphQL ops
 // route through nexus.GqlCall[T].
+//
+// When ep.Skip is set (signature references an unexported type that
+// can't be referenced cross-package anyway), the method is replaced
+// with a one-line comment so the stub stays valid Go and the
+// developer sees what was dropped from the cross-module surface.
 func writeShadowMethod(b *bytes.Buffer, ep endpointInfo) {
+	if ep.Skip {
+		fmt.Fprintf(b, "// %s skipped: %s — not callable cross-module.\n", ep.OpName, ep.SkipReason)
+		fmt.Fprintln(b)
+		return
+	}
 	receiver := "s"
 	args := "nil"
 	argsParam := ""

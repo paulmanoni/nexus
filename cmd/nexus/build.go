@@ -165,6 +165,14 @@ func runBuild(opts buildOptions) error {
 			overlay.Replace[sf.Original] = sf.Generated
 			fmt.Fprintf(opts.Stdout, "shadow %s → %s\n", relTo(projectRoot, sf.Original), relTo(projectRoot, sf.Generated))
 		}
+		// Surface any endpoints we had to drop from the shadow because
+		// their signatures reference unexported types — the user sees
+		// what cross-module surface they're losing.
+		for _, ep := range m.Endpoints {
+			if ep.Skip {
+				fmt.Fprintf(opts.Stderr, "  skip %s.%s: %s\n", m.Name, ep.OpName, ep.SkipReason)
+			}
+		}
 	}
 
 	// Generate the deploy-defaults init file for the active
