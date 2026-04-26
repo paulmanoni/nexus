@@ -29,9 +29,14 @@ const clearOp = inject('nexus.clearOp', () => {})
 // error badge on a row pops the recent-errors modal.
 const openErrors = inject('nexus.openErrors', () => {})
 
-const MAX_VISIBLE = 6
-const displayed = computed(() => (props.data.endpoints || []).slice(0, MAX_VISIBLE))
-const hidden = computed(() => Math.max(0, (props.data.endpoints?.length || 0) - MAX_VISIBLE))
+// Module cards now show every endpoint they own — modules with many
+// routes (oats_applicant's device module has ~20) need to surface
+// the full surface so the operator can see what's there. The
+// architecture-layout height estimate (estimateServiceHeight in
+// Architecture.vue) walks the same list to size the card; both
+// must agree or cards overlap.
+const displayed = computed(() => props.data.endpoints || [])
+const hidden = computed(() => 0)
 const total = computed(() => props.data.endpoints?.length || 0)
 
 function iconFor(t) {
