@@ -287,9 +287,15 @@ func renderShadowStub(m modInfo) ([]byte, error) {
 		writeShadowMethod(&b, ep)
 	}
 
-	fmt.Fprintln(&b, "// Module preserves the DeployAs tag for Topology validation;")
-	fmt.Fprintln(&b, "// no routes register because this binary doesn't own the module.")
-	fmt.Fprintf(&b, "var Module = nexus.Module(%q, nexus.DeployAs(%q))\n\n", m.Name, m.Tag)
+	fmt.Fprintln(&b, "// Module preserves the DeployAs tag for Topology validation and")
+	fmt.Fprintln(&b, "// registers a Remote service placeholder so the dashboard's")
+	fmt.Fprintln(&b, "// Architecture tab shows this peer module as a card — without")
+	fmt.Fprintln(&b, "// RemoteService, modules with no local endpoints are invisible.")
+	fmt.Fprintf(&b, "var Module = nexus.Module(%q,\n", m.Name)
+	fmt.Fprintf(&b, "\tnexus.DeployAs(%q),\n", m.Tag)
+	fmt.Fprintf(&b, "\tnexus.RemoteService(%q, %q),\n", m.Name, m.Tag)
+	fmt.Fprintln(&b, ")")
+	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "// Auto-Provide so consumer modules don't need a manual")
 	fmt.Fprintln(&b, "// nexus.Provide(NewService) — fx satisfies *Service from this")

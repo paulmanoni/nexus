@@ -145,8 +145,14 @@ func runBuild(opts buildOptions) error {
 
 	overlay := overlayJSON{Replace: map[string]string{}}
 	for _, m := range mods {
+		// Source-side DeployAs wins; otherwise infer from manifest's
+		// owns mapping (auto-inject path — modules without explicit
+		// DeployAs in source still need a tag for shadow generation).
 		if m.Tag == "" {
-			continue // never shadowed
+			m.Tag = manifest.DeploymentOf(m.Name)
+		}
+		if m.Tag == "" {
+			continue // truly untagged module — never shadowed
 		}
 		if manifest.Owns(opts.Deployment, m.Name) {
 			continue // local in this deployment
