@@ -338,6 +338,17 @@ func (r *Registry) Services() []Service {
 	return out
 }
 
+// GetService returns the registered service entry for name, or
+// (zero, false) when no service of that name exists yet. Used by
+// the framework's cross-module-dep merge path to read-modify-write
+// ServiceDeps without losing existing fields.
+func (r *Registry) GetService(name string) (Service, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	s, ok := r.services[name]
+	return s, ok
+}
+
 func (r *Registry) EndpointsByService(name string) []Endpoint {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
