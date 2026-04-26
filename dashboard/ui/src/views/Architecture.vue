@@ -213,6 +213,29 @@ async function load() {
     if (g.service && g.service !== e.Service) g.service = ''
     g.endpoints.push(withStats(e))
   }
+  // Remote service placeholders — modules from peer deployments
+  // register a service with Remote: true via the shadow generator's
+  // nexus.RemoteService(...) option. Those have no endpoints in this
+  // binary so the endpoint loop above doesn't create a group for
+  // them; add one here so the architecture view shows the full
+  // topology, with the remote module rendered as a card alongside
+  // local ones.
+  for (const s of epData.services || []) {
+    if (!s.Remote) continue
+    const groupKey = `mod:${s.Name}`
+    if (groups.has(groupKey)) continue // local endpoint already created the group
+    groups.set(groupKey, {
+      key: groupKey,
+      name: s.Name,
+      isModule: true,
+      service: s.Name,
+      endpoints: [],
+      description: s.Description || '',
+      remote: true,
+      deployment: s.Deployment || '',
+    })
+  }
+
   const groupNodes = [...groups.values()].map(g => ({
     id: g.key,
     type: 'service',
@@ -224,6 +247,8 @@ async function load() {
       service: g.service,
       description: g.description,
       endpoints: g.endpoints,
+      remote: !!g.remote,
+      deployment: g.deployment || '',
     },
   }))
 

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
-import { Globe, Zap, Radio, Database, Box, Activity, AlertTriangle, Shield, Layers } from 'lucide-vue-next'
+import { Globe, Zap, Radio, Database, Box, Activity, AlertTriangle, Shield, Layers, Cloud } from 'lucide-vue-next'
 
 // ServiceNode (a.k.a the module/group card) renders one nexus.Module as
 // a container of endpoint rows. Module is the outer grouping unit; each
@@ -127,7 +127,7 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
 </script>
 
 <template>
-  <div class="service-node" :class="{ 'has-selection': hasSelection, dim: cardDimmed }">
+  <div class="service-node" :class="{ 'has-selection': hasSelection, dim: cardDimmed, remote: data.remote }">
     <!-- Target handle at the card level for any inbound edge (rare today;
          reserved for future service→service topology). -->
     <Handle type="target" :position="Position.Left" />
@@ -135,6 +135,17 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
       <component :is="HeaderIcon" :size="13" :stroke-width="2" class="hdr-icon" />
       <span class="kind">{{ isModule ? 'module' : 'service' }}</span>
       <span class="name">{{ data.name }}</span>
+      <!-- Remote badge — module lives in a peer deployment; routes
+           don't run in this binary. The deployment tag is in the
+           tooltip so operators can see WHICH peer at a glance. -->
+      <span
+        v-if="data.remote"
+        class="remote-badge"
+        :title="data.deployment ? 'Peer deployment: ' + data.deployment : 'Remote service'"
+      >
+        <Cloud :size="10" :stroke-width="2" />
+        remote
+      </span>
       <span class="total">{{ total }}</span>
     </div>
     <div v-if="data.description" class="desc">{{ data.description }}</div>
@@ -212,7 +223,11 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
         />
       </div>
       <div v-if="hidden > 0" class="more">+ {{ hidden }} more</div>
-      <div v-if="!total" class="empty-item">No endpoints</div>
+      <div v-if="!total && data.remote" class="empty-item remote-empty">
+        <Cloud :size="11" :stroke-width="2" />
+        Routes served by {{ data.deployment || 'peer deployment' }}
+      </div>
+      <div v-else-if="!total" class="empty-item">No endpoints</div>
     </div>
     <!-- Fallback service-level source handle for runtime-only attachments
          (resources attached via OnResourceUse but not claimed by any op). -->
@@ -376,6 +391,44 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
   font-size: 11px;
   font-family: var(--font-sans);
 }
+.empty-item.remote-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.empty-item.remote-empty :deep(svg) { color: #60a5fa; flex-shrink: 0; }
+
+/* Remote-card variant — clear visual distinction from local services
+   so an operator scanning the topology can tell at a glance which
+   modules run in this binary vs which are reached over HTTP. The
+   accent color and dashed border mirror the "external" feeling of
+   the InternetNode without being so different they break visual
+   continuity with local cards. */
+.service-node.remote {
+  border-style: dashed;
+  border-color: #60a5fa;
+  background: linear-gradient(180deg, var(--bg-card) 0%, rgba(96, 165, 250, 0.04) 100%);
+}
+.service-node.remote .header {
+  background: #1e3a5f;
+}
+.service-node.remote .header:hover { background: #243b5e; }
+.remote-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #93c5fd;
+  background: rgba(96, 165, 250, 0.18);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.remote-badge :deep(svg) { color: #93c5fd; }
 
 /* Per-op handle: small dot on the right edge of each row. VueFlow auto-
    positions handles at the node boundary; override so each row anchors
