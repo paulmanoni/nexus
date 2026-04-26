@@ -116,25 +116,55 @@ func runDevSplitWithManifest(manifestPath, target string, basePort int, stdout, 
 	}
 	defer os.RemoveAll(tmpRoot)
 
+	// Preload once: the slow packages.Load + manifest read + scan
+	// happens a single time and the result is shared across every
+	// deployment build below. Without this, each deployment runs
+	// its own type-check from scratch, multiplying cold-start time
+	// by N for an N-unit topology.
+	preload, err := preloadBuild(manifestPath, stderr)
+	if err != nil {
+		return fmt.Errorf("preload build inputs: %w", err)
+	}
+
+	// Parallelize the per-deployment builds. They're independent —
+	// different shadow dirs, different output binaries, different
+	// overlays — so go build runs them concurrently and we collapse
+	// total wall time to ~max(per-deployment time) instead of sum.
 	binByTag := map[string]string{}
+	var binByTagMu sync.Mutex
+	buildErrCh := make(chan error, len(units))
+	var buildWG sync.WaitGroup
 	for _, u := range units {
-		binPath := filepath.Join(tmpRoot, u.Tag)
+		u := u
+		buildWG.Add(1)
 		fmt.Fprintf(stdout, "  %sbuilding %s%s\n", ansiDim, u.Tag, ansiReset)
-		err := runBuild(buildOptions{
-			Deployment:   u.Tag,
-			ManifestPath: manifestPath,
-			Output:       binPath,
-			MainPackage:  target,
-			// Suppress the per-build overlay/shadow chatter so the
-			// dev banner stays scannable. Errors still flow through
-			// stderr so build failures surface.
-			Stdout: io.Discard,
-			Stderr: stderr,
-		})
+		go func() {
+			defer buildWG.Done()
+			binPath := filepath.Join(tmpRoot, u.Tag)
+			err := runBuild(buildOptions{
+				Deployment:   u.Tag,
+				ManifestPath: manifestPath,
+				Output:       binPath,
+				MainPackage:  target,
+				Preloaded:    preload,
+				Stdout:       io.Discard,
+				Stderr:       stderr,
+			})
+			if err != nil {
+				buildErrCh <- fmt.Errorf("build %s: %w", u.Tag, err)
+				return
+			}
+			binByTagMu.Lock()
+			binByTag[u.Tag] = binPath
+			binByTagMu.Unlock()
+		}()
+	}
+	buildWG.Wait()
+	close(buildErrCh)
+	for err := range buildErrCh {
 		if err != nil {
-			return fmt.Errorf("build %s: %w", u.Tag, err)
+			return err
 		}
-		binByTag[u.Tag] = binPath
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
