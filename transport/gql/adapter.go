@@ -107,24 +107,34 @@ func simpleHandler(schema *graphql.Schema) gin.HandlerFunc {
 				return
 			}
 		}
-		// Caller IP is already stashed in the request context by a
-		// route-level middleware in Mount, so any downstream reader
-		// (rate-limit, metrics error recorder) sees it via
-		// ratelimit.ClientIPFromCtx(ctx).
+		// Install the status holder before graphql.Do so field
+		// middlewares can call SetStatusCode(ctx, ...) to override
+		// the default 200. Caller IP is already stashed by the
+		// route-level middleware in Mount.
+		ctx, _ := withStatusHolder(c.Request.Context())
 		result := graphql.Do(graphql.Params{
 			Schema:         *schema,
 			RequestString:  req.Query,
 			VariableValues: req.Variables,
 			OperationName:  req.OperationName,
-			Context:        c.Request.Context(),
+			Context:        ctx,
 		})
-		c.JSON(http.StatusOK, result)
+		status := http.StatusOK
+		if s := statusFromCtx(ctx); s > 0 {
+			status = s
+		}
+		c.JSON(status, result)
 	}
 }
 
 // goGraphHandler delegates to graph.NewHTTP so resolvers can read user
 // details out of rootValue and the Playground works. nexus still owns
 // tracing and middleware composition at the Gin layer.
+//
+// Status-code override: graph.NewHTTP writes the response directly
+// (no hook between "compute result" and "send headers"), so the
+// handler buffers the inner response via statusCaptureWriter, then
+// replays it onto c.Writer with any override applied.
 func goGraphHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
 	h := graph.NewHTTP(&graph.GraphContext{
 		Schema:        schema,
@@ -133,7 +143,13 @@ func goGraphHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
 		DEBUG:         cfg.DEBUG,
 		UserDetailsFn: cfg.UserDetailsFn,
 	})
-	return gin.WrapF(h)
+	return func(c *gin.Context) {
+		ctx, _ := withStatusHolder(c.Request.Context())
+		req := c.Request.WithContext(ctx)
+		wrap := newStatusCaptureWriter(c.Writer)
+		h(wrap, req)
+		wrap.flush(statusFromCtx(ctx))
+	}
 }
 
 func registerOps(r *registry.Registry, service, path string, schema *graphql.Schema) {
