@@ -302,7 +302,26 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
   border-bottom: 1px solid var(--border);
   line-height: 1.45;
 }
-.endpoints { padding: 6px 6px 8px; display: flex; flex-direction: column; gap: 2px; }
+.endpoints {
+  padding: 6px 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Cap card height so modules with many endpoints (oats device:
+     ~25 REST routes) don't grow into walls of text that obscure
+     the rest of the canvas. The body scrolls instead. */
+  max-height: 480px;
+  overflow-y: auto;
+  /* Slim scrollbar so it doesn't draw the eye away from content. */
+  scrollbar-width: thin;
+}
+.endpoints::-webkit-scrollbar { width: 6px; }
+.endpoints::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 3px;
+}
+.endpoints::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.55); }
+.endpoints::-webkit-scrollbar-track { background: transparent; }
 .row {
   padding: 4px 8px 4px 10px;
   border-radius: 4px;
