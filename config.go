@@ -20,22 +20,6 @@ type Config struct {
 	// when Listeners is non-empty — the explicit map takes over.
 	Addr string
 
-	// AdminPortOffset, when non-zero and Listeners is empty, makes
-	// the framework auto-derive a public + admin listener pair:
-	// public binds at the manifest port (or Addr / :8080 fallback),
-	// admin binds at public + AdminPortOffset. The dashboard's
-	// /__nexus/* surface lands on admin only — public 404s it via
-	// the scope filter.
-	//
-	// Useful when you want the standard "REST/GraphQL on the public
-	// port, dashboard on a sidecar port" split without typing the
-	// listener map by hand. Set to 0 (default) to keep the single-
-	// listener behavior.
-	//
-	// Ignored when Listeners is non-empty — the explicit map wins,
-	// no auto-derivation happens.
-	AdminPortOffset int
-
 	// Listeners declares one or more named listeners with explicit
 	// scopes. Use to split user-facing traffic, peer/health checks,
 	// and the admin dashboard onto separate ports (and, via the bound
@@ -214,18 +198,10 @@ type Topology struct {
 // clients. Every field is optional — zero values map to the
 // framework's default behavior for that knob.
 type Peer struct {
-	// URL is the base URL for HTTP calls when this peer is remote.
-	// Sugar for URLs with a single entry; ignored when URLs is set.
-	// One of URL or URLs is required when the active deployment is
-	// not this peer's tag; ignored for the active peer's own entry.
-	URL string
-
-	// URLs lists multiple replica base URLs for the same peer. When
-	// non-empty, calls round-robin across replicas and passively
-	// eject any replica that returns transport errors / 5xx for a
-	// cooldown window. Use this when you scale a peer to N pods and
-	// want the framework to balance instead of putting an external
-	// load balancer in front of every peer:
+	// URLs is the replica list for this peer. The runtime round-
+	// robins across entries and passively ejects any replica that
+	// returns transport errors / 5xx for a cooldown window — single-
+	// replica peers just declare a one-element slice.
 	//
 	//	"users-svc": {URLs: []string{
 	//	    "http://users-1.cluster.local:8080",
@@ -233,9 +209,8 @@ type Peer struct {
 	//	    "http://users-3.cluster.local:8080",
 	//	}},
 	//
-	// Setting both URL and URLs is permitted; URLs wins. An empty
-	// URLs falls back to URL — back-compat with single-replica
-	// configs.
+	// Required when the active deployment is not this peer's tag;
+	// ignored for the active peer's own entry.
 	URLs []string
 
 	// Timeout caps each remote call. Zero falls back to the
@@ -268,21 +243,6 @@ type Peer struct {
 	// Zero disables retries entirely. Backoff between attempts is
 	// 50ms * 2^n with full jitter.
 	Retries int
-}
-
-// EffectiveURLs returns the resolved replica list for this peer.
-// URLs takes precedence; URL is the singleton fallback. Empty result
-// means the peer has no remote URL declared (a placeholder for the
-// active deployment, or a misconfiguration the codegen / build-time
-// validator should catch).
-func (p Peer) EffectiveURLs() []string {
-	if len(p.URLs) > 0 {
-		return p.URLs
-	}
-	if p.URL != "" {
-		return []string{p.URL}
-	}
-	return nil
 }
 
 // DeploymentFromEnv reads NEXUS_DEPLOYMENT. The single-binary, multi-shape

@@ -16,11 +16,10 @@
 //
 //	nexus dev --split
 //
-// All deployment-specific config (port, peers, timeouts) lives in
-// nexus.deploy.yaml — this file stays deployment-agnostic.
-// AdminPortOffset asks the framework to bind a sidecar admin listener
-// at public+1000, so the dashboard sits off the public surface
-// without per-deployment wiring here.
+// All deployment-specific config (port, peers, timeouts, listeners)
+// lives in nexus.deploy.yaml — this file stays deployment-agnostic.
+// The manifest's listeners block adds an admin listener at port+1000
+// so the dashboard sits off the public surface.
 //
 // # Verifying the production-grade features
 //

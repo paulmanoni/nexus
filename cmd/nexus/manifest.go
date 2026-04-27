@@ -101,37 +101,23 @@ type ListenerSpec struct {
 // remote clients. Mirrors nexus.Peer's runtime shape with YAML-friendly
 // types. Empty fields fall back to framework defaults.
 type PeerSpec struct {
-	// URL overrides the default local URL ("http://localhost:<port>")
-	// for this peer. Useful for prod where peers live behind LBs or
-	// in another network. Supports env-var expansion via the
-	// codegen'd init: `${USERS_SVC_URL}` literal becomes an
-	// os.Getenv read at boot, defaulting to the local URL when
-	// unset.
-	//
-	// Sugar for URLs with a single entry; ignored when URLs is
-	// non-empty.
-	URL string `yaml:"url,omitempty"`
-
-	// URLs lists multiple replica base URLs for the same peer. When
-	// non-empty, the codegen'd Peer.URLs slice drives the runtime's
-	// round-robin + passive-eject behavior in client_remote.go.
+	// URLs is the replica list. Each entry supports shell-style env
+	// interpolation: `${VAR}` lifts to os.Getenv at boot,
+	// `${VAR:-fallback}` to envOr. The codegen'd Peer.URLs slice
+	// drives the runtime's round-robin + passive-eject behavior.
 	//
 	//	peers:
 	//	  users-svc:
 	//	    urls:
-	//	      - http://users-1.cluster.local:8080
-	//	      - http://users-2.cluster.local:8080
-	//	      - ${USERS_SVC_REPLICA_3_URL}      # per-element env interp
+	//	      - ${USERS_SVC_REPLICA_1_URL:-http://localhost:8081}
+	//	      - ${USERS_SVC_REPLICA_2_URL:-http://localhost:8081}
+	//	      - ${USERS_SVC_REPLICA_3_URL:-http://localhost:8081}
 	//	    timeout: 2s
 	//
-	// Each entry supports the same `${VAR}` interpolation as URL:
-	// a value of exactly `${X}` becomes an os.Getenv("X") read at
-	// boot. Mixed literals + env entries are emitted in the same
-	// order as the YAML.
-	//
-	// When both URL and URLs are declared, URLs wins — the codegen
-	// emits the slice and drops the singular URL silently. Most
-	// users should pick one form per peer.
+	// Single-replica peers declare a one-element list. When omitted,
+	// the codegen falls back to envOr("<TAG>_URL",
+	// "http://localhost:<port>") so `nexus dev --split` keeps
+	// working without operator wiring.
 	URLs []string `yaml:"urls,omitempty"`
 
 	// Timeout caps each remote call. Zero falls back to the

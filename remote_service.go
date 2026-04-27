@@ -3,8 +3,6 @@ package nexus
 import (
 	"sync"
 
-	"go.uber.org/fx"
-
 	"github.com/paulmanoni/nexus/registry"
 )
 
@@ -114,23 +112,3 @@ func (a *App) applyCrossModuleDeps() {
 	}
 }
 
-// RemoteService is the Option-flavored variant kept for back-compat
-// with builds that already emitted nexus.RemoteService(...) inside
-// their shadow Module declaration. It runs as an fx.Invoke, so it
-// only fires when the shadow's enclosing Module isn't filtered out
-// by NEXUS_DEPLOYMENT — which means it MISSES exactly the case
-// nexus dev --split needs (each subprocess has the env var set, and
-// every shadow module's tag mismatches the active deployment by
-// definition). Prefer the init()-driven RegisterRemoteServicePlaceholder
-// path; this stays here for older codegen output that may still be
-// in build caches.
-func RemoteService(name, tag string) Option {
-	return rawOption{o: fx.Invoke(func(app *App) {
-		app.registry.RegisterService(registry.Service{
-			Name:        name,
-			Deployment:  tag,
-			Description: "Remote service · routes via " + tag,
-			Remote:      true,
-		})
-	})}
-}

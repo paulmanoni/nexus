@@ -82,7 +82,7 @@ func TestReady_PeerDownProducesNotReady(t *testing.T) {
 			Deployment: "checkout-svc",
 			Topology: Topology{Peers: map[string]Peer{
 				"checkout-svc": {},
-				"users-svc":    {URL: peer.URL},
+				"users-svc":    {URLs: []string{peer.URL}},
 			}},
 		}),
 		fx.Populate(&app),

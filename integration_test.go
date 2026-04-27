@@ -246,8 +246,8 @@ func TestProvideService_RecordsConstructorDeps(t *testing.T) {
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
-		ProvideService(NewUsersService).nexusOption(),
-		ProvideService(NewAdvertsService).nexusOption(),
+		Provide(NewUsersService).nexusOption(),
+		Provide(NewAdvertsService).nexusOption(),
 		fx.Populate(&app),
 	)
 	fxApp.RequireStart()

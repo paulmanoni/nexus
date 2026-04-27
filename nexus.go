@@ -93,147 +93,97 @@ type App struct {
 	health *healthState
 }
 
-// AppOption is the functional-option type for nexus.New. Named AppOption
-// (not Option) so nexus.Option can be reserved for the top-level
-// fx-wrapping builder type used by nexus.Provide / Module / Invoke / Run.
-type AppOption func(*App)
-
-// WithEngine supplies a pre-configured Gin engine. Without it, nexus builds a
-// bare engine with just Recovery so the caller can bring their own logger.
-func WithEngine(e *gin.Engine) AppOption {
-	return func(a *App) { a.engine = e }
-}
-
-// WithTracing enables per-request trace events, buffered in a ring of the given
-// capacity. Required for the dashboard's event stream to show anything.
-func WithTracing(capacity int) AppOption {
-	return func(a *App) { a.bus = trace.NewBus(capacity) }
-}
-
-// WithDashboard mounts /__nexus/endpoints (always) and /__nexus/events (if tracing is on).
-func WithDashboard() AppOption {
-	return func(a *App) { a.dashboardOn = true }
-}
-
-// WithDashboardName sets the brand shown in the dashboard header and the
-// browser tab title. Defaults to "Nexus". The name is served over
-// /__nexus/config so the client picks it up without a rebuild.
-func WithDashboardName(name string) AppOption {
-	return func(a *App) { a.dashboardName = name }
-}
-
-// WithGraphQLPath overrides the default GraphQL mount path used by
-// services that don't call (*Service).AtGraphQL themselves. Empty
-// falls back to DefaultGraphQLPath ("/graphql").
-func WithGraphQLPath(path string) AppOption {
-	return func(a *App) { a.graphqlPath = path }
-}
-
-// WithRateLimitStore swaps the default in-memory rate-limit store for a
-// custom implementation — typically ratelimit.NewRedisStore(...) in a
-// multi-replica deploy. Pass this to nexus.New / via nexus.Config when
-// you want limit state (counters, overrides) to survive restarts or be
-// shared across processes.
-func WithRateLimitStore(s ratelimit.Store) AppOption {
-	return func(a *App) { a.rlStore = s }
-}
-
-// WithMetricsStore swaps the default cache-backed metrics store. Useful
-// when you want a Prometheus- or StatsD-backed implementation; the
-// built-in dashboard /__nexus/stats endpoint reads from whichever
-// Store is installed.
-func WithMetricsStore(s metrics.Store) AppOption {
-	return func(a *App) { a.metricsStore = s }
-}
-
-// WithCache installs a user-provided cache.Manager instead of the
-// default one nexus creates. Pass the same Manager users' app code
-// receives from fx (e.g. via cache.Module) so every cache consumer —
-// user code, metrics, rate-limit overrides — hits one store.
-func WithCache(m *cache.Manager) AppOption {
-	return func(a *App) { a.cacheMgr = m }
-}
-
-// WithDeployment names the deployment unit this binary runs as. Empty =
-// monolith. Mirrors Config.Deployment for callers using the lower-level
-// nexus.New(...) entry point.
-func WithDeployment(name string) AppOption {
-	return func(a *App) { a.deployment = name }
-}
-
-// WithVersion stamps the binary's version onto /__nexus/config. Used by
-// generated clients to detect peer-version skew across services in a
-// split deployment.
-func WithVersion(v string) AppOption {
-	return func(a *App) { a.version = v }
-}
-
-// WithTopology installs the peer table consulted by codegen'd remote
-// clients. Mirrors Config.Topology for callers using the lower-level
-// nexus.New(...) entry point. Each entry binds a DeployAs tag to a
-// Peer with URL / Timeout / Auth / MinVersion / Retries.
-func WithTopology(t Topology) AppOption {
-	return func(a *App) { a.topology = t }
-}
-
-// WithListeners declares one or more named listeners with explicit
-// scopes. Mirrors Config.Listeners for callers using the lower-level
-// nexus.New(...) entry point. When set, Config.Addr / WithEngine's
-// implicit single-listener default is replaced — registerLifecycle
-// binds every entry and the framework installs a scope-filter
-// middleware that 404s out-of-scope routes per listener.
-func WithListeners(ls map[string]Listener) AppOption {
-	return func(a *App) { a.listeners = ls }
-}
-
-// WithDashboardMiddleware gates the /__nexus surface behind one or
-// more middleware bundles. Each bundle's Gin realization runs in
-// registration order before any dashboard handler. Typical use:
+// New constructs an *App from a single Config. The canonical
+// (and, since v0.18, only) public constructor — both nexus.Run and
+// the lower-level "build app, then app.Run(addr)" pattern feed
+// through here.
 //
-//	nexus.WithDashboardMiddleware(
-//	    middleware.Middleware{Name: "auth",  Gin: bearerAuth},
-//	    middleware.Middleware{Name: "admin", Gin: requireAdminRole},
-//	)
+// Behavior:
+//   - Manifest-derived defaults (codegen'd by `nexus build
+//     --deployment X`) fill any zero Config field; explicit Config
+//     fields always win.
+//   - The framework owns engine creation, scope-filter middleware,
+//     /__nexus/health + /ready, the cache + ratelimit + metrics
+//     stores, and (when EnableDashboard is true) the dashboard
+//     mount.
+//   - Listeners with empty Addrs auto-fill from the resolved
+//     Config.Addr (admin = port+1000, internal = port+2000).
+//   - Global rate limit and global middlewares are installed at the
+//     engine root in registration order.
 //
-// Bundles without a Gin realization are skipped silently — the
-// dashboard is an HTTP surface, so graph-only bundles don't apply.
-func WithDashboardMiddleware(bundles ...middleware.Middleware) AppOption {
-	return func(a *App) {
-		for _, b := range bundles {
-			if b.Gin != nil {
-				a.dashboardMw = append(a.dashboardMw, b.Gin)
-			}
+// The returned *App is fully constructed and safe to register
+// endpoints/services on, but listeners aren't bound until Run is
+// invoked (either nexus.Run or App.Run for direct callers).
+func New(cfg Config) *App {
+	cfg = resolveConfig(cfg)
+
+	traceCapacity := cfg.TraceCapacity
+	if traceCapacity == 0 && cfg.EnableDashboard {
+		// 1024 events covers a few hundred requests in a typical dev
+		// session; user override via Config.TraceCapacity.
+		traceCapacity = 1024
+	}
+	deployment := cfg.Deployment
+
+	dashboardName := cfg.DashboardName
+	if dashboardName == "" {
+		dashboardName = defaultDashboardName
+	}
+
+	version := cfg.Version
+	if version == "" {
+		version = "dev"
+	}
+
+	// Resolve the listener map: explicit Listeners with empty Addrs
+	// auto-filled from cfg.Addr, otherwise nil (single-listener
+	// back-compat at cfg.Addr).
+	var listeners map[string]Listener
+	if len(cfg.Listeners) > 0 {
+		listeners = fillListenerAddrs(cfg.Listeners, cfg.Addr)
+	}
+
+	// Engine. Recovery middleware first so panics surface as 500s.
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+
+	a := &App{
+		engine:        engine,
+		dashboardName: dashboardName,
+		version:       version,
+		deployment:    deployment,
+		topology:      cfg.Topology,
+		graphqlPath:   cfg.GraphQLPath,
+		dashboardOn:   cfg.EnableDashboard,
+		cacheMgr:      cfg.Cache,
+		rlStore:       cfg.RateLimitStore,
+		metricsStore:  cfg.MetricsStore,
+		listeners:     listeners,
+	}
+	if traceCapacity > 0 {
+		a.bus = trace.NewBus(traceCapacity)
+	}
+	for _, b := range cfg.DashboardMiddleware {
+		if b.Gin != nil {
+			a.dashboardMw = append(a.dashboardMw, b.Gin)
 		}
 	}
-}
 
-func New(opts ...AppOption) *App {
-	a := &App{dashboardName: defaultDashboardName, version: "dev"}
-	for _, opt := range opts {
-		opt(a)
-	}
-	if a.engine == nil {
-		a.engine = gin.New()
-		a.engine.Use(gin.Recovery())
-	}
 	// Scope filter is installed as the first engine middleware so it
 	// runs before any group middleware (notably dashboard.Mount's
-	// admin gate). Empty scope table = no filtering — back-compat
-	// path for single-Addr deployments.
+	// admin gate). Empty scope table = no filtering.
 	a.listenerScopes = newListenerScopes()
 	a.engine.Use(scopeFilterMiddleware(a.listenerScopes))
 	// Health/ready endpoints mount unconditionally so liveness and
-	// readiness probes work even when EnableDashboard is false. The
-	// scope filter routes them onto internal listeners while hiding
-	// the rest of /__nexus from non-admin scopes.
+	// readiness probes work even when EnableDashboard is false.
 	a.health = newHealthState()
 	mountHealth(a.engine, a.health)
 	a.registry = registry.New()
 	a.cronSched = cron.NewScheduler(a.bus, 0)
-	// Cache is non-optional: if the caller didn't inject one, we build
-	// a memory-backed Manager so downstream stores never need to
-	// branch on "is there a cache". Redis kicks in automatically when
-	// env vars ask for it (see cache.NewConfig / cache.NewManager).
+	// Cache is non-optional: if the caller didn't inject one, build a
+	// memory-backed Manager so downstream stores never branch on "is
+	// there a cache". Redis kicks in automatically when env vars ask
+	// for it (see cache.NewConfig).
 	if a.cacheMgr == nil {
 		a.cacheMgr = cache.NewManager(cache.NewConfig(), zap.NewNop())
 		a.cacheMgr.Start()
@@ -252,6 +202,35 @@ func New(opts ...AppOption) *App {
 			Version:    a.version,
 		})
 	}
+
+	// Cross-module + remote-service registrations from codegen'd
+	// init() blocks. Has to run after New so app.registry exists;
+	// before fx start so the dashboard's first /__nexus/endpoints
+	// poll already includes every peer module.
+	a.applyRemoteServicePlaceholders()
+	a.applyCrossModuleDeps()
+
+	// Global rate limit primed before any op runs.
+	if !cfg.GlobalRateLimit.Zero() {
+		a.rlStore.Declare(ratelimitGlobalKey, cfg.GlobalRateLimit)
+		a.engine.Use(ratelimit.GinMiddleware(a.rlStore, ratelimit.GlobalKey, nil))
+		a.registry.RegisterMiddleware(middleware.Info{
+			Name:        "rate-limit",
+			Kind:        middleware.KindBuiltin,
+			Description: "Global rate limit (per-app bucket)",
+		})
+		a.registry.RegisterGlobalMiddleware("rate-limit")
+	}
+
+	// User-supplied global middlewares in registration order.
+	for _, m := range cfg.GlobalMiddleware {
+		if m.Gin != nil {
+			a.engine.Use(m.Gin)
+		}
+		a.registry.RegisterMiddleware(m.AsInfo())
+		a.registry.RegisterGlobalMiddleware(m.Name)
+	}
+
 	return a
 }
 

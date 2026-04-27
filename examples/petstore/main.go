@@ -14,11 +14,11 @@ import (
 )
 
 func main() {
-	app := nexus.New(
-		nexus.WithTracing(1000),
-		nexus.WithDashboard(),
-		nexus.WithDashboardName("Petstore"),
-	)
+	app := nexus.New(nexus.Config{
+		EnableDashboard: true,
+		DashboardName:   "Petstore",
+		TraceCapacity:   1000,
+	})
 
 	pets := app.Service("pets").Describe("Pet inventory")
 

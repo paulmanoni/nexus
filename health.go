@@ -188,19 +188,21 @@ func (p *peerProber) run(ctx context.Context) {
 }
 
 // probeAll fires one HTTP GET per peer in parallel and records the
-// result. Failures (network error, non-200) mark the peer not ready
-// with the reason string for the JSON body.
+// result. Probes the first replica URL — health is a per-deployment
+// property (every replica of a unit ships the same binary), so one
+// probe is sufficient. Failures (network error, non-200) mark the
+// peer not ready with the reason string for the JSON body.
 func (p *peerProber) probeAll(ctx context.Context) {
 	var wg sync.WaitGroup
 	for tag, peer := range p.topology.Peers {
-		if tag == p.deployment || peer.URL == "" {
+		if tag == p.deployment || len(peer.URLs) == 0 {
 			continue
 		}
 		wg.Add(1)
 		go func(tag, baseURL string) {
 			defer wg.Done()
 			p.probeOne(ctx, tag, baseURL)
-		}(tag, peer.URL)
+		}(tag, peer.URLs[0])
 	}
 	wg.Wait()
 }

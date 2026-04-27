@@ -133,19 +133,24 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 		for _, peer := range peerNames {
 			ps := manifest.Peers[peer]
 			fmt.Fprintf(&b, "\t\t\t\t%q: {\n", peer)
-			// URLs wins when set — the codegen emits the slice and
-			// skips the singular URL field. Matches the runtime
-			// invariant in Peer.EffectiveURLs().
+			// Always emit URLs as a slice. Single-replica peers
+			// (manifest declares one entry, or none + the framework
+			// falls back to envOr) get a one-element slice; multi-
+			// replica peers get N entries. One emit path, one
+			// runtime mental model.
+			fmt.Fprintln(&b, "\t\t\t\t\tURLs: []string{")
 			if len(ps.URLs) > 0 {
-				fmt.Fprintln(&b, "\t\t\t\t\tURLs: []string{")
 				for _, u := range ps.URLs {
 					fmt.Fprintf(&b, "\t\t\t\t\t\t%s,\n", urlEntryExpr(u))
 				}
-				fmt.Fprintln(&b, "\t\t\t\t\t},")
 			} else {
-				urlExpr := peerURLExpr(peer, ps.URL, portByTag[peer])
-				fmt.Fprintf(&b, "\t\t\t\t\tURL: %s,\n", urlExpr)
+				// No urls declared — fall back to the singleton env-
+				// var convention dev_split uses (USERS_SVC_URL etc.)
+				// with the local port as the default. Keeps current
+				// dev workflow working without manifest changes.
+				fmt.Fprintf(&b, "\t\t\t\t\t\t%s,\n", peerFallbackURLExpr(peer, portByTag[peer]))
 			}
+			fmt.Fprintln(&b, "\t\t\t\t\t},")
 			if ps.Timeout > 0 {
 				fmt.Fprintf(&b, "\t\t\t\t\tTimeout: %d * time.Nanosecond,\n", ps.Timeout.Nanoseconds())
 			}
@@ -213,50 +218,26 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 	return out, nil
 }
 
-// peerURLExpr builds the Go expression for a Peer.URL value:
+// peerFallbackURLExpr builds the Go expression used as the single
+// URLs entry for peers that don't declare an explicit `urls:` block.
+// Convention: envOr("<TAG>_URL", "http://localhost:<peer-port>") so
+// `nexus dev --split`'s env wiring keeps working out of the box,
+// with operators able to override per-environment via the env var.
 //
-//   - Manifest-supplied url with `${VAR}` literals → expands to
-//     os.Getenv reads at runtime, defaulting to the local URL.
-//   - Manifest-supplied url without expansion → emit as a string
-//     literal.
-//   - No manifest url → emit os.Getenv(<TAG>_URL) with the local
-//     port as fallback. Convention matches how dev_split sets env
-//     vars and how the legacy NewRemoteCallerFromEnv resolved peers.
-func peerURLExpr(tag, manifestURL string, peerPort int) string {
+// When peerPort is 0 (manifest didn't pin one), the fallback is just
+// os.Getenv("<TAG>_URL") — operators MUST set the env var or the
+// runtime will see an empty replica.
+func peerFallbackURLExpr(tag string, peerPort int) string {
 	envVar := tagToURLEnvVar(tag)
-	fallback := ""
 	if peerPort > 0 {
-		fallback = fmt.Sprintf("http://localhost:%d", peerPort)
-	}
-	if manifestURL != "" {
-		// Allow ${VAR} interpolation. Anything else is a literal.
-		if strings.Contains(manifestURL, "${") {
-			// Conservative: when the manifest URL contains ${VAR},
-			// generate an os.Getenv($VAR) call returning the
-			// remainder if any. For the spike, support a single ${VAR}
-			// occupying the whole string.
-			start := strings.Index(manifestURL, "${")
-			end := strings.Index(manifestURL[start:], "}")
-			if end > 0 && start == 0 && end == len(manifestURL)-1 {
-				v := manifestURL[2 : len(manifestURL)-1]
-				if fallback != "" {
-					return fmt.Sprintf("envOr(%q, %q)", v, fallback)
-				}
-				return fmt.Sprintf("os.Getenv(%q)", v)
-			}
-			// Fall through to literal for complex patterns; users
-			// can do their own env reads.
-		}
-		return fmt.Sprintf("%q", manifestURL)
-	}
-	if fallback != "" {
-		return fmt.Sprintf("envOr(%q, %q)", envVar, fallback)
+		return fmt.Sprintf("envOr(%q, %q)", envVar, fmt.Sprintf("http://localhost:%d", peerPort))
 	}
 	return fmt.Sprintf("os.Getenv(%q)", envVar)
 }
 
-// tagToURLEnvVar mirrors the convention used by dev_split.go and
-// the legacy NewRemoteCallerFromEnv ("users-svc" → "USERS_SVC_URL").
+// tagToURLEnvVar mirrors the convention used by dev_split.go
+// ("users-svc" → "USERS_SVC_URL"), so the codegen'd envOr fallback
+// reads the same env var dev_split sets per subprocess.
 func tagToURLEnvVar(tag string) string {
 	out := strings.ToUpper(tag)
 	out = strings.ReplaceAll(out, "-", "_")

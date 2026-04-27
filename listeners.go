@@ -151,32 +151,6 @@ func scopeAllowsPath(scope ListenerScope, path string) bool {
 	return false
 }
 
-// autoListeners derives a public + admin listener pair from a single
-// public-side Addr and a port offset. Used by Config.AdminPortOffset
-// so callers don't have to type the listener map by hand:
-//
-//	autoListeners(":8081", 1000) →
-//	  {"public": {Addr: ":8081"}, "admin": {Addr: ":9081", Scope: ScopeAdmin}}
-//
-// Empty publicAddr falls back to ":8080" so plain `go run` (no
-// manifest-derived defaults) still produces a working pair.
-func autoListeners(publicAddr string, offset int) (map[string]Listener, error) {
-	if offset <= 0 {
-		return nil, fmt.Errorf("autoListeners: offset must be > 0, got %d", offset)
-	}
-	if publicAddr == "" {
-		publicAddr = ":8080"
-	}
-	adminAddr, err := offsetAddr(publicAddr, offset)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]Listener{
-		"public": {Addr: publicAddr},
-		"admin":  {Addr: adminAddr, Scope: ScopeAdmin},
-	}, nil
-}
-
 // offsetAddr returns publicAddr with its port shifted by offset.
 // Preserves the host part — `127.0.0.1:8081` + 1000 stays loopback-
 // bound on `127.0.0.1:9081`, `:8081` becomes `:9081`.
@@ -194,26 +168,23 @@ func offsetAddr(publicAddr string, offset int) (string, error) {
 
 // fillListenerAddrs walks an explicit Listeners map and fills in any
 // empty Addrs from the resolved public address. Lets users declare
-// the listener *shape* in main.go without hardcoding ports — the
-// manifest's per-deployment port flows in via cfg.Addr, so split
-// binaries each bind to their own port without per-binary main.go.
+// the listener *shape* in main.go (or via the manifest's listeners
+// block) without hardcoding ports — the per-deployment port flows
+// in via cfg.Addr, so split binaries each bind to their own port
+// without per-binary main.go.
 //
 // Rules:
 //   - non-empty Addr: kept verbatim (explicit override wins)
 //   - empty Addr + ScopePublic: filled from publicAddr
-//   - empty Addr + ScopeAdmin: filled from publicAddr + adminOffset
-//     (defaulting to +1000 when adminOffset is 0)
-//   - empty Addr + ScopeInternal: filled from publicAddr + 2000 by
-//     convention (room above admin), best-effort — operators who
-//     care set Addr explicitly
+//   - empty Addr + ScopeAdmin: filled from publicAddr + 1000
+//   - empty Addr + ScopeInternal: filled from publicAddr + 2000
 //
-// Returns the filled map. Doesn't mutate the input.
-func fillListenerAddrs(in map[string]Listener, publicAddr string, adminOffset int) map[string]Listener {
+// The 1000/2000 offsets are framework conventions — operators who
+// need different numbers set Addr explicitly. Returns the filled
+// map; doesn't mutate the input.
+func fillListenerAddrs(in map[string]Listener, publicAddr string) map[string]Listener {
 	if publicAddr == "" {
 		publicAddr = ":8080"
-	}
-	if adminOffset == 0 {
-		adminOffset = 1000
 	}
 	out := make(map[string]Listener, len(in))
 	for name, l := range in {
@@ -225,7 +196,7 @@ func fillListenerAddrs(in map[string]Listener, publicAddr string, adminOffset in
 		case ScopePublic:
 			l.Addr = publicAddr
 		case ScopeAdmin:
-			if a, err := offsetAddr(publicAddr, adminOffset); err == nil {
+			if a, err := offsetAddr(publicAddr, 1000); err == nil {
 				l.Addr = a
 			}
 		case ScopeInternal:
