@@ -165,10 +165,8 @@ func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writ
 		case <-restartCh:
 			fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
 			killChild()
-			<-exited
 		case <-ctx.Done():
 			killChild()
-			<-exited
 			return nil
 		}
 	}
@@ -210,12 +208,17 @@ func startDevChild(ctx context.Context, target, addr string, openOnReady bool, s
 	killChild := func() {
 		// SIGTERM first to give shutdown handlers (HTTP graceful close,
 		// fx hooks) a chance, then SIGKILL after a short grace period.
+		// Drain `exited` fully before returning so the caller never
+		// has to read from it again — double-reading a buffered chan
+		// of size 1 deadlocks (caused Ctrl-C to hang in v0.21.x).
 		_ = killProcessGroup(pid, syscall.SIGTERM)
 		select {
 		case <-exited:
+			return
 		case <-time.After(5 * time.Second):
-			_ = killProcessGroup(pid, syscall.SIGKILL)
 		}
+		_ = killProcessGroup(pid, syscall.SIGKILL)
+		<-exited
 	}
 	return exited, killChild, nil
 }
