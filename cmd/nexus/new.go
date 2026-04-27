@@ -127,8 +127,8 @@ import "github.com/paulmanoni/nexus"
 func main() {
 	nexus.Run(
 		nexus.Config{
-			Addr:            ":8080",
-			EnableDashboard: true,
+			Server:    nexus.ServerConfig{Addr: ":8080"},
+			Dashboard: nexus.DashboardConfig{Enabled: true},
 		},
 		helloModule,
 	)

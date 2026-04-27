@@ -16,7 +16,7 @@ import (
 func TestHealth_AliveFlagsToggle(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		fx.Populate(&app),
 	)
 	fxApp.RequireStart()
@@ -40,7 +40,7 @@ func TestHealth_AliveFlagsToggle(t *testing.T) {
 func TestReady_MonolithReadyImmediately(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		fx.Populate(&app),
 	)
 	fxApp.RequireStart()
@@ -78,7 +78,7 @@ func TestReady_PeerDownProducesNotReady(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
-			Addr:       "127.0.0.1:0",
+			Server:     ServerConfig{Addr: "127.0.0.1:0"},
 			Deployment: "checkout-svc",
 			Topology: Topology{Peers: map[string]Peer{
 				"checkout-svc": {},

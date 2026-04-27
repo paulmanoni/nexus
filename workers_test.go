@@ -28,7 +28,7 @@ func TestAsWorker_RunsUntilStopSignalsCtx(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsWorker("test-worker", worker).nexusOption(),
 		fx.Populate(&app),
 	)
@@ -89,7 +89,7 @@ func TestAsWorker_ErrorReturnMarksFailed(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsWorker("bad-worker", worker).nexusOption(),
 		fx.Populate(&app),
 	)
@@ -126,7 +126,7 @@ func TestAsWorker_CapturesDeps(t *testing.T) {
 	}
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
 		Provide(NewUsersService).nexusOption(),
 		AsWorker("cache-invalidation", worker).nexusOption(),

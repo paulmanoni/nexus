@@ -186,12 +186,18 @@ function gridLayout(ns) {
 }
 
 async function load() {
-  const [epData, rsData, statsData, wkData] = await Promise.all([
-    fetchEndpoints(),
-    fetchResources(),
-    fetchStats().catch(() => ({ stats: [] })), // graceful if stats endpoint absent
-    fetchWorkers().catch(() => ({ workers: [] })),
-  ])
+  let epData, rsData, statsData, wkData
+  try {
+    [epData, rsData, statsData, wkData] = await Promise.all([
+      fetchEndpoints(),
+      fetchResources(),
+      fetchStats().catch(() => ({ stats: [] })), // graceful if stats endpoint absent
+      fetchWorkers().catch(() => ({ workers: [] })),
+    ])
+  } catch (err) {
+    console.error('[nexus] Architecture load failed:', err)
+    return
+  }
   // Index stats by "service.op". The stats key stays service-scoped
   // even after the UI regroups by module, because the metrics
   // middleware keys its counters by the owning service name.
@@ -569,15 +575,19 @@ async function load() {
   // Build the system boundary AFTER layout so we can size it to the
   // bounding box of all non-Internet nodes. Padding leaves a soft
   // margin between the border and the outermost cards.
-  const boundary = buildBoundaryNode(laid)
-  // Render boundary first so VueFlow paints it beneath real nodes.
-  // Explicit zIndex keeps it safely behind even under future refactors.
-  nodes.value = boundary ? [{ ...boundary, zIndex: -1 }, ...laid] : laid
-  rawEdges.value = edgeList
-  indexEndpointEdges(edgeList)
-  indexEndpointGroups(groupNodes)
-  edges.value = restyleEdges(edgeList, opSelection.value, flashedEdges.value)
-  nextTick(() => fitView({ padding: 0.2, maxZoom: 1 }))
+  try {
+    const boundary = buildBoundaryNode(laid)
+    // Render boundary first so VueFlow paints it beneath real nodes.
+    // Explicit zIndex keeps it safely behind even under future refactors.
+    nodes.value = boundary ? [{ ...boundary, zIndex: -1 }, ...laid] : laid
+    rawEdges.value = edgeList
+    indexEndpointEdges(edgeList)
+    indexEndpointGroups(groupNodes)
+    edges.value = restyleEdges(edgeList, opSelection.value, flashedEdges.value)
+    nextTick(() => fitView({ padding: 0.2, maxZoom: 1 }))
+  } catch (err) {
+    console.error('[nexus] Architecture render failed:', err, { groupCount: groupNodes.length, edgeCount: edgeList.length })
+  }
 }
 
 function buildBoundaryNode(laid) {

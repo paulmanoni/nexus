@@ -101,10 +101,9 @@ var resourceModule = nexus.Module("resources",
 func main() {
 	nexus.Run(
 		nexus.Config{
-			Addr:            ":8080",
-			DashboardName:   "Fx Petstore",
-			TraceCapacity:   1000,
-			EnableDashboard: true,
+			Server:        nexus.ServerConfig{Addr: ":8080"},
+			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Fx Petstore"},
+			TraceCapacity: 1000,
 		},
 		petsModule,
 		ownersModule,

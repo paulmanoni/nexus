@@ -23,10 +23,9 @@ func TestRun_StartsAndStops(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
-			Addr:            "127.0.0.1:0",
-			EnableDashboard: true,
-			TraceCapacity:   100,
-			DashboardName:   "Test",
+			Server:        ServerConfig{Addr: "127.0.0.1:0"},
+			Dashboard:     DashboardConfig{Enabled: true, Name: "Test"},
+			TraceCapacity: 100,
 		}),
 		fx.Populate(&app),
 	)
@@ -56,7 +55,7 @@ func TestRun_BindFailureAbortsStart(t *testing.T) {
 
 	fxApp := fx.New(
 		fx.NopLogger,
-		fxBootOptions(Config{Addr: busy.Addr().String()}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: busy.Addr().String()}}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -70,7 +69,7 @@ func TestRun_BindFailureAbortsStart(t *testing.T) {
 func TestRun_TracingDisabledWhenZero(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0", TraceCapacity: 0}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 0}),
 		fx.Populate(&app),
 	)
 	fxApp.RequireStart()
@@ -151,7 +150,7 @@ func TestAutoMount_StampsModuleName(t *testing.T) {
 		AsQuery(NewNoSvcQuery()),
 	)
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		mod.nexusOption(),
 		fx.Populate(&app),
 	)
@@ -207,7 +206,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Supply(ctrl).nexusOption(),
 		AsRestHandler("GET", "/ping",
 			func(c *testRestHandlerCtrl) gin.HandlerFunc { return c.Ping },
@@ -244,7 +243,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 func TestProvideService_RecordsConstructorDeps(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
 		Provide(NewUsersService).nexusOption(),
 		Provide(NewAdvertsService).nexusOption(),
@@ -278,7 +277,7 @@ func TestAutoMount_ZeroServiceFallback(t *testing.T) {
 	// failing. Proves the minimal-app case boots.
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsQuery(NewNoSvcQuery()).nexusOption(),
 		fx.Populate(&app),
 	)

@@ -45,12 +45,14 @@ func TestListeners_ScopeFilter(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
-			EnableDashboard: true,
-			TraceCapacity:   100,
-			Listeners: map[string]Listener{
-				"public":   {Addr: "127.0.0.1:0", Scope: ScopePublic},
-				"internal": {Addr: "127.0.0.1:0", Scope: ScopeInternal},
-				"admin":    {Addr: "127.0.0.1:0", Scope: ScopeAdmin},
+			Dashboard:     DashboardConfig{Enabled: true},
+			TraceCapacity: 100,
+			Server: ServerConfig{
+				Listeners: map[string]Listener{
+					"public":   {Addr: "127.0.0.1:0", Scope: ScopePublic},
+					"internal": {Addr: "127.0.0.1:0", Scope: ScopeInternal},
+					"admin":    {Addr: "127.0.0.1:0", Scope: ScopeAdmin},
+				},
 			},
 		}),
 		fx.Populate(&app),
@@ -98,13 +100,15 @@ func TestListeners_DualStackBindResolves(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
-			EnableDashboard: true,
-			TraceCapacity:   100,
-			Listeners: map[string]Listener{
-				// Bare host elides → dual-stack. ln.Addr() comes
-				// back as "[::]:<port>"; request LocalAddr arrives
-				// as "127.0.0.1:<port>".
-				"public": {Addr: ":0", Scope: ScopePublic},
+			Dashboard:     DashboardConfig{Enabled: true},
+			TraceCapacity: 100,
+			Server: ServerConfig{
+				Listeners: map[string]Listener{
+					// Bare host elides → dual-stack. ln.Addr()
+					// comes back as "[::]:<port>"; request
+					// LocalAddr arrives as "127.0.0.1:<port>".
+					"public": {Addr: ":0", Scope: ScopePublic},
+				},
 			},
 		}),
 		fx.Populate(&app),
@@ -171,9 +175,9 @@ func TestListeners_BackCompat_NoConfig(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
-			Addr:            "127.0.0.1:0",
-			EnableDashboard: true,
-			TraceCapacity:   100,
+			Server:        ServerConfig{Addr: "127.0.0.1:0"},
+			Dashboard:     DashboardConfig{Enabled: true},
+			TraceCapacity: 100,
 		}),
 		fx.Populate(&app),
 	)

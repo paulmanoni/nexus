@@ -27,7 +27,7 @@ const ratelimitGlobalKey = "_global"
 // no scope filtering — the back-compat path with no behavioral
 // change for callers who haven't declared Listeners.
 func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
-	listeners := resolveListeners(app.listeners, cfg.Addr)
+	listeners := resolveListeners(app.listeners, cfg.Server.Addr)
 	servers := make([]*http.Server, 0, len(listeners))
 	for range listeners {
 		servers = append(servers, &http.Server{Handler: app})

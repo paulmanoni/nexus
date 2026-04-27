@@ -23,18 +23,19 @@ import (
 func main() {
 	nexus.Run(
 		nexus.Config{
-			Addr:            ":8080",
-			DashboardName:   "GraphApp",
-			TraceCapacity:   1000,
-			EnableDashboard: true,
+			Server:        nexus.ServerConfig{Addr: ":8080"},
+			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "GraphApp"},
+			TraceCapacity: 1000,
 			// Share one store between the app (dashboard reads this via
 			// /__nexus/ratelimits and operator overrides land here) and
 			// the middleware bundle built in init.go — otherwise two
 			// stores would drift. A single store via Config closes the loop.
-			RateLimitStore: defaultStore,
+			Stores: nexus.StoreConfig{RateLimit: defaultStore},
 			// Optional app-wide ceiling: rejects any caller exceeding
 			// 600 rpm across all endpoints. Per-op limits layer on top.
-			GlobalRateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
+			Middleware: nexus.MiddlewareConfig{
+				RateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
+			},
 		},
 		nexus.Provide(NewMainDB, NewQuestionsDB, NewCacheManager),
 		advertsModule,

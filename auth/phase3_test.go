@@ -137,7 +137,7 @@ func TestRejectEvent_FiresOnUnauthenticated(t *testing.T) {
 	appCh := make(chan *nexus.App, 1)
 	go func() {
 		nexus.Run(
-			nexus.Config{Addr: addr, TraceCapacity: 100},
+			nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 100},
 			auth.Module(auth.Config{Resolve: resolver}),
 			nexus.Invoke(func(app *nexus.App) { appCh <- app }),
 			nexus.AsRest("GET", "/gated", func(ctx context.Context) (map[string]string, error) {
