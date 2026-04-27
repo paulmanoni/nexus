@@ -258,15 +258,28 @@ type servicePartition struct {
 
 // mountGroup builds one merged schema for every partition that shares
 // the group's GraphQL path and mounts it with a single gql.Mount
-// call. The owner service (the first partition seen on this path)
-// names the registered endpoint — subsequent services contribute
-// queries / mutations into the same schema. Endpoint registry
-// patching runs per-partition so each query/mutation still records
-// against its own service for the dashboard.
+// call. The owner service (the first partition seen on this path) is
+// the path-level fallback; per-field service is threaded through
+// gql.Mount via WithServiceForField so each query/mutation records
+// under its OWN service in the registry. Without this, fields
+// belonging to a different service would all be attributed to the
+// path owner — the dashboard would show a single card containing
+// endpoints that actually belong to N different services.
 func mountGroup(app *App, g *pathGroup) error {
 	var queries []graph.QueryField
 	var mutations []graph.MutationField
+	// fieldService maps GraphQL field name → owning service name. Built
+	// while we walk each partition's queries/mutations so the call to
+	// gql.Mount can register endpoints under the right service.
+	fieldService := map[string]string{}
 	for _, p := range g.partitions {
+		svcName := p.service.Name()
+		for _, q := range p.queries {
+			fieldService[q.Name()] = svcName
+		}
+		for _, m := range p.mutations {
+			fieldService[m.Name()] = svcName
+		}
 		queries = append(queries, p.queries...)
 		mutations = append(mutations, p.mutations...)
 	}
@@ -280,7 +293,9 @@ func mountGroup(app *App, g *pathGroup) error {
 	if err != nil {
 		return fmt.Errorf("nexus: build schema for path %q: %w", g.path, err)
 	}
-	gql.Mount(app.Engine(), app.Registry(), app.Bus(), g.owner.Name(), g.path, &schema, g.opts...)
+	opts := append([]gql.Option(nil), g.opts...)
+	opts = append(opts, gql.WithServiceForField(func(name string) string { return fieldService[name] }))
+	gql.Mount(app.Engine(), app.Registry(), app.Bus(), g.owner.Name(), g.path, &schema, opts...)
 
 	for _, p := range g.partitions {
 		for _, q := range p.queries {

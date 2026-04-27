@@ -34,6 +34,16 @@ type Options struct {
 
 	// DEBUG disables validation/sanitization in go-graph. Use only in dev.
 	DEBUG bool
+
+	// ServiceForField overrides the registered service per GraphQL field
+	// name. When N service partitions share one /graphql path (autoMount
+	// merges their schemas to avoid double-registering routes), each
+	// field needs to record under its OWN service in the registry — not
+	// the path's owner service. autoMountGraphQL builds this lookup
+	// from its servicePartition list and threads it through Mount; the
+	// dashboard then groups endpoints by the right service. Nil falls
+	// back to the mount-level `service` arg.
+	ServiceForField func(fieldName string) string
 }
 
 // Option is the variadic form of Options for builder-style callsites.
@@ -45,6 +55,12 @@ func WithUserDetailsFn(fn func(ctx context.Context, token string) (context.Conte
 func WithPlayground(v bool) Option { return func(o *Options) { o.Playground = v } }
 func WithPretty(v bool) Option     { return func(o *Options) { o.Pretty = v } }
 func WithDEBUG(v bool) Option      { return func(o *Options) { o.DEBUG = v } }
+
+// WithServiceForField installs a per-field service-name resolver.
+// See Options.ServiceForField.
+func WithServiceForField(fn func(name string) string) Option {
+	return func(o *Options) { o.ServiceForField = fn }
+}
 
 // Mount attaches schema at path for POST/GET and auto-registers every
 // operation (queries, mutations, subscriptions) into the registry for the
@@ -58,7 +74,7 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 	for _, o := range opts {
 		o(&cfg)
 	}
-	registerOps(r, service, path, schema)
+	registerOps(r, service, path, schema, cfg.ServiceForField)
 
 	var h gin.HandlerFunc
 	if cfg.UserDetailsFn != nil || cfg.Playground || cfg.DEBUG {
@@ -152,10 +168,16 @@ func goGraphHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
 	}
 }
 
-func registerOps(r *registry.Registry, service, path string, schema *graphql.Schema) {
+func registerOps(r *registry.Registry, service, path string, schema *graphql.Schema, serviceForField func(string) string) {
 	record := func(kind, name string, f *graphql.FieldDefinition) {
+		svc := service
+		if serviceForField != nil {
+			if s := serviceForField(name); s != "" {
+				svc = s
+			}
+		}
 		r.RegisterEndpoint(registry.Endpoint{
-			Service:     service,
+			Service:     svc,
 			Name:        name,
 			Transport:   registry.GraphQL,
 			Method:      kind,
