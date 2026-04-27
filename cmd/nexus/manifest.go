@@ -70,7 +70,32 @@ type PeerSpec struct {
 	// codegen'd init: `${USERS_SVC_URL}` literal becomes an
 	// os.Getenv read at boot, defaulting to the local URL when
 	// unset.
+	//
+	// Sugar for URLs with a single entry; ignored when URLs is
+	// non-empty.
 	URL string `yaml:"url,omitempty"`
+
+	// URLs lists multiple replica base URLs for the same peer. When
+	// non-empty, the codegen'd Peer.URLs slice drives the runtime's
+	// round-robin + passive-eject behavior in client_remote.go.
+	//
+	//	peers:
+	//	  users-svc:
+	//	    urls:
+	//	      - http://users-1.cluster.local:8080
+	//	      - http://users-2.cluster.local:8080
+	//	      - ${USERS_SVC_REPLICA_3_URL}      # per-element env interp
+	//	    timeout: 2s
+	//
+	// Each entry supports the same `${VAR}` interpolation as URL:
+	// a value of exactly `${X}` becomes an os.Getenv("X") read at
+	// boot. Mixed literals + env entries are emitted in the same
+	// order as the YAML.
+	//
+	// When both URL and URLs are declared, URLs wins — the codegen
+	// emits the slice and drops the singular URL silently. Most
+	// users should pick one form per peer.
+	URLs []string `yaml:"urls,omitempty"`
 
 	// Timeout caps each remote call. Zero falls back to the
 	// RemoteCaller default (30s).

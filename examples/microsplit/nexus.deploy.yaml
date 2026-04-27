@@ -17,12 +17,29 @@ deployments:
     owns: [checkout]
     port: 8080
 
-# Per-peer transport settings. URL defaults to
-# http://localhost:<peer-port> when omitted; override with an env var
-# (USERS_SVC_URL / CHECKOUT_SVC_URL) per environment.
+# Per-peer transport settings.
+#
+# Two URL forms are supported per peer:
+#
+#   url:  http://...               # singular — single replica
+#   urls: [http://..., http://...] # multi-replica (round-robin + eject)
+#
+# Each entry (in either form) supports shell-style env interpolation:
+#
+#   ${VAR}            → os.Getenv("VAR")  (empty if unset)
+#   ${VAR:-fallback}  → envOr("VAR", "fallback")
+#
+# users-svc below demonstrates the multi-replica path. Each replica
+# entry falls back to localhost:8081 (the dev port) so `nexus dev
+# --split` works without any env vars. Production sets per-replica
+# env vars and the fallback is unused.
 peers:
   users-svc:
     timeout: 2s
+    urls:
+      - ${USERS_SVC_REPLICA_1_URL:-http://localhost:8081}
+      - ${USERS_SVC_REPLICA_2_URL:-http://localhost:8081}
+      - ${USERS_SVC_REPLICA_3_URL:-http://localhost:8081}
     # Bearer-token auth wired declaratively. ${USERS_SVC_TOKEN} is
     # read from the environment at boot — never commit real secrets.
     # Demo only: works without USERS_SVC_TOKEN set (closure produces

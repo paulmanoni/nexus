@@ -46,8 +46,19 @@ type SubmitArgs struct {
 // invoke; split: HTTP) and returns a receipt that includes the user's
 // display name. The handler is unaware of which transport ran the
 // users.Get call — this is the framework's contract.
+//
+// In split mode with multiple users-svc replicas, WithRouteKey pins
+// every checkout for the same user to the same users replica — useful
+// when the users service maintains per-user in-memory caches or
+// connection state. Affinity is best-effort: a healthy preferred
+// replica is reused; an ejected one falls forward via the framework's
+// linear probe (see nexus.WithRouteKey docs).
+//
+// In monolith mode the route key is ignored — the users.Service call
+// is in-process, no peer selection happens.
 func NewSubmit(svc *Service, p nexus.Params[SubmitArgs]) (*Receipt, error) {
-	u, err := svc.users.Get(p.Context, users.GetArgs{ID: p.Args.UserID})
+	ctx := nexus.WithRouteKey(p.Context, p.Args.UserID)
+	u, err := svc.users.Get(ctx, users.GetArgs{ID: p.Args.UserID})
 	if err != nil {
 		return nil, fmt.Errorf("lookup user: %w", err)
 	}

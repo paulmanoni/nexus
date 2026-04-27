@@ -58,6 +58,7 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newInitCmd(stdout, stderr),
 		newDevCmd(stdout, stderr),
 		newBuildCmd(stdout, stderr),
+		newGenerateCmd(stdout, stderr),
 	)
 	return root
 }

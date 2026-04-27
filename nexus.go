@@ -75,6 +75,22 @@ type App struct {
 	// ones just add handlers to the type-dispatch table.
 	wsMu        sync.Mutex
 	wsEndpoints map[string]*wsEndpoint
+
+	// listeners is the configured listener set (name → Listener). Empty
+	// means single-listener back-compat mode bound to Config.Addr;
+	// non-empty triggers multi-listener binding in registerLifecycle
+	// and activates the scope filter middleware.
+	listeners map[string]Listener
+	// listenerScopes is the runtime scope-lookup table: bound-address
+	// string → scope. Populated by registerLifecycle as each listener
+	// actually binds, read by scopeFilterMiddleware on every request.
+	listenerScopes *listenerScopes
+
+	// health backs /__nexus/health (liveness) and /__nexus/ready
+	// (liveness + peer reachability). Always non-nil — set by New()
+	// so the endpoints can answer immediately, even before fx Start
+	// flips the alive flag.
+	health *healthState
 }
 
 // AppOption is the functional-option type for nexus.New. Named AppOption
@@ -160,6 +176,16 @@ func WithTopology(t Topology) AppOption {
 	return func(a *App) { a.topology = t }
 }
 
+// WithListeners declares one or more named listeners with explicit
+// scopes. Mirrors Config.Listeners for callers using the lower-level
+// nexus.New(...) entry point. When set, Config.Addr / WithEngine's
+// implicit single-listener default is replaced — registerLifecycle
+// binds every entry and the framework installs a scope-filter
+// middleware that 404s out-of-scope routes per listener.
+func WithListeners(ls map[string]Listener) AppOption {
+	return func(a *App) { a.listeners = ls }
+}
+
 // WithDashboardMiddleware gates the /__nexus surface behind one or
 // more middleware bundles. Each bundle's Gin realization runs in
 // registration order before any dashboard handler. Typical use:
@@ -190,6 +216,18 @@ func New(opts ...AppOption) *App {
 		a.engine = gin.New()
 		a.engine.Use(gin.Recovery())
 	}
+	// Scope filter is installed as the first engine middleware so it
+	// runs before any group middleware (notably dashboard.Mount's
+	// admin gate). Empty scope table = no filtering — back-compat
+	// path for single-Addr deployments.
+	a.listenerScopes = newListenerScopes()
+	a.engine.Use(scopeFilterMiddleware(a.listenerScopes))
+	// Health/ready endpoints mount unconditionally so liveness and
+	// readiness probes work even when EnableDashboard is false. The
+	// scope filter routes them onto internal listeners while hiding
+	// the rest of /__nexus from non-admin scopes.
+	a.health = newHealthState()
+	mountHealth(a.engine, a.health)
 	a.registry = registry.New()
 	a.cronSched = cron.NewScheduler(a.bus, 0)
 	// Cache is non-optional: if the caller didn't inject one, we build
