@@ -61,6 +61,14 @@ provide('nexus.openErrors', openErrors)
 
 const { fitView, onNodesInitialized, onPaneClick } = useVueFlow()
 onNodesInitialized(() => fitView({ padding: 0.2, maxZoom: 1 }))
+
+// lastTopologyFingerprint is a sorted-id-list snapshot of the last
+// rendered node set. load() compares the next render's fingerprint
+// to this; an unchanged fingerprint means "same topology, just new
+// counters" and we skip fitView so the user's pan/zoom survives the
+// 5s poll. A changed fingerprint (new module appeared, etc.) calls
+// fitView to bring the new node into view.
+let lastTopologyFingerprint = ''
 // Click the empty canvas → clear op selection. Lets users reset without
 // having to find the card header.
 onPaneClick(() => clearOp())
@@ -579,12 +587,22 @@ async function load() {
     const boundary = buildBoundaryNode(laid)
     // Render boundary first so VueFlow paints it beneath real nodes.
     // Explicit zIndex keeps it safely behind even under future refactors.
-    nodes.value = boundary ? [{ ...boundary, zIndex: -1 }, ...laid] : laid
+    const nextNodes = boundary ? [{ ...boundary, zIndex: -1 }, ...laid] : laid
+    // Topology fingerprint: a sorted list of node ids. fitView only
+    // fires when the set CHANGES — initial paint and when a new
+    // module/service/resource appears mid-session. Steady-state
+    // polling (every 5s) keeps the user's pan + zoom intact.
+    const nextFingerprint = nextNodes.map(n => n.id).sort().join('|')
+    const topologyChanged = nextFingerprint !== lastTopologyFingerprint
+    lastTopologyFingerprint = nextFingerprint
+    nodes.value = nextNodes
     rawEdges.value = edgeList
     indexEndpointEdges(edgeList)
     indexEndpointGroups(groupNodes)
     edges.value = restyleEdges(edgeList, opSelection.value, flashedEdges.value)
-    nextTick(() => fitView({ padding: 0.2, maxZoom: 1 }))
+    if (topologyChanged) {
+      nextTick(() => fitView({ padding: 0.2, maxZoom: 1 }))
+    }
   } catch (err) {
     console.error('[nexus] Architecture render failed:', err, { groupCount: groupNodes.length, edgeCount: edgeList.length })
   }
