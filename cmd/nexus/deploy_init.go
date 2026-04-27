@@ -125,9 +125,20 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 		peerNames := sortedKeysStr(manifest.Peers)
 		for _, peer := range peerNames {
 			ps := manifest.Peers[peer]
-			urlExpr := peerURLExpr(peer, ps.URL, portByTag[peer])
 			fmt.Fprintf(&b, "\t\t\t\t%q: {\n", peer)
-			fmt.Fprintf(&b, "\t\t\t\t\tURL: %s,\n", urlExpr)
+			// URLs wins when set — the codegen emits the slice and
+			// skips the singular URL field. Matches the runtime
+			// invariant in Peer.EffectiveURLs().
+			if len(ps.URLs) > 0 {
+				fmt.Fprintln(&b, "\t\t\t\t\tURLs: []string{")
+				for _, u := range ps.URLs {
+					fmt.Fprintf(&b, "\t\t\t\t\t\t%s,\n", urlEntryExpr(u))
+				}
+				fmt.Fprintln(&b, "\t\t\t\t\t},")
+			} else {
+				urlExpr := peerURLExpr(peer, ps.URL, portByTag[peer])
+				fmt.Fprintf(&b, "\t\t\t\t\tURL: %s,\n", urlExpr)
+			}
 			if ps.Timeout > 0 {
 				fmt.Fprintf(&b, "\t\t\t\t\tTimeout: %d * time.Nanosecond,\n", ps.Timeout.Nanoseconds())
 			}
@@ -243,6 +254,31 @@ func tagToURLEnvVar(tag string) string {
 	out := strings.ToUpper(tag)
 	out = strings.ReplaceAll(out, "-", "_")
 	return out + "_URL"
+}
+
+// urlEntryExpr builds the Go source for one entry in a Peer.URLs
+// slice. Recognized YAML forms:
+//
+//   - `http://...` literal → quoted string
+//   - `${VAR}`             → os.Getenv("VAR")
+//   - `${VAR:-fallback}`   → envOr("VAR", "fallback")
+//
+// The :- shell-style default keeps `nexus dev --split` working with
+// a manifest that declares replicas: each entry falls back to the
+// dev port when the per-replica env var isn't set, so the multi-
+// replica code path runs without operator setup. Production sets
+// the env vars per replica and the fallback is unused.
+func urlEntryExpr(entry string) string {
+	if !strings.HasPrefix(entry, "${") || !strings.HasSuffix(entry, "}") || len(entry) <= 3 {
+		return fmt.Sprintf("%q", entry)
+	}
+	inner := entry[2 : len(entry)-1]
+	if i := strings.Index(inner, ":-"); i > 0 {
+		varName := inner[:i]
+		fallback := inner[i+2:]
+		return fmt.Sprintf("envOr(%q, %q)", varName, fallback)
+	}
+	return fmt.Sprintf("os.Getenv(%q)", inner)
 }
 
 // peerAuthExpr emits the Go source for a Peer.Auth closure built

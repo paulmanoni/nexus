@@ -25,8 +25,9 @@ import (
 // override on a per-client basis (e.g. WithLocalVersion to thread
 // app.Version() in for the skew probe).
 func NewPeerCaller(peer Peer, opts ...RemoteCallerOption) *RemoteCaller {
-	if peer.URL == "" {
-		panic("nexus: NewPeerCaller called with empty Peer.URL — generated clients should resolve this before construction")
+	urls := peer.EffectiveURLs()
+	if len(urls) == 0 {
+		panic("nexus: NewPeerCaller called with no URLs (set Peer.URL or Peer.URLs)")
 	}
 	derived := []RemoteCallerOption{}
 	if peer.Timeout > 0 {
@@ -41,7 +42,7 @@ func NewPeerCaller(peer Peer, opts ...RemoteCallerOption) *RemoteCaller {
 	if peer.Retries > 0 {
 		derived = append(derived, WithRetries(peer.Retries))
 	}
-	return NewRemoteCaller(peer.URL, append(derived, opts...)...)
+	return NewRemoteCallerWithReplicas(urls, append(derived, opts...)...)
 }
 
 // peerAuthAdapter bridges Peer.Auth (returns header value) to the

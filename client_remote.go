@@ -19,17 +19,34 @@ import (
 )
 
 // RemoteCaller is the HTTP variant of a generated cross-module client.
-// One per peer service: BaseURL points at the peer's HTTP root, the
-// embedded http.Client is wrapped via trace.HTTPClient so traceparent
-// is auto-injected on every call (request stitching across services
-// is free).
+// One per peer service: replicas hold one base URL each, the embedded
+// http.Client is wrapped via trace.HTTPClient so traceparent is
+// auto-injected on every call (request stitching across services is
+// free).
+//
+// Multi-replica behavior: when len(replicas) > 1, calls round-robin
+// across replicas and passively eject any replica that returns a
+// transport error or 5xx for a cooldown window. Idempotent verbs
+// retry on a different replica when their first pick errors; non-
+// idempotent verbs (POST, PATCH) still don't retry but the chosen
+// replica is updated for the next caller.
 //
 // Generated client code never constructs this directly — see
-// NewRemoteCaller / NewRemoteCallerFromEnv / NewPeerCaller.
+// NewRemoteCaller / NewRemoteCallerWithReplicas / NewRemoteCallerFromEnv
+// / NewPeerCaller.
 type RemoteCaller struct {
-	baseURL string
-	client  *http.Client
-	auth    AuthPropagator
+	// replicas holds one entry per declared base URL. Always non-empty
+	// after construction (the constructors panic on zero URLs).
+	replicas []*replicaState
+	// cursor drives round-robin replica selection across calls.
+	// Atomic increment then modulo the replica count gives uniform
+	// distribution without per-replica counters.
+	cursor uint64
+	// ejectFor is how long a replica stays ejected after a failure.
+	// Defaults to 30s; tests can shorten via WithEjectDuration.
+	ejectFor time.Duration
+	client   *http.Client
+	auth     AuthPropagator
 
 	// localVersion is the version this binary identifies as — typically
 	// app.Version() threaded in by the generated client constructor.
@@ -55,15 +72,34 @@ type RemoteCaller struct {
 	versionMu sync.Mutex
 }
 
-// NewRemoteCaller wraps a base URL with default settings: 30s timeout,
-// trace.HTTPClient for traceparent injection, default auth propagator
-// (Authorization header forwarding).
-//
-// Trailing slashes on baseURL are trimmed so callers don't double-slash
-// when their handler paths begin with "/".
+// NewRemoteCaller wraps a single base URL — sugar for the single-
+// replica case. Equivalent to NewRemoteCallerWithReplicas with a
+// one-element slice. Trailing slashes are trimmed so callers don't
+// double-slash when handler paths begin with "/".
 func NewRemoteCaller(baseURL string, opts ...RemoteCallerOption) *RemoteCaller {
+	return NewRemoteCallerWithReplicas([]string{baseURL}, opts...)
+}
+
+// NewRemoteCallerWithReplicas wraps multiple replica base URLs with
+// round-robin balancing and passive ejection. Calls pick the next
+// replica in cursor order; transport errors and 5xx responses mark
+// the replica ejected for the eject duration (30s default), so the
+// next caller skips it.
+//
+// At least one URL is required — zero URLs is a programming error,
+// not a runtime case, and panics here so codegen surfaces the bug
+// at boot rather than on the first cross-module call.
+func NewRemoteCallerWithReplicas(urls []string, opts ...RemoteCallerOption) *RemoteCaller {
+	if len(urls) == 0 {
+		panic("nexus: NewRemoteCallerWithReplicas requires at least one URL")
+	}
+	reps := make([]*replicaState, 0, len(urls))
+	for _, u := range urls {
+		reps = append(reps, &replicaState{baseURL: strings.TrimRight(u, "/")})
+	}
 	c := &RemoteCaller{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		replicas: reps,
+		ejectFor: 30 * time.Second,
 		// CheckRedirect short-circuits on the first 3xx so the caller
 		// sees the redirect response directly rather than silently
 		// landing on a different endpoint. Gin's RedirectTrailingSlash
@@ -81,6 +117,83 @@ func NewRemoteCaller(baseURL string, opts ...RemoteCallerOption) *RemoteCaller {
 		opt(c)
 	}
 	return c
+}
+
+// replicaState carries one peer replica's base URL and ejection state.
+// Ejection is a single deadline — a replica is ejected when the
+// current time is before ejectedUntil. After the deadline passes the
+// replica becomes available for round-robin again with no separate
+// re-add path.
+type replicaState struct {
+	baseURL      string
+	mu           sync.Mutex
+	ejectedUntil time.Time
+}
+
+func (r *replicaState) ejected() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return time.Now().Before(r.ejectedUntil)
+}
+
+// eject marks the replica unavailable for d. Repeated ejections
+// extend the cooldown to whichever deadline is later — a fresh
+// failure during an active eject doesn't shorten the window.
+func (r *replicaState) eject(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	deadline := time.Now().Add(d)
+	if deadline.After(r.ejectedUntil) {
+		r.ejectedUntil = deadline
+	}
+}
+
+// pick returns the next non-ejected replica via round-robin. When
+// every replica is ejected, returns the cursor's current pick anyway
+// so the call still has a chance to land — better to fail loud than
+// starve when peers are flapping.
+func (r *RemoteCaller) pick() *replicaState {
+	n := uint64(len(r.replicas))
+	if n == 1 {
+		return r.replicas[0]
+	}
+	start := atomic.AddUint64(&r.cursor, 1)
+	for i := uint64(0); i < n; i++ {
+		idx := (start + i) % n
+		rep := r.replicas[idx]
+		if !rep.ejected() {
+			return rep
+		}
+	}
+	// All ejected — fall through to wherever the cursor landed.
+	return r.replicas[start%n]
+}
+
+// pickFor returns a replica preferring the routing key from ctx when
+// set: hash → index, then walk forward looking for the next non-
+// ejected replica starting at the hashed index. This keeps affinity
+// stable as long as the preferred replica is healthy and degrades
+// gracefully (linear probe to the next replica) when it isn't.
+//
+// When ctx has no route key, falls back to plain round-robin.
+func (r *RemoteCaller) pickFor(ctx context.Context) *replicaState {
+	n := len(r.replicas)
+	if n == 1 {
+		return r.replicas[0]
+	}
+	key := routeKeyFromContext(ctx)
+	if key == "" {
+		return r.pick()
+	}
+	start := hashRouteKey(key, n)
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		rep := r.replicas[idx]
+		if !rep.ejected() {
+			return rep
+		}
+	}
+	return r.replicas[start]
 }
 
 // NewRemoteCallerFromEnv reads the named env var for the base URL.
@@ -166,6 +279,19 @@ func WithRetries(n int) RemoteCallerOption {
 	}
 }
 
+// WithEjectDuration overrides how long a replica stays ejected after
+// a transport error or 5xx. Defaults to 30s. Tests use shorter values
+// to exercise re-add behavior in seconds; production rarely needs to
+// tune this — the default is conservative enough for typical pod
+// restart times.
+func WithEjectDuration(d time.Duration) RemoteCallerOption {
+	return func(r *RemoteCaller) {
+		if d > 0 {
+			r.ejectFor = d
+		}
+	}
+}
+
 // Invoke is an alias for Call exposed so RemoteCaller satisfies the
 // same ClientCallable interface as LocalInvoker. New code should
 // prefer Invoke for shape consistency across the in-process and HTTP
@@ -193,15 +319,15 @@ func (r *RemoteCaller) Invoke(ctx context.Context, method, path string, args, ou
 func (r *RemoteCaller) Call(ctx context.Context, method, path string, args, out any) (rerr error) {
 	// Open a child span so the cross-service HTTP call appears on the
 	// dashboard waterfall with method/path/peer-URL/status/error.
-	// Errors flow through span.End(rerr); UserError fields surface
-	// as attrs (op/hint/notes/cause) for the dashboard to render
-	// separately from the flat Error string.
+	// peer.url is set after the first replica pick so the span shows
+	// which replica actually handled the call (or the last one tried,
+	// for failures); peer.replicas counts the configured pool.
 	ctx, span := trace.StartSpan(ctx, "remote "+method+" "+path,
 		trace.Str("transport", "remote"),
 		trace.Str("method", method),
 		trace.Str("path", path),
-		trace.Str("peer.url", r.baseURL),
 	)
+	span.Set("peer.replicas", len(r.replicas))
 	defer func() {
 		attachUserErrorAttrs(span, rerr)
 		span.End(rerr)
@@ -213,7 +339,6 @@ func (r *RemoteCaller) Call(ctx context.Context, method, path string, args, out 
 	if err != nil {
 		return err
 	}
-	fullURL := r.baseURL + finalPath
 
 	// Body needs to be re-readable across retry attempts; cache the
 	// bytes once so http.NewRequestWithContext can take a fresh
@@ -232,7 +357,23 @@ func (r *RemoteCaller) Call(ctx context.Context, method, path string, args, out 
 	}
 
 	var resp *http.Response
+	var lastReplica *replicaState
+	var lastFullURL string
 	for attempt := 0; attempt < attempts; attempt++ {
+		// First attempt honors any route key on ctx so calls with the
+		// same key land on the same replica. Retries fall back to
+		// round-robin via pick() so a sticky-but-unhealthy replica
+		// doesn't starve the call.
+		var rep *replicaState
+		if attempt == 0 {
+			rep = r.pickFor(ctx)
+		} else {
+			rep = r.pick()
+		}
+		lastReplica = rep
+		fullURL := rep.baseURL + finalPath
+		lastFullURL = fullURL
+		span.Set("peer.url", rep.baseURL)
 		var bodyReader io.Reader
 		if bodyBytes != nil {
 			bodyReader = bytes.NewReader(bodyBytes)
@@ -254,9 +395,10 @@ func (r *RemoteCaller) Call(ctx context.Context, method, path string, args, out 
 		if err == nil {
 			break
 		}
-		// Last attempt → bubble the error up. Otherwise sleep with
-		// jittered backoff and retry. Honor ctx cancellation while
-		// waiting so a deadlined caller doesn't sit out a backoff.
+		// Transport error: eject the replica for the cooldown so the
+		// next caller skips it. Then either bubble (last attempt) or
+		// retry on the next replica after a jittered backoff.
+		rep.eject(r.ejectFor)
 		if attempt == attempts-1 {
 			return err
 		}
@@ -267,8 +409,15 @@ func (r *RemoteCaller) Call(ctx context.Context, method, path string, args, out 
 	defer resp.Body.Close()
 
 	span.Set("status", resp.StatusCode)
+	// Passive eject on 5xx — the replica responded but is unhealthy,
+	// so future calls should round past it. The current call still
+	// returns the response (we don't synthesize a retry; that's the
+	// caller's policy).
+	if resp.StatusCode >= 500 && resp.StatusCode < 600 && lastReplica != nil {
+		lastReplica.eject(r.ejectFor)
+	}
 	respBody, _ := io.ReadAll(resp.Body)
-	return decodeResponse(resp.StatusCode, respBody, method, path, fullURL, out)
+	return decodeResponse(resp.StatusCode, respBody, method, path, lastFullURL, out)
 }
 
 // methodIsIdempotent reports whether automatic retries are safe for
@@ -331,7 +480,12 @@ func (r *RemoteCaller) checkPeerVersion(ctx context.Context) {
 	// localhost call, sufficient for an intra-cluster one.
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, r.baseURL+"/__nexus/config", nil)
+	// Probe the first replica — version skew is a per-deployment
+	// property (every replica of a unit ships the same binary), so
+	// hitting one is sufficient. If it's down we skip the probe;
+	// the next call retries.
+	probeURL := r.replicas[0].baseURL
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, probeURL+"/__nexus/config", nil)
 	if err != nil {
 		return
 	}
@@ -354,7 +508,7 @@ func (r *RemoteCaller) checkPeerVersion(ctx context.Context) {
 		return
 	}
 	log.Printf("nexus warning [version skew]: peer at %s reports version %q; expected %q\n  hint: rebuild and redeploy peers together, or set Peer.MinVersion in Topology to suppress this warning when skew is intentional",
-		r.baseURL, cfg.Version, floor)
+		probeURL, cfg.Version, floor)
 }
 
 // RemoteError is what a non-2xx peer response unmarshals to. Generated

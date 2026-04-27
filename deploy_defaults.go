@@ -56,3 +56,17 @@ func loadDeploymentDefaults() (DeploymentDefaults, bool) {
 	defer deployDefaultsMu.RUnlock()
 	return deployDefaults, deployDefaultsOK
 }
+
+// Defaults returns the manifest-derived configuration (the same data
+// newApp consults to fill in zero-valued Config fields). Exposed so
+// main.go can read the active deployment's port — useful when the
+// caller wants to derive listener addresses from the manifest's
+// port without parsing nexus.deploy.yaml itself.
+//
+// Returns the zero DeploymentDefaults and false when no codegen'd
+// init() has run (typical of `go run` against a deployment-agnostic
+// monolith). Callers should fall back to their own defaults in that
+// case rather than treating the empty Addr as authoritative.
+func Defaults() (DeploymentDefaults, bool) {
+	return loadDeploymentDefaults()
+}

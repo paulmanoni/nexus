@@ -15,8 +15,31 @@ import (
 // argument to nexus.Run; users never construct a *App directly when using
 // the top-level builder.
 type Config struct {
-	// Addr is the HTTP listen address (default ":8080").
+	// Addr is the HTTP listen address (default ":8080"). Equivalent to
+	// declaring a single ScopePublic listener under that address. Ignored
+	// when Listeners is non-empty — the explicit map takes over.
 	Addr string
+
+	// Listeners declares one or more named listeners with explicit
+	// scopes. Use to split user-facing traffic, peer/health checks,
+	// and the admin dashboard onto separate ports (and, via the bound
+	// host, separate network exposures):
+	//
+	//	nexus.Config{
+	//	    Listeners: map[string]nexus.Listener{
+	//	        "public":   {Addr: ":8080",            Scope: nexus.ScopePublic},
+	//	        "internal": {Addr: "127.0.0.1:9000",   Scope: nexus.ScopeInternal},
+	//	        "admin":    {Addr: "127.0.0.1:7000",   Scope: nexus.ScopeAdmin},
+	//	    },
+	//	}
+	//
+	// When Listeners is set, Config.Addr is ignored and every declared
+	// listener binds. The framework installs a scope-filter middleware
+	// that 404s out-of-scope routes per listener (e.g. requests to
+	// /__nexus/* on the public listener). When Listeners is empty,
+	// behavior is unchanged: a single listener bound to Addr serves
+	// every route.
+	Listeners map[string]Listener
 
 	// DashboardName is the brand shown in the dashboard header and tab title
 	// (default "Nexus"). Served over /__nexus/config so you can change it
@@ -176,9 +199,28 @@ type Topology struct {
 // framework's default behavior for that knob.
 type Peer struct {
 	// URL is the base URL for HTTP calls when this peer is remote.
-	// Required when the active deployment is not this peer's tag;
-	// ignored for the active peer's own entry.
+	// Sugar for URLs with a single entry; ignored when URLs is set.
+	// One of URL or URLs is required when the active deployment is
+	// not this peer's tag; ignored for the active peer's own entry.
 	URL string
+
+	// URLs lists multiple replica base URLs for the same peer. When
+	// non-empty, calls round-robin across replicas and passively
+	// eject any replica that returns transport errors / 5xx for a
+	// cooldown window. Use this when you scale a peer to N pods and
+	// want the framework to balance instead of putting an external
+	// load balancer in front of every peer:
+	//
+	//	"users-svc": {URLs: []string{
+	//	    "http://users-1.cluster.local:8080",
+	//	    "http://users-2.cluster.local:8080",
+	//	    "http://users-3.cluster.local:8080",
+	//	}},
+	//
+	// Setting both URL and URLs is permitted; URLs wins. An empty
+	// URLs falls back to URL — back-compat with single-replica
+	// configs.
+	URLs []string
 
 	// Timeout caps each remote call. Zero falls back to the
 	// RemoteCaller default (30s). Recommended: set to your
@@ -210,6 +252,21 @@ type Peer struct {
 	// Zero disables retries entirely. Backoff between attempts is
 	// 50ms * 2^n with full jitter.
 	Retries int
+}
+
+// EffectiveURLs returns the resolved replica list for this peer.
+// URLs takes precedence; URL is the singleton fallback. Empty result
+// means the peer has no remote URL declared (a placeholder for the
+// active deployment, or a misconfiguration the codegen / build-time
+// validator should catch).
+func (p Peer) EffectiveURLs() []string {
+	if len(p.URLs) > 0 {
+		return p.URLs
+	}
+	if p.URL != "" {
+		return []string{p.URL}
+	}
+	return nil
 }
 
 // DeploymentFromEnv reads NEXUS_DEPLOYMENT. The single-binary, multi-shape

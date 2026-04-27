@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="nexus — control plane for Go applications" width="320">
+</p>
+
 # nexus
 
 A Go framework over [Gin](https://github.com/gin-gonic/gin) that lets you write plain handler functions, wires them into REST + GraphQL + WebSocket transports, and ships a live Vue dashboard that renders your service topology, per-endpoint traffic, rate limits, errors, and cron jobs as they happen.
