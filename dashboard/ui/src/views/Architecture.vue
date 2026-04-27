@@ -255,14 +255,19 @@ async function load() {
       g = {
         key: groupKey,
         name: groupName,
-        isModule: true, // every group renders as a module-style card
+        // isModule reflects HOW the group was keyed:
+        //   mod:* → header reads "module"  (auto-routed endpoints)
+        //   svc:* → header reads "service" (explicit *Service wrapper)
+        // The previous "always true" was a bug from the
+        // group-by-service patch — service-keyed cards labeled as
+        // "module" in their header, which is what the user spotted.
+        isModule: groupKey.startsWith('mod:'),
         service: e.Service,
         endpoints: [],
         description: serviceIndex[e.Service]?.Description || '',
-        // Module label for the card header — empty when the group
-        // IS the module (auto-routed) so the header doesn't repeat
-        // the title; populated when grouping by service so the
-        // user can still see which nexus.Module() declared it.
+        // moduleLabel surfaces the nexus.Module() origin as a small
+        // tag on the header when grouping is by service. Empty when
+        // grouping by module (the title already names the module).
         moduleLabel: e.ServiceAutoRouted ? '' : moduleName,
       }
       groups.set(groupKey, g)
@@ -301,6 +306,7 @@ async function load() {
       groupKey: g.key,
       name: g.name,
       isModule: g.isModule,
+      moduleLabel: g.moduleLabel || '',
       service: g.service,
       description: g.description,
       endpoints: g.endpoints,
