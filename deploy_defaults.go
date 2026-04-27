@@ -28,6 +28,13 @@ type DeploymentDefaults struct {
 	// block plus each peer deployment's port (so URLs default to
 	// http://localhost:<peer-port> for local dev).
 	Topology Topology
+
+	// Listeners is the manifest-derived listener map. When non-nil
+	// AND Config.Listeners is empty, newApp adopts this. Lets the
+	// operator declare scope shape in nexus.deploy.yaml ("admin"
+	// listener at port+1000, etc.) without main.go touching the
+	// listener struct.
+	Listeners map[string]Listener
 }
 
 var (

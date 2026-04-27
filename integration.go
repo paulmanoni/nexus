@@ -34,6 +34,9 @@ func newApp(cfg Config) *App {
 		if cfg.Topology.Peers == nil && defaults.Topology.Peers != nil {
 			cfg.Topology = defaults.Topology
 		}
+		if len(cfg.Listeners) == 0 && len(defaults.Listeners) > 0 {
+			cfg.Listeners = defaults.Listeners
+		}
 	}
 	var opts []AppOption
 	// Default trace capacity when the dashboard is on. Without the
@@ -90,7 +93,21 @@ func newApp(cfg Config) *App {
 		opts = append(opts, WithTopology(cfg.Topology))
 	}
 	if len(cfg.Listeners) > 0 {
-		opts = append(opts, WithListeners(cfg.Listeners))
+		// Listener entries with empty Addr are filled in from the
+		// resolved cfg.Addr (which absorbed any manifest default
+		// above). That lets main.go declare just the listener
+		// *shape* — `{Scope: ScopeAdmin}` etc. — and have the
+		// per-deployment port flow in automatically. Explicit
+		// Addrs in the map are passed through unchanged.
+		filled := fillListenerAddrs(cfg.Listeners, cfg.Addr, cfg.AdminPortOffset)
+		opts = append(opts, WithListeners(filled))
+	} else if cfg.AdminPortOffset > 0 {
+		// No explicit Listeners but the user asked for the auto
+		// public+admin pair via AdminPortOffset. Build it from
+		// cfg.Addr.
+		if listeners, err := autoListeners(cfg.Addr, cfg.AdminPortOffset); err == nil {
+			opts = append(opts, WithListeners(listeners))
+		}
 	}
 	// When the user didn't set MetricsStore explicitly, New() already
 	// defaults to metrics.NewCacheStore(a.cacheMgr) using whatever cache

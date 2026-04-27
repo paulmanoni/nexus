@@ -132,6 +132,96 @@ func TestWriteDeployInitFile_URLsEnvDefault(t *testing.T) {
 	mustContain(t, src, `envOr("USERS_SVC_REPLICA_2_URL", "http://localhost:8081"),`)
 }
 
+// TestLoadManifest_Listeners verifies the new `listeners:` block
+// round-trips from YAML into DeploymentSpec.Listeners — scope is
+// required, addr is optional.
+func TestLoadManifest_Listeners(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nexus.deploy.yaml")
+	body := `deployments:
+  monolith:
+    port: 8080
+    listeners:
+      admin:
+        scope: admin
+      internal:
+        scope: internal
+        addr: 127.0.0.1:9000
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+	mono := m.Deployments["monolith"]
+	if got := mono.Listeners["admin"]; got.Scope != "admin" || got.Addr != "" {
+		t.Errorf("admin: want {scope:admin addr:}, got %+v", got)
+	}
+	if got := mono.Listeners["internal"]; got.Scope != "internal" || got.Addr != "127.0.0.1:9000" {
+		t.Errorf("internal: want {scope:internal addr:127.0.0.1:9000}, got %+v", got)
+	}
+}
+
+// TestWriteDeployInitFile_ListenersEmitted verifies the codegen
+// emits a Listeners map with the right scope constant per entry.
+// Empty Addr in YAML stays empty in the emitted struct so the
+// framework's fillListenerAddrs can derive from cfg.Addr at boot.
+func TestWriteDeployInitFile_ListenersEmitted(t *testing.T) {
+	manifest := &DeployManifest{
+		Deployments: map[string]DeploymentSpec{
+			"monolith": {
+				Port: 8080,
+				Listeners: map[string]ListenerSpec{
+					"admin":    {Scope: "admin"},
+					"internal": {Scope: "internal", Addr: "127.0.0.1:9000"},
+				},
+			},
+		},
+	}
+	shadowDir := t.TempDir()
+	out, err := writeDeployInitFile("monolith", manifest, shadowDir, ".", shadowDir, nil)
+	if err != nil {
+		t.Fatalf("writeDeployInitFile: %v", err)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	src := string(body)
+
+	mustContain(t, src, "Listeners: map[string]nexus.Listener{")
+	mustContain(t, src, "Scope: nexus.ScopeAdmin,")
+	mustContain(t, src, "Scope: nexus.ScopeInternal,")
+	mustContain(t, src, `Addr:  "127.0.0.1:9000",`)
+}
+
+// TestWriteDeployInitFile_UnknownScopeRejected fails the build when
+// a manifest declares a scope value the framework doesn't know.
+// Catches typos at the CI gate instead of producing a binary that
+// silently behaves wrong.
+func TestWriteDeployInitFile_UnknownScopeRejected(t *testing.T) {
+	manifest := &DeployManifest{
+		Deployments: map[string]DeploymentSpec{
+			"monolith": {
+				Port: 8080,
+				Listeners: map[string]ListenerSpec{
+					"admin": {Scope: "addmin"}, // typo
+				},
+			},
+		},
+	}
+	shadowDir := t.TempDir()
+	_, err := writeDeployInitFile("monolith", manifest, shadowDir, ".", shadowDir, nil)
+	if err == nil {
+		t.Fatal("expected error for unknown scope")
+	}
+	if !strings.Contains(err.Error(), "addmin") {
+		t.Errorf("error should name the bad scope; got: %v", err)
+	}
+}
+
 // TestWriteDeployInitFile_SingularURLBackCompat verifies the existing
 // singular `url:` path still emits Peer.URL — back-compat for every
 // manifest that hasn't moved to URLs.

@@ -20,6 +20,22 @@ type Config struct {
 	// when Listeners is non-empty — the explicit map takes over.
 	Addr string
 
+	// AdminPortOffset, when non-zero and Listeners is empty, makes
+	// the framework auto-derive a public + admin listener pair:
+	// public binds at the manifest port (or Addr / :8080 fallback),
+	// admin binds at public + AdminPortOffset. The dashboard's
+	// /__nexus/* surface lands on admin only — public 404s it via
+	// the scope filter.
+	//
+	// Useful when you want the standard "REST/GraphQL on the public
+	// port, dashboard on a sidecar port" split without typing the
+	// listener map by hand. Set to 0 (default) to keep the single-
+	// listener behavior.
+	//
+	// Ignored when Listeners is non-empty — the explicit map wins,
+	// no auto-derivation happens.
+	AdminPortOffset int
+
 	// Listeners declares one or more named listeners with explicit
 	// scopes. Use to split user-facing traffic, peer/health checks,
 	// and the admin dashboard onto separate ports (and, via the bound
