@@ -169,12 +169,33 @@ func autoMountGraphQL(in autoMountIn) error {
 		}
 	}
 
+	// Group partitions by mount path before calling gql.Mount: when N
+	// services share the same /graphql path, mounting per-service
+	// would double-register POST/GET on the engine and panic. Merge
+	// their query/mutation lists into one schema per path so each
+	// path lands a single Mount call.
+	pathGroups := []*pathGroup{}
+	pathByMount := map[string]*pathGroup{}
 	for _, p := range partitions {
 		if p.service == nil {
 			return fmt.Errorf("nexus: first dep of a %s handler must be a *Service wrapper (got %s)",
 				p.serviceType, p.serviceType)
 		}
-		if err := mountOne(in.App, in.Cfg, p); err != nil {
+		path := p.service.GraphQLPath()
+		g, ok := pathByMount[path]
+		if !ok {
+			g = &pathGroup{
+				path:  path,
+				owner: p.service,
+				opts:  p.service.graphqlOptions(in.Cfg),
+			}
+			pathByMount[path] = g
+			pathGroups = append(pathGroups, g)
+		}
+		g.partitions = append(g.partitions, p)
+	}
+	for _, g := range pathGroups {
+		if err := mountGroup(in.App, g); err != nil {
 			return err
 		}
 	}
@@ -218,6 +239,16 @@ func autoMountGraphQL(in autoMountIn) error {
 	return nil
 }
 
+// pathGroup bundles every partition that mounts at the same GraphQL
+// path. autoMountGraphQL groups partitions through this structure so
+// schemas merge instead of double-registering routes.
+type pathGroup struct {
+	path       string
+	owner      *Service // first service on this path — names the registered endpoint
+	opts       []gql.Option
+	partitions []*servicePartition
+}
+
 type servicePartition struct {
 	serviceType reflect.Type
 	service     *Service
@@ -225,24 +256,39 @@ type servicePartition struct {
 	mutations   []graph.MutationField
 }
 
-func mountOne(app *App, cfg Config, p *servicePartition) error {
-	if len(p.queries) == 0 && len(p.mutations) == 0 {
+// mountGroup builds one merged schema for every partition that shares
+// the group's GraphQL path and mounts it with a single gql.Mount
+// call. The owner service (the first partition seen on this path)
+// names the registered endpoint — subsequent services contribute
+// queries / mutations into the same schema. Endpoint registry
+// patching runs per-partition so each query/mutation still records
+// against its own service for the dashboard.
+func mountGroup(app *App, g *pathGroup) error {
+	var queries []graph.QueryField
+	var mutations []graph.MutationField
+	for _, p := range g.partitions {
+		queries = append(queries, p.queries...)
+		mutations = append(mutations, p.mutations...)
+	}
+	if len(queries) == 0 && len(mutations) == 0 {
 		return nil
 	}
 	schema, err := graph.NewSchemaBuilder(graph.SchemaBuilderParams{
-		QueryFields:    p.queries,
-		MutationFields: p.mutations,
+		QueryFields:    queries,
+		MutationFields: mutations,
 	}).Build()
 	if err != nil {
-		return fmt.Errorf("nexus: build schema for service %q: %w", p.service.Name(), err)
+		return fmt.Errorf("nexus: build schema for path %q: %w", g.path, err)
 	}
-	gql.Mount(app.Engine(), app.Registry(), app.Bus(), p.service.Name(), p.service.GraphQLPath(), &schema, p.service.graphqlOptions(cfg)...)
+	gql.Mount(app.Engine(), app.Registry(), app.Bus(), g.owner.Name(), g.path, &schema, g.opts...)
 
-	for _, q := range p.queries {
-		patchRegistryFromField(app.Registry(), p.service.Name(), q)
-	}
-	for _, m := range p.mutations {
-		patchRegistryFromField(app.Registry(), p.service.Name(), m)
+	for _, p := range g.partitions {
+		for _, q := range p.queries {
+			patchRegistryFromField(app.Registry(), p.service.Name(), q)
+		}
+		for _, m := range p.mutations {
+			patchRegistryFromField(app.Registry(), p.service.Name(), m)
+		}
 	}
 	return nil
 }
