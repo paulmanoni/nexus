@@ -15,9 +15,8 @@ import (
 
 func main() {
 	app := nexus.New(nexus.Config{
-		EnableDashboard: true,
-		DashboardName:   "Petstore",
-		TraceCapacity:   1000,
+		Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Petstore"},
+		TraceCapacity: 1000,
 	})
 
 	pets := app.Service("pets").Describe("Pet inventory")

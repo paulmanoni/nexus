@@ -22,7 +22,7 @@ func TestDeployAs_StampsRESTEndpoint(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Module("users",
 			DeployAs("users-svc"),
 			AsRest("GET", "/users/:id", fn),
@@ -58,7 +58,7 @@ func TestDeployAs_OmittedLeavesEmpty(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Module("plain",
 			AsRest("GET", "/plain", fn),
 		).nexusOption(),
@@ -83,10 +83,10 @@ func TestConfig_DeploymentAndVersion_OnDashboardConfig(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
-			Addr:            "127.0.0.1:0",
-			EnableDashboard: true,
-			Deployment:      "users-svc",
-			Version:         "v1.2.3",
+			Server:     ServerConfig{Addr: "127.0.0.1:0"},
+			Dashboard:  DashboardConfig{Enabled: true},
+			Deployment: "users-svc",
+			Version:    "v1.2.3",
 		}),
 		fx.Populate(&app),
 	)
@@ -148,7 +148,7 @@ func TestDeployAs_LastWriteWins(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Module("dual",
 			DeployAs("first"),
 			DeployAs("second"),
@@ -172,7 +172,7 @@ func TestDeployAs_LastWriteWins(t *testing.T) {
 func TestApp_DefaultsVersion_DevWhenUnset(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		fx.Populate(&app),
 	)
 	fxApp.RequireStart()

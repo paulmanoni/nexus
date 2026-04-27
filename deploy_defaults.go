@@ -98,8 +98,8 @@ func Defaults() (DeploymentDefaults, bool) {
 // inline).
 func resolveConfig(cfg Config) Config {
 	if defaults, ok := loadDeploymentDefaults(); ok {
-		if cfg.Addr == "" {
-			cfg.Addr = defaults.Addr
+		if cfg.Server.Addr == "" {
+			cfg.Server.Addr = defaults.Addr
 		}
 		if cfg.Deployment == "" {
 			cfg.Deployment = defaults.Deployment
@@ -107,8 +107,8 @@ func resolveConfig(cfg Config) Config {
 		if cfg.Topology.Peers == nil && defaults.Topology.Peers != nil {
 			cfg.Topology = defaults.Topology
 		}
-		if len(cfg.Listeners) == 0 && len(defaults.Listeners) > 0 {
-			cfg.Listeners = defaults.Listeners
+		if len(cfg.Server.Listeners) == 0 && len(defaults.Listeners) > 0 {
+			cfg.Server.Listeners = defaults.Listeners
 		}
 	}
 	if cfg.Deployment == "" {

@@ -90,13 +90,13 @@ func (s *Service) Auth(fn UserDetailsFn) *Service { s.graphqlUserDetFn = fn; ret
 // auto-mount.
 func (s *Service) graphqlOptions(cfg Config) []gql.Option {
 	var out []gql.Option
-	if !cfg.DisablePlayground {
+	if !cfg.GraphQL.DisablePlayground {
 		out = append(out, gql.WithPlayground(true))
 	}
-	if cfg.GraphQLDebug {
+	if cfg.GraphQL.Debug {
 		out = append(out, gql.WithDEBUG(true))
 	}
-	if cfg.GraphQLPretty {
+	if cfg.GraphQL.Pretty {
 		out = append(out, gql.WithPretty(true))
 	}
 	if s.graphqlUserDetFn != nil {

@@ -179,6 +179,13 @@ func offsetAddr(publicAddr string, offset int) (string, error) {
 //   - empty Addr + ScopeAdmin: filled from publicAddr + 1000
 //   - empty Addr + ScopeInternal: filled from publicAddr + 2000
 //
+// Public-listener synthesis: if `in` declares no public-scoped
+// listener, one is added automatically at publicAddr. That makes
+// the manifest's `port:` and `listeners:` blocks composable —
+// `port: 8080` + `listeners: {admin: {scope: admin}}` produces
+// public=:8080, admin=:9080 without operators having to repeat
+// the public entry in YAML.
+//
 // The 1000/2000 offsets are framework conventions — operators who
 // need different numbers set Addr explicitly. Returns the filled
 // map; doesn't mutate the input.
@@ -186,8 +193,12 @@ func fillListenerAddrs(in map[string]Listener, publicAddr string) map[string]Lis
 	if publicAddr == "" {
 		publicAddr = ":8080"
 	}
-	out := make(map[string]Listener, len(in))
+	out := make(map[string]Listener, len(in)+1)
+	hasPublic := false
 	for name, l := range in {
+		if l.Scope == ScopePublic {
+			hasPublic = true
+		}
 		if l.Addr != "" {
 			out[name] = l
 			continue
@@ -205,6 +216,9 @@ func fillListenerAddrs(in map[string]Listener, publicAddr string) map[string]Lis
 			}
 		}
 		out[name] = l
+	}
+	if !hasPublic {
+		out["public"] = Listener{Addr: publicAddr, Scope: ScopePublic}
 	}
 	return out
 }

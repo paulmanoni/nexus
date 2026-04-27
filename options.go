@@ -161,7 +161,7 @@ func Provide(fns ...any) Option {
 // Supply puts concrete values into the graph (no constructor). Useful for
 // config structs or pre-built instances created outside the fx graph.
 //
-//	nexus.Supply(nexus.Config{Addr: ":8080"})   // rare — Run takes Config directly
+//	nexus.Supply(nexus.Config{Server: ServerConfig{Addr: ":8080"}})   // rare — Run takes Config directly
 //	nexus.Supply(myAlreadyBuiltClient)          // typical
 func Supply(values ...any) Option {
 	return rawOption{o: fx.Supply(values...)}

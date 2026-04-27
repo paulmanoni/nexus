@@ -118,14 +118,14 @@ func New(cfg Config) *App {
 	cfg = resolveConfig(cfg)
 
 	traceCapacity := cfg.TraceCapacity
-	if traceCapacity == 0 && cfg.EnableDashboard {
+	if traceCapacity == 0 && cfg.Dashboard.Enabled {
 		// 1024 events covers a few hundred requests in a typical dev
 		// session; user override via Config.TraceCapacity.
 		traceCapacity = 1024
 	}
 	deployment := cfg.Deployment
 
-	dashboardName := cfg.DashboardName
+	dashboardName := cfg.Dashboard.Name
 	if dashboardName == "" {
 		dashboardName = defaultDashboardName
 	}
@@ -139,8 +139,8 @@ func New(cfg Config) *App {
 	// auto-filled from cfg.Addr, otherwise nil (single-listener
 	// back-compat at cfg.Addr).
 	var listeners map[string]Listener
-	if len(cfg.Listeners) > 0 {
-		listeners = fillListenerAddrs(cfg.Listeners, cfg.Addr)
+	if len(cfg.Server.Listeners) > 0 {
+		listeners = fillListenerAddrs(cfg.Server.Listeners, cfg.Server.Addr)
 	}
 
 	// Engine. Recovery middleware first so panics surface as 500s.
@@ -153,17 +153,17 @@ func New(cfg Config) *App {
 		version:       version,
 		deployment:    deployment,
 		topology:      cfg.Topology,
-		graphqlPath:   cfg.GraphQLPath,
-		dashboardOn:   cfg.EnableDashboard,
-		cacheMgr:      cfg.Cache,
-		rlStore:       cfg.RateLimitStore,
-		metricsStore:  cfg.MetricsStore,
+		graphqlPath:   cfg.GraphQL.Path,
+		dashboardOn:   cfg.Dashboard.Enabled,
+		cacheMgr:      cfg.Stores.Cache,
+		rlStore:       cfg.Stores.RateLimit,
+		metricsStore:  cfg.Stores.Metrics,
 		listeners:     listeners,
 	}
 	if traceCapacity > 0 {
 		a.bus = trace.NewBus(traceCapacity)
 	}
-	for _, b := range cfg.DashboardMiddleware {
+	for _, b := range cfg.Middleware.Dashboard {
 		if b.Gin != nil {
 			a.dashboardMw = append(a.dashboardMw, b.Gin)
 		}
@@ -210,9 +210,22 @@ func New(cfg Config) *App {
 	a.applyRemoteServicePlaceholders()
 	a.applyCrossModuleDeps()
 
+	// CORS lands first so preflights short-circuit before rate
+	// limiting eats the budget; cross-origin OPTIONS shouldn't
+	// count against the bucket.
+	if cfg.Middleware.CORS != nil {
+		a.engine.Use(corsMiddleware(*cfg.Middleware.CORS))
+		a.registry.RegisterMiddleware(middleware.Info{
+			Name:        "cors",
+			Kind:        middleware.KindBuiltin,
+			Description: "CORS (built-in)",
+		})
+		a.registry.RegisterGlobalMiddleware("cors")
+	}
+
 	// Global rate limit primed before any op runs.
-	if !cfg.GlobalRateLimit.Zero() {
-		a.rlStore.Declare(ratelimitGlobalKey, cfg.GlobalRateLimit)
+	if !cfg.Middleware.RateLimit.Zero() {
+		a.rlStore.Declare(ratelimitGlobalKey, cfg.Middleware.RateLimit)
 		a.engine.Use(ratelimit.GinMiddleware(a.rlStore, ratelimit.GlobalKey, nil))
 		a.registry.RegisterMiddleware(middleware.Info{
 			Name:        "rate-limit",
@@ -223,7 +236,7 @@ func New(cfg Config) *App {
 	}
 
 	// User-supplied global middlewares in registration order.
-	for _, m := range cfg.GlobalMiddleware {
+	for _, m := range cfg.Middleware.Global {
 		if m.Gin != nil {
 			a.engine.Use(m.Gin)
 		}

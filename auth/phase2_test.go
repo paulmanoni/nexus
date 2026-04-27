@@ -26,7 +26,7 @@ func bootWithManager(t *testing.T, addr string, cfg auth.Config, extra ...nexus.
 		nexus.Invoke(func(m *auth.Manager) { mgrCh <- m }),
 	}, extra...)
 	go func() {
-		nexus.Run(nexus.Config{Addr: addr, TraceCapacity: 10}, opts...)
+		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10}, opts...)
 	}()
 	select {
 	case m := <-mgrCh:

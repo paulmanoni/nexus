@@ -49,10 +49,9 @@ func NewChatTyping(svc *ChatService, sess *nexus.WSSession, p nexus.Params[ChatP
 func main() {
 	nexus.Run(
 		nexus.Config{
-			Addr:            ":8080",
-			EnableDashboard: true,
-			TraceCapacity:   1000,
-			DashboardName:   "WS Echo",
+			Server:        nexus.ServerConfig{Addr: ":8080"},
+			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "WS Echo"},
+			TraceCapacity: 1000,
 		},
 		nexus.Module("chat",
 			nexus.Provide(NewChatService),

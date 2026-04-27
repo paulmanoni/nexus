@@ -38,7 +38,7 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0", TraceCapacity: 100}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/events", "chat.send", sendHandler).nexusOption(),
 		AsWS("/events", "chat.typing", typingHandler).nexusOption(),
 		fx.Populate(&app),
@@ -138,7 +138,7 @@ func TestAsWS_HandlerErrorSendsErrorEvent(t *testing.T) {
 
 	var app *App
 	fxApp := fxtest.New(t,
-		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsWS("/bad", "thing", badHandler).nexusOption(),
 		fx.Populate(&app),
 	)

@@ -55,8 +55,7 @@ import (
 func main() {
 	nexus.Run(
 		nexus.Config{
-			EnableDashboard: true,
-			DashboardName:   "microsplit",
+			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "microsplit"},
 		},
 		users.Module,
 		checkout.Module,

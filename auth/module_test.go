@@ -100,7 +100,7 @@ func startTestApp(t *testing.T, cfg auth.Config) string {
 
 	go func() {
 		nexus.Run(
-			nexus.Config{Addr: "127.0.0.1:8799", TraceCapacity: 10},
+			nexus.Config{Server: nexus.ServerConfig{Addr: "127.0.0.1:8799"}, TraceCapacity: 10},
 			auth.Module(cfg),
 			nexus.AsRest("GET", "/whoami", whoamiHandler),
 		)

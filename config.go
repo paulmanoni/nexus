@@ -15,127 +15,73 @@ import (
 // argument to nexus.Run; users never construct a *App directly when using
 // the top-level builder.
 type Config struct {
-	// Addr is the HTTP listen address (default ":8080"). Equivalent to
-	// declaring a single ScopePublic listener under that address. Ignored
-	// when Listeners is non-empty — the explicit map takes over.
-	Addr string
-
-	// Listeners declares one or more named listeners with explicit
-	// scopes. Use to split user-facing traffic, peer/health checks,
-	// and the admin dashboard onto separate ports (and, via the bound
-	// host, separate network exposures):
+	// Server bundles every network-binding knob: the single-listener
+	// fallback Addr, and the explicit Listeners map for multi-scope
+	// deployments. Both fields are optional; the framework supplies a
+	// :8080 default when both are empty.
 	//
 	//	nexus.Config{
-	//	    Listeners: map[string]nexus.Listener{
-	//	        "public":   {Addr: ":8080",            Scope: nexus.ScopePublic},
-	//	        "internal": {Addr: "127.0.0.1:9000",   Scope: nexus.ScopeInternal},
-	//	        "admin":    {Addr: "127.0.0.1:7000",   Scope: nexus.ScopeAdmin},
+	//	    Server: nexus.ServerConfig{
+	//	        Listeners: map[string]nexus.Listener{
+	//	            "public": {Addr: ":8080"},
+	//	            "admin":  {Addr: "127.0.0.1:7000", Scope: nexus.ScopeAdmin},
+	//	        },
 	//	    },
 	//	}
-	//
-	// When Listeners is set, Config.Addr is ignored and every declared
-	// listener binds. The framework installs a scope-filter middleware
-	// that 404s out-of-scope routes per listener (e.g. requests to
-	// /__nexus/* on the public listener). When Listeners is empty,
-	// behavior is unchanged: a single listener bound to Addr serves
-	// every route.
-	Listeners map[string]Listener
+	Server ServerConfig
 
-	// DashboardName is the brand shown in the dashboard header and tab title
-	// (default "Nexus"). Served over /__nexus/config so you can change it
-	// per-environment without rebuilding the UI.
-	DashboardName string
+	// Dashboard bundles the /__nexus surface knobs (whether it
+	// mounts at all, the brand label). Middleware that gates the
+	// dashboard lives under Middleware.Dashboard so all middleware
+	// configuration stays in one place.
+	//
+	//	nexus.Config{
+	//	    Dashboard: nexus.DashboardConfig{Enabled: true, Name: "MyApp"},
+	//	}
+	Dashboard DashboardConfig
 
 	// TraceCapacity is the ring-buffer size for request traces. 0 disables
 	// tracing — the Traces tab will stay empty.
 	TraceCapacity int
 
-	// EnableDashboard mounts /__nexus/* if true.
-	EnableDashboard bool
-
-	// GraphQL — environment-level flags that apply to every service's
-	// mounted schema. Set once on the app, not per-service.
-
-	// GraphQLPath overrides the default mount path for auto-generated
-	// GraphQL services. Empty falls back to "/graphql". Per-service
-	// paths via (*Service).AtGraphQL(p) still win over this default;
-	// use this Config field to change where the auto-mount fallback
-	// service (the one created when no *Service dep is present on a
-	// handler) and any other service that doesn't call AtGraphQL
-	// will mount their schema.
-	//
-	//    nexus.Config{GraphQLPath: "/api/graphql"}
-	GraphQLPath string
-
-	// DisablePlayground turns OFF the GraphQL Playground served on GET
-	// <service>/<path>. Default is enabled. Flip in prod wiring to hide
-	// the interactive console.
-	DisablePlayground bool
-
-	// GraphQLDebug skips query validation + response sanitization in
-	// go-graph. Dev-only. Default false.
-	GraphQLDebug bool
-
-	// GraphQLPretty pretty-prints JSON responses. Convenient while
-	// exploring; ship off in prod.
-	GraphQLPretty bool
-
-	// GlobalRateLimit applies across every endpoint — the whole app
-	// consumes from one bucket. Combine with per-op nexus.RateLimit()
-	// declarations for layered protection: the request must pass both
-	// the global bucket and the op's bucket. Zero disables.
-	//
-	// Set PerIP to scope the global bucket per caller IP.
-	GlobalRateLimit ratelimit.Limit
-
-	// GlobalMiddleware stacks on the Gin engine root, so every REST
-	// endpoint, GraphQL POST, WebSocket upgrade, and dashboard request
-	// flows through it in registration order. Use for cross-cutting
-	// concerns (request-id, logger, CORS, global rate limit, auth pre-
-	// gate, etc.). Each bundle's Gin field runs; nil Gin realizations
-	// are skipped silently. Per-op middleware (via nexus.Use on a
-	// registration) layers on top.
-	GlobalMiddleware []middleware.Middleware
-
-	// RateLimitStore replaces the default in-memory rate-limit store.
-	// Set when you want to share the store between the app and externally-
-	// built middleware bundles (ratelimit.NewMiddleware consumes a Store),
-	// or for persistence / multi-replica via a Redis-backed implementation.
-	// Nil → app builds its own MemoryStore at boot (or cache-backed when
-	// Cache is set — see below).
-	RateLimitStore ratelimit.Store
-
-	// MetricsStore replaces the default metrics store. Parallel to
-	// RateLimitStore — explicit wins over Cache-driven defaults.
-	MetricsStore metrics.Store
-
-	// DashboardMiddleware gates the /__nexus surface behind user-supplied
-	// middleware — typically auth + permission checks. Each bundle's
-	// Gin realization runs in registration order on the /__nexus route
-	// group BEFORE any dashboard handler, covering the JSON API,
-	// WebSocket events, and the embedded Vue UI in one pass.
+	// GraphQL bundles every environment-level GraphQL knob that
+	// applies across all services' mounted schemas. Set once on the
+	// app, not per-service.
 	//
 	//	nexus.Config{
-	//	    EnableDashboard: true,
-	//	    DashboardMiddleware: []middleware.Middleware{
-	//	        {Name: "auth",  Gin: bearerAuth},
-	//	        {Name: "admin", Gin: requireAdminRole},
+	//	    GraphQL: nexus.GraphQLConfig{
+	//	        Path:   "/api/graphql",
+	//	        Pretty: true,
 	//	    },
 	//	}
-	//
-	// Bundles whose Gin field is nil are ignored for the dashboard (no
-	// graph-only protection makes sense here — the dashboard itself
-	// isn't GraphQL).
-	DashboardMiddleware []middleware.Middleware
+	GraphQL GraphQLConfig
 
-	// Cache is an optional nexus cache.Manager. When set, nexus uses it
-	// as the default backing for metrics + rate-limit stores so counters
-	// and overrides benefit from the app's cache tier (Redis when
-	// configured via env, go-cache otherwise) without extra wiring.
+	// Middleware bundles every middleware-related knob: engine-root
+	// stacks, dashboard gating, and the built-in global rate limit.
 	//
-	// Explicit RateLimitStore / MetricsStore settings still win — this
-	// is just the default when those are nil.
-	Cache *cache.Manager
+	//	nexus.Config{
+	//	    Middleware: nexus.MiddlewareConfig{
+	//	        Global:    []middleware.Middleware{requestID, logger, cors},
+	//	        Dashboard: []middleware.Middleware{bearerAuth, requireAdminRole},
+	//	        RateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
+	//	    },
+	//	}
+	Middleware MiddlewareConfig
+
+	// Stores groups the framework's pluggable backends for state
+	// nexus needs to keep around — rate-limit counters, metrics
+	// rings, the general-purpose cache. All optional; the framework
+	// supplies sensible defaults (in-memory / cache-backed) when
+	// fields are zero. Set explicitly to swap in Redis-backed,
+	// Prometheus-backed, or other implementations.
+	//
+	//	nexus.Config{
+	//	    Stores: nexus.StoreConfig{
+	//	        RateLimit: ratelimit.NewRedisStore(rdb),
+	//	        Cache:     myCacheManager,
+	//	    },
+	//	}
+	Stores StoreConfig
 
 	// Deployment names the deployment unit this binary runs as. Empty
 	// = monolith mode (every module is local — current behavior).
@@ -180,6 +126,186 @@ type Config struct {
 	//	    },
 	//	}
 	Topology Topology
+}
+
+// DashboardConfig groups the /__nexus surface knobs. Both fields
+// are optional: leave the struct zero-valued and the dashboard
+// stays unmounted (default).
+type DashboardConfig struct {
+	// Enabled mounts /__nexus/* on the engine when true. Pulls in
+	// the Architecture / Endpoints / Crons / Rate-limits / Traces
+	// tabs and the JSON API the dashboard reads from.
+	Enabled bool
+
+	// Name is the brand shown in the dashboard header and the
+	// browser tab title. Defaults to "Nexus" when empty. Served
+	// over /__nexus/config so you can change it per-environment
+	// without rebuilding the UI.
+	Name string
+}
+
+// ServerConfig groups the network-binding knobs. Addr is the
+// single-listener fallback (used when Listeners is empty);
+// Listeners declares one or more named listeners with explicit
+// scopes. Both optional — leaving both zero binds a single
+// listener at :8080 with ScopePublic.
+//
+// When Listeners is set, Addr is ignored and every declared
+// listener binds. The framework installs a scope-filter middleware
+// that 404s out-of-scope routes per listener (e.g. requests to
+// /__nexus/* on the public listener).
+type ServerConfig struct {
+	// Addr is the HTTP listen address used in single-listener
+	// mode (default ":8080"). Ignored when Listeners is non-empty.
+	// Manifest-driven defaults via DeploymentDefaults.Addr fill
+	// this when zero, so split binaries each pick up their own
+	// per-deployment port.
+	Addr string
+
+	// Listeners declares one or more named listeners with explicit
+	// scopes. Empty Addrs auto-fill from the resolved Addr above
+	// (admin = port+1000, internal = port+2000); explicit Addrs
+	// are passed through unchanged.
+	Listeners map[string]Listener
+}
+
+// MiddlewareConfig groups every middleware-related knob the
+// framework recognizes. All fields are optional — leave the struct
+// zero-valued for "no extra middleware" and the framework runs with
+// its built-in stack alone.
+type MiddlewareConfig struct {
+	// Global stacks on the Gin engine root, so every REST endpoint,
+	// GraphQL POST, WebSocket upgrade, and dashboard request flows
+	// through it in registration order. Use for cross-cutting
+	// concerns (request-id, logger, CORS, auth pre-gate, etc.).
+	// Each bundle's Gin field runs; nil Gin realizations are
+	// skipped silently. Per-op middleware (via nexus.Use on a
+	// registration) layers on top.
+	Global []middleware.Middleware
+
+	// Dashboard gates the /__nexus surface behind user-supplied
+	// middleware — typically auth + permission checks. Each
+	// bundle's Gin realization runs in registration order on the
+	// /__nexus route group BEFORE any dashboard handler, covering
+	// the JSON API, WebSocket events, and the embedded Vue UI in
+	// one pass.
+	//
+	// Bundles whose Gin field is nil are ignored — the dashboard
+	// is an HTTP surface, so graph-only bundles don't apply.
+	Dashboard []middleware.Middleware
+
+	// RateLimit is the built-in app-wide rate limit. When set,
+	// installs as a gin middleware on the engine root so every
+	// HTTP path consults the bucket. Combine with per-op
+	// nexus.RateLimit() declarations for layered protection: the
+	// request must pass both the global bucket and the op's bucket.
+	// Zero disables.
+	RateLimit ratelimit.Limit
+
+	// CORS configures the built-in CORS middleware. Nil = no CORS
+	// handling (the framework installs nothing — same-origin
+	// browsers work, cross-origin requests are rejected by the
+	// browser). Set to a populated struct to allow cross-origin
+	// requests with the listed origins / methods / headers. The
+	// middleware lands on the engine root before any route, so
+	// REST + GraphQL + WebSocket upgrades all see it.
+	//
+	// For finer control (per-route CORS, dynamic origin checks),
+	// install your own gin middleware via Global instead.
+	CORS *CORSConfig
+}
+
+// CORSConfig declares the framework's built-in CORS policy. All
+// fields are optional; reasonable defaults fill in for the common
+// "allow my SPA's origin to hit my API" case.
+type CORSConfig struct {
+	// AllowOrigins lists allowed Origin header values verbatim.
+	// Use "*" for "any origin" — note that AllowCredentials cannot
+	// be true with "*" per the CORS spec; the middleware will
+	// downgrade to echoing the request's Origin in that case.
+	// Empty defaults to ["*"].
+	AllowOrigins []string
+
+	// AllowMethods lists HTTP methods allowed on cross-origin
+	// requests. Empty defaults to GET, POST, PUT, PATCH, DELETE,
+	// OPTIONS — covers every method nexus handlers register.
+	AllowMethods []string
+
+	// AllowHeaders lists request headers the browser is allowed to
+	// send. Empty defaults to Origin, Content-Type, Accept,
+	// Authorization, X-Requested-With.
+	AllowHeaders []string
+
+	// ExposeHeaders lists response headers the browser is allowed
+	// to read from JavaScript. Empty omits the header (browser
+	// only sees the safelisted response headers).
+	ExposeHeaders []string
+
+	// AllowCredentials sets Access-Control-Allow-Credentials: true
+	// when an origin matches. Required when the SPA sends cookies
+	// or Authorization headers cross-origin.
+	AllowCredentials bool
+
+	// MaxAge caches the preflight response for this duration.
+	// Zero defaults to 12 hours — enough to amortize the OPTIONS
+	// round-trip across a session, conservative enough that policy
+	// changes propagate within a workday.
+	MaxAge time.Duration
+}
+
+// StoreConfig groups the framework's pluggable backends. All fields
+// are optional — leave them nil and the framework supplies in-
+// memory / cache-backed defaults. Set explicitly to share state
+// across replicas, push to a monitoring stack, or hand the
+// framework an existing cache tier.
+type StoreConfig struct {
+	// RateLimit replaces the default in-memory rate-limit store.
+	// Set when you want to share the store between the app and
+	// externally-built middleware bundles (ratelimit.NewMiddleware
+	// consumes a Store), or for persistence / multi-replica via a
+	// Redis-backed implementation. Nil → app builds its own
+	// MemoryStore (or cache-backed when Cache is set).
+	RateLimit ratelimit.Store
+
+	// Metrics replaces the default cache-backed metrics store. Use
+	// for Prometheus / StatsD / OTel-backed implementations. The
+	// dashboard's /__nexus/stats endpoint reads from whichever
+	// Store is installed.
+	Metrics metrics.Store
+
+	// Cache is the framework's general-purpose cache.Manager. When
+	// set, nexus uses it as the default backing for the metrics +
+	// rate-limit stores (so counters and overrides benefit from
+	// the app's cache tier). Pass your own when user code already
+	// runs a cache.Manager — framework + app share one tier.
+	//
+	// Explicit RateLimit / Metrics settings still win; Cache is
+	// just the default when those are nil.
+	Cache *cache.Manager
+}
+
+// GraphQLConfig groups the framework's environment-level GraphQL
+// knobs. Per-service paths via (*Service).AtGraphQL still win over
+// these defaults — these only apply to services that don't carry an
+// explicit AtGraphQL call.
+type GraphQLConfig struct {
+	// Path overrides the default mount path for auto-generated
+	// GraphQL services. Empty falls back to DefaultGraphQLPath
+	// ("/graphql").
+	Path string
+
+	// DisablePlayground turns OFF the GraphQL Playground served on
+	// GET <service>/<path>. Default is enabled — flip in prod
+	// wiring to hide the interactive console.
+	DisablePlayground bool
+
+	// Debug skips query validation + response sanitization in
+	// go-graph. Dev-only. Default false.
+	Debug bool
+
+	// Pretty pretty-prints JSON responses. Convenient while
+	// exploring; ship off in prod.
+	Pretty bool
 }
 
 // Topology is the peer table for cross-module HTTP calls in a split
