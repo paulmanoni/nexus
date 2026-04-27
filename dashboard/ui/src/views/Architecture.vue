@@ -217,31 +217,53 @@ async function load() {
   })
 
   // ---------------------------------------------------------------
-  // Grouping: by MODULE (the nexus.Module("name", ...) wrapper), with
-  // the owning service name as a fallback for endpoints registered
-  // outside any module. This is the core of the architecture-view
-  // shift — modules own endpoints; services become dep nodes.
+  // Grouping respects SERVICE OWNERSHIP when the endpoint declared
+  // it explicitly (handler took a *Service wrapper as a dep), and
+  // falls back to the enclosing nexus.Module() name when auto-
+  // routed (handlers without a *Service param). This handles two
+  // common shapes correctly:
+  //
+  //   1. one module = one service (microsplit, oats device REST):
+  //      both rules pick the same key — net result, one card.
+  //
+  //   2. one module wraps multiple services (oats core/controllers
+  //      where SessionService and UtilService each own a subset of
+  //      the GraphQL fields): each service gets its own card,
+  //      reflecting the actual handler-to-service ownership. The
+  //      module name surfaces as a tag on the card header instead.
+  //
+  // Without this split, services explicitly named via a *Service
+  // wrapper got demoted to dep-nodes when their containing module
+  // had a different name — burying the ownership the framework
+  // had carefully recorded.
   // ---------------------------------------------------------------
   const groups = new Map() // groupKey -> { key, name, isModule, service, endpoints[], description }
   const serviceIndex = {}
   for (const s of epData.services || []) serviceIndex[s.Name] = s
   for (const e of epData.endpoints || []) {
     const moduleName = e.Module || ''
-    const groupKey = moduleName ? `mod:${moduleName}` : `svc:${e.Service}`
+    // Auto-routed endpoints (no *Service param) group by module —
+    // the synthesized service has no identity worth surfacing.
+    // Endpoints with explicit *Service wrappers group by service —
+    // that's the one the developer actually named and described.
+    const groupKey = e.ServiceAutoRouted
+      ? (moduleName ? `mod:${moduleName}` : `svc:${e.Service}`)
+      : `svc:${e.Service}`
+    const groupName = e.ServiceAutoRouted ? (moduleName || e.Service) : e.Service
     let g = groups.get(groupKey)
     if (!g) {
       g = {
         key: groupKey,
-        name: moduleName || e.Service,
-        isModule: !!moduleName,
-        // service: the single owning service for this group, if every
-        // endpoint in the group shares one. When endpoints from
-        // multiple services land in one module (rare), this stays ''
-        // so the owner chip resolves row-by-row via e.Service
-        // (handled by a per-row fallback in ServiceNode).
+        name: groupName,
+        isModule: true, // every group renders as a module-style card
         service: e.Service,
         endpoints: [],
         description: serviceIndex[e.Service]?.Description || '',
+        // Module label for the card header — empty when the group
+        // IS the module (auto-routed) so the header doesn't repeat
+        // the title; populated when grouping by service so the
+        // user can still see which nexus.Module() declared it.
+        moduleLabel: e.ServiceAutoRouted ? '' : moduleName,
       }
       groups.set(groupKey, g)
     }
