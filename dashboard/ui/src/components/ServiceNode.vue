@@ -140,18 +140,6 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
       <component :is="HeaderIcon" :size="13" :stroke-width="2" class="hdr-icon" />
       <span class="kind">{{ isModule ? 'module' : 'service' }}</span>
       <span class="name">{{ data.name }}</span>
-      <!-- Module-origin badge — only renders when this is a service-
-           grouped card (isModule=false) AND the endpoints came from
-           inside a nexus.Module() wrapper. Lets the user see "this
-           service's endpoints were declared in module X" without
-           needing a separate tooltip click. -->
-      <span
-        v-if="!isModule && data.moduleLabel"
-        class="module-label"
-        :title="'Declared in nexus.Module(' + JSON.stringify(data.moduleLabel) + ')'"
-      >
-        {{ data.moduleLabel }}
-      </span>
       <!-- Remote badge — module lives in a peer deployment; routes
            don't run in this binary. The deployment tag is in the
            tooltip so operators can see WHICH peer at a glance. -->
@@ -200,14 +188,18 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
                the chip matches the resource chips, which also reflect
                declared deps). Auto-routed ops — where the auto-mount
                adopted the op without the handler declaring the service
-               — do NOT get a chip, because the function didn't name it. -->
+               — do NOT get a chip, because the function didn't name it.
+               Resolves per-row: when a single module wraps endpoints
+               from multiple services (oats core/controllers shape),
+               each row shows its own owning service rather than the
+               group's (which is empty in that case). -->
           <span
-            v-if="!e.ServiceAutoRouted && data.service"
+            v-if="!e.ServiceAutoRouted && (data.service || e.Service)"
             class="chip owner"
-            :title="'Handler declares *' + data.service + 'Service as a dep'"
+            :title="'Handler declares *' + (data.service || e.Service) + 'Service as a dep'"
           >
             <Box :size="9" :stroke-width="2.2" />
-            {{ data.service }}
+            {{ data.service || e.Service }}
           </span>
           <span
             v-for="r in resources(e)"
@@ -446,17 +438,6 @@ const HeaderIcon = computed(() => (isModule.value ? Layers : Box))
   border-radius: 6px;
 }
 .remote-badge :deep(svg) { color: #93c5fd; }
-
-.module-label {
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.16);
-  padding: 1px 6px;
-  border-radius: 6px;
-  white-space: nowrap;
-}
 
 /* Per-op handle: small dot on the right edge of each row. VueFlow auto-
    positions handles at the node boundary; override so each row anchors
