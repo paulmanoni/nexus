@@ -32,7 +32,7 @@ var createRateLimit = nexus.Use(ratelimit.NewMiddleware(
 var defaultStore = ratelimit.NewMemoryStore()
 
 var advertsModule = nexus.Module("adverts",
-	nexus.ProvideService(NewAdvertsService),
+	nexus.Provide(NewAdvertsService),
 	nexus.AsQuery(NewGetAllAdverts),
 	nexus.AsMutation(NewCreateAdvert,
 		nexus.GraphMiddleware("auth", "Bearer token validation", AuthMiddleware),

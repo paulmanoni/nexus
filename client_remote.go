@@ -9,7 +9,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,8 +31,7 @@ import (
 // replica is updated for the next caller.
 //
 // Generated client code never constructs this directly — see
-// NewRemoteCaller / NewRemoteCallerWithReplicas / NewRemoteCallerFromEnv
-// / NewPeerCaller.
+// NewRemoteCaller / NewRemoteCallerWithReplicas / NewPeerCaller.
 type RemoteCaller struct {
 	// replicas holds one entry per declared base URL. Always non-empty
 	// after construction (the constructors panic on zero URLs).
@@ -196,18 +194,6 @@ func (r *RemoteCaller) pickFor(ctx context.Context) *replicaState {
 	return r.replicas[start]
 }
 
-// NewRemoteCallerFromEnv reads the named env var for the base URL.
-// Generated clients use this so a deployment can wire peer URLs
-// through the standard Kubernetes-style envFrom pattern. Panics at
-// boot if the env var is unset — fail fast beats a runtime nil-deref
-// on the first cross-service call.
-func NewRemoteCallerFromEnv(envVar string, opts ...RemoteCallerOption) *RemoteCaller {
-	url := os.Getenv(envVar)
-	if url == "" {
-		panic(fmt.Sprintf("nexus: %s is required for the remote client (set it to the peer's HTTP base URL)", envVar))
-	}
-	return NewRemoteCaller(url, opts...)
-}
 
 // RemoteCallerOption tunes a RemoteCaller. Functional-option pattern
 // matches AppOption — keeps the constructor signature stable as new

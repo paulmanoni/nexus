@@ -7,11 +7,10 @@ import (
 
 // NewPeerCaller builds a RemoteCaller from a Topology Peer entry.
 // Generated client constructors call this when the active deployment
-// differs from the target module's tag, replacing the older
-// NewRemoteCallerFromEnv path that read a hard-coded env var.
+// differs from the target module's tag.
 //
 // Field mapping:
-//   - peer.URL       → base URL (required; empty panics — codegen
+//   - peer.URLs      → replica list (required; empty panics — codegen
 //                      should resolve missing-peer cases before
 //                      reaching this constructor)
 //   - peer.Timeout   → WithRemoteTimeout
@@ -25,9 +24,8 @@ import (
 // override on a per-client basis (e.g. WithLocalVersion to thread
 // app.Version() in for the skew probe).
 func NewPeerCaller(peer Peer, opts ...RemoteCallerOption) *RemoteCaller {
-	urls := peer.EffectiveURLs()
-	if len(urls) == 0 {
-		panic("nexus: NewPeerCaller called with no URLs (set Peer.URL or Peer.URLs)")
+	if len(peer.URLs) == 0 {
+		panic("nexus: NewPeerCaller called with no URLs (set Peer.URLs)")
 	}
 	derived := []RemoteCallerOption{}
 	if peer.Timeout > 0 {
@@ -42,7 +40,7 @@ func NewPeerCaller(peer Peer, opts ...RemoteCallerOption) *RemoteCaller {
 	if peer.Retries > 0 {
 		derived = append(derived, WithRetries(peer.Retries))
 	}
-	return NewRemoteCallerWithReplicas(urls, append(derived, opts...)...)
+	return NewRemoteCallerWithReplicas(peer.URLs, append(derived, opts...)...)
 }
 
 // peerAuthAdapter bridges Peer.Auth (returns header value) to the

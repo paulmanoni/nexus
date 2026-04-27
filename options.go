@@ -178,21 +178,7 @@ func Invoke(fns ...any) Option {
 	return rawOption{o: fx.Invoke(fns...)}
 }
 
-// ProvideResources is a back-compat alias for Provide. The detection
-// nexus.Provide now does covers resource auto-registration too.
-//
-// Deprecated: use nexus.Provide.
-func ProvideResources(fns ...any) Option {
-	return Provide(fns...)
-}
 
-// ProvideService is a back-compat alias for Provide. Service-wrapper
-// detection is part of Provide now.
-//
-// Deprecated: use nexus.Provide.
-func ProvideService(fn any) Option {
-	return Provide(fn)
-}
 
 // serviceDepsRegisterInvoke synthesizes an fx.Invoke that takes the
 // constructed service + ALL of the constructor's original params,
@@ -322,20 +308,10 @@ func Raw(opt fx.Option) Option {
 // scaffolding noise; users hitting framework-level issues can unset
 // it for full diagnostics.
 func Run(cfg Config, opts ...Option) {
-	// Resolve manifest-driven defaults the same way newApp does, so
-	// validateTopology operates on the final Config the rest of the
-	// stack will see. Explicit Config fields still win.
-	if defaults, ok := loadDeploymentDefaults(); ok {
-		if cfg.Addr == "" {
-			cfg.Addr = defaults.Addr
-		}
-		if cfg.Deployment == "" {
-			cfg.Deployment = defaults.Deployment
-		}
-		if cfg.Topology.Peers == nil && defaults.Topology.Peers != nil {
-			cfg.Topology = defaults.Topology
-		}
-	}
+	// Apply the framework's precedence chain (manifest defaults →
+	// env var fallback) so validateTopology and downstream New() see
+	// the same resolved Config. Explicit fields always win.
+	cfg = resolveConfig(cfg)
 	if err := validateTopology(cfg); err != nil {
 		// Boot-time misconfiguration — fail before fx spins up so the
 		// operator sees a single clean line instead of an fx stack
@@ -356,16 +332,13 @@ func Run(cfg Config, opts ...Option) {
 // table" which is fine in monolith and as a back-compat path; it
 // short-circuits the check.
 //
-// The fallback to NEXUS_DEPLOYMENT mirrors newApp so the validation
-// considers the same deployment the rest of the framework will see.
+// Callers must pass a Config that's already been through
+// resolveConfig — no env-var fallback happens here.
 func validateTopology(cfg Config) error {
 	if len(cfg.Topology.Peers) == 0 {
 		return nil
 	}
 	deployment := cfg.Deployment
-	if deployment == "" {
-		deployment = os.Getenv(nexusDeploymentEnv)
-	}
 	if deployment == "" {
 		// Monolith run with a populated Topology is permitted —
 		// the table is unused but keeping it doesn't break anything.

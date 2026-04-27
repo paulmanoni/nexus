@@ -26,7 +26,8 @@ peers:
       - ${USERS_SVC_REPLICA_3_URL}
     timeout: 2s
   checkout-svc:
-    url: http://checkout.local:8080
+    urls:
+      - http://checkout.local:8080
 `
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -49,9 +50,9 @@ peers:
 			t.Errorf("URLs[%d]: want %q, got %q", i, w, users.URLs[i])
 		}
 	}
-	// Sugar form still parses into the singular URL field.
-	if got := m.Peers["checkout-svc"].URL; got != "http://checkout.local:8080" {
-		t.Errorf("checkout-svc URL: want %q, got %q", "http://checkout.local:8080", got)
+	// Single-replica peers also use the urls slice — one entry.
+	if got := m.Peers["checkout-svc"].URLs; len(got) != 1 || got[0] != "http://checkout.local:8080" {
+		t.Errorf("checkout-svc URLs: want [http://checkout.local:8080], got %v", got)
 	}
 }
 
@@ -222,17 +223,19 @@ func TestWriteDeployInitFile_UnknownScopeRejected(t *testing.T) {
 	}
 }
 
-// TestWriteDeployInitFile_SingularURLBackCompat verifies the existing
-// singular `url:` path still emits Peer.URL — back-compat for every
-// manifest that hasn't moved to URLs.
-func TestWriteDeployInitFile_SingularURLBackCompat(t *testing.T) {
+// TestWriteDeployInitFile_NoUrlsFallback verifies that a peer with
+// no `urls:` declared still emits a one-element URLs slice using
+// envOr("<TAG>_URL", "http://localhost:<port>"). Keeps `nexus dev
+// --split` working with manifests that don't bother declaring per-
+// replica URLs.
+func TestWriteDeployInitFile_NoUrlsFallback(t *testing.T) {
 	manifest := &DeployManifest{
 		Deployments: map[string]DeploymentSpec{
 			"checkout-svc": {Owns: []string{"checkout"}, Port: 8080},
 			"users-svc":    {Owns: []string{"users"}, Port: 8081},
 		},
 		Peers: map[string]PeerSpec{
-			"users-svc": {URL: "http://users.local:8081"},
+			"users-svc": {}, // no urls declared
 		},
 	}
 	shadowDir := t.TempDir()
@@ -245,8 +248,6 @@ func TestWriteDeployInitFile_SingularURLBackCompat(t *testing.T) {
 		t.Fatalf("read generated file: %v", err)
 	}
 	src := string(body)
-	mustContain(t, src, `URL: "http://users.local:8081"`)
-	if strings.Contains(src, "URLs: []string{") {
-		t.Errorf("URLs slice should not be emitted when only URL is set; got:\n%s", src)
-	}
+	mustContain(t, src, `URLs: []string{`)
+	mustContain(t, src, `envOr("USERS_SVC_URL", "http://localhost:8081"),`)
 }

@@ -1,6 +1,9 @@
 package nexus
 
-import "sync"
+import (
+	"os"
+	"sync"
+)
 
 // DeploymentDefaults is the manifest-derived configuration applied
 // when Config.Addr / Config.Topology / Config.Deployment / Config.Version
@@ -65,7 +68,7 @@ func loadDeploymentDefaults() (DeploymentDefaults, bool) {
 }
 
 // Defaults returns the manifest-derived configuration (the same data
-// newApp consults to fill in zero-valued Config fields). Exposed so
+// New consults to fill in zero-valued Config fields). Exposed so
 // main.go can read the active deployment's port — useful when the
 // caller wants to derive listener addresses from the manifest's
 // port without parsing nexus.deploy.yaml itself.
@@ -76,4 +79,40 @@ func loadDeploymentDefaults() (DeploymentDefaults, bool) {
 // case rather than treating the empty Addr as authoritative.
 func Defaults() (DeploymentDefaults, bool) {
 	return loadDeploymentDefaults()
+}
+
+// resolveConfig applies the framework's precedence chain to fill in
+// zero-valued Config fields:
+//
+//  1. Explicit Config fields always win.
+//  2. Manifest-derived defaults (set by codegen'd init() blocks via
+//     SetDeploymentDefaults) fill the next layer of gaps.
+//  3. The NEXUS_DEPLOYMENT env var is the final fallback for
+//     Deployment — useful when the same binary boots as different
+//     units across environments via env override alone.
+//
+// One canonical implementation, called by both New (App
+// construction) and Run (boot-time topology validation). Without
+// this consolidation, three call sites re-implemented the chain and
+// drifted (Run skipped step 3, validateTopology re-did step 3
+// inline).
+func resolveConfig(cfg Config) Config {
+	if defaults, ok := loadDeploymentDefaults(); ok {
+		if cfg.Addr == "" {
+			cfg.Addr = defaults.Addr
+		}
+		if cfg.Deployment == "" {
+			cfg.Deployment = defaults.Deployment
+		}
+		if cfg.Topology.Peers == nil && defaults.Topology.Peers != nil {
+			cfg.Topology = defaults.Topology
+		}
+		if len(cfg.Listeners) == 0 && len(defaults.Listeners) > 0 {
+			cfg.Listeners = defaults.Listeners
+		}
+	}
+	if cfg.Deployment == "" {
+		cfg.Deployment = os.Getenv(nexusDeploymentEnv)
+	}
+	return cfg
 }

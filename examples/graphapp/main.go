@@ -36,7 +36,7 @@ func main() {
 			// 600 rpm across all endpoints. Per-op limits layer on top.
 			GlobalRateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
 		},
-		nexus.ProvideResources(NewMainDB, NewQuestionsDB, NewCacheManager),
+		nexus.Provide(NewMainDB, NewQuestionsDB, NewCacheManager),
 		advertsModule,
 	)
 }

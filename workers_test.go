@@ -128,7 +128,7 @@ func TestAsWorker_CapturesDeps(t *testing.T) {
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{Addr: "127.0.0.1:0"}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
-		ProvideService(NewUsersService).nexusOption(),
+		Provide(NewUsersService).nexusOption(),
 		AsWorker("cache-invalidation", worker).nexusOption(),
 		fx.Populate(&app),
 	)
