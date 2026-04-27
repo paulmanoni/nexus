@@ -10,7 +10,6 @@ import ServiceDepNode from '../components/ServiceDepNode.vue'
 import WorkerNode from '../components/WorkerNode.vue'
 import ResourceNode from '../components/ResourceNode.vue'
 import InternetNode from '../components/InternetNode.vue'
-import BoundaryNode from '../components/BoundaryNode.vue'
 import ErrorDialog from '../components/ErrorDialog.vue'
 import PacketOverlay from '../components/PacketOverlay.vue'
 import GlobalMiddlewareBar from '../components/GlobalMiddlewareBar.vue'
@@ -28,7 +27,6 @@ const nodeTypes = {
   worker: markRaw(WorkerNode),
   resource: markRaw(ResourceNode),
   internet: markRaw(InternetNode),
-  boundary: markRaw(BoundaryNode),
 }
 
 // INTERNET_ID is the fixed id of the single "Clients" node. Keep it a
@@ -59,7 +57,7 @@ function openErrors(payload) {
 function closeErrors() { errorDialog.value = { ...errorDialog.value, open: false } }
 provide('nexus.openErrors', openErrors)
 
-const { fitView, onNodesInitialized, onPaneClick } = useVueFlow()
+const { fitView, onNodesInitialized, onPaneClick, onNodeDragStop } = useVueFlow()
 onNodesInitialized(() => fitView({ padding: 0.2, maxZoom: 1 }))
 
 // lastTopologyFingerprint is a sorted-id-list snapshot of the last
@@ -69,6 +67,32 @@ onNodesInitialized(() => fitView({ padding: 0.2, maxZoom: 1 }))
 // 5s poll. A changed fingerprint (new module appeared, etc.) calls
 // fitView to bring the new node into view.
 let lastTopologyFingerprint = ''
+
+// userPositions tracks per-node drag overrides so polling doesn't
+// snap a card back to dagre's slot after the user dropped it
+// somewhere meaningful. Persisted in sessionStorage so a soft
+// browser refresh keeps the layout — but not localStorage, so the
+// arrangement resets on a fresh tab (avoids stale positions
+// surviving real topology changes for too long).
+const userPositions = (() => {
+  try {
+    const raw = sessionStorage.getItem('nexus.archPositions')
+    return raw ? new Map(Object.entries(JSON.parse(raw))) : new Map()
+  } catch {
+    return new Map()
+  }
+})()
+function persistPositions() {
+  try {
+    sessionStorage.setItem('nexus.archPositions', JSON.stringify(Object.fromEntries(userPositions)))
+  } catch { /* quota / private mode — best effort */ }
+}
+onNodeDragStop(({ node }) => {
+  if (!node || !node.id) return
+  userPositions.set(node.id, { x: node.position.x, y: node.position.y })
+  persistPositions()
+})
+
 // Click the empty canvas → clear op selection. Lets users reset without
 // having to find the card header.
 onPaneClick(() => clearOp())
@@ -101,8 +125,15 @@ function estimateServiceHeight(data) {
   }
   // Header (38) + description + rows × 22 + bottom padding (16) +
   // small safety margin (12) so cards never butt against each
-  // other under variable chip wrapping.
-  return 38 + desc + rows*22 + 16 + 12
+  // other under variable chip wrapping. Capped at the same 480px
+  // cap the .endpoints body uses for overflow scroll — without
+  // this, dagre reserves vertical space for a 25-row module that
+  // the card itself never displays (it scrolls).
+  const HEADER = 38
+  const FOOTER = 16 + 12
+  const BODY_MAX = 480 // matches ServiceNode.vue .endpoints max-height
+  const body = Math.min(rows * 22, BODY_MAX)
+  return HEADER + desc + body + FOOTER
 }
 
 function estimateResourceHeight(data) {
@@ -589,14 +620,16 @@ async function load() {
     }
   }
   const laid = layout(all, edgeList)
-  // Build the system boundary AFTER layout so we can size it to the
-  // bounding box of all non-Internet nodes. Padding leaves a soft
-  // margin between the border and the outermost cards.
   try {
-    const boundary = buildBoundaryNode(laid)
-    // Render boundary first so VueFlow paints it beneath real nodes.
-    // Explicit zIndex keeps it safely behind even under future refactors.
-    const nextNodes = boundary ? [{ ...boundary, zIndex: -1 }, ...laid] : laid
+    // Apply user-drag overrides so dragged cards don't snap back to
+    // dagre's slot on the next 5s poll. dagre still computes the
+    // baseline layout for first paint and for any node the user
+    // hasn't touched; the override map only kicks in for ids the
+    // user explicitly moved.
+    const nextNodes = laid.map(n => {
+      const moved = userPositions.get(n.id)
+      return moved ? { ...n, position: moved } : n
+    })
     // Topology fingerprint: a sorted list of node ids. fitView only
     // fires when the set CHANGES — initial paint and when a new
     // module/service/resource appears mid-session. Steady-state
@@ -614,42 +647,6 @@ async function load() {
     }
   } catch (err) {
     console.error('[nexus] Architecture render failed:', err, { groupCount: groupNodes.length, edgeCount: edgeList.length })
-  }
-}
-
-function buildBoundaryNode(laid) {
-  const BBOX_PAD = 28
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  let hits = 0
-  for (const n of laid) {
-    // Enclose only the "inside-the-system" nodes — module groups,
-    // service-deps, resources. Internet is an outside caller, so
-    // the boundary shouldn't ring around it.
-    if (n.type !== 'service' && n.type !== 'resource' && n.type !== 'serviceDep' && n.type !== 'worker') continue
-    const w = (n.type === 'resource' || n.type === 'serviceDep' || n.type === 'worker') ? NODE_WIDTH_RESOURCE : NODE_WIDTH_SERVICE
-    const h = n.type === 'resource' ? estimateResourceHeight(n.data)
-           : n.type === 'serviceDep' ? estimateServiceDepHeight(n.data)
-           : n.type === 'worker' ? estimateWorkerHeight(n.data)
-           : estimateServiceHeight(n.data)
-    minX = Math.min(minX, n.position.x)
-    minY = Math.min(minY, n.position.y)
-    maxX = Math.max(maxX, n.position.x + w)
-    maxY = Math.max(maxY, n.position.y + h)
-    hits++
-  }
-  if (hits === 0) return null
-  const x = minX - BBOX_PAD
-  const y = minY - BBOX_PAD
-  const width  = (maxX - minX) + BBOX_PAD * 2
-  const height = (maxY - minY) + BBOX_PAD * 2
-  return {
-    id: 'boundary',
-    type: 'boundary',
-    position: { x, y },
-    data: { width, height },
-    // Boundary is purely decorative — no handles, no interactivity.
-    selectable: false,
-    draggable: false,
   }
 }
 
