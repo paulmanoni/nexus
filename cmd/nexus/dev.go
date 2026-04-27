@@ -32,6 +32,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		split    bool
 		basePort int
 		tui      bool
+		noWatch  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -65,7 +66,7 @@ examples/microsplit for the convention.`,
 			if tui {
 				return runDevTUI(target, addr, stdout, stderr)
 			}
-			return runDev(target, addr, !noOpen, stdout, stderr)
+			return runDev(target, addr, !noOpen, !noWatch, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -78,6 +79,8 @@ examples/microsplit for the convention.`,
 		"first port to assign in --split mode (subsequent units take +1, +2, ...)")
 	cmd.Flags().BoolVar(&tui, "tui", false,
 		"interactive Bubble Tea UI: log pane + restart hotkey + ready indicator")
+	cmd.Flags().BoolVar(&noWatch, "no-watch", false,
+		"disable file-watch auto-rebuild (single-process mode only)")
 	return cmd
 }
 
@@ -101,17 +104,84 @@ func (e *userError) Error() string { return e.msg }
 // runDev is the dev-loop body. Separated from the cobra wrapper so the
 // happy path (start child → race signal vs natural exit → clean kill)
 // reads top-to-bottom without being interleaved with flag parsing.
-func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) error {
+//
+// When watch is true, runs a fsnotify watcher on the target dir and
+// restarts `go run` on every coalesced source-file change. SIGINT
+// stops the loop and tears down the active child cleanly.
+func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// We deliberately do NOT use exec.CommandContext: that cancels by
-	// killing only the direct child PID — the `go` process — leaving
-	// the compiled binary `go run` exec'd as an orphan that keeps the
-	// listening port bound. Instead we manage shutdown explicitly via
-	// the process group below so the binary actually dies on Ctrl-C.
+	var restartCh chan struct{}
+	if watch {
+		restartCh = make(chan struct{}, 1)
+		root, _ := os.Getwd()
+		if err := watchSource(ctx, root, restartCh, stderr); err != nil {
+			fmt.Fprintf(stderr, "watcher disabled: %v\n", err)
+			restartCh = nil
+		}
+	}
+
+	// First boot announces the dashboard URL via waitAndOpen. Subsequent
+	// restarts skip the open-browser branch (user already has the tab).
+	first := true
+	for {
+		exited, killChild, err := startDevChild(ctx, target, addr, openOnReady && first, stdout, stderr)
+		if err != nil {
+			return err
+		}
+		first = false
+		select {
+		case err := <-exited:
+			if err != nil {
+				// Compile error or panic. With the watcher running we
+				// don't tear down the loop — the user fixes the bug,
+				// the next save triggers a restart. Without it, exit
+				// like the legacy single-shot path.
+				if restartCh == nil {
+					return fmt.Errorf("app exited: %w", err)
+				}
+				fmt.Fprintf(stderr, "%s●%s app exited: %v · waiting for changes\n", ansiYellow, ansiReset, err)
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-restartCh:
+					fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
+					continue
+				}
+			}
+			if restartCh == nil {
+				return nil
+			}
+			// Clean exit + watcher running: idle until the next change.
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-restartCh:
+				fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
+			}
+		case <-restartCh:
+			fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
+			killChild()
+			<-exited
+		case <-ctx.Done():
+			killChild()
+			<-exited
+			return nil
+		}
+	}
+}
+
+// startDevChild starts one `go run target` invocation and returns
+// channels the caller selects on:
+//   - exited: receives the child's wait error (or nil on clean exit)
+//   - killChild: tear-down hook that SIGTERMs the process group and
+//     escalates to SIGKILL after 5s
+//
+// Carved out of runDev so the watcher loop's select can stay readable.
+func startDevChild(ctx context.Context, target, addr string, openOnReady bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	cmd := exec.Command("go", "run", target)
 	// Tee stdout/stderr through addrFinder so we can detect the
 	// actual bind address from gin's "Listening and serving HTTP on
@@ -125,7 +195,7 @@ func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) err
 	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start `go run %s`: %w", target, err)
+		return nil, func() {}, fmt.Errorf("failed to start `go run %s`: %w", target, err)
 	}
 
 	// waitAndOpen runs even when --no-open is set so the user still
@@ -133,32 +203,21 @@ func runDev(target, addr string, openOnReady bool, stdout, stderr io.Writer) err
 	// on openOnReady.
 	go waitAndOpen(ctx, addr, openOnReady, stdout, detectedCh)
 
-	// Wait in a goroutine so the main goroutine can race the user's
-	// signal against the child's natural exit.
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 
-	select {
-	case err := <-exited:
-		// Child terminated on its own (build error, panic, normal exit).
-		if err != nil {
-			return fmt.Errorf("app exited: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		// User interrupted — kill the whole process group so the
-		// compiled binary dies along with the `go` wrapper. SIGTERM
-		// first to give shutdown handlers (HTTP graceful close, fx
-		// hooks) a chance, then SIGKILL after a short grace period.
-		_ = killProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
+	pid := cmd.Process.Pid
+	killChild := func() {
+		// SIGTERM first to give shutdown handlers (HTTP graceful close,
+		// fx hooks) a chance, then SIGKILL after a short grace period.
+		_ = killProcessGroup(pid, syscall.SIGTERM)
 		select {
 		case <-exited:
 		case <-time.After(5 * time.Second):
-			_ = killProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
-			<-exited
+			_ = killProcessGroup(pid, syscall.SIGKILL)
 		}
-		return nil
 	}
+	return exited, killChild, nil
 }
 
 // waitAndOpen produces the "ready" line and (optionally) opens the
