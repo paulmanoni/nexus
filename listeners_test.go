@@ -121,6 +121,80 @@ func TestListeners_DualStackBindResolves(t *testing.T) {
 	}
 }
 
+// TestFillListenerAddrs verifies the auto-fill: empty Addrs derive
+// from publicAddr per scope; explicit Addrs pass through. This is
+// the load-bearing helper that makes split deployments work without
+// per-binary main.go — the manifest's per-deployment port flows
+// into the public listener and admin = public + offset.
+func TestFillListenerAddrs(t *testing.T) {
+	in := map[string]Listener{
+		"public":   {},
+		"admin":    {Scope: ScopeAdmin},
+		"internal": {Scope: ScopeInternal},
+		"explicit": {Addr: "127.0.0.1:5555", Scope: ScopeAdmin},
+	}
+	out := fillListenerAddrs(in, ":8081", 1000)
+
+	if out["public"].Addr != ":8081" {
+		t.Errorf("public: want :8081, got %q", out["public"].Addr)
+	}
+	if out["admin"].Addr != ":9081" {
+		t.Errorf("admin: want :9081, got %q", out["admin"].Addr)
+	}
+	if out["internal"].Addr != ":10081" {
+		t.Errorf("internal: want :10081, got %q", out["internal"].Addr)
+	}
+	if out["explicit"].Addr != "127.0.0.1:5555" {
+		t.Errorf("explicit: want pass-through, got %q", out["explicit"].Addr)
+	}
+}
+
+// TestFillListenerAddrs_DefaultsWhenEmpty verifies the framework's
+// :8080 fallback kicks in for plain `go run` (no manifest defaults).
+func TestFillListenerAddrs_DefaultsWhenEmpty(t *testing.T) {
+	in := map[string]Listener{
+		"public": {},
+		"admin":  {Scope: ScopeAdmin},
+	}
+	out := fillListenerAddrs(in, "", 0)
+	if out["public"].Addr != ":8080" {
+		t.Errorf("public default: want :8080, got %q", out["public"].Addr)
+	}
+	if out["admin"].Addr != ":9080" {
+		t.Errorf("admin default: want :9080, got %q", out["admin"].Addr)
+	}
+}
+
+// TestAutoListeners_PortMath unit-tests the port arithmetic.
+func TestAutoListeners_PortMath(t *testing.T) {
+	cases := []struct {
+		in     string
+		offset int
+		public string
+		admin  string
+	}{
+		{":8080", 1000, ":8080", ":9080"},
+		{"127.0.0.1:8081", 1000, "127.0.0.1:8081", "127.0.0.1:9081"},
+		{"", 1000, ":8080", ":9080"},
+	}
+	for _, c := range cases {
+		got, err := autoListeners(c.in, c.offset)
+		if err != nil {
+			t.Errorf("autoListeners(%q, %d): %v", c.in, c.offset, err)
+			continue
+		}
+		if got["public"].Addr != c.public {
+			t.Errorf("public for %q+%d: want %q, got %q", c.in, c.offset, c.public, got["public"].Addr)
+		}
+		if got["admin"].Addr != c.admin {
+			t.Errorf("admin for %q+%d: want %q, got %q", c.in, c.offset, c.admin, got["admin"].Addr)
+		}
+		if got["admin"].Scope != ScopeAdmin {
+			t.Errorf("admin scope for %q: want ScopeAdmin, got %v", c.in, got["admin"].Scope)
+		}
+	}
+}
+
 // TestListeners_BackCompat_NoConfig verifies the default single-listener
 // path keeps working: /__nexus/* stays reachable when Listeners is empty.
 func TestListeners_BackCompat_NoConfig(t *testing.T) {

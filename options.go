@@ -116,13 +116,46 @@ type moduleAnnotator interface {
 	setModule(name string)
 }
 
-// Provide registers one or more constructor functions with the dep graph.
-// Return types are entered into the graph; parameter types are resolved
-// from it. Same semantics as fx.Provide.
+// Provide registers one or more constructor functions with the dep
+// graph and auto-detects two opt-in extensions:
 //
-//	nexus.Provide(NewDBManager, NewCacheManager)
+//   - Resource providers: any returned value implementing
+//     NexusResourceProvider has its resource.Resource list registered
+//     with the app at boot. Add UseReporter alongside and OnResourceUse
+//     wires automatically — service→resource edges appear on first
+//     UsingCtx call without manual plumbing.
+//
+//   - Service wrappers: when the first return is a *T whose struct
+//     anonymously embeds *nexus.Service, the constructor's params are
+//     scanned for resource providers and other service wrappers. The
+//     resulting (resourceDeps, serviceDeps) lists are recorded on the
+//     service's registry entry so the dashboard's architecture view
+//     draws service→service and service→resource edges at the SERVICE
+//     layer with no extra annotation.
+//
+// Constructors that don't trigger either detector behave like plain
+// fx.Provide — return types enter the graph, params resolve from it.
+// Mixed sets (one service wrapper + one resource manager + one plain
+// helper) work in a single call.
+//
+//	nexus.Provide(
+//	    NewDBManager,        // resource provider — auto-registered
+//	    NewCacheManager,     // ditto
+//	    NewAdvertsService,   // service wrapper — deps recorded
+//	    NewClock,            // plain type — just enters the graph
+//	)
 func Provide(fns ...any) Option {
-	return rawOption{o: fx.Provide(fns...)}
+	opts := make([]fx.Option, 0, len(fns)+1)
+	opts = append(opts, fx.Provide(fns...))
+	for _, fn := range fns {
+		if inv := resourceAutoRegisterInvoke(fn); inv != nil {
+			opts = append(opts, inv)
+		}
+		if inv := serviceDepsRegisterInvoke(fn); inv != nil {
+			opts = append(opts, inv)
+		}
+	}
+	return rawOption{o: fx.Options(opts...)}
 }
 
 // Supply puts concrete values into the graph (no constructor). Useful for
@@ -145,63 +178,20 @@ func Invoke(fns ...any) Option {
 	return rawOption{o: fx.Invoke(fns...)}
 }
 
-// ProvideResources is like Provide but also auto-registers each constructed
-// instance's resources at boot. For any fn whose returned value implements
-// NexusResourceProvider, every resource.Resource it reports is passed to
-// app.Register; if it also satisfies UseReporter (e.g. *multi.Registry),
-// app.OnResourceUse is wired automatically so resolver→resource edges
-// appear on first UsingCtx call.
+// ProvideResources is a back-compat alias for Provide. The detection
+// nexus.Provide now does covers resource auto-registration too.
 //
-// This replaces the old pattern of a "resources" module full of
-// resource.NewDatabase / NewCache calls — managers now describe their
-// resources themselves via NexusResources() []resource.Resource, and
-// a single ProvideResources does all the wiring.
-//
-//	nexus.ProvideResources(ProvideDBs, NewCacheManager)
-//
-// Types that don't implement either interface fall through to a plain
-// Provide — so it's safe to pass mixed providers.
+// Deprecated: use nexus.Provide.
 func ProvideResources(fns ...any) Option {
-	opts := []fx.Option{fx.Provide(fns...)}
-	for _, fn := range fns {
-		if inv := resourceAutoRegisterInvoke(fn); inv != nil {
-			opts = append(opts, inv)
-		}
-	}
-	return rawOption{o: fx.Options(opts...)}
+	return Provide(fns...)
 }
 
-// ProvideService is like Provide but inspects the constructor's
-// parameters for resources (NexusResourceProvider) and other services
-// (service-wrapper types — pointer to a struct that anonymously
-// embeds *nexus.Service) and records them onto the service's
-// registry entry. The dashboard uses those records to draw
-// architecture edges at the SERVICE layer:
+// ProvideService is a back-compat alias for Provide. Service-wrapper
+// detection is part of Provide now.
 //
-//	func NewAdvertsService(app *nexus.App, users *UsersService, db *DBManager) *AdvertsService {
-//	    return &AdvertsService{Service: app.Service("adverts")}
-//	}
-//
-//	nexus.ProvideService(NewAdvertsService)
-//	// → registry sees: adverts.ServiceDeps = ["users"]
-//	//                  adverts.ResourceDeps = [<whatever db.NexusResources() returns>]
-//
-// The constructed service still flows into fx's dep graph the same
-// way fx.Provide would wire it, so downstream consumers (other
-// services, resolvers) get it injected normally. The ONLY side effect
-// is the registry metadata that feeds the architecture view — nothing
-// observable happens at runtime.
-//
-// Only the first return value is inspected; trailing (T, error)
-// returns are supported. Constructors that don't return a service
-// wrapper are still Provide'd (same as plain Provide), but no service
-// deps are recorded — the option gracefully no-ops in that case.
+// Deprecated: use nexus.Provide.
 func ProvideService(fn any) Option {
-	opts := []fx.Option{fx.Provide(fn)}
-	if inv := serviceDepsRegisterInvoke(fn); inv != nil {
-		opts = append(opts, inv)
-	}
-	return rawOption{o: fx.Options(opts...)}
+	return Provide(fn)
 }
 
 // serviceDepsRegisterInvoke synthesizes an fx.Invoke that takes the
@@ -265,7 +255,11 @@ func serviceDepsRegisterInvoke(fn any) fx.Option {
 
 // resourceAutoRegisterInvoke synthesizes an fx.Invoke(func(app *App, instance T))
 // that, at boot, registers resources and wires OnResourceUse for the instance.
-// Returns nil when fn isn't a single-return constructor.
+// Returns nil when fn isn't a function, returns nothing, or its first
+// return type doesn't implement NexusResourceProvider or UseReporter —
+// skipping the invoke avoids forcing a *App dep on the graph for plain
+// types (a regression that surfaces when nexus.Provide is used for
+// unrelated values like func() string in tests).
 func resourceAutoRegisterInvoke(fn any) fx.Option {
 	rt := reflect.TypeOf(fn)
 	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
@@ -273,6 +267,11 @@ func resourceAutoRegisterInvoke(fn any) fx.Option {
 	}
 	// First return is the constructed instance. Ignore trailing error return.
 	outType := rt.Out(0)
+	providerIface := reflect.TypeOf((*NexusResourceProvider)(nil)).Elem()
+	reporterIface := reflect.TypeOf((*UseReporter)(nil)).Elem()
+	if !outType.Implements(providerIface) && !outType.Implements(reporterIface) {
+		return nil
+	}
 
 	invokeType := reflect.FuncOf(
 		[]reflect.Type{reflect.TypeOf((*App)(nil)), outType},

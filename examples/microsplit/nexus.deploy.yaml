@@ -8,14 +8,27 @@ deployments:
   # Monolith owns every module by default; omit `owns` to mean "all".
   monolith:
     port: 8080
+    # `listeners:` declares extra bound listeners per deployment.
+    # The "public" listener is implicit at `port:` above. Each entry
+    # needs `scope:` (public / admin / internal); `addr:` is optional
+    # and auto-derived (admin = port+1000, internal = port+2000).
+    listeners:
+      admin:
+        scope: admin
 
   users-svc:
     owns: [users]
     port: 8081
+    listeners:
+      admin:
+        scope: admin
 
   checkout-svc:
     owns: [checkout]
     port: 8080
+    listeners:
+      admin:
+        scope: admin
 
 # Per-peer transport settings.
 #

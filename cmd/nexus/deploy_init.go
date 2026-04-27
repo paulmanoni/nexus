@@ -119,6 +119,13 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 	if spec.Port > 0 {
 		fmt.Fprintf(&b, "\t\tAddr:       fmt_addr(%q, %d),\n", "PORT", spec.Port)
 	}
+	if len(spec.Listeners) > 0 {
+		listenersExpr, err := manifestListenersExpr(spec.Listeners)
+		if err != nil {
+			return "", fmt.Errorf("listeners for %q: %w", deployment, err)
+		}
+		fmt.Fprintln(&b, "\t\tListeners: "+listenersExpr+",")
+	}
 	if len(manifest.Peers) > 0 {
 		fmt.Fprintln(&b, "\t\tTopology: nexus.Topology{")
 		fmt.Fprintln(&b, "\t\t\tPeers: map[string]nexus.Peer{")
@@ -254,6 +261,56 @@ func tagToURLEnvVar(tag string) string {
 	out := strings.ToUpper(tag)
 	out = strings.ReplaceAll(out, "-", "_")
 	return out + "_URL"
+}
+
+// manifestListenersExpr renders the listeners map from a deployment
+// spec into a Go composite literal. Empty Addr stays empty in the
+// emitted struct — the framework's fillListenerAddrs auto-fills
+// from cfg.Addr at boot. Unknown scope values fail the build with a
+// clear message so YAML typos surface immediately.
+func manifestListenersExpr(listeners map[string]ListenerSpec) (string, error) {
+	if len(listeners) == 0 {
+		return "nil", nil
+	}
+	names := make([]string, 0, len(listeners))
+	for n := range listeners {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	b.WriteString("map[string]nexus.Listener{\n")
+	for _, name := range names {
+		l := listeners[name]
+		scope, err := scopeLiteral(l.Scope)
+		if err != nil {
+			return "", fmt.Errorf("listener %q: %w", name, err)
+		}
+		fmt.Fprintf(&b, "\t\t\t%q: {\n", name)
+		fmt.Fprintf(&b, "\t\t\t\tScope: %s,\n", scope)
+		if l.Addr != "" {
+			fmt.Fprintf(&b, "\t\t\t\tAddr: %q,\n", l.Addr)
+		}
+		fmt.Fprintln(&b, "\t\t\t},")
+	}
+	b.WriteString("\t\t}")
+	return b.String(), nil
+}
+
+// scopeLiteral maps the YAML scope string to its Go constant. Returns
+// an error for unknown values so the build fails before producing a
+// binary that ignores the scope (silent dashboard leak).
+func scopeLiteral(scope string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "", "public":
+		return "nexus.ScopePublic", nil
+	case "admin":
+		return "nexus.ScopeAdmin", nil
+	case "internal":
+		return "nexus.ScopeInternal", nil
+	default:
+		return "", fmt.Errorf("unknown scope %q (want public, admin, or internal)", scope)
+	}
 }
 
 // urlEntryExpr builds the Go source for one entry in a Peer.URLs

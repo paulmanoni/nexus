@@ -58,6 +58,43 @@ type DeploymentSpec struct {
 	// also uses this for its readiness probe, falling back to the
 	// --base-port auto-assignment when omitted.
 	Port int `yaml:"port,omitempty"`
+
+	// Listeners declares additional bound listeners with explicit
+	// scopes — typically an admin listener for the dashboard:
+	//
+	//	deployments:
+	//	  users-svc:
+	//	    port: 8081
+	//	    listeners:
+	//	      admin:
+	//	        scope: admin
+	//	        # addr defaults to port+1000 (:9081) when omitted
+	//
+	// The "public" listener is implicit at `port:` — these add to
+	// it. Each entry needs `scope:` (public / admin / internal);
+	// `addr:` is optional and auto-derived from the public port
+	// when missing (admin = port+1000, internal = port+2000).
+	//
+	// When both manifest listeners and main.go's Config.Listeners
+	// are declared, the explicit Config.Listeners wins (operator
+	// override path).
+	Listeners map[string]ListenerSpec `yaml:"listeners,omitempty"`
+}
+
+// ListenerSpec is one listener declaration in the manifest. Mirrors
+// nexus.Listener's runtime shape with YAML-friendly types.
+type ListenerSpec struct {
+	// Scope is the listener's scope — "public", "admin", or
+	// "internal". Required. Unknown values fail `nexus build` so
+	// typos surface at the CI gate, not at first request.
+	Scope string `yaml:"scope"`
+
+	// Addr is the bind address. Optional — when empty, the
+	// framework derives it from the public port: admin →
+	// port+1000, internal → port+2000. Set explicitly when the
+	// auto-derivation doesn't fit (e.g. admin on a private
+	// loopback "127.0.0.1:7000").
+	Addr string `yaml:"addr,omitempty"`
 }
 
 // PeerSpec is the per-peer transport binding consumed by codegen'd
