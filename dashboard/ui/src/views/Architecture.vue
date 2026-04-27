@@ -217,58 +217,40 @@ async function load() {
   })
 
   // ---------------------------------------------------------------
-  // Grouping respects SERVICE OWNERSHIP when the endpoint declared
-  // it explicitly (handler took a *Service wrapper as a dep), and
-  // falls back to the enclosing nexus.Module() name when auto-
-  // routed (handlers without a *Service param). This handles two
-  // common shapes correctly:
+  // Hierarchy: MODULE → CONTROLLERS → SERVICES.
   //
-  //   1. one module = one service (microsplit, oats device REST):
-  //      both rules pick the same key — net result, one card.
+  //   - Module is the container card (one nexus.Module wrapper = one
+  //     card on the canvas).
+  //   - Each endpoint row inside the card represents a controller
+  //     (handler) declared in that module.
+  //   - Services that controllers depend on (via *Service wrappers
+  //     in the handler signature, or via the owning service's
+  //     constructor params) render as small dep nodes on the right —
+  //     not as cards. They're consumed, not containers.
   //
-  //   2. one module wraps multiple services (oats core/controllers
-  //      where SessionService and UtilService each own a subset of
-  //      the GraphQL fields): each service gets its own card,
-  //      reflecting the actual handler-to-service ownership. The
-  //      module name surfaces as a tag on the card header instead.
-  //
-  // Without this split, services explicitly named via a *Service
-  // wrapper got demoted to dep-nodes when their containing module
-  // had a different name — burying the ownership the framework
-  // had carefully recorded.
+  // Endpoints registered outside any nexus.Module fall back to the
+  // owning service name as the group key (no module to land in).
   // ---------------------------------------------------------------
   const groups = new Map() // groupKey -> { key, name, isModule, service, endpoints[], description }
   const serviceIndex = {}
   for (const s of epData.services || []) serviceIndex[s.Name] = s
   for (const e of epData.endpoints || []) {
     const moduleName = e.Module || ''
-    // Auto-routed endpoints (no *Service param) group by module —
-    // the synthesized service has no identity worth surfacing.
-    // Endpoints with explicit *Service wrappers group by service —
-    // that's the one the developer actually named and described.
-    const groupKey = e.ServiceAutoRouted
-      ? (moduleName ? `mod:${moduleName}` : `svc:${e.Service}`)
-      : `svc:${e.Service}`
-    const groupName = e.ServiceAutoRouted ? (moduleName || e.Service) : e.Service
+    const groupKey = moduleName ? `mod:${moduleName}` : `svc:${e.Service}`
     let g = groups.get(groupKey)
     if (!g) {
       g = {
         key: groupKey,
-        name: groupName,
-        // isModule reflects HOW the group was keyed:
-        //   mod:* → header reads "module"  (auto-routed endpoints)
-        //   svc:* → header reads "service" (explicit *Service wrapper)
-        // The previous "always true" was a bug from the
-        // group-by-service patch — service-keyed cards labeled as
-        // "module" in their header, which is what the user spotted.
-        isModule: groupKey.startsWith('mod:'),
+        name: moduleName || e.Service,
+        isModule: !!moduleName,
+        // service: the single owning service for this group, if every
+        // endpoint in the group shares one. When endpoints from
+        // multiple services land in one module (the oats core/
+        // controllers shape), this stays '' so each row resolves
+        // its own service via e.Service in ServiceNode.
         service: e.Service,
         endpoints: [],
-        description: serviceIndex[e.Service]?.Description || '',
-        // moduleLabel surfaces the nexus.Module() origin as a small
-        // tag on the header when grouping is by service. Empty when
-        // grouping by module (the title already names the module).
-        moduleLabel: e.ServiceAutoRouted ? '' : moduleName,
+        description: serviceIndex[moduleName || e.Service]?.Description || '',
       }
       groups.set(groupKey, g)
     }
@@ -306,7 +288,6 @@ async function load() {
       groupKey: g.key,
       name: g.name,
       isModule: g.isModule,
-      moduleLabel: g.moduleLabel || '',
       service: g.service,
       description: g.description,
       endpoints: g.endpoints,
