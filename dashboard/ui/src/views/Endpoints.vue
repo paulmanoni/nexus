@@ -20,14 +20,22 @@ async function load() {
 }
 onMounted(load)
 
+// Group endpoints by their nexus.Module() name so the sidebar
+// reflects the project's container hierarchy (module > controllers).
+// Endpoints registered outside any module fall back to the owning
+// service name — those are bare app.AsRest(...) calls without a
+// module wrapper.
 const grouped = computed(() => {
   const f = filter.value.toLowerCase()
   const list = f
-    ? endpoints.value.filter(e => (e.Name + e.Service + e.Path).toLowerCase().includes(f))
+    ? endpoints.value.filter(e => (e.Name + e.Service + e.Module + e.Path).toLowerCase().includes(f))
     : endpoints.value
-  const byService = {}
-  for (const e of list) (byService[e.Service] ||= []).push(e)
-  return byService
+  const byModule = {}
+  for (const e of list) {
+    const key = e.Module || e.Service
+    ;(byModule[key] ||= []).push(e)
+  }
+  return byModule
 })
 
 function tagLabel(e) {
@@ -65,8 +73,8 @@ function mwDesc(name) {
         <input v-model="filter" placeholder="Search endpoints" />
       </div>
       <div class="list">
-        <div v-for="(list, svc) in grouped" :key="svc" class="service-group">
-          <div class="svc-name">{{ svc }}</div>
+        <div v-for="(list, mod) in grouped" :key="mod" class="service-group">
+          <div class="svc-name">{{ mod }}</div>
           <button
             v-for="e in list"
             :key="e.Service + ':' + e.Name"
@@ -139,10 +147,15 @@ aside { border-right: 1px solid var(--border); display: flex; flex-direction: co
 .service-group { margin-top: 12px; }
 .service-group:first-child { margin-top: 4px; }
 .svc-name { padding: 4px 10px 6px; font-size: 10.5px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.08em; font-weight: 600; }
-.endpoint { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; border: 1px solid transparent; background: transparent; border-radius: var(--radius); font-family: var(--font-mono); font-size: 12px; margin-bottom: 1px; color: var(--text); font-weight: 500; }
+.endpoint { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; border: 1px solid transparent; background: transparent; border-radius: var(--radius); font-family: var(--font-mono); font-size: 12px; margin-bottom: 1px; color: var(--text); font-weight: 500; }
 .endpoint:hover { background: var(--bg-hover); }
 .endpoint.active { background: var(--bg-active); border-color: transparent; color: var(--accent); }
-.ep-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Long names (saveCandidateQuestionsResponses, etc.) wrap to a
+   second line instead of being truncated with an ellipsis — keeps
+   the identifier readable in the 320px sidebar without forcing a
+   wider column. flex-start aligns the tag chip with the first line
+   of the wrapped name. */
+.ep-name { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; padding-top: 1px; }
 .chev { color: var(--text-dim); opacity: 0; transition: opacity 120ms; }
 .endpoint:hover .chev, .endpoint.active .chev { opacity: 1; }
 .tag { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 700; flex-shrink: 0; letter-spacing: 0.02em; }
