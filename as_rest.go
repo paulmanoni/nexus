@@ -119,7 +119,7 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		deps := args[1:]
 
 		service := resolveEndpointService(cfg.service, cfg.module, deps, depTypes, app)
-		finalPath := cfg.pathPrefix + path
+		finalPath := app.PrefixPath(cfg.pathPrefix + path)
 		opName := opNameFromFactory(factory, method+" "+finalPath)
 
 		// Invoke the factory once to extract the gin.HandlerFunc.
@@ -267,7 +267,8 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 
 		// Resolve the final mounted path by prefixing — module-level
 		// or per-endpoint RoutePrefix stamped cfg.pathPrefix for us.
-		finalPath := cfg.pathPrefix + path
+		// app.PrefixPath wraps the deployment-wide prefix on top.
+		finalPath := app.PrefixPath(cfg.pathPrefix + path)
 		opName := opNameFromFunc(sh.funcVal.Interface(), method+" "+finalPath)
 		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath)
 

@@ -79,6 +79,36 @@ type DeploymentSpec struct {
 	// are declared, the explicit Config.Listeners wins (operator
 	// override path).
 	Listeners map[string]ListenerSpec `yaml:"listeners,omitempty"`
+
+	// Prefix is prepended to every user-mounted route in this
+	// deployment's binary — REST endpoints, the GraphQL POST mount,
+	// and WebSocket upgrades. Framework routes (/__nexus, /health,
+	// /ready) are not prefixed by design so liveness probes and
+	// the dashboard mount stay at fixed paths.
+	//
+	// Lets the same source tree mount under different roots per
+	// deployment, which is the typical shape when a single host
+	// fronts multiple services via path-based ingress:
+	//
+	//	deployments:
+	//	  uaa-svc:
+	//	    prefix: /oats-uaa
+	//	    owns: [uaa]
+	//	    port: 8081
+	//	  interview-svc:
+	//	    prefix: /oats-interview
+	//	    owns: [interview]
+	//	    port: 8082
+	//
+	// Then GraphQL lands at /oats-uaa/graphql vs /oats-interview/graphql,
+	// and REST routes get the same prefix.
+	//
+	// The prefix wraps any nexus.RoutePrefix(...) declared in source:
+	// manifest prefix is the outermost frame (the deployment-wide
+	// mount root), source prefix is the per-module group. With both,
+	// `/oats-uaa` (manifest) + `/users` (Module RoutePrefix) +
+	// `/:id` (AsRest path) = /oats-uaa/users/:id.
+	Prefix string `yaml:"prefix,omitempty"`
 }
 
 // ListenerSpec is one listener declaration in the manifest. Mirrors

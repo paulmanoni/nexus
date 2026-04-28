@@ -137,12 +137,16 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 
 		// Per-op registry entry — one row per (path, type) so the
 		// dashboard's Endpoints tab lists each handler separately.
-		endpointName := "WS " + path + " " + msgType
+		// The recorded Path is the actual mounted URL (prefixed) so
+		// dashboard testers and operator copy/paste hit the live
+		// route, not the source-declared form.
+		mountedPath := app.PrefixPath(path)
+		endpointName := "WS " + mountedPath + " " + msgType
 		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
 			Name:      endpointName,
 			Transport: registry.WebSocket,
 			Method:    msgType,
-			Path:      path,
+			Path:      mountedPath,
 		})
 		recordEndpointDeps(app, service, endpointName, deps, sh.depTypes)
 		return nil
@@ -199,7 +203,8 @@ func mountWSEndpoint(app *App, lc fx.Lifecycle, ep *wsEndpoint, cfg *wsConfig, f
 		},
 	})
 
-	endpointName := "WS " + ep.path
+	mountedPath := app.PrefixPath(ep.path)
+	endpointName := "WS " + mountedPath
 	chain, _ := buildEndpointChain(
 		app, ep.service,
 		ep.service+".ws."+firstMsgType,
@@ -207,7 +212,7 @@ func mountWSEndpoint(app *App, lc fx.Lifecycle, ep *wsEndpoint, cfg *wsConfig, f
 		endpointName,
 		cfg.bundles, hub.ServeGin,
 	)
-	app.engine.GET(ep.path, chain...)
+	app.engine.GET(mountedPath, chain...)
 }
 
 // dispatchWSMessage unmarshals the envelope, looks up the handler for the
