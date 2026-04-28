@@ -283,7 +283,23 @@ func renderShadowStub(m modInfo) ([]byte, error) {
 	fmt.Fprintln(&b, "}")
 	fmt.Fprintln(&b)
 
+	// Dedupe by OpName: a handler bound to multiple routes (e.g. an
+	// OAuth endpoint registered as both POST and GET, or under two
+	// paths) appears once per AsRest call in m.Endpoints. The shadow
+	// stub names methods after the handler, so two registrations of
+	// the same handler would emit `func (s *Service) X` twice and
+	// fail to compile. The cross-module client only needs one entry
+	// point per handler — both routes run identical code on the
+	// peer — so keep the first occurrence.
+	seenOp := make(map[string]struct{}, len(m.Endpoints))
 	for _, ep := range m.Endpoints {
+		if ep.OpName == "" {
+			continue
+		}
+		if _, dup := seenOp[ep.OpName]; dup {
+			continue
+		}
+		seenOp[ep.OpName] = struct{}{}
 		writeShadowMethod(&b, ep)
 	}
 
