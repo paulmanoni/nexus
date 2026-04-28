@@ -10,6 +10,7 @@ package nexus
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,13 @@ type App struct {
 	// means "/graphql" (the DefaultGraphQLPath const). Config.GraphQLPath
 	// and the WithGraphQLPath app option both write here.
 	graphqlPath string
+	// routePrefix is prepended to every user-mounted route (REST,
+	// GraphQL, WebSocket) at registration time. Set from
+	// Config.Server.RoutePrefix (which DeploymentDefaults populates
+	// from nexus.deploy.yaml's per-deployment `prefix:`). Empty
+	// disables prefixing. Normalized once at newApp time so per-
+	// route mount sites can concatenate without re-trimming.
+	routePrefix string
 	// dashboardMw is the ordered list of gin.HandlerFunc realizations
 	// that guard /__nexus. WithDashboardMiddleware + Config.DashboardMiddleware
 	// populate it; Mount applies them to the route group.
@@ -168,6 +176,7 @@ func New(cfg Config) *App {
 		rlStore:       cfg.Stores.RateLimit,
 		metricsStore:  cfg.Stores.Metrics,
 		listeners:     listeners,
+		routePrefix:   normalizeRoutePrefix(cfg.Server.RoutePrefix),
 	}
 	if traceCapacity > 0 {
 		a.bus = trace.NewBus(traceCapacity)
@@ -291,6 +300,37 @@ func (a *App) Peer(tag string) (Peer, bool) {
 func (a *App) Topology() Topology { return a.topology }
 func (a *App) Metrics() metrics.Store       { return a.metricsStore }
 func (a *App) Cache() *cache.Manager        { return a.cacheMgr }
+
+// RoutePrefix returns the deployment-wide path prefix applied to
+// every user-mounted route (REST, GraphQL, WebSocket). Empty when
+// no manifest `prefix:` (or Config.Server.RoutePrefix) was set.
+func (a *App) RoutePrefix() string { return a.routePrefix }
+
+// PrefixPath returns p with the deployment route prefix prepended.
+// Mount sites use this so a single binary can be served behind a
+// path-based ingress without each registration re-implementing the
+// prepend. Both inputs are expected to start with "/"; the helper
+// is a noop when the prefix is empty.
+func (a *App) PrefixPath(p string) string {
+	if a.routePrefix == "" {
+		return p
+	}
+	return a.routePrefix + p
+}
+
+// normalizeRoutePrefix tidies a user-provided prefix so concatenation
+// at mount sites stays trivial: ensures a leading "/", strips a
+// trailing "/", and treats "/" alone as empty (no-op prefix).
+func normalizeRoutePrefix(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return strings.TrimRight(p, "/")
+}
 func (a *App) Run(addr string) error {
 	a.cronSched.Start()
 	return a.engine.Run(addr)

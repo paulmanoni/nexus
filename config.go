@@ -167,6 +167,21 @@ type ServerConfig struct {
 	// (admin = port+1000, internal = port+2000); explicit Addrs
 	// are passed through unchanged.
 	Listeners map[string]Listener
+
+	// RoutePrefix is prepended to every user-mounted route — REST
+	// endpoints, the GraphQL POST mount, and WebSocket upgrades —
+	// so a single binary can be served behind a path-based ingress.
+	// Framework routes (/__nexus, /health, /ready) are not prefixed.
+	//
+	// Typical use: per-deployment routing in a shared-domain setup,
+	// e.g. /oats-uaa/* on the uaa-svc binary and /oats-interview/*
+	// on the interview-svc binary. Set in source via Config or
+	// declaratively via nexus.deploy.yaml's `prefix:` per deployment;
+	// the manifest value lands here through DeploymentDefaults.
+	//
+	// Leading slash is required; trailing slash is trimmed at apply
+	// time so paths concatenate cleanly.
+	RoutePrefix string
 }
 
 // MiddlewareConfig groups every middleware-related knob the

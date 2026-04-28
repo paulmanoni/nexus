@@ -38,6 +38,13 @@ type DeploymentDefaults struct {
 	// listener at port+1000, etc.) without main.go touching the
 	// listener struct.
 	Listeners map[string]Listener
+
+	// RoutePrefix is prepended to every user-mounted route in this
+	// binary — REST, GraphQL, and WebSocket. Framework routes
+	// (/__nexus/*, /health, /ready) are unprefixed by design so
+	// liveness probes and the dashboard mount stay at fixed paths.
+	// Empty disables prefixing.
+	RoutePrefix string
 }
 
 var (
@@ -109,6 +116,9 @@ func resolveConfig(cfg Config) Config {
 		}
 		if len(cfg.Server.Listeners) == 0 && len(defaults.Listeners) > 0 {
 			cfg.Server.Listeners = defaults.Listeners
+		}
+		if cfg.Server.RoutePrefix == "" {
+			cfg.Server.RoutePrefix = defaults.RoutePrefix
 		}
 	}
 	if cfg.Deployment == "" {

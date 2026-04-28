@@ -119,6 +119,9 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 	if spec.Port > 0 {
 		fmt.Fprintf(&b, "\t\tAddr:       fmt_addr(%q, %d),\n", "PORT", spec.Port)
 	}
+	if spec.Prefix != "" {
+		fmt.Fprintf(&b, "\t\tRoutePrefix: %q,\n", spec.Prefix)
+	}
 	if len(spec.Listeners) > 0 {
 		listenersExpr, err := manifestListenersExpr(spec.Listeners)
 		if err != nil {

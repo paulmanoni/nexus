@@ -306,7 +306,12 @@ func mountGroup(app *App, g *pathGroup) error {
 	}
 	opts := append([]gql.Option(nil), g.opts...)
 	opts = append(opts, gql.WithServiceForField(func(name string) string { return fieldService[name] }))
-	gql.Mount(app.Engine(), app.Registry(), app.Bus(), g.owner.Name(), g.path, &schema, opts...)
+	// Prefix the GraphQL mount with the deployment-wide route prefix
+	// so e.g. uaa-svc serves at /oats-uaa/graphql while interview-svc
+	// serves at /oats-interview/graphql. Source-declared per-service
+	// AtGraphQL paths are preserved beneath the prefix.
+	mountedPath := app.PrefixPath(g.path)
+	gql.Mount(app.Engine(), app.Registry(), app.Bus(), g.owner.Name(), mountedPath, &schema, opts...)
 
 	for _, p := range g.partitions {
 		for _, q := range p.queries {
