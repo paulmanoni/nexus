@@ -470,19 +470,39 @@ async function load() {
       endpointGroup[`${e.Service}.${e.Name || `${e.Method} ${e.Path}`}`] = g.key
     }
   }
+  // Dedupe by (source, target). When N endpoints in the same module
+  // all use the same dep, we draw ONE card-level edge instead of N
+  // overlapping per-op lines. The edge stores the list of ops it
+  // represents; selection + flash logic looks up by op name to find
+  // which edge to highlight.
+  const edgeByKey = new Map()
+  function pushAggregatedEdge(src, tgt, base) {
+    const k = `${src}->${tgt}`
+    let edge = edgeByKey.get(k)
+    if (edge) {
+      // Same source/target seen before → just record this op as one
+      // more user of the existing edge.
+      if (base.op) edge.data.ops.push(base.op)
+      return
+    }
+    edge = {
+      id: `e:${k}`,
+      source: src,
+      target: tgt,
+      markerEnd: MarkerType.ArrowClosed,
+      data: { ...base, ops: base.op ? [base.op] : [] },
+    }
+    edgeByKey.set(k, edge)
+    edgeList.push(edge)
+  }
   for (const e of epData.endpoints || []) {
     const opName = e.Name || `${e.Method} ${e.Path}`
     const groupKey = endpointGroup[`${e.Service}.${opName}`]
     if (!groupKey) continue
     // Resource edges.
     for (const rName of e.Resources || []) {
-      edgeList.push({
-        id: `e:${groupKey}.${opName}->res:${rName}`,
-        source: groupKey,
-        sourceHandle: `op:${opName}`,
-        target: `res:${rName}`,
-        markerEnd: MarkerType.ArrowClosed,
-        data: { service: e.Service, target: rName, targetKind: 'resource', op: opName },
+      pushAggregatedEdge(groupKey, `res:${rName}`, {
+        service: e.Service, target: rName, targetKind: 'resource', op: opName,
       })
       claimed.add(`${e.Service}|res:${rName}`)
     }
@@ -492,13 +512,8 @@ async function load() {
     // were adopted into the service for schema/metrics routing only.
     if (!e.ServiceAutoRouted && (depServices.has(e.Service) || moduleCardsByName[e.Service])) {
       const tgt = resolveDepTarget(e.Service)
-      edgeList.push({
-        id: `e:${groupKey}.${opName}->${tgt}`,
-        source: groupKey,
-        sourceHandle: `op:${opName}`,
-        target: tgt,
-        markerEnd: MarkerType.ArrowClosed,
-        data: { service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true },
+      pushAggregatedEdge(groupKey, tgt, {
+        service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true,
       })
     }
     // Other-service dep edges. resolveDepTarget routes to the module
@@ -507,13 +522,8 @@ async function load() {
     // otherwise (purely service-level dep).
     for (const sName of e.ServiceDeps || []) {
       const tgt = resolveDepTarget(sName)
-      edgeList.push({
-        id: `e:${groupKey}.${opName}->${tgt}`,
-        source: groupKey,
-        sourceHandle: `op:${opName}`,
-        target: tgt,
-        markerEnd: MarkerType.ArrowClosed,
-        data: { service: e.Service, target: sName, targetKind: 'service', op: opName },
+      pushAggregatedEdge(groupKey, tgt, {
+        service: e.Service, target: sName, targetKind: 'service', op: opName,
       })
     }
   }
@@ -650,17 +660,17 @@ async function load() {
   }
 }
 
-// selectedMatches reports whether edge `e` belongs to the currently-
-// selected op on the currently-selected module group. Edge ids are
-// formatted `e:<groupKey>.<op>-><target>` so we compare against the
-// selection's groupKey + op to decide whether to highlight.
+// selectedMatches reports whether edge `e` carries the currently-
+// selected op on the currently-selected module group. Edges are
+// aggregated by (source, target) and store the list of ops they
+// represent on data.ops; a match means "the edge runs from this
+// group AND the selected op is one of the contributors."
 function selectedMatches(sel, e) {
   if (!sel) return false
-  if (sel.op !== e.data.op) return false
-  // Source is the group that owns this edge — it's encoded as the
-  // edge's source field (e.g. "mod:adverts"). Match against the
-  // selection's groupKey for a direct hit.
-  return e.source === sel.groupKey
+  if (e.source !== sel.groupKey) return false
+  const ops = e.data.ops
+  if (Array.isArray(ops) && ops.length > 0) return ops.includes(sel.op)
+  return false
 }
 
 // restyleEdges returns a fresh edges array with styling applied based on
@@ -760,11 +770,18 @@ function indexEndpointEdges(edgeList) {
       serviceEdgeIdx.set(e.data.service, arr)
       continue
     }
-    if (!e.data.op || e.data.inbound) continue
-    const k = `${e.data.service}.${e.data.op}`
-    const arr = endpointEdgeIdx.get(k) || []
-    arr.push(e.id)
-    endpointEdgeIdx.set(k, arr)
+    if (e.data.inbound) continue
+    // Aggregated edges carry an ops list — index the edge id under
+    // every op it represents so a flash on any of those ops lights
+    // up the single shared edge.
+    const ops = Array.isArray(e.data.ops) ? e.data.ops : []
+    for (const op of ops) {
+      if (!op) continue
+      const k = `${e.data.service}.${op}`
+      const arr = endpointEdgeIdx.get(k) || []
+      arr.push(e.id)
+      endpointEdgeIdx.set(k, arr)
+    }
   }
 }
 // endpointGroupIdx maps "<service>.<op>" → module-group node id so the
