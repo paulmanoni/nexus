@@ -77,12 +77,12 @@ function mwDesc(name) {
           <div class="svc-name">{{ mod }}</div>
           <button
             v-for="e in list"
-            :key="e.Service + ':' + e.Name"
+            :key="e.Service + ':' + e.Name + ':' + (e.Method || '') + ':' + (e.Path || '')"
             class="endpoint"
             :class="[
               e.Transport,
               {
-                active: selected && selected.Name === e.Name && selected.Service === e.Service,
+                active: selected && selected.Name === e.Name && selected.Service === e.Service && selected.Method === e.Method && selected.Path === e.Path,
                 deprecated: e.Deprecated
               }
             ]"
@@ -129,9 +129,9 @@ function mwDesc(name) {
           </div>
         </div>
 
-        <RestTester v-if="selected.Transport === 'rest'" :endpoint="selected" :key="selected.Service + selected.Name" />
-        <GraphQLTester v-else-if="selected.Transport === 'graphql'" :endpoint="selected" :key="selected.Service + selected.Name" />
-        <WsTester v-else-if="selected.Transport === 'websocket'" :endpoint="selected" :key="selected.Service + selected.Name" />
+        <RestTester v-if="selected.Transport === 'rest'" :endpoint="selected" :key="selected.Service + selected.Name + (selected.Method || '') + (selected.Path || '')" />
+        <GraphQLTester v-else-if="selected.Transport === 'graphql'" :endpoint="selected" :key="selected.Service + selected.Name + (selected.Method || '') + (selected.Path || '')" />
+        <WsTester v-else-if="selected.Transport === 'websocket'" :endpoint="selected" :key="selected.Service + selected.Name + (selected.Method || '') + (selected.Path || '')" />
       </div>
     </section>
   </div>
