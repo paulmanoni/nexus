@@ -42,7 +42,6 @@ func autoMountGraphQL(in autoMountIn) error {
 	distinctCount := 0
 	hasUnresolved := false
 	seenTypes := map[reflect.Type]bool{}
-	var distinctTypeNames []string
 	for _, f := range in.Fields {
 		if f.ServiceType == nil || f.Service == nil {
 			hasUnresolved = true
@@ -53,29 +52,38 @@ func autoMountGraphQL(in autoMountIn) error {
 			distinctCount++
 			distinctType = f.ServiceType
 			distinctService = f.Service
-			distinctTypeNames = append(distinctTypeNames, f.ServiceType.String())
 		}
 	}
-	// Zero-service fallback: when the app registered no services but has
-	// handlers without a *Service dep, synthesize a default service so the
-	// schema still mounts. Lets minimal apps skip service modeling entirely
-	// (single /graphql endpoint, handlers are plain funcs with deps).
-	if hasUnresolved && distinctCount == 0 {
-		distinctService = in.App.Service(defaultServiceName)
-		distinctType = reflect.TypeFor[*Service]()
-		distinctCount = 1
+	// Default-service fallback: any handler without a *Service dep
+	// mounts on a synthesized default service partition. This covers
+	// two cases uniformly:
+	//   - zero named services (minimal apps with plain-func handlers)
+	//   - 2+ named services where some handlers (e.g. a top-level
+	//     HelloWorld) intentionally don't belong to any of them
+	// The default partition lives alongside the named ones; queries
+	// land on the same /graphql mount, so the operator sees one
+	// schema with all fields.
+	var defaultType reflect.Type
+	var defaultService *Service
+	if hasUnresolved {
+		if distinctCount == 1 {
+			// Preserve the historical behavior: a lone named service
+			// still adopts service-less handlers, so users who rely on
+			// that pattern aren't forced to declare a default partition.
+			defaultType = distinctType
+			defaultService = distinctService
+		} else {
+			defaultService = in.App.Service(defaultServiceName)
+			defaultType = reflect.TypeFor[*Service]()
+		}
 	}
 	resolveUnresolved := func(f GqlField) (GqlField, error) {
 		if f.ServiceType != nil && f.Service != nil {
 			return f, nil
 		}
-		if distinctCount == 1 {
-			f.ServiceType = distinctType
-			f.Service = distinctService
-			return f, nil
-		}
-		return f, fmt.Errorf("nexus: GraphQL handler %s lacks a *Service dep and the app has %d services (%s) — add one to the handler's signature or pin it with nexus.OnService[*Svc]()",
-			describeUnresolvedField(f), distinctCount, joinComma(distinctTypeNames))
+		f.ServiceType = defaultType
+		f.Service = defaultService
+		return f, nil
 	}
 
 	// Partition by service type. The service instance is already unwrapped
@@ -458,43 +466,3 @@ func middlewareNames(ms []graph.MiddlewareInfo) []string {
 	return out
 }
 
-// describeUnresolvedField produces a human label for a GqlField that
-// failed service resolution: the GraphQL field name (always present
-// from the resolver builder), plus the kind and the declaring module
-// when known. Used by the autoMountGraphQL error so the operator can
-// jump straight to the AsQuery/AsMutation site instead of grepping.
-func describeUnresolvedField(f GqlField) string {
-	name := "<unknown>"
-	switch v := f.Field.(type) {
-	case graph.QueryField:
-		if n := v.Name(); n != "" {
-			name = n
-		}
-	case graph.MutationField:
-		if n := v.Name(); n != "" {
-			name = n
-		}
-	}
-	kind := "field"
-	switch f.Kind {
-	case graph.FieldKindQuery:
-		kind = "query"
-	case graph.FieldKindMutation:
-		kind = "mutation"
-	}
-	if f.Module != "" {
-		return fmt.Sprintf("%s %q (in module %q)", kind, name, f.Module)
-	}
-	return fmt.Sprintf("%s %q", kind, name)
-}
-
-func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ", "
-		}
-		out += p
-	}
-	return out
-}
