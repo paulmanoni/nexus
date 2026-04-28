@@ -146,6 +146,15 @@ func New(cfg Config) *App {
 	// Engine. Recovery middleware first so panics surface as 500s.
 	engine := gin.New()
 	engine.Use(gin.Recovery())
+	// Per-request access log when gin is in debug mode (the default
+	// for `nexus dev`). Mirrors gin.Default()'s behavior. In release
+	// mode the logger is suppressed — operators usually wire their
+	// own structured logger via Config.Middleware.Global, so we
+	// don't compete with that. Set GIN_MODE=release in prod to
+	// silence the dev access log.
+	if gin.IsDebugging() {
+		engine.Use(gin.Logger())
+	}
 
 	a := &App{
 		engine:        engine,

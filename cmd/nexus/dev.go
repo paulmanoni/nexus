@@ -114,6 +114,18 @@ func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writ
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Manifest-aware codegen: when nexus.deploy.yaml exists in cwd,
+	// pick the monolith deployment (or first when no monolith), emit
+	// zz_deploy_gen.go with that deployment's port + listeners +
+	// topology, and feed it through `go run -overlay`. Without this
+	// `nexus dev` ran plain `go run .` and the manifest's port +
+	// listener config never reached the binary — the framework fell
+	// back to its :8080 / single-listener defaults.
+	overlayPath, devDeployment, manifestErr := prepareDevOverlay(target)
+	if manifestErr != nil {
+		fmt.Fprintf(stderr, "manifest codegen skipped: %v\n", manifestErr)
+	}
+
 	var restartCh chan struct{}
 	if watch {
 		restartCh = make(chan struct{}, 1)
@@ -128,7 +140,17 @@ func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writ
 	// restarts skip the open-browser branch (user already has the tab).
 	first := true
 	for {
-		exited, killChild, err := startDevChild(ctx, target, addr, openOnReady && first, stdout, stderr)
+		// Refresh the overlay on every restart so manifest edits and
+		// new modules picked up by the watcher land in the next boot.
+		// Skipped when the project has no manifest (overlayPath stays
+		// "" and `go run` runs without -overlay just like before).
+		if !first && manifestErr == nil {
+			if p, _, err := prepareDevOverlay(target); err == nil {
+				overlayPath = p
+			}
+		}
+		_ = devDeployment // currently informational; reserved for the banner
+		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -178,9 +200,18 @@ func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writ
 //   - killChild: tear-down hook that SIGTERMs the process group and
 //     escalates to SIGKILL after 5s
 //
+// When overlayPath is non-empty, it's passed via `go run
+// -overlay=...` so the manifest-derived deploy-init (port,
+// listeners, topology) gets compiled into the binary.
+//
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr string, openOnReady bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
-	cmd := exec.Command("go", "run", target)
+func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
+	args := []string{"run"}
+	if overlayPath != "" {
+		args = append(args, "-overlay="+overlayPath)
+	}
+	args = append(args, target)
+	cmd := exec.Command("go", args...)
 	// Tee stdout/stderr through addrFinder so we can detect the
 	// actual bind address from gin's "Listening and serving HTTP on
 	// :PORT" line. The user's own Config.Addr trumps our --addr flag
