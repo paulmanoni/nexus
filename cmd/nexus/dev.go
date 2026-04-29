@@ -29,6 +29,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		addr     string
 		noOpen   bool
+		openDash bool
 		split    bool
 		basePort int
 		tui      bool
@@ -64,15 +65,17 @@ examples/microsplit for the convention.`,
 				return runDevSplit(target, basePort, stdout, stderr)
 			}
 			if tui {
-				return runDevTUI(target, addr, stdout, stderr)
+				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, !noOpen, !noWatch, stdout, stderr)
+			return runDev(target, addr, !noOpen, openDash, !noWatch, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
 		"dashboard address to probe and open (single-process mode)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false,
 		"don't auto-open the browser when the port responds")
+	cmd.Flags().BoolVar(&openDash, "open-dash", false,
+		"open the /__nexus/ admin dashboard instead of the app's root URL")
 	cmd.Flags().BoolVar(&split, "split", false,
 		"boot one subprocess per nexus.DeployAs tag (split mode)")
 	cmd.Flags().IntVar(&basePort, "base-port", 8080,
@@ -108,7 +111,7 @@ func (e *userError) Error() string { return e.msg }
 // When watch is true, runs a fsnotify watcher on the target dir and
 // restarts `go run` on every coalesced source-file change. SIGINT
 // stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -150,7 +153,7 @@ func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writ
 			}
 		}
 		_ = devDeployment // currently informational; reserved for the banner
-		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, stdout, stderr)
+		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -205,7 +208,7 @@ func runDev(target, addr string, openOnReady, watch bool, stdout, stderr io.Writ
 // listeners, topology) gets compiled into the binary.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	args := []string{"run"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
@@ -230,7 +233,7 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	// waitAndOpen runs even when --no-open is set so the user still
 	// gets the green "ready" line — only the browser launch is gated
 	// on openOnReady.
-	go waitAndOpen(ctx, addr, openOnReady, stdout, detectedCh)
+	go waitAndOpen(ctx, addr, openOnReady, openDash, stdout, detectedCh)
 
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
@@ -267,7 +270,7 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 // as --addr, we surface a correction line — a misleading banner is
 // the symptom that drove this code, so making the discrepancy
 // visible is part of the fix.
-func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady bool, stdout io.Writer, detectedCh <-chan string) {
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash bool, stdout io.Writer, detectedCh <-chan string) {
 	flagAddr := normalizeProbeAddr(addr)
 
 	probeOnce := func(target string) bool {
@@ -320,7 +323,10 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady bool, stdo
 			ansiDim, ansiReset, ansiBold, ready, ansiReset, ansiDim, addr, ansiReset)
 	}
 
-	url := dashboardURL(ready)
+	url := clientURL(ready)
+	if openDash {
+		url = dashboardURL(ready)
+	}
 	printReadyLine(stdout, url, openBrowserOnReady)
 	if openBrowserOnReady {
 		_ = openBrowser(url)
@@ -455,6 +461,14 @@ func normalizeProbeAddr(addr string) string {
 func dashboardURL(addr string) string {
 	host := normalizeProbeAddr(addr)
 	return "http://" + host + "/__nexus/"
+}
+
+// clientURL is dashboardURL's app-side counterpart: the root URL the
+// user's own routes serve from. This is what auto-open targets by
+// default — landing on the admin dashboard is opt-in via --open-dash.
+func clientURL(addr string) string {
+	host := normalizeProbeAddr(addr)
+	return "http://" + host + "/"
 }
 
 // openBrowser dispatches to the platform's URL-opening tool. Errors are

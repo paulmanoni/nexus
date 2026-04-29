@@ -35,8 +35,8 @@ import (
 // Picking a TUI mode is deliberately opt-in (--tui) — a TUI takes
 // over the whole terminal and is unfriendly when piping (`nexus dev
 // | grep`); the static-banner mode stays the default.
-func runDevTUI(target, addr string, stdout, stderr io.Writer) error {
-	model := newTUIModel(target, addr)
+func runDevTUI(target, addr string, openDash bool, stdout, stderr io.Writer) error {
+	model := newTUIModel(target, addr, openDash)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	model.prog = prog
 
@@ -61,9 +61,10 @@ func runDevTUI(target, addr string, stdout, stderr io.Writer) error {
 // --- Model ---
 
 type tuiModel struct {
-	target  string
-	addr    string // --addr flag value; the initial probe target
-	bindURL string // resolved HTTP base, populated once we detect "nexus: listening on…"
+	target   string
+	addr     string // --addr flag value; the initial probe target
+	bindURL  string // resolved HTTP base, populated once we detect "nexus: listening on…"
+	openDash bool   // when true, 'o' / header URL points at /__nexus/ instead of /
 
 	width, height int
 	state         tuiState
@@ -103,23 +104,32 @@ const (
 	tuiRestarting
 )
 
-func newTUIModel(target, addr string) *tuiModel {
+func newTUIModel(target, addr string, openDash bool) *tuiModel {
 	return &tuiModel{
-		target:  target,
-		addr:    addr,
-		state:   tuiStarting,
-		maxLogs: 2000,
+		target:   target,
+		addr:     addr,
+		openDash: openDash,
+		state:    tuiStarting,
+		maxLogs:  2000,
 	}
 }
 
-// dashURL returns the URL to render in the header: the resolved
-// bind once we've seen one, otherwise the --addr probe target as a
-// best-effort guess.
+// dashURL returns the URL to render in the header and target when
+// the user hits 'o': the resolved bind once we've seen one, otherwise
+// the --addr probe target as a best-effort guess. Defaults to the
+// app's root URL; flips to /__nexus/ when --open-dash was passed.
 func (m *tuiModel) dashURL() string {
-	if m.bindURL != "" {
-		return m.bindURL + "/__nexus/"
+	suffix := "/"
+	if m.openDash {
+		suffix = "/__nexus/"
 	}
-	return dashboardURL(m.addr)
+	if m.bindURL != "" {
+		return m.bindURL + suffix
+	}
+	if m.openDash {
+		return dashboardURL(m.addr)
+	}
+	return clientURL(m.addr)
 }
 
 // --- Tea messages ---
