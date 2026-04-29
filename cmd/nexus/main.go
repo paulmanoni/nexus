@@ -21,14 +21,61 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
-// Version is stamped in at release time via -ldflags. Defaults to "dev"
-// so unreleased builds (`go run ./cmd/nexus ...`) still produce
-// meaningful output.
-var Version = "dev"
+// Version is the CLI version printed by `nexus version`. Three
+// resolution layers, in priority:
+//
+//  1. -ldflags "-X main.Version=v0.21.20" at release time
+//  2. runtime/debug.ReadBuildInfo() — the module version stamped
+//     by `go install github.com/paulmanoni/nexus/cmd/nexus@vX.Y.Z`,
+//     or the VCS commit + dirty flag when the user ran
+//     `go install ./cmd/nexus` against a local checkout.
+//  3. "dev" — the literal placeholder for `go run ./cmd/nexus ...`
+//     where neither ldflags nor BuildInfo carries a version.
+//
+// resolveVersion runs once at init() so the value is stable
+// across subcommand invocations within one process (tests).
+var Version = resolveVersion()
+
+// resolveVersion walks the priority chain. Most users will hit
+// case 2 — `go install ...@vX.Y.Z` puts the tag in BuildInfo's
+// Main.Version, which is what we want printed.
+func resolveVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	// Fallback: when running from a local checkout, Main.Version
+	// is "(devel)" but vcs.revision/vcs.modified are populated.
+	// Surface them so a developer's `nexus version` reflects the
+	// actual binary they're running, not a confusing "dev".
+	var rev, modified string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) >= 7 {
+				rev = s.Value[:7]
+			} else {
+				rev = s.Value
+			}
+		case "vcs.modified":
+			if s.Value == "true" {
+				modified = "-dirty"
+			}
+		}
+	}
+	if rev != "" {
+		return "dev-" + rev + modified
+	}
+	return "dev"
+}
 
 func main() {
 	if err := newRootCmd(os.Stdout, os.Stderr).Execute(); err != nil {
