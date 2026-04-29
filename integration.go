@@ -156,14 +156,41 @@ func resolveListeners(ls map[string]Listener, fallbackAddr string) []resolvedLis
 	return out
 }
 
-// fxBootOptions returns the baseline fx.Option chain nexus.Run assembles:
-// supply Config, provide *App, register lifecycle, auto-mount GraphQL.
-// Exposed to tests via integration_test.go; users go through nexus.Run.
+// fxBootOptions returns the complete baseline fx.Option chain.
+// Used by tests directly via integration_test.go (one entry,
+// everything mounts).
+//
+// nexus.Run does NOT use this — see fxEarlyOptions / fxLateOptions
+// below. The Run path needs autoMountGraphQL to fire AFTER user
+// options so engine middleware they install (notably
+// auth.Module's ginAuthMiddleware) is in place before GraphQL
+// routes are registered. Gin captures middleware at route-
+// registration time; routes registered before a Use() call don't
+// pick up that middleware afterwards.
 func fxBootOptions(cfg Config) fx.Option {
+	return fx.Options(
+		fxEarlyOptions(cfg),
+		fxLateOptions(),
+	)
+}
+
+// fxEarlyOptions runs BEFORE user options in nexus.Run.
+// Supplies Config, provides *App, registers lifecycle.
+func fxEarlyOptions(cfg Config) fx.Option {
 	return fx.Options(
 		fx.Supply(cfg),
 		fx.Provide(New),
 		fx.Invoke(registerLifecycle),
+	)
+}
+
+// fxLateOptions runs AFTER user options in nexus.Run. Invokes
+// here observe a fully-populated graph and an engine with every
+// user middleware already installed via engine.Use(...) — so
+// auto-mounted GraphQL routes pick up auth, request-id, CORS,
+// and any other middleware that user opts declared earlier.
+func fxLateOptions() fx.Option {
+	return fx.Options(
 		fx.Invoke(autoMountGraphQL),
 	)
 }
