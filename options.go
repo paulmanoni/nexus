@@ -35,7 +35,14 @@ func Module(name string, opts ...Option) Option {
 	// so we can stamp them on REST registrations. Multiple prefixes
 	// in the same Module concatenate left-to-right:
 	//   Module("x", RoutePrefix("/a"), RoutePrefix("/b"), ...) → "/a/b".
+	//
+	// PublicPath is consumed alongside RoutePrefix — it's a sugar
+	// that means "this is the module's URL prefix" and must apply
+	// to REST mounts the same way RoutePrefix does. It ALSO seeds
+	// the module GraphQL path registry so app.Service(<modName>)
+	// returns a Service rooted at <path>/graphql.
 	var prefix string
+	var publicPath string
 	// DeployAs is at-most-once per Module; last write wins. Empty
 	// string keeps the module untagged (always-local).
 	var deployment string
@@ -44,10 +51,22 @@ func Module(name string, opts ...Option) Option {
 		if rp, ok := o.(routePrefixOption); ok {
 			prefix += rp.prefix
 		}
+		if pp, ok := o.(pathOption); ok {
+			publicPath = pp.path
+			prefix += pp.path
+		}
 		if dt, ok := o.(deployTagOption); ok {
 			deployment = dt.tag
 			explicitDeploy = true
 		}
+	}
+	// Register the module's GraphQL path BEFORE the children walk
+	// below. Module-aware children read the registry indirectly
+	// (via app.Service at construction time), so the registration
+	// only needs to land before fx.Start fires constructors —
+	// which happens after this whole Module() call returns.
+	if publicPath != "" {
+		registerModulePublicPath(name, publicPath)
 	}
 
 	// Manifest fallback: if the user didn't write nexus.DeployAs(...)

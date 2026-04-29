@@ -52,6 +52,15 @@ func (a *App) Service(name string) *Service {
 	if path == "" {
 		path = DefaultGraphQLPath
 	}
+	// Module-level PublicPath wins: when nexus.Module(name,
+	// PublicPath("/x"), ...) was declared and the user constructs
+	// a Service with the same name here, the GraphQL mount becomes
+	// /x/graphql automatically — no AtGraphQL call needed in the
+	// constructor. AtGraphQL on the returned Service can still
+	// override afterwards if the caller wants something different.
+	if pp := modulePublicPathOf(name); pp != "" {
+		path = pp + "/graphql"
+	}
 	return &Service{app: a, name: name, graphqlPath: path}
 }
 

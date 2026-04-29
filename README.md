@@ -142,6 +142,7 @@ func NewCreateAdvert(svc *AdvertsService, db *MainDB, p nexus.Params[CreateArgs]
 | Option | Produces |
 |---|---|
 | `Module(name, opts...)` | Named group; stamps module name on every endpoint. |
+| `Path(p)` | Module-level public URL prefix — sets REST mount + per-service GraphQL path (`<p>/graphql`) in one declaration. |
 | `Provide(fns...)` | Constructor(s) into the dep graph. |
 | `ProvideService(fn)` | Provide + introspect: detects deps and draws Architecture edges. |
 | `ProvideResources(fns...)` | Provide + auto-register resources via `NexusResourceProvider`. |
