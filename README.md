@@ -63,6 +63,7 @@ nexus dev                 # go run + auto-open the dashboard
 | `nexus init [dir]` | Add `nexus.deploy.yaml` to an existing project (scans `DeployAs` tags). |
 | `nexus dev [dir]` | `go run`, probe the port, open the dashboard. `--split` boots one subprocess per deployment unit and streams cross-service traces. |
 | `nexus build --deployment <name>` | Build one deployment binary using `go build -overlay` (HTTP-stub shadows for non-owned modules + manifest-baked port/peers). |
+| `nexus docs [topic]` | Inline reference for any feature (`handlers`, `deploy`, `frontend`, `auth`, …). `--web` opens the GitHub README; `--list` prints topic names for shell completion. |
 
 ## Quick start
 

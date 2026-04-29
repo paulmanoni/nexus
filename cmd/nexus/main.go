@@ -13,6 +13,7 @@
 //	nexus init [dir]      Add nexus.deploy.yaml to an existing project.
 //	nexus dev [dir]       Run `go run` on the target package, open the dashboard.
 //	nexus build           Build a deployment binary using overlay-driven shadow code.
+//	nexus docs [topic]    Show inline documentation; --web opens the README.
 //	nexus version         Print the CLI version.
 package main
 
@@ -59,6 +60,7 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newDevCmd(stdout, stderr),
 		newBuildCmd(stdout, stderr),
 		newGenerateCmd(stdout, stderr),
+		newDocsCmd(stdout, stderr),
 	)
 	return root
 }
