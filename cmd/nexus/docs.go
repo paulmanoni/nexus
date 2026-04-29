@@ -275,12 +275,20 @@ MODULE / PROVIDE
 Example:
 
     var Module = nexus.Module("uaa",
-        nexus.RoutePrefix("/oats-uaa"),
+        nexus.Path("/oats-uaa"),                   // REST + GraphQL prefix in one
         nexus.DeployAs("uaa-svc"),
         nexus.Provide(NewService),
         nexus.AsRest("POST", "/oauth/token", TokenHandler),
         nexus.AsQuery(NewSearchUsers),
     )
+
+  nexus.Path("/oats-uaa")
+    Sugar for "this module's URL prefix": REST endpoints mount
+    under /oats-uaa/*, AND app.Service("uaa") returns a Service
+    whose GraphQL mount is /oats-uaa/graphql automatically. One
+    declaration, kept in sync with monolith ↔ split. Use
+    nexus.RoutePrefix + service.AtGraphQL separately if you
+    need different paths for REST vs GraphQL.
 `,
 
 	"auth": `
