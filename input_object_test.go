@@ -44,6 +44,43 @@ func TestDetectInputObject_DoesNotMatchFlat(t *testing.T) {
 	}
 }
 
+func TestIsInputObjectNullable(t *testing.T) {
+	// Non-pointer wrapper field → required (NonNull) at SDL level.
+	type valueWrapper = struct{ Input inputTestArgs }
+	if isInputObjectNullable(reflect.TypeOf(valueWrapper{})) {
+		t.Error("non-pointer wrapper field should NOT be nullable")
+	}
+
+	// Pointer wrapper field → nullable at SDL level.
+	type pointerWrapper = struct{ Input *inputTestArgs }
+	if !isInputObjectNullable(reflect.TypeOf(pointerWrapper{})) {
+		t.Error("pointer wrapper field SHOULD be nullable")
+	}
+
+	// Non-struct argsType (e.g. a primitive) returns false defensively.
+	if isInputObjectNullable(reflect.TypeOf(0)) {
+		t.Error("non-struct argsType should return false")
+	}
+}
+
+func TestDetectInputObject_StillMatchesPointerWrapper(t *testing.T) {
+	// detectInputObject must keep dereferencing *Inner — pointer-ness only
+	// affects nullability, not whether the wrapper qualifies as input-object.
+	type pointerWrapper = struct{ Input *inputTestArgs }
+	argsType := reflect.TypeOf(pointerWrapper{})
+
+	name, inner, ok := detectInputObject(argsType)
+	if !ok {
+		t.Fatal("detectInputObject returned ok=false for *Inner wrapper")
+	}
+	if name != "input" {
+		t.Errorf("arg name = %q; want input", name)
+	}
+	if inner != reflect.TypeOf(inputTestArgs{}) {
+		t.Errorf("inner = %v; want inputTestArgs (dereferenced)", inner)
+	}
+}
+
 func TestInspectHandler_ParamsWithAnonInputWrapper(t *testing.T) {
 	fn := func(svc *testSvc, p Params[struct{ Input inputTestArgs }]) (*string, error) {
 		return nil, nil

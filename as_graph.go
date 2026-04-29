@@ -549,6 +549,12 @@ func applyArgsFromStruct(r *graph.UnifiedResolver[any], argsType reflect.Type) (
 		// reflection on it to generate the SDL input type + mapstructure
 		// decode incoming args.
 		r.WithInputObjectFieldName(name)
+		// Pointer-typed wrapper fields opt the SDL arg into nullable.
+		// Must run BEFORE WithInputObject — that's where go-graph reads
+		// r.nullableInput when building the FieldConfigArgument.
+		if isInputObjectNullable(argsType) {
+			r.WithInputObjectNullable()
+		}
 		r.WithInputObject(reflect.New(inner).Elem().Interface())
 		// Validators on the inner struct's fields still fire — go-graph
 		// runs per-arg validators after the input object is decoded.
@@ -578,6 +584,24 @@ func applyArgsFromStruct(r *graph.UnifiedResolver[any], argsType reflect.Type) (
 		}
 	}
 	return ""
+}
+
+// isInputObjectNullable reports whether the input-object wrapper's single
+// exported field is a pointer type — in which case the auto-generated SDL
+// arg should be nullable. Mirrors detectInputObject's field-discovery loop;
+// callers should only invoke this after detectInputObject returns ok=true.
+func isInputObjectNullable(argsType reflect.Type) bool {
+	if argsType.Kind() != reflect.Struct {
+		return false
+	}
+	for i := 0; i < argsType.NumField(); i++ {
+		f := argsType.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		return f.Type.Kind() == reflect.Ptr
+	}
+	return false
 }
 
 // detectInputObject returns (argName, innerType, true) when argsType is the
