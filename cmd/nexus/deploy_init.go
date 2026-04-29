@@ -74,13 +74,17 @@ func writeDeployInitFile(deployment string, manifest *DeployManifest, projectRoo
 	fmt.Fprintf(&b, "// framework before main() runs. The generated init() runs once\n")
 	fmt.Fprintf(&b, "// per binary; nexus.Run consults these when Config fields are\n")
 	fmt.Fprintf(&b, "// zero.\n")
-	// A deployment is a "split unit" iff its manifest owns list is
-	// non-empty. Empty owns means monolith (owns every module, no
-	// tagging). The previous version of this check looked at
-	// source-side DeployAs tags, but auto-inject means source can
-	// omit the tag entirely — so consult the manifest, which is the
-	// source of truth either way.
-	isSplitUnit := len(spec.Owns) > 0
+	// A deployment is a "named unit" iff its `owns:` key was set
+	// explicitly (either listed or empty []). Only an OMITTED
+	// owns key means "monolith / unconstrained" and leaves the
+	// runtime Deployment empty.
+	//
+	// This matters for IfDeployment() at runtime: a web-svc with
+	// `owns: []` (owns nothing — frontend-only) needs its name
+	// baked in so gates like nexus.IfDeployment(["web-svc"], ...)
+	// can match. Listed split units (uaa-svc, interview-svc) get
+	// the same treatment — their name is the dispatch key.
+	isSplitUnit := spec.Owns != nil
 
 	// Module → deployment tag inference. Each non-monolith deployment
 	// (one with a non-empty owns list) means "this binary's split

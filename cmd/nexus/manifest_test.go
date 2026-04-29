@@ -251,3 +251,58 @@ func TestWriteDeployInitFile_NoUrlsFallback(t *testing.T) {
 	mustContain(t, src, `URLs: []string{`)
 	mustContain(t, src, `envOr("USERS_SVC_URL", "http://localhost:8081"),`)
 }
+
+// TestOwns_OmittedVsExplicitEmpty verifies the three-shape
+// semantic for the `owns:` key. yaml.v3 preserves the
+// distinction between an absent key (nil slice) and an
+// explicit empty list ([]string{}) — Owns() consumes that
+// distinction so a frontend-only deployment (`owns: []`) is
+// genuinely owns-nothing while a monolith (no owns key) is
+// owns-everything.
+func TestOwns_OmittedVsExplicitEmpty(t *testing.T) {
+	yaml := `
+deployments:
+  monolith:
+    port: 8080
+  web-svc:
+    owns: []
+    port: 9000
+  uaa-svc:
+    owns: [uaa]
+    port: 9001
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nexus.deploy.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(path)
+	if err != nil {
+		t.Fatalf("LoadManifest: %v", err)
+	}
+
+	cases := []struct {
+		dep, mod string
+		want     bool
+	}{
+		// Monolith owns everything (omitted owns key).
+		{"monolith", "uaa", true},
+		{"monolith", "interview", true},
+		{"monolith", "anything-at-all", true},
+		// web-svc owns nothing (explicit empty list).
+		{"web-svc", "uaa", false},
+		{"web-svc", "interview", false},
+		{"web-svc", "anything-at-all", false},
+		// uaa-svc owns the listed module only.
+		{"uaa-svc", "uaa", true},
+		{"uaa-svc", "interview", false},
+		// Unknown deployment never owns anything.
+		{"missing-svc", "uaa", false},
+	}
+	for _, tc := range cases {
+		got := m.Owns(tc.dep, tc.mod)
+		if got != tc.want {
+			t.Errorf("Owns(%q, %q) = %v; want %v", tc.dep, tc.mod, got, tc.want)
+		}
+	}
+}

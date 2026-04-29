@@ -262,6 +262,37 @@ nexus.ServeFrontend(webFS, "web/dist", nexus.FrontendAt("/admin"))
 // SPA at /admin/*, REST/GraphQL at the root.
 ```
 
+### Frontend-only deployment (web-svc)
+
+Manifest pattern: a deployment with `owns: []` (explicit empty) ships no backend modules — every module compiles as an HTTP stub, so the binary stays small but consumer code still type-checks against `*uaa.Service` etc. Pair it with `IfDeployment` to gate the SPA mount on the binaries that should serve it:
+
+```yaml
+deployments:
+  monolith:
+    port: 9590                # owns: omitted → owns everything
+  web-svc:
+    owns: []                  # explicit empty → owns nothing
+    port: 9000                # tiny SPA-only binary
+  uaa-svc:
+    owns: [uaa]
+    port: 9001
+  interview-svc:
+    owns: [interview]
+    port: 9002
+```
+
+```go
+nexus.Run(nexus.Config{...},
+    nexus.IfDeployment([]string{"monolith", "web-svc"},
+        nexus.ServeFrontend(distFS, "web/dist"),
+    ),
+    uaa.Module,
+    interview.Module,
+)
+```
+
+The same `main.go` builds N binaries; only the named deployments mount the SPA. The other split units stay API-only.
+
 ## Deployment
 
 Write the app as a monolith; ship as N binaries from the same source. The framework swaps cross-module `*Service` bodies between local impl and HTTP stub at compile time, all driven by one file.

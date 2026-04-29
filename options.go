@@ -108,6 +108,87 @@ func Module(name string, opts ...Option) Option {
 // consult it without an import cycle.
 const nexusDeploymentEnv = "NEXUS_DEPLOYMENT"
 
+// Options bundles multiple Option values into a single Option.
+// Useful when one logical feature expands into several: a
+// conditional gate that pulls in a frontend mount + a config
+// supply + an extra invoke, for example. Empty input is a no-op.
+func Options(opts ...Option) Option {
+	if len(opts) == 0 {
+		return rawOption{o: fx.Options()}
+	}
+	return rawOption{o: fx.Options(unwrap(opts)...)}
+}
+
+// IfDeployment yields opts as a single Option only when the
+// active deployment matches one of names. When it doesn't match,
+// the returned Option is a no-op so all listed opts (and any
+// Provide / Invoke / Module they wrap) are skipped — no
+// constructors run, no routes register, no fx graph touched.
+//
+// Active deployment, in priority:
+//
+//  1. NEXUS_DEPLOYMENT env var (set per subprocess by
+//     `nexus dev --split`)
+//  2. DeploymentDefaults.Deployment (baked into the binary by
+//     `nexus build --deployment X` for any deployment whose
+//     manifest entry has an explicit `owns:` key — listed or
+//     empty []. Omitted owns: monolith leaves this empty.)
+//  3. Empty → matches "monolith" by convention so a plain
+//     `go run .` against an unannotated build still hits
+//     monolith-only opts.
+//
+// The classic use is gating a frontend mount on the
+// monolith / web-svc deployments while leaving uaa-svc /
+// interview-svc as API-only binaries that ship no SPA bytes:
+//
+//	nexus.Run(nexus.Config{...},
+//	    nexus.IfDeployment([]string{"monolith", "web-svc"},
+//	        nexus.ServeFrontend(distFS, "web/dist"),
+//	    ),
+//	    uaa.Module,
+//	    interview.Module,
+//	)
+//
+// Manifest pairing for the web-svc shape:
+//
+//	deployments:
+//	  monolith:                  # owns: omitted → owns everything
+//	    port: 8080
+//	  web-svc:
+//	    owns: []                 # explicit empty → owns nothing
+//	    port: 9000               # tiny SPA-only binary
+//	  uaa-svc:
+//	    owns: [uaa]
+//	    port: 9001
+func IfDeployment(names []string, opts ...Option) Option {
+	if !activeDeploymentMatches(names) {
+		return rawOption{o: fx.Options()}
+	}
+	return Options(opts...)
+}
+
+// activeDeploymentMatches reports whether the active deployment
+// (resolved via the priority chain above) is in names. Empty
+// active falls back to "monolith" so single-process dev runs
+// hit monolith-gated opts.
+func activeDeploymentMatches(names []string) bool {
+	active := os.Getenv(nexusDeploymentEnv)
+	if active == "" {
+		if d, ok := loadDeploymentDefaults(); ok {
+			active = d.Deployment
+		}
+	}
+	if active == "" {
+		active = "monolith"
+	}
+	for _, n := range names {
+		if n == active {
+			return true
+		}
+	}
+	return false
+}
+
 // moduleAnnotator is implemented by options that participate in the
 // nexus.Module grouping — specifically AsQuery/AsMutation/AsRest. The
 // Module() function walks its direct children and calls setModule on

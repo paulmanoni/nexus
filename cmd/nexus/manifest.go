@@ -50,6 +50,18 @@ type DeploymentSpec struct {
 	// that compile in their hand-written form for this deployment.
 	// Modules not listed are remote: their public surface is
 	// replaced by an HTTP stub via go build -overlay.
+	//
+	// Three shapes carry different semantics:
+	//
+	//   - omitted (`monolith: { port: 8080 }`)
+	//     → owns every module (monolith / dev shape)
+	//   - explicit empty (`web-svc: { owns: [], port: 9000 }`)
+	//     → owns NOTHING; every module compiles as an HTTP stub.
+	//     Useful for frontend-only / SPA-host binaries that
+	//     reference *uaa.Service etc. for typed cross-service
+	//     calls but never run any module locally.
+	//   - listed (`uaa-svc: { owns: [uaa] }`)
+	//     → owns only the named modules; everything else is stub'd.
 	Owns []string `yaml:"owns"`
 
 	// Port is the listen port baked into Config.Addr at build time.
@@ -231,25 +243,31 @@ func (m *DeployManifest) Names() []string {
 }
 
 // Owns reports whether the named deployment owns the given module
-// locally. Unknown deployments return false. An empty `owns` list
-// means "owns everything" — the monolith semantic — so any module
-// query against an unspecified-owns deployment returns true. Split
-// units must list `owns` explicitly; if they don't, they silently
-// degrade to monolith mode (no shadows generated for that unit).
+// locally. Unknown deployments return false.
+//
+// Semantics by `owns:` shape (yaml.v3 distinguishes omitted from
+// explicit-empty):
+//
+//   - omitted (nil slice) → "owns everything" (monolith default)
+//   - empty []            → "owns nothing" (frontend-only / web-svc)
+//   - listed              → owns those modules only
+//
+// Split units must list `owns` explicitly; if they don't, they
+// silently degrade to monolith mode (no shadows generated).
 func (m *DeployManifest) Owns(deployment, module string) bool {
 	spec, ok := m.Deployments[deployment]
 	if !ok {
 		return false
 	}
-	if len(spec.Owns) == 0 {
-		return true
+	if spec.Owns == nil {
+		return true // omitted owns: → owns everything (monolith)
 	}
 	for _, n := range spec.Owns {
 		if n == module {
 			return true
 		}
 	}
-	return false
+	return false // explicit empty or listed-without-this-module
 }
 
 // DeploymentOf returns the name of the split-unit deployment that
