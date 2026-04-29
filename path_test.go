@@ -1,7 +1,11 @@
 package nexus
 
 import (
+	"context"
 	"testing"
+	"time"
+
+	"go.uber.org/fx"
 )
 
 // TestPath_RegistersForServiceLookup verifies the round-trip:
@@ -84,6 +88,106 @@ func TestPath_AtGraphQLOverrides(t *testing.T) {
 		t.Fatalf("AtGraphQL override: got %q, want %q",
 			svc.GraphQLPath(), "/custom/graphql")
 	}
+}
+
+// TestPath_MultiServiceModuleAllMountUnderPath is the regression
+// test for the original bug report: when a single module declares
+// nexus.Path("/oats-uaa") AND has handlers attached to multiple
+// services (e.g. "uaa" + "user" inside the uaa module), every
+// field should mount at /oats-uaa/graphql — not just the ones
+// whose service name happens to match the module name.
+//
+// We exercise this through the public surface: build the module
+// options, run them through fx end-to-end, and inspect the gin
+// engine's registered routes to confirm /oats-uaa/graphql is the
+// only GraphQL mount and /graphql is NOT registered.
+func TestPath_MultiServiceModuleAllMountUnderPath(t *testing.T) {
+	resetPublicPathRegistryForTest(t)
+
+	type uaaArgs struct {
+		Token string `graphql:"token"`
+	}
+	type userArgs struct {
+		ID string `graphql:"id"`
+	}
+	type uaaSvc struct{ *Service }
+	type userSvc struct{ *Service }
+
+	newUaaSvc := func(app *App) *uaaSvc { return &uaaSvc{app.Service("uaa")} }
+	newUserSvc := func(app *App) *userSvc { return &userSvc{app.Service("user")} }
+	newCheckToken := func(_ *uaaSvc, _ Params[uaaArgs]) (string, error) { return "ok", nil }
+	newGetUser := func(_ *userSvc, _ Params[userArgs]) (string, error) { return "u", nil }
+
+	mod := Module("uaa",
+		Path("/oats-uaa"),
+		Provide(newUaaSvc, newUserSvc),
+		AsQuery(newCheckToken),
+		AsQuery(newGetUser),
+	)
+
+	app, err := newApp(Config{}, mod)
+	if err != nil {
+		t.Fatalf("newApp: %v", err)
+	}
+	defer app.Stop()
+
+	routes := app.Engine().Routes()
+	var gqlPaths []string
+	for _, r := range routes {
+		if r.Path == "/oats-uaa/graphql" || r.Path == "/graphql" {
+			if !contains(gqlPaths, r.Path) {
+				gqlPaths = append(gqlPaths, r.Path)
+			}
+		}
+	}
+	if !contains(gqlPaths, "/oats-uaa/graphql") {
+		t.Errorf("missing /oats-uaa/graphql mount; routes seen: %v", gqlPaths)
+	}
+	if contains(gqlPaths, "/graphql") {
+		t.Errorf("unexpected /graphql mount — Path should have moved every module field there; routes seen: %v", gqlPaths)
+	}
+}
+
+// newApp is a tiny test harness mirroring nexus.Run's fx wiring
+// (fxBootOptions registers the *App provider and autoMountGraphQL
+// Invoke that turns AsQuery/AsMutation declarations into actual
+// engine routes) but without binding a listener. Used to drive
+// the full mount path in-process and inspect the resulting gin
+// route table.
+func newApp(cfg Config, opts ...Option) (*testApp, error) {
+	var captured *App
+	capture := fx.Invoke(func(a *App) { captured = a })
+	all := append([]fx.Option{fx.NopLogger, fxBootOptions(cfg), capture}, unwrap(opts)...)
+	fxApp := fx.New(all...)
+	if err := fxApp.Err(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := fxApp.Start(ctx); err != nil {
+		return nil, err
+	}
+	return &testApp{fx: fxApp, App: captured}, nil
+}
+
+type testApp struct {
+	*App
+	fx *fx.App
+}
+
+func (a *testApp) Stop() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = a.fx.Stop(ctx)
+}
+
+func contains(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // resetPublicPathRegistryForTest wipes the package-global

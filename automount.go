@@ -86,10 +86,23 @@ func autoMountGraphQL(in autoMountIn) error {
 		return f, nil
 	}
 
-	// Partition by service type. The service instance is already unwrapped
-	// inside each GqlField (AsQuery did this via the service-wrapper dep
-	// scan or OnService option) so we can read path/name directly.
-	partitions := map[reflect.Type]*servicePartition{}
+	// Partition by (service type, mount path). The service instance is
+	// already unwrapped inside each GqlField (AsQuery did this via the
+	// service-wrapper dep scan or OnService option) so we can read
+	// path/name directly.
+	//
+	// Mount path is keyed alongside service type so a single service
+	// can have its fields mounted on multiple URLs when those fields
+	// belong to modules that declared nexus.Path(...). Without this,
+	// a "user" service whose handlers were registered inside both the
+	// uaa module (Path /oats-uaa) and a separate billing module (no
+	// Path) would mount everything at one default /graphql instead
+	// of the per-module URLs the SPA expects.
+	type partitionKey struct {
+		serviceType reflect.Type
+		mountPath   string
+	}
+	partitions := map[partitionKey]*servicePartition{}
 	// Stash per-op resource/service-dep lists during the walk; applied
 	// AFTER mountOne so the registry.Set* helpers have endpoints to match.
 	type pending struct {
@@ -120,10 +133,20 @@ func autoMountGraphQL(in autoMountIn) error {
 			return err
 		}
 		f = resolved
-		p, ok := partitions[f.ServiceType]
+		// Module-scoped Path overrides the service's GraphQL path
+		// for fields declared inside that module. Same-service
+		// fields from different modules end up in different
+		// partitions and mount on different URLs — exactly what
+		// the SPA-portability story needs.
+		mountPath := f.Service.GraphQLPath()
+		if pp := modulePublicPathOf(f.Module); pp != "" {
+			mountPath = pp + "/graphql"
+		}
+		key := partitionKey{serviceType: f.ServiceType, mountPath: mountPath}
+		p, ok := partitions[key]
 		if !ok {
-			p = &servicePartition{serviceType: f.ServiceType, service: f.Service}
-			partitions[f.ServiceType] = p
+			p = &servicePartition{serviceType: f.ServiceType, service: f.Service, mountPath: mountPath}
+			partitions[key] = p
 		}
 		switch f.Kind {
 		case graph.FieldKindQuery:
@@ -192,7 +215,10 @@ func autoMountGraphQL(in autoMountIn) error {
 			return fmt.Errorf("nexus: first dep of a %s handler must be a *Service wrapper (got %s)",
 				p.serviceType, p.serviceType)
 		}
-		path := p.service.GraphQLPath()
+		path := p.mountPath
+		if path == "" {
+			path = p.service.GraphQLPath()
+		}
 		g, ok := pathByMount[path]
 		if !ok {
 			g = &pathGroup{
@@ -263,8 +289,13 @@ type pathGroup struct {
 type servicePartition struct {
 	serviceType reflect.Type
 	service     *Service
-	queries     []graph.QueryField
-	mutations   []graph.MutationField
+	// mountPath is the URL the partition's fields should mount at.
+	// Computed once during the field walk: nexus.Path on the field's
+	// module wins; service.GraphQLPath() is the fallback. Stored on
+	// the partition so the grouping step doesn't have to recompute.
+	mountPath string
+	queries   []graph.QueryField
+	mutations []graph.MutationField
 }
 
 // mountGroup builds one merged schema for every partition that shares
