@@ -418,7 +418,15 @@ func Run(cfg Config, opts ...Option) {
 		// trace. Mirrors how net.Listen errors surface today.
 		panic(err)
 	}
-	all := append([]fx.Option{fxBootOptions(cfg), autoClientOptions()}, unwrap(opts)...)
+	// Two-phase split: fxEarlyOptions seeds Config + *App + lifecycle
+	// BEFORE user opts run, then user opts (which may install global
+	// middleware via auth.Module / engine.Use), then fxLateOptions
+	// runs autoMountGraphQL last so GraphQL routes pick up every
+	// user-installed middleware. Without the split, GraphQL routes
+	// registered first wouldn't see middleware Use()'d afterwards
+	// — gin captures middleware at route-registration time.
+	all := append([]fx.Option{fxEarlyOptions(cfg), autoClientOptions()}, unwrap(opts)...)
+	all = append(all, fxLateOptions())
 	if os.Getenv("NEXUS_FX_QUIET") == "1" {
 		all = append(all, fx.NopLogger)
 	}
