@@ -239,6 +239,15 @@ const htmlTemplate = `<!doctype html>
   .res-users a { display: inline-block; margin-right: 12px; color: var(--accent); text-decoration: none; font-size: 13px; }
   .res-users a:hover { text-decoration: underline; }
   aside .toc-resources { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 16px; }
+  .warn-banner {
+    background: #d29922;
+    color: #1b1300;
+    padding: 10px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-size: 13px;
+  }
+  .warn-banner strong { font-weight: 700; }
   .pdf-btn {
     display: block;
     width: 100%;
@@ -326,6 +335,12 @@ const htmlTemplate = `<!doctype html>
 </aside>
 
 <main>
+{{if .LoadErrors}}
+<div class="warn-banner">
+  <strong>Partial scan:</strong> {{.LoadErrors}} package load error(s) — IR shows whatever did parse.
+  Stale third-party imports or broken local packages are usually the cause.
+</div>
+{{end}}
 {{range .Modules}}
   <h2 class="module" id="mod-{{.Name}}">{{.Name}}</h2>
   <div class="module-meta">

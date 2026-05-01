@@ -121,7 +121,7 @@ stop the server.`,
 // terminal.
 func apidocsHandler(dir, format string, errOut io.Writer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		doc, err := apidocs.Collect(dir, ".")
+		doc, err := apidocs.Collect(dir, "./...")
 		if err != nil {
 			fmt.Fprintf(errOut, "collect: %v\n", err)
 			http.Error(w, "collect failed: "+err.Error(), http.StatusInternalServerError)
@@ -162,7 +162,7 @@ func newAPIDocsBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve %s: %w", target, err)
 			}
-			doc, err := apidocs.Collect(abs, ".")
+			doc, err := apidocs.Collect(abs, "./...")
 			if err != nil {
 				return err
 			}

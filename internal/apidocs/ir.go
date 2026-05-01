@@ -18,10 +18,11 @@ package apidocs
 
 // Doc is the top-level IR document — one per app scan.
 type Doc struct {
-	Module    string    `json:"module"`              // user's go.mod module path
-	GoVersion string    `json:"goVersion,omitempty"` // toolchain that produced the IR
-	Modules   []Module  `json:"modules"`             // nexus.Module(...) calls found
-	Loose     []Handler `json:"loose,omitempty"`     // AsQuery/AsRest/etc. found outside any Module
+	Module     string    `json:"module"`               // user's go.mod module path
+	GoVersion  string    `json:"goVersion,omitempty"`  // toolchain that produced the IR
+	Modules    []Module  `json:"modules"`              // nexus.Module(...) calls found
+	Loose      []Handler `json:"loose,omitempty"`      // AsQuery/AsRest/etc. found outside any Module
+	LoadErrors int       `json:"loadErrors,omitempty"` // type-check errors encountered (best-effort)
 }
 
 // Module mirrors a `nexus.Module(name, opts...)` declaration. The

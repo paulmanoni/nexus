@@ -39,17 +39,42 @@ func Collect(dir, pattern string) (*Doc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", pattern, err)
 	}
-	if n := packages.PrintErrors(pkgs); n > 0 {
-		return nil, fmt.Errorf("package load: %d error(s)", n)
-	}
+	// Best-effort: type errors elsewhere in the tree (stale APIs,
+	// missing peer packages in a multi-repo setup) shouldn't stop us
+	// from documenting what did parse. Count them so the caller can
+	// surface a one-line summary rather than scrolling a wall of
+	// compiler output.
 	doc := &Doc{GoVersion: runtime.Version()}
+	for _, p := range pkgs {
+		doc.LoadErrors += len(p.Errors)
+	}
 	if len(pkgs) > 0 && pkgs[0].Module != nil {
 		doc.Module = pkgs[0].Module.Path
 	}
 	for _, pkg := range pkgs {
+		// Skip framework codegen output: nexus emits zz_shadow_gen.go
+		// files into .nexus/build/<deployment>/ for split builds. They
+		// re-declare the same modules, which would double every entry
+		// in the IR.
+		if isShadowPkg(pkg) {
+			continue
+		}
 		newPkgCollector(pkg).scan(doc)
 	}
 	return doc, nil
+}
+
+// isShadowPkg detects packages produced by `nexus build` overlay
+// codegen, identified by the .nexus/build/ path segment in any of
+// their source files. Filtering these out keeps the IR free of the
+// duplicate registrations the build cache holds.
+func isShadowPkg(p *packages.Package) bool {
+	for _, f := range p.GoFiles {
+		if strings.Contains(f, "/.nexus/build/") {
+			return true
+		}
+	}
+	return false
 }
 
 // pkgCollector holds per-package state — chiefly the *types.Func →
