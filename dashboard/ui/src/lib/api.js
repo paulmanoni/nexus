@@ -54,24 +54,24 @@ export async function fetchRateLimits() {
   return r.json()
 }
 
+// configureRateLimit + resetRateLimit pass service + op as QUERY
+// params for the same reason fetchErrorEvents does — REST op names
+// like "GET /v1/api/users" contain slashes that break gin's
+// path-param matching.
 export async function configureRateLimit(service, op, limit) {
-  const r = await fetch(
-    `/__nexus/ratelimits/${encodeURIComponent(service)}/${encodeURIComponent(op)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(limit),
-    }
-  )
+  const params = new URLSearchParams({ service, op })
+  const r = await fetch(`/__nexus/ratelimits?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(limit),
+  })
   if (!r.ok) throw new Error(`configure ${service}.${op}: ${r.status}`)
   return r.json()
 }
 
 export async function resetRateLimit(service, op) {
-  const r = await fetch(
-    `/__nexus/ratelimits/${encodeURIComponent(service)}/${encodeURIComponent(op)}`,
-    { method: 'DELETE' }
-  )
+  const params = new URLSearchParams({ service, op })
+  const r = await fetch(`/__nexus/ratelimits?${params}`, { method: 'DELETE' })
   if (!r.ok) throw new Error(`reset ${service}.${op}: ${r.status}`)
   return r.json()
 }
@@ -132,12 +132,70 @@ export async function fetchStats() {
 // specific endpoint — time + IP + message per event, newest-first.
 // Called on dialog open so the per-poll /stats payload stays small
 // regardless of how many errors are retained.
+//
+// service + op pass as QUERY params because REST op names are
+// "<METHOD> <path>" — they contain spaces and slashes that gin's
+// path-param matcher can't capture across segment boundaries.
 export async function fetchErrorEvents(service, op) {
-  const r = await fetch(
-    `/__nexus/stats/${encodeURIComponent(service)}/${encodeURIComponent(op)}/errors`
-  )
+  const params = new URLSearchParams({ service, op })
+  const r = await fetch(`/__nexus/stats/errors?${params}`)
   if (!r.ok) throw new Error(`errors ${service}.${op}: ${r.status}`)
   return r.json()
+}
+
+// subscribeLive opens /__nexus/live and consumes the unified state-snapshot
+// stream that replaces the dashboard's 5-second polling fan-out. The server
+// pushes a fresh snapshot every ~2s carrying { services, endpoints,
+// resources, workers, stats, crons, ratelimits } — the UI subscribes once
+// and re-renders on each frame.
+//
+// Auto-reconnects on close with exponential backoff. Returns a controller
+// with .close(). onStatus is called with 'open' | 'closed' for connection-
+// indicator UI.
+export function subscribeLive(onSnapshot, onStatus) {
+  let socket = null
+  let stopped = false
+  let retryMs = 500
+  const MAX_RETRY = 10000
+
+  function connect() {
+    if (stopped) return
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    socket = new WebSocket(`${proto}://${location.host}/__nexus/live`)
+    socket.onopen = () => {
+      retryMs = 500
+      onStatus && onStatus('open')
+    }
+    socket.onmessage = ev => {
+      try {
+        const snap = JSON.parse(ev.data)
+        if (snap && snap.kind === 'snapshot') onSnapshot(snap)
+      } catch (err) {
+        console.error('bad snapshot', err)
+      }
+    }
+    socket.onclose = () => {
+      socket = null
+      onStatus && onStatus('closed')
+      if (stopped) return
+      setTimeout(connect, retryMs)
+      retryMs = Math.min(retryMs * 2, MAX_RETRY)
+    }
+    socket.onerror = () => {
+      try { socket && socket.close() } catch { /* ignore */ }
+    }
+  }
+
+  connect()
+
+  return {
+    close() {
+      stopped = true
+      if (socket) {
+        try { socket.close() } catch { /* ignore */ }
+      }
+    }
+  }
 }
 
 // subscribeEvents opens /__nexus/events and auto-reconnects on close with

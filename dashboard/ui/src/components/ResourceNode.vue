@@ -1,44 +1,50 @@
 <script setup>
 import { computed, inject } from 'vue'
-import { Database, HardDrive, Radio as RadioIcon } from 'lucide-vue-next'
 import BaseNodeCard from './BaseNodeCard.vue'
+import CategoryIcon from './CategoryIcon.vue'
 
+// ResourceNode renders one external dep — DB, cache, queue, or generic
+// "other" — on the architecture canvas. Visual grammar comes from
+// BaseNodeCard + CategoryIcon so it stays in lockstep with services and
+// workers; only the icon hue + the engine/backend pill tell you the kind.
 const props = defineProps(['data'])
 
-// When an op is selected in a service card, resources not in the op's
-// resource list dim. Provided by Architecture via provide/inject.
+// Drawer plumbing — clicking a resource node opens the per-resource
+// detail drawer (health, details map, attached services, actions).
+const openDrawer = inject('nexus.openDrawer', () => {})
+
+function onClick() {
+  openDrawer({ kind: 'resource', key: props.data.name })
+}
+
+// When an op is selected, resources not in the op's resource list dim.
+// Provided by Architecture via provide/inject.
 const selection = inject('nexus.opSelection', { value: null })
 const inSelection = computed(() => {
   const sel = selection.value
-  if (!sel) return true   // no selection → everything visible
+  if (!sel) return true
   return Array.isArray(sel.resources) && sel.resources.includes(props.data.name)
 })
 
-const icon = computed(() => {
-  if (props.data.kind === 'cache') return HardDrive
-  if (props.data.kind === 'queue') return RadioIcon
-  return Database
+// Map registry kind → CategoryIcon type. The taxonomy lives in tokens.css;
+// "other" falls back to database so the canvas never has an un-iconed
+// resource (rare in practice; only Resource.Other types).
+const iconType = computed(() => {
+  if (props.data.kind === 'cache')    return 'cache'
+  if (props.data.kind === 'queue')    return 'queue'
+  if (props.data.kind === 'database') return 'database'
+  return 'database'
 })
 
 // Pill surfaces the most-interesting single detail: backend for caches,
-// engine for databases. Updates live because details are probed each poll.
+// engine for databases, broker for queues. Updates live because details
+// are probed each snapshot.
 const pillLabel = computed(() => {
   const d = props.data.details || {}
   if (props.data.kind === 'cache') return d.backend
   if (props.data.kind === 'database') return d.engine
   if (props.data.kind === 'queue') return d.broker
   return null
-})
-
-const pillClass = computed(() => {
-  const l = (pillLabel.value || '').toLowerCase()
-  if (l === 'redis') return 'redis'
-  if (l === 'memory' || l === 'in-memory') return 'memory'
-  if (l === 'postgres' || l === 'postgresql') return 'postgres'
-  if (l === 'mysql' || l === 'mariadb') return 'mysql'
-  if (l === 'rabbitmq') return 'rabbit'
-  if (l === 'kafka') return 'kafka'
-  return 'neutral'
 })
 
 // Secondary detail rows — skip whatever we already promoted into the pill.
@@ -50,12 +56,21 @@ const detailKeys = computed(() => {
 </script>
 
 <template>
-  <BaseNodeCard :dim="!inSelection" :unhealthy="!data.healthy">
+  <BaseNodeCard :dim="!inSelection" :unhealthy="!data.healthy" @click.stop="onClick">
     <template #head>
-      <component :is="icon" :size="13" :stroke-width="2" class="icon" />
-      <span class="name">{{ data.name }}</span>
-      <span v-if="pillLabel" class="pill" :class="pillClass">{{ pillLabel }}</span>
-      <span class="dot" :class="{ on: data.healthy }" :title="data.healthy ? 'Healthy' : 'Unhealthy'"></span>
+      <CategoryIcon :type="iconType" :size="32" />
+      <div class="title">
+        <div class="name">{{ data.name }}</div>
+        <div v-if="pillLabel" class="kind">{{ pillLabel }}</div>
+      </div>
+      <span
+        class="status"
+        :class="{ healthy: data.healthy, error: !data.healthy }"
+        :title="data.healthy ? 'Healthy' : 'Unhealthy'"
+      >
+        <span class="dot" />
+        {{ data.healthy ? 'healthy' : 'down' }}
+      </span>
     </template>
     <template v-if="data.description" #description>{{ data.description }}</template>
     <div v-if="detailKeys.length" class="details">
@@ -68,46 +83,63 @@ const detailKeys = computed(() => {
 </template>
 
 <style scoped>
-.icon { color: var(--accent); flex-shrink: 0; }
-.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  flex-shrink: 0;
-}
-.dot.on { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+/* The whole card is clickable (opens the resource drawer); make that
+   discoverable with a pointer cursor scoped to the underlying card. */
+:deep(.base-node) { cursor: pointer; }
 
-.pill {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 10px;
-  text-transform: lowercase;
-  letter-spacing: 0.02em;
-  flex-shrink: 0;
-}
-.pill.redis     { background: #dbeafe; color: #1e40af; }
-.pill.memory    { background: #fef3c7; color: #b45309; }
-.pill.postgres  { background: #dbeafe; color: #1e40af; }
-.pill.mysql     { background: #fed7aa; color: #9a3412; }
-.pill.rabbit    { background: #fed7aa; color: #9a3412; }
-.pill.kafka     { background: #e9d5ff; color: #6b21a8; }
-.pill.neutral   { background: var(--bg-hover); color: var(--text-muted); }
-
-.details {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 11px;
+.title {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.details .row { display: flex; gap: 8px; }
+.name {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kind {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+/* Status pill — two-axis design from tokens.css (category color = what,
+   status color = how). Slim by default, never competes with the icon. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status.healthy { background: var(--st-healthy-soft); color: var(--st-healthy); }
+.status.error   { background: var(--st-error-soft);   color: var(--st-error); }
+
+.details {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.details .row { display: flex; gap: var(--space-2); }
 .details .k { color: var(--text-dim); min-width: 50px; }
 .details .v { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

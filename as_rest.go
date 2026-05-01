@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 
+	"braces.dev/errtrace"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
@@ -120,7 +121,12 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 
 		service := resolveEndpointService(cfg.service, cfg.module, deps, depTypes, app)
 		finalPath := app.PrefixPath(cfg.pathPrefix + path)
-		opName := opNameFromFactory(factory, method+" "+finalPath)
+		// Op identifier for REST is "<METHOD> <path>" — guaranteed unique
+		// per endpoint, even when the same factory (e.g. NewList) is wired
+		// under several routes. Using factory-derived names here would
+		// collapse N routes into one Name, which breaks the dashboard's
+		// per-op edges + per-op stats lookups.
+		opName := method + " " + finalPath
 
 		// Invoke the factory once to extract the gin.HandlerFunc.
 		out := reflect.ValueOf(factory).Call(deps)
@@ -130,36 +136,22 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 			app, service,
 			service+"."+opName,
 			string(registry.REST),
-			method+" "+finalPath,
+			opName,
 			cfg.bundles, userHandler,
 		)
 		app.engine.Handle(method, finalPath, chain...)
 
-		endpointName := method + " " + finalPath
 		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
-			Name:       endpointName,
+			Name:       opName,
 			Transport:  registry.REST,
 			Method:     method,
 			Path:       finalPath,
 			Middleware: mwNames,
 		})
-		recordEndpointDeps(app, service, endpointName, deps, depTypes)
+		recordEndpointDeps(app, service, opName, deps, depTypes)
 		return nil
 	})
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
-}
-
-// opNameFromFactory derives a dashboard op name for a factory-style
-// handler registration. Tries the factory's own runtime name (e.g. a
-// closure literal) first; falls back to "<method> <path>" when the
-// factory is anonymous — same fallback opNameFromFunc uses for
-// anonymous reflective handlers.
-func opNameFromFactory(factory any, fallback string) string {
-	name := opNameFromFunc(factory, "")
-	if name == "" {
-		return fallback
-	}
-	return name
 }
 
 type restConfig struct {
@@ -269,7 +261,10 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		// or per-endpoint RoutePrefix stamped cfg.pathPrefix for us.
 		// app.PrefixPath wraps the deployment-wide prefix on top.
 		finalPath := app.PrefixPath(cfg.pathPrefix + path)
-		opName := opNameFromFunc(sh.funcVal.Interface(), method+" "+finalPath)
+		// REST op identifier — "<METHOD> <path>" — unique per endpoint
+		// even when the same handler is reused across routes. See the
+		// AsRestHandler comment above for context.
+		opName := method + " " + finalPath
 		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath)
 
 		// AsRest's reflective path threads tracing inside buildGinHandler
@@ -377,7 +372,29 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			GinCtx: c, // available to handlers that take *gin.Context as a param
 		}, deps, args)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			// errtrace.Wrap captures THIS frame as a bottom-of-stack
+			// marker (the framework's REST boundary). User code that
+			// chained `errtrace.Wrap` at each return appends frames
+			// above; user code that didn't still gets a one-frame
+			// trace pointing at this call site so the dashboard's
+			// "▸ stack" toggle has something useful to show.
+			//
+			// c.Error attaches the wrapped err to gin.Context so the
+			// metrics recorder downstream reads it from c.Errors and
+			// stores the formatted trace on the *trace.StackError.
+			err = errtrace.Wrap(err)
+			_ = c.Error(err)
+			// Sentinel-aware status mapping — handlers (typically
+			// AsCRUD's generated ones, but any handler is free to
+			// participate) can return ErrCRUDNotFound / Conflict /
+			// Validation to surface the right HTTP code instead of a
+			// generic 500. Anything not mapped stays a 500 so we
+			// never silently downgrade a real bug.
+			status := http.StatusInternalServerError
+			if mapped, ok := MapCRUDError(err); ok {
+				status = mapped
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		// A handler that takes *gin.Context may have already written the

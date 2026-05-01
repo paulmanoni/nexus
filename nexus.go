@@ -152,8 +152,11 @@ func New(cfg Config) *App {
 	}
 
 	// Engine. Recovery middleware first so panics surface as 500s.
+	// We use the framework's own recoveryMiddleware (instead of
+	// gin.Recovery()) so panic stacks land on the dashboard via the
+	// trace + metrics pipeline — see recovery.go.
 	engine := gin.New()
-	engine.Use(gin.Recovery())
+	engine.Use(recoveryMiddleware())
 	// Per-request access log when gin is in debug mode (the default
 	// for `nexus dev`). Mirrors gin.Default()'s behavior. In release
 	// mode the logger is suppressed — operators usually wire their

@@ -1,6 +1,6 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
-import { Globe } from 'lucide-vue-next'
+import CategoryIcon from './CategoryIcon.vue'
 
 // InternetNode represents the outside world — the source of every
 // request the dashboard visualises. Rendered once at the far left of
@@ -12,9 +12,7 @@ defineProps(['data'])
 
 <template>
   <div class="internet-node">
-    <div class="puck">
-      <Globe :size="16" :stroke-width="2.2" />
-    </div>
+    <CategoryIcon type="internet" :size="40" />
     <div class="label">Clients</div>
     <div class="sub">external traffic</div>
     <Handle type="source" :position="Position.Right" />
@@ -25,30 +23,29 @@ defineProps(['data'])
 .internet-node {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  min-width: 140px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  min-width: 150px;
   color: var(--text);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
   font-family: var(--font-sans);
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
+  transition: border-color 120ms, box-shadow 120ms;
 }
-.puck {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  margin-bottom: 4px;
+.label {
+  font-weight: 600;
+  font-size: var(--fs-md);
+  color: var(--text);
+  margin-top: var(--space-1);
 }
-.label { font-weight: 600; font-size: 12.5px; color: var(--text); }
-.sub { font-size: 10.5px; color: var(--text-dim); }
+.sub {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
 
 /* Pulsing glow when a request is flowing through this node. Architecture
    toggles the 'active' class on the VueFlow node data via the live-traffic

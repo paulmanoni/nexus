@@ -39,3 +39,10 @@ type ListArgs struct{}
 type SearchArgs struct {
 	Prefix string `graphql:"prefix" json:"prefix"`
 }
+
+// CreateArgs is the typed input for the createUser GraphQL mutation.
+// Validation tags surface as chips in the dashboard's args panel —
+// gives the drawer a reason to show its Arguments section.
+type CreateArgs struct {
+	Name string `graphql:"name,required" json:"name" validate:"required,len=2|80"`
+}

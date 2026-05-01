@@ -1,61 +1,6 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
-
-:root {
-  /* Surface */
-  --bg: #ffffff;
-  --bg-subtle: #f7f8fa;
-  --bg-card: #ffffff;
-  --bg-hover: #f3f4f6;
-  --bg-active: #eef2ff;
-  --bg-error: #fef2f2;
-
-  /* Border / lines */
-  --border: #e5e7eb;
-  --border-strong: #d1d5db;
-
-  /* Text */
-  --text: #111827;
-  --text-muted: #4b5563;
-  --text-dim: #6b7280;
-
-  /* Brand + accent */
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft: #eef2ff;
-
-  /* Transport hues */
-  --rest: #15803d;
-  --rest-soft: #dcfce7;
-  --graphql: #be185d;
-  --graphql-soft: #fce7f3;
-  --ws: #b45309;
-  --ws-soft: #fef3c7;
-
-  /* Status */
-  --success: #15803d;
-  --success-soft: #dcfce7;
-  --error: #b91c1c;
-  --error-soft: #fee2e2;
-
-  /* Vue Flow canvas */
-  --canvas-bg: #f9fafb;
-  --canvas-dot: #d1d5db;
-
-  /* Shadow */
-  --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.04);
-  --shadow-md: 0 1px 3px rgba(17, 24, 39, 0.08), 0 1px 2px rgba(17, 24, 39, 0.04);
-  --shadow-lg: 0 4px 6px -1px rgba(17, 24, 39, 0.08), 0 2px 4px -2px rgba(17, 24, 39, 0.04);
-
-  /* Radii */
-  --radius-sm: 4px;
-  --radius: 6px;
-  --radius-lg: 8px;
-
-  /* Typography */
-  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
-}
+@import './lib/tokens.css';
 
 * {
   box-sizing: border-box;

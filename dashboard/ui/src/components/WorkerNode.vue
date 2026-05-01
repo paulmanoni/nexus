@@ -1,16 +1,26 @@
 <script setup>
-import { computed } from 'vue'
-import { Cog, Database, Link2, AlertTriangle } from 'lucide-vue-next'
+import { computed, inject } from 'vue'
+import { Database, Link2, AlertTriangle } from 'lucide-vue-next'
 import BaseNodeCard from './BaseNodeCard.vue'
+import CategoryIcon from './CategoryIcon.vue'
+import DeploymentTag from './DeploymentTag.vue'
 
 // WorkerNode renders a nexus.AsWorker entry on the architecture graph.
 // Workers are long-lived background tasks (DB listeners, queue
 // consumers, sweepers) — structurally similar to a service in that
 // they depend on resources / other services, but they don't handle
 // HTTP traffic, so they don't need the row-by-row endpoint layout
-// ServiceNode uses. A single card per worker with a dep list is
-// enough to tell the "what does this worker depend on" story.
+// ServiceNode uses. A single card per worker with a status pill +
+// dep list is enough to tell the "what does this worker depend on" story.
 const props = defineProps(['data'])
+
+// Drawer plumbing — clicking a worker node opens the per-worker
+// detail drawer (status, last error, deps, actions).
+const openDrawer = inject('nexus.openDrawer', () => {})
+
+function onClick() {
+  openDrawer({ kind: 'worker', key: props.data.name })
+}
 
 const statusClass = computed(() => props.data.status || 'unknown')
 const hasDeps = computed(() => {
@@ -18,30 +28,46 @@ const hasDeps = computed(() => {
   const s = props.data.serviceDeps || []
   return r.length + s.length > 0
 })
+// Status pill state — maps the worker lifecycle to the canonical status
+// set so the pill shares a vocabulary with resources (healthy/error).
+const pillState = computed(() => {
+  switch (statusClass.value) {
+    case 'running':  return 'healthy'
+    case 'starting': return 'throttled'
+    case 'failed':   return 'error'
+    case 'stopped':  return 'inactive'
+    default:         return 'inactive'
+  }
+})
 </script>
 
 <template>
-  <BaseNodeCard :status="statusClass" source>
+  <BaseNodeCard :status="statusClass" source @click.stop="onClick">
     <template #head>
-      <Cog :size="13" :stroke-width="2" class="icon" />
-      <span class="name">{{ data.name }}</span>
-      <span class="tag">worker</span>
+      <CategoryIcon type="worker" :size="32" />
+      <div class="title">
+        <div class="name-row">
+          <span class="name">{{ data.name }}</span>
+          <DeploymentTag v-if="data.deployment" :name="data.deployment" />
+        </div>
+        <div class="kind">worker</div>
+      </div>
+      <span class="status" :class="pillState" :title="data.status">
+        <span class="dot" />
+        {{ data.status || 'unknown' }}
+      </span>
     </template>
-    <div class="row">
-      <span class="status-dot" :class="statusClass" :title="data.status"></span>
-      <span class="status-text">{{ data.status || 'unknown' }}</span>
-    </div>
     <div v-if="data.lastError" class="err" :title="data.lastError">
-      <AlertTriangle :size="10" :stroke-width="2" />
+      <AlertTriangle :size="11" :stroke-width="2" />
       <span class="err-msg">{{ data.lastError }}</span>
     </div>
     <div v-if="hasDeps" class="deps">
       <div v-for="r in data.resourceDeps || []" :key="'r:' + r" class="dep">
-        <Database :size="10" :stroke-width="2" class="dep-ico" />
+        <Database :size="11" :stroke-width="2" class="dep-ico res" />
         <span class="dep-name">{{ r }}</span>
       </div>
-      <div v-for="s in data.serviceDeps || []" :key="'s:' + s" class="dep svc">
-        <Link2 :size="10" :stroke-width="2" class="dep-ico" />
+      <div v-for="s in data.serviceDeps || []" :key="'s:' + s" class="dep">
+        <Link2 :size="11" :stroke-width="2" class="dep-ico svc" />
         <span class="dep-name">{{ s }}</span>
       </div>
     </div>
@@ -49,57 +75,69 @@ const hasDeps = computed(() => {
 </template>
 
 <style scoped>
-.icon { color: #059669; flex-shrink: 0; }
-.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tag {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 10px;
-  background: #d1fae5;
-  color: #065f46;
-  text-transform: lowercase;
-  letter-spacing: 0.02em;
-  flex-shrink: 0;
+/* Whole card opens the worker drawer on click. */
+:deep(.base-node) { cursor: pointer; }
+
+.title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.row {
-  margin-top: 6px;
+.name-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+.name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kind {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
 }
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-dim);
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  text-transform: capitalize;
 }
-.status-dot.running { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
-.status-dot.failed  { background: var(--error); }
-.status-dot.stopped { background: var(--text-dim); }
-.status-dot.starting { background: var(--accent); }
-.status-text { text-transform: capitalize; }
+.status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status.healthy   { background: var(--st-healthy-soft);   color: var(--st-healthy); }
+.status.throttled { background: var(--st-throttled-soft); color: var(--st-throttled); }
+.status.error     { background: var(--st-error-soft);     color: var(--st-error); }
+.status.inactive  { background: var(--st-inactive-soft);  color: var(--st-inactive); }
 
 .err {
-  margin-top: 6px;
   display: inline-flex;
   gap: 5px;
   align-items: center;
   font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--error);
+  font-size: var(--fs-xs);
+  color: var(--st-error);
   overflow: hidden;
 }
 .err-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .deps {
-  margin-top: 8px;
-  padding-top: 7px;
-  border-top: 1px dashed var(--border);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -107,12 +145,13 @@ const hasDeps = computed(() => {
 .dep {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
-.dep-ico { color: var(--accent); flex-shrink: 0; }
-.dep.svc .dep-ico { color: #7c3aed; }
+.dep-ico { flex-shrink: 0; }
+.dep-ico.res { color: var(--cat-database); }
+.dep-ico.svc { color: var(--cat-service); }
 .dep-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

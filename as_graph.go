@@ -646,8 +646,15 @@ func detectInputObject(argsType reflect.Type) (name string, inner reflect.Type, 
 }
 
 // parseGraphQLTag reads `graphql:"name[,required]"`. When the tag is
-// missing or "-", the field is skipped. Empty name falls back to the Go
-// field name with the first rune lowercased.
+// missing or "-", the field is skipped. Empty name falls back to the
+// JSON tag name (so a single `json:"id"` is enough to serve both REST
+// and GraphQL), then to the Go field name with the first rune
+// lowercased.
+//
+// The JSON-fallback path matters specifically for all-caps acronym
+// fields like ID/URL/API: lowerFirst("ID") yields the awkward "iD",
+// while the json tag is invariably "id" — so json wins when both
+// would otherwise produce arg names a GraphQL caller wouldn't guess.
 func parseGraphQLTag(f reflect.StructField) (name string, required bool) {
 	tag := f.Tag.Get("graphql")
 	if tag == "-" {
@@ -656,7 +663,11 @@ func parseGraphQLTag(f reflect.StructField) (name string, required bool) {
 	parts := strings.Split(tag, ",")
 	name = strings.TrimSpace(parts[0])
 	if name == "" {
-		name = lowerFirst(f.Name)
+		if jsonName := jsonFieldName(f); jsonName != "" {
+			name = jsonName
+		} else {
+			name = lowerFirst(f.Name)
+		}
 	}
 	for _, p := range parts[1:] {
 		if strings.TrimSpace(p) == "required" {
@@ -666,6 +677,20 @@ func parseGraphQLTag(f reflect.StructField) (name string, required bool) {
 	// Non-pointer + non-slice types also imply required by the business rule,
 	// but we only auto-promote when the user explicitly asked via validate.
 	return name, required
+}
+
+// jsonFieldName extracts the wire name from a `json:"…"` tag. Returns
+// "" when the tag is absent, "-", or empty — letting callers fall back
+// to whatever default they prefer.
+func jsonFieldName(f reflect.StructField) string {
+	tag := f.Tag.Get("json")
+	if tag == "" || tag == "-" {
+		return ""
+	}
+	if comma := strings.Index(tag, ","); comma >= 0 {
+		tag = tag[:comma]
+	}
+	return strings.TrimSpace(tag)
 }
 
 // parseValidateTag turns `validate:"required,len=3|120"` into concrete

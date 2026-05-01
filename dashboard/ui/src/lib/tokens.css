@@ -1,0 +1,143 @@
+/* ----------------------------------------------------------------------
+ * tokens.css — single source of truth for the dashboard's visual system.
+ *
+ * Imported by style.css; nothing else should define design tokens. New
+ * components should reference these vars rather than literal hex values
+ * so dark mode + theming stay coherent.
+ *
+ * Sections:
+ *   1. Surfaces / borders / text   — neutrals + theme switch
+ *   2. Brand accent
+ *   3. Category colors             — node taxonomy (service, db, cache, …)
+ *   4. Status set                  — healthy / warn / error / throttled / inactive
+ *   5. Transport hues              — REST / GraphQL / WebSocket
+ *   6. Typography                  — families + size scale + line heights
+ *   7. Spacing + radii + shadows
+ *   8. Vue Flow canvas
+ * -------------------------------------------------------------------- */
+
+:root {
+  /* 1 — Surfaces / borders / text -------------------------------------- */
+  --bg:           #ffffff;
+  --bg-subtle:    #f7f8fa;
+  --bg-card:      #ffffff;
+  --bg-hover:     #f3f4f6;
+  --bg-active:    #eef2ff;
+  --bg-error:     #fef2f2;
+
+  --border:        #e5e7eb;
+  --border-strong: #d1d5db;
+
+  --text:        #111827;
+  --text-muted:  #4b5563;
+  --text-dim:    #6b7280;
+
+  /* 2 — Brand accent --------------------------------------------------- */
+  --accent:       #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft:  #eef2ff;
+
+  /* 3 — Category colors -----------------------------------------------
+   * One color per node type. Used as the left icon-tile fill (12% alpha)
+   * and the icon stroke. Pick once, reuse everywhere.
+   */
+  --cat-service:    #6366f1;   /* indigo  */
+  --cat-database:   #3b82f6;   /* blue    */
+  --cat-cache:      #f59e0b;   /* amber   */
+  --cat-queue:      #a855f7;   /* purple  */
+  --cat-cron:       #ec4899;   /* pink    */
+  --cat-worker:     #f97316;   /* orange  */
+  --cat-internet:   #64748b;   /* slate   */
+  --cat-peer:       #0ea5e9;   /* sky     */
+  --cat-auth:       #64748b;   /* slate   */
+
+  /* 4 — Status set ----------------------------------------------------
+   * Independent of category. A node has BOTH a category color (what it is)
+   * and a status color (how it's doing). Two-axis system; don't fold.
+   */
+  --st-healthy:        #10b981;
+  --st-healthy-soft:   #d1fae5;
+  --st-warn:           #f59e0b;
+  --st-warn-soft:      #fef3c7;
+  --st-error:          #ef4444;
+  --st-error-soft:     #fee2e2;
+  --st-throttled:      #0ea5e9;
+  --st-throttled-soft: #e0f2fe;
+  --st-inactive:       #9ca3af;
+  --st-inactive-soft:  #f3f4f6;
+
+  /* Back-compat shims for existing code that referenced --success / --error
+     before the status set existed. Map onto the new tokens so a refactor
+     doesn't have to touch every component at once. */
+  --success:        var(--st-healthy);
+  --success-soft:   var(--st-healthy-soft);
+  --error:          var(--st-error);
+  --error-soft:     var(--st-error-soft);
+
+  /* 5 — Transport hues ------------------------------------------------ */
+  --rest:        #15803d;
+  --rest-soft:   #dcfce7;
+  --graphql:     #be185d;
+  --graphql-soft:#fce7f3;
+  --ws:          #b45309;
+  --ws-soft:     #fef3c7;
+
+  /* 6 — Typography ---------------------------------------------------- */
+  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --fs-xs: 11px;     /* metrics, badges, chips */
+  --fs-sm: 12px;     /* subtitles, labels */
+  --fs-md: 13px;     /* body */
+  --fs-lg: 14px;     /* node titles, drawer headers */
+  --fs-xl: 16px;     /* section headers */
+  --fs-xxl: 20px;    /* modal headers */
+
+  --lh-tight: 1.2;
+  --lh-body:  1.5;
+
+  /* 7 — Spacing + radii + shadows ------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 4px;
+  --radius:    6px;     /* legacy alias */
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.04);
+  --shadow-md: 0 1px 3px rgba(17, 24, 39, 0.08), 0 1px 2px rgba(17, 24, 39, 0.04);
+  --shadow-lg: 0 4px 6px -1px rgba(17, 24, 39, 0.08), 0 2px 4px -2px rgba(17, 24, 39, 0.04);
+
+  /* 8 — Vue Flow canvas ---------------------------------------------- */
+  --canvas-bg:  #f8fafc;
+  --canvas-dot: #cbd5e1;
+}
+
+/* Dark mode tokens — opt-in via [data-theme="dark"] on <html>. Wired but
+   not yet toggled from the UI; the next step ships a theme switch in the
+   header. Until then this just makes sure the foundation is ready. */
+[data-theme="dark"] {
+  --bg:           #0b0f19;
+  --bg-subtle:    #11151f;
+  --bg-card:      #161b27;
+  --bg-hover:     #1c2230;
+  --bg-active:    #1e2438;
+  --bg-error:     #2a1414;
+
+  --border:        #1f2532;
+  --border-strong: #2a3042;
+
+  --text:        #e5e7eb;
+  --text-muted:  #9ca3af;
+  --text-dim:    #6b7280;
+
+  --accent-soft: #1e1b4b;
+
+  --canvas-bg:  #0e131c;
+  --canvas-dot: #1f2532;
+}

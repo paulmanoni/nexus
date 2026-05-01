@@ -102,8 +102,16 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 		// Per-op error ring — lazy-loaded when the dashboard opens the
 		// error dialog for a specific endpoint. Keeps /stats lean even
 		// when RecentErrorsCap is in the thousands.
-		g.GET("/stats/:service/:op/errors", func(c *gin.Context) {
-			key := c.Param("service") + "." + c.Param("op")
+		//
+		// service + op live in query parameters (not :path/:params)
+		// because REST op names are "<METHOD> <path>" and contain
+		// slashes — which gin's path-param matcher can't capture
+		// across segment boundaries. Query params handle the URL-
+		// encoding cleanly.
+		g.GET("/stats/errors", func(c *gin.Context) {
+			s := c.Query("service")
+			o := c.Query("op")
+			key := s + "." + o
 			c.JSON(http.StatusOK, gin.H{
 				"key":    key,
 				"events": ms.Errors(key),
@@ -114,6 +122,12 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 		g.GET("/events", streamEvents(bus))
 		g.GET("/traces/:id", traceByID(bus))
 	}
+	// /live is the consolidated WS pump that replaces the dashboard's
+	// 5-second poll. One socket carries periodic snapshots of every
+	// surface (endpoints, resources, workers, stats, crons, ratelimits)
+	// — the UI subscribes once and renders live. /events stays separate
+	// for per-request trace pulses.
+	g.GET("/live", streamLive(reg, ms, sched, rl))
 	mountUI(g)
 }
 
@@ -217,8 +231,13 @@ func traceByID(bus *trace.Bus) gin.HandlerFunc {
 // mountRateLimits serves the rate-limit introspection + override surface:
 //
 //	GET    /__nexus/ratelimits                    → snapshot of every key
-//	POST   /__nexus/ratelimits/:service/:op       → override limit live
-//	DELETE /__nexus/ratelimits/:service/:op       → reset to declared baseline
+//	POST   /__nexus/ratelimits?service=...&op=... → override limit live
+//	DELETE /__nexus/ratelimits?service=...&op=... → reset to declared baseline
+//
+// service + op live in QUERY params (not :path/:params) because REST
+// op names are "<METHOD> <path>" and contain slashes — which gin's
+// path-param matcher can't capture across segment boundaries. Query
+// params handle the URL-encoding cleanly.
 //
 // The key format is "<service>.<op>" — matches what the auto-mount
 // registers at boot so dashboard and store talk the same dialect.
@@ -226,13 +245,13 @@ func mountRateLimits(g *gin.RouterGroup, store ratelimit.Store) {
 	g.GET("/ratelimits", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"limits": store.Snapshot(c.Request.Context())})
 	})
-	g.POST("/ratelimits/:service/:op", func(c *gin.Context) {
+	g.POST("/ratelimits", func(c *gin.Context) {
 		var body ratelimit.Limit
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		key := c.Param("service") + "." + c.Param("op")
+		key := c.Query("service") + "." + c.Query("op")
 		rec, err := store.Configure(c.Request.Context(), key, body)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -240,8 +259,8 @@ func mountRateLimits(g *gin.RouterGroup, store ratelimit.Store) {
 		}
 		c.JSON(http.StatusOK, rec)
 	})
-	g.DELETE("/ratelimits/:service/:op", func(c *gin.Context) {
-		key := c.Param("service") + "." + c.Param("op")
+	g.DELETE("/ratelimits", func(c *gin.Context) {
+		key := c.Query("service") + "." + c.Query("op")
 		if err := store.Reset(c.Request.Context(), key); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
