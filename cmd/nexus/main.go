@@ -108,6 +108,7 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newBuildCmd(stdout, stderr),
 		newGenerateCmd(stdout, stderr),
 		newDocsCmd(stdout, stderr),
+		newAPIDocsCmd(stdout, stderr),
 	)
 	return root
 }
