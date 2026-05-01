@@ -137,6 +137,61 @@ func NewCreateAdvert(svc *AdvertsService, db *MainDB, p nexus.Params[CreateArgs]
 
 `graphql:` builds the schema; `validate:` builds validators that the dashboard renders as chips.
 
+## CRUD generator
+
+`AsCRUD[T]` collapses the five-endpoint CRUD shape into a single declaration. Reflection on `T` derives the URL prefix, the GraphQL types, and the primary key; a per-request resolver yields the `Store[T]` the generated handlers run against.
+
+```go
+import nxgorm "github.com/paulmanoni/nexus/storage/gorm"
+
+type Note struct {
+    ID    string `json:"id"`
+    Title string `json:"title" validate:"required,len=1|120"`
+    Body  string `json:"body"`
+}
+
+var Module = nexus.Module("notes",
+    nexus.Provide(NewNotesDB),
+    nexus.AsCRUD[Note](
+        func(ctx context.Context, db *DB) (nexus.Store[Note], error) {
+            return nxgorm.New[Note](db.GetDB())
+        },
+        nexus.WithGraphQL(),
+    ),
+)
+```
+
+| Surface | Endpoints |
+|---|---|
+| REST (default) | `GET /notes` · `GET /notes/:id` · `POST /notes` · `PATCH /notes/:id` · `DELETE /notes/:id` |
+| GraphQL (`WithGraphQL()`) | `listNotes(limit, offset, sort)` · `getNote(id)` · `createNote(...)` · `updateNote(id, ...)` · `deleteNote(id)` |
+
+- `WithoutREST()` — pair with `WithGraphQL()` for a GraphQL-only resource.
+- `validate:` tags on `T` flow into Create/Update — invalid bodies are 400 on REST, resolver errors on GraphQL.
+- The resolver runs once per request, so multi-tenancy / read-replica routing is just "build the right `Store` from `ctx`."
+- Any resolver dep that satisfies `NexusResources()` auto-links its resource node to every generated endpoint on the architecture canvas — no manual edge declarations.
+- Auth, rate limits, `Use(...)` — all the per-op options work the same way they do on `AsRest`.
+
+### Stores
+
+| Adapter | Use |
+|---|---|
+| `nexus.MemoryResolver[T](nil, nil)` | In-process map; prototyping and tests. |
+| `nexus/storage/gorm.New[T](db)` | Production GORM adapter — UUID assignment, paginated `Search`, sort whitelisting, and `gorm.ErrRecordNotFound` → `nexus.ErrCRUDNotFound` so 404s map cleanly. |
+
+Custom backends (Redis, sqlc, …) implement `nexus.Store[T]` directly:
+
+```go
+type Store[T any] interface {
+    Find(ctx context.Context, id string) (*T, error)
+    Search(ctx context.Context, opts nexus.ListOptions) (items []T, total int, err error)
+    Save(ctx context.Context, item *T) error
+    Remove(ctx context.Context, id string) error
+}
+```
+
+Sentinels `ErrCRUDNotFound` / `ErrCRUDConflict` / `ErrCRUDValidation` map to 404 / 409 / 400; anything else maps to 500.
+
 ## Options
 
 | Option | Produces |
@@ -149,6 +204,7 @@ func NewCreateAdvert(svc *AdvertsService, db *MainDB, p nexus.Params[CreateArgs]
 | `Supply(vals...)` | Ready-made values into the dep graph. |
 | `Invoke(fn)` | Side-effect at start-up. |
 | `AsRest(method, path, fn, opts...)` | REST endpoint. |
+| `AsCRUD[T](resolver, opts...)` | Five REST + five GraphQL CRUD ops in one declaration; resolver yields a `Store[T]` per request. |
 | `AsQuery(fn, opts...)` / `AsMutation(...)` | GraphQL op, auto-mounted. |
 | `AsWS(path, type, fn, opts...)` | WebSocket scoped to one envelope type. |
 | `AsWorker(name, fn)` | Long-lived background task; framework-managed lifecycle. |
@@ -458,7 +514,7 @@ go test ./... -bench=. -benchmem -run 'x^'
 | `examples/fxapp` | Multi-domain app via `nexus.Module` (fx hidden). |
 | `examples/graphapp` | GraphQL via reflective AsQuery/AsMutation, typed DB wrappers, validators. |
 | `examples/wsecho` | Typed WebSocket via `AsWS` — two message types on one path. |
-| `examples/microsplit` | `users` + `checkout` showing manifest-driven deployments. Three binaries from one source. |
+| `examples/microsplit` | `users` + `checkout` (manifest-driven deployments, three binaries from one source) and `notes` (canonical `AsCRUD` demo). |
 
 ```bash
 go run ./examples/graphapp
@@ -480,6 +536,7 @@ nexus/                top-level App, Run, Module, Provide, AsWorker, ServeFronte
 ├── cron/             scheduler + dashboard control
 ├── cache/            Redis + in-memory hybrid
 ├── db/               opinionated GORM helpers
+├── storage/gorm/     production Store[T] adapter for AsCRUD
 ├── dashboard/        /__nexus surface + embedded Vue UI
 └── examples/         runnable demos
 ```
