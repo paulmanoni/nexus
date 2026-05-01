@@ -1,20 +1,31 @@
 <script setup>
-import { ref, onMounted, onUnmounted, markRaw, nextTick, provide, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide, watch } from 'vue'
 import { VueFlow, useVueFlow, Position, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import dagre from 'dagre'
+import { ShieldCheck } from 'lucide-vue-next'
 
 import ServiceNode from '../components/ServiceNode.vue'
 import ServiceDepNode from '../components/ServiceDepNode.vue'
 import WorkerNode from '../components/WorkerNode.vue'
+import CronNode from '../components/CronNode.vue'
 import ResourceNode from '../components/ResourceNode.vue'
 import InternetNode from '../components/InternetNode.vue'
 import ErrorDialog from '../components/ErrorDialog.vue'
 import PacketOverlay from '../components/PacketOverlay.vue'
 import GlobalMiddlewareBar from '../components/GlobalMiddlewareBar.vue'
-import { fetchEndpoints, fetchResources, fetchStats, fetchWorkers, subscribeEvents } from '../lib/api.js'
-import { usePoll } from '../lib/usePoll.js'
+import ActivityRail from '../components/ActivityRail.vue'
+import OverlayToggles from '../components/OverlayToggles.vue'
+import TimeScrubber from '../components/TimeScrubber.vue'
+import Drawer from '../components/Drawer.vue'
+import OpDetail from '../components/drawer/OpDetail.vue'
+import ResourceDetail from '../components/drawer/ResourceDetail.vue'
+import WorkerDetail from '../components/drawer/WorkerDetail.vue'
+import CronDetail from '../components/drawer/CronDetail.vue'
+import AuthDetail from '../components/drawer/AuthDetail.vue'
+import CmdK from '../components/CmdK.vue'
+import { subscribeEvents, subscribeLive } from '../lib/api.js'
 
 const nodes = ref([])
 const edges = ref([])
@@ -25,6 +36,7 @@ const nodeTypes = {
   service: markRaw(ServiceNode),
   serviceDep: markRaw(ServiceDepNode),
   worker: markRaw(WorkerNode),
+  cron: markRaw(CronNode),
   resource: markRaw(ResourceNode),
   internet: markRaw(InternetNode),
 }
@@ -33,15 +45,320 @@ const nodeTypes = {
 // constant so edge-builders and the traffic animator agree on naming.
 const INTERNET_ID = 'internet'
 
+// MAX_VISIBLE_ENDPOINTS caps rows shown per module card by default. Top
+// N by traffic (alphabetical tiebreak) appear; the rest hide behind a
+// "+N more endpoints" toggle. Without the cap, modules with many ops
+// turned the canvas into a wall of text and edges anchored to scrolled-
+// out rows desynced from their handles.
+const MAX_VISIBLE_ENDPOINTS = 12
+
+// expandedGroups holds the set of group-keys whose cards are currently
+// rendering ALL their endpoints (toggle clicked). Survives WS snapshots
+// because it lives outside latestSnapshot. Mutating triggers a load()
+// rerun so dagre re-lays-out around the now-taller card.
+const expandedGroups = ref(new Set())
+function toggleExpanded(groupKey) {
+  if (!groupKey) return
+  // Replace the Set wholesale so Vue's reactivity fires; mutating the
+  // existing Set in place doesn't trigger watchers.
+  const next = new Set(expandedGroups.value)
+  if (next.has(groupKey)) next.delete(groupKey)
+  else next.add(groupKey)
+  expandedGroups.value = next
+}
+provide('nexus.expandedGroups', expandedGroups)
+provide('nexus.toggleExpanded', toggleExpanded)
+
 // Per-op selection store. ServiceNode writes here on click; ResourceNode
 // + edge-styling read from it. Single source of truth means no props need
 // to thread through the VueFlow custom-node API.
 const opSelection = ref(null)  // { service, op, resources: string[] }
-function setOp(sel) { opSelection.value = sel }
-function clearOp() { opSelection.value = null }
+
+// SIMULATE_INTERVAL_MS controls how often the click-simulate animation
+// re-fires while a selection is held. 3s feels alive without becoming
+// distracting; the FLASH_MS=900ms flash decays naturally between fires.
+const SIMULATE_INTERVAL_MS = 3000
+let simulateTimer = null
+function stopSimulateLoop() {
+  if (simulateTimer) {
+    clearInterval(simulateTimer)
+    simulateTimer = null
+  }
+}
+
+function setOp(sel) {
+  opSelection.value = sel
+  stopSimulateLoop()
+  // Click-to-simulate: visualise the request path the moment the user
+  // selects an op, without waiting for real traffic. Spawns the same
+  // packet animation onTraceEvent uses, so clicking an endpoint reads
+  // as "this is what a request through me looks like." A loop keeps
+  // the animation alive while the selection is held — without it, the
+  // visual fades after FLASH_MS and the canvas looks idle even though
+  // an op is still selected. Toggling off (clearOp) cancels the loop.
+  if (sel) {
+    simulateOp(sel)
+    simulateTimer = setInterval(() => simulateOp(sel), SIMULATE_INTERVAL_MS)
+  }
+}
+function clearOp() {
+  opSelection.value = null
+  stopSimulateLoop()
+}
 provide('nexus.opSelection', opSelection)
 provide('nexus.setOp', setOp)
 provide('nexus.clearOp', clearOp)
+
+// Overlay highlight modes — Set of active overlay ids ('errors',
+// 'limits', 'auth'). Op rows + edges read this to decide whether to
+// dim themselves (no overlay matches) or pop with a coloured ring
+// (matches an active overlay). OR semantics across overlays.
+const overlays = ref(new Set())
+function setOverlay(next) { overlays.value = next instanceof Set ? next : new Set(next) }
+provide('nexus.overlays', overlays)
+provide('nexus.setOverlay', setOverlay)
+
+// Time scrubber state — capture every WS snapshot into a ring buffer
+// so the user can rewind the canvas to a recent moment. scrubIndex =
+// null means "follow live"; an integer pins the canvas at that
+// history index.
+//
+// Capacity: 30 minutes at the 2s server snapshotInterval. ~900 frames,
+// each typically 5-15 KB → 5-15 MB of in-tab memory for a real app.
+// That's the practical sweet spot for dev/debug sessions: long enough
+// to rewind to "what was the state when the bug fired?" without paying
+// for hour-plus windows we'd more cleanly back with server-side
+// per-bucket storage. Bump SCRUB_HISTORY_CAP if you need longer.
+const SCRUB_HISTORY_CAP = 900
+const snapshotHistory = ref([])
+const scrubIndex = ref(null)
+
+// Event history ring buffer — every trace event the WS streams in
+// gets stashed with its timestamp so the scrubber can REPLAY the
+// flashes + packet animations that happened at the moment the user
+// rewinds to. Without this, scrubbing back swaps the snapshot but
+// leaves the canvas eerily idle, hiding what was actually flowing.
+//
+// Cap covers a busy app for 30 min at modest event rates; oldest
+// frames evict first when the cap is hit.
+const EVENT_HISTORY_CAP = 5000
+const eventHistory = ref([])
+// SCRUB_REPLAY_WINDOW_MS is how far back from the pinned snapshot's
+// timestamp we look for events to replay. Matches the 2s server
+// snapshot interval so each frame replays the events that were
+// fresh AT that moment.
+const SCRUB_REPLAY_WINDOW_MS = 2000
+
+function setScrubIndex(idx) {
+  scrubIndex.value = idx
+  // Always wipe in-flight flashes / packet timers when changing
+  // scrub state — leftovers from the previous frame would otherwise
+  // bleed into the new one. Both paths (resume live + pin past) need
+  // this clear.
+  flashedEdges.value = new Map()
+  flashTimers.forEach(t => clearTimeout(t))
+  flashTimers.clear()
+  if (idx === null) {
+    const last = snapshotHistory.value[snapshotHistory.value.length - 1]
+    if (last) latestSnapshot.value = last.snap
+  } else {
+    const e = snapshotHistory.value[idx]
+    if (e) {
+      latestSnapshot.value = e.snap
+      // Replay every event whose timestamp falls inside the snapshot's
+      // window. nextTick ensures the layout has rebuilt so flashEdges
+      // / spawnPacketsForEdges find the right edge SVG paths to ride.
+      nextTick(() => replayEventsAt(e.ts))
+    }
+  }
+  if (latestSnapshot.value) load()
+}
+
+function replayEventsAt(targetTimeMs) {
+  if (!eventHistory.value.length) return
+  const lo = targetTimeMs - SCRUB_REPLAY_WINDOW_MS
+  const hi = targetTimeMs
+  for (const ev of eventHistory.value) {
+    if (!ev.timestamp) continue
+    const evTime = new Date(ev.timestamp).getTime()
+    if (!evTime) continue
+    if (evTime >= lo && evTime <= hi) {
+      // Force-replay flag: bypass onTraceEvent's "skip backlog older
+      // than mount" filter, which exists to avoid replaying old
+      // events on initial subscribe but is exactly what we want here.
+      onTraceEvent(ev, true)
+    }
+  }
+}
+
+provide('nexus.scrubHistory', snapshotHistory)
+provide('nexus.scrubIndex', scrubIndex)
+provide('nexus.setScrubIndex', setScrubIndex)
+
+// Drawer store. The drawer is the single click-to-open detail surface
+// for any node — kicks in when the user clicks an endpoint row, and
+// (eventually) resource/worker/cron cards. Held as { kind, key } so the
+// content stays *live* against subsequent /__nexus/live snapshots
+// instead of snapshotting the payload at click time.
+const drawer = ref(null) // { kind: 'op', key: 'svc.opName' }
+function openDrawer(spec) { drawer.value = spec }
+function closeDrawer() { drawer.value = null }
+provide('nexus.openDrawer', openDrawer)
+provide('nexus.closeDrawer', closeDrawer)
+
+// Each drawer kind re-resolves its target from the latest snapshot
+// every time the WS pump pushes a new frame. Stats / health / status
+// stay current; if the target disappears between snapshots (deployment
+// change), the drawer renders nothing and the user can close it.
+const drawerOp = computed(() => {
+  if (drawer.value?.kind !== 'op') return null
+  const snap = latestSnapshot.value
+  if (!snap) return null
+  const want = drawer.value.key
+  for (const e of snap.endpoints || []) {
+    const k = `${e.Service}.${e.Name}`
+    if (k !== want) continue
+    const stat = (snap.stats || []).find(s => s.key === k) || null
+    // Attach the live rate-limit record (declared + effective +
+    // overridden) so the drawer's Rate limit section can show both
+    // baseline and any operator override without a second fetch.
+    const rl = (snap.ratelimits || []).find(r => r.key === k) || null
+    return { ...e, Stats: stat, RateLimitRecord: rl }
+  }
+  return null
+})
+const drawerResource = computed(() => {
+  if (drawer.value?.kind !== 'resource') return null
+  const snap = latestSnapshot.value
+  if (!snap) return null
+  return (snap.resources || []).find(r => r.name === drawer.value.key) || null
+})
+const drawerWorker = computed(() => {
+  if (drawer.value?.kind !== 'worker') return null
+  const snap = latestSnapshot.value
+  if (!snap) return null
+  return (snap.workers || []).find(w => w.Name === drawer.value.key) || null
+})
+const drawerCron = computed(() => {
+  if (drawer.value?.kind !== 'cron') return null
+  const snap = latestSnapshot.value
+  if (!snap) return null
+  return (snap.crons || []).find(c => c.name === drawer.value.key) || null
+})
+
+// Drawer header copy — title varies by kind. Subtitle gives one
+// supporting line of context (service / kind / status).
+const drawerTitle = computed(() => {
+  if (!drawer.value) return ''
+  if (drawer.value.kind === 'op') {
+    const e = drawerOp.value
+    if (!e) return ''
+    if (e.Transport === 'rest')    return `${e.Method} ${e.Path}`
+    if (e.Transport === 'graphql') return `${e.Method} ${e.Name}`
+    return e.Path || e.Name || ''
+  }
+  if (drawer.value.kind === 'resource') return drawerResource.value?.name || ''
+  if (drawer.value.kind === 'worker')   return drawerWorker.value?.Name || ''
+  if (drawer.value.kind === 'cron')     return drawerCron.value?.name || ''
+  if (drawer.value.kind === 'auth')     return 'Auth'
+  return ''
+})
+const drawerSubtitle = computed(() => {
+  if (!drawer.value) return ''
+  if (drawer.value.kind === 'op') {
+    // Prefer the MODULE name in the header subtitle — it's the
+    // organizational unit the operator scans for on the canvas.
+    // Falls back to the registered service name only when the
+    // endpoint wasn't declared inside any nexus.Module.
+    const e = drawerOp.value
+    if (!e) return ''
+    return e.Module || e.Service || ''
+  }
+  if (drawer.value.kind === 'resource') return drawerResource.value?.kind || ''
+  if (drawer.value.kind === 'worker')   return 'worker · ' + (drawerWorker.value?.Status || 'unknown')
+  if (drawer.value.kind === 'cron')     return 'cron · ' + (drawerCron.value?.schedule || '')
+  if (drawer.value.kind === 'auth')     return 'cached identities · live rejections'
+  return ''
+})
+
+// ─── Cmd-K palette ─────────────────────────────────────────────────
+// Flat search index built from the latest snapshot so a keypress can
+// fly to any node without scanning the canvas. Selecting a result
+// routes through openDrawer — same destination as a click on the node.
+const cmdkOpen = ref(false)
+const cmdkItems = computed(() => {
+  const snap = latestSnapshot.value
+  if (!snap) return []
+  const out = []
+  // Global / non-node entries — Auth surfaces here so a keypress
+  // opens the cached-identities + rejections drawer without needing
+  // a click target on the canvas.
+  out.push({
+    id: 'auth',
+    kind: 'auth',
+    label: 'Auth',
+    sublabel: 'cached identities · rejections',
+    searchKey: 'auth identities sessions rejections',
+    drawerSpec: { kind: 'auth' },
+  })
+  for (const e of snap.endpoints || []) {
+    const label = e.Transport === 'rest'
+      ? `${e.Method} ${e.Path}`
+      : e.Transport === 'graphql'
+        ? `${e.Method} ${e.Name}`
+        : (e.Path || e.Name || '')
+    const sub = `${e.Service || ''} · ${e.Transport || ''}`
+    out.push({
+      id: 'op:' + e.Service + '.' + e.Name,
+      kind: 'op',
+      label,
+      sublabel: sub,
+      searchKey: `${label} ${sub}`.toLowerCase(),
+      drawerSpec: { kind: 'op', key: `${e.Service}.${e.Name}` },
+    })
+  }
+  for (const r of snap.resources || []) {
+    out.push({
+      id: 'res:' + r.name,
+      kind: 'resource-' + (r.kind || 'database'),
+      label: r.name,
+      sublabel: 'resource · ' + (r.kind || ''),
+      searchKey: `${r.name} ${r.kind || ''} resource`.toLowerCase(),
+      drawerSpec: { kind: 'resource', key: r.name },
+    })
+  }
+  for (const w of snap.workers || []) {
+    out.push({
+      id: 'wk:' + w.Name,
+      kind: 'worker',
+      label: w.Name,
+      sublabel: 'worker · ' + (w.Status || ''),
+      searchKey: `${w.Name} worker ${w.Status || ''}`.toLowerCase(),
+      drawerSpec: { kind: 'worker', key: w.Name },
+    })
+  }
+  for (const c of snap.crons || []) {
+    out.push({
+      id: 'cron:' + c.name,
+      kind: 'cron',
+      label: c.name,
+      sublabel: 'cron · ' + (c.schedule || ''),
+      searchKey: `${c.name} cron ${c.schedule || ''}`.toLowerCase(),
+      drawerSpec: { kind: 'cron', key: c.name },
+    })
+  }
+  return out
+})
+function onCmdK(spec) {
+  if (!spec) return
+  openDrawer(spec)
+}
+function onGlobalKey(e) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault()
+    cmdkOpen.value = !cmdkOpen.value
+  }
+}
 
 // Error-dialog state. Dialog lazy-loads events via the per-op endpoint
 // when opened — keeps /stats hot-path lean, and supports thousands of
@@ -93,47 +410,50 @@ onNodeDragStop(({ node }) => {
   persistPositions()
 })
 
-// Click the empty canvas → clear op selection. Lets users reset without
-// having to find the card header.
-onPaneClick(() => clearOp())
+// Click the empty canvas → clear op selection AND close the drawer.
+// Backdrop clicks in the drawer go straight to closeDrawer; this is the
+// other reset path for users who want to dismiss everything in one go.
+onPaneClick(() => {
+  clearOp()
+  closeDrawer()
+})
 
 function estimateServiceHeight(data) {
-  // Every endpoint renders — no MAX_VISIBLE cap. The chip row's
-  // visual height grows with chip count (chips wrap to 2-3 lines
-  // when many resources / middlewares pile on); approximate by
-  // bucketing into 0/1/2 extra rows, which keeps cards from
-  // overlapping in dagre's layout without measuring post-render.
+  // data.endpoints is the VISIBLE slice (sorted + truncated unless
+  // expanded). The chip row's visual height grows with chip count
+  // (chips wrap to 2-3 lines when many resources / middlewares pile
+  // on); approximate by bucketing into 0/1/2 extra rows so cards
+  // don't overlap in dagre's layout without post-render measurement.
   const eps = data.endpoints || []
+  const total = data.totalEndpoints ?? eps.length
   const desc = data.description ? 32 : 0
   let rows = 0
   for (const e of eps) {
     const hasOwnerChip = !e.ServiceAutoRouted
     const resCount = Array.isArray(e.Resources) ? e.Resources.length : 0
+    const sdCount = Array.isArray(e.ServiceDeps) ? e.ServiceDeps.length : 0
     const mwCount = Array.isArray(e.Middleware)
       ? e.Middleware.filter(m => m !== 'metrics').length
       : 0
-    const chipCount = (hasOwnerChip ? 1 : 0) + resCount + mwCount
-    if (chipCount === 0) {
-      rows += 1            // single op line
-    } else if (chipCount <= 3) {
-      rows += 2            // op line + one chip line
-    } else if (chipCount <= 6) {
-      rows += 3            // op line + two chip lines
-    } else {
-      rows += 4            // op line + three chip lines
-    }
+    const chipCount = (hasOwnerChip ? 1 : 0) + resCount + sdCount + mwCount
+    if (chipCount === 0)       rows += 1
+    else if (chipCount <= 3)   rows += 2
+    else if (chipCount <= 6)   rows += 3
+    else                       rows += 4
   }
-  // Header (38) + description + rows × 22 + bottom padding (16) +
-  // small safety margin (12) so cards never butt against each
-  // other under variable chip wrapping. Capped at the same 480px
-  // cap the .endpoints body uses for overflow scroll — without
-  // this, dagre reserves vertical space for a 25-row module that
-  // the card itself never displays (it scrolls).
-  const HEADER = 38
-  const FOOTER = 16 + 12
-  const BODY_MAX = 480 // matches ServiceNode.vue .endpoints max-height
-  const body = Math.min(rows * 22, BODY_MAX)
-  return HEADER + desc + body + FOOTER
+  // Toggle button row — present whenever the card hides some endpoints
+  // (collapsed and total > visible) OR shows them all (expanded with
+  // a "Show fewer" affordance). About one row's worth of vertical real
+  // estate including its top margin.
+  const showToggle = total > eps.length || (data.isExpanded && total > 0)
+  const toggleH = showToggle ? 36 : 0
+  // Header now hosts a 32px CategoryIcon tile + a two-line title (name
+  // + "service · N endpoints"); padding 12px top+bottom. ~56-60px tall.
+  // Old 38 underestimated by ~20px and let dagre pack neighbouring
+  // cards under the header → visible overlap.
+  const HEADER = 60
+  const FOOTER = 16 + 16
+  return HEADER + desc + rows * 24 + toggleH + FOOTER
 }
 
 function estimateResourceHeight(data) {
@@ -154,17 +474,18 @@ function layout(ns, es) {
 function dagreLayout(ns, es) {
   const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
   // nodesep controls vertical gap between cards in the same rank,
-  // ranksep the horizontal gap between ranks. Bumped from
-  // (50, 140) so module cards with many endpoints — which can be
-  // ~600-800px tall in real projects — still have visible air
-  // between them.
-  g.setGraph({ rankdir: 'LR', nodesep: 80, ranksep: 160 })
+  // ranksep the horizontal gap between ranks. Generous values so
+  // module cards with many endpoints (commonly 200-600px tall) keep
+  // visible air between them and never visibly overlap when
+  // estimateServiceHeight is slightly off.
+  g.setGraph({ rankdir: 'LR', nodesep: 120, ranksep: 220 })
   ns.forEach(n => {
     let w, h
     if (n.type === 'internet') { w = 160; h = 90 }
     else if (n.type === 'resource') { w = NODE_WIDTH_RESOURCE; h = estimateResourceHeight(n.data) }
     else if (n.type === 'serviceDep') { w = NODE_WIDTH_RESOURCE; h = estimateServiceDepHeight(n.data) }
     else if (n.type === 'worker') { w = NODE_WIDTH_RESOURCE; h = estimateWorkerHeight(n.data) }
+    else if (n.type === 'cron') { w = NODE_WIDTH_RESOURCE; h = estimateCronHeight(n.data) }
     else { w = NODE_WIDTH_SERVICE; h = estimateServiceHeight(n.data) }
     g.setNode(n.id, { width: w, height: h })
   })
@@ -196,6 +517,27 @@ function estimateWorkerHeight(data) {
   return 68 + depsH + errH
 }
 
+function estimateCronHeight(data) {
+  // header (60) + schedule row (~22) + optional last-error (~22) +
+  // padding. Matches the BaseNodeCard padding/footer reservations the
+  // service-card estimator uses.
+  const errH = data.lastRun?.error ? 22 : 0
+  return 60 + 22 + errH + 16
+}
+
+// nodeBoxSize re-derives the (width, height) dagre reserved for a node
+// — used by the deployment-frame computation post-layout. Same per-
+// type logic as dagreLayout's setNode pass; kept in one helper so
+// they can't drift apart.
+function nodeBoxSize(n) {
+  if (n.type === 'internet')   return { w: 160, h: 90 }
+  if (n.type === 'resource')   return { w: NODE_WIDTH_RESOURCE, h: estimateResourceHeight(n.data) }
+  if (n.type === 'serviceDep') return { w: NODE_WIDTH_RESOURCE, h: estimateServiceDepHeight(n.data) }
+  if (n.type === 'worker')     return { w: NODE_WIDTH_RESOURCE, h: estimateWorkerHeight(n.data) }
+  if (n.type === 'cron')       return { w: NODE_WIDTH_RESOURCE, h: estimateCronHeight(n.data) }
+  return { w: NODE_WIDTH_SERVICE, h: estimateServiceHeight(n.data) }
+}
+
 function gridLayout(ns) {
   const cols = Math.min(ns.length, 3)
   const rowHeights = []
@@ -205,6 +547,7 @@ function gridLayout(ns) {
     if (n.type === 'resource') h = estimateResourceHeight(n.data)
     else if (n.type === 'serviceDep') h = estimateServiceDepHeight(n.data)
     else if (n.type === 'worker') h = estimateWorkerHeight(n.data)
+    else if (n.type === 'cron') h = estimateCronHeight(n.data)
     else h = estimateServiceHeight(n.data)
     rowHeights[row] = Math.max(rowHeights[row] || 0, h)
   })
@@ -224,19 +567,22 @@ function gridLayout(ns) {
   })
 }
 
-async function load() {
-  let epData, rsData, statsData, wkData
-  try {
-    [epData, rsData, statsData, wkData] = await Promise.all([
-      fetchEndpoints(),
-      fetchResources(),
-      fetchStats().catch(() => ({ stats: [] })), // graceful if stats endpoint absent
-      fetchWorkers().catch(() => ({ workers: [] })),
-    ])
-  } catch (err) {
-    console.error('[nexus] Architecture load failed:', err)
-    return
-  }
+// latestSnapshot holds the most recent /__nexus/live frame. load() reads
+// from it instead of fetching, so the WS push is the single source of
+// state for the architecture view. null until the first snapshot arrives.
+const latestSnapshot = ref(null)
+
+function load() {
+  const snap = latestSnapshot.value
+  if (!snap) return
+  // Shape the snapshot fields back into the {endpoints, services, …}
+  // payloads the rest of this function was written against. Cheap,
+  // and means we didn't have to rewrite the group/edge builder below.
+  const epData = { services: snap.services || [], endpoints: snap.endpoints || [] }
+  const rsData = { resources: snap.resources || [] }
+  const statsData = { stats: snap.stats || [] }
+  const wkData = { workers: snap.workers || [] }
+  const crData = { crons: snap.crons || [] }
   // Index stats by "service.op". The stats key stays service-scoped
   // even after the UI regroups by module, because the metrics
   // middleware keys its counters by the owning service name.
@@ -280,6 +626,11 @@ async function load() {
         // controllers shape), this stays '' so each row resolves
         // its own service via e.Service in ServiceNode.
         service: e.Service,
+        // deployment: the DeployAs tag from the module declaration,
+        // pulled off the first endpoint. Drives the deployment-frame
+        // bbox computation post-layout — modules sharing a tag end up
+        // wrapped in a single labelled VPC-style container.
+        deployment: e.Deployment || '',
         endpoints: [],
         description: serviceIndex[moduleName || e.Service]?.Description || '',
       }
@@ -311,7 +662,27 @@ async function load() {
     })
   }
 
-  const groupNodes = [...groups.values()].map(g => ({
+  // Build the "displayed" view per group: sort by traffic (desc), tie-
+  // break alphabetically, then truncate to MAX_VISIBLE_ENDPOINTS unless
+  // the user has expanded this group via the +N more toggle. Edge
+  // construction below iterates `displayed` so per-op edges only land
+  // on rows that actually render — Vue Flow needs the targetHandle to
+  // exist for routing to the right anchor.
+  const labelOfEp = (e) => e.Name || `${e.Method} ${e.Path}` || ''
+  const sortEndpoints = (eps) => [...eps].sort((a, b) => {
+    const ca = a.Stats?.count || 0
+    const cb = b.Stats?.count || 0
+    if (cb !== ca) return cb - ca
+    return labelOfEp(a).localeCompare(labelOfEp(b))
+  })
+  const sortedGroups = [...groups.values()].map(g => {
+    const sorted = sortEndpoints(g.endpoints)
+    const isExpanded = expandedGroups.value.has(g.key)
+    const displayed = isExpanded ? sorted : sorted.slice(0, MAX_VISIBLE_ENDPOINTS)
+    return { g, displayed, sorted, isExpanded, total: g.endpoints.length }
+  })
+
+  const groupNodes = sortedGroups.map(({ g, displayed, isExpanded, total }) => ({
     id: g.key,
     type: 'service',
     position: { x: 0, y: 0 },
@@ -321,7 +692,11 @@ async function load() {
       isModule: g.isModule,
       service: g.service,
       description: g.description,
-      endpoints: g.endpoints,
+      // Only the visible slice ships in `endpoints`. Total + isExpanded
+      // let the card render the +N more / Show fewer toggle.
+      endpoints: displayed,
+      totalEndpoints: total,
+      isExpanded,
       remote: !!g.remote,
       deployment: g.deployment || '',
     },
@@ -344,14 +719,52 @@ async function load() {
   for (const g of groups.values()) {
     if (g.isModule) moduleCardsByName[g.name] = g.key
   }
+  // serviceToCard: maps a SERVICE NAME (whatever the registered service
+  // wrapper called itself — e.g. "User service") to the module card
+  // that owns its endpoints (e.g. "mod:users"). Lets the dashboard
+  // route service-level edges (constructor deps, worker deps, cross-
+  // service deps) onto the module CARD instead of spawning a separate
+  // mini "dep" node when the service's name and module's name diverge.
+  // Without this, a module named "users" with a service called "User
+  // service" would render BOTH a "users" card and a sidekick "User
+  // service" dep — the resource edge would land on the dep, looking
+  // detached from the card the user actually clicks.
+  const serviceToCard = {}
+  for (const g of groups.values()) {
+    for (const e of g.endpoints) {
+      if (e.Service && !serviceToCard[e.Service]) {
+        serviceToCard[e.Service] = g.key
+      }
+    }
+  }
+  // service-name → deployment-tag map; lets workers and crons (which
+  // don't carry a deployment field of their own) infer membership of
+  // a deployment frame via their service deps. Lifted into a ref so
+  // drag-time recomputation reads the same map without re-scanning.
+  // Service-name → deployment-tag map. Lets workers and crons (which
+  // don't carry a Deployment field of their own) inherit the tag of
+  // a service they depend on, so the deployment-tag pill shows up on
+  // every card that conceptually belongs to a deployment unit.
+  const svcToDep = {}
+  for (const e of epData.endpoints || []) {
+    if (e.Service && e.Deployment && !svcToDep[e.Service]) {
+      svcToDep[e.Service] = e.Deployment
+    }
+  }
+  // resolveServiceCard returns the canonical canvas node id for a
+  // service name. Module-name match wins (rare but explicit); otherwise
+  // we look at where the service's endpoints actually live.
+  const resolveServiceCard = (name) => moduleCardsByName[name] || serviceToCard[name] || null
 
   const depServices = new Map() // name -> { Name, Description, ResourceDeps, ServiceDeps }
   const markDep = (name) => {
     if (!name) return
-    // Skip names already represented by a module card. The card
-    // carries the service identity (header shows the name); a
-    // separate dep node would just duplicate it on the canvas.
-    if (moduleCardsByName[name]) return
+    // Skip names already represented by a module card OR by a card
+    // that owns this service's endpoints (resolveServiceCard handles
+    // the divergent-name case — e.g. service "User service" lives in
+    // module card "users"). In both cases the card already carries the
+    // service identity and a separate dep node would duplicate it.
+    if (resolveServiceCard(name)) return
     if (!depServices.has(name)) {
       const s = serviceIndex[name] || { Name: name, Description: '' }
       depServices.set(name, {
@@ -364,9 +777,11 @@ async function load() {
   }
 
   // resolveDepTarget returns the canvas node ID an edge should target
-  // when pointing at "service X". Module cards win over plain dep
-  // nodes; falls back to dep:X when no card claims the name.
-  const resolveDepTarget = (name) => moduleCardsByName[name] || `dep:${name}`
+  // when pointing at "service X". Prefer a module card (matched by
+  // module name OR by the service name's owning card via
+  // resolveServiceCard); fall back to a plain dep node only when the
+  // service has no endpoints on the canvas.
+  const resolveDepTarget = (name) => resolveServiceCard(name) || `dep:${name}`
   for (const e of epData.endpoints || []) {
     // Only endpoints whose handler explicitly took *Service as a Go
     // dep add the service as a per-row architecture dep. Auto-routed
@@ -428,17 +843,40 @@ async function load() {
   // the graph; edges to/from their deps share the same service-level
   // styling so the "background worker uses X" relationship is
   // visually consistent with "service uses X".
-  const workerNodes = (wkData.workers || []).map(w => ({
-    id: `wk:${w.Name}`,
-    type: 'worker',
+  const workerNodes = (wkData.workers || []).map(w => {
+    // Infer deployment from any service dep that carries a tag.
+    // Lets workers ride along on their owning service's deployment
+    // pill without the framework needing to track this directly.
+    let dep = ''
+    for (const s of w.ServiceDeps || []) {
+      if (svcToDep[s]) { dep = svcToDep[s]; break }
+    }
+    return {
+      id: `wk:${w.Name}`,
+      type: 'worker',
+      position: { x: 0, y: 0 },
+      data: {
+        name: w.Name,
+        status: w.Status || 'unknown',
+        lastError: w.LastError || '',
+        resourceDeps: w.ResourceDeps || [],
+        serviceDeps: w.ServiceDeps || [],
+        deployment: dep,
+      },
+    }
+  })
+
+  // Crons — one node per app.Cron(...). Linked to a service when the
+  // job's .Service was set; that draws a cron→service edge so an
+  // operator sees which service "owns" each scheduled task.
+  const cronNodes = (crData.crons || []).map(c => ({
+    id: `cron:${c.name}`,
+    type: 'cron',
     position: { x: 0, y: 0 },
-    data: {
-      name: w.Name,
-      status: w.Status || 'unknown',
-      lastError: w.LastError || '',
-      resourceDeps: w.ResourceDeps || [],
-      serviceDeps: w.ServiceDeps || [],
-    },
+    // c.service points at the service name the cron belongs to; we
+    // resolve that to a deployment tag so the cron card carries the
+    // same deployment pill its service does.
+    data: { ...c, deployment: c.service ? (svcToDep[c.service] || '') : '' },
   }))
 
   // ---------------------------------------------------------------
@@ -452,86 +890,89 @@ async function load() {
   // ---------------------------------------------------------------
   const edgeList = []
   const claimed = new Set()
-  // Map each service name → the GROUP key that owns endpoints for that
-  // service. Used by the aggregated fallback and the Internet inbound
-  // lanes so edges land on the right module card even when grouping
-  // differs from the service name.
-  const serviceToGroup = {}
-  for (const g of groups.values()) {
-    for (const e of g.endpoints) {
-      serviceToGroup[e.Service] = g.key
-    }
-  }
-  // Build a per-endpoint lookup so we can locate the owning group by
-  // (service, op) — needed to source edges from the right group card.
-  const endpointGroup = {}
-  for (const g of groups.values()) {
-    for (const e of g.endpoints) {
-      endpointGroup[`${e.Service}.${e.Name || `${e.Method} ${e.Path}`}`] = g.key
-    }
-  }
-  // Dedupe by (source, target). When N endpoints in the same module
-  // all use the same dep, we draw ONE card-level edge instead of N
-  // overlapping per-op lines. The edge stores the list of ops it
-  // represents; selection + flash logic looks up by op name to find
-  // which edge to highlight.
+  // Per-op edge construction. One line per (source, target, op) so the
+  // line ANCHORS to the row's per-op handle on both ends — outbound
+  // emerges from the row's right, inbound (built separately below)
+  // lands on the row's left. Trades visual density for accuracy: a
+  // module with 25 endpoints all hitting main-db now draws 25 lines
+  // instead of one, but each line ties to its own row.
+  //
+  // Dedupe is by (source, target, op) so the same op claiming the same
+  // dep twice (rare; service-deps + handler-deps overlap) doesn't push
+  // duplicate edges. Service-level edges (no op) keep (source, target)
+  // dedup since they don't have a row to anchor to.
   const edgeByKey = new Map()
-  function pushAggregatedEdge(src, tgt, base) {
-    const k = `${src}->${tgt}`
-    let edge = edgeByKey.get(k)
-    if (edge) {
-      // Same source/target seen before → just record this op as one
-      // more user of the existing edge.
-      if (base.op) edge.data.ops.push(base.op)
-      return
-    }
-    edge = {
+  function pushOpEdge(src, tgt, base) {
+    // Drop self-loops. They happen when an endpoint declares its owning
+    // *Service (or a ServiceDeps name) that resolves to THE SAME module
+    // card the endpoint already lives in — e.g. an endpoint in module
+    // "users" that takes *UsersService as a dep. Useless arc.
+    if (src === tgt) return
+    const op = base.op || ''
+    const k = op ? `${src}->${tgt}@${op}` : `${src}->${tgt}`
+    if (edgeByKey.has(k)) return
+    const edge = {
       id: `e:${k}`,
       source: src,
+      // Per-row source handle — only set when the edge belongs to a
+      // specific op. Service-level / fallback edges leave it unset and
+      // emerge from the card's default right side instead.
+      sourceHandle: op ? `op:${op}` : undefined,
       target: tgt,
       markerEnd: MarkerType.ArrowClosed,
-      data: { ...base, ops: base.op ? [base.op] : [] },
+      data: { ...base, ops: op ? [op] : [] },
     }
     edgeByKey.set(k, edge)
     edgeList.push(edge)
   }
-  for (const e of epData.endpoints || []) {
-    const opName = e.Name || `${e.Method} ${e.Path}`
-    const groupKey = endpointGroup[`${e.Service}.${opName}`]
-    if (!groupKey) continue
-    // Resource edges.
-    for (const rName of e.Resources || []) {
-      pushAggregatedEdge(groupKey, `res:${rName}`, {
-        service: e.Service, target: rName, targetKind: 'resource', op: opName,
-      })
-      claimed.add(`${e.Service}|res:${rName}`)
-    }
-    // Owning-service dep edge — ONLY when the handler explicitly took
-    // *Service as a Go dep. Auto-routed endpoints skip this because
-    // they don't actually depend on the service wrapper value; they
-    // were adopted into the service for schema/metrics routing only.
-    if (!e.ServiceAutoRouted && (depServices.has(e.Service) || moduleCardsByName[e.Service])) {
-      const tgt = resolveDepTarget(e.Service)
-      pushAggregatedEdge(groupKey, tgt, {
-        service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true,
-      })
-    }
-    // Other-service dep edges. resolveDepTarget routes to the module
-    // card when one exists (cross-module dep — the dep IS another
-    // module on the canvas) and falls back to the small dep node
-    // otherwise (purely service-level dep).
-    for (const sName of e.ServiceDeps || []) {
-      const tgt = resolveDepTarget(sName)
-      pushAggregatedEdge(groupKey, tgt, {
-        service: e.Service, target: sName, targetKind: 'service', op: opName,
-      })
+  // Per-op outbound edges. Iterates `displayed` (visible rows only) so
+  // every edge has a sourceHandle that actually renders. Hidden rows
+  // get no outbound edges — when the user expands the card via +N more,
+  // load() reruns and the edges materialise.
+  for (const { g, displayed } of sortedGroups) {
+    for (const e of displayed) {
+      const opName = e.Name || `${e.Method} ${e.Path}`
+      // Resource edges.
+      for (const rName of e.Resources || []) {
+        pushOpEdge(g.key, `res:${rName}`, {
+          service: e.Service, target: rName, targetKind: 'resource', op: opName,
+        })
+        claimed.add(`${e.Service}|res:${rName}`)
+      }
+      // Owning-service dep edge — ONLY when the handler explicitly took
+      // *Service as a Go dep. Auto-routed endpoints skip this because
+      // they don't actually depend on the service wrapper value; they
+      // were adopted into the service for schema/metrics routing only.
+      if (!e.ServiceAutoRouted && (depServices.has(e.Service) || resolveServiceCard(e.Service))) {
+        const tgt = resolveDepTarget(e.Service)
+        // Skip self-edges: when the resolved target is the same module
+        // card we're emitting from (the common case after
+        // resolveServiceCard funnels "User service" → "mod:users"),
+        // pushOpEdge already drops src===tgt — but we can short-circuit
+        // here so we don't even count the edge as claimed.
+        if (tgt !== g.key) {
+          pushOpEdge(g.key, tgt, {
+            service: e.Service, target: e.Service, targetKind: 'service', op: opName, owning: true,
+          })
+        }
+      }
+      // Other-service dep edges. resolveDepTarget routes to the module
+      // card when one exists (cross-module dep — the dep IS another
+      // module on the canvas) and falls back to the small dep node
+      // otherwise (purely service-level dep).
+      for (const sName of e.ServiceDeps || []) {
+        const tgt = resolveDepTarget(sName)
+        pushOpEdge(g.key, tgt, {
+          service: e.Service, target: sName, targetKind: 'service', op: opName,
+        })
+      }
     }
   }
   // Aggregated fallback for runtime-attached resources no op claims.
   for (const r of rsData.resources || []) {
     for (const svc of r.attachedTo || []) {
       if (claimed.has(`${svc}|res:${r.name}`)) continue
-      const groupKey = serviceToGroup[svc]
+      const groupKey = serviceToCard[svc]
       if (!groupKey) continue
       edgeList.push({
         id: `e:${groupKey}->res:${r.name}`,
@@ -549,26 +990,49 @@ async function load() {
   // packet-animation rules apply. Workers get pulses on their
   // resource edges whenever the worker reports activity (phase 4+).
   for (const w of wkData.workers || []) {
+    const wSrc = `wk:${w.Name}`
     for (const res of w.ResourceDeps || []) {
       edgeList.push({
-        id: `e:wk:${w.Name}->res:${res}`,
-        source: `wk:${w.Name}`,
+        id: `e:${wSrc}->res:${res}`,
+        source: wSrc,
         target: `res:${res}`,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: w.Name, target: res, targetKind: 'resource', op: null, serviceLevel: true, worker: true },
       })
     }
     for (const other of w.ServiceDeps || []) {
-      if (!depServices.has(other) && !moduleCardsByName[other]) continue
+      if (!depServices.has(other) && !resolveServiceCard(other)) continue
       const tgt = resolveDepTarget(other)
+      // Skip self-loops — a worker that shares a name with a module
+      // card it depends on would otherwise produce wk:X → wk:X.
+      if (tgt === wSrc) continue
       edgeList.push({
-        id: `e:wk:${w.Name}->${tgt}`,
-        source: `wk:${w.Name}`,
+        id: `e:${wSrc}->${tgt}`,
+        source: wSrc,
         target: tgt,
         markerEnd: MarkerType.ArrowClosed,
         data: { service: w.Name, target: other, targetKind: 'service', op: null, serviceLevel: true, worker: true },
       })
     }
+  }
+
+  // Cron edges — when a job declared .Service("foo"), draw an edge
+  // from the cron node onto that service's card. Same semantics as
+  // worker→service: the cron "belongs to" the service for purposes of
+  // ownership / on-call grouping. resolveServiceCard gracefully
+  // handles divergent service/module naming.
+  for (const c of crData.crons || []) {
+    if (!c.service) continue
+    const tgt = resolveDepTarget(c.service)
+    const src = `cron:${c.name}`
+    if (!tgt || tgt === src) continue
+    edgeList.push({
+      id: `e:${src}->${tgt}`,
+      source: src,
+      target: tgt,
+      markerEnd: MarkerType.ArrowClosed,
+      data: { service: c.service, target: c.service, targetKind: 'service', op: null, serviceLevel: true, cron: true },
+    })
   }
 
   // Service-level dep edges: edges originating at a service-dep node
@@ -581,7 +1045,10 @@ async function load() {
   // cards) lines so the service layer's architecture is visible even
   // when no individual endpoint touches those dependencies directly.
   for (const s of epData.services || []) {
-    const sourceID = moduleCardsByName[s.Name] || (depServices.has(s.Name) ? `dep:${s.Name}` : '')
+    // Source: prefer the service's owning module card so service-level
+    // edges land on the visible card the user clicks (not a sidekick
+    // dep node when the service name doesn't match the module name).
+    const sourceID = resolveServiceCard(s.Name) || (depServices.has(s.Name) ? `dep:${s.Name}` : '')
     if (!sourceID) continue
     for (const res of s.ResourceDeps || []) {
       edgeList.push({
@@ -593,8 +1060,12 @@ async function load() {
       })
     }
     for (const other of s.ServiceDeps || []) {
-      if (!depServices.has(other) && !moduleCardsByName[other]) continue
+      if (!depServices.has(other) && !resolveServiceCard(other)) continue
       const tgt = resolveDepTarget(other)
+      // Skip self-loops — a service whose constructor lists itself in
+      // ServiceDeps (or aliases that resolve back to its own module
+      // card) would otherwise draw a useless mod:X → mod:X arc.
+      if (tgt === sourceID) continue
       edgeList.push({
         id: `e:${sourceID}->${tgt}`,
         source: sourceID,
@@ -604,19 +1075,48 @@ async function load() {
       })
     }
   }
-  // Internet → group edges. One per module-group, since modules are
-  // the thing external traffic now "enters" in the visual model.
-  for (const g of groups.values()) {
-    edgeList.push({
-      id: `e:internet->${g.key}`,
-      source: INTERNET_ID,
-      target: g.key,
-      markerEnd: MarkerType.ArrowClosed,
-      data: { service: g.service, target: g.name, targetKind: 'module', op: null, inbound: true, groupKey: g.key },
-    })
+  // Internet → endpoint-row edges. One per VISIBLE endpoint, with
+  // targetHandle pointing at the row's per-op target handle so the
+  // line LANDS on the row the request actually hits. Empty / all-
+  // hidden modules (typically remote-deployment placeholders OR
+  // collapsed groups whose top-N happens to be empty — rare) fall back
+  // to one card-level inbound so the topology still shows the module
+  // gets traffic conceptually.
+  for (const { g, displayed } of sortedGroups) {
+    if (displayed.length === 0) {
+      edgeList.push({
+        id: `e:internet->${g.key}`,
+        source: INTERNET_ID,
+        target: g.key,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: g.service, target: g.name, targetKind: 'module', op: null, inbound: true, groupKey: g.key },
+      })
+      continue
+    }
+    for (const e of displayed) {
+      const opName = e.Name || `${e.Method} ${e.Path}`
+      edgeList.push({
+        id: `e:internet->${g.key}@${opName}`,
+        source: INTERNET_ID,
+        target: g.key,
+        targetHandle: 'op:' + opName,
+        markerEnd: MarkerType.ArrowClosed,
+        data: {
+          service: e.Service,
+          target: g.name,
+          targetKind: 'module',
+          op: opName,
+          // ops singleton so indexEndpointEdges + selectedMatches treat
+          // it like a per-op edge for flash/highlight purposes.
+          ops: [opName],
+          inbound: true,
+          groupKey: g.key,
+        },
+      })
+    }
   }
 
-  const all = [internetNode, ...groupNodes, ...svcDepNodes, ...workerNodes, ...rsNodes]
+  const all = [internetNode, ...groupNodes, ...svcDepNodes, ...workerNodes, ...cronNodes, ...rsNodes]
   // Diagnostic: surface the built graph to window so operators can
   // verify service-level edges from DevTools without re-reading this
   // file. Cheap (single assignment per poll) and invaluable when an
@@ -661,58 +1161,127 @@ async function load() {
 }
 
 // selectedMatches reports whether edge `e` carries the currently-
-// selected op on the currently-selected module group. Edges are
-// aggregated by (source, target) and store the list of ops they
-// represent on data.ops; a match means "the edge runs from this
+// selected op on the currently-selected module group. Per-op edges
+// store the op in data.ops; a match means "the edge runs from this
 // group AND the selected op is one of the contributors."
+//
+// Inbound per-op edges (Internet → row) are matched by (target,
+// op) instead of (source, op) — their source is INTERNET_ID, not
+// the group key. Inbound aggregated edges (empty module fallback)
+// match by target alone since they have no op.
 function selectedMatches(sel, e) {
   if (!sel) return false
+  if (e.data.inbound) {
+    if (e.target !== sel.groupKey) return false
+    if (!e.data.op) return true              // empty-module card-level fallback
+    return e.data.op === sel.op
+  }
   if (e.source !== sel.groupKey) return false
   const ops = e.data.ops
   if (Array.isArray(ops) && ops.length > 0) return ops.includes(sel.op)
   return false
 }
 
-// restyleEdges returns a fresh edges array with styling applied based on
-// the current op selection + live-traffic flash state. Baseline shows
-// every per-op line softly; selecting an op highlights that op's lines
-// and dims the rest; a flashed edge id temporarily overrides both.
+// EDGE_COLOR is the hex palette restyleEdges paints with. Hardcoded (rather
+// than var(--*) lookups) because SVG marker fill/stroke attributes don't
+// resolve CSS vars — only the path's inline style does. Comments map back
+// to the source token in tokens.css; bump both together.
+const EDGE_COLOR = {
+  accent:    '#4f46e5',  // --accent
+  border:    '#e5e7eb',  // --border
+  borderStr: '#d1d5db',  // --border-strong
+  internet:  '#64748b',  // --cat-internet
+  worker:    '#f97316',  // --cat-worker
+  error:     '#ef4444',  // --st-error
+}
+
+// buildMarker returns a Vue Flow markerEnd object whose arrowhead matches
+// the path stroke. Smaller than the default ArrowClosed (14px instead of
+// the ~20px default) so arrows read as direction cues, not as icons.
+function buildMarker(color) {
+  return { type: MarkerType.ArrowClosed, width: 14, height: 14, color }
+}
+
+// restyleEdges returns a fresh edges array with type/path/style applied
+// based on the current op selection + live-traffic flash state. Every
+// edge becomes a smoothstep (orthogonal with rounded corners) so the
+// canvas reads as infrastructure, not a tangle of bezier curves. Five
+// semantic kinds get distinct idle styling: inbound (entry lane from
+// Internet), service-level (constructor wires — dashed), aggregated
+// (multi-op shared edge), per-op (specific endpoint use), and selected.
 function restyleEdges(list, sel, flashed) {
   return list.map(e => {
     const base = { ...e }
-    const isAggregated = e.data.op === null
-    const isInbound = !!e.data.inbound
+    // Orthogonal routing with rounded corners — AWS-console-style. The
+    // offset gives the path a generous "elbow" before turning, which
+    // keeps lines from cramming into a node's edge.
+    base.type = 'smoothstep'
+    base.pathOptions = { borderRadius: 12, offset: 20 }
 
-    // Flashed edges (live traffic) — brightest, always animated. Color
-    // reflects request outcome: accent on success, red when the request
-    // was stopped (rate-limited, auth-failed, validation-failed, etc.).
-    if (flashed && flashed.has(e.id)) {
-      const state = flashed.get(e.id)
-      const stroke = state === 'error' ? 'var(--error)' : 'var(--accent)'
-      base.style = { stroke, strokeWidth: 2.6, opacity: 1 }
-      base.animated = true
-      return base
-    }
-    if (!sel) {
-      if (isInbound) {
-        // Inbound lanes sit gray by default — they only come alive
-        // when traffic actually flows, via the flashed branch above.
-        base.style = { stroke: 'var(--border-strong)', strokeWidth: 1.5, opacity: 0.8 }
-      } else if (isAggregated) {
-        base.style = { stroke: 'var(--border-strong)', strokeWidth: 1.5, opacity: 1 }
+    const isAggregated = e.data.op === null
+    const isInbound    = !!e.data.inbound
+    const isWorker     = !!e.data.worker
+    const isServiceLvl = !!e.data.serviceLevel
+    const flashState   = flashed && flashed.get(e.id)
+
+    let stroke, width, opacity, animated = false, dashed = false
+
+    if (flashState) {
+      // Live traffic — brightest, always animated. Color reflects request
+      // outcome so error flows visually distinct from successes.
+      stroke = flashState === 'error' ? EDGE_COLOR.error : EDGE_COLOR.accent
+      width = 2.2
+      opacity = 1
+      animated = true
+    } else if (sel) {
+      // Selection mode: highlight the matching edges, fade everything else
+      // down to a barely-there scaffolding so the focused path pops.
+      if (selectedMatches(sel, e)) {
+        stroke = EDGE_COLOR.accent
+        width = 2
+        opacity = 1
+        animated = true
       } else {
-        base.style = { stroke: 'var(--accent)', strokeWidth: 1.4, opacity: 0.55 }
+        stroke = EDGE_COLOR.border
+        width = 1
+        opacity = 0.12
       }
-      base.animated = false
-    } else if (selectedMatches(sel, e)) {
-      base.style = { stroke: 'var(--accent)', strokeWidth: 2.4, opacity: 1 }
-      base.animated = true
     } else {
-      base.style = (isAggregated || isInbound)
-        ? { stroke: 'var(--border-strong)', strokeWidth: 1.5, opacity: 0.12 }
-        : { stroke: 'var(--accent)', strokeWidth: 1.4, opacity: 0.12 }
-      base.animated = false
+      // Idle baselines — semantic by edge kind. Worker edges paint in
+      // the worker category color (orange) so an active background task
+      // stays visible against the constructor-wires/inbound styling.
+      // Constructor wires get a dashed stroke so they read as "wired
+      // but not actively used per request"; inbound lanes use the
+      // slate internet color so the entry boundary is visually distinct
+      // from intra-service traffic.
+      if (isWorker) {
+        stroke = EDGE_COLOR.worker
+        width = 1.5
+        opacity = 0.85
+      } else if (isInbound) {
+        stroke = EDGE_COLOR.internet
+        width = 1.3
+        opacity = 0.5
+      } else if (isServiceLvl) {
+        stroke = EDGE_COLOR.borderStr
+        width = 1.2
+        opacity = 0.7
+        dashed = true
+      } else if (isAggregated) {
+        stroke = EDGE_COLOR.borderStr
+        width = 1.2
+        opacity = 0.8
+      } else {
+        stroke = EDGE_COLOR.accent
+        width = 1.2
+        opacity = 0.4
+      }
     }
+
+    base.style = { stroke, strokeWidth: width, opacity }
+    if (dashed) base.style.strokeDasharray = '5 4'
+    base.animated = animated
+    base.markerEnd = buildMarker(stroke)
     return base
   })
 }
@@ -749,6 +1318,37 @@ function flashEdges(ids, state) {
     }, FLASH_MS))
   }
   flashedEdges.value = next
+}
+
+// simulateOp paints the request path for a selected op without waiting
+// for live traffic — spawns the same packets onTraceEvent does, in the
+// same order, so a click reads as "here's what a request through this
+// endpoint touches." Inbound entry lane fires first; outbound edges
+// (resources / service deps the op declared) cascade after a stagger.
+//
+// Service-level constructor edges are intentionally skipped: they're
+// "wired but not actively running per-request," shown dashed in the
+// idle style, and animating them on click would falsely suggest the
+// click reached the constructor's wiring.
+function simulateOp(sel) {
+  if (!sel) return
+  const ids = []
+  // Per-op inbound first (Internet → specific row). Falls back to the
+  // empty-module aggregated id if the per-op variant doesn't exist.
+  const perOpInbound = `e:internet->${sel.groupKey}@${sel.op}`
+  const aggInbound   = `e:internet->${sel.groupKey}`
+  if (rawEdges.value.find(e => e.id === perOpInbound)) ids.push(perOpInbound)
+  else if (rawEdges.value.find(e => e.id === aggInbound)) ids.push(aggInbound)
+  // Outbound edges from this row to its declared resources / service deps.
+  for (const e of rawEdges.value) {
+    if (e.source !== sel.groupKey) continue
+    if (e.data.serviceLevel) continue
+    const ops = Array.isArray(e.data.ops) ? e.data.ops : []
+    if (ops.includes(sel.op)) ids.push(e.id)
+  }
+  if (!ids.length) return
+  flashEdges(ids, 'ok')
+  spawnPacketsForEdges(ids, sel.op, 'ok')
 }
 
 // onTraceEvent maps an incoming request.start event to the edges that
@@ -798,7 +1398,7 @@ function indexEndpointGroups(groupNodes) {
   }
 }
 
-function onTraceEvent(ev) {
+function onTraceEvent(ev, force = false) {
   // request.op carries the specific op name in Endpoint (emitted by the
   // metrics middleware per handler exit). request.start from the
   // framework trace layer only carries the HTTP path — too coarse to
@@ -808,8 +1408,10 @@ function onTraceEvent(ev) {
   if (!ev.service) return
   // Skip events we're replaying from the /events backlog on initial
   // subscribe — they're older than this mount so animating them would
-  // misrepresent "live" state.
-  if (ev.timestamp) {
+  // misrepresent "live" state. The scrubber's replay path passes
+  // force=true to bypass this filter, since replaying past events at
+  // a pinned snapshot is exactly what the user asked for.
+  if (!force && ev.timestamp) {
     const evTime = new Date(ev.timestamp).getTime()
     if (evTime && evTime < mountedAtMs) return
   }
@@ -820,7 +1422,15 @@ function onTraceEvent(ev) {
   const groupId = ev.endpoint
     ? endpointGroupIdx.get(`${ev.service}.${ev.endpoint}`)
     : null
-  const inboundId = groupId ? `e:internet->${groupId}` : `e:internet->svc:${ev.service}`
+  // Prefer the per-op inbound edge so the flash + packet land on the
+  // specific row. Fall back to the aggregated card-level inbound for
+  // empty-module placeholders, then to the legacy svc: shape if the
+  // group hasn't materialised yet.
+  const perOpInbound = groupId && ev.endpoint ? `e:internet->${groupId}@${ev.endpoint}` : null
+  const aggInbound   = groupId ? `e:internet->${groupId}` : `e:internet->svc:${ev.service}`
+  const inboundId = (perOpInbound && rawEdges.value.find(e => e.id === perOpInbound))
+    ? perOpInbound
+    : aggInbound
 
   // On error we ONLY light up the inbound lane — downstream resource/
   // service-dep edges never ran, so animating them would falsely
@@ -844,69 +1454,83 @@ function onTraceEvent(ev) {
 
 const mountedAtMs = Date.now()
 
-// spawnPacketsForEdges reads the CURRENT screen positions of the
-// involved source/target nodes and asks the overlay to shoot a dot
-// from one to the other. For edges that target a specific op row
-// (inbound Internet → service for the endpoint being hit, OR the
-// per-op row's outbound edges), we aim at the row's exact y so the
-// dot visibly lands on the endpoint the operator is interested in.
-function spawnPacketsForEdges(ids, opName, state) {
+// spawnPacketsForEdges asks the overlay to fly a packet along each
+// edge's actual SVG path — not a straight line. The overlay's spawn()
+// reads getPointAtLength every frame, so packets ride the smoothstep
+// elbows, anchor to per-op row handles automatically (Vue Flow already
+// routes the path from the right handle), and track pan/zoom during
+// transit. opName is no longer needed for row aiming — the path
+// already starts/ends at the right point on the card.
+function spawnPacketsForEdges(ids, _opName, state) {
   if (!packetOverlay.value) return
   const canvas = canvasEl.value
   if (!canvas) return
-  const cr = canvas.getBoundingClientRect()
   const opts = { state: state === 'error' ? 'error' : 'ok' }
   ids.forEach((edgeId, i) => {
-    const edge = rawEdges.value.find(e => e.id === edgeId)
-    if (!edge) return
-    const fromEl = canvas.querySelector(`.vue-flow__node[data-id="${CSS.escape(edge.source)}"]`)
-    const toEl   = canvas.querySelector(`.vue-flow__node[data-id="${CSS.escape(edge.target)}"]`)
-    if (!fromEl || !toEl) return
-    const fr = fromEl.getBoundingClientRect()
-    const tr = toEl.getBoundingClientRect()
-
-    // Source y: if the source is a service card with a per-op handle,
-    // aim from that row's right edge (matches where the line actually
-    // leaves the card). Otherwise use the card vertical center.
-    let fromY = fr.top + fr.height / 2
-    if (edge.sourceHandle && edge.sourceHandle.startsWith('op:') && fromEl.matches('.vue-flow__node[data-type="service"]')) {
-      const rowOp = edge.sourceHandle.slice(3)
-      const row = fromEl.querySelector(`.row[data-op="${CSS.escape(rowOp)}"]`)
-      if (row) fromY = row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2
-    }
-
-    // Target y: inbound edges (Internet → service) aim at the row of
-    // the endpoint the request actually hit so the packet lands ON
-    // the endpoint, not just "in the card somewhere".
-    let toY = tr.top + tr.height / 2
-    if (edge.data?.inbound && opName && toEl.matches('.vue-flow__node[data-type="service"]')) {
-      const row = toEl.querySelector(`.row[data-op="${CSS.escape(opName)}"]`)
-      if (row) toY = row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2
-    }
-
-    const from = { x: fr.right - cr.left, y: fromY - cr.top }
-    const to   = { x: tr.left  - cr.left, y: toY   - cr.top }
-    const stagger = i * 120 // ms; entry dot first, then downstream hops
-    setTimeout(() => packetOverlay.value?.spawn(from, to, opts), stagger)
+    const pathEl = canvas.querySelector(
+      `.vue-flow__edge[data-id="${CSS.escape(edgeId)}"] .vue-flow__edge-path`
+    )
+    if (!pathEl) return
+    const stagger = i * 120 // entry dot first, then downstream hops
+    setTimeout(() => packetOverlay.value?.spawn(pathEl, canvas, opts), stagger)
   })
 }
 
 const packetOverlay = ref(null)
 const canvasEl = ref(null)
 
+// Re-layout when the user toggles a card's +N more / Show fewer. We
+// have to rebuild edges (per-op edges depend on which rows are visible)
+// and rerun dagre so neighbouring cards reflow around the now-taller
+// (or shorter) card.
+watch(expandedGroups, () => {
+  if (latestSnapshot.value) load()
+}, { deep: true })
+
 let traceSub = null
+let liveSub = null
 onMounted(() => {
-  load()
-  // Subscribe to the request trace stream so the graph lights up on
-  // live traffic. Same socket the Traces tab uses; it multiplexes
-  // fine — backlog replay is harmless because each flash has its own
-  // short timeout.
-  traceSub = subscribeEvents(onTraceEvent, null, 0)
+  // /__nexus/live pushes a fresh state snapshot every ~2s. First frame
+  // is the initial render; later frames keep the graph live without the
+  // 5s polling tax. The WS auto-reconnects on close.
+  liveSub = subscribeLive(snap => {
+    // Always record into the scrub-history ring. When the user is
+    // scrubbing, we still capture frames in the background so they
+    // can advance time forward without losing what just happened.
+    snapshotHistory.value.push({ ts: Date.now(), snap })
+    if (snapshotHistory.value.length > SCRUB_HISTORY_CAP) {
+      snapshotHistory.value.shift()
+    }
+    // Render the new frame only when streaming live; while paused
+    // the canvas reflects the user's pinned scrubIndex instead.
+    if (scrubIndex.value === null) {
+      latestSnapshot.value = snap
+      load()
+    }
+  })
+  // Per-request trace stream — drives the live edge pulse and packet
+  // animation. Separate socket from /live; the two streams are
+  // independent and each owns its reconnect logic.
+  //
+  // Every event also goes into eventHistory so the scrubber can
+  // replay flashes + packets at a pinned past moment. Live processing
+  // is suppressed while scrubbing — animations should reflect the
+  // pinned frame, not whatever just streamed in the background.
+  traceSub = subscribeEvents(ev => {
+    eventHistory.value.push(ev)
+    if (eventHistory.value.length > EVENT_HISTORY_CAP) eventHistory.value.shift()
+    if (scrubIndex.value === null) onTraceEvent(ev)
+  }, null, 0)
+  // Cmd-K toggle. CmdK owns its own internal navigation keys; we just
+  // own the open/close shortcut here.
+  window.addEventListener('keydown', onGlobalKey)
 })
-usePoll(load, 5000) // refresh health
 onUnmounted(() => {
   if (traceSub) traceSub.close()
+  if (liveSub) liveSub.close()
+  stopSimulateLoop()
   flashTimers.forEach(t => clearTimeout(t))
+  window.removeEventListener('keydown', onGlobalKey)
 })
 </script>
 
@@ -919,11 +1543,40 @@ onUnmounted(() => {
       :min-zoom="0.25"
       :max-zoom="1.5"
     >
-      <Background pattern-color="#d1d5db" :gap="22" :size="1.3" />
+      <!-- Dot grid (Vue Flow's Background defaults to dots). Color +
+           gap match the --canvas-dot token in tokens.css; keep literals
+           here because Background takes string props, not CSS vars. -->
+      <Background pattern-color="#cbd5e1" :gap="18" :size="1.4" />
       <Controls :show-interactive="false" />
     </VueFlow>
     <GlobalMiddlewareBar />
+    <!-- Canvas-level utility strip (top-right). Currently just the
+         Auth opener, but reserved as the home for future global
+         actions (theme toggle, settings, …) so the canvas itself
+         hosts everything that used to live in the top tab bar. -->
+    <div class="canvas-utility">
+      <TimeScrubber />
+      <button
+        class="utility-btn"
+        title="Open Auth drawer (cached identities + rejections)"
+        @click="openDrawer({ kind: 'auth' })"
+      >
+        <ShieldCheck :size="14" :stroke-width="2" />
+        Auth
+      </button>
+    </div>
     <PacketOverlay ref="packetOverlay" />
+    <!-- Overlay toggles — diagnostic paint mode. Floating chip group
+         that dims non-matching op rows so error / limit / auth
+         coverage is visible at a glance across the whole canvas. -->
+    <OverlayToggles />
+    <!-- Activity rail — bottom strip with the live trace feed. Folds
+         what used to be the Traces tab onto the canvas. Subscribes
+         independently from the canvas's own event listener (which
+         only watches request.op for edge pulses) so the rail always
+         reflects the full /__nexus/events stream, including spans +
+         auth rejects + errors. -->
+    <ActivityRail />
     <div v-if="!nodes.length" class="empty">
       No services registered yet.
     </div>
@@ -933,11 +1586,63 @@ onUnmounted(() => {
       :op="errorDialog.op"
       @close="closeErrors"
     />
+    <Drawer
+      :open="!!drawer"
+      :title="drawerTitle"
+      :subtitle="drawerSubtitle"
+      @close="closeDrawer"
+    >
+      <OpDetail       v-if="drawer?.kind === 'op'       && drawerOp"       :op="drawerOp" />
+      <ResourceDetail v-if="drawer?.kind === 'resource' && drawerResource" :resource="drawerResource" />
+      <WorkerDetail   v-if="drawer?.kind === 'worker'   && drawerWorker"   :worker="drawerWorker" />
+      <CronDetail     v-if="drawer?.kind === 'cron'     && drawerCron"     :cron="drawerCron" />
+      <AuthDetail     v-if="drawer?.kind === 'auth'" />
+    </Drawer>
+    <CmdK
+      :open="cmdkOpen"
+      :items="cmdkItems"
+      @close="cmdkOpen = false"
+      @select="onCmdK"
+    />
   </div>
 </template>
 
 <style scoped>
 .arch { width: 100%; height: 100%; position: relative; background: var(--canvas-bg); }
+
+/* Canvas-level utility strip — sits on top of the VueFlow surface in
+   the top-right, above any node. Reserved for global controls (Auth
+   drawer opener for now; theme + settings can land here next). z-
+   index above the canvas grid but below the drawer's backdrop. */
+.canvas-utility {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 12;
+  display: flex;
+  gap: var(--space-2);
+}
+.utility-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.utility-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
 .empty {
   position: absolute;
   inset: 0;
@@ -947,4 +1652,16 @@ onUnmounted(() => {
   pointer-events: none;
   font-size: 13px;
 }
+
+/* Vue Flow edge polish — smooth transitions on stroke + opacity changes
+   so the selection / flash state-machine reads as movement, not as a
+   hard cut. Hover lifts opacity to 1 so a user can confirm "yes, this
+   line goes there" by mousing over without committing to a click. */
+:deep(.vue-flow__edge .vue-flow__edge-path) {
+  transition: stroke 160ms ease, opacity 160ms ease, stroke-width 160ms ease;
+}
+:deep(.vue-flow__edge:hover .vue-flow__edge-path) {
+  opacity: 1 !important;
+}
+:deep(.vue-flow__edge:hover) { cursor: pointer; }
 </style>

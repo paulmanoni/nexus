@@ -1,13 +1,16 @@
 <script setup>
 import { computed, inject } from 'vue'
-import { Box, Database, Link2 } from 'lucide-vue-next'
+import { Database, Link2 } from 'lucide-vue-next'
 import BaseNodeCard from './BaseNodeCard.vue'
+import CategoryIcon from './CategoryIcon.vue'
 
 // ServiceDepNode represents a nexus.Service as a DEPENDENCY that one or
-// more endpoints consume. Visual parity with ResourceNode: a small pill
-// on the right of the canvas. The conceptual shift away from services-
-// as-containers lives here — modules now group endpoints; services are
-// just typed deps endpoints ask for, on equal footing with DBs/caches.
+// more endpoints consume. Visual parity with ResourceNode: the same card
+// grammar (icon tile + name/kind + body), only the category color
+// differs (--cat-service vs --cat-database). The conceptual shift away
+// from services-as-containers lives here — modules now group endpoints;
+// services are just typed deps endpoints ask for, on equal footing with
+// DBs/caches.
 const props = defineProps(['data'])
 
 // When an op is selected, non-matching service deps dim. Match rule:
@@ -31,9 +34,11 @@ const hasDeps = computed(() => {
 <template>
   <BaseNodeCard :dim="!inSelection" source>
     <template #head>
-      <Box :size="13" :stroke-width="2" class="icon" />
-      <span class="name">{{ data.name }}</span>
-      <span class="tag">service</span>
+      <CategoryIcon type="service" :size="32" />
+      <div class="title">
+        <div class="name">{{ data.name }}</div>
+        <div class="kind">service</div>
+      </div>
     </template>
     <template v-if="data.description" #description>{{ data.description }}</template>
     <!-- Inline dep list — surfaces ProvideService's constructor deps
@@ -42,11 +47,11 @@ const hasDeps = computed(() => {
          the relationship hard to eyeball. -->
     <div v-if="hasDeps" class="deps">
       <div v-for="r in data.resourceDeps || []" :key="'r:' + r" class="dep">
-        <Database :size="10" :stroke-width="2" class="dep-ico" />
+        <Database :size="11" :stroke-width="2" class="dep-ico res" />
         <span class="dep-name">{{ r }}</span>
       </div>
-      <div v-for="s in data.serviceDeps || []" :key="'s:' + s" class="dep svc">
-        <Link2 :size="10" :stroke-width="2" class="dep-ico" />
+      <div v-for="s in data.serviceDeps || []" :key="'s:' + s" class="dep">
+        <Link2 :size="11" :stroke-width="2" class="dep-ico svc" />
         <span class="dep-name">{{ s }}</span>
       </div>
     </div>
@@ -54,24 +59,30 @@ const hasDeps = computed(() => {
 </template>
 
 <style scoped>
-.icon { color: #7c3aed; flex-shrink: 0; }
-.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tag {
+.title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.name {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kind {
   font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 10px;
-  background: #ede9fe;
-  color: #6b21a8;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
   text-transform: lowercase;
   letter-spacing: 0.02em;
-  flex-shrink: 0;
 }
+
 .deps {
-  margin-top: 8px;
-  padding-top: 7px;
-  border-top: 1px dashed var(--border);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -79,12 +90,13 @@ const hasDeps = computed(() => {
 .dep {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
-.dep-ico { color: var(--accent); flex-shrink: 0; }
-.dep.svc .dep-ico { color: #7c3aed; }
+.dep-ico { flex-shrink: 0; }
+.dep-ico.res { color: var(--cat-database); }
+.dep-ico.svc { color: var(--cat-service); }
 .dep-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

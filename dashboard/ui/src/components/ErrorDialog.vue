@@ -1,19 +1,21 @@
 <script setup>
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { X, AlertTriangle, Search, Loader2 } from 'lucide-vue-next'
 import { fetchErrorEvents } from '../lib/api.js'
 import { formatAbsolute as fmt } from '../lib/time.js'
+import StackTrace from './StackTrace.vue'
 
 // ErrorDialog shows the recent-error ring for one endpoint, lazily
-// fetched on open so the /stats hot path stays lean. Scales to thousands
-// of events via:
-//   - server-side ring cap (metrics.RecentErrorsCap, currently 1000)
-//   - client-side virtual scrolling: only rows inside the visible
-//     viewport are rendered, so 1000 events keep ~30 DOM nodes
-//   - live text filter over {ip, message} for narrowing on incidents
+// fetched on open so the /stats hot path stays lean. The server-side
+// ring is capped at metrics.RecentErrorsCap (currently 1000); we
+// render the filtered list with native scroll so each row can carry
+// a click-to-expand stack disclosure (added when panic stacks were
+// captured server-side). Virtual scrolling was dropped because fixed
+// row heights are incompatible with the variable-height stack panel.
 //
-// Props take service+op names (not a pre-captured list) so we can refetch
-// on open without Architecture having to hold the ring in its state.
+// Props take service+op names (not a pre-captured list) so we can
+// refetch on open without Architecture having to hold the ring in
+// its state.
 const props = defineProps({
   open: Boolean,
   service: String,
@@ -25,15 +27,6 @@ const events = ref([])     // full ring from the server, newest first
 const loading = ref(false)
 const error = ref(null)
 const filter = ref('')
-
-// Virtual scroll state. We render a window of rows around the scroll
-// viewport; everything else is a spacer. Row height is a constant so
-// we can do direct arithmetic — no per-row measurement needed.
-const ROW_H = 40         // px; matches CSS .row line-height + padding
-const OVERSCAN = 8       // rows above + below the viewport
-const scrollEl = ref(null)
-const scrollTop = ref(0)
-const viewportH = ref(0)
 
 async function load() {
   if (!props.service || !props.op) return
@@ -53,7 +46,6 @@ async function load() {
 watch(() => [props.open, props.service, props.op], ([open]) => {
   if (open) {
     filter.value = ''
-    scrollTop.value = 0
     load()
   } else {
     events.value = []
@@ -70,35 +62,6 @@ const filtered = computed(() => {
 })
 
 const total = computed(() => filtered.value.length)
-const totalHeight = computed(() => total.value * ROW_H)
-
-// Windowing math: first visible index, last index (+overscan on both sides).
-const window_ = computed(() => {
-  const start = Math.max(0, Math.floor(scrollTop.value / ROW_H) - OVERSCAN)
-  const visibleRows = Math.ceil((viewportH.value || 400) / ROW_H) + OVERSCAN * 2
-  const end = Math.min(total.value, start + visibleRows)
-  return { start, end }
-})
-const visible = computed(() => filtered.value.slice(window_.value.start, window_.value.end))
-const topPad = computed(() => window_.value.start * ROW_H)
-const bottomPad = computed(() => (total.value - window_.value.end) * ROW_H)
-
-function onScroll(e) { scrollTop.value = e.target.scrollTop }
-function onResize() {
-  if (scrollEl.value) viewportH.value = scrollEl.value.clientHeight
-}
-
-// Observe viewport size so virtualization math adapts to resize/zoom.
-let ro = null
-watch(scrollEl, (el) => {
-  if (ro) { ro.disconnect(); ro = null }
-  if (el) {
-    ro = new ResizeObserver(onResize)
-    ro.observe(el)
-    onResize()
-  }
-}, { flush: 'post' })
-onBeforeUnmount(() => { if (ro) ro.disconnect() })
 
 function onBackdrop(e) { if (e.target.classList.contains('backdrop')) emit('close') }
 const title = computed(() => `${props.service || ''}.${props.op || ''}`)
@@ -127,20 +90,19 @@ const title = computed(() => `${props.service || ''}.${props.op || ''}`)
         </span>
       </div>
       <div v-if="error" class="error-banner">Could not load errors: {{ error }}</div>
-      <div class="body" ref="scrollEl" @scroll="onScroll">
+      <div class="body">
         <div class="table-head">
           <span class="col ts">When</span>
           <span class="col ip">IP</span>
           <span class="col msg">Message</span>
         </div>
-        <div class="vlist" :style="{ height: totalHeight + 'px' }">
-          <div :style="{ height: topPad + 'px' }"></div>
-          <div v-for="(e, i) in visible" :key="window_.start + i" class="row">
+        <div v-for="(e, i) in filtered" :key="i" class="row">
+          <div class="row-main">
             <span class="col ts mono">{{ fmt(e.timestamp) }}</span>
             <span class="col ip mono">{{ e.ip || '—' }}</span>
             <span class="col msg">{{ e.message }}</span>
           </div>
-          <div :style="{ height: bottomPad + 'px' }"></div>
+          <StackTrace :stack="e.stack || ''" />
         </div>
         <div v-if="!loading && !total && !error" class="empty">
           {{ filter ? 'No events match the filter.' : 'No errors recorded yet.' }}
@@ -238,8 +200,8 @@ header {
 
 .error-banner {
   padding: 8px 16px;
-  background: var(--error-soft);
-  color: var(--error);
+  background: var(--st-error-soft);
+  color: var(--st-error);
   font-size: 12px;
   border-bottom: 1px solid var(--border);
 }
@@ -264,23 +226,23 @@ header {
   top: 0;
   z-index: 1;
 }
-.vlist { position: relative; }
 .row {
-  display: grid;
-  grid-template-columns: 170px 130px 1fr;
-  align-items: center;
-  padding: 0 16px;
-  height: 40px;  /* = ROW_H */
+  padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
 .row:hover { background: var(--bg-hover); }
+.row-main {
+  display: grid;
+  grid-template-columns: 170px 130px 1fr;
+  align-items: center;
+}
 .col { min-width: 0; }
 .mono { font-family: var(--font-mono); }
 .ts { color: var(--text-muted); white-space: nowrap; }
 .ip { color: var(--text); }
 .msg {
-  color: var(--error);
+  color: var(--st-error);
   font-family: var(--font-mono);
   font-size: 11.5px;
   overflow: hidden;

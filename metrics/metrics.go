@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // ErrorEvent captures one error occurrence for the dashboard's click-
@@ -22,6 +24,11 @@ type ErrorEvent struct {
 	Timestamp time.Time `json:"timestamp"`
 	IP        string    `json:"ip,omitempty"`
 	Message   string    `json:"message"`
+	// Stack is the captured Go runtime stack trace when the error
+	// originated from a panic (extracted via trace.StackOf). Empty
+	// for plain returned errors — those don't carry a stack unless
+	// user code explicitly wraps them in a *trace.StackError.
+	Stack string `json:"stack,omitempty"`
 }
 
 // RecentErrorsCap is the ring-buffer depth per endpoint. Large enough
@@ -43,6 +50,12 @@ type EndpointStats struct {
 	Count         int64        `json:"count"`
 	Errors        int64        `json:"errors"`
 	LastError     string       `json:"lastError,omitempty"`
+	// LastErrStack is the stack trace captured at the most recent
+	// errored request (when the error was a panic wrapped via
+	// trace.StackError). Surfaces in the drawer's last-error panel as
+	// a collapsible disclosure so an operator can see the failing
+	// call chain without opening the per-op error ring.
+	LastErrStack  string       `json:"lastErrStack,omitempty"`
 	LastAt        time.Time    `json:"lastAt,omitempty"`      // time of last request
 	LastErrAt     time.Time    `json:"lastErrAt,omitempty"`   // time of last errored request
 	RecentErrors  []ErrorEvent `json:"recentErrors,omitempty"`
@@ -89,12 +102,13 @@ type MemoryStore struct {
 }
 
 type entry struct {
-	count      atomic.Int64
-	errors     atomic.Int64
-	mu         sync.Mutex
-	lastErr    string
-	lastAt     time.Time
-	lastErrAt  time.Time
+	count        atomic.Int64
+	errors       atomic.Int64
+	mu           sync.Mutex
+	lastErr      string
+	lastErrStack string
+	lastAt       time.Time
+	lastErrAt    time.Time
 	// recent is a newest-first ring of error events. Size capped at
 	// RecentErrorsCap; oldest entries drop as new ones arrive.
 	recent []ErrorEvent
@@ -126,9 +140,17 @@ func (s *MemoryStore) Record(key, ip string, err error) {
 	if err != nil {
 		e.errors.Add(1)
 		e.lastErr = err.Error()
+		e.lastErrStack = trace.StackOf(err)
 		e.lastErrAt = now
 		// newest-first insertion; cap ring length so old events drop.
-		ev := ErrorEvent{Timestamp: now, IP: ip, Message: err.Error()}
+		// trace.StackOf walks the error chain via errors.As so wrapped
+		// stack-carriers still surface their stack trace here.
+		ev := ErrorEvent{
+			Timestamp: now,
+			IP:        ip,
+			Message:   err.Error(),
+			Stack:     trace.StackOf(err),
+		}
 		e.recent = append([]ErrorEvent{ev}, e.recent...)
 		if len(e.recent) > RecentErrorsCap {
 			e.recent = e.recent[:RecentErrorsCap]
@@ -170,18 +192,20 @@ func (s *MemoryStore) Snapshot() []EndpointStats {
 func snapshotOf(key string, e *entry) EndpointStats {
 	e.mu.Lock()
 	lastErr := e.lastErr
+	lastErrStack := e.lastErrStack
 	lastAt := e.lastAt
 	lastErrAt := e.lastErrAt
 	e.mu.Unlock()
 	// RecentErrors intentionally omitted — /stats polling stays lean.
 	// The dashboard's error dialog fetches the full ring via Errors(key).
 	return EndpointStats{
-		Key:       key,
-		Count:     e.count.Load(),
-		Errors:    e.errors.Load(),
-		LastError: lastErr,
-		LastAt:    lastAt,
-		LastErrAt: lastErrAt,
+		Key:          key,
+		Count:        e.count.Load(),
+		Errors:       e.errors.Load(),
+		LastError:    lastErr,
+		LastErrStack: lastErrStack,
+		LastAt:       lastAt,
+		LastErrAt:    lastErrAt,
 	}
 }
 

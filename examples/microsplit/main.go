@@ -49,6 +49,7 @@ package main
 import (
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/examples/microsplit/checkout"
+	"github.com/paulmanoni/nexus/examples/microsplit/notes"
 	"github.com/paulmanoni/nexus/examples/microsplit/users"
 )
 
@@ -59,5 +60,6 @@ func main() {
 		},
 		users.Module,
 		checkout.Module,
+		notes.Module,
 	)
 }
