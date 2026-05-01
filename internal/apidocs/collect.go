@@ -8,6 +8,7 @@ import (
 	"go/types"
 	"reflect"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -24,10 +25,12 @@ const nexusPkgPath = "github.com/paulmanoni/nexus"
 //
 // `pattern` follows go/packages conventions ("./...", ".", a package
 // path). `dir` is the working directory the load runs from — usually
-// the user's app root. Errors from the loader (missing module, type
-// errors) come back wrapped; package-level type-check errors are
-// surfaced via packages.PrintErrors and turned into a single err
-// rather than silently producing partial IR.
+// the user's app root.
+//
+// Best-effort: type-check errors elsewhere in the tree (stale APIs,
+// missing peer packages in a multi-repo setup) don't abort the scan;
+// they're counted into Doc.LoadErrors so the renderer can show a
+// "partial scan" banner.
 func Collect(dir, pattern string) (*Doc, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
@@ -39,11 +42,6 @@ func Collect(dir, pattern string) (*Doc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", pattern, err)
 	}
-	// Best-effort: type errors elsewhere in the tree (stale APIs,
-	// missing peer packages in a multi-repo setup) shouldn't stop us
-	// from documenting what did parse. Count them so the caller can
-	// surface a one-line summary rather than scrolling a wall of
-	// compiler output.
 	doc := &Doc{GoVersion: runtime.Version()}
 	for _, p := range pkgs {
 		doc.LoadErrors += len(p.Errors)
@@ -51,6 +49,8 @@ func Collect(dir, pattern string) (*Doc, error) {
 	if len(pkgs) > 0 && pkgs[0].Module != nil {
 		doc.Module = pkgs[0].Module.Path
 	}
+
+	st := newCollectState(pkgs, doc.Module)
 	for _, pkg := range pkgs {
 		// Skip framework codegen output: nexus emits zz_shadow_gen.go
 		// files into .nexus/build/<deployment>/ for split builds. They
@@ -59,15 +59,15 @@ func Collect(dir, pattern string) (*Doc, error) {
 		if isShadowPkg(pkg) {
 			continue
 		}
-		newPkgCollector(pkg).scan(doc)
+		newPkgCollector(pkg, st).scan(doc)
 	}
+	doc.Entities = st.materializeEntities()
 	return doc, nil
 }
 
 // isShadowPkg detects packages produced by `nexus build` overlay
 // codegen, identified by the .nexus/build/ path segment in any of
-// their source files. Filtering these out keeps the IR free of the
-// duplicate registrations the build cache holds.
+// their source files.
 func isShadowPkg(p *packages.Package) bool {
 	for _, f := range p.GoFiles {
 		if strings.Contains(f, "/.nexus/build/") {
@@ -75,6 +75,389 @@ func isShadowPkg(p *packages.Package) bool {
 		}
 	}
 	return false
+}
+
+// collectState is shared across every pkgCollector for one Collect
+// run. It holds the global type index (so an entity defined in
+// pkg/models can be resolved from a handler in modules/uaa) and the
+// set of TypeNames referenced by handler signatures — those are
+// the seed for the entity-materialization pass.
+type collectState struct {
+	rootModule string
+	pkgs       []*packages.Package
+	// typeIndex maps every type-name declared in any loaded package
+	// to its source location, enabling entity resolution across
+	// package boundaries.
+	typeIndex map[*types.TypeName]*typeSite
+	// funcsIndex maps every function/method declared in any loaded
+	// package to its FuncDecl, so the entity pass can attach doc
+	// comments and source positions to method-set entries.
+	funcsIndex map[*types.Func]funcSite
+	// referenced is the worklist seeded by signature(); the entity
+	// pass expands it transitively before rendering.
+	referenced map[*types.TypeName]bool
+}
+
+// funcSite carries the AST + package context for a function or method.
+type funcSite struct {
+	pkg  *packages.Package
+	decl *ast.FuncDecl
+}
+
+// typeSite captures everything we need to render an Entity from a
+// *types.TypeName: its declaration's AST (for the field doc comments
+// we'd grab in a future iteration) and its package context.
+type typeSite struct {
+	pkg  *packages.Package
+	spec *ast.TypeSpec
+	doc  string
+	pos  Pos
+}
+
+func newCollectState(pkgs []*packages.Package, rootModule string) *collectState {
+	return &collectState{
+		rootModule: rootModule,
+		pkgs:       pkgs,
+		typeIndex:  buildTypeIndex(pkgs),
+		funcsIndex: buildFuncsIndex(pkgs),
+		referenced: map[*types.TypeName]bool{},
+	}
+}
+
+// buildFuncsIndex walks every loaded package's top-level FuncDecls
+// (both free functions and methods) and indexes them by their
+// *types.Func object. Used during entity materialization to attach
+// doc comments to method-set entries.
+func buildFuncsIndex(pkgs []*packages.Package) map[*types.Func]funcSite {
+	out := map[*types.Func]funcSite{}
+	for _, p := range pkgs {
+		for _, f := range p.Syntax {
+			for _, d := range f.Decls {
+				fd, ok := d.(*ast.FuncDecl)
+				if !ok {
+					continue
+				}
+				if obj, ok := p.TypesInfo.Defs[fd.Name].(*types.Func); ok {
+					out[obj] = funcSite{pkg: p, decl: fd}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// buildTypeIndex walks every loaded package's top-level type decls
+// and records a typeSite per declared TypeName. Doc comments are
+// pulled from the type spec when present, or the enclosing GenDecl
+// for the `var (...)` style declaration that puts the doc one level
+// up.
+func buildTypeIndex(pkgs []*packages.Package) map[*types.TypeName]*typeSite {
+	out := map[*types.TypeName]*typeSite{}
+	for _, p := range pkgs {
+		for _, f := range p.Syntax {
+			for _, d := range f.Decls {
+				gd, ok := d.(*ast.GenDecl)
+				if !ok || gd.Tok != token.TYPE {
+					continue
+				}
+				for _, sp := range gd.Specs {
+					ts, ok := sp.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					obj, _ := p.TypesInfo.Defs[ts.Name].(*types.TypeName)
+					if obj == nil {
+						continue
+					}
+					site := &typeSite{pkg: p, spec: ts, pos: posOf(p.Fset, ts.Pos())}
+					switch {
+					case ts.Doc != nil:
+						site.doc = strings.TrimSpace(ts.Doc.Text())
+					case gd.Doc != nil:
+						site.doc = strings.TrimSpace(gd.Doc.Text())
+					}
+					out[obj] = site
+				}
+			}
+		}
+	}
+	return out
+}
+
+// shouldDocument decides whether a TypeName earns an Entity entry —
+// must live under the user's module path (so we don't try to render
+// stdlib or third-party types) and must resolve in our index (so we
+// have the source to work from).
+func (s *collectState) shouldDocument(tn *types.TypeName) bool {
+	if tn == nil || tn.Pkg() == nil {
+		return false
+	}
+	if !strings.HasPrefix(tn.Pkg().Path(), s.rootModule) {
+		return false
+	}
+	_, ok := s.typeIndex[tn]
+	return ok
+}
+
+// note records a TypeName as referenced. Returns the slug if it
+// will be documented, "" otherwise — the caller stores the slug on
+// the IR field for cross-linking.
+func (s *collectState) note(tn *types.TypeName) string {
+	if !s.shouldDocument(tn) {
+		return ""
+	}
+	s.referenced[tn] = true
+	return entitySlug(tn)
+}
+
+// noteType walks a Type expression to find any *types.Named within
+// (through pointers, slices, arrays, maps). Used at signature time
+// so that `*[]models.Note` registers `models.Note` as referenced.
+// Returns the slug for the first Named encountered (the most useful
+// link target — the visible name in the rendered type string).
+func (s *collectState) noteType(t types.Type) string {
+	first := ""
+	walkType(t, func(tn *types.TypeName) {
+		slug := s.note(tn)
+		if first == "" {
+			first = slug
+		}
+	})
+	return first
+}
+
+// materializeEntities expands the referenced set transitively into
+// Entity records. As each entity's struct fields are walked, any
+// in-module Named struct field types are pulled into the worklist —
+// so referencing one type pulls its supporting types in too.
+func (s *collectState) materializeEntities() []Entity {
+	seen := map[*types.TypeName]bool{}
+	out := []Entity{}
+	queue := make([]*types.TypeName, 0, len(s.referenced))
+	for tn := range s.referenced {
+		queue = append(queue, tn)
+	}
+	for len(queue) > 0 {
+		tn := queue[0]
+		queue = queue[1:]
+		if seen[tn] {
+			continue
+		}
+		seen[tn] = true
+		site, ok := s.typeIndex[tn]
+		if !ok {
+			continue
+		}
+		named, ok := tn.Type().(*types.Named)
+		if !ok {
+			continue
+		}
+		methods := s.collectMethods(named)
+		st, ok := named.Underlying().(*types.Struct)
+		if !ok {
+			// Non-struct named types (enums, type aliases) — fields
+			// stay empty but methods may still be present.
+			out = append(out, Entity{
+				Name:    tn.Name(),
+				Pkg:     tn.Pkg().Path(),
+				Slug:    entitySlug(tn),
+				Doc:     site.doc,
+				Pos:     site.pos,
+				Methods: methods,
+			})
+			continue
+		}
+		ent := Entity{
+			Name:    tn.Name(),
+			Pkg:     tn.Pkg().Path(),
+			Slug:    entitySlug(tn),
+			Doc:     site.doc,
+			Pos:     site.pos,
+			Methods: methods,
+		}
+		for i := 0; i < st.NumFields(); i++ {
+			f := st.Field(i)
+			if !f.Exported() {
+				continue
+			}
+			tags := parseTags(st.Tag(i))
+			ef := EntityField{
+				Name: f.Name(),
+				Type: types.TypeString(f.Type(), nil),
+				Tags: tags,
+			}
+			// Recurse: each in-module Named struct field type joins
+			// the worklist so the entity graph closes.
+			walkType(f.Type(), func(child *types.TypeName) {
+				if !seen[child] && s.shouldDocument(child) {
+					queue = append(queue, child)
+				}
+				if ef.TypeLink == "" {
+					if slug := s.note(child); slug != "" {
+						ef.TypeLink = slug
+					}
+				}
+			})
+			ent.Fields = append(ent.Fields, ef)
+		}
+		out = append(out, ent)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Pkg != out[j].Pkg {
+			return out[i].Pkg < out[j].Pkg
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// collectMethods walks the method set of a Named type — both
+// value-receiver and pointer-receiver methods, since *types.Named
+// exposes value-receiver methods directly and we add pointer ones via
+// types.NewPointer. Doc + position come from the FuncDecl in the
+// global funcs index; methods declared in unloaded packages get name
+// + signature only.
+//
+// Only exported methods are emitted. Methods inherited via struct
+// embedding are captured by types.NewMethodSet — useful for service
+// wrappers that embed *nexus.Service.
+func (s *collectState) collectMethods(named *types.Named) []EntityMethod {
+	seen := map[*types.Func]bool{}
+	collect := func(t types.Type) []EntityMethod {
+		mset := types.NewMethodSet(t)
+		out := []EntityMethod{}
+		for i := 0; i < mset.Len(); i++ {
+			fn, ok := mset.At(i).Obj().(*types.Func)
+			if !ok || !fn.Exported() || seen[fn] {
+				continue
+			}
+			seen[fn] = true
+			sig, ok := fn.Type().(*types.Signature)
+			if !ok {
+				continue
+			}
+			recv := ""
+			if r := sig.Recv(); r != nil {
+				if _, isPtr := r.Type().(*types.Pointer); isPtr {
+					recv = "pointer"
+				} else {
+					recv = "value"
+				}
+			}
+			em := EntityMethod{
+				Name:      fn.Name(),
+				Signature: signatureString(sig),
+				Receiver:  recv,
+			}
+			if site, ok := s.funcsIndex[fn]; ok {
+				if site.decl != nil && site.decl.Doc != nil {
+					em.Doc = strings.TrimSpace(site.decl.Doc.Text())
+				}
+				em.Pos = posOf(site.pkg.Fset, fn.Pos())
+			}
+			out = append(out, em)
+		}
+		return out
+	}
+	// Value-receiver method set, then pointer-receiver — pointer set
+	// is a superset, but the seen map keeps duplicates out and we
+	// preserve receiver kind by querying the method's actual signature
+	// receiver above.
+	methods := collect(named)
+	methods = append(methods, collect(types.NewPointer(named))...)
+	sort.Slice(methods, func(i, j int) bool { return methods[i].Name < methods[j].Name })
+	return methods
+}
+
+// signatureString renders a *types.Signature without the receiver and
+// without the function name — just `(params) (results)`. Matches how
+// godoc shows method signatures, with package basenames instead of
+// full import paths so the output reads like Go source.
+func signatureString(sig *types.Signature) string {
+	q := func(p *types.Package) string {
+		if p == nil {
+			return ""
+		}
+		return p.Name()
+	}
+	var b strings.Builder
+	b.WriteByte('(')
+	for i := 0; i < sig.Params().Len(); i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		p := sig.Params().At(i)
+		if p.Name() != "" {
+			b.WriteString(p.Name())
+			b.WriteByte(' ')
+		}
+		b.WriteString(types.TypeString(p.Type(), q))
+	}
+	b.WriteByte(')')
+	results := sig.Results()
+	if results.Len() == 0 {
+		return b.String()
+	}
+	b.WriteByte(' ')
+	if results.Len() > 1 {
+		b.WriteByte('(')
+	}
+	for i := 0; i < results.Len(); i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(types.TypeString(results.At(i).Type(), q))
+	}
+	if results.Len() > 1 {
+		b.WriteByte(')')
+	}
+	return b.String()
+}
+
+// walkType descends through composite type wrappers (pointer, slice,
+// array, map) and calls fn for every named type at the leaves. Used
+// for both link resolution at signature time and the recursive
+// closure during entity materialization.
+func walkType(t types.Type, fn func(*types.TypeName)) {
+	if t == nil {
+		return
+	}
+	switch v := t.(type) {
+	case *types.Named:
+		if v.Obj() != nil {
+			fn(v.Obj())
+		}
+	case *types.Pointer:
+		walkType(v.Elem(), fn)
+	case *types.Slice:
+		walkType(v.Elem(), fn)
+	case *types.Array:
+		walkType(v.Elem(), fn)
+	case *types.Map:
+		walkType(v.Key(), fn)
+		walkType(v.Elem(), fn)
+	}
+}
+
+// entitySlug builds the stable HTML anchor id for a TypeName: derived
+// from its package path + name, with non-alphanumerics collapsed to
+// dashes. Stable across runs so links survive page reloads.
+func entitySlug(tn *types.TypeName) string {
+	if tn == nil || tn.Pkg() == nil {
+		return ""
+	}
+	raw := tn.Pkg().Path() + "-" + tn.Name()
+	var b strings.Builder
+	b.WriteString("entity-")
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
 }
 
 // pkgCollector holds per-package state — chiefly the *types.Func →
@@ -85,10 +468,11 @@ type pkgCollector struct {
 	pkg   *packages.Package
 	fset  *token.FileSet
 	funcs map[*types.Func]*ast.FuncDecl
+	state *collectState
 }
 
-func newPkgCollector(p *packages.Package) *pkgCollector {
-	c := &pkgCollector{pkg: p, fset: p.Fset, funcs: map[*types.Func]*ast.FuncDecl{}}
+func newPkgCollector(p *packages.Package, st *collectState) *pkgCollector {
+	c := &pkgCollector{pkg: p, fset: p.Fset, funcs: map[*types.Func]*ast.FuncDecl{}, state: st}
 	for _, f := range p.Syntax {
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)
@@ -239,7 +623,7 @@ func (c *pkgCollector) handler(call *ast.CallExpr, kind string, fnIdx int) Handl
 		if decl := c.funcs[fn]; decl != nil && decl.Doc != nil {
 			h.Doc = strings.TrimSpace(decl.Doc.Text())
 		}
-		h.Deps, h.Args, h.Returns = c.signature(fn)
+		h.Deps, h.Args, h.Returns, h.ReturnsLink = c.signature(fn)
 	}
 	for _, a := range call.Args[fnIdx+1:] {
 		h.Options = append(h.Options, Opt{Expr: c.exprStr(a)})
@@ -272,11 +656,12 @@ func (c *pkgCollector) resolveFunc(e ast.Expr) *types.Func {
 // signature splits a constructor's params into Deps (services / DBs /
 // caches injected by fx) and Args (the Params[T] or trailing struct
 // holding user-supplied input). Returns the first non-error result
-// type as the pretty-printed return.
-func (c *pkgCollector) signature(fn *types.Func) ([]Dep, *Args, string) {
+// type as the pretty-printed return + its entity slug if the type is
+// in-module.
+func (c *pkgCollector) signature(fn *types.Func) ([]Dep, *Args, string, string) {
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
-		return nil, nil, ""
+		return nil, nil, "", ""
 	}
 	var deps []Dep
 	var args *Args
@@ -285,35 +670,36 @@ func (c *pkgCollector) signature(fn *types.Func) ([]Dep, *Args, string) {
 	for i := 0; i < params.Len(); i++ {
 		p := params.At(i)
 		pt := p.Type()
-		if a := paramsArg(pt); a != nil {
+		if a := c.paramsArg(pt); a != nil {
 			args = a
 			continue
 		}
-		// Last param may be a trailing args struct without Params[T].
 		if i == params.Len()-1 {
-			if a := structArg(pt); a != nil {
+			if a := c.structArg(pt); a != nil {
 				args = a
 				continue
 			}
 		}
-		deps = append(deps, Dep{Name: p.Name(), Type: types.TypeString(pt, q)})
+		dep := Dep{Name: p.Name(), Type: types.TypeString(pt, q)}
+		dep.TypeLink = c.state.noteType(pt)
+		deps = append(deps, dep)
 	}
-	var ret string
+	var ret, retLink string
 	for i := 0; i < sig.Results().Len(); i++ {
 		r := sig.Results().At(i)
 		if isError(r.Type()) {
 			continue
 		}
 		ret = types.TypeString(r.Type(), q)
+		retLink = c.state.noteType(r.Type())
 		break
 	}
-	return deps, args, ret
+	return deps, args, ret, retLink
 }
 
 // paramsArg returns the Args extracted from a nexus.Params[T] type.
-// Returns nil for any other type. Match is by package path + name so
-// a user with a local `Params` type can't accidentally collide.
-func paramsArg(t types.Type) *Args {
+// Returns nil for any other type.
+func (c *pkgCollector) paramsArg(t types.Type) *Args {
 	n, ok := t.(*types.Named)
 	if !ok {
 		return nil
@@ -329,23 +715,23 @@ func paramsArg(t types.Type) *Args {
 	if targs == nil || targs.Len() == 0 {
 		return nil
 	}
-	return structArg(targs.At(0))
+	return c.structArg(targs.At(0))
 }
 
 // structArg flattens a struct or named-struct into Args. Empty
 // `struct{}` (used by handlers that take no input) returns a non-nil
 // Args with no fields, which is meaningful — renderers can show
 // "no arguments" instead of omitting the section.
-func structArg(t types.Type) *Args {
-	name := ""
+func (c *pkgCollector) structArg(t types.Type) *Args {
+	a := &Args{}
 	if n, ok := t.(*types.Named); ok && n.Obj() != nil {
-		name = n.Obj().Name()
+		a.Type = n.Obj().Name()
+		a.TypeLink = c.state.note(n.Obj())
 	}
 	st, ok := t.Underlying().(*types.Struct)
 	if !ok {
 		return nil
 	}
-	a := &Args{Type: name}
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
 		if !f.Exported() {
@@ -353,9 +739,10 @@ func structArg(t types.Type) *Args {
 		}
 		tags := parseTags(st.Tag(i))
 		fld := Field{
-			Name: f.Name(),
-			Type: types.TypeString(f.Type(), nil),
-			Tags: tags,
+			Name:     f.Name(),
+			Type:     types.TypeString(f.Type(), nil),
+			TypeLink: c.state.noteType(f.Type()),
+			Tags:     tags,
 		}
 		if _, isPtr := f.Type().(*types.Pointer); isPtr {
 			fld.Optional = true
@@ -411,15 +798,12 @@ func isError(t types.Type) bool {
 }
 
 // isNexusCall reports whether call is `nexus.<name>(...)` from the
-// framework package. Resolves the receiver through TypesInfo so an
-// aliased import (`nexus "github.com/paulmanoni/nexus"`) still works.
+// framework package.
 func (c *pkgCollector) isNexusCall(call *ast.CallExpr, name string) bool {
 	return matchSelector(c.pkg.TypesInfo, call.Fun, name)
 }
 
-// isNexusCallIndexed matches the generic form `nexus.<name>[T](...)`
-// (single or multiple type arguments). The CallExpr.Fun is an
-// *ast.IndexExpr or *ast.IndexListExpr wrapping the SelectorExpr.
+// isNexusCallIndexed matches the generic form `nexus.<name>[T](...)`.
 func (c *pkgCollector) isNexusCallIndexed(call *ast.CallExpr, name string) bool {
 	switch fn := call.Fun.(type) {
 	case *ast.IndexExpr:
@@ -465,6 +849,10 @@ func (c *pkgCollector) crud(call *ast.CallExpr, prefix string) []Handler {
 	tName := c.exprStr(tArg)
 	tType := c.pkg.TypesInfo.TypeOf(tArg)
 
+	// Register the resource type as an entity if it lives in-module
+	// — every generated handler returns or accepts T.
+	tLink := c.state.noteType(tType)
+
 	enableGQL, disableREST := false, false
 	options := []Opt{}
 	for _, a := range call.Args[1:] {
@@ -483,7 +871,7 @@ func (c *pkgCollector) crud(call *ast.CallExpr, prefix string) []Handler {
 	restPath := strings.TrimRight(prefix, "/") + stem
 	plural := strings.ToLower(tName) + "s"
 
-	resourceArgs := structArg(tType)
+	resourceArgs := c.structArg(tType)
 	idArgs := &Args{Fields: []Field{{Name: "ID", Type: "string", Tags: map[string]string{"path": "id"}}}}
 
 	out := []Handler{}
@@ -496,25 +884,25 @@ func (c *pkgCollector) crud(call *ast.CallExpr, prefix string) []Handler {
 
 	if !disableREST {
 		add(Handler{Kind: "rest", Name: "List" + tName + "s", Doc: "Generated by nexus.AsCRUD[" + tName + "]. List with ?limit / ?offset / ?sort.",
-			HTTP: &HTTP{Method: "GET", Path: restPath}, Returns: "[]" + tName})
+			HTTP: &HTTP{Method: "GET", Path: restPath}, Returns: "[]" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "rest", Name: "Get" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. Read by id.",
-			HTTP: &HTTP{Method: "GET", Path: restPath + "/:id"}, Args: idArgs, Returns: "*" + tName})
+			HTTP: &HTTP{Method: "GET", Path: restPath + "/:id"}, Args: idArgs, Returns: "*" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "rest", Name: "Create" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. Create from body.",
-			HTTP: &HTTP{Method: "POST", Path: restPath}, Args: resourceArgs, Returns: "*" + tName})
+			HTTP: &HTTP{Method: "POST", Path: restPath}, Args: resourceArgs, Returns: "*" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "rest", Name: "Update" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. Shallow merge by id.",
-			HTTP: &HTTP{Method: "PATCH", Path: restPath + "/:id"}, Args: resourceArgs, Returns: "*" + tName})
+			HTTP: &HTTP{Method: "PATCH", Path: restPath + "/:id"}, Args: resourceArgs, Returns: "*" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "rest", Name: "Delete" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. Remove by id.",
 			HTTP: &HTTP{Method: "DELETE", Path: restPath + "/:id"}, Args: idArgs, Returns: ""})
 	}
 	if enableGQL {
 		add(Handler{Kind: "query", Name: "list" + tName + "s", Doc: "Generated by nexus.AsCRUD[" + tName + "]. GraphQL list " + plural + ".",
-			Returns: "[]" + tName})
+			Returns: "[]" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "query", Name: "get" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. GraphQL fetch one.",
-			Args: idArgs, Returns: "*" + tName})
+			Args: idArgs, Returns: "*" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "mutation", Name: "create" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. GraphQL create.",
-			Args: resourceArgs, Returns: "*" + tName})
+			Args: resourceArgs, Returns: "*" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "mutation", Name: "update" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. GraphQL update.",
-			Args: resourceArgs, Returns: "*" + tName})
+			Args: resourceArgs, Returns: "*" + tName, ReturnsLink: tLink})
 		add(Handler{Kind: "mutation", Name: "delete" + tName, Doc: "Generated by nexus.AsCRUD[" + tName + "]. GraphQL delete; returns Boolean.",
 			Args: idArgs, Returns: "bool"})
 	}
@@ -531,7 +919,13 @@ func (c *pkgCollector) exprStr(e ast.Expr) string {
 }
 
 func (c *pkgCollector) posOf(p token.Pos) Pos {
-	pos := c.fset.Position(p)
+	return posOf(c.fset, p)
+}
+
+// posOf is the package-level form, used by the type-index builder
+// that doesn't have a pkgCollector around.
+func posOf(fset *token.FileSet, p token.Pos) Pos {
+	pos := fset.Position(p)
 	return Pos{File: pos.Filename, Line: pos.Line}
 }
 
