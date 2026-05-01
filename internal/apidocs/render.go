@@ -248,6 +248,30 @@ const htmlTemplate = `<!doctype html>
     font-size: 13px;
   }
   .warn-banner strong { font-weight: 700; }
+  .entities { margin-top: 48px; }
+  .entities h2 { font-size: 18px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin: 0 0 16px; }
+  .entity-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 0 0 14px;
+  }
+  .entity-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .entity-name { font-size: 16px; font-weight: 600; font-family: ui-monospace, monospace; }
+  .entity-pkg { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
+  .typed { color: var(--accent); text-decoration: none; }
+  .typed:hover { text-decoration: underline; }
+  .methods { margin-top: 12px; }
+  .method-row {
+    padding: 8px 0;
+    border-top: 1px dotted var(--border);
+  }
+  .method-row:first-child { border-top: 0; }
+  .method-sig { font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .method-sig .mname { color: var(--accent); font-weight: 600; }
+  .method-recv { color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .method-doc { color: var(--fg); font-size: 12.5px; margin: 4px 0 0; white-space: pre-wrap; }
   .pdf-btn {
     display: block;
     width: 100%;
@@ -299,7 +323,8 @@ const htmlTemplate = `<!doctype html>
     }
     .pos a { color: var(--muted); border: 0; }
     .deps a, .res-users a { color: var(--accent); text-decoration: none; }
-    .resources { break-before: page; page-break-before: always; }
+    .resources, .entities { break-before: page; page-break-before: always; }
+    .entity-card { break-inside: avoid; page-break-inside: avoid; box-shadow: none; }
     /* Headers/footers are added by the print dialog; we just provide
        a title at the top of the first page via the document <title>. */
     @page { margin: 18mm 16mm; }
@@ -329,6 +354,14 @@ const htmlTemplate = `<!doctype html>
     <div class="mod-name"><a href="#resources">Resources</a></div>
     <ul>
       {{range .Resources}}<li><a href="#{{.Slug}}"><code>{{.Type}}</code></a></li>{{end}}
+    </ul>
+  </div>
+  {{end}}
+  {{if .Entities}}
+  <div class="toc-resources">
+    <div class="mod-name"><a href="#entities">Entities</a></div>
+    <ul>
+      {{range .Entities}}<li><a href="#{{.Slug}}"><code>{{.Name}}</code></a></li>{{end}}
     </ul>
   </div>
   {{end}}
@@ -364,12 +397,18 @@ const htmlTemplate = `<!doctype html>
     {{if .Deps}}
     <div class="section-label">Dependencies</div>
     <ul class="deps">
-      {{range .Deps}}<li><span class="mono">{{.Name}}</span> <a href="#{{slugType .Type}}"><code>{{.Type}}</code></a></li>{{end}}
+      {{range .Deps}}<li>
+        <span class="mono">{{.Name}}</span>
+        <a href="#{{slugType .Type}}"><code>{{.Type}}</code></a>
+        {{if .TypeLink}}<a class="typed" href="#{{.TypeLink}}">→ definition</a>{{end}}
+      </li>{{end}}
     </ul>
     {{end}}
 
     {{if hasArgs .Args}}
-    <div class="section-label">Arguments {{if .Args.Type}}<code>{{.Args.Type}}</code>{{end}}</div>
+    <div class="section-label">Arguments
+      {{if .Args.Type}}{{if .Args.TypeLink}}<a class="typed" href="#{{.Args.TypeLink}}"><code>{{.Args.Type}}</code></a>{{else}}<code>{{.Args.Type}}</code>{{end}}{{end}}
+    </div>
     {{if .Args.Fields}}
     <table>
       <thead><tr><th>Field</th><th>Type</th><th>Tags</th></tr></thead>
@@ -377,7 +416,7 @@ const htmlTemplate = `<!doctype html>
         {{range .Args.Fields}}
         <tr>
           <td class="mono">{{.Name}}{{if .Optional}} <span class="badge-opt">optional</span>{{end}}</td>
-          <td><code>{{.Type}}</code></td>
+          <td>{{if .TypeLink}}<a class="typed" href="#{{.TypeLink}}"><code>{{.Type}}</code></a>{{else}}<code>{{.Type}}</code>{{end}}</td>
           <td>
             {{range $k, $v := .Tags}}<span class="tag">{{$k}}: {{$v}}</span>{{end}}
           </td>
@@ -392,7 +431,9 @@ const htmlTemplate = `<!doctype html>
 
     {{if .Returns}}
     <div class="section-label">Returns</div>
-    <div><code>{{.Returns}}</code></div>
+    <div>
+      {{if .ReturnsLink}}<a class="typed" href="#{{.ReturnsLink}}"><code>{{.Returns}}</code></a>{{else}}<code>{{.Returns}}</code>{{end}}
+    </div>
     {{end}}
 
     {{if .Options}}
@@ -416,6 +457,49 @@ const htmlTemplate = `<!doctype html>
       <div class="res-users">
         {{range .Users}}<a href="#{{anchor .Module .Name}}">{{if .Module}}{{.Module}}.{{end}}{{.Name}}</a>{{end}}
       </div>
+    </div>
+    {{end}}
+  </section>
+{{end}}
+
+{{if .Entities}}
+  <section class="entities">
+    <h2 id="entities">Entities</h2>
+    {{range .Entities}}
+    <div class="entity-card" id="{{.Slug}}">
+      <div class="entity-head">
+        <span class="entity-name">{{.Name}}</span>
+        <span class="entity-pkg">{{.Pkg}}</span>
+      </div>
+      {{if .Doc}}<div class="doc">{{.Doc}}</div>{{end}}
+      {{if .Fields}}
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Tags</th></tr></thead>
+        <tbody>
+          {{range .Fields}}
+          <tr>
+            <td class="mono">{{.Name}}</td>
+            <td>{{if .TypeLink}}<a class="typed" href="#{{.TypeLink}}"><code>{{.Type}}</code></a>{{else}}<code>{{.Type}}</code>{{end}}</td>
+            <td>{{range $k, $v := .Tags}}<span class="tag">{{$k}}: {{$v}}</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else if not .Methods}}
+      <div class="empty">Opaque type (non-struct or unexported fields only).</div>
+      {{end}}
+      {{if .Methods}}
+      <div class="section-label">Methods</div>
+      <div class="methods">
+        {{range .Methods}}
+        <div class="method-row">
+          <div class="method-sig"><span class="mname">{{.Name}}</span>{{.Signature}}{{if .Receiver}}<span class="method-recv">{{.Receiver}} receiver</span>{{end}}</div>
+          {{if .Doc}}<div class="method-doc">{{.Doc}}</div>{{end}}
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+      <div class="pos"><a href="{{editorURL .Pos.File .Pos.Line}}">{{.Pos.File}}:{{.Pos.Line}}</a></div>
     </div>
     {{end}}
   </section>
