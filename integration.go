@@ -46,6 +46,23 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
+			// Startup tasks run BEFORE listener bind. Migrations are
+			// the canonical case: a partially-bound app accepting
+			// traffic against an unmigrated DB is worse than a clean
+			// boot failure. Tasks fire in registration order; the
+			// first error halts boot with the task name surfaced so
+			// the operator (and the orchestration platform's logs)
+			// see WHICH task failed rather than a bare error from
+			// somewhere deeper.
+			//
+			// Print mode never reaches OnStart (Run short-circuits in
+			// options.go), so a print-mode invocation observes
+			// declared StartupTasks via the manifest without ever
+			// running them — exactly what the orchestration platform
+			// needs to plan migrations as a separate phase.
+			if err := app.runStartupTasks(ctx); err != nil {
+				return err
+			}
 			for i, l := range listeners {
 				ln, err := net.Listen("tcp", l.Addr)
 				if err != nil {

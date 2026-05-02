@@ -418,6 +418,23 @@ func Run(cfg Config, opts ...Option) {
 		// trace. Mirrors how net.Listen errors surface today.
 		panic(err)
 	}
+	// Print-mode short-circuit. When NEXUS_PRINT_MANIFEST=1 is set,
+	// the orchestration platform is invoking us at build/upload time
+	// to extract the manifest. Build the fx graph, populate *App
+	// (which fires every DeclareEnv / DeclareService / UseVolume /
+	// AddStartupTask invoke from module-level options), print the
+	// manifest as JSON, exit 0. Lifecycle hooks never run — no
+	// listener bind, no DB/Redis dial.
+	//
+	// Side-effect contract: implementations of EnvProvider /
+	// ServiceDependencyProvider / VolumeProvider, and any constructor
+	// that fx invokes during graph build, must be cheap and free of
+	// network/filesystem reads. fx is lazy by default, so this holds
+	// for typical apps.
+	if os.Getenv(printManifestEnv) == "1" {
+		printManifestAndExitIfRequested(cfg, opts)
+		return // unreachable; printManifestAndExitIfRequested calls os.Exit
+	}
 	// Two-phase split: fxEarlyOptions seeds Config + *App + lifecycle
 	// BEFORE user opts run, then user opts (which may install global
 	// middleware via auth.Module / engine.Use), then fxLateOptions

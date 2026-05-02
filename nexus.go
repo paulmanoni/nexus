@@ -99,6 +99,14 @@ type App struct {
 	// so the endpoints can answer immediately, even before fx Start
 	// flips the alive flag.
 	health *healthState
+
+	// manifest is the deploy-time self-description store. Populated
+	// by the option helpers in manifest_app.go (DeclareEnv,
+	// DeclareService, UseVolume, AddStartupTask) which run as
+	// fx.Invoke at graph construction. Read by manifestInputs() at
+	// print time. Never holds connections or state that needs
+	// teardown — pure metadata.
+	manifest manifestStore
 }
 
 // New constructs an *App from a single Config. The canonical
