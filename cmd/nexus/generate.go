@@ -15,6 +15,9 @@ import (
 // Today's children:
 //
 //	nexus generate dockerfile  — multi-stage Dockerfile per deployment
+//	nexus generate bake        — docker-bake.hcl that builds every
+//	                             deployment in one BuildKit run with
+//	                             shared cache mounts
 func newGenerateCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -29,6 +32,7 @@ Each subcommand is documented under nexus help generate <subcommand>.`,
 	}
 	cmd.AddCommand(
 		newGenerateDockerfileCmd(stdout, stderr),
+		newGenerateBakeCmd(stdout, stderr),
 	)
 	return cmd
 }

@@ -101,6 +101,23 @@ type buildPreload struct {
 	Mods        []modInfo
 }
 
+// loadManifestForBuild reads the manifest and resolves the project
+// root without doing any source scanning. The monolith fast path in
+// runBuild uses it to decide whether the expensive packages.Load is
+// necessary, and to feed the deploy-init generator (which only needs
+// manifest data when no shadows are involved).
+func loadManifestForBuild(manifestPath string) (*DeployManifest, string, error) {
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		return nil, "", err
+	}
+	projectRoot, err := filepath.Abs(filepath.Dir(manifestPath))
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve project root: %w", err)
+	}
+	return manifest, projectRoot, nil
+}
+
 // preloadBuild does the manifest read + recursive packages.Load +
 // scanModules + cross-validation once, returning a result that
 // can be threaded through several runBuild calls. Splitter mode
@@ -108,18 +125,26 @@ type buildPreload struct {
 // deployments. Direct nexus build callers don't need it; runBuild
 // falls back to its own load when Preloaded is nil.
 func preloadBuild(manifestPath string, stderr io.Writer) (*buildPreload, error) {
-	manifest, err := LoadManifest(manifestPath)
+	manifest, projectRoot, err := loadManifestForBuild(manifestPath)
 	if err != nil {
 		return nil, err
 	}
-	projectRoot, err := filepath.Abs(filepath.Dir(manifestPath))
-	if err != nil {
-		return nil, fmt.Errorf("resolve project root: %w", err)
-	}
+	// Mode is the minimum set the scan needs:
+	//   - NeedName/NeedFiles: PkgPath, Name, GoFiles → PackageDir.
+	//   - NeedSyntax: AST walk in scanModules.
+	//   - NeedTypes/NeedTypesInfo: TypesInfo.ObjectOf for handler
+	//     resolution; types.Type walking for ArgsType/Return strings
+	//     and cross-module dep struct-field detection.
+	//
+	// NeedDeps and NeedImports were dropped: nothing reads
+	// pkg.Imports here, and dependent packages' types load via
+	// export data (sufficient for paramsTypeArg + collectPackagePaths
+	// to resolve obj.Pkg().Path()). Skipping NeedDeps avoids a full
+	// transitive type-check of every dep tree leaf, which dominates
+	// cold-load time on real projects.
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps |
-			packages.NeedImports,
+			packages.NeedTypes | packages.NeedTypesInfo,
 		Tests: false,
 		Dir:   projectRoot,
 	}
@@ -167,13 +192,46 @@ func runBuild(opts buildOptions) error {
 		projectRoot = opts.Preloaded.ProjectRoot
 		mods = opts.Preloaded.Mods
 	} else {
-		pre, err := preloadBuild(opts.ManifestPath, opts.Stderr)
+		// Read the manifest first (cheap) so we can decide whether
+		// the heavyweight packages.Load is even necessary. A monolith
+		// deployment (omitted `owns:` → DeploymentSpec.Owns == nil
+		// → manifest.Owns returns true for every module) generates
+		// no shadows by construction, so we can skip the recursive
+		// type-check and shell straight to go build below.
+		m, root, err := loadManifestForBuild(opts.ManifestPath)
 		if err != nil {
 			return err
 		}
-		manifest = pre.Manifest
-		projectRoot = pre.ProjectRoot
-		mods = pre.Mods
+		manifest = m
+		projectRoot = root
+		spec, ok := manifest.Deployments[opts.Deployment]
+		if !ok {
+			return fmt.Errorf("nexus build: deployment %q not in %s — declared: %v",
+				opts.Deployment, opts.ManifestPath, manifest.Names())
+		}
+		// Only run the full scan when this deployment may need
+		// shadows. spec.Owns == nil means "owns everything"
+		// (monolith); spec.Owns == [] means "owns nothing"
+		// (frontend-only — needs shadows for every module);
+		// spec.Owns == [a, b] means split unit (needs shadows for
+		// non-listed modules). The latter two require source scan.
+		//
+		// Trade-off for the fast path: the static cross-module dep
+		// arrows the dashboard draws from struct-field references
+		// (RegisterCrossModuleDep, emitted by buildCrossModuleDepRegistrations)
+		// are skipped. Runtime reflection in automount still picks up
+		// peers injected as handler deps — only field-only references
+		// (svc.users used internally without appearing in any handler
+		// signature) lose their dashboard edge in monolith builds.
+		if spec.Owns != nil {
+			pre, err := preloadBuild(opts.ManifestPath, opts.Stderr)
+			if err != nil {
+				return err
+			}
+			manifest = pre.Manifest
+			projectRoot = pre.ProjectRoot
+			mods = pre.Mods
+		}
 	}
 	if _, ok := manifest.Deployments[opts.Deployment]; !ok {
 		return fmt.Errorf("nexus build: deployment %q not in %s — declared: %v",

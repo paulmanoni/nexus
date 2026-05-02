@@ -5,15 +5,15 @@
 # syntax=docker/dockerfile:1.7
 #
 # Build with:
-#     docker build -f examples/microsplit/Dockerfile.monolith .
+#     docker build -f examples/microsplit/Dockerfile.users-svc .
 #
 # Context = repo root (where go.mod lives). The Dockerfile lives in
 # examples/microsplit/ alongside nexus.deploy.yaml; -f points at it.
 
 # --- Build stage --------------------------------------------------------
 # golang base does the overlay-driven shadow build. The nexus CLI emits
-# .nexus/build/monolith/ shadow files and runs go build with -overlay
-# so this stage produces a single static binary at /out/monolith.
+# .nexus/build/users-svc/ shadow files and runs go build with -overlay
+# so this stage produces a single static binary at /out/users-svc.
 #
 # BuildKit cache mounts on /root/.cache/go-build and /go/pkg/mod
 # persist Go's compile cache + module download cache across builds.
@@ -48,7 +48,7 @@ WORKDIR /src/examples/microsplit
 # same cache mounts — incremental rebuilds collapse to seconds.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    nexus build --deployment monolith -o /out/monolith
+    nexus build --deployment users-svc -o /out/users-svc
 
 # --- Runtime stage ------------------------------------------------------
 # Small image carries only the binary + ca-certs (for any outbound TLS
@@ -58,18 +58,18 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM alpine:3.20 AS runtime
 RUN apk add --no-cache ca-certificates wget || true
 WORKDIR /app
-COPY --from=builder /out/monolith /app/monolith
+COPY --from=builder /out/users-svc /app/users-svc
 
 # NEXUS_DEPLOYMENT is the secondary source for the active unit name
 # (after Config.Deployment / SetDeploymentDefaults). Setting it here
 # lets the same image be reused across environments by overriding via
 # docker run -e NEXUS_DEPLOYMENT=... if needed.
-ENV NEXUS_DEPLOYMENT=monolith
+ENV NEXUS_DEPLOYMENT=users-svc
 
 # Public port carries REST + GraphQL + WebSocket + GraphQL playground.
 # Admin port carries the /__nexus dashboard surface. Keep it off the
 # public network in production (k8s NetworkPolicy / cloud SG).
-EXPOSE 8080 9080
+EXPOSE 8081 9081
 
 # Liveness probe: 200 once fx Start completes. Readiness lives at
 # /__nexus/ready and is more useful in k8s where the orchestrator can
@@ -77,6 +77,6 @@ EXPOSE 8080 9080
 # Probe targets the admin port because the public listener's scope
 # filter hides /__nexus/* — health/ready are dashboard-namespaced.
 HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 \
-  CMD wget -q --spider http://localhost:9080/__nexus/health || exit 1
+  CMD wget -q --spider http://localhost:9081/__nexus/health || exit 1
 
-ENTRYPOINT ["/app/monolith"]
+ENTRYPOINT ["/app/users-svc"]
