@@ -235,6 +235,21 @@ type VolumeProvider interface {
 	NexusVolumes() []Volume
 }
 
+// Registrar is the contract *nexus.App satisfies for the manifest
+// declaration methods. Carved into the leaf manifest package so
+// any package (cache, db, app-defined wrappers) can require it as
+// an fx dependency without importing nexus and creating an import
+// cycle.
+//
+// Implementations must accept nil-safe registration: calling with
+// a nil provider is a no-op, not a panic. (Mirrors the *App method
+// guards.)
+type Registrar interface {
+	DeclareEnvProvider(EnvProvider)
+	DeclareServiceProvider(ServiceDependencyProvider)
+	DeclareVolumeProvider(VolumeProvider)
+}
+
 // ── Aggregation ────────────────────────────────────────────────────
 
 // Inputs is the data the framework collects from various places before

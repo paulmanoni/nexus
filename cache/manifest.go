@@ -66,3 +66,23 @@ func ManifestService() manifest.ServiceNeed {
 		},
 	}
 }
+
+// ── Auto-discovered manifest providers ─────────────────────────────
+//
+// *Manager implements manifest.EnvProvider and
+// manifest.ServiceDependencyProvider so nexus.Provide auto-walks
+// the constructed Manager at print-mode boot and pulls these
+// declarations into the manifest. No nexus.DeclareEnv /
+// DeclareService calls in the application's main.go — adoption is
+// just `cache.Module`.
+//
+// Methods are static (no read of m.config) so print mode gets the
+// same answer pre-Start as a fully-running Manager — preserves the
+// side-effect-free contract.
+func (m *Manager) NexusEnv() []manifest.EnvVar {
+	return ManifestEnv()
+}
+
+func (m *Manager) NexusServices() []manifest.ServiceNeed {
+	return []manifest.ServiceNeed{ManifestService()}
+}

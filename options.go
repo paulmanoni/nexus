@@ -254,6 +254,9 @@ func Provide(fns ...any) Option {
 		if inv := serviceDepsRegisterInvoke(fn); inv != nil {
 			opts = append(opts, inv)
 		}
+		if inv := manifestAutoRegisterInvoke(fn); inv != nil {
+			opts = append(opts, inv)
+		}
 	}
 	return rawOption{o: fx.Options(opts...)}
 }
