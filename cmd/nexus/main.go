@@ -107,6 +107,7 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newDevCmd(stdout, stderr),
 		newBuildCmd(stdout, stderr),
 		newGenerateCmd(stdout, stderr),
+		newReconcileCmd(stdout, stderr),
 		newDocsCmd(stdout, stderr),
 		newAPIDocsCmd(stdout, stderr),
 	)
