@@ -133,6 +133,14 @@ type Manager struct {
 	isConnected bool
 	ctx         context.Context
 	cancel      context.CancelFunc
+
+	// envNames + bindName drive NexusEnv / NexusServices when the
+	// auto-walk fires. Populated via WithEnvNames / WithBindName
+	// options (or zero, meaning "use defaults"). Static for the
+	// life of the Manager — print mode reads these without
+	// touching the live DB.
+	envNames EnvNames
+	bindName string
 }
 
 // Option tweaks a Manager at construction time.
@@ -149,6 +157,21 @@ func WithPool(p PoolConfig) Option { return func(m *Manager) { m.pool = p } }
 func WithExecutor(e failsafe.Executor[*gorm.DB]) Option {
 	return func(m *Manager) { m.executor = e }
 }
+
+// WithEnvNames stamps the env-var names this Manager's Config came
+// from onto the Manager so NexusEnv / NexusServices can declare
+// them in the manifest. Empty fields fall back to DefaultEnvNames.
+//
+// Use when the app reads from env-var names that don't follow the
+// framework convention (e.g. oats reads PASSWORD instead of
+// DB_PASSWORD). Apps that build their Config via LoadConfig pass
+// the same EnvNames here.
+func WithEnvNames(names EnvNames) Option { return func(m *Manager) { m.envNames = names } }
+
+// WithBindName names this Manager in the manifest. Defaults to
+// "main"; multi-DB apps override per Manager so each shows up as
+// a distinct slot in the orchestration canvas.
+func WithBindName(name string) Option { return func(m *Manager) { m.bindName = name } }
 
 // NewManager builds a Manager without connecting. Call Open or Start next.
 func NewManager(cfg Config, opts ...Option) *Manager {

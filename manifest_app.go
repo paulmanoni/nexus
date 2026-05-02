@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"strconv"
 	"sync"
+
+	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/registry"
@@ -351,6 +354,53 @@ func AddStartupTask(t manifest.StartupTask) Option {
 	return Invoke(func(a *App) { a.AddStartupTask(t) })
 }
 
+// manifestAutoRegisterInvoke is the manifest-side counterpart to
+// resourceAutoRegisterInvoke. When nexus.Provide is given a
+// constructor whose return type implements one of the manifest
+// provider interfaces, we synthesize an fx.Invoke(func(*App, T))
+// that registers the constructed value with the right declarator.
+//
+// Result: developer writes nexus.Provide(NewRabbitMQ) — no
+// DeclareEnv/DeclareService calls in main.go — and the returned
+// *RabbitMQ is auto-walked at print-mode boot, populating the
+// manifest. Same shape as how NexusResources() flows today.
+//
+// Returns nil when the constructor's return type doesn't implement
+// any manifest provider interface, so plain types pay nothing.
+func manifestAutoRegisterInvoke(fn any) fx.Option {
+	rt := reflect.TypeOf(fn)
+	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
+		return nil
+	}
+	outType := rt.Out(0)
+	envIface := reflect.TypeOf((*manifest.EnvProvider)(nil)).Elem()
+	svcIface := reflect.TypeOf((*manifest.ServiceDependencyProvider)(nil)).Elem()
+	volIface := reflect.TypeOf((*manifest.VolumeProvider)(nil)).Elem()
+	if !outType.Implements(envIface) && !outType.Implements(svcIface) && !outType.Implements(volIface) {
+		return nil
+	}
+
+	invokeType := reflect.FuncOf(
+		[]reflect.Type{reflect.TypeOf((*App)(nil)), outType},
+		nil, false,
+	)
+	invokeFn := reflect.MakeFunc(invokeType, func(args []reflect.Value) []reflect.Value {
+		app := args[0].Interface().(*App)
+		inst := args[1].Interface()
+		if p, ok := inst.(manifest.EnvProvider); ok {
+			app.DeclareEnvProvider(p)
+		}
+		if p, ok := inst.(manifest.ServiceDependencyProvider); ok {
+			app.DeclareServiceProvider(p)
+		}
+		if p, ok := inst.(manifest.VolumeProvider); ok {
+			app.DeclareVolumeProvider(p)
+		}
+		return nil
+	})
+	return fx.Invoke(invokeFn.Interface())
+}
+
 // ── Type-assert that registry shapes match what we expect ──────────
 //
 // Compile-time guard: if registry.Worker / registry.Endpoint ever
@@ -358,3 +408,9 @@ func AddStartupTask(t manifest.StartupTask) Option {
 // and we know to update collectors above. Cheaper than an integration
 // test for catching field renames.
 var _ = registry.Worker{Name: "", Description: ""}
+
+// Compile-time guard: *App MUST satisfy manifest.Registrar. Carved
+// here so a future signature drift on the interface (or a method
+// rename on *App) blows up the build instead of producing a wrong-
+// type panic at fx.Run time.
+var _ manifest.Registrar = (*App)(nil)
