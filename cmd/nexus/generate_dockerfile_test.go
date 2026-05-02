@@ -69,7 +69,15 @@ func TestGenerateDockerfile_RendersExpectedDirectives(t *testing.T) {
 	mustContain(t, out, "FROM golang:1.25-alpine AS builder")
 	mustContain(t, out, "FROM alpine:3.20 AS runtime")
 	mustContain(t, out, "go install github.com/paulmanoni/nexus/cmd/nexus@latest")
-	mustContain(t, out, "RUN nexus build --deployment users-svc -o /out/users-svc")
+	// `RUN ` prefix omitted because the rendered command lives on a
+	// separate line under a multi-line --mount block; the substring
+	// check still verifies the right deployment + output flags.
+	mustContain(t, out, "nexus build --deployment users-svc -o /out/users-svc")
+	// Cache mounts must wrap the build invocation — without them,
+	// repeat docker builds re-download every dep and recompile from
+	// scratch.
+	mustContain(t, out, "--mount=type=cache,target=/root/.cache/go-build")
+	mustContain(t, out, "--mount=type=cache,target=/go/pkg/mod")
 	mustContain(t, out, "ENV NEXUS_DEPLOYMENT=users-svc")
 	// Admin offset 1000 → 8081 + 1000 = 9081.
 	mustContain(t, out, "EXPOSE 8081 9081")
@@ -198,7 +206,8 @@ func TestGenerateDockerfile_ManifestInSubdir(t *testing.T) {
 	// WORKDIR switches into the subdir before nexus build runs.
 	mustContain(t, out, "WORKDIR /src/examples/microsplit")
 	// nexus build still runs from there with the same deployment name.
-	mustContain(t, out, "RUN nexus build --deployment monolith -o /out/monolith")
+	// (RUN prefix omitted: cache-mount block puts it on the next line.)
+	mustContain(t, out, "nexus build --deployment monolith -o /out/monolith")
 }
 
 // TestGenerateDockerfile_NoGoModRefuses produces a clear error when

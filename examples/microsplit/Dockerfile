@@ -14,21 +14,41 @@
 # golang base does the overlay-driven shadow build. The nexus CLI emits
 # .nexus/build/monolith/ shadow files and runs go build with -overlay
 # so this stage produces a single static binary at /out/monolith.
+#
+# BuildKit cache mounts on /root/.cache/go-build and /go/pkg/mod
+# persist Go's compile cache + module download cache across builds.
+# Without them, every docker build re-downloads modules and
+# recompiles every transitive dep from scratch — these mounts turn
+# repeat builds into incremental compiles. Requires BuildKit (default
+# in Docker 23+; otherwise prefix the build with DOCKER_BUILDKIT=1).
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
-RUN go install github.com/paulmanoni/nexus/cmd/nexus@latest
+# Pinning NexusVersion (default "latest") to a tag makes this layer
+# reproducible — and even with "latest", the cache mounts below keep
+# the install fast on re-runs by reusing the module + build cache.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go install github.com/paulmanoni/nexus/cmd/nexus@latest
 
 # Module cache layer: copying go.mod/go.sum first means dep changes
-# invalidate the cache here, but source-only changes reuse it.
+# invalidate the cache here, but source-only changes reuse it. The
+# mount keeps the actual download cached even when this layer
+# re-runs (e.g. a single-line go.mod tweak).
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
 # nexus.deploy.yaml lives in examples/microsplit/; switch to that subdir
 # so the manifest, packages.Load, and overlay paths all resolve.
 WORKDIR /src/examples/microsplit
-RUN nexus build --deployment monolith -o /out/monolith
+# nexus build shells out to go build internally, which honors the
+# same cache mounts — incremental rebuilds collapse to seconds.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    nexus build --deployment monolith -o /out/monolith
 
 # --- Runtime stage ------------------------------------------------------
 # Small image carries only the binary + ca-certs (for any outbound TLS

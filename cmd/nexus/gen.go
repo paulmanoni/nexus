@@ -101,10 +101,13 @@ type endpointInfo struct {
 // needs to launch as subprocesses without otherwise caring about the
 // AsRest signatures that gen clients reads.
 func discoverDeployTags(pattern string) ([]string, error) {
+	// Same mode trim as preloadBuild: NeedDeps/NeedImports buy us
+	// nothing here (we never read pkg.Imports and import types load
+	// via export data) and avoiding the transitive type-check of
+	// every dep leaf is the dominant cold-load speedup.
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps |
-			packages.NeedImports,
+			packages.NeedTypes | packages.NeedTypesInfo,
 		Tests: false,
 	}
 	pkgs, err := packages.Load(cfg, pattern)
