@@ -10,6 +10,7 @@ package nexus
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/paulmanoni/nexus/cache"
 	"github.com/paulmanoni/nexus/cron"
 	"github.com/paulmanoni/nexus/dashboard"
+	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/metrics"
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/ratelimit"
@@ -27,6 +29,12 @@ import (
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/trace"
 )
+
+// EnvAdminToken is the env var the framework reads for the admin
+// token gating GET /__nexus/manifest. Empty value (or unset) leaves
+// the endpoint unmounted — fail-closed so a forgotten orchestrator
+// config doesn't expose declared services / env / crons.
+const EnvAdminToken = "NEXUS_ADMIN_TOKEN"
 
 const defaultDashboardName = "Nexus"
 
@@ -229,6 +237,18 @@ func New(cfg Config) *App {
 			Middleware: a.dashboardMw,
 			Deployment: a.deployment,
 			Version:    a.version,
+			// Manifest closure builds against the live *App on every
+			// request — same Build() path print mode and `nexus build
+			// --emit-manifest` use, so the three consumer surfaces
+			// stay byte-equivalent (modulo App.GeneratedAt, which
+			// ComputeHash excludes).
+			Manifest: func() manifest.Manifest {
+				return manifest.Build(a.manifestInputs())
+			},
+			// AdminToken from env. Empty → dashboard.Mount leaves the
+			// endpoint unmounted (fail-closed). The orchestration
+			// platform sets NEXUS_ADMIN_TOKEN at deploy time.
+			AdminToken: os.Getenv(EnvAdminToken),
 		})
 	}
 

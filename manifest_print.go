@@ -2,8 +2,10 @@ package nexus
 
 import (
 	"fmt"
+	"io"
 	"os"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/manifest"
@@ -62,6 +64,18 @@ const printManifestEnv = manifest.EnvVarPrintAndExit
 // themselves; declare at module level instead (see "Integration"
 // step 4 in manifest/manifest.go).
 func printManifestAndExitIfRequested(cfg Config, opts []Option) {
+	// Print mode must produce JSON-and-only-JSON on stdout — anything
+	// else breaks downstream parsers (`nexus reconcile`, `nexus build
+	// --emit-manifest`, the orchestrator's extractManifest). Silence
+	// Gin's route-registration debug noise (which fires during fx
+	// graph construction below as modules wire endpoints) by switching
+	// it to release mode AND redirecting its writers to discard. We
+	// hold both belts: ReleaseMode suppresses most lines, the writer
+	// swap catches anything that leaks regardless of mode.
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+	gin.DefaultErrorWriter = io.Discard
+
 	// Build the same option chain Run uses, MINUS fxLateOptions —
 	// fxLateOptions invokes autoMountGraphQL which registers HTTP
 	// routes; we don't need that for the manifest and skipping it

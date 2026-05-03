@@ -74,36 +74,11 @@ provide('nexus.toggleExpanded', toggleExpanded)
 // to thread through the VueFlow custom-node API.
 const opSelection = ref(null)  // { service, op, resources: string[] }
 
-// SIMULATE_INTERVAL_MS controls how often the click-simulate animation
-// re-fires while a selection is held. 3s feels alive without becoming
-// distracting; the FLASH_MS=900ms flash decays naturally between fires.
-const SIMULATE_INTERVAL_MS = 3000
-let simulateTimer = null
-function stopSimulateLoop() {
-  if (simulateTimer) {
-    clearInterval(simulateTimer)
-    simulateTimer = null
-  }
-}
-
 function setOp(sel) {
   opSelection.value = sel
-  stopSimulateLoop()
-  // Click-to-simulate: visualise the request path the moment the user
-  // selects an op, without waiting for real traffic. Spawns the same
-  // packet animation onTraceEvent uses, so clicking an endpoint reads
-  // as "this is what a request through me looks like." A loop keeps
-  // the animation alive while the selection is held — without it, the
-  // visual fades after FLASH_MS and the canvas looks idle even though
-  // an op is still selected. Toggling off (clearOp) cancels the loop.
-  if (sel) {
-    simulateOp(sel)
-    simulateTimer = setInterval(() => simulateOp(sel), SIMULATE_INTERVAL_MS)
-  }
 }
 function clearOp() {
   opSelection.value = null
-  stopSimulateLoop()
 }
 provide('nexus.opSelection', opSelection)
 provide('nexus.setOp', setOp)
@@ -1320,37 +1295,6 @@ function flashEdges(ids, state) {
   flashedEdges.value = next
 }
 
-// simulateOp paints the request path for a selected op without waiting
-// for live traffic — spawns the same packets onTraceEvent does, in the
-// same order, so a click reads as "here's what a request through this
-// endpoint touches." Inbound entry lane fires first; outbound edges
-// (resources / service deps the op declared) cascade after a stagger.
-//
-// Service-level constructor edges are intentionally skipped: they're
-// "wired but not actively running per-request," shown dashed in the
-// idle style, and animating them on click would falsely suggest the
-// click reached the constructor's wiring.
-function simulateOp(sel) {
-  if (!sel) return
-  const ids = []
-  // Per-op inbound first (Internet → specific row). Falls back to the
-  // empty-module aggregated id if the per-op variant doesn't exist.
-  const perOpInbound = `e:internet->${sel.groupKey}@${sel.op}`
-  const aggInbound   = `e:internet->${sel.groupKey}`
-  if (rawEdges.value.find(e => e.id === perOpInbound)) ids.push(perOpInbound)
-  else if (rawEdges.value.find(e => e.id === aggInbound)) ids.push(aggInbound)
-  // Outbound edges from this row to its declared resources / service deps.
-  for (const e of rawEdges.value) {
-    if (e.source !== sel.groupKey) continue
-    if (e.data.serviceLevel) continue
-    const ops = Array.isArray(e.data.ops) ? e.data.ops : []
-    if (ops.includes(sel.op)) ids.push(e.id)
-  }
-  if (!ids.length) return
-  flashEdges(ids, 'ok')
-  spawnPacketsForEdges(ids, sel.op, 'ok')
-}
-
 // onTraceEvent maps an incoming request.start event to the edges that
 // should light up: inbound lane Internet→module-group, plus any per-op
 // edges the handler declared (resources / other services). We stash the
@@ -1528,7 +1472,6 @@ onMounted(() => {
 onUnmounted(() => {
   if (traceSub) traceSub.close()
   if (liveSub) liveSub.close()
-  stopSimulateLoop()
   flashTimers.forEach(t => clearTimeout(t))
   window.removeEventListener('keydown', onGlobalKey)
 })

@@ -16,21 +16,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// reconcileOptions carries the flags for `nexus reconcile`. Two
-// input shapes:
+// reconcileOptions carries the flags for `nexus reconcile`. Three
+// input shapes, picked by what the caller has on hand:
 //
-//   - --image <ref>: shells out to `docker run --rm -e
-//     NEXUS_PRINT_MANIFEST=1 <ref>`, captures stdout.
-//   - --manifest-json <path>: reads the print-mode JSON from a
-//     file already produced by some other process (typically the
-//     orchestration server's builder, which extracts the manifest
-//     in a separate step and reuses the bytes).
+//   - --manifest-json <path|->: read the print-mode JSON from a file
+//     (or stdin). Cheapest. The orchestration server's builder
+//     already extracts the manifest as a separate build step and
+//     pipes the bytes here.
+//   - --binary <path>: exec the built binary with
+//     NEXUS_PRINT_MANIFEST=1 set and capture stdout. No container.
+//     Use this after `go build` (or `nexus build`).
+//   - --source <dir>: run `go run` against the project's main package
+//     with NEXUS_PRINT_MANIFEST=1 set. Use when no binary is built
+//     yet — typical local-dev workflow.
 //
-// Pick one. If both are set, --manifest-json wins (cheaper, no
-// docker round-trip).
+// Resolution order when multiple are set: --manifest-json > --binary
+// > --source. Cheaper sources win so a CI step that pipes JSON in
+// doesn't accidentally re-build because someone left --source on.
 type reconcileOptions struct {
-	Image        string
 	ManifestJSON string
+	Binary       string
+	Source       string
 	YAMLPath     string
 	Out          string
 	DryRun       bool
@@ -52,29 +58,32 @@ env, startup_tasks) are overwritten — any hand edits there will be
 clobbered, by design. Source declarations (nexus.DeclareService,
 DeclareEnv, AddStartupTask) are the canonical way to change them.
 
-Two ways to feed the manifest:
+Three ways to feed the manifest, no docker required:
 
-    nexus reconcile --image my-app:latest
-    nexus reconcile --manifest-json /tmp/manifest.json
+    nexus reconcile --manifest-json <file|->   # JSON already extracted
+    nexus reconcile --binary ./bin/myapp       # exec built binary
+    nexus reconcile --source .                 # go run the main pkg
 
-Both write back to nexus.deploy.yaml in place. --out writes elsewhere
-without touching the original (useful for diffs in CI). --dry-run
-prints the merged YAML to stdout without writing anywhere.
+All three write back to nexus.deploy.yaml in place. --out writes
+elsewhere without touching the original (useful for diffs in CI).
+--dry-run prints the merged YAML to stdout without writing anywhere.
 
 Examples:
-    nexus reconcile --image oats:dev
-    nexus reconcile --manifest-json - < manifest.json   # stdin
-    nexus reconcile --image oats:dev --dry-run | diff nexus.deploy.yaml -
+    nexus reconcile --binary ./bin/myapp
+    nexus reconcile --source ./cmd/myapp
+    nexus reconcile --manifest-json - < manifest.json
+    nexus reconcile --binary ./bin/myapp --dry-run | diff nexus.deploy.yaml -
 `,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if opts.Image == "" && opts.ManifestJSON == "" {
-				return fmt.Errorf("nexus reconcile: --image or --manifest-json required")
+			if opts.ManifestJSON == "" && opts.Binary == "" && opts.Source == "" {
+				return fmt.Errorf("nexus reconcile: one of --manifest-json, --binary, or --source is required")
 			}
 			return runReconcile(opts, stdout, stderr)
 		},
 	}
-	cmd.Flags().StringVar(&opts.Image, "image", "", "docker image ref to extract manifest from (runs `docker run --rm -e NEXUS_PRINT_MANIFEST=1 <image>`)")
 	cmd.Flags().StringVar(&opts.ManifestJSON, "manifest-json", "", "path to a pre-extracted manifest JSON file (- for stdin)")
+	cmd.Flags().StringVar(&opts.Binary, "binary", "", "path to a built nexus binary; will be exec'd with NEXUS_PRINT_MANIFEST=1")
+	cmd.Flags().StringVar(&opts.Source, "source", "", "Go main package (dir or import path) to `go run` with NEXUS_PRINT_MANIFEST=1 set")
 	cmd.Flags().StringVar(&opts.YAMLPath, "yaml", opts.YAMLPath, "path to nexus.deploy.yaml")
 	cmd.Flags().StringVar(&opts.Out, "out", "", "write merged YAML here instead of in-place (default: rewrite --yaml)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "print merged YAML to stdout, write nothing")
@@ -194,28 +203,58 @@ func runReconcile(opts reconcileOptions, stdout, stderr io.Writer) error {
 }
 
 // loadManifestJSON resolves the JSON bytes from whichever input the
-// operator chose. --manifest-json wins over --image (cheaper); "-"
-// reads from stdin so a pipe-driven CI step doesn't need a temp
-// file.
-func loadManifestJSON(opts reconcileOptions, stderr io.Writer) ([]byte, error) {
+// operator chose, in cheapest-first order: --manifest-json > --binary
+// > --source. Cheaper sources win so a CI step that pipes JSON in
+// doesn't accidentally re-run a full `go run` because someone left
+// --source on. The stderr writer is reserved for future hints; today
+// the underlying helpers report errors directly.
+//
+// All three paths produce the same byte stream — print-mode JSON from
+// the canonical manifest package — so the rest of runReconcile is
+// source-agnostic.
+func loadManifestJSON(opts reconcileOptions, _ io.Writer) ([]byte, error) {
 	if opts.ManifestJSON != "" {
 		if opts.ManifestJSON == "-" {
 			return io.ReadAll(os.Stdin)
 		}
 		return os.ReadFile(opts.ManifestJSON)
 	}
-	// --image path: docker run with the env var the runtime checks.
-	// 60s ceiling — fx graph build is fast (< 1s for any sane app)
-	// but image pulls on first run can lag.
-	if _, err := exec.LookPath("docker"); err != nil {
-		return nil, fmt.Errorf("nexus reconcile: docker CLI not found on PATH (needed for --image; alternatively pass --manifest-json)")
+	if opts.Binary != "" {
+		// Reuses the same exec helper `nexus build --emit-manifest`
+		// uses, so behavior (timeout, env passthrough, empty-output
+		// detection) stays identical between the two commands.
+		return runBinaryPrintMode(opts.Binary)
+	}
+	if opts.Source != "" {
+		return runSourcePrintMode(opts.Source)
+	}
+	// Caller-side guard in newReconcileCmd already rejects this case;
+	// duplicate the check so the helper is safe to use stand-alone.
+	return nil, fmt.Errorf("nexus reconcile: no input source configured")
+}
+
+// runSourcePrintMode runs `go run <pkg>` with NEXUS_PRINT_MANIFEST=1
+// set, capturing stdout. The 60s ceiling is more generous than the
+// binary path because `go run` adds a compile step on every
+// invocation; on a cold build of a real project that's the dominant
+// cost. For repeated reconciles, prefer --binary against a
+// pre-built artifact.
+//
+// Empty stdout → likely a non-nexus main package, or one that was
+// built against an older nexus that lacks print-mode. Surface a
+// pointed error so the user knows where to look, not a generic
+// "exit 0 with nothing".
+func runSourcePrintMode(pkg string) ([]byte, error) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return nil, fmt.Errorf("nexus reconcile: `go` toolchain not found on PATH (needed for --source; pass --binary against a pre-built artifact instead)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm",
-		"-e", "NEXUS_PRINT_MANIFEST=1",
-		opts.Image,
-	)
+	cmd := exec.CommandContext(ctx, "go", "run", pkg)
+	// Inherit env so go's GOPATH/GOMODCACHE/etc. resolve normally,
+	// then append the print-mode trigger so it always wins on a
+	// duplicate key. Same shape as runBinaryPrintMode in build.go.
+	cmd.Env = append(os.Environ(), "NEXUS_PRINT_MANIFEST=1")
 	out, err := cmd.Output()
 	if err != nil {
 		stderrStr := ""
@@ -223,12 +262,12 @@ func loadManifestJSON(opts reconcileOptions, stderr io.Writer) ([]byte, error) {
 			stderrStr = strings.TrimSpace(string(exitErr.Stderr))
 		}
 		if stderrStr != "" {
-			return nil, fmt.Errorf("nexus reconcile: docker run %s: %w: %s", opts.Image, err, stderrStr)
+			return nil, fmt.Errorf("nexus reconcile: go run %s: %w: %s", pkg, err, stderrStr)
 		}
-		return nil, fmt.Errorf("nexus reconcile: docker run %s: %w", opts.Image, err)
+		return nil, fmt.Errorf("nexus reconcile: go run %s: %w", pkg, err)
 	}
 	if len(bytes.TrimSpace(out)) == 0 {
-		return nil, fmt.Errorf("nexus reconcile: image %s produced empty manifest — does the binary call nexus.Run with print-mode wired in?", opts.Image)
+		return nil, fmt.Errorf("nexus reconcile: %s produced empty manifest — is this a nexus main package built against a print-mode-aware framework version?", pkg)
 	}
 	return out, nil
 }

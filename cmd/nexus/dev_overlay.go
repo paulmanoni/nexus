@@ -100,7 +100,12 @@ func pickDevDeployment(m *DeployManifest) string {
 	}
 	names := m.Names() // sorted lexically
 	for _, n := range names {
-		if len(m.Deployments[n].Owns) == 0 {
+		// OwnsAll == "owns: omitted" — the monolith semantic. An
+		// explicit empty owns: ([]) means "owns NOTHING" (web-svc),
+		// which is not a sensible dev pick. The previous len()-based
+		// check conflated the two; the helper makes the intent
+		// explicit and excludes the wrong case.
+		if m.Deployments[n].OwnsAll() {
 			return n
 		}
 	}
