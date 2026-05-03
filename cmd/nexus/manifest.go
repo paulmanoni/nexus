@@ -49,7 +49,15 @@ type DeployManifest struct {
 	// NEXUS_PRINT_MANIFEST=1. `nexus reconcile` walks the binary's
 	// output and overwrites these fields verbatim — operators
 	// shouldn't hand-edit them; edits to source (DeclareEnv,
-	// DeclareService, AddStartupTask) are the canonical way.
+	// DeclareService, AddStartupTask) are the canonical way for
+	// changes that should travel with the code.
+	//
+	// For changes that should NOT travel with the code (per-deploy
+	// env-name remappings when the app reads POSTGRES_HOST instead
+	// of DB_HOSTNAME, switching service kinds for a particular
+	// environment, etc.), use the Overrides block below — it
+	// survives reconciliation and gets re-applied on top of these
+	// auto-generated sections.
 	//
 	// All omitempty so a hand-rolled v1 manifest still parses
 	// without these blocks.
@@ -71,6 +79,150 @@ type DeployManifest struct {
 	// at deploy time the framework runs them before binding
 	// listeners.
 	StartupTasks []StartupTaskDeclSpec `yaml:"startup_tasks,omitempty"`
+
+	// ── Overrides (operator-authored, preserved across reconcile) ─
+	//
+	// Overrides patch the auto-generated sections above without
+	// requiring a code change + rebuild cycle. Common uses:
+	//   - rename ExposeAs env vars when the app reads non-default
+	//     names (e.g. POSTGRES_HOST instead of DB_HOSTNAME);
+	//   - flip required/secret flags on declared env vars;
+	//   - swap a service Kind (postgres → mariadb, rabbitmq → kafka)
+	//     for a particular environment;
+	//   - inject default values for env that the operator wants to
+	//     bake into the deploy.
+	//
+	// Reconciliation captures Overrides BEFORE rewriting the
+	// declaration sections, then re-applies them field-by-field on
+	// top of the freshly-emitted code declarations. Field-level
+	// merge means an override that touches one ExposeAs key doesn't
+	// blow away the others.
+	Overrides Overrides `yaml:"overrides,omitempty"`
+}
+
+// Overrides is the operator-authored patch layer that survives
+// `nexus reconcile`. Each field mirrors a top-level auto-generated
+// section; entries match by Name (services, env keys).
+type Overrides struct {
+	Services map[string]ServiceOverride `yaml:"services,omitempty"`
+	Env      map[string]EnvOverride     `yaml:"env,omitempty"`
+}
+
+// ServiceOverride patches a single ServiceDeclSpec by binding name.
+// Empty fields (zero values) leave the code-derived value alone;
+// non-zero fields replace it. ExposeAs is per-key merge: only the
+// keys the override touches change, the rest stay code-derived.
+//
+// Optional uses *bool because the bool zero-value (false) is a
+// meaningful state ("operator wants this not optional"), so we
+// need to distinguish nil ("no override") from false ("override
+// to false").
+type ServiceOverride struct {
+	Kind     string            `yaml:"kind,omitempty"`
+	Version  string            `yaml:"version,omitempty"`
+	Optional *bool             `yaml:"optional,omitempty"`
+	ExposeAs map[string]string `yaml:"expose_as,omitempty"`
+}
+
+// EnvOverride patches a single EnvDeclSpec by env-var name. All
+// fields are pointer-typed so nil means "no override" and the
+// non-nil value (including empty string / false) replaces the
+// code-derived value. Lets an operator do things like
+// `required: false` (mark as optional) without ambiguity.
+type EnvOverride struct {
+	Description *string `yaml:"description,omitempty"`
+	Required    *bool   `yaml:"required,omitempty"`
+	Secret      *bool   `yaml:"secret,omitempty"`
+	Default     *string `yaml:"default,omitempty"`
+	BoundTo     *string `yaml:"bound_to,omitempty"`
+}
+
+// ApplyOverrides patches dm's auto-generated sections with the
+// operator-authored Overrides block, in-place. Returns the count of
+// fields actually changed (so callers can surface
+// "applied N overrides" feedback) and any unmatched entries
+// (overrides whose target service/env name doesn't exist in the
+// current code declarations — typically stale after the source-side
+// declaration was renamed or removed).
+func (dm *DeployManifest) ApplyOverrides() (applied int, stale []string) {
+	applied += applyServiceOverrides(dm.Services, dm.Overrides.Services, &stale)
+	applied += applyEnvOverrides(dm.Env, dm.Overrides.Env, &stale)
+	return applied, stale
+}
+
+func applyServiceOverrides(target map[string]ServiceDeclSpec, overs map[string]ServiceOverride, stale *[]string) int {
+	if len(overs) == 0 {
+		return 0
+	}
+	count := 0
+	for name, ov := range overs {
+		spec, ok := target[name]
+		if !ok {
+			*stale = append(*stale, "services."+name)
+			continue
+		}
+		if ov.Kind != "" && ov.Kind != spec.Kind {
+			spec.Kind = ov.Kind
+			count++
+		}
+		if ov.Version != "" && ov.Version != spec.Version {
+			spec.Version = ov.Version
+			count++
+		}
+		if ov.Optional != nil && *ov.Optional != spec.Optional {
+			spec.Optional = *ov.Optional
+			count++
+		}
+		if len(ov.ExposeAs) > 0 {
+			if spec.ExposeAs == nil {
+				spec.ExposeAs = map[string]string{}
+			}
+			for k, v := range ov.ExposeAs {
+				if spec.ExposeAs[k] != v {
+					spec.ExposeAs[k] = v
+					count++
+				}
+			}
+		}
+		target[name] = spec
+	}
+	return count
+}
+
+func applyEnvOverrides(target map[string]EnvDeclSpec, overs map[string]EnvOverride, stale *[]string) int {
+	if len(overs) == 0 {
+		return 0
+	}
+	count := 0
+	for name, ov := range overs {
+		spec, ok := target[name]
+		if !ok {
+			*stale = append(*stale, "env."+name)
+			continue
+		}
+		if ov.Description != nil && *ov.Description != spec.Description {
+			spec.Description = *ov.Description
+			count++
+		}
+		if ov.Required != nil && *ov.Required != spec.Required {
+			spec.Required = *ov.Required
+			count++
+		}
+		if ov.Secret != nil && *ov.Secret != spec.Secret {
+			spec.Secret = *ov.Secret
+			count++
+		}
+		if ov.Default != nil && *ov.Default != spec.Default {
+			spec.Default = *ov.Default
+			count++
+		}
+		if ov.BoundTo != nil && *ov.BoundTo != spec.BoundTo {
+			spec.BoundTo = *ov.BoundTo
+			count++
+		}
+		target[name] = spec
+	}
+	return count
 }
 
 // ServiceDeclSpec is one service the binary declared at code level.

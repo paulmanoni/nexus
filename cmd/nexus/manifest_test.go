@@ -306,3 +306,176 @@ deployments:
 		}
 	}
 }
+
+// ── Overrides ─────────────────────────────────────────────────────
+
+func ptrBool(b bool) *bool       { return &b }
+func ptrString(s string) *string { return &s }
+
+func TestApplyOverrides_ServiceExposeAsRename(t *testing.T) {
+	// The classic OATS scenario: code declares DB_HOSTNAME but the
+	// app actually reads POSTGRES_HOST. Operator override remaps the
+	// env name without touching source.
+	dm := &DeployManifest{
+		Services: map[string]ServiceDeclSpec{
+			"main": {
+				Kind: "postgres",
+				ExposeAs: map[string]string{
+					"host":     "DB_HOSTNAME",
+					"port":     "DB_PORT",
+					"user":     "DB_USERNAME",
+					"password": "DB_PASSWORD",
+					"database": "DB_NAME",
+				},
+			},
+		},
+		Overrides: Overrides{
+			Services: map[string]ServiceOverride{
+				"main": {
+					ExposeAs: map[string]string{
+						"host":     "POSTGRES_HOST",
+						"port":     "POSTGRES_PORT",
+						"user":     "POSTGRES_USER",
+						"password": "POSTGRES_PASSWORD",
+						"database": "POSTGRES_DB",
+					},
+				},
+			},
+		},
+	}
+	applied, stale := dm.ApplyOverrides()
+	if applied != 5 {
+		t.Errorf("applied count: got %d, want 5", applied)
+	}
+	if len(stale) != 0 {
+		t.Errorf("stale: got %v, want none", stale)
+	}
+	if got := dm.Services["main"].ExposeAs["host"]; got != "POSTGRES_HOST" {
+		t.Errorf("host override: got %q", got)
+	}
+	if got := dm.Services["main"].ExposeAs["database"]; got != "POSTGRES_DB" {
+		t.Errorf("database override: got %q", got)
+	}
+}
+
+func TestApplyOverrides_ServicePartialMerge(t *testing.T) {
+	// Override only one ExposeAs key; the others must stay
+	// code-derived.
+	dm := &DeployManifest{
+		Services: map[string]ServiceDeclSpec{
+			"main": {
+				Kind:     "postgres",
+				ExposeAs: map[string]string{"host": "DB_HOSTNAME", "port": "DB_PORT"},
+			},
+		},
+		Overrides: Overrides{
+			Services: map[string]ServiceOverride{
+				"main": {ExposeAs: map[string]string{"host": "PG_HOST"}},
+			},
+		},
+	}
+	applied, _ := dm.ApplyOverrides()
+	if applied != 1 {
+		t.Errorf("applied: got %d, want 1", applied)
+	}
+	if dm.Services["main"].ExposeAs["host"] != "PG_HOST" {
+		t.Errorf("host not overridden: %v", dm.Services["main"].ExposeAs)
+	}
+	if dm.Services["main"].ExposeAs["port"] != "DB_PORT" {
+		t.Errorf("port should be untouched: %v", dm.Services["main"].ExposeAs)
+	}
+}
+
+func TestApplyOverrides_KindSwap(t *testing.T) {
+	dm := &DeployManifest{
+		Services: map[string]ServiceDeclSpec{
+			"events": {Kind: "rabbitmq"},
+		},
+		Overrides: Overrides{
+			Services: map[string]ServiceOverride{
+				"events": {Kind: "kafka"},
+			},
+		},
+	}
+	applied, _ := dm.ApplyOverrides()
+	if applied != 1 || dm.Services["events"].Kind != "kafka" {
+		t.Errorf("kind swap: applied=%d kind=%q", applied, dm.Services["events"].Kind)
+	}
+}
+
+func TestApplyOverrides_EnvFlipRequiredFalse(t *testing.T) {
+	// Pointer-based override: nil = no override, &false = explicit
+	// "set to false". The bool zero-value being meaningful is why
+	// EnvOverride uses pointer fields.
+	dm := &DeployManifest{
+		Env: map[string]EnvDeclSpec{
+			"DB_NAME": {Required: true, BoundTo: "main.database"},
+		},
+		Overrides: Overrides{
+			Env: map[string]EnvOverride{
+				"DB_NAME": {Required: ptrBool(false), Default: ptrString("oats_db")},
+			},
+		},
+	}
+	applied, _ := dm.ApplyOverrides()
+	if applied != 2 {
+		t.Errorf("applied: got %d, want 2", applied)
+	}
+	if dm.Env["DB_NAME"].Required != false {
+		t.Errorf("required: should be false, got true")
+	}
+	if dm.Env["DB_NAME"].Default != "oats_db" {
+		t.Errorf("default: got %q, want %q", dm.Env["DB_NAME"].Default, "oats_db")
+	}
+	if dm.Env["DB_NAME"].BoundTo != "main.database" {
+		t.Errorf("boundTo should be untouched: got %q", dm.Env["DB_NAME"].BoundTo)
+	}
+}
+
+func TestApplyOverrides_StaleTargetReported(t *testing.T) {
+	// Override targets a service that no longer exists in code (e.g.
+	// the source-side declaration was renamed). Reconcile shouldn't
+	// fail, but should surface the mismatch so the operator can
+	// clean up.
+	dm := &DeployManifest{
+		Services: map[string]ServiceDeclSpec{
+			"main": {Kind: "postgres"},
+		},
+		Overrides: Overrides{
+			Services: map[string]ServiceOverride{
+				"old-name": {Kind: "mysql"},
+			},
+			Env: map[string]EnvOverride{
+				"GHOST_VAR": {Required: ptrBool(false)},
+			},
+		},
+	}
+	applied, stale := dm.ApplyOverrides()
+	if applied != 0 {
+		t.Errorf("applied: got %d, want 0", applied)
+	}
+	if len(stale) != 2 {
+		t.Errorf("stale count: got %d (%v), want 2", len(stale), stale)
+	}
+}
+
+func TestApplyOverrides_NoOpWhenValueAlreadyMatches(t *testing.T) {
+	// If override matches code-derived value, the count of "applied"
+	// stays 0 — useful so operators see signal only when overrides
+	// actually do something. Lets a stale override that no longer
+	// differs from code stay in the YAML without inflating the count.
+	dm := &DeployManifest{
+		Services: map[string]ServiceDeclSpec{
+			"main": {Kind: "postgres", ExposeAs: map[string]string{"host": "DB_HOSTNAME"}},
+		},
+		Overrides: Overrides{
+			Services: map[string]ServiceOverride{
+				"main": {Kind: "postgres", ExposeAs: map[string]string{"host": "DB_HOSTNAME"}},
+			},
+		},
+	}
+	applied, _ := dm.ApplyOverrides()
+	if applied != 0 {
+		t.Errorf("applied: got %d, want 0 (override matched code)", applied)
+	}
+}
