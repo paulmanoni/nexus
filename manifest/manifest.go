@@ -977,36 +977,97 @@ const (
 // that may also contain stdout pollution (user stdlib log / zap /
 // zerolog lines emitted during fx graph construction).
 //
-// Strategy:
-//   - If both BeginMarker and EndMarker appear, return the bytes
-//     between them (newlines preserved). This is the v1+ contract.
-//   - Else, if no markers appear, return the whole input. This is
-//     the v0 fallback — old nexus binaries that emit raw JSON keep
-//     working with new parsers.
-//   - Else (only one marker), return an error — partial output is
-//     more likely a truncation bug than a real manifest, and
-//     guessing risks parsing junk.
+// Three resolution paths, tried in order:
+//
+//  1. Marker pair found → return bytes between (BEGIN+EOL stripped,
+//     EOL+END stripped). v1+ contract.
+//  2. Whole input is valid JSON → return it. v0 happy path: nexus
+//     binaries that emit raw JSON with no stdout pollution.
+//  3. Polluted v0 output → scan for embedded JSON objects via the
+//     stdlib decoder, return the LAST one containing "schemaVersion".
+//     Recovers manifests from binaries built against pre-marker
+//     nexus whose stdout also carries log emissions during fx
+//     construction. Without this, the v0 fallback would return raw
+//     bytes that fail to parse and the operator sees a generic JSON
+//     error instead of the actual manifest.
+//
+// One-marker (only BEGIN, only END) is treated as truncation: error.
 func Extract(raw []byte) ([]byte, error) {
 	bi := bytesIndex(raw, []byte(BeginMarker))
 	ei := bytesIndex(raw, []byte(EndMarker))
-	if bi < 0 && ei < 0 {
-		// No markers at all → assume v0 raw-JSON output.
-		return raw, nil
+	if bi >= 0 && ei > bi {
+		start := bi + len(BeginMarker)
+		for start < ei && (raw[start] == '\n' || raw[start] == '\r') {
+			start++
+		}
+		end := ei
+		for end > start && (raw[end-1] == '\n' || raw[end-1] == '\r') {
+			end--
+		}
+		return raw[start:end], nil
 	}
-	if bi < 0 || ei < 0 || ei <= bi {
+	if (bi >= 0) != (ei >= 0) {
 		return nil, errBadMarkers
 	}
-	start := bi + len(BeginMarker)
-	// Skip the trailing newline after the begin marker (and the one
-	// before the end marker) so the extracted slice is just the JSON.
-	for start < ei && (raw[start] == '\n' || raw[start] == '\r') {
-		start++
+	// No markers. v0 happy path first — single valid JSON value.
+	if json.Valid(raw) {
+		return raw, nil
 	}
-	end := ei
-	for end > start && (raw[end-1] == '\n' || raw[end-1] == '\r') {
-		end--
+	// v0 polluted path: scan for the last JSON object containing
+	// "schemaVersion".
+	if last := lastJSONWithSchemaVersion(raw); last != nil {
+		return last, nil
 	}
-	return raw[start:end], nil
+	// Nothing recoverable — return raw and let the caller's Unmarshal
+	// produce the real error context.
+	return raw, nil
+}
+
+// lastJSONWithSchemaVersion scans raw for every '{' position,
+// attempts a single-value decode from each, and returns the last
+// decoded value containing "schemaVersion". Returns nil when no
+// candidate matches.
+func lastJSONWithSchemaVersion(raw []byte) []byte {
+	var found []byte
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '{' {
+			continue
+		}
+		dec := json.NewDecoder(bytesReader(raw[i:]))
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			continue
+		}
+		if !bytesContains(v, []byte(`"schemaVersion"`)) {
+			continue
+		}
+		found = v
+	}
+	return found
+}
+
+// bytesReader / bytesContains are inlined to keep this file
+// stdlib-only-by-convention; importing "bytes" would be the cleaner
+// choice if more bytes ops landed here, but for two callers the
+// inline forms keep the dependency story explicit.
+func bytesReader(b []byte) *byteReader { return &byteReader{b: b} }
+
+type byteReader struct {
+	b []byte
+	i int
+}
+
+func (r *byteReader) Read(p []byte) (int, error) {
+	if r.i >= len(r.b) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.b[r.i:])
+	r.i += n
+	return n, nil
+}
+
+func bytesContains(haystack, needle []byte) bool {
+	return bytesIndex(haystack, needle) >= 0
 }
 
 // errBadMarkers signals that print-mode output contains exactly one
