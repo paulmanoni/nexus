@@ -941,10 +941,106 @@ func ComputeHash(m Manifest) string {
 // PrintJSON writes the manifest as pretty-printed JSON to w.
 // Used by nexus.Run when EnvVarPrintAndExit is set; callable directly
 // by tests / tooling that wants the same output without the os.Exit.
+//
+// Output is wrapped in BeginMarker / EndMarker sentinels on their own
+// lines so parsers can extract the manifest from a stream that also
+// carries unrelated stdout (a user's stdlib log / zap / zerolog
+// emissions during fx graph construction). ExtractJSON walks any
+// io.Reader and pulls out the bytes between the markers; absent
+// markers, callers fall back to treating the whole stream as JSON
+// (the v0 contract — preserved for binaries built against earlier
+// nexus releases).
 func PrintJSON(w io.Writer, m Manifest) error {
+	if _, err := io.WriteString(w, BeginMarker+"\n"); err != nil {
+		return err
+	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(m)
+	if err := enc.Encode(m); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, EndMarker+"\n")
+	return err
+}
+
+// BeginMarker / EndMarker bracket the JSON in print-mode output.
+// Each is on its own line; Extract reads the bytes between (exclusive
+// of the markers themselves). Picked for low collision probability
+// with realistic log output — neither string is plausible as a log
+// prefix or JSON content.
+const (
+	BeginMarker = "===BEGIN-NEXUS-MANIFEST==="
+	EndMarker   = "===END-NEXUS-MANIFEST==="
+)
+
+// Extract pulls the manifest JSON bytes from a print-mode stream
+// that may also contain stdout pollution (user stdlib log / zap /
+// zerolog lines emitted during fx graph construction).
+//
+// Strategy:
+//   - If both BeginMarker and EndMarker appear, return the bytes
+//     between them (newlines preserved). This is the v1+ contract.
+//   - Else, if no markers appear, return the whole input. This is
+//     the v0 fallback — old nexus binaries that emit raw JSON keep
+//     working with new parsers.
+//   - Else (only one marker), return an error — partial output is
+//     more likely a truncation bug than a real manifest, and
+//     guessing risks parsing junk.
+func Extract(raw []byte) ([]byte, error) {
+	bi := bytesIndex(raw, []byte(BeginMarker))
+	ei := bytesIndex(raw, []byte(EndMarker))
+	if bi < 0 && ei < 0 {
+		// No markers at all → assume v0 raw-JSON output.
+		return raw, nil
+	}
+	if bi < 0 || ei < 0 || ei <= bi {
+		return nil, errBadMarkers
+	}
+	start := bi + len(BeginMarker)
+	// Skip the trailing newline after the begin marker (and the one
+	// before the end marker) so the extracted slice is just the JSON.
+	for start < ei && (raw[start] == '\n' || raw[start] == '\r') {
+		start++
+	}
+	end := ei
+	for end > start && (raw[end-1] == '\n' || raw[end-1] == '\r') {
+		end--
+	}
+	return raw[start:end], nil
+}
+
+// errBadMarkers signals that print-mode output contains exactly one
+// marker — likely a truncation rather than a complete manifest.
+var errBadMarkers = errMarkers{}
+
+type errMarkers struct{}
+
+func (errMarkers) Error() string {
+	return "manifest: print-mode output has only one of BEGIN/END markers — output likely truncated"
+}
+
+// bytesIndex is bytes.Index without the import (this package is
+// stdlib-only-by-design and bytes is fine, just keeping it explicit).
+func bytesIndex(haystack, needle []byte) int {
+	if len(needle) == 0 {
+		return 0
+	}
+	if len(needle) > len(haystack) {
+		return -1
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		match := true
+		for j := 0; j < len(needle); j++ {
+			if haystack[i+j] != needle[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
 }
 
 // ── Integration (sequenced; this file is step 0) ───────────────────
