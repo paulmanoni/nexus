@@ -111,18 +111,26 @@ type DeploymentSpec struct {
 	// Modules not listed are remote: their public surface is
 	// replaced by an HTTP stub via go build -overlay.
 	//
-	// Three shapes carry different semantics:
+	// The pointer-to-slice shape exists to preserve three semantics
+	// across YAML roundtrips — yaml.v3's typed unmarshal collapses
+	// nil and empty []string to the same value, which silently
+	// flipped a monolith's meaning to "owns nothing" on `nexus
+	// reconcile`. With *[]string, omitempty elides nil but still
+	// emits an explicit empty list:
 	//
-	//   - omitted (`monolith: { port: 8080 }`)
+	//   - omitted in YAML (`monolith: { port: 8080 }`) → Owns == nil
 	//     → owns every module (monolith / dev shape)
 	//   - explicit empty (`web-svc: { owns: [], port: 9000 }`)
-	//     → owns NOTHING; every module compiles as an HTTP stub.
-	//     Useful for frontend-only / SPA-host binaries that
-	//     reference *uaa.Service etc. for typed cross-service
-	//     calls but never run any module locally.
+	//     → Owns == &[]string{}; owns NOTHING; every module
+	//     compiles as an HTTP stub. Useful for frontend-only /
+	//     SPA-host binaries that reference *uaa.Service etc. for
+	//     typed cross-service calls but never run any module locally.
 	//   - listed (`uaa-svc: { owns: [uaa] }`)
-	//     → owns only the named modules; everything else is stub'd.
-	Owns []string `yaml:"owns"`
+	//     → Owns == &[]string{"uaa"}; owns only the named modules.
+	//
+	// Most callers go through OwnsAll() / OwnsList() / OwnsContains()
+	// rather than dereferencing the pointer directly.
+	Owns *[]string `yaml:"owns,omitempty"`
 
 	// Port is the listen port baked into Config.Addr at build time.
 	// Optional — when zero, the binary falls back to PORT env var
@@ -302,32 +310,52 @@ func (m *DeployManifest) Names() []string {
 	return out
 }
 
+// OwnsAll reports whether this deployment owns every declared module
+// — the monolith default, signaled by an omitted `owns:` key in the
+// source YAML. Cheaper than checking `s.Owns == nil` at call sites
+// and clearer about intent.
+func (s DeploymentSpec) OwnsAll() bool { return s.Owns == nil }
+
+// OwnsList returns the explicit module list, or nil when OwnsAll is
+// true. Safe to range over without a guard — len(nil) is 0 so a
+// monolith-shape spec yields no iterations rather than panicking.
+// Callers that need the "owns everything" semantic must check
+// OwnsAll() separately; this method does not synthesize the full
+// module set.
+func (s DeploymentSpec) OwnsList() []string {
+	if s.Owns == nil {
+		return nil
+	}
+	return *s.Owns
+}
+
+// OwnsContains reports whether this deployment owns the named module
+// locally. Always true under OwnsAll (the monolith covers everything);
+// otherwise a linear scan over the explicit list. Mirrors the
+// DeployManifest.Owns method's semantics so a caller with a
+// DeploymentSpec in hand doesn't need the parent manifest.
+func (s DeploymentSpec) OwnsContains(module string) bool {
+	if s.Owns == nil {
+		return true
+	}
+	for _, n := range *s.Owns {
+		if n == module {
+			return true
+		}
+	}
+	return false
+}
+
 // Owns reports whether the named deployment owns the given module
-// locally. Unknown deployments return false.
-//
-// Semantics by `owns:` shape (yaml.v3 distinguishes omitted from
-// explicit-empty):
-//
-//   - omitted (nil slice) → "owns everything" (monolith default)
-//   - empty []            → "owns nothing" (frontend-only / web-svc)
-//   - listed              → owns those modules only
-//
-// Split units must list `owns` explicitly; if they don't, they
-// silently degrade to monolith mode (no shadows generated).
+// locally. Unknown deployments return false. Delegates to
+// DeploymentSpec.OwnsContains so the three-state semantic
+// (monolith / explicit-empty / listed) lives in one place.
 func (m *DeployManifest) Owns(deployment, module string) bool {
 	spec, ok := m.Deployments[deployment]
 	if !ok {
 		return false
 	}
-	if spec.Owns == nil {
-		return true // omitted owns: → owns everything (monolith)
-	}
-	for _, n := range spec.Owns {
-		if n == module {
-			return true
-		}
-	}
-	return false // explicit empty or listed-without-this-module
+	return spec.OwnsContains(module)
 }
 
 // DeploymentOf returns the name of the split-unit deployment that
@@ -336,15 +364,16 @@ func (m *DeployManifest) Owns(deployment, module string) bool {
 // modules whose source omits nexus.DeployAs(...) — the manifest's
 // owns list is the secondary source of truth (auto-inject path).
 //
-// Monolith deployments (empty owns) are skipped here: they own
-// every module, so they'd match every query and aren't a useful
-// "split tag" answer.
+// Skips both monolith deployments (OwnsAll → match every module —
+// useless as a "split tag" answer) and explicit-empty ones (own
+// nothing → can't match anything). Listed deployments are the only
+// useful candidates here.
 func (m *DeployManifest) DeploymentOf(module string) string {
 	for name, spec := range m.Deployments {
-		if len(spec.Owns) == 0 {
+		if spec.OwnsAll() {
 			continue
 		}
-		for _, n := range spec.Owns {
+		for _, n := range spec.OwnsList() {
 			if n == module {
 				return name
 			}

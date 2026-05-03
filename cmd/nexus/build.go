@@ -1,17 +1,27 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/tools/go/packages"
+
+	nexusmanifest "github.com/paulmanoni/nexus/manifest"
 )
+
+// manifestEmitAuto is the sentinel cobra fills in when --emit-manifest
+// is passed bare (no `=value`). runBuild sees it and resolves the real
+// destination path from the build's output binary location.
+const manifestEmitAuto = "<auto>"
 
 // newBuildCmd builds `nexus build --deployment <name> [package]`.
 //
@@ -30,6 +40,7 @@ func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 		manifestPath string
 		outputPath   string
 		mainPkg      string
+		emitManifest string
 	)
 	cmd := &cobra.Command{
 		Use:   "build [main-package]",
@@ -46,7 +57,15 @@ build tags or per-deployment files in your repo.
 Examples:
     nexus build --deployment monolith                          # main pkg = "."
     nexus build --deployment users-svc -o ./bin/users-svc
-    nexus build --deployment checkout-svc ./cmd/checkout-main`,
+    nexus build --deployment checkout-svc ./cmd/checkout-main
+    nexus build --deployment monolith --emit-manifest          # ./bin/monolith.manifest.json
+    nexus build --deployment monolith --emit-manifest=/tmp/m.json
+
+--emit-manifest extracts the just-built binary's NEXUS_PRINT_MANIFEST
+output to a JSON file, enriched with the topology declared in
+nexus.deploy.yaml (Deployments + Owns + Peers — fields print mode
+alone cannot see). The orchestration platform reads this file to
+plan the deploy without booting the binary first.`,
 		RunE: func(_ *cobra.Command, args []string) error {
 			pkg := "."
 			if mainPkg != "" {
@@ -62,6 +81,7 @@ Examples:
 				ManifestPath: manifestPath,
 				Output:       outputPath,
 				MainPackage:  pkg,
+				EmitManifest: emitManifest,
 				Stdout:       stdout,
 				Stderr:       stderr,
 			})
@@ -71,6 +91,11 @@ Examples:
 	cmd.Flags().StringVar(&manifestPath, "manifest", "nexus.deploy.yaml", "path to the deploy manifest")
 	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "output binary path; defaults to ./bin/<deployment>")
 	cmd.Flags().StringVar(&mainPkg, "package", "", "Go main package to build (defaults to '.')")
+	cmd.Flags().StringVar(&emitManifest, "emit-manifest", "", "extract the binary's manifest JSON to this path (bare flag → <output>.manifest.json)")
+	// NoOptDefVal makes `--emit-manifest` (no value) valid: cobra fills
+	// in the sentinel below, runBuild resolves it to <output>.manifest.json.
+	// Without this, bare --emit-manifest errors with "needs an argument".
+	cmd.Flag("emit-manifest").NoOptDefVal = manifestEmitAuto
 	return cmd
 }
 
@@ -79,6 +104,11 @@ type buildOptions struct {
 	ManifestPath string
 	Output       string
 	MainPackage  string // single main package to compile
+	// EmitManifest is the destination for the build's manifest JSON.
+	// Empty: skip extraction. manifestEmitAuto sentinel: derive from
+	// Output path (<binary>.manifest.json). Any other value: literal
+	// path to write to.
+	EmitManifest string
 	Stdout       io.Writer
 	Stderr       io.Writer
 
@@ -210,11 +240,11 @@ func runBuild(opts buildOptions) error {
 				opts.Deployment, opts.ManifestPath, manifest.Names())
 		}
 		// Only run the full scan when this deployment may need
-		// shadows. spec.Owns == nil means "owns everything"
-		// (monolith); spec.Owns == [] means "owns nothing"
-		// (frontend-only — needs shadows for every module);
-		// spec.Owns == [a, b] means split unit (needs shadows for
-		// non-listed modules). The latter two require source scan.
+		// shadows. OwnsAll → "owns everything" (monolith — no
+		// shadows); explicit empty → "owns nothing" (frontend-only,
+		// needs shadows for every module); listed → split unit
+		// (needs shadows for non-listed modules). The latter two
+		// require source scan, signaled by spec.Owns being non-nil.
 		//
 		// Trade-off for the fast path: the static cross-module dep
 		// arrows the dashboard draws from struct-field references
@@ -341,7 +371,155 @@ func runBuild(opts buildOptions) error {
 		return fmt.Errorf("go build failed: %w", err)
 	}
 	fmt.Fprintf(opts.Stdout, "built %s\n", relTo(projectRoot, output))
+
+	if opts.EmitManifest != "" {
+		emitPath := opts.EmitManifest
+		if emitPath == manifestEmitAuto {
+			emitPath = output + ".manifest.json"
+		} else if !filepath.IsAbs(emitPath) {
+			// Resolve relative paths against the project root, not the
+			// process cwd, so `nexus build --emit-manifest=foo.json`
+			// from a subdir lands the file in the same place as the
+			// other build artifacts.
+			emitPath = filepath.Join(projectRoot, emitPath)
+		}
+		if err := emitBuildManifest(output, manifest, emitPath, opts.Stdout); err != nil {
+			return fmt.Errorf("emit-manifest: %w", err)
+		}
+		fmt.Fprintf(opts.Stdout, "manifest %s\n", relTo(projectRoot, emitPath))
+	}
 	return nil
+}
+
+// emitBuildManifest runs the just-built binary in print mode, parses
+// the JSON it produces, augments it with build-time-known topology
+// (Deployments + Owns + Peers from nexus.deploy.yaml — fields the
+// running binary cannot infer because it doesn't read the YAML),
+// recomputes ManifestHash so consumers diffing on the hash see the
+// enriched shape, and writes a pretty-printed copy to outPath.
+//
+// Hard-fail on extraction errors: the user explicitly asked for the
+// manifest, so a non-nexus binary or a print-mode failure is a real
+// problem, not a "best effort" miss.
+func emitBuildManifest(binaryPath string, dm *DeployManifest, outPath string, stdout io.Writer) error {
+	jsonBytes, err := runBinaryPrintMode(binaryPath)
+	if err != nil {
+		return err
+	}
+	var m nexusmanifest.Manifest
+	if err := json.Unmarshal(jsonBytes, &m); err != nil {
+		// Surface a snippet so the user sees what came out — useful when
+		// a non-nexus binary printed something unexpected.
+		snippet := strings.TrimSpace(string(jsonBytes))
+		if len(snippet) > 200 {
+			snippet = snippet[:200] + "..."
+		}
+		return fmt.Errorf("parse print-mode JSON: %w (output starts: %q)", err, snippet)
+	}
+	if dep := topologyFromDeployYAML(dm); len(dep) > 0 {
+		m.Deployments = dep
+		// Hash must be recomputed: the binary's own ComputeHash didn't
+		// see the topology we just merged in, so the hash it carried
+		// no longer matches the document. ComputeHash excludes
+		// App.GeneratedAt, so this stays deterministic across re-emits.
+		m.ManifestHash = nexusmanifest.ComputeHash(m)
+	}
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode merged manifest: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir for %s: %w", outPath, err)
+	}
+	// Trailing newline so the file plays nice with line-oriented tools
+	// (cat, diff, git) that flag missing-final-newline.
+	if err := os.WriteFile(outPath, append(out, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", outPath, err)
+	}
+	return nil
+}
+
+// runBinaryPrintMode execs the binary with NEXUS_PRINT_MANIFEST=1 and
+// returns its stdout. The binary is expected to print its manifest
+// JSON and exit 0 within a few seconds; the 30s ceiling protects
+// against a non-nexus binary that ignores the env var and starts a
+// long-running server.
+func runBinaryPrintMode(binaryPath string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binaryPath)
+	// Inherit the parent env so the binary's config-load can resolve
+	// any vars it consults during print mode (provider declarations
+	// should be side-effect free, but constructors that read env to
+	// decide *whether* to register are common). Then append the
+	// print-mode trigger so it always wins on a duplicate key.
+	cmd.Env = append(os.Environ(), nexusmanifest.EnvVarPrintAndExit+"=1")
+	out, err := cmd.Output()
+	if err != nil {
+		stderrStr := ""
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderrStr = strings.TrimSpace(string(exitErr.Stderr))
+		}
+		if stderrStr != "" {
+			return nil, fmt.Errorf("run %s in print mode: %w: %s", binaryPath, err, stderrStr)
+		}
+		return nil, fmt.Errorf("run %s in print mode: %w", binaryPath, err)
+	}
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return nil, fmt.Errorf("binary %s produced no output in print mode — does it call nexus.Run with the framework version that emits manifests?", binaryPath)
+	}
+	return out, nil
+}
+
+// topologyFromDeployYAML projects nexus.deploy.yaml's deployments +
+// peers map onto the runtime manifest's Deployment slice. Print mode
+// can't produce these fields (the binary doesn't read the YAML) — the
+// build tool fills them in once, here, so the orchestration platform
+// gets the full topology in a single document.
+//
+// Peers are derived as "every other declared deployment that also
+// appears in the global peers: map." This may overcount when an
+// operator wants per-deployment peer subsets; refine when DeploymentSpec
+// gains an explicit peers field. Until then, listing every cross-talk
+// candidate is closer to right than listing none.
+func topologyFromDeployYAML(dm *DeployManifest) []nexusmanifest.Deployment {
+	if dm == nil || len(dm.Deployments) == 0 {
+		return nil
+	}
+	declaredPeers := make(map[string]struct{}, len(dm.Peers))
+	for name := range dm.Peers {
+		declaredPeers[name] = struct{}{}
+	}
+	out := make([]nexusmanifest.Deployment, 0, len(dm.Deployments))
+	for name, spec := range dm.Deployments {
+		var peers []string
+		for peerName := range declaredPeers {
+			if peerName != name {
+				peers = append(peers, peerName)
+			}
+		}
+		// Inner slices are sorted so two emissions of the same yaml
+		// produce identical bytes. The outer Deployments slice is
+		// sorted below for the same reason.
+		sort.Strings(peers)
+		// OwnsList yields nil for monolith-shape specs (Owns omitted),
+		// which projects to no `owns:` field on the manifest's
+		// Deployment — matching the source YAML's intent. An explicit
+		// empty list (web-svc shape) projects to an empty slice,
+		// preserved through omitempty/omitzero on the manifest type.
+		owns := append([]string(nil), spec.OwnsList()...)
+		sort.Strings(owns)
+		out = append(out, nexusmanifest.Deployment{
+			Name:  name,
+			Port:  spec.Port,
+			Owns:  owns,
+			Peers: peers,
+		})
+	}
+	// Map iteration is randomized; sort by name so ManifestHash is
+	// stable across repeated builds of the same source.
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // overlayJSON matches the shape `go build -overlay=` expects.

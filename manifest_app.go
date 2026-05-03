@@ -212,15 +212,96 @@ func (a *App) manifestInputs() manifest.Inputs {
 		})
 	}
 	in.Crons = collectCrons(a)
-	for _, e := range a.registry.Endpoints() {
+
+	// Endpoint walk: emit BOTH the v0 EndpointSummary list (back-compat
+	// for consumers already parsing it) AND the v1 Routes + Modules
+	// shapes (richer kind taxonomy + module/deployment grouping the
+	// orchestrator dashboard reads). Single pass — endpoint walk is
+	// already O(n), no reason to do it twice.
+	endpoints := a.registry.Endpoints()
+	moduleAcc := map[string]*manifest.Module{}
+	for _, e := range endpoints {
 		in.Endpoints = append(in.Endpoints, manifest.EndpointSummary{
 			Service:   e.Service,
 			Transport: string(e.Transport),
 			Method:    e.Method,
 			Path:      e.Path,
 		})
+		r, ok := routeFromEndpoint(e)
+		if !ok {
+			continue
+		}
+		in.Routes = append(in.Routes, r)
+		if e.Module == "" {
+			continue // top-level endpoint, not module-owned
+		}
+		mod, exists := moduleAcc[e.Module]
+		if !exists {
+			mod = &manifest.Module{Name: e.Module, Deployment: e.Deployment}
+			moduleAcc[e.Module] = mod
+		}
+		mod.Routes = append(mod.Routes, r.ID)
 	}
+	if len(moduleAcc) > 0 {
+		in.Modules = make([]manifest.Module, 0, len(moduleAcc))
+		for _, m := range moduleAcc {
+			in.Modules = append(in.Modules, *m)
+		}
+	}
+	// Auth + TenantScoped on Route, and Crons/Entities references on
+	// Module, are intentionally left empty here. The registry doesn't
+	// track auth requirements or tenant scope per endpoint today, and
+	// crons don't carry a Module link. Each is a small extension to
+	// the registry's Endpoint / Snapshot types — defer until at least
+	// one consumer (orchestrator dashboard) actually needs the field.
 	return in
+}
+
+// routeFromEndpoint translates a registry endpoint into the v1 Route
+// shape, deriving Kind from Transport+Method and synthesizing a stable
+// ID. Returns ok=false when the endpoint can't be classified — today
+// only happens for unknown future Transport values, so the caller
+// silently skips and the endpoint still appears in the v0 Endpoints
+// list.
+//
+// ID format is intentionally human-readable rather than opaque hash:
+// it shows up in Module.Routes references and dashboard URLs, so
+// "users.rest.GET./users/:id" is more useful than "r-3a7b1c". Stable
+// across rebuilds because it's pure function of the endpoint's
+// declaration.
+func routeFromEndpoint(e registry.Endpoint) (manifest.Route, bool) {
+	mod := e.Module
+	if mod == "" {
+		// Use service name as a fallback prefix for top-level routes
+		// so their IDs don't collide across services in the rare case
+		// of duplicate METHOD+path under different services.
+		mod = e.Service
+	}
+	r := manifest.Route{
+		Module:     e.Module,
+		Deployment: e.Deployment,
+	}
+	switch e.Transport {
+	case registry.REST:
+		r.Kind = "rest"
+		r.Method = e.Method
+		r.Path = e.Path
+		r.ID = mod + ".rest." + e.Method + "." + e.Path
+	case registry.WebSocket:
+		r.Kind = "ws"
+		r.Path = e.Path
+		r.ID = mod + ".ws." + e.Path
+	case registry.GraphQL:
+		// e.Method is "query"|"mutation"|"subscription"; e.Name is the
+		// operation name (e.g. "listUsers"). Keep them split on Route
+		// so consumers can filter by operation type without parsing.
+		r.Kind = "graphql." + e.Method
+		r.Operation = e.Name
+		r.ID = mod + ".gql." + e.Method + "." + e.Name
+	default:
+		return manifest.Route{}, false
+	}
+	return r, true
 }
 
 // collectPorts maps the configured listener set into manifest ports.

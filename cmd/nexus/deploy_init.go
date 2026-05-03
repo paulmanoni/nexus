@@ -520,10 +520,14 @@ func buildModuleTagRegistrations(manifest *DeployManifest) []string {
 	tagByModule := map[string]string{}
 	for _, dep := range deploymentNames {
 		spec := manifest.Deployments[dep]
-		if len(spec.Owns) == 0 {
-			continue // monolith — owns everything, tags nothing
+		// Skip both monolith (OwnsAll, owns everything → tags nothing)
+		// and explicit-empty (owns nothing → no modules to tag).
+		// Both shapes contribute zero entries to tagByModule, so the
+		// semantic is "no listed modules to claim."
+		if spec.OwnsAll() || len(spec.OwnsList()) == 0 {
+			continue
 		}
-		for _, mod := range spec.Owns {
+		for _, mod := range spec.OwnsList() {
 			if _, claimed := tagByModule[mod]; claimed {
 				continue
 			}

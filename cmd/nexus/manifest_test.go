@@ -63,8 +63,8 @@ peers:
 func TestWriteDeployInitFile_URLsEmitted(t *testing.T) {
 	manifest := &DeployManifest{
 		Deployments: map[string]DeploymentSpec{
-			"checkout-svc": {Owns: []string{"checkout"}, Port: 8080},
-			"users-svc":    {Owns: []string{"users"}, Port: 8081},
+			"checkout-svc": {Owns: &[]string{"checkout"}, Port: 8080},
+			"users-svc":    {Owns: &[]string{"users"}, Port: 8081},
 		},
 		Peers: map[string]PeerSpec{
 			"users-svc": {
@@ -106,8 +106,8 @@ func TestWriteDeployInitFile_URLsEmitted(t *testing.T) {
 func TestWriteDeployInitFile_URLsEnvDefault(t *testing.T) {
 	manifest := &DeployManifest{
 		Deployments: map[string]DeploymentSpec{
-			"checkout-svc": {Owns: []string{"checkout"}, Port: 8080},
-			"users-svc":    {Owns: []string{"users"}, Port: 8081},
+			"checkout-svc": {Owns: &[]string{"checkout"}, Port: 8080},
+			"users-svc":    {Owns: &[]string{"users"}, Port: 8081},
 		},
 		Peers: map[string]PeerSpec{
 			"users-svc": {
@@ -231,8 +231,8 @@ func TestWriteDeployInitFile_UnknownScopeRejected(t *testing.T) {
 func TestWriteDeployInitFile_NoUrlsFallback(t *testing.T) {
 	manifest := &DeployManifest{
 		Deployments: map[string]DeploymentSpec{
-			"checkout-svc": {Owns: []string{"checkout"}, Port: 8080},
-			"users-svc":    {Owns: []string{"users"}, Port: 8081},
+			"checkout-svc": {Owns: &[]string{"checkout"}, Port: 8080},
+			"users-svc":    {Owns: &[]string{"users"}, Port: 8081},
 		},
 		Peers: map[string]PeerSpec{
 			"users-svc": {}, // no urls declared

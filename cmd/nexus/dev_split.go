@@ -84,7 +84,12 @@ func runDevSplitWithManifest(manifestPath, target string, basePort int, stdout, 
 	// (empty owns) is never a split unit.
 	var splitDeployments []string
 	for name, spec := range manifest.Deployments {
-		isSplit := tagSet[name] || len(spec.Owns) > 0
+		// A spec is a split unit if either source-side tags claim it
+		// or it explicitly owns one or more modules. Monolith
+		// (OwnsAll) and explicit-empty (no listed modules) are not
+		// split units. len(spec.OwnsList()) covers both filters in
+		// one expression: nil-safe (OwnsAll → 0) and empty-safe.
+		isSplit := tagSet[name] || len(spec.OwnsList()) > 0
 		if isSplit {
 			splitDeployments = append(splitDeployments, name)
 		}
