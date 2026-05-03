@@ -406,6 +406,12 @@ func emitBuildManifest(binaryPath string, dm *DeployManifest, outPath string, st
 	if err != nil {
 		return err
 	}
+	// Strip stdout pollution between begin/end markers; v0 binaries
+	// without markers pass through as-is.
+	jsonBytes, err = nexusmanifest.Extract(jsonBytes)
+	if err != nil {
+		return fmt.Errorf("extract manifest: %w", err)
+	}
 	var m nexusmanifest.Manifest
 	if err := json.Unmarshal(jsonBytes, &m); err != nil {
 		// Surface a snippet so the user sees what came out — useful when

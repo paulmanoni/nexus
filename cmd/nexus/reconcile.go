@@ -14,6 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	nexusmanifest "github.com/paulmanoni/nexus/manifest"
 )
 
 // reconcileOptions carries the flags for `nexus reconcile`. Three
@@ -131,6 +133,13 @@ func runReconcile(opts reconcileOptions, stdout, stderr io.Writer) error {
 	jsonBytes, err := loadManifestJSON(opts, stderr)
 	if err != nil {
 		return err
+	}
+	// Strip stdout pollution (user log lines from fx-construction-time
+	// loggers) by extracting between begin/end markers when present.
+	// v0 binaries that emit raw JSON pass through unchanged.
+	jsonBytes, err = nexusmanifest.Extract(jsonBytes)
+	if err != nil {
+		return fmt.Errorf("nexus reconcile: extract manifest: %w", err)
 	}
 	var pm printedManifest
 	if err := json.Unmarshal(jsonBytes, &pm); err != nil {
