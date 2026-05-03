@@ -12,6 +12,7 @@ import (
 
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/resource"
 )
 
 // manifestStore holds every declaration registered against an *App by
@@ -202,6 +203,20 @@ func (a *App) manifestInputs() manifest.Inputs {
 		DirectVolumes:    volumes,
 	}
 
+	// Auto-derive ServiceNeeds from registered NexusResources whose
+	// Kind maps to a known sidecar (database / cache / queue). Lets
+	// apps that already use the resource pattern (for the dashboard's
+	// health pill) automatically appear in manifest.services[] without
+	// also calling DeclareService — closes the gap where an app's
+	// RabbitMQ wrapper registers as a "queue" resource but the
+	// orchestrator can't see it as a provisionable dependency.
+	//
+	// Explicit DeclareService entries always win on Name conflict.
+	// ExposeAs is left empty (the framework can't infer which env
+	// vars the user's wrapper reads); operators wire manually OR the
+	// user adds an explicit ServiceNeed with ExposeAs filled in.
+	in.DirectServices = appendDerivedServicesFromResources(in.DirectServices, a.registry.Resources())
+
 	// Registry-derived sections. The dashboard's existing endpoints
 	// expose richer views; here we project just what an external
 	// deployer needs to route traffic and understand the topology.
@@ -367,6 +382,83 @@ func collectCrons(a *App) []manifest.CronSummary {
 		})
 	}
 	return out
+}
+
+// appendDerivedServicesFromResources synthesizes manifest.ServiceNeed
+// entries from registered NexusResources so apps that already use the
+// resource pattern (for the dashboard's health pill) don't have to
+// also call DeclareService for the orchestrator to see the dependency.
+//
+// Mapping rules:
+//   - resource.KindDatabase  → ServiceNeed{Kind: details["driver"] | details["engine"] | "postgres"}
+//   - resource.KindCache     → ServiceNeed{Kind: details["engine"]                    | "redis"}
+//   - resource.KindQueue     → ServiceNeed{Kind: details["broker"]                    | "rabbitmq"}
+//   - resource.KindOther     → skipped (no provisioning policy)
+//
+// Conflict policy: if existing already contains a ServiceNeed with
+// the same Name (typically because the user explicitly declared it),
+// the existing entry wins and the derivation is skipped. This makes
+// auto-derivation purely additive — never overrides operator intent.
+//
+// ExposeAs is intentionally left empty: the framework can't know
+// which env vars the user's wrapper reads. Operators wire env vars
+// manually after the orchestrator binds the sidecar, OR the user
+// upgrades the wrapper to declare ExposeAs explicitly.
+func appendDerivedServicesFromResources(existing []manifest.ServiceNeed, resources []registry.ResourceSnapshot) []manifest.ServiceNeed {
+	if len(resources) == 0 {
+		return existing
+	}
+	known := make(map[string]struct{}, len(existing))
+	for _, s := range existing {
+		known[s.Name] = struct{}{}
+	}
+	for _, r := range resources {
+		if _, dup := known[r.Name]; dup {
+			continue
+		}
+		kind := serviceKindFromResource(r)
+		if kind == "" {
+			continue // unknown resource kind — no provisioning policy
+		}
+		existing = append(existing, manifest.ServiceNeed{
+			Name: r.Name,
+			Kind: kind,
+		})
+		known[r.Name] = struct{}{}
+	}
+	return existing
+}
+
+// serviceKindFromResource picks the manifest service Kind string for a
+// resource snapshot, preferring details-supplied technology over the
+// kind-default. Returns "" for resource.KindOther (no sensible default).
+func serviceKindFromResource(r registry.ResourceSnapshot) string {
+	hint := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := r.Details[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	switch r.Kind {
+	case resource.KindDatabase:
+		if k := hint("driver", "engine", "kind"); k != "" {
+			return k
+		}
+		return "postgres"
+	case resource.KindCache:
+		if k := hint("engine", "driver", "kind"); k != "" {
+			return k
+		}
+		return "redis"
+	case resource.KindQueue:
+		if k := hint("broker", "engine", "driver", "kind"); k != "" {
+			return k
+		}
+		return "rabbitmq"
+	}
+	return ""
 }
 
 // ── Option helpers (module-level declarations) ─────────────────────

@@ -76,11 +76,19 @@ func printManifestAndExitIfRequested(cfg Config, opts []Option) {
 	gin.DefaultWriter = io.Discard
 	gin.DefaultErrorWriter = io.Discard
 
-	// Build the same option chain Run uses, MINUS fxLateOptions —
-	// fxLateOptions invokes autoMountGraphQL which registers HTTP
-	// routes; we don't need that for the manifest and skipping it
-	// keeps print mode strictly cheaper than a real boot.
+	// Build the same option chain Run uses, INCLUDING fxLateOptions
+	// because autoMountGraphQL is what walks the GqlField group and
+	// registers GraphQL endpoints into the registry. Without it,
+	// nexus.AsQuery / nexus.AsMutation declarations stay invisible to
+	// the manifest's Routes section — the user sees REST endpoints
+	// only, even though their app has a fully-wired GraphQL surface.
+	//
+	// Mounting routes on the engine in print mode is harmless: no
+	// listeners bind (registerLifecycle's OnStart never fires because
+	// fx.Populate doesn't fire lifecycle hooks), so the engine is
+	// just a registry-of-routes, never a server.
 	all := append([]fx.Option{fxEarlyOptions(cfg), autoClientOptions()}, unwrap(opts)...)
+	all = append(all, fxLateOptions())
 
 	// Drop the lifecycle invoke from fxEarlyOptions if it ever grows
 	// side-effecting OnStart hooks beyond listener bind (today
