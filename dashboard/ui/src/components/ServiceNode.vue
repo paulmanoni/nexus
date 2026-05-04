@@ -193,7 +193,11 @@ const hasServiceSubtitle = computed(() => {
 </script>
 
 <template>
-  <div class="service-node" :class="{ 'has-selection': hasSelection, dim: cardDimmed, remote: data.remote }">
+  <div
+    class="service-node"
+    :class="{ 'has-selection': hasSelection, dim: cardDimmed, remote: data.remote }"
+    :style="data.cardWidth ? { width: data.cardWidth + 'px' } : null"
+  >
     <!-- Target handle at the card level for any inbound edge (rare today;
          reserved for future service→service topology). -->
     <Handle type="target" :position="Position.Left" />
@@ -376,8 +380,11 @@ const hasServiceSubtitle = computed(() => {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  min-width: 260px;
-  max-width: 300px;
+  /* Width is set via inline style from data.cardWidth (computed in
+     Architecture.vue from the longest endpoint label, clamped 280-460).
+     Fall back to 280 when the card is rendered standalone (storybook,
+     tests) so a missing data.cardWidth doesn't collapse the card. */
+  min-width: 280px;
   color: var(--text);
   box-shadow: var(--shadow-md);
   overflow: visible;       /* handles stick out — don't clip them */
@@ -447,7 +454,7 @@ const hasServiceSubtitle = computed(() => {
   padding: var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   /* No max-height + scroll — Architecture.vue caps the visible row
      count at MAX_VISIBLE_ENDPOINTS and offers a "+N more" toggle.
      The card grows naturally to the height of the visible rows so
@@ -459,7 +466,7 @@ const hasServiceSubtitle = computed(() => {
    on the left calls out state (transport color when idle, brand accent
    when active), main content fills the row, badges right-align. */
 .row {
-  padding: 6px 8px 6px 12px;
+  padding: 5px 8px 5px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 120ms, opacity 120ms, box-shadow 120ms;
@@ -469,8 +476,8 @@ const hasServiceSubtitle = computed(() => {
   content: '';
   position: absolute;
   left: 3px;
-  top: 6px;
-  bottom: 6px;
+  top: 5px;
+  bottom: 5px;
   width: 2px;
   border-radius: 2px;
   background: transparent;
