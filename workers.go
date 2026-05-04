@@ -9,6 +9,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // AsWorker registers a long-lived background worker. The framework
@@ -117,7 +118,13 @@ func AsWorker(name string, fn any) Option {
 			ServiceDeps:  serviceDeps,
 		})
 
-		ctx, cancel := context.WithCancel(context.Background())
+		// Stash the trace bus in the worker's ctx so any code on the
+		// worker's path (pubsub consumers, downstream HTTP calls,
+		// trace.Record callers) emits to the same dashboard event
+		// stream as request-handler code. Without this the worker is
+		// observability-dark — spans started inside it find no bus
+		// and silently drop.
+		ctx, cancel := context.WithCancel(trace.WithBus(context.Background(), app.bus))
 		lc.Append(fx.Hook{
 			OnStart: func(_ context.Context) error {
 				go runWorker(name, fn, ctx, deps, errType, app)
