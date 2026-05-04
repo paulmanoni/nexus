@@ -95,7 +95,7 @@ func TestInMemory_Roundtrip(t *testing.T) {
 	topic := NewTopic[testEvent]("rt", TopicConfig{})
 	tr := NewInMemoryTransport()
 	t.Cleanup(func() { _ = tr.Close() })
-	bindTopics(tr)
+	BindTopics(tr)
 
 	var got testEvent
 	var seen int32
@@ -128,7 +128,7 @@ func TestInMemory_FanOut(t *testing.T) {
 	topic := NewTopic[testEvent]("fanout", TopicConfig{})
 	tr := NewInMemoryTransport()
 	t.Cleanup(func() { _ = tr.Close() })
-	bindTopics(tr)
+	BindTopics(tr)
 
 	var seenA, seenB int32
 	stopA := runConsumer(t, tr, "fanout", "sub-a",
@@ -162,7 +162,7 @@ func TestInMemory_RetryThenSucceed(t *testing.T) {
 	topic := NewTopic[testEvent]("retry-ok", TopicConfig{})
 	tr := NewInMemoryTransport()
 	t.Cleanup(func() { _ = tr.Close() })
-	bindTopics(tr)
+	BindTopics(tr)
 
 	var attempts int32
 	stop := runConsumer(t, tr, "retry-ok", "sub",
@@ -192,7 +192,7 @@ func TestInMemory_RetryExhaustedToDLQ(t *testing.T) {
 	topic := NewTopic[testEvent]("retry-bad", TopicConfig{})
 	tr := NewInMemoryTransport()
 	t.Cleanup(func() { _ = tr.Close() })
-	bindTopics(tr)
+	BindTopics(tr)
 
 	stop := runConsumer(t, tr, "retry-bad", "sub",
 		ConsumeConfig{MaxRetries: 3, AckDeadline: time.Second, BackoffMin: time.Millisecond, BackoffMax: 5 * time.Millisecond},
@@ -219,7 +219,7 @@ func TestInMemory_PoisonGoesStraightToDLQ(t *testing.T) {
 	topic := NewTopic[testEvent]("poison", TopicConfig{})
 	tr := NewInMemoryTransport()
 	t.Cleanup(func() { _ = tr.Close() })
-	bindTopics(tr)
+	BindTopics(tr)
 
 	stop := runConsumer(t, tr, "poison", "sub",
 		ConsumeConfig{MaxRetries: 5, AckDeadline: time.Second},
@@ -348,7 +348,7 @@ func TestLateBind(t *testing.T) {
 	// Bind the transport BEFORE any topic exists — simulates the
 	// boot order where pubsub.UseInMemory's Invoke fires before a
 	// lazy module registers its topic.
-	bindTopics(tr)
+	BindTopics(tr)
 
 	topic := NewTopic[testEvent]("late", TopicConfig{})
 	stop := runConsumer(t, tr, "late", "sub",
@@ -369,7 +369,7 @@ func TestPublish_InjectsTraceparent(t *testing.T) {
 	topic := NewTopic[testEvent]("trace-prop", TopicConfig{})
 	tr := NewInMemoryTransport()
 	t.Cleanup(func() { _ = tr.Close() })
-	bindTopics(tr)
+	BindTopics(tr)
 
 	var got Message
 	var seen int32
@@ -545,7 +545,7 @@ func TestPublish_NoSpanInCtx(t *testing.T) {
 	topic := NewTopic[testEvent]("no-span", TopicConfig{})
 	tr := NewInMemoryTransport()
 	t.Cleanup(func() { _ = tr.Close() })
-	bindTopics(tr)
+	BindTopics(tr)
 
 	var got Message
 	var seen int32
