@@ -350,7 +350,13 @@ function closeErrors() { errorDialog.value = { ...errorDialog.value, open: false
 provide('nexus.openErrors', openErrors)
 
 const { fitView, onNodesInitialized, onPaneClick, onNodeDragStop } = useVueFlow()
-onNodesInitialized(() => fitView({ padding: 0.2, maxZoom: 1 }))
+// FIT_OPTS — shared between initial paint and topology-change re-fits.
+// minZoom floors the auto-fit so a busy topology (many modules /
+// endpoints) doesn't shrink cards into illegible postage stamps;
+// instead we stop zooming out at 0.6 and let the user pan. maxZoom
+// caps the other end so a single tiny graph doesn't blow up to 1.5x.
+const FIT_OPTS = { padding: 0.2, minZoom: 0.6, maxZoom: 1 }
+onNodesInitialized(() => fitView(FIT_OPTS))
 
 // lastTopologyFingerprint is a sorted-id-list snapshot of the last
 // rendered node set. load() compares the next render's fingerprint
@@ -393,6 +399,39 @@ onPaneClick(() => {
   closeDrawer()
 })
 
+// estimateServiceWidth scales the card width with the longest endpoint
+// label so paths like `GET /api/v1/users/:id/permissions` stop ellipsis-
+// truncating into illegibility. Width is fed BOTH into dagre (so
+// neighbours don't overlap) and into the rendered card style (so the
+// element actually renders that wide). Clamped between a comfortable
+// minimum and a sensible maximum — past the cap, long paths fall back
+// to truncation rather than letting one outlier card dominate the row.
+const SERVICE_WIDTH_MIN = 280
+const SERVICE_WIDTH_MAX = 460
+function estimateServiceWidth(data) {
+  const eps = data.endpoints || []
+  // Row content geometry: 18px transport tile + 8px gap + label +
+  // ~80px reserved for the right-aligned stat badges + 24px outer
+  // row padding. Mono font at 11px ≈ 6.6px per char.
+  const ROW_RESERVED = 18 + 8 + 80 + 24
+  const MONO_CHAR_W = 6.6
+  let longestLabelChars = 0
+  for (const e of eps) {
+    let lbl
+    if (e.Transport === 'rest')         lbl = `${e.Method || ''} ${e.Path || ''}`
+    else if (e.Transport === 'graphql') lbl = `${e.Method || ''} ${e.Name || ''}`
+    else                                lbl = e.Path || e.Name || ''
+    if (lbl.length > longestLabelChars) longestLabelChars = lbl.length
+  }
+  const rowDesired = Math.ceil(longestLabelChars * MONO_CHAR_W) + ROW_RESERVED
+  // Header geometry: 32px icon + 8px gap + sans title (≈8px/char at
+  // 16px) + ~40px for deployment / remote tags + 24px outer padding.
+  const headerName = (data.name || '') + (data.service && data.service !== data.name ? ` (${data.service})` : '')
+  const headerDesired = 32 + 8 + Math.ceil(headerName.length * 8) + 40 + 24
+  const desired = Math.max(rowDesired, headerDesired, SERVICE_WIDTH_MIN)
+  return Math.min(desired, SERVICE_WIDTH_MAX)
+}
+
 function estimateServiceHeight(data) {
   // data.endpoints is the VISIBLE slice (sorted + truncated unless
   // expanded). The chip row's visual height grows with chip count
@@ -428,7 +467,10 @@ function estimateServiceHeight(data) {
   // cards under the header → visible overlap.
   const HEADER = 60
   const FOOTER = 16 + 16
-  return HEADER + desc + rows * 24 + toggleH + FOOTER
+  // ROW_H matches the tightened row metrics in ServiceNode.css
+  // (5px+5px vertical padding, 1px gap between rows, ~12px content).
+  const ROW_H = 22
+  return HEADER + desc + rows * ROW_H + toggleH + FOOTER
 }
 
 function estimateResourceHeight(data) {
@@ -437,7 +479,6 @@ function estimateResourceHeight(data) {
   return 40 + desc + (detailKeys ? detailKeys * 18 + 16 : 0)
 }
 
-const NODE_WIDTH_SERVICE = 260
 const NODE_WIDTH_RESOURCE = 200
 const GAP = 48
 
@@ -461,7 +502,7 @@ function dagreLayout(ns, es) {
     else if (n.type === 'serviceDep') { w = NODE_WIDTH_RESOURCE; h = estimateServiceDepHeight(n.data) }
     else if (n.type === 'worker') { w = NODE_WIDTH_RESOURCE; h = estimateWorkerHeight(n.data) }
     else if (n.type === 'cron') { w = NODE_WIDTH_RESOURCE; h = estimateCronHeight(n.data) }
-    else { w = NODE_WIDTH_SERVICE; h = estimateServiceHeight(n.data) }
+    else { w = estimateServiceWidth(n.data); h = estimateServiceHeight(n.data) }
     g.setNode(n.id, { width: w, height: h })
   })
   es.forEach(e => g.setEdge(e.source, e.target))
@@ -510,32 +551,46 @@ function nodeBoxSize(n) {
   if (n.type === 'serviceDep') return { w: NODE_WIDTH_RESOURCE, h: estimateServiceDepHeight(n.data) }
   if (n.type === 'worker')     return { w: NODE_WIDTH_RESOURCE, h: estimateWorkerHeight(n.data) }
   if (n.type === 'cron')       return { w: NODE_WIDTH_RESOURCE, h: estimateCronHeight(n.data) }
-  return { w: NODE_WIDTH_SERVICE, h: estimateServiceHeight(n.data) }
+  return { w: estimateServiceWidth(n.data), h: estimateServiceHeight(n.data) }
 }
 
 function gridLayout(ns) {
   const cols = Math.min(ns.length, 3)
   const rowHeights = []
+  // Track the widest service card per column so the grid spaces columns
+  // around the actual card widths instead of a constant — a wide module
+  // (long REST paths) and a narrow one would overlap if we kept a fixed
+  // column pitch.
+  const colWidths = new Array(cols).fill(SERVICE_WIDTH_MIN)
   ns.forEach((n, i) => {
+    const col = i % cols
     const row = Math.floor(i / cols)
     let h
     if (n.type === 'resource') h = estimateResourceHeight(n.data)
     else if (n.type === 'serviceDep') h = estimateServiceDepHeight(n.data)
     else if (n.type === 'worker') h = estimateWorkerHeight(n.data)
     else if (n.type === 'cron') h = estimateCronHeight(n.data)
-    else h = estimateServiceHeight(n.data)
+    else {
+      h = estimateServiceHeight(n.data)
+      const w = estimateServiceWidth(n.data)
+      if (w > colWidths[col]) colWidths[col] = w
+    }
     rowHeights[row] = Math.max(rowHeights[row] || 0, h)
   })
   const rowY = [0]
   for (let r = 1; r < rowHeights.length; r++) {
     rowY.push(rowY[r - 1] + rowHeights[r - 1] + GAP)
   }
+  const colX = [0]
+  for (let c = 1; c < cols; c++) {
+    colX.push(colX[c - 1] + colWidths[c - 1] + GAP)
+  }
   return ns.map((n, i) => {
     const col = i % cols
     const row = Math.floor(i / cols)
     return {
       ...n,
-      position: { x: col * (NODE_WIDTH_SERVICE + GAP), y: rowY[row] },
+      position: { x: colX[col], y: rowY[row] },
       targetPosition: Position.Left,
       sourcePosition: Position.Right
     }
@@ -657,11 +712,8 @@ function load() {
     return { g, displayed, sorted, isExpanded, total: g.endpoints.length }
   })
 
-  const groupNodes = sortedGroups.map(({ g, displayed, isExpanded, total }) => ({
-    id: g.key,
-    type: 'service',
-    position: { x: 0, y: 0 },
-    data: {
+  const groupNodes = sortedGroups.map(({ g, displayed, isExpanded, total }) => {
+    const data = {
       groupKey: g.key,
       name: g.name,
       isModule: g.isModule,
@@ -674,8 +726,21 @@ function load() {
       isExpanded,
       remote: !!g.remote,
       deployment: g.deployment || '',
-    },
-  }))
+    }
+    // cardWidth is the dagre-allocated width for THIS card, derived
+    // from its longest endpoint label. Threaded via data → inline
+    // style in ServiceNode so the rendered element exactly matches
+    // the box dagre placed it in. Without this, dagre reserves the
+    // grown width but the CSS clamp would still render at the old
+    // max — neighbours then look wrongly spaced.
+    data.cardWidth = estimateServiceWidth(data)
+    return {
+      id: g.key,
+      type: 'service',
+      position: { x: 0, y: 0 },
+      data,
+    }
+  })
 
   // ---------------------------------------------------------------
   // Service-as-dep nodes: one per distinct service that some endpoint
@@ -1128,7 +1193,7 @@ function load() {
     indexEndpointGroups(groupNodes)
     edges.value = restyleEdges(edgeList, opSelection.value, flashedEdges.value)
     if (topologyChanged) {
-      nextTick(() => fitView({ padding: 0.2, maxZoom: 1 }))
+      nextTick(() => fitView(FIT_OPTS))
     }
   } catch (err) {
     console.error('[nexus] Architecture render failed:', err, { groupCount: groupNodes.length, edgeCount: edgeList.length })
