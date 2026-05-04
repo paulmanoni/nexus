@@ -70,6 +70,18 @@ type Config struct {
 	// recommend on for production publishers that absolutely cannot
 	// drop. Default: off (best-effort, faster).
 	Confirms bool
+
+	// ResourceName is the dashboard label for the auto-registered
+	// queue resource. Default "rabbit". Set to a more specific name
+	// when multiple brokers coexist in one app (rare).
+	ResourceName string
+
+	// SkipResource disables the auto-registration of a
+	// resource.NewQueue on the app's topology graph. Set to true
+	// when the caller wants to register their own resource (custom
+	// health probe, richer details, multiple bindings) and avoid
+	// the generic auto-registered one stepping on it.
+	SkipResource bool
 }
 
 // Transport is the adapter implementing pubsub.Transport against a
@@ -356,6 +368,26 @@ func (t *Transport) isClosed() bool {
 	t.closedMu.RLock()
 	defer t.closedMu.RUnlock()
 	return t.closed
+}
+
+// Healthy reports whether the broker connection is alive. Returns
+// false when the AMQP connection's I/O loop has terminated (network
+// drop, broker crash) OR after Close() has been called. Used as
+// the health probe for the auto-registered resource.NewQueue so
+// the dashboard's topology view turns red the moment the broker
+// becomes unreachable.
+//
+// Cheap — IsClosed reads a single mutex-guarded bool inside
+// amqp091. Safe to call from the dashboard's snapshot loop on
+// every poll.
+func (t *Transport) Healthy() bool {
+	if t.isClosed() {
+		return false
+	}
+	if t.conn == nil {
+		return false
+	}
+	return !t.conn.IsClosed()
 }
 
 // applyConsumeDefaults fills in zero ConsumeConfig fields with the
