@@ -180,13 +180,13 @@ func UseInMemory() nexus.Option {
 			})
 			return t, t
 		}),
-		nexus.Invoke(bindTopics),
+		nexus.Invoke(BindTopics),
 	)
 }
 
 // UseTransport is the escape hatch for adapters defined outside this
 // package. The returned option provides the user-supplied transport
-// to fx and runs bindTopics. The pubsub/rabbit subpackage uses this
+// to fx and runs BindTopics. The pubsub/rabbit subpackage uses this
 // internally so adapter code doesn't need to duplicate the binding
 // boilerplate.
 //
@@ -195,14 +195,16 @@ func UseInMemory() nexus.Option {
 func UseTransport(t Transport) nexus.Option {
 	return nexus.Options(
 		nexus.Supply(t),
-		nexus.Invoke(bindTopics),
+		nexus.Invoke(BindTopics),
 	)
 }
 
-// bindTopics is the boot-time fx.Invoke that walks the topic
-// registry and points every Topic[T].publisher at the live
-// transport. Called by UseInMemory / UseTransport so user code
-// never has to write this plumbing.
+// BindTopics is the boot-time hook that walks the topic registry
+// and points every Topic[T].publisher at the live transport.
+// Called automatically by UseInMemory / UseTransport so most user
+// code never invokes this directly — but transport adapter packages
+// (pubsub/rabbit, future pubsub/nats) call it from their own Use
+// option after constructing the transport.
 //
 // Also caches t as the registry's active transport so any topic
 // registered after this point (lazy module init) gets bound on
@@ -213,7 +215,7 @@ func UseTransport(t Transport) nexus.Option {
 // Idempotent: calling twice (e.g. test that toggles UseInMemory
 // across subtests) replaces the binding atomically. The previous
 // transport's Close is the caller's responsibility.
-func bindTopics(t Transport) {
+func BindTopics(t Transport) {
 	regMu.Lock()
 	activeTransport = t
 	regMu.Unlock()
