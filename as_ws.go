@@ -110,14 +110,17 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 
 		service := resolveEndpointService(cfg.service, cfg.module, deps, sh.depTypes, app)
 		opName := opNameFromFunc(rawFn, service+"."+msgType)
+		mountedPath := app.PrefixPath(path)
+		endpointName := "WS " + mountedPath + " " + msgType
 
 		handler := wsTypedHandler{
-			shape:    sh,
-			deps:     deps,
-			depTypes: sh.depTypes,
-			service:  service,
-			opName:   opName,
-			bundles:  cfg.bundles,
+			shape:        sh,
+			deps:         deps,
+			depTypes:     sh.depTypes,
+			service:      service,
+			opName:       opName,
+			endpointName: endpointName,
+			bundles:      cfg.bundles,
 		}
 
 		ep, fresh := app.wsEndpointFor(path, service)
@@ -140,8 +143,6 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 		// The recorded Path is the actual mounted URL (prefixed) so
 		// dashboard testers and operator copy/paste hit the live
 		// route, not the source-declared form.
-		mountedPath := app.PrefixPath(path)
-		endpointName := "WS " + mountedPath + " " + msgType
 		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
 			Name:      endpointName,
 			Transport: registry.WebSocket,
@@ -293,14 +294,20 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 	}
 	finish(status, err)
 	if app.bus != nil {
+		// Endpoint MUST match the registry's e.Name ("WS <path>
+		// <msgType>") so the dashboard's per-op edge lookup hits.
+		// Using h.opName here would land flashes on the module
+		// aggregate inbound — i.e. flash every endpoint on the
+		// module card instead of the specific WS row.
 		ev := trace.Event{
 			Kind:       trace.KindRequestOp,
 			Service:    h.service,
-			Endpoint:   h.opName,
+			Endpoint:   h.endpointName,
 			Transport:  string(registry.WebSocket),
+			Method:     env.Type,
 			Status:     status,
 			DurationMs: time.Since(start).Milliseconds(),
-			Meta:       map[string]any{"clientId": conn.ClientID, "type": env.Type},
+			Meta:       map[string]any{"clientId": conn.ClientID, "type": env.Type, "op": h.opName},
 		}
 		if err != nil {
 			ev.Error = err.Error()
