@@ -207,14 +207,23 @@ func New(cfg Config) *App {
 	}
 
 	a.liveNotifier = live.New()
-	// Forward request-completion events from the trace bus to the
-	// live notifier so each finished REST/GraphQL/WS/cron run
-	// pushes a fresh dashboard snapshot. The 50ms debounce + hash
-	// dedup downstream coalesce N requests into one snapshot, so
-	// even high-QPS apps stay well under one send per ~50ms.
-	if a.bus != nil {
-		go forwardBusToLive(a.bus, a.liveNotifier)
-	}
+	// NOTE: we deliberately do NOT forward trace.Bus events into the
+	// live notifier. Each finished request would push a fresh
+	// dashboard snapshot, and the snapshot replaces nodes.value +
+	// rawEdges.value on the canvas — Vue Flow regenerates edge SVG
+	// paths, the in-flight packet animation's pathEl.isConnected
+	// flips false mid-flight, and the packet drops. With pushes
+	// arriving every ~160ms (one per request) and packets needing
+	// ~850ms to complete, no animation finishes — UI looks stuck.
+	//
+	// Dashboard live updates therefore come from two sources:
+	//   1. Structural changes (registry/cron/ratelimit OnChange)
+	//      push immediately within 50ms.
+	//   2. Stats updates lag by up to heartbeatInterval (5s).
+	//
+	// The dashboard's /__nexus/events stream is a separate WS that
+	// drives the activity rail + packet animations; it doesn't
+	// re-render the canvas, so per-request real-time stays intact.
 	for _, b := range cfg.Middleware.Dashboard {
 		if b.Gin != nil {
 			a.dashboardMw = append(a.dashboardMw, b.Gin)
@@ -435,28 +444,4 @@ func (a *App) OnResourceUse(target UseReporter) {
 }
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.engine.ServeHTTP(w, r)
-}
-
-// forwardBusToLive subscribes to the trace bus and pokes the live
-// notifier for every event that reflects observable dashboard state
-// changing — request completions (REST / GraphQL / WS / cron),
-// per-op events with a status, and span ends. Skips KindLog and
-// KindDownstream which don't change the snapshot's content.
-//
-// Runs for the app's lifetime in a single goroutine. The bus's
-// Subscribe channel is buffer 256: under bursts the bus drops
-// events for slow subscribers, which is exactly what we want here
-// — the dashboard's hash-dedup makes "missed N notifies" indistin-
-// guishable from "received them all" anyway.
-func forwardBusToLive(bus *trace.Bus, n *live.Notifier) {
-	if bus == nil || n == nil {
-		return
-	}
-	_, ch, _ := bus.Subscribe(0, 256)
-	for ev := range ch {
-		switch ev.Kind {
-		case trace.KindRequestEnd, trace.KindRequestOp, trace.KindSpanEnd:
-			n.Notify()
-		}
-	}
 }
