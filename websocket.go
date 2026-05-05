@@ -146,8 +146,18 @@ type wsTypedHandler struct {
 	deps     []reflect.Value
 	depTypes []reflect.Type
 	service  string
-	opName   string
-	bundles  []middleware.Middleware
+	// opName is the metrics-store key — typically "<service>.<msgType>"
+	// or the function name (via opNameFromFunc) — kept in sync with the
+	// metrics middleware key registered in asWSInvoke.
+	opName string
+	// endpointName is the registry's canonical Endpoint.Name for this
+	// dispatch (e.g. "WS /events chat.send"). The dashboard's per-op
+	// edge index keys on this exact string, so the per-frame
+	// request.op event MUST set Endpoint: endpointName to land flashes
+	// + packet animations on the right WS row instead of the module-
+	// wide aggregate edge.
+	endpointName string
+	bundles      []middleware.Middleware
 }
 
 // wsEnvelope is the inbound message shape. Matches the ws.Hub's Event for

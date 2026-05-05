@@ -23,11 +23,25 @@ const STOP_HOLD_MS = 500
 // spawn(pathEl, canvasEl, opts) attaches a packet to one Vue Flow edge
 // path. opts.state: 'ok' | 'error'. The packet auto-removes after the
 // animation (+ stop hold for errors) so the DOM stays small.
+//
+// The animation is resilient to mid-flight path replacement: when the
+// edge restyles (e.g. flash colour change), Vue Flow regenerates the
+// SVG <path> node and pathEl.isConnected flips false. We capture the
+// edge's data-id at spawn time and re-locate the new path inside the
+// canvas on each frame, so chatty traffic (especially WebSocket
+// endpoints firing many request.op events per second) doesn't drop
+// the packet partway through. Without this, every flash kills any
+// in-flight animation since restyleEdges returns a fresh array.
 function spawn(pathEl, canvasEl, opts = {}) {
   if (!pathEl || !canvasEl) return
   let len = 0
   try { len = pathEl.getTotalLength() } catch { len = 0 }
   if (!len) return
+
+  // Walk up to the .vue-flow__edge wrapper to grab data-id; that's
+  // what re-find queries by when the inner <path> gets replaced.
+  let edgeWrap = pathEl.closest('.vue-flow__edge')
+  const edgeId = edgeWrap ? edgeWrap.getAttribute('data-id') : null
 
   const state = opts.state === 'error' ? 'error' : 'ok'
   const id = ++seq
@@ -51,20 +65,41 @@ function spawn(pathEl, canvasEl, opts = {}) {
     }
   } catch { /* path may have detached mid-spawn — ignore */ }
 
+  // currentPath is what we actually animate against. May get swapped
+  // mid-flight when Vue Flow re-renders the edge.
+  let currentPath = pathEl
+  let currentLen = len
+
+  function relocatePath() {
+    if (!edgeId) return false
+    const fresh = canvasEl.querySelector(
+      `.vue-flow__edge[data-id="${CSS.escape(edgeId)}"] .vue-flow__edge-path`,
+    )
+    if (!fresh) return false
+    let freshLen = 0
+    try { freshLen = fresh.getTotalLength() } catch { freshLen = 0 }
+    if (!freshLen) return false
+    currentPath = fresh
+    currentLen = freshLen
+    return true
+  }
+
   const startedAt = performance.now()
   function frame(t) {
     const elapsed = t - startedAt
     const progress = Math.min(elapsed / DURATION_MS, 1)
-    if (!pathEl.isConnected) {
-      // Edge re-rendered (poll regenerated rawEdges). Drop the packet
-      // rather than animate against a stale path.
-      packets.value = packets.value.filter(x => x.id !== id)
-      return
+    if (!currentPath.isConnected) {
+      // Edge SVG was replaced — re-find by data-id and continue. Only
+      // give up when the edge itself is gone from the canvas.
+      if (!relocatePath()) {
+        packets.value = packets.value.filter(x => x.id !== id)
+        return
+      }
     }
     let pt
-    try { pt = pathEl.getPointAtLength(progress * len) } catch { pt = null }
+    try { pt = currentPath.getPointAtLength(progress * currentLen) } catch { pt = null }
     if (pt) {
-      const ctm = pathEl.getScreenCTM()
+      const ctm = currentPath.getScreenCTM()
       const cr = canvasEl.getBoundingClientRect()
       if (ctm) {
         const sx = ctm.a * pt.x + ctm.c * pt.y + ctm.e
