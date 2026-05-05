@@ -339,19 +339,25 @@ func (m *Manager) maintainConnection() {
 
 func (m *Manager) checkRedisConnection() {
 	m.mu.RLock()
-	store := m.redisStore
+	client := m.redisClient
 	m.mu.RUnlock()
-	if store == nil {
+	if client == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	// Any non-"key missing" error indicates a transport problem. The gocache
-	// redis store returns a redis.Nil-style error for missing keys but the
-	// Get API wraps it so we can't reliably distinguish — we treat only a
-	// nil error as "healthy" and everything else as "unhealthy". This is
-	// pessimistic but matches the oats behavior (any error → switch).
-	if _, err := store.Get(ctx, "__nexus_cache_healthcheck__"); err != nil {
+	// PING the redis client directly. The previous implementation did
+	// Get("__nexus_cache_healthcheck__") which returned "value not
+	// found" on every tick (the key was never set), and the code
+	// couldn't distinguish that from a real transport error — so it
+	// flapped: switch to memory → reconnect succeeds → next tick
+	// health-checks a missing key → switch to memory → repeat.
+	//
+	// PING is the canonical Redis liveness probe: it requires no
+	// pre-existing state and returns a clean error only on transport
+	// failure. Same call connectToRedis already uses for the initial
+	// dial.
+	if _, err := client.Ping(ctx).Result(); err != nil {
 		m.logger.Error("cache: health check failed, switching to memory", zap.Error(err))
 		m.switchToMemoryCache()
 	}
