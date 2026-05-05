@@ -192,6 +192,15 @@ type Registry struct {
 	// through these before per-endpoint stacks. Dashboard renders them
 	// as a strip so operators see the global pre-gate at a glance.
 	globalMiddlewares []string
+
+	// changeHook is called after every mutating method so the
+	// dashboard's live snapshot stream can push instead of poll.
+	// Set via OnChange; nil by default so the registry stays
+	// usable in tests / non-dashboard contexts. The hook MUST be
+	// non-blocking and MUST NOT call back into the registry —
+	// typically wired to a live.Notifier.Notify which just nudges
+	// a buffered channel.
+	changeHook func()
 }
 
 func New() *Registry {
@@ -208,9 +217,37 @@ func New() *Registry {
 	return r
 }
 
+// OnChange installs hook to be called after every mutating method.
+// Used by the dashboard's live stream to convert the polling loop
+// into a push: each Register* / Update* / Set* / Attach* call
+// nudges the dashboard, which sends a fresh snapshot on the next
+// tick of its debounce window.
+//
+// The hook must be non-blocking — it runs while the registry's
+// write lock is held. A typical wiring is OnChange(notifier.Notify)
+// where notifier is a live.Notifier; Notify just does a select-
+// default channel send and returns immediately.
+//
+// nil hook is fine and equivalent to "don't call back" — useful
+// for unit tests that want a registry without dashboard wiring.
+func (r *Registry) OnChange(hook func()) {
+	r.mu.Lock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
+	r.changeHook = hook
+}
+
+// notifyChanged invokes changeHook if set. Called from mutating
+// methods inside the write lock; the hook contract requires non-
+// blocking behavior so the lock is released promptly.
+func (r *Registry) notifyChanged() {
+	if r.changeHook != nil {
+		r.changeHook()
+	}
+}
+
 func (r *Registry) RegisterService(s Service) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	existing, ok := r.services[s.Name]
 	if ok {
 		if s.Description == "" {
@@ -239,7 +276,7 @@ func (r *Registry) RegisterService(s Service) {
 // constructs a new instance on app restart within a test.
 func (r *Registry) RegisterWorker(w Worker) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	existing := r.workers[w.Name]
 	if w.Description == "" {
 		w.Description = existing.Description
@@ -261,7 +298,7 @@ func (r *Registry) RegisterWorker(w Worker) {
 // status transitions so the dashboard can surface runtime durations.
 func (r *Registry) UpdateWorkerStatus(name, status, lastError string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	w, ok := r.workers[name]
 	if !ok {
 		return
@@ -302,7 +339,7 @@ func (r *Registry) Workers() []Worker {
 // injected. Replaces any previously-recorded deps for the service.
 func (r *Registry) SetServiceDeps(name string, resourceDeps, serviceDeps []string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	s := r.services[name]
 	s.Name = name
 	s.ResourceDeps = dedupeSort(resourceDeps)
@@ -312,7 +349,7 @@ func (r *Registry) SetServiceDeps(name string, resourceDeps, serviceDeps []strin
 
 func (r *Registry) RegisterEndpoint(e Endpoint) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	if e.RegisteredAt.IsZero() {
 		e.RegisteredAt = time.Now()
 	}
@@ -365,7 +402,7 @@ func (r *Registry) EndpointsByService(name string) []Endpoint {
 // times with the same resource — later calls overwrite earlier ones.
 func (r *Registry) RegisterResource(res resource.Resource) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	r.resources[res.Name()] = res
 }
 
@@ -373,7 +410,7 @@ func (r *Registry) RegisterResource(res resource.Resource) {
 // service → resource. Multiple services may attach to the same resource.
 func (r *Registry) AttachResource(serviceName, resourceName string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	if slices.Contains(r.attached[resourceName], serviceName) {
 		return
 	}
@@ -384,7 +421,7 @@ func (r *Registry) AttachResource(serviceName, resourceName string) {
 // any time; the dashboard reflects the latest on its next poll.
 func (r *Registry) RegisterMiddleware(m middleware.Info) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	r.middlewares[m.Name] = m
 }
 
@@ -397,7 +434,7 @@ func (r *Registry) EnsureMiddleware(name string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	if _, ok := r.middlewares[name]; ok {
 		return
 	}
@@ -414,7 +451,7 @@ func (r *Registry) RegisterGlobalMiddleware(name string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for _, existing := range r.globalMiddlewares {
 		if existing == name {
 			return
@@ -451,7 +488,7 @@ func (r *Registry) Middlewares() []middleware.Info {
 // only carrying middleware names won't wipe previously-set args).
 func (r *Registry) UpdateGraphQLEndpoint(service, name string, u GraphQLUpdate) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		e := &r.endpoints[i]
 		if e.Service != service || e.Transport != GraphQL || e.Name != name {
@@ -482,7 +519,7 @@ func (r *Registry) UpdateGraphQLEndpoint(service, name string, u GraphQLUpdate) 
 // GraphQL mount with the middleware that actually applied inside go-graph.
 func (r *Registry) SetEndpointMiddlewares(service string, transport Transport, names []string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Transport == transport {
 			r.endpoints[i].Middleware = append([]string(nil), names...)
@@ -499,7 +536,7 @@ func (r *Registry) SetEndpointResources(service, name string, resources []string
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].Resources = uniq
@@ -517,7 +554,7 @@ func (r *Registry) SetEndpointServiceDeps(service, name string, services []strin
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].ServiceDeps = uniq
@@ -535,7 +572,7 @@ func (r *Registry) SetEndpointModule(service, name, module string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].Module = module
@@ -552,7 +589,7 @@ func (r *Registry) SetEndpointDeployment(service, name, deployment string) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].Deployment = deployment
@@ -567,7 +604,7 @@ func (r *Registry) SetEndpointDeployment(service, name, deployment string) {
 // implicitly-routed rows.
 func (r *Registry) SetEndpointServiceAutoRouted(service, name string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].ServiceAutoRouted = true
@@ -581,7 +618,7 @@ func (r *Registry) SetEndpointServiceAutoRouted(service, name string) {
 // overrides are reflected separately via the ratelimit.Store snapshot.
 func (r *Registry) SetEndpointRateLimit(service, name string, info RateLimitInfo) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].RateLimit = &info
