@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -389,14 +390,52 @@ func streamEvents(bus *trace.Bus) gin.HandlerFunc {
 		backlog, ch, cancel := bus.Subscribe(since, 128)
 		defer cancel()
 
+		// Detect client close so a half-open connection (browser tab
+		// closed, laptop slept, firewall idle-killed) stops fanning
+		// events into a black hole. NextReader blocks until either
+		// the peer sends a frame (the dashboard never does) or the
+		// conn errors — on the latter, signal the writer loop.
+		closed := make(chan struct{})
+		go func() {
+			defer close(closed)
+			for {
+				if _, _, err := conn.NextReader(); err != nil {
+					return
+				}
+			}
+		}()
+
+		// writeJSON wraps each Write with a deadline so a slow /
+		// backgrounded client can't pin the goroutine forever. Without
+		// this, WriteJSON blocks indefinitely on TCP backpressure and
+		// the dashboard appears "stuck" — bus.Publish keeps dropping
+		// for this subscriber but the conn never errors, so the
+		// frontend's auto-reconnect never kicks in. The deadline forces
+		// the loop to error out and close, the client reconnects with
+		// since=lastId and recovers cleanly.
+		writeJSON := func(v any) error {
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			return conn.WriteJSON(v)
+		}
+
 		for _, e := range backlog {
-			if err := conn.WriteJSON(e); err != nil {
+			if err := writeJSON(e); err != nil {
 				return
 			}
 		}
-		for e := range ch {
-			if err := conn.WriteJSON(e); err != nil {
+		for {
+			select {
+			case <-c.Request.Context().Done():
 				return
+			case <-closed:
+				return
+			case e, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := writeJSON(e); err != nil {
+					return
+				}
 			}
 		}
 	}

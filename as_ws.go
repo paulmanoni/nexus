@@ -234,8 +234,25 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 		return // no handler — client may be speaking a type we don't serve
 	}
 
-	sess := &WSSession{conn: conn, hub: ep.hub, ctx: context.Background()}
-	ci := callInput{Ctx: sess.ctx, WS: sess}
+	// Bracket the handler with request.start / request.end on a
+	// fresh trace, same shape as the gin trace.Middleware does for
+	// REST. The dashboard's waterfall renders each WS frame as its
+	// own root trace; child spans started inside the handler attach
+	// via the stashed span in ctx, so a handler doing DB work or
+	// fanning out a pubsub publish shows the full chain.
+	rootCtx := trace.WithBus(context.Background(), app.bus)
+	rootCtx, _, finish := trace.NewRootSpan(
+		rootCtx,
+		h.opName,
+		h.service,
+		h.opName,
+		string(registry.WebSocket),
+		trace.Str("ws.type", env.Type),
+		trace.Str("ws.client_id", conn.ClientID),
+	)
+
+	sess := &WSSession{conn: conn, hub: ep.hub, ctx: rootCtx}
+	ci := callInput{Ctx: rootCtx, WS: sess}
 
 	// Bind the payload into a fresh args struct. Missing `data` is fine —
 	// zero-valued args.
@@ -244,6 +261,10 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 		ptr := reflect.New(h.shape.argsType)
 		if len(env.Data) > 0 {
 			if err := json.Unmarshal(env.Data, ptr.Interface()); err != nil {
+				// Decode failed before the handler ran — close the
+				// root trace with a 400-style status so the waterfall
+				// doesn't show an open-ended request.
+				finish(400, err)
 				_ = sess.Send("error", map[string]string{
 					"type":    env.Type,
 					"message": "invalid payload: " + err.Error(),
@@ -260,11 +281,12 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 	// not JSON bind cost.
 	start := time.Now()
 	_, err := h.shape.callHandler(ci, h.deps, argsVal)
+	status := 200
+	if err != nil {
+		status = 500
+	}
+	finish(status, err)
 	if app.bus != nil {
-		status := 200
-		if err != nil {
-			status = 500
-		}
 		ev := trace.Event{
 			Kind:       trace.KindRequestOp,
 			Service:    h.service,

@@ -1,6 +1,9 @@
 package trace
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // ParseTraceparent decodes a W3C traceparent header value and returns
 // the trace + parent span IDs. Public wrapper around the package-
@@ -34,6 +37,81 @@ func WithBus(ctx context.Context, bus *Bus) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, busCtxKey{}, bus)
+}
+
+// NewRootSpan emits a request.start event on the bus carried by ctx
+// and returns a ctx with a fresh root span installed, plus a finish
+// func to call when the request is done. It's the transport-
+// agnostic counterpart to the gin Middleware: WebSocket frames,
+// pubsub consumers, background workers — anything that wants to be
+// the root of a trace tree on the dashboard's waterfall — call
+// this instead of building Event values by hand.
+//
+// The returned span is also stored in ctx so child StartSpan calls
+// inside the handler attach as children automatically.
+//
+// finish(status, err) emits the matching request.end event.
+// Recommend `defer finish(...)` from the dispatcher with the post-
+// handler status + error in scope; calling finish more than once is
+// safe (subsequent calls publish a new event each time, mirroring
+// trace.Middleware's contract — the dashboard de-dupes by SpanID).
+//
+// When ctx carries no bus (caller forgot WithBus), this is a no-op
+// shim: the returned span has well-formed IDs, ctx-stash works for
+// child spans, finish swallows. Code paths that touch the bus check
+// for nil internally so the caller doesn't have to gate.
+func NewRootSpan(ctx context.Context, name, service, endpoint, transport string, attrs ...Attr) (context.Context, *Span, func(status int, err error)) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	bus, _ := BusFromCtx(ctx)
+	span := &Span{
+		TraceID:  newTraceID(),
+		SpanID:   newSpanID(),
+		Name:     name,
+		Service:  service,
+		Endpoint: endpoint,
+		Start:    time.Now(),
+		bus:      bus,
+	}
+	span.SetAttrs(attrs...)
+	if bus != nil {
+		bus.Publish(Event{
+			TraceID:   span.TraceID,
+			SpanID:    span.SpanID,
+			Kind:      KindRequestStart,
+			Name:      name,
+			Service:   service,
+			Endpoint:  endpoint,
+			Transport: transport,
+			Timestamp: span.Start,
+			Meta:      span.snapshotAttrs(),
+		})
+	}
+	ctx = context.WithValue(ctx, spanCtxKey{}, span)
+	finish := func(status int, err error) {
+		if bus == nil {
+			return
+		}
+		var errStr string
+		if err != nil {
+			errStr = err.Error()
+		}
+		bus.Publish(Event{
+			TraceID:    span.TraceID,
+			SpanID:     span.SpanID,
+			Kind:       KindRequestEnd,
+			Name:       name,
+			Service:    service,
+			Endpoint:   endpoint,
+			Transport:  transport,
+			Status:     status,
+			DurationMs: time.Since(span.Start).Milliseconds(),
+			Error:      errStr,
+			Timestamp:  time.Now(),
+		})
+	}
+	return ctx, span, finish
 }
 
 // WithRemoteParent installs a synthetic parent span in ctx so a

@@ -185,3 +185,137 @@ func TestAsWS_HandlerErrorSendsErrorEvent(t *testing.T) {
 type testErr struct{ s string }
 
 func (e testErr) Error() string { return e.s }
+
+// TestAsWS_FrameEmitsRequestStartEnd asserts every inbound WS frame
+// produces a matching pair of request.start + request.end events on
+// the bus, with the same TraceID, transport=websocket, and the
+// handler's status. This is what makes WS traffic show up on the
+// dashboard's trace waterfall the same way REST does — without it,
+// a developer looking at /__nexus/events sees only the request.op
+// badge and can't drill into the handler's child spans.
+func TestAsWS_FrameEmitsRequestStartEnd(t *testing.T) {
+	okHandler := func(sess *WSSession, p Params[chatPayload]) error {
+		return nil
+	}
+
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
+		AsWS("/events", "chat.send", okHandler).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+"/events", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := c.ReadMessage(); err != nil { // drain greeting
+		t.Fatalf("greeting: %v", err)
+	}
+
+	// Subscribe to the bus BEFORE sending so we capture the start
+	// event; the bus's backlog buffer is large but we want a
+	// deterministic read.
+	_, ch, cancel := app.Bus().Subscribe(0, 32)
+	defer cancel()
+
+	data, _ := json.Marshal(map[string]any{"type": "chat.send", "data": map[string]string{"text": "hi"}})
+	if err := c.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	var startEv, endEv struct {
+		traceID, kind, transport, name string
+		status                          int
+	}
+	got := 0
+	for got < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("did not see both request.start + request.end (got %d events)", got)
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatal("bus channel closed")
+			}
+			if e.Transport != "websocket" {
+				continue
+			}
+			switch e.Kind {
+			case "request.start":
+				startEv.traceID, startEv.kind, startEv.transport, startEv.name = e.TraceID, string(e.Kind), e.Transport, e.Name
+				got++
+			case "request.end":
+				endEv.traceID, endEv.kind, endEv.transport, endEv.name, endEv.status = e.TraceID, string(e.Kind), e.Transport, e.Name, e.Status
+				got++
+			}
+		}
+	}
+
+	if startEv.traceID == "" || startEv.traceID != endEv.traceID {
+		t.Errorf("start/end TraceID mismatch: start=%q end=%q", startEv.traceID, endEv.traceID)
+	}
+	if endEv.status != 200 {
+		t.Errorf("expected status 200 on success, got %d", endEv.status)
+	}
+}
+
+// TestAsWS_HandlerErrorEmitsRequestEnd500 verifies the request.end
+// from a failing handler carries status=500 + the error string —
+// otherwise the dashboard's "show only failed traces" filter would
+// miss WS errors.
+func TestAsWS_HandlerErrorEmitsRequestEnd500(t *testing.T) {
+	badHandler := func(sess *WSSession, p Params[chatPayload]) error {
+		return testErr{"boom"}
+	}
+
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
+		AsWS("/bad", "thing", badHandler).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+"/bad", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, _ = c.ReadMessage() // greeting
+
+	_, ch, cancel := app.Bus().Subscribe(0, 32)
+	defer cancel()
+
+	data, _ := json.Marshal(map[string]any{"type": "thing", "data": map[string]string{"text": "x"}})
+	_ = c.WriteMessage(websocket.TextMessage, data)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("never observed request.end with status 500")
+		case e := <-ch:
+			if e.Transport == "websocket" && e.Kind == "request.end" {
+				if e.Status != 500 {
+					t.Errorf("status: want 500, got %d", e.Status)
+				}
+				if e.Error != "boom" {
+					t.Errorf("error: want %q, got %q", "boom", e.Error)
+				}
+				return
+			}
+		}
+	}
+}
