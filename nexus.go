@@ -207,6 +207,14 @@ func New(cfg Config) *App {
 	}
 
 	a.liveNotifier = live.New()
+	// Forward request-completion events from the trace bus to the
+	// live notifier so each finished REST/GraphQL/WS/cron run
+	// pushes a fresh dashboard snapshot. The 50ms debounce + hash
+	// dedup downstream coalesce N requests into one snapshot, so
+	// even high-QPS apps stay well under one send per ~50ms.
+	if a.bus != nil {
+		go forwardBusToLive(a.bus, a.liveNotifier)
+	}
 	for _, b := range cfg.Middleware.Dashboard {
 		if b.Gin != nil {
 			a.dashboardMw = append(a.dashboardMw, b.Gin)
@@ -223,12 +231,13 @@ func New(cfg Config) *App {
 	a.health = newHealthState()
 	mountHealth(a.engine, a.health)
 	a.registry = registry.New()
-	// Push-on-change: registry mutations wake the dashboard's
-	// snapshot stream within ~50ms. Without this, the dashboard
-	// only emits on the heartbeat ticker and worker-status flips
-	// lag by up to 5s.
+	// Push-on-change: every mutating subsystem wakes the dashboard's
+	// snapshot stream within ~50ms. Without this, the dashboard only
+	// emits on the heartbeat ticker and operator actions (pause cron,
+	// adjust rate limit, worker status flip) lag visibly.
 	a.registry.OnChange(a.liveNotifier.Notify)
 	a.cronSched = cron.NewScheduler(a.bus, 0)
+	a.cronSched.OnChange(a.liveNotifier.Notify)
 	// Cache is non-optional: if the caller didn't inject one, build a
 	// memory-backed Manager so downstream stores never branch on "is
 	// there a cache". Redis kicks in automatically when env vars ask
@@ -240,6 +249,7 @@ func New(cfg Config) *App {
 	if a.rlStore == nil {
 		a.rlStore = ratelimit.NewMemoryStore()
 	}
+	a.rlStore.OnChange(a.liveNotifier.Notify)
 	if a.metricsStore == nil {
 		a.metricsStore = metrics.NewCacheStore(a.cacheMgr)
 	}
@@ -425,4 +435,28 @@ func (a *App) OnResourceUse(target UseReporter) {
 }
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.engine.ServeHTTP(w, r)
+}
+
+// forwardBusToLive subscribes to the trace bus and pokes the live
+// notifier for every event that reflects observable dashboard state
+// changing — request completions (REST / GraphQL / WS / cron),
+// per-op events with a status, and span ends. Skips KindLog and
+// KindDownstream which don't change the snapshot's content.
+//
+// Runs for the app's lifetime in a single goroutine. The bus's
+// Subscribe channel is buffer 256: under bursts the bus drops
+// events for slow subscribers, which is exactly what we want here
+// — the dashboard's hash-dedup makes "missed N notifies" indistin-
+// guishable from "received them all" anyway.
+func forwardBusToLive(bus *trace.Bus, n *live.Notifier) {
+	if bus == nil || n == nil {
+		return
+	}
+	_, ch, _ := bus.Subscribe(0, 256)
+	for ev := range ch {
+		switch ev.Kind {
+		case trace.KindRequestEnd, trace.KindRequestOp, trace.KindSpanEnd:
+			n.Notify()
+		}
+	}
 }
