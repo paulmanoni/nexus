@@ -78,6 +78,14 @@ type Scheduler struct {
 	historyCap int
 	jobs       map[string]*scheduled
 	started    atomic.Bool
+
+	// changeHook is fired after every state-changing method
+	// (Register, SetPaused, run completion) so the dashboard's
+	// live snapshot stream wakes within ~50ms instead of waiting
+	// on its heartbeat. Set via OnChange. Must be non-blocking;
+	// typically wired to a live.Notifier.Notify which is a
+	// select-default channel send.
+	changeHook func()
 }
 
 // NewScheduler builds a Scheduler. historyCap is the per-job run buffer; pass
@@ -91,6 +99,35 @@ func NewScheduler(bus *trace.Bus, historyCap int) *Scheduler {
 		bus:        bus,
 		historyCap: historyCap,
 		jobs:       map[string]*scheduled{},
+	}
+}
+
+// OnChange installs hook to be called after every mutating method
+// — Register a new job, SetPaused, or a run completion that updates
+// LastRun / NextRun. Used by the dashboard to push a fresh
+// snapshot on cron state changes; without this, an operator
+// pausing a cron has to wait for the heartbeat tick.
+//
+// hook must be non-blocking. nil unwires.
+func (s *Scheduler) OnChange(hook func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.changeHook = hook
+}
+
+// notifyChanged invokes changeHook if set. Called from mutating
+// paths AND from the per-run completion path so a cron tick fires
+// a snapshot push the moment it lands in the run history.
+//
+// changeHook is read without the lock — OnChange writes are rare
+// (boot-time only) and pointer reads are atomic in Go, so the
+// worst race is "miss one notify on the boot path", which is
+// indistinguishable from the dashboard not having connected yet.
+// Avoids re-entering the scheduler lock from inside a method that
+// already holds it.
+func (s *Scheduler) notifyChanged() {
+	if hook := s.changeHook; hook != nil {
+		hook()
 	}
 }
 
@@ -108,7 +145,10 @@ func (s *Scheduler) Register(j Job) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer func() {
+		s.mu.Unlock()
+		s.notifyChanged()
+	}()
 
 	if existing, ok := s.jobs[j.Name]; ok {
 		s.cron.Remove(existing.entryID)
@@ -166,6 +206,7 @@ func (s *Scheduler) SetPaused(name string, paused bool) bool {
 		return false
 	}
 	sj.paused.Store(paused)
+	s.notifyChanged()
 	return true
 }
 
@@ -234,6 +275,10 @@ func (s *Scheduler) run(sj *scheduled, manual bool) {
 		// also get ignored rather than stacking up.
 		return
 	}
+	// Running flag flipped from false → true; push so the
+	// dashboard's "currently running" indicator lights up
+	// immediately rather than next heartbeat.
+	s.notifyChanged()
 	defer sj.running.Store(false)
 
 	traceID := trace.NewTraceID()
@@ -274,6 +319,11 @@ func (s *Scheduler) run(sj *scheduled, manual bool) {
 		sj.history = sj.history[:s.historyCap]
 	}
 	sj.mu.Unlock()
+
+	// Each completed run lands in history with new LastRun /
+	// NextRun + Running=false; push to wake the dashboard
+	// snapshot so the operator sees results without heartbeat lag.
+	s.notifyChanged()
 
 	if s.bus != nil {
 		ev := trace.Event{

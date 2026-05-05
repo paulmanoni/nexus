@@ -90,6 +90,19 @@ type Store interface {
 	// Snapshot returns every key's current Record. Dashboard consumes
 	// this on GET /__nexus/ratelimits.
 	Snapshot(ctx context.Context) []Record
+
+	// OnChange installs hook to be called after Configure / Reset —
+	// the operator-driven mutations the dashboard cares about. Wires
+	// into nexus's live.Notifier so an override applied via the
+	// dashboard's HTTP API surfaces back on the live snapshot stream
+	// within ~50ms instead of waiting on heartbeat. hook must be
+	// non-blocking; nil unwires.
+	//
+	// Declare and Allow do NOT call the hook — Declare is a boot-time
+	// no-op for the dashboard view (the snapshot already reflects it
+	// on first render), and hooking Allow would fire per-request,
+	// which is what we explicitly avoid for metrics.
+	OnChange(hook func())
 }
 
 // NewMemoryStore returns an in-process token-bucket Store. Safe for
@@ -112,6 +125,26 @@ type MemoryStore struct {
 	declared  map[string]Limit
 	effective map[string]Limit
 	buckets   map[string]*bucket
+	// changeHook is fired after Configure / Reset so the dashboard
+	// snapshot stream wakes within ~50ms when an operator tunes a
+	// limit. Read without lock — set rarely, atomic pointer read.
+	changeHook func()
+}
+
+// OnChange installs hook to be called after Configure / Reset.
+// Mutex-guarded write; lockless read in notifyChanged.
+func (s *MemoryStore) OnChange(hook func()) {
+	s.mu.Lock()
+	s.changeHook = hook
+	s.mu.Unlock()
+}
+
+// notifyChanged invokes changeHook if set. Lockless — same trade-off
+// as the registry / cron scheduler.
+func (s *MemoryStore) notifyChanged() {
+	if hook := s.changeHook; hook != nil {
+		hook()
+	}
 }
 
 type bucket struct {
@@ -134,7 +167,10 @@ func (s *MemoryStore) Declare(key string, limit Limit) {
 
 func (s *MemoryStore) Configure(_ context.Context, key string, limit Limit) (Record, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer func() {
+		s.mu.Unlock()
+		s.notifyChanged()
+	}()
 	s.effective[key] = limit
 	// Drop cached buckets for this key — next call rebuilds with the
 	// new RPM/burst so the operator sees the change immediately.
@@ -153,7 +189,10 @@ func (s *MemoryStore) Configure(_ context.Context, key string, limit Limit) (Rec
 
 func (s *MemoryStore) Reset(_ context.Context, key string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer func() {
+		s.mu.Unlock()
+		s.notifyChanged()
+	}()
 	if declared, ok := s.declared[key]; ok {
 		s.effective[key] = declared
 	} else {
