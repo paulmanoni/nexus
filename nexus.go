@@ -21,6 +21,7 @@ import (
 	"github.com/paulmanoni/nexus/cache"
 	"github.com/paulmanoni/nexus/cron"
 	"github.com/paulmanoni/nexus/dashboard"
+	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/metrics"
 	"github.com/paulmanoni/nexus/middleware"
@@ -45,6 +46,10 @@ type App struct {
 	cronSched     *cron.Scheduler
 	rlStore       ratelimit.Store
 	metricsStore  metrics.Store
+	// liveNotifier signals "registry state changed" to the dashboard's
+	// live snapshot stream. Wired in New so registry mutations push
+	// snapshots instead of poll.
+	liveNotifier  *live.Notifier
 	// cacheMgr is always non-nil — created by New() with a default
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
@@ -200,6 +205,8 @@ func New(cfg Config) *App {
 	if traceCapacity > 0 {
 		a.bus = trace.NewBus(traceCapacity)
 	}
+
+	a.liveNotifier = live.New()
 	for _, b := range cfg.Middleware.Dashboard {
 		if b.Gin != nil {
 			a.dashboardMw = append(a.dashboardMw, b.Gin)
@@ -216,6 +223,11 @@ func New(cfg Config) *App {
 	a.health = newHealthState()
 	mountHealth(a.engine, a.health)
 	a.registry = registry.New()
+	// Push-on-change: registry mutations wake the dashboard's
+	// snapshot stream within ~50ms. Without this, the dashboard
+	// only emits on the heartbeat ticker and worker-status flips
+	// lag by up to 5s.
+	a.registry.OnChange(a.liveNotifier.Notify)
 	a.cronSched = cron.NewScheduler(a.bus, 0)
 	// Cache is non-optional: if the caller didn't inject one, build a
 	// memory-backed Manager so downstream stores never branch on "is
@@ -232,7 +244,7 @@ func New(cfg Config) *App {
 		a.metricsStore = metrics.NewCacheStore(a.cacheMgr)
 	}
 	if a.dashboardOn {
-		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, dashboard.Config{
+		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, a.liveNotifier, dashboard.Config{
 			Name:       a.dashboardName,
 			Middleware: a.dashboardMw,
 			Deployment: a.deployment,

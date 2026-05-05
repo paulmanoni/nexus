@@ -2,45 +2,71 @@ package dashboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/paulmanoni/nexus/cron"
+	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/metrics"
 	"github.com/paulmanoni/nexus/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 )
 
-// snapshotInterval is the cadence at which the live socket emits a fresh
-// state snapshot. 2s is fast enough that the dashboard feels live but slow
-// enough that a 50-endpoint app's payload (~5-10 KB) costs nothing.
-const snapshotInterval = 2 * time.Second
+// heartbeatInterval is the maximum time between snapshot emissions
+// when no changes have fired. Push-on-change is the primary path
+// (registry mutations call live.Notifier.Notify which wakes the
+// stream); the heartbeat exists as a safety net so a paused app
+// still gives the dashboard a recent timestamp + lets the client
+// confirm the connection is alive. 5s is generous: an idle app
+// genuinely has nothing to say, and the client's auto-reconnect
+// covers a missed heartbeat.
+const heartbeatInterval = 5 * time.Second
+
+// debounceWindow coalesces a burst of mutations into one snapshot
+// send. fx graph construction registers ~50 endpoints in <1ms; we
+// don't want to fire 50 snapshots through the WS — one snapshot
+// after the storm settles is enough. 50ms is short enough that an
+// interactive operator action (clicking pause on a cron) feels
+// instant while still folding the cascade of internal updates that
+// follow it.
+const debounceWindow = 50 * time.Millisecond
 
 // liveSnapshot bundles every source the dashboard renders so a single WS
 // frame replaces the old (endpoints + resources + workers + stats + crons +
 // ratelimits) poll fan-out. Optional subsystems (ms / sched / rl) emit nil
 // fields — `omitempty` keeps the payload tight.
 type liveSnapshot struct {
-	Kind       string                  `json:"kind"` // always "snapshot"
-	TS         time.Time               `json:"ts"`
-	Services   []registry.Service      `json:"services,omitempty"`
-	Endpoints  []registry.Endpoint     `json:"endpoints,omitempty"`
+	Kind       string                      `json:"kind"` // always "snapshot"
+	TS         time.Time                   `json:"ts"`
+	Services   []registry.Service          `json:"services,omitempty"`
+	Endpoints  []registry.Endpoint         `json:"endpoints,omitempty"`
 	Resources  []registry.ResourceSnapshot `json:"resources,omitempty"`
-	Workers    []registry.Worker       `json:"workers,omitempty"`
-	Stats      []metrics.EndpointStats `json:"stats,omitempty"`
-	Crons      []cron.Snapshot         `json:"crons,omitempty"`
-	RateLimits []ratelimit.Record      `json:"ratelimits,omitempty"`
+	Workers    []registry.Worker           `json:"workers,omitempty"`
+	Stats      []metrics.EndpointStats     `json:"stats,omitempty"`
+	Crons      []cron.Snapshot             `json:"crons,omitempty"`
+	RateLimits []ratelimit.Record          `json:"ratelimits,omitempty"`
 }
 
-// streamLive is the WS handler at /__nexus/live. Sends an initial snapshot
-// on connect, then a fresh snapshot every snapshotInterval. The writer
-// never blocks indefinitely — a missed write deadline closes the conn so
-// the client's auto-reconnect resumes cleanly.
+// streamLive is the WS handler at /__nexus/live. Push-driven: a
+// registry mutation (RegisterEndpoint, UpdateWorkerStatus, …) calls
+// notifier.Notify, the writer wakes within debounceWindow, builds a
+// snapshot, and ships it. A heartbeat ticker fires the same path
+// every heartbeatInterval as a fallback so an idle app still emits
+// its current state periodically.
 //
-// Optional subsystems are tolerated: pass nil for ms / sched / rl when
-// they're not wired and those fields drop out of the payload.
-func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store) gin.HandlerFunc {
+// Identical-snapshot dedup: SHA256 of the marshaled payload is
+// kept across iterations; sends are skipped when the hash matches.
+// Prevents wasted bytes when a notify fires for a mutation that
+// produced an identical observable state (e.g. attaching a
+// resource that's already attached).
+//
+// The writer never blocks indefinitely — write deadlines force
+// errors on backpressure, NextReader signals client close, ctx
+// covers server shutdown.
+func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, notifier *live.Notifier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
@@ -49,7 +75,19 @@ func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler,
 		defer conn.Close()
 
 		ctx := c.Request.Context()
-		send := func() error {
+
+		// Subscribe BEFORE the initial snapshot so any notify firing
+		// between snapshot construction and channel registration is
+		// captured (will trigger a redundant immediate send, deduped
+		// by the hash).
+		var nudge <-chan struct{}
+		var nudgeCancel func()
+		if notifier != nil {
+			nudge, nudgeCancel = notifier.Subscribe()
+			defer nudgeCancel()
+		}
+
+		buildSnap := func() liveSnapshot {
 			snap := liveSnapshot{
 				Kind:      "snapshot",
 				TS:        time.Now(),
@@ -67,19 +105,36 @@ func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler,
 			if rl != nil {
 				snap.RateLimits = rl.Snapshot(ctx)
 			}
-			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			return conn.WriteJSON(snap)
+			return snap
 		}
 
-		// Initial snapshot — the client treats first frame as "fully loaded"
-		// so the dashboard renders before the first tick fires.
-		if err := send(); err != nil {
+		var lastHash [32]byte
+		send := func(force bool) error {
+			snap := buildSnap()
+			body, err := json.Marshal(snap)
+			if err != nil {
+				return err
+			}
+			h := sha256.Sum256(body)
+			if !force && h == lastHash {
+				// State hasn't observably changed — skip the send.
+				return nil
+			}
+			lastHash = h
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			return conn.WriteMessage(1, body)
+		}
+
+		// Initial snapshot — force=true so the client sees state on
+		// first connect even if the hash happens to match a future
+		// no-op (impossible at boot, but the explicit force is the
+		// right contract).
+		if err := send(true); err != nil {
 			return
 		}
 
-		// Detect client close in a separate goroutine. NextReader blocks
-		// until the peer sends a frame or closes the conn; on close it
-		// returns an error and we signal the loop to exit.
+		// Detect client close so a half-open conn (browser tab
+		// closed, network blip) stops blocking on the writer.
 		closed := make(chan struct{})
 		go func() {
 			defer close(closed)
@@ -90,18 +145,46 @@ func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler,
 			}
 		}()
 
-		ticker := time.NewTicker(snapshotInterval)
+		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
+
+		// debounceTimer is non-nil only while a debounce window is
+		// active. We use a one-shot timer rather than a ticker so an
+		// idle stream doesn't churn select cases waiting on a never-
+		// firing channel.
+		var debounceTimer *time.Timer
+		debounceCh := func() <-chan time.Time {
+			if debounceTimer == nil {
+				return nil
+			}
+			return debounceTimer.C
+		}
+		armDebounce := func() {
+			if debounceTimer == nil {
+				debounceTimer = time.NewTimer(debounceWindow)
+			}
+			// If already armed, leave it — the existing window will
+			// still fire and capture this notify too. Resetting on
+			// every notify under heavy load could starve sends.
+		}
+
 		for {
 			select {
-			case <-ticker.C:
-				if err := send(); err != nil {
-					return
-				}
-			case <-closed:
-				return
 			case <-ctx.Done():
 				return
+			case <-closed:
+				return
+			case <-nudge:
+				armDebounce()
+			case <-debounceCh():
+				debounceTimer = nil
+				if err := send(false); err != nil {
+					return
+				}
+			case <-ticker.C:
+				if err := send(false); err != nil {
+					return
+				}
 			}
 		}
 	}
