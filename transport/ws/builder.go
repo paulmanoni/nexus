@@ -68,13 +68,18 @@ func (b *Builder) Tag(k, v string) *Builder               { b.tags[k] = v; retur
 func (b *Builder) WithHub(h *Hub) *Builder { b.hub = h; return b }
 
 // Mount attaches the WebSocket endpoint to Gin and records it in the registry. Terminal.
+//
+// Tracing: NO trace.Middleware on the upgrade route. WS upgrade is a
+// one-time HTTP request that promotes to a long-lived connection;
+// wrapping it in request.start/request.end would keep one trace open
+// for the entire connection lifetime (until close) and produce no
+// renderable spans. Per-frame traces are emitted inside b.serve's
+// read loop instead — each frame becomes its own root trace on the
+// dashboard's waterfall, matching how AsWS's typed dispatcher does
+// it.
 func (b *Builder) Mount() {
 	endpoint := "WS " + b.path
-	var handlers []gin.HandlerFunc
-	if b.bus != nil {
-		handlers = append(handlers, trace.Middleware(b.bus, b.service, endpoint, string(registry.WebSocket)))
-	}
-	handlers = append(handlers, b.middleware...)
+	handlers := append([]gin.HandlerFunc(nil), b.middleware...)
 	handlers = append(handlers, b.serve)
 	b.engine.GET(b.path, handlers...)
 	b.reg.RegisterEndpoint(registry.Endpoint{
@@ -109,12 +114,30 @@ func (b *Builder) serve(c *gin.Context) {
 	if b.onMessage == nil {
 		return
 	}
+	endpoint := "WS " + b.path
 	for {
 		t, data, err := conn.ReadMessage()
 		if err != nil {
 			return
 		}
-		if err := b.onMessage(conn, t, data); err != nil {
+		// Each frame is its own root trace so the dashboard's
+		// waterfall renders them as independent requests — same
+		// shape AsWS's typed dispatcher emits. NewRootSpan is a
+		// no-op when b.bus is nil (never the case in production
+		// nexus apps but tests sometimes pass nil).
+		ctx := trace.WithBus(c.Request.Context(), b.bus)
+		_, _, finish := trace.NewRootSpan(
+			ctx, endpoint, b.service, endpoint, string(registry.WebSocket),
+			trace.Int("ws.message_type", int64(t)),
+			trace.Int("ws.payload_bytes", int64(len(data))),
+		)
+		err = b.onMessage(conn, t, data)
+		status := 200
+		if err != nil {
+			status = 500
+		}
+		finish(status, err)
+		if err != nil {
 			return
 		}
 	}

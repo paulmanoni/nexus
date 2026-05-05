@@ -204,12 +204,18 @@ func mountWSEndpoint(app *App, lc fx.Lifecycle, ep *wsEndpoint, cfg *wsConfig, f
 	})
 
 	mountedPath := app.PrefixPath(ep.path)
-	endpointName := "WS " + mountedPath
+	// traceEndpoint = "" intentionally — WS upgrade is a one-time HTTP
+	// request that promotes to a long-lived connection. Wrapping it in
+	// trace.Middleware would keep one request.start open for the whole
+	// connection lifetime (until close), polluting the waterfall with a
+	// trace that contains nothing useful and never ends. Per-frame
+	// traces are minted inside dispatchWSMessage instead, each as its
+	// own root.
 	chain, _ := buildEndpointChain(
 		app, ep.service,
 		ep.service+".ws."+firstMsgType,
 		string(registry.WebSocket),
-		endpointName,
+		"",
 		cfg.bundles, hub.ServeGin,
 	)
 	app.engine.GET(mountedPath, chain...)
