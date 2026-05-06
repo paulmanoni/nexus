@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/cache"
+	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/metrics"
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/ratelimit"
@@ -39,6 +40,27 @@ type Config struct {
 	//	    Dashboard: nexus.DashboardConfig{Enabled: true, Name: "MyApp"},
 	//	}
 	Dashboard DashboardConfig
+
+	// Client bundles the auto-generated JS/TS client SDK knobs —
+	// whether the SDK routes mount at all, what URL prefix they
+	// land under, and any middleware that gates them. Mirrors the
+	// Dashboard knob; defaults to disabled so apps that don't ship
+	// an SDK pay no embed cost.
+	//
+	// When Enabled, four routes appear under cfg.Client.Path
+	// (default "/__nexus/client"):
+	//
+	//	GET <path>/manifest.json    SDK-tailored, public
+	//	GET <path>/client.js        runtime ESM
+	//	GET <path>/client.d.ts      generated TS types
+	//	GET <path>/vue.js           Vue 3 composables
+	//
+	// For per-deployment gating (ship the SDK only from the
+	// public-facing service), use nexus.IfDeployment([...],
+	// nexus.ClientUse(...)) instead of setting Client.Enabled at
+	// the Config level — IfDeployment composes with the option
+	// chain while Config is a static value across the binary.
+	Client client.Config
 
 	// TraceCapacity is the ring-buffer size for request traces. 0 disables
 	// tracing — the Traces tab will stay empty.

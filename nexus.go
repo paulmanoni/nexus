@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/cache"
+	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/cron"
 	"github.com/paulmanoni/nexus/dashboard"
 	"github.com/paulmanoni/nexus/live"
@@ -57,6 +58,13 @@ type App struct {
 	// schemaRefs() so non-client apps pay nothing.
 	schemaRefsMu  sync.Mutex
 	schemaRefsMap map[string]registry.NamedType
+
+	// clientHandler holds the live *client.Handler when the SDK is
+	// mounted (Config.Client.Enabled OR via nexus.ClientUse). nil
+	// otherwise. Exposed via ClientHandler() so auth.Module's option
+	// chain can wire the AuthInfo bridge without forcing every app
+	// to thread auth.Manager through Mount manually.
+	clientHandler *client.Handler
 	// cacheMgr is always non-nil — created by New() with a default
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
@@ -289,6 +297,14 @@ func New(cfg Config) *App {
 			AdminToken: os.Getenv(EnvAdminToken),
 		})
 	}
+	if cfg.Client.Enabled {
+		// Auto-mount the SDK routes (/__nexus/client/*). Auth bridge
+		// is wired separately when auth.Module is also in the option
+		// chain — the client/ package can't import auth/ without a
+		// cycle, and the cleanest seam is for auth.Module's own
+		// option chain to call (*App).SetClientAuthInfo via Invoke.
+		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, cfg.Client)
+	}
 
 	// Cross-module + remote-service registrations from codegen'd
 	// init() blocks. Has to run after New so app.registry exists;
@@ -364,6 +380,26 @@ func (a *App) schemaRefs() map[string]registry.NamedType {
 // MUST NOT mutate.
 func (a *App) SchemaRefs() map[string]registry.NamedType {
 	return a.schemaRefs()
+}
+
+// ClientHandler returns the live *client.Handler when the client
+// SDK is mounted (Config.Client.Enabled OR a nexus.ClientUse
+// option fired in the chain), nil otherwise. Used by auth.Module's
+// option chain to wire the AuthInfo bridge without forcing app
+// code to thread the manager through Mount manually.
+func (a *App) ClientHandler() *client.Handler {
+	return a.clientHandler
+}
+
+// SetClientAuthInfo installs the manifest's auth-section provider
+// on the mounted SDK handler. No-op when the client SDK isn't
+// mounted (apps that don't ship the SDK pay nothing). Designed for
+// auth.Module's option chain to call via fx.Invoke once both
+// auth.Manager and the SDK are in scope.
+func (a *App) SetClientAuthInfo(fn func() client.ExtractorInfo) {
+	if a.clientHandler != nil {
+		a.clientHandler.SetAuthInfo(fn)
+	}
 }
 func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
 func (a *App) RateLimiter() ratelimit.Store { return a.rlStore }

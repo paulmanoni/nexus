@@ -333,6 +333,115 @@ func TestClientManifest_RuntimeJSExports(t *testing.T) {
 	}
 }
 
+// TestClientManifest_AutoMountViaConfig pins the Config.Client.Enabled
+// auto-mount path: declaring Client on nexus.Config is sufficient to
+// make /__nexus/client/manifest.json resolve. No manual client.Mount
+// call needed.
+func TestClientManifest_AutoMountViaConfig(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{
+			Server: ServerConfig{Addr: "127.0.0.1:0"},
+			Client: client.Config{Enabled: true},
+		}),
+		Module("pets", AsRest("GET", "/pets", newListPets())).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	if app.ClientHandler() == nil {
+		t.Fatal("ClientHandler() returned nil — Config.Client.Enabled didn't trigger Mount")
+	}
+
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+	r, err := http.Get(ts.URL + "/__nexus/client/manifest.json")
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("manifest GET: err=%v status=%d", err, statusOf(r))
+	}
+	r.Body.Close()
+}
+
+// TestClientManifest_AutoMountViaOption covers the option-chain
+// wiring (ClientUse) — same effect as Config.Client.Enabled but
+// composes with IfDeployment / Module wrappers.
+func TestClientManifest_AutoMountViaOption(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		Module("pets", AsRest("GET", "/pets", newListPets())).nexusOption(),
+		ClientUse(client.Config{}).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	if app.ClientHandler() == nil {
+		t.Fatal("ClientHandler() nil after ClientUse")
+	}
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+	r, err := http.Get(ts.URL + "/__nexus/client/manifest.json")
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("manifest GET: err=%v status=%d", err, statusOf(r))
+	}
+	r.Body.Close()
+}
+
+// TestClientManifest_DoubleMountIsNoOp pins ClientUse's idempotence:
+// when BOTH Config.Client.Enabled AND ClientUse are present, the
+// second wiring is a no-op (the first mount wins). Without this
+// guard a paranoid user mixing both styles would crash with a
+// duplicate-route gin panic.
+func TestClientManifest_DoubleMountIsNoOp(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{
+			Server: ServerConfig{Addr: "127.0.0.1:0"},
+			Client: client.Config{Enabled: true},
+		}),
+		Module("pets", AsRest("GET", "/pets", newListPets())).nexusOption(),
+		ClientUse(client.Config{}).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+	// If we got here the route table didn't double-register.
+	if app.ClientHandler() == nil {
+		t.Fatal("ClientHandler() nil after dual wiring")
+	}
+}
+
+// TestClientManifest_SetAuthInfo proves the auth-bridge seam: an
+// explicit SetClientAuthInfo call (the kind auth.Module's option
+// chain will issue) populates Manifest.Auth on the next request.
+func TestClientManifest_SetAuthInfo(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{
+			Server: ServerConfig{Addr: "127.0.0.1:0"},
+			Client: client.Config{Enabled: true},
+		}),
+		Module("pets", AsRest("GET", "/pets", newListPets())).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	app.SetClientAuthInfo(func() client.ExtractorInfo {
+		return client.ExtractorInfo{Strategy: "bearer", HeaderName: "Authorization"}
+	})
+
+	m := app.ClientHandler().Manifest()
+	if m.Auth == nil {
+		t.Fatal("Manifest.Auth nil after SetClientAuthInfo")
+	}
+	if m.Auth.Strategy != "bearer" {
+		t.Errorf("Auth.Strategy: got %q, want %q", m.Auth.Strategy, "bearer")
+	}
+}
+
 func refKeys(m map[string]registry.NamedType) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
