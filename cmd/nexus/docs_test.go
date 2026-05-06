@@ -46,6 +46,34 @@ func TestDocsCmd_Topic(t *testing.T) {
 	}
 }
 
+// TestDocsCmd_ClientTopic pins the client SDK topic — added in step 9
+// of the SDK rollout. Catches regression when the topic body shifts
+// (e.g. an example block deleted by accident) and asserts the index
+// + --list expose the topic alongside the others.
+func TestDocsCmd_ClientTopic(t *testing.T) {
+	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+	cmd := newDocsCmd(stdout, stderr)
+	cmd.SetArgs([]string{"client"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v stderr=%q", err, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"CLIENT SDK",
+		"/__nexus/client",
+		"client.Config{Enabled: true}",
+		"NexusClient",
+		"useAuth",
+		"useCrud",
+		"AuthRoute",
+		"nexus client --out",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("client topic missing %q", want)
+		}
+	}
+}
+
 // TestDocsCmd_UnknownTopic returns an error and prints a typo
 // suggestion so the user gets pointed at the right name.
 func TestDocsCmd_UnknownTopic(t *testing.T) {

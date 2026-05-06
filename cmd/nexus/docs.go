@@ -165,6 +165,7 @@ var topicSummaries = map[string]string{
 	"deploy":     "nexus.deploy.yaml, owns shapes, IfDeployment, prefix",
 	"cli":        "Subcommand cheatsheet (new / init / dev / build / docs)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
+	"client":     "Embedded JS/TS SDK — connect a browser to your app",
 }
 
 // docsTopics is the inline reference. Each entry is plain text
@@ -567,6 +568,217 @@ CLI CHEATSHEET
   nexus version              Print the CLI version.
 
 Get details on any subcommand with: nexus help <cmd>
+`,
+
+	"client": `
+CLIENT SDK (auto-generated JS/TS)
+
+A typed JS runtime + Vue 3 composables + generated TypeScript types
+served straight from the Go binary. No npm package, no build step
+on the framework side. Browsers fetch the SDK at runtime; tooling
+(IDE completion, vendoring) reads the same artifacts via
+"nexus client --out".
+
+Routes mounted under cfg.Client.Path (default /__nexus/client):
+
+    GET <path>/manifest.json    SDK-tailored manifest (public, no admin gate)
+    GET <path>/client.js        runtime ESM — REST/GraphQL/WS/CRUD/auth
+    GET <path>/client.d.ts      generated TypeScript types
+    GET <path>/vue.js           Vue 3 composables built on client.js
+
+
+─── ENABLE ON THE SERVER ────────────────────────────────────────────
+
+One line on the Config literal:
+
+    nexus.Run(
+        nexus.Config{
+            Server: nexus.ServerConfig{Addr: ":8080"},
+            Client: client.Config{Enabled: true},
+        },
+        modules...,
+    )
+
+…or via the option chain (composes with IfDeployment to ship the
+SDK only from the public-facing service):
+
+    nexus.IfDeployment([]string{"web-svc", "monolith"},
+        nexus.ClientUse(client.Config{}),
+    )
+
+
+─── CONNECT FROM THE BROWSER ────────────────────────────────────────
+
+Plain ESM, works in any modern browser. No bundler required (a
+bundler is fine too — same import lines).
+
+    <script type="importmap">
+    { "imports": { "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js" } }
+    </script>
+    <script type="module">
+      import { NexusClient } from '/__nexus/client/client.js'
+      const nx = new NexusClient()
+
+      // GET /pets — args become query string.
+      const pets = await nx.rest('GET', '/pets', { limit: 20 })
+
+      // POST /pets — args become JSON body. :params get pulled out
+      // of the bag and substituted into the path automatically.
+      await nx.rest('POST', '/pets', { name: 'Rex' })
+      await nx.rest('PATCH', '/pets/:id', { id: 'abc-123', age: 4 })
+    </script>
+
+
+─── AUTH (login / logout / me) ──────────────────────────────────────
+
+Mark plain REST handlers with nexus.AuthRoute so the SDK's auth
+namespace promotes them. The framework doesn't own the handlers —
+just surfaces the convention via the manifest.
+
+    nexus.AsRest("POST", "/login",  NewLogin,  nexus.AuthRoute("login"))
+    nexus.AsRest("POST", "/logout", NewLogout, nexus.AuthRoute("logout"), auth.Required())
+    nexus.AsRest("GET",  "/me",     NewMe,     nexus.AuthRoute("me"),     auth.Required())
+
+When auth.Module is also wired, the manifest's Auth section auto-
+populates with the strategy (bearer / cookie / apikey / chain) so
+the SDK knows where to put the token. Browser side:
+
+    await nx.auth.login({ username: 'alice', password: 'hunter2' })
+    // login response.token auto-stashed; subsequent calls carry it.
+
+    const me = await nx.auth.me()      // current Identity
+    await nx.auth.logout()              // clears local + posts /logout
+
+Token storage defaults to localStorage (with a private-mode safe
+fallback). Pass tokenStore: ... to swap in sessionStorage,
+encrypted, cookie-only, etc.
+
+
+─── CRUD ─────────────────────────────────────────────────────────────
+
+For entities registered via nexus.AsCRUD[Pet]:
+
+    const pets = nx.crud('pets')
+    await pets.list()
+    await pets.get('abc-123')
+    await pets.create({ name: 'Rex' })
+    await pets.update('abc-123', { age: 4 })
+    await pets.delete('abc-123')
+
+
+─── GRAPHQL ──────────────────────────────────────────────────────────
+
+For ops registered via nexus.AsQuery / nexus.AsMutation:
+
+    const list = await nx.query('listPets',  { limit: 20 })
+    const made = await nx.mutate('createPet', { name: 'Rex' })
+
+The SDK builds the GraphQL document from the manifest's typed
+schema; apps that need a richer selection set call rest() against
+the GraphQL endpoint directly.
+
+
+─── WEBSOCKETS ───────────────────────────────────────────────────────
+
+For typed AsWS handlers (one connection per path, dispatch by
+envelope type):
+
+    const events = nx.ws('/events')
+      .on('chat.message', (msg) => console.log(msg))
+      .on('chat.typing',  ({ user }) => showTypingIndicator(user))
+      .on('@close', () => setStatus('disconnected'))
+    await events.connect()
+    events.send('chat.send', { text: 'hello' })
+
+
+─── VUE 3 COMPOSABLES ────────────────────────────────────────────────
+
+    <script setup>
+    import { ref } from 'vue'
+    import { useAuth, useCrud, useQuery } from '/__nexus/client/vue.js'
+
+    const auth   = useAuth()                       // reactive auth
+    const pets   = useCrud('pets')                 // list + CUD + WS
+    const search = ref('')
+    const found  = useQuery('GET', '/pets', () => ({ q: search.value }))
+    </script>
+
+    <template>
+      <div v-if="!auth.isAuthenticated.value">
+        <button @click="auth.login({ username: 'alice', password: 'hunter2' })">
+          Sign in
+        </button>
+      </div>
+      <ul v-else>
+        <li v-for="p in pets.items.value" :key="p.id">{{ p.name }}</li>
+      </ul>
+    </template>
+
+
+─── TYPESCRIPT ───────────────────────────────────────────────────────
+
+Point your tsconfig at the served .d.ts (or the dumped one — see
+` + "`nexus client --out`" + ` below). Types include:
+
+    interface Pet { id: string; name: string; age?: number }
+
+    interface RestEndpoints {
+      'GET /pets':  { args: { limit?: number }; return: Pet[] }
+      'POST /pets': { args: Pet;                 return: Pet }
+    }
+
+    interface GraphqlOps  { listPets: { kind: 'query'; ... } }
+    interface WSMessages  { '/events': { 'chat.send': {...} } }
+
+The runtime client surface is typed via TS template-literal type
+inference, so:
+
+    nx.rest('GET', '/pets', { limit: 20 })   // return: Pet[]
+    nx.rest('POST', '/pets', { name: 'Rex' }) // return: Pet
+
+
+─── DUMP TO DISK (vendoring) ─────────────────────────────────────────
+
+For frontends that prefer checking the SDK into their repo:
+
+    nexus client --out ./web/src/sdk
+        # static dump: client.js + vue.js only
+
+    nexus client --out ./web/src/sdk --url http://localhost:8080
+        # also fetch manifest.json + generate matching client.d.ts
+
+    nexus client --out ./web/src/sdk --manifest ./manifest.json
+        # offline — read a saved manifest
+
+Closed-port URL is non-fatal; the CLI falls back to static-only and
+warns on stderr. See: nexus help client.
+
+
+─── COMPOSITION ──────────────────────────────────────────────────────
+
+Plays cleanly with the rest of the framework:
+
+  - ServeFrontend: SDK routes register before the SPA's NoRoute
+    fallback, so /__nexus/client/* never gets swallowed.
+  - IfDeployment: gate per-deployment via nexus.ClientUse(...).
+  - Multiple backends: construct two NexusClient instances from
+    different origins; each fetches its own manifest + carries
+    its own auth state.
+  - Custom fetch: pass opts.fetch for tests, retries, server-side
+    rendering with synthetic credentials.
+
+
+─── TROUBLESHOOTING ──────────────────────────────────────────────────
+
+  Manifest 404           Config.Client.Enabled = false (or never set)
+  Auth section missing   auth.Module isn't wired — bridge needs both
+  401 on every call      check manifest.auth.strategy matches what
+                         your handler expects (bearer ≠ cookie)
+  Stale .d.ts            handler.Reload() OR restart the app — the
+                         manifest caches once after first request
+
+Full demo: examples/petstore-spa/ (one Go file + one HTML page +
+one Vue setup script — login + CRUD wired end-to-end).
 `,
 
 	"dashboard": `
