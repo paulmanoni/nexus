@@ -3,6 +3,7 @@ package nexus
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,6 +187,56 @@ func TestClientManifest_HTTPRouteServesJSON(t *testing.T) {
 			continue
 		}
 		rr.Body.Close()
+	}
+}
+
+// TestClientManifest_RuntimeJSExports asserts the served client.js
+// is the real runtime, not the step-3 placeholder. Pins the public
+// surface (NexusClient + AuthNamespace + WSHandle + token stores)
+// without parsing JavaScript: the SDK is hand-authored and small
+// enough that a name-presence check catches any catastrophic
+// regression (file truncated, wrong file embedded) without
+// requiring a node toolchain in CI.
+func TestClientManifest_RuntimeJSExports(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		Module("pets", AsRest("GET", "/pets", newListPets())).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	client.Mount(app.Engine(), app.Registry(), nil, app.SchemaRefs, "", client.Config{Enabled: true})
+
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+
+	r, err := http.Get(ts.URL + "/__nexus/client/client.js")
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("GET client.js: err=%v status=%d", err, statusOf(r))
+	}
+	defer r.Body.Close()
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/javascript") {
+		t.Errorf("Content-Type: got %q, want application/javascript prefix", ct)
+	}
+	body, _ := io.ReadAll(r.Body)
+	bodyStr := string(body)
+	for _, sym := range []string{
+		"export class NexusClient",
+		"export class NexusError",
+		"export function localStorageTokenStore",
+		"export function memoryTokenStore",
+		"class AuthNamespace",
+		"class CrudHandle",
+		"class WSHandle",
+		"async login",
+		"async logout",
+		"buildGqlDocument",
+	} {
+		if !strings.Contains(bodyStr, sym) {
+			t.Errorf("client.js missing %q — runtime regressed to placeholder?", sym)
+		}
 	}
 }
 
