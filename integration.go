@@ -3,6 +3,7 @@ package nexus
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -62,6 +63,17 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 			// needs to plan migrations as a separate phase.
 			if err := app.runStartupTasks(ctx); err != nil {
 				return err
+			}
+			// SDK auto-dump: fires AFTER all AsRest/AsQuery/AsWS
+			// fx.Invokes have populated the registry, so the
+			// generated .d.ts + manifest reflect every endpoint.
+			// Failures don't crash the app — a permission error on
+			// the project tree is dev-tool friction, not a reason
+			// to refuse to serve traffic.
+			if h := app.ClientHandler(); h != nil && cfg.Client.OutDir != "" {
+				if err := h.Dump(cfg.Client.OutDir, cfg.Client.TSConfig, log.Writer()); err != nil {
+					log.Printf("nexus client: auto-dump %s: %v", cfg.Client.OutDir, err)
+				}
 			}
 			for i, l := range listeners {
 				ln, err := net.Listen("tcp", l.Addr)
