@@ -60,6 +60,33 @@ type Config struct {
 	// type-stripping. Called once on first request, then cached;
 	// see Handler.Reload to invalidate.
 	Manifest func() Manifest
+
+	// OutDir, when non-empty, makes Mount also dump the SDK files
+	// (client.js, vue.js, manifest.json, client.d.ts) to disk on
+	// startup so a frontend's filesystem-based tooling (TypeScript
+	// compiler, Vite, JetBrains, VS Code) can resolve types and
+	// runtime imports without a manual `nexus client --out` step.
+	//
+	// Idempotent: files are byte-compared and skipped when content
+	// matches, preserving mtime — file-watcher reloads + IDE
+	// re-indexing don't fire on no-op restarts.
+	//
+	// Recommend leaving empty in production builds. Apps that need
+	// it gated to dev only can branch on an env var when building
+	// the Config (this field intentionally has no built-in env
+	// magic — explicit beats implicit for "writes files to your
+	// project tree").
+	OutDir string
+
+	// TSConfig, when non-empty, makes Mount merge path mappings
+	// (the runtime URL imports → OutDir files) into the named
+	// jsconfig.json or tsconfig.json on startup. Existing fields
+	// (compilerOptions.target, include, exclude, custom paths)
+	// survive untouched. Same idempotent contract as OutDir.
+	//
+	// Only takes effect when OutDir is also set — the path
+	// mappings need a target.
+	TSConfig string
 }
 
 // Handler holds the live state of a mounted SDK surface — the
@@ -175,6 +202,12 @@ func VueJS() []byte { return vueJS }
 // basePath is the deployment-wide route prefix (app.routePrefix),
 // stamped onto Manifest.BasePath so the SDK prepends it to every
 // call.
+//
+// When cfg.OutDir is set, Mount also dumps the SDK files to disk
+// after registering routes so frontend tooling (TS compiler, IDE)
+// can resolve types/imports without a manual `nexus client --out`
+// step. Dump errors are logged but don't fail Mount — dev-tool
+// convenience shouldn't crash boot.
 func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config) *Handler {
 	if cfg.Path == "" {
 		cfg.Path = DefaultPath
@@ -218,6 +251,11 @@ func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo,
 		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 		c.Data(http.StatusOK, "application/javascript; charset=utf-8", vueJS)
 	})
+	// Auto-dump on cfg.OutDir is wired by the caller via a
+	// fx.Lifecycle.OnStart hook (see nexus.New). Mount can't dump
+	// here because it runs inside the *App constructor —
+	// AsRest/AsQuery invokes haven't yet populated the registry,
+	// so the .d.ts would be empty.
 	return h
 }
 

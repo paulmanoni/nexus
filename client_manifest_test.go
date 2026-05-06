@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -410,6 +411,68 @@ func TestClientManifest_DoubleMountIsNoOp(t *testing.T) {
 	// If we got here the route table didn't double-register.
 	if app.ClientHandler() == nil {
 		t.Fatal("ClientHandler() nil after dual wiring")
+	}
+}
+
+// TestClientManifest_OutDirAutoDump confirms Config.Client.OutDir
+// triggers the in-process disk dump on Mount — frontend tooling
+// (TS compiler, IDE) picks up types and imports without a manual
+// nexus client --out step. Idempotent contract verified by the
+// CLI's TestClientCmd_IdempotentSecondRun; this test only pins
+// that the auto-dump fires at all and lands the expected files.
+func TestClientManifest_OutDirAutoDump(t *testing.T) {
+	dir := t.TempDir()
+	out := dir + "/sdk"
+	tsconfig := dir + "/tsconfig.json"
+
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{
+			Server: ServerConfig{Addr: "127.0.0.1:0"},
+			Client: client.Config{
+				Enabled:  true,
+				OutDir:   out,
+				TSConfig: tsconfig,
+			},
+		}),
+		Module("pets", AsRest("GET", "/pets", newListPets())).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	// All four SDK files should exist immediately after Mount —
+	// no HTTP request needed. .d.ts must reflect the registered
+	// pet endpoint (manifest was eagerly built).
+	for _, name := range []string{"client.js", "vue.js", "manifest.json", "client.d.ts"} {
+		path := out + "/" + name
+		if info, err := os.Stat(path); err != nil {
+			t.Errorf("auto-dump missing %s: %v", path, err)
+		} else if info.Size() == 0 {
+			t.Errorf("auto-dumped %s is empty", path)
+		}
+	}
+
+	// tsconfig.json should have the path mappings + baseUrl.
+	tsBody, err := os.ReadFile(tsconfig)
+	if err != nil {
+		t.Fatalf("tsconfig not written: %v", err)
+	}
+	for _, want := range []string{
+		`"baseUrl": "."`,
+		`"/__nexus/client/client.js"`,
+		`"/__nexus/client/vue.js"`,
+		`"sdk/client.js"`,
+	} {
+		if !strings.Contains(string(tsBody), want) {
+			t.Errorf("tsconfig missing %q", want)
+		}
+	}
+
+	// Manifest content reflects the running app.
+	dts, _ := os.ReadFile(out + "/client.d.ts")
+	if !strings.Contains(string(dts), "'GET /pets'") {
+		t.Errorf("client.d.ts didn't pick up the registered endpoint:\n%s", dts)
 	}
 }
 

@@ -606,6 +606,25 @@ SDK only from the public-facing service):
         nexus.ClientUse(client.Config{}),
     )
 
+For TS / IDE-friendly setups, OutDir + TSConfig auto-write the
+SDK files + path mappings to disk on startup so frontend tooling
+picks them up without a manual "nexus client --out" step:
+
+    nexus.Config{
+        Client: client.Config{
+            Enabled:  true,
+            OutDir:   "./web/sdk",       // dump client.js + vue.js +
+                                          // manifest.json + client.d.ts
+            TSConfig: "./web/tsconfig.json",  // merge path mappings
+        },
+    }
+
+The dump fires on fx.Start AFTER all endpoints register, so the
+generated .d.ts reflects every route. Idempotent — files with
+matching content are skipped to preserve mtime (no file-watcher
+churn on no-op restarts). Recommend leaving OutDir empty in
+production builds; explicit dev-only conditional is cleanest.
+
 
 ─── CONNECT FROM THE BROWSER ────────────────────────────────────────
 
