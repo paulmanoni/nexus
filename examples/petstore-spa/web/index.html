@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Petstore SPA — nexus client SDK demo</title>
+  <!--
+    importmap: tells the browser where to resolve bare module
+    specifiers used by app.js. Vue 3 ships an ESM build at unpkg;
+    swap to your CDN of choice or pin a version. The nexus SDK
+    is served by the framework itself at /__nexus/client/*.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"
+    }
+  }
+  </script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">Loading…</div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -59,6 +59,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/trace"
 )
 
@@ -330,8 +331,35 @@ func Module(cfg Config) nexus.Option {
 			state.bus = app.Bus()
 			app.Engine().Use(ginAuthMiddleware(state))
 			mountDashboardRoutes(app.Engine(), manager)
+			// Bridge the auth strategy into the client SDK
+			// manifest. No-op when the SDK isn't mounted (apps
+			// without Config.Client.Enabled or nexus.ClientUse
+			// see SetClientAuthInfo short-circuit on a nil
+			// handler). Keeping this here means apps wiring
+			// auth.Module + the SDK get the manifest's Auth
+			// section for free, no extra options.
+			app.SetClientAuthInfo(func() client.ExtractorInfo {
+				return toClientExtractor(manager.Info())
+			})
 		}),
 	))
+}
+
+// toClientExtractor adapts auth.ExtractorInfo (canonical) to
+// client.ExtractorInfo (the duplicate that lives in client/ to
+// avoid a nexus → client → auth import cycle). Recurses on
+// chained extractors so multi-strategy apps surface the full
+// shape to SDK consumers.
+func toClientExtractor(a ExtractorInfo) client.ExtractorInfo {
+	out := client.ExtractorInfo{
+		Strategy:   a.Strategy,
+		HeaderName: a.HeaderName,
+		CookieName: a.CookieName,
+	}
+	for _, c := range a.Chain {
+		out.Chain = append(out.Chain, toClientExtractor(c))
+	}
+	return out
 }
 
 // --- in-memory identity cache -------------------------------------------
