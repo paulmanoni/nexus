@@ -19,6 +19,11 @@ const packets = ref([])
 let seq = 0
 const DURATION_MS = 850
 const STOP_HOLD_MS = 500
+// MAX_PACKETS bounds the live array so a runaway scenario (tab hidden
+// for an extended period AND the visibility guard somehow misses)
+// can't grow it without limit. 60 is enough for any reasonable burst —
+// even at 100 req/s, packets exit within ~1s of spawn.
+const MAX_PACKETS = 60
 
 // spawn(pathEl, canvasEl, opts) attaches a packet to one Vue Flow edge
 // path. opts.state: 'ok' | 'error'. The packet auto-removes after the
@@ -34,6 +39,20 @@ const STOP_HOLD_MS = 500
 // in-flight animation since restyleEdges returns a fresh array.
 function spawn(pathEl, canvasEl, opts = {}) {
   if (!pathEl || !canvasEl) return
+  // Skip when the tab isn't visible. requestAnimationFrame is paused
+  // by the browser while document.hidden, so a packet queued here
+  // would sit forever with startedAt = performance.now() at hidden-
+  // time. When the tab returns to foreground, every queued RAF fires
+  // at once with elapsed = (time since hidden), progress jumps to 1,
+  // and the packets all snap to their endpoint and fade in a burst —
+  // looking like the dashboard "saved up" animations for the user.
+  // Decorative animations of past traffic aren't useful; drop them.
+  if (typeof document !== 'undefined' && document.hidden) return
+  // Bound the in-flight set so even a missed visibility transition
+  // can't grow it without limit. Drop the oldest packet on overflow.
+  if (packets.value.length >= MAX_PACKETS) {
+    packets.value.shift()
+  }
   let len = 0
   try { len = pathEl.getTotalLength() } catch { len = 0 }
   if (!len) return
@@ -126,9 +145,30 @@ function spawn(pathEl, canvasEl, opts = {}) {
   requestAnimationFrame(frame)
 }
 
+// Clear in-flight packets whenever the tab goes back into the
+// foreground. Defensive: anything spawned while hidden (in case a
+// caller bypassed the spawn guard) would otherwise compute a huge
+// elapsed on first RAF and snap-to-end. Wiping on visibility-resume
+// gives the user a clean canvas — they only see traffic from the
+// moment they came back, not retroactive bursts.
+function onVisibilityChange() {
+  if (typeof document === 'undefined') return
+  if (!document.hidden) {
+    packets.value = []
+  }
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+}
+
 defineExpose({ spawn })
 
-onBeforeUnmount(() => { packets.value = [] })
+onBeforeUnmount(() => {
+  packets.value = []
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+  }
+})
 </script>
 
 <template>
