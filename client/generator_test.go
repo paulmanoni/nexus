@@ -105,13 +105,28 @@ func TestGenerateDTS_TinyManifestSnapshot(t *testing.T) {
 		"'/events': {",
 		"'chat.send': { text: string }",
 		"'chat.typing': {}",
-		// Module declaration
+		// client.js module declaration
 		"declare module '/__nexus/client/client.js'",
 		"export class NexusClient",
 		"export class NexusError",
 		"export interface CrudHandle",
 		"export class WSHandle<P extends keyof WSMessages>",
 		"export interface AuthNamespace",
+		// vue.js module declaration — typed composables
+		"declare module '/__nexus/client/vue.js'",
+		"export function useNexus",
+		"export function useQuery<K extends keyof RestEndpoints>",
+		"export function useMutation<K extends keyof RestEndpoints>",
+		"export function useGqlQuery<K extends keyof GraphqlOps>",
+		"export function useGqlMutation<K extends keyof GraphqlOps>",
+		"export function useCrud<T = unknown>",
+		"export function useWS<P extends keyof WSMessages>",
+		"export function useAuth(opts?: UseAuthOptions): UseAuthHandle",
+		"export interface QueryHandle<T>",
+		"export interface CrudListHandle<T>",
+		"export interface UseAuthHandle",
+		// Vue's reactive primitives are imported, not redefined
+		"import type { Ref, ComputedRef } from 'vue'",
 	}
 
 	for _, s := range wantSubstrings {
