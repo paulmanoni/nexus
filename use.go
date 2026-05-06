@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"go.uber.org/fx"
+
 	"github.com/paulmanoni/nexus/middleware"
 )
 
@@ -27,7 +29,18 @@ func Use(m middleware.Middleware) MiddlewareOption {
 // MiddlewareOption carries a Middleware across the AsRest/AsQuery/... call
 // sites. Each transport's option type embeds / converts this, so a single
 // nexus.Use(...) expression can appear wherever the transport accepts it.
+//
+// MiddlewareOption also satisfies the top-level Option interface as a
+// no-op so callers can flow it through Option-typed variadic slots
+// (notably nexus.AsCRUD, which accepts ...Option). The option still
+// only takes effect via applyToRest / applyToGql / applyToWS — the
+// no-op nexusOption() exists purely for type-system passage.
 type MiddlewareOption struct{ mw middleware.Middleware }
+
+// nexusOption satisfies Option. Empty fx.Options because this slot is
+// for transport-attaching options (RestOption/GqlOption/WSOption);
+// middleware doesn't register anything globally on its own.
+func (m MiddlewareOption) nexusOption() fx.Option { return fx.Options() }
 
 // applyToGql wires this middleware into a GraphQL registration. Called
 // by asGqlField for each MiddlewareOption passed to AsQuery/AsMutation.
