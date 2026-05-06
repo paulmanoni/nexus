@@ -583,8 +583,9 @@ Routes mounted under cfg.Client.Path (default /__nexus/client):
 
     GET <path>/manifest.json    SDK-tailored manifest (public, no admin gate)
     GET <path>/client.js        runtime ESM — REST/GraphQL/WS/CRUD/auth
-    GET <path>/client.d.ts      generated TypeScript types
+    GET <path>/client.d.ts      TS types paired with client.js
     GET <path>/vue.js           Vue 3 composables built on client.js
+    GET <path>/vue.d.ts         TS types paired with vue.js
 
 
 ─── ENABLE ON THE SERVER ────────────────────────────────────────────
@@ -613,11 +614,29 @@ picks them up without a manual "nexus client --out" step:
     nexus.Config{
         Client: client.Config{
             Enabled:  true,
-            OutDir:   "./web/sdk",       // dump client.js + vue.js +
-                                          // manifest.json + client.d.ts
+            OutDir:   "./web/sdk",       // dump SDK files (see below)
             TSConfig: "./web/tsconfig.json",  // merge path mappings
         },
     }
+
+OutDir produces:
+
+    sdk/
+      client.js       runtime ESM
+      client.d.ts     TS types — auto-pairs with client.js on disk
+      vue.js          Vue 3 composables ESM
+      vue.d.ts        TS types — auto-pairs with vue.js on disk
+      manifest.json   live SDK manifest (mirrors /__nexus/client/manifest.json)
+      nexus.ts        wiring scaffold — write-once, edit freely
+
+Each .js sits beside its .d.ts so TypeScript auto-resolves types
+whether you import via the URL form (path-mapped) or by a plain
+relative path: import { NexusClient } from '../sdk/client.js'
+
+nexus.ts is a one-shot scaffold: it constructs the page-shared
+NexusClient, re-exports composables from one place, and re-exports
+manifest-derived type names for "import type". After the first
+boot, subsequent dumps SKIP it — your edits survive.
 
 The dump fires on fx.Start AFTER all endpoints register, so the
 generated .d.ts reflects every route. Idempotent — files with
@@ -736,13 +755,28 @@ envelope type):
 
 ─── TYPESCRIPT ───────────────────────────────────────────────────────
 
-The .d.ts ships TWO module declarations — one for the runtime
-(/__nexus/client/client.js) and one for the Vue composables
-(/__nexus/client/vue.js). TS apps importing either get full
-completion + signature checks, no @types/* package needed.
+Each runtime .js sits beside its own .d.ts (client.js ↔ client.d.ts;
+vue.js ↔ vue.d.ts). All exports are top-level — no declare-module
+wrappers — so TypeScript auto-pairs the type files with their JS
+siblings whether you import by URL or by relative path.
 
-Wire your tsconfig.json (the CLI does this for you — see "DUMP
-TO DISK" below):
+Two ways to import:
+
+  // URL form — works when path mappings are wired (CLI does this):
+  import { NexusClient } from '/__nexus/client/client.js'
+  import { useAuth }     from '/__nexus/client/vue.js'
+
+  // Relative form — works as soon as files are on disk:
+  import { NexusClient } from '../sdk/client.js'
+  import { useAuth }     from '../sdk/vue.js'
+
+Or import everything through the generated nexus.ts barrel:
+
+  import { useNexus, useAuth, useGqlQuery } from '@/sdk/nexus'
+  import type { Pet, User } from '@/sdk/nexus'
+
+A typical tsconfig.json (the CLI / OutDir+TSConfig writes the
+paths block for you):
 
     {
       "compilerOptions": {
@@ -756,7 +790,7 @@ TO DISK" below):
           "/__nexus/client/vue.js":    ["./sdk/vue.js"]
         }
       },
-      "include": ["src/**/*", "sdk/client.d.ts"]
+      "include": ["src/**/*", "sdk/**/*"]
     }
 
 Types include:

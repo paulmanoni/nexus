@@ -41,24 +41,37 @@ func (h *Handler) Dump(outDir, tsconfig string, stdout io.Writer) error {
 	h.build()
 	h.mu.Lock()
 	manifest := append([]byte(nil), h.manifest...)
-	dts := append([]byte(nil), h.dts...)
+	clientDTS := append([]byte(nil), h.dtsClient...)
+	vueDTS := append([]byte(nil), h.dtsVue...)
 	h.mu.Unlock()
 
-	// Static + generated files. Order: static first (small, cheap,
-	// always present), then the generated ones (depend on h.build).
+	// Static + generated files. Each .js sits next to its .d.ts so
+	// the TypeScript compiler auto-pairs them whether the consumer
+	// imports via the runtime URL or as a plain relative path.
 	files := []struct {
 		name string
 		body []byte
 	}{
 		{"client.js", clientJS},
+		{"client.d.ts", clientDTS},
 		{"vue.js", vueJS},
+		{"vue.d.ts", vueDTS},
 		{"manifest.json", manifest},
-		{"client.d.ts", dts},
 	}
 	for _, f := range files {
 		if err := WriteIfChanged(filepath.Join(outDir, f.name), f.body, stdout); err != nil {
 			return err
 		}
+	}
+
+	// nexus.ts is a one-time wiring scaffold (singleton client +
+	// composable re-exports + type re-exports). Written ONLY when
+	// missing so subsequent boots don't clobber developer edits to
+	// the singleton's construction (custom origin logic, alternate
+	// token stores, extra exports). Delete the file to regenerate.
+	nexusTS := []byte(GenerateNexusTS(h.Manifest()))
+	if err := WriteIfMissing(filepath.Join(outDir, "nexus.ts"), nexusTS, stdout); err != nil {
+		return err
 	}
 
 	if tsconfig != "" {
@@ -92,6 +105,23 @@ func WriteIfChanged(path string, body []byte, stdout io.Writer) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	fmt.Fprintf(stdout, "wrote %s (%d bytes)\n", path, len(body))
+	return nil
+}
+
+// WriteIfMissing writes body to path only when the file does not
+// already exist. The first run scaffolds it; subsequent runs
+// observe the user's edits and skip. Distinct from WriteIfChanged
+// (which compares bytes and rewrites on drift) — used for the
+// nexus.ts wiring file that the developer is expected to edit.
+func WriteIfMissing(path string, body []byte, stdout io.Writer) error {
+	if _, err := os.Stat(path); err == nil {
+		fmt.Fprintf(stdout, "skipped %s (already exists — edit freely)\n", path)
+		return nil
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	fmt.Fprintf(stdout, "wrote %s (%d bytes, scaffold — feel free to edit)\n", path, len(body))
 	return nil
 }
 
