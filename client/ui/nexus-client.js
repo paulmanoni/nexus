@@ -103,7 +103,12 @@ export class NexusClient {
     this.manifestPath = opts.manifestPath ?? DEFAULT_MANIFEST_PATH
     this._fetch = opts.fetch ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null)
     this._tokenStore = opts.tokenStore ?? localStorageTokenStore()
-    this._manifest = null
+    // opts.manifest seeds the cache so ready() never makes a network
+    // request. Production-friendly: the bundler inlines the
+    // sdk/manifest.json file at build time, so the prod bundle has
+    // zero /__nexus/client/* traffic. Also kills CORS issues from
+    // SPAs on a different origin than the API.
+    this._manifest = opts.manifest ?? null
     this._loadingManifest = null
     this.auth = new AuthNamespace(this)
   }

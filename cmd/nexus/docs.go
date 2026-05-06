@@ -620,6 +620,15 @@ picks them up without a manual "nexus client --out" step:
         },
     }
 
+RUNTIME WITHOUT NETWORK — pass opts.manifest to NexusClient and
+the runtime skips the /__nexus/client/manifest.json fetch
+entirely. Bundlers inline sdk/manifest.json at build time so the
+prod bundle makes zero /__nexus/client/* requests, eliminating
+cross-origin CORS issues and removing a runtime dependency:
+
+    import manifest from '../sdk/manifest.json'
+    setNexus(new NexusClient({ manifest }))
+
 PRODUCTION SAFETY — the Public flag (default false) controls how
 much of the manifest the unauthenticated /manifest.json route
 exposes. With Public:false an anonymous browser sees only the

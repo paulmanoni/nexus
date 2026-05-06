@@ -346,6 +346,11 @@ func TestClientManifest_RuntimeJSExports(t *testing.T) {
 		"async login",
 		"async logout",
 		"buildGqlDocument",
+		// v0.30.1: opts.manifest seeds _manifest so the runtime
+		// skips the network fetch — bundlers can inline
+		// sdk/manifest.json and the prod bundle has zero
+		// /__nexus/client/* traffic.
+		"opts.manifest ?? null",
 	} {
 		if !strings.Contains(bodyStr, sym) {
 			t.Errorf("client.js missing %q — runtime regressed to placeholder?", sym)

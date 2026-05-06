@@ -204,6 +204,14 @@ export interface NexusClientOptions {
   manifestPath?: string
   fetch?: typeof globalThis.fetch
   tokenStore?: TokenStore
+  /**
+   * Pre-fetched manifest. When set, the client skips the runtime
+   * fetch of /__nexus/client/manifest.json — bundle the file via
+   *   import manifest from '../sdk/manifest.json'
+   * to drop all /__nexus/client/* traffic from the prod bundle and
+   * eliminate cross-origin CORS issues entirely.
+   */
+  manifest?: unknown
 }
 
 export class NexusClient {

@@ -370,6 +370,13 @@ func mountGroup(app *App, g *pathGroup) error {
 	}
 	opts := append([]gql.Option(nil), g.opts...)
 	opts = append(opts, gql.WithServiceForField(func(name string) string { return fieldService[name] }))
+	// Introspection gate — same source of truth as the dashboard
+	// gate (Config.Introspection + IntrospectionNetworks). Only
+	// installed when at least one is set; an unconfigured app gets
+	// the open default the gql package already had.
+	if app.introspect || len(app.introspectionNets) > 0 {
+		opts = append(opts, gql.WithAllowIntrospection(app.AllowIntrospection))
+	}
 	// Prefix the GraphQL mount with the deployment-wide route prefix
 	// so e.g. uaa-svc serves at /oats-uaa/graphql while interview-svc
 	// serves at /oats-interview/graphql. Source-declared per-service
