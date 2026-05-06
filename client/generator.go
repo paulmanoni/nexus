@@ -26,8 +26,13 @@ import (
 //   4. `export interface GraphqlOps` keyed by op name.
 //   5. `export interface WSMessages` keyed by WS path; each path is
 //      a map of msgType → args.
-//   6. Re-export typed surface for NexusClient — typed rest()/
-//      query()/mutate()/crud()/ws() overloads via the maps above.
+//   6. `declare module '/__nexus/client/client.js'` — typed runtime
+//      surface (NexusClient, NexusError, CrudHandle, WSHandle,
+//      AuthNamespace, token stores).
+//   7. `declare module '/__nexus/client/vue.js'` — typed Vue 3
+//      composables (useNexus, useQuery, useMutation, useCrud,
+//      useWS, useAuth, …) so TS apps importing from the SDK's
+//      vue.js URL get completion + signature checks.
 //
 // Pure function: same manifest in, same string out. Caller
 // (Handler.build) memoizes via sync.Once.
@@ -39,6 +44,7 @@ func GenerateDTS(m Manifest) string {
 	writeGraphqlOps(&b, m)
 	writeWSMessages(&b, m)
 	writeClientOverloads(&b)
+	writeVueOverloads(&b)
 	return b.String()
 }
 
@@ -262,6 +268,205 @@ declare module '/__nexus/client/client.js' {
 // Helpers — extract the METHOD and PATH halves of a 'METHOD PATH' literal.
 type ExtractRestMethod<K> = K extends ` + "`${infer M} ${string}`" + ` ? M : never
 type ExtractRestPath<K>   = K extends ` + "`${string} ${infer P}`" + ` ? P : never
+`)
+}
+
+// writeVueOverloads emits the typed module declaration for the
+// composables runtime served at /__nexus/client/vue.js. Pulls the
+// reactive primitives from 'vue' (host-provided) and the SDK types
+// from the sibling client.js module. Same trick that powers the
+// rest()/query()/ws() overloads in client.js — the discriminated
+// maps (RestEndpoints, GraphqlOps, WSMessages) drive completion +
+// signature checks on every composable's returned refs.
+func writeVueOverloads(b *strings.Builder) {
+	b.WriteString(`// ── Typed Vue composables surface ────────────────────────────
+
+declare module '/__nexus/client/vue.js' {
+  import type { Ref, ComputedRef } from 'vue'
+  import {
+    NexusClient,
+    NexusClientOptions,
+    NexusError,
+    CrudHandle,
+    WSHandle,
+    AuthNamespace,
+    TokenStore,
+  } from '/__nexus/client/client.js'
+
+  // Shared opts every composable accepts: pass an explicit client
+  // when an app wants to drive a non-default backend without
+  // touching the page-shared singleton.
+  export interface UseOptions {
+    client?: NexusClient
+  }
+
+  // ──────── Singleton client ────────
+
+  /** Get or lazy-construct the page-shared NexusClient. */
+  export function useNexus(opts?: NexusClientOptions): NexusClient
+  /** Replace the shared client — for tests / SSR harnesses. */
+  export function setNexus(client: NexusClient): void
+
+  // ──────── REST: useQuery / useMutation ────────
+
+  /**
+   * Reactive REST query handle. data/error/loading mutate as the
+   * call resolves; refresh() forces a new fetch with current args;
+   * abort() cancels the in-flight request.
+   */
+  export interface QueryHandle<T> {
+    data: Ref<T | null>
+    error: Ref<NexusError | null>
+    loading: Ref<boolean>
+    refresh(): Promise<void>
+    abort(): void
+  }
+
+  export interface UseQueryOptions extends UseOptions {
+    /** Request headers per call. */
+    headers?: Record<string, string>
+    /**
+     * When false, suppresses the deep-watch on args. Caller drives
+     * via refresh() manually. Default true.
+     */
+    watch?: boolean
+  }
+
+  /** Args supplied as a plain value, a ref, or a getter. */
+  export type ArgsSource<A> = A | Ref<A> | (() => A)
+
+  /** Typed REST query — picks args + return from RestEndpoints. */
+  export function useQuery<K extends keyof RestEndpoints>(
+    method: ExtractRestMethod<K>,
+    path: ExtractRestPath<K>,
+    args?: ArgsSource<RestEndpoints[K]['args']>,
+    opts?: UseQueryOptions,
+  ): QueryHandle<RestEndpoints[K]['return']>
+
+  /** Untyped escape hatch for arbitrary REST calls. */
+  export function useQuery<T = unknown>(
+    method: string, path: string,
+    args?: ArgsSource<object>,
+    opts?: UseQueryOptions,
+  ): QueryHandle<T>
+
+  /**
+   * Manual-fire mutation handle. Does not run on mount; mutate()
+   * fires the call, populates data, and resolves with the response.
+   */
+  export interface MutationHandle<A, T> {
+    mutate(args?: A, opts?: { headers?: Record<string, string>; signal?: AbortSignal }): Promise<T>
+    data: Ref<T | null>
+    error: Ref<NexusError | null>
+    loading: Ref<boolean>
+  }
+
+  export function useMutation<K extends keyof RestEndpoints>(
+    method: ExtractRestMethod<K>,
+    path: ExtractRestPath<K>,
+    opts?: UseOptions,
+  ): MutationHandle<RestEndpoints[K]['args'], RestEndpoints[K]['return']>
+
+  export function useMutation<A = object, T = unknown>(
+    method: string, path: string, opts?: UseOptions,
+  ): MutationHandle<A, T>
+
+  // ──────── GraphQL: useGqlQuery / useGqlMutation ────────
+
+  export function useGqlQuery<K extends keyof GraphqlOps>(
+    name: K,
+    args?: ArgsSource<GraphqlOps[K]['args']>,
+    opts?: UseQueryOptions,
+  ): QueryHandle<GraphqlOps[K]['return']>
+
+  export function useGqlMutation<K extends keyof GraphqlOps>(
+    name: K, opts?: UseOptions,
+  ): MutationHandle<GraphqlOps[K]['args'], GraphqlOps[K]['return']>
+
+  // ──────── CRUD ────────
+
+  /**
+   * Reactive CRUD list with optimistic updates and optional WS-
+   * backed live sync. T is the entity shape; supply via the
+   * generic param when the entity name doesn't match a Refs key.
+   */
+  export interface CrudListHandle<T> {
+    items: Ref<T[]>
+    loading: Ref<boolean>
+    error: Ref<NexusError | null>
+    refresh(args?: object): Promise<void>
+    create(body: Partial<T>): Promise<T>
+    update(id: string | number, body: Partial<T>): Promise<T>
+    remove(id: string | number): Promise<void>
+    ws: WSHandle<keyof WSMessages> | null
+  }
+
+  export interface UseCrudOptions extends UseOptions {
+    /** WS path to subscribe for <name>.created / .updated / .deleted events. */
+    wsPath?: string
+    /** Disable the WS subscription entirely. Default true (subscribe). */
+    subscribe?: boolean
+    /** Skip the initial list() on mount; caller drives via refresh(). */
+    lazy?: boolean
+    /** Field used as the entity identifier. Defaults to 'id'. */
+    idField?: string
+    /** Args supplied to the initial list() call. */
+    initialArgs?: object
+  }
+
+  export function useCrud<T = unknown>(
+    name: string, opts?: UseCrudOptions,
+  ): CrudListHandle<T>
+
+  // ──────── WebSocket ────────
+
+  /** Reactive WebSocket handle scoped to one path. */
+  export interface UseWSHandle<P extends keyof WSMessages> {
+    connected: Ref<boolean>
+    handle: WSHandle<P>
+    on<T extends keyof WSMessages[P]>(
+      type: T, fn: (data: WSMessages[P][T]) => void,
+    ): WSHandle<P>
+    on(type: '*' | '@close' | '@error', fn: (data: unknown) => void): WSHandle<P>
+    send<T extends keyof WSMessages[P]>(type: T, data: WSMessages[P][T]): WSHandle<P>
+    connect(): Promise<WSHandle<P>>
+    close(): void
+  }
+
+  export interface UseWSOptions extends UseOptions {
+    /** Connect immediately on mount. Default true. */
+    eager?: boolean
+  }
+
+  export function useWS<P extends keyof WSMessages>(
+    path: P, opts?: UseWSOptions,
+  ): UseWSHandle<P>
+
+  // ──────── Auth ────────
+
+  /** Reactive auth state + login/logout/me actions. */
+  export interface UseAuthHandle {
+    token: Ref<string | null>
+    identity: Ref<unknown>
+    loading: Ref<boolean>
+    error: Ref<NexusError | null>
+    isAuthenticated: ComputedRef<boolean>
+    login(creds: object): Promise<unknown>
+    logout(): Promise<void>
+    refresh(): Promise<void>
+  }
+
+  export interface UseAuthOptions extends UseOptions {
+    /** Bootstrap by calling /me on mount when a token is present. Default true. */
+    eager?: boolean
+  }
+
+  export function useAuth(opts?: UseAuthOptions): UseAuthHandle
+
+  // Default export — most-common composable, paired with
+  //   import useNexus from '/__nexus/client/vue.js'
+  export default useNexus
+}
 `)
 }
 

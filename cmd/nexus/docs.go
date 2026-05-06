@@ -717,8 +717,30 @@ envelope type):
 
 ─── TYPESCRIPT ───────────────────────────────────────────────────────
 
-Point your tsconfig at the served .d.ts (or the dumped one — see
-` + "`nexus client --out`" + ` below). Types include:
+The .d.ts ships TWO module declarations — one for the runtime
+(/__nexus/client/client.js) and one for the Vue composables
+(/__nexus/client/vue.js). TS apps importing either get full
+completion + signature checks, no @types/* package needed.
+
+Wire your tsconfig.json (the CLI does this for you — see "DUMP
+TO DISK" below):
+
+    {
+      "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "strict": true,
+        "baseUrl": ".",
+        "paths": {
+          "/__nexus/client/client.js": ["./sdk/client.js"],
+          "/__nexus/client/vue.js":    ["./sdk/vue.js"]
+        }
+      },
+      "include": ["src/**/*", "sdk/client.d.ts"]
+    }
+
+Types include:
 
     interface Pet { id: string; name: string; age?: number }
 
@@ -730,11 +752,26 @@ Point your tsconfig at the served .d.ts (or the dumped one — see
     interface GraphqlOps  { listPets: { kind: 'query'; ... } }
     interface WSMessages  { '/events': { 'chat.send': {...} } }
 
-The runtime client surface is typed via TS template-literal type
-inference, so:
+Runtime surface uses template-literal type inference:
 
     nx.rest('GET', '/pets', { limit: 20 })   // return: Pet[]
     nx.rest('POST', '/pets', { name: 'Rex' }) // return: Pet
+
+Composable signatures are typed via the same maps:
+
+    const pets   = useQuery('GET', '/pets', { limit: 20 })
+    // pets.data: Ref<Pet[] | null>
+
+    const create = useMutation('POST', '/pets')
+    // create.mutate({ name: 'Rex' }): Promise<Pet>
+
+    const events = useWS('/events')
+    events.on('chat.send', msg => /* msg typed from WSMessages */)
+
+    const auth = useAuth()
+    // auth.identity: Ref<unknown>  (cast to your User type or
+    //                              register the type via Refs to
+    //                              get end-to-end inference)
 
 
 ─── DUMP TO DISK (vendoring) ─────────────────────────────────────────
