@@ -286,6 +286,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 			Middleware: mwNames,
 		})
 		recordEndpointDeps(app, service, opName, deps, sh.depTypes)
+		recordEndpointSchema(app, service, opName, sh)
 		return nil
 	})
 	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}

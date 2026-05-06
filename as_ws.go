@@ -150,6 +150,7 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 			Path:      mountedPath,
 		})
 		recordEndpointDeps(app, service, endpointName, deps, sh.depTypes)
+		recordEndpointSchema(app, service, endpointName, sh)
 		return nil
 	})
 	return &wsOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}

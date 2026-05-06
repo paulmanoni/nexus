@@ -23,7 +23,7 @@ func (f ExtractorFunc) Extract(r *http.Request) (string, bool) { return f(r) }
 // scheme name per RFC 7235. Empty tokens ("Bearer ") are treated as
 // absent so downstream Required() correctly fires 401.
 func Bearer() Extractor {
-	return ExtractorFunc(func(r *http.Request) (string, bool) {
+	return bearerExtractor{Extractor: ExtractorFunc(func(r *http.Request) (string, bool) {
 		h := r.Header.Get("Authorization")
 		if h == "" {
 			return "", false
@@ -40,32 +40,32 @@ func Bearer() Extractor {
 			return "", false
 		}
 		return tok, true
-	})
+	})}
 }
 
 // Cookie reads the value of a named cookie (typically a session ID).
 // Non-existent cookie → ("", false), same treatment as a missing Bearer
 // header, so public routes keep working.
 func Cookie(name string) Extractor {
-	return ExtractorFunc(func(r *http.Request) (string, bool) {
+	return cookieExtractor{name: name, Extractor: ExtractorFunc(func(r *http.Request) (string, bool) {
 		c, err := r.Cookie(name)
 		if err != nil || c.Value == "" {
 			return "", false
 		}
 		return c.Value, true
-	})
+	})}
 }
 
 // APIKey reads a named header (e.g. "X-API-Key"). Trailing whitespace
 // stripped for ergonomics; empty values are treated as absent.
 func APIKey(header string) Extractor {
-	return ExtractorFunc(func(r *http.Request) (string, bool) {
+	return apiKeyExtractor{header: header, Extractor: ExtractorFunc(func(r *http.Request) (string, bool) {
 		v := strings.TrimSpace(r.Header.Get(header))
 		if v == "" {
 			return "", false
 		}
 		return v, true
-	})
+	})}
 }
 
 // Chain runs extractors in order and returns the first hit. Useful when
@@ -74,12 +74,12 @@ func APIKey(header string) Extractor {
 //
 //	auth.Chain(auth.Bearer(), auth.Cookie("session"))
 func Chain(extractors ...Extractor) Extractor {
-	return ExtractorFunc(func(r *http.Request) (string, bool) {
+	return chainExtractor{parts: extractors, Extractor: ExtractorFunc(func(r *http.Request) (string, bool) {
 		for _, e := range extractors {
 			if tok, ok := e.Extract(r); ok {
 				return tok, true
 			}
 		}
 		return "", false
-	})
+	})}
 }

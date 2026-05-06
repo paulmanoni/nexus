@@ -38,6 +38,12 @@ type baseEndpointConfig struct {
 	// Graph) are extracted at apply time; this slice is the canonical
 	// metadata source for the dashboard.
 	bundles []middleware.Middleware
+
+	// tags accumulate registry.Endpoint.Tags entries via options like
+	// nexus.AuthRoute (sets "auth.flow" → "login" | "logout" | "me").
+	// Surfaced on the dashboard + the client SDK manifest. Lazy-init
+	// inside the option setter so endpoints with no tags pay nothing.
+	tags map[string]string
 }
 
 func (b *baseEndpointConfig) setModule(name string)    { b.module = name }
@@ -86,6 +92,14 @@ func registerEndpoint(app *App, cfg *baseEndpointConfig, service string, e regis
 	e.Module = cfg.module
 	e.Deployment = cfg.deployment
 	e.Description = cfg.description
+	if len(cfg.tags) > 0 {
+		if e.Tags == nil {
+			e.Tags = map[string]string{}
+		}
+		for k, v := range cfg.tags {
+			e.Tags[k] = v
+		}
+	}
 	app.registry.RegisterEndpoint(e)
 }
 
@@ -106,6 +120,37 @@ func recordEndpointDeps(app *App, service, endpointName string, deps []reflect.V
 	if svcDeps := collectServiceDeps(deps, depTypes, service); len(svcDeps) > 0 {
 		app.registry.SetEndpointServiceDeps(service, endpointName, svcDeps)
 	}
+}
+
+// recordEndpointSchema reflects the handler's args/return reflect.Type
+// into structural TypeRef values and stamps them on the registered
+// endpoint via the registry's SetEndpointSchema mutator. Powers the
+// client SDK's TS codegen at GET /__nexus/client/manifest.json — every
+// endpoint that goes through here surfaces its full request/response
+// shape to the SDK without an external schema source.
+//
+// Named struct types (User, Pet, …) collect into the registry's
+// shared refs pool so they appear once in the manifest even when N
+// endpoints share them. Anonymous args structs are inlined.
+//
+// Called from AsRest and AsWS after registerEndpoint runs (so the
+// endpoint exists for the mutator to find). The GraphQL path mirrors
+// this from automount.go where the handlerShape is in scope.
+func recordEndpointSchema(app *App, service, endpointName string, sh handlerShape) {
+	refs := app.schemaRefs()
+	var args, ret *registry.TypeRef
+	if sh.argsType != nil {
+		v := registry.WalkType(sh.argsType, refs)
+		args = &v
+	}
+	if sh.returnType != nil {
+		v := registry.WalkType(sh.returnType, refs)
+		ret = &v
+	}
+	if args == nil && ret == nil {
+		return
+	}
+	app.registry.SetEndpointSchema(service, endpointName, args, ret)
 }
 
 // attachEndpointResources attaches every NexusResourceProvider dep to

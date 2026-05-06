@@ -50,6 +50,13 @@ type App struct {
 	// live snapshot stream. Wired in New so registry mutations push
 	// snapshots instead of poll.
 	liveNotifier  *live.Notifier
+	// schemaRefsMu guards schemaRefs which holds the deduped pool of
+	// named-struct shapes referenced by endpoint ArgsSchema /
+	// ReturnSchema. Populated lazily as endpoints register; surfaced
+	// by /__nexus/client/manifest.json's Refs section. Lazy init via
+	// schemaRefs() so non-client apps pay nothing.
+	schemaRefsMu  sync.Mutex
+	schemaRefsMap map[string]registry.NamedType
 	// cacheMgr is always non-nil — created by New() with a default
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
@@ -330,6 +337,34 @@ func New(cfg Config) *App {
 func (a *App) Engine() *gin.Engine          { return a.engine }
 func (a *App) Registry() *registry.Registry { return a.registry }
 func (a *App) Bus() *trace.Bus              { return a.bus }
+
+// schemaRefs returns the app's shared pool of walked named struct
+// types. Lazy-initialized so apps that never run the client SDK
+// generator carry no allocation. Called by recordEndpointSchema
+// during AsRest / AsWS registration; the client manifest builder
+// reads the same map at request time.
+//
+// The map is mutated in-place by registry.WalkType during walks;
+// the lock guards the lazy init only. WalkType itself is single-
+// threaded per call (one endpoint at a time during fx graph
+// construction), so concurrent walks aren't a concern.
+func (a *App) schemaRefs() map[string]registry.NamedType {
+	a.schemaRefsMu.Lock()
+	if a.schemaRefsMap == nil {
+		a.schemaRefsMap = map[string]registry.NamedType{}
+	}
+	m := a.schemaRefsMap
+	a.schemaRefsMu.Unlock()
+	return m
+}
+
+// SchemaRefs is the public accessor for the deduped named-type
+// pool. Used by the client SDK package (client/) at manifest-build
+// time to populate the Refs section. Returns the live map; callers
+// MUST NOT mutate.
+func (a *App) SchemaRefs() map[string]registry.NamedType {
+	return a.schemaRefs()
+}
 func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
 func (a *App) RateLimiter() ratelimit.Store { return a.rlStore }
 
