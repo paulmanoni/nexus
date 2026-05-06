@@ -92,6 +92,23 @@ func (h *Handler) Reload() {
 	h.mu.Unlock()
 }
 
+// SetAuthInfo installs (or replaces) the auth-info provider used to
+// populate the manifest's Auth section on next build. Wired by
+// auth.Module's option chain when both the SDK and auth are in
+// the same app — separates the cycle (client/ doesn't import auth/,
+// auth/ doesn't import client/, the bridge lives in nexus/).
+//
+// Calls Reload internally so the cached manifest rebuilds with the
+// new auth shape on the next request.
+func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
+	h.mu.Lock()
+	h.authInfo = fn
+	h.once = &sync.Once{}
+	h.manifest = nil
+	h.dts = nil
+	h.mu.Unlock()
+}
+
 // Manifest returns the projected SDK manifest, building it from
 // the registry on first call and caching the result. Exposed so
 // tests can introspect the manifest without going through the HTTP
