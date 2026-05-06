@@ -61,27 +61,73 @@ function passesKind(e) {
 
 const filtered = computed(() => {
   const f = filter.value.toLowerCase().trim()
-  const matchText = (e) => !f || JSON.stringify(e).toLowerCase().includes(f)
   const out = []
   for (let i = events.value.length - 1; i >= 0; i--) {
     const e = events.value[i]
-    if (passesKind(e) && matchText(e)) out.push(e)
+    if (!passesKind(e)) continue
+    // Search by a per-event cached lowercased haystack instead of
+    // re-stringifying every event on every keystroke. The cache lives
+    // on the event object as a non-enumerable __h field so it doesn't
+    // round-trip through JSON if events get serialized elsewhere.
+    if (f) {
+      let h = e.__h
+      if (h === undefined) {
+        h = JSON.stringify(e).toLowerCase()
+        try { Object.defineProperty(e, '__h', { value: h, enumerable: false }) }
+        catch { e.__h = h }
+      }
+      if (!h.includes(f)) continue
+    }
+    out.push(e)
   }
   return out
 })
 
 // Unread badge — count of events seen since the rail was last
 // expanded. Resets on expand. Lets a collapsed rail show "look at me"
-// without the user scrolling back to find the new one.
+// without the user scrolling back to find the new one. Tracked
+// directly on event ingestion so it's accurate even before the
+// batched flush lands new events into events.value.
 const unread = ref(0)
-watch(events, () => { if (!expanded.value) unread.value++ }, { flush: 'post' })
 watch(expanded, (v) => { if (v) unread.value = 0 })
+
+// Batched ingestion: a WS burst (especially WebSocket-heavy apps with
+// 5–50 frames per second) used to push each event synchronously,
+// re-running the filtered computed and re-rendering the v-for per
+// event. That blocked interaction — typing in the filter or clicking
+// chips felt frozen because the main thread was diffing 200-row
+// lists between every event.
+//
+// Now incoming events accumulate in a pending buffer; a single
+// requestAnimationFrame flush moves them into events.value at most
+// once per frame (~16ms). Result: filtered re-runs once per frame
+// regardless of incoming rate, and the rail stays interactive even
+// under sustained bursts.
+let pendingBuf = []
+let flushScheduled = false
+function scheduleFlush() {
+  if (flushScheduled) return
+  flushScheduled = true
+  requestAnimationFrame(() => {
+    flushScheduled = false
+    if (!pendingBuf.length) return
+    const incoming = pendingBuf
+    pendingBuf = []
+    let next = events.value.concat(incoming)
+    if (next.length > MAX) next = next.slice(next.length - MAX)
+    events.value = next
+  })
+}
 
 onMounted(() => {
   ws = subscribeEvents(
     e => {
-      events.value.push(e)
-      if (events.value.length > MAX) events.value.splice(0, events.value.length - MAX)
+      pendingBuf.push(e)
+      // Increment unread eagerly — it's a single ref bump, doesn't
+      // trigger the v-for diff. The user sees "look at me" pulse in
+      // real time even though the visible list updates per-frame.
+      if (!expanded.value) unread.value++
+      scheduleFlush()
     },
     status => { connected.value = status === 'open' }
   )
