@@ -177,8 +177,12 @@ func TestClientManifest_HTTPRouteServesJSON(t *testing.T) {
 		t.Errorf("cached manifest changed across requests: %v vs %v", m, m2)
 	}
 
-	// client.js / client.d.ts / vue.js routes also respond.
-	for _, path := range []string{"/__nexus/client/client.js", "/__nexus/client/client.d.ts", "/__nexus/client/vue.js"} {
+	// All five SDK routes respond — both .js's plus their paired
+	// .d.ts files plus the manifest.
+	for _, path := range []string{
+		"/__nexus/client/client.js", "/__nexus/client/client.d.ts",
+		"/__nexus/client/vue.js", "/__nexus/client/vue.d.ts",
+	} {
 		rr, err := http.Get(ts.URL + path)
 		if err != nil || rr.StatusCode != http.StatusOK {
 			t.Errorf("GET %s: err=%v status=%d", path, err, statusOf(rr))
@@ -234,11 +238,16 @@ func TestClientManifest_DTSCarriesRefsAndEndpoints(t *testing.T) {
 		"'POST /pets':",
 		"return: pet[]",
 		"args: pet",
-		"declare module '/__nexus/client/client.js'",
+		// Top-level runtime exports — paired with client.js by file
+		// proximity (no `declare module` wrapper).
+		"export class NexusClient",
 	} {
 		if !strings.Contains(dts, sym) {
 			t.Errorf("DTS missing %q\n--- DTS ---\n%s\n--- end ---", sym, dts)
 		}
+	}
+	if strings.Contains(dts, "declare module '/__nexus/client/client.js'") {
+		t.Error("served client.d.ts should not wrap exports in a declare-module block")
 	}
 }
 
@@ -441,10 +450,10 @@ func TestClientManifest_OutDirAutoDump(t *testing.T) {
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
 
-	// All four SDK files should exist immediately after Mount —
-	// no HTTP request needed. .d.ts must reflect the registered
-	// pet endpoint (manifest was eagerly built).
-	for _, name := range []string{"client.js", "vue.js", "manifest.json", "client.d.ts"} {
+	// All five SDK files should exist immediately after Mount —
+	// no HTTP request needed. Each .d.ts must reflect the
+	// registered pet endpoint (manifest was eagerly built).
+	for _, name := range []string{"client.js", "client.d.ts", "vue.js", "vue.d.ts", "manifest.json"} {
 		path := out + "/" + name
 		if info, err := os.Stat(path); err != nil {
 			t.Errorf("auto-dump missing %s: %v", path, err)
@@ -473,6 +482,39 @@ func TestClientManifest_OutDirAutoDump(t *testing.T) {
 	dts, _ := os.ReadFile(out + "/client.d.ts")
 	if !strings.Contains(string(dts), "'GET /pets'") {
 		t.Errorf("client.d.ts didn't pick up the registered endpoint:\n%s", dts)
+	}
+
+	// nexus.ts wiring scaffold — sibling-relative imports, the
+	// singleton constructed via setNexus, composables re-exported.
+	nexusTS, err := os.ReadFile(out + "/nexus.ts")
+	if err != nil {
+		t.Fatalf("nexus.ts not written: %v", err)
+	}
+	for _, want := range []string{
+		"from './client.js'",
+		"from './vue.js'",
+		"setNexus(",
+		"new NexusClient({",
+		"useGqlQuery,",
+	} {
+		if !strings.Contains(string(nexusTS), want) {
+			t.Errorf("nexus.ts missing %q", want)
+		}
+	}
+
+	// Write-once semantics: edit the file and re-run the dump.
+	// The user's edit must survive — nexus.ts is a scaffold, not
+	// a re-emitted artifact.
+	stamp := []byte("// USER EDIT — must survive re-dump\n")
+	if err := os.WriteFile(out+"/nexus.ts", stamp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.ClientHandler().Dump(out, tsconfig, io.Discard); err != nil {
+		t.Fatalf("re-dump: %v", err)
+	}
+	post, _ := os.ReadFile(out + "/nexus.ts")
+	if string(post) != string(stamp) {
+		t.Error("nexus.ts was overwritten on re-dump — must use write-once semantics")
 	}
 }
 

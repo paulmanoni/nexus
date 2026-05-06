@@ -3,13 +3,14 @@
 // directly from the Go binary. No separate npm package; the SDK
 // ships with the app.
 //
-// Mount installs four routes under cfg.Path (default
+// Mount installs five routes under cfg.Path (default
 // "/__nexus/client"):
 //
 //	GET  <path>/manifest.json    application/json
 //	GET  <path>/client.js        application/javascript (ESM)
-//	GET  <path>/client.d.ts      application/typescript (generated)
+//	GET  <path>/client.d.ts      application/typescript (paired with client.js)
 //	GET  <path>/vue.js           application/javascript (ESM, Vue 3)
+//	GET  <path>/vue.d.ts         application/typescript (paired with vue.js)
 //
 // The manifest is the foundation. It enumerates every endpoint
 // (REST, GraphQL, WebSocket), their typed args/return schemas, the
@@ -62,10 +63,13 @@ type Config struct {
 	Manifest func() Manifest
 
 	// OutDir, when non-empty, makes Mount also dump the SDK files
-	// (client.js, vue.js, manifest.json, client.d.ts) to disk on
-	// startup so a frontend's filesystem-based tooling (TypeScript
-	// compiler, Vite, JetBrains, VS Code) can resolve types and
-	// runtime imports without a manual `nexus client --out` step.
+	// (client.js + client.d.ts, vue.js + vue.d.ts, manifest.json) to
+	// disk on startup so a frontend's filesystem-based tooling
+	// (TypeScript compiler, Vite, JetBrains, VS Code) can resolve
+	// types and runtime imports without a manual `nexus client --out`
+	// step. Each .js sits next to its .d.ts so TS auto-pairs them
+	// regardless of whether the import uses the runtime URL or a
+	// plain relative path.
 	//
 	// Idempotent: files are byte-compared and skipped when content
 	// matches, preserving mtime — file-watcher reloads + IDE
@@ -100,10 +104,11 @@ type Handler struct {
 	schemaRefs func() map[string]registry.NamedType
 	basePath   string
 
-	mu       sync.Mutex
-	once     *sync.Once
-	manifest []byte
-	dts      []byte
+	mu        sync.Mutex
+	once      *sync.Once
+	manifest  []byte
+	dtsClient []byte
+	dtsVue    []byte
 }
 
 // Reload drops the cached manifest + .d.ts so the next request
@@ -115,7 +120,8 @@ func (h *Handler) Reload() {
 	h.mu.Lock()
 	h.once = &sync.Once{}
 	h.manifest = nil
-	h.dts = nil
+	h.dtsClient = nil
+	h.dtsVue = nil
 	h.mu.Unlock()
 }
 
@@ -132,7 +138,8 @@ func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
 	h.authInfo = fn
 	h.once = &sync.Once{}
 	h.manifest = nil
-	h.dts = nil
+	h.dtsClient = nil
+	h.dtsVue = nil
 	h.mu.Unlock()
 }
 
@@ -162,12 +169,14 @@ func (h *Handler) build() {
 	once.Do(func() {
 		m := h.Manifest()
 		body, err := json.MarshalIndent(m, "", "  ")
-		dts := GenerateDTS(m)
+		clientDTS := GenerateClientDTS(m)
+		vueDTS := GenerateVueDTS(m)
 		h.mu.Lock()
 		if err == nil {
 			h.manifest = body
 		}
-		h.dts = []byte(dts)
+		h.dtsClient = []byte(clientDTS)
+		h.dtsVue = []byte(vueDTS)
 		h.mu.Unlock()
 	})
 }
@@ -242,7 +251,7 @@ func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo,
 	g.GET("/client.d.ts", func(c *gin.Context) {
 		h.build()
 		h.mu.Lock()
-		body := h.dts
+		body := h.dtsClient
 		h.mu.Unlock()
 		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 		c.Data(http.StatusOK, "application/typescript; charset=utf-8", body)
@@ -250,6 +259,14 @@ func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo,
 	g.GET("/vue.js", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 		c.Data(http.StatusOK, "application/javascript; charset=utf-8", vueJS)
+	})
+	g.GET("/vue.d.ts", func(c *gin.Context) {
+		h.build()
+		h.mu.Lock()
+		body := h.dtsVue
+		h.mu.Unlock()
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Data(http.StatusOK, "application/typescript; charset=utf-8", body)
 	})
 	// Auto-dump on cfg.OutDir is wired by the caller via a
 	// fx.Lifecycle.OnStart hook (see nexus.New). Mount can't dump

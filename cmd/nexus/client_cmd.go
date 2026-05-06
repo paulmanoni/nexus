@@ -135,7 +135,7 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 		// developer running this against a non-running app should
 		// still get a useful dump, not a failed exit.
 		fmt.Fprintf(stderr, "warn: %v\n", err)
-		fmt.Fprintln(stderr, "warn: skipped manifest.json + client.d.ts (no manifest source)")
+		fmt.Fprintln(stderr, "warn: skipped manifest.json + client.d.ts + vue.d.ts (no manifest source)")
 		return nil
 	}
 	if manifestBytes == nil {
@@ -151,8 +151,18 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 	if err := client.WriteIfChanged(filepath.Join(opts.Out, "manifest.json"), manifestBytes, stdout); err != nil {
 		return err
 	}
-	dts := client.GenerateDTS(m)
-	if err := client.WriteIfChanged(filepath.Join(opts.Out, "client.d.ts"), []byte(dts), stdout); err != nil {
+	clientDTS := client.GenerateClientDTS(m)
+	if err := client.WriteIfChanged(filepath.Join(opts.Out, "client.d.ts"), []byte(clientDTS), stdout); err != nil {
+		return err
+	}
+	vueDTS := client.GenerateVueDTS(m)
+	if err := client.WriteIfChanged(filepath.Join(opts.Out, "vue.d.ts"), []byte(vueDTS), stdout); err != nil {
+		return err
+	}
+	// nexus.ts is the wiring scaffold — write-once so re-running
+	// the CLI never clobbers the developer's edits.
+	nexusTS := client.GenerateNexusTS(m)
+	if err := client.WriteIfMissing(filepath.Join(opts.Out, "nexus.ts"), []byte(nexusTS), stdout); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "  manifest endpoints: %d\n", len(m.Endpoints))

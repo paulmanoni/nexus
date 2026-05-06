@@ -31,6 +31,9 @@ func TestClientCmd_StaticOnly(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "client.d.ts")); err == nil {
 		t.Error("client.d.ts shouldn't exist without --url / --manifest")
 	}
+	if _, err := os.Stat(filepath.Join(dir, "vue.d.ts")); err == nil {
+		t.Error("vue.d.ts shouldn't exist without --url / --manifest")
+	}
 
 	js := readFile(t, filepath.Join(dir, "client.js"))
 	if !strings.Contains(string(js), "export class NexusClient") {

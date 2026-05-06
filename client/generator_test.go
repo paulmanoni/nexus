@@ -105,15 +105,32 @@ func TestGenerateDTS_TinyManifestSnapshot(t *testing.T) {
 		"'/events': {",
 		"'chat.send': { text: string }",
 		"'chat.typing': {}",
-		// client.js module declaration
-		"declare module '/__nexus/client/client.js'",
+		// Top-level runtime exports — paired with client.js by file
+		// proximity (no `declare module` wrapper).
 		"export class NexusClient",
 		"export class NexusError",
 		"export interface CrudHandle",
 		"export class WSHandle<P extends keyof WSMessages>",
 		"export interface AuthNamespace",
-		// vue.js module declaration — typed composables
-		"declare module '/__nexus/client/vue.js'",
+		"export type ExtractRestMethod<K>",
+	}
+
+	for _, s := range wantSubstrings {
+		if !strings.Contains(out, s) {
+			t.Errorf("client.d.ts missing substring %q\n--- output ---\n%s\n--- end ---", s, out)
+		}
+	}
+	// Must NOT wrap exports in a declare-module block — that
+	// stops TS from auto-pairing the .d.ts with its .js sibling on
+	// disk. Regression marker for the v0.28.6 fix.
+	if strings.Contains(out, "declare module '/__nexus/client/client.js'") {
+		t.Error("client.d.ts should not wrap exports in a `declare module` block — they must be top-level so TS auto-pairs with client.js")
+	}
+
+	// Vue half — separate file, top-level composable exports,
+	// imports shared types from the './client.js' sibling.
+	vueOut := GenerateVueDTS(m)
+	wantVueSubstrings := []string{
 		"export function useNexus",
 		"export function useQuery<K extends keyof RestEndpoints>",
 		"export function useMutation<K extends keyof RestEndpoints>",
@@ -125,20 +142,25 @@ func TestGenerateDTS_TinyManifestSnapshot(t *testing.T) {
 		"export interface QueryHandle<T>",
 		"export interface CrudListHandle<T>",
 		"export interface UseAuthHandle",
-		// Vue's reactive primitives are imported, not redefined
 		"import type { Ref, ComputedRef } from 'vue'",
+		"from './client.js'",
 	}
-
-	for _, s := range wantSubstrings {
-		if !strings.Contains(out, s) {
-			t.Errorf("DTS missing substring %q\n--- output ---\n%s\n--- end ---", s, out)
+	for _, s := range wantVueSubstrings {
+		if !strings.Contains(vueOut, s) {
+			t.Errorf("vue.d.ts missing substring %q\n--- output ---\n%s\n--- end ---", s, vueOut)
 		}
+	}
+	if strings.Contains(vueOut, "declare module '/__nexus/client/vue.js'") {
+		t.Error("vue.d.ts should not wrap exports in a `declare module` block")
 	}
 
 	// Stability — same inputs, byte-equal outputs (snapshot tests
 	// downstream rely on this).
-	if GenerateDTS(m) != out {
-		t.Error("GenerateDTS not deterministic — same input produced different output")
+	if GenerateClientDTS(m) != out {
+		t.Error("GenerateClientDTS not deterministic — same input produced different output")
+	}
+	if GenerateVueDTS(m) != vueOut {
+		t.Error("GenerateVueDTS not deterministic — same input produced different output")
 	}
 }
 
@@ -147,17 +169,22 @@ func TestGenerateDTS_TinyManifestSnapshot(t *testing.T) {
 // emit just the header + module declaration without crashing on
 // nil maps / empty slices.
 func TestGenerateDTS_EmptyManifest(t *testing.T) {
-	out := GenerateDTS(Manifest{Version: SchemaVersion})
+	out := GenerateClientDTS(Manifest{Version: SchemaVersion})
 	if !strings.Contains(out, "Schema version: "+SchemaVersion) {
 		t.Error("header missing")
 	}
-	if !strings.Contains(out, "declare module '/__nexus/client/client.js'") {
-		t.Error("module declaration missing")
+	// Runtime classes must always be present — they're the type
+	// pair for client.js regardless of whether endpoints are
+	// registered yet.
+	if !strings.Contains(out, "export class NexusClient") {
+		t.Error("NexusClient export missing on empty manifest")
 	}
-	// No empty interfaces emitted — RestEndpoints / GraphqlOps /
-	// WSMessages should be skipped when no endpoints exist.
-	if strings.Contains(out, "export interface RestEndpoints {\n}") {
-		t.Error("emitted empty RestEndpoints interface — should be skipped")
+	// Empty discriminated maps ARE emitted (as `{}` shells) so the
+	// runtime surface's `K extends keyof RestEndpoints` constraint
+	// resolves to `never` rather than triggering a "cannot find
+	// name" error in the consuming app's TS.
+	if !strings.Contains(out, "export interface RestEndpoints {}") {
+		t.Error("expected empty RestEndpoints shell for typeof-keyof use sites")
 	}
 }
 
