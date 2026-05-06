@@ -66,8 +66,14 @@ func TestGenerateNexusTS_Shape(t *testing.T) {
 	if strings.Contains(out, "/__nexus/client/client.js") || strings.Contains(out, "/__nexus/client/vue.js") {
 		t.Error("nexus.ts should import via sibling-relative './client.js' / './vue.js', not the runtime URL")
 	}
-	if strings.Contains(out, "@ts-ignore") {
-		t.Error("nexus.ts should not need @ts-ignore — types auto-pair via sibling .d.ts files")
+	// @ts-ignore is allowed only on the import.meta.env line —
+	// Vite-style env access without forcing every consumer to
+	// pull in vite/client types.
+	if strings.Count(out, "@ts-ignore") != 1 {
+		t.Errorf("nexus.ts should have exactly one @ts-ignore (on import.meta.env), got %d", strings.Count(out, "@ts-ignore"))
+	}
+	if !strings.Contains(out, "// @ts-ignore — import.meta.env") {
+		t.Error("expected @ts-ignore guard immediately above the import.meta.env line")
 	}
 }
 
