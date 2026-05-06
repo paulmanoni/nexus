@@ -77,8 +77,33 @@ func autoMountGraphQL(in autoMountIn) error {
 			defaultType = reflect.TypeFor[*Service]()
 		}
 	}
+	// moduleServices caches per-module service instances we lazily
+	// create so handlers declared inside nexus.Module("foo", ...) that
+	// don't take a service-wrapper dep get attributed to "foo" rather
+	// than adopted by some unrelated lone-service heuristic. Without
+	// this, a portal_admin-style app with a single named UserService
+	// + a migrations module of plain-func GraphQL handlers ends up
+	// drawing migrations packets/edges as if they came from user —
+	// the dashboard shows the wrong source.
+	moduleServices := map[string]*Service{}
 	resolveUnresolved := func(f GqlField) (GqlField, error) {
 		if f.ServiceType != nil && f.Service != nil {
+			return f, nil
+		}
+		// Module-scoped fallback wins over the lone-service heuristic.
+		// A handler declared in nexus.Module("migrations", ...) gets a
+		// service named "migrations" — its module is the strongest
+		// available signal of intent. The lone-service behavior is
+		// preserved only for handlers with NO module annotation
+		// (top-level Provide / Invoke registrations).
+		if f.Module != "" {
+			svc, ok := moduleServices[f.Module]
+			if !ok {
+				svc = in.App.Service(f.Module)
+				moduleServices[f.Module] = svc
+			}
+			f.ServiceType = reflect.TypeFor[*Service]()
+			f.Service = svc
 			return f, nil
 		}
 		f.ServiceType = defaultType
