@@ -207,6 +207,16 @@ type Registry struct {
 	// typically wired to a live.Notifier.Notify which just nudges
 	// a buffered channel.
 	changeHook func()
+
+	// healthCache holds the last-observed Healthy() value per
+	// resource name. Resources() parallelizes Healthy() calls with
+	// a per-probe timeout so a slow DB ping can't pin the whole
+	// snapshot — when the timer fires before the probe returns,
+	// Resources() falls back to the cached value here. The slow
+	// probe's goroutine completes in the background and updates
+	// the cache for the next snapshot.
+	healthCacheMu sync.Mutex
+	healthCache   map[string]bool
 }
 
 func New() *Registry {
@@ -216,6 +226,7 @@ func New() *Registry {
 		attached:    map[string][]string{},
 		middlewares: map[string]middleware.Info{},
 		workers:     map[string]Worker{},
+		healthCache: map[string]bool{},
 	}
 	for _, m := range middleware.Builtins {
 		r.middlewares[m.Name] = m
@@ -680,7 +691,21 @@ func (r *Registry) DefaultOfKind(kind resource.Kind) resource.Resource {
 	return first
 }
 
-// Resources returns a fresh snapshot with health probed right now.
+// healthProbeTimeout caps how long Resources() waits for any single
+// Healthy() probe before falling back to the cached value. 1s is
+// generous for an in-process atomic-bool read (microseconds) and
+// short enough that a wedged DB ping doesn't visibly stall the
+// dashboard's first /__nexus/live snapshot.
+const healthProbeTimeout = time.Second
+
+// Resources returns a fresh snapshot with health probed in parallel.
+// Each Healthy() call runs in its own goroutine bounded by
+// healthProbeTimeout; on timeout the cached last-observed value is
+// returned and the slow probe completes in the background, updating
+// the cache for the next snapshot. Total wall-clock cost is
+// max(probe time, healthProbeTimeout) regardless of how many
+// resources are registered — first /__nexus/live frame stays snappy
+// even when an app declares ten DB-pinging probes.
 func (r *Registry) Resources() []ResourceSnapshot {
 	r.mu.RLock()
 	resources := make([]resource.Resource, 0, len(r.resources))
@@ -695,26 +720,87 @@ func (r *Registry) Resources() []ResourceSnapshot {
 	}
 	r.mu.RUnlock()
 
-	out := make([]ResourceSnapshot, 0, len(resources))
-	for _, res := range resources {
-		var dependsOn []string
-		// Type-asserted optional contract — Resource implementations
-		// that have nothing to declare just don't satisfy it. Avoids
-		// adding a Dependencies() method to the core interface for a
-		// feature most resources won't use.
-		if dep, ok := res.(resource.DependsOnResource); ok {
-			dependsOn = dep.DependsOn()
-		}
-		out = append(out, ResourceSnapshot{
-			Name:        res.Name(),
-			Kind:        res.Kind(),
-			Description: res.Describe(),
-			Healthy:     res.Healthy(),
-			Details:     res.Details(),
-			AttachedTo:  attached[res.Name()],
-			DependsOn:   dependsOn,
-		})
+	out := make([]ResourceSnapshot, len(resources))
+	var wg sync.WaitGroup
+	for i, res := range resources {
+		wg.Add(1)
+		go func(i int, res resource.Resource) {
+			defer wg.Done()
+			var dependsOn []string
+			if dep, ok := res.(resource.DependsOnResource); ok {
+				dependsOn = dep.DependsOn()
+			}
+			out[i] = ResourceSnapshot{
+				Name:        res.Name(),
+				Kind:        res.Kind(),
+				Description: res.Describe(),
+				Healthy:     r.probeHealthy(res),
+				Details:     res.Details(),
+				AttachedTo:  attached[res.Name()],
+				DependsOn:   dependsOn,
+			}
+		}(i, res)
 	}
+	wg.Wait()
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// probeHealthy runs res.Healthy() in a separate goroutine with a
+// healthProbeTimeout deadline. Returns the live value when the probe
+// completes in time; falls back to the cached last-observed value
+// (or false when nothing's cached yet) on timeout. The slow probe's
+// goroutine isn't cancelled — the Healthy() interface has no context
+// — so it completes in the background and lands its result in the
+// cache for the next snapshot. Steady-state goroutine overhead for a
+// resource whose probe takes T seconds is bounded by T × snapshot
+// rate; well under any realistic budget for typical apps.
+func (r *Registry) probeHealthy(res resource.Resource) bool {
+	name := res.Name()
+	done := make(chan bool, 1)
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				// Panic-on-probe → unhealthy. Better to mark a
+				// resource red than crash the dashboard render path.
+				select {
+				case done <- false:
+				default:
+				}
+			}
+		}()
+		done <- res.Healthy()
+	}()
+	timer := time.NewTimer(healthProbeTimeout)
+	defer timer.Stop()
+	select {
+	case v := <-done:
+		r.healthCacheMu.Lock()
+		r.healthCache[name] = v
+		r.healthCacheMu.Unlock()
+		return v
+	case <-timer.C:
+		// Probe didn't return in time. Spin off a follow-up goroutine
+		// to write the eventual result into the cache so the next
+		// snapshot benefits — without blocking this caller.
+		go func() {
+			v, ok := <-done
+			if !ok {
+				return
+			}
+			r.healthCacheMu.Lock()
+			r.healthCache[name] = v
+			r.healthCacheMu.Unlock()
+		}()
+		r.healthCacheMu.Lock()
+		cached, ok := r.healthCache[name]
+		r.healthCacheMu.Unlock()
+		if ok {
+			return cached
+		}
+		// First snapshot, no cache yet — show unhealthy until the
+		// probe lands. Operator sees red briefly, then green on the
+		// next live frame. Better than a frozen "loading" state.
+		return false
+	}
 }
