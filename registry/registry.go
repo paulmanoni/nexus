@@ -159,6 +159,12 @@ type ResourceSnapshot struct {
 	Healthy     bool           `json:"healthy"`
 	Details     map[string]any `json:"details,omitempty"`
 	AttachedTo  []string       `json:"attachedTo,omitempty"`
+	// DependsOn is the list of OTHER resource names this resource
+	// has a hard dependency on (cache → database, queue → its
+	// downstream store). Surfaced when the underlying Resource
+	// implements resource.DependsOnResource. The dashboard draws an
+	// edge from this resource to each name in the list.
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // Worker describes a long-lived background task registered via
@@ -691,6 +697,14 @@ func (r *Registry) Resources() []ResourceSnapshot {
 
 	out := make([]ResourceSnapshot, 0, len(resources))
 	for _, res := range resources {
+		var dependsOn []string
+		// Type-asserted optional contract — Resource implementations
+		// that have nothing to declare just don't satisfy it. Avoids
+		// adding a Dependencies() method to the core interface for a
+		// feature most resources won't use.
+		if dep, ok := res.(resource.DependsOnResource); ok {
+			dependsOn = dep.DependsOn()
+		}
 		out = append(out, ResourceSnapshot{
 			Name:        res.Name(),
 			Kind:        res.Kind(),
@@ -698,6 +712,7 @@ func (r *Registry) Resources() []ResourceSnapshot {
 			Healthy:     res.Healthy(),
 			Details:     res.Details(),
 			AttachedTo:  attached[res.Name()],
+			DependsOn:   dependsOn,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
