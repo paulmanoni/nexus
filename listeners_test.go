@@ -46,6 +46,7 @@ func TestListeners_ScopeFilter(t *testing.T) {
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
 			Dashboard:     DashboardConfig{Enabled: true},
+			Introspection: true, // test exercises gated routes; opt in
 			TraceCapacity: 100,
 			Server: ServerConfig{
 				Listeners: map[string]Listener{
@@ -101,6 +102,7 @@ func TestListeners_DualStackBindResolves(t *testing.T) {
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
 			Dashboard:     DashboardConfig{Enabled: true},
+			Introspection: true, // test exercises gated routes; opt in
 			TraceCapacity: 100,
 			Server: ServerConfig{
 				Listeners: map[string]Listener{
@@ -177,6 +179,7 @@ func TestListeners_BackCompat_NoConfig(t *testing.T) {
 		fxBootOptions(Config{
 			Server:        ServerConfig{Addr: "127.0.0.1:0"},
 			Dashboard:     DashboardConfig{Enabled: true},
+			Introspection: true, // test exercises gated routes; opt in
 			TraceCapacity: 100,
 		}),
 		fx.Populate(&app),

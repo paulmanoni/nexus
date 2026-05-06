@@ -128,6 +128,50 @@ type Config struct {
 	//    nexus.Config{Version: version}
 	Version string
 
+	// Introspection is the master gate over developer-facing
+	// surfaces under /__nexus (the dashboard, /__nexus/config,
+	// /__nexus/manifest, /__nexus/endpoints, etc.). Default false:
+	// requests to these surfaces 404 unless the request bypasses
+	// the gate via IntrospectionNetworks.
+	//
+	// Health + readiness probes (/__nexus/health, /__nexus/ready)
+	// stay unconditional — orchestrators need them. The SDK manifest
+	// at /__nexus/client/manifest.json has its own gate via
+	// Config.Client.Public; Introspection does not affect it.
+	//
+	// Typical prod: leave false, populate IntrospectionNetworks with
+	// VPN / office / loopback CIDRs so operators can still reach the
+	// dashboard from trusted networks.
+	//
+	// Set true on dev/internal listeners (compose with
+	// nexus.IfDeployment) to expose introspection unconditionally.
+	Introspection bool
+
+	// IntrospectionNetworks is the CIDR allowlist that bypasses the
+	// Introspection gate. When the request's TCP peer
+	// (gin.Context.RemoteIP — UNSPOOFABLE; ignores X-Forwarded-For)
+	// falls within any of these networks, the introspection routes
+	// serve as if Introspection were true.
+	//
+	// CIDRs are parsed once at nexus.New() time; an invalid entry
+	// fails fast with a clear error so misconfiguration surfaces
+	// at boot, not at the first dashboard request.
+	//
+	//	nexus.Config{
+	//	    Introspection: false,
+	//	    IntrospectionNetworks: []string{
+	//	        "127.0.0.0/8",     // loopback
+	//	        "192.168.1.0/24",  // office LAN
+	//	        "10.0.0.0/8",      // VPN
+	//	    },
+	//	}
+	//
+	// Behind a load balancer the TCP peer is the LB itself — the
+	// allowlist won't recognize the original client. For LB-fronted
+	// deploys, prefer a separate internal listener bound to the
+	// loopback / VPN interface (Server.Listeners with ScopeAdmin).
+	IntrospectionNetworks []string
+
 	// Topology declares the peer table for split deployments — one
 	// entry per DeployAs tag the binary calls into. Codegen'd clients
 	// look up the active peer here at construction time instead of

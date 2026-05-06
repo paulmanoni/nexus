@@ -25,6 +25,7 @@ func TestRun_StartsAndStops(t *testing.T) {
 		fxBootOptions(Config{
 			Server:        ServerConfig{Addr: "127.0.0.1:0"},
 			Dashboard:     DashboardConfig{Enabled: true, Name: "Test"},
+			Introspection: true, // test starts the app + exercises mounts
 			TraceCapacity: 100,
 		}),
 		fx.Populate(&app),
