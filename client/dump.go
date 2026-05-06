@@ -40,10 +40,19 @@ func (h *Handler) Dump(outDir, tsconfig string, stdout io.Writer) error {
 	// need them synchronously now.
 	h.build()
 	h.mu.Lock()
-	manifest := append([]byte(nil), h.manifest...)
 	clientDTS := append([]byte(nil), h.dtsClient...)
 	vueDTS := append([]byte(nil), h.dtsVue...)
 	h.mu.Unlock()
+
+	// Dump always writes the FULL manifest to disk — the cached
+	// h.manifest bytes hold the public projection (skinny when
+	// cfg.Public is false), but build-time TS / dev tooling needs
+	// the complete shape. Marshalling is cheap enough to do here
+	// without an extra cache slot.
+	manifest, err := json.MarshalIndent(h.Manifest(), "", "  ")
+	if err != nil {
+		return fmt.Errorf("nexus client: marshal full manifest: %w", err)
+	}
 
 	// Static + generated files. Each .js sits next to its .d.ts so
 	// the TypeScript compiler auto-pairs them whether the consumer

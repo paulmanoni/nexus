@@ -614,10 +614,29 @@ picks them up without a manual "nexus client --out" step:
     nexus.Config{
         Client: client.Config{
             Enabled:  true,
+            Public:   false,             // default: skinny public manifest
             OutDir:   "./web/sdk",       // dump SDK files (see below)
             TSConfig: "./web/tsconfig.json",  // merge path mappings
         },
     }
+
+PRODUCTION SAFETY — the Public flag (default false) controls how
+much of the manifest the unauthenticated /manifest.json route
+exposes. With Public:false an anonymous browser sees only the
+Auth section + auth-flagged endpoints (login/logout/me) — enough
+for the login flow + plain nx.rest() calls. Schemas, refs, and
+business endpoints stay hidden.
+
+Set Public:true to expose the full manifest publicly (the
+v0.28.x default). Required only when the runtime needs op-name
+lookup at runtime — nx.query / nx.mutate / nx.crud. Most SPAs
+that vendor sdk/client.d.ts at build time can stay on the safe
+default and lose nothing in TS completion (types are vendored,
+not fetched).
+
+Compose with nexus.IfDeployment to flip the default per listener:
+internal admin services keep Public:true, public-facing services
+ride the safe default.
 
 OutDir produces:
 

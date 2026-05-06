@@ -46,13 +46,42 @@ type Config struct {
 	// Path is the URL prefix the SDK routes mount under. Default
 	// DefaultPath ("/__nexus/client"). The dashboard at /__nexus/*
 	// and the SDK at /__nexus/client/* share an obvious namespace;
-	// the SDK routes are PUBLIC (no admin-token gate) because a
-	// browser bundle has to fetch them at runtime.
+	// the runtime files (client.js, vue.js, *.d.ts) are always
+	// served unauthenticated since browsers fetch them anonymously
+	// before any login. The MANIFEST is gated by the Public flag.
 	Path string
 
-	// Middleware applies to every SDK route. Useful when an app
-	// gates its dashboard but wants the SDK manifest publicly
-	// readable. Empty by default — the SDK is meant to be public.
+	// Public, when true, exposes the FULL manifest (every endpoint,
+	// every schema, every named ref, every WS path) on the
+	// unauthenticated /manifest.json route — the v0.28.x default.
+	//
+	// Default false: the public manifest is stripped to the safe
+	// minimum (Version, BasePath, Auth section, auth-flagged
+	// endpoints only) so an anonymous browser can still complete
+	// the login flow without leaking the API surface to scrapers.
+	//
+	// What works on each setting (runtime, browser-side):
+	//
+	//	             Public: false (default)   Public: true
+	//	nx.auth.*    ✓                          ✓
+	//	nx.rest      ✓ (path/args caller-side)  ✓
+	//	nx.ws        ✓ (path caller-side)       ✓
+	//	nx.query     ✗ (op lookup needs full)   ✓
+	//	nx.mutate    ✗                          ✓
+	//	nx.crud      ✗                          ✓
+	//
+	// TypeScript completion is unaffected by this flag — types
+	// come from the dumped sdk/client.d.ts (vendored at build
+	// time), not the runtime manifest.
+	//
+	// Recommended pattern for production: leave Public false on
+	// public-facing deployments; flip to true only on internal
+	// admin/dev listeners (compose with nexus.IfDeployment).
+	Public bool
+
+	// Middleware applies to every SDK route. Empty by default. For
+	// the manifest specifically, prefer the Public flag — Middleware
+	// gates the runtime .js files too, which most apps don't want.
 	Middleware []gin.HandlerFunc
 
 	// Manifest overrides the default per-build manifest projection.
@@ -147,6 +176,15 @@ func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
 // the registry on first call and caching the result. Exposed so
 // tests can introspect the manifest without going through the HTTP
 // layer.
+//
+// When cfg.Public is false (the default), the result is the
+// FULL manifest — the same shape used internally for code
+// generation and for the public route when Public is true.
+// Tests + the .d.ts generator always see the full shape so type
+// output is identical regardless of the runtime gating.
+//
+// publicManifest() is the projection used for the unauthenticated
+// HTTP route only.
 func (h *Handler) Manifest() Manifest {
 	if h.cfg.Manifest != nil {
 		return h.cfg.Manifest()
@@ -156,6 +194,44 @@ func (h *Handler) Manifest() Manifest {
 		refs = h.schemaRefs()
 	}
 	return buildManifest(h.reg, h.authInfo, refs, h.basePath)
+}
+
+// publicManifest returns the manifest shape served to anonymous
+// browsers at GET <path>/manifest.json. With cfg.Public the full
+// manifest goes out; without it, the result is stripped to the
+// minimum needed for the runtime's auth flows + plain nx.rest()
+// calls (no schemas, no ref pool, no GraphQL/CRUD/WS endpoints,
+// no service list).
+//
+// The stripping happens at HTTP-projection time, not at build
+// time — the .d.ts always reflects the full schema since types
+// are vendored at the consumer's tsc compile step, not fetched at
+// runtime.
+func (h *Handler) publicManifest() Manifest {
+	full := h.Manifest()
+	if h.cfg.Public {
+		return full
+	}
+	skinny := Manifest{
+		Version:  full.Version,
+		BasePath: full.BasePath,
+		Auth:     full.Auth,
+	}
+	// Keep auth-flagged endpoints (login/logout/me) so the SDK's
+	// auth namespace can resolve their paths post-construct.
+	// Strip Args/Return — the runtime doesn't need typed schemas
+	// to make these calls; just the path/method.
+	for _, e := range full.Endpoints {
+		if e.AuthFlow == "" {
+			continue
+		}
+		stripped := e
+		stripped.Args = nil
+		stripped.Return = nil
+		stripped.RequiresPerm = nil
+		skinny.Endpoints = append(skinny.Endpoints, stripped)
+	}
+	return skinny
 }
 
 // build serializes the manifest + .d.ts once. sync.Once-protected;
@@ -168,7 +244,12 @@ func (h *Handler) build() {
 	h.mu.Unlock()
 	once.Do(func() {
 		m := h.Manifest()
-		body, err := json.MarshalIndent(m, "", "  ")
+		// The public projection is what the unauthenticated HTTP
+		// route serves; the full one feeds .d.ts generation +
+		// h.Manifest() callers (tests, dump, in-process consumers)
+		// so types stay complete regardless of the runtime gating.
+		pub := h.publicManifest()
+		body, err := json.MarshalIndent(pub, "", "  ")
 		clientDTS := GenerateClientDTS(m)
 		vueDTS := GenerateVueDTS(m)
 		h.mu.Lock()

@@ -140,7 +140,10 @@ func TestClientManifest_HTTPRouteServesJSON(t *testing.T) {
 	defer fxApp.RequireStop()
 
 	client.Mount(app.Engine(), app.Registry(), nil, app.SchemaRefs, "",
-		client.Config{Enabled: true, Path: "/__nexus/client"})
+		// Public:true here so this route-shape test can pin the
+		// full-manifest payload. The Public:false default is
+		// covered by TestClientManifest_PublicFlagGatesManifest.
+		client.Config{Enabled: true, Path: "/__nexus/client", Public: true})
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -523,6 +526,115 @@ func TestClientManifest_OutDirAutoDump(t *testing.T) {
 	post, _ := os.ReadFile(out + "/nexus.ts")
 	if string(post) != string(stamp) {
 		t.Error("nexus.ts was overwritten on re-dump — must use write-once semantics")
+	}
+}
+
+// TestClientManifest_PublicFlagGatesManifest is the production-
+// safety contract: Config.Client.Public defaults to false, and
+// the unauthenticated /manifest.json route serves a SKINNY shape
+// — Auth section + auth-flagged endpoints only, no schemas, no
+// refs, no business endpoints. Apps that need full client features
+// (nx.query / nx.mutate / nx.crud) must opt in via Public:true,
+// accepting that the API surface becomes scrapable.
+//
+// In-process callers (Handler.Manifest(), Handler.Dump(), .d.ts
+// generation) still see the full manifest regardless — TS types
+// stay complete because they ride to the consumer at build time
+// via vendored sdk/client.d.ts, not via the runtime manifest.
+func TestClientManifest_PublicFlagGatesManifest(t *testing.T) {
+	build := func(public bool) (string, *App) {
+		var app *App
+		fxApp := fxtest.New(t,
+			fxBootOptions(Config{
+				Server: ServerConfig{Addr: "127.0.0.1:0"},
+				Client: client.Config{Enabled: true, Public: public},
+			}),
+			Module("pets",
+				AsRest("GET", "/pets", newListPets()),
+				AsRest("POST", "/pets", newCreatePet()),
+				AsRest("POST", "/login", newLogin(), AuthRoute("login")),
+			).nexusOption(),
+			fx.Populate(&app),
+		)
+		fxApp.RequireStart()
+		t.Cleanup(func() { fxApp.RequireStop() })
+
+		ts := httptest.NewServer(app)
+		t.Cleanup(ts.Close)
+		r, err := http.Get(ts.URL + "/__nexus/client/manifest.json")
+		if err != nil || r.StatusCode != http.StatusOK {
+			t.Fatalf("GET manifest.json: err=%v status=%d", err, statusOf(r))
+		}
+		defer r.Body.Close()
+		body, _ := io.ReadAll(r.Body)
+		return string(body), app
+	}
+
+	// Default (Public:false): only auth section + login endpoint
+	// path/method visible. NO 'pet' ref, NO /pets endpoints, NO
+	// args/return schemas on the endpoints that ARE present.
+	skinny, app1 := build(false)
+	for _, want := range []string{`"/login"`, `"authFlow": "login"`} {
+		if !strings.Contains(skinny, want) {
+			t.Errorf("skinny manifest missing %q\n--- body ---\n%s", want, skinny)
+		}
+	}
+	for _, leak := range []string{`"pet"`, `"/pets"`, `"args"`, `"return"`, `"refs"`} {
+		if strings.Contains(skinny, leak) {
+			t.Errorf("skinny manifest leaked %q — production safety regressed\n--- body ---\n%s", leak, skinny)
+		}
+	}
+	// In-process callers still see the full manifest — types
+	// always work for in-process tests + Dump.
+	full := app1.ClientHandler().Manifest()
+	if _, ok := full.Refs["pet"]; !ok {
+		t.Error("in-process Manifest() should still expose Refs even when Public:false")
+	}
+	if len(full.Endpoints) < 3 {
+		t.Errorf("in-process Manifest() missing endpoints; got %d, want ≥3", len(full.Endpoints))
+	}
+
+	// Public:true: full manifest is exposed (the v0.28.x default,
+	// preserved as an explicit opt-in).
+	full2, _ := build(true)
+	for _, want := range []string{`"/login"`, `"/pets"`, `"pet"`, `"args"`} {
+		if !strings.Contains(full2, want) {
+			t.Errorf("Public:true manifest missing %q\n--- body ---\n%s", want, full2)
+		}
+	}
+}
+
+// TestClientManifest_DumpAlwaysFullManifest pins that disk-dumped
+// manifest.json carries the COMPLETE shape regardless of cfg.Public
+// — the dumped file is local to the developer's machine and feeds
+// build-time TS / dev tooling. Stripping it would cripple
+// vendored .d.ts.
+func TestClientManifest_DumpAlwaysFullManifest(t *testing.T) {
+	dir := t.TempDir()
+	out := dir + "/sdk"
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{
+			Server: ServerConfig{Addr: "127.0.0.1:0"},
+			Client: client.Config{Enabled: true, Public: false, OutDir: out},
+		}),
+		Module("pets",
+			AsRest("GET", "/pets", newListPets()),
+			AsRest("POST", "/login", newLogin(), AuthRoute("login")),
+		).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	body, err := os.ReadFile(out + "/manifest.json")
+	if err != nil {
+		t.Fatalf("read dumped manifest: %v", err)
+	}
+	for _, want := range []string{`"/pets"`, `"pet"`, `"refs"`, `"args"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("dumped manifest.json missing %q (Public:false should NOT strip the disk dump)", want)
+		}
 	}
 }
 
