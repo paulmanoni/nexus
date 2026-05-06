@@ -26,11 +26,62 @@ const events = ref([])
 const MAX = 200 // smaller ring than Traces had — rail is for "what just
                 // happened", not deep history. Pop a Cmd+K → traces or
                 // open the waterfall modal for full per-trace detail.
+// RENDER_CAP bounds how many rows the v-for actually paints. Above
+// this, older events stay in events.value (counter on the header
+// reflects the full ring, filter matches still find them) but the
+// DOM tree skips them. Without this the activity rail painted 200
+// rows per flush — each row 5–6 helper-function calls plus a
+// StackTrace child component — which dropped frames noticeably
+// under a high-QPS app.
+const RENDER_CAP = 80
 const filter = ref('')
 const kindFilter = ref('all') // 'all' | 'request' | 'auth' | 'error'
 const connected = ref(false)
 const expanded = ref(false)
 let ws = null
+
+// decorateEvent precomputes the per-row display strings the template
+// would otherwise recompute on every flush. Stashed as non-enumerable
+// fields so they don't round-trip through JSON.
+//   __t  formatted timestamp
+//   __k  kind family ('request' | 'auth' | 'span' | 'other')
+//   __sk short kind ('start' | 'end' | 'op' | …)
+//   __tx transport class ('rest' | 'graphql' | 'websocket' | 'other')
+//   __ok status >= 200 && < 400
+//   __sd has stack to render
+function decorateEvent(e) {
+  if (e.__decorated) return
+  let ts = ''
+  try { ts = fmtTime(e.timestamp) } catch { ts = '' }
+  const kind = e.kind || ''
+  let kf = 'other'
+  if (kind.startsWith('request'))    kf = 'request'
+  else if (kind.startsWith('auth'))  kf = 'auth'
+  else if (kind.startsWith('span'))  kf = 'span'
+  const sk = kind.replace('request.', '').replace('auth.', 'auth ').replace('.', ' ')
+  const t = (e.transport || '').toLowerCase()
+  const tx = (t === 'rest' || t === 'graphql' || t === 'websocket') ? t : 'other'
+  const props = {
+    __decorated: true,
+    __t:  { value: ts, enumerable: false },
+    __k:  { value: kf, enumerable: false },
+    __sk: { value: sk, enumerable: false },
+    __tx: { value: tx, enumerable: false },
+    __sd: { value: !!e.stack, enumerable: false },
+  }
+  try {
+    Object.defineProperty(e, '__t',  props.__t)
+    Object.defineProperty(e, '__k',  props.__k)
+    Object.defineProperty(e, '__sk', props.__sk)
+    Object.defineProperty(e, '__tx', props.__tx)
+    Object.defineProperty(e, '__sd', props.__sd)
+    Object.defineProperty(e, '__decorated', { value: true, enumerable: false })
+  } catch {
+    // Frozen / sealed event — fall back to plain assignment.
+    e.__t = ts; e.__k = kf; e.__sk = sk; e.__tx = tx; e.__sd = !!e.stack
+    e.__decorated = true
+  }
+}
 
 // Persist expanded state across reloads so an operator's preference
 // survives. session-scoped — open a fresh tab and you start collapsed.
@@ -59,16 +110,16 @@ function passesKind(e) {
   }
 }
 
+// filtered returns matching events newest-first, capped at
+// RENDER_CAP. The header badge still uses events.length for the
+// total — the cap only governs how many rows the DOM paints.
 const filtered = computed(() => {
   const f = filter.value.toLowerCase().trim()
   const out = []
   for (let i = events.value.length - 1; i >= 0; i--) {
+    if (out.length >= RENDER_CAP) break
     const e = events.value[i]
     if (!passesKind(e)) continue
-    // Search by a per-event cached lowercased haystack instead of
-    // re-stringifying every event on every keystroke. The cache lives
-    // on the event object as a non-enumerable __h field so it doesn't
-    // round-trip through JSON if events get serialized elsewhere.
     if (f) {
       let h = e.__h
       if (h === undefined) {
@@ -81,6 +132,30 @@ const filtered = computed(() => {
     out.push(e)
   }
   return out
+})
+
+// totalMatching counts every event passing the filter — even those
+// past RENDER_CAP. Header shows "<rendered> / <totalMatching>" so
+// the user knows when the rail is truncating output.
+const totalMatching = computed(() => {
+  const f = filter.value.toLowerCase().trim()
+  if (!f && kindFilter.value === 'all') return events.value.length
+  let n = 0
+  for (let i = 0; i < events.value.length; i++) {
+    const e = events.value[i]
+    if (!passesKind(e)) continue
+    if (f) {
+      let h = e.__h
+      if (h === undefined) {
+        h = JSON.stringify(e).toLowerCase()
+        try { Object.defineProperty(e, '__h', { value: h, enumerable: false }) }
+        catch { e.__h = h }
+      }
+      if (!h.includes(f)) continue
+    }
+    n++
+  }
+  return n
 })
 
 // Unread badge — count of events seen since the rail was last
@@ -122,6 +197,9 @@ function scheduleFlush() {
 onMounted(() => {
   ws = subscribeEvents(
     e => {
+      // Decorate before queueing so the v-for body has no function
+      // calls — display strings are cached on the event object.
+      decorateEvent(e)
       pendingBuf.push(e)
       // Increment unread eagerly — it's a single ref bump, doesn't
       // trigger the v-for diff. The user sees "look at me" pulse in
@@ -187,7 +265,7 @@ function openTrace(id, ev) {
         <component :is="connected ? Wifi : WifiOff" :size="12" :stroke-width="2" />
         {{ connected ? 'Live' : 'Reconnecting' }}
       </span>
-      <span class="counter">{{ filtered.length }} <span class="dim">/ {{ events.length }}</span></span>
+      <span class="counter">{{ filtered.length }} <span class="dim">/ {{ totalMatching }}</span></span>
       <span v-if="!expanded && unread > 0" class="unread" :title="`${unread} new since collapse`">+{{ unread }}</span>
 
       <span class="spacer" />
@@ -235,11 +313,11 @@ function openTrace(id, ev) {
         v-for="e in filtered"
         :key="e.id"
         class="row"
-        :class="[transportClass(e), { err: e.error || (e.status && e.status >= 400) }]"
+        :class="[e.__tx, { err: e.error || (e.status && e.status >= 400) }]"
       >
         <div class="row-main">
-          <span class="ts">{{ fmtTime(e.timestamp) }}</span>
-          <span class="kind" :class="kindFamily(e.kind)">{{ shortKind(e.kind) }}</span>
+          <span class="ts">{{ e.__t }}</span>
+          <span class="kind" :class="e.__k">{{ e.__sk }}</span>
           <button
             v-if="e.traceId"
             class="trace"
@@ -265,7 +343,7 @@ function openTrace(id, ev) {
           <span v-if="e.durationMs > 0" class="dur">{{ e.durationMs }} ms</span>
           <span v-if="e.error" class="err-text" :title="e.error">{{ e.error }}</span>
         </div>
-        <StackTrace :stack="e.stack || ''" />
+        <StackTrace v-if="e.__sd" :stack="e.stack" />
       </div>
     </div>
 
