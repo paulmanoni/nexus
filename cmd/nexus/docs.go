@@ -750,6 +750,17 @@ For frontends that prefer checking the SDK into their repo:
     nexus client --out ./web/src/sdk --manifest ./manifest.json
         # offline — read a saved manifest
 
+    nexus client --out ./web/src/sdk --jsconfig ./web/jsconfig.json
+        # add IDE path mappings so '/__nexus/client/*' imports
+        # resolve to the dumped files (go-to-definition + completion)
+
+    nexus client --out ./web/src/sdk --tsconfig ./web/tsconfig.json
+        # same as --jsconfig but writes/merges a TS config
+
+Both --jsconfig and --tsconfig MERGE into existing files — your
+custom compilerOptions, include/exclude, and other paths entries
+survive untouched. The CLI only adds the two SDK URL keys.
+
 Closed-port URL is non-fatal; the CLI falls back to static-only and
 warns on stderr. See: nexus help client.
 
@@ -776,6 +787,9 @@ Plays cleanly with the rest of the framework:
                          your handler expects (bearer ≠ cookie)
   Stale .d.ts            handler.Reload() OR restart the app — the
                          manifest caches once after first request
+  IDE "Cannot find       run nexus client --out <dir> --jsconfig
+  declaration to go to"  <path> (or --tsconfig); the merged config
+  on '/__nexus/...'      maps the URL imports to local files
 
 Full demo: examples/petstore-spa/ (one Go file + one HTML page +
 one Vue setup script — login + CRUD wired end-to-end).

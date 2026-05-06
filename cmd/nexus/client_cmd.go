@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,7 @@ type clientCmdOptions struct {
 	Out      string
 	URL      string
 	Manifest string
+	JSConfig string
 }
 
 func newClientCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -55,12 +57,28 @@ app and generate the matching .d.ts:
     <out>/manifest.json # SDK-tailored manifest snapshot
     <out>/client.d.ts   # generated TypeScript types
 
+Pass --jsconfig <path> (or its alias --tsconfig <path>) to also
+write a jsconfig.json / tsconfig.json that maps the runtime URL
+imports ('/__nexus/client/client.js' and friends) to the dumped
+relative paths — IDE go-to-definition + completion "just work"
+against the URL-style imports the SDK README suggests. The flag
+merges with an existing config rather than overwriting; user
+fields (compilerOptions.target, include, exclude, custom paths
+entries, …) are preserved.
+
+The two flags are aliases — both write the same content; the
+filename is the only difference. Use --jsconfig for plain JS
+projects, --tsconfig for TS projects. Setting both is redundant;
+the second-parsed wins.
+
 Examples:
 
     nexus client --out ./web/src/sdk
     nexus client --out ./web/src/sdk --url http://localhost:8080
     nexus client --out ./web/src/sdk --manifest ./manifest.json
     nexus client --out ./web/src/sdk --manifest -            # JSON on stdin
+    nexus client --out ./web/src/sdk --jsconfig ./web/jsconfig.json
+    nexus client --out ./web/src/sdk --tsconfig ./web/tsconfig.json
 `,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if opts.Out == "" {
@@ -72,6 +90,12 @@ Examples:
 	cmd.Flags().StringVar(&opts.Out, "out", "", "directory to write the SDK files into (created if missing)")
 	cmd.Flags().StringVar(&opts.URL, "url", "", "origin of a running nexus app; the CLI fetches /__nexus/client/manifest.json from here")
 	cmd.Flags().StringVar(&opts.Manifest, "manifest", "", "path to a manifest JSON file (- for stdin)")
+	cmd.Flags().StringVar(&opts.JSConfig, "jsconfig", "", "path to write (or merge into) a jsconfig.json with URL→file path mappings; enables IDE go-to-definition on '/__nexus/client/*' imports")
+	// --tsconfig is an alias bound to the same backing variable —
+	// the file shape is identical (compilerOptions.paths). TS
+	// projects pass --tsconfig, JS projects pass --jsconfig; both
+	// accepted so users don't have to mentally translate.
+	cmd.Flags().StringVar(&opts.JSConfig, "tsconfig", "", "alias for --jsconfig; pass when targeting a tsconfig.json (same content, different filename)")
 	return cmd
 }
 
@@ -83,15 +107,23 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 	// Always write the static runtime files. The embedded contents
 	// come from client/ui via the same //go:embed directives the
 	// HTTP path uses, so there's exactly one source of truth across
-	// the CLI dump and the live route.
-	if err := writeFile(filepath.Join(opts.Out, "client.js"), client.RuntimeJS()); err != nil {
+	// the CLI dump and the live route. writeIfChanged skips the
+	// disk write when bytes match — avoids touching mtime and
+	// triggering file-watch / hot-reload churn on no-op runs.
+	if err := writeIfChanged(filepath.Join(opts.Out, "client.js"), client.RuntimeJS(), stdout); err != nil {
 		return err
 	}
-	if err := writeFile(filepath.Join(opts.Out, "vue.js"), client.VueJS()); err != nil {
+	if err := writeIfChanged(filepath.Join(opts.Out, "vue.js"), client.VueJS(), stdout); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "wrote %s/client.js (%d bytes)\n", opts.Out, len(client.RuntimeJS()))
-	fmt.Fprintf(stdout, "wrote %s/vue.js (%d bytes)\n", opts.Out, len(client.VueJS()))
+
+	// jsconfig is the IDE-config helper — wired before the manifest
+	// step so a static-only dump (no --url / --manifest) still gets
+	// the path mappings. The IDE benefit doesn't depend on the
+	// .d.ts being present.
+	if err := writeJSConfig(opts, stdout); err != nil {
+		return err
+	}
 
 	// Manifest source — file or URL. Skip when neither is set; the
 	// dump-of-static-files-only mode is a valid use case.
@@ -114,17 +146,95 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 		return fmt.Errorf("nexus client: parse manifest JSON: %w", err)
 	}
 
-	if err := writeFile(filepath.Join(opts.Out, "manifest.json"), manifestBytes); err != nil {
+	if err := writeIfChanged(filepath.Join(opts.Out, "manifest.json"), manifestBytes, stdout); err != nil {
 		return err
 	}
 	dts := client.GenerateDTS(m)
-	if err := writeFile(filepath.Join(opts.Out, "client.d.ts"), []byte(dts)); err != nil {
+	if err := writeIfChanged(filepath.Join(opts.Out, "client.d.ts"), []byte(dts), stdout); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "wrote %s/manifest.json (%d bytes)\n", opts.Out, len(manifestBytes))
-	fmt.Fprintf(stdout, "wrote %s/client.d.ts (%d bytes, %d endpoints)\n",
-		opts.Out, len(dts), len(m.Endpoints))
+	fmt.Fprintf(stdout, "  manifest endpoints: %d\n", len(m.Endpoints))
 	return nil
+}
+
+// jsconfigPaths is the URL → file mapping the SDK serves. Wrapped
+// in a function so tests + the writer share one source of truth.
+func jsconfigPaths(out, jsconfig string) (map[string][]string, error) {
+	// Mappings live inside the jsconfig file's directory; compute
+	// the relative path from there to the SDK dump dir.
+	jsconfigDir := filepath.Dir(jsconfig)
+	rel, err := filepath.Rel(jsconfigDir, out)
+	if err != nil {
+		return nil, err
+	}
+	// jsconfig path values use forward slashes regardless of OS.
+	rel = filepath.ToSlash(rel)
+	if rel == "" || rel == "." {
+		rel = "."
+	}
+	return map[string][]string{
+		"/__nexus/client/client.js": {rel + "/client.js"},
+		"/__nexus/client/vue.js":    {rel + "/vue.js"},
+	}, nil
+}
+
+// writeJSConfig emits or merges a jsconfig.json at the path so an
+// IDE (JetBrains, VS Code) can resolve URL-style imports like
+// '/__nexus/client/client.js' to the locally-dumped files. Without
+// it, "Cannot find declaration to go to" warns on every import.
+//
+// Merge semantics: existing jsconfig.json's compilerOptions.paths
+// is preserved entry-for-entry; the SDK URL keys are added or
+// overwritten. include/exclude/baseUrl/other top-level fields are
+// preserved as-is. baseUrl defaults to "." when missing — required
+// for paths to resolve.
+func writeJSConfig(opts clientCmdOptions, stdout io.Writer) error {
+	if opts.JSConfig == "" {
+		return nil
+	}
+	mappings, err := jsconfigPaths(opts.Out, opts.JSConfig)
+	if err != nil {
+		return fmt.Errorf("nexus client: compute jsconfig paths: %w", err)
+	}
+
+	// Read existing config when present. A bare-bones top-level map
+	// keeps preserved fields untouched even when the user has knobs
+	// the CLI doesn't know about.
+	var doc map[string]any
+	if existing, err := os.ReadFile(opts.JSConfig); err == nil {
+		if err := json.Unmarshal(existing, &doc); err != nil {
+			return fmt.Errorf("nexus client: parse existing %s: %w", opts.JSConfig, err)
+		}
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+
+	co, _ := doc["compilerOptions"].(map[string]any)
+	if co == nil {
+		co = map[string]any{}
+		doc["compilerOptions"] = co
+	}
+	if _, ok := co["baseUrl"]; !ok {
+		co["baseUrl"] = "."
+	}
+	paths, _ := co["paths"].(map[string]any)
+	if paths == nil {
+		paths = map[string]any{}
+		co["paths"] = paths
+	}
+	for k, v := range mappings {
+		paths[k] = v
+	}
+
+	body, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(opts.JSConfig), 0o755); err != nil {
+		return fmt.Errorf("nexus client: mkdir %s: %w", filepath.Dir(opts.JSConfig), err)
+	}
+	return writeIfChanged(opts.JSConfig, body, stdout)
 }
 
 // loadClientManifest reads the manifest JSON from either a file
@@ -159,9 +269,27 @@ func loadClientManifest(opts clientCmdOptions, stderr io.Writer) ([]byte, error)
 	return nil, nil
 }
 
-func writeFile(path string, body []byte) error {
+// writeIfChanged writes body to path only when the file is missing
+// or its current contents differ from body. Logs "wrote" with the
+// byte count on a real write, "unchanged" when the disk copy
+// already matched. Skipping the no-op write preserves mtime —
+// file watchers (vite, webpack-dev-server, JetBrains' indexer)
+// don't re-trigger builds when re-running `nexus client --out`
+// against an already-up-to-date target. Side benefit: a CI step
+// that runs the CLI on every build sees clean diffs only when the
+// SDK actually changed.
+//
+// Bytes-equal comparison rather than hash because the files are
+// small (tens of KB each) and the explicit byte-slice equality is
+// allocation-free for the common no-change case.
+func writeIfChanged(path string, body []byte, stdout io.Writer) error {
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, body) {
+		fmt.Fprintf(stdout, "unchanged %s (%d bytes)\n", path, len(body))
+		return nil
+	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
+	fmt.Fprintf(stdout, "wrote %s (%d bytes)\n", path, len(body))
 	return nil
 }
