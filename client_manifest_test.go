@@ -285,7 +285,14 @@ func TestClientManifest_VueComposablesExports(t *testing.T) {
 		"export function useWS",
 		"export function useAuth",
 		"import { ref, watch, unref, computed, onUnmounted } from 'vue'",
-		"import { NexusClient } from './client.js'",
+		"import { NexusClient, localStorageTokenStore, memoryTokenStore } from './client.js'",
+		// Env-aware singleton — useNexus() with no opts picks up
+		// VITE_NEXUS_API + VITE_NEXUS_TOKEN so apps importing
+		// directly from './vue.js' don't need any wiring file.
+		"function envDefaults()",
+		"VITE_NEXUS_API",
+		"VITE_NEXUS_TOKEN",
+		"new NexusClient({ ...envDefaults()",
 	} {
 		if !strings.Contains(bodyStr, sym) {
 			t.Errorf("vue.js missing %q — composables regressed to placeholder?", sym)
@@ -491,11 +498,12 @@ func TestClientManifest_OutDirAutoDump(t *testing.T) {
 		t.Fatalf("nexus.ts not written: %v", err)
 	}
 	for _, want := range []string{
+		// Optional barrel: pure re-exports, no client construction.
 		"from './client.js'",
 		"from './vue.js'",
-		"setNexus(",
-		"new NexusClient({",
+		"useNexus,",
 		"useGqlQuery,",
+		"export type {",
 	} {
 		if !strings.Contains(string(nexusTS), want) {
 			t.Errorf("nexus.ts missing %q", want)

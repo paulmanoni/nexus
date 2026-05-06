@@ -26,11 +26,36 @@
 //   </script>
 
 import { ref, watch, unref, computed, onUnmounted } from 'vue'
-import { NexusClient } from './client.js'
+import { NexusClient, localStorageTokenStore, memoryTokenStore } from './client.js'
 
 // -- Shared client -------------------------------------------------
 
 let _shared = null
+
+// envDefaults reads Vite-style env vars (harmless under any other
+// bundler — import.meta.env is just absent and falls back to {}).
+// VITE_NEXUS_API   → origin override (trailing slashes stripped).
+// VITE_NEXUS_TOKEN → localStorage key for the bearer token; default
+//                    'access_token' so it pairs with the common
+//                    Pinia auth-store convention.
+//
+// Returns a NexusClient-options object. Explicit caller opts on
+// useNexus() always win — this only fills holes. Calling
+// useNexus() with no opts in a Vite app picks up VITE_NEXUS_* and
+// constructs a same-origin / localStorage-backed client without
+// any wiring file.
+function envDefaults() {
+  const env = (typeof import.meta !== 'undefined' && import.meta.env) || {}
+  const origin = String(env.VITE_NEXUS_API ?? '').replace(/\/+$/, '')
+  const tokenKey = String(env.VITE_NEXUS_TOKEN ?? 'access_token')
+  return {
+    origin: origin || undefined,
+    tokenStore:
+      typeof window === 'undefined'
+        ? memoryTokenStore()
+        : localStorageTokenStore(tokenKey),
+  }
+}
 
 /**
  * useNexus returns the page-shared NexusClient. The first caller's
@@ -39,12 +64,17 @@ let _shared = null
  * backends) construct a `new NexusClient(...)` directly and pass it
  * to the other composables via the `client` option.
  *
+ * Default construction picks up VITE_NEXUS_API (origin) and
+ * VITE_NEXUS_TOKEN (localStorage key) so a bare `useNexus()` works
+ * in a typical Vite app with zero wiring. Explicit opts always
+ * override the env-derived defaults field-by-field.
+ *
  * @param {object} [opts]  forwarded to NexusClient constructor on
  *                         first call only.
  * @returns {NexusClient}
  */
 export function useNexus(opts) {
-  if (!_shared) _shared = new NexusClient(opts)
+  if (!_shared) _shared = new NexusClient({ ...envDefaults(), ...(opts || {}) })
   return _shared
 }
 
