@@ -505,6 +505,75 @@ func TestClientManifest_SetAuthInfo(t *testing.T) {
 	}
 }
 
+// genericResp[T] reflects to a Go-syntax type name like
+// "genericResp[*github.com/paulmanoni/nexus.runState]" — the exact
+// shape that prompted v0.28.5's sanitizeTypeName fix. This test
+// pins the full pipeline: schema walk → manifest Refs pool →
+// generated .d.ts → valid TS interface name.
+type genericResp[T any] struct {
+	Data T      `json:"data"`
+	Note string `json:"note,omitempty"`
+}
+
+type runState struct {
+	ID   string `json:"id"`
+	Step int    `json:"step"`
+}
+
+func newGetRunState() func(ctx context.Context, _ struct{}) (genericResp[*runState], error) {
+	return func(ctx context.Context, _ struct{}) (genericResp[*runState], error) {
+		return genericResp[*runState]{}, nil
+	}
+}
+
+// TestClientManifest_GenericTypeNameSanitized confirms the
+// generated .d.ts uses TS-valid identifiers for Go generic
+// instantiations (e.g. "genericRespOfrunState"), never the raw
+// reflect form ("genericResp[*pkg.runState]") which would be a
+// syntax error in TS.
+func TestClientManifest_GenericTypeNameSanitized(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		Module("runs", AsRest("GET", "/run", newGetRunState())).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	h := client.Mount(app.Engine(), app.Registry(), nil, app.SchemaRefs, "", client.Config{Enabled: true})
+	m := h.Manifest()
+
+	// Refs pool keys must be valid TS identifiers — no '[', ']',
+	// '*', '/', or '.'.
+	for k := range m.Refs {
+		if strings.ContainsAny(k, "[]*/.") {
+			t.Errorf("ref key %q contains invalid TS-identifier chars", k)
+		}
+	}
+	if _, ok := m.Refs["genericRespOfrunState"]; !ok {
+		t.Errorf("expected sanitized ref key 'genericRespOfrunState', got keys: %v", refKeys(m.Refs))
+	}
+
+	// .d.ts itself must mention the sanitized name and never the
+	// raw bracketed form.
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+	r, err := http.Get(ts.URL + "/__nexus/client/client.d.ts")
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("GET client.d.ts: err=%v status=%d", err, statusOf(r))
+	}
+	defer r.Body.Close()
+	body, _ := io.ReadAll(r.Body)
+	dts := string(body)
+	if !strings.Contains(dts, "export interface genericRespOfrunState") {
+		t.Errorf("DTS missing sanitized interface name\n--- DTS ---\n%s", dts)
+	}
+	if strings.Contains(dts, "genericResp[") || strings.Contains(dts, "[*") {
+		t.Errorf("DTS still contains raw Go generic-instantiation syntax\n--- DTS ---\n%s", dts)
+	}
+}
+
 func refKeys(m map[string]registry.NamedType) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

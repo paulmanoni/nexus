@@ -111,7 +111,18 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 		// Named struct → put into refs, return Kind="ref". Anonymous
 		// struct → inline. Naming heuristic: t.Name() is non-empty for
 		// named types declared at package scope.
-		name := t.Name()
+		raw := t.Name()
+		if raw == "" {
+			obj := walkStructFields(t, refs)
+			return TypeRef{Kind: "object", Object: &obj}
+		}
+		// Generic instantiations come back from reflect with Go-syntax
+		// names like "Response[*pkg/sub.RunState]" or
+		// "Page[[]portal.Pet]" — invalid TS identifiers + invalid map
+		// keys for the Refs section. Sanitize once into a stable TS
+		// name (ResponseOfRunState, PageOfPetList, …) so the output
+		// type-checks and stays human-readable.
+		name := sanitizeTypeName(raw)
 		if name == "" {
 			obj := walkStructFields(t, refs)
 			return TypeRef{Kind: "object", Object: &obj}
@@ -130,6 +141,125 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 	default:
 		return TypeRef{Kind: "any"}
 	}
+}
+
+// sanitizeTypeName converts a Go reflect.Type.Name() into a valid
+// TypeScript identifier. Handles the shapes Go's generics +
+// pointers + slices produce that aren't valid TS / JSON keys:
+//
+//	Response[*pkg/sub.RunState]                 → ResponseOfRunState
+//	Page[[]portal_admin/migrations.Pet]         → PageOfPetList
+//	*Pet                                        → Pet
+//	pkg/sub.Foo                                 → Foo
+//	Map[K, V]                                   → MapOfKAndV
+//	Pet                                         → Pet  (unchanged)
+//
+// Rules in order:
+//   1. strip a leading "*" (pointer prefix)
+//   2. "[]X" prefix → recurse on X, append "List"
+//   3. balanced "[" before "]" → outer + "Of" + recurse(inner)
+//      (multi-arg generics: split inner on top-level "," and join with "And")
+//   4. strip package path: keep the segment after the last "/" then
+//      after the last "."
+//   5. drop any remaining non-identifier chars (defensive)
+//
+// Empty result is impossible for a non-empty named type at runtime;
+// returning "" lets WalkType fall back to inline-object rendering
+// in the unlikely case sanitization eats everything.
+func sanitizeTypeName(name string) string {
+	s := strings.TrimPrefix(name, "*")
+	if s == "" {
+		return ""
+	}
+
+	// "[]X" — slice prefix. Recurse + append "List".
+	if strings.HasPrefix(s, "[]") {
+		inner := sanitizeTypeName(s[2:])
+		if inner == "" {
+			return ""
+		}
+		return inner + "List"
+	}
+
+	// "Foo[X]" — generic instantiation. Find matching "]" by depth so
+	// nested generics ("Page[Response[Pet]]") parse correctly.
+	if i := strings.IndexByte(s, '['); i > 0 {
+		depth := 1
+		end := -1
+		for j := i + 1; j < len(s); j++ {
+			switch s[j] {
+			case '[':
+				depth++
+			case ']':
+				depth--
+				if depth == 0 {
+					end = j
+				}
+			}
+			if end >= 0 {
+				break
+			}
+		}
+		if end > i {
+			outer := sanitizeTypeName(s[:i])
+			tail := sanitizeTypeName(s[end+1:])
+			// Split top-level commas so multi-arg generics produce
+			// "MapOfKAndV" rather than "MapOfKVMashed".
+			args := splitTopLevelCommas(s[i+1 : end])
+			parts := make([]string, 0, len(args))
+			for _, a := range args {
+				if p := sanitizeTypeName(strings.TrimSpace(a)); p != "" {
+					parts = append(parts, p)
+				}
+			}
+			return outer + "Of" + strings.Join(parts, "And") + tail
+		}
+	}
+
+	// Strip package path: "pkg/sub.Name" → "Name". Slash first, then
+	// dot, so a name with no slash but a dot ("time.Time") still
+	// resolves to "Time".
+	if i := strings.LastIndexByte(s, '/'); i >= 0 {
+		s = s[i+1:]
+	}
+	if i := strings.LastIndexByte(s, '.'); i >= 0 {
+		s = s[i+1:]
+	}
+
+	// Defensive: drop any remaining non-identifier chars. Real names
+	// pass through; only weird reflect outputs (uncommon) get here.
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// splitTopLevelCommas walks s and splits on commas that aren't
+// nested inside brackets. Lets sanitizeTypeName handle multi-arg
+// generics where each arg may itself be a generic
+// ("Map[K, Response[V]]" → ["K", " Response[V]"]).
+func splitTopLevelCommas(s string) []string {
+	var out []string
+	depth := 0
+	last := 0
+	for i, r := range s {
+		switch r {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, s[last:i])
+				last = i + 1
+			}
+		}
+	}
+	out = append(out, s[last:])
+	return out
 }
 
 // walkStructFields builds the field list for a struct type. Skips
