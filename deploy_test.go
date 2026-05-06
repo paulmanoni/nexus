@@ -83,10 +83,11 @@ func TestConfig_DeploymentAndVersion_OnDashboardConfig(t *testing.T) {
 	var app *App
 	fxApp := fxtest.New(t,
 		fxBootOptions(Config{
-			Server:     ServerConfig{Addr: "127.0.0.1:0"},
-			Dashboard:  DashboardConfig{Enabled: true},
-			Deployment: "users-svc",
-			Version:    "v1.2.3",
+			Server:        ServerConfig{Addr: "127.0.0.1:0"},
+			Dashboard:     DashboardConfig{Enabled: true},
+			Introspection: true, // dev/test opt-in; gate covered separately
+			Deployment:    "users-svc",
+			Version:       "v1.2.3",
 		}),
 		fx.Populate(&app),
 	)

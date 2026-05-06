@@ -239,6 +239,20 @@ func New(cfg Config) *App {
 	// The dashboard's /__nexus/events stream is a separate WS that
 	// drives the activity rail + packet animations; it doesn't
 	// re-render the canvas, so per-request real-time stays intact.
+	// Introspection gate sits BEFORE every other dashboard middleware
+	// so an unauthorized peer 404s before any auth/permission stack
+	// sees the request. Pre-parsing the CIDR list here surfaces a
+	// bad config at boot rather than the first dashboard request;
+	// errors panic since New() doesn't return one (parsing is
+	// pure-config, deterministic, and must succeed for the binary
+	// to be safely runnable).
+	introspectionNets, err := parseIntrospectionNetworks(cfg.IntrospectionNetworks)
+	if err != nil {
+		panic(err)
+	}
+	if gate := introspectionGate(cfg.Introspection, introspectionNets); gate != nil {
+		a.dashboardMw = append(a.dashboardMw, gate)
+	}
 	for _, b := range cfg.Middleware.Dashboard {
 		if b.Gin != nil {
 			a.dashboardMw = append(a.dashboardMw, b.Gin)
