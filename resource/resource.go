@@ -26,6 +26,13 @@ const (
 )
 
 // Resource is anything whose health the dashboard should surface.
+//
+// Implementations may optionally satisfy DependsOnResource (declared
+// in this same package) so the dashboard renders a resource→resource
+// edge — e.g. a cache that falls back to a database, a queue whose
+// consumers persist into Postgres. Implementations that don't
+// declare deps simply omit the method; the registry's snapshot
+// detects DependsOnResource via type assertion.
 type Resource interface {
 	Name() string            // unique identifier, e.g. "main-db"
 	Kind() Kind              // database / cache / queue / other
@@ -33,6 +40,15 @@ type Resource interface {
 	Healthy() bool           // called each time the registry snapshots
 	Details() map[string]any // free-form (engine, host, version); shown in UI
 	IsDefault() bool         // registry's DefaultOfKind picks this first
+}
+
+// DependsOnResource is the optional contract a Resource implements
+// when it has hard dependencies on other resources. The dashboard
+// reads it via type assertion and draws an edge from this resource
+// to each named target. Cycles are an authoring bug; the dashboard
+// renders them as-is and the layout engine handles the visual mess.
+type DependsOnResource interface {
+	DependsOn() []string
 }
 
 // Option tweaks a resource at construction time.
@@ -53,6 +69,29 @@ func WithDetails(fn func() map[string]any) Option {
 	return func(s *simple) { s.detailsFn = fn }
 }
 
+// DependsOn declares this resource's hard dependencies on OTHER
+// resources by name — the dashboard renders an edge from this
+// resource to each. Typical pairings: a cache fronting a database,
+// a queue whose consumers persist into Postgres, an object store
+// whose CDN cache invalidates on writes.
+//
+// Names must match the Name() of an already-registered resource;
+// unknown names render as dangling edges (also surfaced as a
+// console warning so authoring bugs are obvious).
+//
+// Multiple DependsOn calls accumulate — each appends rather than
+// replaces — so a builder can layer deps from different sources.
+func DependsOn(names ...string) Option {
+	return func(s *simple) {
+		for _, n := range names {
+			if n == "" {
+				continue
+			}
+			s.dependsOn = append(s.dependsOn, n)
+		}
+	}
+}
+
 type simple struct {
 	name      string
 	kind      Kind
@@ -61,7 +100,13 @@ type simple struct {
 	detailsFn func() map[string]any
 	healthy   func() bool
 	isDefault bool
+	dependsOn []string
 }
+
+// DependsOn satisfies DependsOnResource for resources built via
+// NewDatabase/NewCache/NewQueue. Empty when no DependsOn option
+// was applied; the registry treats nil and empty alike.
+func (s *simple) DependsOn() []string { return s.dependsOn }
 
 func (s *simple) Name() string     { return s.name }
 func (s *simple) Kind() Kind       { return s.kind }

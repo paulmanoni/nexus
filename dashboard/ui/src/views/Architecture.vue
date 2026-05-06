@@ -1056,6 +1056,35 @@ function load() {
     }
   }
 
+  // Resource → resource dep edges. Surfaces hard dependencies between
+  // resources declared via resource.DependsOn(...names) — the canonical
+  // pairing is a cache fronting a database, or a queue whose consumers
+  // persist into Postgres. Each entry in r.dependsOn becomes one edge
+  // res:<r.name> → res:<targetName>. Unknown targets render as
+  // dangling edges with a console warning so authoring bugs are
+  // obvious rather than silent.
+  const resourceNames = new Set((rsData.resources || []).map(r => r.name))
+  for (const r of rsData.resources || []) {
+    const deps = Array.isArray(r.dependsOn) ? r.dependsOn : []
+    for (const dep of deps) {
+      if (!dep) continue
+      if (!resourceNames.has(dep)) {
+        if (typeof console !== 'undefined') {
+          console.warn(`[nexus] resource ${r.name} depends on unknown resource "${dep}"`)
+        }
+        continue
+      }
+      if (dep === r.name) continue // self-loop bug
+      edgeList.push({
+        id: `e:res:${r.name}->res:${dep}`,
+        source: `res:${r.name}`,
+        target: `res:${dep}`,
+        markerEnd: MarkerType.ArrowClosed,
+        data: { service: r.name, target: dep, targetKind: 'resource', op: null, resourceLevel: true },
+      })
+    }
+  }
+
   // Cron edges — when a job declared .Service("foo"), draw an edge
   // from the cron node onto that service's card. Same semantics as
   // worker→service: the cron "belongs to" the service for purposes of
@@ -1229,9 +1258,15 @@ function selectedMatches(sel, e) {
 const EDGE_COLOR = {
   accent:    '#4f46e5',  // --accent
   border:    '#e5e7eb',  // --border
-  borderStr: '#d1d5db',  // --border-strong
+  borderStr: '#9ca3af',  // bumped from #d1d5db so service-level wires
+                         // and aggregated edges stay legible against
+                         // the canvas background — older value blended
+                         // into bg-subtle.
   internet:  '#64748b',  // --cat-internet
   worker:    '#f97316',  // --cat-worker
+  resource:  '#0ea5e9',  // --cat-database; used for resource→resource
+                         // dep edges so the data-tier wiring reads as
+                         // its own layer instead of grey-on-grey.
   error:     '#ef4444',  // --st-error
 }
 
@@ -1258,11 +1293,12 @@ function restyleEdges(list, sel, flashed) {
     base.type = 'smoothstep'
     base.pathOptions = { borderRadius: 12, offset: 20 }
 
-    const isAggregated = e.data.op === null
-    const isInbound    = !!e.data.inbound
-    const isWorker     = !!e.data.worker
-    const isServiceLvl = !!e.data.serviceLevel
-    const flashState   = flashed && flashed.get(e.id)
+    const isAggregated   = e.data.op === null
+    const isInbound      = !!e.data.inbound
+    const isWorker       = !!e.data.worker
+    const isServiceLvl   = !!e.data.serviceLevel
+    const isResourceLvl  = !!e.data.resourceLevel
+    const flashState     = flashed && flashed.get(e.id)
 
     let stroke, width, opacity, animated = false, dashed = false
 
@@ -1300,21 +1336,30 @@ function restyleEdges(list, sel, flashed) {
         opacity = 0.85
       } else if (isInbound) {
         stroke = EDGE_COLOR.internet
-        width = 1.3
-        opacity = 0.5
+        width = 1.4
+        opacity = 0.7
+      } else if (isResourceLvl) {
+        // Resource → resource (cache → db, queue → db, etc). Painted in
+        // the data-tier color so the dependency layer reads as its own
+        // visual band, distinct from constructor-wire grey. Dashed
+        // because it's a declarative dep, not a per-request flow.
+        stroke = EDGE_COLOR.resource
+        width = 1.4
+        opacity = 0.9
+        dashed = true
       } else if (isServiceLvl) {
         stroke = EDGE_COLOR.borderStr
-        width = 1.2
-        opacity = 0.7
+        width = 1.4
+        opacity = 0.9
         dashed = true
       } else if (isAggregated) {
         stroke = EDGE_COLOR.borderStr
-        width = 1.2
-        opacity = 0.8
+        width = 1.4
+        opacity = 0.9
       } else {
         stroke = EDGE_COLOR.accent
-        width = 1.2
-        opacity = 0.4
+        width = 1.3
+        opacity = 0.65
       }
     }
 
