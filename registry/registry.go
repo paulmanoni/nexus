@@ -77,6 +77,26 @@ type Endpoint struct {
 	// Deprecation flows from graph.WithDeprecated on the underlying resolver.
 	Deprecated        bool   `json:",omitempty"`
 	DeprecationReason string `json:",omitempty"`
+
+	// ArgsSchema is the structural shape of the handler's args
+	// (request body / query / path params), walked from the
+	// underlying handlerShape.argsType at registration. nil when the
+	// handler takes no args. Powers the client SDK's TS codegen
+	// without an external schema source.
+	//
+	// Auth metadata (whether the route is gated, and any required
+	// permissions) is derived at manifest-build time from the
+	// Middleware list — middleware names "auth:required" and
+	// "auth:requires:..." carry the signal; no separate field on
+	// Endpoint is needed.
+	//
+	// Auth-flow membership (login / logout / me) is recorded via
+	// Tags["auth.flow"], populated by nexus.AuthRoute(...).
+	ArgsSchema *TypeRef `json:",omitempty"`
+
+	// ReturnSchema is the structural shape of the handler's return
+	// value. nil for handlers that return only error.
+	ReturnSchema *TypeRef `json:",omitempty"`
 }
 
 // RateLimitInfo is the registry-serializable shape of a rate limit for
@@ -625,6 +645,30 @@ func (r *Registry) SetEndpointServiceAutoRouted(service, name string) {
 	for i := range r.endpoints {
 		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
 			r.endpoints[i].ServiceAutoRouted = true
+			return
+		}
+	}
+}
+
+// SetEndpointSchema attaches the structural args/return type schemas
+// to an endpoint. Walked once at registration via WalkType and
+// surfaced in the client SDK manifest. nil values for either side
+// mean "no schema" — the client codegen emits an unconstrained
+// any-shape on that side.
+func (r *Registry) SetEndpointSchema(service, name string, args, ret *TypeRef) {
+	if args == nil && ret == nil {
+		return
+	}
+	r.mu.Lock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
+	for i := range r.endpoints {
+		if r.endpoints[i].Service == service && r.endpoints[i].Name == name {
+			if args != nil {
+				r.endpoints[i].ArgsSchema = args
+			}
+			if ret != nil {
+				r.endpoints[i].ReturnSchema = ret
+			}
 			return
 		}
 	}

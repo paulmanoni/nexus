@@ -170,17 +170,19 @@ func autoMountGraphQL(in autoMountIn) error {
 		key := partitionKey{serviceType: f.ServiceType, mountPath: mountPath}
 		p, ok := partitions[key]
 		if !ok {
-			p = &servicePartition{serviceType: f.ServiceType, service: f.Service, mountPath: mountPath}
+			p = &servicePartition{serviceType: f.ServiceType, service: f.Service, mountPath: mountPath, shapes: map[string]GqlField{}}
 			partitions[key] = p
 		}
 		switch f.Kind {
 		case graph.FieldKindQuery:
 			if qf, ok := f.Field.(graph.QueryField); ok {
 				p.queries = append(p.queries, qf)
+				p.shapes[qf.Name()] = f
 			}
 		case graph.FieldKindMutation:
 			if mf, ok := f.Field.(graph.MutationField); ok {
 				p.mutations = append(p.mutations, mf)
+				p.shapes[mf.Name()] = f
 			}
 		}
 		attachDeclaredResources(in.App, f)
@@ -321,6 +323,12 @@ type servicePartition struct {
 	mountPath string
 	queries   []graph.QueryField
 	mutations []graph.MutationField
+	// shapes maps GraphQL field name → the originating GqlField, kept
+	// so the post-mount stamping pass can read each field's
+	// ArgsType / ReturnType and walk them into the registry's
+	// structural schema. Without this, the SDK manifest would have
+	// REST schemas but blank GraphQL ones.
+	shapes map[string]GqlField
 }
 
 // mountGroup builds one merged schema for every partition that shares
@@ -372,12 +380,37 @@ func mountGroup(app *App, g *pathGroup) error {
 	for _, p := range g.partitions {
 		for _, q := range p.queries {
 			patchRegistryFromField(app.Registry(), p.service.Name(), q)
+			stampSchemaFromField(app, p.service.Name(), q.Name(), p.shapes[q.Name()])
 		}
 		for _, m := range p.mutations {
 			patchRegistryFromField(app.Registry(), p.service.Name(), m)
+			stampSchemaFromField(app, p.service.Name(), m.Name(), p.shapes[m.Name()])
 		}
 	}
 	return nil
+}
+
+// stampSchemaFromField walks the GqlField's ArgsType / ReturnType
+// into registry.TypeRef values and persists them on the just-
+// registered endpoint via SetEndpointSchema. Mirrors what
+// recordEndpointSchema does for REST/WS, but driven from the
+// auto-mount's field-level metadata since GraphQL handlers don't
+// have a single registerEndpoint call site we can hook from.
+func stampSchemaFromField(app *App, service, opName string, f GqlField) {
+	if f.ArgsType == nil && f.ReturnType == nil {
+		return
+	}
+	refs := app.schemaRefs()
+	var args, ret *registry.TypeRef
+	if f.ArgsType != nil {
+		v := registry.WalkType(f.ArgsType, refs)
+		args = &v
+	}
+	if f.ReturnType != nil {
+		v := registry.WalkType(f.ReturnType, refs)
+		ret = &v
+	}
+	app.Registry().SetEndpointSchema(service, opName, args, ret)
 }
 
 // NexusResourceProvider is implemented by managers that know the external

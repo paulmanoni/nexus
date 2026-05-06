@@ -379,6 +379,8 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 			DepTypes:    sh.depTypes,
 			Deps:        append([]reflect.Value(nil), deps...),
 			RateLimit:   cfg.rateLimit,
+			ArgsType:    sh.argsType,
+			ReturnType:  sh.returnType,
 		}
 		return []reflect.Value{reflect.ValueOf(entry)}
 	})
@@ -411,6 +413,17 @@ type GqlField struct {
 	// — once operator overrides land — show the effective limit beside
 	// the declared one.
 	RateLimit *ratelimit.Limit
+	// ArgsType / ReturnType are the reflect.Type of the handler's args
+	// struct + return value, captured at AsQuery/AsMutation time. The
+	// auto-mount walks them into registry.TypeRef structures and
+	// stamps the result on the registered Endpoint via
+	// registry.SetEndpointSchema. Powers the client SDK's TS codegen
+	// alongside REST + WS.
+	//
+	// Either may be nil — handlers that take no args / return only
+	// error pass through as the SDK's "no schema" signal.
+	ArgsType   reflect.Type
+	ReturnType reflect.Type
 }
 
 // GqlFieldGroup is the single fx value-group name every reflective GraphQL
