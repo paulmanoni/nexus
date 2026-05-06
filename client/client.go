@@ -107,10 +107,10 @@ func (h *Handler) Manifest() Manifest {
 	return buildManifest(h.reg, h.authInfo, refs, h.basePath)
 }
 
-// build serializes the manifest + (placeholder for now) .d.ts once.
-// sync.Once-protected; Reload swaps the Once so a subsequent call
-// rebuilds. The d.ts pipeline lands in step 5 of the SDK rollout;
-// today the route returns an empty placeholder.
+// build serializes the manifest + .d.ts once. sync.Once-protected;
+// Reload swaps the Once so a subsequent call rebuilds. Both
+// artifacts come from the same projected Manifest so they describe
+// a coherent point-in-time view of the registry.
 func (h *Handler) build() {
 	h.mu.Lock()
 	once := h.once
@@ -118,11 +118,12 @@ func (h *Handler) build() {
 	once.Do(func() {
 		m := h.Manifest()
 		body, err := json.MarshalIndent(m, "", "  ")
+		dts := GenerateDTS(m)
 		h.mu.Lock()
 		if err == nil {
 			h.manifest = body
 		}
-		h.dts = []byte("// Nexus client.d.ts — generator lands in step 5\n")
+		h.dts = []byte(dts)
 		h.mu.Unlock()
 	})
 }

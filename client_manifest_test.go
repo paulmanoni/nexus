@@ -190,6 +190,57 @@ func TestClientManifest_HTTPRouteServesJSON(t *testing.T) {
 	}
 }
 
+// TestClientManifest_DTSCarriesRefsAndEndpoints pins that the live
+// HTTP path through GET /__nexus/client/client.d.ts produces a
+// .d.ts file that reflects the running app's registry: the named
+// type pet shows up as an interface, REST endpoints land in
+// RestEndpoints with proper TS types. Generator unit tests (in
+// client/generator_test.go) cover individual renderer arms; this
+// test pins the wiring at the HTTP boundary.
+func TestClientManifest_DTSCarriesRefsAndEndpoints(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		Module("pets",
+			AsRest("GET", "/pets", newListPets()),
+			AsRest("POST", "/pets", newCreatePet()),
+		).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	client.Mount(app.Engine(), app.Registry(), nil, app.SchemaRefs, "", client.Config{Enabled: true})
+
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+
+	r, err := http.Get(ts.URL + "/__nexus/client/client.d.ts")
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("GET client.d.ts: err=%v status=%d", err, statusOf(r))
+	}
+	defer r.Body.Close()
+	body, _ := io.ReadAll(r.Body)
+	dts := string(body)
+
+	for _, sym := range []string{
+		"export interface pet {",
+		"id: string",
+		"name: string",
+		"age?: number",
+		"export interface RestEndpoints {",
+		"'GET /pets':",
+		"'POST /pets':",
+		"return: pet[]",
+		"args: pet",
+		"declare module '/__nexus/client/client.js'",
+	} {
+		if !strings.Contains(dts, sym) {
+			t.Errorf("DTS missing %q\n--- DTS ---\n%s\n--- end ---", sym, dts)
+		}
+	}
+}
+
 // TestClientManifest_RuntimeJSExports asserts the served client.js
 // is the real runtime, not the step-3 placeholder. Pins the public
 // surface (NexusClient + AuthNamespace + WSHandle + token stores)
