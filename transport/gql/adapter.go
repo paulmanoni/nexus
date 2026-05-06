@@ -44,6 +44,15 @@ type Options struct {
 	// dashboard then groups endpoints by the right service. Nil falls
 	// back to the mount-level `service` arg.
 	ServiceForField func(fieldName string) string
+
+	// AllowIntrospection, when non-nil, is consulted on every request
+	// before the resolver runs. Returning false on a request whose
+	// query contains __schema / __type makes the handler 404 — the
+	// schema-shape leak the public-prod safety pass is closing. Nil
+	// means introspection is allowed unconditionally (the dev/internal
+	// default; nexus.New supplies a closure that reads
+	// Config.Introspection + IntrospectionNetworks).
+	AllowIntrospection func(c *gin.Context) bool
 }
 
 // Option is the variadic form of Options for builder-style callsites.
@@ -60,6 +69,15 @@ func WithDEBUG(v bool) Option      { return func(o *Options) { o.DEBUG = v } }
 // See Options.ServiceForField.
 func WithServiceForField(fn func(name string) string) Option {
 	return func(o *Options) { o.ServiceForField = fn }
+}
+
+// WithAllowIntrospection installs a per-request gate. When fn returns
+// false, queries containing __schema / __type tokens 404 instead of
+// resolving. Used by nexus.New to wire Config.Introspection +
+// IntrospectionNetworks through to the GraphQL handler so the gate is
+// consistent with the dashboard.
+func WithAllowIntrospection(fn func(c *gin.Context) bool) Option {
+	return func(o *Options) { o.AllowIntrospection = fn }
 }
 
 // Mount attaches schema at path for POST/GET and auto-registers every
@@ -86,6 +104,17 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 	var handlers []gin.HandlerFunc
 	if bus != nil {
 		handlers = append(handlers, trace.Middleware(bus, service, "POST "+path, string(registry.GraphQL)))
+	}
+	// Production gate sits before the trace middleware unwrap so
+	// blocked requests don't allocate a trace record. allow == nil
+	// makes the gate a pass-through (no-op). When allow returns
+	// false, the FULL go-graph security suite runs (depth, aliases,
+	// complexity, no introspection) — matching what go-graph's
+	// DEBUG: false / EnableValidation: true mode applies. When
+	// allow returns true, validation is skipped (dev / admin /
+	// allowlisted peer keeps the loose experience).
+	if cfg.AllowIntrospection != nil {
+		handlers = append([]gin.HandlerFunc{productionGate(cfg.AllowIntrospection, schema)}, handlers...)
 	}
 	// Stash the caller IP in the request context so per-op middleware
 	// downstream (rate-limit, metrics error recorder) can attribute the

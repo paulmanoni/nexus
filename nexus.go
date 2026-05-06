@@ -9,6 +9,7 @@ package nexus
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -88,6 +89,13 @@ type App struct {
 	// that guard /__nexus. WithDashboardMiddleware + Config.DashboardMiddleware
 	// populate it; Mount applies them to the route group.
 	dashboardMw []gin.HandlerFunc
+
+	// introspect + introspectionNets are the parsed Config knobs used
+	// to gate GraphQL __schema queries (in addition to the dashboard).
+	// True / non-empty network = bypass; the GraphQL adapter calls
+	// AllowIntrospection on every request via WithAllowIntrospection.
+	introspect        bool
+	introspectionNets []*net.IPNet
 
 	// deployment is the unit name this binary boots as (from
 	// Config.Deployment / NEXUS_DEPLOYMENT). "" = monolith. Today only
@@ -250,6 +258,8 @@ func New(cfg Config) *App {
 	if err != nil {
 		panic(err)
 	}
+	a.introspect = cfg.Introspection
+	a.introspectionNets = introspectionNets
 	if gate := introspectionGate(cfg.Introspection, introspectionNets); gate != nil {
 		a.dashboardMw = append(a.dashboardMw, gate)
 	}
@@ -463,6 +473,17 @@ func (a *App) PrefixPath(p string) string {
 		return p
 	}
 	return a.routePrefix + p
+}
+
+// AllowIntrospection reports whether the request c is permitted to
+// see schema-shape data — drives both the dashboard gate and the
+// GraphQL adapter's __schema-query block. Returns true when
+// Config.Introspection is true OR the TCP peer falls within
+// Config.IntrospectionNetworks. Exposed so transport adapters
+// outside the nexus package (notably gql) can consult one source
+// of truth.
+func (a *App) AllowIntrospection(c *gin.Context) bool {
+	return introspectionAllowed(c, a.introspect, a.introspectionNets)
 }
 
 // normalizeRoutePrefix tidies a user-provided prefix so concatenation
