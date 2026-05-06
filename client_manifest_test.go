@@ -241,6 +241,48 @@ func TestClientManifest_DTSCarriesRefsAndEndpoints(t *testing.T) {
 	}
 }
 
+// TestClientManifest_VueComposablesExports asserts the served
+// vue.js is the real composables module, not the step-3 placeholder.
+// Same name-presence approach as the client.js sibling test.
+func TestClientManifest_VueComposablesExports(t *testing.T) {
+	var app *App
+	fxApp := fxtest.New(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		Module("pets", AsRest("GET", "/pets", newListPets())).nexusOption(),
+		fx.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+
+	client.Mount(app.Engine(), app.Registry(), nil, app.SchemaRefs, "", client.Config{Enabled: true})
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+
+	r, err := http.Get(ts.URL + "/__nexus/client/vue.js")
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("GET vue.js: err=%v status=%d", err, statusOf(r))
+	}
+	defer r.Body.Close()
+	body, _ := io.ReadAll(r.Body)
+	bodyStr := string(body)
+	for _, sym := range []string{
+		"export function useNexus",
+		"export function useQuery",
+		"export function useMutation",
+		"export function useGqlQuery",
+		"export function useGqlMutation",
+		"export function useCrud",
+		"export function useWS",
+		"export function useAuth",
+		"import { ref, watch, unref, computed, onUnmounted } from 'vue'",
+		"import { NexusClient } from './client.js'",
+	} {
+		if !strings.Contains(bodyStr, sym) {
+			t.Errorf("vue.js missing %q — composables regressed to placeholder?", sym)
+		}
+	}
+}
+
 // TestClientManifest_RuntimeJSExports asserts the served client.js
 // is the real runtime, not the step-3 placeholder. Pins the public
 // surface (NexusClient + AuthNamespace + WSHandle + token stores)
