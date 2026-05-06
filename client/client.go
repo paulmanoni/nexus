@@ -151,6 +151,16 @@ var clientJS []byte
 //go:embed ui/nexus-vue.js
 var vueJS []byte
 
+// RuntimeJS returns the embedded nexus-client.js bytes. Public so
+// the `nexus client --out` CLI can dump the runtime to disk
+// without re-embedding a copy in cmd/nexus. Returns the same byte
+// slice the HTTP handler serves at <path>/client.js.
+func RuntimeJS() []byte { return clientJS }
+
+// VueJS returns the embedded nexus-vue.js bytes. Same role as
+// RuntimeJS for the Vue 3 composables module.
+func VueJS() []byte { return vueJS }
+
 // Mount installs the SDK routes on engine. Idempotent: re-mounting
 // rebuilds the cached manifest by invalidating the Once. Called
 // automatically by nexus.New when Config.Client.Enabled.
