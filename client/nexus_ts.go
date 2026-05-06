@@ -56,6 +56,9 @@ import {
   useWS,
 } from './vue.js'
 
+// @ts-ignore — import.meta.env requires Vite client types; silence
+// the lookup so this scaffold compiles under any tsconfig without
+// forcing a /// <reference types="vite/client" /> hoop.
 const env = (import.meta as any).env ?? {}
 
 const origin: string = String(env.VITE_NEXUS_API ?? '').replace(/\/+$/, '')
