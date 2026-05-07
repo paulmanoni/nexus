@@ -349,18 +349,22 @@ class AuthNamespace {
   clearToken() { this._c._tokenStore.clear() }
 
   /**
-   * login posts credentials to the manifest's auth.loginPath
-   * (declared by the app via nexus.AuthRoute("login")). On a
-   * response carrying a `token` field, the SDK auto-stashes it via
-   * the token store. Returns the full response so apps can surface
-   * additional fields (refresh token, expiry, profile snapshot).
+   * login dispatches the credentials to the auth flow declared by
+   * nexus.AuthRoute("login"). Transport is auto-selected from the
+   * manifest: REST endpoints go through nx.rest('POST', loginPath),
+   * GraphQL mutations go through nx.mutate(loginName). On a response
+   * carrying a `token` field the SDK auto-stashes it via the token
+   * store. Returns the full response so apps can surface additional
+   * fields (refresh token, expiry, profile snapshot).
    */
   async login(creds) {
     const m = await this._c.ready()
     if (!m.auth?.loginPath) {
-      throw new NexusError('nexus: app declares no login route — use nexus.AuthRoute("login") on a REST endpoint')
+      throw new NexusError('nexus: app declares no login route — use nexus.AuthRoute("login") on a REST endpoint or GraphQL mutation')
     }
-    const r = await this._c.rest('POST', m.auth.loginPath, creds)
+    const r = (m.auth.loginTransport === 'graphql')
+      ? await this._c._gql('mutation', m.auth.loginName, creds, {})
+      : await this._c.rest('POST', m.auth.loginPath, creds)
     if (r && typeof r === 'object' && typeof r.token === 'string') {
       this.setToken(r.token)
     }
@@ -368,27 +372,34 @@ class AuthNamespace {
   }
 
   /**
-   * logout posts to auth.logoutPath when declared (apps that issue
-   * server-side session invalidation), then clears the local token.
-   * Logout always clears the local token even when the route call
-   * fails — the user's intent is "I'm done".
+   * logout dispatches to the auth.logout flow when declared, then
+   * clears the local token. Transport-aware like login. Logout
+   * always clears the local token even when the route call fails —
+   * the user's intent is "I'm done".
    */
   async logout() {
     const m = await this._c.ready()
     try {
       if (m.auth?.logoutPath) {
-        await this._c.rest('POST', m.auth.logoutPath)
+        if (m.auth.logoutTransport === 'graphql') {
+          await this._c._gql('mutation', m.auth.logoutName, {}, {})
+        } else {
+          await this._c.rest('POST', m.auth.logoutPath)
+        }
       }
     } finally {
       this.clearToken()
     }
   }
 
-  /** me fetches the current Identity from auth.mePath. */
+  /** me fetches the current Identity from the auth.me flow. */
   async me() {
     const m = await this._c.ready()
     if (!m.auth?.mePath) {
-      throw new NexusError('nexus: app declares no /me route — use nexus.AuthRoute("me") on a REST endpoint')
+      throw new NexusError('nexus: app declares no /me route — use nexus.AuthRoute("me") on a REST endpoint or GraphQL query')
+    }
+    if (m.auth.meTransport === 'graphql') {
+      return this._c._gql('query', m.auth.meName, {}, {})
     }
     return this._c.rest('GET', m.auth.mePath)
   }

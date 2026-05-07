@@ -381,6 +381,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 			RateLimit:   cfg.rateLimit,
 			ArgsType:    sh.argsType,
 			ReturnType:  sh.returnType,
+			Tags:        cfg.tags,
 		}
 		return []reflect.Value{reflect.ValueOf(entry)}
 	})
@@ -424,6 +425,12 @@ type GqlField struct {
 	// error pass through as the SDK's "no schema" signal.
 	ArgsType   reflect.Type
 	ReturnType reflect.Type
+	// Tags carries registry.Endpoint.Tags entries declared via
+	// option helpers (e.g. nexus.AuthRoute → "auth.flow"). Forwarded
+	// through the auto-mount so the registered endpoint surfaces the
+	// same tags REST endpoints receive via registerEndpoint, keeping
+	// the SDK manifest's auth-flow discovery transport-agnostic.
+	Tags map[string]string
 }
 
 // GqlFieldGroup is the single fx value-group name every reflective GraphQL
