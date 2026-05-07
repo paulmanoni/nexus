@@ -706,63 +706,52 @@ const tmplAuthGoTpl = `// Package auth wires nexus's built-in oauth2 server. It 
 // /oauth/token endpoint that accepts grant_type=password and emits
 // JWT access + refresh tokens.
 //
-// Replace the stub Authenticator and IdentityResolver below with
-// implementations that consult your real user store. Until then
-// the server accepts {username:"admin", password:"admin"} and
-// returns a synthetic identity — useful for the first dashboard
-// click-through, dangerous in any other context.
+// Replace StubAuthenticator with a real credential check against
+// your user store before shipping. Until then the server accepts
+// {username:"admin", password:"admin"} and returns user id "1" —
+// fine for the first dashboard click-through, dangerous in any
+// other context.
 package auth
 
 import (
 	"context"
-	"errors"
 
-	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/oauth2"
 )
 
-// SeedClient registers a single dev client at boot. Real apps swap
-// the StaticClientStore for a database-backed loader (see
-// oauth2.NewLoaderClientStore) so client provisioning becomes a
+// Default dev client. Real apps swap NewStaticClientStore for
+// oauth2.NewLoaderClientStore so client provisioning becomes a
 // runtime operation instead of a code change.
 const (
 	defaultClientID     = "{{.Name}}-web"
 	defaultClientSecret = "change-me-in-prod"
 )
 
-// Module wires the oauth2 server alongside its stub Authenticator
-// + IdentityResolver. nexus.Run picks it up via main.go.
+// Module wires the oauth2 server. nexus.Run picks it up via main.go.
+// IdentityResolver is left at its default (echoes the userID from
+// the password grant); add one to Config when you need richer JWT
+// claims (roles, scopes, extra payload).
 var Module = oauth2.Module(oauth2.Config{
 	ClientStore: oauth2.NewStaticClientStore(
-		oauth2.NewLoadedClient(defaultClientID, defaultClientSecret, []string{"all"}),
+		oauth2.StaticClient{
+			ID:     defaultClientID,
+			Secret: defaultClientSecret,
+			Domain: "*",
+		},
 	),
-	Authenticator:    StubAuthenticator,
-	IdentityResolver: StubIdentityResolver,
+	Authenticator: StubAuthenticator,
 })
 
-// StubAuthenticator accepts admin/admin only — replace with a real
-// password check (bcrypt against your users table) before shipping.
-func StubAuthenticator(ctx context.Context, username, password string) (string, error) {
+// StubAuthenticator accepts admin/admin only. The clientID arg lets
+// you scope credentials per OAuth2 client when you need it; the stub
+// ignores it. Return oauth2.ErrInvalidCredentials (or any error) to
+// fail the password grant.
+func StubAuthenticator(ctx context.Context, clientID, username, password string) (string, error) {
 	if username == "admin" && password == "admin" {
-		return "user:1", nil
+		return "1", nil
 	}
-	return "", errors.New("invalid credentials")
+	return "", oauth2.ErrInvalidCredentials
 }
-
-// StubIdentityResolver maps a userID (returned from the
-// Authenticator) to the claim payload that lands inside the JWT.
-// The "extra" map ends up under the "ext" claim — anything in
-// here is visible to every downstream service.
-func StubIdentityResolver(ctx context.Context, userID string) (oauth2.Identity, error) {
-	return oauth2.Identity{
-		Subject: userID,
-		Extra:   map[string]any{"role": "admin"},
-	}, nil
-}
-
-// _ keeps the nexus import live in case future stubs grow into
-// real handler functions that depend on app context.
-var _ = nexus.AsRest
 `
 
 // ── deployment manifest ─────────────────────────────────────────────

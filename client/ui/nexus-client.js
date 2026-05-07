@@ -149,6 +149,15 @@ export class NexusClient {
     return this.ready()
   }
 
+  // _findGqlEndpoint is the per-name lookup used by query()/mutate()
+  // and by _gql's stale-cache retry path. Pulled out so the retry
+  // is one line instead of duplicating the find() filter.
+  _findGqlEndpoint(m, kind, name) {
+    return (m.endpoints || []).find(e =>
+      e.transport === 'graphql' && e.method === kind && e.name === name
+    )
+  }
+
   /**
    * rest invokes a REST endpoint. Path-param tokens (:name) in path
    * are pulled from args and removed; remaining args become the
@@ -227,8 +236,18 @@ export class NexusClient {
   }
 
   async _gql(kind, name, variables, opts) {
-    const m = await this.ready()
-    const ep = (m.endpoints || []).find(e => e.transport === 'graphql' && e.method === kind && e.name === name)
+    let m = await this.ready()
+    let ep = this._findGqlEndpoint(m, kind, name)
+    if (!ep) {
+      // Cache miss: in a live dev session the user may have just
+      // added a Go-side handler that registers `name`. The running
+      // server's manifest has it now; our cached copy doesn't.
+      // Refetch once and retry the lookup before giving up.
+      // Concurrent misses dedupe via ready()'s _loadingManifest
+      // promise — only one network round-trip happens.
+      m = await this.reload()
+      ep = this._findGqlEndpoint(m, kind, name)
+    }
     if (!ep) {
       throw new NexusError(`nexus: no GraphQL ${kind} named ${name}`, { endpoint: name })
     }

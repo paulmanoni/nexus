@@ -162,6 +162,54 @@ func TestScaffoldWithOpts_FullStack(t *testing.T) {
 	}
 }
 
+// TestScaffoldFullStack_Builds catches API drift between the
+// auth/db/cache templates and the framework packages they import.
+// The cheaper TestScaffoldWithOpts_FullStack only checks file
+// contents — it would have missed the recent oauth2 signature
+// change that broke `nexus new --auth=oauth2`. This one runs the
+// full mod-tidy + go-build dance against an in-repo replace, so
+// any template that references a renamed/removed symbol fails
+// loudly here instead of in user inboxes.
+func TestScaffoldFullStack_Builds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping build test in -short mode")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not on PATH")
+	}
+	_, here, _, _ := runtime.Caller(0)
+	repoRoot, err := filepath.Abs(filepath.Join(filepath.Dir(here), "..", ".."))
+	if err != nil {
+		t.Fatalf("repo root: %v", err)
+	}
+
+	dir := filepath.Join(t.TempDir(), "fullstack")
+	if err := scaffoldWithOpts(scaffoldOpts{
+		Dir: dir, Frontend: "vue", DB: "postgres", Cache: "redis", Auth: "oauth2",
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	addReplace := exec.Command("go", "mod", "edit",
+		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
+		"-require", "github.com/paulmanoni/nexus@v0.0.0",
+	)
+	addReplace.Dir = dir
+	if out, err := addReplace.CombinedOutput(); err != nil {
+		t.Fatalf("go mod edit: %v\n%s", err, out)
+	}
+	for _, step := range [][]string{
+		{"go", "mod", "tidy"},
+		{"go", "build", "./..."},
+	} {
+		cmd := exec.Command(step[0], step[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s failed: %v\n%s", strings.Join(step, " "), err, out)
+		}
+	}
+}
+
 // TestScaffoldWithOpts_ReactFrontend covers the react-specific
 // branch: package.json carries react deps, src/main.tsx is the
 // entry point, and vite.config.ts plugs in @vitejs/plugin-react.
