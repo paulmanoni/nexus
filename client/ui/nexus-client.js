@@ -506,16 +506,24 @@ class WSHandle {
 // -- GraphQL document builder --------------------------------------
 //
 // Builds a minimal GraphQL document from the manifest's endpoint
-// info. Selection set on object returns expands into __typename +
-// every field reachable through manifest.refs, recursing into nested
-// refs / inline objects / list elements. Cycle-safe via a per-walk
-// visited set; depth-bounded so a self-referential type can't blow
-// the document size.
+// info. Selection sets on object returns auto-expand into __typename +
+// every field reachable through manifest.refs, recursing through
+// nested refs, inline objects, and array elements. Cycle-safe via a
+// per-walk visited set; depth-bounded so self-referential types can't
+// blow up the document size.
 //
-// Apps that want richer or pruned selection sets can call client.rest
-// against the GraphQL endpoint directly with a hand-written document.
+// nx.query / nx.mutate intentionally take NO field-selection option —
+// the SDK fetches everything reachable within the depth cap. Apps
+// that need a tighter or hand-tuned selection set can call
+// client.rest against the GraphQL endpoint directly with a
+// hand-written document.
+//
+// SELECTION_MAX_DEPTH bounds how deep the auto-expansion walks. 3
+// matches "the field, its sub-objects, and their sub-objects" —
+// covers the common Response[Data{User, ...}] shape without
+// accidentally pulling N-deep relation graphs.
 
-const SELECTION_MAX_DEPTH = 6
+const SELECTION_MAX_DEPTH = 3
 
 function buildGqlDocument(kind, name, variables, ep, refs) {
   const argDefs = []
@@ -541,14 +549,17 @@ function buildSelectionSet(typeRef, refs) {
 }
 
 function walkSelection(typeRef, refs, seenRefs, depth) {
-  if (!typeRef || depth <= 0) return ''
+  if (!typeRef) return ''
   switch (typeRef.kind) {
     case 'primitive':
     case 'any':
       // Leaves of the schema — no selection set.
       return ''
+    case 'array':
     case 'list':
-      // GraphQL puts the selection on the element, not the list.
+      // GraphQL puts the selection on the element, not the wrapper.
+      // Lists of primitives unwind to '' so we don't request a sub-
+      // selection on a [String] field (which the schema rejects).
       return walkSelection(typeRef.of, refs, seenRefs, depth)
     case 'map':
       // GraphQL has no map type; the framework degrades these to a
@@ -557,7 +568,10 @@ function walkSelection(typeRef, refs, seenRefs, depth) {
     case 'ref': {
       const refName = typeRef.ref
       if (!refName) return '{ __typename }'
-      if (seenRefs.has(refName)) return '{ __typename }'
+      // Cycle break + depth cap both fall back to __typename — keeps
+      // the document syntactically valid (an object field MUST carry
+      // a selection set) without recursing further.
+      if (seenRefs.has(refName) || depth <= 0) return '{ __typename }'
       const nt = refs[refName]
       if (!nt || !nt.fields) return '{ __typename }'
       const next = new Set(seenRefs)
@@ -566,6 +580,7 @@ function walkSelection(typeRef, refs, seenRefs, depth) {
     }
     case 'object':
       if (!typeRef.object || !typeRef.object.fields) return '{ __typename }'
+      if (depth <= 0) return '{ __typename }'
       return renderObjectSelection(typeRef.object.fields, refs, seenRefs, depth - 1)
     default:
       return '{ __typename }'
