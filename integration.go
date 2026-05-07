@@ -71,7 +71,7 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 			// the project tree is dev-tool friction, not a reason
 			// to refuse to serve traffic.
 			if h := app.ClientHandler(); h != nil && cfg.Client.OutDir != "" {
-				if err := h.Dump(cfg.Client.OutDir, cfg.Client.TSConfig, log.Writer()); err != nil {
+				if err := h.Dump(cfg.Client.OutDir, cfg.Client.TSConfig, cfg.Client.ViteConfig, log.Writer()); err != nil {
 					log.Printf("nexus client: auto-dump %s: %v", cfg.Client.OutDir, err)
 				}
 			}

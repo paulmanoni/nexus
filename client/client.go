@@ -120,6 +120,26 @@ type Config struct {
 	// Only takes effect when OutDir is also set — the path
 	// mappings need a target.
 	TSConfig string
+
+	// ViteConfig, when non-empty, makes Mount auto-attach the
+	// nexus-vite-plugin (auto-select) to a Vite config on startup.
+	// Two idempotent edits land in the file:
+	//
+	//   1. an `import nexusAutoSelect from '<rel>/nexus-vite-plugin.js'`
+	//      after the last top-level import,
+	//   2. a `nexusAutoSelect()` entry inside the first `plugins:`
+	//      array.
+	//
+	// Path can be absolute or relative to the Go binary's CWD.
+	// Only takes effect when OutDir is set — the plugin file lives
+	// under OutDir. Re-running is a no-op once both edits have
+	// landed; the framework keys idempotence off the literal
+	// "nexusAutoSelect" identifier in the file.
+	//
+	// Recommend gating this behind a dev-mode flag in production
+	// builds — there's no reason to mutate a checked-in config on
+	// every prod boot.
+	ViteConfig string
 }
 
 // Handler holds the live state of a mounted SDK surface — the

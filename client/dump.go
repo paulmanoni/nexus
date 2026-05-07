@@ -27,7 +27,7 @@ import (
 //
 // stdout receives one line per file ("wrote …" / "unchanged …").
 // Pass io.Discard to silence.
-func (h *Handler) Dump(outDir, tsconfig string, stdout io.Writer) error {
+func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -86,6 +86,11 @@ func (h *Handler) Dump(outDir, tsconfig string, stdout io.Writer) error {
 
 	if tsconfig != "" {
 		if err := MergePathsConfig(tsconfig, outDir, stdout); err != nil {
+			return err
+		}
+	}
+	if viteConfig != "" {
+		if err := MergeViteConfig(viteConfig, outDir, stdout); err != nil {
 			return err
 		}
 	}
