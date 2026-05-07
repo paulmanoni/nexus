@@ -234,18 +234,29 @@ export class NexusClient {
   rest(method: string, path: string, args?: object, opts?: object): Promise<unknown>
 
   /** Typed GraphQL query. opts.select narrows the auto-expanded
-   *  selection set: a string passes through verbatim, an array
-   *  lists top-level scalars, an object recurses (true = leaf,
-   *  nested object = sub-selection). */
-  query<K extends keyof GraphqlOps>(
+   *  selection set AND narrows the response type — the await
+   *  result reflects exactly what was selected. */
+  query<
+    K extends keyof GraphqlOps,
+    const S extends
+      | string
+      | ReadonlyArray<GqlKeyOf<GraphqlOps[K]['return']>>
+      | SelectionFor<GraphqlOps[K]['return']> = never,
+  >(
     name: K, vars?: GraphqlOps[K]['args'],
-    opts?: GqlCallOptions,
-  ): Promise<GraphqlOps[K]['return']>
+    opts?: GqlCallOpts<GraphqlOps[K]['return'], S>,
+  ): Promise<Selected<GraphqlOps[K]['return'], S>>
   /** Typed GraphQL mutation. Same options as query(). */
-  mutate<K extends keyof GraphqlOps>(
+  mutate<
+    K extends keyof GraphqlOps,
+    const S extends
+      | string
+      | ReadonlyArray<GqlKeyOf<GraphqlOps[K]['return']>>
+      | SelectionFor<GraphqlOps[K]['return']> = never,
+  >(
     name: K, vars?: GraphqlOps[K]['args'],
-    opts?: GqlCallOptions,
-  ): Promise<GraphqlOps[K]['return']>
+    opts?: GqlCallOpts<GraphqlOps[K]['return'], S>,
+  ): Promise<Selected<GraphqlOps[K]['return'], S>>
 
   /** CRUD handle for AsCRUD-registered entities. */
   crud(name: string): CrudHandle
@@ -254,19 +265,91 @@ export class NexusClient {
   ws<P extends keyof WSMessages>(path: P): WSHandle<P>
 }
 
-/** Options shared by nx.query / nx.mutate. */
-export interface GqlCallOptions {
+/** Scalar leaves — no sub-selection possible on these in GraphQL. */
+type GqlScalar = string | number | boolean | bigint | null | undefined
+
+/** Top-level scalar field names of T (or T's array element). */
+export type GqlKeyOf<T> =
+  T extends ReadonlyArray<infer U> ? Extract<keyof U, string>
+  : Extract<keyof T, string>
+
+/** Selection shape for one field F of a parent type. */
+type GqlField<F> =
+  F extends GqlScalar ? boolean
+  : F extends ReadonlyArray<infer U>
+    ? (U extends object
+        ? boolean | SelectionFor<U> | ReadonlyArray<Extract<keyof U, string>>
+        : boolean)
+    : F extends object
+      ? boolean | SelectionFor<F> | ReadonlyArray<Extract<keyof F, string>>
+      : boolean
+
+/** Recursive selection-set tree shaped to mirror T. The IDE
+ *  autocompletes T's field names; nested objects recurse the same
+ *  way. true selects a leaf, an array shorthand lists scalar
+ *  children of an object/array field. */
+export type SelectionFor<T> =
+  T extends GqlScalar ? never
+  : T extends ReadonlyArray<infer U> ? SelectionFor<U>
+  : T extends object ? { [K in keyof T]?: GqlField<T[K]> }
+  : never
+
+/** Internal: opts shape for nx.query / nx.mutate. Generic over both
+ *  the return type T and the literal selection S so the response
+ *  type narrows to exactly what was selected. */
+export interface GqlCallOpts<T, S> {
   headers?: Record<string, string>
   signal?: AbortSignal
-  /** Override the auto-expanded selection set. String passes through;
-   *  array lists scalars; object recurses (true selects, nested
-   *  object emits a sub-selection). */
-  select?: string | readonly string[] | GqlSelection
+  /** Override the auto-expanded selection set. */
+  select?: S & (
+    | string
+    | ReadonlyArray<GqlKeyOf<T>>
+    | SelectionFor<T>
+  )
 }
 
-/** Recursive selection-set tree: true selects a leaf field, an
- *  array lists scalar children, a nested object emits its own
- *  selection set. */
+/** Public alias kept for hand-built untyped calls. The two-generic
+ *  GqlCallOpts is what the typed query/mutate signatures use. */
+export type GqlCallOptions<T = unknown> = GqlCallOpts<T, unknown>
+
+/** Computes the response shape after applying selection S to T.
+ *
+ *    no select / never        → T (full shape, auto-expanded server-side)
+ *    string                   → T (passthrough; TS can't introspect a raw doc)
+ *    readonly K[]             → Pick<T, K> (or array of Pick for list T)
+ *    SelectionFor<T>          → recursive narrowed tree
+ */
+export type Selected<T, S> =
+  [S] extends [never] ? T
+  : S extends string ? T
+  : S extends readonly (infer F)[]
+    ? T extends readonly (infer U)[]
+      ? PickFields<U, F>[]
+      : PickFields<T, F>
+  : S extends Record<string, unknown>
+    ? T extends readonly (infer U)[]
+      ? PickObject<U, S>[]
+      : PickObject<T, S>
+  : T
+
+type PickFields<T, F> = F extends keyof T ? Pick<T, F> : T
+
+type PickObject<T, S> = {
+  [K in Extract<keyof S, keyof T>]:
+    S[K] extends true ? T[K]
+    : S[K] extends readonly (infer F)[]
+      ? T[K] extends readonly (infer U)[]
+        ? PickFields<U, F>[]
+        : PickFields<T[K], F>
+    : S[K] extends Record<string, unknown>
+      ? T[K] extends readonly (infer U)[]
+        ? PickObject<U, S[K]>[]
+        : PickObject<T[K], S[K]>
+    : T[K]
+}
+
+/** Loose, untyped selection tree — used by hand-written documents
+ *  and as the escape hatch when the return type is unknown. */
 export interface GqlSelection {
   [field: string]: boolean | readonly string[] | GqlSelection
 }
