@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -36,6 +37,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		noWatch     bool
 		frontendDir string
 		frontendCmd string
+		verbose     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -69,7 +71,7 @@ examples/microsplit for the convention.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, !noOpen, openDash, !noWatch, frontendDir, frontendCmd, stdout, stderr)
+			return runDev(target, addr, !noOpen, openDash, !noWatch, frontendDir, frontendCmd, verbose, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -90,6 +92,8 @@ examples/microsplit for the convention.`,
 		"path to a frontend project (e.g. ./web); spawns its watcher alongside go run and prefixes its logs with [web]")
 	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "npm run dev:build",
 		"command run inside --frontend dir (typically wraps `vite build --watch`)")
+	cmd.Flags().BoolVar(&verbose, "verbose", false,
+		"keep [Fx] graph chatter + [GIN-debug] route-registration logs (suppressed by default in dev)")
 	return cmd
 }
 
@@ -117,7 +121,7 @@ func (e *userError) Error() string { return e.msg }
 // When watch is true, runs a fsnotify watcher on the target dir and
 // restarts `go run` on every coalesced source-file change. SIGINT
 // stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose bool, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -177,7 +181,18 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	if watch {
 		restartCh = make(chan struct{}, 1)
 		root, _ := os.Getwd()
-		if err := watchSource(ctx, root, restartCh, stderr); err != nil {
+		// In dev mode the frontend dir is owned by the frontend
+		// watcher (vite, esbuild, etc.); Go has no business
+		// rebuilding when its files change. Override the embed-root
+		// rule so saves under web/ don't bounce the Go process.
+		ignore := []string{}
+		if frontendDir != "" {
+			abs, _ := filepath.Abs(frontendDir)
+			if abs != "" {
+				ignore = append(ignore, abs)
+			}
+		}
+		if err := watchSource(ctx, root, restartCh, stderr, ignore); err != nil {
 			fmt.Fprintf(stderr, "watcher disabled: %v\n", err)
 			restartCh = nil
 		}
@@ -197,7 +212,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			}
 		}
 		_ = devDeployment // currently informational; reserved for the banner
-		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, stdout, stderr)
+		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -252,7 +267,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // listeners, topology) gets compiled into the binary.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	args := []string{"run"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
@@ -273,8 +288,13 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	// build --watch, esbuild --watch) can update web/dist/ without
 	// forcing a Go recompile. NEXUS_DEV_ROOT pins the disk root to
 	// the dev target so users running from a different CWD still
-	// resolve correctly.
-	cmd.Env = append(os.Environ(), "NEXUS_DEV=1", "NEXUS_DEV_ROOT="+target)
+	// resolve correctly. NEXUS_VERBOSE flips the framework's
+	// quiet-by-default policy off (keeps [Fx] + [GIN-debug] logs).
+	env := append(os.Environ(), "NEXUS_DEV=1", "NEXUS_DEV_ROOT="+target)
+	if verbose {
+		env = append(env, "NEXUS_VERBOSE=1")
+	}
+	cmd.Env = env
 	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {

@@ -23,7 +23,7 @@ func TestWatchSource_FiresOnGoFileChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan struct{}, 1)
-	if err := watchSource(ctx, dir, out, &bytes.Buffer{}); err != nil {
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, nil); err != nil {
 		t.Fatalf("watchSource: %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestWatchSource_IgnoresIrrelevantPaths(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan struct{}, 1)
-	if err := watchSource(ctx, dir, out, &bytes.Buffer{}); err != nil {
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, nil); err != nil {
 		t.Fatalf("watchSource: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -107,7 +107,7 @@ func TestWatchSource_FiresOnEmbedTarget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan struct{}, 1)
-	if err := watchSource(ctx, dir, out, &bytes.Buffer{}); err != nil {
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, nil); err != nil {
 		t.Fatalf("watchSource: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -139,7 +139,7 @@ func TestWatchSource_DebouncesBurst(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out := make(chan struct{}, 4)
-	if err := watchSource(ctx, dir, out, &bytes.Buffer{}); err != nil {
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, nil); err != nil {
 		t.Fatalf("watchSource: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
