@@ -525,7 +525,7 @@ func TestClientManifest_OutDirAutoDump(t *testing.T) {
 	if err := os.WriteFile(out+"/nexus.ts", stamp, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.ClientHandler().Dump(out, tsconfig, io.Discard); err != nil {
+	if err := app.ClientHandler().Dump(out, tsconfig, "", io.Discard); err != nil {
 		t.Fatalf("re-dump: %v", err)
 	}
 	post, _ := os.ReadFile(out + "/nexus.ts")
