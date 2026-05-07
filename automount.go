@@ -386,12 +386,14 @@ func mountGroup(app *App, g *pathGroup) error {
 
 	for _, p := range g.partitions {
 		for _, q := range p.queries {
-			patchRegistryFromField(app.Registry(), p.service.Name(), q)
-			stampSchemaFromField(app, p.service.Name(), q.Name(), p.shapes[q.Name()])
+			shape := p.shapes[q.Name()]
+			patchRegistryFromField(app.Registry(), p.service.Name(), q, shape.Tags)
+			stampSchemaFromField(app, p.service.Name(), q.Name(), shape)
 		}
 		for _, m := range p.mutations {
-			patchRegistryFromField(app.Registry(), p.service.Name(), m)
-			stampSchemaFromField(app, p.service.Name(), m.Name(), p.shapes[m.Name()])
+			shape := p.shapes[m.Name()]
+			patchRegistryFromField(app.Registry(), p.service.Name(), m, shape.Tags)
+			stampSchemaFromField(app, p.service.Name(), m.Name(), shape)
 		}
 	}
 	return nil
@@ -506,7 +508,7 @@ func collectResourceNames(deps []reflect.Value) []string {
 	return names
 }
 
-func patchRegistryFromField(reg *registry.Registry, service string, f any) {
+func patchRegistryFromField(reg *registry.Registry, service string, f any, tags map[string]string) {
 	info, ok := graph.Inspect(f)
 	if !ok {
 		return
@@ -523,6 +525,7 @@ func patchRegistryFromField(reg *registry.Registry, service string, f any) {
 		Middleware:        middlewareNames(info.Middlewares),
 		Deprecated:        info.Deprecated,
 		DeprecationReason: info.DeprecationReason,
+		Tags:              tags,
 	})
 }
 

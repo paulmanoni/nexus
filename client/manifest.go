@@ -116,13 +116,25 @@ type ExtractorInfo struct {
 
 // AuthInfo describes the running auth surface. The extractor shape
 // tells the SDK where to put the access token; LoginPath /
-// LogoutPath / MePath are discovered from endpoints marked via
-// nexus.AuthRoute.
+// LogoutPath / MePath (plus their *Transport / *Name siblings) are
+// discovered from endpoints marked via nexus.AuthRoute.
+//
+// Transport is "rest" or "graphql" — the SDK switches between
+// rest() and _gql() dispatch based on this. Name is the GraphQL op
+// name when Transport == "graphql"; empty for REST. The legacy
+// *Path fields stay populated for both transports (the GraphQL
+// mount path) so older SDK builds continue to resolve auth flows.
 type AuthInfo struct {
 	ExtractorInfo
-	LoginPath  string `json:"loginPath,omitempty"`
-	LogoutPath string `json:"logoutPath,omitempty"`
-	MePath     string `json:"mePath,omitempty"`
+	LoginPath       string `json:"loginPath,omitempty"`
+	LoginTransport  string `json:"loginTransport,omitempty"`
+	LoginName       string `json:"loginName,omitempty"`
+	LogoutPath      string `json:"logoutPath,omitempty"`
+	LogoutTransport string `json:"logoutTransport,omitempty"`
+	LogoutName      string `json:"logoutName,omitempty"`
+	MePath          string `json:"mePath,omitempty"`
+	MeTransport     string `json:"meTransport,omitempty"`
+	MeName          string `json:"meName,omitempty"`
 }
 
 // buildManifest projects the registry into the SDK manifest shape.
@@ -222,14 +234,26 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 	if authInfo != nil {
 		ai := &AuthInfo{ExtractorInfo: authInfo()}
 		// Discover login/logout/me from AuthRoute-tagged endpoints.
+		// For GraphQL ops, also record the op name so the SDK can
+		// dispatch via _gql; the path field carries the mount URL.
 		for _, e := range m.Endpoints {
+			name := ""
+			if e.Transport == string(registry.GraphQL) {
+				name = e.Name
+			}
 			switch e.AuthFlow {
 			case "login":
 				ai.LoginPath = e.Path
+				ai.LoginTransport = e.Transport
+				ai.LoginName = name
 			case "logout":
 				ai.LogoutPath = e.Path
+				ai.LogoutTransport = e.Transport
+				ai.LogoutName = name
 			case "me":
 				ai.MePath = e.Path
+				ai.MeTransport = e.Transport
+				ai.MeName = name
 			}
 		}
 		m.Auth = ai

@@ -219,16 +219,22 @@ func (h *Handler) publicManifest() Manifest {
 	}
 	// Keep auth-flagged endpoints (login/logout/me) so the SDK's
 	// auth namespace can resolve their paths post-construct.
-	// Strip Args/Return — the runtime doesn't need typed schemas
-	// to make these calls; just the path/method.
+	// Strip Args + RequiresPerm in all cases — neither feeds the
+	// runtime's auth dispatch. Return stays ONLY for GraphQL auth
+	// ops because _gql's selection-set hint reads it (object
+	// returns need "{ __typename }"). REST auth ops still have
+	// Return stripped, preserving the original "no schemas in the
+	// public projection" contract for the non-graphql path.
 	for _, e := range full.Endpoints {
 		if e.AuthFlow == "" {
 			continue
 		}
 		stripped := e
 		stripped.Args = nil
-		stripped.Return = nil
 		stripped.RequiresPerm = nil
+		if e.Transport != string(registry.GraphQL) {
+			stripped.Return = nil
+		}
 		skinny.Endpoints = append(skinny.Endpoints, stripped)
 	}
 	return skinny

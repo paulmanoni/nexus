@@ -140,6 +140,12 @@ type GraphQLUpdate struct {
 	Middleware        []string
 	Deprecated        bool
 	DeprecationReason string
+	// Tags merge into the endpoint's Tags map. Used by the auto-mount
+	// to forward option-declared tags (e.g. nexus.AuthRoute's
+	// "auth.flow") into the registry, keeping GraphQL ops on equal
+	// footing with REST endpoints that receive tags via
+	// registerEndpoint. Nil leaves existing tags untouched.
+	Tags map[string]string
 }
 
 type Service struct {
@@ -546,6 +552,14 @@ func (r *Registry) UpdateGraphQLEndpoint(service, name string, u GraphQLUpdate) 
 		if u.Deprecated {
 			e.Deprecated = true
 			e.DeprecationReason = u.DeprecationReason
+		}
+		if len(u.Tags) > 0 {
+			if e.Tags == nil {
+				e.Tags = map[string]string{}
+			}
+			for k, v := range u.Tags {
+				e.Tags[k] = v
+			}
 		}
 		return
 	}
