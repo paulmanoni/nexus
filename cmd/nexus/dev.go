@@ -188,7 +188,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				fmt.Fprintf(stderr, "vite watch.exclude injection skipped: %v\n", err)
 			}
 		}
-		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, !verbose, stdout, stderr); err != nil {
+		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, verbose, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
 		}
 	}
