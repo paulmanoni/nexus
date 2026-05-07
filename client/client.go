@@ -237,7 +237,76 @@ func (h *Handler) publicManifest() Manifest {
 		}
 		skinny.Endpoints = append(skinny.Endpoints, stripped)
 	}
+	// GraphQL auth ops need their Return type's refs resolvable on the
+	// browser side — _gql's selection-set walker reads manifest.refs to
+	// expand object returns into concrete fields. Without this, login
+	// responses come back as `{__typename: "..."}` with no data. We
+	// project only the refs reachable from the preserved auth-flow
+	// endpoints, keeping the public surface minimal.
+	skinny.Refs = collectAuthFlowRefs(skinny.Endpoints, full.Refs)
 	return skinny
+}
+
+// collectAuthFlowRefs walks the Return TypeRefs of every endpoint in
+// `eps` (typically the auth-flow projection) and returns a Refs
+// subset of `pool` containing every named type transitively reachable.
+// Returns nil when no refs are needed so the JSON projection stays
+// `refs` omittable.
+func collectAuthFlowRefs(eps []EndpointInfo, pool map[string]registry.NamedType) map[string]registry.NamedType {
+	if len(pool) == 0 {
+		return nil
+	}
+	needed := map[string]struct{}{}
+	for _, e := range eps {
+		collectRefNames(e.Return, needed)
+	}
+	if len(needed) == 0 {
+		return nil
+	}
+	out := make(map[string]registry.NamedType, len(needed))
+	// Transitive closure — refs may reference other refs through
+	// nested fields. Iterate until the needed set stops growing.
+	for changed := true; changed; {
+		changed = false
+		for name := range needed {
+			if _, done := out[name]; done {
+				continue
+			}
+			nt, ok := pool[name]
+			if !ok {
+				// Mark resolved-but-missing so we don't loop on it.
+				out[name] = registry.NamedType{}
+				delete(out, name)
+				continue
+			}
+			out[name] = nt
+			for _, f := range nt.Fields {
+				collectRefNames(&f.Type, needed)
+			}
+			changed = true
+		}
+	}
+	return out
+}
+
+func collectRefNames(t *registry.TypeRef, into map[string]struct{}) {
+	if t == nil {
+		return
+	}
+	if t.Kind == "ref" && t.Ref != "" {
+		into[t.Ref] = struct{}{}
+	}
+	if t.Of != nil {
+		collectRefNames(t.Of, into)
+	}
+	if t.KeyOf != nil {
+		collectRefNames(t.KeyOf, into)
+	}
+	if t.Object != nil {
+		for _, f := range t.Object.Fields {
+			collectRefNames(&f.Type, into)
+		}
+	}
 }
 
 // build serializes the manifest + .d.ts once. sync.Once-protected;

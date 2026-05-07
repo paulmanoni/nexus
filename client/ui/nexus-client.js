@@ -224,7 +224,7 @@ export class NexusClient {
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...(opts.headers || {}) },
       signal: opts.signal,
       body: JSON.stringify({
-        query: buildGqlDocument(kind, name, variables, ep),
+        query: buildGqlDocument(kind, name, variables, ep, m.refs || {}),
         variables,
         operationName: capitalize(name),
       }),
@@ -506,15 +506,18 @@ class WSHandle {
 // -- GraphQL document builder --------------------------------------
 //
 // Builds a minimal GraphQL document from the manifest's endpoint
-// info. For scalar-only args + scalar-or-named return, this produces
-// a query / mutation that calls the field with the supplied
-// variables. Selection set on object returns is __typename + every
-// field listed in manifest.refs[<refName>] — gets the operator a
-// usable response without needing to learn graphql-go's introspection
-// surface. Apps that want richer selection sets can call client.rest
-// against the GraphQL endpoint directly.
+// info. Selection set on object returns expands into __typename +
+// every field reachable through manifest.refs, recursing into nested
+// refs / inline objects / list elements. Cycle-safe via a per-walk
+// visited set; depth-bounded so a self-referential type can't blow
+// the document size.
+//
+// Apps that want richer or pruned selection sets can call client.rest
+// against the GraphQL endpoint directly with a hand-written document.
 
-function buildGqlDocument(kind, name, variables, ep) {
+const SELECTION_MAX_DEPTH = 6
+
+function buildGqlDocument(kind, name, variables, ep, refs) {
   const argDefs = []
   const argList = []
   for (const k of Object.keys(variables)) {
@@ -526,15 +529,69 @@ function buildGqlDocument(kind, name, variables, ep) {
   const sig = argDefs.length ? `(${argDefs.join(', ')})` : ''
   const args = argList.length ? `(${argList.join(', ')})` : ''
   const opName = capitalize(name)
-  const selection = isScalarReturn(ep) ? '' : ' { __typename }'
+  const selection = buildSelectionSet(ep && ep.return, refs || {})
   return `${kind} ${opName}${sig} { ${name}${args}${selection} }`
 }
 
-function isScalarReturn(ep) {
-  const r = ep && ep.return
-  if (!r) return true
-  if (r.kind === 'primitive' || r.kind === 'any') return true
-  return false
+// buildSelectionSet returns the leading-space selection-set fragment
+// (" { a b c }") or "" when the return type is scalar/unknown.
+function buildSelectionSet(typeRef, refs) {
+  const inner = walkSelection(typeRef, refs, new Set(), SELECTION_MAX_DEPTH)
+  return inner ? ' ' + inner : ''
+}
+
+function walkSelection(typeRef, refs, seenRefs, depth) {
+  if (!typeRef || depth <= 0) return ''
+  switch (typeRef.kind) {
+    case 'primitive':
+    case 'any':
+      // Leaves of the schema — no selection set.
+      return ''
+    case 'list':
+      // GraphQL puts the selection on the element, not the list.
+      return walkSelection(typeRef.of, refs, seenRefs, depth)
+    case 'map':
+      // GraphQL has no map type; the framework degrades these to a
+      // scalar-shaped JSON blob, so no selection.
+      return ''
+    case 'ref': {
+      const refName = typeRef.ref
+      if (!refName) return '{ __typename }'
+      if (seenRefs.has(refName)) return '{ __typename }'
+      const nt = refs[refName]
+      if (!nt || !nt.fields) return '{ __typename }'
+      const next = new Set(seenRefs)
+      next.add(refName)
+      return renderObjectSelection(nt.fields, refs, next, depth - 1)
+    }
+    case 'object':
+      if (!typeRef.object || !typeRef.object.fields) return '{ __typename }'
+      return renderObjectSelection(typeRef.object.fields, refs, seenRefs, depth - 1)
+    default:
+      return '{ __typename }'
+  }
+}
+
+function renderObjectSelection(fields, refs, seenRefs, depth) {
+  const parts = ['__typename']
+  for (const f of fields) {
+    const fieldName = wireFieldName(f)
+    if (!fieldName) continue
+    const sub = walkSelection(f.type, refs, seenRefs, depth)
+    parts.push(sub ? `${fieldName} ${sub}` : fieldName)
+  }
+  return `{ ${parts.join(' ')} }`
+}
+
+// wireFieldName resolves a field's wire name with the same priority
+// the server's schema walker uses: graphql tag wins for output
+// selections, json tag is the fallback, and the lower-cased Go name
+// is the last resort (matching graphql-go's default field naming).
+function wireFieldName(f) {
+  if (f.graphqlName) return f.graphqlName
+  if (f.jsonName) return f.jsonName
+  if (!f.name) return ''
+  return f.name.charAt(0).toLowerCase() + f.name.slice(1)
 }
 
 function inferGqlType(v) {
