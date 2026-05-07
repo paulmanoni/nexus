@@ -502,7 +502,13 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash 
 	}
 	printReadyLine(stdout, primaryURL, openBrowserOnReady)
 	if viteURL != "" && ready != "" {
-		fmt.Fprintf(stdout, "  %sAPI: %s%s\n", ansiDim, clientURL(ready), ansiReset)
+		// In dev-server mode the user lives at vite's URL, but the
+		// framework dashboard is a separate Vue bundle baked into
+		// the Go binary. Going through vite's proxy adds edge
+		// cases (SSE streaming, asset-path resolution); pointing
+		// at Go's port directly skips the proxy entirely.
+		fmt.Fprintf(stdout, "  %sAPI:        %s%s\n", ansiDim, clientURL(ready), ansiReset)
+		fmt.Fprintf(stdout, "  %sDashboard:  %s%s\n", ansiDim, dashboardURL(ready), ansiReset)
 	}
 	if openBrowserOnReady {
 		_ = openBrowser(primaryURL)
