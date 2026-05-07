@@ -158,6 +158,7 @@ var topicSummaries = map[string]string{
 	"handlers":   "Reflective handler signature, Params[T], return shape",
 	"module":     "nexus.Module, Provide, ProvideService, route prefix",
 	"auth":       "auth.Module setup, Required, Requires, User[T]",
+	"oauth2":     "oauth2.Module — go-oauth2 server + auth bridge",
 	"rest":       "AsRest — REST endpoints with reflective handlers",
 	"graphql":    "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":         "AsWS — typed WebSocket envelopes, session fan-out",
@@ -330,6 +331,104 @@ Logout flows: take *auth.Manager via fx, call:
 
 Dashboard's Auth tab shows cached identities + live 401/403
 rejections + per-row "invalidate" buttons.
+
+AuthRoute (cross-transport): mark login/logout/me on REST or
+GraphQL ops. The client SDK auto-dispatches:
+
+    nexus.AsRest("POST", "/login",  NewLogin,  nexus.AuthRoute("login"))
+    nexus.AsMutation(NewLogin,                  nexus.AuthRoute("login"))
+    nexus.AsQuery(NewMe,                        nexus.AuthRoute("me"))
+
+The browser calls nx.auth.login(creds) / nx.auth.me() either
+way; the manifest's transport tag picks REST POST or GraphQL
+mutation/query under the hood.
+
+For full OAuth2 (password / client_credentials / refresh): see
+"nexus docs oauth2".
+`,
+
+	"oauth2": `
+OAUTH2
+
+  oauth2.Module(oauth2.Config{Authenticator: ...})
+
+Wraps go-oauth2/oauth2/v4 with sane defaults and bridges its
+access-token store to nexus.auth so handlers gate themselves
+with auth.Required() / auth.Requires(). Mounts POST /oauth/token
+out of the box.
+
+Minimal app — password grant against your user store:
+
+    import "github.com/paulmanoni/nexus/oauth2"
+
+    nexus.Run(nexus.Config{...},
+        oauth2.Module(oauth2.Config{
+            Authenticator: func(ctx context.Context, _, username, password string) (string, error) {
+                u, err := users.Authenticate(ctx, username, password)
+                if err != nil { return "", oauth2.ErrInvalidCredentials }
+                return strconv.Itoa(int(u.ID)), nil
+            },
+        }),
+        // ...your modules
+    )
+
+Every field beyond Authenticator has a default. Production apps
+typically set:
+
+  ClientStore       — oauth2.NewLoaderClientStore(loadByID) or
+                      oauth2.NewStaticClientStore(clients...)
+  TokenStore        — oauth2.NewCacheTokenStore(cache, "app:oauth:")
+                      ('cache' is any 3-method Get/Set/Delete impl)
+  IdentityResolver  — populate Identity.Roles / .Extra from your
+                      user-profile lookup
+  ErrorMapper       — domain errs → OAuth2 responses (the bundled
+                      DefaultErrorMapper handles the four sentinels
+                      below)
+  TokenType         — "Bearer" (default) or "bearer" (Spring-compat)
+  IncludeJTI        — adds a unique jti to every issued token
+  RevokePath        — when set, mounts POST <path> for revocation
+
+Sentinel errors (return from Authenticator for free translation):
+
+  oauth2.ErrInvalidCredentials   → 400 invalid_grant
+  oauth2.ErrAccountDisabled      → 400 invalid_grant
+  oauth2.ErrAccountLocked        → 400 invalid_grant
+  oauth2.ErrServiceUnavailable   → 503 temporarily_unavailable
+
+Spring-compat / migration helpers:
+
+  oauth2.SoftenStockMessages       — friendlier descriptions for
+                                     OAuth2 invalid_request etc.
+  oauth2.VerifySpringPassword(s,p) — checks {bcrypt} / {noop} /
+                                     raw bcrypt / legacy salted-sha1
+  oauth2.VerifyBcrypt(hash, input) — pure bcrypt only
+
+Plugging your own stores: ClientStore wants oauth2lib.ClientStore;
+TokenStore wants oauth2lib.TokenStore. The package's Cache adapter
++ NewLoaderClientStore generalize the common DB+cache shape
+without forcing a specific cache library on the framework.
+
+Escape hatches for advanced configurations:
+
+  Config.Manager           — supply your own *manage.Manager (skips
+                             ClientStore/TokenStore wiring above)
+  Config.ServerCustomizer  — runs after *server.Server is built but
+                             before Mount; use for custom user-
+                             authorization handler, scope handler,
+                             etc.
+
+Three-legged authorization-code flow isn't mounted by default —
+add it via ServerCustomizer + a custom AsRest route.
+
+Identity in handlers — same as plain auth.Module:
+
+    nexus.AsQuery(NewMe, auth.Required())   // 401 if no token
+
+    func NewMe(ctx context.Context) (*Profile, error) {
+        id, _ := auth.IdentityFrom(ctx)
+        // id.ID is the userID Authenticator returned
+        // id.Extra is *oauth2.Session by default {Token, Info}
+    }
 `,
 
 	"rest": `
