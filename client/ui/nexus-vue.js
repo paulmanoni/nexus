@@ -35,6 +35,15 @@ let _shared = null
 // envDefaults reads Vite-style env vars (harmless under any other
 // bundler — import.meta.env is just absent and falls back to {}).
 // VITE_NEXUS_API   → origin override (trailing slashes stripped).
+//                    IGNORED in vite dev mode (import.meta.env.DEV)
+//                    when it points cross-origin, because nexus dev
+//                    relies on vite's server.proxy to forward the
+//                    framework's reserved paths (/__nexus, /graphql,
+//                    /oauth, /ws) to the Go server same-origin. An
+//                    absolute origin would bypass the proxy and
+//                    trip CORS. The setting is still honored for
+//                    production builds where the SPA and API
+//                    legitimately live on different hosts.
 // VITE_NEXUS_TOKEN → localStorage key for the bearer token; default
 //                    'access_token' so it pairs with the common
 //                    Pinia auth-store convention.
@@ -46,7 +55,19 @@ let _shared = null
 // any wiring file.
 function envDefaults() {
   const env = (typeof import.meta !== 'undefined' && import.meta.env) || {}
-  const origin = String(env.VITE_NEXUS_API ?? '').replace(/\/+$/, '')
+  let origin = String(env.VITE_NEXUS_API ?? '').replace(/\/+$/, '')
+  // Dev-mode override: drop the configured origin so requests go
+  // through vite's same-origin proxy. Without this, the user's
+  // VITE_NEXUS_API=http://localhost:8080 would make the SDK fetch
+  // absolute URLs that skip the proxy entirely.
+  if (env.DEV && origin && typeof location !== 'undefined') {
+    try {
+      const apiOrigin = new URL(origin).origin
+      if (apiOrigin !== location.origin) origin = ''
+    } catch {
+      origin = ''
+    }
+  }
   const tokenKey = String(env.VITE_NEXUS_TOKEN ?? 'access_token')
   return {
     origin: origin || undefined,
