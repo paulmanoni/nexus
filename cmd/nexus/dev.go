@@ -27,13 +27,15 @@ import (
 // over real HTTP. Cobra wraps the runner.
 func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		addr     string
-		noOpen   bool
-		openDash bool
-		split    bool
-		basePort int
-		tui      bool
-		noWatch  bool
+		addr        string
+		noOpen      bool
+		openDash    bool
+		split       bool
+		basePort    int
+		tui         bool
+		noWatch     bool
+		frontendDir string
+		frontendCmd string
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -67,7 +69,7 @@ examples/microsplit for the convention.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, !noOpen, openDash, !noWatch, stdout, stderr)
+			return runDev(target, addr, !noOpen, openDash, !noWatch, frontendDir, frontendCmd, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -84,6 +86,10 @@ examples/microsplit for the convention.`,
 		"interactive Bubble Tea UI: log pane + restart hotkey + ready indicator")
 	cmd.Flags().BoolVar(&noWatch, "no-watch", false,
 		"disable file-watch auto-rebuild (single-process mode only)")
+	cmd.Flags().StringVar(&frontendDir, "frontend", "",
+		"path to a frontend project (e.g. ./web); spawns its watcher alongside go run and prefixes its logs with [web]")
+	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "npm run dev:build",
+		"command run inside --frontend dir (typically wraps `vite build --watch`)")
 	return cmd
 }
 
@@ -111,11 +117,23 @@ func (e *userError) Error() string { return e.msg }
 // When watch is true, runs a fsnotify watcher on the target dir and
 // restarts `go run` on every coalesced source-file change. SIGINT
 // stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, openDash, watch bool, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Optional frontend watcher — runs alongside the Go process. Logs
+	// stream into the same terminal under a [web] prefix so build
+	// progress is visible in one place. Lifecycle is tied to ctx, so
+	// SIGINT to nexus dev tears the watcher down too. Surviving
+	// across Go restarts is the point: the frontend toolchain has
+	// its own file watcher and shouldn't bounce on every Go save.
+	if frontendDir != "" {
+		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
+		}
+	}
 
 	// Manifest-aware codegen: when nexus.deploy.yaml exists in cwd,
 	// pick the monolith deployment (or first when no monolith), emit
