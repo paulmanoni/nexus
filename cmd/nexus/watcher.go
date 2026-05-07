@@ -37,13 +37,20 @@ import (
 // Cancellation: closing ctx stops the watcher goroutine and closes
 // the underlying fsnotify watcher. out is left open — consumers
 // that select on ctx.Done() shut down naturally.
-func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr io.Writer) error {
+func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr io.Writer, ignore []string) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
 	embedRoots := scanEmbedTargets(root)
-	if err := addWatchDirs(w, root, embedRoots); err != nil {
+	// ignoreSet absolutizes once so the per-event check stays cheap.
+	ignoreSet := make([]string, 0, len(ignore))
+	for _, p := range ignore {
+		if abs, err := filepath.Abs(p); err == nil && abs != "" {
+			ignoreSet = append(ignoreSet, abs)
+		}
+	}
+	if err := addWatchDirs(w, root, embedRoots, ignoreSet); err != nil {
 		w.Close()
 		return fmt.Errorf("watch %s: %w", root, err)
 	}
@@ -69,7 +76,7 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 				if !ok {
 					return
 				}
-				if !relevantEvent(ev, embedRoots) {
+				if !relevantEvent(ev, embedRoots, ignoreSet) {
 					continue
 				}
 				// New directory created? Add it to the watch list so
@@ -78,7 +85,7 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 				// build creates fresh subdirs under an embed root.
 				if ev.Op&fsnotify.Create != 0 {
 					if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
-						_ = addWatchDirs(w, ev.Name, embedRoots)
+						_ = addWatchDirs(w, ev.Name, embedRoots, ignoreSet)
 					}
 				}
 				if debounce != nil {
@@ -106,13 +113,20 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 // it is, or contains, an //go:embed target — that's how `web/dist`
 // changes reach the rebuild signal even though "dist" is in the
 // skip-list.
-func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool) error {
+func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool, ignore []string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable subtrees rather than aborting the whole walk
 		}
 		if !d.IsDir() {
 			return nil
+		}
+		// Caller-supplied ignore wins over the embed-root override —
+		// the dev loop uses this to keep web/dist out of the rebuild
+		// signal even though it's an embed target. The frontend
+		// watcher takes responsibility for those changes.
+		if pathUnder(path, ignore) {
+			return filepath.SkipDir
 		}
 		name := d.Name()
 		if path != root && shouldSkipDir(name) && !embedDirOrAncestor(path, embedRoots) {
@@ -149,12 +163,15 @@ func shouldSkipDir(name string) bool {
 //
 // Hidden files are skipped — editors write dotfile buffer state
 // during normal saves and we don't want to rebuild on those.
-func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool) bool {
+func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool, ignore []string) bool {
 	if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 		return false
 	}
 	base := filepath.Base(ev.Name)
 	if strings.HasPrefix(base, ".") {
+		return false
+	}
+	if pathUnder(ev.Name, ignore) {
 		return false
 	}
 	if underEmbedRoot(ev.Name, embedRoots) {
@@ -166,6 +183,29 @@ func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool) bool {
 	switch base {
 	case "go.mod", "go.sum", "nexus.deploy.yaml":
 		return true
+	}
+	return false
+}
+
+// pathUnder reports whether path is the same as, or nested under,
+// any prefix in roots. Each root is treated as a directory boundary
+// (matching `<root>` exactly or `<root>/...`); a partial-name match
+// like "/web2" against "/web" doesn't count as a hit.
+func pathUnder(path string, roots []string) bool {
+	if len(roots) == 0 {
+		return false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	for _, r := range roots {
+		if abs == r {
+			return true
+		}
+		if strings.HasPrefix(abs, r+string(filepath.Separator)) {
+			return true
+		}
 	}
 	return false
 }

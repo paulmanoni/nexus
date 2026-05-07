@@ -438,6 +438,20 @@ func Run(cfg Config, opts ...Option) {
 		printManifestAndExitIfRequested(cfg, opts)
 		return // unreachable; printManifestAndExitIfRequested calls os.Exit
 	}
+	// Quiet-by-default in dev: nexus dev sets NEXUS_DEV=1 on the
+	// child, which here implies "suppress [Fx] graph chatter and
+	// [GIN-debug] route-registration spam unless the user wants
+	// them back". The opt-out is NEXUS_VERBOSE=1 (set by the
+	// `nexus dev --verbose` flag). Users running `go run` directly
+	// keep today's behavior — neither env var is set.
+	devQuiet := os.Getenv("NEXUS_DEV") == "1" && os.Getenv("NEXUS_VERBOSE") != "1"
+	if devQuiet {
+		// Don't override an explicit GIN_MODE — operators sometimes
+		// pin it for reasons we can't see (CI, container images).
+		if os.Getenv("GIN_MODE") == "" {
+			_ = os.Setenv("GIN_MODE", "release")
+		}
+	}
 	// Two-phase split: fxEarlyOptions seeds Config + *App + lifecycle
 	// BEFORE user opts run, then user opts (which may install global
 	// middleware via auth.Module / engine.Use), then fxLateOptions
@@ -447,7 +461,7 @@ func Run(cfg Config, opts ...Option) {
 	// — gin captures middleware at route-registration time.
 	all := append([]fx.Option{fxEarlyOptions(cfg), autoClientOptions()}, unwrap(opts)...)
 	all = append(all, fxLateOptions())
-	if os.Getenv("NEXUS_FX_QUIET") == "1" {
+	if os.Getenv("NEXUS_FX_QUIET") == "1" || devQuiet {
 		all = append(all, fx.NopLogger)
 	}
 	fx.New(all...).Run()
