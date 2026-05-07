@@ -54,6 +54,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		frontendDir string
 		frontendCmd string
 		verbose     bool
+		bundleMode  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -87,7 +88,7 @@ examples/microsplit for the convention.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, !noOpen, openDash, !noWatch, frontendDir, frontendCmd, verbose, stdout, stderr)
+			return runDev(target, addr, !noOpen, openDash, !noWatch, frontendDir, frontendCmd, verbose, bundleMode, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -106,8 +107,10 @@ examples/microsplit for the convention.`,
 		"disable file-watch auto-rebuild (single-process mode only)")
 	cmd.Flags().StringVar(&frontendDir, "frontend", "",
 		"path to a frontend project (e.g. ./web); spawns its watcher alongside go run and prefixes its logs with [web]")
-	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "npm run dev:build",
-		"command run inside --frontend dir (typically wraps `vite build --watch`)")
+	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "",
+		"command run inside --frontend dir; default is `npm run dev` (vite dev server, HMR) or `npm run dev:build` with --bundle")
+	cmd.Flags().BoolVar(&bundleMode, "bundle", false,
+		"use vite build --watch + Go-served dist instead of vite dev server (slower, but produces an embeddable bundle continuously)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
 	return cmd
@@ -137,7 +140,7 @@ func (e *userError) Error() string { return e.msg }
 // When watch is true, runs a fsnotify watcher on the target dir and
 // restarts `go run` on every coalesced source-file change. SIGINT
 // stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose bool, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, bundleMode bool, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -164,33 +167,51 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
 		}
 	}
+	// frontendURLCh receives vite's "Local: http://..." URL when the
+	// dev server (non-bundle mode) prints it. Buffered=1 so the
+	// watcher's pump never blocks if no one's listening yet.
+	frontendURLCh := make(chan string, 1)
 	if frontendDir != "" {
-		// Inject the default dev:build script into the project's
-		// package.json when missing. Idempotent and byte-edit-only
-		// (preserves existing key order + indentation), so a project
-		// that already declares the script keeps its own version.
-		// Skipped when the user passes a custom --frontend-cmd —
-		// they're explicitly opting out of the convention.
+		// Pick the right script + default command for the chosen
+		// mode. Bundle mode keeps the legacy `vite build --watch`
+		// path; the default mode runs vite's dev server with HMR.
+		// A user-supplied --frontend-cmd overrides both.
+		if frontendCmd == "" {
+			if bundleMode {
+				frontendCmd = "npm run dev:build"
+			} else {
+				frontendCmd = "npm run dev"
+			}
+		}
+		// Inject the matching script into package.json when needed.
+		// Idempotent against the named key, so projects that already
+		// declare their own version keep it.
 		if frontendCmd == "npm run dev:build" {
 			if err := ensureDevBuildScript(frontendDir, stdout); err != nil {
 				fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
 			}
 		}
-		// Patch vite.config.{ts,js,mts,mjs} with build.watch.exclude
-		// for the auto-import .d.ts files BEFORE spawning vite —
-		// vite loads its config once at startup and won't re-read
-		// when the framework's later auto-dump rewrites the file.
-		// Without the pre-boot patch, vite spends the first dev
-		// session in a self-rebuild loop driven by the @nuxt/ui /
-		// unplugin-auto-import declaration regen.
-		if cfg := findViteConfig(frontendDir); cfg != "" {
-			if err := client.EnsureViteWatchExclude(cfg, stdout); err != nil {
-				fmt.Fprintf(stderr, "vite watch.exclude injection skipped: %v\n", err)
+		if frontendCmd == "npm run dev" {
+			if err := ensureDevServerScript(frontendDir, stdout); err != nil {
+				fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
 			}
 		}
-		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, verbose, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
+		// The watch.exclude injection only matters for bundle mode —
+		// the dev server doesn't re-bundle and doesn't loop on the
+		// auto-import-plugin .d.ts regen.
+		if bundleMode {
+			if cfg := findViteConfig(frontendDir); cfg != "" {
+				if err := client.EnsureViteWatchExclude(cfg, stdout); err != nil {
+					fmt.Fprintf(stderr, "vite watch.exclude injection skipped: %v\n", err)
+				}
+			}
 		}
+		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
+			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
+			frontendURLCh = nil
+		}
+	} else {
+		frontendURLCh = nil
 	}
 
 	// Manifest-aware codegen: when nexus.deploy.yaml exists in cwd,
@@ -240,7 +261,14 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			}
 		}
 		_ = devDeployment // currently informational; reserved for the banner
-		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, stdout, stderr)
+		// Pass the frontend URL channel only on the first boot.
+		// Subsequent Go restarts shouldn't re-open browsers, and the
+		// vite dev server is already running anyway.
+		viteURLForOpen := frontendURLCh
+		if !first {
+			viteURLForOpen = nil
+		}
+		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, viteURLForOpen, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -295,7 +323,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // listeners, topology) gets compiled into the binary.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose bool, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose bool, frontendURLCh <-chan string, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	args := []string{"run"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
@@ -331,8 +359,10 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 
 	// waitAndOpen runs even when --no-open is set so the user still
 	// gets the green "ready" line — only the browser launch is gated
-	// on openOnReady.
-	go waitAndOpen(ctx, addr, openOnReady, openDash, stdout, detectedCh)
+	// on openOnReady. When the vite dev server is running, prefer
+	// its URL (HMR-aware, the right tab to live in); fall back to
+	// the gin/probe URL when bundle mode owns the frontend.
+	go waitAndOpen(ctx, addr, openOnReady, openDash, stdout, detectedCh, frontendURLCh)
 
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
@@ -369,7 +399,7 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 // as --addr, we surface a correction line — a misleading banner is
 // the symptom that drove this code, so making the discrepancy
 // visible is part of the fix.
-func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash bool, stdout io.Writer, detectedCh <-chan string) {
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash bool, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string) {
 	flagAddr := normalizeProbeAddr(addr)
 
 	probeOnce := func(target string) bool {
@@ -400,10 +430,27 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash 
 	flagDone := make(chan bool, 1)
 	go func() { flagDone <- probeFlagAddr() }()
 
-	var ready string
+	// Vite URL wins when present — if the frontend is being served
+	// by the dev server, that's where the user wants to land. Falls
+	// through to the gin URL when frontendURLCh is nil (bundle mode
+	// or no frontend).
+	var ready, viteURL string
 	select {
 	case <-ctx.Done():
 		return
+	case viteURL = <-frontendURLCh:
+		// keep waiting for the API addr too so we can show a coherent
+		// "API at :8080" line alongside the SPA URL.
+		select {
+		case <-ctx.Done():
+			return
+		case detected := <-detectedCh:
+			ready = detected
+		case ok := <-flagDone:
+			if ok {
+				ready = addr
+			}
+		}
 	case detected := <-detectedCh:
 		ready = detected
 	case ok := <-flagDone:
@@ -417,18 +464,29 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash 
 	// actual bind, surface the gap. Default --addr (":8080") is
 	// suppressed — we never claimed it on the banner anyway, so
 	// there's nothing to "correct" for the user.
-	if addr != defaultDevAddr && normalizeProbeAddr(ready) != flagAddr {
+	if ready != "" && addr != defaultDevAddr && normalizeProbeAddr(ready) != flagAddr {
 		fmt.Fprintf(stdout, "\n  %s→ %sbound on %s%s%s %s(--addr was %s)%s\n",
 			ansiDim, ansiReset, ansiBold, ready, ansiReset, ansiDim, addr, ansiReset)
 	}
 
-	url := clientURL(ready)
-	if openDash {
-		url = dashboardURL(ready)
+	var primaryURL string
+	if viteURL != "" {
+		primaryURL = strings.TrimRight(viteURL, "/") + "/"
+	} else if ready != "" {
+		primaryURL = clientURL(ready)
+		if openDash {
+			primaryURL = dashboardURL(ready)
+		}
 	}
-	printReadyLine(stdout, url, openBrowserOnReady)
+	if primaryURL == "" {
+		return
+	}
+	printReadyLine(stdout, primaryURL, openBrowserOnReady)
+	if viteURL != "" && ready != "" {
+		fmt.Fprintf(stdout, "  %sAPI: %s%s\n", ansiDim, clientURL(ready), ansiReset)
+	}
 	if openBrowserOnReady {
-		_ = openBrowser(url)
+		_ = openBrowser(primaryURL)
 	}
 }
 

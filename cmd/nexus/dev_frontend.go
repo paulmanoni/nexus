@@ -11,6 +11,11 @@ import (
 	"sync"
 )
 
+// viteURLRE matches the "Local:" line vite's dev server prints
+// when ready, e.g. "  ➜  Local:   http://localhost:5173/".
+// Capture group 1 is the URL.
+var viteURLRE = regexp.MustCompile(`Local:\s*(https?://[^\s/]+/?)`)
+
 // startFrontendWatcher spawns the user's frontend build watcher
 // (typically `vite build --watch` wrapped in an npm script) inside
 // dir, prefixing every output line with [web] so the combined log
@@ -39,7 +44,9 @@ import (
 //     Go save would cripple iteration feel.
 //   - When the child exits unexpectedly, we log it but don't fail
 //     nexus dev — the user can fix the script and relaunch.
-func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool, stdout, stderr io.Writer) error {
+// frontendURLCh receives the URL vite prints when its dev server
+// is ready. nil means caller doesn't care (bundle mode).
+func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool, stdout, stderr io.Writer, frontendURLCh chan<- string) error {
 	cmdline = strings.TrimSpace(cmdline)
 	if cmdline == "" {
 		return fmt.Errorf("--frontend-cmd is empty")
@@ -63,13 +70,30 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool
 	}
 
 	tag := fmt.Sprintf("%s[web]%s ", ansiCyan, ansiReset)
+	// Sniff every line for vite's "Local: http://..." marker —
+	// regardless of mode, regardless of filter — so the dev-server
+	// auto-open path can race against it without caring whether
+	// we're in bundle mode (where the line never arrives).
+	maybeReportURL := func(line string) {
+		if frontendURLCh == nil {
+			return
+		}
+		if m := viteURLRE.FindStringSubmatch(line); m != nil {
+			select {
+			case frontendURLCh <- m[1]:
+			default: // already reported once; the channel is buffered=1
+			}
+		}
+	}
 	var wg sync.WaitGroup
 	stderrPump := func(src io.Reader, dst io.Writer) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(src)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			fmt.Fprintf(dst, "%s%s\n", tag, scanner.Text())
+			line := scanner.Text()
+			maybeReportURL(line)
+			fmt.Fprintf(dst, "%s%s\n", tag, line)
 		}
 	}
 	stdoutPump := func(src io.Reader, dst io.Writer) {
@@ -78,13 +102,17 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		if verbose {
 			for scanner.Scan() {
-				fmt.Fprintf(dst, "%s%s\n", tag, scanner.Text())
+				line := scanner.Text()
+				maybeReportURL(line)
+				fmt.Fprintf(dst, "%s%s\n", tag, line)
 			}
 			return
 		}
 		f := newBuildBlockFilter(dst, tag)
 		for scanner.Scan() {
-			f.line(scanner.Text())
+			line := scanner.Text()
+			maybeReportURL(line)
+			f.line(line)
 		}
 		f.flush()
 	}
