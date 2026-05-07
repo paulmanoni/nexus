@@ -167,6 +167,7 @@ var topicSummaries = map[string]string{
 	"cli":        "Subcommand cheatsheet (new / init / dev / build / docs)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
 	"client":     "Embedded JS/TS SDK — connect a browser to your app",
+	"autoselect": "Vite plugin that auto-injects opts.select from accesses",
 }
 
 // docsTopics is the inline reference. Each entry is plain text
@@ -1010,6 +1011,68 @@ Plays cleanly with the rest of the framework:
 
 Full demo: examples/petstore-spa/ (one Go file + one HTML page +
 one Vue setup script — login + CRUD wired end-to-end).
+`,
+
+	"autoselect": `
+AUTO-SELECT (Vite plugin)
+
+  ./sdk/nexus-vite-plugin.js
+
+A build-time Vite plugin shipped alongside the runtime SDK. It
+rewrites every nx.query / nx.mutate call to fetch ONLY the fields
+the consumer reads — no manual opts.select, no over-fetching, no
+exposed schema fields slipping into responses through the depth-3
+auto-walker.
+
+How it works:
+
+  1. Plugin parses each .ts/.js/.tsx/.jsx + <script setup> block.
+  2. Finds:
+         const|let X = await nx.{query|mutate}('opname', vars)
+  3. Walks the rest of the function body, recording every X.a.b.c
+     access (deep, optional-chain, non-null-asserted).
+  4. Builds the matching select tree and inlines it as the third
+     arg of the call before the bundle is emitted.
+
+Wire it into vite.config.ts:
+
+    import { defineConfig } from 'vite'
+    import vue from '@vitejs/plugin-vue'
+    import nexusAutoSelect from './src/sdk/nexus-vite-plugin.js'
+
+    export default defineConfig({
+      plugins: [
+        vue(),
+        nexusAutoSelect(),
+      ],
+    })
+
+Peer deps the plugin uses (already in any Vue+TS project):
+  typescript, magic-string, @vue/compiler-sfc
+
+Defaults to reading the manifest from ./src/sdk/manifest.json
+(matches Config.Client.OutDir = "./web/sdk" with a vite root of
+"./web"). Pass {sdkDir: "..."} to override.
+
+What auto-select handles today:
+
+  ✓ const|let res = await nx.{query|mutate}('op', vars [, opts])
+  ✓ res.x.y.z  (deep, optional-chain, non-null)
+  ✓ same-function scope (handler, watcher, computed body, etc.)
+  ✓ skips the call if opts.select is already supplied
+  ✓ .ts / .js / .tsx / .jsx + <script setup lang="ts"> in .vue
+
+Documented limitations (use explicit opts.select to opt out):
+
+  ✗ destructured results: const { data } = await nx.mutate(...)
+  ✗ result passed across functions / files
+  ✗ template-only access: <span>{{ res.data.token }}</span>
+  ✗ dynamic op names: nx.mutate(opName, ...)
+
+Sensitive-field policy: hide schema fields you never want on the
+wire (passwords, internal IDs, audit fingerprints) with
+json:"-" or graphql:"-" on the Go struct. Auto-select narrowing
+is a perf win, NOT a security boundary.
 `,
 
 	"dashboard": `

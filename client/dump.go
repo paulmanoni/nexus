@@ -66,6 +66,7 @@ func (h *Handler) Dump(outDir, tsconfig string, stdout io.Writer) error {
 		{"vue.js", vueJS},
 		{"vue.d.ts", vueDTS},
 		{"manifest.json", manifest},
+		{"nexus-vite-plugin.js", vitePluginJS},
 	}
 	for _, f := range files {
 		if err := WriteIfChanged(filepath.Join(outDir, f.name), f.body, stdout); err != nil {
