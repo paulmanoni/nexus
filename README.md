@@ -260,6 +260,28 @@ nexus.AsMutation(NewCreateAdvert,
 
 Extractors: `auth.Bearer()`, `auth.Cookie(name)`, `auth.APIKey(header)`, `auth.Chain(...)`. Typed access: `user, ok := auth.User[MyUser](p.Context)`. Logout via the fx-injected `*auth.Manager`. Live 401/403 stream + cached identity table on the dashboard's Auth tab.
 
+`nexus.AuthRoute("login"|"logout"|"me")` works on both `AsRest` and `AsQuery`/`AsMutation` — the client SDK's `nx.auth.login()` / `.me()` auto-dispatches to REST or GraphQL based on whichever transport you tagged.
+
+## OAuth2
+
+```go
+import "github.com/paulmanoni/nexus/oauth2"
+
+nexus.Run(nexus.Config{...},
+    oauth2.Module(oauth2.Config{
+        Authenticator: func(ctx context.Context, _, username, password string) (string, error) {
+            u, err := users.Authenticate(ctx, username, password)
+            if err != nil { return "", oauth2.ErrInvalidCredentials }
+            return strconv.Itoa(int(u.ID)), nil
+        },
+        ClientStore: oauth2.NewLoaderClientStore(loadClientByID),
+        TokenStore:  oauth2.NewCacheTokenStore(myCache, "app:oauth:"),
+    }),
+)
+```
+
+Wraps `go-oauth2/oauth2/v4` and bridges its access-token store to `auth.Module` automatically — `auth.Required()` / `auth.Requires("ROLE_X")` work on every endpoint with no extra wiring. Mounts `POST /oauth/token` out of the box; `Config.RevokePath` and `Config.ServerCustomizer` open the door to revocation and three-legged authorization-code flows. Sentinel errors (`ErrInvalidCredentials`, `ErrAccountLocked`, etc.) translate into the standard OAuth2 responses with friendly descriptions; `oauth2.VerifySpringPassword` covers the `{bcrypt}` / `{noop}` / raw-bcrypt / legacy-salted-sha1 matrix when you're migrating off Spring. See `nexus docs oauth2` for the full reference.
+
 ## Workers, cron, WebSocket
 
 **Worker** — first param `context.Context`, rest are fx deps. `ctx` cancels at `fx.Stop`; panics recover; appears as a card on the Architecture view.
