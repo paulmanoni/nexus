@@ -75,6 +75,85 @@ export default defineConfig({
 	}
 }
 
+// TestMergeViteConfig_InjectsWatchExcludeIntoExistingBuild verifies
+// the auto-fix for the unplugin-auto-import / @nuxt/ui rebuild loop:
+// when the user's config already has a build: { … } block, we
+// prepend watch: { exclude: [...] } without disturbing the rest.
+func TestMergeViteConfig_InjectsWatchExcludeIntoExistingBuild(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [vue()],
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+  },
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MergeViteConfig(cfgPath, dir, io.Discard); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	for _, want := range []string{
+		"watch: { exclude:",
+		"'**/auto-imports.d.ts'",
+		"'**/components.d.ts'",
+		`outDir: "dist"`,    // unchanged
+		`emptyOutDir: true`, // unchanged
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in output\n--- body ---\n%s", want, got)
+		}
+	}
+	// Idempotency: second run must not duplicate the entry.
+	if err := MergeViteConfig(cfgPath, dir, io.Discard); err != nil {
+		t.Fatalf("second merge: %v", err)
+	}
+	again, _ := os.ReadFile(cfgPath)
+	if string(again) != got {
+		t.Errorf("watch-exclude injection is not idempotent")
+	}
+	if strings.Count(string(again), "auto-imports.d.ts") != 1 {
+		t.Errorf("auto-imports.d.ts appears more than once after second merge")
+	}
+}
+
+// TestMergeViteConfig_AddsBuildBlockWhenMissing verifies the second
+// branch: a config without any build: block gets a freshly-formed
+// build: { watch: { exclude: [...] } } added inside defineConfig.
+func TestMergeViteConfig_AddsBuildBlockWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [vue()],
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MergeViteConfig(cfgPath, dir, io.Discard); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	if !strings.Contains(got, "build: { watch: { exclude:") {
+		t.Errorf("expected fresh build block with watch.exclude\n--- body ---\n%s", got)
+	}
+	if !strings.Contains(got, "'**/auto-imports.d.ts'") {
+		t.Errorf("expected auto-imports glob\n--- body ---\n%s", got)
+	}
+}
+
 func TestMergeViteConfig_NoPluginsArrayLeavesFileAlone(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "vite.config.ts")
