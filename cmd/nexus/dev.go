@@ -145,6 +145,17 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		}
 	}
 	if frontendDir != "" {
+		// Inject the default dev:build script into the project's
+		// package.json when missing. Idempotent and byte-edit-only
+		// (preserves existing key order + indentation), so a project
+		// that already declares the script keeps its own version.
+		// Skipped when the user passes a custom --frontend-cmd —
+		// they're explicitly opting out of the convention.
+		if frontendCmd == "npm run dev:build" {
+			if err := ensureDevBuildScript(frontendDir, stdout); err != nil {
+				fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
+			}
+		}
 		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
 		}
