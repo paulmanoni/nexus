@@ -75,6 +75,58 @@ export default defineConfig({
 	}
 }
 
+// TestEnsureViteWatchExclude_StandaloneInjection verifies the helper
+// the dev CLI calls before spawning vite — it should patch the
+// config independently of the plugin-wiring path so vite reads the
+// fix on first boot.
+func TestEnsureViteWatchExclude_StandaloneInjection(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({
+  plugins: [],
+  build: { outDir: "dist" },
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureViteWatchExclude(cfgPath, io.Discard); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	if !strings.Contains(got, "watch: { exclude:") {
+		t.Errorf("expected watch.exclude\n--- body ---\n%s", got)
+	}
+	if !strings.Contains(got, "'**/auto-imports.d.ts'") {
+		t.Errorf("expected auto-imports glob\n--- body ---\n%s", got)
+	}
+	// Standalone helper should NOT inject the plugin import — that's
+	// MergeViteConfig's job and runs later from Go's auto-dump.
+	if strings.Contains(got, "nexusAutoSelect") {
+		t.Errorf("EnsureViteWatchExclude leaked plugin wiring\n--- body ---\n%s", got)
+	}
+	// Idempotent.
+	if err := EnsureViteWatchExclude(cfgPath, io.Discard); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	again, _ := os.ReadFile(cfgPath)
+	if string(again) != got {
+		t.Errorf("EnsureViteWatchExclude is not idempotent")
+	}
+}
+
+// TestEnsureViteWatchExclude_MissingFile silently no-ops so a
+// project without a vite config (or with one in a non-conventional
+// location) doesn't fail the dev loop.
+func TestEnsureViteWatchExclude_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := EnsureViteWatchExclude(filepath.Join(dir, "absent.config.ts"), io.Discard); err != nil {
+		t.Fatalf("expected nil for missing config, got %v", err)
+	}
+}
+
 // TestMergeViteConfig_InjectsWatchExcludeIntoExistingBuild verifies
 // the auto-fix for the unplugin-auto-import / @nuxt/ui rebuild loop:
 // when the user's config already has a build: { … } block, we
