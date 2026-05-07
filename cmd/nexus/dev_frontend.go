@@ -15,6 +15,14 @@ import (
 // dir, prefixing every output line with [web] so the combined log
 // stream stays readable.
 //
+// quiet=true silences the child's stdout (the per-build "✓ N
+// modules transformed" + asset-table spam) while keeping stderr
+// streaming so real errors still surface. Build-progress output
+// gets noisy fast under `vite build --watch`, especially when an
+// auto-import plugin pegs the watcher into a self-rebuild loop —
+// we'd rather hide the spam than let it drown the interactive
+// session. Pass --verbose on `nexus dev` to keep the stream.
+//
 // Lifecycle:
 //   - Child process group is killed on ctx cancel (the same SIGINT
 //     that tears down the Go run loop), so a single Ctrl-C cleans
@@ -24,7 +32,7 @@ import (
 //     Go save would cripple iteration feel.
 //   - When the child exits unexpectedly, we log it but don't fail
 //     nexus dev — the user can fix the script and relaunch.
-func startFrontendWatcher(ctx context.Context, dir, cmdline string, stdout, stderr io.Writer) error {
+func startFrontendWatcher(ctx context.Context, dir, cmdline string, quiet bool, stdout, stderr io.Writer) error {
 	cmdline = strings.TrimSpace(cmdline)
 	if cmdline == "" {
 		return fmt.Errorf("--frontend-cmd is empty")
@@ -60,8 +68,14 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, stdout, stde
 			fmt.Fprintf(dst, "%s%s\n", tag, scanner.Text())
 		}
 	}
+	// Always drain the pipe so the child doesn't block on a full
+	// stdout buffer — quiet mode just discards what it reads.
+	stdoutSink := stdout
+	if quiet {
+		stdoutSink = io.Discard
+	}
 	wg.Add(2)
-	go pump(stdoutPipe, stdout)
+	go pump(stdoutPipe, stdoutSink)
 	go pump(stderrPipe, stderr)
 
 	go func() {
@@ -73,5 +87,8 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, stdout, stde
 	}()
 
 	fmt.Fprintf(stdout, "%s●%s frontend watcher: %q in %s\n", ansiCyan, ansiReset, cmdline, dir)
+	if quiet {
+		fmt.Fprintf(stdout, "  %s(build output suppressed — pass --verbose to stream %q logs)%s\n", ansiDim, "[web]", ansiReset)
+	}
 	return nil
 }

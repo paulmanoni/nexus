@@ -109,7 +109,7 @@ examples/microsplit for the convention.`,
 	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "npm run dev:build",
 		"command run inside --frontend dir (typically wraps `vite build --watch`)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
-		"keep [Fx] graph chatter + [GIN-debug] route-registration logs (suppressed by default in dev)")
+		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
 	return cmd
 }
 
@@ -188,7 +188,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				fmt.Fprintf(stderr, "vite watch.exclude injection skipped: %v\n", err)
 			}
 		}
-		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, stdout, stderr); err != nil {
+		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, !verbose, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
 		}
 	}
