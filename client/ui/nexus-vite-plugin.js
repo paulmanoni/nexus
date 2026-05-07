@@ -30,11 +30,25 @@
 //   ✗ destructuring (defer; document workaround = direct access)
 //   ✗ cross-function flow (defer)
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, utimesSync } from 'node:fs'
 import { join, isAbsolute, resolve } from 'node:path'
 
 const DEFAULT_SDK_DIR = 'src/sdk'
 const MANIFEST = 'manifest.json'
+
+// LOOP_GUARD_TARGETS are basenames of files that auto-import plugins
+// (unplugin-auto-import, unplugin-vue-components — both shipped by
+// @nuxt/ui's vite plugin) re-write at the end of every vite build
+// with identical bytes. Each unconditional re-write bumps the mtime,
+// chokidar fires a "change" event, rollup rebuilds, the plugin
+// re-writes, ad infinitum. Rollup's `build.watch.exclude` does NOT
+// suppress files plugins add via this.addWatchFile().
+//
+// We break the cycle by snapshotting these files' bytes + mtime at
+// the start of each build and, in `closeBundle`, restoring the
+// mtime when the bytes haven't actually changed. chokidar's next
+// stat returns the original mtime → no change event → no rebuild.
+const LOOP_GUARD_TARGETS = ['auto-imports.d.ts', 'components.d.ts']
 
 export default function nexusAutoSelect(options = {}) {
   let ts, MagicString, parseSFC
@@ -62,7 +76,16 @@ export default function nexusAutoSelect(options = {}) {
     }
   }
 
-  return {
+  // Loop-guard state: per-target { bytes: Buffer, mtime: Date }.
+  // Captured at buildStart, consulted at closeBundle to decide
+  // whether to restore mtime. Lives on the post-enforce plugin so
+  // closeBundle runs AFTER unplugin-auto-import writes its d.ts.
+  const loopGuardSnapshots = new Map()
+  const loopGuardPaths = () => projectRoot
+    ? LOOP_GUARD_TARGETS.map((t) => join(projectRoot, t))
+    : []
+
+  const authoringPlugin = {
     name: 'nexus-auto-select',
     enforce: 'pre',
 
@@ -149,6 +172,55 @@ export default function nexusAutoSelect(options = {}) {
       return result
     },
   }
+
+  // Loop-guard plugin runs at enforce: 'post' so its closeBundle
+  // hook fires AFTER unplugin-auto-import / unplugin-vue-components
+  // have written their d.ts files. We snapshot bytes+mtime at
+  // buildStart (still post-enforced, but every plugin's buildStart
+  // runs before any plugin's writeBundle/closeBundle) and revert
+  // mtime when content is unchanged. chokidar's next stat sees the
+  // pre-build mtime → no event → no rebuild loop.
+  const loopGuardPlugin = {
+    name: 'nexus-loop-guard',
+    enforce: 'post',
+    apply: 'build', // skip during `vite` (dev server); only matters in build --watch
+    configResolved(cfg) {
+      // Independent of the authoring plugin: the loop guard is
+      // useful even when the auto-select half is disabled (no
+      // manifest, no typescript, etc.).
+      if (!projectRoot) projectRoot = cfg.root || process.cwd()
+    },
+    buildStart() {
+      loopGuardSnapshots.clear()
+      for (const p of loopGuardPaths()) {
+        try {
+          if (!existsSync(p)) continue
+          const bytes = readFileSync(p)
+          const { mtime, atime } = statSync(p)
+          loopGuardSnapshots.set(p, { bytes, mtime, atime })
+        } catch {
+          /* file may not yet exist — first build creates it */
+        }
+      }
+    },
+    closeBundle() {
+      for (const p of loopGuardPaths()) {
+        const snap = loopGuardSnapshots.get(p)
+        if (!snap) continue
+        try {
+          if (!existsSync(p)) continue
+          const after = readFileSync(p)
+          if (after.length === snap.bytes.length && after.equals(snap.bytes)) {
+            utimesSync(p, snap.atime, snap.mtime)
+          }
+        } catch {
+          /* best effort — never fail the build */
+        }
+      }
+    },
+  }
+
+  return [authoringPlugin, loopGuardPlugin]
 
   // ---- script transform (TS / JS / TSX / JSX) -----------------------
 
