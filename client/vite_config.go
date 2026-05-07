@@ -9,25 +9,45 @@ import (
 	"strings"
 )
 
-// MergeViteConfig wires the auto-select plugin into a Vite config
-// file in two idempotent edits:
+// viteWatchExcludeGlobs are the well-known files that auto-import
+// plugins (unplugin-auto-import, unplugin-vue-components — both
+// shipped by @nuxt/ui's vite plugin) regenerate at the end of every
+// vite build. With `vite build --watch`, that self-write triggers
+// the next build, the next build rewrites them again, and the
+// frontend watcher pegs a CPU forever. Excluding them from
+// rollup's input watcher breaks the cycle without affecting the
+// useful watch — source-file edits still trigger a rebuild.
 //
-//   1. Adds `import nexusAutoSelect from '<rel>/nexus-vite-plugin.js'`
-//      after the last existing top-level import.
-//   2. Adds `nexusAutoSelect()` to the first plugins array it finds.
+// Hard-coded rather than configurable because the file names are
+// industry-standard and apply to every project using these
+// ecosystem plugins. A project that doesn't generate them won't
+// notice the exclude (rollup ignores patterns that match nothing).
+var viteWatchExcludeGlobs = []string{
+	"**/auto-imports.d.ts",
+	"**/components.d.ts",
+}
+
+// MergeViteConfig wires three idempotent edits into a Vite config:
+//
+//  1. Adds `import nexusAutoSelect from '<rel>/nexus-vite-plugin.js'`
+//     after the last existing top-level import.
+//  2. Adds `nexusAutoSelect()` to the first plugins array it finds.
+//  3. Adds `watch: { exclude: [...] }` inside `build:` to suppress
+//     the auto-import-plugin self-rebuild loop documented at
+//     viteWatchExcludeGlobs.
 //
 // String-pattern based — does NOT parse the config as TS. Handles
 // the 95% of vite.config.{ts,js,mts,mjs} shapes that wrap a plugins
 // array inside defineConfig({...}). When the heuristic can't locate
-// a plugins array (variable-extracted plugins, conditional configs,
-// etc.) the function leaves the file untouched and prints a hint
-// pointing at the manual one-line change.
+// the relevant block, the function leaves THAT edit untouched and
+// prints a hint pointing at the manual one-line change. The other
+// edits still apply.
 //
 // configPath is the absolute or relative path to the user's Vite
 // config; sdkDir is where nexus-vite-plugin.js was dumped (matches
-// Config.Client.OutDir). Re-running is a no-op once both edits
-// have landed — idempotency keys off the literal `nexusAutoSelect`
-// identifier appearing anywhere in the file.
+// Config.Client.OutDir). Re-running is a no-op once all edits have
+// landed — idempotency keys off the literal `nexusAutoSelect`
+// identifier and the `auto-imports.d.ts` glob appearing in the file.
 func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
@@ -80,6 +100,12 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 		changed = true
 	}
 
+	if updated, ok := insertWatchExclude(body, viteWatchExcludeGlobs); ok {
+		body = updated
+		changed = true
+		fmt.Fprintf(stdout, "[nexus] added build.watch.exclude for auto-imports.d.ts / components.d.ts in %s\n", configPath)
+	}
+
 	if !changed {
 		return nil
 	}
@@ -88,6 +114,55 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "[nexus] wired auto-select plugin into %s\n", configPath)
 	return nil
+}
+
+// insertWatchExclude injects a build.watch.exclude entry covering
+// globs into body. Returns the new body and ok=true on edit, or
+// (body, false) when no edit was needed (already present) or no
+// suitable insertion point was found.
+//
+// Strategy:
+//   - Idempotency: if body already mentions any of globs (substring),
+//     assume it's already wired and skip.
+//   - First choice: inject into the existing `build: { … }` block
+//     by prepending `watch: { exclude: [...] },` after the opening
+//     brace. Preserves the rest of build untouched.
+//   - Second choice: inject a complete `build: { watch: { … } },`
+//     block at the top of the defineConfig({...}) argument.
+//   - Otherwise: leave body alone (caller falls back to no-op).
+func insertWatchExclude(body string, globs []string) (string, bool) {
+	for _, g := range globs {
+		if strings.Contains(body, g) {
+			return body, false
+		}
+	}
+	if len(globs) == 0 {
+		return body, false
+	}
+
+	quoted := make([]string, 0, len(globs))
+	for _, g := range globs {
+		quoted = append(quoted, "'"+g+"'")
+	}
+	excludeArr := "[" + strings.Join(quoted, ", ") + "]"
+
+	// Try injecting into existing build: { … }.
+	buildRe := regexp.MustCompile(`build\s*:\s*\{`)
+	if loc := buildRe.FindStringIndex(body); loc != nil {
+		openBrace := loc[1] - 1
+		insertion := "\n    watch: { exclude: " + excludeArr + " },"
+		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+	}
+
+	// No build block — add a fresh one at the top of defineConfig({...}).
+	cfgRe := regexp.MustCompile(`defineConfig\s*\(\s*\{`)
+	if loc := cfgRe.FindStringIndex(body); loc != nil {
+		openBrace := loc[1] - 1
+		insertion := "\n  build: { watch: { exclude: " + excludeArr + " } },"
+		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+	}
+
+	return body, false
 }
 
 // insertImport appends importLine after the last top-level `import …`
