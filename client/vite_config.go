@@ -116,6 +116,88 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 	return nil
 }
 
+// EnsureViteProxyForNexus injects a server.proxy entry for the
+// framework's reserved "/__nexus" path so the browser's request
+// for /__nexus/client/manifest.json (and the rest of the dashboard
+// + SDK assets) goes through vite's same-origin proxy instead of
+// hitting the Go server cross-origin and tripping CORS.
+//
+// apiURL is the http://host:port the proxy forwards to (typically
+// http://localhost:8080 for plain `nexus dev`). Idempotent against
+// the literal `"/__nexus":` substring.
+//
+// Strategy mirrors insertWatchExclude:
+//  1. Already-wired? skip.
+//  2. Existing `proxy: { … }` block? prepend the /__nexus entry.
+//  3. Existing `server: { … }` block without proxy? add a fresh
+//     `proxy: { /__nexus: ... }` inside it.
+//  4. No `server:` block? add `server: { proxy: { /__nexus: ... } }`
+//     inside defineConfig({...}).
+//  5. None of the above? leave the file alone.
+func EnsureViteProxyForNexus(configPath, apiURL string, stdout io.Writer) error {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if apiURL == "" {
+		apiURL = "http://localhost:8080"
+	}
+	src, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", configPath, err)
+	}
+	body := string(src)
+	updated, ok := insertNexusProxyEntry(body, apiURL)
+	if !ok {
+		return nil
+	}
+	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", configPath, err)
+	}
+	fmt.Fprintf(stdout, "[nexus] added /__nexus proxy entry to %s (target: %s)\n", configPath, apiURL)
+	return nil
+}
+
+// insertNexusProxyEntry adds a `"/__nexus": { target, changeOrigin }`
+// rule to the user's vite proxy block, creating intermediate
+// `proxy:` / `server:` blocks as needed. Returns (body, false)
+// when the entry is already present or no suitable insertion
+// point exists.
+func insertNexusProxyEntry(body, apiURL string) (string, bool) {
+	if strings.Contains(body, `"/__nexus"`) || strings.Contains(body, `'/__nexus'`) {
+		return body, false
+	}
+	entry := fmt.Sprintf(`"/__nexus": { target: "%s", changeOrigin: true }`, apiURL)
+
+	// First choice: there's already a server.proxy block, prepend
+	// our entry inside it.
+	proxyRe := regexp.MustCompile(`proxy\s*:\s*\{`)
+	if loc := proxyRe.FindStringIndex(body); loc != nil {
+		openBrace := loc[1] - 1
+		insertion := "\n      " + entry + ","
+		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+	}
+
+	// Second: server: { … } without proxy — add proxy as a sibling.
+	serverRe := regexp.MustCompile(`server\s*:\s*\{`)
+	if loc := serverRe.FindStringIndex(body); loc != nil {
+		openBrace := loc[1] - 1
+		insertion := "\n    proxy: {\n      " + entry + ",\n    },"
+		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+	}
+
+	// Third: no server block — drop one inside defineConfig({...}).
+	cfgRe := regexp.MustCompile(`defineConfig\s*\(\s*\{`)
+	if loc := cfgRe.FindStringIndex(body); loc != nil {
+		openBrace := loc[1] - 1
+		insertion := "\n  server: { proxy: { " + entry + " } },"
+		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+	}
+	return body, false
+}
+
 // EnsureViteWatchExclude is the watch.exclude half of MergeViteConfig
 // exposed for the dev CLI. The CLI calls this BEFORE spawning the
 // frontend watcher so vite reads the patched config on first boot

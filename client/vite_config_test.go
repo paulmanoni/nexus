@@ -127,6 +127,107 @@ func TestEnsureViteWatchExclude_MissingFile(t *testing.T) {
 	}
 }
 
+// TestEnsureViteProxyForNexus_PrependsIntoExistingProxy pins the
+// happy path: a project that already has /graphql + /oauth proxy
+// rules gets /__nexus prepended without disturbing the rest.
+func TestEnsureViteProxyForNexus_PrependsIntoExistingProxy(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({
+  plugins: [],
+  server: {
+    proxy: {
+      "/graphql": { target: "http://localhost:8080", changeOrigin: true },
+      "/ws": { target: "ws://localhost:8080", ws: true, changeOrigin: true },
+    },
+  },
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureViteProxyForNexus(cfgPath, "http://localhost:8080", io.Discard); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	for _, want := range []string{
+		`"/__nexus": { target: "http://localhost:8080", changeOrigin: true }`,
+		`"/graphql": { target: "http://localhost:8080", changeOrigin: true }`, // unchanged
+		`"/ws": { target: "ws://localhost:8080", ws: true, changeOrigin: true }`, // unchanged
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q\n--- body ---\n%s", want, got)
+		}
+	}
+	// Idempotent.
+	if err := EnsureViteProxyForNexus(cfgPath, "http://localhost:8080", io.Discard); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	if again, _ := os.ReadFile(cfgPath); string(again) != got {
+		t.Errorf("proxy injection is not idempotent")
+	}
+	if strings.Count(got, `"/__nexus"`) != 1 {
+		t.Errorf("/__nexus duplicated:\n%s", got)
+	}
+}
+
+// TestEnsureViteProxyForNexus_AddsProxyToServerBlock covers the
+// case where server: { … } exists but has no proxy: yet.
+func TestEnsureViteProxyForNexus_AddsProxyToServerBlock(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({
+  server: { port: 5173 },
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureViteProxyForNexus(cfgPath, "http://localhost:8080", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	for _, want := range []string{
+		"proxy: {",
+		`"/__nexus":`,
+		"port: 5173", // unchanged
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q\n--- body ---\n%s", want, got)
+		}
+	}
+}
+
+// TestEnsureViteProxyForNexus_AddsServerBlockWhenMissing covers
+// the case where defineConfig has no server: block at all.
+func TestEnsureViteProxyForNexus_AddsServerBlockWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({
+  plugins: [],
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureViteProxyForNexus(cfgPath, "http://localhost:8080", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	if !strings.Contains(got, "server: { proxy: {") {
+		t.Errorf("expected fresh server.proxy block\n--- body ---\n%s", got)
+	}
+	if !strings.Contains(got, `"/__nexus":`) {
+		t.Errorf("missing /__nexus entry\n--- body ---\n%s", got)
+	}
+}
+
 // TestMergeViteConfig_InjectsWatchExcludeIntoExistingBuild verifies
 // the auto-fix for the unplugin-auto-import / @nuxt/ui rebuild loop:
 // when the user's config already has a build: { … } block, we
