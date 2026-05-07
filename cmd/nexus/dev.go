@@ -18,8 +18,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/paulmanoni/nexus/client"
 	"github.com/spf13/cobra"
 )
+
+// findViteConfig returns the absolute path to the first
+// vite.config.{ts,js,mts,mjs} sitting at the root of frontendDir,
+// or "" when none exists. Probed in priority order so a project
+// using TypeScript wins over the legacy `.js` shape if both
+// happen to be present.
+func findViteConfig(frontendDir string) string {
+	for _, name := range []string{"vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs"} {
+		p := filepath.Join(frontendDir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
 
 // newDevCmd builds `nexus dev` — runs `go run` on the target package
 // with a startup banner and auto-opens the dashboard once the configured
@@ -158,6 +174,18 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		if frontendCmd == "npm run dev:build" {
 			if err := ensureDevBuildScript(frontendDir, stdout); err != nil {
 				fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
+			}
+		}
+		// Patch vite.config.{ts,js,mts,mjs} with build.watch.exclude
+		// for the auto-import .d.ts files BEFORE spawning vite —
+		// vite loads its config once at startup and won't re-read
+		// when the framework's later auto-dump rewrites the file.
+		// Without the pre-boot patch, vite spends the first dev
+		// session in a self-rebuild loop driven by the @nuxt/ui /
+		// unplugin-auto-import declaration regen.
+		if cfg := findViteConfig(frontendDir); cfg != "" {
+			if err := client.EnsureViteWatchExclude(cfg, stdout); err != nil {
+				fmt.Fprintf(stderr, "vite watch.exclude injection skipped: %v\n", err)
 			}
 		}
 		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, stdout, stderr); err != nil {

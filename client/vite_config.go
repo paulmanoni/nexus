@@ -116,6 +116,39 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 	return nil
 }
 
+// EnsureViteWatchExclude is the watch.exclude half of MergeViteConfig
+// exposed for the dev CLI. The CLI calls this BEFORE spawning the
+// frontend watcher so vite reads the patched config on first boot
+// rather than continuing with the unpatched copy in memory while
+// the framework's later auto-dump rewrites the file behind it.
+//
+// Idempotent: a no-op when the exclude entry is already present.
+// Returns nil for a missing config (skip-with-notice on stdout)
+// since not every project keeps vite.config.ts at the conventional
+// location and we'd rather not fail the dev loop over it.
+func EnsureViteWatchExclude(configPath string, stdout io.Writer) error {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	src, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", configPath, err)
+	}
+	body := string(src)
+	updated, ok := insertWatchExclude(body, viteWatchExcludeGlobs)
+	if !ok {
+		return nil
+	}
+	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", configPath, err)
+	}
+	fmt.Fprintf(stdout, "[nexus] added build.watch.exclude for auto-imports.d.ts / components.d.ts in %s\n", configPath)
+	return nil
+}
+
 // insertWatchExclude injects a build.watch.exclude entry covering
 // globs into body. Returns the new body and ok=true on edit, or
 // (body, false) when no edit was needed (already present) or no
