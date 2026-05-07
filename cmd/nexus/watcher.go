@@ -113,6 +113,16 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 // it is, or contains, an //go:embed target — that's how `web/dist`
 // changes reach the rebuild signal even though "dist" is in the
 // skip-list.
+//
+// Ignore handling: the caller-supplied ignore list flags directories
+// the frontend toolchain owns (e.g. ./web). We still descend into
+// them so a Go source file kept alongside the SPA (a `package web`
+// embed helper) bounces the binary on save, but we ONLY register
+// dirs that contain Go source — not artifact subdirs like web/dist
+// or web/sdk that vite would write to and loop us. shouldSkipDir
+// stays in force inside the ignore tree (no embed override) since
+// the frontend bytes don't need to reach the binary; ServeFrontend
+// reads them off disk in dev.
 func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool, ignore []string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -121,19 +131,45 @@ func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool, 
 		if !d.IsDir() {
 			return nil
 		}
-		// Caller-supplied ignore wins over the embed-root override —
-		// the dev loop uses this to keep web/dist out of the rebuild
-		// signal even though it's an embed target. The frontend
-		// watcher takes responsibility for those changes.
-		if pathUnder(path, ignore) {
-			return filepath.SkipDir
-		}
+		underIgnore := pathUnder(path, ignore)
 		name := d.Name()
-		if path != root && shouldSkipDir(name) && !embedDirOrAncestor(path, embedRoots) {
-			return filepath.SkipDir
+		if path != root && shouldSkipDir(name) {
+			// Inside the ignore tree the embed-override is suppressed
+			// (vite owns those bytes); outside, we still walk into
+			// embed targets so a non-dev build still rebuilds when
+			// the embedded SPA changes.
+			if underIgnore || !embedDirOrAncestor(path, embedRoots) {
+				return filepath.SkipDir
+			}
+		}
+		if underIgnore && !dirHasGoSource(path) {
+			// Frontend dir without Go source: don't watch. We still
+			// recurse so a nested package (web/internal/foo.go) is
+			// reachable.
+			return nil
 		}
 		return w.Add(path)
 	})
+}
+
+// dirHasGoSource reports whether dir directly contains a .go file
+// (test files included — they're still build inputs). Used to decide
+// whether a directory inside the caller's ignore list still deserves
+// a watch.
+func dirHasGoSource(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".go") {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldSkipDir returns true for directories the watcher should never
@@ -161,6 +197,11 @@ func shouldSkipDir(name string) bool {
 // non-hidden file under an //go:embed root also counts — the binary
 // has to recompile to repackage the new bundle bytes.
 //
+// Ignore handling: events under the caller's ignore tree fire only
+// for Go-build-relevant files. That keeps web/embed.go saves bouncing
+// the binary while suppressing vite's web/dist + web/sdk writes that
+// would otherwise loop us through the embed-root override.
+//
 // Hidden files are skipped — editors write dotfile buffer state
 // during normal saves and we don't want to rebuild on those.
 func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool, ignore []string) bool {
@@ -172,11 +213,18 @@ func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool, ignore []strin
 		return false
 	}
 	if pathUnder(ev.Name, ignore) {
-		return false
+		return isGoBuildFile(base)
 	}
 	if underEmbedRoot(ev.Name, embedRoots) {
 		return true
 	}
+	return isGoBuildFile(base)
+}
+
+// isGoBuildFile reports whether base names a file whose change
+// invalidates the Go build: any .go source, go.mod / go.sum (deps),
+// or nexus.deploy.yaml (codegen consumes it).
+func isGoBuildFile(base string) bool {
 	if strings.HasSuffix(base, ".go") {
 		return true
 	}
