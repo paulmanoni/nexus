@@ -318,34 +318,44 @@ export type GqlCallOptions<T = unknown> = GqlCallOpts<T, unknown>
  *    string                   → T (passthrough; TS can't introspect a raw doc)
  *    readonly K[]             → Pick<T, K> (or array of Pick for list T)
  *    SelectionFor<T>          → recursive narrowed tree
+ *
+ *  null/undefined union members pass through at every level so
+ *  optional fields (data?: LoginData) keep their optionality in the
+ *  narrowed result instead of collapsing to {}.
  */
 export type Selected<T, S> =
   [S] extends [never] ? T
   : S extends string ? T
-  : S extends readonly (infer F)[]
+  : T extends null | undefined ? T
+  : SelectedCore<T, S>
+
+type SelectedCore<T, S> =
+  S extends readonly (infer F)[]
     ? T extends readonly (infer U)[]
-      ? PickFields<U, F>[]
+      ? PickFields<NonNullable<U>, F>[]
       : PickFields<T, F>
   : S extends Record<string, unknown>
     ? T extends readonly (infer U)[]
-      ? PickObject<U, S>[]
+      ? Selected<U, S>[]
       : PickObject<T, S>
   : T
 
 type PickFields<T, F> = F extends keyof T ? Pick<T, F> : T
 
+/** PickObject narrows T's fields to those present in S, recursing
+ *  through Selected on each value so nested optional/union fields
+ *  stay correctly typed. NonNullable is applied around T to defend
+ *  against the keyof (X | undefined) = never collapse. */
 type PickObject<T, S> = {
-  [K in Extract<keyof S, keyof T>]:
-    S[K] extends true ? T[K]
+  [K in Extract<keyof S, keyof NonNullable<T>>]:
+    S[K] extends true ? NonNullable<T>[K]
     : S[K] extends readonly (infer F)[]
-      ? T[K] extends readonly (infer U)[]
-        ? PickFields<U, F>[]
-        : PickFields<T[K], F>
+      ? NonNullable<T>[K] extends readonly (infer U)[]
+        ? PickFields<NonNullable<U>, F>[]
+        : PickFields<NonNullable<T>[K], F>
     : S[K] extends Record<string, unknown>
-      ? T[K] extends readonly (infer U)[]
-        ? PickObject<U, S[K]>[]
-        : PickObject<T[K], S[K]>
-    : T[K]
+      ? Selected<NonNullable<T>[K], S[K]>
+      : NonNullable<T>[K]
 }
 
 /** Loose, untyped selection tree — used by hand-written documents
