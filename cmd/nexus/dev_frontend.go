@@ -112,13 +112,33 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool
 var (
 	buildStartedRE = regexp.MustCompile(`build started\.{3}`)
 	buildEndedRE   = regexp.MustCompile(`built in ([\d.]+\s?m?s)\.?$`)
-	// assetLineRE matches the per-asset summary that vite prints,
-	// e.g.  "dist/assets/index-CgaP6gEu.js   389.02 kB │ gzip: 109.45 kB"
-	// Filename + sizes is the comparison key — when content
-	// changes, the content-hash changes, so the filename changes
-	// too. Same line = same asset = suppressible.
-	assetLineRE = regexp.MustCompile(`^\s*dist/\S+.*\b\d+\.\d+\s*kB`)
+	// assetParseRE pulls the path + size + gzip out of a vite
+	// asset summary line:
+	//   "dist/assets/index-CgaP6gEu.js   389.02 kB │ gzip: 109.45 kB"
+	assetParseRE = regexp.MustCompile(`^\s*(dist/\S+)\s+([\d.]+)\s*kB\s*│\s*gzip:\s*([\d.]+)\s*kB`)
+	// hashStripRE peels vite's 8-char content hash off a filename
+	// so two builds that only differ by hash-shuffling (no size
+	// change) collapse to the same logical key. Vite hashes are
+	// always 8 chars from [A-Za-z0-9_-] immediately before the
+	// extension; the dash-prefix is stable across versions.
+	//   LoginView-Df8jaTme.js                  → LoginView.js
+	//   vendor-nuxt-ui-CFRnWYHU.js             → vendor-nuxt-ui.js
+	//   DualListBox.vue_vue_type_..._lang-C-Rtz0G-.js
+	//                                          → DualListBox.vue_vue_type_..._lang.js
+	hashStripRE = regexp.MustCompile(`-[A-Za-z0-9_-]{8}(\.[a-z]+)$`)
 )
+
+// assetEntry captures the comparison key for a single asset: its
+// logical (un-hashed) path and its reported sizes. Two entries are
+// "the same" iff all three fields match — that's what tells us
+// vite produced an identical chunk regardless of hash shuffling
+// from module-id reordering.
+type assetEntry struct {
+	logical string
+	size    string
+	gzip    string
+	line    string // original printed line, for emit
+}
 
 // buildBlockFilter compares the asset summary table emitted at the
 // end of every `vite build --watch` cycle against the previous
@@ -139,12 +159,12 @@ var (
 // so the user sees the initial bundle shape. Subsequent cycles
 // emit only the delta.
 type buildBlockFilter struct {
-	dst       io.Writer
-	tag       string
-	inBuild   bool
-	buffer    []string
-	prevAssets map[string]struct{}
-	hadFirst  bool
+	dst        io.Writer
+	tag        string
+	inBuild    bool
+	buffer     []string
+	prevAssets map[string]assetEntry
+	hadFirst   bool
 }
 
 func newBuildBlockFilter(dst io.Writer, tag string) *buildBlockFilter {
@@ -172,7 +192,7 @@ func (f *buildBlockFilter) line(s string) {
 }
 
 func (f *buildBlockFilter) endCycle() {
-	currAssets := extractAssetSet(f.buffer)
+	currAssets := extractAssets(f.buffer)
 	duration := extractDuration(f.buffer)
 
 	if !f.hadFirst {
@@ -188,31 +208,48 @@ func (f *buildBlockFilter) endCycle() {
 		return
 	}
 
-	added := make([]string, 0)
-	for k := range currAssets {
-		if _, ok := f.prevAssets[k]; !ok {
-			added = append(added, k)
-		}
-	}
-	removed := make([]string, 0)
-	for k := range f.prevAssets {
-		if _, ok := currAssets[k]; !ok {
-			removed = append(removed, k)
-		}
-	}
-	unchanged := len(currAssets) - len(added)
+	type sizeChange struct{ logical, oldSize, newSize, oldGzip, newGzip string }
+	var added, removed []assetEntry
+	var changed []sizeChange
+	unchanged := 0
 
-	if len(added) == 0 && len(removed) == 0 {
+	for k, curr := range currAssets {
+		prev, ok := f.prevAssets[k]
+		if !ok {
+			added = append(added, curr)
+			continue
+		}
+		if prev.size == curr.size && prev.gzip == curr.gzip {
+			unchanged++
+			continue
+		}
+		changed = append(changed, sizeChange{
+			logical: k, oldSize: prev.size, newSize: curr.size,
+			oldGzip: prev.gzip, newGzip: curr.gzip,
+		})
+	}
+	for k, prev := range f.prevAssets {
+		if _, ok := currAssets[k]; !ok {
+			removed = append(removed, prev)
+		}
+	}
+
+	if len(added)+len(removed)+len(changed) == 0 {
 		fmt.Fprintf(f.dst, "%s%s● rebuild · no changes (%s)%s\n",
 			f.tag, ansiDim, duration, ansiReset)
 	} else {
 		fmt.Fprintf(f.dst, "%s● %d changed · %d unchanged (%s)\n",
-			f.tag, len(added)+len(removed), unchanged, duration)
-		for _, l := range removed {
-			fmt.Fprintf(f.dst, "%s  %s- %s%s\n", f.tag, ansiRed, strings.TrimSpace(l), ansiReset)
+			f.tag, len(added)+len(removed)+len(changed), unchanged, duration)
+		for _, e := range removed {
+			fmt.Fprintf(f.dst, "%s  %s- %s%s\n", f.tag, ansiRed, e.logical, ansiReset)
 		}
-		for _, l := range added {
-			fmt.Fprintf(f.dst, "%s  %s+ %s%s\n", f.tag, ansiGreen, strings.TrimSpace(l), ansiReset)
+		for _, c := range changed {
+			fmt.Fprintf(f.dst, "%s  %s~ %s  %s → %s kB │ gzip %s → %s kB%s\n",
+				f.tag, ansiYellow, c.logical, c.oldSize, c.newSize, c.oldGzip, c.newGzip, ansiReset)
+		}
+		for _, e := range added {
+			fmt.Fprintf(f.dst, "%s  %s+ %s  %s kB │ gzip %s kB%s\n",
+				f.tag, ansiGreen, e.logical, e.size, e.gzip, ansiReset)
 		}
 	}
 
@@ -236,16 +273,22 @@ func (f *buildBlockFilter) flush() {
 	}
 }
 
-// extractAssetSet returns the set of asset summary lines from a
-// rebuild block (e.g. "dist/assets/foo-HASH.js  X kB │ gzip: Y kB").
-// Each unique line is a key; the comparison is exact-match so a
-// content-hash change creates a new key.
-func extractAssetSet(buffer []string) map[string]struct{} {
-	out := make(map[string]struct{})
+// extractAssets parses every "dist/<path>  size kB │ gzip: gzip
+// kB" line out of buffer and returns logical-name → assetEntry.
+// "Logical name" is the path with vite's 8-char content hash
+// stripped, so two builds that only shuffled hashes (because
+// module IDs reordered) produce the same key. Sizes drive the
+// "did this asset really change?" decision in endCycle.
+func extractAssets(buffer []string) map[string]assetEntry {
+	out := make(map[string]assetEntry)
 	for _, l := range buffer {
-		if assetLineRE.MatchString(l) {
-			out[l] = struct{}{}
+		m := assetParseRE.FindStringSubmatch(l)
+		if m == nil {
+			continue
 		}
+		path, size, gzip := m[1], m[2], m[3]
+		logical := hashStripRE.ReplaceAllString(path, "$1")
+		out[logical] = assetEntry{logical: logical, size: size, gzip: gzip, line: l}
 	}
 	return out
 }

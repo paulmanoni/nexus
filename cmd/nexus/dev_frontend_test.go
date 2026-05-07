@@ -92,40 +92,75 @@ func TestBuildBlockFilter_IdenticalRebuildSuppressed(t *testing.T) {
 	}
 }
 
-// TestBuildBlockFilter_ChangedAssetShownAsDelta verifies the real
-// fix-the-source-and-edit case: only the changed asset appears,
-// alongside a summary of how many were unchanged.
-func TestBuildBlockFilter_ChangedAssetShownAsDelta(t *testing.T) {
+// TestBuildBlockFilter_HashShuffleSuppressed pins the load-bearing
+// case: vite often re-hashes many chunks on any source edit
+// because module IDs reshuffle. If the SIZE didn't change, those
+// hash-only diffs are noise and must collapse like a no-changes
+// rebuild. Only files whose size genuinely shifted should print.
+func TestBuildBlockFilter_HashShuffleSuppressed(t *testing.T) {
 	var out bytes.Buffer
 	f := newBuildBlockFilter(&out, tag)
 	for _, l := range fakeBuild(2000,
 		"dist/index.html  1.14 kB │ gzip:  0.52 kB",
-		"dist/assets/main-AAA.js  389.02 kB │ gzip: 109.45 kB",
-		"dist/assets/Login-OLD.js  2.23 kB │ gzip:  1.15 kB",
+		"dist/assets/index-Df8jaTme.js  389.02 kB │ gzip: 109.45 kB",
+		"dist/assets/Login-AAAAAAAA.js  2.23 kB │ gzip:  1.15 kB",
+		"dist/assets/Roles-BBBBBBBB.js  4.55 kB │ gzip:  1.95 kB",
 	) {
 		f.line(l)
 	}
 	out.Reset()
-	// Login changed — different content hash, different filename.
+	// Login.vue edited → only Login's size changes. vite re-hashes
+	// index AND Roles even though their bytes are identical.
 	for _, l := range fakeBuild(1900,
 		"dist/index.html  1.14 kB │ gzip:  0.52 kB",
-		"dist/assets/main-AAA.js  389.02 kB │ gzip: 109.45 kB",
-		"dist/assets/Login-NEW.js  2.30 kB │ gzip:  1.18 kB",
+		"dist/assets/index-XXXXXXXX.js  389.02 kB │ gzip: 109.45 kB",
+		"dist/assets/Login-YYYYYYYY.js  2.30 kB │ gzip:  1.18 kB",
+		"dist/assets/Roles-ZZZZZZZZ.js  4.55 kB │ gzip:  1.95 kB",
 	) {
 		f.line(l)
 	}
 	got := out.String()
-	if !strings.Contains(got, "+ ") || !strings.Contains(got, "Login-NEW.js") {
-		t.Errorf("expected new asset highlighted with '+', got\n%s", got)
+	if !strings.Contains(got, "Login.js") {
+		t.Errorf("expected Login.js to appear (size changed), got\n%s", got)
 	}
-	if !strings.Contains(got, "- ") || !strings.Contains(got, "Login-OLD.js") {
-		t.Errorf("expected removed asset highlighted with '-', got\n%s", got)
+	if !strings.Contains(got, "2.23 → 2.30 kB") {
+		t.Errorf("expected size-delta '2.23 → 2.30 kB' for Login.js, got\n%s", got)
 	}
-	if strings.Contains(got, "main-AAA.js") {
-		t.Errorf("unchanged asset (main-AAA.js) leaked into delta\n%s", got)
+	for _, drop := range []string{"index-XXXXXXXX", "Roles-ZZZZZZZZ", "index-Df8jaTme"} {
+		if strings.Contains(got, drop) {
+			t.Errorf("hash-shuffled asset %q leaked into output\n%s", drop, got)
+		}
 	}
-	if !strings.Contains(got, "1 unchanged") && !strings.Contains(got, "2 unchanged") {
-		t.Errorf("expected unchanged-count summary, got\n%s", got)
+	if !strings.Contains(got, "1 changed") {
+		t.Errorf("expected '1 changed' header, got\n%s", got)
+	}
+}
+
+// TestBuildBlockFilter_AddRemoveDistinct verifies the genuine
+// add/remove case: a brand-new logical asset appears with "+"
+// and one that disappeared shows with "-".
+func TestBuildBlockFilter_AddRemoveDistinct(t *testing.T) {
+	var out bytes.Buffer
+	f := newBuildBlockFilter(&out, tag)
+	for _, l := range fakeBuild(2000,
+		"dist/index.html  1.14 kB │ gzip:  0.52 kB",
+		"dist/assets/Old-AAAAAAAA.js  2.23 kB │ gzip:  1.15 kB",
+	) {
+		f.line(l)
+	}
+	out.Reset()
+	for _, l := range fakeBuild(1900,
+		"dist/index.html  1.14 kB │ gzip:  0.52 kB",
+		"dist/assets/New-BBBBBBBB.js  3.40 kB │ gzip:  1.50 kB",
+	) {
+		f.line(l)
+	}
+	got := out.String()
+	if !strings.Contains(got, "+ ") || !strings.Contains(got, "New.js") {
+		t.Errorf("expected '+ New.js' line, got\n%s", got)
+	}
+	if !strings.Contains(got, "- ") || !strings.Contains(got, "Old.js") {
+		t.Errorf("expected '- Old.js' line, got\n%s", got)
 	}
 }
 
