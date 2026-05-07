@@ -38,12 +38,24 @@ type NamedType struct {
 	Fields      []FieldSchema `json:"fields"`
 }
 
-// FieldSchema describes one struct field. JSONName is the wire name
-// (from the json tag); Name is the Go field name — kept separate so
-// codegen can emit the right identifier on each side.
+// FieldSchema describes one struct field.
+//
+// Name        — Go field name; used as a last-resort wire identifier.
+// JSONName    — wire name on the JSON / REST side; from the `json:` tag.
+// GraphQLName — wire name on the GraphQL side; from the `graphql:` tag's
+//               first comma-separated token. The schema walker also uses
+//               this as a fallback for JSONName when the `json:` tag is
+//               absent — that's what makes graphql-only-tagged args
+//               structs (e.g. `Username string \`graphql:"username"\``)
+//               surface as `username` in TS + on the wire instead of
+//               leaking the Go field name.
+//
+// Codegen and manifest projection pick whichever side fits the
+// transport.
 type FieldSchema struct {
 	Name        string  `json:"name"`
 	JSONName    string  `json:"jsonName,omitempty"`
+	GraphQLName string  `json:"graphqlName,omitempty"`
 	Type        TypeRef `json:"type"`
 	Optional    bool    `json:"optional,omitempty"`
 	Description string  `json:"description,omitempty"`
@@ -278,18 +290,39 @@ func walkStructFields(t reflect.Type, refs map[string]NamedType) NamedType {
 		if jsonTag == "-" {
 			continue
 		}
+		gqlTag := f.Tag.Get("graphql")
+		if gqlTag == "-" {
+			continue
+		}
+		gqlName := ""
+		if gqlTag != "" {
+			if name := strings.SplitN(gqlTag, ",", 2)[0]; name != "" {
+				gqlName = name
+			}
+		}
 		jsonName := f.Name
+		jsonExplicit := false
 		omitempty := false
 		if jsonTag != "" {
 			parts := strings.Split(jsonTag, ",")
 			if parts[0] != "" {
 				jsonName = parts[0]
+				jsonExplicit = true
 			}
 			for _, p := range parts[1:] {
 				if p == "omitempty" {
 					omitempty = true
 				}
 			}
+		}
+		// graphql-only-tagged fields (no json tag) borrow the graphql
+		// name as the wire name so TS codegen + the GraphQL document
+		// builder agree with the registered schema arg names. Without
+		// this, `Username string \`graphql:"username"\`` would surface
+		// as `Username` on the wire and the document would hit the
+		// server with `Username:` (which the schema doesn't know).
+		if !jsonExplicit && gqlName != "" {
+			jsonName = gqlName
 		}
 		// Anonymous embedded fields with no explicit json tag flatten
 		// into the parent struct on the wire. Walk the embedded type
@@ -313,6 +346,7 @@ func walkStructFields(t reflect.Type, refs map[string]NamedType) NamedType {
 		fs := FieldSchema{
 			Name:        f.Name,
 			JSONName:    jsonName,
+			GraphQLName: gqlName,
 			Type:        ft,
 			Optional:    opt,
 			Description: f.Tag.Get("desc"),
