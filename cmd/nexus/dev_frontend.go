@@ -187,6 +187,11 @@ func (f *buildBlockFilter) line(s string) {
 			f.endCycle()
 		}
 	default:
+		// Suppress blank-line spacers vite emits between cycles —
+		// without them, no-change rebuilds produce zero output.
+		if strings.TrimSpace(s) == "" {
+			return
+		}
 		fmt.Fprintf(f.dst, "%s%s\n", f.tag, s)
 	}
 }
@@ -235,8 +240,12 @@ func (f *buildBlockFilter) endCycle() {
 	}
 
 	if len(added)+len(removed)+len(changed) == 0 {
-		fmt.Fprintf(f.dst, "%s%s● rebuild · no changes (%s)%s\n",
-			f.tag, ansiDim, duration, ansiReset)
+		// No-change rebuild — emit nothing. Vite/auto-import-style
+		// loops can fire dozens of these per minute; even a single
+		// summary line per cycle floods the terminal. Silence is
+		// the right default; --verbose still streams the raw
+		// output for users who want to see every cycle.
+		_ = duration
 	} else {
 		fmt.Fprintf(f.dst, "%s● %d changed · %d unchanged (%s)\n",
 			f.tag, len(added)+len(removed)+len(changed), unchanged, duration)

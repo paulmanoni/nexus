@@ -62,33 +62,32 @@ func TestBuildBlockFilter_FirstCycleEmittedVerbatim(t *testing.T) {
 	}
 }
 
-// TestBuildBlockFilter_IdenticalRebuildSuppressed verifies the loop
+// TestBuildBlockFilter_IdenticalRebuildIsSilent verifies the loop
 // signature: when the second cycle's asset table matches the first,
-// only a one-line "no changes" summary appears.
-func TestBuildBlockFilter_IdenticalRebuildSuppressed(t *testing.T) {
+// the filter emits NOTHING. A no-change rebuild loop can fire
+// dozens of cycles per minute — any per-cycle output spams the
+// terminal. Silence is the only acceptable default.
+func TestBuildBlockFilter_IdenticalRebuildIsSilent(t *testing.T) {
 	var out bytes.Buffer
 	f := newBuildBlockFilter(&out, tag)
 	assets := []string{
 		"dist/index.html  1.14 kB │ gzip:  0.52 kB",
-		"dist/assets/main-AAA.js  389.02 kB │ gzip: 109.45 kB",
+		"dist/assets/main-AAAAAAAA.js  389.02 kB │ gzip: 109.45 kB",
 	}
 	for _, l := range fakeBuild(2000, assets...) {
 		f.line(l)
 	}
-	out.Reset() // drop the first-cycle output, focus on the second
-	for _, l := range fakeBuild(1850, assets...) {
-		f.line(l)
+	out.Reset()
+	// Three identical rebuild cycles + the blank "spacer" lines
+	// vite emits between them — all of it should produce nothing.
+	for i := 0; i < 3; i++ {
+		f.line("") // vite's between-cycle blank
+		for _, l := range fakeBuild(1850+i, assets...) {
+			f.line(l)
+		}
 	}
-	got := out.String()
-	if !strings.Contains(got, "no changes") {
-		t.Errorf("expected 'no changes' summary, got\n%s", got)
-	}
-	// The full asset table must NOT appear — that's the loop spam.
-	if strings.Contains(got, "main-AAA.js") {
-		t.Errorf("identical asset line leaked into output\n%s", got)
-	}
-	if strings.Contains(got, "build started") {
-		t.Errorf("'build started...' header leaked into suppressed cycle\n%s", got)
+	if got := out.String(); got != "" {
+		t.Errorf("identical rebuilds should emit nothing; got:\n%s", got)
 	}
 }
 
