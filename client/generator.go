@@ -233,13 +233,18 @@ export class NexusClient {
   /** Untyped escape hatch. */
   rest(method: string, path: string, args?: object, opts?: object): Promise<unknown>
 
-  /** Typed GraphQL query. */
+  /** Typed GraphQL query. opts.select narrows the auto-expanded
+   *  selection set: a string passes through verbatim, an array
+   *  lists top-level scalars, an object recurses (true = leaf,
+   *  nested object = sub-selection). */
   query<K extends keyof GraphqlOps>(
     name: K, vars?: GraphqlOps[K]['args'],
+    opts?: GqlCallOptions,
   ): Promise<GraphqlOps[K]['return']>
-  /** Typed GraphQL mutation. */
+  /** Typed GraphQL mutation. Same options as query(). */
   mutate<K extends keyof GraphqlOps>(
     name: K, vars?: GraphqlOps[K]['args'],
+    opts?: GqlCallOptions,
   ): Promise<GraphqlOps[K]['return']>
 
   /** CRUD handle for AsCRUD-registered entities. */
@@ -247,6 +252,23 @@ export class NexusClient {
 
   /** WebSocket handle — typed by path via WSMessages. */
   ws<P extends keyof WSMessages>(path: P): WSHandle<P>
+}
+
+/** Options shared by nx.query / nx.mutate. */
+export interface GqlCallOptions {
+  headers?: Record<string, string>
+  signal?: AbortSignal
+  /** Override the auto-expanded selection set. String passes through;
+   *  array lists scalars; object recurses (true selects, nested
+   *  object emits a sub-selection). */
+  select?: string | readonly string[] | GqlSelection
+}
+
+/** Recursive selection-set tree: true selects a leaf field, an
+ *  array lists scalar children, a nested object emits its own
+ *  selection set. */
+export interface GqlSelection {
+  [field: string]: boolean | readonly string[] | GqlSelection
 }
 
 export interface CrudHandle {

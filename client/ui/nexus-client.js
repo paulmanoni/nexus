@@ -202,12 +202,26 @@ export class NexusClient {
    * graphql-transport endpoints declare op names; the SDK looks up
    * the path of the GraphQL mount the op lives on so apps with
    * multi-mount schemas (per-module Path) work transparently.
+   *
+   * Selection set: by default the SDK auto-expands every field
+   * reachable through manifest.refs up to depth 3. Pass `opts.select`
+   * to override:
+   *
+   *   nx.query('users', {}, { select: 'id name email' })
+   *   nx.query('users', {}, { select: ['id', 'name', 'email'] })
+   *   nx.query('users', {}, { select: { id: true, profile: { city: true } } })
+   *
+   * String form passes through verbatim (supports aliases, fragments,
+   * field arguments). Array form joins top-level scalar field names
+   * with spaces. Object form recurses — `true` selects a leaf,
+   * a nested object emits a sub-selection.
    */
   async query(name, variables = {}, opts = {}) {
     return this._gql('query', name, variables, opts)
   }
 
-  /** mutate runs a GraphQL mutation by name. Same shape as query(). */
+  /** mutate runs a GraphQL mutation by name. Same options as query(),
+   *  including `opts.select` for explicit selection sets. */
   async mutate(name, variables = {}, opts = {}) {
     return this._gql('mutation', name, variables, opts)
   }
@@ -219,12 +233,13 @@ export class NexusClient {
       throw new NexusError(`nexus: no GraphQL ${kind} named ${name}`, { endpoint: name })
     }
     const url = this._url(ep.path)
+    const explicit = renderSelectOption(opts.select)
     const init = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...(opts.headers || {}) },
       signal: opts.signal,
       body: JSON.stringify({
-        query: buildGqlDocument(kind, name, variables, ep, m.refs || {}),
+        query: buildGqlDocument(kind, name, variables, ep, m.refs || {}, explicit),
         variables,
         operationName: capitalize(name),
       }),
@@ -525,7 +540,7 @@ class WSHandle {
 
 const SELECTION_MAX_DEPTH = 3
 
-function buildGqlDocument(kind, name, variables, ep, refs) {
+function buildGqlDocument(kind, name, variables, ep, refs, explicitSelection) {
   const argDefs = []
   const argList = []
   for (const k of Object.keys(variables)) {
@@ -537,8 +552,59 @@ function buildGqlDocument(kind, name, variables, ep, refs) {
   const sig = argDefs.length ? `(${argDefs.join(', ')})` : ''
   const args = argList.length ? `(${argList.join(', ')})` : ''
   const opName = capitalize(name)
-  const selection = buildSelectionSet(ep && ep.return, refs || {})
+  // Caller-supplied selection wins over auto-expansion. The override
+  // is already shaped (' { ... }' or '') by renderSelectOption; null
+  // means "no override, use the default walk".
+  const selection = (explicitSelection != null)
+    ? explicitSelection
+    : buildSelectionSet(ep && ep.return, refs || {})
   return `${kind} ${opName}${sig} { ${name}${args}${selection} }`
+}
+
+// renderSelectOption normalizes opts.select into the leading-space
+// selection-set fragment buildGqlDocument expects, or returns null
+// when the caller didn't pass one. Three input shapes:
+//
+//   string  — passthrough, wrapped in braces if not already.
+//   array   — top-level scalar fields, space-joined.
+//   object  — recursive tree; true selects a leaf, nested object
+//             emits its own selection set.
+//
+// Empty values short-circuit to '' so the caller can opt OUT of
+// selection (degenerate but explicit). Anything else falls back to
+// null so the auto-walker takes over.
+function renderSelectOption(sel) {
+  if (sel == null) return null
+  if (typeof sel === 'string') {
+    const s = sel.trim()
+    if (!s) return ''
+    if (s.startsWith('{')) return ' ' + s
+    return ' { ' + s + ' }'
+  }
+  if (Array.isArray(sel)) {
+    if (!sel.length) return ''
+    return ' { ' + sel.join(' ') + ' }'
+  }
+  if (typeof sel === 'object') {
+    return ' ' + objectToSelection(sel)
+  }
+  return null
+}
+
+function objectToSelection(o) {
+  const parts = []
+  for (const [k, v] of Object.entries(o)) {
+    if (v === true || v === 1) {
+      parts.push(k)
+    } else if (Array.isArray(v)) {
+      // Shorthand: `{ user: ['id', 'name'] }` → `user { id name }`.
+      parts.push(`${k} { ${v.join(' ')} }`)
+    } else if (v && typeof v === 'object') {
+      parts.push(`${k} ${objectToSelection(v)}`)
+    }
+    // false / 0 / null → omitted
+  }
+  return `{ ${parts.join(' ')} }`
 }
 
 // buildSelectionSet returns the leading-space selection-set fragment
