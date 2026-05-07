@@ -27,9 +27,9 @@ func TestServeFrontend(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	fsys := fstest.MapFS{
 		"index.html":             {Data: []byte("<html>app</html>")},
-		"favicon.ico":             {Data: []byte("favicon-bytes")},
-		"assets/main-abc.js":      {Data: []byte("console.log(1)")},
-		"assets/nested/deep.css":  {Data: []byte(".x{}")},
+		"favicon.ico":            {Data: []byte("favicon-bytes")},
+		"assets/main-abc.js":     {Data: []byte("console.log(1)")},
+		"assets/nested/deep.css": {Data: []byte(".x{}")},
 	}
 
 	app := New(Config{})
@@ -214,6 +214,95 @@ func TestServeFrontendWithRoutePrefix(t *testing.T) {
 // embed-style FS and reads from os.DirFS at NEXUS_DEV_ROOT instead,
 // so a watching frontend toolchain can refresh the served bundle
 // without recompiling Go.
+// TestServeFrontend_DevModeRefreshesIndexHTML pins the bug where
+// the framework cached index.html at boot — vite's mid-session
+// rewrite would land on disk but the served HTML stayed pointing
+// at the old asset hashes. In dev mode we must re-read on each
+// request so a frontend rebuild is visible on the next refresh.
+func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
+	t.Setenv("GIN_MODE", "test")
+	dir := t.TempDir()
+	distDir := dir + "/web/dist"
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := distDir + "/index.html"
+	if err := os.WriteFile(indexPath, []byte("<html>v1</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(NexusDevEnv, "1")
+	t.Setenv(NexusDevRootEnv, dir)
+
+	fsys := os.DirFS(dir)
+	sub, err := fs.Sub(fsys, "web/dist")
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	app := New(Config{})
+	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+
+	// First request — boot-time bytes.
+	rec := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/", nil)
+	app.engine.ServeHTTP(rec, req)
+	if got := rec.Body.String(); got != "<html>v1</html>" {
+		t.Fatalf("first GET: got %q, want %q", got, "<html>v1</html>")
+	}
+
+	// Simulate vite rewriting index.html with a fresh asset hash.
+	if err := os.WriteFile(indexPath, []byte("<html>v2</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	app.engine.ServeHTTP(rec, req)
+	if got := rec.Body.String(); got != "<html>v2</html>" {
+		t.Errorf("second GET: got %q, want %q (dev-mode re-read regressed — frontend changes won't reach the browser)", got, "<html>v2</html>")
+	}
+}
+
+// TestServeFrontend_ProductionCachesIndexHTML pins the inverse:
+// outside dev mode the boot-time read is authoritative (assets are
+// content-hashed; re-reading per request is wasted I/O).
+func TestServeFrontend_ProductionCachesIndexHTML(t *testing.T) {
+	t.Setenv("GIN_MODE", "test")
+	t.Setenv(NexusDevEnv, "")
+	dir := t.TempDir()
+	distDir := dir + "/web/dist"
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := distDir + "/index.html"
+	if err := os.WriteFile(indexPath, []byte("<html>boot</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fsys := os.DirFS(dir)
+	sub, err := fs.Sub(fsys, "web/dist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := New(Config{})
+	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mutate after boot. Production should keep serving the boot copy.
+	if err := os.WriteFile(indexPath, []byte("<html>after-boot</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/", nil)
+	app.engine.ServeHTTP(rec, req)
+	if got := rec.Body.String(); got != "<html>boot</html>" {
+		t.Errorf("prod GET: got %q, want boot-time bytes %q", got, "<html>boot</html>")
+	}
+}
+
 func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	dir := t.TempDir()

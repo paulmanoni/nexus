@@ -125,10 +125,32 @@ func FrontendAt(path string) FrontendOption {
 // One handler instead of per-file/per-dir registrations keeps the
 // engine route table small and lets the dispatcher own all the
 // caching policy in one place.
+//
+// index.html policy: in production we read once at boot and serve
+// the cached bytes (assets are content-hashed, the shell never
+// changes between deploys, no point hitting disk). In dev mode
+// (NEXUS_DEV=1) the disk-FS swap above is meaningless if we still
+// cache the shell — vite writes a fresh dist/index.html with new
+// asset hashes on each rebuild, and stale cached bytes would point
+// at deleted assets. The dev path re-reads index.html per request
+// so a frontend rebuild becomes visible on the next refresh.
 func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
-	indexHTML, err := fs.ReadFile(fsys, "index.html")
+	devMode := os.Getenv(NexusDevEnv) == "1"
+	bootIndex, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
 		return fmt.Errorf("nexus: ServeFrontend: index.html not found — did the bundle build? (%w)", err)
+	}
+	readIndex := func() []byte {
+		if !devMode {
+			return bootIndex
+		}
+		fresh, err := fs.ReadFile(fsys, "index.html")
+		if err != nil {
+			// Vite mid-rebuild may briefly delete/rewrite index.html;
+			// fall back to the boot copy rather than 500ing.
+			return bootIndex
+		}
+		return fresh
 	}
 	httpFS := http.FS(fsys)
 
@@ -169,7 +191,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 		// SPA fallback would return.
 		if relPath == "/index.html" {
 			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-			c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+			c.Data(http.StatusOK, "text/html; charset=utf-8", readIndex())
 			return
 		}
 
@@ -194,7 +216,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 		// picked up on the next reload — the browser asks every
 		// time, the answer is fresh from the binary.
 		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", readIndex())
 	})
 	return nil
 }
