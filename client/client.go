@@ -343,6 +343,9 @@ var clientJS []byte
 //go:embed ui/nexus-vue.js
 var vueJS []byte
 
+//go:embed ui/nexus-vite-plugin.js
+var vitePluginJS []byte
+
 // RuntimeJS returns the embedded nexus-client.js bytes. Public so
 // the `nexus client --out` CLI can dump the runtime to disk
 // without re-embedding a copy in cmd/nexus. Returns the same byte
@@ -352,6 +355,13 @@ func RuntimeJS() []byte { return clientJS }
 // VueJS returns the embedded nexus-vue.js bytes. Same role as
 // RuntimeJS for the Vue 3 composables module.
 func VueJS() []byte { return vueJS }
+
+// VitePluginJS returns the embedded nexus-vite-plugin.js bytes —
+// the build-time auto-select transformer that rewrites nx.query /
+// nx.mutate calls to fetch only the fields the consumer reads.
+// Dumped into OutDir alongside client.js / vue.js when OutDir is
+// configured; users wire it into vite.config.ts manually.
+func VitePluginJS() []byte { return vitePluginJS }
 
 // Mount installs the SDK routes on engine. Idempotent: re-mounting
 // rebuilds the cached manifest by invalidating the Once. Called
