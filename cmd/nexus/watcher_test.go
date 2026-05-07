@@ -125,6 +125,89 @@ func TestWatchSource_FiresOnEmbedTarget(t *testing.T) {
 	}
 }
 
+// TestWatchSource_IgnoreSuppressesViteOutput verifies that writes
+// under the caller's ignore root (the frontend project dir) DON'T
+// fire a rebuild even when those paths sit inside an //go:embed
+// target. Without this, vite re-emitting web/dist/* would loop us
+// through the embed-root override on every Go restart.
+func TestWatchSource_IgnoreSuppressesViteOutput(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.go")
+	mainBody := "package main\n\nimport \"embed\"\n\n//go:embed web/dist/*\nvar distFS embed.FS\n\nfunc main() { _ = distFS }\n"
+	if err := os.WriteFile(src, []byte(mainBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dist := filepath.Join(dir, "web", "dist")
+	if err := os.MkdirAll(dist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(dist, "index.html")
+	if err := os.WriteFile(indexPath, []byte("<html>v1</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan struct{}, 4)
+	ignore := []string{filepath.Join(dir, "web")}
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, ignore); err != nil {
+		t.Fatalf("watchSource: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Simulate vite re-emitting dist/index.html.
+	if err := os.WriteFile(indexPath, []byte("<html>v2</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-out:
+		t.Fatal("vite write under ignore root should not fire — would loop")
+	case <-time.After(400 * time.Millisecond):
+		// expected
+	}
+}
+
+// TestWatchSource_IgnoreFiresOnGoUnderFrontend verifies that a .go
+// file kept inside the frontend dir (e.g. web/embed.go for the SPA's
+// `package web` helper) still bounces the Go process on save. The
+// ignore is meant to suppress vite's artifact writes, not silence
+// every file in the tree — a Go source change is always relevant.
+func TestWatchSource_IgnoreFiresOnGoUnderFrontend(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	web := filepath.Join(dir, "web")
+	if err := os.MkdirAll(web, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	embedGo := filepath.Join(web, "embed.go")
+	if err := os.WriteFile(embedGo, []byte("package web\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan struct{}, 4)
+	ignore := []string{web}
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, ignore); err != nil {
+		t.Fatalf("watchSource: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if err := os.WriteFile(embedGo, []byte("package web\n// edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-out:
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected restart on Go file save inside ignored frontend dir")
+	}
+}
+
 // TestWatchSource_DebouncesBurst verifies that 5 rapid writes
 // produce ONE rebuild signal, not 5. Editors that save with
 // atomic-rename or write multiple files for one Cmd-S would
