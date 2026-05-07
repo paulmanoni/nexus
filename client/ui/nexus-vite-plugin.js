@@ -31,7 +31,7 @@
 //   ✗ cross-function flow (defer)
 
 import { readFileSync, existsSync } from 'node:fs'
-import { join, isAbsolute } from 'node:path'
+import { join, isAbsolute, resolve } from 'node:path'
 
 const DEFAULT_SDK_DIR = 'src/sdk'
 const MANIFEST = 'manifest.json'
@@ -39,7 +39,28 @@ const MANIFEST = 'manifest.json'
 export default function nexusAutoSelect(options = {}) {
   let ts, MagicString, parseSFC
   let manifest = null
+  let manifestPath = ''
   let projectRoot = ''
+  // Tracks every module we successfully rewrote. On manifest change
+  // we invalidate these so they re-run their transform with the
+  // fresh op list — without it, brand-new ops added on the Go side
+  // wouldn't get auto-selected until vite dev is restarted.
+  const transformedIds = new Set()
+
+  function loadManifest(logger) {
+    try {
+      const raw = JSON.parse(readFileSync(manifestPath, 'utf8'))
+      const ops = new Set()
+      for (const e of raw.endpoints || []) {
+        if (e.transport === 'graphql') ops.add(e.name)
+      }
+      manifest = { ops }
+      return true
+    } catch (e) {
+      logger?.warn(`[nexus-auto-select] manifest reload failed: ${e?.message || e}`)
+      return false
+    }
+  }
 
   return {
     name: 'nexus-auto-select',
@@ -50,9 +71,9 @@ export default function nexusAutoSelect(options = {}) {
       const sdkDir = options.sdkDir
         ? (isAbsolute(options.sdkDir) ? options.sdkDir : join(projectRoot, options.sdkDir))
         : join(projectRoot, DEFAULT_SDK_DIR)
-      const mfPath = join(sdkDir, MANIFEST)
-      if (!existsSync(mfPath)) {
-        cfg.logger.warn(`[nexus-auto-select] manifest not found at ${mfPath} — plugin disabled`)
+      manifestPath = join(sdkDir, MANIFEST)
+      if (!existsSync(manifestPath)) {
+        cfg.logger.warn(`[nexus-auto-select] manifest not found at ${manifestPath} — plugin disabled`)
         return
       }
       try {
@@ -73,12 +94,43 @@ export default function nexusAutoSelect(options = {}) {
         // Optional — the plugin still works on .ts/.js files.
         parseSFC = null
       }
-      const raw = JSON.parse(readFileSync(mfPath, 'utf8'))
-      const ops = new Set()
-      for (const e of raw.endpoints || []) {
-        if (e.transport === 'graphql') ops.add(e.name)
+      loadManifest(cfg.logger)
+    },
+
+    // Wire the manifest watcher into the dev server. When the Go
+    // side re-dumps manifest.json (a struct change, a new op, etc.)
+    // we re-read the op list and invalidate every module we've
+    // already transformed so HMR picks up the new selection rules.
+    configureServer(server) {
+      if (!manifestPath) return
+      // Vite's chokidar watcher already covers files inside the
+      // project root; manifest.json under OutDir typically qualifies,
+      // but adding it explicitly is cheap and safe outside the root.
+      server.watcher.add(manifestPath)
+      const target = resolve(manifestPath)
+      const onChange = (file) => {
+        if (resolve(file) !== target) return
+        const ok = loadManifest(server.config.logger)
+        if (!ok) return
+        const graph = server.moduleGraph
+        let invalidated = 0
+        for (const id of transformedIds) {
+          const mod = graph.getModuleById(id)
+          if (mod) {
+            graph.invalidateModule(mod)
+            invalidated++
+          }
+        }
+        // A full reload is the cheapest correct thing here — a new
+        // op list might affect any number of modules, and partial
+        // HMR on rewritten code is fragile.
+        server.ws.send({ type: 'full-reload' })
+        server.config.logger.info(
+          `[nexus-auto-select] manifest reloaded, ${invalidated} module(s) invalidated`,
+        )
       }
-      manifest = { ops }
+      server.watcher.on('change', onChange)
+      server.watcher.on('add', onChange)
     },
 
     transform(code, id) {
@@ -87,13 +139,14 @@ export default function nexusAutoSelect(options = {}) {
       if (id.includes('/node_modules/')) return null
       if (id.includes('/sdk/')) return null
 
+      let result = null
       if (/\.(t|j)sx?$/.test(id)) {
-        return transformScript(code, id, /*isVueScript=*/false)
+        result = transformScript(code, id, /*isVueScript=*/false)
+      } else if (id.endsWith('.vue') && parseSFC) {
+        result = transformVue(code, id)
       }
-      if (id.endsWith('.vue') && parseSFC) {
-        return transformVue(code, id)
-      }
-      return null
+      if (result) transformedIds.add(id)
+      return result
     },
   }
 
