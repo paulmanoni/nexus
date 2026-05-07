@@ -129,6 +129,21 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// SIGINT to nexus dev tears the watcher down too. Surviving
 	// across Go restarts is the point: the frontend toolchain has
 	// its own file watcher and shouldn't bounce on every Go save.
+	//
+	// Auto-detect: when --frontend isn't passed but the target package
+	// declares nexus.ServeFrontend(distFS, "web/dist"), derive "web"
+	// as the watcher dir. The user's "I want auto-rebuild" intent is
+	// implicit in registering ServeFrontend, so requiring the flag is
+	// just friction. The detection is best-effort — non-literal
+	// embed roots fall through to the explicit-flag path.
+	if frontendDir == "" {
+		root, _ := os.Getwd()
+		pkgDir, _ := devMainPackageDir(root, target)
+		if d := detectFrontendDir(pkgDir); d != "" {
+			frontendDir = d
+			fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
+		}
+	}
 	if frontendDir != "" {
 		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
