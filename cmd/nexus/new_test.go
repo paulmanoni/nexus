@@ -101,6 +101,145 @@ func TestScaffold_InvalidModulePath(t *testing.T) {
 	}
 }
 
+// TestScaffoldWithOpts_FullStack covers the maximum-options path:
+// vue + postgres + redis + oauth2. We assert each axis dropped its
+// expected files, the generated main.go imports the right
+// packages, and the .env.example includes credentials for every
+// chosen resource.
+func TestScaffoldWithOpts_FullStack(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "myapp")
+	var stdout bytes.Buffer
+	err := scaffoldWithOpts(scaffoldOpts{
+		Dir:      dir,
+		Frontend: "vue",
+		DB:       "postgres",
+		Cache:    "redis",
+		Auth:     "oauth2",
+	}, &stdout)
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	for _, name := range []string{
+		"go.mod",
+		"main.go",
+		"module.go",
+		"nexus.deploy.yaml",
+		"resources/database.go",
+		"resources/cache.go",
+		"auth/auth.go",
+		"web/package.json",
+		"web/vite.config.ts",
+		"web/index.html",
+		"web/src/main.ts",
+		"web/src/App.vue",
+		"web/tsconfig.json",
+		"web/dist/index.html",
+		".env.example",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("expected %s, missing: %v", name, err)
+		}
+	}
+	mainGo, _ := os.ReadFile(filepath.Join(dir, "main.go"))
+	for _, want := range []string{
+		`"embed"`,
+		"//go:embed all:web/dist",
+		`"github.com/paulmanoni/nexus/client"`,
+		"resources.NewDB",
+		"resources.NewCacheManager",
+		"auth.Module",
+		"nexus.ServeFrontend(distFS",
+	} {
+		if !strings.Contains(string(mainGo), want) {
+			t.Errorf("main.go missing %q\n--- body ---\n%s", want, mainGo)
+		}
+	}
+	envExample, _ := os.ReadFile(filepath.Join(dir, ".env.example"))
+	for _, want := range []string{"DB_HOST", "DB_PORT=5432", "REDIS_HOST"} {
+		if !strings.Contains(string(envExample), want) {
+			t.Errorf(".env.example missing %q\n--- body ---\n%s", want, envExample)
+		}
+	}
+}
+
+// TestScaffoldWithOpts_ReactFrontend covers the react-specific
+// branch: package.json carries react deps, src/main.tsx is the
+// entry point, and vite.config.ts plugs in @vitejs/plugin-react.
+func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ra")
+	if err := scaffoldWithOpts(scaffoldOpts{
+		Dir: dir, Frontend: "react", DB: "none", Cache: "none", Auth: "none",
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	for _, p := range []string{"web/src/main.tsx", "web/src/App.tsx", "web/package.json", "web/vite.config.ts"} {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			t.Errorf("missing %s: %v", p, err)
+		}
+	}
+	pkg, _ := os.ReadFile(filepath.Join(dir, "web/package.json"))
+	for _, want := range []string{`"react":`, `"@vitejs/plugin-react":`} {
+		if !strings.Contains(string(pkg), want) {
+			t.Errorf("package.json missing %q\n--- body ---\n%s", want, pkg)
+		}
+	}
+	vite, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
+	if !strings.Contains(string(vite), "@vitejs/plugin-react") {
+		t.Errorf("vite.config.ts missing react plugin import\n%s", vite)
+	}
+}
+
+// TestScaffoldWithOpts_RejectsBadAxis catches typos / casing
+// mismatches early — better than letting `go build` fail with a
+// confusing template-rendered import.
+func TestScaffoldWithOpts_RejectsBadAxis(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "x")
+	err := scaffoldWithOpts(scaffoldOpts{
+		Dir: dir, Frontend: "Vue", DB: "none", Cache: "none", Auth: "none",
+	}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for non-canonical frontend value, got nil")
+	}
+}
+
+// TestPromptMissing_TakesNumericChoices simulates a user picking
+// "2) postgres" via the prompt. Confirms numeric input maps to
+// the right axis value.
+func TestPromptMissing_TakesNumericChoices(t *testing.T) {
+	stdin := bytes.NewBufferString("\n2\n2\n2\n") // frontend default, db=postgres, cache=redis, auth=oauth2
+	var stdout bytes.Buffer
+	opts := scaffoldOpts{}
+	if err := promptMissing(&opts, stdin, &stdout); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if opts.Frontend != "none" {
+		t.Errorf("frontend: got %q want none", opts.Frontend)
+	}
+	if opts.DB != "postgres" {
+		t.Errorf("db: got %q want postgres", opts.DB)
+	}
+	if opts.Cache != "redis" {
+		t.Errorf("cache: got %q want redis", opts.Cache)
+	}
+	if opts.Auth != "oauth2" {
+		t.Errorf("auth: got %q want oauth2", opts.Auth)
+	}
+}
+
+// TestPromptMissing_TakesNamedChoices verifies users can type
+// "vue" / "sqlite" / "redis" / "oauth2" instead of the index.
+func TestPromptMissing_TakesNamedChoices(t *testing.T) {
+	stdin := bytes.NewBufferString("vue\nsqlite\nredis\noauth2\n")
+	var stdout bytes.Buffer
+	opts := scaffoldOpts{}
+	if err := promptMissing(&opts, stdin, &stdout); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if opts.Frontend != "vue" || opts.DB != "sqlite" || opts.Cache != "redis" || opts.Auth != "oauth2" {
+		t.Errorf("got %+v", opts)
+	}
+}
+
 // TestCobra_VersionCommand asserts the cobra wiring routes the
 // `version` subcommand to its handler — guards against accidental
 // reorganization of the command tree dropping the brand line.

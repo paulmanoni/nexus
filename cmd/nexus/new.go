@@ -1,54 +1,159 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-// newNewCmd builds the `nexus new` subcommand. The cobra wrapper is
-// thin — all the real work lives in scaffold(), which is also driven
-// directly by the tests.
+// frontendChoices / dbChoices / cacheChoices are the options the
+// flags accept and the prompt walks through. "none" sits first so
+// pressing Enter with no input picks the no-extra-deps path.
+var (
+	frontendChoices = []string{"none", "vue", "react"}
+	dbChoices       = []string{"none", "postgres", "mysql", "sqlite"}
+	cacheChoices    = []string{"none", "redis"}
+	authChoices     = []string{"none", "oauth2"}
+)
+
+// newNewCmd builds the `nexus new` subcommand. Flags carry the
+// non-interactive contract; --yes (alias --no-prompt) suppresses
+// the prompt loop so CI / automation get deterministic behaviour
+// regardless of whether stdin is a tty.
 func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
-	var modulePath string
+	var (
+		modulePath string
+		frontend   string
+		db         string
+		cache      string
+		auth       string
+		yes        bool
+	)
 	cmd := &cobra.Command{
 		Use:   "new <dir>",
-		Short: "Scaffold a minimal nexus app",
+		Short: "Scaffold a nexus app (interactive — picks frontend / db / cache)",
 		Long: `Scaffold a runnable nexus app in <dir>.
 
-The generated project uses the reflective API (nexus.AsRest +
-nexus.Module) so 'go mod tidy && go run .' produces a working app
-with the dashboard already mounted at /__nexus/.`,
+By default the command prompts for a frontend (vue or none),
+database (postgres / mysql / sqlite / none), and cache (redis or
+none) when stdin is a tty. Pass --frontend / --db / --cache to
+skip the prompt for any axis, or --yes to take defaults across
+the board (none everywhere — minimum viable scaffold).
+
+Generated layout:
+
+  ./go.mod ./main.go ./module.go ./nexus.deploy.yaml ./README.md
+  resources/database.go     # only when --db is set
+  resources/cache.go        # only when --cache is set
+  web/                      # only when --frontend=vue is set
+    package.json vite.config.ts index.html src/{main.ts,App.vue}
+    dist/index.html         # placeholder so ServeFrontend boots
+
+` + "`go mod tidy && nexus dev`" + ` then runs the app, opens the SPA via
+vite's dev server (HMR) when one's scaffolded, and mounts the
+dashboard at /__nexus/.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return scaffold(args[0], modulePath, stdout)
+			opts := scaffoldOpts{
+				Dir:        args[0],
+				ModulePath: modulePath,
+				Frontend:   frontend,
+				DB:         db,
+				Cache:      cache,
+				Auth:       auth,
+			}
+			// Interactive prompts fill any axis the user didn't pin
+			// via flags. Skipped on a non-tty stdin or when --yes is
+			// passed — both signal the caller wants determinism.
+			interactive := !yes && stdinIsTerminal()
+			if interactive {
+				if err := promptMissing(&opts, os.Stdin, stdout); err != nil {
+					return err
+				}
+			}
+			// Defaults so an unattended run still produces a valid
+			// scaffold instead of erroring on empty axes.
+			if opts.Frontend == "" {
+				opts.Frontend = "none"
+			}
+			if opts.DB == "" {
+				opts.DB = "none"
+			}
+			if opts.Cache == "" {
+				opts.Cache = "none"
+			}
+			if opts.Auth == "" {
+				opts.Auth = "none"
+			}
+			return scaffoldWithOpts(opts, stdout)
 		},
 	}
 	cmd.Flags().StringVar(&modulePath, "module", "",
 		"go.mod module path (default: derived from <dir>'s basename)")
+	cmd.Flags().StringVar(&frontend, "frontend", "",
+		"frontend stack: "+strings.Join(frontendChoices, " | ")+" (default: prompt)")
+	cmd.Flags().StringVar(&db, "db", "",
+		"database driver: "+strings.Join(dbChoices, " | ")+" (default: prompt)")
+	cmd.Flags().StringVar(&cache, "cache", "",
+		"cache backend: "+strings.Join(cacheChoices, " | ")+" (default: prompt)")
+	cmd.Flags().StringVar(&auth, "auth", "",
+		"authentication: "+strings.Join(authChoices, " | ")+" (default: prompt)")
+	cmd.Flags().BoolVar(&yes, "yes", false,
+		"skip prompts and accept defaults on any axis not passed via flags")
 	return cmd
 }
 
-// scaffold writes the skeleton files into dir. It refuses to touch an
-// existing non-empty directory — a misaimed `nexus new .` in someone's
-// repo could clobber live code otherwise.
+// scaffold (legacy entry point) preserves the original signature so
+// the existing test suite keeps working. New callers go through
+// scaffoldWithOpts directly.
 func scaffold(dir, modulePath string, stdout io.Writer) error {
-	if dir == "" {
+	return scaffoldWithOpts(scaffoldOpts{
+		Dir:        dir,
+		ModulePath: modulePath,
+		Frontend:   "none",
+		DB:         "none",
+		Cache:      "none",
+		Auth:       "none",
+	}, stdout)
+}
+
+// scaffoldWithOpts is the real worker. Validates the directory +
+// module path, renders every per-option template, writes them with
+// MkdirAll-on-parent so subdirs (resources/, web/src/) exist, and
+// prints a follow-up command list tailored to the chosen options.
+func scaffoldWithOpts(opts scaffoldOpts, stdout io.Writer) error {
+	if opts.Dir == "" {
 		return fmt.Errorf("directory is required")
 	}
-	abs, err := filepath.Abs(dir)
+	abs, err := filepath.Abs(opts.Dir)
 	if err != nil {
 		return err
 	}
-	if modulePath == "" {
-		modulePath = filepath.Base(abs)
+	if opts.ModulePath == "" {
+		opts.ModulePath = filepath.Base(abs)
 	}
-	if !isValidModulePath(modulePath) {
-		return fmt.Errorf("module path %q is not a valid Go module path", modulePath)
+	if !isValidModulePath(opts.ModulePath) {
+		return fmt.Errorf("module path %q is not a valid Go module path", opts.ModulePath)
+	}
+	opts.Name = filepath.Base(abs)
+
+	if err := validChoice(opts.Frontend, "--frontend", frontendChoices); err != nil {
+		return err
+	}
+	if err := validChoice(opts.DB, "--db", dbChoices); err != nil {
+		return err
+	}
+	if err := validChoice(opts.Cache, "--cache", cacheChoices); err != nil {
+		return err
+	}
+	if err := validChoice(opts.Auth, "--auth", authChoices); err != nil {
+		return err
 	}
 
 	if info, err := os.Stat(abs); err == nil && info.IsDir() {
@@ -63,33 +168,120 @@ func scaffold(dir, modulePath string, stdout io.Writer) error {
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return err
 	}
-
-	files := map[string]string{
-		"go.mod":            tmplGoMod(modulePath),
-		"main.go":           tmplMainGo,
-		"module.go":         tmplModuleGo,
-		".gitignore":        tmplGitignore,
-		"README.md":         tmplReadme(filepath.Base(abs)),
-		"nexus.deploy.yaml": tmplDeployYaml,
+	files, err := buildFiles(opts)
+	if err != nil {
+		return err
 	}
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(abs, name), []byte(content), 0o644); err != nil {
-			return err
+	for relPath, content := range files {
+		full := filepath.Join(abs, relPath)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(full), err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", full, err)
 		}
 	}
 
-	fmt.Fprintf(stdout, "Scaffolded %s (module %s)\n", abs, modulePath)
-	fmt.Fprintf(stdout, "Next:\n")
-	fmt.Fprintf(stdout, "  cd %s\n", dir)
-	fmt.Fprintf(stdout, "  go mod tidy\n")
-	fmt.Fprintf(stdout, "  nexus dev                          # one process, dashboard at http://localhost:8080/__nexus/\n")
-	fmt.Fprintf(stdout, "  nexus build --deployment monolith  # produce ./bin/monolith\n")
-	fmt.Fprintf(stdout, "\n")
-	fmt.Fprintf(stdout, "Edit nexus.deploy.yaml to add split deployments — the file's\n")
-	fmt.Fprintf(stdout, "comments walk through tagging a module DeployAs(...), declaring a\n")
-	fmt.Fprintf(stdout, "unit + port, and wiring peers. Then `nexus dev --split` boots\n")
-	fmt.Fprintf(stdout, "every unit as a subprocess with cross-service HTTP between them.\n")
+	fmt.Fprintf(stdout, "Scaffolded %s (module %s)\n", abs, opts.ModulePath)
+	fmt.Fprintf(stdout, "  frontend: %s\n", opts.Frontend)
+	fmt.Fprintf(stdout, "  db:       %s\n", opts.DB)
+	fmt.Fprintf(stdout, "  cache:    %s\n", opts.Cache)
+	fmt.Fprintf(stdout, "  auth:     %s\n", opts.Auth)
+	fmt.Fprintf(stdout, "\nNext:\n")
+	for _, line := range nextStepsLines(opts) {
+		fmt.Fprintln(stdout, line)
+	}
+	fmt.Fprintln(stdout)
 	return nil
+}
+
+// promptMissing fills opts.Frontend / opts.DB / opts.Cache by asking
+// the user. Already-set fields skip their prompt so flag-driven
+// invocations short-circuit cleanly.
+func promptMissing(opts *scaffoldOpts, stdin io.Reader, stdout io.Writer) error {
+	r := bufio.NewReader(stdin)
+	if opts.Frontend == "" {
+		v, err := pickOne(r, stdout, "Frontend?", frontendChoices, 0)
+		if err != nil {
+			return err
+		}
+		opts.Frontend = v
+	}
+	if opts.DB == "" {
+		v, err := pickOne(r, stdout, "Database?", dbChoices, 0)
+		if err != nil {
+			return err
+		}
+		opts.DB = v
+	}
+	if opts.Cache == "" {
+		v, err := pickOne(r, stdout, "Cache?", cacheChoices, 0)
+		if err != nil {
+			return err
+		}
+		opts.Cache = v
+	}
+	if opts.Auth == "" {
+		v, err := pickOne(r, stdout, "Authentication?", authChoices, 0)
+		if err != nil {
+			return err
+		}
+		opts.Auth = v
+	}
+	return nil
+}
+
+// pickOne prints a numbered menu, reads a line of stdin, and
+// returns the matching choice. Empty input picks defIdx — that's
+// why "none" sits first in every choice slice (Enter does the
+// least-surprising thing). Invalid input re-prompts up to 3 times
+// before giving up so a typo doesn't kill the scaffold.
+func pickOne(r *bufio.Reader, w io.Writer, label string, choices []string, defIdx int) (string, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		fmt.Fprintf(w, "\n%s\n", label)
+		for i, c := range choices {
+			marker := " "
+			if i == defIdx {
+				marker = "*"
+			}
+			fmt.Fprintf(w, "  [%s] %d) %s\n", marker, i+1, c)
+		}
+		fmt.Fprintf(w, "→ choose [%d]: ", defIdx+1)
+
+		line, err := r.ReadString('\n')
+		if err != nil && line == "" {
+			return choices[defIdx], nil
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return choices[defIdx], nil
+		}
+		// Accept either an index ("2") or the full name ("postgres").
+		if n, err := strconv.Atoi(line); err == nil {
+			if n >= 1 && n <= len(choices) {
+				return choices[n-1], nil
+			}
+		}
+		for _, c := range choices {
+			if strings.EqualFold(c, line) {
+				return c, nil
+			}
+		}
+		fmt.Fprintf(w, "  → %q is not one of the listed choices, try again\n", line)
+	}
+	return "", fmt.Errorf("too many invalid attempts at %q", label)
+}
+
+// stdinIsTerminal returns true when stdin is a real tty. Non-tty
+// stdin (CI pipes, automated scripts) skips the prompt loop so
+// `nexus new ... < /dev/null` doesn't hang. Implemented with the
+// stdlib's mode bits to avoid pulling in golang.org/x/term.
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 // isValidModulePath is a loose check — enough to catch typos ("my app"
@@ -105,212 +297,4 @@ func isValidModulePath(p string) bool {
 		}
 	}
 	return true
-}
-
-// tmplGoMod writes a minimal go.mod with no pinned dependencies. The
-// nexus require lands when the user runs `go mod tidy` — this avoids
-// baking in a version that may not be published yet.
-func tmplGoMod(module string) string {
-	return fmt.Sprintf(`module %s
-
-go 1.25.1
-`, module)
-}
-
-const tmplMainGo = `package main
-
-import "github.com/paulmanoni/nexus"
-
-// main boots the framework, mounts the dashboard at /__nexus/, and wires
-// one module (see module.go). Run with ` + "`nexus dev`" + ` or ` + "`go run .`" + ` and hit
-// http://localhost:8080/__nexus/ to see the live architecture view.
-func main() {
-	nexus.Run(
-		nexus.Config{
-			Server:    nexus.ServerConfig{Addr: ":8080"},
-			Dashboard: nexus.DashboardConfig{Enabled: true},
-		},
-		helloModule,
-	)
-}
-`
-
-const tmplModuleGo = `package main
-
-import "github.com/paulmanoni/nexus"
-
-// HelloService — a typed wrapper around *nexus.Service so fx can route
-// by type. Every handler that declares *HelloService as a dep grounds
-// under the "hello" service on the dashboard's Architecture view.
-type HelloService struct{ *nexus.Service }
-
-func NewHelloService(app *nexus.App) *HelloService {
-	return &HelloService{app.Service("hello").Describe("Hello world")}
-}
-
-type HelloResponse struct {
-	Message string ` + "`json:\"message\"`" + `
-}
-
-type HelloArgs struct {
-	Name string ` + "`graphql:\"name\" json:\"name\"`" + `
-}
-
-// NewHello is a reflective handler: the signature tells nexus how to wire it
-// (first *Service dep grounds the op; nexus.Params[T] carries user input).
-func NewHello(svc *HelloService, p nexus.Params[HelloArgs]) (*HelloResponse, error) {
-	name := p.Args.Name
-	if name == "" {
-		name = "world"
-	}
-	return &HelloResponse{Message: "hello, " + name}, nil
-}
-
-var helloModule = nexus.Module("hello",
-	nexus.Provide(NewHelloService),
-	nexus.AsRest("GET", "/hello", NewHello),
-)
-`
-
-const tmplGitignore = `/bin/
-/dist/
-/vendor/
-*.test
-*.out
-.DS_Store
-`
-
-// tmplDeployYaml is the starter manifest. It declares a single
-// monolith deployment and embeds a hand-walkthrough showing how to
-// split modules into independent services. The user edits this file
-// (not main.go) when topology changes.
-const tmplDeployYaml = `# nexus.deploy.yaml — deployment topology for this app.
-#
-# 'nexus build --deployment NAME' reads this file to decide which
-# modules compile locally and which become HTTP-stub shadows.
-# 'nexus dev --split' reads it to launch one subprocess per split
-# unit. Application code (main.go, modules) stays
-# deployment-agnostic; everything per-environment lives here.
-#
-# ── Concepts ──────────────────────────────────────────────────────
-#
-# deployments:    map of unit name → { owns: [...], port: N }
-#                 Empty 'owns' = "owns every module" (the monolith).
-#                 Listed 'owns' = real split unit; modules NOT
-#                 listed get replaced by HTTP-stub shadows in this
-#                 unit's binary.
-# peers:          map of DeployAs-tag → transport config (URL,
-#                 timeout, retries, min_version, auth). Codegen bakes
-#                 this into the binary as Config.Topology defaults.
-
-deployments:
-  # Monolith owns every module by default. Run with:
-  #     nexus build --deployment monolith
-  #     ./bin/monolith
-  monolith:
-    port: 8080
-
-# ── How to split a module out ─────────────────────────────────────
-#
-# 1. Tag the module's declaration with DeployAs:
-#
-#        var Module = nexus.Module("orders",
-#            nexus.DeployAs("orders-svc"),  // names the deployment unit
-#            nexus.Provide(NewService),
-#            nexus.AsRest("GET", "/orders/:id", NewGet),
-#        )
-#
-# 2. Add a deployment for it here, and add it to monolith's owns
-#    list (or leave monolith empty so it auto-includes everything):
-#
-#        deployments:
-#          monolith:
-#            port: 8080
-#          orders-svc:
-#            owns: [orders]
-#            port: 8081
-#
-# 3. Add a peer entry so other services can reach it. URL defaults
-#    to http://localhost:<port> for local dev — override with an
-#    env var in prod:
-#
-#        peers:
-#          orders-svc:
-#            timeout: 2s
-#            # url: ${ORDERS_SVC_URL}     # interpolated at boot
-#            # min_version: v0.9          # warn on peer-version skew
-#            # retries: 1                 # idempotent retries only
-#            # auth:                      # bearer-token credential
-#            #   type: bearer
-#            #   token: ${ORDERS_SVC_TOKEN}
-#
-# 4. Cross-module call sites stay unchanged — checkout's struct
-#    field is *orders.Service in every binary; the build tool
-#    swaps the body at compile time:
-#
-#        type Service struct {
-#            *nexus.Service
-#            orders *orders.Service   // local in monolith, HTTP in split
-#        }
-#
-# 5. Build (or run) per deployment:
-#
-#        nexus build --deployment orders-svc   # ./bin/orders-svc
-#        nexus build --deployment monolith     # ./bin/monolith
-#        nexus dev --split                     # all units, one terminal
-
-# ── Example split topology (uncomment to enable) ──────────────────
-#
-# deployments:
-#   monolith:
-#     port: 8080
-#   orders-svc:
-#     owns: [orders]
-#     port: 8081
-#   billing-svc:
-#     owns: [billing]
-#     port: 8082
-#
-# peers:
-#   orders-svc:
-#     timeout: 2s
-#   billing-svc:
-#     timeout: 2s
-#     auth:
-#       type: bearer
-#       token: ${BILLING_SVC_TOKEN}
-`
-
-func tmplReadme(name string) string {
-	return fmt.Sprintf(`# %s
-
-Generated with `+"`nexus new`"+`.
-
-## Run (single process)
-
-    go mod tidy
-    nexus dev
-
-Then open http://localhost:8080/__nexus/ for the dashboard, and:
-
-    curl 'http://localhost:8080/hello?name=Paul'
-
-## Build a deployable binary
-
-    nexus build --deployment monolith
-    ./bin/monolith
-
-## Split into microservices
-
-Edit `+"`nexus.deploy.yaml`"+` to declare additional deployments and tag
-your modules with `+"`nexus.DeployAs(\"...\")`"+`. The manifest comments
-walk through each step. Then:
-
-    nexus dev --split           # all units in one terminal
-    nexus build --deployment orders-svc
-
-Application code stays unchanged — the framework swaps cross-module
-*Service struct bodies between the local impl and HTTP-stub shadows
-at compile time, based on the active deployment.
-`, name)
 }
