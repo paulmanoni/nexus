@@ -163,6 +163,31 @@ func TestBuildBlockFilter_AddRemoveDistinct(t *testing.T) {
 	}
 }
 
+// TestViteURLRE verifies the regex pulls vite's "Local: http://..."
+// out of the various shapes its dev server prints across versions.
+// Capture group 1 must hold the full URL (with or without trailing
+// slash) because waitAndOpen normalizes that.
+func TestViteURLRE(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"  ➜  Local:   http://localhost:5173/", "http://localhost:5173/"},
+		{"Local: http://127.0.0.1:5174/", "http://127.0.0.1:5174/"},
+		{"  Local:    https://localhost:8443/", "https://localhost:8443/"},
+		// Negative case — bundle-mode noise shouldn't false-match.
+		{"build started...", ""},
+		{"dist/index.html  1.14 kB", ""},
+	}
+	for _, tc := range cases {
+		m := viteURLRE.FindStringSubmatch(tc.in)
+		var got string
+		if len(m) > 1 {
+			got = m[1]
+		}
+		if got != tc.want {
+			t.Errorf("input %q: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestBuildBlockFilter_NonBuildLinesPassThrough verifies that
 // vite output OUTSIDE a build cycle (HMR notices, warnings,
 // arbitrary plugin chatter) streams through verbatim.

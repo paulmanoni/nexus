@@ -122,6 +122,56 @@ func TestEnsureDevBuildScript_EmptyScriptsBlock(t *testing.T) {
 	mustParseJSON(t, got)
 }
 
+// TestEnsureDevServerScript_AddsViteAlongsideBuild verifies the
+// dev-server injection works alongside the existing dev:build
+// script — calling both produces a package.json with both keys
+// and clobbers neither.
+func TestEnsureDevServerScript_AddsViteAlongsideBuild(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package.json")
+	original := `{
+  "name": "web",
+  "scripts": {
+    "build": "vite build"
+  }
+}
+`
+	if err := os.WriteFile(pkg, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDevBuildScript(dir, io.Discard); err != nil {
+		t.Fatalf("dev:build inject: %v", err)
+	}
+	if err := ensureDevServerScript(dir, io.Discard); err != nil {
+		t.Fatalf("dev inject: %v", err)
+	}
+	got := readPkg(t, pkg)
+	for _, want := range []string{
+		`"dev": "vite"`,
+		`"dev:build": "vite build --watch --emptyOutDir false"`,
+		`"build": "vite build"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing key %q\n--- body ---\n%s", want, got)
+		}
+	}
+	// Idempotent: re-running both must not duplicate.
+	if err := ensureDevBuildScript(dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDevServerScript(dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	body := readPkg(t, pkg)
+	if strings.Count(body, `"dev":`) != 1 {
+		t.Errorf("dev key duplicated:\n%s", body)
+	}
+	if strings.Count(body, `"dev:build":`) != 1 {
+		t.Errorf("dev:build key duplicated:\n%s", body)
+	}
+	mustParseJSON(t, body)
+}
+
 // TestEnsureDevBuildScript_MissingFile silences when there's no
 // package.json at all — the user might be using a non-npm toolchain.
 func TestEnsureDevBuildScript_MissingFile(t *testing.T) {

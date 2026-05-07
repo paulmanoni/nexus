@@ -12,19 +12,32 @@ import (
 const (
 	devBuildScriptName = "dev:build"
 	devBuildScriptCmd  = "vite build --watch --emptyOutDir false"
+	devServerScriptName = "dev"
+	devServerScriptCmd  = "vite"
 )
 
-// ensureDevBuildScript injects the dev:build script into the
-// frontend project's package.json when it isn't already declared.
-// Idempotent — re-running is a no-op once the entry has landed.
-//
-// Operates on the raw bytes (no full JSON re-marshaling) so the
-// file's existing key order, indentation, and any custom fields the
-// project has added stay untouched. Skips silently when the file
-// doesn't exist or the JSON shape is too irregular for the
-// heuristic — the watcher then surfaces npm's "missing script"
-// error, which the user can fix with a one-line manual addition.
+// ensureDevBuildScript adds the bundle-watch script (used when the
+// user passes `nexus dev --bundle`).
 func ensureDevBuildScript(frontendDir string, stdout io.Writer) error {
+	return ensureNamedScript(frontendDir, devBuildScriptName, devBuildScriptCmd, stdout)
+}
+
+// ensureDevServerScript adds the vite dev-server script (the
+// default shape now — HMR + on-demand transforms + no rebundle
+// loop). Idempotent against the named key, so a project that
+// already declares its own `dev` script keeps it.
+func ensureDevServerScript(frontendDir string, stdout io.Writer) error {
+	return ensureNamedScript(frontendDir, devServerScriptName, devServerScriptCmd, stdout)
+}
+
+// ensureNamedScript injects scripts.<name> = <cmd> into the
+// frontend project's package.json when the key isn't already
+// declared. Operates on the raw bytes so the file's existing
+// key order, indentation, and custom fields stay untouched.
+// Skips silently when the file doesn't exist or its shape is too
+// irregular for the heuristic — the user then surfaces npm's
+// "missing script" error, which a one-line manual addition fixes.
+func ensureNamedScript(frontendDir, scriptName, scriptCmd string, stdout io.Writer) error {
 	pkgPath := filepath.Join(frontendDir, "package.json")
 	src, err := os.ReadFile(pkgPath)
 	if err != nil {
@@ -37,15 +50,15 @@ func ensureDevBuildScript(frontendDir string, stdout io.Writer) error {
 	body := string(src)
 
 	// Idempotence: bail if the script key already appears anywhere
-	// in the file. Constructed as `"dev:build":` so a string VALUE
-	// containing "dev:build" can't false-match.
-	if strings.Contains(body, `"`+devBuildScriptName+`":`) {
+	// in the file. Constructed as `"<name>":` so a string VALUE
+	// containing the name can't false-match.
+	if strings.Contains(body, `"`+scriptName+`":`) {
 		return nil
 	}
 
 	indent := detectJSONIndent(body)
 	twoLevel := indent + indent
-	entryLine := fmt.Sprintf(`"%s": "%s"`, devBuildScriptName, devBuildScriptCmd)
+	entryLine := fmt.Sprintf(`"%s": "%s"`, scriptName, scriptCmd)
 
 	scriptsRe := regexp.MustCompile(`"scripts"\s*:\s*\{`)
 	loc := scriptsRe.FindStringIndex(body)
@@ -67,7 +80,7 @@ func ensureDevBuildScript(frontendDir string, stdout io.Writer) error {
 		if err := os.WriteFile(pkgPath, []byte(out), 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "%s●%s added %s script to %s\n", ansiCyan, ansiReset, devBuildScriptName, pkgPath)
+		fmt.Fprintf(stdout, "%s●%s added %s script to %s\n", ansiCyan, ansiReset, scriptName, pkgPath)
 		return nil
 	}
 
@@ -99,7 +112,7 @@ func ensureDevBuildScript(frontendDir string, stdout io.Writer) error {
 	if err := os.WriteFile(pkgPath, []byte(out), 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "%s●%s added scripts.%s to %s\n", ansiCyan, ansiReset, devBuildScriptName, pkgPath)
+	fmt.Fprintf(stdout, "%s●%s added scripts.%s to %s\n", ansiCyan, ansiReset, scriptName, pkgPath)
 	return nil
 }
 
