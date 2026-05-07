@@ -206,6 +206,25 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				}
 			}
 		}
+		// Dev-server mode: the SPA fetches /__nexus/client/manifest.json
+		// (and friends) at runtime. Without a vite proxy entry those
+		// hit :8080 cross-origin from :5173 and CORS blocks them.
+		// One-time injection alongside the existing /graphql /oauth
+		// /ws rules. Bundle mode doesn't need this — same-origin
+		// because Go serves the SPA itself.
+		if !bundleMode {
+			if cfg := findViteConfig(frontendDir); cfg != "" {
+				apiURL := "http://localhost" + addr
+				if strings.HasPrefix(addr, ":") {
+					apiURL = "http://localhost" + addr
+				} else {
+					apiURL = "http://" + addr
+				}
+				if err := client.EnsureViteProxyForNexus(cfg, apiURL, stdout); err != nil {
+					fmt.Fprintf(stderr, "vite proxy injection skipped: %v\n", err)
+				}
+			}
+		}
 		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
 			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
 			frontendURLCh = nil
