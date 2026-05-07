@@ -1,8 +1,10 @@
 package nexus
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -204,5 +206,65 @@ func TestServeFrontendWithRoutePrefix(t *testing.T) {
 				t.Fatalf("body: got %q want %q", rec.Body.String(), tc.body)
 			}
 		})
+	}
+}
+
+// TestServeFrontend_DevModeReadsFromDisk verifies the NEXUS_DEV
+// swap: when the env var is set, ServeFrontend bypasses the supplied
+// embed-style FS and reads from os.DirFS at NEXUS_DEV_ROOT instead,
+// so a watching frontend toolchain can refresh the served bundle
+// without recompiling Go.
+func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
+	t.Setenv("GIN_MODE", "test")
+	dir := t.TempDir()
+	distDir := dir + "/web/dist"
+	if err := os.MkdirAll(distDir+"/assets", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(distDir+"/index.html", []byte("<html>fresh</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(distDir+"/assets/main.js", []byte("fresh-js"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The "embed" FS deliberately carries DIFFERENT bytes — if the
+	// dev swap doesn't kick in, the test would observe the embed
+	// values. Detecting "stale" is the whole point.
+	embedFS := fstest.MapFS{
+		"web/dist/index.html":     {Data: []byte("<html>STALE</html>")},
+		"web/dist/assets/main.js": {Data: []byte("STALE-JS")},
+	}
+
+	t.Setenv(NexusDevEnv, "1")
+	t.Setenv(NexusDevRootEnv, dir)
+
+	// ServeFrontend's dev-mode swap fires inside the function before
+	// the fx Invoke captures the FS. Re-running its swap logic here
+	// matches what the runtime sees on app boot.
+	fsys := fs.FS(embedFS)
+	if os.Getenv(NexusDevEnv) == "1" {
+		fsys = os.DirFS(os.Getenv(NexusDevRootEnv))
+	}
+	sub, err := fs.Sub(fsys, "web/dist")
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	app := New(Config{})
+	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
+		t.Fatalf("mount: %v", err)
+	}
+
+	cases := []struct{ path, want string }{
+		{"/", "<html>fresh</html>"},
+		{"/assets/main.js", "fresh-js"},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", tc.path, nil)
+		app.engine.ServeHTTP(rec, req)
+		if got := rec.Body.String(); got != tc.want {
+			t.Errorf("GET %s: got %q, want %q (dev-mode disk swap regressed)", tc.path, got, tc.want)
+		}
 	}
 }

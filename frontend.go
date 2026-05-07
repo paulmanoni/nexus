@@ -4,11 +4,25 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 )
+
+// NexusDevEnv signals dev mode to the framework. When set to "1",
+// ServeFrontend reads files from disk (os.DirFS) instead of the
+// supplied embed.FS, so a watching frontend toolchain (vite build
+// --watch, esbuild --watch) can refresh the served bundle without
+// recompiling Go. nexus dev sets it on the spawned process env.
+const NexusDevEnv = "NEXUS_DEV"
+
+// NexusDevRootEnv overrides the disk root used in dev mode. Defaults
+// to "." (the binary's CWD), which matches how //go:embed paths are
+// declared. nexus dev sets it to the resolved target directory so
+// users running from a non-project CWD still resolve correctly.
+const NexusDevRootEnv = "NEXUS_DEV_ROOT"
 
 // ServeFrontend mounts a built single-page-app bundle from an
 // embedded filesystem. The classic shape:
@@ -53,6 +67,17 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 	cfg := &frontendConfig{}
 	for _, o := range opts {
 		o.applyToFrontend(cfg)
+	}
+	// Dev-mode swap: read from disk instead of embed.FS so a
+	// watching frontend toolchain (vite build --watch) refreshes
+	// the served bundle without recompiling Go. Same `root`
+	// semantics — fs.Sub still narrows to the dist directory.
+	if os.Getenv(NexusDevEnv) == "1" {
+		dvr := os.Getenv(NexusDevRootEnv)
+		if dvr == "" {
+			dvr = "."
+		}
+		fsys = os.DirFS(dvr)
 	}
 	return rawOption{o: fx.Invoke(func(app *App) error {
 		sub := fsys

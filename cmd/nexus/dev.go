@@ -224,6 +224,13 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	cmd.Stdout = newAddrFinder(stdout, detectedCh)
 	cmd.Stderr = newAddrFinder(stderr, detectedCh)
 	cmd.Stdin = os.Stdin
+	// Hand the child a NEXUS_DEV signal so ServeFrontend swaps its
+	// embed.FS for os.DirFS — a watching frontend toolchain (vite
+	// build --watch, esbuild --watch) can update web/dist/ without
+	// forcing a Go recompile. NEXUS_DEV_ROOT pins the disk root to
+	// the dev target so users running from a different CWD still
+	// resolve correctly.
+	cmd.Env = append(os.Environ(), "NEXUS_DEV=1", "NEXUS_DEV_ROOT="+target)
 	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
