@@ -453,31 +453,66 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash 
 	// by the dev server, that's where the user wants to land. Falls
 	// through to the gin URL when frontendURLCh is nil (bundle mode
 	// or no frontend).
+	//
+	// Race detail: the API and the Vite dev server come up within
+	// milliseconds of each other. Whichever channel fires first wins
+	// Go's select, so an unlucky scheduler gave the user the API URL
+	// (port 8080) even though the SPA was about to be ready on its
+	// own port. The fix is to always wait for BOTH signals (with a
+	// short grace window after the first one lands) so the SPA URL
+	// gets a fair chance to be the primary destination.
+	const frontendGrace = 1500 * time.Millisecond
 	var ready, viteURL string
+	gotReady := func(detected string, ok bool) {
+		if detected != "" {
+			ready = detected
+		} else if ok {
+			ready = addr
+		}
+	}
+
+	// First arrival.
 	select {
 	case <-ctx.Done():
 		return
 	case viteURL = <-frontendURLCh:
-		// keep waiting for the API addr too so we can show a coherent
-		// "API at :8080" line alongside the SPA URL.
+	case detected := <-detectedCh:
+		gotReady(detected, true)
+	case ok := <-flagDone:
+		gotReady("", ok)
+	}
+
+	// Wait briefly for the still-pending signals so the Vite URL can
+	// catch up when an API signal landed first. A bounded deadline
+	// keeps this from stalling the banner when there's no frontend.
+	deadline := time.After(frontendGrace)
+	for viteURL == "" || ready == "" {
 		select {
 		case <-ctx.Done():
 			return
+		case <-deadline:
+			// Out of grace; print whatever we've got. If neither side
+			// reported, fall through to the original "no signal"
+			// behavior of returning silently.
+			if viteURL == "" && ready == "" {
+				return
+			}
+			goto done
+		case u := <-frontendURLCh:
+			if viteURL == "" {
+				viteURL = u
+			}
 		case detected := <-detectedCh:
-			ready = detected
+			if ready == "" {
+				gotReady(detected, true)
+			}
 		case ok := <-flagDone:
-			if ok {
-				ready = addr
+			if ready == "" {
+				gotReady("", ok)
 			}
 		}
-	case detected := <-detectedCh:
-		ready = detected
-	case ok := <-flagDone:
-		if !ok {
-			return
-		}
-		ready = addr
 	}
+done:
 
 	// If the user passed an explicit --addr that doesn't match the
 	// actual bind, surface the gap. Default --addr (":8080") is
