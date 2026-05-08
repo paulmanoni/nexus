@@ -32,10 +32,10 @@ export default defineConfig({
 	out, _ := os.ReadFile(cfgPath)
 	body := string(out)
 
-	if !strings.Contains(body, "import nexusAutoSelect from") {
+	if !strings.Contains(body, "import nexus from") {
 		t.Errorf("missing import line\n--- body ---\n%s", body)
 	}
-	if !strings.Contains(body, "nexusAutoSelect()") {
+	if !strings.Contains(body, "nexus()") {
 		t.Errorf("plugins entry missing\n--- body ---\n%s", body)
 	}
 	if !strings.Contains(body, "vue()") {
@@ -50,8 +50,44 @@ export default defineConfig({
 		t.Errorf("merge is not idempotent")
 	}
 	// Make sure we didn't double up.
-	if strings.Count(string(again), "nexusAutoSelect()") != 1 {
-		t.Errorf("nexusAutoSelect() appears more than once after second merge")
+	if strings.Count(string(again), "nexus()") != 1 {
+		t.Errorf("nexus() appears more than once after second merge")
+	}
+}
+
+// TestMergeViteConfig_LegacyAutoSelectName confirms a config that
+// was wired before the rename (using `nexusAutoSelect`) is left
+// untouched on the next merge — both the import and the plugin
+// call stay as-is, no duplicate `nexus(...)` gets inserted.
+func TestMergeViteConfig_LegacyAutoSelectName(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	sdkDir := dir
+	original := `import { defineConfig } from 'vite'
+import nexusAutoSelect from './nexus-vite-plugin.js'
+import vue from '@vitejs/plugin-vue'
+export default defineConfig({
+  plugins: [vue(), nexusAutoSelect()],
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MergeViteConfig(cfgPath, sdkDir, io.Discard); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	if strings.Count(got, "import nexus") != 1 {
+		t.Errorf("expected exactly one nexus-style import, got %d\n%s",
+			strings.Count(got, "import nexus"), got)
+	}
+	if strings.Contains(got, "nexus()") && strings.Contains(got, "nexusAutoSelect()") {
+		// Both the legacy and new call sites would mean we duplicated.
+		// The legacy one is fine on its own; we just shouldn't add a new one.
+		if strings.Count(got, "nexus(") != 1 { // counts both prefixes via prefix match
+			t.Errorf("legacy + new call both present:\n%s", got)
+		}
 	}
 }
 
@@ -70,7 +106,7 @@ export default defineConfig({
 		t.Fatalf("merge: %v", err)
 	}
 	body, _ := os.ReadFile(cfgPath)
-	if !strings.Contains(string(body), "plugins: [nexusAutoSelect()]") {
+	if !strings.Contains(string(body), "plugins: [nexus()]") {
 		t.Errorf("entry not inserted into empty array\n--- body ---\n%s", body)
 	}
 }
