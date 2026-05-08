@@ -108,6 +108,12 @@ type Config struct {
 	// the Config (this field intentionally has no built-in env
 	// magic — explicit beats implicit for "writes files to your
 	// project tree").
+	//
+	// Auto-detection: when left empty AND a frontend dir is
+	// detected (web/, frontend/, client/, app/ — anything containing
+	// vite.config.ts), Mount fills this with `./<dir>/sdk`. Set
+	// explicitly to override or to disable the dump in non-standard
+	// layouts.
 	OutDir string
 
 	// TSConfig, when non-empty, makes Mount merge path mappings
@@ -118,6 +124,12 @@ type Config struct {
 	//
 	// Only takes effect when OutDir is also set — the path
 	// mappings need a target.
+	//
+	// Auto-detection: when left empty AND a frontend dir is
+	// detected, Mount fills this with `./<dir>/tsconfig.json` IF
+	// that file exists. Missing tsconfig (jsconfig-only or no TS
+	// config at all) keeps the field empty so the dump path
+	// doesn't try to read a phantom file.
 	TSConfig string
 
 	// ViteConfig, when non-empty, makes Mount auto-attach the
@@ -138,6 +150,12 @@ type Config struct {
 	// Recommend gating this behind a dev-mode flag in production
 	// builds — there's no reason to mutate a checked-in config on
 	// every prod boot.
+	//
+	// Auto-detection: when left empty AND a frontend dir is
+	// detected (vite.config.ts present), Mount fills this with
+	// `./<dir>/vite.config.ts`. Together with the OutDir +
+	// TSConfig defaults, this means the canonical scaffold layout
+	// only needs `client.Config{Enabled: true}`.
 	ViteConfig string
 }
 
@@ -415,6 +433,7 @@ func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo,
 	if cfg.Path == "" {
 		cfg.Path = DefaultPath
 	}
+	cfg = applyFrontendDefaults(cfg)
 	h := &Handler{
 		cfg:        cfg,
 		reg:        reg,
