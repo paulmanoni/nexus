@@ -76,3 +76,24 @@ func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
+
+// ApplyVisibilityDefaults aligns Client.Public with the framework's
+// top-level Introspection toggle. When introspection is open, the
+// runtime manifest is open too — gating Public separately is
+// security theatre because anything the skinny projection hides is
+// already reachable through GraphQL's __schema query when
+// introspection is on. When introspection is closed, Public's
+// explicit value (or the default false) stands as-is.
+//
+// This collapses the two-flag posture down to one in the common
+// case: users only need to flip Introspection, and the
+// runtime-manifest exposure follows automatically. The pathological
+// "introspection on, manifest skinny" combination is removed; if
+// someone genuinely needs that, they're better served by a custom
+// route gate downstream of Mount.
+func ApplyVisibilityDefaults(cfg Config, introspection bool) Config {
+	if introspection {
+		cfg.Public = true
+	}
+	return cfg
+}

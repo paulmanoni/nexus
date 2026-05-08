@@ -76,6 +76,15 @@ type Config struct {
 	// Recommended pattern for production: leave Public false on
 	// public-facing deployments; flip to true only on internal
 	// admin/dev listeners (compose with nexus.IfDeployment).
+	//
+	// Auto-derived from nexus.Config.Introspection: when
+	// Introspection is true, Public is forced true at Mount time.
+	// The two flags are the same "schema visibility" lever at
+	// different layers — gating one without the other was security
+	// theatre because GraphQL's __schema query already exposed more
+	// than the skinny manifest would. Set Introspection: true and
+	// the runtime manifest follows automatically; you no longer need
+	// to repeat Public: true.
 	Public bool
 
 	// Middleware applies to every SDK route. Empty by default. For

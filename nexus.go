@@ -327,7 +327,13 @@ func New(cfg Config) *App {
 		// chain — the client/ package can't import auth/ without a
 		// cycle, and the cleanest seam is for auth.Module's own
 		// option chain to call (*App).SetClientAuthInfo via Invoke.
-		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, cfg.Client)
+		//
+		// Introspection drives Client.Public — they're the same
+		// "schema visibility" lever at different layers. When
+		// introspection is on, the manifest goes out full; when off,
+		// it stays skinny. Removes the redundant double-flag.
+		clientCfg := client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection)
+		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
 	}
 
 	// Cross-module + remote-service registrations from codegen'd
