@@ -258,12 +258,10 @@ func main() {
 			Server:    nexus.ServerConfig{Addr: ":8080"},
 			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "{{.Name}}"},
 {{- if .HasFrontend}}
-			Client: client.Config{
-				Enabled:    true,
-				OutDir:     "./web/sdk",
-				TSConfig:   "./web/tsconfig.json",
-				ViteConfig: "./web/vite.config.ts",
-			},
+			// Mount auto-detects ./web/{vite.config.ts,tsconfig.json}
+			// and writes SDK files to ./web/sdk by default. Override
+			// any field below to escape the convention.
+			Client: client.Config{Enabled: true},
 {{- end}}
 		},
 {{- if .HasFrontend}}
