@@ -1,11 +1,32 @@
-// nexus-vite-plugin.js — auto-injects opts.select into nx.query /
-// nx.mutate calls based on the property accesses the surrounding
-// code makes on the result variable.
+// nexus-vite-plugin.js — three plugins in one factory:
 //
-// Without this plugin, the SDK auto-walker fetches every field
-// reachable from the operation's return type up to depth 3 — safe
-// but over-fetches. With the plugin, every typed call rewrites at
-// build time to fetch exactly the fields the consumer reads.
+//   1. nexus-auto-select   (default-on, all builds)
+//      Auto-injects opts.select into nx.query / nx.mutate calls
+//      based on the property accesses the surrounding code makes on
+//      the result variable. Without it, the SDK auto-walker fetches
+//      every field reachable from the operation's return type up to
+//      depth 3 — safe but over-fetches. With it, every typed call
+//      rewrites at build time to fetch exactly the fields the
+//      consumer reads.
+//
+//   2. nexus-manifest-filter   (opt-in via options.filter: 'usage')
+//      Walks the source tree at buildStart, collects every literal
+//      endpoint reference (nx.query/mutate/crud/rest/ws), then
+//      intercepts the import of sdk/manifest.json via vite's `load`
+//      hook and returns a projected manifest containing only the
+//      used endpoints + their reachable ref types + auth flows.
+//      Apply: 'build' — inactive in dev, where the runtime fetch
+//      keeps the full manifest live for HMR + endpoint discovery.
+//      Loose mode (default) tolerates dynamic calls (varName as the
+//      first arg) by including everything in that build with a
+//      warning; strict mode errors out unless every dynamic call
+//      has a `// @nexus-include foo, bar` pragma above it.
+//
+//   3. nexus-loop-guard   (default-on, build-only)
+//      Snapshots auto-imports.d.ts / components.d.ts at buildStart,
+//      restores the mtime in closeBundle when contents are
+//      unchanged. Breaks the rebuild loop unplugin-auto-import
+//      causes by writing identical bytes on every build.
 //
 // Wire it up in vite.config.ts:
 //
@@ -30,7 +51,7 @@
 //   ✗ destructuring (defer; document workaround = direct access)
 //   ✗ cross-function flow (defer)
 
-import { readFileSync, existsSync, statSync, utimesSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, utimesSync, readdirSync } from 'node:fs'
 import { join, isAbsolute, resolve } from 'node:path'
 
 const DEFAULT_SDK_DIR = 'src/sdk'
@@ -49,6 +70,15 @@ const MANIFEST = 'manifest.json'
 // mtime when the bytes haven't actually changed. chokidar's next
 // stat returns the original mtime → no change event → no rebuild.
 const LOOP_GUARD_TARGETS = ['auto-imports.d.ts', 'components.d.ts']
+
+// Directories the manifest-filter usage walker skips when crawling
+// the project root. Hoisted to module scope (instead of declared
+// inside the plugin factory) because the recursive walker is invoked
+// from a function-declaration that runs after the factory's return
+// — `const` inside the factory would hit the TDZ at call time.
+const FILTER_SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.vite', '.cache', '.next', '.nuxt', 'coverage',
+])
 
 export default function nexusAutoSelect(options = {}) {
   let ts, MagicString, parseSFC
@@ -220,7 +250,104 @@ export default function nexusAutoSelect(options = {}) {
     },
   }
 
-  return [authoringPlugin, loopGuardPlugin]
+  // ── manifest filter (mode 1: usage-driven projection) ────────────
+  //
+  // When options.filter === 'usage', this plugin walks every source
+  // file at buildStart, collecting literal endpoint references from
+  // nx.query/mutate/crud/rest/ws calls. At `load` time it intercepts
+  // the import of sdk/manifest.json and returns a filtered subset:
+  // only the endpoints actually referenced + the ref types reachable
+  // from their args/return TypeRefs + the auth flows.
+  //
+  // Goal: shrink the schema slice that ends up in the production
+  // bundle to just what the app uses. Threat model is "schema visible
+  // inside the JS bundle": this is the lever that reduces it without
+  // going to full compile-time inlining.
+  //
+  // Inactive in dev (`apply: 'build'`) — dev keeps the full manifest
+  // for HMR + autocomplete + endpoint discoverability. Inactive when
+  // typescript isn't installed (the AST walker can't run) — same
+  // graceful degradation as the auto-select plugin.
+  //
+  // Loose mode (default): a dynamic call (`nx.query(varName, ...)`)
+  // disables the filter for that build and warns. Strict mode
+  // (`filterMode: 'strict'`) errors out unless every dynamic call
+  // has a `// @nexus-include foo, bar` pragma immediately above it.
+  const filterMode = options.filter || 'off'
+  const filterStrict = options.filterMode === 'strict'
+  const scanInclude = options.scanInclude || ['src']
+  const usedGqlNames = new Set()       // 'listUsers' (query + mutation)
+  const usedRestRoutes = new Set()     // 'GET /users/:id'
+  const usedCrudEntities = new Set()   // 'pets' → keeps every REST route under /pets
+  const usedWsPaths = new Set()        // '/events'
+  let filterDynamicSeen = false
+
+  const manifestFilterPlugin = {
+    name: 'nexus-manifest-filter',
+    enforce: 'pre',
+    apply: 'build',
+
+    async buildStart() {
+      if (filterMode !== 'usage') return
+      if (!ts) return
+      if (!projectRoot) return
+
+      const start = Date.now()
+      let scanned = 0
+      for (const root of scanInclude) {
+        const dir = isAbsolute(root) ? root : join(projectRoot, root)
+        walkDir(dir, (file) => {
+          if (!isScanFile(file)) return
+          scanned++
+          scanFileForUsage(file)
+        })
+      }
+      const elapsed = Date.now() - start
+      const dynNote = filterDynamicSeen ? ' — dynamic call(s) detected' : ''
+      this.warn?.(
+        `[nexus-manifest-filter] scanned ${scanned} files in ${elapsed}ms · ` +
+        `${usedGqlNames.size} gql, ${usedRestRoutes.size} rest, ` +
+        `${usedCrudEntities.size} crud, ${usedWsPaths.size} ws${dynNote}`,
+      )
+      if (filterDynamicSeen && filterStrict) {
+        this.error?.(
+          `[nexus-manifest-filter] strict mode: dynamic call without // @nexus-include pragma. ` +
+          `Inline the literal name, add a pragma above the call, or switch to filterMode: 'loose'.`,
+        )
+      }
+    },
+
+    load(id) {
+      if (filterMode !== 'usage') return null
+      if (!isManifestImport(id)) return null
+
+      let raw
+      try {
+        raw = JSON.parse(readFileSync(stripQuery(id), 'utf8'))
+      } catch {
+        return null
+      }
+
+      // Loose-mode escape hatch: any dynamic call disables the
+      // filter for this build. We still inline via a virtual module
+      // (so on-disk file isn't bundled as-is) but with the full
+      // contents — same security as today, no broken calls.
+      const projected = filterDynamicSeen ? raw : projectManifest(raw)
+
+      const before = (raw.endpoints || []).length
+      const after = (projected.endpoints || []).length
+      const beforeRefs = Object.keys(raw.refs || {}).length
+      const afterRefs = Object.keys(projected.refs || {}).length
+      this.warn?.(
+        `[nexus-manifest-filter] manifest projected: ` +
+        `${before} → ${after} endpoints, ${beforeRefs} → ${afterRefs} refs`,
+      )
+
+      return `export default ${JSON.stringify(projected)}`
+    },
+  }
+
+  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin]
 
   // ---- script transform (TS / JS / TSX / JSX) -----------------------
 
@@ -448,5 +575,260 @@ export default function nexusAutoSelect(options = {}) {
     }
     // 0 args is invalid for query/mutate but defend anyway.
     ms.appendLeft(closeParenPos, `undefined, undefined, { select: ${selectExpr} }`)
+  }
+
+  // ── manifest-filter helpers ──────────────────────────────────────
+
+  // walkDir is a deps-free recursive directory walker. Skips a few
+  // well-known build-output / dependency directories (FILTER_SKIP_DIRS,
+  // hoisted to module scope so it survives the TDZ when this fn is
+  // invoked from a closure that captured the post-return scope).
+  // Hand-rolled instead of pulling in fast-glob — the plugin ships
+  // embedded in the Go binary, so every dep adds to the consumer's
+  // install footprint.
+  function walkDir(dir, fn) {
+    if (!existsSync(dir)) return
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (FILTER_SKIP_DIRS.has(e.name)) continue
+      const full = join(dir, e.name)
+      if (e.isDirectory()) walkDir(full, fn)
+      else fn(full)
+    }
+  }
+
+  function isScanFile(p) {
+    return /\.(ts|tsx|js|jsx|vue)$/.test(p)
+  }
+
+  // isManifestImport recognises the on-disk SDK manifest. We accept
+  // either the configured manifestPath exactly, or any path ending
+  // in /sdk/manifest.json (covers monorepo setups where multiple
+  // sub-packages might import their own SDK bundle). vite passes
+  // resolved ids that may carry a `?something` suffix on rare paths;
+  // strip it before comparing.
+  function isManifestImport(id) {
+    if (!id) return false
+    const clean = stripQuery(id)
+    if (manifestPath && resolve(clean) === resolve(manifestPath)) return true
+    return clean.endsWith('/sdk/manifest.json')
+  }
+
+  function stripQuery(id) {
+    const q = id.indexOf('?')
+    return q >= 0 ? id.slice(0, q) : id
+  }
+
+  function scanFileForUsage(file) {
+    let code
+    try { code = readFileSync(file, 'utf8') } catch { return }
+    let scriptCode = code
+    let scriptKindHint = file
+    if (file.endsWith('.vue')) {
+      if (!parseSFC) return
+      let descriptor
+      try { ({ descriptor } = parseSFC(code)) } catch { return }
+      scriptCode = descriptor.scriptSetup?.content || descriptor.script?.content || ''
+      if (!scriptCode) return
+      // Use the SFC's script lang to pick the AST mode below.
+      const lang = descriptor.scriptSetup?.lang || descriptor.script?.lang || 'ts'
+      scriptKindHint = file + '.' + lang
+    }
+    let sf
+    try {
+      const isTSX = /\.(t|j)sx$/.test(scriptKindHint)
+      sf = ts.createSourceFile(
+        scriptKindHint,
+        scriptCode,
+        ts.ScriptTarget.Latest,
+        /*setParentNodes=*/true,
+        isTSX ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      )
+    } catch {
+      return
+    }
+    walkUsage(sf, sf, scriptCode)
+  }
+
+  function walkUsage(node, sf, srcCode) {
+    if (ts.isCallExpression(node)) {
+      collectUsageFromCall(node, sf, srcCode)
+    }
+    ts.forEachChild(node, (child) => walkUsage(child, sf, srcCode))
+  }
+
+  // collectUsageFromCall identifies a usage signal and adds it to
+  // the appropriate set. A usage signal is ANY call that looks like
+  // `<expr>.<query|mutate|crud|rest|ws>(<literal>, ...)`. We don't
+  // try to verify the receiver is a NexusClient — false positives
+  // (overshoots: pulls a real endpoint into the bundle that wasn't
+  // meant) are safer than false negatives (undershoots: drops an
+  // endpoint the app actually calls). The set is a *floor*, not a
+  // ceiling.
+  function collectUsageFromCall(call, sf, srcCode) {
+    const callee = call.expression
+    if (!ts.isPropertyAccessExpression(callee)) return
+    const method = callee.name && callee.name.text
+    if (method !== 'query' && method !== 'mutate'
+      && method !== 'crud' && method !== 'rest' && method !== 'ws') return
+
+    const arg0 = call.arguments[0]
+    if (!arg0) return
+
+    if (method === 'rest') {
+      // nx.rest('METHOD', '/path', args, opts) — both literals required.
+      const arg1 = call.arguments[1]
+      if (ts.isStringLiteral(arg0) && arg1 && ts.isStringLiteral(arg1)) {
+        usedRestRoutes.add(arg0.text.toUpperCase() + ' ' + arg1.text)
+        return
+      }
+      handleDynamicCall(call, sf, srcCode, 'rest')
+      return
+    }
+
+    if (ts.isStringLiteral(arg0)) {
+      if (method === 'query' || method === 'mutate') usedGqlNames.add(arg0.text)
+      else if (method === 'crud') usedCrudEntities.add(arg0.text)
+      else if (method === 'ws') usedWsPaths.add(arg0.text)
+      return
+    }
+
+    handleDynamicCall(call, sf, srcCode, method)
+  }
+
+  // handleDynamicCall reads any `// @nexus-include foo, bar` pragma
+  // sitting immediately above the call's line and folds the listed
+  // names into every usage set (we don't know what kind the dynamic
+  // first-arg resolves to — projecting against the manifest filters
+  // out non-existent kinds naturally). When no pragma is present the
+  // build-wide dynamic-seen flag is set; loose mode treats that as
+  // "include everything", strict mode treats it as a build error.
+  function handleDynamicCall(call, sf, srcCode, methodKind) {
+    const names = readIncludePragma(call, sf, srcCode)
+    if (names.length === 0) {
+      filterDynamicSeen = true
+      return
+    }
+    for (const n of names) {
+      if (methodKind === 'rest') {
+        usedRestRoutes.add(n)
+        continue
+      }
+      // For non-rest, the pragma name is interpreted as the GraphQL
+      // op name OR the WS path OR the crud entity. We add it to all
+      // three; the manifest projection filters out the ones that
+      // don't exist as real endpoints.
+      usedGqlNames.add(n)
+      usedCrudEntities.add(n)
+      if (n.startsWith('/')) usedWsPaths.add(n)
+    }
+  }
+
+  function readIncludePragma(call, sf, srcCode) {
+    // Walk backward through preceding lines, tolerating any number
+    // of blank lines between the pragma and the call so a developer
+    // can write a multi-line annotation block.
+    let cursor = call.getStart(sf)
+    while (cursor > 0) {
+      const lineStart = srcCode.lastIndexOf('\n', cursor - 1) + 1
+      const prevLineEnd = lineStart - 1
+      if (prevLineEnd <= 0) break
+      const prevLineStartIdx = srcCode.lastIndexOf('\n', prevLineEnd - 1) + 1
+      const prevLine = srcCode.slice(prevLineStartIdx, prevLineEnd).trim()
+      if (prevLine === '') {
+        cursor = prevLineStartIdx
+        continue
+      }
+      const m = prevLine.match(/^\/\/\s*@nexus-include\s+(.+)$/)
+      if (m) return m[1].split(',').map(s => s.trim()).filter(Boolean)
+      // First non-blank, non-pragma line above the call → no pragma.
+      return []
+    }
+    return []
+  }
+
+  // projectManifest filters raw to only the endpoints flagged in the
+  // usage sets, plus auth flows (always preserved), plus the ref
+  // types reachable from the surviving endpoints' Args/Return
+  // TypeRefs. Mirrors the Go-side collectAuthFlowRefs closure walk
+  // — same algorithm, JS-side at build time.
+  function projectManifest(raw) {
+    const out = {
+      version: raw.version,
+      basePath: raw.basePath,
+      auth: raw.auth,
+      endpoints: [],
+      refs: {},
+    }
+    for (const e of (raw.endpoints || [])) {
+      if (shouldKeepEndpoint(e)) out.endpoints.push(e)
+    }
+    const need = new Set()
+    for (const e of out.endpoints) {
+      collectRefsFromTypeRef(e.args, need)
+      collectRefsFromTypeRef(e.return, need)
+    }
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const name of [...need]) {
+        if (out.refs[name]) continue
+        const nt = (raw.refs || {})[name]
+        if (!nt) continue
+        out.refs[name] = nt
+        for (const f of (nt.fields || [])) collectRefsFromTypeRef(f.type, need)
+        changed = true
+      }
+    }
+    return out
+  }
+
+  function shouldKeepEndpoint(e) {
+    if (!e) return false
+    // Auth flows (login/logout/me) are always preserved so the SDK's
+    // auth namespace keeps working regardless of usage scan results.
+    if (e.authFlow) return true
+    // Name match works across all transports: pragma authors write
+    // `// @nexus-include myEndpoint` without knowing whether the
+    // target is GraphQL, REST, or WS — and any endpoint registered
+    // with a `name` field can be referenced by it. Cheap to check
+    // first, common case for GraphQL.
+    if (e.name && usedGqlNames.has(e.name)) return true
+
+    if (e.transport === 'graphql') {
+      return false  // GraphQL is name-only; falling through means no match
+    }
+    if (e.transport === 'rest') {
+      const route = (e.method || 'GET').toUpperCase() + ' ' + (e.path || '')
+      if (usedRestRoutes.has(route)) return true
+      // CRUD entities expand to a 5-route suite under /<entity>.
+      // Match any rest endpoint whose path starts with /<entity> or
+      // /<entity>/. This may over-keep when an unrelated route lives
+      // under that prefix; the filter is a floor, not a ceiling.
+      for (const ent of usedCrudEntities) {
+        const prefix = '/' + ent
+        if (e.path === prefix || (e.path || '').startsWith(prefix + '/')) return true
+      }
+      return false
+    }
+    if (e.transport === 'ws') {
+      return usedWsPaths.has(e.path)
+    }
+    return false
+  }
+
+  function collectRefsFromTypeRef(t, into) {
+    if (!t) return
+    if (t.kind === 'ref' && t.ref) into.add(t.ref)
+    if (t.of) collectRefsFromTypeRef(t.of, into)
+    if (t.keyOf) collectRefsFromTypeRef(t.keyOf, into)
+    if (t.object && t.object.fields) {
+      for (const f of t.object.fields) collectRefsFromTypeRef(f.type, into)
+    }
   }
 }
