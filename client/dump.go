@@ -40,8 +40,8 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 	// need them synchronously now.
 	h.build()
 	h.mu.Lock()
-	clientDTS := append([]byte(nil), h.dtsClient...)
-	vueDTS := append([]byte(nil), h.dtsVue...)
+	clientDTS := append([]byte(nil), h.dtsClient.body...)
+	vueDTS := append([]byte(nil), h.dtsVue.body...)
 	h.mu.Unlock()
 
 	// Dump always writes the FULL manifest to disk — the cached

@@ -22,7 +22,6 @@ package client
 import (
 	"embed"
 	"encoding/json"
-	"net/http"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -155,9 +154,9 @@ type Handler struct {
 
 	mu        sync.Mutex
 	once      *sync.Once
-	manifest  []byte
-	dtsClient []byte
-	dtsVue    []byte
+	manifest  cachedAsset
+	dtsClient cachedAsset
+	dtsVue    cachedAsset
 }
 
 // Reload drops the cached manifest + .d.ts so the next request
@@ -168,9 +167,9 @@ type Handler struct {
 func (h *Handler) Reload() {
 	h.mu.Lock()
 	h.once = &sync.Once{}
-	h.manifest = nil
-	h.dtsClient = nil
-	h.dtsVue = nil
+	h.manifest = cachedAsset{}
+	h.dtsClient = cachedAsset{}
+	h.dtsVue = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -186,9 +185,9 @@ func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
 	h.mu.Lock()
 	h.authInfo = fn
 	h.once = &sync.Once{}
-	h.manifest = nil
-	h.dtsClient = nil
-	h.dtsVue = nil
+	h.manifest = cachedAsset{}
+	h.dtsClient = cachedAsset{}
+	h.dtsVue = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -349,10 +348,10 @@ func (h *Handler) build() {
 		vueDTS := GenerateVueDTS(m)
 		h.mu.Lock()
 		if err == nil {
-			h.manifest = body
+			h.manifest = newCachedAsset(body)
 		}
-		h.dtsClient = []byte(clientDTS)
-		h.dtsVue = []byte(vueDTS)
+		h.dtsClient = newCachedAsset([]byte(clientDTS))
+		h.dtsVue = newCachedAsset([]byte(vueDTS))
 		h.mu.Unlock()
 	})
 }
@@ -365,6 +364,15 @@ var vueJS []byte
 
 //go:embed ui/nexus-vite-plugin.js
 var vitePluginJS []byte
+
+// Static JS assets never change at runtime (the bytes are baked
+// into the binary by go:embed), so hash + gzip them once at package
+// init. The eager init is fine — both files together gzip in well
+// under a millisecond, well-amortized over every subsequent request.
+var (
+	clientJSAsset = newCachedAsset(clientJS)
+	vueJSAsset    = newCachedAsset(vueJS)
+)
 
 // RuntimeJS returns the embedded nexus-client.js bytes. Public so
 // the `nexus client --out` CLI can dump the runtime to disk
@@ -425,34 +433,29 @@ func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo,
 	g.GET("/manifest.json", func(c *gin.Context) {
 		h.build()
 		h.mu.Lock()
-		body := h.manifest
+		asset := h.manifest
 		h.mu.Unlock()
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, "application/json; charset=utf-8", body)
+		serveCachedAsset(c, "application/json; charset=utf-8", asset)
 	})
 	g.GET("/client.js", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, "application/javascript; charset=utf-8", clientJS)
+		serveCachedAsset(c, "application/javascript; charset=utf-8", clientJSAsset)
 	})
 	g.GET("/client.d.ts", func(c *gin.Context) {
 		h.build()
 		h.mu.Lock()
-		body := h.dtsClient
+		asset := h.dtsClient
 		h.mu.Unlock()
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, "application/typescript; charset=utf-8", body)
+		serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
 	})
 	g.GET("/vue.js", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, "application/javascript; charset=utf-8", vueJS)
+		serveCachedAsset(c, "application/javascript; charset=utf-8", vueJSAsset)
 	})
 	g.GET("/vue.d.ts", func(c *gin.Context) {
 		h.build()
 		h.mu.Lock()
-		body := h.dtsVue
+		asset := h.dtsVue
 		h.mu.Unlock()
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, "application/typescript; charset=utf-8", body)
+		serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
 	})
 	// Auto-dump on cfg.OutDir is wired by the caller via a
 	// fx.Lifecycle.OnStart hook (see nexus.New). Mount can't dump
