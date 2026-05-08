@@ -5,7 +5,24 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+
+	"github.com/paulmanoni/nexus/client"
 )
+
+// stubManifestJSON is the placeholder dropped at web/sdk/manifest.json
+// during scaffold so vite.config.ts's `import './sdk/manifest.json'`
+// resolves before the user has run `nexus dev` for the first time.
+// nexus dev overwrites this with the real projection on its first
+// boot — the file is in web/.gitignore so the stub never reaches
+// version control.
+const stubManifestJSON = `{
+  "version": "client.v1",
+  "basePath": "",
+  "endpoints": [],
+  "refs": {},
+  "auth": {}
+}
+`
 
 // scaffoldOpts captures every choice the scaffolder needs. Flags
 // and the interactive prompt both fill the same struct so the
@@ -61,6 +78,13 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		out[path] = rendered
 		return nil
 	}
+	// addRaw writes bytes verbatim — no template substitution. Used
+	// for embedded JS payloads (the SDK runtime, the vite plugin)
+	// where `{{` and `${` already mean something in the source and
+	// we don't want text/template touching them.
+	addRaw := func(path string, body []byte) {
+		out[path] = string(body)
+	}
 
 	if err := add("go.mod", tmplGoMod2); err != nil {
 		return nil, err
@@ -114,6 +138,20 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		if err := add("web/dist/index.html", tmplStubDistHTMLTpl); err != nil {
 			return nil, err
 		}
+		// SDK assets — vite.config.ts imports ./sdk/nexus-vite-plugin.js
+		// and source files import ./sdk/client.js (or vue.js). Drop the
+		// embedded copies here so a fresh checkout can run `vite dev`
+		// before the user has ever invoked `nexus dev`. Once `nexus
+		// dev` runs, it overwrites these with the live projection;
+		// either way the consumer never has a missing-file error.
+		// All four entries sit under web/sdk/ which the generated
+		// .gitignore excludes — they're build artifacts, not source.
+		addRaw("web/sdk/nexus-vite-plugin.js", client.VitePluginJS())
+		addRaw("web/sdk/client.js", client.RuntimeJS())
+		if opts.IsVue() {
+			addRaw("web/sdk/vue.js", client.VueJS())
+		}
+		out["web/sdk/manifest.json"] = stubManifestJSON
 		switch opts.Frontend {
 		case "vue":
 			if err := add("web/package.json", tmplPackageJSONVueTpl); err != nil {
@@ -472,20 +510,40 @@ const tmplPackageJSONReactTpl = `{
 
 // tmplViteConfigTS is parameterized over .Frontend so the import +
 // plugins entry switches between vue() and react() while the
-// proxy / build sections stay shared.
+// proxy / build sections stay shared. The nexus plugin is always
+// wired so the auto-select rewriter + loop-guard run on every
+// build; the manifest filter is opt-in via filter: 'usage'.
 const tmplViteConfigTS = `import { defineConfig } from 'vite'
 {{if .IsVue -}}
 import vue from '@vitejs/plugin-vue'
 {{- else if .IsReact -}}
 import react from '@vitejs/plugin-react'
 {{- end}}
+import nexus from './sdk/nexus-vite-plugin.js'
 
 // Proxy entries forward the framework's reserved paths back to Go
 // during dev. nexus dev keeps these in sync automatically; they're
 // pre-seeded here so a one-shot ` + "`npm run dev`" + ` works without nexus
 // dev too.
 export default defineConfig({
-  plugins: [{{if .IsVue}}vue(){{else if .IsReact}}react(){{end}}],
+  plugins: [
+    {{if .IsVue}}vue(),{{else if .IsReact}}react(),{{end}}
+    // The nexus plugin bundles three behaviors:
+    //   1. nexus-auto-select  — rewrites nx.query/mutate at build to
+    //      fetch only the fields the surrounding code reads.
+    //   2. nexus-manifest-filter — opt-in. Set filter: 'usage' to
+    //      project the bundled SDK manifest down to the endpoints
+    //      the app actually calls (production hardening — leaks
+    //      less schema in the JS bundle). 'off' (default) ships
+    //      the full manifest, which keeps autocomplete + ad-hoc
+    //      experimentation friction-free during early development.
+    //   3. nexus-loop-guard   — prevents unplugin-auto-import from
+    //      thrashing rebuilds in nexus dev.
+    nexus({
+      filter: 'off',
+      // filterMode: 'loose', // 'loose' (default) | 'strict'
+    }),
+  ],
   server: {
     proxy: {
       '/__nexus': { target: 'http://localhost:8080', changeOrigin: true },

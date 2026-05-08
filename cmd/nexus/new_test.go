@@ -210,6 +210,53 @@ func TestScaffoldFullStack_Builds(t *testing.T) {
 	}
 }
 
+// TestScaffoldWithOpts_DropsSDKAssetsAndWiresPlugin asserts the
+// scaffolder writes the static SDK files (the vite plugin runtime
+// and the JS client) plus a stub manifest, AND that the generated
+// vite.config.ts imports + invokes the nexus plugin. Without these,
+// a fresh checkout would fail to start `vite dev` until the user
+// ran `nexus dev` once to populate web/sdk/.
+func TestScaffoldWithOpts_DropsSDKAssetsAndWiresPlugin(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "wired")
+	if err := scaffoldWithOpts(scaffoldOpts{
+		Dir: dir, Frontend: "vue", DB: "none", Cache: "none", Auth: "none",
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	for _, p := range []string{
+		"web/sdk/nexus-vite-plugin.js",
+		"web/sdk/client.js",
+		"web/sdk/vue.js",
+		"web/sdk/manifest.json",
+	} {
+		info, err := os.Stat(filepath.Join(dir, p))
+		if err != nil {
+			t.Errorf("missing %s: %v", p, err)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("%s exists but is empty", p)
+		}
+	}
+	vite, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
+	for _, want := range []string{
+		`import nexus from './sdk/nexus-vite-plugin.js'`,
+		`nexus({`,
+		`filter: 'off'`,
+	} {
+		if !strings.Contains(string(vite), want) {
+			t.Errorf("vite.config.ts missing %q\n--- body ---\n%s", want, vite)
+		}
+	}
+	// manifest stub should parse as JSON with the expected shape.
+	manifest, _ := os.ReadFile(filepath.Join(dir, "web/sdk/manifest.json"))
+	for _, want := range []string{`"version"`, `"endpoints": []`, `"refs": {}`} {
+		if !strings.Contains(string(manifest), want) {
+			t.Errorf("manifest stub missing %q\n%s", want, manifest)
+		}
+	}
+}
+
 // TestScaffoldWithOpts_ReactFrontend covers the react-specific
 // branch: package.json carries react deps, src/main.tsx is the
 // entry point, and vite.config.ts plugs in @vitejs/plugin-react.
