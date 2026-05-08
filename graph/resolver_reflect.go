@@ -96,7 +96,13 @@ func objectNameFromType(t reflect.Type) string {
 	} else if dot := strings.LastIndex(name, "."); dot >= 0 {
 		name = name[dot+1:]
 	}
-	name = strings.ReplaceAll(name, "[]", "")
+	// Tag list params as "ListX" so Response[[]T] and Response[*T] don't
+	// collapse to the same GraphQL type name (Response_T) and silently
+	// share a schema entry — the second registration would otherwise
+	// reuse the first's `data` field shape and the resolver returning
+	// the wrong shape (slice into struct, or struct into slice) errors
+	// at runtime with "expected struct, got slice".
+	name = strings.ReplaceAll(name, "[]", "List")
 	name = strings.ReplaceAll(name, "*", "")
 	name = strings.ReplaceAll(name, "[", "_")
 	name = strings.ReplaceAll(name, "]", "")
