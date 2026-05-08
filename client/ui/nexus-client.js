@@ -791,23 +791,27 @@ function gqlTypeFromArgs(argsRef, refs, varKey) {
   if (!nt || !nt.fields) return ''
   for (const f of nt.fields) {
     if (wireFieldName(f) !== varKey) continue
-    return renderGqlTypeRef(f.type, refs)
+    // Optionality may be carried on the field itself OR on its type
+    // (the manifest emits it on the field for primitive/ref-typed
+    // struct fields, and on the type for return-shaped TypeRefs).
+    // Fold both so we don't render `String!` for an optional `*string`.
+    return renderGqlTypeRef(f.type, refs, f.optional)
   }
   return ''
 }
 
-function renderGqlTypeRef(t, refs) {
+function renderGqlTypeRef(t, refs, fieldOptional) {
   if (!t) return ''
+  const bang = (t.optional || fieldOptional) ? '' : '!'
   switch (t.kind) {
     case 'primitive': {
-      const base = primitiveToGql(t.primitive)
-      return base + (t.optional ? '' : '!')
+      return primitiveToGql(t.primitive) + bang
     }
     case 'array':
     case 'list': {
       const inner = renderGqlTypeRef(t.of, refs)
       if (!inner) return ''
-      return '[' + inner + ']' + (t.optional ? '' : '!')
+      return '[' + inner + ']' + bang
     }
     case 'ref': {
       let name = t.ref || ''
@@ -816,7 +820,7 @@ function renderGqlTypeRef(t, refs) {
       // when not already present; mirror that here so the document
       // declares the SDL name the server will accept.
       if (!name.endsWith('Input')) name += 'Input'
-      return name + (t.optional ? '' : '!')
+      return name + bang
     }
     default:
       return ''
