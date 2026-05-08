@@ -563,9 +563,15 @@ function buildGqlDocument(kind, name, variables, ep, refs, explicitSelection) {
   const argDefs = []
   const argList = []
   for (const k of Object.keys(variables)) {
-    // The manifest doesn't carry SDL types in EndpointInfo.Args
-    // (those are TypeRef-based); fall back to inferred shape.
-    argDefs.push(`$${k}: ${inferGqlType(variables[k])}`)
+    // Prefer the manifest's args schema for the GraphQL type — it
+    // carries ref names that map to SDL input types (the framework
+    // suffixes object refs with "Input"). Inference is the fallback
+    // for primitive variables and untyped endpoints; without the
+    // schema lookup, object-valued variables would degrade to
+    // String! and the server would reject them with "Variable $x of
+    // type String! used in position expecting type FooInput!".
+    const fromSchema = gqlTypeFromArgs(ep && ep.args, refs || {}, k)
+    argDefs.push(`$${k}: ${fromSchema || inferGqlType(variables[k])}`)
     argList.push(`${k}: $${k}`)
   }
   const sig = argDefs.length ? `(${argDefs.join(', ')})` : ''
@@ -701,6 +707,64 @@ function inferGqlType(v) {
     case 'number':  return Number.isInteger(v) ? 'Int!' : 'Float!'
     case 'boolean': return 'Boolean!'
     case 'object':  return Array.isArray(v) ? '[String!]!' : 'String!' // structured args degrade to String
+    default:        return 'String'
+  }
+}
+
+// gqlTypeFromArgs walks the endpoint's Args TypeRef looking for the
+// field whose wire name matches varKey, and renders its TypeRef as
+// a GraphQL type expression. Returns '' when nothing matches so the
+// caller can fall back to inferGqlType.
+//
+// Object refs render as '<Ref>Input' to match the framework's input-
+// type naming convention (the schema generator suffixes 'Input' to
+// every input object's name). Primitives and arrays compose the
+// usual GraphQL scalar / list syntax.
+function gqlTypeFromArgs(argsRef, refs, varKey) {
+  if (!argsRef || argsRef.kind !== 'ref') return ''
+  const nt = refs[argsRef.ref]
+  if (!nt || !nt.fields) return ''
+  for (const f of nt.fields) {
+    if (wireFieldName(f) !== varKey) continue
+    return renderGqlTypeRef(f.type, refs)
+  }
+  return ''
+}
+
+function renderGqlTypeRef(t, refs) {
+  if (!t) return ''
+  switch (t.kind) {
+    case 'primitive': {
+      const base = primitiveToGql(t.primitive)
+      return base + (t.optional ? '' : '!')
+    }
+    case 'array':
+    case 'list': {
+      const inner = renderGqlTypeRef(t.of, refs)
+      if (!inner) return ''
+      return '[' + inner + ']' + (t.optional ? '' : '!')
+    }
+    case 'ref': {
+      let name = t.ref || ''
+      if (!name) return ''
+      // The schema generator suffixes object input types with 'Input'
+      // when not already present; mirror that here so the document
+      // declares the SDL name the server will accept.
+      if (!name.endsWith('Input')) name += 'Input'
+      return name + (t.optional ? '' : '!')
+    }
+    default:
+      return ''
+  }
+}
+
+function primitiveToGql(p) {
+  switch (p) {
+    case 'string':  return 'String'
+    case 'integer': return 'Int'
+    case 'number':
+    case 'float':   return 'Float'
+    case 'boolean': return 'Boolean'
     default:        return 'String'
   }
 }
