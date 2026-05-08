@@ -116,15 +116,31 @@ func autoMountGraphQL(in autoMountIn) error {
 	// service-wrapper dep scan or OnService option) so we can read
 	// path/name directly.
 	//
-	// Mount path is keyed alongside service type so a single service
-	// can have its fields mounted on multiple URLs when those fields
-	// belong to modules that declared nexus.Path(...). Without this,
-	// a "user" service whose handlers were registered inside both the
-	// uaa module (Path /oats-uaa) and a separate billing module (no
-	// Path) would mount everything at one default /graphql instead
-	// of the per-module URLs the SPA expects.
+	// Mount path is keyed alongside service identity (type + name)
+	// so two things stay separate that would otherwise collide:
+	//
+	//  1. Same Go service TYPE, different names. The lone-service
+	//     heuristic + the per-module fallback both produce *Service
+	//     instances; without keying on the name, a portal_admin-
+	//     style app with one named CRUD service in module A and a
+	//     plain-func handler set in module B (resolved to a fresh
+	//     *Service named "B") would partition together and every
+	//     query in the merged partition would get tagged with
+	//     whichever service hit the bucket first. Dashboard
+	//     attribution would silently lie ("queries belong to A"
+	//     when they were actually authored in module B).
+	//
+	//  2. Same SERVICE name, different mount paths. The original
+	//     case the comment used to describe: a "user" service
+	//     whose handlers were registered inside both the uaa
+	//     module (Path /oats-uaa) and a separate billing module
+	//     (no Path) needs to mount on /oats-uaa/graphql and the
+	//     default /graphql respectively. Without mountPath in the
+	//     key, the second registration would silently overwrite
+	//     the first.
 	type partitionKey struct {
 		serviceType reflect.Type
+		serviceName string
 		mountPath   string
 	}
 	partitions := map[partitionKey]*servicePartition{}
@@ -167,7 +183,11 @@ func autoMountGraphQL(in autoMountIn) error {
 		if pp := modulePublicPathOf(f.Module); pp != "" {
 			mountPath = pp + "/graphql"
 		}
-		key := partitionKey{serviceType: f.ServiceType, mountPath: mountPath}
+		key := partitionKey{
+			serviceType: f.ServiceType,
+			serviceName: f.Service.Name(),
+			mountPath:   mountPath,
+		}
 		p, ok := partitions[key]
 		if !ok {
 			p = &servicePartition{serviceType: f.ServiceType, service: f.Service, mountPath: mountPath, shapes: map[string]GqlField{}}
