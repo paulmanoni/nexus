@@ -77,7 +77,23 @@ func GenerateGraphQLObject[T any](name string) *graphql.Object {
 }
 
 func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
+	return g.generateFieldsAt(t, nil)
+}
 
+// generateFieldsAt is the recursive worker. indexPrefix carries the
+// reflect.StructField.Index path from the *root* struct down to the
+// type currently being walked, which is critical when t is an
+// embedded type: a leaf field's Index is relative to t, but at
+// resolve time graphql-go calls us with p.Source = the root struct,
+// so we need the full path-from-root to FieldByIndexErr.
+//
+// The earlier implementation closed over field.Name and used
+// FieldByName, which transparently followed Go's field promotion
+// rules but at the cost of a name search on every resolve and an
+// allocation per embedded hop. Threading the index path lets us
+// pre-compute the lookup once at registration and use the cheap
+// FieldByIndexErr at request time.
+func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int) graphql.Fields {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -91,6 +107,13 @@ func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
+		// Build the full path from root: copy then append so each
+		// resolver closes over its own slice (append might otherwise
+		// alias the prefix's backing array across siblings).
+		fieldIndex := make([]int, 0, len(indexPrefix)+1)
+		fieldIndex = append(fieldIndex, indexPrefix...)
+		fieldIndex = append(fieldIndex, i)
+
 		// Handle embedded (anonymous) fields by flattening them
 		if field.Anonymous {
 			embeddedType := field.Type
@@ -98,10 +121,8 @@ func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
 				embeddedType = embeddedType.Elem()
 			}
 
-			// Recursively get fields from embedded struct
-			embeddedFields := g.generateFields(embeddedType)
+			embeddedFields := g.generateFieldsAt(embeddedType, fieldIndex)
 			for name, embeddedField := range embeddedFields {
-				// Only add if not already present (child fields take precedence)
 				if _, exists := fields[name]; !exists {
 					fields[name] = embeddedField
 				}
@@ -136,8 +157,12 @@ func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
 					return nil, fmt.Errorf("expected struct, got %v", source.Kind())
 				}
 
-				fieldValue := source.FieldByName(field.Name)
-				if !fieldValue.IsValid() {
+				// FieldByIndexErr returns an error (instead of
+				// panicking) when the path steps through a nil
+				// embedded pointer — surface that as a null field
+				// rather than a 500.
+				fieldValue, err := source.FieldByIndexErr(fieldIndex)
+				if err != nil || !fieldValue.IsValid() {
 					return nil, nil
 				}
 
@@ -692,6 +717,10 @@ func (g *FieldGenerator[T]) createWrapperObject(t reflect.Type, typeName string)
 				dataType := field.Type
 				graphqlType = g.getBaseGraphQLType(dataType, &typeName)
 
+				// Wrapper types (Response[T]) don't recurse into embedded
+				// fields — every field is top-level — so a single-element
+				// index path is enough.
+				fieldIndex := []int{i}
 				description := field.Tag.Get("description")
 				fields[fieldName] = &graphql.Field{
 					Type:        graphqlType,
@@ -703,8 +732,8 @@ func (g *FieldGenerator[T]) createWrapperObject(t reflect.Type, typeName string)
 						}
 
 						if source.Kind() == reflect.Struct {
-							fieldValue := source.FieldByName(field.Name)
-							if fieldValue.IsValid() && fieldValue.CanInterface() {
+							fieldValue, err := source.FieldByIndexErr(fieldIndex)
+							if err == nil && fieldValue.IsValid() && fieldValue.CanInterface() {
 								return fieldValue.Interface(), nil
 							}
 						}
