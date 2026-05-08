@@ -72,22 +72,31 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 	if !strings.HasPrefix(rel, ".") {
 		rel = "./" + rel
 	}
-	importLine := fmt.Sprintf("import nexusAutoSelect from '%s'", rel)
+	// Modern alias is plain `nexus`; the plugin is no longer just the
+	// auto-select rewriter (it bundles manifest-filter + loop-guard
+	// too). The legacy `nexusAutoSelect` import name remains
+	// recognised below so projects wired before the rename don't get
+	// a duplicate import on the next nexus dev.
+	importLine := fmt.Sprintf("import nexus from '%s'", rel)
 
 	changed := false
-	// Idempotence: any existing reference to `nexusAutoSelect` means
-	// we've wired it before — skip both edits.
-	alreadyWired := strings.Contains(body, "nexusAutoSelect")
+	// Idempotence: any existing reference to `nexus` (new) or
+	// `nexusAutoSelect` (legacy) means we've wired it before — skip
+	// both edits.
+	alreadyWired := strings.Contains(body, "nexusAutoSelect") ||
+		strings.Contains(body, "from '"+rel+"'")
 
 	if !alreadyWired {
 		body = insertImport(body, importLine)
 		changed = true
 	}
 
-	if !strings.Contains(body, "nexusAutoSelect()") {
-		updated, ok := insertIntoPluginsArray(body, "nexusAutoSelect()")
+	// Same dual-name check on the call site so we don't duplicate
+	// nexus() into a plugins array that already has nexusAutoSelect().
+	if !strings.Contains(body, "nexusAutoSelect()") && !strings.Contains(body, "nexus(") {
+		updated, ok := insertIntoPluginsArray(body, "nexus()")
 		if !ok {
-			fmt.Fprintf(stdout, "[nexus] couldn't locate a `plugins:` array in %s — add `nexusAutoSelect()` manually\n", configPath)
+			fmt.Fprintf(stdout, "[nexus] couldn't locate a `plugins:` array in %s — add `nexus()` manually\n", configPath)
 			// Still write the import (helpful even if the array edit failed).
 			if changed {
 				if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
