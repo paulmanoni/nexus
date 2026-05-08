@@ -112,6 +112,33 @@ func TestApplyFrontendDefaults_ExplicitOverrides(t *testing.T) {
 	}
 }
 
+// TestApplyVisibilityDefaults pins the Introspection→Public bridge:
+// introspection ON forces Public=true regardless of the user's
+// explicit value (the "introspection on, manifest skinny" combo is
+// security theatre and intentionally collapsed); introspection OFF
+// leaves Public at whatever the user set (or default false).
+func TestApplyVisibilityDefaults(t *testing.T) {
+	cases := []struct {
+		name          string
+		introspection bool
+		inPublic      bool
+		want          bool
+	}{
+		{"intr=on,pub=on  → on", true, true, true},
+		{"intr=on,pub=off → on (forced)", true, false, true},
+		{"intr=off,pub=on → on (preserved)", false, true, true},
+		{"intr=off,pub=off → off (default)", false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ApplyVisibilityDefaults(Config{Public: tc.inPublic}, tc.introspection)
+			if got.Public != tc.want {
+				t.Errorf("Public = %v; want %v", got.Public, tc.want)
+			}
+		})
+	}
+}
+
 // TestApplyFrontendDefaults_TSConfigOnlyWhenPresent guards the
 // "tsconfig.json is conditional" rule: a vue project without one
 // keeps TSConfig empty so the dump path doesn't try to read a
