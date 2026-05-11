@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/paulmanoni/nexus/cron"
+	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"

@@ -21,7 +21,7 @@ import (
 
 	"github.com/paulmanoni/nexus/cache"
 	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/cron"
+	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/dashboard"
 	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/manifest"
@@ -321,6 +321,11 @@ func New(cfg Config) *App {
 	})
 	a.RegisterPlugin(PluginRecord{
 		Name:         "metrics",
+		Version:      "1",
+		HasDashboard: true,
+	})
+	a.RegisterPlugin(PluginRecord{
+		Name:         "cron",
 		Version:      "1",
 		HasDashboard: true,
 	})

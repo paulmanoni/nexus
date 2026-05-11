@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"github.com/paulmanoni/nexus/cron"
+	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/extension/metrics"
@@ -117,7 +117,7 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 		})
 	})
 	if sched != nil {
-		mountCron(g, sched)
+		cron.MountDashboard(g, sched)
 	}
 	if rl != nil {
 		// Route handlers live in extension/ratelimit so the package that
@@ -281,33 +281,6 @@ func traceByID(bus *trace.Bus) gin.HandlerFunc {
 		})
 		c.JSON(http.StatusOK, gin.H{"traceId": id, "spans": out})
 	}
-}
-
-func mountCron(g *gin.RouterGroup, sched *cron.Scheduler) {
-	g.GET("/crons", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"crons": sched.Snapshots()})
-	})
-	g.POST("/crons/:name/trigger", func(c *gin.Context) {
-		if !sched.Trigger(c.Param("name")) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "unknown cron"})
-			return
-		}
-		c.JSON(http.StatusAccepted, gin.H{"ok": true})
-	})
-	g.POST("/crons/:name/pause", func(c *gin.Context) {
-		if !sched.SetPaused(c.Param("name"), true) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "unknown cron"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"paused": true})
-	})
-	g.POST("/crons/:name/resume", func(c *gin.Context) {
-		if !sched.SetPaused(c.Param("name"), false) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "unknown cron"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"paused": false})
-	})
 }
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
