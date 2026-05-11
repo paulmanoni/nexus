@@ -364,6 +364,32 @@ func New(cfg Config) *App {
 			// endpoint unmounted (fail-closed). The orchestration
 			// platform sets NEXUS_ADMIN_TOKEN at deploy time.
 			AdminToken: os.Getenv(EnvAdminToken),
+			// Plugins closure adapts app.Plugins() (PluginRecord) into
+			// the dashboard's own PluginInfo shape so the package can
+			// surface plugin metadata without importing nexus.
+			Plugins: func() []dashboard.PluginInfo {
+				records := a.Plugins()
+				out := make([]dashboard.PluginInfo, 0, len(records))
+				for _, r := range records {
+					info := dashboard.PluginInfo{
+						Name:         r.Name,
+						Version:      r.Version,
+						Namespace:    r.Namespace,
+						HasDashboard: r.HasDashboard,
+						HasClient:    r.HasClient,
+						LiveEvents:   r.LiveEvents,
+					}
+					if r.Tab != nil {
+						info.Tab = &dashboard.TabInfo{
+							ID:    r.Tab.ID,
+							Label: r.Tab.Label,
+							Icon:  r.Tab.Icon,
+						}
+					}
+					out = append(out, info)
+				}
+				return out
+			},
 		})
 	}
 	if cfg.Client.Enabled {
