@@ -560,6 +560,9 @@ func (a *App) PrefixPath(p string) string {
 // outside the nexus package (notably gql) can consult one source
 // of truth.
 func (a *App) AllowIntrospection(c *gin.Context) bool {
+	if devModeBypass() {
+		return true
+	}
 	return introspectionAllowed(c, a.introspect, a.introspectionNets)
 }
 
