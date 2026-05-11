@@ -129,11 +129,11 @@ func (l *listenerScopes) empty() bool {
 }
 
 // scopeAllowsPath decides whether the given path is exposed on the
-// given scope. The split between health/ready and the rest of the
-// dashboard is the load-bearing rule for ScopeInternal: /__nexus/health
-// and /ready are safe to expose to peers and orchestrators (they
-// reveal nothing sensitive), but the rest of the dashboard is held
-// back from internal traffic.
+// given scope. /__nexus/health and /__nexus/ready are exposed on
+// every scope — k8s liveness/readiness probes hit the service's
+// public port, and the framework's own peerProber (health.go) probes
+// peers through their declared public URL. The rest of /__nexus/* is
+// held back from public + internal scopes and only served on admin.
 //
 // ScopeAdmin allows everything — see ScopeAdmin's doc comment for
 // the rationale (operator ergonomics + dashboard testers).
@@ -142,7 +142,7 @@ func scopeAllowsPath(scope ListenerScope, path string) bool {
 	isHealth := path == dashboard.Prefix+"/health" || path == dashboard.Prefix+"/ready"
 	switch scope {
 	case ScopePublic:
-		return !isDash
+		return !isDash || isHealth
 	case ScopeInternal:
 		return !isDash || isHealth
 	case ScopeAdmin:
