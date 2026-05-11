@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/paulmanoni/nexus/dashboard"
+	"github.com/paulmanoni/nexus/extension/dashboard"
 )
 
 // healthState tracks two signals every production deployment needs:

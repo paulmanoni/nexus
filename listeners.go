@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/paulmanoni/nexus/dashboard"
+	"github.com/paulmanoni/nexus/extension/dashboard"
 )
 
 // ListenerScope decides which routes a listener exposes. The framework
