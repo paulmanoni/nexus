@@ -176,6 +176,38 @@ type Manifest struct {
 	// future framework version moves them, the manifest is the source
 	// of truth.
 	Admin AdminPaths `json:"admin"`
+
+	// Inputs surface — see inputs.go for the type definitions and the
+	// resolution model. All fields are additive; pre-v0.39 manifests
+	// without an inputs surface parse identically to before.
+
+	// Environments enumerates every named target ("production",
+	// "staging", "preview", ...) the binary can be deployed to. The
+	// orchestration platform owns the actual provisioning; this slice
+	// declares the contract.
+	Environments []Environment `json:"environments,omitempty"`
+
+	// Secrets are sensitive inputs (API keys, signing keys, etc.) that
+	// live in the platform's encrypted store, distinct from regular
+	// env vars so the platform UI can render them with redaction +
+	// rotation hints. Empty for apps without sensitive inputs.
+	Secrets []Secret `json:"secrets,omitempty"`
+
+	// Files are mounted blobs (TLS bundles, JSON config overrides) the
+	// platform writes to known paths at deploy time. Empty for apps
+	// without file-shaped inputs.
+	Files []File `json:"files,omitempty"`
+
+	// Hooks declares platform-orchestrated build/predeploy/postdeploy
+	// commands. Nil → no platform-side hooks; in-binary StartupTasks
+	// (above) still apply.
+	Hooks *Hooks `json:"hooks,omitempty"`
+
+	// Overrides hold the per-environment diffs applied to the base
+	// inputs at merge time. Keyed by environment name. After
+	// MergeOverrides runs, the returned Manifest has Overrides nil —
+	// the diffs have been baked into the effective values.
+	Overrides map[string]Override `json:"overrides,omitempty"`
 }
 
 // Port describes one listening socket. The orchestration platform uses
@@ -215,6 +247,21 @@ type EnvVar struct {
 	// of the ServiceNeed named primary-db". Empty when the operator
 	// must supply the value directly.
 	BoundTo string `json:"boundTo,omitempty"`
+
+	// EnvScoped means each environment gets its own value. Typical for
+	// LOG_LEVEL or feature flags that legitimately differ per env.
+	// When false (the default), one value applies across every
+	// environment that doesn't override it.
+	EnvScoped bool `json:"envScoped,omitempty"`
+
+	// Validation constrains the effective value. Applied at boot or
+	// pre-render. nil = no validation beyond Required.
+	Validation *EnvValidation `json:"validation,omitempty"`
+
+	// Source tracks where the effective value came from after merge:
+	// "default" | "override" | "platform" | "env". Populated by
+	// MergeOverrides; empty in the declared base manifest.
+	Source string `json:"source,omitempty"`
 }
 
 // ServiceNeed is a logical sidecar this app needs to talk to. The
@@ -236,6 +283,23 @@ type ServiceNeed struct {
 	// sidecar (e.g. a Redis cache that falls back to in-memory). The
 	// platform may skip provisioning in dev environments.
 	Optional bool `json:"optional,omitempty"`
+
+	// Size is the platform-defined sizing tier ("small" | "medium" |
+	// "large" — exact set is platform-specific). Empty = platform
+	// default. Typically overridden per environment ("large" in prod,
+	// "small" in preview).
+	Size string `json:"size,omitempty"`
+
+	// Backup is the platform-defined backup cadence ("none" | "daily"
+	// | "hourly" | "continuous"). Empty = platform default. Mostly
+	// relevant for stateful services (postgres, mysql); meaningless
+	// for caches.
+	Backup string `json:"backup,omitempty"`
+
+	// Ephemeral=true tells the platform to tear down the provisioned
+	// resource when the environment is destroyed. Used for preview
+	// environments so per-PR databases don't accumulate.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // Volume describes a path inside the container that must persist.
