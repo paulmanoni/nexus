@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 )
 
 // advertsModule wires the adverts domain. Resolvers are plain Go functions

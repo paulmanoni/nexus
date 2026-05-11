@@ -11,7 +11,7 @@ import (
 
 	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/trace"
 )
 

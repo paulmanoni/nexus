@@ -3,7 +3,7 @@ package nexus
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/paulmanoni/nexus/metrics"
+	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/trace"
 )

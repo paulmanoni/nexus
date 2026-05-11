@@ -10,8 +10,8 @@ import (
 
 	"github.com/paulmanoni/nexus/cron"
 	"github.com/paulmanoni/nexus/live"
-	"github.com/paulmanoni/nexus/metrics"
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/metrics"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 )
 
