@@ -54,6 +54,33 @@ type Config struct {
 	// Compared in constant time against the request's
 	// `Authorization: Bearer <token>` header.
 	AdminToken string `json:"-"`
+
+	// Plugins is the closure dashboard.Mount calls on each request to
+	// GET /__nexus/plugins. Returns the inert metadata for every plugin
+	// registered with the App — auth, oauth2, cron, ratelimit, etc.
+	// nexus.New populates this by adapting app.Plugins() at mount time;
+	// nil leaves the endpoint unmounted.
+	Plugins func() []PluginInfo `json:"-"`
+}
+
+// PluginInfo mirrors nexus.PluginRecord in a form the dashboard can
+// own without importing nexus (which already imports this package).
+// nexus.New converts app.Plugins() into []PluginInfo at Mount time.
+type PluginInfo struct {
+	Name         string   `json:"name"`
+	Version      string   `json:"version,omitempty"`
+	Namespace    string   `json:"namespace,omitempty"`
+	HasDashboard bool     `json:"hasDashboard,omitempty"`
+	HasClient    bool     `json:"hasClient,omitempty"`
+	Tab          *TabInfo `json:"tab,omitempty"`
+	LiveEvents   []string `json:"liveEvents,omitempty"`
+}
+
+// TabInfo is a plugin's declared dashboard nav-tab metadata.
+type TabInfo struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Icon  string `json:"icon,omitempty"`
 }
 
 // Mount attaches:
@@ -95,6 +122,14 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 	g.GET("/config", func(c *gin.Context) {
 		c.JSON(http.StatusOK, cfg)
 	})
+	// /plugins enumerates everything registered via app.RegisterPlugin
+	// — built-ins (auth, oauth2, cron, ratelimit, metrics, cache,
+	// dashboard) and any third-party extension.Use calls.
+	if cfg.Plugins != nil {
+		g.GET("/plugins", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"plugins": cfg.Plugins()})
+		})
+	}
 	// Every other introspection surface lives in the package that owns
 	// the data — keeps dashboard.Mount a thin orchestrator instead of
 	// a god-route table.

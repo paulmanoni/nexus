@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { Box } from 'lucide-vue-next'
 import Architecture from './views/Architecture.vue'
+import PluginChips from './components/PluginChips.vue'
 import { fetchConfig } from './lib/api.js'
 
 // The dashboard is a single page now — Architecture canvas with its
@@ -27,6 +28,7 @@ onMounted(async () => {
         <div class="logo"><Box :size="16" :stroke-width="2.5" /></div>
         <span>{{ brand }}</span>
       </div>
+      <PluginChips class="header-plugins" />
       <span class="hint">
         <kbd>⌘</kbd><kbd>K</kbd> jump
       </span>
@@ -72,8 +74,10 @@ header {
   place-items: center;
   border-radius: var(--radius-sm);
 }
-.hint {
+.header-plugins {
   margin-left: auto;
+}
+.hint {
   display: inline-flex;
   align-items: center;
   gap: 4px;

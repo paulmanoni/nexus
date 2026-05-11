@@ -8,6 +8,21 @@ export async function fetchConfig() {
   }
 }
 
+// fetchPlugins returns the list of built-in + user-installed plugins
+// registered with the App. Empty array on any failure so the UI can
+// render a "no plugins" state instead of crashing on older backends
+// that don't ship the /plugins endpoint yet.
+export async function fetchPlugins() {
+  try {
+    const r = await fetch('/__nexus/plugins')
+    if (!r.ok) return []
+    const data = await r.json()
+    return data.plugins || []
+  } catch {
+    return []
+  }
+}
+
 export async function fetchEndpoints() {
   const r = await fetch('/__nexus/endpoints')
   if (!r.ok) throw new Error(`endpoints: ${r.status}`)
