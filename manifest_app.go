@@ -212,6 +212,56 @@ func (a *App) DeclareOverride(env string, ov manifest.Override) {
 	a.manifest.mu.Unlock()
 }
 
+// LoadDeployManifest reads nexus.deploy.yaml at path, parses its
+// inputs surface (environments / secrets / files / hooks /
+// environment_overrides), and registers each entry through the
+// existing Declare* methods. Idempotent: re-declaring an environment
+// with the same name is a no-op, secrets / files dedup by name, and
+// DeclareOverride replaces any prior diff for the same environment.
+//
+// Intended call sites:
+//
+//   - Directly in main() before nexus.Run, when the operator wants
+//     YAML to be the source of truth for the inputs surface.
+//   - From a nexus.Invoke(...) for apps that want the inputs to
+//     participate in fx ordering.
+//   - From a codegen'd init() emitted by `nexus build` (future
+//     extension — the codegen path that currently bakes deployment
+//     defaults will also bake DeclareEnvironment / DeclareSecret /
+//     DeclareOverride calls so the runtime stays file-IO-free).
+//
+// YAML parse errors return immediately. Schema validation (duplicate
+// names, malformed validation rules) is NOT performed here — call
+// manifest.Lint() on the result manifest to surface those issues.
+// Boot validation against actual env values still runs at fx.Start
+// via resolveEffectiveManifest.
+//
+// Missing file is treated as an error so a typo in the path doesn't
+// silently produce an empty inputs surface. To make the call optional,
+// stat the file first or wrap in a guard.
+func (a *App) LoadDeployManifest(path string) error {
+	loaded, err := manifest.LoadInputsYAMLFile(path)
+	if err != nil {
+		return err
+	}
+	for _, e := range loaded.Environments {
+		a.DeclareEnvironment(e)
+	}
+	for _, s := range loaded.Secrets {
+		a.DeclareSecret(s)
+	}
+	for _, f := range loaded.Files {
+		a.DeclareFile(f)
+	}
+	if loaded.Hooks != nil {
+		a.DeclareHooks(*loaded.Hooks)
+	}
+	for env, ov := range loaded.Overrides {
+		a.DeclareOverride(env, ov)
+	}
+	return nil
+}
+
 // AddStartupTask registers a one-shot task that runs before listeners
 // bind. Migrations and other pre-start side-effecting work belong
 // here. The Run function is opaque to print mode (manifest only

@@ -237,31 +237,31 @@ type Health struct {
 // orchestration: when a ServiceNeed exposes "host" via this var, the
 // platform can fill it automatically without operator intervention.
 type EnvVar struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-	Secret      bool   `json:"secret,omitempty"`
-	Default     string `json:"default,omitempty"`
+	Name        string `json:"name" yaml:"name"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Required    bool   `json:"required,omitempty" yaml:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty" yaml:"secret,omitempty"`
+	Default     string `json:"default,omitempty" yaml:"default,omitempty"`
 	// BoundTo is a dotted reference into a ServiceNeed entry, e.g.
 	// "primary-db.host" means "fill this env var with the resolved host
 	// of the ServiceNeed named primary-db". Empty when the operator
 	// must supply the value directly.
-	BoundTo string `json:"boundTo,omitempty"`
+	BoundTo string `json:"boundTo,omitempty" yaml:"bound_to,omitempty"`
 
 	// EnvScoped means each environment gets its own value. Typical for
 	// LOG_LEVEL or feature flags that legitimately differ per env.
 	// When false (the default), one value applies across every
 	// environment that doesn't override it.
-	EnvScoped bool `json:"envScoped,omitempty"`
+	EnvScoped bool `json:"envScoped,omitempty" yaml:"env_scoped,omitempty"`
 
 	// Validation constrains the effective value. Applied at boot or
 	// pre-render. nil = no validation beyond Required.
-	Validation *EnvValidation `json:"validation,omitempty"`
+	Validation *EnvValidation `json:"validation,omitempty" yaml:"validation,omitempty"`
 
 	// Source tracks where the effective value came from after merge:
 	// "default" | "override" | "platform" | "env". Populated by
 	// MergeOverrides; empty in the declared base manifest.
-	Source string `json:"source,omitempty"`
+	Source string `json:"source,omitempty" yaml:"source,omitempty"`
 }
 
 // ServiceNeed is a logical sidecar this app needs to talk to. The
@@ -270,36 +270,36 @@ type EnvVar struct {
 // dependencies the platform may not natively support yet — operators
 // still see the requirement and can wire something manually.
 type ServiceNeed struct {
-	Name    string `json:"name"`              // unique within the app, e.g. "primary-db"
-	Kind    string `json:"kind"`              // "postgres" | "redis" | "rabbitmq" | "s3" | ...
-	Version string `json:"version,omitempty"` // major or constraint, e.g. "16", ">=14"
+	Name    string `json:"name" yaml:"name"`                          // unique within the app, e.g. "primary-db"
+	Kind    string `json:"kind" yaml:"kind"`                          // "postgres" | "redis" | "rabbitmq" | "s3" | ...
+	Version string `json:"version,omitempty" yaml:"version,omitempty"` // major or constraint, e.g. "16", ">=14"
 	// ExposeAs maps logical fields (host, port, user, password, url, ...)
 	// to env-var names the app reads. The orchestration platform fills
 	// each one once the sidecar is bound. Field names are advisory but
 	// the well-known set is "host", "port", "user", "password", "url",
 	// "database", "vhost", "exchange".
-	ExposeAs map[string]string `json:"exposeAs,omitempty"`
+	ExposeAs map[string]string `json:"exposeAs,omitempty" yaml:"expose_as,omitempty"`
 	// Optional indicates the app degrades gracefully without this
 	// sidecar (e.g. a Redis cache that falls back to in-memory). The
 	// platform may skip provisioning in dev environments.
-	Optional bool `json:"optional,omitempty"`
+	Optional bool `json:"optional,omitempty" yaml:"optional,omitempty"`
 
 	// Size is the platform-defined sizing tier ("small" | "medium" |
 	// "large" — exact set is platform-specific). Empty = platform
 	// default. Typically overridden per environment ("large" in prod,
 	// "small" in preview).
-	Size string `json:"size,omitempty"`
+	Size string `json:"size,omitempty" yaml:"size,omitempty"`
 
 	// Backup is the platform-defined backup cadence ("none" | "daily"
 	// | "hourly" | "continuous"). Empty = platform default. Mostly
 	// relevant for stateful services (postgres, mysql); meaningless
 	// for caches.
-	Backup string `json:"backup,omitempty"`
+	Backup string `json:"backup,omitempty" yaml:"backup,omitempty"`
 
 	// Ephemeral=true tells the platform to tear down the provisioned
 	// resource when the environment is destroyed. Used for preview
 	// environments so per-PR databases don't accumulate.
-	Ephemeral bool `json:"ephemeral,omitempty"`
+	Ephemeral bool `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
 }
 
 // Volume describes a path inside the container that must persist.
