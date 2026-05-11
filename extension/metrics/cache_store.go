@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus/cache"
+	"github.com/paulmanoni/nexus/extension/cache"
 )
 
 // NewCacheStore returns a Store backed by a nexus cache.Manager —

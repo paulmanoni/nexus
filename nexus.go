@@ -19,7 +19,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/cache"
+	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/dashboard"
@@ -328,6 +328,12 @@ func New(cfg Config) *App {
 		Name:         "cron",
 		Version:      "1",
 		HasDashboard: true,
+	})
+	// Cache has no dashboard surface — it's plumbing consumed by
+	// metrics + user code via App.Cache(). Listed for discovery only.
+	a.RegisterPlugin(PluginRecord{
+		Name:    "cache",
+		Version: "1",
 	})
 	if a.dashboardOn {
 		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, a.liveNotifier, dashboard.Config{
