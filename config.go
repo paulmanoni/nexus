@@ -118,6 +118,21 @@ type Config struct {
 	// recompiling.
 	Deployment string
 
+	// Environment is the named target the binary is booting into —
+	// "production", "staging", "preview", etc. Distinct from
+	// Deployment (which is the topology unit, e.g. "users-svc"):
+	// one Deployment can run in many Environments. Drives the
+	// per-environment Override merge at boot.
+	//
+	// Resolution priority:
+	//   1. Explicit Config.Environment field
+	//   2. NEXUS_ENVIRONMENT env var (set by the orchestration platform)
+	//   3. Default "production"
+	//
+	// Empty string is normalized to "production" at resolveConfig time
+	// so downstream code doesn't branch on the empty value.
+	Environment string
+
 	// Version stamps the binary's version on /__nexus/config. Used by
 	// generated clients to detect peer-version skew across services
 	// in a split deployment ("service A is on v2, service B on v1"

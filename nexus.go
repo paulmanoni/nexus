@@ -102,6 +102,12 @@ type App struct {
 	// surfaced on /__nexus/config; future codegen'd clients will
 	// consult it to choose local-shortcut vs HTTP for cross-module calls.
 	deployment string
+
+	// environment is the named target this binary is booting into,
+	// resolved from Config.Environment / NEXUS_ENVIRONMENT / default
+	// ("production"). Drives the per-environment Override merge at
+	// fx.Start; surfaced on /__nexus/config.
+	environment string
 	// version is stamped on /__nexus/config so peer services in a split
 	// deployment can detect version skew. Defaults to "dev" via newApp
 	// when the user doesn't pass one.
@@ -222,6 +228,7 @@ func New(cfg Config) *App {
 		dashboardName: dashboardName,
 		version:       version,
 		deployment:    deployment,
+		environment:   cfg.Environment,
 		topology:      cfg.Topology,
 		graphqlPath:   cfg.GraphQL.Path,
 		dashboardOn:   cfg.Dashboard.Enabled,
@@ -358,6 +365,14 @@ func New(cfg Config) *App {
 			// stay byte-equivalent (modulo App.GeneratedAt, which
 			// ComputeHash excludes).
 			Manifest: func() manifest.Manifest {
+				// Prefer the effective (post-merge, post-validate)
+				// manifest computed at boot — that's what the platform
+				// should consume. Pre-boot inspection (print mode,
+				// requests during startup) falls back to building from
+				// the declared base.
+				if eff := a.EffectiveManifest(); eff != nil {
+					return *eff
+				}
 				return manifest.Build(a.manifestInputs())
 			},
 			// AdminToken from env. Empty → dashboard.Mount leaves the
@@ -509,6 +524,12 @@ func (a *App) RateLimiter() ratelimit.Store { return a.rlStore }
 // monolith. Read by future cross-module clients to choose the in-process
 // shortcut over HTTP.
 func (a *App) Deployment() string { return a.deployment }
+
+// Environment returns the resolved environment name ("production",
+// "staging", "preview", ...) the binary is booting into. Set from
+// Config.Environment or NEXUS_ENVIRONMENT; never empty (resolveConfig
+// normalizes to "production" when neither is supplied).
+func (a *App) Environment() string { return a.environment }
 
 // Version is the binary's release tag, defaulting to "dev". Surfaced on
 // /__nexus/config so generated clients can detect peer-version skew.

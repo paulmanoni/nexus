@@ -124,5 +124,25 @@ func resolveConfig(cfg Config) Config {
 	if cfg.Deployment == "" {
 		cfg.Deployment = os.Getenv(nexusDeploymentEnv)
 	}
+	// Environment chain: explicit Config field → NEXUS_ENVIRONMENT env
+	// var → "production". Normalized here so every downstream caller
+	// can rely on a non-empty value.
+	if cfg.Environment == "" {
+		cfg.Environment = os.Getenv(nexusEnvironmentEnv)
+	}
+	if cfg.Environment == "" {
+		cfg.Environment = defaultEnvironment
+	}
 	return cfg
 }
+
+// nexusEnvironmentEnv is the env var the orchestration platform sets
+// to flag which named environment the binary is booting into.
+// Resolved by resolveConfig into Config.Environment.
+const nexusEnvironmentEnv = "NEXUS_ENVIRONMENT"
+
+// defaultEnvironment is the fallback when neither Config.Environment
+// nor NEXUS_ENVIRONMENT is set. "production" is the conservative
+// default — a missing env var should land in the strictest validation
+// mode, not the most permissive.
+const defaultEnvironment = "production"
