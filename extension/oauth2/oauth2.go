@@ -17,7 +17,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/auth"
+	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/extension"
 )
 
 // PasswordAuthenticator validates a (username, password) pair against
@@ -194,8 +195,14 @@ func (h *holder) resolve(ctx context.Context, token string) (*auth.Identity, err
 	return s.Resolve(ctx, token)
 }
 
-// Module wires the OAuth2 server into a nexus app. Returns a
-// nexus.Option to compose into your top-level Module(...) chain.
+// Module wires the OAuth2 server into a nexus app as an
+// extension.Plugin — the same shape custom plugins use. Composes
+// auth.Module (so /oauth/token-issued bearer tokens flow through the
+// standard auth middleware + Required/Requires bundles), provides the
+// *Server type, and mounts the token (and optionally revoke) endpoint.
+//
+// The Plugin appears in app.Plugins() alongside auth — useful for
+// dashboards that list installed extensions.
 func Module(cfg Config) nexus.Option {
 	cfg.applyDefaults()
 	h := &holder{}
@@ -206,6 +213,9 @@ func Module(cfg Config) nexus.Option {
 
 	opts := []nexus.Option{
 		nexus.Provide(func(app *nexus.App) *Server { return buildServer(app, cfg, h) }),
+		// auth.Module is itself an extension.Plugin — composing it
+		// inside oauth2's Options means both auth and oauth2 register
+		// in app.Plugins(), no special handling needed.
 		auth.Module(authCfg),
 		nexus.AsRestHandler("POST", cfg.TokenPath,
 			func(srv *Server) gin.HandlerFunc { return srv.HandleToken },
@@ -218,7 +228,12 @@ func Module(cfg Config) nexus.Option {
 			nexus.Description("OAuth2 token revocation endpoint."),
 		))
 	}
-	return nexus.Options(opts...)
+
+	return extension.Use(extension.Plugin{
+		Name:    "oauth2",
+		Version: "1",
+		Options: opts,
+	})
 }
 
 func buildServer(app *nexus.App, cfg Config, h *holder) *Server {

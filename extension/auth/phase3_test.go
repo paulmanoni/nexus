@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/auth"
+	"github.com/paulmanoni/nexus/extension/auth"
 )
 
 func TestManager_InvalidateByIdentity(t *testing.T) {

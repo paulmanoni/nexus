@@ -238,7 +238,7 @@ Built-ins: `ratelimit.NewMiddleware(...)`, framework-attached `metrics`.
 ## Auth
 
 ```go
-import "github.com/paulmanoni/nexus/auth"
+import "github.com/paulmanoni/nexus/extension/auth"
 
 nexus.Run(nexus.Config{...},
     auth.Module(auth.Config{
@@ -265,7 +265,7 @@ Extractors: `auth.Bearer()`, `auth.Cookie(name)`, `auth.APIKey(header)`, `auth.C
 ## OAuth2
 
 ```go
-import "github.com/paulmanoni/nexus/oauth2"
+import "github.com/paulmanoni/nexus/extension/oauth2"
 
 nexus.Run(nexus.Config{...},
     oauth2.Module(oauth2.Config{
@@ -546,7 +546,9 @@ go run ./examples/graphapp
 
 ```
 nexus/                top-level App, Run, Module, Provide, AsWorker, ServeFrontend, options
-├── auth/             extractors, identity cache, per-op bundles, dashboard routes
+├── extension/        plugin seam — Plugin struct + Use(); built-in plugins live as subpackages:
+│   ├── auth/         extractors, identity cache, per-op bundles, dashboard routes
+│   └── oauth2/       password / refresh / client_credentials grant + auth bridge
 ├── graph/            resolver builder + validators
 ├── registry/         services, endpoints, resources, workers, middleware metadata
 ├── resource/         Database/Cache/Queue + health probing

@@ -772,7 +772,7 @@ package auth
 import (
 	"context"
 
-	"github.com/paulmanoni/nexus/oauth2"
+	"github.com/paulmanoni/nexus/extension/oauth2"
 )
 
 // Default dev client. Real apps swap NewStaticClientStore for

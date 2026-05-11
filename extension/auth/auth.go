@@ -60,6 +60,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/extension"
 	"github.com/paulmanoni/nexus/trace"
 )
 
@@ -290,15 +291,19 @@ func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) 
 	return m.state.resolve(ctx, token)
 }
 
-// Module wires auth into the nexus app:
+// Module wires auth into the nexus app. It builds an extension.Plugin
+// — the same shape custom plugins use — so auth participates in the
+// app's plugin registry alongside any other extensions.
 //
-//  1. Installs a global middleware that extracts + (optionally caches)
-//     resolves the identity per request, then stashes it on the
-//     request context.
-//  2. Stashes the shared moduleState on the context so per-op Required /
-//     Requires bundles can read custom PermissionFn / cache config.
-//  3. Registers a few "auth" middleware names in the registry so the
-//     dashboard's middleware chip list labels them consistently.
+//  1. Installs a global gin middleware that extracts + (optionally
+//     caches) resolves the identity per request, then stashes it on
+//     the request context (Options slot, runs first so subsequent
+//     route mounts see the middleware).
+//  2. Mounts /__nexus/auth and /__nexus/auth/invalidate via the
+//     Dashboard slot.
+//  3. Bridges the configured ExtractorInfo into the client SDK
+//     manifest via the Client.Apply slot — no-op when the SDK
+//     isn't mounted.
 //
 // Module does NOT touch (*Service).Auth. Services using the older
 // UserDetailsFn hook continue to work alongside; migration is a
@@ -325,24 +330,42 @@ func Module(cfg Config) nexus.Option {
 	}
 	manager := &Manager{state: state}
 
-	return nexus.Raw(fx.Options(
-		fx.Supply(manager),
-		fx.Invoke(func(app *nexus.App) {
-			state.bus = app.Bus()
-			app.Engine().Use(ginAuthMiddleware(state))
-			mountDashboardRoutes(app.Engine(), manager)
-			// Bridge the auth strategy into the client SDK
-			// manifest. No-op when the SDK isn't mounted (apps
-			// without Config.Client.Enabled or nexus.ClientUse
-			// see SetClientAuthInfo short-circuit on a nil
-			// handler). Keeping this here means apps wiring
-			// auth.Module + the SDK get the manifest's Auth
-			// section for free, no extra options.
-			app.SetClientAuthInfo(func() client.ExtractorInfo {
-				return toClientExtractor(manager.Info())
-			})
-		}),
-	))
+	return extension.Use(extension.Plugin{
+		Name:    "auth",
+		Version: "1",
+		Options: []nexus.Option{
+			nexus.Raw(fx.Supply(manager)),
+			// Install the global auth middleware on the gin engine and
+			// capture the trace bus. Runs before the Dashboard slot
+			// mounts /__nexus/auth, so those routes inherit the
+			// middleware.
+			nexus.Invoke(func(app *nexus.App) {
+				state.bus = app.Bus()
+				app.Engine().Use(ginAuthMiddleware(state))
+			}),
+		},
+		Dashboard: &extension.Dashboard{
+			Tab: &extension.Tab{ID: "auth", Label: "Auth"},
+			Routes: []extension.Route{
+				{Method: "GET", Path: "", Handler: dashboardListHandler(manager)},
+				{Method: "POST", Path: "/invalidate", Handler: dashboardInvalidateHandler(manager)},
+			},
+			LiveEvents: []string{"auth.reject"},
+		},
+		Client: &extension.Client{
+			Namespace: "auth",
+			Apply: func(app *nexus.App) error {
+				// Bridge the auth strategy into the client SDK manifest.
+				// SetClientAuthInfo short-circuits when the SDK isn't
+				// mounted (Config.Client.Enabled off, no nexus.ClientUse),
+				// so apps without the SDK pay nothing for this hook.
+				app.SetClientAuthInfo(func() client.ExtractorInfo {
+					return toClientExtractor(manager.Info())
+				})
+				return nil
+			},
+		},
+	})
 }
 
 // toClientExtractor adapts auth.ExtractorInfo (canonical) to
