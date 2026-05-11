@@ -28,7 +28,7 @@ import (
 	"sync"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/auth"
+	"github.com/paulmanoni/nexus/extension/auth"
 	"github.com/paulmanoni/nexus/client"
 )
 

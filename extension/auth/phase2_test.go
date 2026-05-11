@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/auth"
+	"github.com/paulmanoni/nexus/extension/auth"
 )
 
 // bootWithManager starts a nexus.Run app on a test port and captures the

@@ -143,6 +143,12 @@ type App struct {
 	// print time. Never holds connections or state that needs
 	// teardown — pure metadata.
 	manifest manifestStore
+
+	// plugins records metadata for every extension.Use registration so
+	// the dashboard / SDK can enumerate what's wired in. Methods live
+	// on *App (plugins.go); the field is lazy-initialized by
+	// RegisterPlugin so apps that never use plugins pay nothing.
+	plugins *pluginState
 }
 
 // New constructs an *App from a single Config. The canonical

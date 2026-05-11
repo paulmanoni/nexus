@@ -302,7 +302,7 @@ AUTH
 Wires the framework's auth surface: token extraction → cached
 identity resolution → per-op enforcement → trace events.
 
-    import "github.com/paulmanoni/nexus/auth"
+    import "github.com/paulmanoni/nexus/extension/auth"
 
     auth.Module(auth.Config{
         Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {
@@ -360,7 +360,7 @@ out of the box.
 
 Minimal app — password grant against your user store:
 
-    import "github.com/paulmanoni/nexus/oauth2"
+    import "github.com/paulmanoni/nexus/extension/oauth2"
 
     nexus.Run(nexus.Config{...},
         oauth2.Module(oauth2.Config{

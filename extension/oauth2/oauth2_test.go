@@ -13,8 +13,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/auth"
-	"github.com/paulmanoni/nexus/oauth2"
+	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/extension/oauth2"
 )
 
 // TestModule_PasswordGrantEndToEnd boots a real nexus app with the
