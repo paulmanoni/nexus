@@ -416,7 +416,7 @@ func (m *DB) NexusResources() []resource.Resource {
 const tmplCacheGo = `package resources
 
 import (
-	"github.com/paulmanoni/nexus/cache"
+	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/resource"
 	"go.uber.org/zap"
 )

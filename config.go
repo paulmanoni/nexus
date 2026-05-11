@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/paulmanoni/nexus/cache"
+	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/middleware"
