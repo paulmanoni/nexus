@@ -77,6 +77,17 @@ func TestParseIntrospectionNetworks_EmptyIsNil(t *testing.T) {
 	}
 }
 
+// TestIntrospectionGate_OpenInDevMode pins the dev-only bypass:
+// NEXUS_DEV=1 makes introspectionGate return nil so /__nexus/* routes
+// stay reachable for the operator running `nexus dev`. Production
+// binaries never see NEXUS_DEV=1, so strict-mode stays strict.
+func TestIntrospectionGate_OpenInDevMode(t *testing.T) {
+	t.Setenv(NexusDevEnv, "1")
+	if gate := introspectionGate(false, nil); gate != nil {
+		t.Fatal("gate should be nil under NEXUS_DEV=1")
+	}
+}
+
 // TestIntrospectionGate_BlocksByDefault is the v0.30 contract: with
 // Introspection: false and an empty allowlist, every request to a
 // gated route 404s — indistinguishable from "never mounted" so
