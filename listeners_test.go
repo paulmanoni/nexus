@@ -88,6 +88,18 @@ func TestListeners_ScopeFilter(t *testing.T) {
 	if got := httpGetStatus(t, publicAddr, "/ping"); got != http.StatusOK {
 		t.Errorf("public /ping: want 200, got %d", got)
 	}
+
+	// Health + readiness ARE exposed on the public listener — k8s
+	// liveness probes hit the container port (typically the public
+	// one), and the framework's own peerProber probes peers through
+	// their declared public URL. Without this, multi-listener apps
+	// silently fail readiness in production.
+	if got := httpGetStatus(t, publicAddr, "/__nexus/health"); got != http.StatusOK {
+		t.Errorf("public /__nexus/health: want 200, got %d", got)
+	}
+	if got := httpGetStatus(t, publicAddr, "/__nexus/ready"); got != http.StatusOK {
+		t.Errorf("public /__nexus/ready: want 200, got %d", got)
+	}
 }
 
 // TestListeners_DualStackBindResolves regression-tests the case that
