@@ -64,6 +64,20 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 			if err := app.runStartupTasks(ctx); err != nil {
 				return err
 			}
+			// Resolve the effective manifest for this environment:
+			// merge per-env overrides into the declared base, then
+			// validate required env vars / secrets are present and
+			// satisfy their Validation rules. Fail-fast before
+			// listeners bind so a misconfigured binary never serves
+			// requests.
+			//
+			// Runs AFTER runStartupTasks because some apps populate
+			// env vars in startup tasks (e.g. fetching a runtime
+			// secret) and BEFORE the listener bind so probes never
+			// see a half-resolved process.
+			if err := app.resolveEffectiveManifest(); err != nil {
+				return err
+			}
 			// SDK auto-dump: fires AFTER all AsRest/AsQuery/AsWS
 			// fx.Invokes have populated the registry, so the
 			// generated .d.ts + manifest reflect every endpoint.

@@ -609,6 +609,16 @@ type Inputs struct {
 	// empty) means "use defaults"; setting any field overrides only
 	// that path. Build() merges Admin field-by-field with defaults.
 	Admin AdminPaths
+
+	// Cloud / inputs surface (v0.39+). The framework wires these from
+	// the new DeclareEnvironment / DeclareSecret / DeclareFile /
+	// DeclareHooks / DeclareOverride APIs; nil/empty is the supported
+	// default for pre-cloud apps.
+	Environments []Environment
+	DirectSecrets []Secret
+	DirectFiles   []File
+	Hooks         *Hooks
+	Overrides     map[string]Override
 }
 
 // Build aggregates a Manifest from Inputs. Deduplicates env vars by
@@ -765,6 +775,32 @@ func Build(in Inputs) Manifest {
 	m.Modules = sortedModules(in.Modules)
 	m.Routes = sortedRoutes(in.Routes)
 	m.Entities = sortedEntities(in.Entities)
+
+	// Cloud / inputs surface. Pass-through; no dedup/sort because these
+	// come from a single source (the *App's manifestStore) where
+	// idempotency is enforced at declaration time.
+	if len(in.Environments) > 0 {
+		m.Environments = append([]Environment(nil), in.Environments...)
+		sort.Slice(m.Environments, func(i, j int) bool { return m.Environments[i].Name < m.Environments[j].Name })
+	}
+	if len(in.DirectSecrets) > 0 {
+		m.Secrets = append([]Secret(nil), in.DirectSecrets...)
+		sort.Slice(m.Secrets, func(i, j int) bool { return m.Secrets[i].Name < m.Secrets[j].Name })
+	}
+	if len(in.DirectFiles) > 0 {
+		m.Files = append([]File(nil), in.DirectFiles...)
+		sort.Slice(m.Files, func(i, j int) bool { return m.Files[i].Name < m.Files[j].Name })
+	}
+	if in.Hooks != nil {
+		h := *in.Hooks
+		m.Hooks = &h
+	}
+	if len(in.Overrides) > 0 {
+		m.Overrides = make(map[string]Override, len(in.Overrides))
+		for k, v := range in.Overrides {
+			m.Overrides[k] = v
+		}
+	}
 
 	// Hash last — every other field must be settled first. App.GeneratedAt
 	// is excluded by ComputeHash so the hash is stable across re-emissions

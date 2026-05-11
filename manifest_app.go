@@ -38,6 +38,21 @@ type manifestStore struct {
 	envProvs    []manifest.EnvProvider
 	svcProvs    []manifest.ServiceDependencyProvider
 	volProvs    []manifest.VolumeProvider
+
+	// inputs surface (v0.39+) — additive declarations the orchestration
+	// platform consumes. Empty for apps that haven't adopted the cloud
+	// contract yet; pass through unused.
+	environments []manifest.Environment
+	secrets      []manifest.Secret
+	files        []manifest.File
+	hooks        *manifest.Hooks
+	overrides    map[string]manifest.Override
+
+	// effective is the merged manifest for the active environment,
+	// populated once at boot by ResolveEffective. nil before that
+	// call (e.g. during print mode); /__nexus/manifest then falls
+	// back to building from the declared base.
+	effective *manifest.Manifest
 }
 
 // DeclareEnv records one env var the app reads. Safe to call from any
@@ -116,6 +131,87 @@ func (a *App) DeclareVolumeProvider(p manifest.VolumeProvider) {
 	a.manifest.mu.Unlock()
 }
 
+// DeclareSecret records one sensitive input the app reads. Distinct
+// from DeclareEnv so the platform's secret store can manage it
+// separately (encrypted at rest, redacted in UI, rotation reminders).
+// Empty Name is silently dropped.
+func (a *App) DeclareSecret(s manifest.Secret) {
+	if s.Name == "" {
+		return
+	}
+	a.manifest.mu.Lock()
+	a.manifest.secrets = append(a.manifest.secrets, s)
+	a.manifest.mu.Unlock()
+}
+
+// DeclareFile records a mounted-blob input — TLS bundle, JSON config
+// override, etc. The platform writes the bytes to Path at deploy time.
+// Empty Name or Path is silently dropped.
+func (a *App) DeclareFile(f manifest.File) {
+	if f.Name == "" || f.Path == "" {
+		return
+	}
+	a.manifest.mu.Lock()
+	a.manifest.files = append(a.manifest.files, f)
+	a.manifest.mu.Unlock()
+}
+
+// DeclareEnvironment records a deploy target ("production",
+// "staging", "preview", ...). The orchestration platform consults
+// the list to know which environments the binary is built for; the
+// active one (Config.Environment / NEXUS_ENVIRONMENT) is matched
+// against this set at boot.
+func (a *App) DeclareEnvironment(e manifest.Environment) {
+	if e.Name == "" {
+		return
+	}
+	a.manifest.mu.Lock()
+	// Idempotent: skip if a same-named environment is already declared.
+	// Lets multiple modules each call DeclareEnvironment("production")
+	// without producing duplicate manifest entries.
+	for _, existing := range a.manifest.environments {
+		if existing.Name == e.Name {
+			a.manifest.mu.Unlock()
+			return
+		}
+	}
+	a.manifest.environments = append(a.manifest.environments, e)
+	a.manifest.mu.Unlock()
+}
+
+// DeclareHooks sets the platform-orchestrated build/predeploy/
+// postdeploy commands. Idempotent within a single boot: subsequent
+// calls fully replace the previous Hooks block (rather than
+// accumulating) — typical use is one call from the top-level main()
+// with the full set.
+func (a *App) DeclareHooks(h manifest.Hooks) {
+	a.manifest.mu.Lock()
+	hCopy := h
+	a.manifest.hooks = &hCopy
+	a.manifest.mu.Unlock()
+}
+
+// DeclareOverride registers a per-environment Override against the
+// declared inputs. env must match a previously-declared Environment;
+// validation happens at merge time via manifest.MergeOverrides, not
+// here, so the declaration order doesn't matter.
+//
+// Calling DeclareOverride twice for the same env REPLACES the
+// previous diff — there's no merging at registration time. This
+// matches operator intent: one module owns the prod override for a
+// given env, not a chain of modules each contributing slices.
+func (a *App) DeclareOverride(env string, ov manifest.Override) {
+	if env == "" {
+		return
+	}
+	a.manifest.mu.Lock()
+	if a.manifest.overrides == nil {
+		a.manifest.overrides = make(map[string]manifest.Override)
+	}
+	a.manifest.overrides[env] = ov
+	a.manifest.mu.Unlock()
+}
+
 // AddStartupTask registers a one-shot task that runs before listeners
 // bind. Migrations and other pre-start side-effecting work belong
 // here. The Run function is opaque to print mode (manifest only
@@ -187,6 +283,21 @@ func (a *App) manifestInputs() manifest.Inputs {
 	envProvs := append([]manifest.EnvProvider(nil), a.manifest.envProvs...)
 	svcProvs := append([]manifest.ServiceDependencyProvider(nil), a.manifest.svcProvs...)
 	volProvs := append([]manifest.VolumeProvider(nil), a.manifest.volProvs...)
+	environments := append([]manifest.Environment(nil), a.manifest.environments...)
+	secrets := append([]manifest.Secret(nil), a.manifest.secrets...)
+	files := append([]manifest.File(nil), a.manifest.files...)
+	var hooks *manifest.Hooks
+	if a.manifest.hooks != nil {
+		h := *a.manifest.hooks
+		hooks = &h
+	}
+	var overrides map[string]manifest.Override
+	if len(a.manifest.overrides) > 0 {
+		overrides = make(map[string]manifest.Override, len(a.manifest.overrides))
+		for k, v := range a.manifest.overrides {
+			overrides[k] = v
+		}
+	}
 	a.manifest.mu.Unlock()
 
 	in := manifest.Inputs{
@@ -201,6 +312,11 @@ func (a *App) manifestInputs() manifest.Inputs {
 		DirectEnv:        envs,
 		DirectServices:   services,
 		DirectVolumes:    volumes,
+		Environments:     environments,
+		DirectSecrets:    secrets,
+		DirectFiles:      files,
+		Hooks:            hooks,
+		Overrides:        overrides,
 	}
 
 	// Auto-derive ServiceNeeds from registered NexusResources whose
