@@ -479,18 +479,26 @@ nexus.Config{
 }
 ```
 
-Selected HTTP surface:
+HTTP surface — each route's handler lives in the package that owns the
+data; `extension/dashboard/Mount` is a thin orchestrator that delegates
+via `MountDashboard(group, store)` calls:
 
-| Route | Returns |
-|---|---|
-| `GET /__nexus/` | Embedded Vue UI |
-| `GET /__nexus/endpoints` | Services + endpoints with deps |
-| `GET /__nexus/stats` | Per-endpoint counters |
-| `GET /__nexus/auth` | Cached identities |
-| `POST /__nexus/auth/invalidate` | `{id?|token?}` → drops cache entries |
-| `GET /__nexus/events` | WebSocket: trace + `request.op` + `auth.reject` events |
+| Route | Owner package | Returns |
+|---|---|---|
+| `GET /__nexus/` | `extension/dashboard` | Embedded Vue UI |
+| `GET /__nexus/config` | `extension/dashboard` | Dashboard config + name/version |
+| `GET /__nexus/live` | `extension/dashboard` | WebSocket: consolidated live snapshot stream |
+| `GET /__nexus/manifest` | `extension/dashboard` | Admin-gated (Bearer `NEXUS_ADMIN_TOKEN`) |
+| `GET /__nexus/endpoints` | `registry` | Services + endpoints with deps |
+| `GET /__nexus/resources` `…/workers` `…/middlewares` | `registry` | Registry snapshots |
+| `GET /__nexus/events` | `trace` | WebSocket: trace + `request.op` + `auth.reject` events |
+| `GET /__nexus/traces/:id` | `trace` | Reconstructed span tree |
+| `GET /__nexus/crons` `POST …/:name/{trigger,pause,resume}` | `extension/cron` | Snapshots + control |
+| `GET /__nexus/ratelimits` `POST` `DELETE` | `extension/ratelimit` | Snapshot + override + reset |
+| `GET /__nexus/stats` `…/errors` | `extension/metrics` | Per-endpoint counters + error ring |
+| `GET /__nexus/auth` `POST …/invalidate` | `extension/auth` | Cached identities + invalidation |
 
-UI dev: `cd dashboard/ui && npm install && npm run dev`. `npm run build` updates the embedded bundle.
+UI dev: `cd extension/dashboard/ui && npm install && npm run dev`. `npm run build` updates the embedded bundle.
 
 ## Performance
 
