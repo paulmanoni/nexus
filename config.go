@@ -7,9 +7,9 @@ import (
 
 	"github.com/paulmanoni/nexus/cache"
 	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/metrics"
+	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 )
 
 // Config drives how nexus.Run builds the app. Supply it as the first

@@ -13,7 +13,7 @@ import (
 	"github.com/graphql-go/graphql"
 	graph "github.com/paulmanoni/nexus/graph"
 
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )

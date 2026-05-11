@@ -25,9 +25,9 @@ import (
 	"github.com/paulmanoni/nexus/dashboard"
 	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/manifest"
-	"github.com/paulmanoni/nexus/metrics"
+	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/trace"
@@ -307,6 +307,23 @@ func New(cfg Config) *App {
 	if a.metricsStore == nil {
 		a.metricsStore = metrics.NewCacheStore(a.cacheMgr)
 	}
+	// Register ratelimit + metrics as built-in plugins so App.Plugins()
+	// lists them alongside user-installed extensions. Routes for
+	// /__nexus/ratelimits + /__nexus/stats live in extension/ratelimit
+	// and extension/metrics respectively — dashboard.Mount delegates to
+	// them. The records below capture metadata only; the routes mount
+	// via the dashboard path because these stores are framework-owned,
+	// not user-opt-in.
+	a.RegisterPlugin(PluginRecord{
+		Name:         "ratelimit",
+		Version:      "1",
+		HasDashboard: true,
+	})
+	a.RegisterPlugin(PluginRecord{
+		Name:         "metrics",
+		Version:      "1",
+		HasDashboard: true,
+	})
 	if a.dashboardOn {
 		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, a.liveNotifier, dashboard.Config{
 			Name:       a.dashboardName,

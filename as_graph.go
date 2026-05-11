@@ -12,7 +12,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 )
 
 // AsQuery registers a GraphQL query from a plain Go handler. The handler's

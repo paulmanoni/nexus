@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/ratelimit"
+	"github.com/paulmanoni/nexus/extension/ratelimit"
 )
 
 // listRateLimit caps GET /users at 60 RPM with a burst of 10. Bundled

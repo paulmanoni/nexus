@@ -7,7 +7,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/metrics"
+	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/transport/gql"
