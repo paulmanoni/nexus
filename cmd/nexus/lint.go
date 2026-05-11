@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,12 +19,19 @@ import (
 // runLint; tests construct it directly to drive the validator
 // without going through cobra parsing.
 type lintOptions struct {
-	// Source is where to read the manifest JSON from. Mutually
-	// exclusive set: filePath (path on disk, "-" for stdin), or
-	// binaryPath (run a binary in NEXUS_PRINT_MANIFEST=1 mode and
-	// lint its stdout).
+	// Source is where to read the manifest from. Mutually exclusive
+	// set: filePath (path on disk, "-" for stdin), or binaryPath
+	// (run a binary in NEXUS_PRINT_MANIFEST=1 mode and lint its
+	// stdout).
 	filePath   string
 	binaryPath string
+
+	// inputFormat forces a specific parser. Empty = auto-detect from
+	// the filePath extension (.yaml/.yml → YAML, anything else →
+	// JSON). Explicit --yaml / --json beats auto-detection. Stdin
+	// without an explicit flag defaults to JSON to preserve the
+	// pre-v0.43 pipe-from-print-mode workflow.
+	inputFormat string // "" | "yaml" | "json"
 
 	// JSON output for machine consumers (CI, IDE integrations). When
 	// false, the human-readable text formatter is used.
@@ -82,9 +90,15 @@ affect the exit code unless --quiet is unset (the default — quiet means
 "suppress warnings entirely", not "treat warnings as errors").
 
 Input sources:
-  nexus lint <path>           manifest JSON file
-  nexus lint -                read JSON from stdin (default if no arg)
-  nexus lint --binary=PATH    exec the binary with NEXUS_PRINT_MANIFEST=1`,
+  nexus lint <manifest.json>       JSON manifest file
+  nexus lint <nexus.deploy.yaml>   YAML inputs surface (auto-detected by extension)
+  nexus lint -                     read from stdin (default JSON; use --yaml for YAML)
+  nexus lint --binary=PATH         exec the binary with NEXUS_PRINT_MANIFEST=1
+
+Format detection (in priority order):
+  1. Explicit --yaml or --json flag
+  2. .yaml / .yml file extension → YAML
+  3. Default → JSON (preserves the pipe-from-print-mode CI workflow)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -94,9 +108,33 @@ Input sources:
 		},
 	}
 
+	// --json is overloaded: as a flag it means "emit JSON output";
+	// as an *input* format selector it's set via --json-in (rare,
+	// since JSON is the default). The asymmetry mirrors what
+	// operators actually type — `--yaml` is the new affordance.
 	cmd.Flags().BoolVar(&opts.jsonOut, "json", false, "emit issues as JSON instead of the text report")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress warning-severity issues from output")
 	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "exec the binary in NEXUS_PRINT_MANIFEST=1 mode and lint the result")
+
+	var yamlIn, jsonIn bool
+	cmd.Flags().BoolVar(&yamlIn, "yaml", false, "force YAML input parsing (overrides auto-detection)")
+	cmd.Flags().BoolVar(&jsonIn, "json-in", false, "force JSON input parsing (overrides auto-detection)")
+
+	// Translate the two booleans into the single inputFormat field.
+	// PreRunE runs after flag parsing but before RunE, so the field
+	// is set before runLint sees it.
+	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
+		if yamlIn && jsonIn {
+			return errors.New("nexus lint: --yaml and --json-in are mutually exclusive")
+		}
+		switch {
+		case yamlIn:
+			opts.inputFormat = "yaml"
+		case jsonIn:
+			opts.inputFormat = "json"
+		}
+		return nil
+	}
 
 	return cmd
 }
@@ -108,15 +146,21 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 	if opts.filePath != "" && opts.binaryPath != "" {
 		return errors.New("nexus lint: cannot combine a manifest path with --binary")
 	}
+	if opts.inputFormat == "yaml" && opts.binaryPath != "" {
+		// Binary print mode always emits JSON; --yaml would be
+		// silently ignored otherwise. Surface the conflict.
+		return errors.New("nexus lint: --yaml is incompatible with --binary (binary print mode emits JSON)")
+	}
 
 	raw, source, err := readManifestSource(opts)
 	if err != nil {
 		return err
 	}
 
-	var m nexusmanifest.Manifest
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return fmt.Errorf("nexus lint: parse manifest JSON from %s: %w", source, err)
+	format := resolveInputFormat(opts, source)
+	m, err := parseManifest(raw, format, source)
+	if err != nil {
+		return err
 	}
 
 	issues := nexusmanifest.Lint(m)
@@ -128,6 +172,43 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 		return emitJSON(stdout, issues)
 	}
 	return emitText(stdout, stderr, source, issues)
+}
+
+// resolveInputFormat picks the parser to use based on the explicit
+// --yaml/--json-in flag (highest priority), then the filename
+// extension, then JSON as the default. Source for stdin / binary
+// inputs uses the synthetic names "stdin" / binary path; both fall
+// through to JSON unless --yaml is set.
+func resolveInputFormat(opts lintOptions, source string) string {
+	if opts.inputFormat != "" {
+		return opts.inputFormat
+	}
+	ext := strings.ToLower(filepath.Ext(source))
+	if ext == ".yaml" || ext == ".yml" {
+		return "yaml"
+	}
+	return "json"
+}
+
+// parseManifest dispatches to the JSON or YAML parser based on
+// format. Wrapping errors with source + format makes diagnostics
+// readable when a manifest is wrong AND someone forgot which parser
+// they wanted.
+func parseManifest(raw []byte, format, source string) (nexusmanifest.Manifest, error) {
+	switch format {
+	case "yaml":
+		m, err := nexusmanifest.LoadInputsYAML(raw)
+		if err != nil {
+			return nexusmanifest.Manifest{}, fmt.Errorf("nexus lint: parse YAML from %s: %w", source, err)
+		}
+		return m, nil
+	default:
+		var m nexusmanifest.Manifest
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nexusmanifest.Manifest{}, fmt.Errorf("nexus lint: parse JSON from %s: %w", source, err)
+		}
+		return m, nil
+	}
 }
 
 // readManifestSource resolves opts into the manifest bytes plus a

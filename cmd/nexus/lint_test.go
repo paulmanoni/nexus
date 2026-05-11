@@ -161,7 +161,7 @@ func TestLint_MalformedJSON_Rejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "parse manifest JSON") {
+	if !strings.Contains(err.Error(), "parse JSON") {
 		t.Errorf("error should explain parse failure, got %v", err)
 	}
 }
@@ -200,6 +200,127 @@ func TestLint_TextOutput_OrdersErrorsBeforeWarnings(t *testing.T) {
 	}
 	if errIdx > warnIdx {
 		t.Errorf("error should appear before warning in report:\n%s", out)
+	}
+}
+
+// writeYAMLFile writes raw YAML bytes to a temp file with the given
+// extension and returns the path. Tests use this to drive the YAML
+// input path of nexus lint without depending on Go struct → YAML
+// marshaling (the manifest types don't always round-trip cleanly
+// since YAML omits cleaner than JSON does).
+func writeYAMLFile(t *testing.T, ext, contents string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nexus.deploy"+ext)
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return path
+}
+
+func TestLint_YAML_AutoDetectedByExtension(t *testing.T) {
+	// .yaml extension → YAML parser without --yaml flag.
+	path := writeYAMLFile(t, ".yaml", `
+environments:
+  production: { domain: app.example.com }
+secrets:
+  JWT_SIGNING_KEY: { required: true }
+`)
+	stdout := new(bytes.Buffer)
+	err := runLint(stdout, new(bytes.Buffer), lintOptions{filePath: path})
+	if err != nil {
+		t.Fatalf("expected success on clean YAML, got %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "manifest is valid") {
+		t.Errorf("missing success line:\n%s", stdout.String())
+	}
+}
+
+func TestLint_YAML_DetectedFromYmlExtension(t *testing.T) {
+	path := writeYAMLFile(t, ".yml", `
+environments:
+  production: {}
+`)
+	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{filePath: path})
+	if err != nil {
+		t.Fatalf("expected success on .yml, got %v", err)
+	}
+}
+
+func TestLint_YAML_ExplicitFlagOverridesExtension(t *testing.T) {
+	// File has .json extension but contents are YAML — --yaml should
+	// force YAML parsing, beating the extension hint.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tricky.json")
+	if err := os.WriteFile(path, []byte("environments:\n  production: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{filePath: path, inputFormat: "yaml"})
+	if err != nil {
+		t.Fatalf("--yaml should force YAML parser despite .json extension: %v", err)
+	}
+}
+
+func TestLint_YAML_OverrideMismatchCaught(t *testing.T) {
+	// YAML declares an override for an env var that doesn't exist in
+	// base — lint should catch it (same rule the merger enforces at
+	// runtime, but now visible at write time).
+	path := writeYAMLFile(t, ".yaml", `
+environments:
+  production: {}
+environment_overrides:
+  production:
+    env: { NOT_DECLARED: foo }
+`)
+	stdout := new(bytes.Buffer)
+	err := runLint(stdout, new(bytes.Buffer), lintOptions{filePath: path})
+	if !IsLintExitError(err) {
+		t.Fatalf("expected lint-exit error on unknown override key, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), "NOT_DECLARED") {
+		t.Errorf("error should name the unknown key:\n%s", stdout.String())
+	}
+}
+
+func TestLint_YAML_BinaryConflict_Rejected(t *testing.T) {
+	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{
+		inputFormat: "yaml",
+		binaryPath:  "./bin",
+	})
+	if err == nil {
+		t.Fatal("expected error when --yaml combined with --binary")
+	}
+	if !strings.Contains(err.Error(), "yaml") {
+		t.Errorf("error should mention yaml: %v", err)
+	}
+}
+
+func TestLint_YAML_MalformedRejected(t *testing.T) {
+	path := writeYAMLFile(t, ".yaml", "environments: {{ unclosed")
+	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{filePath: path})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "parse YAML") {
+		t.Errorf("error should explain YAML parse failure: %v", err)
+	}
+}
+
+func TestLint_YAML_StdinWithFlag(t *testing.T) {
+	// Drive the stdin path with --yaml so the parser doesn't fall
+	// back to JSON. We can't easily redirect os.Stdin in tests, so
+	// just verify the flag wiring via lintOptions directly.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "passthrough.yaml")
+	if err := os.WriteFile(path, []byte("environments:\n  staging: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{
+		filePath:    path,
+		inputFormat: "yaml",
+	})
+	if err != nil {
+		t.Fatalf("clean YAML with explicit flag, got %v", err)
 	}
 }
 
