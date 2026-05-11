@@ -22,7 +22,7 @@ import (
 	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension/cron"
-	"github.com/paulmanoni/nexus/dashboard"
+	"github.com/paulmanoni/nexus/extension/dashboard"
 	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/extension/metrics"
@@ -335,6 +335,17 @@ func New(cfg Config) *App {
 		Name:    "cache",
 		Version: "1",
 	})
+	// Dashboard registers itself only when Config.Dashboard.Enabled
+	// flips it on (the actual Mount call below). Conditional record
+	// keeps app.Plugins() honest — a binary with the dashboard off
+	// shouldn't claim it's wired.
+	if a.dashboardOn {
+		a.RegisterPlugin(PluginRecord{
+			Name:         "dashboard",
+			Version:      "1",
+			HasDashboard: true,
+		})
+	}
 	if a.dashboardOn {
 		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, a.liveNotifier, dashboard.Config{
 			Name:       a.dashboardName,

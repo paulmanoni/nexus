@@ -552,7 +552,8 @@ nexus/                top-level App, Run, Module, Provide, AsWorker, ServeFronte
 │   ├── cron/         framework-owned: scheduler + dashboard control
 │   ├── ratelimit/    framework-owned: token-bucket store + middleware factories + dashboard
 │   ├── metrics/      framework-owned: per-endpoint counters + error ring + dashboard
-│   └── cache/        framework-owned: Redis + in-memory hybrid (no dashboard surface)
+│   ├── cache/        framework-owned: Redis + in-memory hybrid (no dashboard surface)
+│   └── dashboard/    framework-owned: /__nexus surface + embedded Vue UI (thin orchestrator — other extensions own their routes)
 ├── graph/            resolver builder + validators
 ├── registry/         services, endpoints, resources, workers, middleware metadata
 ├── resource/         Database/Cache/Queue + health probing
@@ -561,7 +562,6 @@ nexus/                top-level App, Run, Module, Provide, AsWorker, ServeFronte
 ├── middleware/       cross-transport bundle
 ├── db/               opinionated GORM helpers
 ├── storage/gorm/     production Store[T] adapter for AsCRUD
-├── dashboard/        /__nexus surface + embedded Vue UI (thin orchestrator — extension/* own their routes)
 └── examples/         runnable demos
 ```
 
