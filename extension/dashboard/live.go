@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 
 	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/live"
@@ -193,3 +195,9 @@ func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler,
 // keep context import live for downstream refactors that call ctx-aware
 // helpers from this file.
 var _ = context.Background
+
+// upgrader is the WebSocket upgrade used by /live. The dashboard
+// package keeps it local now that the /events handler — the other
+// historical user — has moved to trace.MountDashboard with its own
+// upgrader.
+var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
