@@ -546,24 +546,31 @@ go run ./examples/graphapp
 
 ```
 nexus/                top-level App, Run, Module, Provide, AsWorker, ServeFrontend, options
-├── extension/        plugin seam — Plugin struct + Use(); built-in plugins live as subpackages:
-│   ├── auth/         extractors, identity cache, per-op bundles, dashboard routes
-│   └── oauth2/       password / refresh / client_credentials grant + auth bridge
+├── extension/        plugin seam — Plugin struct + Use(); all built-ins live as subpackages:
+│   ├── auth/         user-opt-in: extractors, identity cache, per-op bundles, dashboard routes
+│   ├── oauth2/       user-opt-in: password / refresh / client_credentials grant + auth bridge
+│   ├── cron/         framework-owned: scheduler + dashboard control
+│   ├── ratelimit/    framework-owned: token-bucket store + middleware factories + dashboard
+│   ├── metrics/      framework-owned: per-endpoint counters + error ring + dashboard
+│   └── cache/        framework-owned: Redis + in-memory hybrid (no dashboard surface)
 ├── graph/            resolver builder + validators
 ├── registry/         services, endpoints, resources, workers, middleware metadata
 ├── resource/         Database/Cache/Queue + health probing
 ├── trace/            ring-buffer bus + per-request middleware
 ├── transport/{rest,gql,ws}/
 ├── middleware/       cross-transport bundle
-├── metrics/          per-endpoint counters, error ring
-├── ratelimit/        token-bucket + middleware factories
-├── cron/             scheduler + dashboard control
-├── cache/            Redis + in-memory hybrid
 ├── db/               opinionated GORM helpers
 ├── storage/gorm/     production Store[T] adapter for AsCRUD
-├── dashboard/        /__nexus surface + embedded Vue UI
+├── dashboard/        /__nexus surface + embedded Vue UI (thin orchestrator — extension/* own their routes)
 └── examples/         runnable demos
 ```
+
+Every built-in registers a `PluginRecord` with the App, so `app.Plugins()`
+enumerates what's wired in. User-opt-in plugins are constructed via
+`extension.Use(extension.Plugin{...})`; framework-owned ones are
+instantiated by the framework itself and contribute their dashboard
+routes via `MountDashboard(group, store)` functions the dashboard
+package calls during mount.
 
 ## License
 
