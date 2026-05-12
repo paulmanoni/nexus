@@ -38,6 +38,7 @@ package visitors
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/paulmanoni/nexus"
@@ -208,7 +209,15 @@ func (s *pluginState) savingLoop(ctx context.Context) {
 
 func applyDefaults(cfg *Config) {
 	if cfg.StorePath == "" {
-		cfg.StorePath = "data/visitors.json"
+		// Env override lets production (with locked-down systemd
+		// ProtectSystem + restrictive WorkingDirectory) point at
+		// /var/lib/<app>/visitors.json without changing main.go.
+		// Falls back to relative path for dev.
+		if env := os.Getenv("NEXUS_VISITORS_STORE"); env != "" {
+			cfg.StorePath = env
+		} else {
+			cfg.StorePath = "data/visitors.json"
+		}
 	}
 	if cfg.APIPath == "" {
 		cfg.APIPath = "/api/visitors"
