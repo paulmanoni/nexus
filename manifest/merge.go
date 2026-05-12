@@ -162,6 +162,17 @@ func MergeOverrides(base Manifest, env string) (Manifest, error) {
 		out.Hooks = &hooksCopy
 	}
 
+	// TLS: field-by-field patch. If the base has no TLS block but
+	// the override provides one, the patch promotes to a full block
+	// for this environment — useful when only one environment needs
+	// TLS (e.g. production-only HTTPS with staging on a private LB).
+	if ov.TLS != nil {
+		if out.TLS == nil {
+			out.TLS = &TLSBlock{}
+		}
+		applyTLSPatch(out.TLS, ov.TLS)
+	}
+
 	return out, nil
 }
 
@@ -243,6 +254,39 @@ func applyServicePatch(s *ServiceNeed, p ServicePatch) {
 	}
 	if p.Ephemeral != nil {
 		s.Ephemeral = *p.Ephemeral
+	}
+}
+
+// applyTLSPatch merges a TLSPatch into the effective TLS block. Field
+// semantics:
+//
+//   - Domains: nil → inherit base; non-nil → fully replace. An empty
+//     slice is meaningful — it means "no domains in this env",
+//     equivalent to disabling the plugin without touching Disabled.
+//   - Email / CacheDir: pointer-set, non-nil replaces.
+//   - Redirect / Staging / Disabled: pointer-set, non-nil replaces.
+//
+// The defensive copy of the Domains slice keeps the override map's
+// slice from sharing a backing array with the merged manifest.
+func applyTLSPatch(t *TLSBlock, p *TLSPatch) {
+	if p.Domains != nil {
+		t.Domains = append([]string(nil), p.Domains...)
+	}
+	if p.Email != nil {
+		t.Email = *p.Email
+	}
+	if p.CacheDir != nil {
+		t.CacheDir = *p.CacheDir
+	}
+	if p.Redirect != nil {
+		r := *p.Redirect
+		t.Redirect = &r
+	}
+	if p.Staging != nil {
+		t.Staging = *p.Staging
+	}
+	if p.Disabled != nil {
+		t.Disabled = *p.Disabled
 	}
 }
 
@@ -423,6 +467,17 @@ func deepCopyManifest(m Manifest) Manifest {
 	if m.Hooks != nil {
 		h := *m.Hooks
 		out.Hooks = &h
+	}
+	if m.TLS != nil {
+		t := *m.TLS
+		if m.TLS.Domains != nil {
+			t.Domains = append([]string(nil), m.TLS.Domains...)
+		}
+		if m.TLS.Redirect != nil {
+			r := *m.TLS.Redirect
+			t.Redirect = &r
+		}
+		out.TLS = &t
 	}
 	return out
 }

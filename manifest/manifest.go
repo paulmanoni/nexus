@@ -203,6 +203,12 @@ type Manifest struct {
 	// (above) still apply.
 	Hooks *Hooks `json:"hooks,omitempty"`
 
+	// TLS declares the public-internet TLS configuration the binary
+	// wants. Read by the extension/tls plugin at boot for the active
+	// environment's effective values (after MergeOverrides). Nil =
+	// no platform-managed TLS requested. See TLSBlock.
+	TLS *TLSBlock `json:"tls,omitempty"`
+
 	// Overrides hold the per-environment diffs applied to the base
 	// inputs at merge time. Keyed by environment name. After
 	// MergeOverrides runs, the returned Manifest has Overrides nil —

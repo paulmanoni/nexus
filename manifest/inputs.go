@@ -115,6 +115,70 @@ type Hooks struct {
 	Postdeploy []string `json:"postdeploy,omitempty" yaml:"postdeploy,omitempty"`
 }
 
+// TLSBlock declares the public-internet TLS configuration the binary
+// wants the platform (or the in-process tls extension) to provide.
+// Surfaced as a structured block instead of a soup of env vars so:
+//
+//   - lint/doctor can reason about it (wildcard rejection, missing
+//     email, conflicting cache config)
+//   - environment_overrides can replace the whole domain list cleanly
+//     (production gets app.example.com; staging gets staging.app...)
+//   - the dashboard's TLS tab can show "this is the declared shape"
+//     alongside the runtime status
+//
+// Empty/nil means the binary does not request platform-managed TLS.
+// The in-process tls extension may still be wired separately.
+type TLSBlock struct {
+	// Domains is the whitelist of hostnames the certificate manager
+	// is allowed to issue for. The tls extension passes these to
+	// autocert.HostWhitelist; a request for any other hostname is
+	// rejected before any ACME round-trip.
+	Domains []string `json:"domains,omitempty" yaml:"domains,omitempty"`
+
+	// Email is the ACME account contact. Required for production
+	// Let's Encrypt; expiry warnings land here ~20 days before a
+	// cert lapses if our renewal fails. Treat as oncall@.
+	Email string `json:"email,omitempty" yaml:"email,omitempty"`
+
+	// CacheDir is the on-disk directory the manager uses for cert
+	// storage. Operator picks the path; the orchestration platform
+	// guarantees a persistent volume mounted there when relevant.
+	CacheDir string `json:"cacheDir,omitempty" yaml:"cache_dir,omitempty"`
+
+	// Redirect controls whether the :80 listener 301-redirects every
+	// non-ACME request to https://. Pointer so "absent" (inherit
+	// extension default) is distinguishable from explicit false.
+	Redirect *bool `json:"redirect,omitempty" yaml:"redirect,omitempty"`
+
+	// Staging routes ACME requests to Let's Encrypt's staging
+	// directory. Use during development / preview environments to
+	// avoid burning production quota.
+	Staging bool `json:"staging,omitempty" yaml:"staging,omitempty"`
+
+	// Disabled, when true, tells the tls extension to no-op for this
+	// environment. Useful when running behind a cloud LB that
+	// already terminates TLS, or when the deploy target is a dev
+	// laptop where binding :443 is not possible.
+	Disabled bool `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+}
+
+// TLSPatch is the override-adjustable subset of TLSBlock applied
+// per-environment. Pointer fields let "absent" mean inherit; non-nil
+// pointers replace. Domains uses a slice (not pointer) and follows
+// list-replace semantics — production and staging typically declare
+// fully different domain sets, so a deep-merge would only confuse.
+type TLSPatch struct {
+	// Domains: nil → inherit base; non-nil → fully replace. An
+	// explicit empty list ([]) means "no domains in this env", which
+	// is equivalent to setting Disabled=true.
+	Domains  []string `json:"domains,omitempty" yaml:"domains,omitempty"`
+	Email    *string  `json:"email,omitempty" yaml:"email,omitempty"`
+	CacheDir *string  `json:"cacheDir,omitempty" yaml:"cache_dir,omitempty"`
+	Redirect *bool    `json:"redirect,omitempty" yaml:"redirect,omitempty"`
+	Staging  *bool    `json:"staging,omitempty" yaml:"staging,omitempty"`
+	Disabled *bool    `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+}
+
 // Override is the per-environment diff applied on top of the base
 // inputs at merge time. Keys absent here inherit from base; keys with
 // scalar values lock the field (operator UI marks it read-only); keys
@@ -141,6 +205,13 @@ type Override struct {
 	// Hooks fully replaces the base Hooks block for this environment.
 	// nil means inherit; non-nil replaces.
 	Hooks *Hooks `json:"hooks,omitempty" yaml:"hooks,omitempty"`
+
+	// TLS patches the base TLSBlock. Field-by-field merge — Domains
+	// is a list-replace, everything else is pointer-set. nil means
+	// "inherit base TLS unchanged". Operators typically use this to
+	// swap domains (production app.example.com vs staging.example.com)
+	// and to flip Staging=true in non-production environments.
+	TLS *TLSPatch `json:"tls,omitempty" yaml:"tls,omitempty"`
 }
 
 // EnvVarPatch is the subset of EnvVar fields an override is allowed to
