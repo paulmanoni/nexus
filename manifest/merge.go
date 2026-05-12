@@ -173,6 +173,15 @@ func MergeOverrides(base Manifest, env string) (Manifest, error) {
 		applyTLSPatch(out.TLS, ov.TLS)
 	}
 
+	// CORS: same merge shape as TLS — promote a missing base block
+	// when the override provides one, then patch in place.
+	if ov.CORS != nil {
+		if out.CORS == nil {
+			out.CORS = &CORSBlock{}
+		}
+		applyCORSPatch(out.CORS, ov.CORS)
+	}
+
 	return out, nil
 }
 
@@ -254,6 +263,36 @@ func applyServicePatch(s *ServiceNeed, p ServicePatch) {
 	}
 	if p.Ephemeral != nil {
 		s.Ephemeral = *p.Ephemeral
+	}
+}
+
+// applyCORSPatch merges a CORSPatch into the effective CORS block.
+// Slice fields list-replace (non-nil means "fully replace"), scalar
+// fields use pointer-set semantics so the override can flip a value
+// while leaving it absent means "inherit". Same shape as
+// applyTLSPatch — kept in sync deliberately.
+func applyCORSPatch(b *CORSBlock, p *CORSPatch) {
+	if p.AllowOrigins != nil {
+		b.AllowOrigins = append([]string(nil), p.AllowOrigins...)
+	}
+	if p.AllowMethods != nil {
+		b.AllowMethods = append([]string(nil), p.AllowMethods...)
+	}
+	if p.AllowHeaders != nil {
+		b.AllowHeaders = append([]string(nil), p.AllowHeaders...)
+	}
+	if p.ExposeHeaders != nil {
+		b.ExposeHeaders = append([]string(nil), p.ExposeHeaders...)
+	}
+	if p.AllowCredentials != nil {
+		v := *p.AllowCredentials
+		b.AllowCredentials = &v
+	}
+	if p.MaxAge != nil {
+		b.MaxAge = *p.MaxAge
+	}
+	if p.Disabled != nil {
+		b.Disabled = *p.Disabled
 	}
 }
 
@@ -478,6 +517,26 @@ func deepCopyManifest(m Manifest) Manifest {
 			t.Redirect = &r
 		}
 		out.TLS = &t
+	}
+	if m.CORS != nil {
+		c := *m.CORS
+		if m.CORS.AllowOrigins != nil {
+			c.AllowOrigins = append([]string(nil), m.CORS.AllowOrigins...)
+		}
+		if m.CORS.AllowMethods != nil {
+			c.AllowMethods = append([]string(nil), m.CORS.AllowMethods...)
+		}
+		if m.CORS.AllowHeaders != nil {
+			c.AllowHeaders = append([]string(nil), m.CORS.AllowHeaders...)
+		}
+		if m.CORS.ExposeHeaders != nil {
+			c.ExposeHeaders = append([]string(nil), m.CORS.ExposeHeaders...)
+		}
+		if m.CORS.AllowCredentials != nil {
+			v := *m.CORS.AllowCredentials
+			c.AllowCredentials = &v
+		}
+		out.CORS = &c
 	}
 	return out
 }

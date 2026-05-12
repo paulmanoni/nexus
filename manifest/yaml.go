@@ -49,6 +49,7 @@ type DeployYAMLInputs struct {
 	Files                map[string]File            `yaml:"files,omitempty"`
 	Hooks                *Hooks                     `yaml:"hooks,omitempty"`
 	TLS                  *TLSBlock                  `yaml:"tls,omitempty"`
+	CORS                 *CORSBlock                 `yaml:"cors,omitempty"`
 	EnvironmentOverrides map[string]Override        `yaml:"environment_overrides,omitempty"`
 
 	// Pre-existing top-level blocks (auto-populated by `nexus
@@ -170,6 +171,25 @@ func materializeInputs(raw DeployYAMLInputs) Manifest {
 			t.Domains = append([]string(nil), t.Domains...)
 		}
 		m.TLS = &t
+	}
+
+	if raw.CORS != nil {
+		c := *raw.CORS
+		// Defensive copies of every slice field so a mutation on
+		// the loader's input can't reach the materialized manifest.
+		if c.AllowOrigins != nil {
+			c.AllowOrigins = append([]string(nil), c.AllowOrigins...)
+		}
+		if c.AllowMethods != nil {
+			c.AllowMethods = append([]string(nil), c.AllowMethods...)
+		}
+		if c.AllowHeaders != nil {
+			c.AllowHeaders = append([]string(nil), c.AllowHeaders...)
+		}
+		if c.ExposeHeaders != nil {
+			c.ExposeHeaders = append([]string(nil), c.ExposeHeaders...)
+		}
+		m.CORS = &c
 	}
 
 	if len(raw.Env) > 0 {

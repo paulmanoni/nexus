@@ -209,6 +209,12 @@ type Manifest struct {
 	// no platform-managed TLS requested. See TLSBlock.
 	TLS *TLSBlock `json:"tls,omitempty"`
 
+	// CORS declares the cross-origin policy the binary applies to
+	// its public HTTP surface. Read by the extension/cors plugin at
+	// boot. Nil = no manifest-driven CORS (in-code Config still
+	// applies if the plugin is loaded). See CORSBlock.
+	CORS *CORSBlock `json:"cors,omitempty"`
+
 	// Overrides hold the per-environment diffs applied to the base
 	// inputs at merge time. Keyed by environment name. After
 	// MergeOverrides runs, the returned Manifest has Overrides nil —

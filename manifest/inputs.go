@@ -162,6 +162,67 @@ type TLSBlock struct {
 	Disabled bool `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 }
 
+// CORSBlock declares the CORS policy the binary wants applied to its
+// public HTTP surface. Surfaced as a structured block (not env vars)
+// so lint/doctor can sanity-check it — most notably the
+// wildcard-vs-credentials trap that browsers silently reject.
+//
+// environment_overrides typically uses this to swap origins per env:
+// production locks to a specific frontend domain, preview environments
+// are permissive ("*") so per-branch URLs work without manifest
+// changes.
+type CORSBlock struct {
+	// AllowOrigins is the list of origins permitted to read responses.
+	// Entries can be exact ("https://app.example.com"), a wildcard
+	// ("*"), or a subdomain wildcard ("https://*.example.com").
+	AllowOrigins []string `json:"allowOrigins,omitempty" yaml:"allow_origins,omitempty"`
+
+	// AllowMethods is the HTTP methods served. Defaults to GET/HEAD/
+	// POST/PUT/PATCH/DELETE when empty.
+	AllowMethods []string `json:"allowMethods,omitempty" yaml:"allow_methods,omitempty"`
+
+	// AllowHeaders is request headers permitted on preflighted calls.
+	// Defaults to Accept/Content-Type/Authorization/X-Requested-With.
+	// Set to ["*"] to echo whatever the browser asks for (dev-friendly
+	// but loose).
+	AllowHeaders []string `json:"allowHeaders,omitempty" yaml:"allow_headers,omitempty"`
+
+	// ExposeHeaders is response headers the browser surfaces to JS.
+	// Required to surface custom headers (X-Total-Count etc.) — the
+	// CORS-safelisted set is otherwise the only readable subset.
+	ExposeHeaders []string `json:"exposeHeaders,omitempty" yaml:"expose_headers,omitempty"`
+
+	// AllowCredentials sets Access-Control-Allow-Credentials: true.
+	// Pointer-typed so the override path distinguishes "absent"
+	// (inherit) from "explicit false". Wildcard origin is incompatible
+	// with credentials; the cors extension rejects that pairing.
+	AllowCredentials *bool `json:"allowCredentials,omitempty" yaml:"allow_credentials,omitempty"`
+
+	// MaxAge is the preflight cache lifetime in seconds. Defaults to
+	// 600 when zero. Production typically wants 86400 (24h); dev
+	// wants low values so policy edits take effect immediately.
+	MaxAge int `json:"maxAge,omitempty" yaml:"max_age,omitempty"`
+
+	// Disabled, when true, makes the extension a no-op for this
+	// environment — useful when an upstream proxy / CDN already
+	// handles CORS.
+	Disabled bool `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+}
+
+// CORSPatch is the override-adjustable subset of CORSBlock. Slice
+// fields follow list-replace semantics (matches TLS) — per-env
+// origin lists are typically wholly different, not deep-merged.
+// Pointers on scalars let "absent" mean inherit.
+type CORSPatch struct {
+	AllowOrigins     []string `json:"allowOrigins,omitempty" yaml:"allow_origins,omitempty"`
+	AllowMethods     []string `json:"allowMethods,omitempty" yaml:"allow_methods,omitempty"`
+	AllowHeaders     []string `json:"allowHeaders,omitempty" yaml:"allow_headers,omitempty"`
+	ExposeHeaders    []string `json:"exposeHeaders,omitempty" yaml:"expose_headers,omitempty"`
+	AllowCredentials *bool    `json:"allowCredentials,omitempty" yaml:"allow_credentials,omitempty"`
+	MaxAge           *int     `json:"maxAge,omitempty" yaml:"max_age,omitempty"`
+	Disabled         *bool    `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+}
+
 // TLSPatch is the override-adjustable subset of TLSBlock applied
 // per-environment. Pointer fields let "absent" mean inherit; non-nil
 // pointers replace. Domains uses a slice (not pointer) and follows
@@ -212,6 +273,11 @@ type Override struct {
 	// swap domains (production app.example.com vs staging.example.com)
 	// and to flip Staging=true in non-production environments.
 	TLS *TLSPatch `json:"tls,omitempty" yaml:"tls,omitempty"`
+
+	// CORS patches the base CORSBlock. Same merge shape as TLS —
+	// slice fields list-replace, scalars pointer-set. Typical use
+	// is locking AllowOrigins to a per-environment frontend URL.
+	CORS *CORSPatch `json:"cors,omitempty" yaml:"cors,omitempty"`
 }
 
 // EnvVarPatch is the subset of EnvVar fields an override is allowed to
