@@ -224,6 +224,20 @@ func readManifestSource(opts lintOptions) (raw []byte, source string, err error)
 		}
 		return out, opts.binaryPath, nil
 	case opts.filePath == "" || opts.filePath == "-":
+		// Default-to-stdin is great in pipelines but a footgun in
+		// terminals — io.ReadAll(os.Stdin) on a TTY blocks forever
+		// because the kernel never sends EOF until the user hits
+		// Ctrl-D. Detect the TTY case and emit a helpful error
+		// instead. The "-" case (explicit stdin request) still
+		// reads even from a TTY in case someone really wants to
+		// type / paste a manifest interactively.
+		if opts.filePath == "" && isStdinTerminal() {
+			return nil, "", errors.New(
+				"nexus lint: no manifest provided — pass a file path, " +
+					"--binary=PATH, or pipe a manifest into stdin " +
+					"(use `-` to force-read stdin from a terminal)",
+			)
+		}
 		out, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, "", fmt.Errorf("nexus lint: read stdin: %w", err)
@@ -364,6 +378,27 @@ func pluralize(word string, n int) string {
 		return word
 	}
 	return word + "s"
+}
+
+// isStdinTerminal reports whether stdin is an interactive terminal
+// (no pipe / redirect attached). When true, reading stdin would
+// block forever waiting on input the user has no way to provide,
+// so the caller bails with a helpful error message instead.
+//
+// Implementation: os.ModeCharDevice on stdin's mode is the standard
+// "is this a terminal?" check on Unix and Windows. A piped or
+// redirected stdin (`./bin | nexus routes`, `nexus routes < f.json`)
+// has ModeCharDevice clear, ModeNamedPipe or no mode flags set.
+func isStdinTerminal() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		// Stat failed — assume the worst (TTY-like) so we don't
+		// hang. ReadAll would likely fail the same way; surfacing
+		// the missing-input error is a better operator experience
+		// than a silent block.
+		return true
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
 // errExitNonZero is a sentinel the cobra harness propagates so the
