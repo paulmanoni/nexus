@@ -50,6 +50,7 @@ type DeployYAMLInputs struct {
 	Hooks                *Hooks                     `yaml:"hooks,omitempty"`
 	TLS                  *TLSBlock                  `yaml:"tls,omitempty"`
 	CORS                 *CORSBlock                 `yaml:"cors,omitempty"`
+	Errors               *ErrorsBlock               `yaml:"errors,omitempty"`
 	EnvironmentOverrides map[string]Override        `yaml:"environment_overrides,omitempty"`
 
 	// Pre-existing top-level blocks (auto-populated by `nexus
@@ -190,6 +191,18 @@ func materializeInputs(raw DeployYAMLInputs) Manifest {
 			c.ExposeHeaders = append([]string(nil), c.ExposeHeaders...)
 		}
 		m.CORS = &c
+	}
+
+	if raw.Errors != nil {
+		e := *raw.Errors
+		if e.IgnorePaths != nil {
+			e.IgnorePaths = append([]string(nil), e.IgnorePaths...)
+		}
+		if e.SampleRate != nil {
+			v := *e.SampleRate
+			e.SampleRate = &v
+		}
+		m.Errors = &e
 	}
 
 	if len(raw.Env) > 0 {

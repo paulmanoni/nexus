@@ -182,6 +182,15 @@ func MergeOverrides(base Manifest, env string) (Manifest, error) {
 		applyCORSPatch(out.CORS, ov.CORS)
 	}
 
+	// Errors: same promote-then-patch shape. Common override is
+	// SampleRate (preview gets 0.1) or Disabled (silence an env).
+	if ov.Errors != nil {
+		if out.Errors == nil {
+			out.Errors = &ErrorsBlock{}
+		}
+		applyErrorsPatch(out.Errors, ov.Errors)
+	}
+
 	return out, nil
 }
 
@@ -263,6 +272,35 @@ func applyServicePatch(s *ServiceNeed, p ServicePatch) {
 	}
 	if p.Ephemeral != nil {
 		s.Ephemeral = *p.Ephemeral
+	}
+}
+
+// applyErrorsPatch merges an ErrorsPatch into the effective
+// ErrorsBlock. Scalar fields use pointer-set semantics; IgnorePaths
+// is a list-replace. Same shape as the CORS patch (kept side-by-side
+// deliberately).
+func applyErrorsPatch(b *ErrorsBlock, p *ErrorsPatch) {
+	if p.Environment != nil {
+		b.Environment = *p.Environment
+	}
+	if p.Release != nil {
+		b.Release = *p.Release
+	}
+	if p.ServerName != nil {
+		b.ServerName = *p.ServerName
+	}
+	if p.Capacity != nil {
+		b.Capacity = *p.Capacity
+	}
+	if p.SampleRate != nil {
+		v := *p.SampleRate
+		b.SampleRate = &v
+	}
+	if p.IgnorePaths != nil {
+		b.IgnorePaths = append([]string(nil), p.IgnorePaths...)
+	}
+	if p.Disabled != nil {
+		b.Disabled = *p.Disabled
 	}
 }
 
@@ -537,6 +575,17 @@ func deepCopyManifest(m Manifest) Manifest {
 			c.AllowCredentials = &v
 		}
 		out.CORS = &c
+	}
+	if m.Errors != nil {
+		e := *m.Errors
+		if m.Errors.IgnorePaths != nil {
+			e.IgnorePaths = append([]string(nil), m.Errors.IgnorePaths...)
+		}
+		if m.Errors.SampleRate != nil {
+			v := *m.Errors.SampleRate
+			e.SampleRate = &v
+		}
+		out.Errors = &e
 	}
 	return out
 }

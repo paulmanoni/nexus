@@ -215,6 +215,11 @@ type Manifest struct {
 	// applies if the plugin is loaded). See CORSBlock.
 	CORS *CORSBlock `json:"cors,omitempty"`
 
+	// Errors declares the configuration for the extension/errors
+	// plugin (capture + reporting policy). Nil = no manifest-driven
+	// errors config; in-code Config still applies. See ErrorsBlock.
+	Errors *ErrorsBlock `json:"errors,omitempty"`
+
 	// Overrides hold the per-environment diffs applied to the base
 	// inputs at merge time. Keyed by environment name. After
 	// MergeOverrides runs, the returned Manifest has Overrides nil —

@@ -162,6 +162,59 @@ type TLSBlock struct {
 	Disabled bool `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 }
 
+// ErrorsBlock declares the configuration for the extension/errors
+// plugin — environment / release tags, capacity, sample rate, and
+// the ignore-paths list. Transports stay in code (they carry Go-only
+// http.Client / function types that can't survive a YAML round-trip).
+//
+// Per-env overrides are the typical use: production reports at 100%
+// to Sentry; preview environments sample at 10%; internal envs flip
+// Disabled to avoid double-reporting through another stack.
+type ErrorsBlock struct {
+	// Environment is the tag every reported event carries
+	// ("production", "staging", "preview"). Empty in dev.
+	Environment string `json:"environment,omitempty" yaml:"environment,omitempty"`
+
+	// Release identifies the binary version. Typical wiring is
+	// either a Go ldflags-injected variable or the GIT_SHA env var.
+	Release string `json:"release,omitempty" yaml:"release,omitempty"`
+
+	// ServerName is the host that captured the event. Defaults to
+	// os.Hostname() when empty.
+	ServerName string `json:"serverName,omitempty" yaml:"server_name,omitempty"`
+
+	// Capacity is the in-memory ring-buffer size for the dashboard.
+	// 0 means "use default" (100).
+	Capacity int `json:"capacity,omitempty" yaml:"capacity,omitempty"`
+
+	// SampleRate is the fraction of captured events forwarded to
+	// transports. Pointer-typed so the override path distinguishes
+	// "absent" (inherit) from "explicit 0.0" (drop everything).
+	// Domain: [0.0, 1.0]. Default: 1.0.
+	SampleRate *float64 `json:"sampleRate,omitempty" yaml:"sample_rate,omitempty"`
+
+	// IgnorePaths is a list of request paths whose errors are NOT
+	// captured. Default: ["/__nexus/health", "/__nexus/ready"].
+	IgnorePaths []string `json:"ignorePaths,omitempty" yaml:"ignore_paths,omitempty"`
+
+	// Disabled, when true, makes the plugin a no-op for this
+	// environment.
+	Disabled bool `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+}
+
+// ErrorsPatch is the per-environment override subset of ErrorsBlock.
+// Slice fields list-replace; scalar fields use pointer-set semantics
+// so an override can distinguish "absent" from "explicit zero".
+type ErrorsPatch struct {
+	Environment *string  `json:"environment,omitempty" yaml:"environment,omitempty"`
+	Release     *string  `json:"release,omitempty" yaml:"release,omitempty"`
+	ServerName  *string  `json:"serverName,omitempty" yaml:"server_name,omitempty"`
+	Capacity    *int     `json:"capacity,omitempty" yaml:"capacity,omitempty"`
+	SampleRate  *float64 `json:"sampleRate,omitempty" yaml:"sample_rate,omitempty"`
+	IgnorePaths []string `json:"ignorePaths,omitempty" yaml:"ignore_paths,omitempty"`
+	Disabled    *bool    `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+}
+
 // CORSBlock declares the CORS policy the binary wants applied to its
 // public HTTP surface. Surfaced as a structured block (not env vars)
 // so lint/doctor can sanity-check it — most notably the
@@ -278,6 +331,11 @@ type Override struct {
 	// slice fields list-replace, scalars pointer-set. Typical use
 	// is locking AllowOrigins to a per-environment frontend URL.
 	CORS *CORSPatch `json:"cors,omitempty" yaml:"cors,omitempty"`
+
+	// Errors patches the base ErrorsBlock. Common override is
+	// SampleRate (cut preview noise) or Disabled (silence a
+	// specific environment).
+	Errors *ErrorsPatch `json:"errors,omitempty" yaml:"errors,omitempty"`
 }
 
 // EnvVarPatch is the subset of EnvVar fields an override is allowed to
