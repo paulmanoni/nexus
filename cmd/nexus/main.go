@@ -79,6 +79,17 @@ func resolveVersion() string {
 
 func main() {
 	if err := newRootCmd(os.Stdout, os.Stderr).Execute(); err != nil {
+		// SilenceErrors on lint / doctor / routes hides cobra's
+		// automatic "Error: <msg>" line so the lint-exit sentinel
+		// doesn't duplicate the report. Side effect: legitimate
+		// usage errors (missing manifest, malformed JSON, etc.)
+		// also get hidden. Print them here explicitly so the user
+		// sees what went wrong — but skip the lint-exit sentinel,
+		// whose message ("lint: errors found") would be noise
+		// after the report.
+		if !IsLintExitError(err) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
