@@ -459,7 +459,16 @@ func Run(cfg Config, opts ...Option) {
 	// user-installed middleware. Without the split, GraphQL routes
 	// registered first wouldn't see middleware Use()'d afterwards
 	// — gin captures middleware at route-registration time.
-	all := append([]fx.Option{fxEarlyOptions(cfg), autoClientOptions()}, unwrap(opts)...)
+	//
+	// autoManifestOptions sits between Early and the user opts so
+	// any plugin the user declares can read its per-environment
+	// block from app.EffectiveManifest() at boot without the
+	// operator having to write a LoadDeployManifest invoke.
+	all := append([]fx.Option{
+		fxEarlyOptions(cfg),
+		autoManifestOptions(),
+		autoClientOptions(),
+	}, unwrap(opts)...)
 	all = append(all, fxLateOptions())
 	if os.Getenv("NEXUS_FX_QUIET") == "1" || devQuiet {
 		all = append(all, fx.NopLogger)
