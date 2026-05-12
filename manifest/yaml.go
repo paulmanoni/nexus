@@ -48,6 +48,7 @@ type DeployYAMLInputs struct {
 	Secrets              map[string]Secret          `yaml:"secrets,omitempty"`
 	Files                map[string]File            `yaml:"files,omitempty"`
 	Hooks                *Hooks                     `yaml:"hooks,omitempty"`
+	TLS                  *TLSBlock                  `yaml:"tls,omitempty"`
 	EnvironmentOverrides map[string]Override        `yaml:"environment_overrides,omitempty"`
 
 	// Pre-existing top-level blocks (auto-populated by `nexus
@@ -159,6 +160,16 @@ func materializeInputs(raw DeployYAMLInputs) Manifest {
 	if raw.Hooks != nil {
 		h := *raw.Hooks
 		m.Hooks = &h
+	}
+
+	if raw.TLS != nil {
+		t := *raw.TLS
+		// Defensive copy of the Domains slice so callers can't mutate
+		// the loader's input through the materialized manifest.
+		if t.Domains != nil {
+			t.Domains = append([]string(nil), t.Domains...)
+		}
+		m.TLS = &t
 	}
 
 	if len(raw.Env) > 0 {
