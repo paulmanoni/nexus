@@ -49,6 +49,14 @@ type DeployYAMLInputs struct {
 	Files                map[string]File            `yaml:"files,omitempty"`
 	Hooks                *Hooks                     `yaml:"hooks,omitempty"`
 	EnvironmentOverrides map[string]Override        `yaml:"environment_overrides,omitempty"`
+
+	// Pre-existing top-level blocks (auto-populated by `nexus
+	// reconcile` from binary print mode, or hand-written by
+	// operators). Not part of the v0.42 "cloud inputs" surface but
+	// surfaced through the same loader so tools that consume YAML
+	// only (doctor, lint) see the complete declared shape.
+	Env      map[string]EnvVar      `yaml:"env,omitempty"`
+	Services map[string]ServiceNeed `yaml:"services,omitempty"`
 }
 
 // EnvironmentYAML mirrors Environment but doesn't carry a Name field
@@ -151,6 +159,24 @@ func materializeInputs(raw DeployYAMLInputs) Manifest {
 	if raw.Hooks != nil {
 		h := *raw.Hooks
 		m.Hooks = &h
+	}
+
+	if len(raw.Env) > 0 {
+		m.Env = make([]EnvVar, 0, len(raw.Env))
+		for name, e := range raw.Env {
+			e.Name = name
+			m.Env = append(m.Env, e)
+		}
+		sortInputsByName(m.Env, func(e EnvVar) string { return e.Name })
+	}
+
+	if len(raw.Services) > 0 {
+		m.Services = make([]ServiceNeed, 0, len(raw.Services))
+		for name, s := range raw.Services {
+			s.Name = name
+			m.Services = append(m.Services, s)
+		}
+		sortInputsByName(m.Services, func(s ServiceNeed) string { return s.Name })
 	}
 
 	if len(raw.EnvironmentOverrides) > 0 {
