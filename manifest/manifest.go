@@ -636,6 +636,15 @@ type Inputs struct {
 	DirectFiles   []File
 	Hooks         *Hooks
 	Overrides     map[string]Override
+
+	// Plugin-driven blocks read from nexus.deploy.yaml. Each plugin's
+	// config (tls/cors/errors) lives at the top level of the YAML and
+	// is consumed by the extension at boot via app.EffectiveManifest.
+	// Nil = not declared; the corresponding plugin falls back to its
+	// in-code Config struct.
+	TLS    *TLSBlock
+	CORS   *CORSBlock
+	Errors *ErrorsBlock
 }
 
 // Build aggregates a Manifest from Inputs. Deduplicates env vars by
@@ -817,6 +826,54 @@ func Build(in Inputs) Manifest {
 		for k, v := range in.Overrides {
 			m.Overrides[k] = v
 		}
+	}
+
+	// Plugin-driven blocks. Each is copied by value so the resulting
+	// Manifest is independent of the Inputs struct the caller passed
+	// in. Slice fields inside the blocks get their own defensive
+	// copy in MergeOverrides' deep-copy step, so we only need to
+	// dereference the pointers here.
+	if in.TLS != nil {
+		t := *in.TLS
+		if in.TLS.Domains != nil {
+			t.Domains = append([]string(nil), in.TLS.Domains...)
+		}
+		if in.TLS.Redirect != nil {
+			r := *in.TLS.Redirect
+			t.Redirect = &r
+		}
+		m.TLS = &t
+	}
+	if in.CORS != nil {
+		c := *in.CORS
+		if in.CORS.AllowOrigins != nil {
+			c.AllowOrigins = append([]string(nil), in.CORS.AllowOrigins...)
+		}
+		if in.CORS.AllowMethods != nil {
+			c.AllowMethods = append([]string(nil), in.CORS.AllowMethods...)
+		}
+		if in.CORS.AllowHeaders != nil {
+			c.AllowHeaders = append([]string(nil), in.CORS.AllowHeaders...)
+		}
+		if in.CORS.ExposeHeaders != nil {
+			c.ExposeHeaders = append([]string(nil), in.CORS.ExposeHeaders...)
+		}
+		if in.CORS.AllowCredentials != nil {
+			v := *in.CORS.AllowCredentials
+			c.AllowCredentials = &v
+		}
+		m.CORS = &c
+	}
+	if in.Errors != nil {
+		e := *in.Errors
+		if in.Errors.IgnorePaths != nil {
+			e.IgnorePaths = append([]string(nil), in.Errors.IgnorePaths...)
+		}
+		if in.Errors.SampleRate != nil {
+			v := *in.Errors.SampleRate
+			e.SampleRate = &v
+		}
+		m.Errors = &e
 	}
 
 	// Hash last — every other field must be settled first. App.GeneratedAt

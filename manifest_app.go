@@ -48,6 +48,14 @@ type manifestStore struct {
 	hooks        *manifest.Hooks
 	overrides    map[string]manifest.Override
 
+	// Plugin-driven blocks read from nexus.deploy.yaml by
+	// LoadDeployManifest. Each is opaque to the framework — the
+	// corresponding plugin reads it back via app.EffectiveManifest()
+	// at boot.
+	tls    *manifest.TLSBlock
+	cors   *manifest.CORSBlock
+	errors *manifest.ErrorsBlock
+
 	// effective is the merged manifest for the active environment,
 	// populated once at boot by ResolveEffective. nil before that
 	// call (e.g. during print mode); /__nexus/manifest then falls
@@ -191,6 +199,34 @@ func (a *App) DeclareHooks(h manifest.Hooks) {
 	a.manifest.mu.Unlock()
 }
 
+// DeclareTLS sets the public-internet TLS configuration block read
+// by the extension/tls plugin at boot. Idempotent within a single
+// boot: subsequent calls fully replace the previous block.
+func (a *App) DeclareTLS(t manifest.TLSBlock) {
+	a.manifest.mu.Lock()
+	tCopy := t
+	a.manifest.tls = &tCopy
+	a.manifest.mu.Unlock()
+}
+
+// DeclareCORS sets the cross-origin policy block read by the
+// extension/cors plugin at boot. Idempotent — last call wins.
+func (a *App) DeclareCORS(c manifest.CORSBlock) {
+	a.manifest.mu.Lock()
+	cCopy := c
+	a.manifest.cors = &cCopy
+	a.manifest.mu.Unlock()
+}
+
+// DeclareErrors sets the error-capture configuration block read by
+// the extension/errors plugin at boot. Idempotent — last call wins.
+func (a *App) DeclareErrors(e manifest.ErrorsBlock) {
+	a.manifest.mu.Lock()
+	eCopy := e
+	a.manifest.errors = &eCopy
+	a.manifest.mu.Unlock()
+}
+
 // DeclareOverride registers a per-environment Override against the
 // declared inputs. env must match a previously-declared Environment;
 // validation happens at merge time via manifest.MergeOverrides, not
@@ -255,6 +291,20 @@ func (a *App) LoadDeployManifest(path string) error {
 	}
 	if loaded.Hooks != nil {
 		a.DeclareHooks(*loaded.Hooks)
+	}
+	// Plugin-driven blocks. Each one corresponds to an extension/*
+	// plugin that reads its config from the effective manifest at
+	// boot. Without these calls the YAML block parses successfully
+	// but never propagates into app.EffectiveManifest() — silent
+	// drop, plugin then fails with "Config.X is required".
+	if loaded.TLS != nil {
+		a.DeclareTLS(*loaded.TLS)
+	}
+	if loaded.CORS != nil {
+		a.DeclareCORS(*loaded.CORS)
+	}
+	if loaded.Errors != nil {
+		a.DeclareErrors(*loaded.Errors)
 	}
 	for env, ov := range loaded.Overrides {
 		a.DeclareOverride(env, ov)
@@ -348,6 +398,24 @@ func (a *App) manifestInputs() manifest.Inputs {
 			overrides[k] = v
 		}
 	}
+	// Plugin-driven blocks — copy by value so the Inputs snapshot
+	// doesn't alias the store's pointer. Inputs.Build will then
+	// deep-copy the slice fields when it materializes the Manifest.
+	var tls *manifest.TLSBlock
+	if a.manifest.tls != nil {
+		t := *a.manifest.tls
+		tls = &t
+	}
+	var cors *manifest.CORSBlock
+	if a.manifest.cors != nil {
+		c := *a.manifest.cors
+		cors = &c
+	}
+	var errors *manifest.ErrorsBlock
+	if a.manifest.errors != nil {
+		e := *a.manifest.errors
+		errors = &e
+	}
 	a.manifest.mu.Unlock()
 
 	in := manifest.Inputs{
@@ -367,6 +435,9 @@ func (a *App) manifestInputs() manifest.Inputs {
 		DirectFiles:      files,
 		Hooks:            hooks,
 		Overrides:        overrides,
+		TLS:              tls,
+		CORS:             cors,
+		Errors:           errors,
 	}
 
 	// Auto-derive ServiceNeeds from registered NexusResources whose
