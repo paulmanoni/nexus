@@ -64,6 +64,68 @@ func main() {}
 `,
 			"",
 		},
+		{
+			"frontend.Plugin(Config{Root: web})",
+			`package main
+import "github.com/paulmanoni/nexus/extension/frontend"
+var fs = "stub"
+func main() {
+    frontend.Plugin(frontend.Config{Root: "web", FS: fs})
+}
+`,
+			"web",
+		},
+		{
+			"frontend.Plugin with Root not first field",
+			`package main
+import "github.com/paulmanoni/nexus/extension/frontend"
+var fs = "stub"
+func main() {
+    frontend.Plugin(frontend.Config{
+        FS:        fs,
+        Framework: frontend.Vue,
+        Root:      "client",
+    })
+}
+`,
+			"client",
+		},
+		{
+			"frontend.Plugin without Root field falls through",
+			`package main
+import "github.com/paulmanoni/nexus/extension/frontend"
+var fs = "stub"
+func main() { frontend.Plugin(frontend.Config{FS: fs}) }
+`,
+			"",
+		},
+		{
+			"frontend.Plugin with non-literal Root falls through",
+			`package main
+import "github.com/paulmanoni/nexus/extension/frontend"
+var (
+    fs   = "stub"
+    root = "web"
+)
+func main() { frontend.Plugin(frontend.Config{Root: root, FS: fs}) }
+`,
+			"",
+		},
+		{
+			"both ServeFrontend and frontend.Plugin → ServeFrontend wins (legacy first)",
+			`package main
+import (
+    "github.com/paulmanoni/nexus"
+    "github.com/paulmanoni/nexus/extension/frontend"
+)
+var distFS = "stub"
+func main() {
+    nexus.ServeFrontend(distFS, "old/dist")
+    frontend.Plugin(frontend.Config{Root: "new", FS: distFS})
+}
+`,
+			"old",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

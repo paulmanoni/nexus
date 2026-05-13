@@ -10,19 +10,21 @@ import (
 	"strings"
 )
 
-// detectFrontendDir scans the Go files in pkgDir for a call to
-// nexus.ServeFrontend (or unqualified ServeFrontend, when the user
-// dot-imported the package) and returns the parent of the second
-// argument's string literal — the conventional frontend project
-// root for an embed-style mount:
+// detectFrontendDir scans the Go files in pkgDir for one of two
+// frontend-mount call shapes and returns the conventional frontend
+// project root:
 //
-//	//go:embed all:web/dist
-//	var distFS embed.FS
-//	nexus.ServeFrontend(distFS, "web/dist")  →  "web"
+//   nexus.ServeFrontend(distFS, "web/dist")              → "web"
+//   frontend.Plugin(frontend.Config{Root: "web", ...})   → "web"
 //
-// Best-effort: returns "" when the call isn't present, the second
-// arg isn't a plain string literal (constant / computed path), or
-// the parser can't read the file. nexus dev falls through to the
+// The legacy ServeFrontend form is checked first to preserve the
+// pre-extension behavior. The frontend.Plugin form is the new
+// canonical shape — its Root field directly names the frontend
+// project dir, no parent-stripping needed.
+//
+// Best-effort: returns "" when neither call is present, the relevant
+// argument isn't a plain string literal (constant / computed path),
+// or the parser can't read the file. nexus dev falls through to the
 // no-frontend path when this returns empty, so an unparseable
 // source file never breaks the dev loop.
 func detectFrontendDir(pkgDir string) string {
@@ -48,20 +50,22 @@ func detectFrontendDir(pkgDir string) string {
 		if err != nil {
 			continue
 		}
-		root := serveFrontendRoot(f)
-		if root == "" {
-			continue
+		if root := serveFrontendRoot(f); root != "" {
+			// ServeFrontend's second arg is "<dir>/dist" by
+			// convention — strip the trailing component to get the
+			// project root. Single-segment paths (already at the
+			// project root) fall back to themselves.
+			dir := filepath.Dir(root)
+			if dir == "." || dir == "" {
+				return root
+			}
+			return dir
 		}
-		// Derive the frontend project dir from the embed root.
-		// Convention: nexus.ServeFrontend(distFS, "web/dist") means
-		// the watcher should run inside "web". Strip the trailing
-		// component; if the path is single-segment, fall back to
-		// the path itself.
-		dir := filepath.Dir(root)
-		if dir == "." || dir == "" {
+		if root := frontendPluginRoot(f); root != "" {
+			// frontend.Config.Root names the project dir literally —
+			// no convention stripping. Pass through as-is.
 			return root
 		}
-		return dir
 	}
 	return ""
 }
@@ -112,6 +116,79 @@ func isServeFrontendCall(fun ast.Expr) bool {
 		return f.Sel != nil && f.Sel.Name == "ServeFrontend"
 	case *ast.Ident:
 		return f.Name == "ServeFrontend"
+	}
+	return false
+}
+
+// frontendPluginRoot walks f for a call shaped like
+// frontend.Plugin(frontend.Config{Root: "web", ...}) and returns the
+// Root field's string-literal value. Returns "" when the call isn't
+// present, the first arg isn't a composite literal, or Root isn't
+// set to a plain string. Constant references and computed paths are
+// not resolved — the user falls back to passing --frontend explicitly.
+//
+// Recognizes `frontend.Plugin(...)`, dot-imported `Plugin(...)`, and
+// any selector whose method name is Plugin (same loose-match policy
+// as isServeFrontendCall — wrong-package false-positives surface as
+// "no such dir" at watch time, not as silent miswatches).
+func frontendPluginRoot(f *ast.File) string {
+	var found string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if found != "" {
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if !isFrontendPluginCall(call.Fun) {
+			return true
+		}
+		if len(call.Args) < 1 {
+			return false
+		}
+		// Plugin(Config{...}) — the first arg is the composite literal.
+		lit, ok := call.Args[0].(*ast.CompositeLit)
+		if !ok {
+			return false
+		}
+		for _, elt := range lit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := kv.Key.(*ast.Ident)
+			if !ok || key.Name != "Root" {
+				continue
+			}
+			str, ok := kv.Value.(*ast.BasicLit)
+			if !ok || str.Kind != token.STRING {
+				return false
+			}
+			v, err := strconv.Unquote(str.Value)
+			if err != nil {
+				return false
+			}
+			found = v
+			return false
+		}
+		return false
+	})
+	return found
+}
+
+// isFrontendPluginCall recognizes frontend.Plugin, the dot-imported
+// bare Plugin form, and any selector whose method name is Plugin.
+// The loose match means a hand-written helper named Plugin would
+// also match — same pragmatic choice as isServeFrontendCall. Wrong
+// matches surface as missing-dir errors at watcher start, not as
+// silent miswatches.
+func isFrontendPluginCall(fun ast.Expr) bool {
+	switch f := fun.(type) {
+	case *ast.SelectorExpr:
+		return f.Sel != nil && f.Sel.Name == "Plugin"
+	case *ast.Ident:
+		return f.Name == "Plugin"
 	}
 	return false
 }
