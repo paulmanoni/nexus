@@ -141,6 +141,29 @@ func (f ContributorFunc) NexusContribute(ctx GenerateContext) ([]File, error) {
 	return f(ctx)
 }
 
+// StaticContributor wraps an already-rendered file list as a
+// ClientContributor. The frontend codegen CLI uses this to slot
+// HTTP-fetched contributions back into ctx.Contributors — the
+// renderer's contributor loop doesn't care whether the bytes were
+// produced in-process or fetched from a remote app.
+//
+// The returned contributor ignores the GenerateContext entirely;
+// the bytes are baked in at construction time.
+func StaticContributor(files []File) ClientContributor {
+	cp := make([]File, len(files))
+	copy(cp, files)
+	return staticContributor(cp)
+}
+
+type staticContributor []File
+
+// NexusContribute returns the wrapped file slice verbatim. The
+// caller (the renderer) treats each entry the same as any in-process
+// contributor's output.
+func (s staticContributor) NexusContribute(GenerateContext) ([]File, error) {
+	return []File(s), nil
+}
+
 // Generate declares a codegen driver. OutDir resolves the absolute
 // directory the driver wants files written to; Render produces the
 // file tree. Both are required. The shape mirrors nexus.GenerateDriver

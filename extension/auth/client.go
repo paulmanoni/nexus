@@ -74,21 +74,27 @@ func discoverFlows(reg *registry.Registry) authFlows {
 	out := authFlows{}
 	for _, e := range reg.Endpoints() {
 		flow := e.Tags[nexus.AuthFlowTag]
-		if flow == "" || e.Name == "" {
+		if flow == "" {
 			continue
 		}
+		// Use the flow tag itself as the import symbol — that matches
+		// what the renderer's index.ts emits for auth-flow endpoints
+		// (see frontend.restOpName's auth-flow special case). Reading
+		// e.Name would pick up AsRest's "METHOD PATH" form ("POST
+		// /login") and produce an import line that doesn't even parse
+		// as TS.
 		switch flow {
 		case "login":
 			if out.loginName == "" {
-				out.loginName = e.Name
+				out.loginName = flow
 			}
 		case "logout":
 			if out.logoutName == "" {
-				out.logoutName = e.Name
+				out.logoutName = flow
 			}
 		case "me":
 			if out.meName == "" {
-				out.meName = e.Name
+				out.meName = flow
 			}
 		}
 	}

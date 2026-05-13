@@ -407,17 +407,14 @@ func New(cfg Config) *App {
 			},
 		})
 	}
+	// Client SDK mounting moved into frontend.Plugin (and remains
+	// reachable via the option-chain nexus.ClientUse for apps that
+	// don't use the frontend extension). cfg.Client is still read
+	// here as a back-compat bridge — when set, we synthesize a
+	// ClientUse-shaped registration so apps that haven't migrated
+	// keep working. The field is deprecated; new code declares
+	// frontend.Plugin(...) instead.
 	if cfg.Client.Enabled {
-		// Auto-mount the SDK routes (/__nexus/client/*). Auth bridge
-		// is wired separately when auth.Module is also in the option
-		// chain — the client/ package can't import auth/ without a
-		// cycle, and the cleanest seam is for auth.Module's own
-		// option chain to call (*App).SetClientAuthInfo via Invoke.
-		//
-		// Introspection drives Client.Public — they're the same
-		// "schema visibility" lever at different layers. When
-		// introspection is on, the manifest goes out full; when off,
-		// it stays skinny. Removes the redundant double-flag.
 		clientCfg := client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection)
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
 	}

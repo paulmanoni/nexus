@@ -27,14 +27,36 @@ import (
 // intent is "mount it"; the Config-side knob exists for the value-
 // driven path only.
 func ClientUse(cfg client.Config) Option {
+	return ClientUseWithContributions(cfg, nil)
+}
+
+// ClientUseWithContributions is ClientUse + a contributions builder
+// factory. When buildFactory is non-nil, the resulting builder is
+// invoked at HTTP-request time so the closure can read live state
+// (contributor list, schema refs) that isn't available at option-
+// construction time. The factory itself runs once inside fx.Invoke
+// with the constructed *App in scope.
+//
+// Lives in nexus/ because the App's clientHandler field is
+// unexported — keeping the assignment inside the package avoids
+// exposing it as a Setter.
+//
+// Phase-3 caller: extension/frontend's mountClientSDK helper.
+// Direct user-side wiring is rare; most apps go through
+// frontend.Plugin(...) which composes this transparently.
+func ClientUseWithContributions(cfg client.Config, buildFactory func(*App) client.ContributionsBuilder) Option {
 	cfg.Enabled = true
 	return Invoke(func(app *App) {
 		if app.ClientHandler() != nil {
 			return
 		}
-		app.clientHandler = client.Mount(
+		var build client.ContributionsBuilder
+		if buildFactory != nil {
+			build = buildFactory(app)
+		}
+		app.clientHandler = client.MountWithContributions(
 			app.Engine(), app.Registry(), nil,
-			app.SchemaRefs, app.routePrefix, cfg,
+			app.SchemaRefs, app.routePrefix, cfg, build,
 		)
 	})
 }

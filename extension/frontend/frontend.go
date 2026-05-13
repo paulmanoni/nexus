@@ -51,9 +51,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension"
 )
 
@@ -109,6 +111,29 @@ type Config struct {
 	// at the deployment root; "/admin" mounts under that subpath.
 	// Composes with the deployment-wide route prefix.
 	Mount string
+
+	// RuntimeSDK, when true, also mounts the legacy client SDK asset
+	// routes (/__nexus/client/client.js, vue.js, *.d.ts). No-bundler
+	// apps that import from '/__nexus/client/vue.js' at runtime need
+	// this; apps using the typed codegen tree do not.
+	//
+	// The manifest and contributions routes ALWAYS mount alongside
+	// the frontend Plugin — they're how `nexus generate frontend`
+	// reaches into the running app. RuntimeSDK only controls the
+	// additional static JS surfaces.
+	RuntimeSDK bool
+	// ManifestPublic, when true, serves the full manifest +
+	// contributions to anonymous browsers. Default false — the
+	// public manifest is skinny (auth flows only) so the API
+	// surface doesn't leak to scrapers. Mirrors client.Config.Public
+	// semantics 1:1.
+	ManifestPublic bool
+
+	// ClientMiddleware applies to every /__nexus/client/* route.
+	// Equivalent to client.Config.Middleware; lifted here so apps
+	// declare it once on the frontend Plugin instead of plumbing a
+	// separate client.Config alongside.
+	ClientMiddleware []gin.HandlerFunc
 }
 
 // Plugin returns a nexus.Option that registers the frontend extension.
@@ -141,6 +166,7 @@ func Plugin(cfg Config) nexus.Option {
 		Version: pkgVersion,
 		Options: []nexus.Option{
 			nexus.ServeFrontend(cfg.FS, cfg.FSRoot, mountOpts...),
+			mountClientSDK(cfg),
 		},
 		Generate: &extension.Generate{
 			OutDir: func(app *nexus.App) (string, error) {
@@ -218,4 +244,81 @@ func (c Config) defaults() Config {
 		c.FSRoot = path.Join(c.Root, c.Output)
 	}
 	return c
+}
+
+// mountClientSDK installs the /__nexus/client/* routes — manifest,
+// contributions, and the legacy SDK runtime JS files — by delegating
+// to nexus.ClientUseWithContributions. The builder factory captures
+// the user-side Config and the *App injected by fx, then returns a
+// closure HTTP handlers call on each contributions.json request.
+//
+// Idempotent: if nexus.Config.Client.Enabled already mounted the SDK
+// (back-compat path), ClientUseWithContributions's existing handler
+// check short-circuits. Apps that want the contributions route MUST
+// drop Config.Client.Enabled in favor of frontend.Plugin — the
+// auto-mounted handler doesn't know about contributors.
+//
+// RuntimeSDK currently doesn't gate the static JS routes (Mount
+// always registers them). The flag is documented for forward
+// compatibility — a future Mount change can selectively skip those
+// routes when RuntimeSDK is false. For now it's an intent marker.
+func mountClientSDK(cfg Config) nexus.Option {
+	ccfg := client.Config{
+		Enabled:    true,
+		Public:     cfg.ManifestPublic,
+		Middleware: cfg.ClientMiddleware,
+	}
+	ccfg = client.ApplyVisibilityDefaults(ccfg, false)
+	_ = cfg.RuntimeSDK
+	return nexus.ClientUseWithContributions(ccfg, func(app *nexus.App) client.ContributionsBuilder {
+		return func(framework string) (client.ContributionsResponse, error) {
+			return renderContributionsResponse(app, cfg, framework)
+		}
+	})
+}
+
+// renderContributionsResponse is the closure body for the
+// contributions builder. Walks the App's registered contributors,
+// invokes each with the live registry + the requested framework, and
+// packages the result into the wire shape client/contributions.go
+// declared. Errors propagate so the HTTP layer can surface a 500 to
+// the CLI.
+func renderContributionsResponse(app *nexus.App, cfg Config, framework string) (client.ContributionsResponse, error) {
+	out := client.ContributionsResponse{
+		Version:   client.SchemaVersion,
+		Framework: framework,
+	}
+	contributors := app.ClientContributors()
+	if len(contributors) == 0 {
+		return out, nil
+	}
+	extras := map[string]any{
+		"frontend.framework": framework,
+		"frontend.root":      cfg.Root,
+		"frontend.output":    cfg.Output,
+		"frontend.generate":  cfg.Generate,
+	}
+	ctx := nexus.GenerateContext{
+		Registry: app.Registry(),
+		Refs:     app.SchemaRefs(),
+		Extras:   extras,
+	}
+	for _, rec := range contributors {
+		files, err := rec.Contribute(ctx)
+		if err != nil {
+			return out, fmt.Errorf("plugin %s: %w", rec.PluginName, err)
+		}
+		if len(files) == 0 {
+			continue
+		}
+		group := client.ContributionPluginRec{Name: rec.PluginName}
+		for _, f := range files {
+			group.Files = append(group.Files, client.ContributionFileRec{
+				Path: f.Path,
+				Body: string(f.Body),
+			})
+		}
+		out.Plugins = append(out.Plugins, group)
+	}
+	return out, nil
 }

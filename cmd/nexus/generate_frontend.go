@@ -30,12 +30,13 @@ import (
 // --check exits non-zero on drift between disk and the rendered tree,
 // suitable for CI gating.
 type frontendOptions struct {
-	Manifest  string
-	URL       string
-	Out       string
-	Framework string
-	Root      string
-	Check     bool
+	Manifest      string
+	Contributions string
+	URL           string
+	Out           string
+	Framework     string
+	Root          string
+	Check         bool
 }
 
 func newGenerateFrontendCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -69,7 +70,8 @@ Examples:
 		},
 	}
 	cmd.Flags().StringVar(&opts.Manifest, "manifest", "", "path to a manifest JSON file (use '-' for stdin)")
-	cmd.Flags().StringVar(&opts.URL, "url", "", "origin of a running app — GET <url>/__nexus/client/manifest.json")
+	cmd.Flags().StringVar(&opts.Contributions, "contributions", "", "path to a contributions JSON file (use '-' for stdin) — only useful with --manifest")
+	cmd.Flags().StringVar(&opts.URL, "url", "", "origin of a running app — GET <url>/__nexus/client/{manifest,contributions}.json")
 	cmd.Flags().StringVar(&opts.Out, "out", opts.Out, "output directory for the generated TS source tree")
 	cmd.Flags().StringVar(&opts.Framework, "framework", opts.Framework, "per-framework adapter: vue | react | svelte | none")
 	cmd.Flags().StringVar(&opts.Root, "root", opts.Root, "frontend project root (informational; recorded in generated config Extras)")
@@ -110,11 +112,23 @@ func runGenerateFrontend(opts frontendOptions, stdout, stderr io.Writer) error {
 		return fmt.Errorf("nexus generate frontend: parse manifest JSON: %w", err)
 	}
 
+	// Contributions are an optional second wire — apps that don't
+	// register Contributor slots get a 404 here, which is silently
+	// skipped (no contributions to merge). Hard failures (file-not-
+	// found on an explicit --contributions path, non-404 HTTP errors,
+	// malformed JSON) propagate so a typo or broken plugin doesn't
+	// quietly produce a renderer-only tree.
+	contribs, err := loadFrontendContributions(opts, fwk)
+	if err != nil {
+		return fmt.Errorf("nexus generate frontend: %w", err)
+	}
+
 	reg := registryFromManifest(m)
 	files, err := frontend.Render(cfg, extension.GenerateContext{
-		Registry: reg,
-		Refs:     m.Refs,
-		BasePath: m.BasePath,
+		Registry:     reg,
+		Refs:         m.Refs,
+		BasePath:     m.BasePath,
+		Contributors: contribs,
 	})
 	if err != nil {
 		return fmt.Errorf("nexus generate frontend: render: %w", err)
@@ -148,6 +162,80 @@ func runGenerateFrontend(opts frontendOptions, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "frontend codegen: %d written, %d unchanged → %s\n", changed, unchanged, abs)
 	return nil
+}
+
+// loadFrontendContributions reads the contributions JSON from a file,
+// stdin, or an HTTP origin and converts each plugin's files into a
+// single StaticContributor wrapped in the extension.ClientContributor
+// shape the renderer expects. Returns (nil, nil) when no source is
+// declared — apps without contributions still get a clean render.
+//
+// Network failures and 404s are not fatal: callers (the CLI's
+// runGenerateFrontend) log a warning and proceed with renderer-only
+// output. Hard failures still surface from JSON parsing — a 200 with
+// malformed bytes is a real bug, not a "feature not enabled."
+func loadFrontendContributions(opts frontendOptions, framework string) ([]extension.ClientContributor, error) {
+	body, err := readContributionsBytes(opts, framework)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return nil, nil
+	}
+	var resp client.ContributionsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse contributions JSON: %w", err)
+	}
+	out := make([]extension.ClientContributor, 0, len(resp.Plugins))
+	for _, p := range resp.Plugins {
+		files := make([]extension.File, 0, len(p.Files))
+		for _, f := range p.Files {
+			files = append(files, extension.File{Path: f.Path, Body: []byte(f.Body)})
+		}
+		if len(files) > 0 {
+			out = append(out, extension.StaticContributor(files))
+		}
+	}
+	return out, nil
+}
+
+// readContributionsBytes picks the source — file, stdin, or HTTP —
+// and returns the raw JSON. Empty result + nil error means "no
+// source declared, skip gracefully." HTTP 404 is treated as
+// graceful skip (older nexus versions); other status codes return
+// an error so the caller can surface them.
+func readContributionsBytes(opts frontendOptions, framework string) ([]byte, error) {
+	if opts.Contributions != "" {
+		if opts.Contributions == "-" {
+			return io.ReadAll(os.Stdin)
+		}
+		return os.ReadFile(opts.Contributions)
+	}
+	if opts.URL == "" {
+		return nil, nil // file source not supplied, no URL — nothing to do
+	}
+	u := opts.URL + "/__nexus/client/contributions.json"
+	if framework != "" {
+		u += "?framework=" + framework
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", u, err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode == http.StatusNotFound {
+		return nil, nil // older nexus or no frontend.Plugin — skip gracefully
+	}
+	if r.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %s: HTTP %d", u, r.StatusCode)
+	}
+	return io.ReadAll(r.Body)
 }
 
 // loadFrontendManifest reads the manifest JSON from stdin, a file, or
@@ -192,7 +280,7 @@ func loadFrontendManifest(opts frontendOptions) ([]byte, error) {
 func registryFromManifest(m client.Manifest) *registry.Registry {
 	reg := registry.New()
 	for _, e := range m.Endpoints {
-		reg.RegisterEndpoint(registry.Endpoint{
+		ep := registry.Endpoint{
 			Service:           e.Service,
 			Module:            e.Module,
 			Name:              e.Name,
@@ -204,7 +292,15 @@ func registryFromManifest(m client.Manifest) *registry.Registry {
 			ReturnSchema:      e.Return,
 			Deprecated:        e.Deprecated,
 			DeprecationReason: e.DeprecationReason,
-		})
+		}
+		// The manifest projects e.Tags["auth.flow"] into a flat
+		// AuthFlow field; the registry consumer (renderer + auth
+		// contributor) reads Tags directly. Round-trip it so both
+		// the in-process and HTTP codegen paths see the same shape.
+		if e.AuthFlow != "" {
+			ep.Tags = map[string]string{"auth.flow": e.AuthFlow}
+		}
+		reg.RegisterEndpoint(ep)
 	}
 	return reg
 }
