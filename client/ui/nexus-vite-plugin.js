@@ -1,4 +1,4 @@
-// nexus-vite-plugin.js — three plugins in one factory:
+// nexus-vite-plugin.js — four plugins in one factory:
 //
 //   1. nexus-auto-select   (default-on, all builds)
 //      Auto-injects opts.select into nx.query / nx.mutate calls
@@ -27,6 +27,14 @@
 //      restores the mtime in closeBundle when contents are
 //      unchanged. Breaks the rebuild loop unplugin-auto-import
 //      causes by writing identical bytes on every build.
+//
+//   4. nexus-hmr   (default-on, dev-only)
+//      Watches the typed-codegen tree (web/src/__nexus by default;
+//      configurable via options.codegenDir) and fires a full-reload
+//      on every file write. Pairs with `nexus dev`'s auto-codegen so
+//      editing a Go endpoint propagates to the browser without a
+//      manual refresh — the user's frontend just has to be running
+//      under vite dev with the nexus plugin attached.
 //
 // Wire it up in vite.config.ts:
 //
@@ -347,7 +355,47 @@ export default function nexusAutoSelect(options = {}) {
     },
   }
 
-  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin]
+  // ── nexus-hmr (mode 4: codegen → frontend full-reload) ──────────
+  //
+  // Watches the typed-codegen tree (web/src/__nexus by default) and
+  // fires a full-reload over vite's WebSocket whenever the renderer
+  // rewrites a file. Pairs with `nexus dev`'s auto-codegen step so
+  // editing a Go endpoint propagates to the browser without a manual
+  // refresh: Go restarts → codegen writes new TS into the tree →
+  // this watcher fires full-reload → browser fetches the fresh
+  // bundle. Apply: 'serve' so prod builds skip it.
+  //
+  // The codegen dir is chosen by:
+  //   options.codegenDir → explicit absolute or projectRoot-relative
+  //   else 'src/__nexus' under the project root (matches
+  //   frontend.Config's default Generate path)
+  //
+  // The watcher is registered against the directory even when empty
+  // / non-existent at boot — vite's chokidar emits add events as
+  // files appear, so the first codegen run is caught without a
+  // restart of vite dev.
+  const hmrPlugin = {
+    name: 'nexus-hmr',
+    enforce: 'pre',
+    apply: 'serve',
+    configureServer(server) {
+      const dir = options.codegenDir
+        ? (isAbsolute(options.codegenDir) ? options.codegenDir : join(projectRoot, options.codegenDir))
+        : join(projectRoot, 'src/__nexus')
+      server.watcher.add(dir)
+      const dirResolved = resolve(dir)
+      const onChange = (file) => {
+        if (!resolve(file).startsWith(dirResolved)) return
+        const rel = file.replace(projectRoot + '/', '')
+        server.config.logger.info(`[nexus-hmr] codegen change → full-reload (${rel})`)
+        server.ws.send({ type: 'full-reload' })
+      }
+      server.watcher.on('change', onChange)
+      server.watcher.on('add', onChange)
+    },
+  }
+
+  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin]
 
   // ---- script transform (TS / JS / TSX / JSX) -----------------------
 

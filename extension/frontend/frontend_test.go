@@ -221,6 +221,120 @@ func TestRender_VueAddsVueFile(t *testing.T) {
 	}
 }
 
+// TestRender_ReactAddsReactFile mirrors the Vue dispatch test: the
+// React framework choice produces an additional react.ts sibling
+// without changing the transport-neutral trio.
+func TestRender_ReactAddsReactFile(t *testing.T) {
+	reg := registry.New()
+	ctx := extension.GenerateContext{Registry: reg}
+	files, err := Render(Config{Framework: React}, ctx)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	got := fileNames(files)
+	want := []string{"_client.ts", "types.ts", "index.ts", "react.ts"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
+// TestRender_SvelteAddsSvelteFile — same shape for Svelte; verifies
+// the Framework dispatch covers all three implemented variants.
+func TestRender_SvelteAddsSvelteFile(t *testing.T) {
+	reg := registry.New()
+	ctx := extension.GenerateContext{Registry: reg}
+	files, err := Render(Config{Framework: Svelte}, ctx)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	got := fileNames(files)
+	want := []string{"_client.ts", "types.ts", "index.ts", "svelte.ts"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
+// TestRender_ReactHookShape boots a small registry with one query +
+// one mutation and checks the React file emits the expected hook
+// surface for each. The mutation branch differs (mutate callback
+// instead of refresh), so we exercise both in one test.
+func TestRender_ReactHookShape(t *testing.T) {
+	reg := registry.New()
+	reg.RegisterEndpoint(registry.Endpoint{
+		Service: "users", Name: "listUsers", Transport: registry.GraphQL, Method: "query",
+		ReturnSchema: &registry.TypeRef{Kind: "ref", Ref: "User"},
+	})
+	reg.RegisterEndpoint(registry.Endpoint{
+		Service: "users", Name: "createUser", Transport: registry.GraphQL, Method: "mutation",
+		ReturnSchema: &registry.TypeRef{Kind: "ref", Ref: "User"},
+	})
+	files, err := Render(Config{Framework: React}, extension.GenerateContext{
+		Registry: reg,
+		Refs:     map[string]registry.NamedType{"User": {Fields: nil}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := findFile(t, files, "react.ts")
+	for _, want := range []string{
+		"import { useState, useEffect, useCallback } from 'react'",
+		"export function useListUsers",
+		"const refresh = useCallback",
+		"useEffect(() => { void refresh() }",
+		"export function useCreateUser",
+		"const mutate = useCallback",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("react.ts missing %q", want)
+		}
+	}
+	// Mutation should NOT auto-fire via useEffect — that pattern is
+	// for queries only. A regression here would re-create every
+	// resource on mount, which is what react-query users learned
+	// to avoid the hard way.
+	if strings.Contains(src, "useEffect(() => { void mutate") {
+		t.Error("mutation auto-fires via useEffect; should require explicit invocation")
+	}
+}
+
+// TestRender_SvelteStoreShape checks the Svelte file emits Writable-
+// shaped stores and a fire-on-mount refresh() for queries. Mutations
+// shouldn't auto-fire — mirror the React invariant.
+func TestRender_SvelteStoreShape(t *testing.T) {
+	reg := registry.New()
+	reg.RegisterEndpoint(registry.Endpoint{
+		Service: "users", Name: "listUsers", Transport: registry.GraphQL, Method: "query",
+		ReturnSchema: &registry.TypeRef{Kind: "ref", Ref: "User"},
+	})
+	reg.RegisterEndpoint(registry.Endpoint{
+		Service: "users", Name: "createUser", Transport: registry.GraphQL, Method: "mutation",
+		ReturnSchema: &registry.TypeRef{Kind: "ref", Ref: "User"},
+	})
+	files, err := Render(Config{Framework: Svelte}, extension.GenerateContext{
+		Registry: reg,
+		Refs:     map[string]registry.NamedType{"User": {Fields: nil}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := findFile(t, files, "svelte.ts")
+	for _, want := range []string{
+		"import { writable, type Writable } from 'svelte/store'",
+		"export function useListUsers",
+		"writable<T.User | undefined>",
+		"loading.set(true)",
+		// Query factories kick refresh once so subscribers see
+		// in-flight state immediately.
+		"void refresh()",
+		"export function useCreateUser",
+		"async function mutate",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("svelte.ts missing %q", want)
+		}
+	}
+}
+
 // TestRender_GraphqlEndpointGeneratesIndexExport boots a fake registry
 // with one GraphQL endpoint and asserts the generated index.ts holds a
 // matching `export const listUsers`. Per-op typed exports are the
