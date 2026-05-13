@@ -81,12 +81,18 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 			// SDK auto-dump: fires AFTER all AsRest/AsQuery/AsWS
 			// fx.Invokes have populated the registry, so the
 			// generated .d.ts + manifest reflect every endpoint.
+			// Reads the dump knobs from the handler itself rather
+			// than cfg.Client — frontend.Plugin mounts the handler
+			// without populating cfg.Client, so the legacy path
+			// would silently skip the dump after migration.
 			// Failures don't crash the app — a permission error on
 			// the project tree is dev-tool friction, not a reason
 			// to refuse to serve traffic.
-			if h := app.ClientHandler(); h != nil && cfg.Client.OutDir != "" {
-				if err := h.Dump(cfg.Client.OutDir, cfg.Client.TSConfig, cfg.Client.ViteConfig, log.Writer()); err != nil {
-					log.Printf("nexus client: auto-dump %s: %v", cfg.Client.OutDir, err)
+			if h := app.ClientHandler(); h != nil {
+				if outdir, tsconfig, viteconfig := h.AutoDumpConfig(); outdir != "" {
+					if err := h.Dump(outdir, tsconfig, viteconfig, log.Writer()); err != nil {
+						log.Printf("nexus client: auto-dump %s: %v", outdir, err)
+					}
 				}
 			}
 			for i, l := range listeners {

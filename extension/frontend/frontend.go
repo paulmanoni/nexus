@@ -134,6 +134,42 @@ type Config struct {
 	// declare it once on the frontend Plugin instead of plumbing a
 	// separate client.Config alongside.
 	ClientMiddleware []gin.HandlerFunc
+
+	// SDKOutDir, when non-empty, makes the client SDK route group
+	// also dump client.js / vue.js / *.d.ts / manifest.json to disk
+	// at boot, so an IDE resolving the runtime URL imports
+	// ('/__nexus/client/vue.js') can find the paired .d.ts on the
+	// local filesystem. Equivalent to client.Config.OutDir.
+	//
+	// Defaults to "./<Root>/sdk" when RuntimeSDK is true; stays
+	// empty otherwise so the typed-codegen path doesn't drop
+	// surprise files into the project tree. Override only when the
+	// convention doesn't fit (custom layout, multi-tenant builds).
+	SDKOutDir string
+
+	// SDKTSConfig, when non-empty, makes the SDK mount merge path
+	// mappings (runtime URL → SDKOutDir files) into the named
+	// jsconfig.json or tsconfig.json on startup. Equivalent to
+	// client.Config.TSConfig. Only takes effect when SDKOutDir is
+	// also set — path mappings need a target.
+	//
+	// Defaults to "./<Root>/tsconfig.json" when RuntimeSDK is true;
+	// stays empty otherwise. The merge is idempotent and tolerant
+	// of a missing file (logs + skips), so the default is safe
+	// even on apps that don't use TypeScript.
+	SDKTSConfig string
+
+	// SDKViteConfig, when non-empty, auto-attaches the
+	// nexus-vite-plugin to the named Vite config on startup.
+	// Equivalent to client.Config.ViteConfig. Only takes effect
+	// when SDKOutDir is also set (the plugin file lives there).
+	//
+	// No auto-default — vite.config.ts presence is detected by
+	// client.applyFrontendDefaults via filesystem probing, which
+	// is the right call site for "do you have a vite project?"
+	// questions. Set explicitly when you want frontend.Plugin to
+	// drive the attach instead of relying on the detection.
+	SDKViteConfig string
 }
 
 // Plugin returns a nexus.Option that registers the frontend extension.
@@ -233,6 +269,13 @@ func (c Config) validateRuntime() error {
 // defaults fills the zero-value fields. Called after validate so a
 // misconfiguration surfaces with the user's literal field, not a
 // surprise default.
+//
+// SDKOutDir / SDKTSConfig only default when RuntimeSDK is true —
+// opting into the runtime SDK is also opting into the auto-dump
+// that makes IntelliSense work on '/__nexus/client/vue.js'-style
+// imports. Apps using the typed codegen tree leave RuntimeSDK
+// false; the defaults stay empty so we don't write SDK files into
+// a project tree the user never asked to populate.
 func (c Config) defaults() Config {
 	if c.Output == "" {
 		c.Output = "dist"
@@ -242,6 +285,19 @@ func (c Config) defaults() Config {
 	}
 	if c.FSRoot == "" {
 		c.FSRoot = path.Join(c.Root, c.Output)
+	}
+	if c.RuntimeSDK {
+		if c.SDKOutDir == "" {
+			c.SDKOutDir = "./" + c.Root + "/sdk"
+		}
+		if c.SDKTSConfig == "" {
+			c.SDKTSConfig = "./" + c.Root + "/tsconfig.json"
+		}
+		// SDKViteConfig stays opt-in: defaulting it would auto-attach
+		// the nexus-vite-plugin to a vite.config.ts that might not
+		// exist. client.applyFrontendDefaults already handles the
+		// "vite project detected" case via filesystem probing — let
+		// that path own the auto-attach decision.
 	}
 	return c
 }
@@ -263,18 +319,29 @@ func (c Config) defaults() Config {
 // compatibility — a future Mount change can selectively skip those
 // routes when RuntimeSDK is false. For now it's an intent marker.
 func mountClientSDK(cfg Config) nexus.Option {
-	ccfg := client.Config{
-		Enabled:    true,
-		Public:     cfg.ManifestPublic,
-		Middleware: cfg.ClientMiddleware,
-	}
-	ccfg = client.ApplyVisibilityDefaults(ccfg, false)
+	ccfg := clientConfigFromFrontend(cfg)
 	_ = cfg.RuntimeSDK
 	return nexus.ClientUseWithContributions(ccfg, func(app *nexus.App) client.ContributionsBuilder {
 		return func(framework string) (client.ContributionsResponse, error) {
 			return renderContributionsResponse(app, cfg, framework)
 		}
 	})
+}
+
+// clientConfigFromFrontend projects the frontend.Config's SDK-related
+// fields into a client.Config. Hoisted out of mountClientSDK so tests
+// can verify the field mapping without spinning up the whole fx graph
+// just to observe one struct.
+func clientConfigFromFrontend(cfg Config) client.Config {
+	ccfg := client.Config{
+		Enabled:    true,
+		Public:     cfg.ManifestPublic,
+		Middleware: cfg.ClientMiddleware,
+		OutDir:     cfg.SDKOutDir,
+		TSConfig:   cfg.SDKTSConfig,
+		ViteConfig: cfg.SDKViteConfig,
+	}
+	return client.ApplyVisibilityDefaults(ccfg, false)
 }
 
 // renderContributionsResponse is the closure body for the

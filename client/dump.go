@@ -113,13 +113,13 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 // one helper means a fix for either site lands everywhere.
 func WriteIfChanged(path string, body []byte, stdout io.Writer) error {
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, body) {
-		fmt.Fprintf(stdout, "unchanged %s (%d bytes)\n", path, len(body))
+		fdumpLine(stdout, ansiYellow, "unchanged", path, fmt.Sprintf("%d bytes", len(body)))
 		return nil
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	fmt.Fprintf(stdout, "wrote %s (%d bytes)\n", path, len(body))
+	fdumpLine(stdout, ansiGreen, "wrote", path, fmt.Sprintf("%d bytes", len(body)))
 	return nil
 }
 
@@ -130,13 +130,13 @@ func WriteIfChanged(path string, body []byte, stdout io.Writer) error {
 // nexus.ts wiring file that the developer is expected to edit.
 func WriteIfMissing(path string, body []byte, stdout io.Writer) error {
 	if _, err := os.Stat(path); err == nil {
-		fmt.Fprintf(stdout, "skipped %s (already exists — edit freely)\n", path)
+		fdumpLine(stdout, ansiDim, "skipped", path, "already exists — edit freely")
 		return nil
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	fmt.Fprintf(stdout, "wrote %s (%d bytes, scaffold — feel free to edit)\n", path, len(body))
+	fdumpLine(stdout, ansiGreen, "wrote", path, fmt.Sprintf("%d bytes, scaffold — feel free to edit", len(body)))
 	return nil
 }
 

@@ -186,6 +186,19 @@ type Handler struct {
 	dtsVue    cachedAsset
 }
 
+// AutoDumpConfig returns the OutDir / TSConfig / ViteConfig the
+// handler was mounted with — the three knobs that drive the SDK
+// auto-dump fired from nexus.New's OnStart hook. Returning a tuple
+// instead of exposing the Config wholesale keeps the handler's
+// other fields encapsulated (cfg.Public, cfg.Middleware, etc.
+// belong to the wire layer, not the auto-dump path).
+//
+// Empty outdir signals "no dump configured" — the caller (the
+// fx.OnStart hook in integration.go) skips the dump entirely.
+func (h *Handler) AutoDumpConfig() (outdir, tsconfig, viteconfig string) {
+	return h.cfg.OutDir, h.cfg.TSConfig, h.cfg.ViteConfig
+}
+
 // Reload drops the cached manifest + .d.ts so the next request
 // rebuilds. Used by tests and by apps that register endpoints via
 // late mount paths. Production callers usually don't need it —

@@ -59,6 +59,104 @@ func TestConfig_validateRuntime(t *testing.T) {
 	}
 }
 
+// TestClientConfigFromFrontend_PassesThroughSDKKnobs covers the
+// IntelliSense pathway after phase 3: apps that want the legacy
+// auto-dump (writes client.js + *.d.ts to disk so IDE URL → file
+// resolution works) declare SDKOutDir / SDKTSConfig / SDKViteConfig
+// on frontend.Config. mountClientSDK projects those into the
+// client.Config it hands to client.Mount; if the mapping silently
+// drops a field the user's IDE goes blind without any obvious cause.
+func TestClientConfigFromFrontend_PassesThroughSDKKnobs(t *testing.T) {
+	got := clientConfigFromFrontend(Config{
+		ManifestPublic: true,
+		SDKOutDir:      "./web/sdk",
+		SDKTSConfig:    "./web/tsconfig.json",
+		SDKViteConfig:  "./web/vite.config.ts",
+	})
+	if !got.Enabled {
+		t.Error("Enabled must be true — frontend.Plugin always mounts the SDK")
+	}
+	if !got.Public {
+		t.Error("Public lost: ManifestPublic did not project to client.Config.Public")
+	}
+	if got.OutDir != "./web/sdk" {
+		t.Errorf("OutDir = %q, want ./web/sdk", got.OutDir)
+	}
+	if got.TSConfig != "./web/tsconfig.json" {
+		t.Errorf("TSConfig = %q, want ./web/tsconfig.json", got.TSConfig)
+	}
+	if got.ViteConfig != "./web/vite.config.ts" {
+		t.Errorf("ViteConfig = %q, want ./web/vite.config.ts", got.ViteConfig)
+	}
+}
+
+// TestClientConfigFromFrontend_ZeroValueStaysZero ensures unset SDK
+// knobs don't leak phantom paths into client.Config — that would
+// trigger the auto-dump against a directory the user never asked
+// to write to. The auto-detection inside client.Mount runs only on
+// genuinely empty fields, so we must not pre-fill them here.
+func TestClientConfigFromFrontend_ZeroValueStaysZero(t *testing.T) {
+	got := clientConfigFromFrontend(Config{Root: "web"})
+	if got.OutDir != "" {
+		t.Errorf("OutDir = %q, want empty (no SDKOutDir set)", got.OutDir)
+	}
+	if got.TSConfig != "" {
+		t.Errorf("TSConfig = %q, want empty", got.TSConfig)
+	}
+	if got.ViteConfig != "" {
+		t.Errorf("ViteConfig = %q, want empty", got.ViteConfig)
+	}
+}
+
+// TestConfig_defaults_RuntimeSDKAutoFills covers the auto-default
+// pathway: RuntimeSDK:true is the opt-in signal that the user wants
+// the IntelliSense bridge wired up. defaults() fills SDKOutDir and
+// SDKTSConfig from Root so most apps never type those paths.
+func TestConfig_defaults_RuntimeSDKAutoFills(t *testing.T) {
+	c := Config{Root: "web", RuntimeSDK: true}.defaults()
+	if c.SDKOutDir != "./web/sdk" {
+		t.Errorf("SDKOutDir = %q, want ./web/sdk", c.SDKOutDir)
+	}
+	if c.SDKTSConfig != "./web/tsconfig.json" {
+		t.Errorf("SDKTSConfig = %q, want ./web/tsconfig.json", c.SDKTSConfig)
+	}
+	if c.SDKViteConfig != "" {
+		t.Errorf("SDKViteConfig should NOT auto-default — got %q", c.SDKViteConfig)
+	}
+}
+
+// TestConfig_defaults_RuntimeSDKFalseLeavesEmpty is the inverse: an
+// app on the typed codegen path (RuntimeSDK: false) shouldn't have
+// the SDK auto-dump fire. The fields stay empty so client.Mount
+// skips its dump entirely.
+func TestConfig_defaults_RuntimeSDKFalseLeavesEmpty(t *testing.T) {
+	c := Config{Root: "web", RuntimeSDK: false}.defaults()
+	if c.SDKOutDir != "" {
+		t.Errorf("SDKOutDir = %q, want empty (RuntimeSDK off)", c.SDKOutDir)
+	}
+	if c.SDKTSConfig != "" {
+		t.Errorf("SDKTSConfig = %q, want empty", c.SDKTSConfig)
+	}
+}
+
+// TestConfig_defaults_RespectsExplicitSDKPaths verifies the
+// override pathway: a user with a non-standard layout sets the
+// fields explicitly, and defaults() must not stomp them.
+func TestConfig_defaults_RespectsExplicitSDKPaths(t *testing.T) {
+	c := Config{
+		Root:        "web",
+		RuntimeSDK:  true,
+		SDKOutDir:   "./other/path",
+		SDKTSConfig: "./other/tsconfig.json",
+	}.defaults()
+	if c.SDKOutDir != "./other/path" {
+		t.Errorf("SDKOutDir = %q, want ./other/path (explicit value lost)", c.SDKOutDir)
+	}
+	if c.SDKTSConfig != "./other/tsconfig.json" {
+		t.Errorf("SDKTSConfig = %q, want explicit override preserved", c.SDKTSConfig)
+	}
+}
+
 func TestConfig_defaults(t *testing.T) {
 	c := Config{Root: "web", FS: minimalFS()}.defaults()
 	if c.Output != "dist" {

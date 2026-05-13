@@ -392,6 +392,7 @@ func New(cfg Config) *App {
 						Namespace:    r.Namespace,
 						HasDashboard: r.HasDashboard,
 						HasClient:    r.HasClient,
+						HasGenerate:  r.HasGenerate,
 						LiveEvents:   r.LiveEvents,
 					}
 					if r.Tab != nil {
