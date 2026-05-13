@@ -49,7 +49,13 @@ func TestAuthContributor_VueEmitsComposable(t *testing.T) {
 		"login as _login",
 		"logout as _logout",
 		"me as _me",
-		"client.tokens.set",
+		// extractToken / extractUser walk both the top-level and the
+		// data-wrapped shape so envelope-style responses (Response[T])
+		// don't silently fail to stash credentials.
+		"function extractToken",
+		"function extractUser",
+		"r.data.token",
+		"client.tokens.set(tok)",
 		"client.tokens.clear",
 	} {
 		if !strings.Contains(src, want) {
@@ -132,7 +138,10 @@ func TestAuthContributor_ReactEmitsHook(t *testing.T) {
 		"login as _login",
 		"logout as _logout",
 		"me as _me",
-		"client.tokens.set",
+		"function extractToken",
+		"function extractUser",
+		"r.data.token",
+		"client.tokens.set(tok)",
 		"client.tokens.clear",
 		// React's idiom for "do this on mount" — couple bootstrap
 		// to a useEffect so the consumer doesn't have to.

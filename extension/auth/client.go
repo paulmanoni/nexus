@@ -137,6 +137,8 @@ func renderAuthVue(f authFlows) string {
 	}
 	b.WriteString("\n")
 
+	writeTokenExtractHelpers(&b)
+
 	// Module-level state: one identity / loading / error per page.
 	b.WriteString("type Identity = unknown\n\n")
 	b.WriteString("const _identity = ref<Identity | null>(null)\n")
@@ -155,15 +157,16 @@ func renderAuthVue(f authFlows) string {
 		b.WriteString("    error.value = undefined\n")
 		b.WriteString("    try {\n")
 		b.WriteString("      const out: any = await _login(creds)\n")
-		// Stash the token if the response carries one. The check is
-		// runtime-shaped because we don't know the response type at
-		// codegen time — different apps name it `token`/`accessToken`/etc.
-		b.WriteString("      if (out && typeof out === 'object' && typeof (out as any).token === 'string') {\n")
-		b.WriteString("        client.tokens.set((out as any).token)\n")
-		b.WriteString("      }\n")
-		b.WriteString("      if (out && typeof out === 'object' && (out as any).user) {\n")
-		b.WriteString("        identity.value = (out as any).user\n")
-		b.WriteString("      }\n")
+		// Stash the token if the response carries one. extractToken
+		// walks a list of common response shapes (top-level token,
+		// envelope-wrapped data.token, OAuth2-spelling accessToken)
+		// so apps with a Response[T] wrapper don't have to flatten
+		// their handler return for the SDK to pick up credentials.
+		b.WriteString("      const tok = extractToken(out)\n")
+		b.WriteString("      if (tok) client.tokens.set(tok)\n")
+		// User extraction mirrors the same envelope-aware shape.
+		b.WriteString("      const usr = extractUser(out)\n")
+		b.WriteString("      if (usr !== undefined) identity.value = usr\n")
 		b.WriteString("      return out\n")
 		b.WriteString("    } catch (e) {\n")
 		b.WriteString("      error.value = e as NexusError\n")
@@ -256,6 +259,8 @@ func renderAuthReact(f authFlows) string {
 	}
 	b.WriteString("\n")
 
+	writeTokenExtractHelpers(&b)
+
 	// Module-level state machine. _identity is read via useSync-
 	// ExternalStore so concurrent-mode renders see a consistent
 	// value within a single commit. _loading and _error are
@@ -281,16 +286,14 @@ func renderAuthReact(f authFlows) string {
 		b.WriteString("    setError(undefined)\n")
 		b.WriteString("    try {\n")
 		b.WriteString("      const out: any = await _login(creds)\n")
-		// Same runtime shape check as the Vue composable — the
-		// codegen doesn't know whether the response calls its token
-		// "token" or "accessToken", and getting it wrong is worse
-		// than not auto-stashing.
-		b.WriteString("      if (out && typeof out === 'object' && typeof (out as any).token === 'string') {\n")
-		b.WriteString("        client.tokens.set((out as any).token)\n")
-		b.WriteString("      }\n")
-		b.WriteString("      if (out && typeof out === 'object' && (out as any).user) {\n")
-		b.WriteString("        _setIdentity((out as any).user)\n")
-		b.WriteString("      }\n")
+		// extractToken / extractUser walk the common response shapes —
+		// top-level token vs envelope-wrapped data.token, OAuth2
+		// `accessToken` vs the bare `token` spelling. Both work without
+		// the consumer flattening their handler return for the SDK.
+		b.WriteString("      const tok = extractToken(out)\n")
+		b.WriteString("      if (tok) client.tokens.set(tok)\n")
+		b.WriteString("      const usr = extractUser(out)\n")
+		b.WriteString("      if (usr !== undefined) _setIdentity(usr)\n")
 		b.WriteString("      return out\n")
 		b.WriteString("    } catch (e) {\n")
 		b.WriteString("      setError(e as NexusError)\n")
@@ -351,4 +354,44 @@ func renderAuthReact(f authFlows) string {
 	b.WriteString("}\n")
 
 	return b.String()
+}
+
+// writeTokenExtractHelpers emits the two response-walking helpers
+// every framework adapter uses to find the access token + user
+// fields in a login() return. Apps that ship their handler return
+// in a Response[T]-style envelope (data: { token: "..." }) get
+// transparent handling; apps that return the token at the top level
+// keep working. Both `token` and OAuth2-spelling `accessToken` are
+// honored at both depths.
+//
+// Emitted once per framework file (Vue / React / Svelte) so the
+// generated TS is self-contained — no cross-file helper imports,
+// no runtime dependency on the SDK package's internals.
+func writeTokenExtractHelpers(b *strings.Builder) {
+	b.WriteString(`// Walk common login-response shapes for the access token. Returns
+// "" when no recognised field is present.
+function extractToken(r: any): string {
+  if (!r || typeof r !== 'object') return ''
+  if (typeof r.token === 'string' && r.token) return r.token
+  if (typeof r.accessToken === 'string' && r.accessToken) return r.accessToken
+  if (r.data && typeof r.data === 'object') {
+    if (typeof r.data.token === 'string' && r.data.token) return r.data.token
+    if (typeof r.data.accessToken === 'string' && r.data.accessToken) return r.data.accessToken
+  }
+  return ''
+}
+
+// extractUser mirrors extractToken for the identity field — apps
+// putting the user under data.user (envelope) get the same depth-2
+// tolerance the token side has. Returns undefined when no user
+// field is found so the caller can distinguish "no identity in
+// response" from "identity was explicitly null/empty".
+function extractUser(r: any): unknown {
+  if (!r || typeof r !== 'object') return undefined
+  if (r.user !== undefined) return r.user
+  if (r.data && typeof r.data === 'object' && r.data.user !== undefined) return r.data.user
+  return undefined
+}
+
+`)
 }

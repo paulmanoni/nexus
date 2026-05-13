@@ -83,6 +83,31 @@ export function localStorageTokenStore(key = 'nexus.token') {
 
 // -- NexusClient ---------------------------------------------------
 
+// extractLoginToken walks a login response body looking for the
+// access token in the common locations. Apps that return the token
+// directly ({ token: "..." }) get the v0-style top-level pickup;
+// apps that wrap their handler return in an envelope (the very common
+// { status, data: { token: "..." } } shape Go REST controllers tend
+// to ship with) get the nested pickup without having to rewrite the
+// handler. Both bare `token` and the OAuth2-spelling `accessToken`
+// are honored at both depths so the framework stays neutral on the
+// JSON-naming bikeshed.
+//
+// Returns "" when no token field is found — login() then leaves the
+// token store untouched, and the next authenticated call surfaces
+// the "auth: unauthenticated" error the user expects when the
+// response shape doesn't include a credential.
+function extractLoginToken(r) {
+  if (!r || typeof r !== 'object') return ''
+  if (typeof r.token === 'string' && r.token) return r.token
+  if (typeof r.accessToken === 'string' && r.accessToken) return r.accessToken
+  if (r.data && typeof r.data === 'object') {
+    if (typeof r.data.token === 'string' && r.data.token) return r.data.token
+    if (typeof r.data.accessToken === 'string' && r.data.accessToken) return r.data.accessToken
+  }
+  return ''
+}
+
 /**
  * NexusClient is the root SDK handle. Construct once per page; all
  * REST / GraphQL / WS / CRUD / auth flows hang off the same instance
@@ -431,9 +456,8 @@ class AuthNamespace {
     const r = (m.auth.loginTransport === 'graphql')
       ? await this._c._gql('mutation', m.auth.loginName, creds, {})
       : await this._c.rest('POST', m.auth.loginPath, creds)
-    if (r && typeof r === 'object' && typeof r.token === 'string') {
-      this.setToken(r.token)
-    }
+    const tok = extractLoginToken(r)
+    if (tok) this.setToken(tok)
     return r
   }
 
