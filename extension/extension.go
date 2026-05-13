@@ -42,6 +42,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/registry"
 )
 
 // Plugin describes a feature contribution to a nexus app. Name is the
@@ -77,6 +78,59 @@ type Plugin struct {
 	// namespace and an Apply hook that runs once the App is built.
 	// Optional.
 	Client *Client
+
+	// Generate marks the plugin as a codegen driver. Exactly one
+	// plugin per app may set this; the second registration panics at
+	// boot. The frontend extension sets it; most plugins don't. See
+	// the Generate struct doc for the contract.
+	Generate *Generate
+}
+
+// File is one generated artifact a driver (or a contributor) emits.
+// Path is forward-slash relative to the driver's OutDir; Body is the
+// raw bytes. Mirrors nexus.GeneratedFile so we can route values across
+// the package boundary without an import cycle, but the user-facing
+// type lives here so plugin authors never touch the nexus internals.
+type File struct {
+	Path string
+	Body []byte
+}
+
+// GenerateContext is the input handed to a driver's Render callback.
+// Mirrors nexus.GenerateContext so plugin authors import only the
+// extension package.
+type GenerateContext struct {
+	Registry     *registry.Registry
+	Refs         map[string]registry.NamedType
+	BasePath     string
+	Extras       map[string]any
+	Contributors []ClientContributor
+}
+
+// ClientContributor is the optional interface a plugin can implement
+// (via a value returned from one of its Provide constructors) to add
+// extra TS files to whatever generator the active Generate driver
+// runs. The frontend extension is the canonical consumer: at Render
+// time it asks the App for every registered contributor and merges
+// the returned files into its output tree.
+//
+// Phase 1 keeps the collection seam minimal — the App doesn't yet
+// gather contributors automatically (that lands when auth + oauth2
+// grow contribution methods). Driver Render() implementations can
+// already see Contributors via GenerateContext, so the plumbing is
+// in place for the follow-up PR.
+type ClientContributor interface {
+	NexusContribute(ctx GenerateContext) ([]File, error)
+}
+
+// Generate declares a codegen driver. OutDir resolves the absolute
+// directory the driver wants files written to; Render produces the
+// file tree. Both are required. The shape mirrors nexus.GenerateDriver
+// — Use() converts between them — so plugin authors never import the
+// nexus internals to write a driver.
+type Generate struct {
+	OutDir func(app *nexus.App) (string, error)
+	Render func(ctx GenerateContext) ([]File, error)
 }
 
 // Lifecycle hooks tied to the fx app lifecycle. OnBoot and OnReady
@@ -168,6 +222,7 @@ func Use(p Plugin) nexus.Option {
 		Version:      p.Version,
 		HasDashboard: p.Dashboard != nil,
 		HasClient:    p.Client != nil,
+		HasGenerate:  p.Generate != nil,
 		Namespace:    namespace(p),
 		Tab:          tabRecord(p.Dashboard),
 		LiveEvents:   liveEvents(p.Dashboard),
@@ -188,7 +243,43 @@ func Use(p Plugin) nexus.Option {
 		opts = append(opts, nexus.Invoke(p.Client.Apply))
 	}
 
+	if p.Generate != nil {
+		opts = append(opts, generateDriverOption(p.Name, p.Generate))
+	}
+
 	return nexus.Options(opts...)
+}
+
+// generateDriverOption converts an extension.Generate slot into a
+// nexus.GenerateDriver registration. The fx.Invoke runs once during
+// fx.Start; (*App).RegisterGenerateDriver panics on duplicate, so
+// "two frontends in one app" surfaces at boot — well before
+// `nexus build` would have tried to merge their outputs.
+func generateDriverOption(name string, g *Generate) nexus.Option {
+	return nexus.Invoke(func(app *nexus.App) {
+		drv := nexus.GenerateDriver{
+			PluginName: name,
+			OutDir:     g.OutDir,
+			Render: func(ctx nexus.GenerateContext) ([]nexus.GeneratedFile, error) {
+				files, err := g.Render(GenerateContext{
+					Registry:     ctx.Registry,
+					Refs:         ctx.Refs,
+					BasePath:     ctx.BasePath,
+					Extras:       ctx.Extras,
+					Contributors: nil, // collected in a follow-up phase
+				})
+				if err != nil {
+					return nil, err
+				}
+				out := make([]nexus.GeneratedFile, len(files))
+				for i, f := range files {
+					out[i] = nexus.GeneratedFile{Path: f.Path, Body: f.Body}
+				}
+				return out, nil
+			},
+		}
+		app.RegisterGenerateDriver(drv)
+	})
 }
 
 func validate(p Plugin) error {
@@ -206,6 +297,14 @@ func validate(p Plugin) error {
 			if r.Handler == nil {
 				return fmt.Errorf("extension: Plugin %q Dashboard.Routes[%d].Handler is required", p.Name, i)
 			}
+		}
+	}
+	if p.Generate != nil {
+		if p.Generate.OutDir == nil {
+			return fmt.Errorf("extension: Plugin %q Generate.OutDir is required", p.Name)
+		}
+		if p.Generate.Render == nil {
+			return fmt.Errorf("extension: Plugin %q Generate.Render is required", p.Name)
 		}
 	}
 	return nil

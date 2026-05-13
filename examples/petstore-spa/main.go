@@ -1,15 +1,17 @@
 // Command petstore-spa is a runnable end-to-end demo of the nexus
-// client SDK. One Go file, one HTML page, one Vue setup script —
-// the smallest reasonable app exercising:
+// frontend extension. One Go file, one HTML page, one Vue setup
+// script — the smallest reasonable app exercising:
 //
-//   - Config.Client.Enabled auto-mounts the SDK at /__nexus/client/*
+//   - frontend.Plugin replaces ServeFrontend + Client.Enabled in
+//     one declaration. The plugin mounts the embedded SPA AND
+//     registers a codegen driver so `nexus generate frontend` can
+//     project the live registry into typed TS source.
 //   - auth.Module's bridge populates the manifest's Auth section
-//     so the browser knows where to put the token
+//     so the browser knows where to put the token.
 //   - nexus.AuthRoute("login"|"logout"|"me") promotes plain REST
-//     handlers into the SDK's auth namespace
-//   - AsCRUD[Pet] generates 5 REST routes the SDK consumes via
-//     useCrud('pets')
-//   - ServeFrontend mounts the embedded SPA at /
+//     handlers into the SDK's auth flows.
+//   - AsCRUD[Pet] generates 5 REST routes the browser consumes via
+//     the runtime SDK (useCrud('pets')).
 //
 // Run:
 //
@@ -17,6 +19,18 @@
 //	open http://localhost:8080
 //
 // Login as alice / hunter2.
+//
+// On the codegen story: this example has NO bundler — the browser
+// loads Vue from a CDN and imports the runtime SDK at
+// /__nexus/client/vue.js, the same way it did before the frontend
+// extension landed. A Vite-driven project would instead run
+//
+//	nexus generate frontend --url http://localhost:8080
+//
+// to write web/src/__nexus/{_client,types,index,vue}.ts, then import
+// the typed per-op functions directly. The plugin's Generate slot
+// makes that one command; this example's app.js doesn't exercise
+// the typed path because the no-bundler constraint rules out TS.
 package main
 
 import (
@@ -28,11 +42,12 @@ import (
 	"sync"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
 	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/extension/frontend"
 )
 
-//go:embed all:web
+//go:embed all:web/dist
 var webFS embed.FS
 
 // Pet is the entity behind /pets — kept tiny so the demo focuses
@@ -141,17 +156,22 @@ func me(ctx context.Context) (User, error) {
 func main() {
 	nexus.Run(
 		nexus.Config{
-			Server:        nexus.ServerConfig{Addr: ":8080"},
-			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Petstore SPA"},
+			Server:    nexus.ServerConfig{Addr: ":8080"},
+			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "Petstore SPA"},
+			// Client.Enabled keeps /__nexus/client/manifest.json
+			// reachable so `nexus generate frontend --url` can pull
+			// the typed schema. Production deploys flip this off
+			// once the generated tree is committed; the example
+			// keeps it on so the regenerate flow is one command.
 			Client:        client.Config{Enabled: true},
 			TraceCapacity: 200,
 		},
 
 		// Auth — Bearer token resolved against the in-memory token
-		// table. auth.Module's Invoke also bridges the strategy
-		// info into the SDK manifest (added in step 9), so the
-		// browser SDK knows to send "Authorization: Bearer <token>"
-		// without any user-side configuration.
+		// table. auth.Module's Invoke bridges the strategy info
+		// into the SDK manifest, so the browser SDK knows to send
+		// "Authorization: Bearer <token>" without any user-side
+		// configuration.
 		auth.Module(auth.Config{
 			Extract: auth.Bearer(),
 			Resolve: resolveToken,
@@ -165,21 +185,31 @@ func main() {
 		nexus.AsRest("GET", "/me", me, nexus.AuthRoute("me"), auth.Required()),
 
 		// CRUD — AsCRUD generates the 5 REST routes (GET list,
-		// GET one, POST, PATCH, DELETE) the SDK consumes via
-		// nx.crud('pets'). MemoryResolver is fine for a demo;
-		// real apps wire a GORM-backed Store via the resolver.
+		// GET one, POST, PATCH, DELETE) keyed on /pets. The
+		// generated tree picks them up as listPets / getPetsById /
+		// createPet / etc.
 		nexus.AsCRUD[Pet](
 			nexus.MemoryResolver[Pet](
-				func(p *Pet) string    { return p.ID },
+				func(p *Pet) string     { return p.ID },
 				func(p *Pet, id string) { p.ID = id },
 			),
 			auth.Required(),
 		),
 
-		// SPA — embedded HTML + Vue setup script. ServeFrontend
-		// catches every route the framework didn't claim and
-		// either serves a static asset or falls back to index.html
-		// (SPA client-side routing).
-		nexus.ServeFrontend(webFS, "web"),
+		// Frontend — one declaration replaces what used to be
+		// nexus.ServeFrontend + Config.Client wiring. The //go:embed
+		// FS satisfies the runtime mount; the registered Generate
+		// driver lets `nexus generate frontend --url ... --out
+		// web/src/__nexus` regenerate the typed TS surface from
+		// the live manifest. This example doesn't exercise the
+		// typed path (no bundler), but flipping Framework to React
+		// or Svelte + adding a Vite project under web/ is enough
+		// to light it up.
+		frontend.Plugin(frontend.Config{
+			Root:      "web",
+			Output:    "dist",
+			Framework: frontend.Vue,
+			FS:        webFS,
+		}),
 	)
 }
