@@ -303,24 +303,19 @@ func (c Config) defaults() Config {
 }
 
 // mountClientSDK installs the /__nexus/client/* routes — manifest,
-// contributions, and the legacy SDK runtime JS files — by delegating
-// to nexus.ClientUseWithContributions. The builder factory captures
-// the user-side Config and the *App injected by fx, then returns a
-// closure HTTP handlers call on each contributions.json request.
+// contributions, and (when RuntimeSDK is true) the legacy SDK runtime
+// JS files — by delegating to nexus.ClientUseWithContributions. The
+// builder factory captures the user-side Config and the *App injected
+// by fx, then returns a closure HTTP handlers call on each
+// contributions.json request.
 //
 // Idempotent: if nexus.Config.Client.Enabled already mounted the SDK
 // (back-compat path), ClientUseWithContributions's existing handler
 // check short-circuits. Apps that want the contributions route MUST
 // drop Config.Client.Enabled in favor of frontend.Plugin — the
 // auto-mounted handler doesn't know about contributors.
-//
-// RuntimeSDK currently doesn't gate the static JS routes (Mount
-// always registers them). The flag is documented for forward
-// compatibility — a future Mount change can selectively skip those
-// routes when RuntimeSDK is false. For now it's an intent marker.
 func mountClientSDK(cfg Config) nexus.Option {
 	ccfg := clientConfigFromFrontend(cfg)
-	_ = cfg.RuntimeSDK
 	return nexus.ClientUseWithContributions(ccfg, func(app *nexus.App) client.ContributionsBuilder {
 		return func(framework string) (client.ContributionsResponse, error) {
 			return renderContributionsResponse(app, cfg, framework)
@@ -332,6 +327,12 @@ func mountClientSDK(cfg Config) nexus.Option {
 // fields into a client.Config. Hoisted out of mountClientSDK so tests
 // can verify the field mapping without spinning up the whole fx graph
 // just to observe one struct.
+//
+// SkipAssets is the inverse of RuntimeSDK: when the user opts out of
+// runtime SDK imports, the static asset routes (client.js / vue.js /
+// *.d.ts) don't register. The codegen routes (manifest +
+// contributions) mount unconditionally so `nexus generate frontend`
+// works either way.
 func clientConfigFromFrontend(cfg Config) client.Config {
 	ccfg := client.Config{
 		Enabled:    true,
@@ -340,6 +341,7 @@ func clientConfigFromFrontend(cfg Config) client.Config {
 		OutDir:     cfg.SDKOutDir,
 		TSConfig:   cfg.SDKTSConfig,
 		ViteConfig: cfg.SDKViteConfig,
+		SkipAssets: !cfg.RuntimeSDK,
 	}
 	return client.ApplyVisibilityDefaults(ccfg, false)
 }

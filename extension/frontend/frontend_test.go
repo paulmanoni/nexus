@@ -108,6 +108,23 @@ func TestClientConfigFromFrontend_ZeroValueStaysZero(t *testing.T) {
 	}
 }
 
+// TestClientConfigFromFrontend_RuntimeSDKDrivesSkipAssets pins the
+// inverse relationship between RuntimeSDK and SkipAssets. The user-
+// facing flag says "yes, serve the runtime SDK", which maps to "no,
+// don't skip the assets" at the client.Config layer. A regression
+// here would silently re-expose the static SDK routes to codegen-
+// only apps.
+func TestClientConfigFromFrontend_RuntimeSDKDrivesSkipAssets(t *testing.T) {
+	on := clientConfigFromFrontend(Config{Root: "web", RuntimeSDK: true})
+	if on.SkipAssets {
+		t.Error("RuntimeSDK:true must produce SkipAssets:false")
+	}
+	off := clientConfigFromFrontend(Config{Root: "web", RuntimeSDK: false})
+	if !off.SkipAssets {
+		t.Error("RuntimeSDK:false must produce SkipAssets:true")
+	}
+}
+
 // TestConfig_defaults_RuntimeSDKAutoFills covers the auto-default
 // pathway: RuntimeSDK:true is the opt-in signal that the user wants
 // the IntelliSense bridge wired up. defaults() fills SDKOutDir and

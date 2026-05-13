@@ -107,12 +107,49 @@ func TestAuthContributor_NoFlowsNoOutput(t *testing.T) {
 	}
 }
 
-// TestAuthContributor_NonVueFrameworkSkipped covers phase-2's scope
-// limit: only Vue templates exist. A React or Svelte target should
-// get nothing rather than a stale Vue file.
-func TestAuthContributor_NonVueFrameworkSkipped(t *testing.T) {
+// TestAuthContributor_ReactEmitsHook is the React-branch counterpart
+// to the Vue happy path: identity, isAuthenticated, loading, error,
+// and all three action functions land in auth/react.ts.
+func TestAuthContributor_ReactEmitsHook(t *testing.T) {
+	reg := makeRegistry(t, "login", "logout", "me")
+	files, err := authContributor{}.NexusContribute(extension.GenerateContext{
+		Registry: reg,
+		Extras:   map[string]any{"frontend.framework": "react"},
+	})
+	if err != nil {
+		t.Fatalf("NexusContribute: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "auth/react.ts" {
+		t.Fatalf("files = %+v, want one entry at auth/react.ts", files)
+	}
+	src := string(files[0].Body)
+	for _, want := range []string{
+		"export function useAuth",
+		"useSyncExternalStore",
+		"const login = useCallback",
+		"const logout = useCallback",
+		"const bootstrap = useCallback",
+		"login as _login",
+		"logout as _logout",
+		"me as _me",
+		"client.tokens.set",
+		"client.tokens.clear",
+		// React's idiom for "do this on mount" — couple bootstrap
+		// to a useEffect so the consumer doesn't have to.
+		"useEffect(() => { void bootstrap() }",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("auth/react.ts missing %q", want)
+		}
+	}
+}
+
+// TestAuthContributor_UnsupportedFrameworkSkipped now narrows the
+// scope of the "no templates" branch: with React added, only Svelte
+// and the empty/none framework return zero files.
+func TestAuthContributor_UnsupportedFrameworkSkipped(t *testing.T) {
 	reg := makeRegistry(t, "login")
-	for _, fw := range []string{"react", "svelte", "", "none"} {
+	for _, fw := range []string{"svelte", "", "none"} {
 		t.Run("framework="+fw, func(t *testing.T) {
 			files, err := authContributor{}.NexusContribute(extension.GenerateContext{
 				Registry: reg,

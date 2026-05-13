@@ -166,6 +166,19 @@ type Config struct {
 	// TSConfig defaults, this means the canonical scaffold layout
 	// only needs `client.Config{Enabled: true}`.
 	ViteConfig string
+
+	// SkipAssets, when true, suppresses the static SDK asset routes
+	// (client.js, client.d.ts, vue.js, vue.d.ts). The manifest and
+	// contributions routes still mount — they're the codegen surface
+	// and don't depend on the runtime SDK.
+	//
+	// Set this for apps that consume the typed codegen tree
+	// (`nexus generate frontend`) instead of importing from
+	// /__nexus/client/*.js at runtime. frontend.Plugin wires it
+	// automatically based on its RuntimeSDK field; direct
+	// client.Mount / nexus.ClientUse callers default to false
+	// (assets served), preserving back-compat.
+	SkipAssets bool
 }
 
 // Handler holds the live state of a mounted SDK surface — the
@@ -487,6 +500,8 @@ func MountWithContributions(e *gin.Engine, reg *registry.Registry, authInfo func
 			g.Use(mw)
 		}
 	}
+	// Manifest is always served — the codegen CLI needs it
+	// regardless of whether the runtime SDK assets are exposed.
 	g.GET("/manifest.json", func(c *gin.Context) {
 		h.build()
 		h.mu.Lock()
@@ -494,26 +509,33 @@ func MountWithContributions(e *gin.Engine, reg *registry.Registry, authInfo func
 		h.mu.Unlock()
 		serveCachedAsset(c, "application/json; charset=utf-8", asset)
 	})
-	g.GET("/client.js", func(c *gin.Context) {
-		serveCachedAsset(c, "application/javascript; charset=utf-8", clientJSAsset)
-	})
-	g.GET("/client.d.ts", func(c *gin.Context) {
-		h.build()
-		h.mu.Lock()
-		asset := h.dtsClient
-		h.mu.Unlock()
-		serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
-	})
-	g.GET("/vue.js", func(c *gin.Context) {
-		serveCachedAsset(c, "application/javascript; charset=utf-8", vueJSAsset)
-	})
-	g.GET("/vue.d.ts", func(c *gin.Context) {
-		h.build()
-		h.mu.Lock()
-		asset := h.dtsVue
-		h.mu.Unlock()
-		serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
-	})
+	// Static SDK assets ride a single SkipAssets gate. Suppress
+	// them on apps that consume the typed codegen tree at build
+	// time — those apps never import from /__nexus/client/*.js, so
+	// keeping the routes registered is dead weight and a small
+	// attack surface (anonymous reads of bundled JS body).
+	if !cfg.SkipAssets {
+		g.GET("/client.js", func(c *gin.Context) {
+			serveCachedAsset(c, "application/javascript; charset=utf-8", clientJSAsset)
+		})
+		g.GET("/client.d.ts", func(c *gin.Context) {
+			h.build()
+			h.mu.Lock()
+			asset := h.dtsClient
+			h.mu.Unlock()
+			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
+		})
+		g.GET("/vue.js", func(c *gin.Context) {
+			serveCachedAsset(c, "application/javascript; charset=utf-8", vueJSAsset)
+		})
+		g.GET("/vue.d.ts", func(c *gin.Context) {
+			h.build()
+			h.mu.Lock()
+			asset := h.dtsVue
+			h.mu.Unlock()
+			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
+		})
+	}
 	if contributions != nil {
 		g.GET("/contributions.json", contributionsHandler(contributions))
 	}
