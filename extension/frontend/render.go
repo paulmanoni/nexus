@@ -16,14 +16,14 @@ import (
 //	types.ts     — interface for every named struct in the ref pool
 //	index.ts     — per-op typed exports (listUsers, createUser, ...)
 //	vue.ts       — per-op composables, when Framework == Vue
-//	react.ts     — placeholder until templates land
-//	svelte.ts    — placeholder until templates land
+//	react.ts     — per-op hooks, when Framework == React
+//	svelte.ts    — per-op store factories, when Framework == Svelte
 //
-// Phase 1 emits only the transport-neutral trio + Vue. React/Svelte
-// gates resolve to no file (consumer reads the runtime client SDK
-// in the meantime). The driver still merges ClientContributor output
-// even though no contributor is wired yet — the loop costs nothing
-// and lights up phase 2 without touching this function.
+// Each per-framework file imports the typed functions from index.ts
+// and wraps them in the framework's reactive primitives. Consumers
+// pick a framework once on the Plugin's Config; switching is a
+// re-run away — the index.ts surface is framework-neutral and stays
+// byte-identical across choices.
 //
 // Exported so the `nexus generate frontend` CLI can call it without
 // going through the in-process driver path (the CLI runs offline
@@ -44,10 +44,10 @@ func Render(cfg Config, ctx extension.GenerateContext) ([]extension.File, error)
 	switch cfg.Framework {
 	case Vue:
 		out = append(out, extension.File{Path: "vue.ts", Body: []byte(renderVueTS(cfg, ctx))})
-	case React, Svelte:
-		// Phase-1: framework adapter templates land in a follow-up.
-		// Emit nothing for now so users opting in early don't see a
-		// stale stub committed into their source tree.
+	case React:
+		out = append(out, extension.File{Path: "react.ts", Body: []byte(renderReactTS(cfg, ctx))})
+	case Svelte:
+		out = append(out, extension.File{Path: "svelte.ts", Body: []byte(renderSvelteTS(cfg, ctx))})
 	case None:
 		// Explicit opt-out from the per-framework wrapper.
 	}
