@@ -120,6 +120,60 @@ func TestContributionsHandler_BuilderErrorReturns500(t *testing.T) {
 	}
 }
 
+// TestMount_SkipAssetsOmitsStaticRoutes verifies the gate: when
+// SkipAssets is true, the four static routes (client.js, vue.js,
+// *.d.ts) don't register, but manifest still mounts. Apps using
+// the typed codegen tree set this to drop unused surface from the
+// HTTP listener.
+func TestMount_SkipAssetsOmitsStaticRoutes(t *testing.T) {
+	e := gin.New()
+	Mount(e, nil, nil, nil, "", Config{SkipAssets: true})
+
+	// Walk the registered routes and assert which paths exist.
+	have := map[string]bool{}
+	for _, r := range e.Routes() {
+		have[r.Path] = true
+	}
+	for _, p := range []string{
+		"/__nexus/client/client.js",
+		"/__nexus/client/client.d.ts",
+		"/__nexus/client/vue.js",
+		"/__nexus/client/vue.d.ts",
+	} {
+		if have[p] {
+			t.Errorf("SkipAssets=true: route %s still registered", p)
+		}
+	}
+	if !have["/__nexus/client/manifest.json"] {
+		t.Errorf("SkipAssets must not affect manifest route — /manifest.json missing")
+	}
+}
+
+// TestMount_DefaultMountsAllAssets is the back-compat anchor: a
+// zero-value Config (Enabled implied at the call site via the
+// caller's option chain) keeps every legacy route alive. Nothing
+// that worked before SkipAssets landed should regress.
+func TestMount_DefaultMountsAllAssets(t *testing.T) {
+	e := gin.New()
+	Mount(e, nil, nil, nil, "", Config{})
+
+	have := map[string]bool{}
+	for _, r := range e.Routes() {
+		have[r.Path] = true
+	}
+	for _, p := range []string{
+		"/__nexus/client/manifest.json",
+		"/__nexus/client/client.js",
+		"/__nexus/client/client.d.ts",
+		"/__nexus/client/vue.js",
+		"/__nexus/client/vue.d.ts",
+	} {
+		if !have[p] {
+			t.Errorf("default Config dropped legacy route %s", p)
+		}
+	}
+}
+
 // TestContributionsHandler_RespectsBuilderVersion ensures the
 // builder can override the default SchemaVersion — useful for
 // forward-compatibility experiments where a custom builder wants
