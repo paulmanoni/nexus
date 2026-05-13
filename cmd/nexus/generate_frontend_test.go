@@ -231,6 +231,73 @@ func TestGenerateFrontend_RejectsBothSources(t *testing.T) {
 	}
 }
 
+// TestGenerateFrontend_MergesContributions covers the phase-3 wire:
+// when a contributions JSON is supplied (file source for hermeticity),
+// the CLI passes its plugins through to the renderer and the
+// resulting tree contains auth's contributed file.
+func TestGenerateFrontend_MergesContributions(t *testing.T) {
+	manifest := fixtureManifestJSON(t)
+	contributions := fixtureContributionsJSON(t)
+	outDir := t.TempDir()
+
+	if err := runGenerateFrontend(frontendOptions{
+		Manifest:      manifest,
+		Contributions: contributions,
+		Out:           outDir,
+		Framework:     "vue",
+		Root:          "web",
+	}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("runGenerateFrontend: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(outDir, "auth", "vue.ts"))
+	if err != nil {
+		t.Fatalf("expected auth/vue.ts in output: %v", err)
+	}
+	if !strings.Contains(string(got), "useAuth") {
+		t.Fatalf("auth/vue.ts missing useAuth marker:\n%s", got)
+	}
+}
+
+// TestGenerateFrontend_MissingContributionsFileIsFatal ensures the
+// CLI doesn't silently skip when the user explicitly points at a
+// missing file (vs. the URL-source 404 case, which IS skipped).
+// Explicit file paths must exist; typos shouldn't produce empty
+// trees that look like success.
+func TestGenerateFrontend_MissingContributionsFileIsFatal(t *testing.T) {
+	manifest := fixtureManifestJSON(t)
+	err := runGenerateFrontend(frontendOptions{
+		Manifest:      manifest,
+		Contributions: "/nonexistent/path/contributions.json",
+		Out:           t.TempDir(),
+		Framework:     "vue",
+		Root:          "web",
+	}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("expected error for missing contributions file")
+	}
+}
+
+func fixtureContributionsJSON(t *testing.T) string {
+	t.Helper()
+	body := `{
+  "version": "client.v1",
+  "framework": "vue",
+  "plugins": [
+    {
+      "name": "auth",
+      "files": [
+        {"path": "auth/vue.ts", "body": "// auth stub\nexport function useAuth() { return {} }\n"}
+      ]
+    }
+  ]
+}`
+	path := filepath.Join(t.TempDir(), "contributions.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // TestGenerateFrontend_UnknownFrameworkRejected catches typos at
 // flag-parse time rather than producing a confusing partial output.
 func TestGenerateFrontend_UnknownFrameworkRejected(t *testing.T) {

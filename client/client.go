@@ -439,6 +439,22 @@ func VitePluginJS() []byte { return vitePluginJS }
 // step. Dump errors are logged but don't fail Mount — dev-tool
 // convenience shouldn't crash boot.
 func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config) *Handler {
+	return MountWithContributions(e, reg, authInfo, schemaRefs, basePath, cfg, nil)
+}
+
+// MountWithContributions is Mount + an optional contributions
+// builder. When build is non-nil, an additional
+// GET <path>/contributions.json route is registered so the CLI's
+// frontend codegen can fetch plugin contributions alongside the
+// manifest. nil reproduces the legacy Mount behavior (manifest +
+// static assets only).
+//
+// Kept as a sibling rather than baked into Mount's signature so
+// existing callers (nexus.ClientUse, test fixtures) don't churn.
+// frontend.Plugin is the canonical caller of the with-contributions
+// form; it's the only place that has the *App pointer needed to
+// build the closure.
+func MountWithContributions(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config, contributions ContributionsBuilder) *Handler {
 	if cfg.Path == "" {
 		cfg.Path = DefaultPath
 	}
@@ -485,6 +501,9 @@ func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo,
 		h.mu.Unlock()
 		serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
 	})
+	if contributions != nil {
+		g.GET("/contributions.json", contributionsHandler(contributions))
+	}
 	// Auto-dump on cfg.OutDir is wired by the caller via a
 	// fx.Lifecycle.OnStart hook (see nexus.New). Mount can't dump
 	// here because it runs inside the *App constructor —

@@ -42,7 +42,6 @@ import (
 	"sync"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension/auth"
 	"github.com/paulmanoni/nexus/extension/frontend"
 )
@@ -156,14 +155,8 @@ func me(ctx context.Context) (User, error) {
 func main() {
 	nexus.Run(
 		nexus.Config{
-			Server:    nexus.ServerConfig{Addr: ":8080"},
-			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "Petstore SPA"},
-			// Client.Enabled keeps /__nexus/client/manifest.json
-			// reachable so `nexus generate frontend --url` can pull
-			// the typed schema. Production deploys flip this off
-			// once the generated tree is committed; the example
-			// keeps it on so the regenerate flow is one command.
-			Client:        client.Config{Enabled: true},
+			Server:        nexus.ServerConfig{Addr: ":8080"},
+			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Petstore SPA"},
 			TraceCapacity: 200,
 		},
 
@@ -197,19 +190,25 @@ func main() {
 		),
 
 		// Frontend — one declaration replaces what used to be
-		// nexus.ServeFrontend + Config.Client wiring. The //go:embed
-		// FS satisfies the runtime mount; the registered Generate
-		// driver lets `nexus generate frontend --url ... --out
-		// web/src/__nexus` regenerate the typed TS surface from
-		// the live manifest. This example doesn't exercise the
-		// typed path (no bundler), but flipping Framework to React
-		// or Svelte + adding a Vite project under web/ is enough
-		// to light it up.
+		// ServeFrontend + Config.Client wiring (which is gone from
+		// this main as of phase 3). The plugin mounts:
+		//
+		//   - the SPA bundle under /
+		//   - /__nexus/client/manifest.json + contributions.json
+		//     so `nexus generate frontend --url ...` can refresh
+		//     the typed TS surface and merge auth's useAuth composable
+		//   - the legacy runtime SDK assets at /__nexus/client/*.js
+		//     (RuntimeSDK: true, because app.js imports vue.js from
+		//     that URL — no-bundler demo)
+		//
+		// Apps using a Vite-built frontend drop RuntimeSDK and import
+		// from the codegen tree instead.
 		frontend.Plugin(frontend.Config{
-			Root:      "web",
-			Output:    "dist",
-			Framework: frontend.Vue,
-			FS:        webFS,
+			Root:       "web",
+			Output:     "dist",
+			Framework:  frontend.Vue,
+			FS:         webFS,
+			RuntimeSDK: true,
 		}),
 	)
 }

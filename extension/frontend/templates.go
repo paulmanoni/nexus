@@ -512,12 +512,38 @@ func writeOpDoc(b *strings.Builder, e registry.Endpoint) {
 }
 
 func restOpName(e registry.Endpoint) string {
-	if e.Name != "" {
+	// Auth-flow endpoints (AuthRoute-tagged) get a canonical name
+	// matching the flow tag. Without this, AsRest's
+	// Name="METHOD PATH" form ("POST /login") would render as the
+	// ugly identifier "pOSTlogin" — and worse, the auth contributor
+	// references the flow name when synthesizing its import line,
+	// so a mismatch would produce auth/vue.ts that imports a symbol
+	// the renderer never emitted.
+	if flow := e.Tags["auth.flow"]; flow != "" {
+		return flow
+	}
+	if e.Name != "" && !strings.ContainsAny(e.Name, " /:") {
+		// A registry Name without method/path noise is an explicit
+		// op name the user set (or that AsQuery / AsMutation set).
+		// Use it verbatim — that's the most direct match for how
+		// the consumer expects to call it.
 		return e.Name
 	}
 	// Synthesize from method + path: "GET /users/:id" → "getUsersById".
-	parts := []string{strings.ToLower(e.Method)}
-	for _, seg := range strings.Split(e.Path, "/") {
+	method := strings.ToLower(e.Method)
+	path := e.Path
+	if e.Name != "" && strings.Contains(e.Name, " ") {
+		// AsRest's stored Name is "METHOD PATH" — pull pieces from
+		// it when Method/Path haven't been populated separately
+		// (defensive; the registry usually has both).
+		parts := strings.SplitN(e.Name, " ", 2)
+		method = strings.ToLower(parts[0])
+		if path == "" && len(parts) == 2 {
+			path = parts[1]
+		}
+	}
+	parts := []string{method}
+	for _, seg := range strings.Split(path, "/") {
 		if seg == "" {
 			continue
 		}
