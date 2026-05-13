@@ -123,10 +123,18 @@ type Config struct {
 	// additional static JS surfaces.
 	RuntimeSDK bool
 	// ManifestPublic, when true, serves the full manifest +
-	// contributions to anonymous browsers. Default false — the
-	// public manifest is skinny (auth flows only) so the API
-	// surface doesn't leak to scrapers. Mirrors client.Config.Public
-	// semantics 1:1.
+	// contributions to anonymous browsers. Default false on its own
+	// (skinny manifest — auth flows only — keeps the schema away
+	// from scrapers), but RuntimeSDK:true forces this to true
+	// regardless because the runtime SDK's nx.query / nx.mutate /
+	// nx.crud surface looks up ops in the fetched manifest body —
+	// the skinny shape makes every non-auth call fail at runtime
+	// with "no GraphQL query named X".
+	//
+	// Apps that genuinely want a private schema use the typed
+	// codegen path (RuntimeSDK:false) and import per-op functions
+	// from web/src/__nexus/; those calls don't depend on a fetched
+	// manifest, so the runtime visibility flag stops mattering.
 	ManifestPublic bool
 
 	// ClientMiddleware applies to every /__nexus/client/* route.
@@ -276,6 +284,15 @@ func (c Config) validateRuntime() error {
 // imports. Apps using the typed codegen tree leave RuntimeSDK
 // false; the defaults stay empty so we don't write SDK files into
 // a project tree the user never asked to populate.
+//
+// ManifestPublic also follows RuntimeSDK. The runtime SDK's
+// nx.query / nx.mutate / nx.crud calls look up ops by name in the
+// manifest body the browser fetches; the skinny "auth-flows-only"
+// default would make every non-auth call fail at runtime with
+// "no GraphQL query named X". Coupling the two flips removes the
+// footgun — operators wanting a private schema use the typed
+// codegen path (RuntimeSDK:false) and import per-op functions
+// instead, which never fetch the manifest at all.
 func (c Config) defaults() Config {
 	if c.Output == "" {
 		c.Output = "dist"
@@ -293,6 +310,12 @@ func (c Config) defaults() Config {
 		if c.SDKTSConfig == "" {
 			c.SDKTSConfig = "./" + c.Root + "/tsconfig.json"
 		}
+		// The runtime SDK is unusable without the full manifest —
+		// see the function-level doc for the reasoning. We can't
+		// distinguish "unset" from "explicitly false" on a Go bool,
+		// so the coupling is unconditional. Apps that need a private
+		// schema must drop RuntimeSDK in favor of the codegen tree.
+		c.ManifestPublic = true
 		// SDKViteConfig stays opt-in: defaulting it would auto-attach
 		// the nexus-vite-plugin to a vite.config.ts that might not
 		// exist. client.applyFrontendDefaults already handles the

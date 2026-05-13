@@ -125,6 +125,26 @@ func TestClientConfigFromFrontend_RuntimeSDKDrivesSkipAssets(t *testing.T) {
 	}
 }
 
+// TestConfig_defaults_RuntimeSDKForcesManifestPublic pins the
+// coupling that closes the "no GraphQL query named X" footgun: a
+// project shipping the runtime SDK must also serve the full
+// manifest, because that's where the SDK's nx.query lookup table
+// lives. Skinny manifest + runtime SDK was a configuration nobody
+// wanted but the defaults made easy to fall into.
+func TestConfig_defaults_RuntimeSDKForcesManifestPublic(t *testing.T) {
+	on := Config{Root: "web", RuntimeSDK: true}.defaults()
+	if !on.ManifestPublic {
+		t.Error("RuntimeSDK:true must force ManifestPublic:true; otherwise nx.query fails at runtime")
+	}
+	// Codegen-only path keeps the skinny default — those apps don't
+	// fetch the manifest at all, so the visibility flag stops
+	// mattering and operators that want a private schema can have it.
+	off := Config{Root: "web", RuntimeSDK: false}.defaults()
+	if off.ManifestPublic {
+		t.Error("RuntimeSDK:false should leave ManifestPublic at the skinny default")
+	}
+}
+
 // TestConfig_defaults_RuntimeSDKAutoFills covers the auto-default
 // pathway: RuntimeSDK:true is the opt-in signal that the user wants
 // the IntelliSense bridge wired up. defaults() fills SDKOutDir and
