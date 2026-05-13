@@ -291,6 +291,14 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		if err != nil {
 			return err
 		}
+		// Auto-codegen for frontend.Plugin apps. Runs alongside the
+		// boot-banner goroutine; both probe the same listen port
+		// independently, and devCodegenWatch silently no-ops when no
+		// --frontend dir was passed or no frontend.Plugin is
+		// registered on the running app. Each iteration of the loop
+		// (Go restart) re-fires the codegen so schema changes flow
+		// into the TS tree without a manual `nexus generate frontend`.
+		go devCodegenWatch(ctx, addr, frontendDir, "vue", stdout, stderr)
 		first = false
 		select {
 		case err := <-exited:
