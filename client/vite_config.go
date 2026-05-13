@@ -125,25 +125,56 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 	return nil
 }
 
-// EnsureViteProxyForNexus injects a server.proxy entry for the
-// framework's reserved "/__nexus" path so the browser's request
-// for /__nexus/client/manifest.json (and the rest of the dashboard
-// + SDK assets) goes through vite's same-origin proxy instead of
-// hitting the Go server cross-origin and tripping CORS.
+// DefaultNexusProxyPrefixes is the list of framework-reserved URL
+// prefixes that nexus dev auto-injects into vite's server.proxy
+// block. Routing them through the vite dev server (same-origin
+// with the SPA) avoids CORS preflights that the browser would
+// otherwise fire against the cross-origin Go listener.
 //
-// apiURL is the http://host:port the proxy forwards to (typically
-// http://localhost:8080 for plain `nexus dev`). Idempotent against
-// the literal `"/__nexus":` substring.
+// Each prefix corresponds to a transport the framework owns:
+//
+//	/__nexus  dashboard, manifest, contributions, health
+//	/graphql  GraphQL ops (AsQuery / AsMutation / AsSubscription)
+//	/oauth    oauth2.Module callback + login flows
+//	/ws       AsWS WebSocket endpoints (ws:true on the proxy rule)
+//
+// Apps with custom prefixes (a sub-router, an /api/v1 base path)
+// pass them via the EnsureViteProxyForPrefixes variant.
+var DefaultNexusProxyPrefixes = []string{"/__nexus", "/graphql", "/oauth", "/ws"}
+
+// EnsureViteProxyForNexus is the back-compat wrapper around
+// EnsureViteProxyForPrefixes(DefaultNexusProxyPrefixes). Existing
+// callers (the dev CLI's earlier shape, third-party scripts) keep
+// working; new code should prefer EnsureViteProxyForPrefixes which
+// is explicit about what gets routed.
+func EnsureViteProxyForNexus(configPath, apiURL string, stdout io.Writer) error {
+	return EnsureViteProxyForPrefixes(configPath, apiURL, DefaultNexusProxyPrefixes, stdout)
+}
+
+// EnsureViteProxyForPrefixes injects a server.proxy entry per prefix
+// so the browser's request for any framework-owned path goes through
+// vite's same-origin proxy instead of hitting the Go server cross-
+// origin and tripping CORS. Each prefix lands as one rule:
+//
+//	"<prefix>": { target: "<apiURL>", changeOrigin: true }
+//
+// The "/ws" prefix is special-cased with ws:true so vite upgrades
+// to the WebSocket transport instead of buffering an HTTP request.
+//
+// Idempotent per-prefix: prefixes already present in the config (by
+// literal "<prefix>" substring match, single or double quotes) are
+// skipped; only missing entries get added. A no-op call returns nil
+// without rewriting the file.
 //
 // Strategy mirrors insertWatchExclude:
-//  1. Already-wired? skip.
-//  2. Existing `proxy: { … }` block? prepend the /__nexus entry.
+//  1. All entries already wired? skip.
+//  2. Existing `proxy: { … }` block? prepend the missing entries.
 //  3. Existing `server: { … }` block without proxy? add a fresh
-//     `proxy: { /__nexus: ... }` inside it.
-//  4. No `server:` block? add `server: { proxy: { /__nexus: ... } }`
-//     inside defineConfig({...}).
+//     `proxy: { ... }` block inside it.
+//  4. No `server:` block? add `server: { proxy: { ... } }` inside
+//     defineConfig({...}).
 //  5. None of the above? leave the file alone.
-func EnsureViteProxyForNexus(configPath, apiURL string, stdout io.Writer) error {
+func EnsureViteProxyForPrefixes(configPath, apiURL string, prefixes []string, stdout io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -158,53 +189,102 @@ func EnsureViteProxyForNexus(configPath, apiURL string, stdout io.Writer) error 
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
 	body := string(src)
-	updated, ok := insertNexusProxyEntry(body, apiURL)
+	updated, added, ok := insertNexusProxyEntries(body, apiURL, prefixes)
 	if !ok {
 		return nil
 	}
 	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
-	fmt.Fprintf(stdout, "[nexus] added /__nexus proxy entry to %s (target: %s)\n", configPath, apiURL)
+	fmt.Fprintf(stdout, "[nexus] added vite proxy entries to %s: %s (target: %s)\n",
+		configPath, strings.Join(added, ", "), apiURL)
 	return nil
 }
 
-// insertNexusProxyEntry adds a `"/__nexus": { target, changeOrigin }`
-// rule to the user's vite proxy block, creating intermediate
-// `proxy:` / `server:` blocks as needed. Returns (body, false)
-// when the entry is already present or no suitable insertion
-// point exists.
-func insertNexusProxyEntry(body, apiURL string) (string, bool) {
-	if strings.Contains(body, `"/__nexus"`) || strings.Contains(body, `'/__nexus'`) {
-		return body, false
+// insertNexusProxyEntries adds one proxy entry per missing prefix to
+// the user's vite proxy block, creating intermediate `proxy:` /
+// `server:` blocks as needed. Returns (body, added, false) when
+// every prefix was already present or no suitable insertion point
+// exists. `added` lists the prefixes that actually got inserted in
+// this pass — empty on skip.
+func insertNexusProxyEntries(body, apiURL string, prefixes []string) (string, []string, bool) {
+	missing := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		if p == "" {
+			continue
+		}
+		needle1 := `"` + p + `"`
+		needle2 := `'` + p + `'`
+		if strings.Contains(body, needle1) || strings.Contains(body, needle2) {
+			continue
+		}
+		missing = append(missing, p)
 	}
-	entry := fmt.Sprintf(`"/__nexus": { target: "%s", changeOrigin: true }`, apiURL)
+	if len(missing) == 0 {
+		return body, nil, false
+	}
+	entries := make([]string, len(missing))
+	for i, p := range missing {
+		entries[i] = renderProxyEntry(p, apiURL)
+	}
 
 	// First choice: there's already a server.proxy block, prepend
-	// our entry inside it.
+	// the missing entries inside it.
 	proxyRe := regexp.MustCompile(`proxy\s*:\s*\{`)
 	if loc := proxyRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		insertion := "\n      " + entry + ","
-		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+		var ins strings.Builder
+		for _, e := range entries {
+			ins.WriteString("\n      ")
+			ins.WriteString(e)
+			ins.WriteByte(',')
+		}
+		return body[:openBrace+1] + ins.String() + body[openBrace+1:], missing, true
 	}
 
-	// Second: server: { … } without proxy — add proxy as a sibling.
+	// Second: server: { … } without proxy — add proxy as a sibling
+	// with every missing entry inside.
 	serverRe := regexp.MustCompile(`server\s*:\s*\{`)
 	if loc := serverRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		insertion := "\n    proxy: {\n      " + entry + ",\n    },"
-		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+		var ins strings.Builder
+		ins.WriteString("\n    proxy: {")
+		for _, e := range entries {
+			ins.WriteString("\n      ")
+			ins.WriteString(e)
+			ins.WriteByte(',')
+		}
+		ins.WriteString("\n    },")
+		return body[:openBrace+1] + ins.String() + body[openBrace+1:], missing, true
 	}
 
 	// Third: no server block — drop one inside defineConfig({...}).
 	cfgRe := regexp.MustCompile(`defineConfig\s*\(\s*\{`)
 	if loc := cfgRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		insertion := "\n  server: { proxy: { " + entry + " } },"
-		return body[:openBrace+1] + insertion + body[openBrace+1:], true
+		var ins strings.Builder
+		ins.WriteString("\n  server: { proxy: {")
+		for _, e := range entries {
+			ins.WriteString(" ")
+			ins.WriteString(e)
+			ins.WriteByte(',')
+		}
+		ins.WriteString(" } },")
+		return body[:openBrace+1] + ins.String() + body[openBrace+1:], missing, true
 	}
-	return body, false
+	return body, nil, false
+}
+
+// renderProxyEntry returns the single-line proxy rule for a prefix.
+// WebSocket prefixes get ws:true so vite upgrades the connection
+// instead of trying to buffer it as a regular HTTP response. The
+// matcher is the literal "/ws" prefix only — apps with custom WS
+// paths can layer their own entries on top via vite.config.ts.
+func renderProxyEntry(prefix, apiURL string) string {
+	if prefix == "/ws" {
+		return fmt.Sprintf(`"%s": { target: "%s", changeOrigin: true, ws: true }`, prefix, apiURL)
+	}
+	return fmt.Sprintf(`"%s": { target: "%s", changeOrigin: true }`, prefix, apiURL)
 }
 
 // EnsureViteWatchExclude is the watch.exclude half of MergeViteConfig

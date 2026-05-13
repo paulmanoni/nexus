@@ -264,6 +264,104 @@ export default defineConfig({
 	}
 }
 
+// TestEnsureViteProxyForNexus_InjectsAllDefaultPrefixes is the
+// post-generalisation contract: when none of the framework prefixes
+// are present, all four (/__nexus, /graphql, /oauth, /ws) land in
+// one pass. The /ws entry gets ws:true so vite upgrades the
+// connection instead of buffering an HTTP response.
+func TestEnsureViteProxyForNexus_InjectsAllDefaultPrefixes(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({
+  plugins: [],
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureViteProxyForNexus(cfgPath, "http://localhost:8080", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(cfgPath)
+	for _, want := range []string{
+		`"/__nexus": { target: "http://localhost:8080", changeOrigin: true }`,
+		`"/graphql": { target: "http://localhost:8080", changeOrigin: true }`,
+		`"/oauth": { target: "http://localhost:8080", changeOrigin: true }`,
+		`"/ws": { target: "http://localhost:8080", changeOrigin: true, ws: true }`,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("missing %q\n--- body ---\n%s", want, got)
+		}
+	}
+}
+
+// TestEnsureViteProxyForPrefixes_CustomList covers the explicit-
+// prefix variant: apps with a custom /api or /v1 base path can pass
+// their own list. Defaults aren't auto-mixed in — the caller owns
+// the full set.
+func TestEnsureViteProxyForPrefixes_CustomList(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureViteProxyForPrefixes(cfgPath, "http://localhost:8080",
+		[]string{"/api", "/v1"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(cfgPath)
+	for _, want := range []string{`"/api":`, `"/v1":`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("missing %q\n--- body ---\n%s", want, got)
+		}
+	}
+	// Defaults should NOT have been auto-added by the custom-list path.
+	for _, leaked := range []string{`"/__nexus"`, `"/graphql"`, `"/oauth"`, `"/ws"`} {
+		if strings.Contains(string(got), leaked) {
+			t.Errorf("default prefix %s leaked into custom-list output", leaked)
+		}
+	}
+}
+
+// TestEnsureViteProxyForPrefixes_PerPrefixIdempotence checks the
+// idempotency contract is per-prefix, not per-call. A second run
+// against a partially-wired config adds only what's missing.
+func TestEnsureViteProxyForPrefixes_PerPrefixIdempotence(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({
+  server: {
+    proxy: {
+      "/graphql": { target: "http://localhost:8080", changeOrigin: true },
+    },
+  },
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureViteProxyForNexus(cfgPath, "http://localhost:8080", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(cfgPath)
+	got := string(body)
+	// /graphql was already present — must not be duplicated.
+	if strings.Count(got, `"/graphql":`) != 1 {
+		t.Errorf("/graphql duplicated:\n%s", got)
+	}
+	// The other three should be added.
+	for _, want := range []string{`"/__nexus":`, `"/oauth":`, `"/ws":`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q after partial-wire pass\n--- body ---\n%s", want, got)
+		}
+	}
+}
+
 // TestMergeViteConfig_InjectsWatchExcludeIntoExistingBuild verifies
 // the auto-fix for the unplugin-auto-import / @nuxt/ui rebuild loop:
 // when the user's config already has a build: { … } block, we
