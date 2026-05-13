@@ -18,6 +18,7 @@ import (
 //	nexus generate bake        — docker-bake.hcl that builds every
 //	                             deployment in one BuildKit run with
 //	                             shared cache mounts
+//	nexus generate frontend    — typed TS source tree from a manifest
 func newGenerateCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -33,6 +34,7 @@ Each subcommand is documented under nexus help generate <subcommand>.`,
 	cmd.AddCommand(
 		newGenerateDockerfileCmd(stdout, stderr),
 		newGenerateBakeCmd(stdout, stderr),
+		newGenerateFrontendCmd(stdout, stderr),
 	)
 	return cmd
 }
