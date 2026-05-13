@@ -81,13 +81,32 @@ type TabRecord struct {
 	Icon  string
 }
 
+// ClientContributorFunc is the per-plugin callback that turns the
+// active GenerateContext into a list of files a Generate driver should
+// merge into its output tree. The contract mirrors GenerateDriver.Render
+// but scoped to one plugin's contribution rather than the whole tree.
+//
+// Errors propagate up to the driver's Render — partial writes never
+// reach disk, so a misbehaving contributor cleanly aborts the run.
+type ClientContributorFunc func(GenerateContext) ([]GeneratedFile, error)
+
+// ClientContributorRecord pairs a contributor's callback with the
+// plugin that registered it. The plugin name powers error reporting
+// (the driver wrapper attributes failures to a specific contributor)
+// and keeps registration order observable for tests.
+type ClientContributorRecord struct {
+	PluginName string
+	Contribute ClientContributorFunc
+}
+
 // pluginState holds the registered plugin records. Kept off App so
 // the (large) App struct doesn't grow another mutex; lookups are rare
 // and the value is constructed at boot.
 type pluginState struct {
-	mu        sync.RWMutex
-	records   []PluginRecord
-	generates []GenerateDriver
+	mu           sync.RWMutex
+	records      []PluginRecord
+	generates    []GenerateDriver
+	contributors []ClientContributorRecord
 }
 
 // RegisterPlugin records plugin metadata on the app. Called by
@@ -153,5 +172,36 @@ func (a *App) GenerateDrivers() []GenerateDriver {
 	defer a.plugins.mu.RUnlock()
 	out := make([]GenerateDriver, len(a.plugins.generates))
 	copy(out, a.plugins.generates)
+	return out
+}
+
+// RegisterClientContributor records a per-plugin codegen contribution.
+// Called by extension.Use when a Plugin declares a Contributor slot.
+// Many contributors may be registered (one per plugin); the active
+// Generate driver invokes them in registration order and merges their
+// output into the rendered tree. Duplicate plugin names are allowed
+// (re-registration appends — useful in tests; the in-process driver
+// invokes both copies, which matches "last write wins" for files
+// sharing a Path).
+func (a *App) RegisterClientContributor(rec ClientContributorRecord) {
+	if a.plugins == nil {
+		a.plugins = &pluginState{}
+	}
+	a.plugins.mu.Lock()
+	defer a.plugins.mu.Unlock()
+	a.plugins.contributors = append(a.plugins.contributors, rec)
+}
+
+// ClientContributors returns a snapshot of every registered codegen
+// contributor. Order matches registration order; the returned slice
+// is a copy so callers can iterate without holding the lock.
+func (a *App) ClientContributors() []ClientContributorRecord {
+	if a.plugins == nil {
+		return nil
+	}
+	a.plugins.mu.RLock()
+	defer a.plugins.mu.RUnlock()
+	out := make([]ClientContributorRecord, len(a.plugins.contributors))
+	copy(out, a.plugins.contributors)
 	return out
 }

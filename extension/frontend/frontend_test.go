@@ -1,6 +1,7 @@
 package frontend
 
 import (
+	"errors"
 	"io/fs"
 	"reflect"
 	"strings"
@@ -208,6 +209,59 @@ func TestRender_DeterministicOutput(t *testing.T) {
 	}
 	if !reflect.DeepEqual(filesByPath(a), filesByPath(b)) {
 		t.Fatal("render output is not deterministic — registry iteration order leaked")
+	}
+}
+
+// TestRender_MergesContributorFiles is the phase-2 contract test:
+// any ClientContributor in ctx.Contributors gets its files appended
+// to the driver's own output, attributed by the contributor and not
+// silently overwriting the driver's emissions.
+func TestRender_MergesContributorFiles(t *testing.T) {
+	contrib := extension.ContributorFunc(func(ctx extension.GenerateContext) ([]extension.File, error) {
+		return []extension.File{
+			{Path: "auth/vue.ts", Body: []byte("// auth stub")},
+		}, nil
+	})
+	files, err := Render(Config{Framework: Vue}, extension.GenerateContext{
+		Registry:     registry.New(),
+		Contributors: []extension.ClientContributor{contrib},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := fileNames(files)
+	wantPresent := []string{"_client.ts", "types.ts", "index.ts", "vue.ts", "auth/vue.ts"}
+	for _, w := range wantPresent {
+		found := false
+		for _, p := range paths {
+			if p == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing %q in render output: %v", w, paths)
+		}
+	}
+}
+
+// TestRender_ContributorErrorAborts ensures a contributor failure
+// surfaces as a render error rather than producing a half-tree.
+// Partial writes would leave the consumer's source tree in a state
+// the writer's no-op detection can't recover from.
+func TestRender_ContributorErrorAborts(t *testing.T) {
+	bad := extension.ContributorFunc(func(extension.GenerateContext) ([]extension.File, error) {
+		return nil, errors.New("contributor broke")
+	})
+	_, err := Render(Config{Framework: None}, extension.GenerateContext{
+		Registry:     registry.New(),
+		Contributors: []extension.ClientContributor{bad},
+	})
+	if err == nil {
+		t.Fatal("expected error from broken contributor")
+	}
+	if !strings.Contains(err.Error(), "contributor broke") {
+		t.Fatalf("error %q does not wrap contributor cause", err)
 	}
 }
 

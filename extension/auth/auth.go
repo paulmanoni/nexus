@@ -365,6 +365,13 @@ func Module(cfg Config) nexus.Option {
 				return nil
 			},
 		},
+		// Contributor emits framework-flavored TS that wraps the
+		// codegen'd login / logout / me typed functions in a stateful
+		// composable. Picked up by the frontend extension's Generate
+		// driver at render time; apps without a frontend driver pay
+		// nothing for this slot (no driver → no Render call → no
+		// NexusContribute invocation).
+		Contributor: authContributor{},
 	})
 }
 
