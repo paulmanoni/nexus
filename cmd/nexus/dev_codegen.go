@@ -260,11 +260,16 @@ func watchAndResyncViteProxy(ctx context.Context, addr, viteConfigPath, proxyURL
 // manifestProxyPrefixes derives the set of URL prefixes the vite
 // dev server should proxy to the Go app. Combines the framework's
 // fixed prefixes (/__nexus, /graphql, /oauth, /ws) with one entry
-// per distinct top-level segment found across REST + WS endpoints
-// in the manifest. Each endpoint's effective URL is BasePath+Path;
+// per distinct top-level segment found across every endpoint in
+// the manifest. Each endpoint's effective URL is BasePath+Path;
 // we take its first segment so a module declared with
 // nexus.RoutePrefix("/oats-uaa") gets "/oats-uaa" proxied without
 // the SPA having to know about every sub-route.
+//
+// All transports count — REST, WebSocket, and GraphQL. A module
+// with RoutePrefix("/oats-uaa") mounts its GraphQL endpoint at
+// /oats-uaa/graphql; excluding graphql here would drop the only
+// signal we have for that prefix.
 //
 // Duplicates and overlaps with the framework defaults collapse
 // naturally — SyncViteProxyForPrefixes deduplicates.
@@ -275,9 +280,6 @@ func manifestProxyPrefixes(m client.Manifest) []string {
 		seen[p] = true
 	}
 	for _, ep := range m.Endpoints {
-		if ep.Transport != "rest" && ep.Transport != "websocket" {
-			continue
-		}
 		seg := firstPathSegment(m.BasePath + ep.Path)
 		if seg == "" || seen[seg] {
 			continue
