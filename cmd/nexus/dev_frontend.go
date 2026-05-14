@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 )
 
 // viteURLRE matches the "Local:" line vite's dev server prints
@@ -44,6 +46,7 @@ var viteURLRE = regexp.MustCompile(`Local:\s*(https?://[^\s/]+/?)`)
 //     Go save would cripple iteration feel.
 //   - When the child exits unexpectedly, we log it but don't fail
 //     nexus dev — the user can fix the script and relaunch.
+//
 // frontendURLCh receives the URL vite prints when its dev server
 // is ready. nil means caller doesn't care (bundle mode).
 func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool, stdout, stderr io.Writer, frontendURLCh chan<- string) error {
@@ -53,7 +56,12 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool
 	}
 	// Honor the user's shell so quoted args + npm scripts that
 	// fork their own child processes work without a Go-side parser.
-	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
+	// exec.Command (not CommandContext) is deliberate: the default
+	// CommandContext cancel path SIGKILLs only the immediate child
+	// (`sh -c`), which orphans `npm run dev` → vite/node and leaks
+	// the dev-server port. We watch ctx.Done() below and tear down
+	// the whole process group via killProcessGroup.
+	cmd := exec.Command("sh", "-c", cmdline)
 	cmd.Dir = dir
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -119,6 +127,26 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool
 	wg.Add(2)
 	go stdoutPump(stdoutPipe, stdout)
 	go stderrPump(stderrPipe, stderr)
+
+	// Tear the whole child group down on ctx cancel — SIGTERM
+	// first so vite/npm get a chance to release their port, then
+	// SIGKILL after a grace window if anything's still alive.
+	// Without this, `sh -c` dies but the grandchild node/vite
+	// keep the dev-server port bound until the user kills them.
+	pid := cmd.Process.Pid
+	go func() {
+		<-ctx.Done()
+		_ = killProcessGroup(pid, syscall.SIGTERM)
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		done := make(chan struct{})
+		go func() { wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-timer.C:
+			_ = killProcessGroup(pid, syscall.SIGKILL)
+		}
+	}()
 
 	go func() {
 		wg.Wait()
@@ -275,8 +303,8 @@ func (f *buildBlockFilter) endCycle() {
 		// output for users who want to see every cycle.
 		_ = duration
 	} else {
-		fmt.Fprintf(f.dst, "%s● %d changed · %d unchanged (%s)\n",
-			f.tag, len(added)+len(removed)+len(changed), unchanged, duration)
+		//fmt.Fprintf(f.dst, "%s● %d changed · %d unchanged (%s)\n",
+		//	f.tag, len(added)+len(removed)+len(changed), unchanged, duration)
 		for _, e := range removed {
 			fmt.Fprintf(f.dst, "%s  %s- %s%s\n", f.tag, ansiRed, e.logical, ansiReset)
 		}
