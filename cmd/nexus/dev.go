@@ -252,7 +252,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				if !strings.HasPrefix(proxyAddr, ":") {
 					proxyURL = "http://" + proxyAddr
 				}
-				go watchAndResyncViteProxy(ctx, addr, cfg, proxyURL, stdout, stderr)
+				go watchAndResyncViteProxy(ctx, proxyAddr, cfg, proxyURL, stdout, stderr)
 			}
 		}
 		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
@@ -328,7 +328,13 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				proxyURL = "http://" + proxyAddr
 			}
 		}
-		go devCodegenWatch(ctx, addr, frontendDir, "vue", proxyURL, stdout, stderr)
+		// Probe the manifest-derived bind addr (proxyAddr), not the
+		// --addr flag's default. The user's manifest pins a port
+		// the binary actually listens on; probing the flag's default
+		// would time out and the post-boot sync (which would add
+		// module RoutePrefix-derived entries to the vite proxy)
+		// would silently never fire.
+		go devCodegenWatch(ctx, proxyAddr, frontendDir, "vue", proxyURL, stdout, stderr)
 		first = false
 		select {
 		case err := <-exited:
