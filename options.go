@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
 )
 
 // Option composes a nexus app. Everything returned by Provide, Supply,
@@ -470,8 +471,20 @@ func Run(cfg Config, opts ...Option) {
 		autoClientOptions(),
 	}, unwrap(opts)...)
 	all = append(all, fxLateOptions())
-	if os.Getenv("NEXUS_FX_QUIET") == "1" || devQuiet {
+	switch {
+	case os.Getenv("NEXUS_FX_QUIET") == "1":
+		// Explicit user opt-out: silence everything including errors.
+		// They asked for it.
 		all = append(all, fx.NopLogger)
+	case devQuiet:
+		// Implicit dev quiet (NEXUS_DEV=1, set by `nexus dev` without
+		// --verbose). Drop the boot chatter but keep error events —
+		// otherwise an fx constructor / Invoke / lifecycle failure
+		// exits the binary silently and `nexus dev` shows
+		// "app exited: exit status 1" with nothing above it.
+		all = append(all, fx.WithLogger(func() fxevent.Logger {
+			return &fxErrorOnlyLogger{inner: &fxevent.ConsoleLogger{W: os.Stderr}}
+		}))
 	}
 	fx.New(all...).Run()
 }
@@ -506,6 +519,57 @@ func validateTopology(cfg Config) error {
 			Notes: []string{fmt.Sprintf("declared peers: %v", keys)},
 			Hint:  fmt.Sprintf(`add Topology.Peers[%q] in main.go's nexus.Config — URL may be empty for the active unit`, deployment),
 		}
+	}
+	return nil
+}
+
+// fxErrorOnlyLogger wraps an fxevent.Logger and only forwards events
+// that carry a non-nil error. Used in dev-quiet mode so fx graph
+// failures (missing dependency, constructor returning error, lifecycle
+// hook returning error) still reach stderr while the routine
+// Provided/Invoked/Started chatter stays suppressed. Replaces
+// fx.NopLogger on the implicit-quiet path — NopLogger ate the cause
+// of "app exited: exit status 1" silent failures.
+type fxErrorOnlyLogger struct{ inner fxevent.Logger }
+
+func (l *fxErrorOnlyLogger) LogEvent(event fxevent.Event) {
+	if fxEventErr(event) != nil {
+		l.inner.LogEvent(event)
+	}
+}
+
+// fxEventErr extracts the Err field from any fxevent type that carries
+// one. Events without an error field always return nil so they're
+// filtered out. RollingBack reports StartErr (the cause that triggered
+// the rollback) since that's the actionable signal.
+func fxEventErr(event fxevent.Event) error {
+	switch e := event.(type) {
+	case *fxevent.OnStartExecuted:
+		return e.Err
+	case *fxevent.OnStopExecuted:
+		return e.Err
+	case *fxevent.Supplied:
+		return e.Err
+	case *fxevent.Provided:
+		return e.Err
+	case *fxevent.Replaced:
+		return e.Err
+	case *fxevent.Decorated:
+		return e.Err
+	case *fxevent.Run:
+		return e.Err
+	case *fxevent.Invoked:
+		return e.Err
+	case *fxevent.Started:
+		return e.Err
+	case *fxevent.Stopped:
+		return e.Err
+	case *fxevent.RollingBack:
+		return e.StartErr
+	case *fxevent.RolledBack:
+		return e.Err
+	case *fxevent.LoggerInitialized:
+		return e.Err
 	}
 	return nil
 }
