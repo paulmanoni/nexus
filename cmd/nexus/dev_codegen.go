@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension"
 	"github.com/paulmanoni/nexus/extension/frontend"
@@ -165,6 +166,95 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyUR
 			ansiCyan, ansiReset, changed, outDir)
 	}
 	return nil
+}
+
+// watchAndResyncViteProxy watches the user's vite.config.ts and
+// re-runs SyncViteProxyForPrefixes whenever it changes. Without
+// this the proxy sync only fires on a Go restart, so editing the
+// vite config directly (e.g., deleting the managed block to test
+// what nexus puts back) doesn't trigger re-injection — the user
+// would have to bounce nexus dev to recover.
+//
+// Cost is low: the sync function is a no-op when bytes already
+// match, and the manifest fetch is local HTTP. When nexus itself
+// writes the file, fsnotify fires once more, the re-sync is
+// byte-identical, no infinite loop.
+//
+// Editor save styles: we watch both the file AND its parent
+// directory, since some editors atomic-rename a temp into place
+// (which fsnotify reports against the dir, not the original file
+// handle). Debounce coalesces the rename + write pair into a
+// single sync call.
+func watchAndResyncViteProxy(ctx context.Context, addr, viteConfigPath, proxyURL string, stdout, stderr io.Writer) {
+	if viteConfigPath == "" || proxyURL == "" {
+		return
+	}
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Fprintf(stderr, "%svite proxy watcher disabled:%s %v\n", ansiDim, ansiReset, err)
+		return
+	}
+	defer w.Close()
+	if err := w.Add(viteConfigPath); err != nil {
+		fmt.Fprintf(stderr, "%svite proxy watcher disabled:%s %v\n", ansiDim, ansiReset, err)
+		return
+	}
+	// Atomic-rename saves (vim, JetBrains) only emit events on the
+	// containing dir against a new inode; watching the dir too is
+	// the only way to catch those.
+	_ = w.Add(filepath.Dir(viteConfigPath))
+
+	probe := normalizeProbeAddr(addr)
+	baseURL := "http://" + probe
+	base := filepath.Base(viteConfigPath)
+
+	var debounce *time.Timer
+	fire := func() {
+		// Re-fetch manifest each time so a module added/removed
+		// between syncs reflects in the prefix set. The endpoint is
+		// local, sub-millisecond; cheap to call.
+		ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		m, err := devFetchManifest(ctx2, baseURL)
+		if err != nil {
+			return // app probably restarting; the next Go boot will re-sync
+		}
+		cfg := findViteConfig(filepath.Dir(viteConfigPath))
+		if cfg == "" {
+			cfg = viteConfigPath
+		}
+		_ = client.SyncViteProxyForPrefixes(cfg, proxyURL, manifestProxyPrefixes(m), stdout)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			if debounce != nil {
+				debounce.Stop()
+			}
+			return
+		case ev, ok := <-w.Events:
+			if !ok {
+				return
+			}
+			// Filter to the config file (or a sibling named the same
+			// — atomic-rename writes hit the dir with the same base).
+			if filepath.Base(ev.Name) != base {
+				continue
+			}
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+				continue
+			}
+			if debounce != nil {
+				debounce.Stop()
+			}
+			debounce = time.AfterFunc(250*time.Millisecond, fire)
+		case _, ok := <-w.Errors:
+			if !ok {
+				return
+			}
+		}
+	}
 }
 
 // manifestProxyPrefixes derives the set of URL prefixes the vite
