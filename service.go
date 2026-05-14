@@ -114,6 +114,17 @@ func (s *Service) graphqlOptions(cfg Config) []gql.Option {
 			return fn(ctx, token)
 		}))
 	}
+	// Document cache: zero → default (1024), negative → disabled.
+	// Profiling shows parse+validate is ~89% of per-request alloc;
+	// memoizing them is a big win for any app with a fixed query
+	// catalog (i.e. ~all of them).
+	cacheSize := cfg.GraphQL.DocumentCacheSize
+	if cacheSize == 0 {
+		cacheSize = 1024
+	}
+	if cacheSize > 0 {
+		out = append(out, gql.WithDocumentCache(cacheSize))
+	}
 	return out
 }
 

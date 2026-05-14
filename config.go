@@ -402,6 +402,22 @@ type GraphQLConfig struct {
 	// Pretty pretty-prints JSON responses. Convenient while
 	// exploring; ship off in prod.
 	Pretty bool
+
+	// DocumentCacheSize bounds the parse+validate memo (LRU) the
+	// framework installs in front of graphql.Do. Repeat queries
+	// re-use the cached AST and validation verdict, skipping the
+	// ~89% of GraphQL request allocations that profiling pinned on
+	// parse + validate.
+	//
+	// Zero (the default) means 1024 entries — enough for any app
+	// with a fixed query catalog. Set to a negative value to
+	// disable the cache entirely.
+	//
+	// A "miss every request" pattern usually indicates clients are
+	// embedding variable values in the query string instead of
+	// using $vars. Check the cache stats on the dashboard if hit
+	// rate is suspiciously low.
+	DocumentCacheSize int
 }
 
 // Topology is the peer table for cross-module HTTP calls in a split

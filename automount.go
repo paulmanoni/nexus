@@ -397,6 +397,12 @@ func mountGroup(app *App, g *pathGroup) error {
 	if app.introspect || len(app.introspectionNets) > 0 {
 		opts = append(opts, gql.WithAllowIntrospection(app.AllowIntrospection))
 	}
+	// Enroll this mount's DocumentCache (if any) in the app-level
+	// stats registry so /__nexus/graphql/cache and the live WS
+	// snapshot can surface its counters.
+	if app.gqlStats != nil {
+		opts = append(opts, gql.WithStatsRegistry(app.gqlStats))
+	}
 	// Prefix the GraphQL mount with the deployment-wide route prefix
 	// so e.g. uaa-svc serves at /oats-uaa/graphql while interview-svc
 	// serves at /oats-interview/graphql. Source-declared per-service

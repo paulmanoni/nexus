@@ -47,7 +47,7 @@ func TestTraceByID_ReturnsWaterfall(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	bus := trace.NewBus(32)
-	Mount(e, registry.New(), bus, nil, nil, nil, nil, Config{})
+	Mount(e, registry.New(), bus, nil, nil, nil, nil, nil, Config{})
 
 	publishTrace(bus, "tid-1")
 
@@ -104,7 +104,7 @@ func TestTraceByID_NotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	bus := trace.NewBus(16)
-	Mount(e, registry.New(), bus, nil, nil, nil, nil, Config{})
+	Mount(e, registry.New(), bus, nil, nil, nil, nil, nil, Config{})
 
 	w := httptest.NewRecorder()
 	e.ServeHTTP(w, httptest.NewRequest("GET", Prefix+"/traces/missing", nil))

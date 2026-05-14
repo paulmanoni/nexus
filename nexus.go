@@ -31,6 +31,7 @@ import (
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/transport/gql"
 )
 
 // EnvAdminToken is the env var the framework reads for the admin
@@ -155,6 +156,13 @@ type App struct {
 	// on *App (plugins.go); the field is lazy-initialized by
 	// RegisterPlugin so apps that never use plugins pay nothing.
 	plugins *pluginState
+
+	// gqlStats is the per-app registry of DocumentCaches keyed by
+	// GraphQL mount path. Populated by autoMountGraphQL when it
+	// wires gql.WithStatsRegistry into each Mount call. Read by
+	// the dashboard (/__nexus/graphql/cache + live WS snapshot)
+	// so operators can verify the cache is hitting.
+	gqlStats *gql.StatsRegistry
 }
 
 // New constructs an *App from a single Config. The canonical
@@ -237,6 +245,7 @@ func New(cfg Config) *App {
 		metricsStore:  cfg.Stores.Metrics,
 		listeners:     listeners,
 		routePrefix:   normalizeRoutePrefix(cfg.Server.RoutePrefix),
+		gqlStats:      gql.NewStatsRegistry(),
 	}
 	if traceCapacity > 0 {
 		a.bus = trace.NewBus(traceCapacity)
@@ -354,7 +363,7 @@ func New(cfg Config) *App {
 		})
 	}
 	if a.dashboardOn {
-		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, a.liveNotifier, dashboard.Config{
+		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, a.liveNotifier, a.gqlStats, dashboard.Config{
 			Name:       a.dashboardName,
 			Middleware: a.dashboardMw,
 			Deployment: a.deployment,
