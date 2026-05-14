@@ -20,6 +20,11 @@ import (
 //   - deployment: the manifest deployment we used (typically
 //     "monolith"). Empty when no manifest. Reserved for future use
 //     in the dev banner.
+//   - manifestAddr: the deployment's public bind address derived
+//     from the manifest's `port:` field (e.g., ":9590"). Empty when
+//     no port is pinned in the manifest, in which case the caller
+//     should fall back to its --addr flag. Lets the vite proxy
+//     target the real port instead of guessing :8080.
 //   - err: only when a manifest exists but is malformed. Empty
 //     manifest = nil err + empty paths so the caller falls back to
 //     plain `go run`.
@@ -29,27 +34,30 @@ import (
 // dev restart. The dashboard's "service depends on service" edges
 // won't draw in dev mode without that scan; everything else (port,
 // listeners, peer table) lands fine.
-func prepareDevOverlay(target string) (overlayPath, deployment string, err error) {
+func prepareDevOverlay(target string) (overlayPath, deployment, manifestAddr string, err error) {
 	manifestPath := findManifest(target)
 	if manifestPath == "" {
-		return "", "", nil
+		return "", "", "", nil
 	}
 	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
-		return "", "", fmt.Errorf("load %s: %w", manifestPath, err)
+		return "", "", "", fmt.Errorf("load %s: %w", manifestPath, err)
 	}
 	deployment = pickDevDeployment(manifest)
 	if deployment == "" {
-		return "", "", fmt.Errorf("manifest declares no deployments")
+		return "", "", "", fmt.Errorf("manifest declares no deployments")
+	}
+	if spec, ok := manifest.Deployments[deployment]; ok && spec.Port > 0 {
+		manifestAddr = fmt.Sprintf(":%d", spec.Port)
 	}
 
 	projectRoot, err := filepath.Abs(filepath.Dir(manifestPath))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	shadowDir := filepath.Join(projectRoot, ".nexus", "build", "_dev_"+deployment)
 	if err := os.MkdirAll(shadowDir, 0o755); err != nil {
-		return "", "", fmt.Errorf("mkdir shadow dir: %w", err)
+		return "", "", "", fmt.Errorf("mkdir shadow dir: %w", err)
 	}
 
 	// writeDeployInitFile codegens zz_deploy_gen.go with the
@@ -59,28 +67,28 @@ func prepareDevOverlay(target string) (overlayPath, deployment string, err error
 	// resolution).
 	depFile, err := writeDeployInitFile(deployment, manifest, projectRoot, target, shadowDir, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("codegen deploy-init: %w", err)
+		return "", "", "", fmt.Errorf("codegen deploy-init: %w", err)
 	}
 	if depFile == "" {
 		// No port + no peers + no listeners → nothing to overlay.
-		return "", deployment, nil
+		return "", deployment, manifestAddr, nil
 	}
 
 	mainPkgDir, err := devMainPackageDir(projectRoot, target)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve main pkg dir: %w", err)
+		return "", "", "", fmt.Errorf("resolve main pkg dir: %w", err)
 	}
 	logicalPath := filepath.Join(mainPkgDir, "zz_deploy_gen.go")
 	overlay := overlayJSON{Replace: map[string]string{logicalPath: depFile}}
 	overlayPath = filepath.Join(shadowDir, "overlay.json")
 	data, err := json.MarshalIndent(overlay, "", "  ")
 	if err != nil {
-		return "", "", fmt.Errorf("encode overlay: %w", err)
+		return "", "", "", fmt.Errorf("encode overlay: %w", err)
 	}
 	if err := os.WriteFile(overlayPath, data, 0o644); err != nil {
-		return "", "", fmt.Errorf("write overlay: %w", err)
+		return "", "", "", fmt.Errorf("write overlay: %w", err)
 	}
-	return overlayPath, deployment, nil
+	return overlayPath, deployment, manifestAddr, nil
 }
 
 // pickDevDeployment chooses which deployment row in the manifest to

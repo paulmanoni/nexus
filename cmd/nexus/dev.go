@@ -167,6 +167,27 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
 		}
 	}
+
+	// Manifest-aware codegen has to run before the vite proxy
+	// injection — the proxy target needs the deployment's actual
+	// listen port (from nexus.deploy.yaml's `port:`), not the
+	// --addr flag's default :8080. Without this the SPA on :5173
+	// proxies /__nexus to :8080 while the binary bound on :9590,
+	// breaking every framework call from the dev frontend.
+	overlayPath, devDeployment, manifestAddr, manifestErr := prepareDevOverlay(target)
+	if manifestErr != nil {
+		fmt.Fprintf(stderr, "manifest codegen skipped: %v\n", manifestErr)
+	}
+	// proxyAddr is what we feed into the vite proxy + readiness
+	// banner. Manifest wins because that's what the binary will
+	// actually bind to; --addr is the fallback for projects with
+	// no manifest. The user's explicit --addr is left alone for
+	// the probe loop in waitAndOpen — addrFinder still catches the
+	// real bind line either way.
+	proxyAddr := addr
+	if manifestAddr != "" {
+		proxyAddr = manifestAddr
+	}
 	// frontendURLCh receives vite's "Local: http://..." URL when the
 	// dev server (non-bundle mode) prints it. Buffered=1 so the
 	// watcher's pump never blocks if no one's listening yet.
@@ -214,11 +235,9 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		// because Go serves the SPA itself.
 		if !bundleMode {
 			if cfg := findViteConfig(frontendDir); cfg != "" {
-				apiURL := "http://localhost" + addr
-				if strings.HasPrefix(addr, ":") {
-					apiURL = "http://localhost" + addr
-				} else {
-					apiURL = "http://" + addr
+				apiURL := "http://localhost" + proxyAddr
+				if !strings.HasPrefix(proxyAddr, ":") {
+					apiURL = "http://" + proxyAddr
 				}
 				if err := client.EnsureViteProxyForNexus(cfg, apiURL, stdout); err != nil {
 					fmt.Fprintf(stderr, "vite proxy injection skipped: %v\n", err)
@@ -231,18 +250,6 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		}
 	} else {
 		frontendURLCh = nil
-	}
-
-	// Manifest-aware codegen: when nexus.deploy.yaml exists in cwd,
-	// pick the monolith deployment (or first when no monolith), emit
-	// zz_deploy_gen.go with that deployment's port + listeners +
-	// topology, and feed it through `go run -overlay`. Without this
-	// `nexus dev` ran plain `go run .` and the manifest's port +
-	// listener config never reached the binary — the framework fell
-	// back to its :8080 / single-listener defaults.
-	overlayPath, devDeployment, manifestErr := prepareDevOverlay(target)
-	if manifestErr != nil {
-		fmt.Fprintf(stderr, "manifest codegen skipped: %v\n", manifestErr)
 	}
 
 	var restartCh chan struct{}
@@ -275,7 +282,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		// Skipped when the project has no manifest (overlayPath stays
 		// "" and `go run` runs without -overlay just like before).
 		if !first && manifestErr == nil {
-			if p, _, err := prepareDevOverlay(target); err == nil {
+			if p, _, _, err := prepareDevOverlay(target); err == nil {
 				overlayPath = p
 			}
 		}
