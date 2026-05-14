@@ -171,6 +171,18 @@ func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int) 
 		}
 	}
 
+	// Merge in virtual fields registered against this type. Virtual
+	// fields win over same-named struct fields — that's the override
+	// path (e.g. replace a slow reflection-driven field with a
+	// batched LoadField). Only applied at the type's *root* (no
+	// embedded path) so embedded-struct walks don't accidentally
+	// inherit the parent's virtual fields twice.
+	if len(indexPrefix) == 0 {
+		for name, vf := range virtualFieldsFor(t.Name()) {
+			fields[name] = vf
+		}
+	}
+
 	return fields
 }
 

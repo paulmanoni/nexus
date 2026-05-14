@@ -14,6 +14,7 @@ import (
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/parser"
 	"github.com/graphql-go/graphql/language/source"
+	"github.com/paulmanoni/nexus/dataloader"
 	graph "github.com/paulmanoni/nexus/graph"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"
@@ -209,6 +210,9 @@ func simpleHandler(schema *graphql.Schema) gin.HandlerFunc {
 		// the default 200. Caller IP is already stashed by the
 		// route-level middleware in Mount.
 		ctx, _ := withStatusHolder(c.Request.Context())
+		// Per-request dataloader registry — same wiring as the
+		// cached fast path so resolvers behave identically here.
+		ctx = dataloader.WithRegistry(ctx, dataloader.NewRegistry())
 		result := graphql.Do(graphql.Params{
 			Schema:         *schema,
 			RequestString:  req.Query,
@@ -256,6 +260,13 @@ func cachedHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
 		// middlewares can call SetStatusCode(ctx, ...). Mirrors
 		// simpleHandler / goGraphHandler.
 		ctx, _ := withStatusHolder(c.Request.Context())
+		// Per-request dataloader registry. Lets resolvers call
+		// dataloader.Get(ctx, name, fetch) to share one Loader
+		// across siblings — the framework's N+1 escape hatch.
+		// Allocated unconditionally because it's tiny (one map);
+		// resolvers that don't use it pay the alloc and nothing
+		// more.
+		ctx = dataloader.WithRegistry(ctx, dataloader.NewRegistry())
 
 		// User-details injection. Same shape as graph.NewHTTP's
 		// RootObjectFn: token under "token", details under
@@ -384,6 +395,7 @@ func goGraphHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
 	})
 	return func(c *gin.Context) {
 		ctx, _ := withStatusHolder(c.Request.Context())
+		ctx = dataloader.WithRegistry(ctx, dataloader.NewRegistry())
 		req := c.Request.WithContext(ctx)
 		wrap := newStatusCaptureWriter(c.Writer)
 		h(wrap, req)
