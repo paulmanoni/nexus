@@ -242,6 +242,17 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				if err := client.EnsureViteProxyForNexus(cfg, apiURL, stdout); err != nil {
 					fmt.Fprintf(stderr, "vite proxy injection skipped: %v\n", err)
 				}
+				// Auto-heal: re-sync the managed block whenever the
+				// user edits vite.config.ts directly (e.g., deletes
+				// the proxy block). Without this watcher, the sync
+				// only fires on a Go restart and a manual config
+				// edit would leave the SPA broken until the user
+				// touches a .go file or restarts nexus dev.
+				proxyURL := "http://localhost" + proxyAddr
+				if !strings.HasPrefix(proxyAddr, ":") {
+					proxyURL = "http://" + proxyAddr
+				}
+				go watchAndResyncViteProxy(ctx, addr, cfg, proxyURL, stdout, stderr)
 			}
 		}
 		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
