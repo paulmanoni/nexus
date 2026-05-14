@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -61,15 +62,31 @@ type Config struct {
 	// ReconnectInterval controls how often the manager retries Redis when
 	// it's down. 0 defaults to 30s.
 	ReconnectInterval time.Duration
+
+	// PersistPath, when non-empty, makes the in-memory store survive
+	// process restarts: Start tries LoadFile, Stop calls SaveFile.
+	// Aimed at `nexus dev`'s auto-restart loop so auth tokens (or
+	// any cached state) don't evaporate on every Go save. Redis still
+	// wins when reachable; this is the memory-only path's escape
+	// hatch. Set explicitly, or let NewConfig auto-pick
+	// ".nexus/dev-cache.gob" when NEXUS_DEV=1.
+	PersistPath string
 }
 
 // NewConfig builds a Config from env vars: APP_ENV, REDIS_HOST, REDIS_PORT,
-// REDIS_PASSWORD. Defaults: env=development, host=localhost, port=6379,
-// db=0, 15m/10m expiries, 5s connect timeout, 30s reconnect.
+// REDIS_PASSWORD, NEXUS_DEV_CACHE_FILE. Defaults: env=development,
+// host=localhost, port=6379, db=0, 15m/10m expiries, 5s connect timeout,
+// 30s reconnect. PersistPath auto-defaults to ".nexus/dev-cache.gob" when
+// NEXUS_DEV=1 (set by `nexus dev`) so tokens + cached state survive the
+// auto-restart loop without anything to wire by hand.
 func NewConfig() *Config {
 	env := os.Getenv("APP_ENV")
 	if env == "" {
 		env = "development"
+	}
+	persistPath := os.Getenv("NEXUS_DEV_CACHE_FILE")
+	if persistPath == "" && os.Getenv("NEXUS_DEV") == "1" {
+		persistPath = ".nexus/dev-cache.gob"
 	}
 	return &Config{
 		Environment:       env,
@@ -81,6 +98,7 @@ func NewConfig() *Config {
 		CleanupExpiry:     10 * time.Minute,
 		ConnectTimeout:    5 * time.Second,
 		ReconnectInterval: 30 * time.Second,
+		PersistPath:       persistPath,
 	}
 }
 
@@ -107,6 +125,7 @@ type Manager struct {
 
 	mu           sync.RWMutex
 	redisStore   store.StoreInterface
+	goCache      *gocache.Cache
 	goCacheStore store.StoreInterface
 	cacheStore   store.StoreInterface
 	redisClient  *redis.Client
@@ -159,6 +178,7 @@ func NewManager(cfg *Config, logger *zap.Logger) *Manager {
 	m := &Manager{
 		config:       cfg,
 		logger:       logger,
+		goCache:      goCache,
 		goCacheStore: goCacheStore,
 		executor:     executor,
 		ctx:          ctx,
@@ -169,20 +189,69 @@ func NewManager(cfg *Config, logger *zap.Logger) *Manager {
 }
 
 // Start kicks off the background reconnect/health loop and fires the
-// first Redis connect attempt asynchronously. Safe to call once; the
-// whole path is skipped outside production mode. Callers never block on
-// Redis availability — the manager serves from memory until Redis comes
-// up, then flips atomically under the mutex.
+// first Redis connect attempt asynchronously. Safe to call once.
+//
+// In addition: when PersistPath is set, restore the in-memory store
+// from the gob-encoded file on disk so the cache survives a process
+// restart (e.g., `nexus dev`'s auto-restart loop). Missing-file is
+// the normal first-boot case and not an error. Redis still wins when
+// reachable — the on-disk snapshot only seeds the memory tier.
+//
+// Callers never block on Redis availability — the manager serves
+// from memory until Redis comes up, then flips atomically under the
+// mutex.
 func (m *Manager) Start() {
+	m.loadPersistFile()
 	if m.config.Environment != "production" {
 		return
 	}
 	go m.maintainConnection()
 }
 
-// Stop cancels the background loop. Idempotent.
+// Stop cancels the background loop and, when PersistPath is set,
+// snapshots the in-memory store to disk so the next process boot
+// can pick up where this one left off. Idempotent.
 func (m *Manager) Stop() {
+	m.savePersistFile()
 	m.cancel()
+}
+
+// loadPersistFile best-effort restores the in-memory store from
+// PersistPath. Silent skip when no path is set or the file doesn't
+// yet exist; logs other errors but doesn't fail boot — a corrupt
+// dev cache shouldn't block the binary from coming up.
+func (m *Manager) loadPersistFile() {
+	if m.config.PersistPath == "" || m.goCache == nil {
+		return
+	}
+	err := m.goCache.LoadFile(m.config.PersistPath)
+	switch {
+	case err == nil:
+		m.logger.Info("cache: restored from disk", zap.String("path", m.config.PersistPath))
+	case os.IsNotExist(err):
+		// First boot — nothing to load. Stay silent.
+	default:
+		m.logger.Warn("cache: load persist file failed",
+			zap.String("path", m.config.PersistPath), zap.Error(err))
+	}
+}
+
+// savePersistFile writes the in-memory store to PersistPath. Creates
+// the parent directory if needed. Save failures are logged but never
+// returned — Stop's contract is best-effort cleanup.
+func (m *Manager) savePersistFile() {
+	if m.config.PersistPath == "" || m.goCache == nil {
+		return
+	}
+	if dir := filepath.Dir(m.config.PersistPath); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+	if err := m.goCache.SaveFile(m.config.PersistPath); err != nil {
+		m.logger.Warn("cache: save persist file failed",
+			zap.String("path", m.config.PersistPath), zap.Error(err))
+		return
+	}
+	m.logger.Info("cache: snapshot written", zap.String("path", m.config.PersistPath))
 }
 
 // IsRedisConnected reports whether Redis is the currently active store.

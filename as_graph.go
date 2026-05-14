@@ -885,6 +885,26 @@ func assignArg(dst reflect.Value, raw any) error {
 		dst.Set(v.Convert(dst.Type()))
 		return nil
 	}
+	// Slice destination: GraphQL list args arrive as []interface{} regardless of
+	// element type, so reflect-level AssignableTo/ConvertibleTo refuse them.
+	// Build a typed slice and recurse per element so []int/[]*string/etc. work too.
+	if dst.Kind() == reflect.Slice && v.Kind() == reflect.Slice {
+		out := reflect.MakeSlice(dst.Type(), v.Len(), v.Len())
+		for i := 0; i < v.Len(); i++ {
+			elem := v.Index(i)
+			if elem.Kind() == reflect.Interface {
+				elem = elem.Elem()
+			}
+			if !elem.IsValid() {
+				continue
+			}
+			if err := assignArg(out.Index(i), elem.Interface()); err != nil {
+				return fmt.Errorf("element %d: %w", i, err)
+			}
+		}
+		dst.Set(out)
+		return nil
+	}
 	// Pointer destination: wrap the raw value.
 	if dst.Kind() == reflect.Ptr {
 		elemType := dst.Type().Elem()
