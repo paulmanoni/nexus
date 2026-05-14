@@ -508,10 +508,25 @@ Per-request hot-path cost on an Apple M1 Pro:
 |---|---:|---:|
 | `metrics.Record` (success) | 73 | 0 |
 | `ratelimit.Allow` | 134 | 1 |
-| `callHandler` (reflective) | 477 | 5 |
-| `bindGqlArgs` (map → struct) | 250 | 4 |
+| `callHandler` (reflective) | 458 | 5 |
+| `bindGqlArgs` (map → struct) | 271 | 4 |
 
 A request through `AsQuery` with args + metrics + one rate limit pays ≈ **1 µs** of nexus-side work. Surrounding cost (Gin, graphql-go, JSON, your handler, DB) is measured by your own load test.
+
+### Transport ceiling (no-op handler, M1 Pro)
+
+End-to-end throughput on a single endpoint with no business logic — the ceiling each transport adds before your code runs:
+
+| Path | ns/op | req/s | B/op | allocs |
+|---|---:|---:|---:|---:|
+| REST (in-process)            |  3,046 | ~328 K |  3,437 |  41 |
+| `AsCRUD` Read (MemoryStore)  |  3,198 | ~313 K |  3,550 |  41 |
+| GraphQL query *(cached)*     |  6,806 | ~147 K |  9,055 | 110 |
+| GraphQL mutation *(cached)*  |  5,992 | ~167 K |  9,906 | 124 |
+| GraphQL query *(no cache)*   | 20,259 |  ~49 K | 44,036 | 700 |
+| REST (real loopback TCP)     | 17,642 |  ~57 K |  8,382 |  99 |
+
+The GraphQL document cache is **on by default** (LRU, cap 1024). Profiling pinned 89% of per-request allocations on graphql-go's parse + validate phases — both pure functions of (query string, schema), so memoizing them turns the 7× REST/GraphQL gap into ~2×. Disable via `Config{GraphQL: GraphQLConfig{DocumentCacheSize: -1}}`. Live counters are exposed at `GET /__nexus/graphql/cache` and on the WS live snapshot.
 
 ### Monolith vs split
 
