@@ -11,6 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
+	"github.com/graphql-go/graphql/gqlerrors"
+	"github.com/graphql-go/graphql/language/parser"
+	"github.com/graphql-go/graphql/language/source"
 	graph "github.com/paulmanoni/nexus/graph"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"
@@ -53,6 +56,21 @@ type Options struct {
 	// default; nexus.New supplies a closure that reads
 	// Config.Introspection + IntrospectionNetworks).
 	AllowIntrospection func(c *gin.Context) bool
+
+	// DocumentCache memoizes parse + validate for repeat queries.
+	// Profiling shows ~89% of a GraphQL request's allocations come
+	// from those two phases; caching the parsed AST drops the
+	// per-request cost dramatically for the typical "same query
+	// repeated with different variables" pattern. Nil disables.
+	// nexus.autoMount wires a default cache via WithDocumentCache
+	// (size from Config.GraphQL.DocumentCacheSize).
+	DocumentCache *DocumentCache
+
+	// StatsRegistry, when non-nil along with DocumentCache, is used
+	// to register this mount's cache so the dashboard can surface
+	// hit/miss/eviction counters. nexus.autoMount wires this from
+	// (*App).gqlStats.
+	StatsRegistry *StatsRegistry
 }
 
 // Option is the variadic form of Options for builder-style callsites.
@@ -80,6 +98,26 @@ func WithAllowIntrospection(fn func(c *gin.Context) bool) Option {
 	return func(o *Options) { o.AllowIntrospection = fn }
 }
 
+// WithDocumentCache installs an LRU memo over parse + validate.
+// capacity <= 0 disables. nexus.autoMount calls this with the
+// value of Config.GraphQL.DocumentCacheSize (default 1024); pass
+// WithDocumentCache(0) at the service level to turn it off.
+func WithDocumentCache(capacity int) Option {
+	return func(o *Options) {
+		o.DocumentCache = NewDocumentCache(capacity)
+	}
+}
+
+// WithStatsRegistry hands Mount the per-app cache registry the
+// dashboard reads from. Each Mount call records its DocumentCache
+// under the mount path so /__nexus/graphql/cache and the live WS
+// snapshot can surface per-mount counters. nexus.autoMount calls
+// this with (*App).gqlStats; raw graphql-go users can pass their
+// own NewStatsRegistry() if they want the dashboard hook.
+func WithStatsRegistry(r *StatsRegistry) Option {
+	return func(o *Options) { o.StatsRegistry = r }
+}
+
 // Mount attaches schema at path for POST/GET and auto-registers every
 // operation (queries, mutations, subscriptions) into the registry for the
 // dashboard. If bus != nil, requests are traced.
@@ -93,42 +131,56 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 		o(&cfg)
 	}
 	registerOps(r, service, path, schema, cfg.ServiceForField)
+	// Enroll this mount's cache so the dashboard can surface its
+	// counters. Registry tolerates nil cache — no-op when caching
+	// is disabled for this mount.
+	if cfg.StatsRegistry != nil {
+		cfg.StatsRegistry.Register(path, cfg.DocumentCache)
+	}
 
-	var h gin.HandlerFunc
+	// POST is the hot path — JSON in, JSON out. cachedHandler runs
+	// the cached-AST executor (skips parse+validate on a hit) and
+	// builds the same rootValue / user-details map that
+	// graph.NewHTTP would. GET keeps going through goGraphHandler
+	// when Playground is on, since that path also serves the HTML
+	// UI for browser visits.
+	postHandler := cachedHandler(schema, cfg)
+	var getHandler gin.HandlerFunc
 	if cfg.UserDetailsFn != nil || cfg.Playground || cfg.DEBUG {
-		h = goGraphHandler(schema, cfg)
+		getHandler = goGraphHandler(schema, cfg)
 	} else {
-		h = simpleHandler(schema)
+		getHandler = simpleHandler(schema)
 	}
 
-	var handlers []gin.HandlerFunc
-	if bus != nil {
-		handlers = append(handlers, trace.Middleware(bus, service, "POST "+path, string(registry.GraphQL)))
+	build := func(h gin.HandlerFunc) []gin.HandlerFunc {
+		var hs []gin.HandlerFunc
+		if bus != nil {
+			hs = append(hs, trace.Middleware(bus, service, "POST "+path, string(registry.GraphQL)))
+		}
+		// Production gate sits before the trace middleware unwrap so
+		// blocked requests don't allocate a trace record. allow == nil
+		// makes the gate a pass-through (no-op). When allow returns
+		// false, the FULL go-graph security suite runs (depth, aliases,
+		// complexity, no introspection) — matching what go-graph's
+		// DEBUG: false / EnableValidation: true mode applies. When
+		// allow returns true, validation is skipped (dev / admin /
+		// allowlisted peer keeps the loose experience).
+		if cfg.AllowIntrospection != nil {
+			hs = append([]gin.HandlerFunc{productionGate(cfg.AllowIntrospection, schema)}, hs...)
+		}
+		// Stash the caller IP in the request context so per-op middleware
+		// downstream (rate-limit, metrics error recorder) can attribute the
+		// request without the gql adapter leaking gin.Context into graph.
+		hs = append(hs, func(c *gin.Context) {
+			ctx := ratelimit.WithClientIP(c.Request.Context(), c.ClientIP())
+			c.Request = c.Request.WithContext(ctx)
+			c.Next()
+		})
+		hs = append(hs, h)
+		return hs
 	}
-	// Production gate sits before the trace middleware unwrap so
-	// blocked requests don't allocate a trace record. allow == nil
-	// makes the gate a pass-through (no-op). When allow returns
-	// false, the FULL go-graph security suite runs (depth, aliases,
-	// complexity, no introspection) — matching what go-graph's
-	// DEBUG: false / EnableValidation: true mode applies. When
-	// allow returns true, validation is skipped (dev / admin /
-	// allowlisted peer keeps the loose experience).
-	if cfg.AllowIntrospection != nil {
-		handlers = append([]gin.HandlerFunc{productionGate(cfg.AllowIntrospection, schema)}, handlers...)
-	}
-	// Stash the caller IP in the request context so per-op middleware
-	// downstream (rate-limit, metrics error recorder) can attribute the
-	// request without the gql adapter leaking gin.Context into graph.
-	// Runs whether the underlying handler is the simple path or graph's
-	// Playground-capable NewHTTP.
-	handlers = append(handlers, func(c *gin.Context) {
-		ctx := ratelimit.WithClientIP(c.Request.Context(), c.ClientIP())
-		c.Request = c.Request.WithContext(ctx)
-		c.Next()
-	})
-	handlers = append(handlers, h)
-	e.POST(path, handlers...)
-	e.GET(path, handlers...)
+	e.POST(path, build(postHandler)...)
+	e.GET(path, build(getHandler)...)
 }
 
 type request struct {
@@ -170,6 +222,148 @@ func simpleHandler(schema *graphql.Schema) gin.HandlerFunc {
 		}
 		c.JSON(status, result)
 	}
+}
+
+// cachedHandler is the POST hot path. It parses the JSON body once,
+// runs the cached executor (skipping parse+validate on a hit), and
+// applies the same UserDetailsFn flow that graph.NewHTTP would —
+// without going through github.com/graphql-go/handler. Falls back
+// to the legacy goGraphHandler / simpleHandler path for unusual
+// content types (form-encoded GraphQL queries are rare in
+// practice; rather than reimplement that branch we delegate).
+func cachedHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
+	fallback := simpleHandler(schema)
+	if cfg.UserDetailsFn != nil || cfg.Playground || cfg.DEBUG {
+		fallback = goGraphHandler(schema, cfg)
+	}
+	cache := cfg.DocumentCache
+	return func(c *gin.Context) {
+		// Only JSON POSTs go through the cached fast path. Anything
+		// else (form-encoded, multipart, etc.) falls back to the
+		// existing handler so we don't have to re-implement those
+		// edge cases here.
+		ct := c.GetHeader("Content-Type")
+		if !isJSONContentType(ct) {
+			fallback(c)
+			return
+		}
+		var req request
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// Install the status holder before resolvers run so field
+		// middlewares can call SetStatusCode(ctx, ...). Mirrors
+		// simpleHandler / goGraphHandler.
+		ctx, _ := withStatusHolder(c.Request.Context())
+
+		// User-details injection. Same shape as graph.NewHTTP's
+		// RootObjectFn: token under "token", details under
+		// "details". Only allocated when UserDetailsFn is set.
+		var rootObj map[string]any
+		if cfg.UserDetailsFn != nil {
+			token := graph.ExtractBearerToken(c.Request)
+			if token != "" {
+				rootObj = map[string]any{"token": token}
+				if newCtx, details, err := cfg.UserDetailsFn(ctx, token); err == nil {
+					ctx = newCtx
+					if details != nil {
+						rootObj["details"] = details
+					}
+				}
+			}
+		}
+
+		result := executeCached(cache, graphql.Params{
+			Schema:         *schema,
+			RequestString:  req.Query,
+			VariableValues: req.Variables,
+			OperationName:  req.OperationName,
+			Context:        ctx,
+			RootObject:     rootObj,
+		})
+
+		status := http.StatusOK
+		if s := statusFromCtx(ctx); s > 0 {
+			status = s
+		}
+		c.JSON(status, result)
+	}
+}
+
+// executeCached is graphql.Do with parse + validate memoized through
+// cache. When cache is nil it degenerates to graphql.Do exactly — so
+// callers don't need to branch.
+func executeCached(cache *DocumentCache, params graphql.Params) *graphql.Result {
+	if cache == nil {
+		return graphql.Do(params)
+	}
+	entry, hit := cache.Get(params.RequestString)
+	if !hit {
+		src := source.NewSource(&source.Source{
+			Body: []byte(params.RequestString),
+			Name: "GraphQL request",
+		})
+		doc, parseErr := parser.Parse(parser.ParseParams{Source: src})
+		if parseErr != nil {
+			// Cache parse failures too — the same query string will
+			// always fail the same way, and the formatted errors are
+			// already allocated.
+			entry = &documentEntry{
+				doc:     nil,
+				valErrs: gqlerrors.FormatErrors(parseErr),
+				valid:   false,
+			}
+			cache.Put(params.RequestString, entry)
+			return &graphql.Result{Errors: entry.valErrs}
+		}
+		validation := graphql.ValidateDocument(&params.Schema, doc, nil)
+		entry = &documentEntry{
+			doc:     doc,
+			valErrs: validation.Errors,
+			valid:   validation.IsValid,
+		}
+		cache.Put(params.RequestString, entry)
+	}
+	if !entry.valid {
+		// Validation failed previously — return the same errors
+		// without re-running Execute. Matches graphql.Do's behavior
+		// for invalid documents.
+		return &graphql.Result{Errors: entry.valErrs}
+	}
+	return graphql.Execute(graphql.ExecuteParams{
+		Schema:        params.Schema,
+		Root:          params.RootObject,
+		AST:           entry.doc,
+		OperationName: params.OperationName,
+		Args:          params.VariableValues,
+		Context:       params.Context,
+	})
+}
+
+// isJSONContentType returns true when ct names application/json (with
+// optional parameters like ; charset=utf-8). Avoids pulling in mime
+// for a one-shot prefix check.
+func isJSONContentType(ct string) bool {
+	if ct == "" {
+		// graphql-go's handler treats missing Content-Type on POST
+		// as JSON when the body parses; we match that for the
+		// common case of curl without an explicit header.
+		return true
+	}
+	// Find the first ';' or end-of-string and compare the prefix.
+	end := len(ct)
+	for i := 0; i < len(ct); i++ {
+		if ct[i] == ';' {
+			end = i
+			break
+		}
+	}
+	// Trim trailing whitespace cheaply.
+	for end > 0 && (ct[end-1] == ' ' || ct[end-1] == '\t') {
+		end--
+	}
+	return ct[:end] == "application/json"
 }
 
 // goGraphHandler delegates to graph.NewHTTP so resolvers can read user

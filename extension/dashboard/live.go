@@ -15,6 +15,7 @@ import (
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/transport/gql"
 )
 
 // heartbeatInterval is the maximum time between snapshot emissions
@@ -41,15 +42,16 @@ const debounceWindow = 50 * time.Millisecond
 // ratelimits) poll fan-out. Optional subsystems (ms / sched / rl) emit nil
 // fields — `omitempty` keeps the payload tight.
 type liveSnapshot struct {
-	Kind       string                      `json:"kind"` // always "snapshot"
-	TS         time.Time                   `json:"ts"`
-	Services   []registry.Service          `json:"services,omitempty"`
-	Endpoints  []registry.Endpoint         `json:"endpoints,omitempty"`
-	Resources  []registry.ResourceSnapshot `json:"resources,omitempty"`
-	Workers    []registry.Worker           `json:"workers,omitempty"`
-	Stats      []metrics.EndpointStats     `json:"stats,omitempty"`
-	Crons      []cron.Snapshot             `json:"crons,omitempty"`
-	RateLimits []ratelimit.Record          `json:"ratelimits,omitempty"`
+	Kind        string                      `json:"kind"` // always "snapshot"
+	TS          time.Time                   `json:"ts"`
+	Services    []registry.Service          `json:"services,omitempty"`
+	Endpoints   []registry.Endpoint         `json:"endpoints,omitempty"`
+	Resources   []registry.ResourceSnapshot `json:"resources,omitempty"`
+	Workers     []registry.Worker           `json:"workers,omitempty"`
+	Stats       []metrics.EndpointStats     `json:"stats,omitempty"`
+	Crons       []cron.Snapshot             `json:"crons,omitempty"`
+	RateLimits  []ratelimit.Record          `json:"ratelimits,omitempty"`
+	GraphQLCache []gql.MountCacheStats      `json:"graphqlCache,omitempty"`
 }
 
 // streamLive is the WS handler at /__nexus/live. Push-driven: a
@@ -68,7 +70,7 @@ type liveSnapshot struct {
 // The writer never blocks indefinitely — write deadlines force
 // errors on backpressure, NextReader signals client close, ctx
 // covers server shutdown.
-func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, notifier *live.Notifier) gin.HandlerFunc {
+func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, gqlStats *gql.StatsRegistry, notifier *live.Notifier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
@@ -107,6 +109,10 @@ func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler,
 			if rl != nil {
 				snap.RateLimits = rl.Snapshot(ctx)
 			}
+			// gqlStats may be nil for apps that don't auto-mount
+			// GraphQL; Snapshot() tolerates nil and returns no
+			// rows so omitempty drops the field.
+			snap.GraphQLCache = gqlStats.Snapshot()
 			return snap
 		}
 

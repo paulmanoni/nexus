@@ -17,6 +17,7 @@ import (
 	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/transport/gql"
 )
 
 const Prefix = "/__nexus"
@@ -104,7 +105,7 @@ type TabInfo struct {
 // silently expose service/env/cron declarations to the public. The
 // cron + rate-limit + metrics endpoints are always mounted — their
 // stores just return empty lists when nothing has been registered.
-func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier *live.Notifier, cfg Config) {
+func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier *live.Notifier, gqlStats *gql.StatsRegistry, cfg Config) {
 	if cfg.Name == "" {
 		cfg.Name = "Nexus"
 	}
@@ -147,6 +148,9 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 	if bus != nil {
 		trace.MountDashboard(g, bus)
 	}
+	// GraphQL document-cache stats — always mounted; the registry
+	// returns an empty list when no caches are enrolled.
+	gql.MountDashboard(g, gqlStats)
 	// Manifest endpoint mounts only when both pieces are configured —
 	// fail-closed so a missing NEXUS_ADMIN_TOKEN doesn't silently
 	// expose service/env/cron declarations. The auth gate is route-
@@ -164,7 +168,7 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 	// surface (endpoints, resources, workers, stats, crons, ratelimits)
 	// — the UI subscribes once and renders live. /events stays separate
 	// for per-request trace pulses.
-	g.GET("/live", streamLive(reg, ms, sched, rl, notifier))
+	g.GET("/live", streamLive(reg, ms, sched, rl, gqlStats, notifier))
 	mountUI(g)
 }
 
