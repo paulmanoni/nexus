@@ -74,7 +74,7 @@ func TestDevRunCodegen_RendersWhenFrontendPluginPresent(t *testing.T) {
 	dir := t.TempDir()
 
 	var out, errBuf bytes.Buffer
-	err := devRunCodegen(context.Background(), srv.URL, dir, "vue", &out, &errBuf)
+	err := devRunCodegen(context.Background(), srv.URL, dir, "vue", "", &out, &errBuf)
 	if err != nil {
 		t.Fatalf("devRunCodegen: %v (stderr: %s)", err, errBuf.String())
 	}
@@ -104,7 +104,7 @@ func TestDevRunCodegen_SilentSkipWhenFrontendAbsent(t *testing.T) {
 	dir := t.TempDir()
 
 	var out, errBuf bytes.Buffer
-	err := devRunCodegen(context.Background(), srv.URL, dir, "vue", &out, &errBuf)
+	err := devRunCodegen(context.Background(), srv.URL, dir, "vue", "", &out, &errBuf)
 	if err != nil {
 		t.Fatalf("devRunCodegen: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestDevRunCodegen_MergesContributions(t *testing.T) {
 	srv := fakeNexusServer(t, true, body)
 	dir := t.TempDir()
 
-	err := devRunCodegen(context.Background(), srv.URL, dir, "vue", &bytes.Buffer{}, &bytes.Buffer{})
+	err := devRunCodegen(context.Background(), srv.URL, dir, "vue", "", &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestDevRunCodegen_NoopOnSecondRunPreservesMtime(t *testing.T) {
 	srv := fakeNexusServer(t, true, "")
 	dir := t.TempDir()
 
-	if err := devRunCodegen(context.Background(), srv.URL, dir, "vue", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := devRunCodegen(context.Background(), srv.URL, dir, "vue", "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	clientPath := filepath.Join(dir, "src", "__nexus", "_client.ts")
@@ -169,7 +169,7 @@ func TestDevRunCodegen_NoopOnSecondRunPreservesMtime(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond)
-	if err := devRunCodegen(context.Background(), srv.URL, dir, "vue", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := devRunCodegen(context.Background(), srv.URL, dir, "vue", "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	info2, err := os.Stat(clientPath)
@@ -187,7 +187,7 @@ func TestDevRunCodegen_NoopOnSecondRunPreservesMtime(t *testing.T) {
 func TestDevCodegenWatch_EmptyFrontendDirReturnsImmediately(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
-		devCodegenWatch(context.Background(), ":8080", "", "vue", &bytes.Buffer{}, &bytes.Buffer{})
+		devCodegenWatch(context.Background(), ":8080", "", "vue", "", &bytes.Buffer{}, &bytes.Buffer{})
 		close(done)
 	}()
 	select {

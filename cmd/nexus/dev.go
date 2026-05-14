@@ -305,7 +305,19 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		// registered on the running app. Each iteration of the loop
 		// (Go restart) re-fires the codegen so schema changes flow
 		// into the TS tree without a manual `nexus generate frontend`.
-		go devCodegenWatch(ctx, addr, frontendDir, "vue", stdout, stderr)
+		// proxyURL is what we ask the SPA's vite proxy to forward
+		// to — manifest port wins (proxyAddr) over the --addr flag,
+		// computed once above. Empty when no frontend so the codegen
+		// path skips the sync.
+		proxyURL := ""
+		if frontendDir != "" && proxyAddr != "" {
+			if strings.HasPrefix(proxyAddr, ":") {
+				proxyURL = "http://localhost" + proxyAddr
+			} else {
+				proxyURL = "http://" + proxyAddr
+			}
+		}
+		go devCodegenWatch(ctx, addr, frontendDir, "vue", proxyURL, stdout, stderr)
 		first = false
 		select {
 		case err := <-exited:

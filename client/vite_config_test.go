@@ -164,8 +164,11 @@ func TestEnsureViteWatchExclude_MissingFile(t *testing.T) {
 }
 
 // TestEnsureViteProxyForNexus_PrependsIntoExistingProxy pins the
-// happy path: a project that already has /graphql + /oauth proxy
-// rules gets /__nexus prepended without disturbing the rest.
+// migration path: a project that already has some framework-managed
+// entries gets them folded into a marker-fenced managed block so
+// future syncs can add/remove declaratively. The standardized shape
+// (apiURL target, std changeOrigin/ws keys) replaces whatever the
+// user had — customizations are expected to live OUTSIDE the markers.
 func TestEnsureViteProxyForNexus_PrependsIntoExistingProxy(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "vite.config.ts")
@@ -189,9 +192,12 @@ export default defineConfig({
 	body, _ := os.ReadFile(cfgPath)
 	got := string(body)
 	for _, want := range []string{
+		"// @nexus:proxy-start",
+		"// @nexus:proxy-end",
 		`"/__nexus": { target: "http://localhost:8080", changeOrigin: true }`,
-		`"/graphql": { target: "http://localhost:8080", changeOrigin: true }`, // unchanged
-		`"/ws": { target: "ws://localhost:8080", ws: true, changeOrigin: true }`, // unchanged
+		`"/graphql": { target: "http://localhost:8080", changeOrigin: true }`,
+		`"/oauth": { target: "http://localhost:8080", changeOrigin: true }`,
+		`"/ws": { target: "http://localhost:8080", changeOrigin: true, ws: true }`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q\n--- body ---\n%s", want, got)
@@ -309,7 +315,7 @@ export default defineConfig({})
 	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureViteProxyForPrefixes(cfgPath, "http://localhost:8080",
+	if err := SyncViteProxyForPrefixes(cfgPath, "http://localhost:8080",
 		[]string{"/api", "/v1"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -359,6 +365,71 @@ export default defineConfig({
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q after partial-wire pass\n--- body ---\n%s", want, got)
 		}
+	}
+}
+
+// TestSyncViteProxyForPrefixes_AddsAndRemovesAcrossCalls covers the
+// declarative-sync contract: a second call with a different prefix
+// set adds the new entries and drops the ones the runtime no longer
+// advertises. The marker pair is what makes this safe — entries
+// OUTSIDE the markers stay untouched.
+func TestSyncViteProxyForPrefixes_AddsAndRemovesAcrossCalls(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "vite.config.ts")
+	original := `import { defineConfig } from 'vite'
+export default defineConfig({
+  server: {
+    proxy: {
+      "/user-custom": { target: "http://example.com", changeOrigin: true },
+    },
+  },
+})
+`
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// First sync: /__nexus + /oats-uaa
+	if err := SyncViteProxyForPrefixes(cfgPath, "http://localhost:9590",
+		[]string{"/__nexus", "/oats-uaa"}, io.Discard); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	got, _ := os.ReadFile(cfgPath)
+	body := string(got)
+	for _, want := range []string{`"/__nexus":`, `"/oats-uaa":`, `"/user-custom":`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("after first sync missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+
+	// Second sync: drop /oats-uaa, add /oats-interview. /user-custom
+	// (outside markers) must survive both passes; /oats-uaa must be
+	// gone since it left the managed set.
+	if err := SyncViteProxyForPrefixes(cfgPath, "http://localhost:9590",
+		[]string{"/__nexus", "/oats-interview"}, io.Discard); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	got, _ = os.ReadFile(cfgPath)
+	body = string(got)
+	if !strings.Contains(body, `"/oats-interview":`) {
+		t.Errorf("added prefix /oats-interview not present\n--- body ---\n%s", body)
+	}
+	if strings.Contains(body, `"/oats-uaa":`) {
+		t.Errorf("removed prefix /oats-uaa still present\n--- body ---\n%s", body)
+	}
+	if !strings.Contains(body, `"/user-custom":`) {
+		t.Errorf("user-owned entry outside markers got dropped\n--- body ---\n%s", body)
+	}
+
+	// Re-sync with the same set should be a no-op (byte-identical).
+	before := body
+	if err := SyncViteProxyForPrefixes(cfgPath, "http://localhost:9590",
+		[]string{"/__nexus", "/oats-interview"}, io.Discard); err != nil {
+		t.Fatalf("third sync: %v", err)
+	}
+	again, _ := os.ReadFile(cfgPath)
+	if string(again) != before {
+		t.Errorf("re-sync with unchanged set is not byte-identical\n--- before ---\n%s\n--- after ---\n%s", before, again)
 	}
 }
 

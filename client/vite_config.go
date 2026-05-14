@@ -6,7 +6,18 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+)
+
+// Markers fence the proxy entries that `nexus dev` owns. Everything
+// between them is regenerated on each sync — adding entries the
+// running app advertises and removing entries it no longer does.
+// User-added proxy rules belong OUTSIDE the markers; those stay
+// untouched across syncs.
+const (
+	nexusProxyMarkerStart = "// @nexus:proxy-start — managed by `nexus dev`, do not edit between markers"
+	nexusProxyMarkerEnd   = "// @nexus:proxy-end"
 )
 
 // viteWatchExcludeGlobs are the well-known files that auto-import
@@ -143,38 +154,42 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 var DefaultNexusProxyPrefixes = []string{"/__nexus", "/graphql", "/oauth", "/ws"}
 
 // EnsureViteProxyForNexus is the back-compat wrapper around
-// EnsureViteProxyForPrefixes(DefaultNexusProxyPrefixes). Existing
-// callers (the dev CLI's earlier shape, third-party scripts) keep
-// working; new code should prefer EnsureViteProxyForPrefixes which
-// is explicit about what gets routed.
+// SyncViteProxyForPrefixes(DefaultNexusProxyPrefixes). Existing
+// callers (the dev CLI's boot path, third-party scripts) keep
+// working; new code should prefer SyncViteProxyForPrefixes when
+// the prefix set is dynamic (e.g., derived from the running app's
+// manifest at boot).
 func EnsureViteProxyForNexus(configPath, apiURL string, stdout io.Writer) error {
-	return EnsureViteProxyForPrefixes(configPath, apiURL, DefaultNexusProxyPrefixes, stdout)
+	return SyncViteProxyForPrefixes(configPath, apiURL, DefaultNexusProxyPrefixes, stdout)
 }
 
-// EnsureViteProxyForPrefixes injects a server.proxy entry per prefix
-// so the browser's request for any framework-owned path goes through
-// vite's same-origin proxy instead of hitting the Go server cross-
-// origin and tripping CORS. Each prefix lands as one rule:
+// SyncViteProxyForPrefixes makes server.proxy reflect a declarative
+// set of prefixes — adds the ones missing, removes the ones the
+// runtime no longer advertises. Idempotent: a re-sync with the same
+// set is a no-op.
 //
-//	"<prefix>": { target: "<apiURL>", changeOrigin: true }
+// Managed entries live between `// @nexus:proxy-start` and
+// `// @nexus:proxy-end` markers inside `server.proxy`. On every
+// call the contents between those markers are regenerated to match
+// `prefixes` exactly. Entries OUTSIDE the markers are user-owned
+// and preserved.
 //
-// The "/ws" prefix is special-cased with ws:true so vite upgrades
-// to the WebSocket transport instead of buffering an HTTP request.
+// First-run migration: when no markers exist, any existing entry
+// in the proxy block whose key matches a prefix in the input set
+// is removed and folded into the new managed block — that way
+// upgrading a project that was previously hand-wired produces a
+// clean managed block without duplicates.
 //
-// Idempotent per-prefix: prefixes already present in the config (by
-// literal "<prefix>" substring match, single or double quotes) are
-// skipped; only missing entries get added. A no-op call returns nil
-// without rewriting the file.
+// Bootstrap ladder when the proxy block is missing:
+//  1. `proxy: { … }` present → prepend the marker block inside it.
+//  2. `server: { … }` present without proxy → add `proxy: { ... }`
+//     with the marker block.
+//  3. `defineConfig({...})` only → add `server: { proxy: { ... } }`.
+//  4. None of the above → leave the file alone.
 //
-// Strategy mirrors insertWatchExclude:
-//  1. All entries already wired? skip.
-//  2. Existing `proxy: { … }` block? prepend the missing entries.
-//  3. Existing `server: { … }` block without proxy? add a fresh
-//     `proxy: { ... }` block inside it.
-//  4. No `server:` block? add `server: { proxy: { ... } }` inside
-//     defineConfig({...}).
-//  5. None of the above? leave the file alone.
-func EnsureViteProxyForPrefixes(configPath, apiURL string, prefixes []string, stdout io.Writer) error {
+// The "/ws" prefix gets ws:true so vite upgrades to WebSocket
+// instead of buffering as HTTP.
+func SyncViteProxyForPrefixes(configPath, apiURL string, prefixes []string, stdout io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -189,90 +204,190 @@ func EnsureViteProxyForPrefixes(configPath, apiURL string, prefixes []string, st
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
 	body := string(src)
-	updated, added, ok := insertNexusProxyEntries(body, apiURL, prefixes)
-	if !ok {
+
+	// Stable order keeps re-syncs byte-identical when the set hasn't
+	// changed — vite's restart-on-change is sensitive enough that an
+	// unstable serialization would cause spurious reloads.
+	cleaned := dedupeSortPrefixes(prefixes)
+	updated, ok := syncProxyManagedBlock(body, apiURL, cleaned)
+	if !ok || updated == body {
 		return nil
 	}
 	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
-	fmt.Fprintf(stdout, "[nexus] added vite proxy entries to %s: %s (target: %s)\n",
-		configPath, strings.Join(added, ", "), apiURL)
+	fmt.Fprintf(stdout, "[nexus] synced vite proxy in %s — %d prefix(es), target %s\n",
+		configPath, len(cleaned), apiURL)
 	return nil
 }
 
-// insertNexusProxyEntries adds one proxy entry per missing prefix to
-// the user's vite proxy block, creating intermediate `proxy:` /
-// `server:` blocks as needed. Returns (body, added, false) when
-// every prefix was already present or no suitable insertion point
-// exists. `added` lists the prefixes that actually got inserted in
-// this pass — empty on skip.
-func insertNexusProxyEntries(body, apiURL string, prefixes []string) (string, []string, bool) {
-	missing := make([]string, 0, len(prefixes))
-	for _, p := range prefixes {
-		if p == "" {
+// dedupeSortPrefixes drops empties + duplicates and sorts. The sort
+// gives stable output so an unchanged input produces byte-identical
+// blocks across syncs — important because vite's HMR restarts the
+// dev server on any vite.config.ts change.
+func dedupeSortPrefixes(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, p := range in {
+		if p == "" || seen[p] {
 			continue
 		}
-		needle1 := `"` + p + `"`
-		needle2 := `'` + p + `'`
-		if strings.Contains(body, needle1) || strings.Contains(body, needle2) {
-			continue
-		}
-		missing = append(missing, p)
+		seen[p] = true
+		out = append(out, p)
 	}
-	if len(missing) == 0 {
-		return body, nil, false
-	}
-	entries := make([]string, len(missing))
-	for i, p := range missing {
-		entries[i] = renderProxyEntry(p, apiURL)
-	}
+	sort.Strings(out)
+	return out
+}
 
-	// First choice: there's already a server.proxy block, prepend
-	// the missing entries inside it.
+// syncProxyManagedBlock returns the new body + ok, where ok is true
+// when an edit is needed (or a write would land identical bytes —
+// the caller short-circuits via the unchanged check). Splits along
+// whether the markers already exist:
+//
+//   - Markers present: replace their contents wholesale.
+//   - Markers absent: strip any existing entries whose key is in
+//     prefixes, then bootstrap the markers in the right scaffold.
+func syncProxyManagedBlock(body, apiURL string, prefixes []string) (string, bool) {
+	managed := renderManagedBlock(prefixes, apiURL)
+	if startIdx, endIdx, ok := findMarkerRange(body); ok {
+		// Replace from the start marker through the end marker
+		// (inclusive). The caller compares the result to the
+		// original to decide whether to write.
+		return body[:startIdx] + managed + body[endIdx:], true
+	}
+	// First-run migration: pull out any unmanaged entries the user
+	// (or an older nexus dev) wrote, so the new managed block
+	// doesn't end up duplicating keys.
+	stripped := body
+	for _, p := range prefixes {
+		if next, removed := removeProxyEntryByKey(stripped, p); removed {
+			stripped = next
+		}
+	}
+	return bootstrapManagedBlock(stripped, managed)
+}
+
+// renderManagedBlock formats the marker-fenced block. Two-space
+// indent inside `proxy: {` mirrors the existing injector's shape
+// and the convention used by hand-written vite configs in this
+// repo's examples/.
+func renderManagedBlock(prefixes []string, apiURL string) string {
+	var b strings.Builder
+	b.WriteString(nexusProxyMarkerStart)
+	for _, p := range prefixes {
+		b.WriteString("\n      ")
+		b.WriteString(renderProxyEntry(p, apiURL))
+		b.WriteByte(',')
+	}
+	b.WriteString("\n      ")
+	b.WriteString(nexusProxyMarkerEnd)
+	return b.String()
+}
+
+// findMarkerRange locates the marker pair and returns the start
+// index of the opening marker + the end index (one past the
+// closing marker). The third return is false when either marker
+// is missing or they appear in the wrong order — in that case the
+// caller treats it as "no managed block yet" and falls through to
+// bootstrap.
+func findMarkerRange(body string) (int, int, bool) {
+	start := strings.Index(body, nexusProxyMarkerStart)
+	if start < 0 {
+		return 0, 0, false
+	}
+	end := strings.Index(body[start:], nexusProxyMarkerEnd)
+	if end < 0 {
+		return 0, 0, false
+	}
+	return start, start + end + len(nexusProxyMarkerEnd), true
+}
+
+// bootstrapManagedBlock inserts the marker-fenced managed block into
+// the right scaffold. Mirrors the legacy injector's ladder so
+// upgrading projects land identical structure to the prior path.
+func bootstrapManagedBlock(body, managed string) (string, bool) {
 	proxyRe := regexp.MustCompile(`proxy\s*:\s*\{`)
 	if loc := proxyRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		var ins strings.Builder
-		for _, e := range entries {
-			ins.WriteString("\n      ")
-			ins.WriteString(e)
-			ins.WriteByte(',')
-		}
-		return body[:openBrace+1] + ins.String() + body[openBrace+1:], missing, true
+		ins := "\n      " + managed + ","
+		return body[:openBrace+1] + ins + body[openBrace+1:], true
 	}
-
-	// Second: server: { … } without proxy — add proxy as a sibling
-	// with every missing entry inside.
 	serverRe := regexp.MustCompile(`server\s*:\s*\{`)
 	if loc := serverRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		var ins strings.Builder
-		ins.WriteString("\n    proxy: {")
-		for _, e := range entries {
-			ins.WriteString("\n      ")
-			ins.WriteString(e)
-			ins.WriteByte(',')
-		}
-		ins.WriteString("\n    },")
-		return body[:openBrace+1] + ins.String() + body[openBrace+1:], missing, true
+		ins := "\n    proxy: {\n      " + managed + ",\n    },"
+		return body[:openBrace+1] + ins + body[openBrace+1:], true
 	}
-
-	// Third: no server block — drop one inside defineConfig({...}).
 	cfgRe := regexp.MustCompile(`defineConfig\s*\(\s*\{`)
 	if loc := cfgRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		var ins strings.Builder
-		ins.WriteString("\n  server: { proxy: {")
-		for _, e := range entries {
-			ins.WriteString(" ")
-			ins.WriteString(e)
-			ins.WriteByte(',')
-		}
-		ins.WriteString(" } },")
-		return body[:openBrace+1] + ins.String() + body[openBrace+1:], missing, true
+		ins := "\n  server: { proxy: {\n    " + managed + ",\n  } },"
+		return body[:openBrace+1] + ins + body[openBrace+1:], true
 	}
-	return body, nil, false
+	return body, false
+}
+
+// removeProxyEntryByKey deletes the JS object property keyed by
+// `"prefix"` (single- or double-quoted) from body, including its
+// value and trailing comma + same-line whitespace. Brace-counted so
+// multi-line values like `"/ws": { target: "...", ws: true, },`
+// get removed in full, not just the first line.
+//
+// Returns (body, false) when the key isn't found, has no `{ ... }`
+// value, or the braces are unbalanced — leave the file alone in
+// those edge cases rather than mangle it.
+func removeProxyEntryByKey(body, prefix string) (string, bool) {
+	for _, q := range []string{`"`, `'`} {
+		key := q + prefix + q
+		idx := strings.Index(body, key)
+		if idx < 0 {
+			continue
+		}
+		// skip whitespace + ':' to reach the value's opening brace
+		i := idx + len(key)
+		for i < len(body) && (body[i] == ' ' || body[i] == '\t' || body[i] == ':') {
+			i++
+		}
+		if i >= len(body) || body[i] != '{' {
+			continue
+		}
+		depth := 0
+		end := -1
+		for j := i; j < len(body); j++ {
+			switch body[j] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+			}
+			if depth == 0 {
+				end = j + 1
+				break
+			}
+		}
+		if end < 0 {
+			continue
+		}
+		// swallow trailing `,` + same-line whitespace + the newline
+		k := end
+		if k < len(body) && body[k] == ',' {
+			k++
+		}
+		for k < len(body) && (body[k] == ' ' || body[k] == '\t') {
+			k++
+		}
+		if k < len(body) && body[k] == '\n' {
+			k++
+		}
+		// trim leading same-line whitespace so we don't leave an
+		// empty indented line behind
+		start := idx
+		for start > 0 && (body[start-1] == ' ' || body[start-1] == '\t') {
+			start--
+		}
+		return body[:start] + body[k:], true
+	}
+	return body, false
 }
 
 // renderProxyEntry returns the single-line proxy rule for a prefix.

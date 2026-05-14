@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/paulmanoni/nexus/client"
@@ -38,7 +39,7 @@ import (
 //   - contributor 5xx (a broken plugin's contribution shouldn't
 //     bring down the dev runner; we log it and skip just the
 //     contributor merge)
-func devCodegenWatch(ctx context.Context, addr, frontendDir, framework string, stdout, stderr io.Writer) {
+func devCodegenWatch(ctx context.Context, addr, frontendDir, framework, proxyURL string, stdout, stderr io.Writer) {
 	if frontendDir == "" {
 		// No --frontend flag → the user isn't running a frontend
 		// alongside this dev session. Codegen would emit into an
@@ -50,7 +51,7 @@ func devCodegenWatch(ctx context.Context, addr, frontendDir, framework string, s
 		return
 	}
 	baseURL := "http://" + probe
-	if err := devRunCodegen(ctx, baseURL, frontendDir, framework, stdout, stderr); err != nil {
+	if err := devRunCodegen(ctx, baseURL, frontendDir, framework, proxyURL, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "%sfrontend codegen:%s %v\n", ansiYellow, ansiReset, err)
 	}
 }
@@ -80,7 +81,13 @@ func devProbeReady(ctx context.Context, addr string, timeout time.Duration) bool
 // contributions, render to disk, log a summary. Output structure
 // matches the standalone `nexus generate frontend` CLI so a manual
 // re-run produces the same bytes.
-func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework string, stdout, stderr io.Writer) error {
+//
+// proxyURL is the http://host:port the vite proxy should forward to —
+// when non-empty, this function also re-syncs the vite proxy block
+// against the manifest's advertised prefixes so add/remove of
+// modules with a RoutePrefix shows up in the SPA without a manual
+// vite.config.ts edit.
+func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyURL string, stdout, stderr io.Writer) error {
 	// Detection short-circuit: ask the plugins endpoint whether the
 	// app has frontend.Plugin wired. A response missing the entry
 	// means codegen isn't expected — skip silently rather than
@@ -99,6 +106,20 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework string, 
 	m, err := devFetchManifest(ctx, baseURL)
 	if err != nil {
 		return fmt.Errorf("manifest fetch: %w", err)
+	}
+
+	// Re-sync vite proxy against the manifest's actual prefixes.
+	// Runs before codegen so a missing proxy entry doesn't make
+	// the first SPA request (manifest fetch from the browser) fail
+	// while codegen happens. Failures are non-fatal — the codegen
+	// itself is what the user cares about.
+	if proxyURL != "" {
+		if cfg := findViteConfig(frontendDir); cfg != "" {
+			prefixes := manifestProxyPrefixes(m)
+			if err := client.SyncViteProxyForPrefixes(cfg, proxyURL, prefixes, stdout); err != nil {
+				fmt.Fprintf(stderr, "%svite proxy sync skipped:%s %v\n", ansiDim, ansiReset, err)
+			}
+		}
 	}
 
 	contribs, err := devFetchContributions(ctx, baseURL, framework)
@@ -144,6 +165,60 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework string, 
 			ansiCyan, ansiReset, changed, outDir)
 	}
 	return nil
+}
+
+// manifestProxyPrefixes derives the set of URL prefixes the vite
+// dev server should proxy to the Go app. Combines the framework's
+// fixed prefixes (/__nexus, /graphql, /oauth, /ws) with one entry
+// per distinct top-level segment found across REST + WS endpoints
+// in the manifest. Each endpoint's effective URL is BasePath+Path;
+// we take its first segment so a module declared with
+// nexus.RoutePrefix("/oats-uaa") gets "/oats-uaa" proxied without
+// the SPA having to know about every sub-route.
+//
+// Duplicates and overlaps with the framework defaults collapse
+// naturally — SyncViteProxyForPrefixes deduplicates.
+func manifestProxyPrefixes(m client.Manifest) []string {
+	out := append([]string{}, client.DefaultNexusProxyPrefixes...)
+	seen := map[string]bool{}
+	for _, p := range out {
+		seen[p] = true
+	}
+	for _, ep := range m.Endpoints {
+		if ep.Transport != "rest" && ep.Transport != "websocket" {
+			continue
+		}
+		seg := firstPathSegment(m.BasePath + ep.Path)
+		if seg == "" || seen[seg] {
+			continue
+		}
+		seen[seg] = true
+		out = append(out, seg)
+	}
+	return out
+}
+
+// firstPathSegment returns "/foo" for any path starting with "/foo/…"
+// or "/foo". Empty / root-only paths yield "" so the caller skips.
+// Used to derive a proxy prefix from an endpoint URL — the vite
+// proxy matches by prefix, so the first segment is the minimal
+// rule that catches every route under the same root.
+func firstPathSegment(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	rest := p[1:]
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	if rest == "" {
+		return ""
+	}
+	return "/" + rest
 }
 
 // devDetectFrontendPlugin reads /__nexus/plugins and returns true
