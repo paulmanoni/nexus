@@ -130,7 +130,7 @@ func TestLoadField_FactoryInjectsFxDeps(t *testing.T) {
 		// lfUser / lfBankDetail caches.
 		Provide(newFakeBankDB),
 		AsQuery(NewListLfxUsers, Op("listLfxUsers")),
-		LoadField[lfxUser, int64, *lfxBankDetail](
+		LoadFieldFx[lfxUser, int64, *lfxBankDetail](
 			"bankDetail",
 			func(u lfxUser) int64 { return u.ID },
 			NewLfxBankDetailFetcher, // ← fx injects *fakeBankDB
@@ -239,7 +239,7 @@ func TestLoadField_InlineDepsForm(t *testing.T) {
 	mod := Module("loadfield_inline_deps",
 		Provide(newFakeBankDB),
 		AsQuery(NewListLfyUsers, Op("listLfyUsers")),
-		LoadField[lfyUser, int64, *lfyBankDetail](
+		LoadFieldFx[lfyUser, int64, *lfyBankDetail](
 			"bankDetail",
 			func(u lfyUser) int64 { return u.ID },
 			// Form (c): db is an fx-injected dep, resolved at boot.
