@@ -332,6 +332,97 @@ type lfyBankDetail struct {
 	AccountNo string `json:"accountNo"`
 }
 
+// TestLoadField1_TypedDep verifies the numbered-variant form: one
+// fully-typed fx-injected dep, full gopls autocomplete at the
+// callsite (the fetch parameter is a concrete typed function, not
+// `any`). Same behavioural contract as LoadFieldFx form (c) — fx
+// resolves the dep at boot, the closure captures it, batched
+// fetch fires once per request — but at compile time the
+// signature is checked.
+func TestLoadField1_TypedDep(t *testing.T) {
+	graph.ResetVirtualFieldsForTest()
+
+	mod := Module("loadfield1",
+		Provide(newFakeBankDB),
+		AsQuery(NewListLfzUsers, Op("listLfzUsers")),
+		LoadField1[lfzUser, int64, *lfzBankDetail, *fakeBankDB](
+			"bankDetail",
+			func(u lfzUser) int64 { return u.ID },
+			// Fully typed: ctx, keys []int64, db *fakeBankDB → map[int64]*lfzBankDetail.
+			// gopls knows every param's type here.
+			func(ctx context.Context, ids []int64, db *fakeBankDB) (map[int64]*lfzBankDetail, error) {
+				out := make(map[int64]*lfzBankDetail, len(ids))
+				for _, id := range ids {
+					out[id] = &lfzBankDetail{AccountNo: "n1-" + itoa64(id)}
+				}
+				_ = db // proves the dep is in scope; real code calls a db method
+				return out, nil
+			},
+		),
+	)
+
+	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Stop()
+	srv := httptest.NewServer(app.Engine())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"query":"{ listLfzUsers { id bankDetail { accountNo } } }"}`)
+	resp, err := http.Post(srv.URL+"/graphql", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	var env struct {
+		Data struct {
+			ListLfzUsers []struct {
+				ID         int64 `json:"id"`
+				BankDetail *struct {
+					AccountNo string `json:"accountNo"`
+				} `json:"bankDetail"`
+			} `json:"listLfzUsers"`
+		} `json:"data"`
+		Errors []any `json:"errors"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, raw)
+	}
+	if len(env.Errors) != 0 {
+		t.Fatalf("errors: %v (body=%s)", env.Errors, raw)
+	}
+	if len(env.Data.ListLfzUsers) != 2 {
+		t.Fatalf("got %d users (body=%s)", len(env.Data.ListLfzUsers), raw)
+	}
+	for i, u := range env.Data.ListLfzUsers {
+		if u.BankDetail == nil {
+			t.Fatalf("user %d: bankDetail nil", i)
+		}
+		want := "n1-" + itoa64(u.ID)
+		if u.BankDetail.AccountNo != want {
+			t.Errorf("user %d: accountNo = %q, want %q", i, u.BankDetail.AccountNo, want)
+		}
+	}
+}
+
+// --- LoadField1 fixtures ---
+
+func NewListLfzUsers(_ context.Context, _ struct{}) ([]*lfzUser, error) {
+	return []*lfzUser{{ID: 100, Name: "p"}, {ID: 200, Name: "q"}}, nil
+}
+
+type lfzUser struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type lfzBankDetail struct {
+	AccountNo string `json:"accountNo"`
+}
+
 // --- test types ---
 
 // Named at the package level (not anonymous) so reflect.Type.Name()
