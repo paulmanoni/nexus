@@ -227,6 +227,111 @@ type lfxBankDetail struct {
 	AccountNo string `json:"accountNo"`
 }
 
+// TestLoadField_InlineDepsForm covers form (c): a single function
+// that takes (ctx, []Key, deps...) and returns (map[Key]V, error).
+// fx resolves the trailing deps at boot; the framework captures them
+// in a closure and registers it as the fetch. Saves the user from
+// writing a separate constructor when they only need one LoadField
+// per relation.
+func TestLoadField_InlineDepsForm(t *testing.T) {
+	graph.ResetVirtualFieldsForTest()
+
+	mod := Module("loadfield_inline_deps",
+		Provide(newFakeBankDB),
+		AsQuery(NewListLfyUsers, Op("listLfyUsers")),
+		LoadField[lfyUser, int64, *lfyBankDetail](
+			"bankDetail",
+			func(u lfyUser) int64 { return u.ID },
+			// Form (c): db is an fx-injected dep, resolved at boot.
+			// Anything in the fx graph works — *DB, *CacheManager,
+			// *Service, custom auth helpers, etc.
+			func(ctx context.Context, ids []int64, db *fakeBankDB) (map[int64]*lfyBankDetail, error) {
+				rows, err := db.BankDetailsByUserIDsAsLfy(ctx, ids)
+				if err != nil {
+					return nil, err
+				}
+				// Tag the data so we know form (c) ran (not some
+				// leftover form-b registration from another test).
+				out := make(map[int64]*lfyBankDetail, len(rows))
+				for k, v := range rows {
+					out[k] = &lfyBankDetail{AccountNo: "inline-" + v.AccountNo}
+				}
+				return out, nil
+			},
+		),
+	)
+
+	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Stop()
+	srv := httptest.NewServer(app.Engine())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"query":"{ listLfyUsers { id bankDetail { accountNo } } }"}`)
+	resp, err := http.Post(srv.URL+"/graphql", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	var env struct {
+		Data struct {
+			ListLfyUsers []struct {
+				ID         int64 `json:"id"`
+				BankDetail *struct {
+					AccountNo string `json:"accountNo"`
+				} `json:"bankDetail"`
+			} `json:"listLfyUsers"`
+		} `json:"data"`
+		Errors []any `json:"errors"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, raw)
+	}
+	if len(env.Errors) != 0 {
+		t.Fatalf("errors: %v (body=%s)", env.Errors, raw)
+	}
+	if len(env.Data.ListLfyUsers) != 2 {
+		t.Fatalf("got %d users, want 2 (body=%s)", len(env.Data.ListLfyUsers), raw)
+	}
+	for i, u := range env.Data.ListLfyUsers {
+		if u.BankDetail == nil {
+			t.Fatalf("user %d: bankDetail nil", i)
+		}
+		want := "inline-fake-" + itoa64(u.ID)
+		if u.BankDetail.AccountNo != want {
+			t.Errorf("user %d: accountNo = %q, want %q (proves the inline fn ran with the injected db)", i, u.BankDetail.AccountNo, want)
+		}
+	}
+}
+
+// --- form-c fixtures (distinct types so the type registry doesn't
+//     collide with the other LoadField tests). ---
+
+func (f *fakeBankDB) BankDetailsByUserIDsAsLfy(ctx context.Context, ids []int64) (map[int64]*lfyBankDetail, error) {
+	out := make(map[int64]*lfyBankDetail, len(ids))
+	for _, id := range ids {
+		out[id] = &lfyBankDetail{AccountNo: "fake-" + itoa64(id)}
+	}
+	return out, nil
+}
+
+func NewListLfyUsers(_ context.Context, _ struct{}) ([]*lfyUser, error) {
+	return []*lfyUser{{ID: 10, Name: "x"}, {ID: 20, Name: "y"}}, nil
+}
+
+type lfyUser struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type lfyBankDetail struct {
+	AccountNo string `json:"accountNo"`
+}
+
 // --- test types ---
 
 // Named at the package level (not anonymous) so reflect.Type.Name()
@@ -258,7 +363,6 @@ func NewListLfUsers(count int) func(ctx context.Context, _ struct{}) ([]*lfUser,
 		return out, nil
 	}
 }
-
 
 func itoa64(n int64) string {
 	if n == 0 {

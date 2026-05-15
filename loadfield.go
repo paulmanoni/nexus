@@ -22,7 +22,8 @@ import (
 // GraphQL resolvers otherwise produce. Parent and Child are Go
 // types; Key is the lookup key (typically int64 / string / UUID).
 //
-// The third argument is either a fetch function or an fx-factory:
+// The third argument is a function in one of three shapes; the
+// framework picks the right path via structural reflection:
 //
 //	// (a) Direct fetch — closes over any deps you can capture at
 //	// module-construction time.
@@ -34,8 +35,9 @@ import (
 //	    },
 //	)
 //
-//	// (b) fx-factory — params resolved from the fx graph at boot.
-//	// Matches the constructor pattern AsRest/AsQuery already use.
+//	// (b) fx-factory — separate constructor whose params come from
+//	// the fx graph at boot. Same shape as AsRest/AsQuery's
+//	// constructor pattern.
 //	func NewBankDetailFetcher(db *DB) dataloader.Fetch[int64, *BankDetail] {
 //	    return func(ctx context.Context, ids []int64) (map[int64]*BankDetail, error) {
 //	        return db.BankDetailsByUserIDs(ctx, ids)
@@ -47,9 +49,22 @@ import (
 //	    NewBankDetailFetcher,
 //	)
 //
-// The framework picks the form via structural reflection: a function
-// matching the fetch signature is form (a); a function whose single
-// return matches the fetch signature is form (b).
+//	// (c) Inline with fx-injected deps — same idea as (b) but
+//	// without the extra constructor. Trailing params after
+//	// (ctx, []Key) are resolved from the fx graph at boot, then
+//	// captured in the closure that the framework registers as the
+//	// fetch. Any type fx can resolve is fair game — *DB,
+//	// *CacheManager, *Service, etc.
+//	nexus.LoadField[User, int64, *BankDetail](
+//	    "bankDetail",
+//	    func(u User) int64 { return u.ID },
+//	    func(ctx context.Context, ids []int64, db *DB, cache *CacheManager) (map[int64]*BankDetail, error) {
+//	        // fx resolves *DB and *CacheManager at boot; this
+//	        // function is invoked once per request batch with the
+//	        // captured deps already in scope.
+//	        ...
+//	    },
+//	)
 //
 // Parent's SDL name is the Go type's reflect name (User → "User").
 // Type aliases unwrap to the original — `type User = users.Row`
@@ -117,9 +132,48 @@ func LoadField[Parent any, Key comparable, Child any](
 			"nexus.LoadField: factory must be a function, got %s", factoryType))}
 	}
 
-	// Form detection. Both forms are functions; distinguish by
-	// signature shape so users don't have to import the dataloader
-	// package just to type-annotate their factory.
+	// Form detection. All three shapes are functions; distinguish by
+	// signature so users don't have to import the dataloader package
+	// for type-annotation purposes. Order matters: form (c) is a
+	// superset of (a) at NumIn>=3, so (c) must be checked first;
+	// otherwise (a) would reject any function with deps as a
+	// signature mismatch.
+	if matchesInlineDepsSignature[Key, Child](factoryType) {
+		// Form (c): inline-with-deps. Wrapper params are the
+		// factory's params from index 2 onwards (the deps); fx
+		// resolves them at boot and the closure captures them.
+		depTypes := make([]reflect.Type, 0, factoryType.NumIn()-2)
+		for i := 2; i < factoryType.NumIn(); i++ {
+			depTypes = append(depTypes, factoryType.In(i))
+		}
+		wrapperType := reflect.FuncOf(depTypes, nil, factoryType.IsVariadic())
+		factoryV := reflect.ValueOf(factory)
+		wrapper := reflect.MakeFunc(wrapperType, func(deps []reflect.Value) []reflect.Value {
+			// Captured deps live for the lifetime of the app;
+			// rebuilding the args slice per request keeps the
+			// closure pointer-clean and lets Go GC the
+			// per-batch ctx/keys values.
+			fetch := func(ctx context.Context, keys []Key) (map[Key]Child, error) {
+				args := make([]reflect.Value, 0, 2+len(deps))
+				args = append(args, reflect.ValueOf(ctx), reflect.ValueOf(keys))
+				args = append(args, deps...)
+				results := factoryV.Call(args)
+				var m map[Key]Child
+				if !results[0].IsNil() {
+					m = results[0].Interface().(map[Key]Child)
+				}
+				var err error
+				if !results[1].IsNil() {
+					err = results[1].Interface().(error)
+				}
+				return m, err
+			}
+			graph.RegisterVirtualField(parentName, fieldName, buildField(fetch))
+			return nil
+		})
+		return rawOption{o: fx.Invoke(wrapper.Interface())}
+	}
+
 	if matchesFetchSignature[Key, Child](factoryType) {
 		// Form (a): direct fetch. Convert to the typed Fetch via
 		// a small reflection trampoline so callers don't have to
@@ -154,6 +208,28 @@ func LoadField[Parent any, Key comparable, Child any](
 	return rawOption{o: fx.Error(fmt.Errorf(
 		"nexus.LoadField: factory must be Fetch[%s, %s] or a function returning it, got %s",
 		reflect.TypeOf((*Key)(nil)).Elem(), childT, factoryType))}
+}
+
+// matchesInlineDepsSignature returns true when t is the inline-deps
+// shape: `func(context.Context, []K, ...deps) (map[K]V, error)`.
+// At least one dep is required to distinguish from the plain fetch
+// signature (form a) which has the same returns but no trailing
+// params.
+func matchesInlineDepsSignature[K comparable, V any](t reflect.Type) bool {
+	if t == nil || t.Kind() != reflect.Func {
+		return false
+	}
+	if t.NumIn() < 3 || t.NumOut() != 2 {
+		return false
+	}
+	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	keyType := reflect.TypeOf((*K)(nil)).Elem()
+	valType := reflect.TypeOf((*V)(nil)).Elem()
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	return t.In(0) == ctxType &&
+		t.In(1) == reflect.SliceOf(keyType) &&
+		t.Out(0) == reflect.MapOf(keyType, valType) &&
+		t.Out(1) == errorType
 }
 
 // matchesFetchSignature returns true when t structurally matches
