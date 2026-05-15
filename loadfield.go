@@ -74,6 +74,130 @@ func LoadField[Parent any, Key comparable, Child any](
 	})}
 }
 
+// LoadField1 is LoadField with one fx-injected dep. fully typed —
+// gopls autocompletes the fetch signature end-to-end, and shape
+// errors surface at compile time. Use this over LoadFieldFx when
+// your fetch has exactly one trailing dep (the common case: a
+// database handle).
+//
+//	nexus.LoadField1[User, int64, *BankDetail, *DB](
+//	    "bankDetail",
+//	    func(u User) int64 { return u.ID },
+//	    func(ctx context.Context, ids []int64, db *DB) (map[int64]*BankDetail, error) {
+//	        return db.BankDetailsByUserIDs(ctx, ids)
+//	    },
+//	)
+//
+// fx resolves D1 at boot. Any type registered via Provide works.
+func LoadField1[Parent any, Key comparable, Child any, D1 any](
+	fieldName string,
+	keyFn func(Parent) Key,
+	fetch func(ctx context.Context, keys []Key, d1 D1) (map[Key]Child, error),
+) Option {
+	if errOpt := validateLoadFieldArgs(fieldName, keyFn, fetch); errOpt != nil {
+		return errOpt
+	}
+	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
+	if errOpt != nil {
+		return errOpt
+	}
+	return rawOption{o: fx.Invoke(func(d1 D1) {
+		typedFetch := func(ctx context.Context, keys []Key) (map[Key]Child, error) {
+			return fetch(ctx, keys, d1)
+		}
+		field := buildLoadFieldResolver[Parent, Key, Child](
+			parentName, fieldName, outputType, keyFn, typedFetch,
+		)
+		graph.RegisterVirtualField(parentName, fieldName, field)
+	})}
+}
+
+// LoadField2 is LoadField with two fx-injected deps. See LoadField1
+// for the design rationale; this is the same pattern with one more
+// type parameter for the second dep.
+//
+//	nexus.LoadField2[User, int64, *BankDetail, *DB, *CacheManager](
+//	    "bankDetail",
+//	    func(u User) int64 { return u.ID },
+//	    func(ctx context.Context, ids []int64, db *DB, cache *CacheManager) (map[int64]*BankDetail, error) {
+//	        ...
+//	    },
+//	)
+func LoadField2[Parent any, Key comparable, Child any, D1 any, D2 any](
+	fieldName string,
+	keyFn func(Parent) Key,
+	fetch func(ctx context.Context, keys []Key, d1 D1, d2 D2) (map[Key]Child, error),
+) Option {
+	if errOpt := validateLoadFieldArgs(fieldName, keyFn, fetch); errOpt != nil {
+		return errOpt
+	}
+	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
+	if errOpt != nil {
+		return errOpt
+	}
+	return rawOption{o: fx.Invoke(func(d1 D1, d2 D2) {
+		typedFetch := func(ctx context.Context, keys []Key) (map[Key]Child, error) {
+			return fetch(ctx, keys, d1, d2)
+		}
+		field := buildLoadFieldResolver[Parent, Key, Child](
+			parentName, fieldName, outputType, keyFn, typedFetch,
+		)
+		graph.RegisterVirtualField(parentName, fieldName, field)
+	})}
+}
+
+// LoadField3 is LoadField with three fx-injected deps. Past three,
+// declare your deps as a struct + use LoadFieldFx form (b), or
+// extract a service that wraps the dependencies — three fx-deps in
+// one resolver is usually a sign that the resolver wants to be its
+// own struct.
+//
+//	nexus.LoadField3[User, int64, *BankDetail, *DB, *CacheManager, *AuthManager](
+//	    "bankDetail",
+//	    func(u User) int64 { return u.ID },
+//	    func(ctx context.Context, ids []int64, db *DB, cache *CacheManager, auth *AuthManager) (map[int64]*BankDetail, error) {
+//	        ...
+//	    },
+//	)
+func LoadField3[Parent any, Key comparable, Child any, D1 any, D2 any, D3 any](
+	fieldName string,
+	keyFn func(Parent) Key,
+	fetch func(ctx context.Context, keys []Key, d1 D1, d2 D2, d3 D3) (map[Key]Child, error),
+) Option {
+	if errOpt := validateLoadFieldArgs(fieldName, keyFn, fetch); errOpt != nil {
+		return errOpt
+	}
+	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
+	if errOpt != nil {
+		return errOpt
+	}
+	return rawOption{o: fx.Invoke(func(d1 D1, d2 D2, d3 D3) {
+		typedFetch := func(ctx context.Context, keys []Key) (map[Key]Child, error) {
+			return fetch(ctx, keys, d1, d2, d3)
+		}
+		field := buildLoadFieldResolver[Parent, Key, Child](
+			parentName, fieldName, outputType, keyFn, typedFetch,
+		)
+		graph.RegisterVirtualField(parentName, fieldName, field)
+	})}
+}
+
+// validateLoadFieldArgs centralizes the nil-check trio every typed
+// LoadField variant performs. Each variant calls this with its own
+// fetch (different concrete func type), so the param is any.
+func validateLoadFieldArgs(fieldName string, keyFn any, fetch any) Option {
+	if fieldName == "" {
+		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: fieldName cannot be empty"))}
+	}
+	if keyFn == nil {
+		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: keyFn cannot be nil"))}
+	}
+	if fetch == nil {
+		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: fetch cannot be nil"))}
+	}
+	return nil
+}
+
 // LoadFieldFx is LoadField for fetches that need fx-injected deps.
 // The factory argument is `any`, accepted in either of two shapes
 // the framework discriminates via reflection at registration time:
