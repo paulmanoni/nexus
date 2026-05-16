@@ -377,5 +377,130 @@ func TestEngine_Lookup(t *testing.T) {
 	}
 }
 
+// --- nl-model integration -------------------------------------------
+
+// formComp covers the v-model surface end-to-end: a string field
+// (Filter), a nested-struct field (State.Email), and a numeric
+// field (Age) reachable through .number coercion.
+type formComp struct {
+	BaseComponent
+	Filter string
+	Age    int
+	State  formState
+}
+
+type formState struct {
+	Email string
+}
+
+const formTmpl = `<template>
+<input nl-model="Filter">
+<input nl-model.lazy="State.Email">
+<input nl-model.number="Age">
+</template>`
+
+func TestNlModel_AssignsBareIdent(t *testing.T) {
+	e := New()
+	_ = e.Register("Form", []byte(formTmpl), func() Component { return &formComp{} })
+	def, _ := e.lookup("Form")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	_ = tr.nextOut(t) // joined
+
+	tr.in <- Inbound{Type: "event", Name: "__model", Payload: Payload{
+		"model-expr": "Filter",
+		"value":      "go",
+	}}
+	if msg := tr.nextOut(t); msg.Type != "diff" {
+		t.Fatalf("got %+v", msg)
+	}
+	if got := sess.component.(*formComp).Filter; got != "go" {
+		t.Errorf("Filter = %q", got)
+	}
+}
+
+func TestNlModel_AssignsDottedChain(t *testing.T) {
+	e := New()
+	_ = e.Register("Form", []byte(formTmpl), func() Component { return &formComp{} })
+	def, _ := e.lookup("Form")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	_ = tr.nextOut(t) // joined
+
+	tr.in <- Inbound{Type: "event", Name: "__model", Payload: Payload{
+		"model-expr": "State.Email",
+		"value":      "x@example.com",
+	}}
+	_ = tr.nextOut(t) // diff
+	if got := sess.component.(*formComp).State.Email; got != "x@example.com" {
+		t.Errorf("State.Email = %q", got)
+	}
+}
+
+func TestNlModel_TrimMod(t *testing.T) {
+	if v := applyModelMods("  hello  ", "trim"); v != "hello" {
+		t.Errorf("trim: got %#v", v)
+	}
+}
+
+func TestNlModel_NumberMod(t *testing.T) {
+	if v := applyModelMods("42", "number"); v != float64(42) {
+		t.Errorf("number: got %#v want 42.0", v)
+	}
+	// trim then number should strip and parse
+	if v := applyModelMods("  3.5  ", "trim.number"); v != 3.5 {
+		t.Errorf("trim.number: got %#v want 3.5", v)
+	}
+}
+
+func TestNlModel_NumberCoercionAssign(t *testing.T) {
+	e := New()
+	_ = e.Register("Form", []byte(formTmpl), func() Component { return &formComp{} })
+	def, _ := e.lookup("Form")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	_ = tr.nextOut(t) // joined
+
+	tr.in <- Inbound{Type: "event", Name: "__model", Payload: Payload{
+		"model-expr": "Age",
+		"model-mods": "number",
+		"value":      "42",
+	}}
+	_ = tr.nextOut(t)
+	if got := sess.component.(*formComp).Age; got != 42 {
+		t.Errorf("Age = %d want 42", got)
+	}
+}
+
+func TestNlModel_MissingFieldEmitsError(t *testing.T) {
+	e := New()
+	_ = e.Register("Form", []byte(formTmpl), func() Component { return &formComp{} })
+	def, _ := e.lookup("Form")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	_ = tr.nextOut(t) // joined
+
+	tr.in <- Inbound{Type: "event", Name: "__model", Payload: Payload{
+		"model-expr": "Nonexistent",
+		"value":      "hi",
+	}}
+	msg := tr.nextOut(t)
+	if msg.Type != "error" {
+		t.Errorf("expected error frame; got %+v", msg)
+	}
+}
+
 // silence unused-import vetting in case future edits drop one of the helpers
 var _ = fmt.Sprintf

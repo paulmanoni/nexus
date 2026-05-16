@@ -331,7 +331,6 @@ func TestLower_ComponentWithChildren(t *testing.T) {
 
 func TestLower_UnsupportedDirectives(t *testing.T) {
 	cases := []struct{ src, want string }{
-		{`<template><input nl-model="x"></template>`, "nl-model"},
 		{`<template><div nl-show="x">y</div></template>`, "nl-show"},
 		{`<template><div nl-html="x">y</div></template>`, "nl-html"},
 		{`<template><div nl-text="x">y</div></template>`, "nl-text"},
@@ -341,6 +340,97 @@ func TestLower_UnsupportedDirectives(t *testing.T) {
 		pe := lowerErr(t, c.src)
 		if !strings.Contains(pe.Msg, c.want) {
 			t.Errorf("src %q: msg = %q (want substring %q)", c.src, pe.Msg, c.want)
+		}
+	}
+}
+
+// --- nl-model desugar -----------------------------------------------
+
+// elemAttrs returns the rendered <tag attrs> static so tests can
+// assert on the desugar output by string search. Walks the fragment
+// statics in order; nl-model lives on plain HTML elements so the
+// flat join is enough.
+func staticsJoined(f *Fragment) string {
+	out := ""
+	for _, s := range f.Statics {
+		out += s
+	}
+	return out
+}
+
+func TestLower_NlModel_BasicDesugar(t *testing.T) {
+	frag := lowerSrc(t, `<template><input nl-model="Filter"></template>`)
+	joined := staticsJoined(frag)
+	for _, want := range []string{
+		` value="`,                  // :value bind opens
+		`nl-on:input="__model"`,     // synthetic event
+		`data-model-expr="Filter"`,  // assignment target marker
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "data-model-mods") {
+		t.Errorf("expected no data-model-mods for bare nl-model; got:\n%s", joined)
+	}
+	if len(frag.Slots) != 1 {
+		t.Fatalf("expected 1 slot (the :value expr); got %d", len(frag.Slots))
+	}
+	if es, ok := frag.Slots[0].(ExprSlot); !ok || es.Expr != "Filter" {
+		t.Errorf("expected ExprSlot{Filter}; got %#v", frag.Slots[0])
+	}
+}
+
+func TestLower_NlModel_LazyUsesChange(t *testing.T) {
+	frag := lowerSrc(t, `<template><input nl-model.lazy="Filter"></template>`)
+	joined := staticsJoined(frag)
+	if !strings.Contains(joined, `nl-on:change="__model"`) {
+		t.Errorf("lazy should switch to change event; got:\n%s", joined)
+	}
+	if strings.Contains(joined, `nl-on:input="__model"`) {
+		t.Errorf("input event should NOT be present alongside change; got:\n%s", joined)
+	}
+}
+
+func TestLower_NlModel_ValueModsShipped(t *testing.T) {
+	frag := lowerSrc(t, `<template><input nl-model.trim.number="Age"></template>`)
+	joined := staticsJoined(frag)
+	if !strings.Contains(joined, `data-model-mods="trim.number"`) {
+		t.Errorf("expected mods in data-model-mods; got:\n%s", joined)
+	}
+}
+
+func TestLower_NlModel_LazyAndValueMods(t *testing.T) {
+	frag := lowerSrc(t, `<template><input nl-model.lazy.trim="Name"></template>`)
+	joined := staticsJoined(frag)
+	// .lazy switches event; .trim rides along in data-model-mods.
+	if !strings.Contains(joined, `nl-on:change="__model"`) {
+		t.Errorf("lazy missing: %s", joined)
+	}
+	if !strings.Contains(joined, `data-model-mods="trim"`) {
+		t.Errorf("trim mod missing: %s", joined)
+	}
+}
+
+func TestLower_NlModel_DottedChain(t *testing.T) {
+	frag := lowerSrc(t, `<template><input nl-model="State.Filter"></template>`)
+	joined := staticsJoined(frag)
+	if !strings.Contains(joined, `data-model-expr="State.Filter"`) {
+		t.Errorf("dotted-chain expr missing: %s", joined)
+	}
+}
+
+func TestLower_NlModel_InvalidExprIsError(t *testing.T) {
+	cases := []string{
+		`<template><input nl-model="foo()"></template>`,
+		`<template><input nl-model="items[0]"></template>`,
+		`<template><input nl-model="x + 1"></template>`,
+		`<template><input nl-model=""></template>`,
+	}
+	for _, src := range cases {
+		pe := lowerErr(t, src)
+		if !strings.Contains(pe.Msg, "nl-model") {
+			t.Errorf("src %q: msg = %q", src, pe.Msg)
 		}
 	}
 }

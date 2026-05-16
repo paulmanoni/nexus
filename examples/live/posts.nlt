@@ -2,7 +2,7 @@
   <div class="posts">
     <h1>Posts ({{ len(Posts()) }})</h1>
 
-    <input :value="Filter" @input="updateFilter" placeholder="Filter by title…" />
+    <input nl-model="Filter" placeholder="Filter by title…" />
 
     <ul>
       <li nl-for="p in Posts()" :key="p.ID">
@@ -15,7 +15,7 @@
     <p nl-if="len(Posts()) == 0">No posts match "{{ Filter }}".</p>
 
     <form @submit.prevent="add">
-      <input :value="NewTitle" @input="updateTitle" placeholder="New post title…" />
+      <input nl-model="NewTitle" placeholder="New post title…" />
       <button type="submit">Add</button>
     </form>
 

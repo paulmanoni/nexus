@@ -251,7 +251,11 @@ func (l *lowerer) lowerElementBody(elem *ElementNode, b *fragBuilder) error {
 // hooks up on the wire.
 func (l *lowerer) lowerHTMLElement(elem *ElementNode, b *fragBuilder) error {
 	b.text("<" + elem.Tag)
-	for _, a := range elem.Attrs {
+	attrs, err := desugarModel(elem.Attrs)
+	if err != nil {
+		return err
+	}
+	for _, a := range attrs {
 		if isStructuralAttr(a) {
 			continue
 		}
@@ -402,7 +406,7 @@ func checkUnsupportedDirectives(elem *ElementNode) error {
 			continue
 		}
 		switch a.Name {
-		case "model", "show", "html", "text", "pre", "slot":
+		case "show", "html", "text", "pre", "slot":
 			return &ParseError{
 				Pos: a.Position,
 				Msg: fmt.Sprintf("nl-%s is parsed but not yet supported by the lowering (will land in a follow-up)", a.Name),
@@ -412,6 +416,98 @@ func checkUnsupportedDirectives(elem *ElementNode) error {
 		}
 	}
 	return nil
+}
+
+// desugarModel rewrites nl-model directives into the underlying
+// :value bind + @input (or @change for .lazy) + data-* markers
+// the server's __model interceptor reads. Called inline during HTML
+// element lowering so the rest of the emit path doesn't need to
+// know nl-model exists.
+//
+// nl-model="Filter"                  → :value="Filter"
+//                                       @input="__model"
+//                                       data-model-expr="Filter"
+// nl-model.lazy="Filter"             → :value, @change, data-model-expr
+// nl-model.lazy.trim.number="Age"    → :value, @change,
+//                                       data-model-expr="Age",
+//                                       data-model-mods="trim.number"
+//
+// Value-coercion modifiers (trim, number) ride along in
+// data-model-mods. Unknown modifiers are filtered out — the parser
+// accepts any dot-suffix, but we only honor the documented set.
+func desugarModel(attrs []Attribute) ([]Attribute, error) {
+	var out []Attribute
+	for _, a := range attrs {
+		if a.Kind != AttrDirective || a.Name != "model" {
+			out = append(out, a)
+			continue
+		}
+		if !isValidModelExpr(a.Value) {
+			return nil, &ParseError{Pos: a.Position, Msg: fmt.Sprintf("nl-model expression must be a bare identifier chain (got %q); index/method expressions are not yet supported", a.Value)}
+		}
+		event := "input"
+		var valueMods []string
+		for _, m := range a.Modifiers {
+			switch m {
+			case "lazy":
+				event = "change"
+			case "trim", "number":
+				valueMods = append(valueMods, m)
+			default:
+				// Silently ignore unknown modifiers. Vue ecosystem
+				// has accumulated many — debounce.NNN, capture,
+				// passive — that we may grow into; rejecting now
+				// would break templates that work elsewhere.
+			}
+		}
+		out = append(out,
+			Attribute{Kind: AttrBind, Name: "value", Value: a.Value, Position: a.Position},
+			Attribute{Kind: AttrOn, Name: event, Value: "__model", Position: a.Position},
+			Attribute{Kind: AttrPlain, Name: "data-model-expr", Value: a.Value, Position: a.Position},
+		)
+		if len(valueMods) > 0 {
+			out = append(out, Attribute{
+				Kind:     AttrPlain,
+				Name:     "data-model-mods",
+				Value:    strings.Join(valueMods, "."),
+				Position: a.Position,
+			})
+		}
+	}
+	return out, nil
+}
+
+// isValidModelExpr accepts only bare-identifier chains: Filter,
+// State.Filter, Form.Email.Address. Anything with brackets, parens,
+// or operators is rejected at lowering time so users see the
+// limitation before runtime.
+func isValidModelExpr(expr string) bool {
+	if expr == "" {
+		return false
+	}
+	for _, part := range strings.Split(expr, ".") {
+		if !isASCIIIdent(part) {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+		if !ok && i > 0 {
+			ok = c >= '0' && c <= '9'
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // parseForExpr decodes "x in xs" / "x, i in xs" / "k, v in m" forms
