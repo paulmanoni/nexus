@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"unicode"
 )
@@ -151,11 +153,17 @@ func (s *Session) pumpRecv(ctx context.Context, out chan<- recvResult) {
 
 // handleInbound dispatches one client message. Events trigger event
 // dispatch; ping echoes a pong; join after the initial join is
-// rejected (the engine assumes one session per Run call).
+// rejected (the engine assumes one session per Run call). The
+// reserved event name "__model" is special-cased to handle the
+// nl-model two-way binding sugar — see handleModelEvent.
 func (s *Session) handleInbound(ctx context.Context, msg Inbound) {
 	switch msg.Type {
 	case "event":
-		s.dispatchEvent(ctx, msg.Name, msg.Payload)
+		if msg.Name == modelEventName {
+			s.handleModelEvent(ctx, msg.Payload)
+		} else {
+			s.dispatchEvent(ctx, msg.Name, msg.Payload)
+		}
 		s.diffAndSend(ctx)
 	case "ping":
 		_ = s.send(ctx, Outbound{Type: "pong"})
@@ -166,6 +174,124 @@ func (s *Session) handleInbound(ctx context.Context, msg Inbound) {
 	default:
 		_ = s.send(ctx, Outbound{Type: "error", Msg: "unknown message type: " + msg.Type})
 	}
+}
+
+// modelEventName is the reserved synthetic event the lowering emits
+// for nl-model. Clients should never use this name directly; the
+// lowering reserves the leading "__" by convention.
+const modelEventName = "__model"
+
+// handleModelEvent processes a v-model-style update: read the LHS
+// expression (data-model-expr in the payload), apply any value-
+// coercion modifiers (data-model-mods), then assign via reflection
+// to the named component field.
+//
+// Assignment supports dotted-chain expressions (Filter, State.Filter)
+// but not indexing or method calls — the lowering already validates
+// the expression is a bare identifier chain, so anything that gets
+// here is well-formed.
+//
+// Errors are surfaced as "error" frames but the session continues;
+// a malformed model binding shouldn't take down the connection.
+func (s *Session) handleModelEvent(ctx context.Context, payload Payload) {
+	expr := payload.String("model-expr")
+	if expr == "" {
+		_ = s.send(ctx, Outbound{Type: "error", Msg: "__model: missing model-expr"})
+		return
+	}
+	value := applyModelMods(payload["value"], payload.String("model-mods"))
+	if err := assignField(s.component, expr, value); err != nil {
+		_ = s.send(ctx, Outbound{Type: "error", Msg: "__model: " + err.Error()})
+	}
+}
+
+// applyModelMods runs the value-coercion modifiers shipped in
+// data-model-mods. Currently supported:
+//
+//	trim   — strings.TrimSpace, only when v is a string
+//	number — parse v as float64 (or int if no decimal)
+//
+// Modifiers are applied left-to-right so .trim.number gives the
+// expected "strip whitespace, then parse" behavior.
+func applyModelMods(v any, mods string) any {
+	if mods == "" {
+		return v
+	}
+	for _, m := range strings.Split(mods, ".") {
+		switch m {
+		case "trim":
+			if s, ok := v.(string); ok {
+				v = strings.TrimSpace(s)
+			}
+		case "number":
+			switch s := v.(type) {
+			case string:
+				if n, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+					v = n
+				}
+			}
+		}
+	}
+	return v
+}
+
+// assignField walks expr (a dot-separated identifier chain) on root
+// via reflection and stores value at the leaf. Each intermediate
+// segment is dereferenced through any pointers automatically;
+// the leaf field must be both addressable and settable.
+//
+// Compatible types assign directly; convertible types (int → int64,
+// string → []byte, etc.) go through reflect.Value.Convert. Mismatched
+// types return a typed error so the calling __model handler can
+// surface it on the wire.
+func assignField(root any, expr string, value any) error {
+	parts := strings.Split(expr, ".")
+	rv := reflect.ValueOf(root)
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return fmt.Errorf("nil receiver while resolving %q", expr)
+		}
+		rv = rv.Elem()
+	}
+
+	// Walk parent segments to reach the field that holds the target.
+	for i := 0; i < len(parts)-1; i++ {
+		f := rv.FieldByName(parts[i])
+		if !f.IsValid() {
+			return fmt.Errorf("no field %q in %q", parts[i], expr)
+		}
+		for f.Kind() == reflect.Ptr {
+			if f.IsNil() {
+				return fmt.Errorf("nil pointer at %q", parts[i])
+			}
+			f = f.Elem()
+		}
+		rv = f
+	}
+
+	leaf := parts[len(parts)-1]
+	dst := rv.FieldByName(leaf)
+	if !dst.IsValid() {
+		return fmt.Errorf("no field %q", leaf)
+	}
+	if !dst.CanSet() {
+		return fmt.Errorf("field %q is not settable (unexported?)", leaf)
+	}
+
+	if value == nil {
+		dst.Set(reflect.Zero(dst.Type()))
+		return nil
+	}
+	src := reflect.ValueOf(value)
+	if src.Type() == dst.Type() {
+		dst.Set(src)
+		return nil
+	}
+	if src.Type().ConvertibleTo(dst.Type()) {
+		dst.Set(src.Convert(dst.Type()))
+		return nil
+	}
+	return fmt.Errorf("cannot assign %T to field %q (%s)", value, leaf, dst.Type())
 }
 
 // dispatchEvent routes a named event to a handler on the component.

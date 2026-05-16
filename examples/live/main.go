@@ -136,32 +136,23 @@ func (c *PostsList) Posts() []Post {
 // Mount runs once per session at WS join. Nothing to seed here:
 // Posts is computed from the repo on every render, so the very
 // first render already shows the current data.
-func (c *PostsList) Mount(ctx *template.Ctx) error { return nil }
-
-// UpdateFilter handles every keystroke in the search input. Event
-// name "updateFilter" maps to method "UpdateFilter" via title-casing
-// in session.go.
-func (c *PostsList) UpdateFilter(ctx *template.Ctx, p template.Payload) {
-	c.Filter = p.String("value")
-}
-
-// UpdateTitle tracks the "new post" input. Stored per-session so the
-// shared repo doesn't see draft state.
-func (c *PostsList) UpdateTitle(ctx *template.Ctx, p template.Payload) {
-	c.NewTitle = p.String("value")
-}
+//
+// Filter and NewTitle are bound via nl-model in posts.nlt; the
+// engine assigns them on input directly, so no UpdateFilter /
+// UpdateTitle handler methods are needed here.
+func (c *PostsList) Mount(_ *template.Ctx) error { return nil }
 
 // Like increments the like count on a post via the repo. The repo's
 // notifier wakes every connected session, including this one — the
 // next render pulls the new count from c.repo.All().
-func (c *PostsList) Like(ctx *template.Ctx, p template.Payload) {
+func (c *PostsList) Like(_ *template.Ctx, p template.Payload) {
 	c.repo.Like(p.Int("id"))
 }
 
 // Add creates a new post from the per-session draft. Author is a
 // placeholder; a real app would pull it from Ctx (auth middleware
 // populates it via Ctx.Params or a future Ctx.User).
-func (c *PostsList) Add(ctx *template.Ctx, _ template.Payload) {
+func (c *PostsList) Add(_ *template.Ctx, _ template.Payload) {
 	c.repo.Add(c.NewTitle, "you")
 	c.NewTitle = ""
 }

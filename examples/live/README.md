@@ -29,7 +29,8 @@ Open the URL in **two** browser tabs and try:
 | Sparse diffs | Like button increments → one slot updates, not the whole list |
 | `nl-for` with `:key` | Per-row diff, not per-list rerender |
 | `nl-if` | The "No posts match" message appears/vanishes |
-| `:bind` and `@on` | `:value="Filter"`, `@input="updateFilter"`, `@click="like"` |
+| `:bind` and `@on` | `@click="like"` on the like button |
+| `nl-model` two-way binding | `nl-model="Filter"` and `nl-model="NewTitle"` on the inputs |
 | Event modifiers | `@submit.prevent` on the add form |
 | `data-*` payload pickup | `:data-id="p.ID"` → handler reads `payload.Int("id")` |
 | `live.Notifier` fan-out | `PostsRepo.Like` calls `notifier.Notify()` → every session re-renders |
@@ -41,7 +42,6 @@ Open the URL in **two** browser tabs and try:
 Things the engine doesn't yet ship — see [`live/template/`](../../live/template/)
 for the full status:
 
-- `nl-model` (the two-way binding sugar). The demo uses `:value` + `@input` manually.
 - Component composition (`ComponentSlot` emits a placeholder).
 - Auto-reconnect with state token resume.
 - Auth integration.
