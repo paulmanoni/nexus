@@ -100,28 +100,38 @@ func (r *PostsRepo) Add(title, author string) {
 // The repo dependency is injected via the factory passed to
 // engine.Register, so this struct stays plain Go with no framework
 // touchpoint other than the embedded BaseComponent.
+//
+// Posts is recomputed in Refresh from the shared repo. The hook
+// fires before every render (initial Mount, post-event, and
+// notifier-triggered), so the field never drifts from the
+// upstream source even when another tab mutates state.
 type PostsList struct {
 	template.BaseComponent
 	repo *PostsRepo
 
+	Posts    []Post
 	Filter   string
 	NewTitle string
 }
 
-// Posts is what the template reads via {{ Posts() }} and nl-for. We
-// don't store the slice on the struct because that would let it
-// drift from the shared repo when another tab mutates state; instead
-// we recompute from the repo on every render. The filter is applied
-// here so the template stays declarative.
+// Mount runs once per session at WS join. Refresh runs immediately
+// after, so we don't need to seed Posts here.
 //
-// Template authors call this as a method — {{ Posts() }} — because
-// the evaluator resolves bare-identifier methods as function values,
-// not as zero-arg calls. The parens are the "yes really, call it"
-// signal.
-func (c *PostsList) Posts() []Post {
+// Filter and NewTitle are bound via nl-model in posts.nlt; the
+// engine assigns them on input directly, so no UpdateFilter /
+// UpdateTitle handler methods are needed here.
+func (c *PostsList) Mount(_ *template.Ctx) error { return nil }
+
+// Refresh pulls the current posts from the shared repo and applies
+// the per-session filter. The session calls this before every
+// render — both event-triggered and notifier-triggered — so the
+// template can read {{ Posts }} as a plain field instead of
+// {{ Posts() }} as a method call.
+func (c *PostsList) Refresh(_ *template.Ctx) error {
 	all := c.repo.All()
 	if c.Filter == "" {
-		return all
+		c.Posts = all
+		return nil
 	}
 	needle := strings.ToLower(c.Filter)
 	out := all[:0]
@@ -130,17 +140,9 @@ func (c *PostsList) Posts() []Post {
 			out = append(out, p)
 		}
 	}
-	return out
+	c.Posts = out
+	return nil
 }
-
-// Mount runs once per session at WS join. Nothing to seed here:
-// Posts is computed from the repo on every render, so the very
-// first render already shows the current data.
-//
-// Filter and NewTitle are bound via nl-model in posts.nlt; the
-// engine assigns them on input directly, so no UpdateFilter /
-// UpdateTitle handler methods are needed here.
-func (c *PostsList) Mount(_ *template.Ctx) error { return nil }
 
 // Like increments the like count on a post via the repo. The repo's
 // notifier wakes every connected session, including this one — the

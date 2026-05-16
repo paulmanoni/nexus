@@ -68,6 +68,13 @@ func (e *Engine) serveSSR(w http.ResponseWriter, r *http.Request, def *component
 		http.Error(w, "mount: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Refresh runs before render so view-derived state is populated
+	// for the SSR frame, exactly as it would be over the WS path.
+	// Errors here are non-fatal — render proceeds with whatever
+	// state the component has, matching session.refresh semantics.
+	if r, ok := component.(Refresher); ok {
+		_ = r.Refresh(ctx)
+	}
 	opts := []RenderOption{}
 	if e.helpers != nil {
 		opts = append(opts, WithHelpers(e.helpers))

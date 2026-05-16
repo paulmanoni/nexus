@@ -1,18 +1,18 @@
 <template>
   <div class="posts">
-    <h1>Posts ({{ len(Posts()) }})</h1>
+    <h1>Posts ({{ len(Posts) }})</h1>
 
     <input nl-model="Filter" placeholder="Filter by title…" />
 
     <ul>
-      <li nl-for="p in Posts()" :key="p.ID">
+      <li nl-for="p in Posts" :key="p.ID">
         <strong>{{ p.Title }}</strong>
         <span>by {{ p.Author }}</span>
         <button @click="like" :data-id="p.ID">♥ {{ p.Likes }}</button>
       </li>
     </ul>
 
-    <p nl-if="len(Posts()) == 0">No posts match "{{ Filter }}".</p>
+    <p nl-if="len(Posts) == 0">No posts match "{{ Filter }}".</p>
 
     <form @submit.prevent="add">
       <input nl-model="NewTitle" placeholder="New post title…" />

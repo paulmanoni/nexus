@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -500,6 +501,173 @@ func TestNlModel_MissingFieldEmitsError(t *testing.T) {
 	if msg.Type != "error" {
 		t.Errorf("expected error frame; got %+v", msg)
 	}
+}
+
+// --- Refresher hook --------------------------------------------------
+
+// viewComp models the typical "view-derived state" pattern: Source
+// is the upstream value (set externally), View is recomputed from
+// it in Refresh, and the template renders View. We assert the
+// session pulls fresh derived state on every re-render path.
+type viewComp struct {
+	BaseComponent
+	Source atomic.Int64 // upstream signal; mutated from tests
+	View   int64        // derived; assigned in Refresh
+
+	calls atomic.Int64 // counts Refresh invocations for assertions
+}
+
+func (c *viewComp) Refresh(_ *Ctx) error {
+	c.calls.Add(1)
+	c.View = c.Source.Load()
+	return nil
+}
+
+func (c *viewComp) Bump(_ *Ctx) {
+	c.Source.Add(1)
+}
+
+const viewTmpl = `<template><span>{{ View }}</span></template>`
+
+func TestRefresher_RunsBeforeInitialRender(t *testing.T) {
+	n := live.New()
+	e := New(WithNotifier(n))
+	comp := &viewComp{}
+	comp.Source.Store(7)
+	_ = e.Register("View", []byte(viewTmpl), func() Component { return comp })
+
+	def, _ := e.lookup("View")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	msg := tr.nextOut(t)
+	if msg.Type != "joined" {
+		t.Fatalf("expected joined; got %+v", msg)
+	}
+	// The initial frame must already reflect Refresh's work.
+	if got := msg.Rendered.HTML(); got != `<span>7</span>` {
+		t.Errorf("initial HTML = %q want <span>7</span>", got)
+	}
+	if comp.calls.Load() != 1 {
+		t.Errorf("Refresh should have run exactly once before initial render; got %d", comp.calls.Load())
+	}
+}
+
+func TestRefresher_RunsBeforeEventTriggeredRerender(t *testing.T) {
+	e := New()
+	comp := &viewComp{}
+	_ = e.Register("View", []byte(viewTmpl), func() Component { return comp })
+
+	def, _ := e.lookup("View")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	_ = tr.nextOut(t) // joined; Refresh ran once
+	if got := comp.calls.Load(); got != 1 {
+		t.Fatalf("after join: calls = %d want 1", got)
+	}
+
+	tr.in <- Inbound{Type: "event", Name: "bump"}
+	msg := tr.nextOut(t)
+	if msg.Type != "diff" {
+		t.Fatalf("expected diff; got %+v", msg)
+	}
+	if got := comp.calls.Load(); got != 2 {
+		t.Errorf("after event: calls = %d want 2 (initial + post-event)", got)
+	}
+	if got := comp.View; got != 1 {
+		t.Errorf("View = %d (Refresh should have pulled fresh Source=1)", got)
+	}
+}
+
+func TestRefresher_RunsBeforeNotifierTriggeredRerender(t *testing.T) {
+	n := live.New()
+	e := New(WithNotifier(n))
+	comp := &viewComp{}
+	_ = e.Register("View", []byte(viewTmpl), func() Component { return comp })
+
+	def, _ := e.lookup("View")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	_ = tr.nextOut(t) // joined
+
+	// Mutate upstream EXTERNALLY (no handler runs), then signal.
+	// Without Refresher, the next render would still show the old
+	// value because no code path on the session would have copied
+	// Source into View.
+	comp.Source.Store(42)
+	n.Notify()
+
+	msg := tr.nextOut(t)
+	if msg.Type != "diff" {
+		t.Fatalf("expected diff; got %+v", msg)
+	}
+	if got := comp.View; got != 42 {
+		t.Errorf("View = %d want 42 (Refresh must have pulled fresh Source)", got)
+	}
+	if got, want := msg.Diff["0"], "42"; got != want {
+		t.Errorf("diff[0] = %#v want %q", got, want)
+	}
+}
+
+// failingRefresher errors from Refresh — the session should surface
+// the error as a frame but keep rendering with whatever state the
+// component has, not blank the page.
+type failingRefresher struct {
+	BaseComponent
+	Greeting string
+}
+
+func (c *failingRefresher) Refresh(_ *Ctx) error {
+	return errors.New("refresh boom")
+}
+
+func TestRefresher_ErrorEmitsFrameButRenderProceeds(t *testing.T) {
+	e := New()
+	_ = e.Register("Boom", []byte(`<template><p>{{ Greeting }}</p></template>`),
+		func() Component { return &failingRefresher{Greeting: "hi"} })
+
+	def, _ := e.lookup("Boom")
+	tr := newChanTransport()
+	sess, _ := newSession(e, def, nil, tr)
+	go func() { _ = sess.Run(context.Background()) }()
+	defer tr.Close()
+
+	// Initial render path: refresh errors → error frame, then joined.
+	// We expect both messages, in that order.
+	first := tr.nextOut(t)
+	if first.Type != "error" || !strings.Contains(first.Msg, "refresh boom") {
+		t.Fatalf("first frame should be the refresh error; got %+v", first)
+	}
+	second := tr.nextOut(t)
+	if second.Type != "joined" {
+		t.Fatalf("second frame should be joined; got %+v", second)
+	}
+	if got := second.Rendered.HTML(); got != `<p>hi</p>` {
+		t.Errorf("render should proceed with prior state; got %q", got)
+	}
+}
+
+func TestRefresher_NotImplemented_ZeroOverhead(t *testing.T) {
+	// Component without Refresher should behave identically to before
+	// the hook landed — no extra frames, no panic.
+	e := New()
+	_ = e.Register("Counter", []byte(counterTmpl), func() Component { return &counterComponent{} })
+	tr, stop, _ := runSession(t, e, "Counter", nil)
+	defer stop()
+
+	msg := tr.nextOut(t)
+	if msg.Type != "joined" {
+		t.Errorf("first frame should be joined; got %+v", msg)
+	}
+	tr.expectNoOut(t, 100*time.Millisecond)
 }
 
 // silence unused-import vetting in case future edits drop one of the helpers
