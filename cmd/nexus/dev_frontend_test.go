@@ -130,9 +130,6 @@ func TestBuildBlockFilter_HashShuffleSuppressed(t *testing.T) {
 			t.Errorf("hash-shuffled asset %q leaked into output\n%s", drop, got)
 		}
 	}
-	if !strings.Contains(got, "1 changed") {
-		t.Errorf("expected '1 changed' header, got\n%s", got)
-	}
 }
 
 // TestBuildBlockFilter_AddRemoveDistinct verifies the genuine

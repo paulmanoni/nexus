@@ -27,8 +27,8 @@ func TestScaffoldAndBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repo root: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, "nexus.go")); err != nil {
-		t.Fatalf("expected nexus.go at %s: %v", repoRoot, err)
+	if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err != nil {
+		t.Fatalf("expected go.mod at %s: %v", repoRoot, err)
 	}
 
 	dir := filepath.Join(t.TempDir(), "myapp")
