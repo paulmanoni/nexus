@@ -5,11 +5,7 @@
     <input nl-model="Filter" placeholder="Filter by title…" />
 
     <ul>
-      <li nl-for="p in Posts" :key="p.ID">
-        <strong>{{ p.Title }}</strong>
-        <span>by {{ p.Author }}</span>
-        <button @click="like" :data-id="p.ID">♥ {{ p.Likes }}</button>
-      </li>
+      <PostRow nl-for="p in Posts" :key="p.ID" :post="p" />
     </ul>
 
     <p nl-if="len(Posts) == 0">No posts match "{{ Filter }}".</p>

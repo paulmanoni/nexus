@@ -42,7 +42,10 @@ Open the URL in **two** browser tabs and try:
 Things the engine doesn't yet ship — see [`live/template/`](../../live/template/)
 for the full status:
 
-- Component composition (`ComponentSlot` emits a placeholder).
+- Live child components (children with their own state / events).
+  This demo uses a pure-render `<PostRow>` child — events bubble
+  up to the parent `PostsList` for handling.
+- Slot routing (`<Modal><h1>Title</h1></Modal>` ignores the body).
 - Auto-reconnect with state token resume.
 - Auth integration.
 

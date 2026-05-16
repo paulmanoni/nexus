@@ -29,6 +29,9 @@ import (
 //go:embed posts.nlt
 var postsTemplate []byte
 
+//go:embed post_row.nlt
+var postRowTemplate []byte
+
 // Post is the domain row. Exported fields so the template can reach
 // p.Title / p.Likes / p.Author through reflection.
 type Post struct {
@@ -147,6 +150,12 @@ func (c *PostsList) Refresh(_ *template.Ctx) error {
 // Like increments the like count on a post via the repo. The repo's
 // notifier wakes every connected session, including this one — the
 // next render pulls the new count from c.repo.All().
+//
+// The like button lives on the child PostRow component, but events
+// always bubble up to the top-level live component (PostsList) for
+// handling — child components are pure renders in v1 and don't
+// own state or event handlers. The :data-id="Post.ID" on the
+// button carries the row identity in the payload.
 func (c *PostsList) Like(_ *template.Ctx, p template.Payload) {
 	c.repo.Like(p.Int("id"))
 }
@@ -157,6 +166,15 @@ func (c *PostsList) Like(_ *template.Ctx, p template.Payload) {
 func (c *PostsList) Add(_ *template.Ctx, _ template.Payload) {
 	c.repo.Add(c.NewTitle, "you")
 	c.NewTitle = ""
+}
+
+// PostRow is the child component rendering one row of the list.
+// It has no state or handlers — just a Post prop the parent passes
+// down. The like button's @click event bubbles up to the parent's
+// Like handler with the post ID in the payload.
+type PostRow struct {
+	template.BaseComponent
+	Post Post
 }
 
 func main() {
@@ -171,7 +189,16 @@ func main() {
 	if err := engine.Register("Posts", postsTemplate, func() template.Component {
 		return &PostsList{repo: repo}
 	}); err != nil {
-		log.Fatalf("register: %v", err)
+		log.Fatalf("register Posts: %v", err)
+	}
+	// PostRow renders one item in the list. Registered as a separate
+	// component so PostsList stays small; child components are pure
+	// renders (no Mount, no events), so the factory just returns a
+	// fresh zero-valued struct each call.
+	if err := engine.Register("PostRow", postRowTemplate, func() template.Component {
+		return &PostRow{}
+	}); err != nil {
+		log.Fatalf("register PostRow: %v", err)
 	}
 
 	mux := http.NewServeMux()

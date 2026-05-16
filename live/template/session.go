@@ -385,10 +385,11 @@ func titleCaseEvent(name string) string {
 }
 
 // render re-evaluates the component's fragment against its current
-// state. Helpers from the engine flow through; per-session helpers
-// could be added later (currently no use case).
+// state. Helpers from the engine flow through; the engine itself
+// is the component resolver, so <Foo /> tags expand against the
+// same registry the session was started against.
 func (s *Session) render() Rendered {
-	opts := []RenderOption{}
+	opts := []RenderOption{WithComponents(s.engine)}
 	if s.engine.helpers != nil {
 		opts = append(opts, WithHelpers(s.engine.helpers))
 	}

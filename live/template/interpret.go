@@ -5,6 +5,7 @@ import (
 	"html"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 // Render walks an IR Fragment against scope and produces a Rendered
@@ -62,8 +63,28 @@ func WithErrorHandler(fn func(err error, pos Position) string) RenderOption {
 }
 
 type renderOpts struct {
-	helpers map[string]any
-	errFn   func(err error, pos Position) string
+	helpers  map[string]any
+	errFn    func(err error, pos Position) string
+	resolver ComponentResolver
+}
+
+// ComponentResolver is what the interpreter calls to instantiate a
+// child component referenced by a <Foo /> tag. Engine implements it;
+// tests can plug in a fake. Decoupling lets interpret.go stay free
+// of engine internals.
+type ComponentResolver interface {
+	// Resolve returns a fresh component instance and the parsed
+	// fragment to render it against. The error is surfaced as an
+	// inline marker if the name isn't registered.
+	Resolve(name string) (Component, *Fragment, error)
+}
+
+// WithComponents wires a ComponentResolver into a Render call. The
+// session passes the Engine here so <Foo /> tags in the template
+// resolve to registered components. Without a resolver, child
+// components render as visible error markers.
+func WithComponents(r ComponentResolver) RenderOption {
+	return func(o *renderOpts) { o.resolver = r }
 }
 
 func defaultRenderOpts() renderOpts {
@@ -112,13 +133,161 @@ func renderSlot(s Slot, sc *scope, o *renderOpts) any {
 		return renderLoop(sl, sc, o)
 
 	case ComponentSlot:
-		// Components require the engine layer (registry + child
-		// session state) which lands in the next commit. For now
-		// emit a visible placeholder so authors see the gap
-		// instead of silent omission.
-		return fmt.Sprintf("<!-- nl: <%s> renders in engine layer -->", sl.Name)
+		return renderComponent(sl, sc, o)
 	}
 	return nil
+}
+
+// renderComponent expands a <Foo :p="x" /> reference into a nested
+// Rendered tree by resolving the component, instantiating it,
+// pushing evaluated prop values onto its exported fields, and
+// rendering its template against a scope rooted at the child.
+//
+// Children in v1 are PURE renders: Mount, Refresh, and event
+// handlers don't fire for child components reached through this
+// path. Only the top-level component owned by a Session sees
+// lifecycle hooks. State on a child is "props in, HTML out"; if
+// state-per-child is needed, hoist it to the parent and pass
+// downward via props.
+//
+// Default-slot children (everything between <Foo>…</Foo>) are
+// captured by the parser but ignored here. Slot routing is a v2
+// concern — emitting a visible warning marker keeps the gap
+// noticeable instead of silently dropping authored markup.
+func renderComponent(sl ComponentSlot, parentScope *scope, o *renderOpts) any {
+	if o.resolver == nil {
+		return errorMarker(fmt.Errorf("no component resolver wired; cannot render <%s>", sl.Name), sl.Pos, o)
+	}
+	component, fragment, err := o.resolver.Resolve(sl.Name)
+	if err != nil {
+		return errorMarker(err, sl.Pos, o)
+	}
+	if err := assignProps(component, sl.Props, parentScope); err != nil {
+		return errorMarker(fmt.Errorf("<%s>: %w", sl.Name, err), sl.Pos, o)
+	}
+	if sl.Children != nil {
+		// Authors expect children to render somewhere; until slots
+		// land, surface the situation rather than letting it vanish.
+		// One marker per render is fine — diff stability is preserved
+		// because the marker string is identical across renders.
+		return Rendered{
+			S: []string{"<!-- nl: <" + sl.Name + "> default-slot children are not rendered until nl-slot lands -->"},
+			D: []any{renderFragment(fragment, newScope(component, o.helpers), o)},
+		}
+	}
+	return renderFragment(fragment, newScope(component, o.helpers), o)
+}
+
+// assignProps evaluates each ComponentProp against parentScope and
+// stores it on the matching exported field of the child component.
+// Prop names are normalized to PascalCase before field lookup so
+// :user-card-key="x" maps to UserCardKey (same convention as the
+// event dispatcher uses for handler names).
+//
+// IsBind=false props ship their literal Value as a string; IsBind=true
+// props evaluate the expression and assign whatever Go value comes
+// back. Convertible types go through reflect.Convert; mismatches
+// return an error that bubbles up as an inline marker.
+func assignProps(component Component, props []ComponentProp, parentScope *scope) error {
+	cv := reflect.ValueOf(component)
+	for cv.Kind() == reflect.Ptr {
+		if cv.IsNil() {
+			return fmt.Errorf("nil component receiver")
+		}
+		cv = cv.Elem()
+	}
+	for _, p := range props {
+		var value any = p.Value
+		if p.IsBind {
+			v, err := evalExpr(p.Value, parentScope)
+			if err != nil {
+				return fmt.Errorf("prop %q: %w", p.Name, err)
+			}
+			value = v
+		}
+
+		field, ok := lookupPropField(cv, p.Name)
+		if !ok {
+			return fmt.Errorf("prop %q: no matching exported field on %s", p.Name, cv.Type())
+		}
+		if !field.CanSet() {
+			return fmt.Errorf("prop %q: field is not settable", p.Name)
+		}
+		if err := setPropValue(field, value); err != nil {
+			return fmt.Errorf("prop %q: %w", p.Name, err)
+		}
+	}
+	return nil
+}
+
+// lookupPropField finds the exported field matching a prop name.
+// First tries the name as-written (handles authors who write
+// :UserName in PascalCase); falls back to PascalCase conversion
+// (the common case — HTML tokenizer lowercases attribute names so
+// :user → "user" → field "User").
+func lookupPropField(cv reflect.Value, name string) (reflect.Value, bool) {
+	if f := cv.FieldByName(name); f.IsValid() {
+		return f, true
+	}
+	if f := cv.FieldByName(titleCaseEvent(name)); f.IsValid() {
+		return f, true
+	}
+	return reflect.Value{}, false
+}
+
+func setPropValue(dst reflect.Value, value any) error {
+	if value == nil {
+		dst.Set(reflect.Zero(dst.Type()))
+		return nil
+	}
+	src := reflect.ValueOf(value)
+	if src.Type() == dst.Type() {
+		dst.Set(src)
+		return nil
+	}
+	// Literal props arrive as strings (compact="true", count="3"); reflect
+	// won't convert string → bool / int / float on its own, so coerce
+	// here. Bind props (IsBind=true) already pass through evalExpr and
+	// land with the right Go type, so this path is only hit for literals.
+	if src.Kind() == reflect.String {
+		if coerced, ok := coerceStringTo(src.String(), dst.Type()); ok {
+			dst.Set(coerced)
+			return nil
+		}
+	}
+	if src.Type().ConvertibleTo(dst.Type()) {
+		dst.Set(src.Convert(dst.Type()))
+		return nil
+	}
+	return fmt.Errorf("cannot assign %T to %s", value, dst.Type())
+}
+
+// coerceStringTo handles the small fixed set of string→primitive
+// conversions needed for HTML-attribute-style literal props. Returns
+// a reflect.Value of dst's exact type on success.
+func coerceStringTo(s string, t reflect.Type) (reflect.Value, bool) {
+	switch t.Kind() {
+	case reflect.Bool:
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "true", "1", "yes":
+			return reflect.ValueOf(true).Convert(t), true
+		case "false", "0", "no", "":
+			return reflect.ValueOf(false).Convert(t), true
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
+			return reflect.ValueOf(n).Convert(t), true
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64); err == nil {
+			return reflect.ValueOf(n).Convert(t), true
+		}
+	case reflect.Float32, reflect.Float64:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+			return reflect.ValueOf(f).Convert(t), true
+		}
+	}
+	return reflect.Value{}, false
 }
 
 // renderLoop evaluates Iter, iterates over the result, and renders

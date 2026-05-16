@@ -101,6 +101,23 @@ func (e *Engine) lookup(name string) (*componentDef, bool) {
 	return d, ok
 }
 
+// Resolve satisfies ComponentResolver so the interpreter can expand
+// <Foo /> tags inside a template into rendered sub-trees. Returns
+// a fresh component instance per call — child components in v1 are
+// pure renders, so reusing instances across renders would just leak
+// per-parent-render state into a shared cell.
+func (e *Engine) Resolve(name string) (Component, *Fragment, error) {
+	def, ok := e.lookup(name)
+	if !ok {
+		return nil, nil, fmt.Errorf("component %q not registered", name)
+	}
+	component := def.factory()
+	if component == nil {
+		return nil, nil, fmt.Errorf("component %q: factory returned nil", name)
+	}
+	return component, def.fragment, nil
+}
+
 // componentDef is the engine-side bundle for one registered template.
 // fragment is shared across sessions (immutable after lowering);
 // factory makes a fresh, mutable Component per session.
