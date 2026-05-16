@@ -5,7 +5,7 @@
 //
 // The two foundational types here are Rendered (the output of a single
 // component render call) and CompDiff/Diff (the wire-format patch
-// between two Rendereds). The compilation pipeline that produces
+// between two Rendered). The compilation pipeline that produces
 // Rendered values from .nlt files and the runtime that holds
 // connection state both build on top of these.
 //
