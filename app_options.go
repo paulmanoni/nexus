@@ -282,8 +282,6 @@ func Invoke(fns ...any) Option {
 	return rawOption{o: fx.Invoke(fns...)}
 }
 
-
-
 // serviceDepsRegisterInvoke synthesizes an fx.Invoke that takes the
 // constructed service + ALL of the constructor's original params,
 // walks them for NexusResourceProvider / service-wrapper values, and

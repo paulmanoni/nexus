@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/graphql-go/graphql"
 	"github.com/mitchellh/mapstructure"
@@ -565,17 +566,29 @@ func isServiceWrapperType(t reflect.Type) bool {
 // matched (empty string otherwise), so bindGqlArgs can route decoding.
 func applyArgsFromStruct(r *graph.UnifiedResolver[any], argsType reflect.Type) (inputFieldName string) {
 	if name, inner, ok := detectInputObject(argsType); ok {
-		// Build a zero-value of the inner struct — WithInputObject uses
-		// reflection on it to generate the SDL input type + mapstructure
-		// decode incoming args.
 		r.WithInputObjectFieldName(name)
-		// Pointer-typed wrapper fields opt the SDL arg into nullable.
-		// Must run BEFORE WithInputObject — that's where go-graph reads
-		// r.nullableInput when building the FieldConfigArgument.
-		if isInputObjectNullable(argsType) {
+		nullable := isInputObjectNullable(argsType)
+		if nullable {
 			r.WithInputObjectNullable()
 		}
-		r.WithInputObject(reflect.New(inner).Elem().Interface())
+		// Build (and memoize) the InputObject in our shared registry so that
+		// the SAME named SDL type is reused if another resolver references
+		// this struct via a flat-args field (where goTypeToGraphQL also
+		// routes through buildInputObjectForType). Without sharing, the two
+		// paths produce distinct *graphql.InputObject instances with the
+		// same name and the schema build fails with "multiple types named X".
+		gqlType := buildInputObjectForType(inner)
+		if gqlType != nil {
+			if nullable {
+				r.WithArg(name, gqlType)
+			} else {
+				r.WithArgRequired(name, gqlType)
+			}
+		} else {
+			// Fallback: let go-graph auto-generate (used only when the type
+			// has no exported fields the registry can map).
+			r.WithInputObject(reflect.New(inner).Elem().Interface())
+		}
 		// Validators on the inner struct's fields still fire — go-graph
 		// runs per-arg validators after the input object is decoded.
 		return name
@@ -590,7 +603,15 @@ func applyArgsFromStruct(r *graph.UnifiedResolver[any], argsType reflect.Type) (
 		if name == "" {
 			continue
 		}
-		gqlType := goTypeToGraphQL(f.Type)
+		var gqlType graphql.Input
+		if override := parseGraphQLTagType(f); override != "" {
+			if t, ok := lookupNamedType(override); ok {
+				gqlType = t
+			}
+		}
+		if gqlType == nil {
+			gqlType = goTypeToGraphQL(f.Type)
+		}
 		if gqlType == nil {
 			continue
 		}
@@ -699,6 +720,47 @@ func parseGraphQLTag(f reflect.StructField) (name string, required bool) {
 	return name, required
 }
 
+// parseGraphQLTagType reads an optional `type=Name` segment from the graphql
+// tag. Used to opt fields into a pre-registered named GraphQL type (e.g. a
+// custom enum) instead of the reflectively-derived default.
+func parseGraphQLTagType(f reflect.StructField) string {
+	tag := f.Tag.Get("graphql")
+	for _, p := range strings.Split(tag, ",") {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "type=") {
+			return strings.TrimPrefix(p, "type=")
+		}
+	}
+	return ""
+}
+
+// namedTypeRegistry stores opt-in custom GraphQL types (enums, scalars,
+// pre-built input objects) so args can reference them by name via a
+// `graphql:"...,type=Foo"` struct tag.
+var namedTypeRegistry sync.Map // map[string]graphql.Input
+
+// RegisterGqlType makes a named GraphQL input type available to flat-args
+// resolvers. Call this once at startup (typically inside a module's init or
+// the app's bootstrap). Re-registering the same name overwrites the previous
+// entry — useful in tests but otherwise a smell.
+func RegisterGqlType(name string, t graphql.Input) {
+	if name == "" || t == nil {
+		return
+	}
+	namedTypeRegistry.Store(name, t)
+}
+
+func lookupNamedType(name string) (graphql.Input, bool) {
+	if name == "" {
+		return nil, false
+	}
+	v, ok := namedTypeRegistry.Load(name)
+	if !ok {
+		return nil, false
+	}
+	return v.(graphql.Input), true
+}
+
 // jsonFieldName extracts the wire name from a `json:"…"` tag. Returns
 // "" when the tag is absent, "-", or empty — letting callers fall back
 // to whatever default they prefer.
@@ -791,10 +853,95 @@ func goTypeToGraphQL(t reflect.Type) graphql.Input {
 			return nil
 		}
 		return graphql.NewList(inner)
+	case reflect.Struct:
+		// Build (and memoize) a GraphQL InputObject for this struct so flat-args
+		// resolvers can declare nested object arguments. Without this, fields
+		// like `searchDataDto: SearchDataDto` would be silently dropped.
+		return buildInputObjectForType(t)
 	}
-	// Structs, maps, interfaces, chans — not handled yet; users can use
+	// Maps, interfaces, chans — not handled yet; users can use
 	// WithArgValidator + a custom converter if needed.
 	return nil
+}
+
+// inputObjectRegistry deduplicates InputObject types across resolvers so
+// the same Go struct reused as an arg in multiple fields produces one named
+// GraphQL type (which is what graphql-go's schema builder requires).
+var inputObjectRegistry sync.Map // map[reflect.Type]*graphql.InputObject
+
+func buildInputObjectForType(t reflect.Type) graphql.Input {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	if cached, ok := inputObjectRegistry.Load(t); ok {
+		return cached.(*graphql.InputObject)
+	}
+	// Suffix the name with "Input" so it can coexist with an output type
+	// named the same — GraphQL requires distinct names per type-kind.
+	name := t.Name()
+	if name == "" {
+		return nil
+	}
+	if !strings.HasSuffix(name, "Input") {
+		name += "Input"
+	}
+	// Pre-register a stub so recursive self-references resolve.
+	stub := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name:   name,
+		Fields: graphql.InputObjectConfigFieldMap{},
+	})
+	inputObjectRegistry.Store(t, stub)
+
+	fields := graphql.InputObjectConfigFieldMap{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		if f.Anonymous {
+			// Flatten embedded structs.
+			embT := f.Type
+			for embT.Kind() == reflect.Ptr {
+				embT = embT.Elem()
+			}
+			if embT.Kind() == reflect.Struct {
+				for j := 0; j < embT.NumField(); j++ {
+					ef := embT.Field(j)
+					if ef.PkgPath != "" {
+						continue
+					}
+					name, _ := parseGraphQLTag(ef)
+					if name == "" {
+						continue
+					}
+					sub := goTypeToGraphQL(ef.Type)
+					if sub == nil {
+						continue
+					}
+					if _, exists := fields[name]; !exists {
+						fields[name] = &graphql.InputObjectFieldConfig{Type: sub}
+					}
+				}
+			}
+			continue
+		}
+		name, _ := parseGraphQLTag(f)
+		if name == "" {
+			continue
+		}
+		sub := goTypeToGraphQL(f.Type)
+		if sub == nil {
+			continue
+		}
+		fields[name] = &graphql.InputObjectFieldConfig{Type: sub}
+	}
+	for fname, fcfg := range fields {
+		stub.AddFieldConfig(fname, fcfg)
+	}
+	return stub
 }
 
 // bindInputObject handles the single-input-object shape: p.Args[argName]
@@ -884,6 +1031,24 @@ func assignArg(dst reflect.Value, raw any) error {
 	if v.Type().ConvertibleTo(dst.Type()) {
 		dst.Set(v.Convert(dst.Type()))
 		return nil
+	}
+	// Map → struct (or *struct): GraphQL nested input objects arrive as
+	// map[string]any. Decode via mapstructure using the graphql tag, the same
+	// way bindInputObject handles single-input-object mode.
+	if v.Kind() == reflect.Map {
+		structDst := dst
+		if dst.Kind() == reflect.Ptr {
+			if dst.IsNil() {
+				dst.Set(reflect.New(dst.Type().Elem()))
+			}
+			structDst = dst.Elem()
+		}
+		if structDst.Kind() == reflect.Struct {
+			if err := decodeMap(raw, structDst.Addr().Interface()); err != nil {
+				return err
+			}
+			return nil
+		}
 	}
 	// Slice destination: GraphQL list args arrive as []interface{} regardless of
 	// element type, so reflect-level AssignableTo/ConvertibleTo refuse them.
