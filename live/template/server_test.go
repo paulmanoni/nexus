@@ -56,6 +56,54 @@ func TestServer_SSR_ReturnsRenderedHTML(t *testing.T) {
 	}
 }
 
+func TestServer_SSR_IncludesClientScriptTag(t *testing.T) {
+	srv, _ := httpReg(t)
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 4096)
+	n, _ := resp.Body.Read(buf)
+	body := string(buf[:n])
+	if !strings.Contains(body, `<script src="`+ScriptPath+`" defer></script>`) {
+		t.Errorf("SSR body missing client script tag; got:\n%s", body)
+	}
+}
+
+func TestServer_Script_ServesJS(t *testing.T) {
+	e := New()
+	srv := httptest.NewServer(e.Script())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/javascript") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	buf := make([]byte, 16384)
+	n, _ := resp.Body.Read(buf)
+	body := string(buf[:n])
+	// Sanity check a few load-bearing identifiers from the JS so a
+	// missing/mistruncated embed is caught.
+	for _, want := range []string{
+		"data-nl-component",
+		"WebSocket",
+		"applyDiff",
+		"morphChildren",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("script body missing %q", want)
+		}
+	}
+}
+
 func TestServer_UnknownComponent_Returns404(t *testing.T) {
 	e := New()
 	srv := httptest.NewServer(e.Handler("Missing"))
