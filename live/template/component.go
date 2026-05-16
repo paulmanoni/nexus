@@ -27,6 +27,28 @@ type EventDispatcher interface {
 	HandleEvent(ctx *Ctx, event string, payload Payload) error
 }
 
+// Refresher is an optional hook the session calls before every
+// render — both the initial render after Mount and every
+// subsequent re-render (event-, notifier-, or self-Notify-
+// triggered). Use it to recompute view-derived state from external
+// sources (a repo, a dataloader cache) so that a notifier-
+// triggered re-render sees fresh data even though no handler ran.
+//
+// Without Refresh, derived state stored on the component drifts
+// from upstream sources between handler invocations. The workaround
+// is to expose a method like Posts() and call it as {{ Posts() }};
+// Refresh lets you keep a plain Posts field and {{ Posts }}
+// instead.
+//
+// Errors returned from Refresh emit an "error" frame to the client
+// but do not abort the render — the previous component state is
+// what gets sent. Refresh is expected to be idempotent and cheap;
+// expensive work belongs in event handlers or background goroutines
+// that signal completion via Ctx.Notify.
+type Refresher interface {
+	Refresh(ctx *Ctx) error
+}
+
 // Ctx is what handler methods receive. It carries the request
 // context, route params, and the session-level helpers: Push for
 // server-initiated client events, Notify to nudge a re-render after

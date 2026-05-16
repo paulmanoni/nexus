@@ -92,6 +92,9 @@ func (s *Session) Run(ctx context.Context) error {
 	}
 
 	// Initial render — establishes baseline statics on the client.
+	// Refresh runs first so view-derived state (computed in Refresh)
+	// is fresh before the very first frame.
+	s.refresh(ctx)
 	s.prev = s.render()
 	if err := s.send(ctx, Outbound{Type: "joined", Rendered: &s.prev}); err != nil {
 		return fmt.Errorf("send joined: %w", err)
@@ -393,16 +396,33 @@ func (s *Session) render() Rendered {
 }
 
 // diffAndSend renders, compares against prev, ships a sparse diff
-// if anything changed, and updates prev. Skipping the send when
-// diff is nil keeps the wire quiet during no-op renders (common
-// when notifier-triggered re-renders touch state that doesn't
-// affect the visible tree).
+// if anything changed, and updates prev. Refresh fires first so a
+// notifier- or event-triggered re-render sees fresh derived state.
+// Skipping the send when diff is nil keeps the wire quiet during
+// no-op renders (common when notifier-triggered re-renders touch
+// state that doesn't affect the visible tree).
 func (s *Session) diffAndSend(ctx context.Context) {
+	s.refresh(ctx)
 	next := s.render()
 	if diff := DiffRendered(s.prev, next); diff != nil {
 		_ = s.send(ctx, Outbound{Type: "diff", Diff: diff})
 	}
 	s.prev = next
+}
+
+// refresh invokes the optional Refresher hook on the component.
+// Components without it short-circuit immediately. Errors are
+// surfaced as "error" frames but the render proceeds with the
+// component state as-is — failure to refresh shouldn't blank the
+// page, and a partial state is usually more useful than nothing.
+func (s *Session) refresh(ctx context.Context) {
+	r, ok := s.component.(Refresher)
+	if !ok {
+		return
+	}
+	if err := r.Refresh(s.newCtx(ctx)); err != nil {
+		_ = s.send(ctx, Outbound{Type: "error", Msg: "refresh: " + err.Error()})
+	}
 }
 
 // newCtx builds the per-handler Ctx. Push and Notify capture the
