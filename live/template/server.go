@@ -75,7 +75,7 @@ func (e *Engine) serveSSR(w http.ResponseWriter, r *http.Request, def *component
 	if r, ok := component.(Refresher); ok {
 		_ = r.Refresh(ctx)
 	}
-	opts := []RenderOption{}
+	opts := []RenderOption{WithComponents(e)}
 	if e.helpers != nil {
 		opts = append(opts, WithHelpers(e.helpers))
 	}
