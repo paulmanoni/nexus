@@ -141,7 +141,9 @@ func ssrShell(componentName, body string, style *Style) string {
 	sb.WriteString(html.EscapeString(componentName))
 	sb.WriteString(`">`)
 	sb.WriteString(body)
-	sb.WriteString(`</div></body></html>`)
+	sb.WriteString(`</div><script src="`)
+	sb.WriteString(ScriptPath)
+	sb.WriteString(`" defer></script></body></html>`)
 	return sb.String()
 }
 
