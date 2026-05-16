@@ -52,14 +52,47 @@ func TestBindGqlArgs_EmptySlice(t *testing.T) {
 	}
 }
 
-func TestBindGqlArgs_NonSliceStillFails(t *testing.T) {
-	// Guard the recursion: a scalar destination given a struct value should
-	// still report "cannot assign" rather than panic.
+type innerInput struct {
+	Foo string `graphql:"foo"`
+	N   int    `graphql:"n"`
+}
+
+func TestBindGqlArgs_PointerStruct(t *testing.T) {
 	var args struct {
-		Name string `graphql:"name"`
+		Inner *innerInput `graphql:"inner"`
+	}
+	if err := bindGqlArgs(&args, map[string]any{
+		"inner": map[string]any{"foo": "x", "n": 7},
+	}); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if args.Inner == nil || args.Inner.Foo != "x" || args.Inner.N != 7 {
+		t.Fatalf("got %#v", args.Inner)
+	}
+}
+
+func TestBindGqlArgs_ValueStruct(t *testing.T) {
+	var args struct {
+		Inner innerInput `graphql:"inner"`
+	}
+	if err := bindGqlArgs(&args, map[string]any{
+		"inner": map[string]any{"foo": "y", "n": 3},
+	}); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if args.Inner.Foo != "y" || args.Inner.N != 3 {
+		t.Fatalf("got %#v", args.Inner)
+	}
+}
+
+func TestBindGqlArgs_ScalarDestRejectsMap(t *testing.T) {
+	// A scalar destination given a struct/map value should still fail
+	// rather than silently produce garbage.
+	var args struct {
+		Name *innerInput `graphql:"name"`
 	}
 	err := bindGqlArgs(&args, map[string]any{
-		"name": map[string]any{"oops": true},
+		"name": 42, // not a map, not a string
 	})
 	if err == nil {
 		t.Fatal("expected error for incompatible types")
