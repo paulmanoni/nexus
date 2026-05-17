@@ -8,6 +8,9 @@
 examples/live/live
 examples/crons/crons
 examples/arch-canvas/arch-canvas
+# Node side-effects for the Vue island build steps.
+examples/arch-canvas/node_modules/
+cookbook/islands/node_modules/
 # `go build .` from the repo root drops named binaries here too.
 /crons
 /arch-canvas

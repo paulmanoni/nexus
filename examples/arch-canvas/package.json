@@ -1,0 +1,24 @@
+{
+  "_comment": "Build config for the Vue island in this example. The committed islands/arch-canvas.js means `go run ./examples/arch-canvas` works without npm install; you only need this when you edit islands.src/.",
+  "name": "arch-canvas-islands",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "@vitejs/plugin-vue": "^5.1.0",
+    "@vue/tsconfig": "^0.5.1",
+    "fast-glob": "^3.3.0",
+    "typescript": "^5.5.0",
+    "vite": "5.4.20",
+    "vue-tsc": "^2.0.0"
+  },
+  "dependencies": {
+    "@vue-flow/core": "^1.41.0",
+    "vue": "^3.4.0"
+  }
+}
