@@ -2,7 +2,6 @@ package template
 
 import (
 	"context"
-	"io/fs"
 	"log"
 
 	"go.uber.org/fx"
@@ -11,46 +10,55 @@ import (
 	"github.com/paulmanoni/nexus/live"
 )
 
-// Module is the fx module for the live template engine. The
-// supplied fs.FS is the source of all .nlt templates referenced
-// by template.WithTemplate options on AsComponent registrations
-// in the same module. Additional Options configure the engine
-// (origin check, user extractor, idle timeout, session
-// resumption, etc.):
+// Module is the fx module for the live template engine.
 //
-//	//go:embed templates/*.nlt
-//	var liveTemplates embed.FS
+// Default behavior — no FS argument, reads from disk relative
+// to cwd. The simplest possible app:
 //
 //	var Module = nexus.Module("posts",
-//	    template.Module(liveTemplates,
-//	        template.WithIdleTimeout(30 * time.Minute),
-//	        template.WithSessionResumption(30 * time.Second),
-//	    ),
-//	    nexus.AsComponent("Posts",
-//	        func(repo *PostsRepo) (*PostsList, error) { ... },
-//	        template.WithTemplate("templates/posts"),
+//	    template.Module(),
+//	    nexus.AsComponent("Posts", NewPosts,
+//	        template.WithTemplate("templates/Posts"),
 //	        nexus.Path("/"),
 //	    ),
 //	)
 //
-// Returns nexus.Option (not fx.Option) so the caller doesn't need
-// nexus.Raw to compose it into a nexus.Module.
+// At first AsComponent the engine reads ./templates/Posts.nlt
+// from disk; no //go:embed, no embed.FS variable, no first-
+// argument plumbing.
+//
+// Production / self-contained binaries — pass WithFS:
+//
+//	//go:embed templates/*.nlt islands/*.js
+//	var assets embed.FS
+//
+//	template.Module(
+//	    template.WithFS(assets),                     // ← embed
+//	    template.WithStatic("islands"),
+//	    template.WithIdleTimeout(30 * time.Minute),
+//	)
+//
+// Or WithRoot for a non-cwd disk layout:
+//
+//	template.Module(
+//	    template.WithRoot("internal/livepages"),
+//	)
+//
+// Returns nexus.Option so it composes into a nexus.Module
+// without a nexus.Raw wrap.
 //
 // The module provides three things into the graph:
 //   - *Engine — the live template renderer
-//   - fs.FS — the supplied template source (used by the adapter
-//     to read .nlt bytes at registration time)
 //   - nexus.LiveAdapter — the seam nexus.AsComponent uses to
-//     register components on the engine.
+//     register components on the engine
 //
-// And runs two background goroutines via fx lifecycle hooks:
-//   - the parked-session reaper (idempotent; no-op when
-//     WithSessionResumption isn't set)
-//   - auto-mounts the embedded client runtime at /__live/nexus.js
-//     on first AsComponent.
-func Module(src fs.FS, opts ...Option) nexus.Option {
+// And runs background goroutines via fx lifecycle hooks:
+//   - the parked-session reaper (no-op when WithSessionResumption
+//     isn't set)
+//   - auto-mounts the embedded client runtime at
+//     /__live/nexus.js on first AsComponent.
+func Module(opts ...Option) nexus.Option {
 	return nexus.Raw(fx.Module("nexus/live/template",
-		fx.Supply(fx.Annotate(src, fx.As(new(fs.FS)))),
 		fx.Provide(func(n *live.Notifier) *Engine {
 			full := append([]Option{WithNotifier(n)}, opts...)
 			return New(full...)

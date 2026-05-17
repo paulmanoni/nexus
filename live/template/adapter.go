@@ -23,9 +23,13 @@ import (
 // auto-mounted on the first AsComponent call — guarded by
 // sync.Once so multiple AsComponent registrations don't try to
 // install the same route twice (gin panics on duplicate routes).
+//
+// The fs source for .nlt + WithStatic subdirs lives on the
+// engine (engine.FS()) rather than being a separate adapter
+// field — keeps a single source-of-truth so WithFS / WithRoot
+// options on the engine flow through everywhere.
 type liveAdapter struct {
 	engine *Engine
-	source fs.FS
 	app    *nexus.App
 
 	scriptOnce sync.Once
@@ -33,10 +37,11 @@ type liveAdapter struct {
 
 // NewLiveAdapter is the fx-friendly constructor. The dependencies
 // are everything the adapter needs to do its job at registration
-// time: the engine to register against, the FS to load .nlt
-// sources from, and the App for gin route mounting.
-func NewLiveAdapter(engine *Engine, source fs.FS, app *nexus.App) nexus.LiveAdapter {
-	return &liveAdapter{engine: engine, source: source, app: app}
+// time: the engine to register against and the App for gin route
+// mounting. The fs source for .nlt + WithStatic subdirs is read
+// from the engine at call time (engine.FS()).
+func NewLiveAdapter(engine *Engine, app *nexus.App) nexus.LiveAdapter {
+	return &liveAdapter{engine: engine, app: app}
 }
 
 // RegisterComponent loads the .nlt source from the configured FS,
@@ -57,7 +62,7 @@ func (a *liveAdapter) RegisterComponent(spec *nexus.ComponentSpec, factory func(
 	if !strings.HasSuffix(path, ".nlt") {
 		path += ".nlt"
 	}
-	src, err := fs.ReadFile(a.source, path)
+	src, err := fs.ReadFile(a.engine.FS(), path)
 	if err != nil {
 		return fmt.Errorf("template: load %s for component %q: %w", path, spec.Name, err)
 	}
@@ -88,7 +93,7 @@ func (a *liveAdapter) RegisterComponent(spec *nexus.ComponentSpec, factory func(
 	a.scriptOnce.Do(func() {
 		a.app.Engine().GET(ScriptPath, gin.WrapH(a.engine.Script()))
 		for _, m := range a.engine.staticMounts {
-			sub, err := fs.Sub(a.source, m.sub)
+			sub, err := fs.Sub(a.engine.FS(), m.sub)
 			if err != nil {
 				// Bad subdir at boot — log and skip rather
 				// than panicking; the live page still works,
