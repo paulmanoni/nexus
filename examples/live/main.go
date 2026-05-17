@@ -34,6 +34,8 @@ import (
 	"embed"
 	"fmt"
 	"html"
+	"io/fs"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -46,6 +48,9 @@ import (
 
 //go:embed templates/*.nlt
 var liveTemplates embed.FS
+
+//go:embed islands
+var liveIslands embed.FS
 
 // Post is the domain row. Exported fields so the template can reach
 // p.Title / p.Likes / p.Author through reflection.
@@ -205,6 +210,24 @@ func (c *PostsList) ClearFilter(_ *template.Ctx) {
 	c.Filter = ""
 }
 
+// ResetCounter targets the Counter island on this page via
+// ctx.PushIsland. The surrounding live template doesn't
+// re-render; only the island's channel listener fires and
+// the island wipes its own client-side state. Demonstrates
+// the server → island push path for the nl-island v1 demo.
+func (c *PostsList) ResetCounter(ctx *template.Ctx) {
+	ctx.PushIsland("Counter", "reset", nil)
+}
+
+// CounterProps returns the props blob that gets JSON-encoded
+// into :nl-island-props for the Counter island. Computed on
+// every render — when len(Posts) changes the engine's diff
+// detects the new attribute value and the client calls the
+// island's updated() callback.
+func (c *PostsList) CounterProps() map[string]any {
+	return map[string]any{"initial": len(c.Posts)}
+}
+
 // pushActivity formats and ships one log line to the
 // "activity" stream container. Pulls a fresh ID from a
 // process-wide counter — ids only need to be unique within
@@ -270,6 +293,17 @@ var liveModule = nexus.Module("posts",
 		template.WithTemplate("templates/About"),
 		nexus.Path("/about"),
 	),
+
+	// Serve the embedded island JS modules at /islands/*. The
+	// browser's dynamic import() fetches counter.js from here
+	// when it first encounters <div nl-island="Counter">.
+	nexus.Invoke(func(app *nexus.App) {
+		sub, err := fs.Sub(liveIslands, "islands")
+		if err != nil {
+			panic(err)
+		}
+		app.Engine().StaticFS("/islands", http.FS(sub))
+	}),
 )
 
 func main() {
@@ -279,7 +313,7 @@ func main() {
 	// inclusion so production binaries don't open file watchers
 	// they can't use (the templates ship inside the embed.FS).
 	if os.Getenv("NEXUS_DEV") == "1" {
-		opts = append(opts, template.HotReload("examples/live/templates"))
+		opts = append(opts, template.HotReload("live/templates"))
 	}
 	nexus.Run(
 		nexus.Config{

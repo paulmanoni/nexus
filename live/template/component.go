@@ -108,6 +108,19 @@ type Ctx struct {
 	// without re-rendering the surrounding template. See
 	// StreamRef for the trade-offs vs nl-for.
 	Stream func(name string) *StreamRef
+
+	// PushIsland dispatches an event to every <element
+	// nl-island="<name>"> on the page. The island's mount(el,
+	// props, channel) receives a channel handle whose
+	// on(event, fn) listener fires when this is called. Use
+	// it to push live signals (a new snapshot, a "reset"
+	// command, etc.) into a client-side widget — VueFlow,
+	// chart, anything wrapped as an island — without
+	// re-rendering the surrounding live template.
+	//
+	// payload is JSON-marshaled and arrives on the client as
+	// the second argument to the listener.
+	PushIsland func(name, event string, payload any)
 }
 
 // Params is the merged set of route + query parameters available to

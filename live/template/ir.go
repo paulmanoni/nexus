@@ -43,6 +43,21 @@ type ExprSlot struct {
 func (ExprSlot) isSlot()             {}
 func (s ExprSlot) SlotPos() Position { return s.Pos }
 
+// IslandPropsSlot evaluates one expression, JSON-encodes the
+// resulting value, and emits an HTML-escaped string suitable for
+// embedding in a data-style attribute. The client parses it back
+// with JSON.parse(el.getAttribute("nl-island-props")) and hands
+// the result to the island's mount(el, props, channel). JSON
+// preserves type info (ints vs strings vs nested objects) that
+// would be lossy through a plain string interpolation.
+type IslandPropsSlot struct {
+	Expr string
+	Pos  Position
+}
+
+func (IslandPropsSlot) isSlot()             {}
+func (s IslandPropsSlot) SlotPos() Position { return s.Pos }
+
 // ArgsSlot evaluates each expression in Exprs, JSON-encodes the
 // values, and emits a JSON array literal — the wire form the
 // client reads from data-nl-args to populate payload.args for

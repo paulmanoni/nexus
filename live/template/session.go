@@ -831,6 +831,19 @@ func (s *Session) newCtx(parent context.Context) *Ctx {
 				context: parent,
 			}
 		},
+		PushIsland: func(island, event string, payload any) {
+			// Routed as a push frame with a prefixed event
+			// name; the client splits "island/<name>/<event>"
+			// and forwards payload to the matching island's
+			// channel listener. Re-uses the existing push
+			// machinery — no new wire type, no new
+			// per-session state on the server.
+			_ = s.send(parent, Outbound{
+				Type:         "push",
+				Event:        "island/" + island + "/" + event,
+				EventPayload: payload,
+			})
+		},
 	}
 }
 

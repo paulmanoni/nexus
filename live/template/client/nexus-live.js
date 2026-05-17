@@ -93,7 +93,15 @@
           handleStreamOp(msg);
           break;
         case "push":
-          mount.dispatchEvent(new CustomEvent("nl:" + msg.event, { detail: msg.payload }));
+          // Island-scoped pushes ride the same wire as generic
+          // pushes; we route them by the "island/<name>/<event>"
+          // event-name prefix so islands receive their messages
+          // without each one having to filter the firehose.
+          if (msg.event && msg.event.startsWith("island/")) {
+            routeIslandPush(msg.event, msg.payload);
+          } else {
+            mount.dispatchEvent(new CustomEvent("nl:" + msg.event, { detail: msg.payload }));
+          }
           break;
         case "error":
           console.error("[nl] server:", msg.msg);
@@ -360,6 +368,10 @@
     // JS hooks lifecycle — mount/update/destroy per element
     // bearing nl-hook="HookName".
     syncHooks();
+    // Island lifecycle — Astro-style: dynamic-import the
+    // module, hand off the element's subtree, run mount/
+    // updated/destroyed as the page evolves.
+    syncIslands();
   }
 
   function morphChildren(target, source) {
@@ -389,6 +401,11 @@
       }
       if (tc.nodeType === 1) { // ELEMENT_NODE
         syncAttributes(tc, sc);
+        // Island isolation: the element owns its children, not the
+        // server. Update the attributes (so :nl-island-props
+        // changes still flow to the island's updated() callback)
+        // but don't recurse — anything the island wrote stays.
+        if (tc.hasAttribute("nl-island")) continue;
         morphChildren(tc, sc);
       }
     }
@@ -548,6 +565,157 @@
     } else {
       mount.removeAttribute("data-nl-scope");
     }
+  }
+
+  // -------- Islands (nl-island="Name" nl-island-src="...") -----------
+  //
+  // Astro-style islands: live-template renders the shell + a
+  // placeholder div per island; the client dynamic-imports the
+  // ES module at nl-island-src, calls its mount(el, props,
+  // channel), and ignores that element's subtree on subsequent
+  // morphs. Updates flow via:
+  //   - changed :nl-island-props attribute → updated() callback
+  //   - server ctx.PushIsland("Name", "event", payload)
+  //     → channel.on("event", fn) listener
+  //   - element removal → destroyed() callback
+  //
+  // Modules are loaded once and cached. Multiple instances of
+  // the same name share the module but get separate channels.
+
+  // mountedIslands: el → { name, module, instance, channel,
+  //                        propsRaw } so we can detect prop
+  // changes, route pushes, and tear down on removal.
+  const mountedIslands = new Map();
+  // Set of currently-live island elements (mirrors mountedIslands
+  // keys; needed for destroyed() detection after morph).
+  let activeIslands = new Set();
+  // src → Promise<module>: dedupes concurrent imports of the
+  // same island bundle and caches across renders.
+  const islandModules = new Map();
+  // name → Set<channel>: routing table for PushIsland — every
+  // active instance with this name receives the message.
+  const islandChannelsByName = new Map();
+
+  function syncIslands() {
+    const seen = new Set();
+    for (const el of mount.querySelectorAll("[nl-island]")) {
+      const name = el.getAttribute("nl-island");
+      const src = el.getAttribute("nl-island-src");
+      if (!name || !src) continue;
+      seen.add(el);
+      const propsRaw = el.getAttribute("nl-island-props") || "";
+      const existing = mountedIslands.get(el);
+      if (existing) {
+        // Same element across renders — call updated() when the
+        // props attribute changed. The morph already ran
+        // syncAttributes for us, so the new value is on the DOM.
+        if (existing.propsRaw !== propsRaw) {
+          existing.propsRaw = propsRaw;
+          const props = parseIslandProps(propsRaw);
+          if (existing.module && typeof existing.module.updated === "function") {
+            try { existing.module.updated(el, props, existing.instance); }
+            catch (err) { console.error(`[nl] island ${name} updated:`, err); }
+          }
+        }
+        return;
+      }
+      // Fresh mount. Kick off the module load; queue the mount
+      // for when it resolves so we don't block the render loop.
+      const channel = newIslandChannel(name);
+      const entry = { name, module: null, instance: null, channel, propsRaw };
+      mountedIslands.set(el, entry);
+      loadIslandModule(src).then((mod) => {
+        entry.module = mod;
+        if (typeof mod.mount !== "function") {
+          console.error(`[nl] island ${name}: module ${src} has no mount() export`);
+          return;
+        }
+        const props = parseIslandProps(propsRaw);
+        try {
+          entry.instance = mod.mount(el, props, channel);
+        } catch (err) {
+          console.error(`[nl] island ${name} mount:`, err);
+        }
+      }).catch((err) => {
+        console.error(`[nl] island ${name}: failed to load ${src}:`, err);
+      });
+    }
+    // Anything in activeIslands but not seen this pass was
+    // removed — fire destroyed() and clean up.
+    for (const el of activeIslands) {
+      if (seen.has(el)) continue;
+      const entry = mountedIslands.get(el);
+      mountedIslands.delete(el);
+      if (!entry) continue;
+      removeIslandChannel(entry.name, entry.channel);
+      if (entry.module && typeof entry.module.destroyed === "function") {
+        try { entry.module.destroyed(el, entry.instance); }
+        catch (err) { console.error(`[nl] island ${entry.name} destroyed:`, err); }
+      }
+    }
+    activeIslands = seen;
+  }
+
+  function parseIslandProps(raw) {
+    if (!raw) return null;
+    try { return JSON.parse(raw); }
+    catch (err) {
+      console.error("[nl] nl-island-props parse failed:", err, raw);
+      return null;
+    }
+  }
+
+  function loadIslandModule(src) {
+    let p = islandModules.get(src);
+    if (!p) {
+      p = import(/* webpackIgnore: true */ src);
+      islandModules.set(src, p);
+    }
+    return p;
+  }
+
+  function newIslandChannel(name) {
+    const listeners = new Map(); // event → Set<fn>
+    const channel = {
+      on(event, fn) {
+        if (!listeners.has(event)) listeners.set(event, new Set());
+        listeners.get(event).add(fn);
+        return () => channel.off(event, fn);
+      },
+      off(event, fn) {
+        const set = listeners.get(event);
+        if (set) set.delete(fn);
+      },
+      // Internal — used by routeIslandPush to fan in messages.
+      _deliver(event, payload) {
+        const set = listeners.get(event);
+        if (!set) return;
+        for (const fn of set) {
+          try { fn(payload); } catch (err) { console.error(`[nl] island ${name} on(${event}):`, err); }
+        }
+      },
+    };
+    if (!islandChannelsByName.has(name)) islandChannelsByName.set(name, new Set());
+    islandChannelsByName.get(name).add(channel);
+    return channel;
+  }
+
+  function removeIslandChannel(name, channel) {
+    const set = islandChannelsByName.get(name);
+    if (!set) return;
+    set.delete(channel);
+    if (set.size === 0) islandChannelsByName.delete(name);
+  }
+
+  function routeIslandPush(event, payload) {
+    // event format: "island/<name>/<eventName>"
+    const parts = event.split("/");
+    if (parts.length < 3) return;
+    const name = parts[1];
+    const inner = parts.slice(2).join("/");
+    const set = islandChannelsByName.get(name);
+    if (!set) return;
+    for (const ch of set) ch._deliver(inner, payload);
   }
 
   // -------- Stream ops (nl-stream containers) ------------------------
