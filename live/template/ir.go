@@ -50,9 +50,18 @@ func (s ExprSlot) SlotPos() Position { return s.Pos }
 // the result to the island's mount(el, props, channel). JSON
 // preserves type info (ints vs strings vs nested objects) that
 // would be lossy through a plain string interpolation.
+//
+// Static, when true, marks the slot as evaluate-once-per-session:
+// the first render computes + caches the value, subsequent
+// re-renders return the cached value untouched. That makes the
+// island's :props value invisible to the diff stream after
+// initial paint — useful for big snapshots where updates flow
+// via ctx.PushIsland rather than auto-flowing through diffs.
+// Triggered by the `static-props` attribute on <nl-island/>.
 type IslandPropsSlot struct {
-	Expr string
-	Pos  Position
+	Expr   string
+	Static bool
+	Pos    Position
 }
 
 func (IslandPropsSlot) isSlot()             {}
