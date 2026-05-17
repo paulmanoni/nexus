@@ -201,10 +201,8 @@ func (c *PostRow) Refresh(_ *template.Ctx) error { return nil }
 // nexus.Path option, so it's child-only — referenced from
 // Posts.nlt's <PostRow /> tag but not reachable as a URL.
 var liveModule = nexus.Module("posts",
-	nexus.Provide(live.New),
 	nexus.Provide(NewPostsRepo),
 	template.Module(liveTemplates),
-
 	nexus.AsComponent("Posts",
 		func(repo *PostsRepo) (*PostsList, error) {
 			return &PostsList{repo: repo}, nil
