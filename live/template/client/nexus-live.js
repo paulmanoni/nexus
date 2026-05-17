@@ -68,6 +68,13 @@
       switch (msg.type) {
         case "joined":
           if (msg.token) resumeToken = msg.token;
+          // Style + scope arrive on navigate-induced joined
+          // frames (the SSR shell handled the first paint).
+          // Apply them BEFORE the body morph so the new tree
+          // paints under the correct stylesheet.
+          if ("style" in msg || "scope" in msg) {
+            applyNavigationStyles(msg.style, msg.scope);
+          }
           tree = msg.r;
           render();
           // After live-navigate the server includes the new
@@ -515,6 +522,33 @@
     left: "arrowleft",
     right: "arrowright",
   };
+
+  // -------- Navigation styles ----------------------------------------
+  //
+  // applyNavigationStyles handles the head/scope-attribute swap
+  // that lives outside the morph target. Called from the
+  // "joined" handler whenever the server ships a new style
+  // body (typically after live-navigate). Idempotent — first
+  // call creates the <style data-nl-managed> tag, subsequent
+  // calls replace its content.
+  //
+  // The mount's data-nl-scope attribute moves in lockstep so
+  // [data-nl-scope="<id>"] selectors in the new CSS actually
+  // match the live tree.
+  function applyNavigationStyles(body, scope) {
+    let tag = document.querySelector("style[data-nl-managed]");
+    if (!tag) {
+      tag = document.createElement("style");
+      tag.setAttribute("data-nl-managed", "");
+      document.head.appendChild(tag);
+    }
+    tag.textContent = body || "";
+    if (scope) {
+      mount.setAttribute("data-nl-scope", scope);
+    } else {
+      mount.removeAttribute("data-nl-scope");
+    }
+  }
 
   // -------- Stream ops (nl-stream containers) ------------------------
   //

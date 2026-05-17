@@ -58,6 +58,16 @@ type Outbound struct {
 	// history.pushState so the address bar reflects the new
 	// location without a full reload.
 	Path string `json:"path,omitempty"`
+	// Style + Scope ship the new component's scoped CSS body
+	// (already rewritten with the scope attribute prefix) and
+	// the scope ID. Set on "joined" frames after live-navigate
+	// so the client can swap the <head>'s style tag and the
+	// mount container's data-nl-scope attribute together — the
+	// SSR shell sets these up on first paint, but a navigate
+	// swaps the body without touching the head, so the new
+	// component's styles never land without this.
+	Style string `json:"style,omitempty"`
+	Scope string `json:"scope,omitempty"`
 
 	// Stream-op frame fields ("stream-op" type). Stream is the
 	// container name (matches nl-stream="X" on a DOM element);
