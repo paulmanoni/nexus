@@ -1,19 +1,25 @@
-// Command hello is the smallest possible live-template app —
-// one component, one route, no state, no dependencies beyond
-// the framework itself. Used as the baseline for measuring
-// boot time:
+// Command hello is the smallest live-template app with all the
+// surface area you actually use:
 //
-//	go build -o /tmp/hello ./examples/hello
-//	./bench.sh    (in this directory)
+//   - a typed component with state ({{ Count }})
+//   - a server-side handler (@click="bump")
+//   - a server → island push (@click="pingIsland" calls PushIsland)
+//   - an embedded vanilla JS island under islands/
+//   - WithStatic auto-mounting the islands/ subdir at /islands/
 //
-// The "framework overhead" you see in the bench is whatever
-// nexus.Run + fx graph build + dashboard mount + gin engine
-// init + listener bind take. Adding a real app on top is
-// additive — your component's Mount runs once per session, not
-// at boot.
+// Still ~50 lines of Go + ~30 of template + ~30 of JS. Doubles as
+// the boot-time bench baseline (see bench.sh in this directory);
+// adding the island doesn't move the needle on boot time because
+// islands are dynamic-imported lazily by the browser, not by the
+// Go boot path.
 //
-// Set NEXUS_HELLO_NODASH=1 to disable the /__nexus dashboard
-// and isolate the live-template engine's contribution.
+// Run:
+//
+//	go run ./examples/hello
+//	→ http://localhost:8083
+//
+// Set NEXUS_HELLO_NODASH=1 to skip the /__nexus dashboard mount
+// and isolate the live-template engine's contribution to boot.
 package main
 
 import (
@@ -24,17 +30,40 @@ import (
 	"github.com/paulmanoni/nexus/live/template"
 )
 
-//go:embed templates/*.nlt
+//go:embed templates/*.nlt islands/*.js
 var assets embed.FS
 
 type Hello struct {
 	template.BaseComponent
+	Count int
 }
 
 func NewHello() (*Hello, error) { return &Hello{}, nil }
 
+// Bump increments the server-side counter; the next diff
+// ships only "{{ Count }}"'s new value (a couple of bytes).
+func (h *Hello) Bump(_ *template.Ctx) { h.Count++ }
+
+// PingIsland targets the Counter island via PushIsland. The
+// surrounding live template does NOT re-render — the island's
+// channel.on("ping") listener fires directly.
+func (h *Hello) PingIsland(ctx *template.Ctx) {
+	ctx.PushIsland("Counter", "ping", nil)
+}
+
+// ClientProps is what :nl-island-props evaluates to on every
+// render. Stays small — just the initial value the island
+// reads on mount.
+func (h *Hello) ClientProps() map[string]any {
+	return map[string]any{"initial": 0}
+}
+
 var liveModule = nexus.Module("hello",
-	template.Module(assets),
+	template.Module(assets,
+		// Serves the islands/ subdir of the embed at /islands/
+		// — counter.js is what /islands/counter.js maps to.
+		template.WithStatic("islands", ""),
+	),
 	nexus.AsComponent("Hello", NewHello,
 		template.WithTemplate("templates/Hello"),
 		nexus.Path("/"),
