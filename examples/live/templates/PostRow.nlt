@@ -1,0 +1,7 @@
+<template>
+    <li>
+        <strong>{{ Post.Title }}</strong>
+        <span>by {{ Post.Author }}</span>
+        <button @click="like" :data-id="Post.ID">♥ {{ Post.Likes }}</button>
+    </li>
+</template>

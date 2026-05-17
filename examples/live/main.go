@@ -1,36 +1,48 @@
-// Command live is a runnable demo of nexus/live/template. It serves a
-// posts page at / where every connection is a live session: clicking
-// like, filtering, or adding a new post in one browser tab updates
-// every other tab connected to the same URL via sparse diffs over a
-// WebSocket. The shared PostsRepo + live.Notifier are the multi-tab
-// sync mechanism — no global JS state, no GraphQL subscriptions.
+// Command live is a runnable demo of nexus/live/template wired
+// through the nexus.Run() entrypoint. Every framework touchpoint
+// — the Notifier, the shared PostsRepo, the *template.Engine, the
+// two component registrations, the HTTP routes — is declared as
+// a nexus option; main() reduces to a single nexus.Run call.
+//
+// The pattern for each live page:
+//
+//	nexus.AsComponent("Posts",
+//	    func(repo *PostsRepo) (*PostsList, error) {
+//	        return &PostsList{repo: repo}, nil
+//	    },
+//	    template.WithTemplate("templates/posts"),
+//	    nexus.Path("/"),
+//	)
+//
+// Constructor params are resolved from the fx graph. The .nlt
+// source is loaded from the embed.FS supplied to template.Module.
+// nexus.Path mounts the engine's SSR/WS handler at the URL;
+// omitting nexus.Path turns the registration into a child-only
+// component (loadable from <Tag /> in another template but not
+// reachable as a URL).
 //
 // Run:
 //
 //	go run ./examples/live
 //
-// Then open http://localhost:8080 in two tabs and watch them stay in
-// sync as you interact.
+// Then open http://localhost:8080 in two tabs and watch them
+// stay in sync as you interact. The dashboard is at
+// http://localhost:8080/__nexus.
 package main
 
 import (
-	_ "embed"
-	"fmt"
-	"log"
-	"net/http"
+	"embed"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/live/template"
 )
 
-//go:embed posts.nlt
-var postsTemplate []byte
-
-//go:embed post_row.nlt
-var postRowTemplate []byte
+//go:embed templates/*.nlt
+var liveTemplates embed.FS
 
 // Post is the domain row. Exported fields so the template can reach
 // p.Title / p.Likes / p.Author through reflection.
@@ -52,7 +64,15 @@ type PostsRepo struct {
 	nextID   atomic.Int64
 }
 
-func NewPostsRepo(n *live.Notifier, seed []Post) *PostsRepo {
+// NewPostsRepo is the fx-friendly constructor. It depends on
+// *live.Notifier (provided by liveModule) and seeds the store
+// with a few system posts so the page isn't empty on first load.
+func NewPostsRepo(n *live.Notifier) *PostsRepo {
+	seed := []Post{
+		{ID: 1, Title: "Welcome to live templates", Author: "system"},
+		{ID: 2, Title: "Open this URL in two tabs and like things", Author: "system"},
+		{ID: 3, Title: "Type below to add your own post", Author: "system"},
+	}
 	r := &PostsRepo{notifier: n, posts: append([]Post(nil), seed...)}
 	maxID := int64(0)
 	for _, p := range seed {
@@ -96,18 +116,15 @@ func (r *PostsRepo) Add(title, author string) {
 	r.notifier.Notify()
 }
 
-// PostsList is the live component bound to posts.nlt. Each session
-// holds its own instance — Filter and NewTitle are per-tab state —
-// but they all read posts from the shared repo on every render.
+// PostsList is the live component bound to templates/Posts.nlt.
+// Each session holds its own instance — Filter and NewTitle are
+// per-tab state — but they all read posts from the shared repo
+// on every render.
 //
-// The repo dependency is injected via the factory passed to
-// engine.Register, so this struct stays plain Go with no framework
-// touchpoint other than the embedded BaseComponent.
-//
-// Posts is recomputed in Refresh from the shared repo. The hook
-// fires before every render (initial Mount, post-event, and
-// notifier-triggered), so the field never drifts from the
-// upstream source even when another tab mutates state.
+// The repo dependency lands via the AsComponent constructor below
+// (fx resolves *PostsRepo and passes it in); the struct itself
+// stays plain Go with no framework touchpoint other than the
+// embedded BaseComponent.
 type PostsList struct {
 	template.BaseComponent
 	repo *PostsRepo
@@ -117,12 +134,6 @@ type PostsList struct {
 	NewTitle string
 }
 
-// Mount runs once per session at WS join. Refresh runs immediately
-// after, so we don't need to seed Posts here.
-//
-// Filter and NewTitle are bound via nl-model in posts.nlt; the
-// engine assigns them on input directly, so no UpdateFilter /
-// UpdateTitle handler methods are needed here.
 func (c *PostsList) Mount(_ *template.Ctx) error { return nil }
 
 // Refresh pulls the current posts from the shared repo and applies
@@ -177,37 +188,40 @@ type PostRow struct {
 	Post Post
 }
 
+func NewPostRow() (*PostRow, error) {
+	return &PostRow{}, nil
+}
+
+func (c *PostRow) Mount(_ *template.Ctx) error   { return nil }
+func (c *PostRow) Refresh(_ *template.Ctx) error { return nil }
+
+// liveModule is the entire wiring surface: providers for the
+// notifier and the repo, the template engine module, and one
+// AsComponent registration per component. PostRow has no
+// nexus.Path option, so it's child-only — referenced from
+// Posts.nlt's <PostRow /> tag but not reachable as a URL.
+var liveModule = nexus.Module("posts",
+	nexus.Provide(live.New),
+	nexus.Provide(NewPostsRepo),
+	template.Module(liveTemplates),
+
+	nexus.AsComponent("Posts",
+		func(repo *PostsRepo) (*PostsList, error) {
+			return &PostsList{repo: repo}, nil
+		},
+		template.WithTemplate("templates/Posts"),
+		nexus.Path("/"),
+	),
+
+	nexus.AsComponent("PostRow", NewPostRow, template.WithTemplate("templates/PostRow")),
+)
+
 func main() {
-	notifier := live.New()
-	repo := NewPostsRepo(notifier, []Post{
-		{ID: 1, Title: "Welcome to live templates", Author: "system"},
-		{ID: 2, Title: "Open this URL in two tabs and like things", Author: "system"},
-		{ID: 3, Title: "Type below to add your own post", Author: "system"},
-	})
-
-	engine := template.New(template.WithNotifier(notifier))
-	if err := engine.Register("Posts", postsTemplate, func() template.Component {
-		return &PostsList{repo: repo}
-	}); err != nil {
-		log.Fatalf("register Posts: %v", err)
-	}
-	// PostRow renders one item in the list. Registered as a separate
-	// component so PostsList stays small; child components are pure
-	// renders (no Mount, no events), so the factory just returns a
-	// fresh zero-valued struct each call.
-	if err := engine.Register("PostRow", postRowTemplate, func() template.Component {
-		return &PostRow{}
-	}); err != nil {
-		log.Fatalf("register PostRow: %v", err)
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle(template.ScriptPath, engine.Script())
-	mux.Handle("/", engine.Handler("Posts"))
-
-	addr := ":8080"
-	fmt.Printf("listening on http://localhost%s — open in two tabs\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("serve: %v", err)
-	}
+	nexus.Run(
+		nexus.Config{
+			Server:    nexus.ServerConfig{Addr: ":8080"},
+			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "Posts (live)"},
+		},
+		liveModule,
+	)
 }

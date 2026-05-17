@@ -1,29 +1,48 @@
 package template
 
 import (
+	"io/fs"
+
 	"go.uber.org/fx"
 
+	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/live"
 )
 
-// Module is the fx.Module for the live template engine. It provides
-// a singleton *Engine constructed from the *live.Notifier and (when
-// present) helper / option values in the graph. Compose with
-// RegisterComponent options to wire individual .nlt templates:
+// Module is the fx module for the live template engine. The
+// supplied fs.FS is the source of all .nlt templates referenced
+// by template.WithTemplate options on AsComponent registrations
+// in the same module:
 //
-//	fx.New(
-//	    fx.Provide(live.New),                                  // *live.Notifier
-//	    template.Module(),                                     // *template.Engine
-//	    template.RegisterComponent("Posts", postsSrc, NewPostsList),
-//	    fx.Invoke(setupHTTPRoutes),
+//	//go:embed templates/*.nlt
+//	var liveTemplates embed.FS
+//
+//	var Module = nexus.Module("posts",
+//	    nexus.Provide(live.New),
+//	    template.Module(liveTemplates),
+//	    nexus.AsComponent("Posts",
+//	        func(repo *PostsRepo) (*PostsList, error) { ... },
+//	        template.WithTemplate("templates/posts"),
+//	        nexus.Path("/"),
+//	    ),
 //	)
 //
-// The Engine is wired to subscribe sessions to the live.Notifier so
-// external mutations fan out to every connected tab.
-func Module() fx.Option {
-	return fx.Module("nexus/live/template",
+// Returns nexus.Option (not fx.Option) so the caller doesn't need
+// nexus.Raw to compose it into a nexus.Module.
+//
+// The module provides three things into the graph:
+//   - *Engine — the live template renderer
+//   - fs.FS — the supplied template source (used by the adapter
+//     to read .nlt bytes at registration time)
+//   - nexus.LiveAdapter — the seam nexus.AsComponent uses to
+//     register components on the engine. Auto-mounts the embedded
+//     client runtime at /__live/nexus.js on first AsComponent.
+func Module(src fs.FS) nexus.Option {
+	return nexus.Raw(fx.Module("nexus/live/template",
+		fx.Supply(fx.Annotate(src, fx.As(new(fs.FS)))),
 		fx.Provide(NewEngine),
-	)
+		fx.Provide(NewLiveAdapter),
+	))
 }
 
 // NewEngine is the fx-friendly constructor. Takes the *live.Notifier
@@ -38,21 +57,28 @@ func NewEngine(n *live.Notifier) *Engine {
 	return New(WithNotifier(n))
 }
 
-// RegisterComponent returns an fx.Option that registers one .nlt
-// template + factory with the engine at startup. The factory is
-// invoked once per WS session — keep it cheap and stateless;
-// per-session deps belong on the component struct.
+// WithTemplate sets the source path for the component's .nlt
+// template. The path is resolved against the fs.FS passed to
+// template.Module; the ".nlt" extension is appended when missing.
 //
-// For factories that need fx-injected dependencies (a repo, a
-// dataloader), inline an fx.Invoke that closes over them:
+//	template.WithTemplate("templates/posts")        // → templates/Posts.nlt
+//	template.WithTemplate("templates/Posts.nlt")    // also works
 //
-//	fx.Invoke(func(e *template.Engine, repo *PostsRepo) error {
-//	    return e.Register("Posts", postsSrc, func() template.Component {
-//	        return &PostsList{repo: repo}
-//	    })
-//	}),
-//
-// RegisterComponent is sugar for the dep-free case.
+// Required for every nexus.AsComponent that uses the live template
+// engine — AsComponent reports a clear registration-time error
+// when omitted.
+func WithTemplate(path string) nexus.ComponentOption {
+	return templatePathOpt(path)
+}
+
+type templatePathOpt string
+
+func (o templatePathOpt) Apply(s *nexus.ComponentSpec) { s.TemplatePath = string(o) }
+
+// RegisterComponent is the lower-level dep-free registration
+// helper. Prefer nexus.AsComponent for new code; this remains for
+// callers that already have a hand-built factory closure and just
+// want to push it through fx.
 func RegisterComponent(name string, src []byte, factory func() Component) fx.Option {
 	return fx.Invoke(func(e *Engine) error {
 		return e.Register(name, src, factory)

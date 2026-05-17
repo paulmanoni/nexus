@@ -66,7 +66,7 @@ func TestPath_NormalizesLooseInput(t *testing.T) {
 	}
 	for _, tc := range cases {
 		opt := Path(tc.in)
-		got := opt.(pathOption).path
+		got := opt.(pathOption).normalizedPath()
 		if got != tc.want {
 			t.Errorf("Path(%q): got %q want %q", tc.in, got, tc.want)
 		}
