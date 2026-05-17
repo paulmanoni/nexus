@@ -37,7 +37,6 @@ import (
 	"sync/atomic"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/live/template"
 )
 
@@ -60,14 +59,14 @@ type Post struct {
 type PostsRepo struct {
 	mu       sync.RWMutex
 	posts    []Post
-	notifier *live.Notifier
+	notifier *nexus.Notifier
 	nextID   atomic.Int64
 }
 
 // NewPostsRepo is the fx-friendly constructor. It depends on
-// *live.Notifier (provided by liveModule) and seeds the store
+// *nexus.Notifier (provided by liveModule) and seeds the store
 // with a few system posts so the page isn't empty on first load.
-func NewPostsRepo(n *live.Notifier) *PostsRepo {
+func NewPostsRepo(n *nexus.Notifier) *PostsRepo {
 	seed := []Post{
 		{ID: 1, Title: "Welcome to live templates", Author: "system"},
 		{ID: 2, Title: "Open this URL in two tabs and like things", Author: "system"},
