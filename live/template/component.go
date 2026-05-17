@@ -101,6 +101,13 @@ type Ctx struct {
 	// state. Re-renders triggered this way coalesce with mutator-
 	// triggered re-renders; the user never sees duplicate frames.
 	Notify func()
+
+	// Stream returns the handle for one nl-stream container by
+	// name. Use it to push incremental updates (append/prepend/
+	// delete/update/reset) into the matching DOM container
+	// without re-rendering the surrounding template. See
+	// StreamRef for the trade-offs vs nl-for.
+	Stream func(name string) *StreamRef
 }
 
 // Params is the merged set of route + query parameters available to
