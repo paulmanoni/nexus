@@ -1,3 +1,54 @@
 <template>
-    <h1>Hello, world!</h1>
+    <div class="page">
+        <h1>Hello, world!</h1>
+        <p>Server count: <strong>{{ Count }}</strong></p>
+        <button @click="bump">Bump server</button>
+
+        <h2>Client island</h2>
+        <p class="hint">
+            Vanilla JS island below — its own state, mounted once,
+            untouched by server re-renders. The "Server ping" button
+            fires <code>ctx.PushIsland("Counter", "ping", nil)</code>,
+            which the island's <code>channel.on("ping")</code> picks
+            up without touching the surrounding template.
+        </p>
+        <button @click="pingIsland">Server ping</button>
+
+        <nl-island name="Counter"
+                   src="/islands/counter.js"
+                   :props="ClientProps()"/>
+    </div>
 </template>
+
+<style scoped>
+    .page {
+        font-family: system-ui, sans-serif;
+        max-width: 32rem;
+        margin: 2rem auto;
+        padding: 0 1rem;
+    }
+    .page h1 { font-size: 1.5rem; }
+    .page h2 { font-size: 1.1rem; margin-top: 2rem; }
+    .page button {
+        padding: 0.4rem 0.8rem;
+        margin-right: 0.5rem;
+        cursor: pointer;
+    }
+    .page .hint {
+        color: #666;
+        font-size: 0.9rem;
+    }
+    .page code {
+        background: #f4f4f4;
+        padding: 0 0.25rem;
+        border-radius: 3px;
+        font-size: 0.85em;
+    }
+    .page .island {
+        margin-top: 0.5rem;
+        padding: 0.75rem;
+        border: 1px solid #e1e4e8;
+        border-radius: 6px;
+        background: #fafbfc;
+    }
+</style>
