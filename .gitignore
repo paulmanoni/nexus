@@ -6,6 +6,9 @@
 *.out
 # `go build ./examples/X` drops a binary at examples/X/X by default.
 examples/live/live
+examples/crons/crons
+# `go build .` from the repo root drops named binaries here too.
+/crons
 
 # nexus build cache (per-deployment shadow source + overlay.json)
 .nexus/build/
