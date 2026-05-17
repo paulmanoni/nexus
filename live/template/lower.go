@@ -298,7 +298,15 @@ func emitAttr(a Attribute, b *fragBuilder) error {
 		b.text(" " + name + `="` + a.Value + `"`)
 		return nil
 	case AttrDirective:
-		// Structural directives are handled upstream; reaching this
+		// nl-hook is a client-side directive: the value is the
+		// name of a hook registered in window.NLHooks. Pass it
+		// through to the DOM so the client can scan for it after
+		// every render and fire lifecycle callbacks.
+		if a.Name == "hook" {
+			b.text(" nl-hook=\"" + a.Value + "\"")
+			return nil
+		}
+		// Other directives are handled upstream; reaching this
 		// point with one is a bug in the lowering routing.
 		return &ParseError{Pos: a.Position, Msg: fmt.Sprintf("lower: directive nl-%s reached emit step (should have been handled)", a.Name)}
 	}

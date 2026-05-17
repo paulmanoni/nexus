@@ -300,6 +300,7 @@ func (e *Engine) Register(name string, src []byte, factory func() Component) err
 		factory:  factory,
 		script:   file.Script,
 		style:    file.Style,
+		scopeID:  computeScopeID(name),
 	}
 	return nil
 }
@@ -408,5 +409,11 @@ type componentDef struct {
 	fragment *Fragment
 	factory  func() Component
 	script   *Script // retained for future dev-mode introspection
-	style    *Style  // retained for future scoped-style emission
+	style    *Style  // emitted as <style> in the SSR shell; scoped via scopeID
+	// scopeID is the stable per-component attribute key used for
+	// CSS scoping. Stamped on the SSR container as
+	// data-nl-scope="<id>"; every selector in style.Body is
+	// rewritten to require [data-nl-scope="<id>"] when
+	// style.Scoped is true.
+	scopeID string
 }

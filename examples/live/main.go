@@ -210,13 +210,9 @@ var liveModule = nexus.Module("posts",
 		template.WithIdleTimeout(30*time.Minute),
 		template.WithSessionResumption(30*time.Second),
 	),
-	nexus.AsComponent("Posts",
-		func(repo *PostsRepo) (*PostsList, error) {
-			return &PostsList{repo: repo}, nil
-		},
-		template.WithTemplate("templates/Posts"),
-		nexus.Path("/"),
-	),
+	nexus.AsComponent("Posts", func(repo *PostsRepo) (*PostsList, error) {
+		return &PostsList{repo: repo}, nil
+	}, template.WithTemplate("templates/Posts"), nexus.Path("/")),
 
 	nexus.AsComponent("PostRow", NewPostRow, template.WithTemplate("templates/PostRow")),
 )

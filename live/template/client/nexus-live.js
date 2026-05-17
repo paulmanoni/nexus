@@ -297,6 +297,13 @@
     const tmp = document.createElement("div");
     tmp.innerHTML = html;
     morphChildren(mount, tmp);
+    // Window/document event listeners are discovered from the
+    // rendered tree; re-scan after morph so newly-mounted
+    // elements with @window/@document modifiers get covered.
+    syncGlobalListeners();
+    // JS hooks lifecycle — mount/update/destroy per element
+    // bearing nl-hook="HookName".
+    syncHooks();
   }
 
   function morphChildren(target, source) {
@@ -384,11 +391,30 @@
 
   // dispatchNlEvent applies modifiers and sends the event to the
   // server. Returns true when the event was consumed (stop modifier
-  // applied, or handled and we don't want bubbling). Currently always
-  // returns true after a match — first ancestor wins.
+  // applied, or handled and we don't want bubbling). Returns false
+  // when a modifier filter (keyboard key, system modifier) rejected
+  // the event — caller should keep walking ancestors / let the
+  // event continue.
   function dispatchNlEvent(elem, attr, e) {
     const mods = attr.name.split(".").slice(1);
     const eventName = attr.value;
+
+    // Keyboard-key modifier filter: @keydown.enter only fires on
+    // Enter. Multiple key mods OR together (.enter.escape fires
+    // on either). System mods (ctrl/shift/alt/meta) require the
+    // matching modifier key to be held.
+    if (typeof KeyboardEvent !== "undefined" && e instanceof KeyboardEvent) {
+      const keyMods = mods.filter(m => KEY_NAMES.has(m));
+      if (keyMods.length > 0) {
+        const k = (e.key || "").toLowerCase();
+        const matched = keyMods.some(m => k === (KEY_ALIASES[m] || m));
+        if (!matched) return false;
+      }
+      if (mods.includes("ctrl") && !e.ctrlKey) return false;
+      if (mods.includes("shift") && !e.shiftKey) return false;
+      if (mods.includes("alt") && !e.altKey) return false;
+      if (mods.includes("meta") && !e.metaKey) return false;
+    }
 
     if (mods.includes("prevent")) e.preventDefault();
     if (mods.includes("stop")) e.stopPropagation();
@@ -409,8 +435,119 @@
     }
     if (e.key !== undefined) payload.key = e.key;
 
-    if (sock.readyState !== WebSocket.OPEN) return true;
+    if (!sock || sock.readyState !== WebSocket.OPEN) return true;
     sock.send(JSON.stringify({ type: "event", name: eventName, payload }));
     return true;
+  }
+
+  // Recognized keyboard-key modifier names. Values left side =
+  // modifier as written in template; values that get aliased to
+  // e.key's lowercased form live in KEY_ALIASES.
+  const KEY_NAMES = new Set([
+    "enter", "escape", "tab", "space", "backspace", "delete",
+    "up", "down", "left", "right",
+  ]);
+  const KEY_ALIASES = {
+    space: " ",
+    up: "arrowup",
+    down: "arrowdown",
+    left: "arrowleft",
+    right: "arrowright",
+  };
+
+  // -------- Global event targets (@window.X, @document.X) ------------
+
+  // attachedGlobals tracks which (target, event) pairs already
+  // have a listener installed on window or document. We never
+  // remove these — a stale listener is a no-op once no element
+  // bears the matching attribute (the dispatch loop simply finds
+  // nothing to fire). Avoids the lifecycle bookkeeping a remove
+  // path would need.
+  const attachedGlobals = new Set();
+
+  function syncGlobalListeners() {
+    for (const el of mount.querySelectorAll("*")) {
+      for (const a of el.attributes) {
+        if (!a.name.startsWith("nl-on:")) continue;
+        const parts = a.name.split(".");
+        const target = parts.find(m => m === "window" || m === "document");
+        if (!target) continue;
+        const eventName = parts[0].slice("nl-on:".length);
+        const key = target + ":" + eventName;
+        if (attachedGlobals.has(key)) continue;
+        attachedGlobals.add(key);
+        const tg = target === "window" ? window : document;
+        tg.addEventListener(eventName, makeGlobalHandler(target, eventName), true);
+      }
+    }
+  }
+
+  function makeGlobalHandler(target, eventName) {
+    return (e) => {
+      const suffix = "." + target;
+      // First match wins, like the in-tree delegated dispatch.
+      for (const el of mount.querySelectorAll("*")) {
+        for (const a of el.attributes) {
+          if (!a.name.startsWith("nl-on:" + eventName)) continue;
+          if (!a.name.includes(suffix)) continue;
+          if (dispatchNlEvent(el, a, e)) return;
+        }
+      }
+    };
+  }
+
+  // -------- JS hooks (nl-hook) ---------------------------------------
+
+  // window.NLHooks is the registry users write to:
+  //
+  //   window.NLHooks = {
+  //     Tooltip: {
+  //       mounted(el)   { ... },
+  //       updated(el)   { ... },   // optional
+  //       destroyed(el) { ... },   // optional
+  //     },
+  //   };
+  //
+  // Templates opt elements in by adding nl-hook="Tooltip". The
+  // engine emits the attribute as-is; the client walks the tree
+  // on every render to fire lifecycle.
+  window.NLHooks = window.NLHooks || {};
+
+  // mountedHooks tracks elements that have had mounted() called.
+  // WeakMap because keys are DOM nodes that get GC'd when removed
+  // from the tree.
+  const mountedHooks = new WeakMap();
+  // activeHooked is the set of currently-mounted hooked elements
+  // — needed for destroyed() detection because a removed element
+  // isn't reachable via querySelectorAll on the next render.
+  let activeHooked = new Set();
+
+  function syncHooks() {
+    const seen = new Set();
+    for (const el of mount.querySelectorAll("[nl-hook]")) {
+      const name = el.getAttribute("nl-hook");
+      const hook = window.NLHooks[name];
+      if (!hook) continue;
+      seen.add(el);
+      if (!mountedHooks.has(el)) {
+        mountedHooks.set(el, name);
+        if (hook.mounted) {
+          try { hook.mounted(el); } catch (err) { console.error("[nl] hook " + name + " mounted:", err); }
+        }
+      } else if (hook.updated) {
+        try { hook.updated(el); } catch (err) { console.error("[nl] hook " + name + " updated:", err); }
+      }
+    }
+    // Anything in activeHooked but not in seen was removed —
+    // fire destroyed() before the WeakMap drops it.
+    for (const el of activeHooked) {
+      if (seen.has(el)) continue;
+      const name = mountedHooks.get(el);
+      const hook = name && window.NLHooks[name];
+      if (hook && hook.destroyed) {
+        try { hook.destroyed(el); } catch (err) { console.error("[nl] hook " + name + " destroyed:", err); }
+      }
+    }
+    activeHooked = seen;
   }
 })();
