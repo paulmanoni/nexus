@@ -35,7 +35,15 @@
             </span>
         </div>
 
-        <nl-island name="ArchCanvas" src="/islands/arch-canvas.js" :props="GraphProps()"/>
+        <!-- static-props: the Graph blob ships in the SSR HTML
+             + the initial joined frame, then NEVER appears in
+             subsequent diffs. Updates flow exclusively via
+             ctx.PushIsland("ArchCanvas", "graph", ...) — see
+             the PushGraph handler in main.go. Trades a tiny bit
+             of server-side explicit-push code for not putting
+             a 50 KB JSON blob on the wire every time anything
+             on the page re-renders. -->
+        <nl-island name="ArchCanvas" src="/islands/arch-canvas.js" :props="GraphProps()" static-props/>
 
         <p class="hint footnote">
             Open DevTools → Network. After the initial page load,

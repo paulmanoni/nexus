@@ -262,6 +262,7 @@ func (l *lowerer) lowerIslandTag(elem *ElementNode, b *fragBuilder) error {
 	var nameSet, srcSet bool
 	var propsAttr *Attribute
 	var dynamicSrc *Attribute
+	var staticProps bool
 	for i := range elem.Attrs {
 		a := &elem.Attrs[i]
 		switch {
@@ -271,6 +272,13 @@ func (l *lowerer) lowerIslandTag(elem *ElementNode, b *fragBuilder) error {
 		case a.Kind == AttrPlain && a.Name == "src":
 			src = a.Value
 			srcSet = true
+		case a.Kind == AttrPlain && a.Name == "static-props":
+			// Boolean marker: presence means "evaluate :props
+			// once per session, skip on subsequent renders so
+			// the diff stream stays quiet". Value (if any) is
+			// ignored — Vue/Vite style: `static-props` alone
+			// flips the flag.
+			staticProps = true
 		case a.Kind == AttrBind && a.Name == "props":
 			propsAttr = a
 		case a.Kind == AttrBind && a.Name == "src":
@@ -278,7 +286,7 @@ func (l *lowerer) lowerIslandTag(elem *ElementNode, b *fragBuilder) error {
 		default:
 			return &ParseError{
 				Pos: a.Position,
-				Msg: fmt.Sprintf("<nl-island>: unsupported attribute %q (use name, src, :src, :props)", a.Raw),
+				Msg: fmt.Sprintf("<nl-island>: unsupported attribute %q (use name, src, :src, :props, static-props)", a.Raw),
 			}
 		}
 	}
@@ -299,8 +307,17 @@ func (l *lowerer) lowerIslandTag(elem *ElementNode, b *fragBuilder) error {
 	}
 	if propsAttr != nil {
 		b.text(` nl-island-props="`)
-		b.slot(IslandPropsSlot{Expr: propsAttr.Value, Pos: propsAttr.Position})
+		b.slot(IslandPropsSlot{
+			Expr:   propsAttr.Value,
+			Static: staticProps,
+			Pos:    propsAttr.Position,
+		})
 		b.text(`"`)
+	} else if staticProps {
+		return &ParseError{
+			Pos: elem.Position,
+			Msg: "<nl-island>: static-props requires :props=\"…\"",
+		}
 	}
 	b.text(`></div>`)
 	return nil

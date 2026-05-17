@@ -78,6 +78,14 @@ type Session struct {
 	outQ      chan Outbound
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// staticIsland caches the first-render evaluation of
+	// IslandPropsSlot{Static: true} so subsequent renders return
+	// the cached value — the diff layer naturally treats it as
+	// unchanged and never re-ships the (potentially large) props
+	// blob. One cache per session; passed into every render call
+	// via WithStaticIslandCache.
+	staticIsland *staticIslandCache
 }
 
 // defaultSendBuffer is the queue depth used when engine.sendBuffer
@@ -104,9 +112,10 @@ func newSession(engine *Engine, def *componentDef, params Params, tr Transport) 
 		params:     params,
 		tr:         tr,
 		component:  component,
-		selfNotify: make(chan struct{}, 1),
-		outQ:       make(chan Outbound, engine.sendBufferOrDefault()),
-		done:       make(chan struct{}),
+		selfNotify:   make(chan struct{}, 1),
+		outQ:         make(chan Outbound, engine.sendBufferOrDefault()),
+		done:         make(chan struct{}),
+		staticIsland: newStaticIslandCache(),
 	}
 	return s, nil
 }
@@ -128,9 +137,10 @@ func newResumedSession(engine *Engine, def *componentDef, params Params, tr Tran
 		user:       parked.user,
 		component:  parked.component,
 		prev:       parked.prev,
-		selfNotify: make(chan struct{}, 1),
-		outQ:       make(chan Outbound, engine.sendBufferOrDefault()),
-		done:       make(chan struct{}),
+		selfNotify:   make(chan struct{}, 1),
+		outQ:         make(chan Outbound, engine.sendBufferOrDefault()),
+		done:         make(chan struct{}),
+		staticIsland: newStaticIslandCache(),
 	}
 }
 
@@ -756,7 +766,10 @@ func (s *Session) render() (out Rendered) {
 		}
 	}()
 	s.engine.stats.rendersTotal.Add(1)
-	opts := []RenderOption{WithComponents(s.engine)}
+	opts := []RenderOption{
+		WithComponents(s.engine),
+		WithStaticIslandCache(s.staticIsland),
+	}
 	if s.engine.helpers != nil {
 		opts = append(opts, WithHelpers(s.engine.helpers))
 	}

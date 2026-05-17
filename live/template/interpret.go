@@ -67,6 +67,49 @@ type renderOpts struct {
 	helpers  map[string]any
 	errFn    func(err error, pos Position) string
 	resolver ComponentResolver
+
+	// staticIslandCache holds per-session memoized values for
+	// IslandPropsSlot{Static: true}. Keyed by (Fragment*,
+	// slot-index): the fragment pointer is stable across renders
+	// (it's the parsed IR, immutable after Lower), and the index
+	// is the slot's position within that fragment. First render
+	// evaluates + writes; subsequent renders read and skip the
+	// evaluation, so the slot value never changes for the diff
+	// layer to ship over the wire.
+	//
+	// Nil-safe: when the option isn't set (tests, one-shot
+	// renders), static slots fall back to re-evaluating each
+	// time — same as a non-static slot.
+	staticIslandCache *staticIslandCache
+}
+
+// staticIslandCache is a small wrapper so the renderOpts field
+// can be a pointer (shared across one render's recursive calls)
+// without exposing the underlying map mutation rules.
+type staticIslandCache struct {
+	values map[staticIslandKey]any
+}
+
+type staticIslandKey struct {
+	frag *Fragment
+	idx  int
+}
+
+func newStaticIslandCache() *staticIslandCache {
+	return &staticIslandCache{values: make(map[staticIslandKey]any)}
+}
+
+// WithStaticIslandCache wires a per-session cache for
+// IslandPropsSlot{Static:true} memoization. The Session creates
+// one in newSession + threads it through every render call,
+// which is why the same slot returns the same value across the
+// session's lifetime even when the expression's inputs change.
+//
+// Tests + one-shot Render calls can omit it; static slots
+// re-evaluate every time without it, which is the conservative
+// behavior.
+func WithStaticIslandCache(c *staticIslandCache) RenderOption {
+	return func(o *renderOpts) { o.staticIslandCache = c }
 }
 
 // ComponentResolver is what the interpreter calls to instantiate a
@@ -99,6 +142,23 @@ func defaultRenderOpts() renderOpts {
 func renderFragment(frag *Fragment, sc *scope, o *renderOpts) Rendered {
 	d := make([]any, len(frag.Slots))
 	for i, s := range frag.Slots {
+		// Static-props islands cache the first evaluation per
+		// session so subsequent renders return the same value
+		// — invisible to the diff. The cache lives on
+		// renderOpts (option populated by Session); when no
+		// cache is wired in (tests, ad-hoc Render calls),
+		// renderSlot evaluates normally.
+		if sl, ok := s.(IslandPropsSlot); ok && sl.Static && o.staticIslandCache != nil {
+			key := staticIslandKey{frag: frag, idx: i}
+			if v, hit := o.staticIslandCache.values[key]; hit {
+				d[i] = v
+				continue
+			}
+			v := renderSlot(s, sc, o)
+			o.staticIslandCache.values[key] = v
+			d[i] = v
+			continue
+		}
 		d[i] = renderSlot(s, sc, o)
 	}
 	return Rendered{S: frag.Statics, D: d}
