@@ -113,6 +113,17 @@ func renderSlot(s Slot, sc *scope, o *renderOpts) any {
 		}
 		return formatText(v)
 
+	case IslandPropsSlot:
+		v, err := evalExpr(sl.Expr, sc)
+		if err != nil {
+			return errorMarker(err, sl.Pos, o)
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return errorMarker(err, sl.Pos, o)
+		}
+		return html.EscapeString(string(b))
+
 	case ArgsSlot:
 		// Each arg evaluates to a Go value; JSON-encode each so
 		// type info survives the wire round-trip. The whole

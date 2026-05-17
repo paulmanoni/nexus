@@ -282,6 +282,17 @@ func emitAttr(a Attribute, b *fragBuilder) error {
 		b.text(" " + a.Name + `="` + a.Value + `"`)
 		return nil
 	case AttrBind:
+		// :nl-island-props is special: the value must reach the
+		// client as JSON (not a stringified scalar) so the
+		// island can rehydrate typed props. Same JSON-encoded
+		// + HTML-escaped pipeline as data-nl-args; different
+		// slot type because we emit one value, not an array.
+		if a.Name == "nl-island-props" {
+			b.text(` nl-island-props="`)
+			b.slot(IslandPropsSlot{Expr: a.Value, Pos: a.Position})
+			b.text(`"`)
+			return nil
+		}
 		b.text(" " + a.Name + `="`)
 		b.slot(ExprSlot{Expr: a.Value, Pos: a.Position})
 		b.text(`"`)
@@ -322,6 +333,19 @@ func emitAttr(a Attribute, b *fragBuilder) error {
 			// the client looks for, not its value. Emit value-
 			// less attribute so the DOM sees the marker.
 			b.text(" nl-navigate")
+			return nil
+		case "island":
+			// Island name. Pass through as nl-island="<name>".
+			// The client matches this against the WeakMap of
+			// mounted instances and against PushIsland(name)
+			// targets from the server.
+			b.text(" nl-island=\"" + a.Value + "\"")
+			return nil
+		case "island-src":
+			// URL of the ES module that exports mount/updated/
+			// destroyed. The client dynamic-import()s it on
+			// first sight of the element.
+			b.text(" nl-island-src=\"" + a.Value + "\"")
 			return nil
 		}
 		// Other directives are handled upstream; reaching this
