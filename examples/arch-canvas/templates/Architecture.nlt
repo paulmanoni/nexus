@@ -1,0 +1,109 @@
+<template>
+    <!-- Vue 3 ESM-bundler build needs these compile-time
+         flags defined as globals before any Vue module loads.
+         Inline script runs synchronously at SSR parse time,
+         so the values are set by the time the browser
+         dynamic-imports the VueFlow island. -->
+    <script>
+        window.__VUE_OPTIONS_API__ = true;
+        window.__VUE_PROD_DEVTOOLS__ = false;
+        window.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__ = false;
+    </script>
+    <div class="arch">
+        <h1>Architecture (VueFlow inside nl-island)</h1>
+        <p class="hint">
+            VueFlow + Vue 3 live inside the
+            <code>&lt;nl-island/&gt;</code> below — loaded lazily from
+            esm.sh, mounted once, never re-mounted by subsequent
+            server-driven re-renders. The toolbar below mutates
+            server-side <code>Graph</code> state; the new props blob
+            flows to the island's <code>updated()</code> callback,
+            which reactively swaps the nodes/edges refs. VueFlow's
+            internal pan / zoom / selection state survives.
+        </p>
+
+        <div class="toolbar">
+            <button @click="addNode">+ Add node</button>
+            <button @click="addEdge">+ Add edge</button>
+            <button @click="randomize">Randomize positions</button>
+            <button @click="reset">Reset</button>
+            <button @click="focusFirst">Focus first node (PushIsland)</button>
+            <span class="status">
+                {{ len(Graph.Nodes) }} nodes · {{ len(Graph.Edges) }} edges
+            </span>
+        </div>
+
+        <nl-island name="ArchCanvas" src="/islands/vueflow-canvas.js" :props="GraphProps()"/>
+
+        <p class="hint footnote">
+            Open DevTools → Network. After the initial page load,
+            <strong>no</strong> HTML re-arrives over HTTP — every
+            mutation flies through the WebSocket as a sparse diff,
+            and the only JS the browser ever fetches beyond
+            <code>/__live/nexus.js</code> is <code>vueflow-canvas.js</code>
+            plus its two esm.sh imports.
+        </p>
+    </div>
+</template>
+
+<style scoped>
+    .arch {
+        font-family: system-ui, sans-serif;
+        max-width: 64rem;
+        margin: 2rem auto;
+        padding: 0 1rem;
+    }
+
+    .arch h1 {
+        font-size: 1.5rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .arch .hint {
+        color: #555;
+        font-size: 0.9rem;
+        line-height: 1.55;
+        margin-bottom: 1rem;
+    }
+
+    .arch .footnote {
+        margin-top: 1rem;
+        font-size: 0.85rem;
+        color: #777;
+    }
+
+    .arch code {
+        background: #f4f4f4;
+        padding: 0 0.25rem;
+        border-radius: 3px;
+        font-family: ui-monospace, monospace;
+        font-size: 0.85em;
+    }
+
+    .arch .toolbar {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+    }
+
+    .arch .toolbar button {
+        font-size: 0.9rem;
+        padding: 0.4rem 0.75rem;
+        background: #fff;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .arch .toolbar button:hover {
+        background: #f6f6f6;
+    }
+
+    .arch .status {
+        margin-left: auto;
+        color: #777;
+        font-size: 0.85rem;
+    }
+</style>
