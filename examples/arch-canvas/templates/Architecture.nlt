@@ -1,16 +1,8 @@
 <template>
-    <!-- Vue 3's ESM-bundler build (which esm.sh serves at
-         /vue@3.4.0) reads __VUE_PROD_DEVTOOLS__ + friends as
-         runtime globals. Vite's `define` only inlines into
-         OUR code, not into externally-imported modules — so
-         we still set the globals here synchronously at SSR
-         parse time, before the browser dynamic-imports the
-         island. Three lines, ships once. -->
-    <script>
-        window.__VUE_OPTIONS_API__ = true;
-        window.__VUE_PROD_DEVTOOLS__ = false;
-        window.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__ = false;
-    </script>
+    <!-- Vue's compile-time globals (__VUE_PROD_DEVTOOLS__ etc.)
+         are now set automatically by /__live/nexus.js at the
+         top of the script, before any island dynamic-import.
+         No template-side <script> needed. -->
     <div class="arch">
         <h1>Architecture (VueFlow inside nl-island)</h1>
         <p class="hint">
