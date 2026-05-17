@@ -3,7 +3,9 @@ package template
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,14 @@ type Engine struct {
 	idleTimeout   time.Duration // 0 = no idle timeout
 	parkTTL       time.Duration // 0 = no session resumption
 	sendBuffer    int           // outgoing-queue depth per session (default 64)
+
+	// fsSource is the filesystem the adapter reads .nlt
+	// templates and WithStatic subdirs from. Defaults to
+	// os.DirFS(".") so a fresh project Just Works without an
+	// embed declaration; production deploys typically swap it
+	// for an embed.FS via WithFS so the binary's
+	// self-contained.
+	fsSource fs.FS
 
 	// staticMounts collects WithStatic options so the adapter
 	// can register a gin static handler for each. Subdirs are
@@ -234,18 +244,57 @@ func WithUserExtractor(fn func(*http.Request) any) Option {
 }
 
 // New builds a fresh Engine. Most apps create exactly one.
+// Default fs source is os.DirFS(".") — the cwd at process
+// start, which lines up with `go run .` from the project
+// root. Override via WithFS for embed-baked binaries or
+// WithRoot for a custom on-disk layout.
 func New(opts ...Option) *Engine {
 	e := &Engine{
 		registry: make(map[string]*componentDef),
 		sessions: make(map[*Session]struct{}),
 		parked:   make(map[string]*parkedSession),
 		routes:   make(map[string]string),
+		fsSource: os.DirFS("."),
 	}
 	for _, opt := range opts {
 		opt(e)
 	}
 	return e
 }
+
+// WithFS sets the filesystem the engine reads .nlt templates
+// and WithStatic subdirs from. Typical production usage:
+//
+//	//go:embed templates/*.nlt islands/*.js
+//	var assets embed.FS
+//
+//	template.Module(template.WithFS(assets), …)
+//
+// Without WithFS the engine reads from os.DirFS(".") — the
+// cwd at process start, which makes a fresh `go run .`
+// project work with zero embed boilerplate. The trade-off:
+// disk-mode binaries need their templates/ and islands/
+// directories shipped alongside.
+func WithFS(src fs.FS) Option {
+	return func(e *Engine) {
+		if src != nil {
+			e.fsSource = src
+		}
+	}
+}
+
+// WithRoot is sugar for WithFS(os.DirFS(dir)) — useful when
+// your templates live somewhere other than cwd (a server
+// mounted under a sub-package, a custom layout, etc.).
+func WithRoot(dir string) Option {
+	return func(e *Engine) { e.fsSource = os.DirFS(dir) }
+}
+
+// FS returns the engine's current fs source. Internal helper
+// for the adapter; exported so consumers building their own
+// adapter (instead of NewLiveAdapter) can read from the same
+// source.
+func (e *Engine) FS() fs.FS { return e.fsSource }
 
 // RegisterRoute records the URL path a component is mounted at so
 // live-navigate messages from the client can resolve to the right

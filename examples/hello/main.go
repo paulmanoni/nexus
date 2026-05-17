@@ -23,15 +23,17 @@
 package main
 
 import (
-	"embed"
 	"os"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/live/template"
 )
 
-//go:embed templates/*.nlt islands/*.js
-var assets embed.FS
+// No //go:embed here — template.Module() defaults to reading
+// from disk (os.DirFS at cwd). Run with `go run .` from
+// examples/hello/ and the engine picks up templates/Hello.nlt
+// + islands/counter.js automatically. For a self-contained
+// production binary, add //go:embed + template.WithFS(assets).
 
 type Hello struct {
 	template.BaseComponent
@@ -59,8 +61,8 @@ func (h *Hello) ClientProps() map[string]any {
 }
 
 var liveModule = nexus.Module("hello",
-	template.Module(assets,
-		// Serves the islands/ subdir of the embed at /islands/
+	template.Module(
+		// Serves the islands/ subdir of the cwd at /islands/
 		// — counter.js is what /islands/counter.js maps to.
 		template.WithStatic("islands"),
 	),

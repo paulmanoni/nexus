@@ -268,7 +268,8 @@ func (c *PostRow) Refresh(_ *template.Ctx) error { return nil }
 // Posts.nlt's <PostRow /> tag but not reachable as a URL.
 var liveModule = nexus.Module("posts",
 	nexus.Provide(NewPostsRepo),
-	template.Module(liveAssets,
+	template.Module(
+		template.WithFS(liveAssets),
 		// WithStatic surfaces the islands/ subdir of the embed
 		// at /islands/ — counter.js et al. — so the browser's
 		// dynamic import() can fetch them without a separate

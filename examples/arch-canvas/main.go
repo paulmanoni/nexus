@@ -205,7 +205,8 @@ func (p *ArchPage) FocusFirst(ctx *template.Ctx) {
 }
 
 var liveModule = nexus.Module("arch",
-	template.Module(assets,
+	template.Module(
+		template.WithFS(assets),
 		// WithStatic serves the islands/ subdir at /islands/
 		// — that's where the browser fetches
 		// vueflow-canvas.js from.

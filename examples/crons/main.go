@@ -166,7 +166,8 @@ var liveModule = nexus.Module("crons",
 		return app.Scheduler()
 	}),
 
-	template.Module(assets,
+	template.Module(
+		template.WithFS(assets),
 		template.WithIdleTimeout(30*time.Minute),
 		template.WithSessionResumption(30*time.Second),
 	),
