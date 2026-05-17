@@ -1,6 +1,7 @@
 package template
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"reflect"
@@ -111,6 +112,25 @@ func renderSlot(s Slot, sc *scope, o *renderOpts) any {
 			return errorMarker(err, sl.Pos, o)
 		}
 		return formatText(v)
+
+	case ArgsSlot:
+		// Each arg evaluates to a Go value; JSON-encode each so
+		// type info survives the wire round-trip. The whole
+		// array is HTML-escaped at the end so embedding inside
+		// data-nl-args="..." doesn't break the attribute.
+		parts := make([]string, len(sl.Exprs))
+		for i, e := range sl.Exprs {
+			v, err := evalExpr(e, sc)
+			if err != nil {
+				return errorMarker(err, sl.Pos, o)
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				return errorMarker(err, sl.Pos, o)
+			}
+			parts[i] = string(b)
+		}
+		return html.EscapeString("[" + strings.Join(parts, ",") + "]")
 
 	case BranchSlot:
 		for _, b := range sl.Branches {

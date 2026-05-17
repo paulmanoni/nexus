@@ -40,8 +40,25 @@ type ExprSlot struct {
 	Pos  Position
 }
 
-func (ExprSlot) isSlot()           {}
+func (ExprSlot) isSlot()             {}
 func (s ExprSlot) SlotPos() Position { return s.Pos }
+
+// ArgsSlot evaluates each expression in Exprs, JSON-encodes the
+// values, and emits a JSON array literal — the wire form the
+// client reads from data-nl-args to populate payload.args for
+// call-form event handlers (@click="like(Post.ID, 'note')").
+//
+// JSON instead of HTML-escaped string concatenation so type info
+// survives the round-trip: an int stays an int, a bool stays a
+// bool, the server dispatch can convert each value to the
+// handler's typed parameter without guessing.
+type ArgsSlot struct {
+	Exprs []string
+	Pos   Position
+}
+
+func (ArgsSlot) isSlot()             {}
+func (s ArgsSlot) SlotPos() Position { return s.Pos }
 
 // BranchSlot is an nl-if / nl-else-if / nl-else chain. Branches are
 // evaluated in order; the first whose Cond is true (or whose Cond is

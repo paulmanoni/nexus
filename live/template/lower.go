@@ -296,6 +296,14 @@ func emitAttr(a Attribute, b *fragBuilder) error {
 			name += "." + strings.Join(a.Modifiers, ".")
 		}
 		b.text(" " + name + `="` + a.Value + `"`)
+		// Call-form handlers ship their arg expressions as a
+		// JSON-encoded data-nl-args attribute the client reads
+		// and ships back as payload.args.
+		if len(a.CallArgs) > 0 {
+			b.text(` data-nl-args="`)
+			b.slot(ArgsSlot{Exprs: a.CallArgs, Pos: a.Position})
+			b.text(`"`)
+		}
 		return nil
 	case AttrDirective:
 		// Client-side directives are pass-through attributes —
