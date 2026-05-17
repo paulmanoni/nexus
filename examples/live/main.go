@@ -32,6 +32,8 @@ package main
 
 import (
 	"embed"
+	"fmt"
+	"html"
 	"os"
 	"strings"
 	"sync"
@@ -168,17 +170,59 @@ func (c *PostsList) Refresh(_ *template.Ctx) error {
 // handling — child components are pure renders in v1 and don't
 // own state or event handlers. The :data-id="Post.ID" on the
 // button carries the row identity in the payload.
-func (c *PostsList) Like(_ *template.Ctx, p template.Payload) {
-	c.repo.Like(p.Int("id"))
+//
+// Also appends to the local Activity stream so this tab sees what
+// it just did. ctx.Stream emits a single stream-op frame — no
+// re-render of the surrounding template — which is the whole
+// point of nl-stream: append-cheap activity feeds.
+func (c *PostsList) Like(ctx *template.Ctx, p template.Payload) {
+	id := p.Int("id")
+	c.repo.Like(id)
+	pushActivity(ctx, fmt.Sprintf("liked post #%d", id))
 }
 
 // Add creates a new post from the per-session draft. Author is a
 // placeholder; a real app would pull it from Ctx (auth middleware
 // populates it via Ctx.Params or a future Ctx.User).
-func (c *PostsList) Add(_ *template.Ctx, _ template.Payload) {
-	c.repo.Add(c.NewTitle, "you")
+func (c *PostsList) Add(ctx *template.Ctx, _ template.Payload) {
+	title := strings.TrimSpace(c.NewTitle)
+	c.repo.Add(title, "you")
 	c.NewTitle = ""
+	if title != "" {
+		pushActivity(ctx, "added: "+title)
+	}
 }
+
+// ClearFilter blanks the Filter field. Wired to the filter
+// input's @keydown.escape so pressing Esc resets the search.
+// The framework's __model handler updates Filter on every
+// keystroke; this method just zeroes it server-side and the
+// next diff propagates the empty value back to the input.
+func (c *PostsList) ClearFilter(_ *template.Ctx) {
+	c.Filter = ""
+}
+
+// pushActivity formats and ships one log line to the
+// "activity" stream container. Pulls a fresh ID from a
+// process-wide counter — ids only need to be unique within
+// the stream container; overlap across sessions is fine since
+// each session has its own container.
+var activitySeq atomic.Uint64
+
+func pushActivity(ctx *template.Ctx, msg string) {
+	id := fmt.Sprintf("act-%d", activitySeq.Add(1))
+	li := fmt.Sprintf(`<li id="%s">%s</li>`, id, html.EscapeString(msg))
+	ctx.Stream("activity").Append(id, li)
+}
+
+// About is the static second page used to demonstrate
+// live-navigate. It has no state, no handlers — just a
+// rendered fragment with a back link.
+type About struct {
+	template.BaseComponent
+}
+
+func NewAbout() (*About, error) { return &About{}, nil }
 
 // PostRow is the child component rendering one row of the list.
 // It has no state or handlers — just a Post prop the parent passes
@@ -215,6 +259,14 @@ var liveModule = nexus.Module("posts",
 	}, template.WithTemplate("templates/Posts"), nexus.Path("/")),
 
 	nexus.AsComponent("PostRow", NewPostRow, template.WithTemplate("templates/PostRow")),
+
+	// Second top-level page reachable via <a nl-navigate
+	// href="/about">; the click stays inside the live WS
+	// channel instead of doing a full reload.
+	nexus.AsComponent("About", NewAbout,
+		template.WithTemplate("templates/About"),
+		nexus.Path("/about"),
+	),
 )
 
 func main() {
