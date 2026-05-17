@@ -1,14 +1,8 @@
 <template>
-    <!-- Vue 3 ESM-bundler build needs these compile-time
-         flags defined as globals before any Vue module loads.
-         Inline script runs synchronously at SSR parse time,
-         so the values are set by the time the browser
-         dynamic-imports the VueFlow island. -->
-    <script>
-        window.__VUE_OPTIONS_API__ = true;
-        window.__VUE_PROD_DEVTOOLS__ = false;
-        window.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__ = false;
-    </script>
+    <!-- The Vue ESM-bundler flag-setting <script> the prior
+         version of this template needed is GONE — vite.config.ts
+         now bakes the flags in at build time via `define`. Clean
+         template, no runtime globals. -->
     <div class="arch">
         <h1>Architecture (VueFlow inside nl-island)</h1>
         <p class="hint">
@@ -33,7 +27,7 @@
             </span>
         </div>
 
-        <nl-island name="ArchCanvas" src="/islands/vueflow-canvas.js" :props="GraphProps()"/>
+        <nl-island name="ArchCanvas" src="/islands/arch-canvas.js" :props="GraphProps()"/>
 
         <p class="hint footnote">
             Open DevTools → Network. After the initial page load,
@@ -105,5 +99,17 @@
         margin-left: auto;
         color: #777;
         font-size: 0.85rem;
+    }
+
+    /* The island root inherits these styles — sized + chromed
+       by the host page rather than by the SFC, so the built
+       bundle has no companion .css to ship. */
+    .arch [nl-island="ArchCanvas"] {
+        display: block;
+        height: 460px;
+        border: 1px solid #e1e4e8;
+        border-radius: 6px;
+        background: #fafbfc;
+        overflow: hidden;
     }
 </style>
