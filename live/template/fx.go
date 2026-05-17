@@ -3,6 +3,7 @@ package template
 import (
 	"context"
 	"io/fs"
+	"log"
 
 	"go.uber.org/fx"
 
@@ -127,7 +128,17 @@ func HotReload(dir string) nexus.Option {
 		ctx, cancel := context.WithCancel(context.Background())
 		lc.Append(fx.Hook{
 			OnStart: func(context.Context) error {
-				return e.WatchHotReload(ctx, dir)
+				// Hot-reload is a dev convenience; a missing or
+				// inaccessible dir (most often when the binary
+				// runs from a working directory that doesn't
+				// match the repo-relative path) should NOT
+				// abort the whole app. Log and continue —
+				// production binaries don't watch anything
+				// anyway, the embed.FS is the source of truth.
+				if err := e.WatchHotReload(ctx, dir); err != nil {
+					log.Printf("template: hot-reload disabled — %v", err)
+				}
+				return nil
 			},
 			OnStop: func(context.Context) error {
 				cancel()
