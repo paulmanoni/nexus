@@ -88,9 +88,12 @@ func (a *liveAdapter) RegisterComponent(spec *nexus.ComponentSpec, factory func(
 	// Mount the page route when WithPath was supplied. Skipping
 	// this for child components (no URL) is what makes
 	// AsComponent the single registration call for both page and
-	// child components.
+	// child components. Also feed the URL → name pairing into
+	// the engine's route index so live-navigate can resolve
+	// inbound "navigate" messages without going through gin.
 	if spec.URLPath != "" {
 		a.app.Engine().GET(spec.URLPath, gin.WrapH(a.engine.Handler(spec.Name)))
+		a.engine.RegisterRoute(spec.URLPath, spec.Name)
 	}
 	return nil
 }

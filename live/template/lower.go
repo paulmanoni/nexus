@@ -298,12 +298,16 @@ func emitAttr(a Attribute, b *fragBuilder) error {
 		b.text(" " + name + `="` + a.Value + `"`)
 		return nil
 	case AttrDirective:
-		// nl-hook is a client-side directive: the value is the
-		// name of a hook registered in window.NLHooks. Pass it
-		// through to the DOM so the client can scan for it after
-		// every render and fire lifecycle callbacks.
-		if a.Name == "hook" {
+		// Client-side directives are pass-through attributes —
+		// the engine doesn't interpret them server-side; the
+		// client JS scans for them and applies its own
+		// behavior (hook lifecycle, stream-op routing).
+		switch a.Name {
+		case "hook":
 			b.text(" nl-hook=\"" + a.Value + "\"")
+			return nil
+		case "stream":
+			b.text(" nl-stream=\"" + a.Value + "\"")
 			return nil
 		}
 		// Other directives are handled upstream; reaching this

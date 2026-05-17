@@ -23,6 +23,11 @@ type Inbound struct {
 	// resumes that session (preserving Filter/NewTitle/etc.);
 	// otherwise it falls through to a fresh Mount.
 	Token string `json:"token,omitempty"`
+	// Path is the URL the client is navigating to (type
+	// "navigate"). Server resolves it via Engine.RegisterRoute
+	// to find the new component, swaps def in-session, and
+	// emits a fresh "joined" frame.
+	Path string `json:"path,omitempty"`
 }
 
 // Outbound is the discriminated union of all server → client
@@ -48,4 +53,19 @@ type Outbound struct {
 	// Rotated on every join (resumption included) so leaking a
 	// token only enables one reconnect, not perpetual hijack.
 	Token string `json:"token,omitempty"`
+	// Path, when present on "joined", tells the client the URL
+	// has changed (live-navigate). The client applies
+	// history.pushState so the address bar reflects the new
+	// location without a full reload.
+	Path string `json:"path,omitempty"`
+
+	// Stream-op frame fields ("stream-op" type). Stream is the
+	// container name (matches nl-stream="X" on a DOM element);
+	// Op is "append" / "prepend" / "delete" / "update" / "reset";
+	// ID is the child's DOM id (required for delete/update);
+	// HTML is the rendered child markup for append/prepend/update.
+	Stream string `json:"stream,omitempty"`
+	Op     string `json:"op,omitempty"`
+	ID     string `json:"id,omitempty"`
+	HTML   string `json:"html,omitempty"`
 }

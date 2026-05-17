@@ -70,10 +70,20 @@
           if (msg.token) resumeToken = msg.token;
           tree = msg.r;
           render();
+          // After live-navigate the server includes the new
+          // path so the address bar reflects it without a
+          // full reload. pushState here is a no-op for plain
+          // joins (no msg.path on initial connect).
+          if (msg.path && msg.path !== location.pathname + location.search) {
+            history.pushState({ nlPath: msg.path }, "", msg.path);
+          }
           break;
         case "diff":
           applyDiff(tree, msg.d);
           render();
+          break;
+        case "stream-op":
+          handleStreamOp(msg);
           break;
         case "push":
           mount.dispatchEvent(new CustomEvent("nl:" + msg.event, { detail: msg.payload }));
@@ -113,6 +123,45 @@
   window.addEventListener("beforeunload", () => {
     closedByUser = true;
     if (sock && sock.readyState === WebSocket.OPEN) sock.close(1000);
+  });
+
+  // ---- live-navigate ------------------------------------------------
+  //
+  // Intercept clicks on <a nl-navigate href="/foo"> and send a
+  // "navigate" message over the existing socket instead of doing
+  // a full page reload. The server responds with a "joined"
+  // frame containing the new tree + new path; the message
+  // handler above applies history.pushState.
+  //
+  // Skip when: modifier key is held (open-in-new-tab), the link
+  // has target="_blank", or the href is external. Falling back
+  // to default navigation in those cases is what users expect.
+  document.addEventListener("click", (e) => {
+    if (e.defaultPrevented) return;
+    if (e.button !== 0) return; // only primary clicks
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target && e.target.closest && e.target.closest("a[nl-navigate]");
+    if (!a) return;
+    if (a.target && a.target !== "_self") return;
+    const href = a.getAttribute("href");
+    if (!href || /^[a-z]+:/i.test(href)) return; // skip external / mailto / etc.
+    e.preventDefault();
+    if (!sock || sock.readyState !== WebSocket.OPEN) {
+      // Socket isn't ready — fall back to a regular nav so the
+      // user isn't stuck on a stale page.
+      location.href = href;
+      return;
+    }
+    sock.send(JSON.stringify({ type: "navigate", path: href }));
+  });
+
+  // Back/forward should also flow through the live channel so
+  // we don't reload the page. State is the path we pushed.
+  window.addEventListener("popstate", (e) => {
+    const path = (e.state && e.state.nlPath) || location.pathname + location.search;
+    if (sock && sock.readyState === WebSocket.OPEN) {
+      sock.send(JSON.stringify({ type: "navigate", path }));
+    }
   });
 
   connect();
@@ -454,6 +503,69 @@
     left: "arrowleft",
     right: "arrowright",
   };
+
+  // -------- Stream ops (nl-stream containers) ------------------------
+  //
+  // Server pushes {type:"stream-op", stream, op, id, html}; we
+  // find the nl-stream="<name>" element and mutate its children
+  // without touching the surrounding template. The full-tree
+  // diff doesn't run for stream ops — that's the whole point
+  // (avoids re-rendering large lists on every append).
+  //
+  // Items are looked up by DOM id within the container, so
+  // every appended/prepended/updated HTML fragment must carry
+  // id="..." on its root element.
+  function handleStreamOp(msg) {
+    const container = mount.querySelector('[nl-stream="' + cssEscape(msg.stream) + '"]');
+    if (!container) {
+      console.warn('[nl] stream-op: no container for stream "' + msg.stream + '"');
+      return;
+    }
+    switch (msg.op) {
+      case "append":
+      case "prepend": {
+        const el = parseFragment(msg.html);
+        if (!el) return;
+        if (msg.op === "append") container.appendChild(el);
+        else container.insertBefore(el, container.firstChild);
+        break;
+      }
+      case "delete": {
+        const existing = container.querySelector("#" + cssEscape(msg.id));
+        if (existing) existing.remove();
+        break;
+      }
+      case "update": {
+        const fresh = parseFragment(msg.html);
+        if (!fresh) return;
+        const existing = container.querySelector("#" + cssEscape(msg.id));
+        if (existing) existing.replaceWith(fresh);
+        else container.appendChild(fresh);
+        break;
+      }
+      case "reset":
+        container.innerHTML = "";
+        break;
+    }
+  }
+
+  // parseFragment renders an HTML string into the first
+  // element it produces. <template>'s parser handles arbitrary
+  // child types correctly (e.g. <li> outside a <ul>); plain
+  // innerHTML on a div would drop those.
+  function parseFragment(html) {
+    const tmp = document.createElement("template");
+    tmp.innerHTML = (html || "").trim();
+    return tmp.content.firstElementChild;
+  }
+
+  // cssEscape mirrors CSS.escape with a small polyfill so the
+  // client works on older browsers. Only the characters that
+  // commonly appear in stream names and ids need escaping.
+  function cssEscape(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_\-]/g, (c) => "\\" + c.charCodeAt(0).toString(16) + " ");
+  }
 
   // -------- Global event targets (@window.X, @document.X) ------------
 

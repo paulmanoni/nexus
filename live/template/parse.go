@@ -495,6 +495,7 @@ var knownDirectives = map[string]bool{
 	"pre":     true,
 	"slot":    true,
 	"hook":    true,
+	"stream":  true,
 }
 
 // suggestDirective returns the directive name whose edit distance

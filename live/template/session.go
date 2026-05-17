@@ -362,6 +362,8 @@ func (s *Session) handleInbound(ctx context.Context, msg Inbound) {
 			s.dispatchEvent(ctx, msg.Name, msg.Payload)
 		}
 		s.diffAndSend(ctx)
+	case "navigate":
+		s.handleNavigate(ctx, msg.Path, msg.Params)
 	case "ping":
 		_ = s.send(ctx, Outbound{Type: "pong"})
 	case "join":
@@ -553,6 +555,54 @@ func (s *Session) parkOnExit() {
 	s.engine.parkSession(s.token, s)
 }
 
+// handleNavigate swaps the session's component to the one
+// registered at path, re-mounts, and ships a fresh "joined"
+// frame including the new Path so the client can update the
+// address bar via history.pushState. State of the old component
+// is discarded — for SPA-style "stay on the same page, just
+// change a query param" use a patch-style flow instead (planned
+// follow-up).
+//
+// Unknown path emits an error frame and leaves the current
+// session untouched. The client logs the error; users see no
+// visible change, which is the right default — silently
+// "navigating to nothing" is worse than a no-op.
+func (s *Session) handleNavigate(ctx context.Context, path string, params Params) {
+	name := s.engine.lookupRoute(path)
+	if name == "" {
+		_ = s.send(ctx, Outbound{Type: "error", Msg: fmt.Sprintf("navigate: no live component at %q", path)})
+		return
+	}
+	def, ok := s.engine.lookup(name)
+	if !ok {
+		_ = s.send(ctx, Outbound{Type: "error", Msg: fmt.Sprintf("navigate: component %q not registered", name)})
+		return
+	}
+	component := def.factory()
+	if component == nil {
+		_ = s.send(ctx, Outbound{Type: "error", Msg: fmt.Sprintf("navigate: factory for %q returned nil", name)})
+		return
+	}
+
+	// Swap the session's component bindings in place; the loop
+	// continues with the new state.
+	s.def = def
+	s.component = component
+	if params == nil {
+		params = Params{}
+	}
+	s.params = params
+	s.prev = Rendered{} // force the next diff to be a full re-render
+
+	if err := s.safeMount(s.newCtx(ctx)); err != nil {
+		_ = s.send(ctx, Outbound{Type: "error", Msg: "navigate mount: " + err.Error()})
+		return
+	}
+	s.refresh(ctx)
+	s.prev = s.render()
+	_ = s.send(ctx, Outbound{Type: "joined", Rendered: &s.prev, Path: path, Token: s.token})
+}
+
 // safeMount wraps Mount with panic recovery so a misbehaving
 // constructor doesn't blow up the session goroutine before Run's
 // main loop even starts. Returns the original error or a synthetic
@@ -694,6 +744,16 @@ func (s *Session) newCtx(parent context.Context) *Ctx {
 			case s.selfNotify <- struct{}{}:
 			default:
 				// already pending — coalesce
+			}
+		},
+		Stream: func(name string) *StreamRef {
+			return &StreamRef{
+				name: name,
+				send: func(o Outbound) { _ = s.send(parent, o) },
+				// captured for symmetry with the other Ctx
+				// helpers; current StreamRef ops don't read it
+				// but a future timeout/cancel could.
+				context: parent,
 			}
 		},
 	}

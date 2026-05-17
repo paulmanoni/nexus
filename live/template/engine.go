@@ -31,6 +31,11 @@ type Engine struct {
 
 	mu       sync.RWMutex
 	registry map[string]*componentDef
+	// routes maps URL path → component name so the session can
+	// resolve a client "navigate" message to the right component.
+	// Populated by the adapter when AsComponent has nexus.Path
+	// configured; missing entries fall through as 404-style navs.
+	routes map[string]string
 
 	// Session tracking is used by hot reload to broadcast a reload
 	// frame to every connected client when a template source
@@ -175,11 +180,36 @@ func New(opts ...Option) *Engine {
 		registry: make(map[string]*componentDef),
 		sessions: make(map[*Session]struct{}),
 		parked:   make(map[string]*parkedSession),
+		routes:   make(map[string]string),
 	}
 	for _, opt := range opts {
 		opt(e)
 	}
 	return e
+}
+
+// RegisterRoute records the URL path a component is mounted at so
+// live-navigate messages from the client can resolve to the right
+// component. Called by the adapter when AsComponent has a
+// nexus.Path option; never called for child-only components.
+//
+// Re-registering the same path overwrites — useful in dev /
+// hot-reload and consistent with Register's idempotence.
+func (e *Engine) RegisterRoute(path, componentName string) {
+	if path == "" || componentName == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.routes[path] = componentName
+}
+
+// lookupRoute returns the component name registered for path, or
+// "" if no live component handles it.
+func (e *Engine) lookupRoute(path string) string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.routes[path]
 }
 
 // sendBufferOrDefault resolves the configured outgoing-queue
