@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,7 @@ func (e *Engine) serveSSR(w http.ResponseWriter, r *http.Request, def *component
 	ctx := &Ctx{
 		Context: r.Context(),
 		Params:  params,
+		User:    e.extractUser(r),
 		// Push and Notify are no-ops in the SSR path — no live channel exists yet.
 		Push:   func(string, any) {},
 		Notify: func() {},
@@ -91,11 +93,7 @@ func (e *Engine) serveSSR(w http.ResponseWriter, r *http.Request, def *component
 // returned (HTTP is already detached at this point).
 func (e *Engine) serveWS(w http.ResponseWriter, r *http.Request, def *componentDef, params Params) {
 	up := websocket.Upgrader{
-		// Permissive CheckOrigin for the v1 — production wiring should
-		// inject a stricter check via http.Handler middleware before
-		// reaching Handler. (Live templates are same-origin in
-		// practice; cross-origin needs CORS-style approval.)
-		CheckOrigin: func(*http.Request) bool { return true },
+		CheckOrigin: e.resolveCheckOrigin(),
 	}
 	conn, err := up.Upgrade(w, r, nil)
 	if err != nil {
@@ -110,7 +108,46 @@ func (e *Engine) serveWS(w http.ResponseWriter, r *http.Request, def *componentD
 		_ = tr.Send(r.Context(), Outbound{Type: "error", Msg: err.Error()})
 		return
 	}
+	// Extract user before Run takes over the request context. The
+	// captured value is stable for the lifetime of the session —
+	// auth changes mid-connection (token rotation, logout) aren't
+	// reflected until the client reconnects, which matches the
+	// typical SPA pattern.
+	sess.user = e.extractUser(r)
 	_ = sess.Run(r.Context())
+}
+
+// resolveCheckOrigin returns the configured check or the default
+// same-origin check. Default: Origin header must be empty (non-
+// browser client) OR its host must equal the Host header. Rejects
+// cross-origin upgrades unless WithCheckOrigin opted in.
+func (e *Engine) resolveCheckOrigin() func(*http.Request) bool {
+	if e.checkOrigin != nil {
+		return e.checkOrigin
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		// Parse the Origin URL to extract its host. A malformed
+		// Origin can't be trusted — reject it.
+		u, err := url.Parse(origin)
+		if err != nil || u.Host == "" {
+			return false
+		}
+		return strings.EqualFold(u.Host, r.Host)
+	}
+}
+
+// extractUser runs the configured user extractor against the
+// request, or returns nil if no extractor was wired. Centralized
+// here so both SSR and WS paths produce the same Ctx.User value.
+func (e *Engine) extractUser(r *http.Request) any {
+	if e.userExtractor == nil {
+		return nil
+	}
+	return e.userExtractor(r)
 }
 
 // paramsFromRequest merges path vars and query strings into a single

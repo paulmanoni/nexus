@@ -44,6 +44,11 @@ type Session struct {
 	params Params
 	tr     Transport
 
+	// user is captured from the upgrade request by serveWS via the
+	// engine's configured WithUserExtractor. Stable for the
+	// lifetime of the session.
+	user any
+
 	component Component
 	prev      Rendered
 
@@ -85,8 +90,13 @@ func newSession(engine *Engine, def *componentDef, params Params, tr Transport) 
 //  2. Engine-level external mutations (live.Notifier subscription)
 //  3. Self-notifies from handler-spawned goroutines (Ctx.Notify)
 func (s *Session) Run(ctx context.Context) error {
+	// Register with the engine so hot-reload can broadcast frames
+	// to us, and so test/debug tooling can enumerate live sessions.
+	s.engine.trackSession(s)
+	defer s.engine.untrackSession(s)
+
 	mountCtx := s.newCtx(ctx)
-	if err := s.component.Mount(mountCtx); err != nil {
+	if err := s.safeMount(mountCtx); err != nil {
 		_ = s.send(ctx, Outbound{Type: "error", Msg: "mount: " + err.Error()})
 		return fmt.Errorf("mount: %w", err)
 	}
@@ -308,7 +318,17 @@ func assignField(root any, expr string, value any) error {
 // Handlers returning a non-nil error get a server-side log marker
 // in the "error" frame; the session continues (errors are surfaced
 // to the user, not fatal to the connection).
+//
+// Panics in handlers are caught and surfaced as error frames; the
+// session goroutine survives so one buggy handler doesn't dump the
+// page for the user.
 func (s *Session) dispatchEvent(ctx context.Context, name string, payload Payload) {
+	defer func() {
+		if r := recover(); r != nil {
+			_ = s.send(ctx, Outbound{Type: "error", Msg: fmt.Sprintf("handler %q panic: %v", name, r)})
+		}
+	}()
+
 	hctx := s.newCtx(ctx)
 
 	if d, ok := s.component.(EventDispatcher); ok {
@@ -337,6 +357,19 @@ func (s *Session) dispatchEvent(ctx context.Context, name string, payload Payloa
 			_ = s.send(ctx, Outbound{Type: "error", Msg: e.Error()})
 		}
 	}
+}
+
+// safeMount wraps Mount with panic recovery so a misbehaving
+// constructor doesn't blow up the session goroutine before Run's
+// main loop even starts. Returns the original error or a synthetic
+// one carrying the panic value.
+func (s *Session) safeMount(ctx *Ctx) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return s.component.Mount(ctx)
 }
 
 func buildHandlerArgs(m reflect.Value, ctx *Ctx, payload Payload) ([]reflect.Value, error) {
@@ -388,7 +421,21 @@ func titleCaseEvent(name string) string {
 // state. Helpers from the engine flow through; the engine itself
 // is the component resolver, so <Foo /> tags expand against the
 // same registry the session was started against.
-func (s *Session) render() Rendered {
+//
+// Panic recovery keeps a buggy expression (nil-deref, out-of-range
+// index) from killing the session goroutine. The recovered frame
+// is empty (no statics, no dynamics), which DiffRendered handles
+// as a no-op against prev — the client keeps its last good tree
+// while the user sees an error frame describing what blew up.
+func (s *Session) render() (out Rendered) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Background ctx is fine — the error frame is
+			// best-effort and shouldn't block on a slow client.
+			_ = s.send(context.Background(), Outbound{Type: "error", Msg: fmt.Sprintf("render panic: %v", r)})
+			out = Rendered{}
+		}
+	}()
 	opts := []RenderOption{WithComponents(s.engine)}
 	if s.engine.helpers != nil {
 		opts = append(opts, WithHelpers(s.engine.helpers))
@@ -416,11 +463,18 @@ func (s *Session) diffAndSend(ctx context.Context) {
 // surfaced as "error" frames but the render proceeds with the
 // component state as-is — failure to refresh shouldn't blank the
 // page, and a partial state is usually more useful than nothing.
+// Panics are caught for the same reason: the next render still
+// runs with whatever state was set before the panic.
 func (s *Session) refresh(ctx context.Context) {
 	r, ok := s.component.(Refresher)
 	if !ok {
 		return
 	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			_ = s.send(ctx, Outbound{Type: "error", Msg: fmt.Sprintf("refresh panic: %v", rec)})
+		}
+	}()
 	if err := r.Refresh(s.newCtx(ctx)); err != nil {
 		_ = s.send(ctx, Outbound{Type: "error", Msg: "refresh: " + err.Error()})
 	}
@@ -428,11 +482,14 @@ func (s *Session) refresh(ctx context.Context) {
 
 // newCtx builds the per-handler Ctx. Push and Notify capture the
 // session via closures; calling Notify after the handler returns
-// is the supported pattern for async background work.
+// is the supported pattern for async background work. User is
+// captured once at session start (see serveWS); same value lands
+// on every Ctx for the session's lifetime.
 func (s *Session) newCtx(parent context.Context) *Ctx {
 	return &Ctx{
 		Context: parent,
 		Params:  s.params,
+		User:    s.user,
 		Push: func(event string, payload any) {
 			_ = s.send(parent, Outbound{Type: "push", Event: event, EventPayload: payload})
 		},

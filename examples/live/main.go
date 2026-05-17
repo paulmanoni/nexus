@@ -32,6 +32,7 @@ package main
 
 import (
 	"embed"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -214,11 +215,19 @@ var liveModule = nexus.Module("posts",
 )
 
 func main() {
+	opts := []nexus.Option{liveModule}
+	// Dev-only: watch templates/ on disk and broadcast a reload
+	// frame to every connected tab when a .nlt changes. Gate
+	// inclusion so production binaries don't open file watchers
+	// they can't use (the templates ship inside the embed.FS).
+	if os.Getenv("NEXUS_DEV") == "1" {
+		opts = append(opts, template.HotReload("examples/live/templates"))
+	}
 	nexus.Run(
 		nexus.Config{
 			Server:    nexus.ServerConfig{Addr: ":8080"},
 			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "Posts (live)"},
 		},
-		liveModule,
+		opts...,
 	)
 }

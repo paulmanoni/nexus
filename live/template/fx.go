@@ -1,6 +1,7 @@
 package template
 
 import (
+	"context"
 	"io/fs"
 
 	"go.uber.org/fx"
@@ -83,4 +84,35 @@ func RegisterComponent(name string, src []byte, factory func() Component) fx.Opt
 	return fx.Invoke(func(e *Engine) error {
 		return e.Register(name, src, factory)
 	})
+}
+
+// HotReload wires a development-only file watcher into the fx
+// lifecycle: when any .nlt under dir changes on disk, the engine
+// re-parses it and pushes a reload frame to every connected
+// session so the browser hard-refreshes and picks up the new
+// template.
+//
+// Usage (gate behind your own dev check):
+//
+//	if os.Getenv("NEXUS_DEV") == "1" {
+//	    opts = append(opts, template.HotReload("examples/live/templates"))
+//	}
+//
+// No-op in production binaries that don't include the option.
+// The watcher reads files from the OS, not from the embed.FS the
+// adapter uses, so the bake-in embed stays the source of truth
+// for production while dev reflects edits live.
+func HotReload(dir string) nexus.Option {
+	return nexus.Raw(fx.Invoke(func(lc fx.Lifecycle, e *Engine) {
+		ctx, cancel := context.WithCancel(context.Background())
+		lc.Append(fx.Hook{
+			OnStart: func(context.Context) error {
+				return e.WatchHotReload(ctx, dir)
+			},
+			OnStop: func(context.Context) error {
+				cancel()
+				return nil
+			},
+		})
+	}))
 }

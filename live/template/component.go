@@ -60,6 +60,14 @@ type Ctx struct {
 	Context context.Context
 	Params  Params
 
+	// User is whatever the engine's WithUserExtractor returned for
+	// the HTTP request that started this session — typically a
+	// *User struct from the auth middleware, a claims map, or nil
+	// for anonymous. Components that gate behavior on auth read
+	// it once per handler invocation; the value is identity-stable
+	// across every Ctx of the same session.
+	User any
+
 	// Push sends a one-off client event to the connected browser.
 	// Useful for toasts, scroll-to, "session-expired" prompts that
 	// aren't state changes. The client JS dispatches by event name.
