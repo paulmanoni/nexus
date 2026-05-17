@@ -62,7 +62,7 @@ var liveModule = nexus.Module("hello",
 	template.Module(assets,
 		// Serves the islands/ subdir of the embed at /islands/
 		// — counter.js is what /islands/counter.js maps to.
-		template.WithStatic("islands", ""),
+		template.WithStatic("islands"),
 	),
 	nexus.AsComponent("Hello", NewHello,
 		template.WithTemplate("templates/Hello"),

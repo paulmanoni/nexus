@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/spf13/cobra"
@@ -74,6 +75,24 @@ Examples:
 			fmt.Fprintf(stdout, "Created:\n")
 			for _, f := range files {
 				fmt.Fprintf(stdout, "  %s\n", f)
+			}
+			// When project configs landed alongside island
+			// sources, surface a one-liner so the user knows
+			// to install the JS deps before running.
+			wroteConfigs := false
+			for _, f := range files {
+				if f == "package.json" {
+					wroteConfigs = true
+					break
+				}
+			}
+			if wroteConfigs {
+				fmt.Fprintln(stdout)
+				fmt.Fprintln(stdout, "Bootstrapped JS build (package.json, vite.config.ts, tsconfig.json, .gitignore).")
+				fmt.Fprintln(stdout, "Project-level — shared across every nl-island in this project.")
+				fmt.Fprintln(stdout, "If you ever mix Vue + React in the same project, the configs only")
+				fmt.Fprintln(stdout, "match the first-scaffolded flavor; --force on the second variant")
+				fmt.Fprintln(stdout, "rewrites them (or merge by hand).")
 			}
 			fmt.Fprintln(stdout)
 			fmt.Fprintln(stdout, "Embed in your .nlt:")
@@ -155,6 +174,14 @@ func defaultIslandDir(flavor string) string {
 // scaffoldIsland writes all files for one island variant. Stops
 // at the first conflict (unless --force was passed) so a re-run
 // never half-clobbers a tree.
+//
+// Vue + React variants additionally write project-config files
+// (package.json / vite.config.ts / tsconfig.json / .gitignore)
+// at the current working directory so a single `nexus island
+// --vue MyChart` is enough to bootstrap a fresh app's whole
+// build chain. Those files are marked shared — re-runs and
+// the second-flavor case (user did --vue then --react) see
+// the existing files and skip without --force.
 func scaffoldIsland(flavor, name, dir string, force bool) ([]string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
@@ -167,6 +194,10 @@ func scaffoldIsland(flavor, name, dir string, force bool) ([]string, error) {
 		spec = []fileSpec{
 			{path: filepath.Join(dir, name+".vue"), tmpl: vueComponentTmpl},
 			{path: filepath.Join(dir, name+".island.ts"), tmpl: vueBridgeTmpl},
+			{path: "package.json", tmpl: vuePkgJSONTmpl, shared: true},
+			{path: "vite.config.ts", tmpl: vueViteConfigTmpl, shared: true},
+			{path: "tsconfig.json", tmpl: tsConfigTmpl, shared: true},
+			{path: ".gitignore", tmpl: gitignoreTmpl, shared: true},
 		}
 	case "react":
 		spec = []fileSpec{
@@ -176,8 +207,15 @@ func scaffoldIsland(flavor, name, dir string, force bool) ([]string, error) {
 			// in the project. Written once; subsequent runs see
 			// it already exists and skip without --force.
 			{path: filepath.Join(dir, "_nl-react-runtime.ts"), tmpl: reactRuntimeTmpl, shared: true},
+			{path: "package.json", tmpl: reactPkgJSONTmpl, shared: true},
+			{path: "vite.config.ts", tmpl: reactViteConfigTmpl, shared: true},
+			{path: "tsconfig.json", tmpl: tsConfigTmpl, shared: true},
+			{path: ".gitignore", tmpl: gitignoreTmpl, shared: true},
 		}
 	case "vanilla":
+		// No build step — vanilla JS lives in islands/ and the
+		// browser dynamic-imports it as-is. No package.json,
+		// no vite, no tsconfig.
 		spec = []fileSpec{
 			{path: filepath.Join(dir, name+".js"), tmpl: vanillaTmpl},
 		}
@@ -189,14 +227,15 @@ func scaffoldIsland(flavor, name, dir string, force bool) ([]string, error) {
 	for _, f := range spec {
 		exists := fileExists(f.path)
 		if exists && !force {
-			// Shared files (the React runtime helper) are
-			// idempotent — skip the conflict and don't error.
+			// Shared files (the React runtime helper +
+			// project-config files) are idempotent — skip the
+			// conflict and don't error.
 			if f.shared {
 				continue
 			}
 			return written, fmt.Errorf("refusing to overwrite %s (pass --force)", f.path)
 		}
-		tmpl, err := template.New(filepath.Base(f.path)).Parse(f.tmpl)
+		tmpl, err := template.New(filepath.Base(f.path)).Funcs(islandTmplFuncs).Parse(f.tmpl)
 		if err != nil {
 			return written, fmt.Errorf("template %s: %w", f.path, err)
 		}
@@ -461,21 +500,245 @@ export function destroyed(el, instance) {
 }
 `
 
+// --- project-config templates (Vue + React only) -----------
+//
+// Written at cwd on first `nexus island --vue|--react` run so
+// `npm install && npm run build` works without any external
+// scaffolding step. Marked shared so re-runs (and the
+// second-flavor case) skip silently.
+//
+// Pinned to specific versions known to work with each other,
+// since auto-resolving `^5.4` can pull in pre-release majors
+// (Vite 8 with rolldown, observed mid-2024) that break.
+
+const vuePkgJSONTmpl = `{
+  "name": "{{.Name | lower}}-islands",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.0",
+    "fast-glob": "^3.3.0",
+    "typescript": "^5.5.0",
+    "vite": "5.4.20",
+    "vue-tsc": "^2.0.0"
+  },
+  "dependencies": {
+    "vue": "^3.4.0"
+  }
+}
+`
+
+const reactPkgJSONTmpl = `{
+  "name": "{{.Name | lower}}-islands",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "fast-glob": "^3.3.0",
+    "typescript": "^5.5.0",
+    "vite": "5.4.20"
+  },
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  }
+}
+`
+
+const vueViteConfigTmpl = `// vite.config.ts — multi-entry build for nl-islands.
+//
+// Every file matching islands.src/*.island.{ts,js,jsx,tsx}
+// becomes one bundle in islands/. Glob-discovered, so adding
+// a new island via ` + "`nexus island --vue <name>`" + ` needs no edit
+// here.
+//
+// vue + the runtime get externalized to esm.sh so the
+// committed islands/<name>.js stays tiny (~1.5 KB). Flip the
+// rollupOptions.external + output.paths block off if you'd
+// rather ship a self-contained bundle.
+
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+// fast-glob is CJS; named-import via default-export destructure
+// is the recipe its README recommends for ESM consumers.
+import fastGlob from 'fast-glob'
+const { sync: globSync } = fastGlob
+import { basename, resolve } from 'path'
+import { fileURLToPath } from 'url'
+
+const root = fileURLToPath(new URL('.', import.meta.url))
+
+const entries = Object.fromEntries(
+  globSync('islands.src/*.island.{ts,js,jsx,tsx}', { cwd: root }).map((file) => {
+    const name = basename(file).replace(/\.island\.[jt]sx?$/, '')
+    return [name, resolve(root, file)]
+  }),
+)
+
+export default defineConfig({
+  plugins: [vue()],
+  // Inline Vue's compile-time flags into OUR code (the SFC's
+  // generated render fn). The Vue runtime ITSELF (imported
+  // from esm.sh below) still needs them as runtime globals —
+  // set those via an inline <script> in your .nlt template:
+  //   <script>
+  //     window.__VUE_OPTIONS_API__ = true;
+  //     window.__VUE_PROD_DEVTOOLS__ = false;
+  //   </script>
+  define: {
+    __VUE_OPTIONS_API__: 'true',
+    __VUE_PROD_DEVTOOLS__: 'false',
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false',
+  },
+  build: {
+    outDir: 'islands',
+    emptyOutDir: true,
+    target: 'es2022',
+    minify: 'esbuild',
+    cssCodeSplit: false,
+    rollupOptions: {
+      input: entries,
+      preserveEntrySignatures: 'strict',
+      external: ['vue'],
+      output: {
+        entryFileNames: '[name].js',
+        chunkFileNames: 'chunks/[name]-[hash].js',
+        format: 'es',
+        paths: {
+          'vue': 'https://esm.sh/vue@3.4.0',
+        },
+      },
+    },
+  },
+  server: { port: 5173, strictPort: true },
+})
+`
+
+const reactViteConfigTmpl = `// vite.config.ts — multi-entry build for nl-islands.
+//
+// Every file matching islands.src/*.island.{ts,js,jsx,tsx}
+// becomes one bundle in islands/. Glob-discovered, so adding
+// a new island via ` + "`nexus island --react <name>`" + ` needs no edit
+// here.
+//
+// react + react-dom get externalized to esm.sh so the
+// committed islands/<name>.js stays tiny. Flip the
+// rollupOptions.external + output.paths block off if you'd
+// rather ship a self-contained bundle.
+
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import fastGlob from 'fast-glob'
+const { sync: globSync } = fastGlob
+import { basename, resolve } from 'path'
+import { fileURLToPath } from 'url'
+
+const root = fileURLToPath(new URL('.', import.meta.url))
+
+const entries = Object.fromEntries(
+  globSync('islands.src/*.island.{ts,js,jsx,tsx}', { cwd: root }).map((file) => {
+    const name = basename(file).replace(/\.island\.[jt]sx?$/, '')
+    return [name, resolve(root, file)]
+  }),
+)
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: 'islands',
+    emptyOutDir: true,
+    target: 'es2022',
+    minify: 'esbuild',
+    cssCodeSplit: false,
+    rollupOptions: {
+      input: entries,
+      preserveEntrySignatures: 'strict',
+      external: ['react', 'react-dom', 'react-dom/client'],
+      output: {
+        entryFileNames: '[name].js',
+        chunkFileNames: 'chunks/[name]-[hash].js',
+        format: 'es',
+        paths: {
+          'react': 'https://esm.sh/react@18.3.1',
+          'react-dom': 'https://esm.sh/react-dom@18.3.1?deps=react@18.3.1',
+          'react-dom/client': 'https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1',
+        },
+      },
+    },
+  },
+  server: { port: 5173, strictPort: true },
+})
+`
+
+const tsConfigTmpl = `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "types": ["vite/client"]
+  },
+  "include": [
+    "islands.src/**/*.ts",
+    "islands.src/**/*.tsx",
+    "islands.src/**/*.vue",
+    "vite.config.ts"
+  ]
+}
+`
+
+const gitignoreTmpl = `node_modules/
+`
+
 func init() {
 	// Sanity check: panic at process start if any template
 	// can't be parsed. Cheaper to fail loudly here than to
 	// surface a template parse error to the first user who
-	// runs `nexus island`.
+	// runs ` + "`nexus island`" + `.
 	for name, body := range map[string]string{
 		"vue/component": vueComponentTmpl,
 		"vue/bridge":    vueBridgeTmpl,
+		"vue/pkg":       vuePkgJSONTmpl,
+		"vue/vite":      vueViteConfigTmpl,
 		"react/comp":    reactComponentTmpl,
 		"react/bridge":  reactBridgeTmpl,
 		"react/runtime": reactRuntimeTmpl,
+		"react/pkg":     reactPkgJSONTmpl,
+		"react/vite":    reactViteConfigTmpl,
+		"tsconfig":      tsConfigTmpl,
+		"gitignore":     gitignoreTmpl,
 		"vanilla":       vanillaTmpl,
 	} {
-		if _, err := template.New(name).Parse(body); err != nil {
+		if _, err := template.New(name).Funcs(islandTmplFuncs).Parse(body); err != nil {
 			panic(fmt.Sprintf("nexus island: malformed embedded template %s: %v", name, err))
 		}
 	}
+}
+
+// islandTmplFuncs are the Go-template helpers the project-
+// config templates use. `lower` lets package.json's "name"
+// field be a sanitized lowercase form of the island name
+// regardless of how the user capitalized it on the CLI.
+var islandTmplFuncs = template.FuncMap{
+	"lower": strings.ToLower,
 }

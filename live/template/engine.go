@@ -140,9 +140,12 @@ type staticMount struct {
 
 // WithStatic serves an embed.FS subdirectory at an HTTP path.
 // sub is the directory inside the fs.FS supplied to Module();
-// mountPath is the URL prefix. An empty mountPath defaults to
-// "/" + the cleaned sub — so WithStatic("islands", "") serves
-// the islands/ subdir at /islands/.
+// the optional mountPath is the URL prefix. With no mountPath
+// the URL defaults to "/" + the cleaned sub — so
+// WithStatic("islands") serves the islands/ subdir at
+// /islands/. Pass an explicit second arg when the URL needs to
+// differ from the directory name (e.g. mounting under
+// /__nexus/islands).
 //
 // Typical use is nl-island ES modules embedded alongside .nlt
 // templates in the same go:embed — saves wiring a separate
@@ -152,21 +155,29 @@ type staticMount struct {
 //	var assets embed.FS
 //
 //	template.Module(assets,
-//	    template.WithStatic("islands", ""),  // serves at /islands/
+//	    template.WithStatic("islands"),                    // → /islands/
+//	    template.WithStatic("images", "/__nexus/assets"),  // → /__nexus/assets/
 //	)
 //
 // Trailing slashes on sub are tolerated; leading slashes on
-// mountPath are added if missing.
-func WithStatic(sub, mountPath string) Option {
+// mountPath are added if missing. Variadic for ergonomics —
+// passing more than one mountPath uses the first; extras are
+// ignored rather than rejected so existing callers writing
+// WithStatic("islands", "") keep compiling.
+func WithStatic(sub string, mountPath ...string) Option {
 	sub = strings.Trim(sub, "/")
-	if mountPath == "" {
-		mountPath = "/" + sub
-	} else if !strings.HasPrefix(mountPath, "/") {
-		mountPath = "/" + mountPath
+	mp := ""
+	if len(mountPath) > 0 {
+		mp = mountPath[0]
 	}
-	mountPath = strings.TrimRight(mountPath, "/")
+	if mp == "" {
+		mp = "/" + sub
+	} else if !strings.HasPrefix(mp, "/") {
+		mp = "/" + mp
+	}
+	mp = strings.TrimRight(mp, "/")
 	return func(e *Engine) {
-		e.staticMounts = append(e.staticMounts, staticMount{sub: sub, mountPath: mountPath})
+		e.staticMounts = append(e.staticMounts, staticMount{sub: sub, mountPath: mp})
 	}
 }
 
