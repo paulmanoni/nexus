@@ -125,6 +125,7 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newDocsCmd(stdout, stderr),
 		newAPIDocsCmd(stdout, stderr),
 		newClientCmd(stdout, stderr),
+		newIslandCmd(stdout, stderr),
 	)
 	return root
 }

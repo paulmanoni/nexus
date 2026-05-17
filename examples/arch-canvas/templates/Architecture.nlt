@@ -1,8 +1,16 @@
 <template>
-    <!-- The Vue ESM-bundler flag-setting <script> the prior
-         version of this template needed is GONE — vite.config.ts
-         now bakes the flags in at build time via `define`. Clean
-         template, no runtime globals. -->
+    <!-- Vue 3's ESM-bundler build (which esm.sh serves at
+         /vue@3.4.0) reads __VUE_PROD_DEVTOOLS__ + friends as
+         runtime globals. Vite's `define` only inlines into
+         OUR code, not into externally-imported modules — so
+         we still set the globals here synchronously at SSR
+         parse time, before the browser dynamic-imports the
+         island. Three lines, ships once. -->
+    <script>
+        window.__VUE_OPTIONS_API__ = true;
+        window.__VUE_PROD_DEVTOOLS__ = false;
+        window.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__ = false;
+    </script>
     <div class="arch">
         <h1>Architecture (VueFlow inside nl-island)</h1>
         <p class="hint">
