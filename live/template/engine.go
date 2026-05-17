@@ -25,6 +25,9 @@ type Engine struct {
 	userExtractor func(*http.Request) any
 	idleTimeout   time.Duration // 0 = no idle timeout
 	parkTTL       time.Duration // 0 = no session resumption
+	sendBuffer    int           // outgoing-queue depth per session (default 64)
+
+	stats engineStats
 
 	mu       sync.RWMutex
 	registry map[string]*componentDef
@@ -114,6 +117,25 @@ func WithSessionResumption(ttl time.Duration) Option {
 	return func(e *Engine) { e.parkTTL = ttl }
 }
 
+// WithSendBuffer sets the per-session outgoing-queue depth.
+// Each session has a bounded channel between the render/event
+// goroutine and the writer goroutine that pushes frames onto
+// the transport; this knob is the queue's depth.
+//
+// When a client is too slow to drain the queue (slow network,
+// frozen tab), the queue fills and the session closes its
+// transport to release backpressure on the server side. A
+// shallower queue triggers this sooner (cheaper memory, more
+// false positives on bursty servers); a deeper queue absorbs
+// transient spikes (more memory, slower detection of truly
+// stuck clients).
+//
+// Default 64 — typically a few seconds of diffs for chatty
+// pages. Zero or negative restores the default.
+func WithSendBuffer(n int) Option {
+	return func(e *Engine) { e.sendBuffer = n }
+}
+
 // WithIdleTimeout closes sessions that see no client message, no
 // notifier wake, and no self-notify for the given duration. The
 // session goroutine exits cleanly and any parked-session
@@ -160,6 +182,17 @@ func New(opts ...Option) *Engine {
 	return e
 }
 
+// sendBufferOrDefault resolves the configured outgoing-queue
+// depth to a positive value. Negative or zero falls back to
+// defaultSendBuffer so tests and unset-option callers get
+// reasonable behavior.
+func (e *Engine) sendBufferOrDefault() int {
+	if e.sendBuffer > 0 {
+		return e.sendBuffer
+	}
+	return defaultSendBuffer
+}
+
 // parkSession stashes a disconnected session's component under
 // its token with a TTL-bounded deadline. No-op when resumption is
 // disabled or the session has no token (defensive — every joined
@@ -176,6 +209,7 @@ func (e *Engine) parkSession(token string, s *Session) {
 		user:      s.user,
 		deadline:  time.Now().Add(e.parkTTL),
 	}
+	e.stats.sessionsParked.Add(1)
 }
 
 // claimParked removes and returns the parked entry for token if
@@ -323,14 +357,28 @@ func (e *Engine) Reload(name string, src []byte) error {
 
 func (e *Engine) trackSession(s *Session) {
 	e.sessionsMu.Lock()
-	defer e.sessionsMu.Unlock()
 	e.sessions[s] = struct{}{}
+	e.sessionsMu.Unlock()
+	e.stats.sessionsOpen.Add(1)
+	e.stats.sessionsTotal.Add(1)
+	if s.resumed {
+		e.stats.sessionsResumed.Add(1)
+	}
 }
 
 func (e *Engine) untrackSession(s *Session) {
 	e.sessionsMu.Lock()
-	defer e.sessionsMu.Unlock()
 	delete(e.sessions, s)
+	e.sessionsMu.Unlock()
+	e.stats.sessionsOpen.Add(-1)
+}
+
+// Stats returns a point-in-time snapshot of the engine's
+// observability counters. Lock-free; safe to call concurrently
+// from any goroutine. Individual counters may be slightly out of
+// sync relative to each other on a busy engine.
+func (e *Engine) Stats() Stats {
+	return e.stats.snapshot()
 }
 
 // broadcastReload sends Outbound{Type:"reload"} to every connected

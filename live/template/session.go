@@ -66,8 +66,26 @@ type Session struct {
 
 	selfNotify chan struct{} // buffered(1); coalesces Notify calls
 
-	sendMu sync.Mutex
+	// outQ is the bounded outgoing queue. Renders + event
+	// dispatch + ping responses all enqueue here; the writer
+	// goroutine drains and writes to the transport. Capacity is
+	// engine.sendBuffer (default 64).
+	//
+	// done closes on shutdown so producers stop enqueuing and the
+	// writer goroutine returns. closeOnce guards both against
+	// double-close and against a writer error racing with a
+	// shutdown initiated elsewhere.
+	outQ      chan Outbound
+	done      chan struct{}
+	closeOnce sync.Once
 }
+
+// defaultSendBuffer is the queue depth used when engine.sendBuffer
+// is unset or non-positive. Sized to absorb a few seconds of
+// chatty diffs (e.g., a typing input) without blocking the render
+// goroutine, while still being shallow enough that a truly stuck
+// client triggers a close within ~100 ms even under heavy load.
+const defaultSendBuffer = 64
 
 // newSession creates and Mount-initializes a session for the given
 // component. It does NOT start the loop; call Run for that. Splitting
@@ -87,6 +105,8 @@ func newSession(engine *Engine, def *componentDef, params Params, tr Transport) 
 		tr:         tr,
 		component:  component,
 		selfNotify: make(chan struct{}, 1),
+		outQ:       make(chan Outbound, engine.sendBufferOrDefault()),
+		done:       make(chan struct{}),
 	}
 	return s, nil
 }
@@ -109,6 +129,8 @@ func newResumedSession(engine *Engine, def *componentDef, params Params, tr Tran
 		component:  parked.component,
 		prev:       parked.prev,
 		selfNotify: make(chan struct{}, 1),
+		outQ:       make(chan Outbound, engine.sendBufferOrDefault()),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -145,6 +167,13 @@ func (s *Session) Run(ctx context.Context) error {
 	// same token can resume. No-op when resumption is disabled or
 	// no token was assigned.
 	defer s.parkOnExit()
+	// Always signal shutdown on exit so the writer goroutine
+	// returns and any in-flight callers of send() short-circuit.
+	defer s.shutdown("run exit")
+
+	// Start the writer that drains outQ into the transport. One
+	// per session; lives until shutdown.
+	go s.writerLoop()
 
 	// Skip Mount on a resumed session — the parked component
 	// already has the user's state. Mount would clobber it.
@@ -326,6 +355,7 @@ func (s *Session) pumpRecv(ctx context.Context, out chan<- recvResult) {
 func (s *Session) handleInbound(ctx context.Context, msg Inbound) {
 	switch msg.Type {
 	case "event":
+		s.engine.stats.eventsTotal.Add(1)
 		if msg.Name == modelEventName {
 			s.handleModelEvent(ctx, msg.Payload)
 		} else {
@@ -600,6 +630,7 @@ func (s *Session) render() (out Rendered) {
 			out = Rendered{}
 		}
 	}()
+	s.engine.stats.rendersTotal.Add(1)
 	opts := []RenderOption{WithComponents(s.engine)}
 	if s.engine.helpers != nil {
 		opts = append(opts, WithHelpers(s.engine.helpers))
@@ -617,6 +648,7 @@ func (s *Session) diffAndSend(ctx context.Context) {
 	s.refresh(ctx)
 	next := s.render()
 	if diff := DiffRendered(s.prev, next); diff != nil {
+		s.engine.stats.diffsTotal.Add(1)
 		_ = s.send(ctx, Outbound{Type: "diff", Diff: diff})
 	}
 	s.prev = next
@@ -667,14 +699,82 @@ func (s *Session) newCtx(parent context.Context) *Ctx {
 	}
 }
 
-// send serializes Outbound emission. Multiple concurrent senders
-// (a handler explicitly Push'ing, the loop sending a diff, the
-// notifier path firing) can otherwise race on the underlying socket.
-func (s *Session) send(ctx context.Context, msg Outbound) error {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
-	return s.tr.Send(ctx, msg)
+// send enqueues a frame onto the bounded outgoing queue. The
+// writer goroutine pops from the queue and writes to the
+// transport in order; concurrent senders are serialized by the
+// channel itself.
+//
+// On a full queue (slow consumer), shutdown is signalled — the
+// writer exits, the transport closes, the Recv loop unblocks,
+// and Run returns cleanly. The closed-session case returns an
+// error so callers that care can stop pushing; most call sites
+// don't because the next loop iteration sees the same shutdown.
+//
+// The ctx parameter is kept for API stability and may carry a
+// deadline future implementations honor; today the bounded
+// channel + shutdown signal supersede it.
+func (s *Session) send(_ context.Context, msg Outbound) error {
+	select {
+	case <-s.done:
+		return errSessionClosed
+	default:
+	}
+	select {
+	case <-s.done:
+		return errSessionClosed
+	case s.outQ <- msg:
+		return nil
+	default:
+		// Backpressure: queue full. Slow consumer or stuck
+		// client. Close so resources free; future sends short-
+		// circuit on the done check above.
+		s.engine.stats.diffsDropped.Add(1)
+		s.shutdown("send backpressure: outgoing queue full")
+		return errSendBackpressure
+	}
 }
+
+// writerLoop drains outQ and writes to the transport. Exits on
+// shutdown signal or transport error. Transport errors trigger
+// shutdown so the Recv loop unblocks; the session is gone
+// either way.
+func (s *Session) writerLoop() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case msg := <-s.outQ:
+			if err := s.tr.Send(context.Background(), msg); err != nil {
+				s.shutdown("transport write: " + err.Error())
+				return
+			}
+		}
+	}
+}
+
+// shutdown signals session termination. Idempotent. Closes the
+// done channel (so producers and the writer loop see it) and
+// the underlying transport (so the Recv loop in Run errors out
+// and returns cleanly).
+func (s *Session) shutdown(reason string) {
+	s.closeOnce.Do(func() {
+		close(s.done)
+		_ = s.tr.Close()
+		// Reason is captured for future logging/metrics — keep
+		// the parameter even though we don't currently emit it
+		// (avoiding stdout noise from normal disconnects).
+		_ = reason
+	})
+}
+
+// Sentinel errors so callers can discriminate without string-
+// matching. Most callers ignore them today (the next loop tick
+// sees the same shutdown), but tests and future observability
+// hooks may inspect them.
+var (
+	errSessionClosed    = errors.New("session: closed")
+	errSendBackpressure = errors.New("session: send queue full")
+)
 
 // randID returns a short opaque session identifier. Not cryptographically
 // secure on its own — the WS handshake is the authority for trust;

@@ -35,6 +35,7 @@ type Notifier struct {
 	mu        sync.Mutex
 	listeners []chan struct{}            // broadcast subscribers (Subscribe)
 	topics    map[string][]chan struct{} // topic → subscribers (SubscribeTopic)
+	bus       Bus                        // optional cross-process fan-out (AttachBus)
 }
 
 // New returns a fresh Notifier. Typically created once at app boot
@@ -52,19 +53,21 @@ func New() *Notifier {
 // don't need to know what topics exist. Subscribers whose channel
 // already has a pending nudge are left alone — coalescing N rapid
 // mutations into one wake-up is the whole point. Never blocks.
+//
+// When a Bus is attached, also Publish("") so peer nodes wake
+// their local subscribers too — that's the horizontal-scale
+// path. Publish errors are swallowed: the wake is best-effort,
+// and a flaky bus shouldn't take down the mutator that called us.
 func (n *Notifier) Notify() {
 	if n == nil {
 		return
 	}
+	n.notifyLocal()
 	n.mu.Lock()
-	defer n.mu.Unlock()
-	for _, ch := range n.listeners {
-		nudge(ch)
-	}
-	for _, subs := range n.topics {
-		for _, ch := range subs {
-			nudge(ch)
-		}
+	bus := n.bus
+	n.mu.Unlock()
+	if bus != nil {
+		_ = bus.Publish("")
 	}
 }
 
@@ -78,10 +81,44 @@ func (n *Notifier) Notify() {
 // keys like "post:42" or "user:alice/inbox". An empty topic is a
 // no-op (NotifyTopic("") matches no one — SubscribeTopic rejects
 // empty strings).
+//
+// When a Bus is attached, also publishes the topic so peer nodes
+// fan it out to their local subscribers. See Notify for the
+// rationale on swallowed Publish errors.
 func (n *Notifier) NotifyTopic(topic string) {
 	if n == nil || topic == "" {
 		return
 	}
+	n.notifyLocalTopic(topic)
+	n.mu.Lock()
+	bus := n.bus
+	n.mu.Unlock()
+	if bus != nil {
+		_ = bus.Publish(topic)
+	}
+}
+
+// notifyLocal wakes only this node's subscribers — no bus
+// publish. Called by Notify (which then publishes) and by the
+// Bus-attached forwarding goroutine (which received the message
+// from a peer and shouldn't re-publish it).
+func (n *Notifier) notifyLocal() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, ch := range n.listeners {
+		nudge(ch)
+	}
+	for _, subs := range n.topics {
+		for _, ch := range subs {
+			nudge(ch)
+		}
+	}
+}
+
+// notifyLocalTopic wakes only this node's subscribers for one
+// topic. Same role as notifyLocal but topic-scoped — see comment
+// there for why local-only.
+func (n *Notifier) notifyLocalTopic(topic string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, ch := range n.topics[topic] {
