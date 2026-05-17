@@ -616,17 +616,71 @@ func (s *Session) safeMount(ctx *Ctx) (err error) {
 	return s.component.Mount(ctx)
 }
 
+// buildHandlerArgs matches the handler's reflect.Type to the
+// arguments the engine can supply. Three patterns are honored:
+//
+//	func (c *T) Like(ctx *Ctx)                          // no args
+//	func (c *T) Like(ctx *Ctx, p Payload)               // raw payload (v0)
+//	func (c *T) Like(ctx *Ctx, id int)                  // positional (v1+, from data-nl-args)
+//	func (c *T) Like(ctx *Ctx, id int, body string)     // many positional
+//
+// The positional path consumes payload["args"] — populated by
+// the client from data-nl-args, which the lowering attaches to
+// elements that use the @click="like(arg, arg)" call form.
+// Each arg is reflect-converted to the handler's parameter type;
+// JSON numbers become int / float / etc. via reflect.Convert,
+// which handles the common cases without ceremony.
 func buildHandlerArgs(m reflect.Value, ctx *Ctx, payload Payload) ([]reflect.Value, error) {
 	t := m.Type()
-	switch t.NumIn() {
-	case 1:
-		// (ctx)
-		return []reflect.Value{reflect.ValueOf(ctx)}, nil
-	case 2:
-		// (ctx, payload)
-		return []reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(payload)}, nil
+	n := t.NumIn()
+	if n == 0 {
+		return nil, fmt.Errorf("handler must take at least (ctx)")
 	}
-	return nil, fmt.Errorf("handler must take (ctx) or (ctx, payload); got %d args", t.NumIn())
+	ctxV := reflect.ValueOf(ctx)
+	if n == 1 {
+		return []reflect.Value{ctxV}, nil
+	}
+	// Legacy single-payload form: (ctx, Payload). Preserved so
+	// existing handlers continue to compile without churn.
+	payloadType := reflect.TypeOf(Payload(nil))
+	if n == 2 && t.In(1) == payloadType {
+		return []reflect.Value{ctxV, reflect.ValueOf(payload)}, nil
+	}
+	// Positional args path. Anything beyond ctx maps to
+	// payload.args by index.
+	rawArgs, _ := payload["args"].([]any)
+	if len(rawArgs) != n-1 {
+		return nil, fmt.Errorf("handler expects %d positional args; got %d", n-1, len(rawArgs))
+	}
+	out := make([]reflect.Value, n)
+	out[0] = ctxV
+	for i := 0; i < n-1; i++ {
+		target := t.In(i + 1)
+		v, err := convertArg(rawArgs[i], target)
+		if err != nil {
+			return nil, fmt.Errorf("arg %d: %w", i, err)
+		}
+		out[i+1] = v
+	}
+	return out, nil
+}
+
+// convertArg coerces a value freshly decoded from JSON (so
+// numeric inputs arrive as float64, strings as string, etc.) to
+// the reflect.Type the handler expects. Falls back to
+// reflect.Convert for the common numeric widening cases.
+func convertArg(v any, target reflect.Type) (reflect.Value, error) {
+	if v == nil {
+		return reflect.Zero(target), nil
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Type() == target {
+		return rv, nil
+	}
+	if rv.Type().ConvertibleTo(target) {
+		return rv.Convert(target), nil
+	}
+	return reflect.Value{}, fmt.Errorf("cannot convert %T to %s", v, target)
 }
 
 // titleCaseEvent converts a wire event name to a Go-conventional

@@ -470,13 +470,25 @@
     if (mods.includes("once")) elem.removeAttribute(attr.name);
 
     // Build payload:
-    //   - every data-* attribute on the firing element
+    //   - every data-* attribute on the firing element (legacy)
     //   - .value if the element has one (input/select/textarea)
     //   - .key for keyboard events
+    //   - .args from data-nl-args, JSON-parsed (call-form
+    //     handlers like @click="like(Post.ID)"). Takes
+    //     precedence over a same-named data-* attr.
     const payload = {};
     for (const a of elem.attributes) {
+      if (a.name === "data-nl-args") continue; // handled below
       if (a.name.startsWith("data-")) {
         payload[a.name.slice(5)] = a.value;
+      }
+    }
+    const argsAttr = elem.getAttribute("data-nl-args");
+    if (argsAttr) {
+      try {
+        payload.args = JSON.parse(argsAttr);
+      } catch (err) {
+        console.error("[nl] data-nl-args parse failed:", err, argsAttr);
       }
     }
     if ("value" in elem && elem.value !== undefined) {

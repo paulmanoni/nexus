@@ -423,6 +423,10 @@ func classifyAttr(name, value string, pos Position) (Attribute, error) {
 		evt, mods := splitModifiers(name[1:])
 		attr.Name = evt
 		attr.Modifiers = mods
+		if h, args, ok := parseHandlerCall(value); ok {
+			attr.Value = h
+			attr.CallArgs = args
+		}
 		return attr, nil
 
 	case strings.HasPrefix(name, "#"):
@@ -441,6 +445,10 @@ func classifyAttr(name, value string, pos Position) (Attribute, error) {
 		evt, mods := splitModifiers(name[len("nl-on:"):])
 		attr.Name = evt
 		attr.Modifiers = mods
+		if h, args, ok := parseHandlerCall(value); ok {
+			attr.Value = h
+			attr.CallArgs = args
+		}
 		return attr, nil
 
 	case strings.HasPrefix(name, "nl-slot:"):
@@ -469,6 +477,100 @@ func classifyAttr(name, value string, pos Position) (Attribute, error) {
 		attr.Name = name
 		return attr, nil
 	}
+}
+
+// parseHandlerCall detects the call form "name(arg, arg, ...)" on
+// an event-handler value. Returns (handler, args, true) when the
+// value matches; (empty, nil, false) when the value is a bare
+// identifier (the v0 form). args are kept as raw expression text;
+// the lowering will wire them into a slot that evaluates against
+// the current scope.
+//
+// Arg-list splitting honors nested parens / brackets and string
+// literals so handler("a,b", foo(1, 2)) splits into two args, not
+// four. The implementation is a small state machine rather than
+// strings.Split — comma-bearing string literals are common in
+// real handler calls.
+func parseHandlerCall(v string) (handler string, args []string, ok bool) {
+	s := strings.TrimSpace(v)
+	open := strings.IndexByte(s, '(')
+	if open < 0 || !strings.HasSuffix(s, ")") {
+		return "", nil, false
+	}
+	handler = strings.TrimSpace(s[:open])
+	if handler == "" || !isHandlerIdent(handler) {
+		return "", nil, false
+	}
+	inner := s[open+1 : len(s)-1]
+	if strings.TrimSpace(inner) == "" {
+		return handler, nil, true
+	}
+	parts := splitTopLevelComma(inner)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return handler, out, true
+}
+
+// isHandlerIdent returns true when s is a plain Go-style
+// identifier suitable for a handler name. Rejects names with
+// dots / brackets so accidental "Repo.Like" doesn't pass for a
+// handler reference — methods on the component struct are bare
+// names by convention.
+func isHandlerIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// splitTopLevelComma splits s on commas at paren/bracket depth 0,
+// outside string literals. Backslash escapes inside strings are
+// honored. Used by parseHandlerCall to break the inner arg text
+// into individual expressions.
+func splitTopLevelComma(s string) []string {
+	var out []string
+	depth := 0
+	inStr := byte(0)
+	start := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr != 0 {
+			if c == '\\' {
+				i++ // skip escaped char
+				continue
+			}
+			if c == inStr {
+				inStr = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'', '`':
+			inStr = c
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, s[start:])
+	return out
 }
 
 func splitModifiers(s string) (name string, mods []string) {

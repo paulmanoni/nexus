@@ -175,8 +175,11 @@ func (c *PostsList) Refresh(_ *template.Ctx) error {
 // it just did. ctx.Stream emits a single stream-op frame — no
 // re-render of the surrounding template — which is the whole
 // point of nl-stream: append-cheap activity feeds.
-func (c *PostsList) Like(ctx *template.Ctx, p template.Payload) {
-	id := p.Int("id")
+//
+// The handler uses the call-form signature: @click="like(Post.ID)"
+// in the template binds Post.ID to the id parameter directly,
+// so we avoid the data-* attribute + payload.Int dance.
+func (c *PostsList) Like(ctx *template.Ctx, id int) {
 	c.repo.Like(id)
 	pushActivity(ctx, fmt.Sprintf("liked post #%d", id))
 }

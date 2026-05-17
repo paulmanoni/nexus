@@ -167,4 +167,16 @@ type Attribute struct {
 	Modifiers []string
 	Value     string
 	Position  Position
+
+	// CallArgs is populated by the parser when an AttrOn value
+	// uses the call form @click="like(Post.ID, msg)": each arg
+	// is one expression to evaluate against the current scope at
+	// render time. Empty (nil) when the value is a bare handler
+	// ident — the v0 form @click="like".
+	//
+	// The lowering wires CallArgs into a data-nl-args attribute
+	// carrying the JSON-encoded evaluated values; the server
+	// dispatch matches them positionally to the handler's
+	// non-Ctx parameters.
+	CallArgs []string
 }
