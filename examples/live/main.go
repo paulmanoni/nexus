@@ -273,7 +273,7 @@ var liveModule = nexus.Module("posts",
 		// at /islands/ — counter.js et al. — so the browser's
 		// dynamic import() can fetch them without a separate
 		// per-app static-mount Invoke.
-		template.WithStatic("islands", ""),
+		template.WithStatic("islands"),
 		template.WithIdleTimeout(30*time.Minute),
 		template.WithSessionResumption(30*time.Second),
 	),

@@ -209,7 +209,7 @@ var liveModule = nexus.Module("arch",
 		// WithStatic serves the islands/ subdir at /islands/
 		// — that's where the browser fetches
 		// vueflow-canvas.js from.
-		template.WithStatic("islands", ""),
+		template.WithStatic("islands"),
 		template.WithIdleTimeout(30*time.Minute),
 		template.WithSessionResumption(30*time.Second),
 	),
