@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/paulmanoni/nexus/live"
 )
@@ -22,6 +23,8 @@ type Engine struct {
 	helpers       map[string]any
 	checkOrigin   func(*http.Request) bool
 	userExtractor func(*http.Request) any
+	idleTimeout   time.Duration // 0 = no idle timeout
+	parkTTL       time.Duration // 0 = no session resumption
 
 	mu       sync.RWMutex
 	registry map[string]*componentDef
@@ -32,6 +35,27 @@ type Engine struct {
 	// deregister on Run exit.
 	sessionsMu sync.Mutex
 	sessions   map[*Session]struct{}
+
+	// parked holds component instances from sessions whose WS
+	// connection dropped, keyed by resumption token. The reaper
+	// goroutine sweeps expired entries periodically; on reconnect
+	// with a matching token the engine claims the entry and
+	// resumes the session with preserved state.
+	parkedMu sync.Mutex
+	parked   map[string]*parkedSession
+}
+
+// parkedSession is the state needed to resume a session after a
+// transient disconnect: the live component instance (carries
+// per-tab fields like Filter / NewTitle), the last Rendered tree
+// (so the first frame after resume can be sent as-is), and the
+// captured user value. Deadline bounds how long the entry stays
+// claimable.
+type parkedSession struct {
+	component Component
+	prev      Rendered
+	user      any
+	deadline  time.Time
 }
 
 // Option configures an Engine at construction time.
@@ -71,6 +95,38 @@ func WithCheckOrigin(fn func(*http.Request) bool) Option {
 	return func(e *Engine) { e.checkOrigin = fn }
 }
 
+// WithSessionResumption enables short-window resumption of a
+// session after a WS disconnect. When set to a non-zero duration,
+// every joined session is assigned an opaque token (sent in the
+// "joined" frame); on transport close the session's component is
+// parked under that token. A reconnect that presents the same
+// token within ttl gets back the same component instance — Filter,
+// NewTitle, and other per-tab state survive across the gap.
+//
+// Zero (the default) disables resumption: every reconnect is a
+// fresh Mount with default state. Most apps want at least 30s for
+// graceful handling of transient network blips and laptop sleep.
+//
+// Memory cost: one parked entry per disconnected session, bounded
+// by ttl. Tabs closed cleanly still park for ttl before the reaper
+// frees them — keep ttl modest unless you've sized the heap for it.
+func WithSessionResumption(ttl time.Duration) Option {
+	return func(e *Engine) { e.parkTTL = ttl }
+}
+
+// WithIdleTimeout closes sessions that see no client message, no
+// notifier wake, and no self-notify for the given duration. The
+// session goroutine exits cleanly and any parked-session
+// resumption state expires with it. Zero (the default) disables
+// the timeout — sessions live as long as the WS connection.
+//
+// Set this in production. Long-lived idle sessions are how a
+// long-tail of forgotten browser tabs accumulates into memory
+// pressure that's only obvious during an incident.
+func WithIdleTimeout(d time.Duration) Option {
+	return func(e *Engine) { e.idleTimeout = d }
+}
+
 // WithUserExtractor wires the engine to whatever auth middleware
 // is upstream of it. The provided func runs once per session join
 // (SSR and WS) with the inbound *http.Request and returns whatever
@@ -96,11 +152,88 @@ func New(opts ...Option) *Engine {
 	e := &Engine{
 		registry: make(map[string]*componentDef),
 		sessions: make(map[*Session]struct{}),
+		parked:   make(map[string]*parkedSession),
 	}
 	for _, opt := range opts {
 		opt(e)
 	}
 	return e
+}
+
+// parkSession stashes a disconnected session's component under
+// its token with a TTL-bounded deadline. No-op when resumption is
+// disabled or the session has no token (defensive — every joined
+// session should have one when parkTTL>0).
+func (e *Engine) parkSession(token string, s *Session) {
+	if e.parkTTL <= 0 || token == "" {
+		return
+	}
+	e.parkedMu.Lock()
+	defer e.parkedMu.Unlock()
+	e.parked[token] = &parkedSession{
+		component: s.component,
+		prev:      s.prev,
+		user:      s.user,
+		deadline:  time.Now().Add(e.parkTTL),
+	}
+}
+
+// claimParked removes and returns the parked entry for token if
+// it exists and hasn't expired. Returns nil otherwise — caller
+// falls through to a fresh Mount.
+func (e *Engine) claimParked(token string) *parkedSession {
+	if token == "" {
+		return nil
+	}
+	e.parkedMu.Lock()
+	defer e.parkedMu.Unlock()
+	p, ok := e.parked[token]
+	if !ok {
+		return nil
+	}
+	delete(e.parked, token)
+	if time.Now().After(p.deadline) {
+		return nil
+	}
+	return p
+}
+
+// reaperLoop periodically removes expired parked entries. Started
+// by template.Module's lifecycle hook and runs until the supplied
+// ctx is cancelled. Sweep period is parkTTL/2 so an entry lives at
+// most ~1.5 * parkTTL before cleanup.
+func (e *Engine) reaperLoop(ctx context.Context) {
+	if e.parkTTL <= 0 {
+		return
+	}
+	period := e.parkTTL / 2
+	if period < time.Second {
+		period = time.Second
+	}
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			now := time.Now()
+			e.parkedMu.Lock()
+			for k, p := range e.parked {
+				if now.After(p.deadline) {
+					delete(e.parked, k)
+				}
+			}
+			e.parkedMu.Unlock()
+		}
+	}
+}
+
+// StartReaper spawns the parked-session reaper goroutine. Safe to
+// call when parkTTL is zero (the goroutine exits immediately).
+// Typically invoked from template.Module's lifecycle hook.
+func (e *Engine) StartReaper(ctx context.Context) {
+	go e.reaperLoop(ctx)
 }
 
 // Register pairs a component name with its parsed template source

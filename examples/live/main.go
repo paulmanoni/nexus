@@ -36,6 +36,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/live/template"
@@ -202,7 +203,13 @@ func (c *PostRow) Refresh(_ *template.Ctx) error { return nil }
 // Posts.nlt's <PostRow /> tag but not reachable as a URL.
 var liveModule = nexus.Module("posts",
 	nexus.Provide(NewPostsRepo),
-	template.Module(liveTemplates),
+	template.Module(liveTemplates,
+		// Production knobs: drop idle tabs after 30 minutes, keep
+		// disconnected sessions around for 30 seconds so a
+		// network blip doesn't wipe Filter/NewTitle.
+		template.WithIdleTimeout(30*time.Minute),
+		template.WithSessionResumption(30*time.Second),
+	),
 	nexus.AsComponent("Posts",
 		func(repo *PostsRepo) (*PostsList, error) {
 			return &PostsList{repo: repo}, nil

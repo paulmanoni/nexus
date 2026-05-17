@@ -13,14 +13,18 @@ import (
 // Module is the fx module for the live template engine. The
 // supplied fs.FS is the source of all .nlt templates referenced
 // by template.WithTemplate options on AsComponent registrations
-// in the same module:
+// in the same module. Additional Options configure the engine
+// (origin check, user extractor, idle timeout, session
+// resumption, etc.):
 //
 //	//go:embed templates/*.nlt
 //	var liveTemplates embed.FS
 //
 //	var Module = nexus.Module("posts",
-//	    nexus.Provide(live.New),
-//	    template.Module(liveTemplates),
+//	    template.Module(liveTemplates,
+//	        template.WithIdleTimeout(30 * time.Minute),
+//	        template.WithSessionResumption(30 * time.Second),
+//	    ),
 //	    nexus.AsComponent("Posts",
 //	        func(repo *PostsRepo) (*PostsList, error) { ... },
 //	        template.WithTemplate("templates/posts"),
@@ -36,24 +40,40 @@ import (
 //   - fs.FS — the supplied template source (used by the adapter
 //     to read .nlt bytes at registration time)
 //   - nexus.LiveAdapter — the seam nexus.AsComponent uses to
-//     register components on the engine. Auto-mounts the embedded
-//     client runtime at /__live/nexus.js on first AsComponent.
-func Module(src fs.FS) nexus.Option {
+//     register components on the engine.
+//
+// And runs two background goroutines via fx lifecycle hooks:
+//   - the parked-session reaper (idempotent; no-op when
+//     WithSessionResumption isn't set)
+//   - auto-mounts the embedded client runtime at /__live/nexus.js
+//     on first AsComponent.
+func Module(src fs.FS, opts ...Option) nexus.Option {
 	return nexus.Raw(fx.Module("nexus/live/template",
 		fx.Supply(fx.Annotate(src, fx.As(new(fs.FS)))),
-		fx.Provide(NewEngine),
+		fx.Provide(func(n *live.Notifier) *Engine {
+			full := append([]Option{WithNotifier(n)}, opts...)
+			return New(full...)
+		}),
 		fx.Provide(NewLiveAdapter),
+		fx.Invoke(func(lc fx.Lifecycle, e *Engine) {
+			ctx, cancel := context.WithCancel(context.Background())
+			lc.Append(fx.Hook{
+				OnStart: func(context.Context) error {
+					e.StartReaper(ctx)
+					return nil
+				},
+				OnStop: func(context.Context) error {
+					cancel()
+					return nil
+				},
+			})
+		}),
 	))
 }
 
-// NewEngine is the fx-friendly constructor. Takes the *live.Notifier
-// from the graph (provide one via fx.Provide(live.New) or pass nil
-// upstream via fx.Supply((*live.Notifier)(nil)) if you don't want
-// notify fan-out).
-//
-// Helpers are configured per-Engine; expose your own
-// fx.Provide(NewHelpers) → map[string]any then use a thin wrapper
-// constructor here if you need them in the DI graph.
+// NewEngine is the fx-friendly constructor used by callers that
+// build their own fx graph instead of going through Module. Takes
+// the *live.Notifier from the graph; no other configuration.
 func NewEngine(n *live.Notifier) *Engine {
 	return New(WithNotifier(n))
 }
