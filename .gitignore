@@ -4,6 +4,8 @@
 /nexus
 *.test
 *.out
+# `go build ./examples/X` drops a binary at examples/X/X by default.
+examples/live/live
 
 # nexus build cache (per-deployment shadow source + overlay.json)
 .nexus/build/
