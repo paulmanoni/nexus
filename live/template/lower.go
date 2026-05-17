@@ -227,7 +227,83 @@ func (l *lowerer) lowerElement(elem *ElementNode, b *fragBuilder) error {
 		return l.lowerComponent(elem, b)
 	}
 
+	// <nl-island /> is built-in sugar over a div with the
+	// nl-island / nl-island-src / nl-island-props attribute
+	// trio. Pure server-side rewrite — the client only ever
+	// sees the desugared div, so all the existing morph /
+	// lifecycle / channel logic applies unchanged.
+	if strings.EqualFold(elem.Tag, "nl-island") {
+		return l.lowerIslandTag(elem, b)
+	}
+
 	return l.lowerHTMLElement(elem, b)
+}
+
+// lowerIslandTag desugars <nl-island name="X" src="Y"
+// :props="Z"> into <div nl-island="X" nl-island-src="Y"
+// nl-island-props="<JSON of Z>">. Structural directives
+// (nl-if / nl-for) on the tag still work because
+// lowerSiblings handles them before reaching us — by the
+// time we run, only non-structural attrs remain.
+//
+// Recognized attrs:
+//
+//	name="…"   →  the island's logical name (required)
+//	src="…"    →  ES module URL the client dynamic-imports (required)
+//	:props="…" →  expression whose value JSON-encodes into props
+//	:src="…"   →  dynamic src (rare; e.g. routing the URL through
+//	              a build-hash; uses the regular bind path)
+//
+// Anything else triggers an error rather than silently
+// passing through — keeps the surface honest while it's
+// young; we can relax later if there's a real need.
+func (l *lowerer) lowerIslandTag(elem *ElementNode, b *fragBuilder) error {
+	var name, src string
+	var nameSet, srcSet bool
+	var propsAttr *Attribute
+	var dynamicSrc *Attribute
+	for i := range elem.Attrs {
+		a := &elem.Attrs[i]
+		switch {
+		case a.Kind == AttrPlain && a.Name == "name":
+			name = a.Value
+			nameSet = true
+		case a.Kind == AttrPlain && a.Name == "src":
+			src = a.Value
+			srcSet = true
+		case a.Kind == AttrBind && a.Name == "props":
+			propsAttr = a
+		case a.Kind == AttrBind && a.Name == "src":
+			dynamicSrc = a
+		default:
+			return &ParseError{
+				Pos: a.Position,
+				Msg: fmt.Sprintf("<nl-island>: unsupported attribute %q (use name, src, :src, :props)", a.Raw),
+			}
+		}
+	}
+	if !nameSet || name == "" {
+		return &ParseError{Pos: elem.Position, Msg: "<nl-island>: missing name=\"…\""}
+	}
+	if !srcSet && dynamicSrc == nil {
+		return &ParseError{Pos: elem.Position, Msg: "<nl-island>: missing src=\"…\" (or :src=\"…\")"}
+	}
+
+	b.text(`<div nl-island="` + name + `"`)
+	if dynamicSrc != nil {
+		b.text(` nl-island-src="`)
+		b.slot(ExprSlot{Expr: dynamicSrc.Value, Pos: dynamicSrc.Position})
+		b.text(`"`)
+	} else {
+		b.text(` nl-island-src="` + src + `"`)
+	}
+	if propsAttr != nil {
+		b.text(` nl-island-props="`)
+		b.slot(IslandPropsSlot{Expr: propsAttr.Value, Pos: propsAttr.Position})
+		b.text(`"`)
+	}
+	b.text(`></div>`)
+	return nil
 }
 
 // lowerElementBody emits an element's body assuming its structural
@@ -240,6 +316,9 @@ func (l *lowerer) lowerElementBody(elem *ElementNode, b *fragBuilder) error {
 	}
 	if elem.IsComponent {
 		return l.lowerComponent(elem, b)
+	}
+	if strings.EqualFold(elem.Tag, "nl-island") {
+		return l.lowerIslandTag(elem, b)
 	}
 	return l.lowerHTMLElement(elem, b)
 }
