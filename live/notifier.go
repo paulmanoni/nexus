@@ -20,25 +20,38 @@ import "sync"
 // API supports more for future widgets) Subscribe to receive a
 // nudge channel.
 //
+// Topic-aware: NotifyTopic("post:42") wakes only subscribers
+// who joined that topic via SubscribeTopic; the un-topic'd
+// Notify() and Subscribe() pair preserves the v0 broadcast
+// behavior for callers that don't care about routing. The two
+// surfaces overlap deliberately — Notify() also wakes every
+// topic subscriber so a global "everything changed" still
+// reaches everyone, while NotifyTopic stays scoped.
+//
 // Notify is cheap (single mutex acquire + N non-blocking sends) and
 // safe from any goroutine. The zero value is unusable — callers
-// must go through New so the listeners slice is initialized.
+// must go through New so the maps are initialized.
 type Notifier struct {
 	mu        sync.Mutex
-	listeners []chan struct{}
+	listeners []chan struct{}            // broadcast subscribers (Subscribe)
+	topics    map[string][]chan struct{} // topic → subscribers (SubscribeTopic)
 }
 
 // New returns a fresh Notifier. Typically created once at app boot
 // and threaded into each mutating subsystem via SetChangeHook (or
 // the equivalent setter on each package).
 func New() *Notifier {
-	return &Notifier{}
+	return &Notifier{
+		topics: make(map[string][]chan struct{}),
+	}
 }
 
 // Notify wakes every current subscriber whose channel has buffer
-// room. Subscribers whose channel already has a pending nudge are
-// left alone — coalescing N rapid mutations into one wake-up is the
-// whole point. Never blocks the caller.
+// room. Includes both broadcast subscribers (Subscribe) and every
+// topic subscriber (SubscribeTopic), so "global change" callers
+// don't need to know what topics exist. Subscribers whose channel
+// already has a pending nudge are left alone — coalescing N rapid
+// mutations into one wake-up is the whole point. Never blocks.
 func (n *Notifier) Notify() {
 	if n == nil {
 		return
@@ -46,21 +59,41 @@ func (n *Notifier) Notify() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, ch := range n.listeners {
-		select {
-		case ch <- struct{}{}:
-		default:
-			// Already pending — coalesce. The subscriber will see
-			// the next read as one wake-up that covers all the
-			// notifies it missed.
+		nudge(ch)
+	}
+	for _, subs := range n.topics {
+		for _, ch := range subs {
+			nudge(ch)
 		}
 	}
 }
 
-// Subscribe registers a new listener and returns its nudge channel
-// plus a cancel func. The channel has buffer 1 so a single pending
-// notify is held even when the subscriber is busy. Cancel removes
-// the listener and closes the channel; subsequent Notify calls
-// skip it.
+// NotifyTopic wakes only subscribers of the given topic.
+// Broadcast subscribers (Subscribe with no topic) are NOT woken —
+// they're for "tell me about everything" and would defeat the
+// scoping if every topic notify also woke them. Use Notify() for
+// the global case.
+//
+// Topic strings are arbitrary; common patterns are entity-scoped
+// keys like "post:42" or "user:alice/inbox". An empty topic is a
+// no-op (NotifyTopic("") matches no one — SubscribeTopic rejects
+// empty strings).
+func (n *Notifier) NotifyTopic(topic string) {
+	if n == nil || topic == "" {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, ch := range n.topics[topic] {
+		nudge(ch)
+	}
+}
+
+// Subscribe registers a new broadcast listener and returns its
+// nudge channel plus a cancel func. The channel has buffer 1 so a
+// single pending notify is held even when the subscriber is busy.
+// Cancel removes the listener and closes the channel; subsequent
+// Notify calls skip it.
 //
 // Cancel is safe to call multiple times.
 func (n *Notifier) Subscribe() (<-chan struct{}, func()) {
@@ -84,4 +117,56 @@ func (n *Notifier) Subscribe() (<-chan struct{}, func()) {
 		})
 	}
 	return ch, cancel
+}
+
+// SubscribeTopic registers a listener scoped to one topic. Same
+// channel + cancel contract as Subscribe; the difference is that
+// only NotifyTopic(topic) and the global Notify() wake the
+// channel — NotifyTopic for other topics leaves it alone.
+//
+// Empty topic returns a closed channel and a no-op cancel — the
+// caller usually has a programming error in that case (constructed
+// a topic key from missing input), and a never-firing channel
+// makes the symptom visible without panicking.
+func (n *Notifier) SubscribeTopic(topic string) (<-chan struct{}, func()) {
+	if topic == "" {
+		ch := make(chan struct{})
+		close(ch)
+		return ch, func() {}
+	}
+	ch := make(chan struct{}, 1)
+	n.mu.Lock()
+	n.topics[topic] = append(n.topics[topic], ch)
+	n.mu.Unlock()
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			n.mu.Lock()
+			subs := n.topics[topic]
+			for i, c := range subs {
+				if c == ch {
+					n.topics[topic] = append(subs[:i], subs[i+1:]...)
+					break
+				}
+			}
+			if len(n.topics[topic]) == 0 {
+				delete(n.topics, topic)
+			}
+			n.mu.Unlock()
+			close(ch)
+		})
+	}
+	return ch, cancel
+}
+
+// nudge does the non-blocking send dance used by Notify and
+// NotifyTopic. Extracted so the two callers don't drift.
+func nudge(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+		// Already pending — coalesce. The subscriber sees one
+		// wake-up covering all the notifies it missed.
+	}
 }

@@ -121,9 +121,16 @@ func TestServer_UnknownComponent_Returns404(t *testing.T) {
 
 // --- WS path --------------------------------------------------------
 
-// dialWS opens a websocket against the test server, doing the
-// http:// → ws:// scheme swap that gorilla expects.
+// dialWS opens a websocket against the test server, does the
+// http:// → ws:// scheme swap that gorilla expects, and writes
+// the initial join frame the server reads before starting Run.
+// Tests that want to drive the resumption path can dial with
+// dialWSWithToken; everything else gets a fresh session.
 func dialWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
+	return dialWSWithToken(t, srv, "")
+}
+
+func dialWSWithToken(t *testing.T, srv *httptest.Server, token string) *websocket.Conn {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -131,6 +138,7 @@ func dialWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	writeFrame(t, conn, Inbound{Type: "join", Token: token})
 	return conn
 }
 

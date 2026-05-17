@@ -17,6 +17,12 @@ type Inbound struct {
 	Params    map[string]string `json:"params,omitempty"`
 	Name      string            `json:"name,omitempty"`
 	Payload   Payload           `json:"payload,omitempty"`
+	// Token, when present on a join, identifies a previous session
+	// the server may have parked at disconnect. When the token
+	// matches a live parked entry within its TTL, the server
+	// resumes that session (preserving Filter/NewTitle/etc.);
+	// otherwise it falls through to a fresh Mount.
+	Token string `json:"token,omitempty"`
 }
 
 // Outbound is the discriminated union of all server → client
@@ -36,4 +42,10 @@ type Outbound struct {
 	Msg          string    `json:"msg,omitempty"`
 	Event        string    `json:"event,omitempty"`
 	EventPayload any       `json:"payload,omitempty"`
+	// Token accompanies "joined" frames. The client stores it in
+	// memory and sends it back in the next join on reconnect; the
+	// server uses it to find a parked session and resume state.
+	// Rotated on every join (resumption included) so leaking a
+	// token only enables one reconnect, not perpetual hijack.
+	Token string `json:"token,omitempty"`
 }

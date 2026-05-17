@@ -103,17 +103,38 @@ func (e *Engine) serveWS(w http.ResponseWriter, r *http.Request, def *componentD
 	defer conn.Close()
 
 	tr := newWSTransport(conn)
-	sess, err := newSession(e, def, params, tr)
-	if err != nil {
-		_ = tr.Send(r.Context(), Outbound{Type: "error", Msg: err.Error()})
+
+	// Read the initial join frame to pick up any resumption token.
+	// A bounded timeout protects the goroutine from a misbehaving
+	// client that connects but never speaks. The client always
+	// sends "join" immediately on socket open, so 5s is generous.
+	joinCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	join, joinErr := tr.Recv(joinCtx)
+	cancel()
+	if joinErr != nil {
+		_ = tr.Send(r.Context(), Outbound{Type: "error", Msg: "join read: " + joinErr.Error()})
 		return
 	}
-	// Extract user before Run takes over the request context. The
-	// captured value is stable for the lifetime of the session —
-	// auth changes mid-connection (token rotation, logout) aren't
-	// reflected until the client reconnects, which matches the
-	// typical SPA pattern.
-	sess.user = e.extractUser(r)
+	if join.Type != "join" {
+		_ = tr.Send(r.Context(), Outbound{Type: "error", Msg: "first frame must be 'join'"})
+		return
+	}
+
+	var sess *Session
+	if parked := e.claimParked(join.Token); parked != nil {
+		sess = newResumedSession(e, def, params, tr, parked)
+	} else {
+		var nsErr error
+		sess, nsErr = newSession(e, def, params, tr)
+		if nsErr != nil {
+			_ = tr.Send(r.Context(), Outbound{Type: "error", Msg: nsErr.Error()})
+			return
+		}
+		// Extract user only on fresh join; resumed sessions keep
+		// the parked user value so a token-rotated reconnect
+		// doesn't have to re-authenticate the request.
+		sess.user = e.extractUser(r)
+	}
 	_ = sess.Run(r.Context())
 }
 

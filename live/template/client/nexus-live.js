@@ -24,51 +24,98 @@
 
   const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
   const wsURL = wsProto + "//" + location.host + location.pathname + location.search;
-  const sock = new WebSocket(wsURL);
 
   // Local mirror of the server's Rendered tree. Set on "joined";
   // mutated in place on every "diff". All renders read from here.
   let tree = null;
 
-  sock.addEventListener("open", () => {
-    sock.send(JSON.stringify({
-      type: "join",
-      component: componentName,
-      params: Object.fromEntries(new URLSearchParams(location.search)),
-    }));
+  // Live socket — replaced on every reconnect. Wrap in a holder
+  // so the closures (event delegation, push targets) always read
+  // the current one rather than capturing a stale reference.
+  let sock = null;
+
+  // Session-resumption token from the most recent "joined" frame.
+  // Sent in the next join after a disconnect so the server can
+  // restore Filter/NewTitle/etc. from its parked-session pool
+  // (engine.WithSessionResumption). Cleared on a clean close.
+  let resumeToken = null;
+
+  // Reconnect bookkeeping. attempt grows the backoff window;
+  // closedByUser short-circuits the loop when the user navigates
+  // away or explicitly disconnects.
+  let attempt = 0;
+  let closedByUser = false;
+  const MAX_BACKOFF_MS = 30_000;
+
+  function connect() {
+    sock = new WebSocket(wsURL);
+
+    sock.addEventListener("open", () => {
+      attempt = 0;
+      sock.send(JSON.stringify({
+        type: "join",
+        component: componentName,
+        params: Object.fromEntries(new URLSearchParams(location.search)),
+        // token is omitted on the very first join — server-side
+        // claimParked treats "" as "no resumption requested".
+        token: resumeToken || undefined,
+      }));
+    });
+
+    sock.addEventListener("message", (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch (_) { return; }
+      switch (msg.type) {
+        case "joined":
+          if (msg.token) resumeToken = msg.token;
+          tree = msg.r;
+          render();
+          break;
+        case "diff":
+          applyDiff(tree, msg.d);
+          render();
+          break;
+        case "push":
+          mount.dispatchEvent(new CustomEvent("nl:" + msg.event, { detail: msg.payload }));
+          break;
+        case "error":
+          console.error("[nl] server:", msg.msg);
+          break;
+        case "reload":
+          location.reload();
+          break;
+        case "pong":
+          break;
+      }
+    });
+
+    sock.addEventListener("close", (ev) => {
+      // Code 1000 = normal closure (we initiated). Code 1001 =
+      // going away (server shutting down, page navigating). In
+      // both cases the user doesn't want a reconnect spinner.
+      if (closedByUser || ev.code === 1000) {
+        console.info("[nl] disconnected");
+        return;
+      }
+      // Exponential backoff with a cap; randomized jitter (50%)
+      // so a server restart doesn't cause every client to
+      // reconnect in lockstep.
+      attempt += 1;
+      const base = Math.min(250 * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+      const delay = base * (0.5 + Math.random() * 0.5);
+      console.info(`[nl] reconnect in ${Math.round(delay)}ms (attempt ${attempt})`);
+      setTimeout(connect, delay);
+    });
+  }
+
+  // Clean-close on navigation so the server can free resources
+  // immediately instead of waiting for parkTTL to expire.
+  window.addEventListener("beforeunload", () => {
+    closedByUser = true;
+    if (sock && sock.readyState === WebSocket.OPEN) sock.close(1000);
   });
 
-  sock.addEventListener("message", (e) => {
-    let msg;
-    try { msg = JSON.parse(e.data); } catch (_) { return; }
-    switch (msg.type) {
-      case "joined":
-        tree = msg.r;
-        render();
-        break;
-      case "diff":
-        applyDiff(tree, msg.d);
-        render();
-        break;
-      case "push":
-        mount.dispatchEvent(new CustomEvent("nl:" + msg.event, { detail: msg.payload }));
-        break;
-      case "error":
-        console.error("[nl] server:", msg.msg);
-        break;
-      case "reload":
-        location.reload();
-        break;
-      case "pong":
-        break;
-    }
-  });
-
-  sock.addEventListener("close", () => {
-    // v1: no auto-reconnect. The session is gone; a refresh starts fresh.
-    // A v2 reconnect path would re-send "join" with a signed state token.
-    console.info("[nl] disconnected");
-  });
+  connect();
 
   // -------- Stitch (mirror of server rendered.go HTML) ----------------
 

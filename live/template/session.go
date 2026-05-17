@@ -2,6 +2,7 @@ package template
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 )
 
@@ -49,6 +51,16 @@ type Session struct {
 	// lifetime of the session.
 	user any
 
+	// token is the session-resumption identifier. Assigned by
+	// newSession and shipped to the client in the "joined" frame.
+	// Empty when resumption is disabled (engine.parkTTL == 0).
+	token string
+
+	// resumed is set true when the session was constructed from a
+	// parked entry — skips Mount on Run start to preserve the
+	// per-tab state the parked component holds.
+	resumed bool
+
 	component Component
 	prev      Rendered
 
@@ -68,6 +80,7 @@ func newSession(engine *Engine, def *componentDef, params Params, tr Transport) 
 	}
 	s := &Session{
 		id:         randID(),
+		token:      newSessionToken(engine),
 		engine:     engine,
 		def:        def,
 		params:     params,
@@ -76,6 +89,40 @@ func newSession(engine *Engine, def *componentDef, params Params, tr Transport) 
 		selfNotify: make(chan struct{}, 1),
 	}
 	return s, nil
+}
+
+// newResumedSession reconstructs a session from a parked entry:
+// the component and last-rendered tree are adopted, the resumed
+// flag is set so Run skips Mount, and a fresh token is issued so
+// the client gets a rotated value (limits replay if a stale token
+// leaks). Caller obtains parked via Engine.claimParked.
+func newResumedSession(engine *Engine, def *componentDef, params Params, tr Transport, parked *parkedSession) *Session {
+	return &Session{
+		id:         randID(),
+		token:      newSessionToken(engine),
+		resumed:    true,
+		engine:     engine,
+		def:        def,
+		params:     params,
+		tr:         tr,
+		user:       parked.user,
+		component:  parked.component,
+		prev:       parked.prev,
+		selfNotify: make(chan struct{}, 1),
+	}
+}
+
+// newSessionToken returns an opaque resumption token, or "" when
+// session resumption is disabled on the engine. 64 bits of
+// crypto/rand are enough — the token rotates on every join and
+// pairs with origin/IP checks for actual auth.
+func newSessionToken(e *Engine) string {
+	if e.parkTTL <= 0 {
+		return ""
+	}
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%x", b)
 }
 
 // Run executes the session's main loop. It blocks until the
@@ -94,11 +141,19 @@ func (s *Session) Run(ctx context.Context) error {
 	// to us, and so test/debug tooling can enumerate live sessions.
 	s.engine.trackSession(s)
 	defer s.engine.untrackSession(s)
+	// Park the component on exit so a quick reconnect with the
+	// same token can resume. No-op when resumption is disabled or
+	// no token was assigned.
+	defer s.parkOnExit()
 
-	mountCtx := s.newCtx(ctx)
-	if err := s.safeMount(mountCtx); err != nil {
-		_ = s.send(ctx, Outbound{Type: "error", Msg: "mount: " + err.Error()})
-		return fmt.Errorf("mount: %w", err)
+	// Skip Mount on a resumed session — the parked component
+	// already has the user's state. Mount would clobber it.
+	if !s.resumed {
+		mountCtx := s.newCtx(ctx)
+		if err := s.safeMount(mountCtx); err != nil {
+			_ = s.send(ctx, Outbound{Type: "error", Msg: "mount: " + err.Error()})
+			return fmt.Errorf("mount: %w", err)
+		}
 	}
 
 	// Initial render — establishes baseline statics on the client.
@@ -106,16 +161,27 @@ func (s *Session) Run(ctx context.Context) error {
 	// is fresh before the very first frame.
 	s.refresh(ctx)
 	s.prev = s.render()
-	if err := s.send(ctx, Outbound{Type: "joined", Rendered: &s.prev}); err != nil {
+	if err := s.send(ctx, Outbound{Type: "joined", Rendered: &s.prev, Token: s.token}); err != nil {
 		return fmt.Errorf("send joined: %w", err)
 	}
 
 	// External-mutation subscription. The notifier is shared across
 	// sessions; coalescing is its job. Skip if no notifier configured.
+	//
+	// Two paths: a Topicer component subscribes per-topic so it only
+	// wakes on relevant changes; everything else falls back to the
+	// broadcast subscription. Multiple topic channels are merged into
+	// a single changeCh via a fan-in goroutine — the main loop's
+	// select stays compact regardless of topic count.
 	var changeCh <-chan struct{}
 	var cancelChange func()
 	if s.engine.notifier != nil {
-		changeCh, cancelChange = s.engine.notifier.Subscribe()
+		if t, ok := s.component.(Topicer); ok {
+			topics := t.Topics(s.newCtx(ctx))
+			changeCh, cancelChange = s.subscribeTopics(ctx, topics)
+		} else {
+			changeCh, cancelChange = s.engine.notifier.Subscribe()
+		}
 		defer cancelChange()
 	}
 
@@ -126,10 +192,29 @@ func (s *Session) Run(ctx context.Context) error {
 	recvCh := make(chan recvResult, 1)
 	go s.pumpRecv(ctx, recvCh)
 
+	// Idle-timeout channel: reset on every loop iteration that
+	// observed activity. Nil channel when no timeout is configured
+	// — select never picks a nil case, so the timeout path is a
+	// no-op for engines without WithIdleTimeout.
+	var idleC <-chan time.Time
+	var idleTimer *time.Timer
+	if s.engine.idleTimeout > 0 {
+		idleTimer = time.NewTimer(s.engine.idleTimeout)
+		idleC = idleTimer.C
+		defer idleTimer.Stop()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+
+		case <-idleC:
+			// No client / notifier / self-notify activity for the
+			// configured window. Exit cleanly; the deferred
+			// untrack + transport close take it from here.
+			_ = s.send(ctx, Outbound{Type: "error", Msg: "session idle timeout"})
+			return nil
 
 		case res := <-recvCh:
 			if res.err != nil {
@@ -139,16 +224,85 @@ func (s *Session) Run(ctx context.Context) error {
 				return fmt.Errorf("recv: %w", res.err)
 			}
 			s.handleInbound(ctx, res.msg)
+			resetIdle(idleTimer, s.engine.idleTimeout)
 			// Refill the pump for the next inbound message.
 			go s.pumpRecv(ctx, recvCh)
 
 		case <-changeCh:
 			s.diffAndSend(ctx)
+			resetIdle(idleTimer, s.engine.idleTimeout)
 
 		case <-s.selfNotify:
 			s.diffAndSend(ctx)
+			resetIdle(idleTimer, s.engine.idleTimeout)
 		}
 	}
+}
+
+// resetIdle drains and resets the timer when configured. Idle
+// timer is nil when no timeout is set, in which case this is a
+// no-op. The drain handles the corner case where Reset is called
+// after the timer fired but before its tick was selected.
+func resetIdle(t *time.Timer, d time.Duration) {
+	if t == nil || d <= 0 {
+		return
+	}
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(d)
+}
+
+// subscribeTopics turns the Topicer's slice into a single merged
+// changeCh. Each per-topic subscription's nudges are forwarded
+// into one fan-in channel; the returned cancel tears down every
+// underlying subscription plus the fan-in goroutine.
+//
+// Empty topic list returns a nil channel — the select case for it
+// is never selectable, effectively opting the session out of
+// notifier wakes entirely (handler/self-notify still work). That's
+// the documented Topicer escape hatch for client-only components.
+func (s *Session) subscribeTopics(ctx context.Context, topics []string) (<-chan struct{}, func()) {
+	if len(topics) == 0 {
+		return nil, func() {}
+	}
+	merged := make(chan struct{}, 1)
+	cancels := make([]func(), 0, len(topics))
+	stopFan := make(chan struct{})
+	for _, t := range topics {
+		ch, cancel := s.engine.notifier.SubscribeTopic(t)
+		cancels = append(cancels, cancel)
+		go func() {
+			for {
+				select {
+				case <-stopFan:
+					return
+				case _, ok := <-ch:
+					if !ok {
+						return
+					}
+					// Coalesce into merged with the same
+					// non-blocking-send pattern the notifier
+					// itself uses.
+					select {
+					case merged <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}()
+	}
+	cancel := func() {
+		close(stopFan)
+		for _, c := range cancels {
+			c()
+		}
+	}
+	_ = ctx // reserved for future per-topic cancellation semantics
+	return merged, cancel
 }
 
 type recvResult struct {
@@ -181,8 +335,9 @@ func (s *Session) handleInbound(ctx context.Context, msg Inbound) {
 	case "ping":
 		_ = s.send(ctx, Outbound{Type: "pong"})
 	case "join":
-		// We accept the initial join out-of-band in server.go before
-		// invoking Run; an inbound join here is a protocol error.
+		// serveWS consumes the initial join before starting Run,
+		// so a join arriving here is a client error — surface it
+		// but don't disconnect; the session is already running.
 		_ = s.send(ctx, Outbound{Type: "error", Msg: "duplicate join"})
 	default:
 		_ = s.send(ctx, Outbound{Type: "error", Msg: "unknown message type: " + msg.Type})
@@ -357,6 +512,15 @@ func (s *Session) dispatchEvent(ctx context.Context, name string, payload Payloa
 			_ = s.send(ctx, Outbound{Type: "error", Msg: e.Error()})
 		}
 	}
+}
+
+// parkOnExit hands the session's component to the engine's
+// parked-session pool so a fast reconnect with the same token
+// resumes state. No-op when resumption is disabled or this
+// session has no token (newSession only assigns one when the
+// engine has parkTTL > 0).
+func (s *Session) parkOnExit() {
+	s.engine.parkSession(s.token, s)
 }
 
 // safeMount wraps Mount with panic recovery so a misbehaving

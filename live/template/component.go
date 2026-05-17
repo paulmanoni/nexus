@@ -27,6 +27,29 @@ type EventDispatcher interface {
 	HandleEvent(ctx *Ctx, event string, payload Payload) error
 }
 
+// Topicer is an optional hook a component implements to scope its
+// notifier subscription to specific topics. When implemented, the
+// session subscribes to each returned topic on join (via
+// notifier.SubscribeTopic) and re-renders only when those topics
+// fire — instead of waking on every global Notify across the app.
+//
+// Critical for apps with many concurrent sessions: without topics,
+// a single mutation in one corner of the system re-renders every
+// connected live page. With topics, only the sessions actually
+// interested in "post:42" wake when post 42 changes.
+//
+// Components that don't implement Topicer fall back to broadcast
+// subscription (every Notify wakes them), preserving the v0
+// behavior. Return an empty slice to opt out entirely (the
+// session won't subscribe to anything — useful for client-only
+// state components driven solely by events).
+//
+// Topics() is called once at session start; the result is cached
+// for the session's lifetime. Topics can't change mid-session.
+type Topicer interface {
+	Topics(ctx *Ctx) []string
+}
+
 // Refresher is an optional hook the session calls before every
 // render — both the initial render after Mount and every
 // subsequent re-render (event-, notifier-, or self-Notify-
