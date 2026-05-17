@@ -85,7 +85,7 @@ func (e *Engine) serveSSR(w http.ResponseWriter, r *http.Request, def *component
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	fmt.Fprint(w, ssrShell(def.name, body, def.style))
+	fmt.Fprint(w, ssrShell(def.name, body, def.style, def.scopeID))
 }
 
 // serveWS upgrades the request, sends the initial join frame, and
@@ -185,25 +185,37 @@ func paramsFromRequest(r *http.Request) Params {
 	return p
 }
 
-// ssrShell wraps the rendered component body in a minimal HTML page.
-// The data-nl-component attribute lets the client JS identify which
-// component to "join" for the live channel; data-nl-id is the (yet
-// unallocated) session ID — the client requests a new ID on join.
+// ssrShell wraps the rendered component body in a minimal HTML
+// page. The data-nl-component attribute lets the client JS
+// identify which component to "join" for the live channel; the
+// data-nl-scope attribute pairs with the scoped CSS rewrite
+// (when style.Scoped is true) so .foo selectors only match
+// elements inside this component's container.
 //
-// Scoped styles, when present, ship inline so the first paint isn't
-// FOUC'd. A v2 build step would extract them to a /__live/styles.css.
-func ssrShell(componentName, body string, style *Style) string {
+// Scoped styles, when present, ship inline so the first paint
+// isn't FOUC'd. A v2 build step would extract them to a
+// /__live/styles.css. The rewrite is regex-light — see
+// rewriteScopedCSS for the documented limitations.
+func ssrShell(componentName, body string, style *Style, scopeID string) string {
 	var sb strings.Builder
 	sb.WriteString(`<!doctype html><html><head><meta charset="utf-8"><title>`)
 	sb.WriteString(html.EscapeString(componentName))
 	sb.WriteString(`</title>`)
 	if style != nil && style.Body != "" {
 		sb.WriteString(`<style>`)
-		sb.WriteString(style.Body)
+		if style.Scoped {
+			sb.WriteString(rewriteScopedCSS(style.Body, scopeID))
+		} else {
+			sb.WriteString(style.Body)
+		}
 		sb.WriteString(`</style>`)
 	}
-	sb.WriteString(`</head><body><div data-nl-component="`)
+	sb.WriteString(`<body><div data-nl-component="`)
 	sb.WriteString(html.EscapeString(componentName))
+	if style != nil && style.Scoped {
+		sb.WriteString(`" data-nl-scope="`)
+		sb.WriteString(scopeID)
+	}
 	sb.WriteString(`">`)
 	sb.WriteString(body)
 	sb.WriteString(`</div><script src="`)
