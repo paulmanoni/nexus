@@ -591,12 +591,10 @@ export default defineConfig({
   plugins: [vue()],
   // Inline Vue's compile-time flags into OUR code (the SFC's
   // generated render fn). The Vue runtime ITSELF (imported
-  // from esm.sh below) still needs them as runtime globals —
-  // set those via an inline <script> in your .nlt template:
-  //   <script>
-  //     window.__VUE_OPTIONS_API__ = true;
-  //     window.__VUE_PROD_DEVTOOLS__ = false;
-  //   </script>
+  // from esm.sh below) reads them as runtime globals — those
+  // are set by /__live/nexus.js at the top of the script
+  // before any island dynamic-imports Vue, so you don't have
+  // to do anything in your template.
   define: {
     __VUE_OPTIONS_API__: 'true',
     __VUE_PROD_DEVTOOLS__: 'false',

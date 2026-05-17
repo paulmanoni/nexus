@@ -16,6 +16,29 @@
 (function () {
   "use strict";
 
+  // -------- Vue ESM-bundler compile-time flags ----------------------
+  //
+  // Vue 3's esm.sh distribution is the ESM-bundler build, which reads
+  // these flags as RUNTIME globals (Vite/webpack normally inline them
+  // at build time via `define`). Without them, runtime-core throws
+  // `ReferenceError: __VUE_PROD_DEVTOOLS__ is not defined` the first
+  // time anything touches the runtime.
+  //
+  // Set unconditionally + idempotently. Non-Vue islands pay nothing
+  // beyond three boolean writes; Vue users no longer need to remember
+  // to add an inline <script> to every template. Runs before any
+  // island module dynamic-imports Vue because syncIslands() (where
+  // the imports happen) lives below in this same script.
+  if (typeof window.__VUE_OPTIONS_API__ === "undefined") {
+    window.__VUE_OPTIONS_API__ = true;
+  }
+  if (typeof window.__VUE_PROD_DEVTOOLS__ === "undefined") {
+    window.__VUE_PROD_DEVTOOLS__ = false;
+  }
+  if (typeof window.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__ === "undefined") {
+    window.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__ = false;
+  }
+
   const mount = document.querySelector("[data-nl-component]");
   if (!mount) return;
   const componentName = mount.getAttribute("data-nl-component");
