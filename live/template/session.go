@@ -600,7 +600,28 @@ func (s *Session) handleNavigate(ctx context.Context, path string, params Params
 	}
 	s.refresh(ctx)
 	s.prev = s.render()
-	_ = s.send(ctx, Outbound{Type: "joined", Rendered: &s.prev, Path: path, Token: s.token})
+
+	// Ship style + scope so the client can swap the head's
+	// <style> tag together with the body content. Skip when
+	// the new component has no <style> block — clients with no
+	// style tag yet will just create one.
+	var styleBody, scope string
+	if def.style != nil && def.style.Body != "" {
+		if def.style.Scoped {
+			styleBody = rewriteScopedCSS(def.style.Body, def.scopeID)
+			scope = def.scopeID
+		} else {
+			styleBody = def.style.Body
+		}
+	}
+	_ = s.send(ctx, Outbound{
+		Type:     "joined",
+		Rendered: &s.prev,
+		Path:     path,
+		Token:    s.token,
+		Style:    styleBody,
+		Scope:    scope,
+	})
 }
 
 // safeMount wraps Mount with panic recovery so a misbehaving
