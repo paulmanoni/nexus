@@ -3,6 +3,7 @@ package template
 import (
 	"fmt"
 	"io/fs"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -80,9 +81,22 @@ func (a *liveAdapter) RegisterComponent(spec *nexus.ComponentSpec, factory func(
 
 	// Auto-mount the embedded client runtime on the first
 	// AsComponent — every live page needs it, so making each
-	// caller wire it manually was pure boilerplate.
+	// caller wire it manually was pure boilerplate. Same one-
+	// shot pass also installs any WithStatic mounts: subdirs
+	// of the templates FS (typically nl-island ES modules)
+	// surfaced at user-chosen URL prefixes.
 	a.scriptOnce.Do(func() {
 		a.app.Engine().GET(ScriptPath, gin.WrapH(a.engine.Script()))
+		for _, m := range a.engine.staticMounts {
+			sub, err := fs.Sub(a.source, m.sub)
+			if err != nil {
+				// Bad subdir at boot — log and skip rather
+				// than panicking; the live page still works,
+				// the static URL just 404s.
+				continue
+			}
+			a.app.Engine().StaticFS(m.mountPath, http.FS(sub))
+		}
 	})
 
 	// Mount the page route when WithPath was supplied. Skipping

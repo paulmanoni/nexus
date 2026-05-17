@@ -34,8 +34,6 @@ import (
 	"embed"
 	"fmt"
 	"html"
-	"io/fs"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -46,11 +44,8 @@ import (
 	"github.com/paulmanoni/nexus/live/template"
 )
 
-//go:embed templates/*.nlt
-var liveTemplates embed.FS
-
-//go:embed islands
-var liveIslands embed.FS
+//go:embed templates/*.nlt islands/*.js
+var liveAssets embed.FS
 
 // Post is the domain row. Exported fields so the template can reach
 // p.Title / p.Likes / p.Author through reflection.
@@ -273,10 +268,12 @@ func (c *PostRow) Refresh(_ *template.Ctx) error { return nil }
 // Posts.nlt's <PostRow /> tag but not reachable as a URL.
 var liveModule = nexus.Module("posts",
 	nexus.Provide(NewPostsRepo),
-	template.Module(liveTemplates,
-		// Production knobs: drop idle tabs after 30 minutes, keep
-		// disconnected sessions around for 30 seconds so a
-		// network blip doesn't wipe Filter/NewTitle.
+	template.Module(liveAssets,
+		// WithStatic surfaces the islands/ subdir of the embed
+		// at /islands/ — counter.js et al. — so the browser's
+		// dynamic import() can fetch them without a separate
+		// per-app static-mount Invoke.
+		template.WithStatic("islands", ""),
 		template.WithIdleTimeout(30*time.Minute),
 		template.WithSessionResumption(30*time.Second),
 	),
@@ -294,16 +291,6 @@ var liveModule = nexus.Module("posts",
 		nexus.Path("/about"),
 	),
 
-	// Serve the embedded island JS modules at /islands/*. The
-	// browser's dynamic import() fetches counter.js from here
-	// when it first encounters <div nl-island="Counter">.
-	nexus.Invoke(func(app *nexus.App) {
-		sub, err := fs.Sub(liveIslands, "islands")
-		if err != nil {
-			panic(err)
-		}
-		app.Engine().StaticFS("/islands", http.FS(sub))
-	}),
 )
 
 func main() {

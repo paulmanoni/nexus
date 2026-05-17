@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,13 @@ type Engine struct {
 	idleTimeout   time.Duration // 0 = no idle timeout
 	parkTTL       time.Duration // 0 = no session resumption
 	sendBuffer    int           // outgoing-queue depth per session (default 64)
+
+	// staticMounts collects WithStatic options so the adapter
+	// can register a gin static handler for each. Subdirs are
+	// resolved against the same fs.FS the engine loads
+	// templates from — typical use is the //go:embed of
+	// nl-island ES modules sitting next to the .nlt files.
+	staticMounts []staticMount
 
 	stats engineStats
 
@@ -120,6 +128,46 @@ func WithCheckOrigin(fn func(*http.Request) bool) Option {
 // frees them — keep ttl modest unless you've sized the heap for it.
 func WithSessionResumption(ttl time.Duration) Option {
 	return func(e *Engine) { e.parkTTL = ttl }
+}
+
+// staticMount records one subdir-of-FS → URL-prefix pairing
+// declared via WithStatic. The adapter walks the slice on first
+// AsComponent and registers each via gin.StaticFS.
+type staticMount struct {
+	sub       string
+	mountPath string
+}
+
+// WithStatic serves an embed.FS subdirectory at an HTTP path.
+// sub is the directory inside the fs.FS supplied to Module();
+// mountPath is the URL prefix. An empty mountPath defaults to
+// "/" + the cleaned sub — so WithStatic("islands", "") serves
+// the islands/ subdir at /islands/.
+//
+// Typical use is nl-island ES modules embedded alongside .nlt
+// templates in the same go:embed — saves wiring a separate
+// nexus.Invoke + StaticFS for every app.
+//
+//	//go:embed templates/*.nlt islands/*.js
+//	var assets embed.FS
+//
+//	template.Module(assets,
+//	    template.WithStatic("islands", ""),  // serves at /islands/
+//	)
+//
+// Trailing slashes on sub are tolerated; leading slashes on
+// mountPath are added if missing.
+func WithStatic(sub, mountPath string) Option {
+	sub = strings.Trim(sub, "/")
+	if mountPath == "" {
+		mountPath = "/" + sub
+	} else if !strings.HasPrefix(mountPath, "/") {
+		mountPath = "/" + mountPath
+	}
+	mountPath = strings.TrimRight(mountPath, "/")
+	return func(e *Engine) {
+		e.staticMounts = append(e.staticMounts, staticMount{sub: sub, mountPath: mountPath})
+	}
 }
 
 // WithSendBuffer sets the per-session outgoing-queue depth.

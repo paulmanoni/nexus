@@ -18,9 +18,9 @@
         </form>
 
         <h2>Counter (vanilla-JS island)</h2>
-        <div nl-island="Counter"
-             nl-island-src="/islands/counter.js"
-             :nl-island-props="CounterProps()"></div>
+        <nl-island name="Counter"
+                   src="/islands/counter.js"
+                   :props="CounterProps()"/>
         <form @submit.prevent="resetCounter">
             <button type="submit">Server reset (PushIsland)</button>
         </form>
