@@ -2,7 +2,9 @@
     <div class="posts">
         <h1>Posts ({{ len(Posts) }})</h1>
 
-        <input nl-model="Filter" placeholder="Filter by title…"/>
+        <input nl-model="Filter"
+               @keydown.escape="clearFilter"
+               placeholder="Filter by title… (Esc to clear)"/>
 
         <ul>
             <PostRow nl-for="p in Posts" :key="p.ID" :post="p"/>
@@ -11,14 +13,25 @@
         <p nl-if="len(Posts) == 0">No posts match "{{ Filter }}".</p>
 
         <form @submit.prevent="add">
-
-            <input nl-model="NewTitle" placeholder="New post title…"/>
+            <input nl-model="NewTitle" placeholder="New post title… (Enter to add)"/>
             <button type="submit">Add</button>
         </form>
+
+        <h2>Activity</h2>
+        <p class="hint">
+            This list is updated via <code>ctx.Stream("activity").Append(...)</code> —
+            individual <code>stream-op</code> frames, no re-render of the surrounding
+            template.
+        </p>
+        <ul nl-stream="activity" class="activity"></ul>
 
         <p class="hint">
             Open this URL in another tab — like, add, or filter in one and the
             others stay in sync via the Notifier + sparse diffs.
+        </p>
+
+        <p>
+            <a nl-navigate href="/about">About this demo</a>
         </p>
     </div>
 </template>
@@ -32,6 +45,11 @@
 
     .posts h1 {
         font-size: 1.5rem;
+    }
+
+    .posts h2 {
+        font-size: 1.1rem;
+        margin-top: 2rem;
     }
 
     .posts input {
@@ -52,6 +70,17 @@
         align-items: center;
         padding: 0.5rem 0;
         border-bottom: 1px solid #eee;
+    }
+
+    .posts .activity {
+        font-size: 0.9rem;
+        color: #555;
+    }
+
+    .posts .activity li {
+        display: block;
+        padding: 0.25rem 0;
+        border: none;
     }
 
     .posts li strong {
@@ -80,6 +109,18 @@
     .posts .hint {
         color: #888;
         font-size: 0.85rem;
-        margin-top: 2rem;
+        margin-top: 0.5rem;
+    }
+
+    .posts code {
+        background: #f4f4f4;
+        padding: 0 0.25rem;
+        border-radius: 3px;
+        font-family: ui-monospace, monospace;
+        font-size: 0.85em;
+    }
+
+    .posts a {
+        color: #2a64d6;
     }
 </style>

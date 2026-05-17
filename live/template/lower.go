@@ -309,6 +309,12 @@ func emitAttr(a Attribute, b *fragBuilder) error {
 		case "stream":
 			b.text(" nl-stream=\"" + a.Value + "\"")
 			return nil
+		case "navigate":
+			// Boolean marker: presence of the attribute is what
+			// the client looks for, not its value. Emit value-
+			// less attribute so the DOM sees the marker.
+			b.text(" nl-navigate")
+			return nil
 		}
 		// Other directives are handled upstream; reaching this
 		// point with one is a bug in the lowering routing.
