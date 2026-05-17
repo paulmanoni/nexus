@@ -243,18 +243,56 @@ func WithUserExtractor(fn func(*http.Request) any) Option {
 	return func(e *Engine) { e.userExtractor = fn }
 }
 
+// defaultFS is the package-level fs source new Engines fall
+// back to when no explicit WithFS option is passed and no
+// SetDefaultFS call has been made. The two-tier model lets:
+//
+//   - dev / `go run .` work with zero declarations
+//     (defaultFS stays at os.DirFS("."), reads from cwd);
+//   - `nexus build` produce embed-baked binaries by writing a
+//     generated _embed_gen.go that calls SetDefaultFS in
+//     init() — runs before main() and before nexus.Run, so
+//     the moment Engine.New fires it already sees the embed.
+var (
+	defaultFSMu sync.RWMutex
+	defaultFS   fs.FS = os.DirFS(".")
+)
+
+// SetDefaultFS replaces the fs source new Engine{} instances
+// pick up when no explicit WithFS option is set. Intended for
+// the generated _embed_gen.go file `nexus build` writes —
+// users typically don't call this directly.
+//
+// WithFS / WithRoot on an individual Engine still override
+// this default. Precedence: per-engine option > package
+// default > os.DirFS(".") fallback.
+func SetDefaultFS(src fs.FS) {
+	if src == nil {
+		return
+	}
+	defaultFSMu.Lock()
+	defaultFS = src
+	defaultFSMu.Unlock()
+}
+
+func getDefaultFS() fs.FS {
+	defaultFSMu.RLock()
+	defer defaultFSMu.RUnlock()
+	return defaultFS
+}
+
 // New builds a fresh Engine. Most apps create exactly one.
-// Default fs source is os.DirFS(".") — the cwd at process
-// start, which lines up with `go run .` from the project
-// root. Override via WithFS for embed-baked binaries or
-// WithRoot for a custom on-disk layout.
+// Default fs source comes from SetDefaultFS (or os.DirFS(".")
+// if nothing set it). Override per-engine via WithFS for
+// embed-baked binaries or WithRoot for a custom on-disk
+// layout.
 func New(opts ...Option) *Engine {
 	e := &Engine{
 		registry: make(map[string]*componentDef),
 		sessions: make(map[*Session]struct{}),
 		parked:   make(map[string]*parkedSession),
 		routes:   make(map[string]string),
-		fsSource: os.DirFS("."),
+		fsSource: getDefaultFS(),
 	}
 	for _, opt := range opts {
 		opt(e)

@@ -73,8 +73,21 @@ plan the deploy without booting the binary first.`,
 			} else if len(args) > 0 {
 				pkg = args[0]
 			}
+			// Simple path: no --deployment + no nexus.deploy.yaml
+			// → not a deployment-managed app. Just generate the
+			// embed file (if applicable) and shell go build. This
+			// is what most live-template apps want; they don't
+			// need overlay/shadow plumbing.
 			if deployment == "" {
-				return fmt.Errorf("nexus build: --deployment is required")
+				if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+					return runSimpleBuild(simpleBuildOptions{
+						Output:      outputPath,
+						MainPackage: pkg,
+						Stdout:      stdout,
+						Stderr:      stderr,
+					})
+				}
+				return fmt.Errorf("nexus build: --deployment is required when %s exists", manifestPath)
 			}
 			return runBuild(buildOptions{
 				Deployment:   deployment,
@@ -354,6 +367,20 @@ func runBuild(opts buildOptions) error {
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return fmt.Errorf("mkdir bin dir: %w", err)
 	}
+
+	// Auto-embed pass: scan the main package for templates/ +
+	// islands/ and write a _embed_gen.go that bakes them into
+	// the binary via //go:embed + template.SetDefaultFS. The
+	// generated file is removed after go build returns (deferred
+	// so it cleans up on failure too — a stray _embed_gen.go
+	// would shadow the user's no-embed dev workflow). No-op for
+	// pure-API apps that have neither directory.
+	mainDir := resolveMainDir(projectRoot, opts.MainPackage)
+	embedPath, err := generateEmbedFile(mainDir, "main", nil, opts.Stderr)
+	if err != nil {
+		return fmt.Errorf("nexus build: embed-gen: %w", err)
+	}
+	defer removeEmbedFile(embedPath, opts.Stderr)
 
 	// Invoke go build with the overlay. Stdout/stderr stream through
 	// so the user sees gc errors live.
