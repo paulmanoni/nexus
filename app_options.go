@@ -53,8 +53,13 @@ func Module(name string, opts ...Option) Option {
 			prefix += rp.prefix
 		}
 		if pp, ok := o.(pathOption); ok {
-			publicPath = pp.path
-			prefix += pp.path
+			// Use the normalized form here so "/" is treated as a
+			// no-op prefix (existing module semantics) while
+			// AsComponent's Apply still sees the raw "/" as a
+			// literal root-URL mount.
+			normalized := pp.normalizedPath()
+			publicPath = normalized
+			prefix += normalized
 		}
 		if dt, ok := o.(deployTagOption); ok {
 			deployment = dt.tag

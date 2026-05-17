@@ -33,7 +33,7 @@ func TestFx_Module_ProvidesEngine(t *testing.T) {
 	var got *Engine
 	_, stop := startedApp(t,
 		fx.Provide(live.New),
-		Module(),
+		fx.Provide(NewEngine),
 		fx.Populate(&got),
 	)
 	defer stop()
@@ -50,7 +50,7 @@ func TestFx_RegisterComponent_RegistersAtStartup(t *testing.T) {
 	var engine *Engine
 	_, stop := startedApp(t,
 		fx.Provide(live.New),
-		Module(),
+		fx.Provide(NewEngine),
 		RegisterComponent("Counter", []byte(counterTmpl), func() Component { return &counterComponent{} }),
 		fx.Populate(&engine),
 	)
@@ -67,7 +67,7 @@ func TestFx_RegisterComponent_PropagatesParseError(t *testing.T) {
 	app := fx.New(
 		fx.NopLogger,
 		fx.Provide(live.New),
-		Module(),
+		fx.Provide(NewEngine),
 		RegisterComponent("Bad", []byte(`<template`), func() Component { return &counterComponent{} }),
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -98,7 +98,7 @@ func TestFx_DepInjectedFactoryPattern(t *testing.T) {
 	_, stop := startedApp(t,
 		fx.Provide(live.New),
 		fx.Provide(func() *fakeRepo { return &fakeRepo{Name: "loaded"} }),
-		Module(),
+		fx.Provide(NewEngine),
 		fx.Invoke(func(e *Engine, repo *fakeRepo) error {
 			return e.Register("Repo", []byte(`<template>{{ Repo.Name }}</template>`),
 				func() Component { return &repoComponent{Repo: repo} },
