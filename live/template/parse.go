@@ -57,12 +57,13 @@ func (p *parser) parse() (*File, error) {
 	if blocks.script != nil {
 		lang := blocks.script.lang
 		if lang == "" {
-			lang = "go"
+			lang = "js"
 		}
 		file.Script = &Script{
-			Lang: lang,
-			Body: string(p.src[blocks.script.bodyStart:blocks.script.bodyEnd]),
-			Pos:  p.posAt(blocks.script.tagStart),
+			Scoped: blocks.script.scoped,
+			Lang:   lang,
+			Body:   string(p.src[blocks.script.bodyStart:blocks.script.bodyEnd]),
+			Pos:    p.posAt(blocks.script.tagStart),
 		}
 	}
 	if blocks.style != nil {
@@ -182,7 +183,11 @@ func (p *parser) splitSFC() (sfcBlocks, error) {
 							case "lang":
 								info.lang = string(v)
 							case "scoped":
-								if tagNameLower == "style" {
+								// Both <style scoped> and <script scoped>
+								// honor the attribute. Other tags (template)
+								// don't have a "scoped" semantic so we
+								// silently ignore it there.
+								if tagNameLower == "style" || tagNameLower == "script" {
 									info.scoped = true
 								}
 							}

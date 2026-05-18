@@ -98,6 +98,15 @@
           if ("style" in msg || "scope" in msg) {
             applyNavigationStyles(msg.style, msg.scope);
           }
+          // Component <script> body arrives on navigate-induced
+          // joined frames. The SSR shell handled the initial
+          // paint's script; on navigate we need to swap the prior
+          // component's <script data-nl-script="..."> tag with
+          // the new component's. Done AFTER the morph below so
+          // scoped scripts find the new DOM via document.
+          if ("script" in msg) {
+            applyNavigationScript(msg.script, msg.component);
+          }
           tree = msg.r;
           render();
           // After live-navigate the server includes the new
@@ -588,6 +597,32 @@
     } else {
       mount.removeAttribute("data-nl-scope");
     }
+  }
+
+  // -------- Navigation scripts ---------------------------------------
+  //
+  // applyNavigationScript swaps the <script data-nl-script="X"> tag
+  // that the SSR shell emits per component, so live-navigate runs
+  // the new component's script and abandons the old one's listeners.
+  //
+  // Why createElement + textContent: a freshly-created <script>
+  // element appended to the DOM IS executed by the browser. The
+  // same body assigned via innerHTML is NOT. So we synthesize a
+  // new tag every time rather than reusing one.
+  //
+  // The old tag stays around if removal would race with anything
+  // — but its closures only ever held references to the old DOM,
+  // which the morph just replaced, so they hold nothing alive.
+  function applyNavigationScript(body, component) {
+    // Remove every prior component-script tag. We key on the
+    // attribute alone, not the component name — defensive against
+    // stale tags from interrupted navigates.
+    document.querySelectorAll("script[data-nl-script]").forEach((s) => s.remove());
+    if (!body) return;
+    const tag = document.createElement("script");
+    tag.setAttribute("data-nl-script", component || "");
+    tag.textContent = body;
+    document.body.appendChild(tag);
   }
 
   // -------- Islands (nl-island="Name" nl-island-src="...") -----------

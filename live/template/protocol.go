@@ -69,6 +69,16 @@ type Outbound struct {
 	Style string `json:"style,omitempty"`
 	Scope string `json:"scope,omitempty"`
 
+	// Script ships the component's <script> body (already wrapped
+	// in an IIFE if the source declared <script scoped>). Set on
+	// "joined" frames after a live-navigate so the client can
+	// replace the prior component's data-nl-script="<Name>" tag —
+	// re-running scoped scripts rebinds `el` to the new SSR root.
+	// Companion field Component carries the new component name so
+	// the client knows which data-nl-script tag to swap.
+	Script    string `json:"script,omitempty"`
+	Component string `json:"component,omitempty"`
+
 	// Stream-op frame fields ("stream-op" type). Stream is the
 	// container name (matches nl-stream="X" on a DOM element);
 	// Op is "append" / "prepend" / "delete" / "update" / "reset";

@@ -46,12 +46,27 @@ type Template struct {
 	Pos      Position
 }
 
-// Script is the verbatim <script> block. The body is not parsed
-// here — the interpreter / future codegen handles the Go side.
+// Script is the verbatim <script> block. The body is shipped to
+// the browser as-is, wrapped per the Scoped flag below. We do not
+// transpile or analyze the body — what you write is what runs.
+//
+// Scoped, when true, makes the renderer wrap the body in an IIFE
+// that binds `el` to this component's SSR root element
+// (data-nl-component="<Name>"). Selectors that look up children
+// then go through el.querySelector instead of document, so two
+// instances of the same component on a page don't collide. The
+// IIFE re-runs on every live-navigate INTO this component, with
+// `el` re-bound to the new root, so listeners attached to the
+// previous DOM die with it (no manual cleanup needed).
+//
+// Lang is the value of the lang= attribute on the open tag.
+// Defaults to "js"; carried through unused for now but reserved
+// for a future TS-pipeline / Go-handlers integration.
 type Script struct {
-	Lang string // value of lang= attr; defaults to "go"
-	Body string
-	Pos  Position
+	Scoped bool
+	Lang   string
+	Body   string
+	Pos    Position
 }
 
 // Style is the verbatim <style> block plus its meta attributes.
