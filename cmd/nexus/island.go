@@ -76,24 +76,6 @@ Examples:
 			for _, f := range files {
 				fmt.Fprintf(stdout, "  %s\n", f)
 			}
-			// When project configs landed alongside island
-			// sources, surface a one-liner so the user knows
-			// to install the JS deps before running.
-			wroteConfigs := false
-			for _, f := range files {
-				if f == "package.json" {
-					wroteConfigs = true
-					break
-				}
-			}
-			if wroteConfigs {
-				fmt.Fprintln(stdout)
-				fmt.Fprintln(stdout, "Bootstrapped JS build (package.json, vite.config.ts, tsconfig.json, .gitignore).")
-				fmt.Fprintln(stdout, "Project-level — shared across every nl-island in this project.")
-				fmt.Fprintln(stdout, "If you ever mix Vue + React in the same project, the configs only")
-				fmt.Fprintln(stdout, "match the first-scaffolded flavor; --force on the second variant")
-				fmt.Fprintln(stdout, "rewrites them (or merge by hand).")
-			}
 			fmt.Fprintln(stdout)
 			fmt.Fprintln(stdout, "Embed in your .nlt:")
 			fmt.Fprintf(stdout, "  <nl-island name=\"%s\"\n", name)
@@ -105,9 +87,13 @@ Examples:
 			fmt.Fprintln(stdout, "  }")
 			if flavor != "vanilla" {
 				fmt.Fprintln(stdout)
-				fmt.Fprintln(stdout, "Build before running:")
-				fmt.Fprintln(stdout, "  npm install        # one-time")
-				fmt.Fprintln(stdout, "  npm run build      # outputs to islands/")
+				fmt.Fprintln(stdout, "Bring in the frontend deps + build:")
+				if flavor == "vue" {
+					fmt.Fprintln(stdout, "  nexus add vue           # one-time")
+				} else {
+					fmt.Fprintln(stdout, "  nexus add react react-dom   # one-time")
+				}
+				fmt.Fprintln(stdout, "  nexus build             # bundles islands.src/ → islands/")
 			}
 			return nil
 		},
@@ -194,10 +180,13 @@ func scaffoldIsland(flavor, name, dir string, force bool) ([]string, error) {
 		spec = []fileSpec{
 			{path: filepath.Join(dir, name+".vue"), tmpl: vueComponentTmpl},
 			{path: filepath.Join(dir, name+".island.ts"), tmpl: vueBridgeTmpl},
-			{path: "package.json", tmpl: vuePkgJSONTmpl, shared: true},
-			{path: "vite.config.ts", tmpl: vueViteConfigTmpl, shared: true},
-			{path: "tsconfig.json", tmpl: tsConfigTmpl, shared: true},
-			{path: ".gitignore", tmpl: gitignoreTmpl, shared: true},
+			// Project configs (package.json, vite.config.ts,
+			// tsconfig.json, .gitignore) deliberately omitted:
+			// the new deps system replaces the vite/npm path with
+			// `nexus add vue` + `nexus build`. The .gitignore
+			// generation is also dropped — nexus.lock + the
+			// shared ~/.nexus/cache mean there's no node_modules
+			// to ignore.
 		}
 	case "react":
 		spec = []fileSpec{
@@ -207,10 +196,7 @@ func scaffoldIsland(flavor, name, dir string, force bool) ([]string, error) {
 			// in the project. Written once; subsequent runs see
 			// it already exists and skip without --force.
 			{path: filepath.Join(dir, "_nl-react-runtime.ts"), tmpl: reactRuntimeTmpl, shared: true},
-			{path: "package.json", tmpl: reactPkgJSONTmpl, shared: true},
-			{path: "vite.config.ts", tmpl: reactViteConfigTmpl, shared: true},
-			{path: "tsconfig.json", tmpl: tsConfigTmpl, shared: true},
-			{path: ".gitignore", tmpl: gitignoreTmpl, shared: true},
+			// Project configs omitted — see Vue branch above.
 		}
 	case "vanilla":
 		// No build step — vanilla JS lives in islands/ and the
