@@ -67,7 +67,7 @@ func newPopulatedStore(t *testing.T) (*store.Store, *lockfile.File) {
 
 func TestResolveOne_BareSpecHitsStore(t *testing.T) {
 	s, lf := newPopulatedStore(t)
-	res, err := resolveOne(Options{Lockfile: lf, Store: s},
+	res, err := resolveOne(Options{Lockfile: lf, Store: s}, nil,
 		api.OnResolveArgs{Path: "vue"})
 	if err != nil {
 		t.Fatalf("resolveOne: %v", err)
@@ -82,7 +82,7 @@ func TestResolveOne_BareSpecHitsStore(t *testing.T) {
 
 func TestResolveOne_RelativeImportFallsThrough(t *testing.T) {
 	s, lf := newPopulatedStore(t)
-	res, _ := resolveOne(Options{Lockfile: lf, Store: s},
+	res, _ := resolveOne(Options{Lockfile: lf, Store: s}, nil,
 		api.OnResolveArgs{Path: "./foo"})
 	if res.Path != "" {
 		t.Errorf("relative should pass through, got Path=%q", res.Path)
@@ -91,7 +91,7 @@ func TestResolveOne_RelativeImportFallsThrough(t *testing.T) {
 
 func TestResolveOne_AbsoluteImportFallsThrough(t *testing.T) {
 	s, lf := newPopulatedStore(t)
-	res, _ := resolveOne(Options{Lockfile: lf, Store: s},
+	res, _ := resolveOne(Options{Lockfile: lf, Store: s}, nil,
 		api.OnResolveArgs{Path: "/absolute/path"})
 	if res.Path != "" {
 		t.Errorf("absolute should pass through, got %q", res.Path)
@@ -102,7 +102,7 @@ func TestResolveOne_UnknownSpecFallsThrough(t *testing.T) {
 	// Spec not in lockfile → fall through (esbuild handles or
 	// errors with its own message).
 	s, lf := newPopulatedStore(t)
-	res, err := resolveOne(Options{Lockfile: lf, Store: s},
+	res, err := resolveOne(Options{Lockfile: lf, Store: s}, nil,
 		api.OnResolveArgs{Path: "react"})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -122,7 +122,7 @@ func TestResolveOne_AmbiguousSurfaceAsBuildError(t *testing.T) {
 	lf.Add(lockfile.Package{Spec: "vue", Version: "3.4.21", Resolved: "https://esm.sh/vue@3.4.21"})
 	lf.Add(lockfile.Package{Spec: "vue", Version: "3.5.0", Resolved: "https://esm.sh/vue@3.5.0"})
 
-	res, err := resolveOne(Options{Lockfile: lf, Store: s},
+	res, err := resolveOne(Options{Lockfile: lf, Store: s}, nil,
 		api.OnResolveArgs{Path: "vue"})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -145,7 +145,7 @@ func TestResolveOne_LockedButUncachedSurfaceAsBuildError(t *testing.T) {
 	lf := lockfile.New()
 	lf.Add(lockfile.Package{Spec: "vue", Version: "3.4.21", Resolved: "https://esm.sh/vue@3.4.21"})
 
-	res, err := resolveOne(Options{Lockfile: lf, Store: s},
+	res, err := resolveOne(Options{Lockfile: lf, Store: s}, nil,
 		api.OnResolveArgs{Path: "vue"})
 	if err != nil {
 		t.Fatalf("err: %v", err)

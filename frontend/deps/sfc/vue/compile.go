@@ -28,6 +28,7 @@
 package vue
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sync"
@@ -76,6 +77,16 @@ func NewCompiler(bundle []byte, version string) (*Compiler, error) {
 		return nil, errors.New("vue: empty compiler bundle")
 	}
 	rt := goja.New()
+	// Install minimal host polyfills BEFORE evaluating the bundle.
+	// @vue/compiler-sfc (and its dep chain) routinely call
+	// console.warn / console.log when it encounters edge cases;
+	// without these, the bundle blows up at module-evaluation
+	// time. process.env.NODE_ENV is mostly handled by esbuild's
+	// Define at bundle time, but a runtime fallback covers the
+	// `typeof process` branches Define can't substitute.
+	if err := installPolyfills(rt); err != nil {
+		return nil, fmt.Errorf("vue: install polyfills: %w", err)
+	}
 	// Goja gotcha: top-level "var" decls produce globals;
 	// top-level "let/const" do NOT. The adapter must explicitly
 	// assign to globalThis. Documented in the adapter contract.
@@ -121,6 +132,67 @@ func (c *Compiler) Compile(source, filename string) (CompileResult, error) {
 // diagnostics ("compiled with vue-compiler@3.4.21") and for cache
 // invalidation logic in the install command.
 func (c *Compiler) Version() string { return c.version }
+
+// installPolyfills sets minimum globals on the runtime so a real
+// @vue/compiler-sfc bundle can evaluate without crashing on
+// undefined host APIs. The set is intentionally tiny — we add to
+// it only when a real-world Vue compile blows up against it.
+//
+// Goja: ES5.1 + most non-async ES6 (lambdas, classes, generators
+// via stdgen, let/const, destructuring, template literals, Map,
+// Set, Promise, Symbol). Missing: async generators (esbuild
+// down-levels them via Target=es2015), top-level await,
+// Node built-ins (we serve those via esm.sh's polyfills which
+// the fetcher pulls in).
+func installPolyfills(rt *goja.Runtime) error {
+	// console — Vue's compiler logs deprecation warnings via it.
+	consoleSrc := `globalThis.console = globalThis.console || {
+		log:   function(){},
+		info:  function(){},
+		warn:  function(){},
+		error: function(){},
+		debug: function(){},
+		trace: function(){},
+	};`
+	if _, err := rt.RunString(consoleSrc); err != nil {
+		return err
+	}
+	// process.env.NODE_ENV — esbuild's Define handles most call
+	// sites at bundle time but a runtime fallback covers the
+	// `if (typeof process !== "undefined")` branches that survive
+	// Define unchanged.
+	processSrc := `globalThis.process = globalThis.process || {
+		env: { NODE_ENV: "production" },
+		platform: "linux",
+		versions: { node: "0.0.0" },
+	};`
+	if _, err := rt.RunString(processSrc); err != nil {
+		return err
+	}
+	// globalThis itself — Goja 0.x defines it but older builds
+	// don't; harmless to assert it as a self-reference. Same for
+	// self and global, both aliases used by some libraries.
+	aliasSrc := `if (typeof self === "undefined") globalThis.self = globalThis;
+		if (typeof global === "undefined") globalThis.global = globalThis;`
+	if _, err := rt.RunString(aliasSrc); err != nil {
+		return err
+	}
+	// btoa / atob — browser base64 APIs. esm.sh's unenv polyfill
+	// for Node's Buffer module does `var Xt=globalThis.btoa.bind(globalThis)`
+	// at top level; without btoa, the `.bind` deref crashes
+	// module evaluation. Wire Go's encoding/base64 through.
+	rt.Set("btoa", func(s string) string {
+		return base64.StdEncoding.EncodeToString([]byte(s))
+	})
+	rt.Set("atob", func(s string) (string, error) {
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	})
+	return nil
+}
 
 // decodeResult walks the JS object the adapter returned and pulls
 // out the {code, errors} fields into a Go-side CompileResult.
