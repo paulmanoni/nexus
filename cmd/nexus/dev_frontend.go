@@ -3,14 +3,26 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/evanw/esbuild/pkg/api"
+
+	"github.com/paulmanoni/nexus/frontend/deps/bundler"
+	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
+	"github.com/paulmanoni/nexus/frontend/deps/resolver"
+	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
 
 // viteURLRE matches the "Local:" line vite's dev server prints
@@ -18,38 +30,359 @@ import (
 // Capture group 1 is the URL.
 var viteURLRE = regexp.MustCompile(`Local:\s*(https?://[^\s/]+/?)`)
 
-// startFrontendWatcher spawns the user's frontend build watcher
-// (typically `vite build --watch` wrapped in an npm script) inside
-// dir, prefixing every output line with [web] so the combined log
-// stream stays readable.
+// startFrontendWatcher dispatches between the two frontend-watch
+// implementations based on what it finds in dir:
 //
-// verbose=false (default) routes stdout through a build-block
-// dedup filter: the first occurrence of any rebuild block streams
-// in full, but consecutive blocks producing the BYTE-IDENTICAL
-// output collapse into a single "● identical rebuild suppressed"
-// summary. Real source edits change the bundle, so they pass
-// through; the auto-import-plugin self-rebuild loop produces
-// identical bundles every cycle and gets compressed.
+//   - nexus.lock present → bundler mode. Drives our esbuild
+//     watcher directly via bundler.Build(Watch: true), no
+//     subprocess. cmdline is ignored in this mode (we know what
+//     to do without being told). frontendURLCh never receives a
+//     URL — dev.go's waitAndOpen falls back to the gin URL after
+//     its grace window, which is correct because bundler mode
+//     produces on-disk islands/ files Go serves itself.
 //
-// verbose=true bypasses the filter, streaming everything verbatim
-// for users who want to inspect the full output.
+//   - nexus.lock absent → legacy vite mode. Same behavior as
+//     before: spawn the user's `npm run dev` (or whatever
+//     cmdline says), sniff stdout for the Local: URL, dedup
+//     identical rebuild blocks, surface errors. Kept so projects
+//     that haven't migrated to the deps system still work
+//     unchanged.
 //
-// stderr is always streamed verbatim regardless of verbose so real
-// build errors surface immediately.
-//
-// Lifecycle:
-//   - Child process group is killed on ctx cancel (the same SIGINT
-//     that tears down the Go run loop), so a single Ctrl-C cleans
-//     up everything.
-//   - Survives across Go restarts. The frontend toolchain has its
-//     own incremental compile + file watcher; bouncing it on every
-//     Go save would cripple iteration feel.
-//   - When the child exits unexpectedly, we log it but don't fail
-//     nexus dev — the user can fix the script and relaunch.
-//
-// frontendURLCh receives the URL vite prints when its dev server
-// is ready. nil means caller doesn't care (bundle mode).
+// Mode detection runs once at startup. We don't try to switch
+// modes mid-session if a user adds nexus.lock; that's a restart-
+// nexus-dev moment, not a runtime concern.
 func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool, stdout, stderr io.Writer, frontendURLCh chan<- string) error {
+	if depsModeAvailable(dir) {
+		return startBundlerWatcher(ctx, dir, verbose, stdout, stderr)
+	}
+	return startViteWatcher(ctx, dir, cmdline, verbose, stdout, stderr, frontendURLCh)
+}
+
+// depsModeAvailable reports whether dir (or any directory between
+// dir and cwd, inclusive) holds a nexus.lock. Walking upward lets
+// the auto-detection in dev.go work even when the user passed a
+// frontend subdir like ./web — the lockfile usually sits one
+// level up at the project root.
+//
+// Bounded walk: we stop at the first nexus.lock OR at the
+// filesystem root, whichever comes first. No depth cap because
+// the path is bounded by the OS already.
+func depsModeAvailable(dir string) bool {
+	cur, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(cur, "nexus.lock")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return false
+		}
+		cur = parent
+	}
+}
+
+// startBundlerWatcher drives our esbuild-based bundler in watch
+// mode against <project-root>/islands.src, writing bundles into
+// <project-root>/islands as the user edits files. Lifecycle:
+//
+//  1. Walk upward from dir to find nexus.lock; treat that
+//     directory as the project root.
+//  2. Load lockfile + open the shared cache via NEXUS_CACHE env
+//     (default ~/.nexus/cache).
+//  3. Construct the resolver plugin that translates bare imports
+//     into cached blob paths.
+//  4. Enumerate islands.src/*.{ts,tsx,jsx,js} as entries; reject
+//     .vue with a clear message (Vue SFC compile is gated in
+//     v0.1, see frontend/deps/sfc/vue/bootstrap_test.go).
+//  5. bundler.Build(Watch: true, OnRebuild: reporter). First
+//     build runs synchronously; subsequent edits fire the
+//     callback asynchronously inside esbuild's watcher loop.
+//  6. Goroutine watches ctx and disposes the BuildContext on
+//     shutdown so esbuild closes its file watches cleanly.
+//
+// Verbose has a meaningful effect here: when off, the reporter
+// only prints when something USEFUL changes (bundle output size
+// drifted, errors appeared, errors cleared). When on, every
+// rebuild prints a one-line summary even when nothing changed
+// in the output bytes.
+//
+// No URL ever lands on frontendURLCh — bundler mode produces
+// on-disk files served by the Go binary, not a separate HTTP
+// dev server. dev.go's waitAndOpen handles the missing-URL case
+// via its grace-window timeout fallback to the gin URL.
+func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, stderr io.Writer) error {
+	root, err := findProjectRoot(dir)
+	if err != nil {
+		return fmt.Errorf("frontend watcher: %w", err)
+	}
+
+	srcDir := filepath.Join(root, "islands.src")
+	if _, err := os.Stat(srcDir); errors.Is(err, fs.ErrNotExist) {
+		// Project has a lockfile but no islands.src — nothing to
+		// watch. Print a one-liner so the user understands why
+		// no [web] output is appearing.
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: no islands.src — skipping\n", ansiCyan, ansiReset)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("frontend watcher: stat islands.src: %w", err)
+	}
+
+	entries, err := collectFrontendEntries(srcDir)
+	if err != nil {
+		return fmt.Errorf("frontend watcher: %w", err)
+	}
+	if len(entries) == 0 {
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: islands.src is empty — skipping\n", ansiCyan, ansiReset)
+		return nil
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e, ".vue") {
+			return fmt.Errorf("frontend watcher: %s is a .vue source — v0.1 doesn't yet "+
+				"compile Vue SFC in watch mode; pre-compile to .js or use the legacy vite path", e)
+		}
+	}
+
+	lf, err := lockfile.Load(filepath.Join(root, lockfile.Filename))
+	if err != nil {
+		return fmt.Errorf("frontend watcher: load lockfile: %w", err)
+	}
+
+	cacheRoot := os.Getenv("NEXUS_CACHE")
+	if cacheRoot == "" {
+		cacheRoot = store.DefaultRoot()
+	}
+	st, err := store.New(cacheRoot)
+	if err != nil {
+		return fmt.Errorf("frontend watcher: open cache %s: %w", cacheRoot, err)
+	}
+
+	plugin, err := resolver.New(resolver.Options{Lockfile: lf, Store: st})
+	if err != nil {
+		return fmt.Errorf("frontend watcher: build resolver: %w", err)
+	}
+
+	outDir := filepath.Join(root, "islands")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return fmt.Errorf("frontend watcher: mkdir %s: %w", outDir, err)
+	}
+
+	tag := fmt.Sprintf("%s[web]%s ", ansiCyan, ansiReset)
+	reporter := newBundlerReporter(stdout, stderr, tag, verbose)
+
+	b := bundler.New()
+	b.AddPlugin(plugin)
+	res, err := b.Build(bundler.Options{
+		Entries:   entries,
+		OutDir:    outDir,
+		Lockfile:  lf,
+		Store:     st,
+		Minify:    false, // dev: readable output > smaller bytes
+		Watch:     true,
+		OnRebuild: reporter.report,
+	})
+	if err != nil {
+		return fmt.Errorf("frontend watcher: %w", err)
+	}
+	// Initial build's result also flows through the reporter so
+	// the first banner line + any startup errors print the same
+	// way subsequent rebuilds do.
+	reporter.report(res.BuildResult)
+
+	// Banner: print after the initial report so the order reads
+	// "bundled N entries" then "watching — Ctrl-C to stop".
+	fmt.Fprintf(stdout, "%s●%s frontend watcher: watching %s (%d %s) — esbuild incremental\n",
+		ansiCyan, ansiReset, srcDir, len(entries), pluralize("entry", len(entries)))
+
+	// Tear down esbuild's watcher on ctx cancel. Dispose closes
+	// the file watches + releases the build context; without it,
+	// the watcher goroutines outlive nexus dev and leak fds.
+	if res.Ctx != nil {
+		go func() {
+			<-ctx.Done()
+			res.Ctx.Dispose()
+		}()
+	}
+	return nil
+}
+
+// findProjectRoot walks upward from dir until it finds nexus.lock
+// and returns that directory. Returns an error when no lockfile
+// is found before the filesystem root; callers should already
+// have checked depsModeAvailable so this is mostly a defensive
+// guard.
+func findProjectRoot(dir string) (string, error) {
+	cur, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(cur, "nexus.lock")); err == nil {
+			return cur, nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", fmt.Errorf("no nexus.lock found at or above %s", dir)
+		}
+		cur = parent
+	}
+}
+
+// bundlerReporter prints rebuild summaries to stdout/stderr with
+// the [web] tag. Tracks the previous build's output-file sizes so
+// it can emit a delta line ("counter.js  4.2 KB → 4.5 KB") on
+// each rebuild rather than re-listing every file every time.
+//
+// Verbose mode prints a one-line "rebuilt in Xms" even when the
+// output didn't change. Default mode suppresses no-change
+// rebuilds entirely (matches the quiet vite-mode behavior).
+type bundlerReporter struct {
+	stdout, stderr io.Writer
+	tag            string
+	verbose        bool
+
+	mu       sync.Mutex
+	prev     map[string]int64 // outfile → byte size
+	hadFirst bool
+	prevErrs int
+	start    time.Time
+}
+
+func newBundlerReporter(stdout, stderr io.Writer, tag string, verbose bool) *bundlerReporter {
+	return &bundlerReporter{
+		stdout:  stdout,
+		stderr:  stderr,
+		tag:     tag,
+		verbose: verbose,
+		prev:    map[string]int64{},
+		start:   time.Now(),
+	}
+}
+
+func (r *bundlerReporter) report(res api.BuildResult) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Errors always print to stderr verbatim — these are the most
+	// actionable lines the user sees, so they should never be
+	// dedup'd. Warnings get the same treatment.
+	for _, e := range res.Errors {
+		r.printDiag(r.stderr, "✗", ansiRed, e)
+	}
+	for _, w := range res.Warnings {
+		r.printDiag(r.stderr, "⚠", ansiYellow, w)
+	}
+
+	// Build a fresh sizes map keyed by basename, paired with full
+	// path for diagnostics. esbuild emits absolute paths in
+	// OutputFiles; the basename is what the user thinks of as
+	// "Counter.js".
+	curr := map[string]int64{}
+	for _, f := range res.OutputFiles {
+		curr[filepath.Base(f.Path)] = int64(len(f.Contents))
+	}
+
+	// Compute added / changed / removed sets relative to prev.
+	type change struct{ name, kind string }
+	var changes []change
+	for name, size := range curr {
+		prev, ok := r.prev[name]
+		switch {
+		case !ok:
+			changes = append(changes, change{name, fmt.Sprintf("+ %s  %s", name, humanBytes(size))})
+		case prev != size:
+			changes = append(changes, change{name, fmt.Sprintf("~ %s  %s → %s", name, humanBytes(prev), humanBytes(size))})
+		}
+	}
+	for name := range r.prev {
+		if _, ok := curr[name]; !ok {
+			changes = append(changes, change{name, fmt.Sprintf("- %s", name)})
+		}
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].name < changes[j].name })
+
+	// First report after the watcher starts: print every entry as
+	// an "+ N" line so the user sees the initial bundle shape.
+	if !r.hadFirst {
+		r.hadFirst = true
+		if len(res.Errors) == 0 && len(curr) > 0 {
+			for _, c := range changes {
+				fmt.Fprintf(r.stdout, "%s  %s%s%s\n", r.tag, ansiGreen, c.kind, ansiReset)
+			}
+		}
+		r.prev = curr
+		r.prevErrs = len(res.Errors)
+		return
+	}
+
+	switch {
+	case len(changes) > 0:
+		for _, c := range changes {
+			color := ansiYellow
+			if strings.HasPrefix(c.kind, "+ ") {
+				color = ansiGreen
+			} else if strings.HasPrefix(c.kind, "- ") {
+				color = ansiRed
+			}
+			fmt.Fprintf(r.stdout, "%s  %s%s%s\n", r.tag, color, c.kind, ansiReset)
+		}
+	case r.prevErrs > 0 && len(res.Errors) == 0:
+		// Errors cleared since last build — emit a recovery line
+		// so the user knows the red they saw a moment ago is gone.
+		fmt.Fprintf(r.stdout, "%s  %s● errors resolved%s\n", r.tag, ansiGreen, ansiReset)
+	case r.verbose:
+		// Verbose: print every rebuild even if no output bytes
+		// changed (useful for confirming the watcher actually
+		// fired in response to a save).
+		fmt.Fprintf(r.stdout, "%s  %s● rebuilt — no output changes%s\n", r.tag, ansiDim, ansiReset)
+	}
+
+	r.prev = curr
+	r.prevErrs = len(res.Errors)
+}
+
+// printDiag renders one esbuild diagnostic with file:line:col +
+// the message text. The first line in the build with errors gets
+// a fresh blank line before it so the diagnostic block stands
+// apart from prior output.
+func (r *bundlerReporter) printDiag(w io.Writer, marker, color string, m api.Message) {
+	loc := ""
+	if m.Location != nil {
+		loc = fmt.Sprintf(" %s:%d:%d", m.Location.File, m.Location.Line, m.Location.Column)
+	}
+	fmt.Fprintf(w, "%s%s%s%s %s%s\n", r.tag, color, marker, loc, m.Text, ansiReset)
+	if m.Location != nil && m.Location.LineText != "" {
+		fmt.Fprintf(w, "%s     %s%s%s\n", r.tag, ansiDim, m.Location.LineText, ansiReset)
+	}
+}
+
+// humanBytes renders b as a friendly size (e.g. "4.2 KB"). Used in
+// the reporter's delta lines so the user sees "Counter.js
+// 4.2 KB → 4.5 KB" instead of raw byte counts.
+func humanBytes(b int64) string {
+	const (
+		kib = 1024
+		mib = 1024 * kib
+	)
+	switch {
+	case b >= mib:
+		return fmt.Sprintf("%.1f MB", float64(b)/mib)
+	case b >= kib:
+		return fmt.Sprintf("%.1f KB", float64(b)/kib)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
+// startViteWatcher is the legacy npm/vite shellout path, preserved
+// for projects that haven't migrated to nexus add / nexus build.
+// Verbatim port of the pre-deps-system implementation: spawns
+// `sh -c <cmdline>` in dir, prefixes [web], sniffs Local: URLs,
+// dedupes identical vite rebuild blocks, tears down the whole
+// process group on ctx cancel.
+func startViteWatcher(ctx context.Context, dir, cmdline string, verbose bool, stdout, stderr io.Writer, frontendURLCh chan<- string) error {
 	cmdline = strings.TrimSpace(cmdline)
 	if cmdline == "" {
 		return fmt.Errorf("--frontend-cmd is empty")
