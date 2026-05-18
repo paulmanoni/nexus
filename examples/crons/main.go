@@ -172,10 +172,14 @@ var liveModule = nexus.Module("crons",
 		template.WithSessionResumption(30*time.Second),
 	),
 
-	nexus.AsComponent("Crons",
+	// Anon ctor returns *CronsPage → inferred name "CronsPage".
+	// Override to "Crons" since the template + route both
+	// register under the shorter name.
+	nexus.AsComponent(
 		func(sched *cron.Scheduler) (*CronsPage, error) {
 			return &CronsPage{sched: sched}, nil
 		},
+		nexus.WithName("Crons"),
 		template.WithTemplate("templates/Crons"),
 		nexus.Path("/"),
 	),

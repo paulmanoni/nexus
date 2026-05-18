@@ -66,10 +66,10 @@ var liveModule = nexus.Module("hello",
 		// — counter.js is what /islands/counter.js maps to.
 		template.WithStatic("islands"),
 	),
-	nexus.AsComponent("Hello", NewHello,
-		template.WithTemplate("templates/Hello"),
-		nexus.Path("/"),
-	),
+	// Name "Hello" inferred from *Hello (NewHello's return type);
+	// template "templates/Hello" resolved via the convention path
+	// since *Hello doesn't implement TemplateNamer.
+	nexus.AsComponent(NewHello, nexus.Path("/")),
 )
 
 func main() {

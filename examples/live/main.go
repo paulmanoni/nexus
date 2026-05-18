@@ -6,16 +6,23 @@
 //
 // The pattern for each live page:
 //
-//	nexus.AsComponent("Posts",
+//	nexus.AsComponent(NewPostRow)
+//	// or with override + dep:
+//	nexus.AsComponent(
 //	    func(repo *PostsRepo) (*PostsList, error) {
 //	        return &PostsList{repo: repo}, nil
 //	    },
-//	    template.WithTemplate("templates/posts"),
+//	    nexus.WithName("Posts"),
 //	    nexus.Path("/"),
 //	)
 //
-// Constructor params are resolved from the fx graph. The .nlt
-// source is loaded from the embed.FS supplied to template.Module.
+// Constructor params are resolved from the fx graph. Component
+// name is inferred from the ctor's return type (override via
+// nexus.WithName). The .nlt source path comes from (in order):
+// template.WithTemplate, the component's TemplateName method,
+// or the "templates/<Name>" convention fallback. The FS itself
+// is the engine's configured fs.FS — embed.FS (WithFS) for
+// production, on-disk default for dev.
 // nexus.Path mounts the engine's SSR/WS handler at the URL;
 // omitting nexus.Path turns the registration into a child-only
 // component (loadable from <Tag /> in another template but not
@@ -261,37 +268,19 @@ func NewPostRow() (*PostRow, error) {
 func (c *PostRow) Mount(_ *template.Ctx) error   { return nil }
 func (c *PostRow) Refresh(_ *template.Ctx) error { return nil }
 
-// liveModule is the entire wiring surface: providers for the
-// notifier and the repo, the template engine module, and one
-// AsComponent registration per component. PostRow has no
-// nexus.Path option, so it's child-only — referenced from
-// Posts.nlt's <PostRow /> tag but not reachable as a URL.
 var liveModule = nexus.Module("posts",
 	nexus.Provide(NewPostsRepo),
 	template.Module(
 		template.WithFS(liveAssets),
-		// WithStatic surfaces the islands/ subdir of the embed
-		// at /islands/ — counter.js et al. — so the browser's
-		// dynamic import() can fetch them without a separate
-		// per-app static-mount Invoke.
 		template.WithStatic("islands"),
 		template.WithIdleTimeout(30*time.Minute),
 		template.WithSessionResumption(30*time.Second),
 	),
-	nexus.AsComponent("Posts", func(repo *PostsRepo) (*PostsList, error) {
+	nexus.AsComponent(func(repo *PostsRepo) (*PostsList, error) {
 		return &PostsList{repo: repo}, nil
-	}, template.WithTemplate("templates/Posts"), nexus.Path("/")),
-
-	nexus.AsComponent("PostRow", NewPostRow, template.WithTemplate("templates/PostRow")),
-
-	// Second top-level page reachable via <a nl-navigate
-	// href="/about">; the click stays inside the live WS
-	// channel instead of doing a full reload.
-	nexus.AsComponent("About", NewAbout,
-		template.WithTemplate("templates/About"),
-		nexus.Path("/about"),
-	),
-
+	}, nexus.WithName("Posts"), nexus.Path("/")),
+	nexus.AsComponent(NewPostRow),
+	nexus.AsComponent(NewAbout, nexus.Path("/about")),
 )
 
 func main() {
