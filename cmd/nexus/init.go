@@ -22,22 +22,30 @@ import (
 // only adds the manifest, leaving everything else alone.
 func newInitCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		dir   string
-		force bool
+		dir      string
+		force    bool
+		frontend string
 	)
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
-		Short: "Add nexus.deploy.yaml to an existing project",
-		Long: `Initialize a deployment manifest for the project at <dir> (default ".").
+		Short: "Initialize an existing project (deploy.yaml and/or frontend scaffolding)",
+		Long: `Initialize the project at <dir> (default ".") with whatever the
+flags request.
 
-Scans the project for nexus.DeployAs(...) tags and pre-populates a
-deployments block with one entry per discovered tag (auto-assigned
-ports starting at 8080) plus a default monolith entry. The manifest
-is heavily commented so it doubles as a walkthrough — edit it to
-match your topology and use --deployment <name> in nexus build /
-nexus dev --split.
+Default (no flags) — drop a nexus.deploy.yaml in the directory.
+Scans the project for nexus.DeployAs(...) tags and pre-populates
+a deployments block with one entry per discovered tag (auto-
+assigned ports starting at 8080) plus a default monolith entry.
 
-Refuses to overwrite an existing nexus.deploy.yaml unless --force.`,
+--frontend=vue|react — scaffold the frontend bits for an existing
+Go project: islands.src/main.{ts,tsx} + App.{vue,tsx}, islands/
+index.html, and a patch to main.go that adds //go:embed all:
+islands plus nexus.ServeFrontend(islandsFS, "islands") to the
+nexus.Run call. Skips deploy.yaml when --frontend is the only
+intent; pass both to do everything.
+
+Refuses to overwrite an existing nexus.deploy.yaml or
+islands.src/ unless --force.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			target := dir
@@ -47,11 +55,25 @@ Refuses to overwrite an existing nexus.deploy.yaml unless --force.`,
 			if target == "" {
 				target = "."
 			}
+			if frontend != "" {
+				if frontend != "vue" && frontend != "react" {
+					return fmt.Errorf("nexus init: --frontend must be vue or react, got %q", frontend)
+				}
+				if err := runInitFrontend(target, frontend, force, stdout); err != nil {
+					return err
+				}
+				// Frontend-only flow returns here; deploy.yaml
+				// only fires when --frontend is unset OR the
+				// user explicitly chains another init pass.
+				return nil
+			}
 			return runInit(target, force, stdout)
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "directory to initialize (default '.')")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing nexus.deploy.yaml")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing nexus.deploy.yaml or islands.src/")
+	cmd.Flags().StringVar(&frontend, "frontend", "",
+		"scaffold a frontend framework into an existing project: 'vue' or 'react'")
 	return cmd
 }
 
