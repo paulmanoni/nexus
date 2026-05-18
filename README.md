@@ -62,8 +62,14 @@ nexus dev                 # go run + auto-open the dashboard
 | `nexus new <dir>` | Scaffold a minimal app with a heavily-commented manifest. |
 | `nexus init [dir]` | Add `nexus.deploy.yaml` to an existing project (scans `DeployAs` tags). |
 | `nexus dev [dir]` | `go run`, probe the port, open the dashboard. `--split` boots one subprocess per deployment unit and streams cross-service traces. |
-| `nexus build --deployment <name>` | Build one deployment binary using `go build -overlay` (HTTP-stub shadows for non-owned modules + manifest-baked port/peers). |
+| `nexus build [--deployment <name>]` | Build a binary. With `--deployment`: uses `go build -overlay` (HTTP-stub shadows for non-owned modules + manifest-baked port/peers). Without: simple `go build` after generating the embed file. Frontend sources under `islands.src/` get bundled first. |
 | `nexus docs [topic]` | Inline reference for any feature (`handlers`, `deploy`, `frontend`, `auth`, …). `--web` opens the GitHub README; `--list` prints topic names for shell completion. |
+| `nexus add <spec>` | Fetch a frontend dependency (`vue`, `@vue-flow/core`, …) from esm.sh into `~/.nexus/cache`, write `nexus.lock`. No npm, no `node_modules`. See [frontend/deps](frontend/deps/README.md). |
+| `nexus install` | Sync the cache to `nexus.lock`. Fresh clones / CI use this. No-op when warm. |
+| `nexus remove <spec>` | Drop entry from `nexus.lock`. |
+| `nexus update [spec]` | Re-resolve pinned specs, bump `nexus.lock`. No args = update everything. |
+| `nexus vendor` | Copy cached blobs into `./vendor/nexus/` for air-gapped builds. |
+| `nexus gc` | Reclaim cache space from unreferenced blobs. |
 
 ## Quick start
 
@@ -314,6 +320,23 @@ nexus.AsWS("/events", "chat.typing", NewChatTyping)
 `*WSSession` exposes `Send`/`Emit`/`EmitToUser`/`EmitToRoom`/`EmitToClient` plus `JoinRoom`/`LeaveRoom`. Identity at upgrade flows from `?userId=` or any `gin.Context` `user` value satisfying `interface{ GetID() string }`.
 
 ## Frontend (embedded SPA)
+
+Two paths to a frontend bundle:
+
+1. **`nexus add` + `nexus build`** — fetches deps from esm.sh, bundles via esbuild, no Node toolchain required. Detailed in [frontend/deps](frontend/deps/README.md). Recommended for new projects.
+
+   ```bash
+   $ nexus add vue @vue-flow/core
+   $ nexus build                         # bundles islands.src/*.{ts,tsx,jsx,vue} → islands/
+   ```
+
+   For `.vue` source, opt into the QuickJS-backed Vue SFC compiler:
+
+   ```bash
+   $ CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
+   ```
+
+2. **Bring-your-own-bundle** — point `nexus.ServeFrontend(...)` at a pre-built `embed.FS`. Works with whatever produced the bundle (vite, webpack, hand-written, or the `nexus build` pipeline above). Pattern below.
 
 Mount a built React/Vue/Svelte bundle from an embedded FS:
 
