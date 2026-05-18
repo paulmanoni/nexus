@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -136,7 +137,63 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 		return fmt.Errorf("nexus add: save %s: %w", dc.lockfilePath, err)
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", dc.lockfilePath)
+
+	// Append ambient module declarations for each newly-added
+	// SPEC (not its transitives) to the IDE shims file. Without
+	// this the user gets TS2307 "Cannot find module 'vue'" on
+	// imports, because the IDE has no node_modules tree to walk.
+	// Best-effort: silent skip when nexus-shims.d.ts doesn't
+	// exist (project either pre-dates the new scaffold or
+	// doesn't use the IDE shims layer).
+	cwd, _ := os.Getwd()
+	shimsPath := filepath.Join(cwd, "nexus-shims.d.ts")
+	if _, statErr := os.Stat(shimsPath); statErr == nil {
+		var added int
+		for _, spec := range specs {
+			// Spec might be "vue" or "vue@3.4.21" — append the
+			// bare-name part only, since TS resolves by module
+			// name not version.
+			bare := spec
+			if i := strings.LastIndex(bare, "@"); i > 0 {
+				bare = bare[:i]
+			}
+			if appendShimIfMissing(shimsPath, bare) {
+				added++
+			}
+		}
+		if added > 0 {
+			fmt.Fprintf(stdout, "appended %d module declaration(s) to nexus-shims.d.ts\n", added)
+		}
+	}
 	return nil
+}
+
+// appendShimIfMissing adds `declare module "<spec>";` to path
+// when no such line is already there. Returns true iff a line
+// was written.
+//
+// O(file-size) per call — read whole file, scan, append. Fine
+// for a shims file that tops out at a few dozen entries; if it
+// ever grows past that we'd switch to a sidecar `.nexus-deps`
+// state file the scaffold consults at build time.
+func appendShimIfMissing(path, spec string) bool {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	line := `declare module "` + spec + `";`
+	if strings.Contains(string(body), line) {
+		return false
+	}
+	out := body
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	out = append(out, []byte(line+"\n")...)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return false
+	}
+	return true
 }
 
 // newRemoveCmd registers `nexus remove <pkg>`. Removes the entry

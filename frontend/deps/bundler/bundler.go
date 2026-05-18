@@ -31,6 +31,20 @@ import (
 	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
 
+// vueRuntimeFlagsBanner is prepended to every emitted JS bundle.
+// Defines Vue 3 esm-bundler's three compile-time globals at module
+// entry, defensive against any code path Define's identifier
+// substitution couldn't reach (e.g. a downstream module reading
+// globalThis.__VUE_PROD_DEVTOOLS__ instead of the bare identifier).
+//
+// The typeof check makes it safe to re-run against an already-set
+// window — useful when nexus dev hot-rebuilds incrementally and a
+// page reload re-evals the banner.
+//
+// One line so esbuild keeps it on the first source line and stack
+// traces from runtime-core stay readable.
+const vueRuntimeFlagsBanner = `if(typeof globalThis.__VUE_PROD_DEVTOOLS__==="undefined"){globalThis.__VUE_PROD_DEVTOOLS__=false;globalThis.__VUE_OPTIONS_API__=true;globalThis.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__=false;}`
+
 // Options configures one Build call. All fields are optional
 // except Entries; sensible defaults are filled in by applyDefaults.
 type Options struct {
@@ -169,9 +183,25 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		// effect. Caller-supplied Define entries (future
 		// option) would merge here rather than replace.
 		Define: map[string]string{
-			"__VUE_PROD_DEVTOOLS__":                  "false",
-			"__VUE_OPTIONS_API__":                    "true",
+			"__VUE_PROD_DEVTOOLS__":                   "false",
+			"__VUE_OPTIONS_API__":                     "true",
 			"__VUE_PROD_HYDRATION_MISMATCH_DETAILS__": "false",
+		},
+		// Runtime polyfill as a banner — runs at the top of
+		// every emitted JS file BEFORE any imports execute, so
+		// even if a Vue chunk somehow slipped past Define's
+		// identifier substitution (rare; can happen when a
+		// downstream module accesses the flag via globalThis
+		// instead of as a bare identifier), the globals are
+		// already set. Belt + suspenders.
+		//
+		// Idempotent (typeof check) so re-running the bundle
+		// in dev mode against an already-set-up window object
+		// is harmless. Cost: ~250 bytes per bundle, trivially
+		// shaken away from non-browser builds since they'd
+		// access globalThis anyway.
+		Banner: map[string]string{
+			"js": vueRuntimeFlagsBanner,
 		},
 	}
 
