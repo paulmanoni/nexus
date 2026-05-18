@@ -128,10 +128,26 @@ func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, erro
 	// such a file refers to a sibling in the registry. Resolve
 	// against the importer URL and look up the result in the store.
 	if args.Namespace == Namespace && args.Importer != "" {
+		// Two-attempt lookup: esm.sh's URL conventions mix
+		// query-bearing and query-free sibling URLs. A stub at
+		// /pkg@1.0.0 might `import "/dep@^2?target=es2022"`,
+		// and that dep's body in turn imports a SIBLING that
+		// path-encodes its variant (/dep@2.0.0/es2022/x.mjs,
+		// no query). resolveRegistryURL inherits the importer's
+		// query (right for the Vue compile bootstrap where every
+		// fetched URL carries ?target=es2015), but for esm.sh's
+		// general conventions the right lookup is query-free.
+		// We try inherited first, then strip query and retry.
+		// On both misses we surface a clear error.
 		absURL, err := resolveRegistryURL(args.Importer, p)
 		if err == nil && absURL != "" {
 			if _, _, gerr := opts.Store.Get(absURL); gerr == nil {
 				return api.OnResolveResult{Path: absURL, Namespace: Namespace}, nil
+			}
+			if stripped := stripQuery(absURL); stripped != absURL {
+				if _, _, gerr := opts.Store.Get(stripped); gerr == nil {
+					return api.OnResolveResult{Path: stripped, Namespace: Namespace}, nil
+				}
 			}
 		}
 		// Registry-shaped import didn't hit the cache → clear
@@ -362,6 +378,18 @@ func loaderFromExtension(urlStr string) (api.Loader, bool) {
 
 
 
+
+// stripQuery returns u with any "?..." query string removed.
+// Used by resolveOne's two-attempt lookup: when the inherited-
+// query URL isn't in the cache, the query-stripped form often is
+// because esm.sh sibling URLs frequently path-encode their
+// variant (e.g. /pkg@1/es2022/x.mjs) and don't need a query.
+func stripQuery(u string) string {
+	if i := strings.Index(u, "?"); i >= 0 {
+		return u[:i]
+	}
+	return u
+}
 
 // resolveRegistryURL joins an import specifier (which may be
 // relative, absolute-path, or absolute-URL) against the importer's
