@@ -1,4 +1,4 @@
-package live
+package nexus
 
 import (
 	"sync/atomic"
@@ -38,7 +38,7 @@ func (b *fakeBus) Close() error {
 // (no bus) and distributed deployments must behave the same
 // from a local caller's perspective.
 func TestAttachBus_NotifyPublishesAndWakesLocal(t *testing.T) {
-	n := New()
+	n := NewNotifier()
 	b := newFakeBus()
 	cancel, err := n.AttachBus(b)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestAttachBus_NotifyPublishesAndWakesLocal(t *testing.T) {
 // subscribers (but NOT broadcast subscribers — that part is
 // the existing Notifier contract).
 func TestAttachBus_NotifyTopicPublishesAndScopes(t *testing.T) {
-	n := New()
+	n := NewNotifier()
 	b := newFakeBus()
 	cancel, _ := n.AttachBus(b)
 	defer cancel()
@@ -96,7 +96,7 @@ func TestAttachBus_NotifyTopicPublishesAndScopes(t *testing.T) {
 // is the peer-to-local direction — node A publishes, node B
 // receives and wakes its sessions).
 func TestAttachBus_IncomingFansOutToLocal(t *testing.T) {
-	n := New()
+	n := NewNotifier()
 	b := newFakeBus()
 	cancel, _ := n.AttachBus(b)
 	defer cancel()
@@ -133,7 +133,7 @@ func TestAttachBus_IncomingFansOutToLocal(t *testing.T) {
 
 // Double-attach is an error — a Notifier hosts one bus at a time.
 func TestAttachBus_RejectsDouble(t *testing.T) {
-	n := New()
+	n := NewNotifier()
 	b1 := newFakeBus()
 	c1, err := n.AttachBus(b1)
 	if err != nil {

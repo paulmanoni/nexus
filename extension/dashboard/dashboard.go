@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/paulmanoni/nexus/extension/cron"
-	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
@@ -105,7 +104,7 @@ type TabInfo struct {
 // silently expose service/env/cron declarations to the public. The
 // cron + rate-limit + metrics endpoints are always mounted — their
 // stores just return empty lists when nothing has been registered.
-func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier *live.Notifier, gqlStats *gql.StatsRegistry, cfg Config) {
+func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier Notifier, gqlStats *gql.StatsRegistry, cfg Config) {
 	if cfg.Name == "" {
 		cfg.Name = "Nexus"
 	}

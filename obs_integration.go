@@ -11,8 +11,6 @@ import (
 	"strings"
 
 	"go.uber.org/fx"
-
-	"github.com/paulmanoni/nexus/live"
 )
 
 // ratelimitGlobalKey is the store key for the app-wide bucket. Re-declared
@@ -231,14 +229,13 @@ func fxEarlyOptions(cfg Config) fx.Option {
 	return fx.Options(
 		fx.Supply(cfg),
 		fx.Provide(New),
-		// *live.Notifier is a framework primitive used by
-		// template.Module and any user code that wants cross-
-		// session fan-out (notify one connection, every other
-		// connected session re-renders). Always provide it so
-		// users don't have to wire it explicitly; constructor
-		// is trivially cheap and the value is unused if no one
+		// *Notifier is a framework primitive used by registry /
+		// cron / rate-limit (and any user code that wants
+		// cross-subsystem fan-out). Always provide it so users
+		// don't have to wire it explicitly; constructor is
+		// trivially cheap and the value is unused if no one
 		// depends on it.
-		fx.Provide(live.New),
+		fx.Provide(NewNotifier),
 		fx.Invoke(registerLifecycle),
 	)
 }

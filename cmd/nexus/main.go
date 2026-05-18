@@ -125,7 +125,6 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newDocsCmd(stdout, stderr),
 		newAPIDocsCmd(stdout, stderr),
 		newClientCmd(stdout, stderr),
-		newIslandCmd(stdout, stderr),
 		// Frontend dependency manager (node-free; see
 		// frontend/deps/* for the implementation).
 		newAddCmd(stdout, stderr),
