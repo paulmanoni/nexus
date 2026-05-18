@@ -55,7 +55,46 @@ func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool
 	if depsModeAvailable(dir) {
 		return startBundlerWatcher(ctx, dir, verbose, stdout, stderr)
 	}
+	// Detect first-run-without-add: the project has frontend
+	// sources under islands.src/ but no nexus.lock yet. Print a
+	// specific suggestion (with per-import nexus add commands)
+	// instead of falling through to the vite path, which would
+	// surface as "--frontend-cmd is empty" and leave the user
+	// guessing what to do.
+	if hint := maybeMissingLockfileHint(dir); hint != "" {
+		fmt.Fprintf(stderr, "%s%s%s\n", ansiYellow, hint, ansiReset)
+		return nil
+	}
 	return startViteWatcher(ctx, dir, cmdline, verbose, stdout, stderr, frontendURLCh)
+}
+
+// maybeMissingLockfileHint scans dir (and one parent up, matching
+// depsModeAvailable's walk shape) for the new-pipeline shape —
+// islands.src/ with entries. Returns a helpful message when the
+// pipeline IS in use but nexus.lock hasn't been populated yet;
+// returns "" otherwise so the caller can fall through to the
+// legacy vite path.
+//
+// Single-level upward walk because the new pipeline always has
+// islands.src/ at the project root. Deeper walks would mistake
+// nested-project layouts for the user's project.
+func maybeMissingLockfileHint(dir string) string {
+	cur, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	for _, candidate := range []string{cur, filepath.Dir(cur)} {
+		srcDir := filepath.Join(candidate, "islands.src")
+		if info, err := os.Stat(srcDir); err != nil || !info.IsDir() {
+			continue
+		}
+		entries, err := collectFrontendEntries(srcDir)
+		if err != nil || len(entries) == 0 {
+			continue
+		}
+		return "nexus dev: " + formatMissingLockfileError(srcDir, entries)
+	}
+	return ""
 }
 
 // depsModeAvailable reports whether dir (or any directory between

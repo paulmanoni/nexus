@@ -140,7 +140,12 @@ func TestFrontendBuild_MissingLockfileReportsClearly(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cwd, "islands.src", "Foo.ts"), []byte(`import "vue";`), 0o644); err != nil {
+	// Two bare imports in user code → error should suggest BOTH
+	// nexus add commands by name, not a generic hint.
+	if err := os.WriteFile(filepath.Join(cwd, "islands.src", "Foo.ts"), []byte(
+		`import { ref } from "vue";
+import { VueFlow } from "@vue-flow/core";
+`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -148,7 +153,14 @@ func TestFrontendBuild_MissingLockfileReportsClearly(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected lockfile-missing error")
 	}
-	if !strings.Contains(err.Error(), "no nexus.lock") {
-		t.Errorf("err missing 'no nexus.lock' hint: %v", err)
+	msg := err.Error()
+	for _, want := range []string{
+		"nexus.lock missing",
+		"nexus add vue",
+		"nexus add @vue-flow/core",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("err missing %q\n--- full msg ---\n%s", want, msg)
+		}
 	}
 }
