@@ -624,13 +624,24 @@ func (s *Session) handleNavigate(ctx context.Context, path string, params Params
 			styleBody = def.style.Body
 		}
 	}
+
+	// Ship the component's <script> body (already wrapped if
+	// scoped) and a Component label so the client can find +
+	// replace the prior data-nl-script="<Name>" tag in the DOM.
+	// Empty when the new component has no <script> block.
+	var scriptBody string
+	if def.script != nil && def.script.Body != "" {
+		scriptBody = wrapScript(def.script, def.name)
+	}
 	_ = s.send(ctx, Outbound{
-		Type:     "joined",
-		Rendered: &s.prev,
-		Path:     path,
-		Token:    s.token,
-		Style:    styleBody,
-		Scope:    scope,
+		Type:      "joined",
+		Rendered:  &s.prev,
+		Path:      path,
+		Token:     s.token,
+		Style:     styleBody,
+		Scope:     scope,
+		Script:    scriptBody,
+		Component: def.name,
 	})
 }
 

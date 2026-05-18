@@ -85,7 +85,7 @@ func (e *Engine) serveSSR(w http.ResponseWriter, r *http.Request, def *component
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	fmt.Fprint(w, ssrShell(def.name, body, def.style, def.scopeID, e.defaultStyles, e.stylesheets))
+	fmt.Fprint(w, ssrShell(def.name, body, def.style, def.scopeID, def.script, e.defaultStyles, e.stylesheets))
 }
 
 // serveWS upgrades the request, sends the initial join frame, and
@@ -219,7 +219,7 @@ const tailwindCDN = "https://cdn.tailwindcss.com"
 // So a user's theme stylesheet can override Tailwind, and a
 // component's scoped style can override the theme — the same
 // order a hand-written page would have.
-func ssrShell(componentName, body string, style *Style, scopeID string, defaultStyles bool, stylesheets []string) string {
+func ssrShell(componentName, body string, style *Style, scopeID string, script *Script, defaultStyles bool, stylesheets []string) string {
 	var sb strings.Builder
 	sb.WriteString(`<!doctype html><html><head><meta charset="utf-8"><title>`)
 	sb.WriteString(html.EscapeString(componentName))
@@ -251,9 +251,47 @@ func ssrShell(componentName, body string, style *Style, scopeID string, defaultS
 	}
 	sb.WriteString(`">`)
 	sb.WriteString(body)
-	sb.WriteString(`</div><script src="`)
+	sb.WriteString(`</div>`)
+
+	// Component <script> block. Tagged data-nl-script="<Name>" so
+	// the client can find + remove it on live-navigate before
+	// injecting the new component's script. Scoped form is wrapped
+	// in an IIFE binding `el` to this component's SSR root, so
+	// querySelector calls don't escape to siblings.
+	if script != nil && script.Body != "" {
+		sb.WriteString(`<script data-nl-script="`)
+		sb.WriteString(html.EscapeString(componentName))
+		sb.WriteString(`">`)
+		sb.WriteString(wrapScript(script, componentName))
+		sb.WriteString(`</script>`)
+	}
+
+	sb.WriteString(`<script src="`)
 	sb.WriteString(ScriptPath)
 	sb.WriteString(`" defer></script></body></html>`)
+	return sb.String()
+}
+
+// wrapScript returns the script body ready to emit between <script>
+// tags. For unscoped scripts the body is passed through verbatim;
+// for scoped scripts it's wrapped in an IIFE that binds `el` to the
+// component's SSR root via the data-nl-component selector.
+//
+// Why an IIFE and not a JS module: classic <script> bodies share
+// the top-level scope across reloads, so a re-injected scoped
+// script on live-navigate wouldn't get a fresh `el`. The IIFE form
+// gives the body a local scope per execution so re-running it on
+// navigate just rebinds `el` without leaking variables.
+func wrapScript(script *Script, componentName string) string {
+	if !script.Scoped {
+		return script.Body
+	}
+	var sb strings.Builder
+	sb.WriteString("(function(el){\n")
+	sb.WriteString(script.Body)
+	sb.WriteString("\n})(document.querySelector('[data-nl-component=\"")
+	sb.WriteString(componentName)
+	sb.WriteString("\"]'));")
 	return sb.String()
 }
 

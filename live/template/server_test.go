@@ -124,6 +124,65 @@ func TestServer_SSR_WithStylesheetAppendsLinkTags(t *testing.T) {
 	}
 }
 
+// counterTmplWithScript reuses counterComponent's state model but
+// adds a per-component <script> block — both scoped and unscoped
+// shapes covered by separate registrations below.
+const counterTmplWithUnscopedScript = `<template><span>x</span></template>
+<script>window.__nlt_unscoped_ran=true;</script>`
+
+const counterTmplWithScopedScript = `<template><span>x</span></template>
+<script scoped>el.dataset.scopedRan="yes";</script>`
+
+func TestServer_SSR_EmitsUnscopedScriptVerbatim(t *testing.T) {
+	e := New()
+	if err := e.Register("Counter", []byte(counterTmplWithUnscopedScript), func() Component { return &counterComponent{} }); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	srv := httptest.NewServer(e.Handler("Counter"))
+	t.Cleanup(func() { srv.Close() })
+	body := fetchBody(t, srv)
+
+	// Tag carries the component-keyed attribute so the client can
+	// find + replace it on live-navigate.
+	if !strings.Contains(body, `<script data-nl-script="Counter">window.__nlt_unscoped_ran=true;</script>`) {
+		t.Errorf("body missing unscoped <script> tag, got:\n%s", body)
+	}
+}
+
+func TestServer_SSR_WrapsScopedScriptInIIFE(t *testing.T) {
+	e := New()
+	if err := e.Register("Counter", []byte(counterTmplWithScopedScript), func() Component { return &counterComponent{} }); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	srv := httptest.NewServer(e.Handler("Counter"))
+	t.Cleanup(func() { srv.Close() })
+	body := fetchBody(t, srv)
+
+	// Wrapping shape: (function(el){ BODY })(document.querySelector('[data-nl-component="Counter"]'));
+	// Body must be in there literally — the IIFE preserves user source byte-for-byte.
+	for _, want := range []string{
+		`<script data-nl-script="Counter">`,
+		`(function(el){`,
+		`el.dataset.scopedRan="yes";`,
+		`})(document.querySelector('[data-nl-component="Counter"]'));`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scoped-script body missing %q, full body:\n%s", want, body)
+		}
+	}
+}
+
+func TestServer_SSR_NoScriptTagWhenComponentHasNoScript(t *testing.T) {
+	// Pure-template registration (no <script> block) should NOT
+	// emit a stray data-nl-script tag. Defends against accidentally
+	// emitting an empty <script data-nl-script=""></script>.
+	srv, _ := httpReg(t)
+	body := fetchBody(t, srv)
+	if strings.Contains(body, `data-nl-script`) {
+		t.Errorf("body should not contain data-nl-script attribute, got:\n%s", body)
+	}
+}
+
 func TestServer_SSR_IncludesClientScriptTag(t *testing.T) {
 	srv, _ := httpReg(t)
 	resp, err := http.Get(srv.URL)

@@ -633,7 +633,7 @@ type componentDef struct {
 	name     string
 	fragment *Fragment
 	factory  func() Component
-	script   *Script // retained for future dev-mode introspection
+	script   *Script // emitted as <script> in the SSR shell; re-shipped on live-navigate
 	style    *Style  // emitted as <style> in the SSR shell; scoped via scopeID
 	// scopeID is the stable per-component attribute key used for
 	// CSS scoping. Stamped on the SSR container as
