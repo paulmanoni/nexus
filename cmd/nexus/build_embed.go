@@ -165,6 +165,19 @@ type simpleBuildOptions struct {
 // runSimpleBuild generates the embed file (templates/, islands/
 // if present) and shells to `go build`. No overlay, no shadows,
 // no manifest. Most live-template apps live here.
+//
+// Pipeline order matters:
+//
+//  1. frontendBuild scans islands.src/ and produces islands/*.js
+//     via esbuild + the resolver plugin. Skipped silently when no
+//     islands.src directory exists (pure-Go projects).
+//  2. generateEmbedFile inspects the now-fresh islands/ + templates/
+//     and writes embed_gen.go so go:embed picks them up.
+//  3. go build absorbs both via the generated embed file.
+//
+// Without step 1 the project would have to run an external
+// frontend toolchain (npm/vite) first, which is exactly what the
+// new deps system replaces.
 func runSimpleBuild(opts simpleBuildOptions) error {
 	pkg := opts.MainPackage
 	if pkg == "" {
@@ -175,6 +188,10 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 	mainDir := resolveMainDir(cwd, pkg)
+
+	if err := frontendBuild(mainDir, opts.Stdout, opts.Stderr); err != nil {
+		return fmt.Errorf("nexus build: %w", err)
+	}
 
 	embedPath, err := generateEmbedFile(mainDir, "main", nil, opts.Stderr)
 	if err != nil {
