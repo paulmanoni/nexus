@@ -52,9 +52,13 @@ func generateEmbedFile(mainDir, mainPkg string, extraDirs []string, stderr io.Wr
 // mainDir) that exist AND contain at least one regular file.
 // Empty directories are skipped because //go:embed on an empty
 // dir is a compile error. extraDirs lets callers add custom
-// names beyond the conventional templates/ + islands/.
+// names beyond the conventional islands/.
+//
+// templates/ used to be conventional too, but the .nlt engine
+// removal dropped its embed-time wiring. Scaffolded projects
+// now own their own go:embed directives in main.go.
 func scanEmbedDirs(mainDir string, extraDirs []string) []string {
-	candidates := append([]string{"templates", "islands"}, extraDirs...)
+	candidates := append([]string{"islands"}, extraDirs...)
 	seen := map[string]bool{}
 	out := make([]string, 0, len(candidates))
 	for _, d := range candidates {
@@ -117,22 +121,18 @@ func renderEmbedGenSource(pkgName string, dirs []string) string {
 	b.WriteString("// Auto-removed after the build completes.\n")
 	b.WriteString("//\n")
 	b.WriteString("// `nexus build` scans the main package for conventional asset\n")
-	b.WriteString("// directories (templates/, islands/) and writes this file so\n")
-	b.WriteString("// the //go:embed directive bakes them into the binary. The\n")
-	b.WriteString("// init() registers the embed with the live/template engine via\n")
-	b.WriteString("// SetDefaultFS, which Engine.New picks up before any\n")
-	b.WriteString("// component renders. Per-engine WithFS / WithRoot options\n")
-	b.WriteString("// still override.\n\n")
+	b.WriteString("// directories (islands/) and writes this file so the\n")
+	b.WriteString("// //go:embed directive bakes them into the binary. The\n")
+	b.WriteString("// exported nexusEmbeddedAssets var is what the user's\n")
+	b.WriteString("// main.go (or ServeFrontend caller) consumes.\n\n")
 	b.WriteString("package " + pkgName + "\n\n")
-	b.WriteString("import (\n")
-	b.WriteString("\t\"embed\"\n\n")
-	b.WriteString("\t\"github.com/paulmanoni/nexus/live/template\"\n")
-	b.WriteString(")\n\n")
+	b.WriteString("import \"embed\"\n\n")
 	b.WriteString("//go:embed " + strings.Join(dirs, " ") + "\n")
 	b.WriteString("var nexusEmbeddedAssets embed.FS\n\n")
-	b.WriteString("func init() {\n")
-	b.WriteString("\ttemplate.SetDefaultFS(nexusEmbeddedAssets)\n")
-	b.WriteString("}\n")
+	b.WriteString("// _ keeps the var from being flagged unused when no\n")
+	b.WriteString("// downstream code references it directly (scaffolded\n")
+	b.WriteString("// projects usually carry their own //go:embed in main.go).\n")
+	b.WriteString("var _ = nexusEmbeddedAssets\n")
 	return b.String()
 }
 

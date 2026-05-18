@@ -1,12 +1,13 @@
 <p align="center">
-  <img src="docs/logo.png" alt="nexus" width="320">
+  <img src="docs/logo.svg" alt="nexus" width="120" height="120">
 </p>
 
-# nexus
+<h1 align="center">nexus</h1>
 
-A Go framework over [Gin](https://github.com/gin-gonic/gin) that lets you write plain handlers, wires them into REST + GraphQL + WebSocket from one signature, and ships a live dashboard at `/__nexus/`.
-
-![Architecture dashboard](docs/dashboard.png)
+<p align="center">
+  A Go framework over <a href="https://github.com/gin-gonic/gin">Gin</a> that lets you write plain handlers,
+  wires them into REST + GraphQL + WebSocket from one signature, and ships a live dashboard at <code>/__nexus/</code>.
+</p>
 
 ```go
 func main() {
@@ -30,594 +31,238 @@ var Module = nexus.Module("adverts",
 )
 ```
 
-No fx import. No schema assembly. No middleware plumbing. The handler is plain Go, the dashboard is at `/__nexus/`.
+![Architecture dashboard](docs/dashboard.png)
+
+---
 
 ## Why nexus
 
 - **One handler, three transports.** `AsRest` / `AsQuery` / `AsMutation` / `AsWS` all read the same reflective signature — `func(svc, deps..., p nexus.Params[Args]) (T, error)` — and wire the right transport.
-- **Live architecture view.** `nexus.Module` groups endpoints; `ProvideService` introspects constructor params and draws service → service / service → resource edges automatically. Real traffic pulses on the edges.
-- **Built-in auth, rate limits, metrics, traces.** Cross-transport bundles via `nexus.Use`. Per-op observability is free — every handler gets request/error counters and a trace event with no user code.
-- **Manifest-driven deployment.** Write the app as a monolith, declare a few split units in `nexus.deploy.yaml`, ship N independent binaries from the same source. `go build -overlay` swaps cross-module `*Service` bodies for HTTP stubs at compile time — your code never branches on deployment.
+- **Live architecture view.** `nexus.Module` groups endpoints; constructor introspection draws service → service / service → resource edges automatically. Real traffic pulses on the edges.
+- **Built-in auth, rate limits, metrics, traces.** Cross-transport bundles via `nexus.Use`. Per-op observability is free — every handler gets counters + traces with no user code.
+- **Manifest-driven deployment.** Write the app as a monolith, declare a few split units in `nexus.deploy.yaml`, ship N independent binaries from the same source. `go build -overlay` swaps cross-module `*Service` bodies for HTTP stubs at compile time.
+- **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. No `node_modules`, no `npm install`. See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
 ## Install
 
 ```bash
-go get github.com/paulmanoni/nexus
-go install github.com/paulmanoni/nexus/cmd/nexus@latest   # CLI
+go install github.com/paulmanoni/nexus/cmd/nexus@latest
 ```
 
-Requires Go 1.25+.
+Go 1.25+. For `.vue` source compile support, opt into the QuickJS-backed Vue SFC compiler:
+
+```bash
+CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
+```
 
 ## CLI
 
 ```bash
-nexus new my-app          # scaffold main.go + module.go + go.mod + nexus.deploy.yaml
-cd my-app && go mod tidy
+nexus new my-app && cd my-app
 nexus dev                 # go run + auto-open the dashboard
 ```
 
-| Command | Description |
+| Command | What it does |
 |---|---|
-| `nexus new <dir>` | Scaffold a minimal app with a heavily-commented manifest. |
-| `nexus init [dir]` | Add `nexus.deploy.yaml` to an existing project (scans `DeployAs` tags). |
-| `nexus dev [dir]` | `go run`, probe the port, open the dashboard. `--split` boots one subprocess per deployment unit and streams cross-service traces. |
-| `nexus build [--deployment <name>]` | Build a binary. With `--deployment`: uses `go build -overlay` (HTTP-stub shadows for non-owned modules + manifest-baked port/peers). Without: simple `go build` after generating the embed file. Frontend sources under `islands.src/` get bundled first. |
-| `nexus docs [topic]` | Inline reference for any feature (`handlers`, `deploy`, `frontend`, `auth`, …). `--web` opens the GitHub README; `--list` prints topic names for shell completion. |
-| `nexus add <spec>` | Fetch a frontend dependency (`vue`, `@vue-flow/core`, …) from esm.sh into `~/.nexus/cache`, write `nexus.lock`. No npm, no `node_modules`. See [frontend/deps](frontend/deps/README.md). |
-| `nexus install` | Sync the cache to `nexus.lock`. Fresh clones / CI use this. No-op when warm. |
+| `nexus new <dir>` | Scaffold a runnable app (prompts for frontend / db / cache / auth). |
+| `nexus init [dir]` | Add `nexus.deploy.yaml` to an existing project. |
+| `nexus dev [dir]` | `go run` + auto-rebuild frontend on save; opens the dashboard. `--split` boots one subprocess per deployment unit. |
+| `nexus build [--deployment <name>]` | Build a binary. Bundles frontend sources under `islands.src/` first, then `go build` (with overlay shadows when `--deployment` is set). |
+| `nexus docs [topic]` | Inline reference (`handlers`, `deploy`, `frontend`, `auth`, …). |
+| `nexus add <spec>` | Fetch a frontend dep from esm.sh into `~/.nexus/cache`, write `nexus.lock`. |
+| `nexus install` | Sync the cache to `nexus.lock` (fresh clones, CI). |
 | `nexus remove <spec>` | Drop entry from `nexus.lock`. |
-| `nexus update [spec]` | Re-resolve pinned specs, bump `nexus.lock`. No args = update everything. |
-| `nexus vendor` | Copy cached blobs into `./vendor/nexus/` for air-gapped builds. |
+| `nexus update [spec]` | Re-resolve specs, bump `nexus.lock`. |
+| `nexus vendor` | Copy cached blobs to `./vendor/nexus/` for air-gapped builds. |
 | `nexus gc` | Reclaim cache space from unreferenced blobs. |
 
 ## Quick start
 
 ```go
+// main.go
 package main
 
-import (
-    "context"
-
-    "github.com/paulmanoni/nexus"
-)
-
-// Service wrapper — distinct Go type per logical service so fx can
-// route by type without named tags.
-type AdvertsService struct{ *nexus.Service }
-
-func NewAdvertsService(app *nexus.App) *AdvertsService {
-    return &AdvertsService{app.Service("adverts").Describe("Job adverts catalog")}
-}
-
-// Typed DB handle — same pattern; fx resolves by type.
-type MainDB struct{ *DB }
-
-func NewMainDB() *MainDB { /* open, migrate, return wrapper */ }
-
-// Every dep shows up on the dashboard:
-//   *AdvertsService → grounds the op under "adverts"
-//   *MainDB         → draws an edge from adverts → main
-//   nexus.Params[T] → resolve context + typed args bundle
-func NewListAdverts(svc *AdvertsService, db *MainDB, p nexus.Params[struct{}]) (*Response, error) {
-    return fetch(p.Context, db)
-}
+import "github.com/paulmanoni/nexus"
 
 func main() {
     nexus.Run(
         nexus.Config{
             Server:    nexus.ServerConfig{Addr: ":8080"},
-            Dashboard: nexus.DashboardConfig{Enabled: true, Name: "Adverts"},
+            Dashboard: nexus.DashboardConfig{Enabled: true, Name: "Demo"},
         },
-        nexus.ProvideResources(NewMainDB),
-        nexus.Module("adverts",
-            nexus.Provide(NewAdvertsService),
-            nexus.AsQuery(NewListAdverts),
-        ),
+        helloModule,
     )
 }
-```
 
-Open <http://localhost:9080/__nexus/> (admin port = `Addr` + 1000). Fire a request → packet animation on the Architecture tab.
+// hello.go
+type HelloService struct{}
 
-## Reflective handlers
+func NewHelloService() *HelloService { return &HelloService{} }
 
-```go
-func NewOp(svc *XService, deps..., p nexus.Params[Args]) (*Response, error)
-```
+type SayHelloArgs struct{ Name string }
 
-- First `*Service`-wrapper dep grounds the op under that service. Single-service apps may omit it; multi-service apps either supply it or pin with `nexus.OnService[*Svc]()`. Service-less handlers (e.g. a public `HelloWorld`) mount on a synthesized default service partition.
-- Last param (`nexus.Params[T]` or a trailing struct) carries args. `Params[T]` exposes `Context` + `Args`.
-- Return must be `(T, error)`; `T` becomes the GraphQL return type.
-
-```go
-type CreateArgs struct {
-    Title        string `graphql:"title,required"        validate:"required,len=3|120"`
-    EmployerName string `graphql:"employerName,required" validate:"required,len=2|200"`
+func (s *HelloService) SayHello(_ context.Context, p nexus.Params[SayHelloArgs]) (string, error) {
+    return "Hello, " + p.Input.Name, nil
 }
 
-func NewCreateAdvert(svc *AdvertsService, db *MainDB, p nexus.Params[CreateArgs]) (*AdvertResponse, error) {
-    return create(p.Context, db, p.Args.Title, p.Args.EmployerName)
-}
-```
-
-`graphql:` builds the schema; `validate:` builds validators that the dashboard renders as chips.
-
-## CRUD generator
-
-`AsCRUD[T]` collapses the five-endpoint CRUD shape into a single declaration. Reflection on `T` derives the URL prefix, the GraphQL types, and the primary key; a per-request resolver yields the `Store[T]` the generated handlers run against.
-
-```go
-import nxgorm "github.com/paulmanoni/nexus/storage/gorm"
-
-type Note struct {
-    ID    string `json:"id"`
-    Title string `json:"title" validate:"required,len=1|120"`
-    Body  string `json:"body"`
-}
-
-var Module = nexus.Module("notes",
-    nexus.Provide(NewNotesDB),
-    nexus.AsCRUD[Note](
-        func(ctx context.Context, db *DB) (nexus.Store[Note], error) {
-            return nxgorm.New[Note](db.GetDB())
-        },
-        nexus.WithGraphQL(),
-    ),
+var helloModule = nexus.Module("hello",
+    nexus.Provide(NewHelloService),
+    nexus.AsQuery((*HelloService).SayHello),
 )
 ```
 
-| Surface | Endpoints |
-|---|---|
-| REST (default) | `GET /notes` · `GET /notes/:id` · `POST /notes` · `PATCH /notes/:id` · `DELETE /notes/:id` |
-| GraphQL (`WithGraphQL()`) | `listNotes(limit, offset, sort)` · `getNote(id)` · `createNote(...)` · `updateNote(id, ...)` · `deleteNote(id)` |
+`nexus dev` runs it, opens the dashboard at `http://localhost:8080/__nexus`, exposes the handler over GraphQL (`{ sayHello(name:"world") }`) and REST (`POST /hello/sayHello`).
 
-- `WithoutREST()` — pair with `WithGraphQL()` for a GraphQL-only resource.
-- `validate:` tags on `T` flow into Create/Update — invalid bodies are 400 on REST, resolver errors on GraphQL.
-- The resolver runs once per request, so multi-tenancy / read-replica routing is just "build the right `Store` from `ctx`."
-- Any resolver dep that satisfies `NexusResources()` auto-links its resource node to every generated endpoint on the architecture canvas — no manual edge declarations.
-- Auth, rate limits, `Use(...)` — all the per-op options work the same way they do on `AsRest`.
+## Reflective handlers
 
-### Stores
-
-| Adapter | Use |
-|---|---|
-| `nexus.MemoryResolver[T](nil, nil)` | In-process map; prototyping and tests. |
-| `nexus/storage/gorm.New[T](db)` | Production GORM adapter — UUID assignment, paginated `Search`, sort whitelisting, and `gorm.ErrRecordNotFound` → `nexus.ErrCRUDNotFound` so 404s map cleanly. |
-
-Custom backends (Redis, sqlc, …) implement `nexus.Store[T]` directly:
+One signature, three transports:
 
 ```go
-type Store[T any] interface {
-    Find(ctx context.Context, id string) (*T, error)
-    Search(ctx context.Context, opts nexus.ListOptions) (items []T, total int, err error)
-    Save(ctx context.Context, item *T) error
-    Remove(ctx context.Context, id string) error
-}
+// REST: POST /widgets
+nexus.AsRest("POST", "/widgets", NewCreateWidget)
+
+// GraphQL: mutation createWidget(input: WidgetInput!): Widget!
+nexus.AsMutation(NewCreateWidget)
+
+// GraphQL query: query listWidgets(filter: WidgetFilter): [Widget!]!
+nexus.AsQuery(NewListWidgets)
+
+// WebSocket event: emit { type:"chat.send", payload:{...} }
+nexus.AsWS("/events", "chat.send", NewChatSend)
 ```
 
-Sentinels `ErrCRUDNotFound` / `ErrCRUDConflict` / `ErrCRUDValidation` map to 404 / 409 / 400; anything else maps to 500.
+Each constructor returns a function with the canonical shape:
 
-## Options
+```go
+func NewCreateWidget(svc *WidgetService) func(context.Context, nexus.Params[CreateArgs]) (Widget, error)
+```
 
-| Option | Produces |
-|---|---|
-| `Module(name, opts...)` | Named group; stamps module name on every endpoint. |
-| `Path(p)` | Module-level public URL prefix — sets REST mount + per-service GraphQL path (`<p>/graphql`) in one declaration. |
-| `Provide(fns...)` | Constructor(s) into the dep graph. |
-| `ProvideService(fn)` | Provide + introspect: detects deps and draws Architecture edges. |
-| `ProvideResources(fns...)` | Provide + auto-register resources via `NexusResourceProvider`. |
-| `Supply(vals...)` | Ready-made values into the dep graph. |
-| `Invoke(fn)` | Side-effect at start-up. |
-| `AsRest(method, path, fn, opts...)` | REST endpoint. |
-| `AsCRUD[T](resolver, opts...)` | Five REST + five GraphQL CRUD ops in one declaration; resolver yields a `Store[T]` per request. |
-| `AsQuery(fn, opts...)` / `AsMutation(...)` | GraphQL op, auto-mounted. |
-| `AsWS(path, type, fn, opts...)` | WebSocket scoped to one envelope type. |
-| `AsWorker(name, fn)` | Long-lived background task; framework-managed lifecycle. |
-| `Use(middleware.Middleware)` | Cross-transport middleware (REST + GraphQL). |
-| `ServeFrontend(fs, root, opts...)` | Mount an embedded SPA bundle. |
-| `auth.Module(auth.Config{...})` | Built-in auth surface. |
+The framework introspects: `*WidgetService` becomes an fx dependency; `Params[CreateArgs]` declares the input schema; the return type becomes the GraphQL field type. Args + return get auto-mapped to GraphQL input + object types — no schema duplication.
+
+## CRUD generator
+
+```go
+type Advert struct {
+    ID    uuid.UUID `nexus:"key"`
+    Title string
+    Body  string
+}
+
+var Module = nexus.Module("adverts",
+    nexus.ProvideCRUD[Advert]("adverts"),
+)
+```
+
+Mounts:
+
+```
+GET    /adverts          → list
+GET    /adverts/:id      → get
+POST   /adverts          → create
+PUT    /adverts/:id      → update
+DELETE /adverts/:id      → delete
+```
+
+Plus the corresponding GraphQL queries + mutations. Stores ship for `postgres`, `mysql`, `sqlite`, in-memory; pick via `ProvideStore[Advert](store.Postgres{...})`.
 
 ## Cross-transport middleware
 
 ```go
-authMw := middleware.Middleware{
-    Name: "auth", Kind: middleware.KindBuiltin,
-    Gin:   authGinHandler,
-    Graph: authResolverMiddleware,
-}
-
-nexus.AsRest("POST", "/secure", NewSecureHandler, nexus.Use(authMw))
-nexus.AsMutation(NewMutate,                       nexus.Use(authMw))
-
-// Engine-root (every HTTP path)
-nexus.Config{
-    Middleware: nexus.MiddlewareConfig{
-        Global:    []middleware.Middleware{requestID, logger, cors},
-        RateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
-    },
-}
-```
-
-Built-ins: `ratelimit.NewMiddleware(...)`, framework-attached `metrics`.
-
-## Auth
-
-```go
-import "github.com/paulmanoni/nexus/extension/auth"
-
-nexus.Run(nexus.Config{...},
-    auth.Module(auth.Config{
-        Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {
-            u, err := myAPI.ValidateToken(ctx, tok)
-            if err != nil { return nil, err }
-            return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
-        },
-        Cache: auth.CacheFor(15 * time.Minute),
-    }),
-    advertsModule,
-)
-
 nexus.AsMutation(NewCreateAdvert,
-    auth.Required(),                       // 401 if missing
-    auth.Requires("ROLE_CREATE_ADVERT"),   // 403 if missing perm
+    auth.Required(),
+    auth.Requires("ROLE_CREATE_ADVERT"),
+    ratelimit.PerUser(100, time.Minute),
 )
 ```
 
-Extractors: `auth.Bearer()`, `auth.Cookie(name)`, `auth.APIKey(header)`, `auth.Chain(...)`. Typed access: `user, ok := auth.User[MyUser](p.Context)`. Logout via the fx-injected `*auth.Manager`. Live 401/403 stream + cached identity table on the dashboard's Auth tab.
+Works identically on REST, GraphQL, and WS. Each middleware reads from `nexus.Context` rather than `*gin.Context` so it's transport-agnostic.
 
-`nexus.AuthRoute("login"|"logout"|"me")` works on both `AsRest` and `AsQuery`/`AsMutation` — the client SDK's `nx.auth.login()` / `.me()` auto-dispatches to REST or GraphQL based on whichever transport you tagged.
+## Frontend
 
-## OAuth2
+Two paths to a bundle the framework can serve:
 
-```go
-import "github.com/paulmanoni/nexus/extension/oauth2"
+**1. `nexus add` + `nexus build` (recommended).** Node-free; pulls deps from esm.sh, bundles via esbuild. See [frontend/deps](frontend/deps/README.md).
 
-nexus.Run(nexus.Config{...},
-    oauth2.Module(oauth2.Config{
-        Authenticator: func(ctx context.Context, _, username, password string) (string, error) {
-            u, err := users.Authenticate(ctx, username, password)
-            if err != nil { return "", oauth2.ErrInvalidCredentials }
-            return strconv.Itoa(int(u.ID)), nil
-        },
-        ClientStore: oauth2.NewLoaderClientStore(loadClientByID),
-        TokenStore:  oauth2.NewCacheTokenStore(myCache, "app:oauth:"),
-    }),
-)
+```bash
+nexus add vue @vue-flow/core
+nexus build                       # islands.src/*.{ts,tsx,jsx,vue} → islands/
 ```
 
-Wraps `go-oauth2/oauth2/v4` and bridges its access-token store to `auth.Module` automatically — `auth.Required()` / `auth.Requires("ROLE_X")` work on every endpoint with no extra wiring. Mounts `POST /oauth/token` out of the box; `Config.RevokePath` and `Config.ServerCustomizer` open the door to revocation and three-legged authorization-code flows. Sentinel errors (`ErrInvalidCredentials`, `ErrAccountLocked`, etc.) translate into the standard OAuth2 responses with friendly descriptions; `oauth2.VerifySpringPassword` covers the `{bcrypt}` / `{noop}` / raw-bcrypt / legacy-salted-sha1 matrix when you're migrating off Spring. See `nexus docs oauth2` for the full reference.
-
-## Workers, cron, WebSocket
-
-**Worker** — first param `context.Context`, rest are fx deps. `ctx` cancels at `fx.Stop`; panics recover; appears as a card on the Architecture view.
+**2. Bring your own bundle.** Mount any pre-built SPA from an `embed.FS`:
 
 ```go
-nexus.AsWorker("cache-invalidation",
-    func(ctx context.Context, db *OatsDB, cache *CacheManager) error {
-        // listen + dispatch...
-    })
-```
-
-**Cron** — schedule, last run, last result, pause/resume, trigger-now on the dashboard.
-
-```go
-app.Cron("refresh", "*/5 * * * *").Handler(func(ctx context.Context) error { ... })
-```
-
-**WebSocket** — typed envelope `{type, data}`. Multiple `AsWS` for the same path share one connection pool; the framework dispatches by `type`.
-
-```go
-func NewChatSend(svc *ChatService, sess *nexus.WSSession, p nexus.Params[ChatPayload]) error {
-    sess.EmitToRoom("chat.message", p.Args, "lobby")
-    return nil
-}
-
-nexus.AsWS("/events", "chat.send",   NewChatSend, auth.Required())
-nexus.AsWS("/events", "chat.typing", NewChatTyping)
-```
-
-`*WSSession` exposes `Send`/`Emit`/`EmitToUser`/`EmitToRoom`/`EmitToClient` plus `JoinRoom`/`LeaveRoom`. Identity at upgrade flows from `?userId=` or any `gin.Context` `user` value satisfying `interface{ GetID() string }`.
-
-## Frontend (embedded SPA)
-
-Two paths to a frontend bundle:
-
-1. **`nexus add` + `nexus build`** — fetches deps from esm.sh, bundles via esbuild, no Node toolchain required. Detailed in [frontend/deps](frontend/deps/README.md). Recommended for new projects.
-
-   ```bash
-   $ nexus add vue @vue-flow/core
-   $ nexus build                         # bundles islands.src/*.{ts,tsx,jsx,vue} → islands/
-   ```
-
-   For `.vue` source, opt into the QuickJS-backed Vue SFC compiler:
-
-   ```bash
-   $ CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
-   ```
-
-2. **Bring-your-own-bundle** — point `nexus.ServeFrontend(...)` at a pre-built `embed.FS`. Works with whatever produced the bundle (vite, webpack, hand-written, or the `nexus build` pipeline above). Pattern below.
-
-Mount a built React/Vue/Svelte bundle from an embedded FS:
-
-```go
-import "embed"
-
 //go:embed all:web/dist
 var webFS embed.FS
 
 nexus.Run(nexus.Config{...},
     nexus.ServeFrontend(webFS, "web/dist"),
-    advertsModule,
+    helloModule,
 )
 ```
 
-- `/` and unknown paths → `index.html` (SPA-aware: client-side routers work).
-- `/assets/*` → far-future `immutable` cache (Vite/Webpack/esbuild content-hash filenames).
-- Other dotted files (favicon.ico, robots.txt) → served directly.
-- REST/GraphQL/WebSocket/dashboard routes win on conflict.
-- Boot fails fast if `index.html` is missing.
-
-Mount under a sub-path when the API lives at the root:
-
-```go
-nexus.ServeFrontend(webFS, "web/dist", nexus.FrontendAt("/admin"))
-// SPA at /admin/*, REST/GraphQL at the root.
-```
-
-### Frontend-only deployment (web-svc)
-
-Manifest pattern: a deployment with `owns: []` (explicit empty) ships no backend modules — every module compiles as an HTTP stub, so the binary stays small but consumer code still type-checks against `*uaa.Service` etc. Pair it with `IfDeployment` to gate the SPA mount on the binaries that should serve it:
-
-```yaml
-deployments:
-  monolith:
-    port: 9590                # owns: omitted → owns everything
-  web-svc:
-    owns: []                  # explicit empty → owns nothing
-    port: 9000                # tiny SPA-only binary
-  uaa-svc:
-    owns: [uaa]
-    port: 9001
-  interview-svc:
-    owns: [interview]
-    port: 9002
-```
-
-```go
-nexus.Run(nexus.Config{...},
-    nexus.IfDeployment([]string{"monolith", "web-svc"},
-        nexus.ServeFrontend(distFS, "web/dist"),
-    ),
-    uaa.Module,
-    interview.Module,
-)
-```
-
-The same `main.go` builds N binaries; only the named deployments mount the SPA. The other split units stay API-only.
+Unknown paths fall through to `index.html` (SPA-aware). REST/GraphQL/WS/dashboard routes win on conflict.
 
 ## Deployment
 
-Write the app as a monolith; ship as N binaries from the same source. The framework swaps cross-module `*Service` bodies between local impl and HTTP stub at compile time, all driven by one file.
+Write one app, ship N binaries:
 
 ```yaml
 # nexus.deploy.yaml
 deployments:
-  monolith:                       # owns every module by default
-    port: 8080
-  uaa-svc:
-    prefix: /oats-uaa             # all routes mount under this on this binary
-    owns: [uaa]
-    port: 9591
-  interview-svc:
-    prefix: /oats-interview
-    owns: [interview]
-    port: 9592
-
-peers:
-  uaa-svc:
-    timeout: 2s
-    auth:
-      type: bearer
-      token: ${UAA_SVC_TOKEN}
+  api-svc:
+    owns: [adverts, users, auth]
+  worker-svc:
+    owns: [billing.workers, notifications.workers]
 ```
-
-### Per-deployment route prefix
-
-Each deployment can set `prefix:`. Every user route (REST + GraphQL + WebSocket + the SPA) mounts beneath it; framework routes (`/__nexus`, `/health`, `/ready`) stay unprefixed so probes and the dashboard never move.
-
-Typical use: a single host fronts multiple services via path-based ingress — `uaa-svc` answers at `/oats-uaa/*`, `interview-svc` at `/oats-interview/*`, each with their own `/graphql` under the prefix.
-
-### Module declaration — unchanged across deployments
-
-```go
-var Module = nexus.Module("uaa",
-    nexus.DeployAs("uaa-svc"),
-    nexus.Provide(NewService),
-    nexus.AsRest("GET", "/users/:id", NewGet),
-    nexus.AsRest("GET", "/users",     NewList),
-    nexus.AsQuery(NewSearch),
-)
-```
-
-### Consumer — same Go in every binary
-
-```go
-type Service struct {
-    *nexus.Service
-    uaa *uaa.Service          // local in monolith / uaa-svc, HTTP stub elsewhere
-}
-
-func NewSubmit(svc *Service, p nexus.Params[SubmitArgs]) (*Receipt, error) {
-    u, err := svc.uaa.Get(p.Context, uaa.GetArgs{ID: p.Args.UserID})
-    if err != nil { return nil, err }
-    return &Receipt{...}, nil
-}
-```
-
-No `Client` interface, no per-deployment branching, no env-var lookups. The framework auto-Provides peer `*Service` constructors via an `init()`-time registry.
-
-### Build / dev
 
 ```bash
-nexus build --deployment monolith       # ./bin/monolith — every module local
-nexus build --deployment uaa-svc        # ./bin/uaa-svc  — interview shadowed
-nexus dev --split                       # all units, one terminal, cross-service traces
+nexus build --deployment api-svc      → ./bin/api-svc
+nexus build --deployment worker-svc   → ./bin/worker-svc
 ```
 
-`nexus build`:
-1. Reads the manifest, scans `DeployAs` tags.
-2. For non-owned modules, emits a `zz_shadow_gen.go` HTTP-stub `Service` whose methods route through `nexus.PeerCaller`. Source files are kept untouched on disk.
-3. Emits a `zz_deploy_gen.go` whose `init()` calls `nexus.SetDeploymentDefaults(...)` with the manifest's port + prefix + peer table baked in.
-4. Runs `go build -overlay=overlay.json` so the compiler picks up the generated files without source rewrites.
-
-### Friendly errors
-
-Framework errors are `*nexus.UserError` with `op` / `hint` / `notes` / `cause`:
-
-```
-nexus error [remote call]: GET /users/:id: peer responded but the JSON didn't fit the client's return type
-  url:  http://localhost:8081/users/
-  cause: json: cannot unmarshal array into Go value of type users.User
-  hint: verify the peer's handler return type matches the client's expected shape
-```
-
-Status-specific hints fire for 401/403/404/405/408/429/5xx. Boot-time topology validation runs before fx spins up. All error fields propagate to the dashboard waterfall as span attrs.
+Both binaries share the source tree. `go build -overlay` substitutes HTTP-stub `*Service` bodies for modules a binary doesn't own — your code reads `users *users.Service` and the framework wires it to the right transport per deployment.
 
 ## Dashboard
 
-Mounted at `/__nexus/` when `Dashboard.Enabled: true`. Tabs: **Architecture**, **Endpoints**, **Crons**, **Rate limits**, **Auth**, **Traces**. Tab selection persists in `?tab=`. Live traffic pulses on edges; click an op's `⚠N` chip for paginated errors with IP/timestamp filters.
+Mounted at `/__nexus/` when `Dashboard.Enabled` is true. Shows:
 
-Gate the whole `/__nexus/*` surface behind your own auth chain:
+- **Architecture**: services, resources, endpoints, dependency edges. Live updates as registry mutates.
+- **Traces**: request waterfalls across services; cross-transport stitched.
+- **Crons**: scheduled jobs + last/next-run.
+- **Rate limits**: per-key bucket state.
 
-```go
-nexus.Config{
-    Dashboard: nexus.DashboardConfig{Enabled: true},
-    Middleware: nexus.MiddlewareConfig{
-        Dashboard: []middleware.Middleware{
-            {Name: "auth",  Kind: middleware.KindBuiltin, Gin: bearerAuthGin},
-            {Name: "admin", Kind: middleware.KindCustom,  Gin: requireAdminGin},
-        },
-    },
-}
-```
-
-HTTP surface — each route's handler lives in the package that owns the
-data; `extension/dashboard/Mount` is a thin orchestrator that delegates
-via `MountDashboard(group, store)` calls:
-
-| Route | Owner package | Returns |
-|---|---|---|
-| `GET /__nexus/` | `extension/dashboard` | Embedded Vue UI |
-| `GET /__nexus/config` | `extension/dashboard` | Dashboard config + name/version |
-| `GET /__nexus/live` | `extension/dashboard` | WebSocket: consolidated live snapshot stream |
-| `GET /__nexus/manifest` | `extension/dashboard` | Admin-gated (Bearer `NEXUS_ADMIN_TOKEN`) |
-| `GET /__nexus/endpoints` | `registry` | Services + endpoints with deps |
-| `GET /__nexus/resources` `…/workers` `…/middlewares` | `registry` | Registry snapshots |
-| `GET /__nexus/events` | `trace` | WebSocket: trace + `request.op` + `auth.reject` events |
-| `GET /__nexus/traces/:id` | `trace` | Reconstructed span tree |
-| `GET /__nexus/crons` `POST …/:name/{trigger,pause,resume}` | `extension/cron` | Snapshots + control |
-| `GET /__nexus/ratelimits` `POST` `DELETE` | `extension/ratelimit` | Snapshot + override + reset |
-| `GET /__nexus/stats` `…/errors` | `extension/metrics` | Per-endpoint counters + error ring |
-| `GET /__nexus/auth` `POST …/invalidate` | `extension/auth` | Cached identities + invalidation |
-
-UI dev: `cd extension/dashboard/ui && npm install && npm run dev`. `npm run build` updates the embedded bundle.
-
-## Performance
-
-Per-request hot-path cost on an Apple M1 Pro:
-
-| Path | ns/op | allocs |
-|---|---:|---:|
-| `metrics.Record` (success) | 73 | 0 |
-| `ratelimit.Allow` | 134 | 1 |
-| `callHandler` (reflective) | 458 | 5 |
-| `bindGqlArgs` (map → struct) | 271 | 4 |
-
-A request through `AsQuery` with args + metrics + one rate limit pays ≈ **1 µs** of nexus-side work. Surrounding cost (Gin, graphql-go, JSON, your handler, DB) is measured by your own load test.
-
-### Transport ceiling (no-op handler, M1 Pro)
-
-End-to-end throughput on a single endpoint with no business logic — the ceiling each transport adds before your code runs:
-
-| Path | ns/op | req/s | B/op | allocs |
-|---|---:|---:|---:|---:|
-| REST (in-process)            |  3,046 | ~328 K |  3,437 |  41 |
-| `AsCRUD` Read (MemoryStore)  |  3,198 | ~313 K |  3,550 |  41 |
-| GraphQL query *(cached)*     |  6,806 | ~147 K |  9,055 | 110 |
-| GraphQL mutation *(cached)*  |  5,992 | ~167 K |  9,906 | 124 |
-| GraphQL query *(no cache)*   | 20,259 |  ~49 K | 44,036 | 700 |
-| REST (real loopback TCP)     | 17,642 |  ~57 K |  8,382 |  99 |
-
-The GraphQL document cache is **on by default** (LRU, cap 1024). Profiling pinned 89% of per-request allocations on graphql-go's parse + validate phases — both pure functions of (query string, schema), so memoizing them turns the 7× REST/GraphQL gap into ~2×. Disable via `Config{GraphQL: GraphQLConfig{DocumentCacheSize: -1}}`. Live counters are exposed at `GET /__nexus/graphql/cache` and on the WS live snapshot.
-
-### Monolith vs split
-
-`examples/microsplit /checkout` (cross-module call to users), 32 concurrent clients, 20k requests:
-
-| | Monolith | Split | Δ |
-|---|---:|---:|---:|
-| Throughput | 56,618 r/s | 16,380 r/s | 3.5× |
-| p50 | 450 µs | 1.66 ms | 3.7× |
-| p99 | 1.75 ms | 7.25 ms | 4.2× |
-
-The 3.5× gap is **mostly TCP loopback** — ~43 µs kernel + HTTP, ~17 µs framework. Add a 5 ms handler (real DB / external call) and the gap collapses:
-
-| | Monolith (5 ms handler) | Split |
-|---|---:|---:|
-| Throughput | 5,286 r/s | 5,376 r/s |
-| p50 | 5.93 ms | 5.51 ms |
-
-So split-vs-monolith is rarely a per-request decision — it's about scaling, on-call, and team boundaries. Ship as monolith on day one without paying a future tax.
-
-```bash
-go test ./... -bench=. -benchmem -run 'x^'
-```
+![Trace waterfall](docs/traces.png)
 
 ## Examples
 
-| Path | Shows |
-|---|---|
-| `examples/petstore` | Minimal REST + WebSocket + tracing. |
-| `examples/fxapp` | Multi-domain app via `nexus.Module` (fx hidden). |
-| `examples/graphapp` | GraphQL via reflective AsQuery/AsMutation, typed DB wrappers, validators. |
-| `examples/wsecho` | Typed WebSocket via `AsWS` — two message types on one path. |
-| `examples/microsplit` | `users` + `checkout` (manifest-driven deployments, three binaries from one source) and `notes` (canonical `AsCRUD` demo). |
+The framework ships a few self-contained examples under `examples/`:
 
-```bash
-go run ./examples/graphapp
-```
+| | |
+|---|---|
+| `petstore` | REST + GraphQL CRUD; the canonical "small app" |
+| `petstore-spa` | Same with a frontend bundle served from `embed.FS` |
+| `pubsub` | Redis + RabbitMQ adapters |
+| `wsecho`, `wstest` | WebSocket patterns |
+| `graphapp` | GraphQL-first app with cross-resolver auth |
+| `microsplit` | Manifest-driven monolith → multi-service split |
+| `fxapp` | Direct fx wiring without the nexus.Run wrapper |
 
 ## Layout
 
 ```
-nexus/                top-level App, Run, Module, Provide, AsWorker, ServeFrontend, options
-├── extension/        plugin seam — Plugin struct + Use(); all built-ins live as subpackages:
-│   ├── auth/         user-opt-in: extractors, identity cache, per-op bundles, dashboard routes
-│   ├── oauth2/       user-opt-in: password / refresh / client_credentials grant + auth bridge
-│   ├── cron/         framework-owned: scheduler + dashboard control
-│   ├── ratelimit/    framework-owned: token-bucket store + middleware factories + dashboard
-│   ├── metrics/      framework-owned: per-endpoint counters + error ring + dashboard
-│   ├── cache/        framework-owned: Redis + in-memory hybrid (no dashboard surface)
-│   └── dashboard/    framework-owned: /__nexus surface + embedded Vue UI (thin orchestrator — other extensions own their routes)
-├── graph/            resolver builder + validators
-├── registry/         services, endpoints, resources, workers, middleware metadata
-├── resource/         Database/Cache/Queue + health probing
-├── trace/            ring-buffer bus + per-request middleware
-├── transport/{rest,gql,ws}/
-├── middleware/       cross-transport bundle
-├── db/               opinionated GORM helpers
-├── storage/gorm/     production Store[T] adapter for AsCRUD
-└── examples/         runnable demos
+.                          framework root + public API surface
+├── cmd/nexus/             CLI binary
+├── frontend/deps/         node-free dep manager + bundler (see its README)
+├── extension/             optional integrations (auth, oauth2, ratelimit,
+│                          metrics, cron, dashboard, frontend, …)
+├── graph/                 GraphQL builder + resolver introspection
+├── transport/             gin/REST + WS adapters
+├── manifest/              nexus.deploy.yaml parser + overlay generator
+├── registry/              endpoint + service + resource graph
+└── examples/              self-contained sample apps
 ```
-
-Every built-in registers a `PluginRecord` with the App, so `app.Plugins()`
-enumerates what's wired in. User-opt-in plugins are constructed via
-`extension.Use(extension.Plugin{...})`; framework-owned ones are
-instantiated by the framework itself and contribute their dashboard
-routes via `MountDashboard(group, store)` functions the dashboard
-package calls during mount.
 
 ## License
 
-[MIT](LICENSE)
+MIT.
