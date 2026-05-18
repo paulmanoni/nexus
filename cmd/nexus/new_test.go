@@ -127,28 +127,36 @@ func TestScaffoldWithOpts_FullStack(t *testing.T) {
 		"resources/database.go",
 		"resources/cache.go",
 		"auth/auth.go",
-		"web/package.json",
-		"web/vite.config.ts",
-		"web/index.html",
-		"web/src/main.ts",
-		"web/src/App.vue",
-		"web/tsconfig.json",
-		"web/dist/index.html",
+		"islands.src/main.ts",
+		"islands.src/App.vue",
+		"islands/index.html",
 		".env.example",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("expected %s, missing: %v", name, err)
 		}
 	}
+	// And these should NOT exist anymore (vite-era artifacts):
+	for _, name := range []string{
+		"web/package.json",
+		"web/vite.config.ts",
+		"web/tsconfig.json",
+		"web/.gitignore",
+		"web/sdk/client.js",
+		"web/dist/index.html",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Errorf("vite-era artifact %s still scaffolded — should be gone", name)
+		}
+	}
 	mainGo, _ := os.ReadFile(filepath.Join(dir, "main.go"))
 	for _, want := range []string{
 		`"embed"`,
-		"//go:embed all:web/dist",
-		`"github.com/paulmanoni/nexus/client"`,
+		"//go:embed all:islands",
 		"resources.NewDB",
 		"resources.NewCacheManager",
 		"auth.Module",
-		"nexus.ServeFrontend(distFS",
+		"nexus.ServeFrontend(islandsFS",
 	} {
 		if !strings.Contains(string(mainGo), want) {
 			t.Errorf("main.go missing %q\n--- body ---\n%s", want, mainGo)
@@ -210,13 +218,12 @@ func TestScaffoldFullStack_Builds(t *testing.T) {
 	}
 }
 
-// TestScaffoldWithOpts_DropsSDKAssetsAndWiresPlugin asserts the
-// scaffolder writes the static SDK files (the vite plugin runtime
-// and the JS client) plus a stub manifest, AND that the generated
-// vite.config.ts imports + invokes the nexus plugin. Without these,
-// a fresh checkout would fail to start `vite dev` until the user
-// ran `nexus dev` once to populate web/sdk/.
-func TestScaffoldWithOpts_DropsSDKAssetsAndWiresPlugin(t *testing.T) {
+// TestScaffoldWithOpts_VueLayout asserts the new-pipeline scaffold
+// shape for --frontend=vue: source under islands.src/, SPA shell
+// at islands/index.html, NO vite/npm artifacts. Replaced the old
+// DropsSDKAssetsAndWiresPlugin test (which validated the
+// now-removed web/sdk/*.js client-SDK files that vite consumed).
+func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "wired")
 	if err := scaffoldWithOpts(scaffoldOpts{
 		Dir: dir, Frontend: "vue", DB: "none", Cache: "none", Auth: "none",
@@ -224,10 +231,9 @@ func TestScaffoldWithOpts_DropsSDKAssetsAndWiresPlugin(t *testing.T) {
 		t.Fatalf("scaffold: %v", err)
 	}
 	for _, p := range []string{
-		"web/sdk/nexus-vite-plugin.js",
-		"web/sdk/client.js",
-		"web/sdk/vue.js",
-		"web/sdk/manifest.json",
+		"islands.src/main.ts",
+		"islands.src/App.vue",
+		"islands/index.html",
 	} {
 		info, err := os.Stat(filepath.Join(dir, p))
 		if err != nil {
@@ -238,28 +244,22 @@ func TestScaffoldWithOpts_DropsSDKAssetsAndWiresPlugin(t *testing.T) {
 			t.Errorf("%s exists but is empty", p)
 		}
 	}
-	vite, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
-	for _, want := range []string{
-		`import nexus from './sdk/nexus-vite-plugin.js'`,
-		`nexus({`,
-		`filter: 'off'`,
-	} {
-		if !strings.Contains(string(vite), want) {
-			t.Errorf("vite.config.ts missing %q\n--- body ---\n%s", want, vite)
-		}
+	// index.html references the bundle by stable filename.
+	html, _ := os.ReadFile(filepath.Join(dir, "islands/index.html"))
+	if !strings.Contains(string(html), `src="/main.js"`) {
+		t.Errorf("islands/index.html should reference /main.js\n--- body ---\n%s", html)
 	}
-	// manifest stub should parse as JSON with the expected shape.
-	manifest, _ := os.ReadFile(filepath.Join(dir, "web/sdk/manifest.json"))
-	for _, want := range []string{`"version"`, `"endpoints": []`, `"refs": {}`} {
-		if !strings.Contains(string(manifest), want) {
-			t.Errorf("manifest stub missing %q\n%s", want, manifest)
+	// main.ts kicks off Vue with createApp.
+	mainTS, _ := os.ReadFile(filepath.Join(dir, "islands.src/main.ts"))
+	for _, want := range []string{"createApp", "App", "mount"} {
+		if !strings.Contains(string(mainTS), want) {
+			t.Errorf("islands.src/main.ts missing %q", want)
 		}
 	}
 }
 
-// TestScaffoldWithOpts_ReactFrontend covers the react-specific
-// branch: package.json carries react deps, src/main.tsx is the
-// entry point, and vite.config.ts plugs in @vitejs/plugin-react.
+// TestScaffoldWithOpts_ReactFrontend covers the react variant.
+// Same shape as Vue but with .tsx sources.
 func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "ra")
 	if err := scaffoldWithOpts(scaffoldOpts{
@@ -267,20 +267,18 @@ func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
 	}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("scaffold: %v", err)
 	}
-	for _, p := range []string{"web/src/main.tsx", "web/src/App.tsx", "web/package.json", "web/vite.config.ts"} {
+	for _, p := range []string{
+		"islands.src/main.tsx",
+		"islands.src/App.tsx",
+		"islands/index.html",
+	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
 		}
 	}
-	pkg, _ := os.ReadFile(filepath.Join(dir, "web/package.json"))
-	for _, want := range []string{`"react":`, `"@vitejs/plugin-react":`} {
-		if !strings.Contains(string(pkg), want) {
-			t.Errorf("package.json missing %q\n--- body ---\n%s", want, pkg)
-		}
-	}
-	vite, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
-	if !strings.Contains(string(vite), "@vitejs/plugin-react") {
-		t.Errorf("vite.config.ts missing react plugin import\n%s", vite)
+	main, _ := os.ReadFile(filepath.Join(dir, "islands.src/main.tsx"))
+	if !strings.Contains(string(main), "react") {
+		t.Errorf("main.tsx should import from react\n%s", main)
 	}
 }
 

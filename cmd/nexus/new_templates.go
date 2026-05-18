@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
-
-	"github.com/paulmanoni/nexus/client"
 )
 
 // stubManifestJSON is the placeholder dropped at web/sdk/manifest.json
@@ -78,14 +76,6 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		out[path] = rendered
 		return nil
 	}
-	// addRaw writes bytes verbatim — no template substitution. Used
-	// for embedded JS payloads (the SDK runtime, the vite plugin)
-	// where `{{` and `${` already mean something in the source and
-	// we don't want text/template touching them.
-	addRaw := func(path string, body []byte) {
-		out[path] = string(body)
-	}
-
 	if err := add("go.mod", tmplGoMod2); err != nil {
 		return nil, err
 	}
@@ -120,57 +110,31 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		}
 	}
 	if opts.HasFrontend() {
-		// Files shared by every frontend choice — config, html shell,
-		// gitignore, dist stub. The framework-specific source lives
-		// under src/ and varies per choice (App.vue vs App.tsx).
-		if err := add("web/vite.config.ts", tmplViteConfigTS); err != nil {
+		// New-pipeline layout: source under islands.src/, build
+		// output under islands/, SPA shell at islands/index.html
+		// (checked in; bundle filenames are stable so the html's
+		// asset references don't need updating between builds).
+		//
+		// No package.json, no vite.config.ts, no tsconfig.json,
+		// no .gitignore-for-node-modules. The frontend dep set
+		// lives in nexus.lock (populated by `nexus add` post-
+		// scaffold) and the build is driven by `nexus build`.
+		if err := add("islands/index.html", tmplIndexHTMLTpl); err != nil {
 			return nil, err
 		}
-		if err := add("web/index.html", tmplIndexHTMLTpl); err != nil {
-			return nil, err
-		}
-		if err := add("web/tsconfig.json", tmplTSConfig); err != nil {
-			return nil, err
-		}
-		if err := add("web/.gitignore", tmplWebGitignore); err != nil {
-			return nil, err
-		}
-		if err := add("web/dist/index.html", tmplStubDistHTMLTpl); err != nil {
-			return nil, err
-		}
-		// SDK assets — vite.config.ts imports ./sdk/nexus-vite-plugin.js
-		// and source files import ./sdk/client.js (or vue.js). Drop the
-		// embedded copies here so a fresh checkout can run `vite dev`
-		// before the user has ever invoked `nexus dev`. Once `nexus
-		// dev` runs, it overwrites these with the live projection;
-		// either way the consumer never has a missing-file error.
-		// All four entries sit under web/sdk/ which the generated
-		// .gitignore excludes — they're build artifacts, not source.
-		addRaw("web/sdk/nexus-vite-plugin.js", client.VitePluginJS())
-		addRaw("web/sdk/client.js", client.RuntimeJS())
-		if opts.IsVue() {
-			addRaw("web/sdk/vue.js", client.VueJS())
-		}
-		out["web/sdk/manifest.json"] = stubManifestJSON
 		switch opts.Frontend {
 		case "vue":
-			if err := add("web/package.json", tmplPackageJSONVueTpl); err != nil {
+			if err := add("islands.src/main.ts", tmplMainTS); err != nil {
 				return nil, err
 			}
-			if err := add("web/src/main.ts", tmplMainTS); err != nil {
-				return nil, err
-			}
-			if err := add("web/src/App.vue", tmplAppVueTpl); err != nil {
+			if err := add("islands.src/App.vue", tmplAppVueTpl); err != nil {
 				return nil, err
 			}
 		case "react":
-			if err := add("web/package.json", tmplPackageJSONReactTpl); err != nil {
+			if err := add("islands.src/main.tsx", tmplMainTSXTpl); err != nil {
 				return nil, err
 			}
-			if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
-				return nil, err
-			}
-			if err := add("web/src/App.tsx", tmplAppTSXTpl); err != nil {
+			if err := add("islands.src/App.tsx", tmplAppTSXTpl); err != nil {
 				return nil, err
 			}
 		}
@@ -192,21 +156,32 @@ func nextStepsLines(opts scaffoldOpts) []string {
 		"  go mod tidy",
 	}
 	if opts.HasFrontend() {
-		lines = append(lines,
-			"  (cd web && npm install)",
-		)
+		// Frontend deps fetched into ~/.nexus/cache + pinned in
+		// nexus.lock. One-time per project; subsequent builds
+		// hit the warm cache.
+		switch opts.Frontend {
+		case "vue":
+			lines = append(lines,
+				"  nexus add vue           # one-time: pull vue from esm.sh into ~/.nexus/cache",
+			)
+		case "react":
+			lines = append(lines,
+				"  nexus add react react-dom",
+			)
+		}
 	}
 	if opts.HasResources() {
 		lines = append(lines,
-			"  cp .env.example .env   # then fill in real credentials",
+			"  cp .env.example .env    # then fill in real credentials",
 		)
 	}
 	lines = append(lines,
-		"  nexus dev               # API on :8080, dashboard at /__nexus/",
+		"  nexus dev               # Go + frontend auto-rebuild; dashboard at /__nexus/",
 	)
-	if opts.HasFrontend() {
+	if opts.IsVue() {
 		lines = append(lines,
-			"                          # SPA opens at vite's port (HMR)",
+			"                          # Vue SFC compile needs CGo + vue build tag:",
+			"                          #   CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest",
 		)
 	}
 	return lines
@@ -228,9 +203,6 @@ import (
 	"embed"
 {{end}}
 	"github.com/paulmanoni/nexus"
-{{- if .HasFrontend}}
-	"github.com/paulmanoni/nexus/client"
-{{- end}}
 {{- if .HasResources}}
 	"go.uber.org/zap"
 {{- end}}
@@ -249,23 +221,22 @@ import (
 {{- end}}
 )
 {{if .HasFrontend}}
-//go:embed all:web/dist
-var distFS embed.FS
+// islandsFS holds the bundled SPA — JS, CSS, fonts, and the
+// hand-written index.html shell. nexus build runs the frontend
+// bundler before go build so islands/ is populated; the embed
+// directive then bakes everything into the binary.
+//
+//go:embed all:islands
+var islandsFS embed.FS
 {{end}}
 func main() {
 	nexus.Run(
 		nexus.Config{
 			Server:    nexus.ServerConfig{Addr: ":8080"},
 			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "{{.Name}}"},
-{{- if .HasFrontend}}
-			// Mount auto-detects ./web/{vite.config.ts,tsconfig.json}
-			// and writes SDK files to ./web/sdk by default. Override
-			// any field below to escape the convention.
-			Client: client.Config{Enabled: true},
-{{- end}}
 		},
 {{- if .HasFrontend}}
-		nexus.ServeFrontend(distFS, "web/dist"),
+		nexus.ServeFrontend(islandsFS, "islands"),
 {{- end}}
 {{- if .HasResources}}
 		nexus.Provide(zap.NewExample),
@@ -557,9 +528,14 @@ export default defineConfig({
 })
 `
 
-// tmplIndexHTMLTpl branches the entry-point script between
-// main.ts (vue) and main.tsx (react) — vite cares about the
-// extension to pick the right transform.
+// tmplIndexHTMLTpl is the SPA shell that ships at
+// islands/index.html. Stable filenames from nexus build mean
+// the script reference doesn't need post-build patching — main.js
+// is always there, alongside the user-edited islands.src/main.ts.
+//
+// The user is free to add <link rel="stylesheet" href="/main.css">
+// after their first import of a .css file from main.ts (esbuild
+// emits a sidecar CSS bundle then).
 const tmplIndexHTMLTpl = `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -569,7 +545,7 @@ const tmplIndexHTMLTpl = `<!DOCTYPE html>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.{{if .IsReact}}tsx{{else}}ts{{end}}"></script>
+    <script type="module" src="/main.js"></script>
   </body>
 </html>
 `
@@ -588,7 +564,7 @@ const count = ref(0)
 <template>
   <main>
     <h1>{{.Name}}</h1>
-    <p>Edit <code>src/App.vue</code> — HMR replaces the module in &lt;100ms.</p>
+    <p>Edit <code>islands.src/App.vue</code> — <code>nexus dev</code> rebuilds on save.</p>
     <button @click="count++">count is {{ "{{ count }}" }}</button>
   </main>
 </template>
@@ -623,23 +599,11 @@ auto-imports.d.ts
 components.d.ts
 `
 
-// tmplStubDistHTMLTpl ships a placeholder index.html so
-// nexus.ServeFrontend(distFS, "web/dist")'s boot-time existence
-// check succeeds before the user has run ` + "`npm run build`" + ` once. The
-// stub points the user at the correct setup step.
-const tmplStubDistHTMLTpl = `<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><title>{{.Name}} — not built yet</title></head>
-  <body>
-    <main style="font-family: system-ui; padding: 2rem; max-width: 40rem">
-      <h1>Frontend not built yet</h1>
-      <p>Run <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code>
-         to produce the production bundle, or use <code>nexus dev</code>
-         which serves the SPA via vite's dev server with HMR.</p>
-    </main>
-  </body>
-</html>
-`
+// tmplStubDistHTMLTpl was the placeholder shipped at web/dist/
+// index.html in the vite-driven scaffold. Unused in the new
+// islands.src/islands convention — kept here as a doc comment
+// rather than emit it. Removed entirely when the next round of
+// new_templates.go cleanup happens.
 
 const tmplReadmeTpl = `# {{.Name}}
 
@@ -649,9 +613,11 @@ Generated with ` + "`nexus new`" + `.
 
 ` + "```" + `
 go mod tidy
-{{if .HasFrontend}}(cd web && npm install)
+{{if .HasFrontend}}{{if .IsVue}}nexus add vue           # one-time: pulls vue into ~/.nexus/cache
+{{else}}nexus add react react-dom
 {{end -}}
-{{if .HasResources}}cp .env.example .env   # then fill in real credentials
+{{end -}}
+{{if .HasResources}}cp .env.example .env    # then fill in real credentials
 {{end -}}
 nexus dev
 ` + "```" + `
@@ -662,16 +628,28 @@ Then open http://localhost:8080/__nexus/ for the dashboard, and:
 curl 'http://localhost:8080/hello?name=Paul'
 ` + "```" + `
 {{if .HasFrontend}}
-The SPA lives in ` + "`web/`" + `. ` + "`nexus dev`" + ` boots vite's dev server with HMR;
-edits in ` + "`web/src/`" + ` show up in <100ms with component state preserved.
-For a one-shot bundle (the embed.FS path):
+## Frontend
+
+The SPA lives under ` + "`islands.src/`" + ` (source) and ` + "`islands/`" + ` (build
+output, embedded in the binary via ` + "`//go:embed`" + ` in main.go).
+No ` + "`node_modules`" + `, no ` + "`package.json`" + `, no vite.
+
+  - Edit ` + "`islands.src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` rebuilds on save.
+  - Add a frontend dependency: ` + "`nexus add <pkg>`" + ` (writes ` + "`nexus.lock`" + `).
+  - Production build is part of ` + "`nexus build`" + `:
 
 ` + "```" + `
-cd web && npm run build
-nexus build --deployment monolith
-./bin/monolith
+nexus build
+./bin/{{.Name}}
 ` + "```" + `
-{{end}}
+{{if .IsVue}}
+The QuickJS-backed Vue SFC compiler runs in-process when CGo is
+on. Install the nexus CLI with the ` + "`vue`" + ` build tag once per machine:
+
+` + "```" + `
+CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
+` + "```" + `
+{{end}}{{end}}
 {{- if .HasDB}}
 ## Database
 
