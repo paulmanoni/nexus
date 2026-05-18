@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/paulmanoni/nexus/extension/cron"
-	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
@@ -70,7 +69,17 @@ type liveSnapshot struct {
 // The writer never blocks indefinitely — write deadlines force
 // errors on backpressure, NextReader signals client close, ctx
 // covers server shutdown.
-func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, gqlStats *gql.StatsRegistry, notifier *live.Notifier) gin.HandlerFunc {
+// Notifier is the minimum surface the dashboard needs from the
+// framework's pub-sub primitive. Defined locally so this package
+// stays a leaf — the concrete *nexus.Notifier (which holds the
+// real implementation) satisfies this interface structurally and
+// the root package can pass it in without us importing nexus and
+// creating an import cycle.
+type Notifier interface {
+	Subscribe() (<-chan struct{}, func())
+}
+
+func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, gqlStats *gql.StatsRegistry, notifier Notifier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {

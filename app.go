@@ -23,7 +23,6 @@ import (
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/extension/dashboard"
-	"github.com/paulmanoni/nexus/live"
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/middleware"
@@ -52,7 +51,7 @@ type App struct {
 	// liveNotifier signals "registry state changed" to the dashboard's
 	// live snapshot stream. Wired in New so registry mutations push
 	// snapshots instead of poll.
-	liveNotifier  *live.Notifier
+	liveNotifier  *Notifier
 	// schemaRefsMu guards schemaRefs which holds the deduped pool of
 	// named-struct shapes referenced by endpoint ArgsSchema /
 	// ReturnSchema. Populated lazily as endpoints register; surfaced
@@ -251,7 +250,7 @@ func New(cfg Config) *App {
 		a.bus = trace.NewBus(traceCapacity)
 	}
 
-	a.liveNotifier = live.New()
+	a.liveNotifier = NewNotifier()
 	// NOTE: we deliberately do NOT forward trace.Bus events into the
 	// live notifier. Each finished request would push a fresh
 	// dashboard snapshot, and the snapshot replaces nodes.value +

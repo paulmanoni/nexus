@@ -14,18 +14,9 @@ type pathOption struct{ path string }
 
 func (pathOption) nexusOption() fx.Option { return fx.Options() }
 
-// Apply lets pathOption double as a ComponentOption: when Path is
-// passed to nexus.AsComponent, the value populates the component's
-// URLPath without touching the module-level public-path registry.
-// The module-level wiring above only fires when Path appears as a
-// child of nexus.Module (consumed via type assertion in that loop),
-// so the two usages don't interfere.
-//
-// The raw stored path is used here so "/" maps to the literal root
-// URL rather than the empty no-op-prefix string used at the
-// module-prefix read site.
-func (p pathOption) Apply(s *ComponentSpec) { s.URLPath = p.path }
-
+// Apply lets pathOption satisfy Option for nexus.Module. The
+// dual ComponentOption role was dropped with the .nlt template
+// engine removal — Path is now a module-prefix concept only.
 // normalizedPath returns the path with module-prefix conventions
 // applied: leading slash, no trailing slash, and "/" alone treated
 // as the empty no-op prefix. Used by Module() when concatenating
@@ -63,29 +54,18 @@ func (p pathOption) normalizedPath() string { return normalizeRoutePrefix(p.path
 //
 // Leading slash is added if missing; trailing slash is trimmed.
 //
-// Dual role: Path also satisfies ComponentOption — passing it to
-// nexus.AsComponent sets the component's URL mount path without
-// touching the module public-path registry. Same value, two
-// roles: module prefix at module level, URL mount at component
-// level.
-//
 // The raw path is stored unchanged; module-side consumers
-// normalize when reading (so "/" → "" for prefix purposes),
-// while component-side consumers use it verbatim (so "/" is the
-// literal root URL the component mounts at).
+// normalize when reading (so "/" → "" for prefix purposes).
 func Path(path string) PathOpt {
 	return pathOption{path: path}
 }
 
-// PathOpt is the static type Path returns. Both Option and
-// ComponentOption are satisfied so the value composes into either
-// a module (as a public-path prefix) or an AsComponent (as the
-// URL the component mounts at). Defined as a named interface
-// rather than relying on the concrete type so future Path
-// behaviors can be added without breaking callers.
+// PathOpt is the static type Path returns. Satisfies Option so the
+// value composes into a nexus.Module as a public-path prefix.
+// Defined as a named interface so future Path behaviors can be
+// added without breaking callers.
 type PathOpt interface {
 	Option
-	ComponentOption
 }
 
 // modulePublicPath maps module name → public path (e.g. "uaa" →
