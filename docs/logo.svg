@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="160" height="160" fill="none" aria-label="nexus">
+  <!-- Strokes drawn first so corner nodes sit cleanly on top.
+       Left vertical, diagonal, right vertical → forms the "N" shape. -->
+  <path d="M6 6 L6 26 M6 26 L26 6 M26 6 L26 26"
+        stroke="#064e3b" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Four corner nodes (deep emerald) -->
+  <circle cx="6"  cy="6"  r="3.4" fill="#064e3b" />
+  <circle cx="6"  cy="26" r="3.4" fill="#064e3b" />
+  <circle cx="26" cy="6"  r="3.4" fill="#064e3b" />
+  <circle cx="26" cy="26" r="3.4" fill="#064e3b" />
+  <!-- Center accent node — the "nexus" point (bright emerald) -->
+  <circle cx="16" cy="16" r="3.6" fill="#10b981" />
+</svg>
