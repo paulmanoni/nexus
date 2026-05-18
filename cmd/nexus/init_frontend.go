@@ -121,6 +121,12 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 	if err := add("islands/index.html", tmplIndexHTMLTpl); err != nil {
 		return nil, err
 	}
+	if err := add("tsconfig.json", tmplTSConfigForIDE); err != nil {
+		return nil, err
+	}
+	if err := add("nexus-shims.d.ts", tmplShimsDTS); err != nil {
+		return nil, err
+	}
 	switch opts.Frontend {
 	case "vue":
 		if err := add("islands.src/main.ts", tmplMainTS); err != nil {
