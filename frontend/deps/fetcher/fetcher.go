@@ -51,6 +51,14 @@ type Fetcher struct {
 	// one redirect (the version-pin hop). The default policy
 	// (10 hops max, no rewrite of method) is fine.
 	HTTP *http.Client
+
+	// URLQuery, when set, is appended to every fetched URL as a
+	// query string. esm.sh in particular honors `?target=es2015`
+	// to serve pre-lowered code suitable for older JS engines
+	// (Goja's case). For the bundler's normal user-code path the
+	// default empty value is correct — modern browsers eat the
+	// default ES2022-ish output esm.sh serves.
+	URLQuery string
 }
 
 // New returns a Fetcher with sensible defaults. The store argument
@@ -226,20 +234,41 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 
 // specToURL builds the registry URL for a bare spec. Three shapes:
 //
-//	"vue"               → <registry>/vue
-//	"vue@3.4.21"        → <registry>/vue@3.4.21
-//	"https://esm.sh/x"  → "https://esm.sh/x"   (already absolute)
+//	"vue"               → <registry>/vue?<URLQuery>
+//	"vue@3.4.21"        → <registry>/vue@3.4.21?<URLQuery>
+//	"https://esm.sh/x"  → "https://esm.sh/x?<URLQuery>"   (already absolute)
 //
 // Absolute URLs are passed through so recursion into CDN-internal
-// imports works without re-prefixing.
+// imports works without re-prefixing. URLQuery (when set) is
+// appended consistently regardless of input shape so esm.sh's
+// `?target=es2015` lowering applies to EVERY fetched URL — the
+// Vue compiler bootstrap depends on this.
 func (f *Fetcher) specToURL(spec string) (string, error) {
-	if strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://") {
-		return spec, nil
-	}
-	if spec == "" {
+	var raw string
+	switch {
+	case strings.HasPrefix(spec, "http://"), strings.HasPrefix(spec, "https://"):
+		raw = spec
+	case spec == "":
 		return "", errors.New("fetcher: empty spec")
+	default:
+		raw = f.Registry + "/" + spec
 	}
-	return f.Registry + "/" + spec, nil
+	return appendURLQuery(raw, f.URLQuery), nil
+}
+
+// appendURLQuery suffixes the query (without leading "?") onto u
+// using "?" or "&" depending on whether u already has a query.
+// Empty query returns u unchanged. Malformed URLs are returned
+// unchanged too — the subsequent fetch will surface a clearer
+// error than we could synthesize here.
+func appendURLQuery(u, query string) string {
+	if query == "" {
+		return u
+	}
+	if strings.Contains(u, "?") {
+		return u + "&" + query
+	}
+	return u + "?" + query
 }
 
 // resolve follows redirects without downloading the body. Returns

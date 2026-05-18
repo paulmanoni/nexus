@@ -63,7 +63,20 @@ func ExtractImports(src string) []string {
 var importPatterns = []*regexp.Regexp{
 	// import ... from "spec"   /   import "spec"
 	// export ... from "spec"   /   export * from "spec"
-	regexp.MustCompile(`(?m)(?:^|[\s;{(,])(?:import|export)\s+(?:[^;'"]*?\s+from\s+)?['"]([^'"\n]+)['"]`),
+	//
+	// Whitespace is OPTIONAL throughout (\s*) because minified
+	// ESM bundles from esm.sh collapse it:
+	//
+	//   }import{EventEmitter as g}from"/node/events.mjs";
+	//
+	// has zero whitespace between `import` and `{` and between
+	// `}` and `from`. The \b after import|export keeps
+	// `importExport` from false-matching.
+	//
+	// Leading-separator class is wide for the same reason —
+	// `}import` and `)import` show up routinely after minifiers
+	// drop newlines.
+	regexp.MustCompile(`(?m)(?:^|[\s;{}(),])(?:import|export)\b\s*(?:[^;'"]*?\s*from\s*)?['"]([^'"\n]+)['"]`),
 	// dynamic import("spec")
 	regexp.MustCompile(`(?m)import\s*\(\s*['"]([^'"\n]+)['"]\s*\)`),
 }

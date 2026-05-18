@@ -30,6 +30,7 @@ package resolver
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -64,6 +65,13 @@ func New(opts Options) (api.Plugin, error) {
 	if opts.Store == nil {
 		return api.Plugin{}, errors.New("resolver: Store is nil")
 	}
+	// Build the blob-path → URL reverse map once at plugin
+	// construction time. Used by relative / absolute imports
+	// nested INSIDE registry-served bodies (esm.sh internal
+	// paths like /node/buffer.mjs) — we need to know what URL
+	// the importing file came from to resolve such paths.
+	blobToURL := buildBlobIndex(opts.Store)
+
 	return api.Plugin{
 		Name: "nexus-deps-resolver",
 		Setup: func(build api.PluginBuild) {
@@ -73,7 +81,7 @@ func New(opts Options) (api.Plugin, error) {
 			// through — gives us one place to reason about
 			// precedence.
 			build.OnResolve(api.OnResolveOptions{Filter: ".*"}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-				return resolveOne(opts, args)
+				return resolveOne(opts, blobToURL, args)
 			})
 			// OnLoad fires for every path we tagged with our
 			// Namespace in OnResolve. esbuild can't infer the
@@ -102,8 +110,50 @@ func New(opts Options) (api.Plugin, error) {
 //     path
 //   - {} (zero) → pass through to esbuild's default resolver
 //   - {Errors: [...]} → fail the build with our diagnostic
-func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, error) {
+//
+// Decision tree:
+//
+//  1. Importer is one of our cached blobs (args.Namespace ==
+//     Namespace OR args.Importer matches a known cache path) →
+//     all imports are CDN-internal; resolve against the importer's
+//     URL and look up in the store. This is the "registry-served
+//     ESM transitively references siblings" case.
+//  2. Importer is user code → relative/absolute paths fall
+//     through to esbuild's default; bare specs go through the
+//     lockfile.
+func resolveOne(opts Options, blobToURL map[string]string, args api.OnResolveArgs) (api.OnResolveResult, error) {
 	p := args.Path
+
+	// --- registry-internal resolution path ---------------------------
+	// When the importer file is one of our cached blobs, EVERY
+	// import refers to a sibling in the registry. We look up the
+	// importer's original URL via the reverse map and resolve the
+	// import against it. The check is purely path-based — we don't
+	// depend on esbuild's args.Namespace because esbuild doesn't
+	// always propagate the namespace for re-entrant resolves of
+	// CDN-internal paths.
+	if importerURL, ok := blobToURL[args.Importer]; ok {
+		absURL, err := resolveRegistryURL(importerURL, p)
+		if err == nil && absURL != "" {
+			if blob, _, gerr := opts.Store.Get(absURL); gerr == nil {
+				return api.OnResolveResult{Path: blob, Namespace: Namespace}, nil
+			}
+		}
+		// If the lookup failed and the import is registry-internal-
+		// shaped (absolute path, relative path, or absolute URL),
+		// surface a clear "missing in cache" error rather than
+		// letting esbuild try a useless filesystem lookup.
+		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, ".") || strings.Contains(p, "://") {
+			return api.OnResolveResult{
+				Errors: []api.Message{{
+					Text: fmt.Sprintf("nexus-deps: %s (imported from %s → %s) is not in the cache — run `nexus install`",
+						p, importerURL, absURL),
+				}},
+			}, nil
+		}
+		// Bare spec — fall through so the lockfile branch below
+		// has a chance.
+	}
 
 	// Relative imports always belong to esbuild's default
 	// resolver — user code referencing user code.
@@ -244,6 +294,112 @@ func loaderFromContentType(ct string) api.Loader {
 		return api.LoaderJSON
 	}
 	return api.LoaderJS
+}
+
+// buildBlobIndex walks every URL → blob mapping in the store and
+// returns a path → URL reverse map. Used by the OnResolve handler
+// to figure out which registry URL an importer file came from when
+// chasing CDN-internal imports.
+//
+// Built once per plugin construction. Cost is O(N_urls) where
+// N_urls is bounded by the lockfile size — typically dozens to
+// low hundreds, so the upfront walk is sub-millisecond.
+//
+// Two subtleties:
+//   - The same blob can map to multiple URLs (a bare URL and its
+//     resolved-version URL pointing at the same content). We pick
+//     the most-resolved URL (longest one) on the theory that it
+//     carries the most version info, which makes resolveRegistryURL
+//     produce more-specific output.
+//   - Missing meta or store-walk errors aren't fatal here — the
+//     resolver degrades gracefully to bare-spec-only lookups.
+func buildBlobIndex(s *store.Store) map[string]string {
+	out := map[string]string{}
+	_ = s.EachURL(func(meta store.Metadata) error {
+		if meta.ContentSHA256 == "" {
+			return nil
+		}
+		blobPath := blobPathFor(s.Root(), meta.ContentSHA256)
+		preferred := meta.ResolvedURL
+		if preferred == "" {
+			preferred = meta.URL
+		}
+		// Prefer the longer (more-resolved) URL on collision.
+		if existing, ok := out[blobPath]; !ok || len(preferred) > len(existing) {
+			out[blobPath] = preferred
+		}
+		return nil
+	})
+	return out
+}
+
+// blobPathFor reproduces the cas-layout the store uses internally:
+// "<root>/cas/<aa>/<bbbb...>". Kept in sync with store.casPath; we
+// can't call into the store's unexported helper, so duplicate the
+// trivial path math here.
+func blobPathFor(root, hash string) string {
+	if len(hash) < 2 {
+		return ""
+	}
+	return root + string(os.PathSeparator) + "cas" + string(os.PathSeparator) + hash[:2] + string(os.PathSeparator) + hash[2:]
+}
+
+// isCachedBlobPath reports whether p sits under the store's cas
+// directory. Used as a secondary signal for the registry-internal
+// resolution branch — esbuild doesn't always populate
+// args.Namespace on transitive resolves of imports inside files
+// our plugin claimed, so we check the path shape too.
+func isCachedBlobPath(root, p string) bool {
+	if p == "" || root == "" {
+		return false
+	}
+	return strings.HasPrefix(p, root+string(os.PathSeparator)+"cas"+string(os.PathSeparator))
+}
+
+// resolveRegistryURL joins an import specifier (which may be
+// relative, absolute-path, or absolute-URL) against the importer's
+// origin URL. The result is an absolute URL we can look up in the
+// store.
+//
+//	importer = https://esm.sh/x@1?target=es2015
+//	imp      = ./y.mjs           → https://esm.sh/y.mjs?target=es2015
+//	imp      = /node/buffer.mjs  → https://esm.sh/node/buffer.mjs?target=es2015
+//	imp      = https://x/y       → https://x/y (unchanged)
+//	imp      = bare-name         → ""  (not registry-internal)
+//
+// The importer's QUERY STRING is preserved on the result when the
+// import is a relative or absolute-path reference. esm.sh keys its
+// content variants on query (`?target=es2015`, `?bundle`, etc.),
+// and our fetcher stored sibling files with the same query — the
+// resolver has to use the same key shape or every cross-file
+// import inside a lowered bundle fails to find its peer.
+func resolveRegistryURL(importerURL, imp string) (string, error) {
+	if strings.HasPrefix(imp, "http://") || strings.HasPrefix(imp, "https://") {
+		return imp, nil
+	}
+	if strings.HasPrefix(imp, ".") || strings.HasPrefix(imp, "/") {
+		base, err := url.Parse(importerURL)
+		if err != nil {
+			return "", err
+		}
+		rel, err := url.Parse(imp)
+		if err != nil {
+			return "", err
+		}
+		joined := base.ResolveReference(rel)
+		// RFC 3986 §5.2.2 says the merged target inherits NOTHING
+		// from the base's query — only scheme/host/path. We
+		// reattach the base query when the import didn't carry
+		// one of its own, since registry-internal siblings live
+		// under the same content variant.
+		if joined.RawQuery == "" && base.RawQuery != "" {
+			joined.RawQuery = base.RawQuery
+		}
+		return joined.String(), nil
+	}
+	// Bare spec — caller already had a chance via the lockfile
+	// path. Returning "" signals "not a registry-internal import".
+	return "", errors.New("bare spec — not a registry-internal import")
 }
 
 // splitBlobPath extracts the sha256 from a store blob path. The
