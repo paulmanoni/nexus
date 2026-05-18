@@ -104,6 +104,12 @@ func run() error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	f := fetcher.New(st, "")
+	// Match the CLI's default External list — the dashboard uses
+	// @vue-flow/core and lucide-vue-next, both of which transitively
+	// pull vue. Without external=vue, esm.sh would embed its own
+	// pinned Vue alongside the version this build picks via
+	// `nexus add vue`, splitting Vue's reactive globals at runtime.
+	f.External = []string{"vue", "react", "react-dom"}
 
 	fmt.Println("[2/5] fetching deps (skipping cached blobs)")
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)

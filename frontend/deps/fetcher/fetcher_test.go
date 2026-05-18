@@ -231,6 +231,99 @@ func TestResolveAgainst(t *testing.T) {
 	}
 }
 
+func TestFetcher_ExternalQueryAppliedToBareSpecs(t *testing.T) {
+	var (
+		observed []string
+		baseURL  string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed = append(observed, r.URL.String())
+		w.Header().Set("Content-Type", "application/javascript")
+		// Body recurses into an absolute-URL sibling so we also
+		// exercise the recursion-path branch — its request URL
+		// should NOT carry external=.
+		if r.URL.Path == "/vue-flow" {
+			_, _ = w.Write([]byte(`import "` + baseURL + `/internal/dep.mjs";` + "\n"))
+			return
+		}
+		if r.URL.Path == "/internal/dep.mjs" {
+			_, _ = w.Write([]byte("export default 1;\n"))
+			return
+		}
+		_, _ = w.Write([]byte("export default 1;\n"))
+	}))
+	defer srv.Close()
+	baseURL = srv.URL
+
+	f := New(newTestStore(t), srv.URL)
+	f.External = []string{"vue", "react"}
+
+	if _, err := f.Fetch(context.Background(), "vue-flow"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	// The bare-spec request must carry the external clause.
+	if len(observed) == 0 || !strings.Contains(observed[0], "external=vue,react") {
+		t.Fatalf("bare-spec request missing external query, got %q", observed)
+	}
+	// The recursion request (absolute URL) must NOT carry external.
+	var sawInternal bool
+	for _, u := range observed {
+		if strings.Contains(u, "/internal/dep.mjs") {
+			sawInternal = true
+			if strings.Contains(u, "external=") {
+				t.Errorf("absolute-URL recursion picked up external query: %s", u)
+			}
+		}
+	}
+	if !sawInternal {
+		t.Errorf("recursion didn't fire — observed = %v", observed)
+	}
+}
+
+func TestFetcher_ExternalComposesWithURLQuery(t *testing.T) {
+	var observed string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/javascript")
+		_, _ = w.Write([]byte("export default 1;\n"))
+	}))
+	defer srv.Close()
+
+	f := New(newTestStore(t), srv.URL)
+	f.URLQuery = "target=es2015"
+	f.External = []string{"vue"}
+
+	if _, err := f.Fetch(context.Background(), "any-pkg"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	// Order matters — URLQuery is composed first so it stays on the
+	// left of the "&" join. The exact full match keeps us honest
+	// about the join character (spec uses & not ;).
+	if observed != "target=es2015&external=vue" {
+		t.Errorf("query = %q, want %q", observed, "target=es2015&external=vue")
+	}
+}
+
+func TestFetcher_EmptyExternalLeavesURLUnchanged(t *testing.T) {
+	var observed string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/javascript")
+		_, _ = w.Write([]byte("export default 1;\n"))
+	}))
+	defer srv.Close()
+
+	f := New(newTestStore(t), srv.URL)
+	// External left nil — must not synthesize an "external=" clause.
+	if _, err := f.Fetch(context.Background(), "any-pkg"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if observed != "" {
+		t.Errorf("query = %q, want empty (no External set)", observed)
+	}
+}
+
 func TestIntegrityHex_RoundTrip(t *testing.T) {
 	good := strings.Repeat("a", 64)
 	if got := IntegrityHex("sha256-" + good); got != good {

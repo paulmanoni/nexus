@@ -55,6 +55,21 @@ func newDepsContext(stdout, stderr io.Writer) (*depsContext, error) {
 		registry = fetcher.DefaultRegistry
 	}
 	f := fetcher.New(st, registry)
+	// Mark the framework-singleton peer deps so esm.sh-served
+	// bundles leave them as bare imports rather than embedding
+	// their own copy. Without this, `nexus add @vue-flow/core`
+	// (or any other vue-consuming pkg) would bring along its
+	// own pinned Vue alongside the project's `nexus add vue`,
+	// and Vue's reactivity globals would split between the two
+	// copies at runtime — "Fa is null" / "ce undefined" in
+	// the bundle.
+	//
+	// The list is intentionally short: only the small set of
+	// framework-singletons where dual-version bundling is a
+	// known runtime failure. Other libs that happen to be
+	// peer-dep'd by something CAN coexist at multiple versions
+	// without splitting state.
+	f.External = []string{"vue", "react", "react-dom"}
 
 	cwd, err := os.Getwd()
 	if err != nil {
