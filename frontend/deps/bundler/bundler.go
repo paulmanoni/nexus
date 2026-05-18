@@ -148,6 +148,31 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		MinifySyntax:      opts.Minify,
 		Plugins:           b.Plugins,
 		LogLevel:          logLevel,
+		// Vue's esm-bundler distribution (which is what esm.sh
+		// serves) reads three compile-time flags as bare global
+		// identifiers — without build-time substitution they
+		// surface in the browser as ReferenceErrors at module
+		// load (the very first line of runtime-core.mjs does
+		// `__VUE_PROD_DEVTOOLS__ && something`).
+		//
+		// Defaults match Vue's recommended production values:
+		//   - PROD_DEVTOOLS=false       no Vue devtools hook
+		//   - OPTIONS_API=true          keep Options API support
+		//                               (set false if your app
+		//                               is composition-only and
+		//                               you want a smaller bundle)
+		//   - HYDRATION_MISMATCH=false  drop SSR hydration debug
+		//                               output from prod bundles
+		//
+		// Harmless for non-Vue projects — the identifiers just
+		// don't appear in non-Vue code, so the Define has no
+		// effect. Caller-supplied Define entries (future
+		// option) would merge here rather than replace.
+		Define: map[string]string{
+			"__VUE_PROD_DEVTOOLS__":                  "false",
+			"__VUE_OPTIONS_API__":                    "true",
+			"__VUE_PROD_HYDRATION_MISMATCH_DETAILS__": "false",
+		},
 	}
 
 	if opts.Watch {
