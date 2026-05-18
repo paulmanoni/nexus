@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/evanw/esbuild/pkg/api"
+
 	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
 	"github.com/paulmanoni/nexus/frontend/deps/resolver"
@@ -66,14 +68,21 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	// Reject .vue with a clear message rather than producing a
-	// broken bundle. Once the Vue SFC bootstrap clears the Goja
-	// edge, this branch drops and the SFC plugin wires in here.
+	// .vue source files require the QuickJS-backed SFC compiler
+	// which is build-tagged behind cgo+vue. When the binary was
+	// built pure-Go (or without the vue tag), the vueCompilerHook
+	// stays nil and we reject .vue with the same clear message
+	// the v0.1 flow used.
+	hasVue := false
 	for _, e := range entries {
 		if strings.HasSuffix(e, ".vue") {
-			return fmt.Errorf("frontend build: %s is a .vue source — v0.1 doesn't yet compile Vue SFC; "+
-				"pre-compile it to .js or keep this project on vite for now", e)
+			hasVue = true
+			break
 		}
+	}
+	if hasVue && vueCompilerHook == nil {
+		return errors.New("frontend build: .vue sources detected but this nexus was built without Vue SFC support — " +
+			"rebuild with `CGO_ENABLED=1 go install -tags vue ./cmd/nexus` to enable")
 	}
 
 	lockfilePath := filepath.Join(projectRoot, lockfile.Filename)
@@ -107,6 +116,19 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 
 	b := bundler.New()
 	b.AddPlugin(plugin)
+
+	// When the vue hook is wired (cgo+vue build), bootstrap the
+	// compiler + register the SFC plugin. The hook owns the
+	// QuickJS lifecycle; we close it on return.
+	if hasVue && vueCompilerHook != nil {
+		closeVue, vuePlugin, err := vueCompilerHook(lf, st)
+		if err != nil {
+			return fmt.Errorf("frontend build: vue compiler: %w", err)
+		}
+		defer closeVue()
+		b.AddPlugin(vuePlugin)
+	}
+
 	noun := "entry"
 	if len(entries) != 1 {
 		noun = "entries"
@@ -132,6 +154,20 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		len(res.OutputFiles), pluralize("file", len(res.OutputFiles)), outDir)
 	return nil
 }
+
+// vueCompilerHook is the build-tagged registration point for the
+// Vue SFC compile plugin. The default value (nil, set in this
+// file's package init or just declared zero) means "this build
+// has no Vue support, reject .vue with a clear message". A
+// sibling file with `//go:build cgo && vue` populates the hook
+// at init time; without those tags, vue/ never compiles and the
+// hook stays nil.
+//
+// The signature gives the hook everything it needs: the
+// project's lockfile (for resolving @vue/compiler-sfc) and the
+// shared store. Returns a teardown func + the esbuild plugin
+// the bundler should add.
+var vueCompilerHook func(*lockfile.File, *store.Store) (func(), api.Plugin, error)
 
 // collectFrontendEntries walks srcDir and returns one entry path
 // per top-level file matching a supported extension. Subdirectories
