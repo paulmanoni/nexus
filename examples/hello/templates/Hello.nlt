@@ -1,54 +1,36 @@
 <template>
-    <div class="page">
-        <h1>Hello, world!</h1>
-        <p>Server count: <strong>{{ Count }}</strong></p>
-        <button @click="bump">Bump server</button>
+    <!-- Styled with Tailwind utility classes (no <style> block).
+         The SSR shell auto-includes the Tailwind Play CDN; disable
+         it in main.go via template.WithoutDefaultStyles() if you
+         ship your own pre-built Tailwind bundle in production. -->
+    <div class="max-w-xl mx-auto my-8 px-4 font-sans">
+        <h1 class="text-2xl font-semibold mb-2">Hello, world!</h1>
+        <p class="text-gray-700 mb-4">
+            Server count:
+            <strong class="font-mono text-blue-600">{{ Count }}</strong>
+        </p>
+        <button @click="bump"
+                class="px-4 py-1.5 mr-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">
+            Bump server
+        </button>
 
-        <h2>Client island</h2>
-        <p class="hint">
+        <h2 class="text-lg font-semibold mt-8 mb-2">Client island</h2>
+        <p class="text-sm text-gray-600 mb-3 leading-relaxed">
             Vanilla JS island below — its own state, mounted once,
             untouched by server re-renders. The "Server ping" button
-            fires <code>ctx.PushIsland("Counter", "ping", nil)</code>,
-            which the island's <code>channel.on("ping")</code> picks
+            fires <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">ctx.PushIsland("Counter", "ping", nil)</code>,
+            which the island's <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">channel.on("ping")</code> picks
             up without touching the surrounding template.
         </p>
-        <button @click="pingIsland">Server ping</button>
+        <button @click="pingIsland"
+                class="px-4 py-1.5 mb-3 rounded-md bg-gray-200 text-gray-800 text-sm font-medium hover:bg-gray-300 transition-colors">
+            Server ping
+        </button>
 
-        <nl-island name="Counter"
-                   src="/islands/counter.js"
-                   :props="ClientProps()"/>
+        <div class="mt-2 p-3 border border-gray-200 rounded-md bg-gray-50">
+            <nl-island name="Counter"
+                       src="/islands/counter.js"
+                       :props="ClientProps()"/>
+        </div>
     </div>
 </template>
-
-<style scoped>
-    .page {
-        font-family: system-ui, sans-serif;
-        max-width: 32rem;
-        margin: 2rem auto;
-        padding: 0 1rem;
-    }
-    .page h1 { font-size: 1.5rem; }
-    .page h2 { font-size: 1.1rem; margin-top: 2rem; }
-    .page button {
-        padding: 0.4rem 0.8rem;
-        margin-right: 0.5rem;
-        cursor: pointer;
-    }
-    .page .hint {
-        color: #666;
-        font-size: 0.9rem;
-    }
-    .page code {
-        background: #f4f4f4;
-        padding: 0 0.25rem;
-        border-radius: 3px;
-        font-size: 0.85em;
-    }
-    .page .island {
-        margin-top: 0.5rem;
-        padding: 0.75rem;
-        border: 1px solid #e1e4e8;
-        border-radius: 6px;
-        background: #fafbfc;
-    }
-</style>

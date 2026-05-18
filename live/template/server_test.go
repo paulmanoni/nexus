@@ -56,6 +56,74 @@ func TestServer_SSR_ReturnsRenderedHTML(t *testing.T) {
 	}
 }
 
+// regWith registers Counter on an engine built with the given
+// options + returns an httptest server. Used by the style-config
+// tests below to vary engine setup without duplicating boilerplate.
+func regWith(t *testing.T, opts ...Option) *httptest.Server {
+	t.Helper()
+	e := New(opts...)
+	if err := e.Register("Counter", []byte(counterTmpl), func() Component { return &counterComponent{} }); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	srv := httptest.NewServer(e.Handler("Counter"))
+	t.Cleanup(func() { srv.Close() })
+	return srv
+}
+
+// fetchBody GETs / and returns the response body as string.
+func fetchBody(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 4096)
+	n, _ := resp.Body.Read(buf)
+	return string(buf[:n])
+}
+
+func TestServer_SSR_DefaultStylesInjectsTailwindCDN(t *testing.T) {
+	srv := regWith(t)
+	body := fetchBody(t, srv)
+	if !strings.Contains(body, `<script src="https://cdn.tailwindcss.com"></script>`) {
+		t.Errorf("default shell missing Tailwind CDN script; got:\n%s", body)
+	}
+}
+
+func TestServer_SSR_WithoutDefaultStylesDropsTailwindCDN(t *testing.T) {
+	srv := regWith(t, WithoutDefaultStyles())
+	body := fetchBody(t, srv)
+	if strings.Contains(body, "cdn.tailwindcss.com") {
+		t.Errorf("WithoutDefaultStyles should omit Tailwind CDN; got:\n%s", body)
+	}
+}
+
+func TestServer_SSR_WithStylesheetAppendsLinkTags(t *testing.T) {
+	srv := regWith(t,
+		WithStylesheet("/static/theme.css"),
+		WithStylesheet("https://example.com/extra.css"),
+	)
+	body := fetchBody(t, srv)
+	for _, want := range []string{
+		`<link rel="stylesheet" href="/static/theme.css">`,
+		`<link rel="stylesheet" href="https://example.com/extra.css">`,
+		`<script src="https://cdn.tailwindcss.com"></script>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\nfull body:\n%s", want, body)
+		}
+	}
+	// Tailwind first, then stylesheets in declared order — so a
+	// user's later stylesheet can override Tailwind's defaults.
+	tw := strings.Index(body, "cdn.tailwindcss.com")
+	first := strings.Index(body, "/static/theme.css")
+	second := strings.Index(body, "extra.css")
+	if !(tw < first && first < second) {
+		t.Errorf("expected order: Tailwind < theme.css < extra.css; got tw=%d theme=%d extra=%d", tw, first, second)
+	}
+}
+
 func TestServer_SSR_IncludesClientScriptTag(t *testing.T) {
 	srv, _ := httpReg(t)
 	resp, err := http.Get(srv.URL)
