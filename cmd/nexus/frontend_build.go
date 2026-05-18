@@ -89,8 +89,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	lf, err := lockfile.Load(lockfilePath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("frontend build: %s has entries but no nexus.lock — run `nexus add` for any "+
-				"frontend dependencies your code imports", srcDir)
+			return fmt.Errorf("frontend build: %s", formatMissingLockfileError(srcDir, entries))
 		}
 		return fmt.Errorf("frontend build: load lockfile: %w", err)
 	}
