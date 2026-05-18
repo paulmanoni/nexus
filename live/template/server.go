@@ -85,7 +85,7 @@ func (e *Engine) serveSSR(w http.ResponseWriter, r *http.Request, def *component
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	fmt.Fprint(w, ssrShell(def.name, body, def.style, def.scopeID))
+	fmt.Fprint(w, ssrShell(def.name, body, def.style, def.scopeID, e.defaultStyles, e.stylesheets))
 }
 
 // serveWS upgrades the request, sends the initial join frame, and
@@ -185,6 +185,19 @@ func paramsFromRequest(r *http.Request) Params {
 	return p
 }
 
+// tailwindCDN is the Tailwind Play CDN URL injected by the SSR
+// shell when defaultStyles is on. Play is the JIT-in-browser
+// distribution — ships ~50 KB of JS that scans the DOM, generates
+// only the utility classes actually used, and injects them as a
+// <style> tag. Perfect for dev and small apps; production builds
+// should opt out via WithoutDefaultStyles + bundle their own
+// pre-compiled Tailwind.
+//
+// Pinned to a major version so a Tailwind 4 breakage doesn't
+// silently demolish existing apps. The CDN's actual major
+// breaks are infrequent — last one was 2 → 3.
+const tailwindCDN = "https://cdn.tailwindcss.com"
+
 // ssrShell wraps the rendered component body in a minimal HTML
 // page. The data-nl-component attribute lets the client JS
 // identify which component to "join" for the live channel; the
@@ -196,11 +209,31 @@ func paramsFromRequest(r *http.Request) Params {
 // isn't FOUC'd. A v2 build step would extract them to a
 // /__live/styles.css. The rewrite is regex-light — see
 // rewriteScopedCSS for the documented limitations.
-func ssrShell(componentName, body string, style *Style, scopeID string) string {
+//
+// Style cascade order (later wins):
+//  1. Tailwind Play CDN script (if defaultStyles)
+//  2. User-added <link rel="stylesheet"> URLs in declaration
+//     order
+//  3. Component's <style> block (inline, scoped or not)
+//
+// So a user's theme stylesheet can override Tailwind, and a
+// component's scoped style can override the theme — the same
+// order a hand-written page would have.
+func ssrShell(componentName, body string, style *Style, scopeID string, defaultStyles bool, stylesheets []string) string {
 	var sb strings.Builder
 	sb.WriteString(`<!doctype html><html><head><meta charset="utf-8"><title>`)
 	sb.WriteString(html.EscapeString(componentName))
 	sb.WriteString(`</title>`)
+	if defaultStyles {
+		sb.WriteString(`<script src="`)
+		sb.WriteString(tailwindCDN)
+		sb.WriteString(`"></script>`)
+	}
+	for _, href := range stylesheets {
+		sb.WriteString(`<link rel="stylesheet" href="`)
+		sb.WriteString(html.EscapeString(href))
+		sb.WriteString(`">`)
+	}
 	if style != nil && style.Body != "" {
 		sb.WriteString(`<style>`)
 		if style.Scoped {

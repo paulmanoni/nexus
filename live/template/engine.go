@@ -38,6 +38,19 @@ type Engine struct {
 	// self-contained.
 	fsSource fs.FS
 
+	// defaultStyles controls whether the SSR shell auto-
+	// includes the Tailwind Play CDN script. True by default
+	// so a fresh page looks reasonable without any CSS work.
+	// WithoutDefaultStyles flips it off (production builds
+	// that ship their own Tailwind / design system).
+	defaultStyles bool
+
+	// stylesheets holds user-supplied <link rel="stylesheet">
+	// URLs rendered into the SSR shell's <head>. Added via
+	// WithStylesheet; runs after the default Tailwind script
+	// so user rules can override.
+	stylesheets []string
+
 	// staticMounts collects WithStatic options so the adapter
 	// can register a gin static handler for each. Subdirs are
 	// resolved against the same fs.FS the engine loads
@@ -286,18 +299,54 @@ func getDefaultFS() fs.FS {
 // if nothing set it). Override per-engine via WithFS for
 // embed-baked binaries or WithRoot for a custom on-disk
 // layout.
+//
+// defaultStyles defaults true so a fresh page paints with
+// Tailwind classes immediately. Flip off via
+// WithoutDefaultStyles for production builds shipping their
+// own design system.
 func New(opts ...Option) *Engine {
 	e := &Engine{
-		registry: make(map[string]*componentDef),
-		sessions: make(map[*Session]struct{}),
-		parked:   make(map[string]*parkedSession),
-		routes:   make(map[string]string),
-		fsSource: getDefaultFS(),
+		registry:      make(map[string]*componentDef),
+		sessions:      make(map[*Session]struct{}),
+		parked:        make(map[string]*parkedSession),
+		routes:        make(map[string]string),
+		fsSource:      getDefaultFS(),
+		defaultStyles: true,
 	}
 	for _, opt := range opts {
 		opt(e)
 	}
 	return e
+}
+
+// WithoutDefaultStyles drops the auto-included Tailwind Play
+// CDN script from the SSR shell. Use when you ship your own
+// bundled Tailwind (production deploys), a different design
+// system, or want a zero-CSS baseline.
+//
+// Combine with WithStylesheet to add your own:
+//
+//	template.WithoutDefaultStyles(),
+//	template.WithStylesheet("/static/tailwind.min.css"),
+func WithoutDefaultStyles() Option {
+	return func(e *Engine) { e.defaultStyles = false }
+}
+
+// WithStylesheet adds one or more <link rel="stylesheet">
+// URLs to the SSR shell's <head>, alongside the default
+// Tailwind script (unless WithoutDefaultStyles disabled it).
+// Variadic — multiple URLs in one call or multiple calls;
+// preserves order, rendered after the default Tailwind so
+// user rules can override.
+//
+//	template.WithStylesheet(
+//	    "/static/theme.css",
+//	    "https://fonts.googleapis.com/css2?family=Inter",
+//	)
+func WithStylesheet(urls ...string) Option {
+	return func(e *Engine) {
+		e.stylesheets = append(e.stylesheets, urls...)
+	}
 }
 
 // WithFS sets the filesystem the engine reads .nlt templates
