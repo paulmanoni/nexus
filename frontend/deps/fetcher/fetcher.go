@@ -59,6 +59,36 @@ type Fetcher struct {
 	// default empty value is correct — modern browsers eat the
 	// default ES2022-ish output esm.sh serves.
 	URLQuery string
+
+	// External names packages that esm.sh should leave as BARE
+	// imports in every bundle it serves us, rather than embedding
+	// them via internal `/v135/<pkg>@<ver>/...` URLs. Composed into
+	// the `?external=<comma-list>` query string esm.sh recognizes.
+	//
+	// This is the deduplication seam. Without it, vue-flow's body
+	// (fetched from esm.sh) contains hard-coded references to the
+	// specific Vue version esm.sh chose at fetch time — typically
+	// the latest 3.x. If the project ALREADY pinned vue at a
+	// different version via `nexus add vue`, that second Vue gets
+	// pulled into the bundle alongside the pinned one, and Vue's
+	// reactivity system silently splits (singleton state ends up
+	// in the wrong copy → "Fa is null" at runtime).
+	//
+	// With external=vue, vue-flow's body has `import "vue"` left
+	// as a bare specifier. esbuild's OnResolve sees it, asks the
+	// lockfile for "vue", gets the pinned version, and the project
+	// ends up with exactly one Vue copy — regardless of what version
+	// any transitive dep was built against.
+	//
+	// Applies only to top-level bare-spec fetches. Absolute URLs
+	// (the recursion path) ignore this field — they're already
+	// CDN-internal paths that wouldn't benefit from re-externalizing
+	// (and esm.sh ignores ?external= on direct path access anyway).
+	//
+	// Sensible default: ["vue", "react", "react-dom"] — the three
+	// classic peer-dep singletons. Set via CLI in newDepsContext;
+	// tests typically leave this empty.
+	External []string
 }
 
 // New returns a Fetcher with sensible defaults. The store argument
@@ -251,8 +281,8 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 
 // specToURL builds the registry URL for a bare spec. Three shapes:
 //
-//	"vue"               → <registry>/vue?<URLQuery>
-//	"vue@3.4.21"        → <registry>/vue@3.4.21?<URLQuery>
+//	"vue"               → <registry>/vue?<URLQuery>&external=...
+//	"vue@3.4.21"        → <registry>/vue@3.4.21?<URLQuery>&external=...
 //	"https://esm.sh/x"  → "https://esm.sh/x?<URLQuery>"   (already absolute)
 //
 // Absolute URLs are passed through so recursion into CDN-internal
@@ -260,17 +290,47 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 // appended consistently regardless of input shape so esm.sh's
 // `?target=es2015` lowering applies to EVERY fetched URL — the
 // Vue compiler bootstrap depends on this.
+//
+// External — when set — applies ONLY to the bare-spec shapes
+// (top-level package fetches and bare-spec recursion). esm.sh
+// returns the package body with the external specifiers left as
+// bare `import "<name>"` statements rather than embedded as
+// `/v135/<name>@<ver>/...` paths, which is the deduplication
+// mechanism we rely on for Vue + React singletons.
 func (f *Fetcher) specToURL(spec string) (string, error) {
-	var raw string
-	switch {
-	case strings.HasPrefix(spec, "http://"), strings.HasPrefix(spec, "https://"):
-		raw = spec
-	case spec == "":
+	if spec == "" {
 		return "", errors.New("fetcher: empty spec")
-	default:
-		raw = f.Registry + "/" + spec
 	}
-	return appendURLQuery(raw, f.URLQuery), nil
+	if strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://") {
+		// Recursion path: an absolute URL the parent body referenced.
+		// esm.sh interprets `?external=` only on package-shape URLs
+		// (https://esm.sh/<spec>); appending it to internal paths
+		// like /v135/.../foo.mjs is at best ignored, at worst a
+		// 404. Apply only URLQuery here.
+		return appendURLQuery(spec, f.URLQuery), nil
+	}
+	raw := f.Registry + "/" + spec
+	return appendURLQuery(raw, f.composeBareSpecQuery()), nil
+}
+
+// composeBareSpecQuery joins URLQuery and (when External is set)
+// the `external=<comma-list>` clause into one query-string body
+// without the leading "?". Empty when both inputs are empty.
+//
+// External names are joined with "," — esm.sh's documented
+// separator. Names are written verbatim; scoped names ("@vue/x")
+// would need URL-encoding if esm.sh balked at the "@", but it
+// doesn't — accepts them as-is. We don't filter or validate the
+// names; the CLI populates this from a known-good list.
+func (f *Fetcher) composeBareSpecQuery() string {
+	parts := make([]string, 0, 2)
+	if f.URLQuery != "" {
+		parts = append(parts, f.URLQuery)
+	}
+	if len(f.External) > 0 {
+		parts = append(parts, "external="+strings.Join(f.External, ","))
+	}
+	return strings.Join(parts, "&")
 }
 
 // appendURLQuery suffixes the query (without leading "?") onto u
