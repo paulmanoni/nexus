@@ -3,6 +3,7 @@ package nexus
 import (
 	"fmt"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"strings"
@@ -10,6 +11,40 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 )
+
+// init seeds the MIME type registry with the modern-web baseline
+// ServeFrontend depends on. Go's mime.TypeByExtension() leans on
+// the host's /etc/mime.types (or the Windows registry, or...) —
+// systems where that file is missing or out-of-date return "" for
+// .js / .css / .woff2 / .mjs, then http.ServeContent falls back
+// to sniffing bytes via http.DetectContentType. The sniffer tags
+// JS modules as "text/plain", which modern browsers refuse to
+// load as ES modules.
+//
+// AddExtensionType prepends to the lookup table — it can't widen
+// or replace the system mapping at runtime, but registering BEFORE
+// any request hits ensures the right type wins for these specific
+// extensions regardless of what the host advertises.
+func init() {
+	for ext, ct := range map[string]string{
+		".js":    "application/javascript; charset=utf-8",
+		".mjs":   "application/javascript; charset=utf-8",
+		".cjs":   "application/javascript; charset=utf-8",
+		".css":   "text/css; charset=utf-8",
+		".map":   "application/json; charset=utf-8", // sourcemaps
+		".json":  "application/json; charset=utf-8",
+		".svg":   "image/svg+xml",
+		".woff":  "font/woff",
+		".woff2": "font/woff2",
+		".ttf":   "font/ttf",
+		".otf":   "font/otf",
+		".eot":   "application/vnd.ms-fontobject",
+		".webp":  "image/webp",
+		".avif":  "image/avif",
+	} {
+		_ = mime.AddExtensionType(ext, ct)
+	}
+}
 
 // NexusDevEnv signals dev mode to the framework. When set to "1",
 // ServeFrontend reads files from disk (os.DirFS) instead of the
