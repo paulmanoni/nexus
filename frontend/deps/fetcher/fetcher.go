@@ -192,11 +192,28 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 	// Record now so concurrent recursion paths find this entry.
 	visited[lockfile.Key(pkg.Spec, pkg.Version)] = pkg
 
-	// Recurse into imports. Only JS-shape responses are scanned
-	// — CSS / source maps / data files have no imports we care
-	// about.
-	if isJSContent(contentType, resolved) {
-		for _, imp := range ExtractImports(string(content)) {
+	// Recurse into imports. Two scan paths, one per body type:
+	//   - JS-shape: ExtractImports finds import / export / dynamic
+	//     import() specifiers.
+	//   - CSS-shape: ExtractCSSImports finds @import + url(...)
+	//     references. Without this, font packages and
+	//     stylesheet-with-image packages would fetch their CSS
+	//     but not the referenced woff2 / png / svg assets, and
+	//     esbuild would error at bundle time with "not in cache"
+	//     for every url().
+	//
+	// We treat sourcemaps + JSON + data files as terminal — no
+	// recursion. Same shape as before; the new branch is the
+	// CSS path.
+	var imports []string
+	switch {
+	case isJSContent(contentType, resolved):
+		imports = ExtractImports(string(content))
+	case isCSSContent(contentType, resolved):
+		imports = ExtractCSSImports(string(content))
+	}
+	if len(imports) > 0 {
+		for _, imp := range imports {
 			// Resolve the import relative to the resolved URL so
 			// CDN-internal paths (e.g. /v135/@vue/x/foo.js) chase
 			// correctly.
@@ -396,6 +413,21 @@ func extractVersionFromURL(u string) string {
 		}
 	}
 	return ""
+}
+
+// isCSSContent decides whether a body should be scanned for CSS
+// imports (@import + url(...)) by the recursive fetcher. Symmetric
+// with isJSContent — Content-Type leads, extension is the fallback
+// for CDNs that mislabel.
+func isCSSContent(contentType, urlString string) bool {
+	if strings.Contains(strings.ToLower(contentType), "css") {
+		return true
+	}
+	parsed, err := url.Parse(urlString)
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(parsed.Path), ".css")
 }
 
 // isJSContent decides whether to parse a fetched body for imports.
