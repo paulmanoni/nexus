@@ -105,7 +105,16 @@ func TestFrontendBuild_EmptyIslandsSrcIsNoOp(t *testing.T) {
 	}
 }
 
+// TestFrontendBuild_DotVueProducesClearError checks the rejection
+// path .vue takes when the binary was built WITHOUT the Vue SFC
+// compiler (default pure-Go build — vueCompilerHook is nil).
+// When -tags vue is passed, the hook is wired, .vue compiles
+// normally, and this test wouldn't be meaningful — so it's gated
+// off the vue tag.
 func TestFrontendBuild_DotVueProducesClearError(t *testing.T) {
+	if vueCompilerHook != nil {
+		t.Skip("vue tag enabled — .vue compiles instead of rejecting")
+	}
 	cwd, cleanup := inDepsTestSandbox(t, "http://127.0.0.1:0")
 	defer cleanup()
 	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0o755); err != nil {
@@ -120,8 +129,8 @@ func TestFrontendBuild_DotVueProducesClearError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected .vue rejection")
 	}
-	if !strings.Contains(err.Error(), "v0.1 doesn't yet compile Vue SFC") {
-		t.Errorf("err missing version-1 guidance: %v", err)
+	if !strings.Contains(err.Error(), "built without Vue SFC support") {
+		t.Errorf("err missing build-tag guidance: %v", err)
 	}
 }
 
