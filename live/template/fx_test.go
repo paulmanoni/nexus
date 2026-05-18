@@ -80,6 +80,45 @@ func TestFx_RegisterComponent_PropagatesParseError(t *testing.T) {
 	}
 }
 
+// --- TemplateNamer / adapter path resolution -----------------------
+
+// namerComp implements TemplateNamer so the adapter resolves its
+// template path via the method rather than spec.TemplatePath or the
+// convention fallback. The Ctx is nil at registration time — the
+// implementation must not deref it.
+type namerComp struct{ BaseComponent }
+
+func (c *namerComp) TemplateName(_ *Ctx) string { return "custom/MyNamer" }
+
+func TestAdapter_PathResolution_TemplateNamer(t *testing.T) {
+	got := resolveTemplatePath("MyNamer", "", func() any { return &namerComp{} })
+	if got != "custom/MyNamer.nlt" {
+		t.Errorf("namer path = %q, want %q", got, "custom/MyNamer.nlt")
+	}
+}
+
+func TestAdapter_PathResolution_ConventionFallback(t *testing.T) {
+	// No TemplateNamer, no WithTemplate → "templates/<Name>.nlt".
+	got := resolveTemplatePath("Hello", "", func() any { return &counterComponent{} })
+	if got != "templates/Hello.nlt" {
+		t.Errorf("convention path = %q, want %q", got, "templates/Hello.nlt")
+	}
+}
+
+func TestAdapter_PathResolution_ExplicitWithTemplateWins(t *testing.T) {
+	got := resolveTemplatePath("MyNamer", "explicit/path", func() any { return &namerComp{} })
+	if got != "explicit/path.nlt" {
+		t.Errorf("explicit path = %q, want %q", got, "explicit/path.nlt")
+	}
+}
+
+func TestAdapter_PathResolution_AcceptsExistingNltSuffix(t *testing.T) {
+	got := resolveTemplatePath("X", "already/has.nlt", func() any { return &counterComponent{} })
+	if got != "already/has.nlt" {
+		t.Errorf("path with .nlt = %q, want %q", got, "already/has.nlt")
+	}
+}
+
 // Verifies the dep-injected-factory pattern documented in
 // RegisterComponent's godoc actually works end-to-end: a constructor
 // closes over a repo and the engine ends up registered with a

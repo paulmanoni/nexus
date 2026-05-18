@@ -48,20 +48,17 @@ func NewLiveAdapter(engine *Engine, app *nexus.App) nexus.LiveAdapter {
 // registers a per-session factory with the engine, and (if a URL
 // path was supplied) mounts the engine's HTTP handler at that
 // path. Always mounts the embedded JS runtime on first call.
+//
+// Template path resolution order (first wins):
+//  1. spec.TemplatePath — set by template.WithTemplate on AsComponent
+//  2. (Component).TemplateName(nil) — if the type implements
+//     TemplateNamer. The nil ctx is the registration-time call
+//     convention; implementations return a stable path that
+//     doesn't depend on session state.
+//  3. "templates/<spec.Name>" — convention fallback covering the
+//     90% case (component "PostRow" → templates/PostRow.nlt).
 func (a *liveAdapter) RegisterComponent(spec *nexus.ComponentSpec, factory func() any) error {
-	if spec.TemplatePath == "" {
-		return fmt.Errorf("template: AsComponent %q: missing template.WithTemplate(...)", spec.Name)
-	}
-
-	// Resolve the template path against the FS. Accept either
-	// "templates/posts" or "templates/Posts.nlt" — the .nlt
-	// extension is appended when missing for ergonomics, so the
-	// WithTemplate value reads as a logical name rather than a
-	// filesystem detail.
-	path := spec.TemplatePath
-	if !strings.HasSuffix(path, ".nlt") {
-		path += ".nlt"
-	}
+	path := resolveTemplatePath(spec.Name, spec.TemplatePath, factory)
 	src, err := fs.ReadFile(a.engine.FS(), path)
 	if err != nil {
 		return fmt.Errorf("template: load %s for component %q: %w", path, spec.Name, err)
@@ -115,4 +112,39 @@ func (a *liveAdapter) RegisterComponent(spec *nexus.ComponentSpec, factory func(
 		a.engine.RegisterRoute(spec.URLPath, spec.Name)
 	}
 	return nil
+}
+
+// resolveTemplatePath picks the .nlt path for a component given
+// (in precedence order):
+//  1. explicitPath — what template.WithTemplate stuffed into
+//     spec.TemplatePath. Highest priority because it's an
+//     explicit caller choice.
+//  2. (factory()).(TemplateNamer).TemplateName(nil) — when the
+//     component opts into the method-based contract. The factory
+//     is called once at registration; the instance is throwaway.
+//     Implementations must tolerate a nil Ctx since no session
+//     exists yet.
+//  3. "templates/" + componentName — convention fallback covering
+//     the 90% case where struct name and template filename match.
+//
+// In all cases the ".nlt" extension is appended if missing, so
+// "templates/Posts" and "templates/Posts.nlt" both work.
+//
+// Extracted from RegisterComponent so unit tests can exercise the
+// precedence ladder without standing up an *nexus.App + engine.
+func resolveTemplatePath(componentName, explicitPath string, factory func() any) string {
+	path := explicitPath
+	if path == "" {
+		probe := factory()
+		if namer, ok := probe.(TemplateNamer); ok {
+			path = namer.TemplateName(nil)
+		}
+		if path == "" {
+			path = "templates/" + componentName
+		}
+	}
+	if !strings.HasSuffix(path, ".nlt") {
+		path += ".nlt"
+	}
+	return path
 }

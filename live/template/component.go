@@ -18,6 +18,31 @@ type Component interface {
 	Mount(ctx *Ctx) error
 }
 
+// TemplateNamer is the optional contract a component implements to
+// declare its own .nlt source path, replacing the
+// template.WithTemplate option on AsComponent. The adapter calls
+// TemplateName(nil) once at registration time — implementations
+// MUST treat a nil ctx gracefully and return a stable path, since
+// no session or request context exists yet. Use template.Ctx fields
+// only when you've already returned the static branch:
+//
+//	func (c *PostRow) TemplateName(ctx *template.Ctx) string {
+//	    return "templates/PostRow"
+//	}
+//
+// When neither WithTemplate nor TemplateName is provided, the
+// adapter falls back to the convention "templates/<ComponentName>"
+// — covers the 90% case where a component named "PostRow" has its
+// source at templates/PostRow.nlt.
+//
+// Override precedence (first wins):
+//  1. template.WithTemplate("path") on AsComponent
+//  2. (Component).TemplateName(nil)
+//  3. "templates/" + spec.Name
+type TemplateNamer interface {
+	TemplateName(ctx *Ctx) string
+}
+
 // EventDispatcher lets a component opt out of reflection-based
 // event routing and handle dispatch itself. Useful for generic
 // components (e.g. a form that routes every "field-change" through

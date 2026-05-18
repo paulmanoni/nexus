@@ -214,10 +214,12 @@ var liveModule = nexus.Module("arch",
 		template.WithIdleTimeout(30*time.Minute),
 		template.WithSessionResumption(30*time.Second),
 	),
-	nexus.AsComponent("Architecture",
-		func() (*ArchPage, error) {
-			return &ArchPage{}, nil
-		},
+	// Anon ctor returns *ArchPage → inferred name "ArchPage".
+	// Override to "Architecture" since the template registers
+	// under that name (and the route reads more naturally).
+	nexus.AsComponent(
+		func() (*ArchPage, error) { return &ArchPage{}, nil },
+		nexus.WithName("Architecture"),
 		template.WithTemplate("templates/Architecture"),
 		nexus.Path("/"),
 	),
