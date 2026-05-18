@@ -65,13 +65,6 @@ func New(opts Options) (api.Plugin, error) {
 	if opts.Store == nil {
 		return api.Plugin{}, errors.New("resolver: Store is nil")
 	}
-	// Build the blob-path → URL reverse map once at plugin
-	// construction time. Used by relative / absolute imports
-	// nested INSIDE registry-served bodies (esm.sh internal
-	// paths like /node/buffer.mjs) — we need to know what URL
-	// the importing file came from to resolve such paths.
-	blobToURL := buildBlobIndex(opts.Store)
-
 	return api.Plugin{
 		Name: "nexus-deps-resolver",
 		Setup: func(build api.PluginBuild) {
@@ -81,7 +74,7 @@ func New(opts Options) (api.Plugin, error) {
 			// through — gives us one place to reason about
 			// precedence.
 			build.OnResolve(api.OnResolveOptions{Filter: ".*"}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-				return resolveOne(opts, blobToURL, args)
+				return resolveOne(opts, args)
 			})
 			// OnLoad fires for every path we tagged with our
 			// Namespace in OnResolve. esbuild can't infer the
@@ -121,38 +114,39 @@ func New(opts Options) (api.Plugin, error) {
 //  2. Importer is user code → relative/absolute paths fall
 //     through to esbuild's default; bare specs go through the
 //     lockfile.
-func resolveOne(opts Options, blobToURL map[string]string, args api.OnResolveArgs) (api.OnResolveResult, error) {
+func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, error) {
 	p := args.Path
 
 	// --- registry-internal resolution path ---------------------------
-	// When the importer file is one of our cached blobs, EVERY
-	// import refers to a sibling in the registry. We look up the
-	// importer's original URL via the reverse map and resolve the
-	// import against it. The check is purely path-based — we don't
-	// depend on esbuild's args.Namespace because esbuild doesn't
-	// always propagate the namespace for re-entrant resolves of
-	// CDN-internal paths.
-	if importerURL, ok := blobToURL[args.Importer]; ok {
-		absURL, err := resolveRegistryURL(importerURL, p)
+	// When the importer file is in our namespace, args.Importer
+	// IS the registry URL we returned at the previous OnResolve
+	// (the URL-as-Path scheme means we don't need a blob-path
+	// reverse index — esbuild threads the path verbatim into
+	// child resolve calls).
+	//
+	// Every relative / absolute-path / absolute-URL import inside
+	// such a file refers to a sibling in the registry. Resolve
+	// against the importer URL and look up the result in the store.
+	if args.Namespace == Namespace && args.Importer != "" {
+		absURL, err := resolveRegistryURL(args.Importer, p)
 		if err == nil && absURL != "" {
-			if blob, _, gerr := opts.Store.Get(absURL); gerr == nil {
-				return api.OnResolveResult{Path: blob, Namespace: Namespace}, nil
+			if _, _, gerr := opts.Store.Get(absURL); gerr == nil {
+				return api.OnResolveResult{Path: absURL, Namespace: Namespace}, nil
 			}
 		}
-		// If the lookup failed and the import is registry-internal-
-		// shaped (absolute path, relative path, or absolute URL),
-		// surface a clear "missing in cache" error rather than
-		// letting esbuild try a useless filesystem lookup.
+		// Registry-shaped import didn't hit the cache → clear
+		// error rather than letting esbuild try a useless
+		// filesystem lookup.
 		if strings.HasPrefix(p, "/") || strings.HasPrefix(p, ".") || strings.Contains(p, "://") {
 			return api.OnResolveResult{
 				Errors: []api.Message{{
 					Text: fmt.Sprintf("nexus-deps: %s (imported from %s → %s) is not in the cache — run `nexus install`",
-						p, importerURL, absURL),
+						p, args.Importer, absURL),
 				}},
 			}, nil
 		}
-		// Bare spec — fall through so the lockfile branch below
-		// has a chance.
+		// Bare spec inside a registry-served file — fall through
+		// to the lockfile branch below.
 	}
 
 	// Relative imports always belong to esbuild's default
@@ -195,17 +189,20 @@ func resolveOne(opts Options, blobToURL map[string]string, args api.OnResolveArg
 		return api.OnResolveResult{}, fmt.Errorf("resolver: lockfile lookup for %q: %w", spec, err)
 	}
 
-	// Resolve to a cached blob path. For root-package imports
-	// the entry's Resolved URL is what we hand to the store.
-	// For sub-path imports we join the sub-path against the
-	// resolved URL and look THAT up — the fetcher should have
-	// recursed into it at `nexus add` time.
+	// Resolve to the registry URL. For root-package imports the
+	// entry's Resolved URL is what we hand to the store. For
+	// sub-path imports we join the sub-path against the resolved
+	// URL and look THAT up — the fetcher should have recursed
+	// into it at `nexus add` time.
 	targetURL := pkg.Resolved
 	if subpath != "" {
 		targetURL = joinSubpath(pkg.Resolved, subpath)
 	}
-	blob, meta, err := opts.Store.Get(targetURL)
-	if err != nil {
+	// Confirm the blob is present before claiming the import —
+	// otherwise the build proceeds through OnLoad and surfaces
+	// the error there with worse context. We discard the meta
+	// here; OnLoad re-fetches it via the same Path (= URL) key.
+	if _, _, err := opts.Store.Get(targetURL); err != nil {
 		if errors.Is(err, store.ErrNotCached) {
 			return api.OnResolveResult{
 				Errors: []api.Message{{
@@ -216,73 +213,76 @@ func resolveOne(opts Options, blobToURL map[string]string, args api.OnResolveArg
 		}
 		return api.OnResolveResult{}, fmt.Errorf("resolver: store lookup for %s: %w", targetURL, err)
 	}
-	_ = meta // future: dispatch on meta.ContentType (CSS, etc.)
 
+	// Return the URL as the Path: esbuild treats it opaquely
+	// inside our namespace, but uses its BASENAME for output
+	// filenames (so an asset import of /inter.woff2 emits
+	// "inter-HASH.woff2" alongside the JS bundle instead of
+	// the hash-named file the blob path produced).
 	return api.OnResolveResult{
-		Path:      blob,
+		Path:      targetURL,
 		Namespace: Namespace,
 	}, nil
 }
 
-// loadOne reads the cached blob from disk and tells esbuild what
-// kind of content it is. The Loader is inferred from Content-Type
-// stored in the lockfile entry (which mirrors what the registry
-// served when the fetcher first downloaded it):
+// loadOne reads the cached blob and tells esbuild what kind of
+// content it is. args.Path is the URL the resolver returned;
+// store.Get round-trips it to the on-disk blob path + the meta
+// we stashed at fetch time (Content-Type, etc.).
 //
-//	application/javascript   →  LoaderJS
-//	text/css                 →  LoaderCSS
-//	application/json         →  LoaderJSON
-//	(else)                   →  LoaderDefault (esbuild's fallback)
-//
-// We re-scan the lockfile by Path-→URL because esbuild's OnLoadArgs
-// doesn't carry plugin-specific data through from OnResolve; the
-// cleanest reverse-lookup is by store blob path → URL via the
-// EachURL iterator. For typical projects (~30 deps) that's a
-// linear scan over a tiny map. Optimizing later via a cached
-// reverse-index is straightforward if it ever shows up in profiles.
+// Loader dispatch follows loaderFor's rules (see its godoc): JS,
+// CSS, JSON, font/image binary assets, generic binary, JS
+// fallback. The URL doubles as the input to the extension-sniff
+// branch for when Content-Type was missing or octet-stream.
 func loadOne(opts Options, args api.OnLoadArgs) (api.OnLoadResult, error) {
-	body, err := os.ReadFile(args.Path)
+	blob, meta, err := opts.Store.Get(args.Path)
 	if err != nil {
-		return api.OnLoadResult{}, fmt.Errorf("resolver: read cached blob %s: %w", args.Path, err)
+		return api.OnLoadResult{}, fmt.Errorf("resolver: store lookup %s: %w", args.Path, err)
+	}
+	body, err := os.ReadFile(blob)
+	if err != nil {
+		return api.OnLoadResult{}, fmt.Errorf("resolver: read cached blob %s: %w", blob, err)
 	}
 	contents := string(body)
-	loader := api.LoaderJS // safe default — esbuild handles bad
-	// JS as syntax errors, which surfaces a clearer message than
-	// LoaderDefault would (which falls through to file copy).
-
-	// Look up the Content-Type that was recorded when the fetcher
-	// stored this blob. Reverse-mapping path → URL via EachURL is
-	// O(N_deps); acceptable at v0.1 dep counts.
-	_ = opts.Store.EachURL(func(meta store.Metadata) error {
-		// The path returned by OnResolve is the blob path which
-		// the store yields the same way. Cheap string compare.
-		if meta.ContentSHA256 != "" {
-			// Each entry maps URL → SHA256 → blob. We don't have
-			// the SHA256 in args.Path directly, but the blob path
-			// embeds it: "<root>/cas/<aa>/<bbbb...>". Extract.
-			parent, base := splitBlobPath(args.Path)
-			_ = parent
-			if base == meta.ContentSHA256 {
-				loader = loaderFromContentType(meta.ContentType)
-				return errors.New("found") // short-circuit
-			}
-		}
-		return nil
-	})
-
 	return api.OnLoadResult{
 		Contents: &contents,
-		Loader:   loader,
+		Loader:   loaderFor(meta.ContentType, args.Path),
 	}, nil
 }
 
-// loaderFromContentType maps an HTTP Content-Type header to the
-// esbuild Loader. We accept the common subset esm.sh serves.
-// Unknown types fall back to LoaderJS — most blobs in our store
-// are JS, and esbuild's loader inference for an extensionless path
-// has no better choice anyway.
-func loaderFromContentType(ct string) api.Loader {
-	ct = strings.ToLower(ct)
+// loaderFor maps a (Content-Type, URL) pair to the esbuild Loader
+// esbuild should treat the cached blob as. Two signals because
+// neither is reliable alone:
+//
+//   - Content-Type is the registry's hint about the bytes' shape.
+//     esm.sh sets it accurately for JS/CSS/JSON but routinely
+//     serves binary assets (woff2, png) as application/octet-stream
+//     when its auto-detection misses.
+//   - URL extension is the last-ditch fallback. Browsers do the
+//     same dance — mime-sniff first, then trust the extension.
+//
+// Resolution order:
+//
+//  1. JS / TS / ES content-types → LoaderJS
+//  2. CSS content-types → LoaderCSS
+//  3. JSON content-types → LoaderJSON
+//  4. Font content-types OR known font extensions → LoaderFile
+//     (esbuild copies the bytes to outdir as a separate asset,
+//     replaces the import expression with the public URL string;
+//     CSS @font-face url() refs work the same way)
+//  5. Image content-types OR known image extensions → LoaderFile
+//  6. Generic binary (octet-stream + no JS-shape ext) → LoaderFile
+//  7. Fallthrough: LoaderJS, because most blobs in our store
+//     genuinely are JS and a syntax error from esbuild is more
+//     useful than silent corruption.
+//
+// LoaderFile is the right answer for fonts + images: esbuild
+// emits them as standalone files alongside the JS bundle and
+// rewrites the import to a URL string. The downstream browser
+// fetches the font over HTTP, which is what every Vue/React app
+// already expects.
+func loaderFor(contentType, urlStr string) api.Loader {
+	ct := strings.ToLower(contentType)
 	switch {
 	case strings.Contains(ct, "javascript"),
 		strings.Contains(ct, "ecmascript"),
@@ -292,69 +292,76 @@ func loaderFromContentType(ct string) api.Loader {
 		return api.LoaderCSS
 	case strings.Contains(ct, "json"):
 		return api.LoaderJSON
+	case strings.Contains(ct, "font/"),
+		strings.Contains(ct, "application/font"),
+		strings.Contains(ct, "application/vnd.ms-fontobject"):
+		return api.LoaderFile
+	case strings.HasPrefix(ct, "image/"):
+		return api.LoaderFile
 	}
+
+	// Content-Type either missing or ambiguous (octet-stream is
+	// the common case for fonts on esm.sh). Sniff the URL's path
+	// extension to dispatch binary asset shapes that JS can't
+	// possibly handle.
+	if loader, ok := loaderFromExtension(urlStr); ok {
+		return loader
+	}
+
 	return api.LoaderJS
 }
 
-// buildBlobIndex walks every URL → blob mapping in the store and
-// returns a path → URL reverse map. Used by the OnResolve handler
-// to figure out which registry URL an importer file came from when
-// chasing CDN-internal imports.
+// loaderFromExtension maps a URL or path's lowercased trailing
+// extension to a binary-safe loader. Returns ok=false when the
+// extension doesn't match a known binary shape, so the caller
+// falls back to the JS default.
 //
-// Built once per plugin construction. Cost is O(N_urls) where
-// N_urls is bounded by the lockfile size — typically dozens to
-// low hundreds, so the upfront walk is sub-millisecond.
-//
-// Two subtleties:
-//   - The same blob can map to multiple URLs (a bare URL and its
-//     resolved-version URL pointing at the same content). We pick
-//     the most-resolved URL (longest one) on the theory that it
-//     carries the most version info, which makes resolveRegistryURL
-//     produce more-specific output.
-//   - Missing meta or store-walk errors aren't fatal here — the
-//     resolver degrades gracefully to bare-spec-only lookups.
-func buildBlobIndex(s *store.Store) map[string]string {
-	out := map[string]string{}
-	_ = s.EachURL(func(meta store.Metadata) error {
-		if meta.ContentSHA256 == "" {
-			return nil
-		}
-		blobPath := blobPathFor(s.Root(), meta.ContentSHA256)
-		preferred := meta.ResolvedURL
-		if preferred == "" {
-			preferred = meta.URL
-		}
-		// Prefer the longer (more-resolved) URL on collision.
-		if existing, ok := out[blobPath]; !ok || len(preferred) > len(existing) {
-			out[blobPath] = preferred
-		}
-		return nil
-	})
-	return out
+// The extension set is the modern web baseline:
+//   - fonts: woff2, woff, ttf, otf, eot
+//   - images: png, jpg, jpeg, gif, webp, svg, ico, avif
+//   - generic binary fallback: covered by the octet-stream branch
+//     in loaderFor; this function is for cases where Content-Type
+//     was outright absent.
+func loaderFromExtension(urlStr string) (api.Loader, bool) {
+	// Strip query string before extension sniff — esm.sh URLs
+	// carry "?target=es2015" etc. that would mask the real ext.
+	if i := strings.Index(urlStr, "?"); i >= 0 {
+		urlStr = urlStr[:i]
+	}
+	lower := strings.ToLower(urlStr)
+	switch {
+	case strings.HasSuffix(lower, ".woff2"),
+		strings.HasSuffix(lower, ".woff"),
+		strings.HasSuffix(lower, ".ttf"),
+		strings.HasSuffix(lower, ".otf"),
+		strings.HasSuffix(lower, ".eot"):
+		return api.LoaderFile, true
+	case strings.HasSuffix(lower, ".png"),
+		strings.HasSuffix(lower, ".jpg"),
+		strings.HasSuffix(lower, ".jpeg"),
+		strings.HasSuffix(lower, ".gif"),
+		strings.HasSuffix(lower, ".webp"),
+		strings.HasSuffix(lower, ".svg"),
+		strings.HasSuffix(lower, ".ico"),
+		strings.HasSuffix(lower, ".avif"):
+		return api.LoaderFile, true
+	case strings.HasSuffix(lower, ".js"),
+		strings.HasSuffix(lower, ".mjs"),
+		strings.HasSuffix(lower, ".cjs"),
+		strings.HasSuffix(lower, ".ts"),
+		strings.HasSuffix(lower, ".tsx"),
+		strings.HasSuffix(lower, ".jsx"):
+		return api.LoaderJS, true
+	case strings.HasSuffix(lower, ".css"):
+		return api.LoaderCSS, true
+	case strings.HasSuffix(lower, ".json"):
+		return api.LoaderJSON, true
+	}
+	return api.LoaderDefault, false
 }
 
-// blobPathFor reproduces the cas-layout the store uses internally:
-// "<root>/cas/<aa>/<bbbb...>". Kept in sync with store.casPath; we
-// can't call into the store's unexported helper, so duplicate the
-// trivial path math here.
-func blobPathFor(root, hash string) string {
-	if len(hash) < 2 {
-		return ""
-	}
-	return root + string(os.PathSeparator) + "cas" + string(os.PathSeparator) + hash[:2] + string(os.PathSeparator) + hash[2:]
-}
 
-// isCachedBlobPath reports whether p sits under the store's cas
-// directory. Used as a secondary signal for the registry-internal
-// resolution branch — esbuild doesn't always populate
-// args.Namespace on transitive resolves of imports inside files
-// our plugin claimed, so we check the path shape too.
-func isCachedBlobPath(root, p string) bool {
-	if p == "" || root == "" {
-		return false
-	}
-	return strings.HasPrefix(p, root+string(os.PathSeparator)+"cas"+string(os.PathSeparator))
-}
+
 
 // resolveRegistryURL joins an import specifier (which may be
 // relative, absolute-path, or absolute-URL) against the importer's
@@ -402,23 +409,6 @@ func resolveRegistryURL(importerURL, imp string) (string, error) {
 	return "", errors.New("bare spec — not a registry-internal import")
 }
 
-// splitBlobPath extracts the sha256 from a store blob path. The
-// store lays blobs out as "<root>/cas/<aa>/<bbbb...>"; we glue the
-// last two path components back together to recover the hash. If
-// the path doesn't match this shape (programming error, or
-// resolver called on something else), returns ("", "").
-func splitBlobPath(p string) (parent, hash string) {
-	parts := strings.Split(p, string(os.PathSeparator))
-	if len(parts) < 2 {
-		return "", ""
-	}
-	shard := parts[len(parts)-2]
-	rest := parts[len(parts)-1]
-	if len(shard) != 2 {
-		return "", ""
-	}
-	return strings.Join(parts[:len(parts)-2], string(os.PathSeparator)), shard + rest
-}
 
 // splitSpec separates a bare import path into (package, subpath).
 //

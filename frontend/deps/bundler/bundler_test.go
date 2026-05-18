@@ -115,6 +115,117 @@ console.log("hello", Vue.name);
 	}
 }
 
+// TestBuild_EndToEnd_FontAssetEmittedAsSidecar exercises the
+// font-asset loader path: a JS module imports a .woff2 by bare
+// spec, the resolver dispatches LoaderFile, esbuild copies the
+// bytes to outdir + rewrites the import to a URL string.
+//
+// This is the proof that binary asset imports work end-to-end
+// without npm/vite. Same shape any @fontsource-* package
+// produces; the dashboard's @fontsource-variable/inter follows
+// this exact pattern.
+func TestBuild_EndToEnd_FontAssetEmittedAsSidecar(t *testing.T) {
+	tmp := t.TempDir()
+
+	s, err := store.New(filepath.Join(tmp, "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 8 bytes that look like a woff2 magic header. Real woff2
+	// is hundreds of KB; for the test the resolver doesn't care
+	// about content correctness, only that the bytes round-trip
+	// through esbuild's LoaderFile path without corruption.
+	fontBytes := []byte{0x77, 0x4F, 0x46, 0x32, 0x00, 0x01, 0x00, 0x00}
+	const fontURL = "https://esm.sh/@fontsource-variable/inter@5/files/inter-latin-wght-normal.woff2"
+	if _, err := s.Put(fontURL, bytes.NewReader(fontBytes), "",
+		store.Metadata{
+			URL:         fontURL,
+			ResolvedURL: fontURL,
+			ContentType: "font/woff2",
+		}); err != nil {
+		t.Fatalf("seed font blob: %v", err)
+	}
+
+	lf := lockfile.New()
+	lf.Add(lockfile.Package{
+		Spec:        "@fontsource-variable/inter",
+		Version:     "5.0.0",
+		Resolved:    fontURL,
+		ContentType: "font/woff2",
+	})
+
+	srcDir := filepath.Join(tmp, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(srcDir, "app.js")
+	if err := os.WriteFile(entry, []byte(
+		`import fontURL from "@fontsource-variable/inter";
+const el = document.createElement("link");
+el.rel = "preload";
+el.href = fontURL;
+document.head.appendChild(el);
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	plugin, err := resolver.New(resolver.Options{Lockfile: lf, Store: s})
+	if err != nil {
+		t.Fatalf("resolver.New: %v", err)
+	}
+	b := New()
+	b.AddPlugin(plugin)
+
+	outDir := filepath.Join(tmp, "out")
+	res, err := b.Build(Options{
+		Entries:  []string{entry},
+		OutDir:   outDir,
+		Lockfile: lf,
+		Store:    s,
+		Minify:   false,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("build errors: %v", res.Errors)
+	}
+
+	// Bundle contains a URL reference, NOT the inlined bytes.
+	jsBundle, err := os.ReadFile(filepath.Join(outDir, "app.js"))
+	if err != nil {
+		t.Fatalf("read js bundle: %v", err)
+	}
+	if !strings.Contains(string(jsBundle), ".woff2") {
+		t.Errorf("bundle should reference the woff2 asset by URL, got:\n%s", jsBundle)
+	}
+	// The woff2 magic bytes must NOT be inlined into the JS bundle
+	// — a sign the loader was JS instead of File and the binary
+	// got round-tripped through string parsing.
+	if bytes.Contains(jsBundle, []byte{0x77, 0x4F, 0x46, 0x32}) {
+		t.Errorf("bundle contains raw woff2 magic — loader dispatch was wrong")
+	}
+
+	// Locate the emitted sidecar font asset under outDir. esbuild
+	// names it after the original basename + a content hash, so we
+	// can't predict the exact filename, but every entry under
+	// outDir matching *.woff2 should have our magic bytes.
+	matches, err := filepath.Glob(filepath.Join(outDir, "*.woff2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one sidecar .woff2 in %s, got %v", outDir, matches)
+	}
+	emitted, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(emitted, fontBytes) {
+		t.Errorf("sidecar font bytes corrupted; want %v, got %v", fontBytes, emitted)
+	}
+}
+
 func TestBuild_DefaultsApplied(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "noop.js")
