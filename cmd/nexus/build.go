@@ -368,6 +368,24 @@ func runBuild(opts buildOptions) error {
 		return fmt.Errorf("mkdir bin dir: %w", err)
 	}
 
+	mainDir := resolveMainDir(projectRoot, opts.MainPackage)
+
+	// Frontend bundle pass: turn islands.src/*.{ts,tsx,vue} into
+	// islands/*.{js,css,assets/*} BEFORE the embed pass runs.
+	// Without this, a deployment build embeds whatever happens to
+	// be on disk in islands/ — typically just the hand-written
+	// index.html — and the resulting binary 404s on /main.js
+	// (with text/plain Content-Type, which browsers report as a
+	// MIME-blocked module load).
+	//
+	// runSimpleBuild already did this; runBuild was missing it.
+	// Mirror the same call so deployment-managed apps (everything
+	// with a nexus.deploy.yaml, which is the default scaffold)
+	// get a fresh bundle baked into every binary.
+	if err := frontendBuild(mainDir, opts.Stdout, opts.Stderr); err != nil {
+		return fmt.Errorf("nexus build: %w", err)
+	}
+
 	// Auto-embed pass: scan the main package for templates/ +
 	// islands/ and write a _embed_gen.go that bakes them into
 	// the binary via //go:embed + template.SetDefaultFS. The
@@ -375,7 +393,6 @@ func runBuild(opts buildOptions) error {
 	// so it cleans up on failure too — a stray _embed_gen.go
 	// would shadow the user's no-embed dev workflow). No-op for
 	// pure-API apps that have neither directory.
-	mainDir := resolveMainDir(projectRoot, opts.MainPackage)
 	embedPath, err := generateEmbedFile(mainDir, "main", nil, opts.Stderr)
 	if err != nil {
 		return fmt.Errorf("nexus build: embed-gen: %w", err)
