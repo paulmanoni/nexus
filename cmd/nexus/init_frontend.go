@@ -129,6 +129,9 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 	}
 	switch opts.Frontend {
 	case "vue":
+		if err := add("package.json", tmplPackageJSONNexusVue); err != nil {
+			return nil, err
+		}
 		if err := add("islands.src/main.ts", tmplMainTS); err != nil {
 			return nil, err
 		}
@@ -136,6 +139,9 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 			return nil, err
 		}
 	case "react":
+		if err := add("package.json", tmplPackageJSONNexusReact); err != nil {
+			return nil, err
+		}
 		if err := add("islands.src/main.tsx", tmplMainTSXTpl); err != nil {
 			return nil, err
 		}

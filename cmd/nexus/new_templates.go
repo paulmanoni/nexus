@@ -136,8 +136,18 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		if err := add("nexus-shims.d.ts", tmplShimsDTS); err != nil {
 			return nil, err
 		}
+		// package.json is the human/IDE/Renovate-facing dep spec.
+		// nexus.lock remains authoritative for resolved pins +
+		// integrity, but package.json lets `nexus install` mirror
+		// the `npm install`-on-fresh-clone UX: a contributor
+		// without nexus.lock yet can clone, run install, and have
+		// every dep listed here fetched in one shot. `nexus add`
+		// and `nexus remove` keep both files in sync going forward.
 		switch opts.Frontend {
 		case "vue":
+			if err := add("package.json", tmplPackageJSONNexusVue); err != nil {
+				return nil, err
+			}
 			if err := add("islands.src/main.ts", tmplMainTS); err != nil {
 				return nil, err
 			}
@@ -145,6 +155,9 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 				return nil, err
 			}
 		case "react":
+			if err := add("package.json", tmplPackageJSONNexusReact); err != nil {
+				return nil, err
+			}
 			if err := add("islands.src/main.tsx", tmplMainTSXTpl); err != nil {
 				return nil, err
 			}
@@ -441,6 +454,44 @@ func (c *CacheManager) NexusResources() []resource.Resource {
 `
 
 // ── frontend (vue) ──────────────────────────────────────────────────
+
+// tmplPackageJSONNexusVue is the minimal package.json the nexus
+// pipeline emits for Vue projects. NO scripts (no npm runner), NO
+// devDependencies (no vite/tsc) — every JS build step is handled
+// by the Go-side bundler reading nexus.lock. The file exists
+// because:
+//   - IDEs (VS Code, JetBrains) detect "this is a JS project" via
+//     package.json and only then load tsconfig.json / .d.ts shims
+//   - Dependabot / Renovate scan package.json for outdated deps
+//   - Humans want a one-glance answer to "what does this depend on?"
+//     that doesn't require reading the machine-formatted nexus.lock
+//
+// The `dependencies` field is the source of truth for what nexus
+// should install. `nexus add <pkg>` mirrors new pins here; `nexus
+// remove <pkg>` drops them. `nexus install` reads this list and
+// reconciles against nexus.lock.
+const tmplPackageJSONNexusVue = `{
+  "name": "{{.Name}}",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "vue": "^3.4.0"
+  }
+}
+`
+
+// tmplPackageJSONNexusReact is the React counterpart. Same layout
+// rationale as tmplPackageJSONNexusVue; only the dep set differs.
+const tmplPackageJSONNexusReact = `{
+  "name": "{{.Name}}",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}
+`
 
 // tmplPackageJSONVueTpl ships the minimum dep set vite needs to
 // dev-server + build a vue 3 + ts project. Versions are loose

@@ -163,6 +163,12 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 	// previously pinned vue@<x.y.z>.
 	dc.fetcher.PinnedVersions = pinnedVersionsFrom(lf)
 
+	// resolvedVersions records the version each spec landed on after
+	// fetch + X-ESM-Path canonicalization, so the package.json
+	// update below uses the actual pinned version (not whatever
+	// version the user happened to type — which may have been
+	// empty, a range, or out of date).
+	resolvedVersions := make(map[string]string, len(specs))
 	for _, spec := range specs {
 		fmt.Fprintf(stdout, "nexus add %s — fetching from %s\n", spec, dc.fetcher.Registry)
 		res, err := dc.fetcher.Fetch(ctx, spec)
@@ -173,6 +179,7 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 		for _, dep := range res.Transitive {
 			lf.Add(dep)
 		}
+		resolvedVersions[res.Root.Spec] = res.Root.Version
 		fmt.Fprintf(stdout, "  resolved %s @ %s — %s (+%d transitive)\n",
 			res.Root.Spec, res.Root.Version, res.Root.Integrity[:23]+"…",
 			len(res.Transitive))
@@ -183,6 +190,39 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", dc.lockfilePath)
 
+	// Mirror the new pins into package.json so IDEs / Dependabot /
+	// Renovate can see what the project depends on without parsing
+	// nexus.lock. Each spec lands under "dependencies" keyed by its
+	// bare name with the resolved version (^-prefixed by addDep);
+	// transitives are NOT recorded — package.json is the
+	// human-facing intent file, nexus.lock is the full resolution.
+	//
+	// Best-effort: a missing package.json is auto-created at the
+	// project root; explicit save errors surface, but a read error
+	// other than "not exist" is swallowed (we'd rather complete the
+	// add than fail because the user's package.json had a typo).
+	cwd, _ := os.Getwd()
+	pjPath := filepath.Join(cwd, packageJSONFilename)
+	if pj, perr := loadPackageJSON(pjPath); perr == nil {
+		var changed int
+		for _, spec := range specs {
+			name, _ := parseSpecForPJ(spec)
+			version := resolvedVersions[name]
+			before := pj.Dependencies[name]
+			pj.addDep(name, version)
+			if pj.Dependencies[name] != before {
+				changed++
+			}
+		}
+		if changed > 0 {
+			if err := pj.save(pjPath); err != nil {
+				fmt.Fprintf(stderr, "warning: couldn't update package.json: %v\n", err)
+			} else {
+				fmt.Fprintf(stdout, "updated %s (%d dep%s)\n", packageJSONFilename, changed, plural(changed))
+			}
+		}
+	}
+
 	// Append ambient module declarations for each newly-added
 	// SPEC (not its transitives) to the IDE shims file. Without
 	// this the user gets TS2307 "Cannot find module 'vue'" on
@@ -190,18 +230,11 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 	// Best-effort: silent skip when nexus-shims.d.ts doesn't
 	// exist (project either pre-dates the new scaffold or
 	// doesn't use the IDE shims layer).
-	cwd, _ := os.Getwd()
 	shimsPath := filepath.Join(cwd, "nexus-shims.d.ts")
 	if _, statErr := os.Stat(shimsPath); statErr == nil {
 		var added int
 		for _, spec := range specs {
-			// Spec might be "vue" or "vue@3.4.21" — append the
-			// bare-name part only, since TS resolves by module
-			// name not version.
-			bare := spec
-			if i := strings.LastIndex(bare, "@"); i > 0 {
-				bare = bare[:i]
-			}
+			bare, _ := parseSpecForPJ(spec)
 			if appendShimIfMissing(shimsPath, bare) {
 				added++
 			}
@@ -211,6 +244,23 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 		}
 	}
 	return nil
+}
+
+// parseSpecForPJ splits a CLI spec into (bare name, version). Same
+// shape as lockfile.SplitKey but lives here to avoid a back-edge
+// dependency from cmd/nexus into a package that already imports it.
+func parseSpecForPJ(spec string) (name, version string) {
+	if i := strings.LastIndex(spec, "@"); i > 0 {
+		return spec[:i], spec[i+1:]
+	}
+	return spec, ""
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // appendShimIfMissing adds `declare module "<spec>";` to path
@@ -297,7 +347,31 @@ func runRemove(stdout, stderr io.Writer, specs []string) error {
 	if removed == 0 {
 		return nil
 	}
-	return dc.saveLockfile(lf)
+	if err := dc.saveLockfile(lf); err != nil {
+		return err
+	}
+	// Drop matching entries from package.json too — same source-of-
+	// truth semantics as `nexus add`. Best-effort: don't fail the
+	// remove if package.json is broken or missing.
+	cwd, _ := os.Getwd()
+	pjPath := filepath.Join(cwd, packageJSONFilename)
+	if pj, perr := loadPackageJSON(pjPath); perr == nil {
+		var changed int
+		for _, spec := range specs {
+			name, _ := parseSpecForPJ(spec)
+			if pj.removeDep(name) {
+				changed++
+			}
+		}
+		if changed > 0 {
+			if err := pj.save(pjPath); err != nil {
+				fmt.Fprintf(stderr, "warning: couldn't update package.json: %v\n", err)
+			} else {
+				fmt.Fprintf(stdout, "updated %s (-%d dep%s)\n", packageJSONFilename, changed, plural(changed))
+			}
+		}
+	}
+	return nil
 }
 
 // newInstallCmd registers `nexus install`. Walks every entry in the
@@ -326,15 +400,69 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+
+	// Read package.json (the human-facing dep spec) and figure out
+	// which top-level deps are missing from the lockfile. This is
+	// what makes a fresh clone work: a user with package.json but no
+	// nexus.lock can run `nexus install` and have everything fetched
+	// in one shot — same UX as `npm install`.
+	cwd, _ := os.Getwd()
+	pj, _ := loadPackageJSON(filepath.Join(cwd, packageJSONFilename))
+
 	lf, err := lockfile.Load(dc.lockfilePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintln(stderr, "nexus install: no nexus.lock found — run `nexus add <pkg>` first")
+		if !os.IsNotExist(err) {
+			return err
+		}
+		// No lockfile yet. If package.json has deps we can build one
+		// from scratch by adding each. Otherwise nothing to do.
+		if pj == nil || len(pj.Dependencies) == 0 {
+			fmt.Fprintln(stderr, "nexus install: no nexus.lock and no package.json deps — run `nexus add <pkg>` first")
 			return nil
 		}
-		return err
+		lf = lockfile.New()
 	}
 
+	// Phase 1: ensure every package.json dep is in the lockfile. New
+	// entries get added via the fetcher (which writes blobs into the
+	// store as a side effect). Existing entries are left untouched
+	// for now — Phase 2 verifies cache integrity.
+	dc.fetcher.PinnedVersions = pinnedVersionsFrom(lf)
+	if pj != nil {
+		added := 0
+		for name, ver := range pj.Dependencies {
+			// Look up by spec name; if any version of this dep is
+			// already pinned, skip — `nexus update` is the way to
+			// bump, not `nexus install`.
+			if hasSpec(lf, name) {
+				continue
+			}
+			clean := strings.TrimLeft(ver, "^~>=< ")
+			spec := name
+			if clean != "" {
+				spec = name + "@" + clean
+			}
+			fmt.Fprintf(stdout, "nexus install: + %s\n", spec)
+			res, ferr := dc.fetcher.Fetch(ctx, spec)
+			if ferr != nil {
+				return fmt.Errorf("nexus install %s: %w", spec, ferr)
+			}
+			lf.Add(res.Root)
+			for _, dep := range res.Transitive {
+				lf.Add(dep)
+			}
+			added++
+		}
+		if added > 0 {
+			if err := dc.saveLockfile(lf); err != nil {
+				return fmt.Errorf("nexus install: save lockfile: %w", err)
+			}
+		}
+	}
+
+	// Phase 2: walk the lockfile and ensure each pinned blob is in
+	// the cache. Designed for CI / fresh clones where ~/.nexus/cache
+	// starts empty but nexus.lock is committed.
 	fetched, skipped := 0, 0
 	for key, pkg := range lf.Packages {
 		hex := fetcher.IntegrityHex(pkg.Integrity)
@@ -353,6 +481,21 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "nexus install: %d fetched, %d already cached\n", fetched, skipped)
 	return nil
+}
+
+// hasSpec reports whether any lockfile entry has the given bare
+// spec name. Used by `nexus install` to decide whether a package.json
+// dep needs fetching or is already pinned.
+func hasSpec(lf *lockfile.File, name string) bool {
+	if lf == nil {
+		return false
+	}
+	for _, p := range lf.Packages {
+		if p.Spec == name {
+			return true
+		}
+	}
+	return false
 }
 
 // newUpdateCmd registers `nexus update [<spec>...]`. Re-resolves
