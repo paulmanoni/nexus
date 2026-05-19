@@ -110,6 +110,18 @@ func run() error {
 	// pinned Vue alongside the version this build picks via
 	// `nexus add vue`, splitting Vue's reactive globals at runtime.
 	f.External = []string{"vue", "react", "react-dom"}
+	// Hand the fetcher the same package.json pins as the explicit
+	// specs above, so when @vue-flow/core's body does a bare
+	// `import "vue"` (made possible by ?external=vue) and the
+	// fetcher recurses, the recursion fetches vue@<package.json>
+	// instead of esm.sh's latest stable. Without this, the lockfile
+	// ends up with vue@3.4.0 (from package.json) AND vue@3.5.x
+	// (from bare recursion) — ambiguous at build time, dual-Vue at
+	// runtime when ambiguity goes undetected.
+	f.PinnedVersions = make(map[string]string, len(pkgJSON.Dependencies))
+	for name, ver := range pkgJSON.Dependencies {
+		f.PinnedVersions[name] = strings.TrimLeft(ver, "^~>=< ")
+	}
 
 	fmt.Println("[2/5] fetching deps (skipping cached blobs)")
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)

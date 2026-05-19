@@ -305,6 +305,60 @@ func TestFetcher_ExternalComposesWithURLQuery(t *testing.T) {
 	}
 }
 
+func TestFetcher_CanonicalizesUnversionedURLViaXESMPath(t *testing.T) {
+	// Mirrors esm.sh's 2025-era behavior: bare /vue returns 200
+	// directly (no 302 to /vue@3.5.34) and discloses the resolved
+	// version only via the X-ESM-Path response header. The fetcher
+	// must rewrite the lockfile entry to the versioned URL or the
+	// lockfile will silently drift on the next `nexus install`.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("X-ESM-Path", "/vue@3.5.34/es2022/vue.mjs")
+		_, _ = w.Write([]byte("export default 1;\n"))
+	}))
+	defer srv.Close()
+
+	f := New(newTestStore(t), srv.URL)
+	f.External = []string{"vue"}
+
+	res, err := f.Fetch(context.Background(), "vue")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if res.Root.Version != "3.5.34" {
+		t.Errorf("Version = %q, want 3.5.34 (extracted from canonicalized URL)", res.Root.Version)
+	}
+	wantURL := srv.URL + "/vue@3.5.34?external=vue"
+	if res.Root.Resolved != wantURL {
+		t.Errorf("Resolved = %q, want %q", res.Root.Resolved, wantURL)
+	}
+}
+
+func TestFetcher_ScopedPackageCanonicalization(t *testing.T) {
+	// Scoped packages have an extra path segment to skip — the
+	// "@vue" scope itself isn't where the version lives, it's on
+	// the next segment ("runtime-dom@3.5.34").
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("X-ESM-Path", "/@vue/runtime-dom@3.5.34/es2022/runtime-dom.mjs")
+		_, _ = w.Write([]byte("export default 1;\n"))
+	}))
+	defer srv.Close()
+
+	f := New(newTestStore(t), srv.URL)
+	res, err := f.Fetch(context.Background(), "@vue/runtime-dom")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if res.Root.Version != "3.5.34" {
+		t.Errorf("Version = %q, want 3.5.34", res.Root.Version)
+	}
+	wantURL := srv.URL + "/@vue/runtime-dom@3.5.34"
+	if res.Root.Resolved != wantURL {
+		t.Errorf("Resolved = %q, want %q", res.Root.Resolved, wantURL)
+	}
+}
+
 func TestFetcher_EmptyExternalLeavesURLUnchanged(t *testing.T) {
 	var observed string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

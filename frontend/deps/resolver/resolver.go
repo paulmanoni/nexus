@@ -467,15 +467,29 @@ func splitSpec(path string) (spec, subpath string) {
 	return path, ""
 }
 
-// joinSubpath appends a sub-path to a package's resolved URL.
-// Used to convert "vue/dist/vue.esm.js" + the lockfile's
-// "https://esm.sh/vue@3.4.21" into "https://esm.sh/vue@3.4.21/dist/vue.esm.js".
+// joinSubpath appends a sub-path to a package's resolved URL,
+// preserving query strings. Used to convert "vue/dist/vue.esm.js"
+// + the lockfile's "https://esm.sh/vue@3.4.21" into
+// "https://esm.sh/vue@3.4.21/dist/vue.esm.js".
 //
-// The esm.sh URL form for sub-paths is exactly this concatenation,
-// which is why our fetcher's recursive traversal would have already
-// fetched these sub-blobs at `nexus add` time.
+// The path append happens BEFORE the query string. A naive string
+// concat would produce garbage like
+// "https://esm.sh/vue@3.4.21?external=vue/dist/vue.esm.js" — the
+// "/dist/vue.esm.js" winds up inside the query string and breaks
+// the lookup. Parsing through net/url and mutating Path keeps
+// query-bearing URLs (post-?external= addition) sound.
+//
+// The esm.sh URL form for sub-paths is exactly this concatenation
+// (on the path), which is why our fetcher's recursive traversal
+// would have already fetched these sub-blobs at `nexus add` time.
 func joinSubpath(resolvedURL, sub string) string {
-	resolvedURL = strings.TrimRight(resolvedURL, "/")
-	sub = strings.TrimLeft(sub, "/")
-	return resolvedURL + "/" + sub
+	u, err := url.Parse(resolvedURL)
+	if err != nil {
+		// Fall back to naive concat — the subsequent store lookup
+		// will fail and the user gets a clear "not cached" error
+		// rather than a silent wrong-URL hit.
+		return strings.TrimRight(resolvedURL, "/") + "/" + strings.TrimLeft(sub, "/")
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/" + strings.TrimLeft(sub, "/")
+	return u.String()
 }

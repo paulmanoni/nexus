@@ -91,6 +91,29 @@ func (c *depsContext) loadOrNewLockfile() (*lockfile.File, error) {
 	return lockfile.LoadOrNew(c.lockfilePath)
 }
 
+// pinnedVersionsFrom extracts a name→version map from the lockfile's
+// top-level entries. Used to seed the fetcher's PinnedVersions so
+// transitive bare-spec recursion can't drift onto a different
+// version than the project already committed to.
+//
+// Skips entries with empty Version (legacy lockfiles created before
+// X-ESM-Path canonicalization landed) — there's nothing to pin
+// against and emitting "vue@" as a spec breaks downstream code.
+// Users with such lockfiles need to re-add to get a clean state.
+func pinnedVersionsFrom(lf *lockfile.File) map[string]string {
+	if lf == nil || len(lf.Packages) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(lf.Packages))
+	for _, p := range lf.Packages {
+		if p.Spec == "" || p.Version == "" {
+			continue
+		}
+		out[p.Spec] = p.Version
+	}
+	return out
+}
+
 func (c *depsContext) saveLockfile(lf *lockfile.File) error {
 	return lf.Save(c.lockfilePath)
 }
@@ -132,6 +155,13 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 	if err != nil {
 		return err
 	}
+	// Hand the fetcher the project's existing top-level pins so
+	// transitive `import "vue"` recursion respects them. Without
+	// this, `nexus add @vue-flow/core` would recurse into `import
+	// "vue"` (bare, thanks to External) and pick up whatever esm.sh
+	// is serving as latest stable today — diverging from the user's
+	// previously pinned vue@<x.y.z>.
+	dc.fetcher.PinnedVersions = pinnedVersionsFrom(lf)
 
 	for _, spec := range specs {
 		fmt.Fprintf(stdout, "nexus add %s — fetching from %s\n", spec, dc.fetcher.Registry)
