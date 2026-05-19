@@ -206,6 +206,27 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 	}
 
 	if opts.Watch {
+		// Wire an OnEnd plugin so EVERY build (initial + every file-
+		// change rebuild) flows through opts.OnRebuild. esbuild's
+		// auto-rebuild loop never calls our code back otherwise —
+		// the v0.71.3 path only invoked opts.OnRebuild manually for
+		// the initial Rebuild(), so file-change rebuilds wrote (or
+		// failed to write) silently with no log output. OnEnd is the
+		// supported hook for "run after every build, including the
+		// ones esbuild triggers itself."
+		if opts.OnRebuild != nil {
+			cb := opts.OnRebuild
+			buildOpts.Plugins = append(buildOpts.Plugins, api.Plugin{
+				Name: "nexus-bundler-onend",
+				Setup: func(build api.PluginBuild) {
+					build.OnEnd(func(result *api.BuildResult) (api.OnEndResult, error) {
+						cb(*result)
+						return api.OnEndResult{}, nil
+					})
+				},
+			})
+		}
+
 		ctx, ctxErr := api.Context(buildOpts)
 		// ctxErr is *ContextError — nil-check the pointer before
 		// dereferencing the Errors field, otherwise a nil ctxErr
@@ -221,13 +242,15 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		if ctx == nil {
 			return Result{}, fmt.Errorf("bundler: esbuild returned nil watch context")
 		}
-		first := ctx.Rebuild()
-		if opts.OnRebuild != nil {
-			opts.OnRebuild(first)
-		}
+		// Watch BEFORE Rebuild so esbuild arms its file-change
+		// watcher before the initial bundle finishes. Watch does NOT
+		// trigger a build itself; Rebuild runs the first one
+		// synchronously and primes the dependency graph esbuild
+		// watches afterwards.
 		if err := ctx.Watch(api.WatchOptions{}); err != nil {
-			return Result{BuildResult: first}, fmt.Errorf("bundler: watch: %w", err)
+			return Result{}, fmt.Errorf("bundler: watch: %w", err)
 		}
+		first := ctx.Rebuild()
 		return Result{BuildResult: first, Ctx: ctx}, nil
 	}
 
