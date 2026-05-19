@@ -207,8 +207,19 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 
 	if opts.Watch {
 		ctx, ctxErr := api.Context(buildOpts)
-		if len(ctxErr.Errors) > 0 {
+		// ctxErr is *ContextError — nil-check the pointer before
+		// dereferencing the Errors field, otherwise a nil ctxErr
+		// (which esbuild returns when api.Context succeeded) would
+		// panic with SIGSEGV at the len(ctxErr.Errors) site.
+		if ctxErr != nil && len(ctxErr.Errors) > 0 {
 			return Result{}, fmt.Errorf("bundler: esbuild context: %s", ctxErr.Errors[0].Text)
+		}
+		// Defense-in-depth against esbuild API changes — a future
+		// version could return (nil, nil) on an error path we
+		// don't recognize, and we'd rather surface a clear message
+		// than crash inside ctx.Rebuild().
+		if ctx == nil {
+			return Result{}, fmt.Errorf("bundler: esbuild returned nil watch context")
 		}
 		first := ctx.Rebuild()
 		if opts.OnRebuild != nil {

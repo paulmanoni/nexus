@@ -68,17 +68,15 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	// .vue source files require the QuickJS-backed SFC compiler
+	// .vue source files (anywhere under islands.src/, not just
+	// top-level entries) require the QuickJS-backed SFC compiler
 	// which is build-tagged behind cgo+vue. When the binary was
 	// built pure-Go (or without the vue tag), the vueCompilerHook
 	// stays nil and we reject .vue with the same clear message
 	// the v0.1 flow used.
-	hasVue := false
-	for _, e := range entries {
-		if strings.HasSuffix(e, ".vue") {
-			hasVue = true
-			break
-		}
+	hasVue, err := hasVueSources(srcDir)
+	if err != nil {
+		return fmt.Errorf("frontend build: scan vue sources: %w", err)
 	}
 	if hasVue && vueCompilerHook == nil {
 		return errors.New("frontend build: .vue sources detected but this nexus was built without Vue SFC support — " +
@@ -169,10 +167,16 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 var vueCompilerHook func(*lockfile.File, *store.Store) (func(), api.Plugin, error)
 
 // collectFrontendEntries walks srcDir and returns one entry path
-// per top-level file matching a supported extension. Subdirectories
-// are treated as colocated source (their files aren't entries
-// themselves but are reachable via relative imports from the
-// top-level entries). One entry per top-level file matches the
+// per top-level JS/TS file. Vue SFCs (.vue) are NOT entries — they
+// get pulled in via `import App from './App.vue'` inside a .ts/.tsx
+// bootstrap file, and the SFC plugin loads them as transitive
+// dependencies. Treating App.vue as its own entry would emit a
+// separate App.js bundle alongside main.js (duplicating Vue
+// runtime + breaking the watch mode's esbuild context init when
+// the SFC compiler's QuickJS worker isn't ready at entry-discovery
+// time).
+//
+// One entry per top-level .ts/.tsx/.jsx/.js file matches the
 // convention `nexus island` scaffolds; users with several pages
 // produce several bundles automatically.
 func collectFrontendEntries(srcDir string) ([]string, error) {
@@ -187,12 +191,35 @@ func collectFrontendEntries(srcDir string) ([]string, error) {
 		}
 		name := e.Name()
 		switch ext := filepath.Ext(name); ext {
-		case ".jsx", ".tsx", ".ts", ".js", ".vue":
+		case ".jsx", ".tsx", ".ts", ".js":
 			entries = append(entries, filepath.Join(srcDir, name))
 		default:
-			// .css / .md / .json — colocated but not entries.
+			// .vue / .css / .md / .json — colocated but not entries.
 		}
 	}
 	return entries, nil
+}
+
+// hasVueSources reports whether srcDir (recursively) contains any
+// .vue file. The frontendBuild + dev watcher use this to decide
+// whether to bootstrap the SFC compiler — needed even when no .vue
+// file is a top-level ENTRY, because main.ts may transitively
+// import an App.vue that needs compiling.
+func hasVueSources(srcDir string) (bool, error) {
+	var found bool
+	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".vue") {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found, err
 }
 
