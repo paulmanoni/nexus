@@ -269,6 +269,17 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 			fmt.Fprintf(stdout, "fetched %d type file%s into ./node_modules/\n", written, plural(written))
 			gitignoreEnsureNodeModules(cwd)
 		}
+		// Real types just landed for these specs — drop any
+		// `declare module "<spec>";` ambient shim that would
+		// otherwise shadow them and force tsserver to resolve the
+		// import as `any`.
+		prunable := make([]string, 0, len(typeSpecs))
+		for name := range typeSpecs {
+			prunable = append(prunable, name)
+		}
+		if n := pruneShimsForResolvedTypes(cwd, prunable); n > 0 {
+			fmt.Fprintf(stdout, "removed %d shadowing module shim%s from nexus-shims.d.ts\n", n, plural(n))
+		}
 	}
 
 	return nil
@@ -317,6 +328,53 @@ func appendShimIfMissing(path, spec string) bool {
 		return false
 	}
 	return true
+}
+
+// pruneShimsForResolvedTypes removes `declare module "<spec>";` lines
+// from nexus-shims.d.ts for any spec whose REAL types now exist under
+// node_modules/<spec>/package.json. An empty-body ambient declaration
+// shadows real types in tsserver's resolution — it gets matched first
+// and resolves the import to `any`, which is exactly the bug users
+// hit ("import works, but no IntelliSense"). Pruning the shim after
+// types land lets tsserver fall through to the real node_modules entry.
+//
+// Best-effort: silent skip when nexus-shims.d.ts doesn't exist. Specs
+// without a node_modules entry (type fetch failed, no X-TypeScript-
+// Types header) keep their shim so TS2307 stays silenced even without
+// real types.
+func pruneShimsForResolvedTypes(projectRoot string, specs []string) int {
+	shimsPath := filepath.Join(projectRoot, "nexus-shims.d.ts")
+	body, err := os.ReadFile(shimsPath)
+	if err != nil {
+		return 0
+	}
+	original := string(body)
+	updated := original
+	var removed int
+	for _, spec := range specs {
+		pjPath := filepath.Join(projectRoot, "node_modules", filepath.FromSlash(spec), "package.json")
+		if _, err := os.Stat(pjPath); err != nil {
+			continue
+		}
+		line := `declare module "` + spec + `";`
+		// Match the bare line ± trailing newline so we strip the
+		// blank line it left behind. Two passes (with-newline and
+		// without) handle both end-of-file and mid-file shims.
+		for _, variant := range []string{line + "\n", line} {
+			if strings.Contains(updated, variant) {
+				updated = strings.Replace(updated, variant, "", 1)
+				removed++
+				break
+			}
+		}
+	}
+	if updated == original {
+		return 0
+	}
+	if err := os.WriteFile(shimsPath, []byte(updated), 0o644); err != nil {
+		return 0
+	}
+	return removed
 }
 
 // newRemoveCmd registers `nexus remove <pkg>`. Removes the entry
@@ -536,6 +594,17 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 			if written > 0 {
 				fmt.Fprintf(stdout, "nexus install: %d type file%s fetched into ./node_modules/\n", written, plural(written))
 				gitignoreEnsureNodeModules(cwd)
+			}
+			// Always run shim pruning (not just on first-fetch),
+			// because existing projects upgrading from earlier
+			// nexus versions have shims AND types coexisting —
+			// the shim shadows the real types until we strip it.
+			prunable := make([]string, 0, len(topLevel))
+			for name := range topLevel {
+				prunable = append(prunable, name)
+			}
+			if n := pruneShimsForResolvedTypes(cwd, prunable); n > 0 {
+				fmt.Fprintf(stdout, "nexus install: removed %d shadowing module shim%s from nexus-shims.d.ts\n", n, plural(n))
 			}
 		}
 	}
