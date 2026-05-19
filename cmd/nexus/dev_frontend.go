@@ -177,11 +177,18 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		fmt.Fprintf(stdout, "%s●%s frontend watcher: islands.src is empty — skipping\n", ansiCyan, ansiReset)
 		return nil
 	}
-	for _, e := range entries {
-		if strings.HasSuffix(e, ".vue") {
-			return fmt.Errorf("frontend watcher: %s is a .vue source — v0.1 doesn't yet "+
-				"compile Vue SFC in watch mode; pre-compile to .js or use the legacy vite path", e)
-		}
+	// Walk islands.src/ recursively — a .vue file colocated under
+	// any subdirectory still needs the SFC compiler, even if no
+	// top-level entry is .vue. Treating only entry extensions as
+	// the signal would miss the common case of main.ts importing
+	// ./components/Foo.vue.
+	hasVue, err := hasVueSources(srcDir)
+	if err != nil {
+		return fmt.Errorf("frontend watcher: scan vue sources: %w", err)
+	}
+	if hasVue && vueCompilerHook == nil {
+		return errors.New("frontend watcher: .vue sources detected but this nexus was built without Vue SFC support — " +
+			"rebuild with `CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest` to enable")
 	}
 
 	lf, err := lockfile.Load(filepath.Join(root, lockfile.Filename))
@@ -213,6 +220,22 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 
 	b := bundler.New()
 	b.AddPlugin(plugin)
+
+	// Vue SFC plugin is registered the same way frontendBuild does
+	// it: the build-tagged hook returns a (close, plugin) pair so
+	// the QuickJS compiler's lifetime tracks the watcher's. The
+	// closer fires from the ctx-cancellation goroutine below so a
+	// Ctrl-C / shutdown disposes the JS runtime cleanly.
+	var closeVue func()
+	if hasVue && vueCompilerHook != nil {
+		cv, vuePlugin, err := vueCompilerHook(lf, st)
+		if err != nil {
+			return fmt.Errorf("frontend watcher: vue compiler: %w", err)
+		}
+		closeVue = cv
+		b.AddPlugin(vuePlugin)
+	}
+
 	res, err := b.Build(bundler.Options{
 		Entries:   entries,
 		OutDir:    outDir,
@@ -238,10 +261,18 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// Tear down esbuild's watcher on ctx cancel. Dispose closes
 	// the file watches + releases the build context; without it,
 	// the watcher goroutines outlive nexus dev and leak fds.
-	if res.Ctx != nil {
+	// Same goroutine also releases the Vue compiler's QuickJS
+	// runtime if one was bootstrapped, so a shutdown doesn't
+	// strand the worker.
+	if res.Ctx != nil || closeVue != nil {
 		go func() {
 			<-ctx.Done()
-			res.Ctx.Dispose()
+			if res.Ctx != nil {
+				res.Ctx.Dispose()
+			}
+			if closeVue != nil {
+				closeVue()
+			}
 		}()
 	}
 	return nil
