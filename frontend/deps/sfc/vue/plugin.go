@@ -57,9 +57,16 @@ func Plugin(c *Compiler) (api.Plugin, error) {
 					return api.OnLoadResult{Errors: msgs}, nil
 				}
 				contents := res.Code
+				// Use the TS loader so esbuild strips the type
+				// annotations @vue/compiler-sfc emits when the
+				// SFC uses `<script setup lang="ts">`. The
+				// compiled template wrapper itself also carries
+				// `(_ctx: any, _cache: any) =>` annotations, so
+				// even pure-JS SFCs benefit. LoaderJS would fail
+				// on those with "Expected ')' but found ':'".
 				return api.OnLoadResult{
 					Contents: &contents,
-					Loader:   api.LoaderJS,
+					Loader:   api.LoaderTS,
 				}, nil
 			})
 		},
