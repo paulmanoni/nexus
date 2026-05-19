@@ -243,6 +243,34 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 			fmt.Fprintf(stdout, "appended %d module declaration(s) to nexus-shims.d.ts\n", added)
 		}
 	}
+
+	// Fetch the real TypeScript declarations from esm.sh and write
+	// them under node_modules/<pkg>/ so the IDE gets full
+	// IntelliSense (autocomplete, parameter types, jump-to-defn)
+	// rather than the shim file's `any`-typed fallback. Best-effort
+	// — failures here log a warning but don't fail the add, since
+	// the shim layer keeps the type checker quiet either way.
+	//
+	// We only fetch types for the SPECS the user passed (not their
+	// transitive deps) — the type files themselves carry their own
+	// imports which fetchAll follows recursively, mirroring the
+	// minimum slice of the dep graph the user's code can reach.
+	typeSpecs := make(map[string]string, len(specs))
+	for _, spec := range specs {
+		name, _ := parseSpecForPJ(spec)
+		if v, ok := resolvedVersions[name]; ok && v != "" {
+			typeSpecs[name] = v
+		}
+	}
+	if len(typeSpecs) > 0 {
+		tf := newTypeFetcher()
+		written, _ := tf.fetchAll(ctx, typeSpecs, cwd, stderr)
+		if written > 0 {
+			fmt.Fprintf(stdout, "fetched %d type file%s into ./node_modules/\n", written, plural(written))
+			gitignoreEnsureNodeModules(cwd)
+		}
+	}
+
 	return nil
 }
 
@@ -480,6 +508,37 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 		fetched++
 	}
 	fmt.Fprintf(stdout, "nexus install: %d fetched, %d already cached\n", fetched, skipped)
+
+	// Refresh the node_modules type tree for every top-level pkg
+	// the project depends on, so a fresh clone (where node_modules
+	// is gitignored) gets IntelliSense on the first install rather
+	// than after the first re-add. Best-effort: log warnings on
+	// per-pkg failures and keep going.
+	//
+	// We feed the type fetcher only TOP-LEVEL specs (lockfile
+	// entries whose spec name matches a package.json dep), not
+	// every transitive — the type files' own imports carry the
+	// type-graph reachability and the recursive walker mirrors
+	// what's actually needed.
+	if pj != nil && len(pj.Dependencies) > 0 {
+		topLevel := make(map[string]string, len(pj.Dependencies))
+		for name := range pj.Dependencies {
+			for _, p := range lf.Packages {
+				if p.Spec == name && p.Version != "" {
+					topLevel[name] = p.Version
+					break
+				}
+			}
+		}
+		if len(topLevel) > 0 {
+			tf := newTypeFetcher()
+			written, _ := tf.fetchAll(ctx, topLevel, cwd, stderr)
+			if written > 0 {
+				fmt.Fprintf(stdout, "nexus install: %d type file%s fetched into ./node_modules/\n", written, plural(written))
+				gitignoreEnsureNodeModules(cwd)
+			}
+		}
+	}
 	return nil
 }
 
