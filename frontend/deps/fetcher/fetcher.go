@@ -89,6 +89,27 @@ type Fetcher struct {
 	// classic peer-dep singletons. Set via CLI in newDepsContext;
 	// tests typically leave this empty.
 	External []string
+
+	// PinnedVersions maps bare-spec names to the version transitive
+	// recursion must use. The companion to External: External tells
+	// esm.sh "leave this as a bare import in served bundles";
+	// PinnedVersions tells the fetcher "when something recurses into
+	// `import \"vue\"`, fetch vue@<pinned>, not the registry's latest."
+	//
+	// Without this, the package.json pin `vue: ^3.4.0` (fetched as
+	// vue@3.4.0) coexists in the lockfile with `vue@3.5.34` (the
+	// version esm.sh redirects bare /vue to today), and the resolver
+	// errors with AmbiguousError. Or worse, the bundle silently
+	// includes both copies and Vue's reactivity globals split at
+	// runtime — the same symptom External alone was meant to fix.
+	//
+	// The CLI populates this from the project's existing lockfile
+	// entries before any fetch; build-ui populates it from
+	// package.json dependency versions. Keys are bare spec names
+	// ("vue", "@vue/runtime-dom"); values are exact versions
+	// ("3.4.0") with no semver prefix. Lookup is exact: PinnedVersions
+	// only fires when the recursion spec has no version of its own.
+	PinnedVersions map[string]string
 }
 
 // New returns a Fetcher with sensible defaults. The store argument
@@ -158,9 +179,27 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 	// downloading the body. esm.sh + ETag-aware registries are
 	// fast for HEAD; we skip a body transfer when the URL is
 	// already in the cache.
-	resolved, contentType, etag, err := f.resolve(ctx, reqURL)
+	resolved, contentType, etag, esmPath, err := f.resolve(ctx, reqURL)
 	if err != nil {
 		return lockfile.Package{}, err
+	}
+
+	// Canonicalize the resolved URL when the registry exposed a
+	// versioned path via X-ESM-Path but the request URL itself was
+	// unversioned (e.g. /vue?external=vue → header reveals it's
+	// vue@3.5.34). Without this, the lockfile records the floating
+	// URL and a `nexus install` six months later silently drifts onto
+	// whatever vue esm.sh is serving then — defeating the lockfile.
+	//
+	// Only applies to bare-spec fetches. Absolute-URL recursion
+	// already carries the version in the URL path; the X-ESM-Path
+	// header for those just points at the internal content path
+	// (e.g. /vue@3.5.34/es2022/vue.mjs) which we'd misuse if we
+	// also canonicalized it.
+	if esmPath != "" && extractVersionFromURL(resolved) == "" {
+		if canon := canonicalizeResolvedURL(resolved, esmPath); canon != "" {
+			resolved = canon
+		}
 	}
 
 	// Dedup by resolved URL across the whole recursion.
@@ -309,6 +348,16 @@ func (f *Fetcher) specToURL(spec string) (string, error) {
 		// 404. Apply only URLQuery here.
 		return appendURLQuery(spec, f.URLQuery), nil
 	}
+	// Apply PinnedVersions when the caller passed a bare name with no
+	// version of its own — typically a transitive `import "vue"` that
+	// would otherwise resolve to whatever esm.sh redirects to today.
+	// If the caller wrote spec="vue@3.4.0" the version is honored
+	// verbatim; PinnedVersions never overrides an explicit ask.
+	if name, version := parseSpec(spec); version == "" && len(f.PinnedVersions) > 0 {
+		if pinned := f.PinnedVersions[name]; pinned != "" {
+			spec = name + "@" + pinned
+		}
+	}
 	raw := f.Registry + "/" + spec
 	return appendURLQuery(raw, f.composeBareSpecQuery()), nil
 }
@@ -349,8 +398,8 @@ func appendURLQuery(u, query string) string {
 }
 
 // resolve follows redirects without downloading the body. Returns
-// the final URL the body would come from, plus Content-Type and
-// ETag headers if present.
+// the final URL the body would come from, plus Content-Type, ETag
+// and X-ESM-Path headers if present.
 //
 // We use GET (not HEAD) because some CDNs (Cloudflare, esm.sh's
 // edge) serve headers for HEAD that differ from GET — Content-Type
@@ -362,22 +411,30 @@ func appendURLQuery(u, query string) string {
 // Closing the body without reading it (when we know we're going to
 // re-fetch) is fine — Go's HTTP client returns connections to the
 // pool either way.
-func (f *Fetcher) resolve(ctx context.Context, reqURL string) (resolved, contentType, etag string, err error) {
+//
+// esmPath is esm.sh's X-ESM-Path response header — present on every
+// response and exposes the resolved-version path even when the
+// request URL didn't include the version. We need it because esm.sh
+// stopped using 302 redirects for unversioned package URLs in 2025;
+// /vue now returns the stub at /vue directly with the version
+// disclosed only via this header, and we can't extract a version
+// from the request URL alone.
+func (f *Fetcher) resolve(ctx context.Context, reqURL string) (resolved, contentType, etag, esmPath string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	resp, err := f.HTTP.Do(req)
 	if err != nil {
-		return "", "", "", fmt.Errorf("fetcher: GET %s: %w", reqURL, err)
+		return "", "", "", "", fmt.Errorf("fetcher: GET %s: %w", reqURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", "", &HTTPError{URL: reqURL, Status: resp.StatusCode}
+		return "", "", "", "", &HTTPError{URL: reqURL, Status: resp.StatusCode}
 	}
 	// resp.Request.URL is the final URL after redirects.
 	final := resp.Request.URL.String()
-	return final, resp.Header.Get("Content-Type"), resp.Header.Get("ETag"), nil
+	return final, resp.Header.Get("Content-Type"), resp.Header.Get("ETag"), resp.Header.Get("X-ESM-Path"), nil
 }
 
 // get downloads the body at url and returns its bytes. Errors carry
@@ -443,6 +500,70 @@ func parseSpec(spec string) (name, version string) {
 		return spec[:i], spec[i+1:]
 	}
 	return spec, ""
+}
+
+// canonicalizeResolvedURL rewrites an unversioned esm.sh URL like
+// "https://esm.sh/vue?external=vue" into its versioned form using
+// the X-ESM-Path response header, e.g. "/vue@3.5.34/es2022/vue.mjs"
+// → "https://esm.sh/vue@3.5.34?external=vue". The query string is
+// preserved verbatim so the canonical URL still hits the right
+// content variant (external=, target=, etc.) on subsequent installs.
+//
+// Returns "" when esmPath doesn't follow the expected esm.sh shape
+// (leading "/<pkg>@<version>/...") so callers fall back to the
+// uncanonicalized URL — better to keep going than to corrupt the
+// lockfile with a guess. Scoped packages are recognized via the
+// "@" prefix; their canonical key includes the scope segment too.
+func canonicalizeResolvedURL(resolved, esmPath string) string {
+	canon := canonicalSpecFromESMPath(esmPath)
+	if canon == "" {
+		return ""
+	}
+	u, err := url.Parse(resolved)
+	if err != nil {
+		return ""
+	}
+	u.Path = "/" + canon
+	return u.String()
+}
+
+// canonicalSpecFromESMPath extracts the "<pkg>@<version>" prefix from
+// an X-ESM-Path value. Two shapes:
+//
+//	"/vue@3.5.34/es2022/vue.mjs"           → "vue@3.5.34"
+//	"/@vue/runtime-dom@3.5.34/es2022/..."  → "@vue/runtime-dom@3.5.34"
+//
+// Returns "" when the path doesn't contain a versioned leading
+// package segment — a sign that the registry isn't esm.sh (or that
+// its X-ESM-Path conventions have changed and we should fall back
+// to the URL-as-is).
+func canonicalSpecFromESMPath(esmPath string) string {
+	trimmed := strings.TrimPrefix(esmPath, "/")
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "@") {
+		// Scoped: "@scope/name@version/..." → leading two slash-
+		// separated segments belong to the spec.
+		parts := strings.SplitN(trimmed, "/", 3)
+		if len(parts) < 2 {
+			return ""
+		}
+		head := parts[0] + "/" + parts[1]
+		if !strings.Contains(parts[1], "@") {
+			return ""
+		}
+		return head
+	}
+	// Unscoped: "name@version/..." → first slash-separated segment.
+	first := trimmed
+	if i := strings.Index(trimmed, "/"); i >= 0 {
+		first = trimmed[:i]
+	}
+	if !strings.Contains(first, "@") {
+		return ""
+	}
+	return first
 }
 
 // extractVersionFromURL pulls the version out of a resolved URL
