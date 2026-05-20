@@ -57,12 +57,23 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 		return nexus.Raw(fx.Error(fmt.Errorf("config.Client: %w", err)))
 	}
 	holder := &clientHolder{cfg: cfg}
+
+	// EAGER boot — fetch + install the snapshot synchronously,
+	// before returning the Option. nexus.Get(...) becomes
+	// callable from every Provide constructor, Invoke, handler,
+	// and any code between Client(...) and Run(...). Without
+	// this, an unlucky fx ordering can run user-side
+	// constructors before the snapshot installs and Get returns
+	// zero values silently.
+	if err := holder.bootInstall(); err != nil {
+		return nexus.Raw(fx.Error(fmt.Errorf("config.Client: %w", err)))
+	}
+
 	return extension.Use(extension.Plugin{
 		Name:    "config",
 		Version: "1",
 		Options: []nexus.Option{
 			nexus.Supply(holder),
-			nexus.Invoke(initClient),
 		},
 		Lifecycle: &extension.Lifecycle{
 			OnBoot: func(ctx context.Context, _ *nexus.App) error {
@@ -120,11 +131,19 @@ type clientHolder struct {
 	subWG           sync.WaitGroup
 }
 
-// initClient is the fx.Invoke that runs the boot state machine.
-// Fails (returns non-nil error) only when the OnUnreachable
-// policy says to fail; otherwise installs the best-available
-// snapshot and lets the polling loop drive the rest.
-func initClient(h *clientHolder) error {
+// initClient remains as a test-only entry point exercising the
+// same boot-state-machine logic that production runs from
+// Client(...) directly.
+func initClient(h *clientHolder) error { return h.bootInstall() }
+
+// bootInstall is the synchronous boot state machine. Runs from
+// Client(...) so the snapshot is installed BEFORE fx.New/Start
+// even begin — making nexus.Get callable from every constructor
+// and invoke in the rest of the app. Fails (returns non-nil
+// error) only when the OnUnreachable policy says to fail;
+// otherwise installs the best-available snapshot and lets the
+// polling loop (started in OnBoot) drive the rest.
+func (h *clientHolder) bootInstall() error {
 	if len(h.pinnedKeys) == 0 && len(h.cfg.signerKeyPaths) > 0 {
 		if err := h.loadPinnedKeys(); err != nil {
 			return fmt.Errorf("config.Client: load signer keys: %w", err)
@@ -150,13 +169,22 @@ func initClient(h *clientHolder) error {
 		fmt.Fprintf(os.Stderr, "config.Client: cached snapshot unreadable: %v (continuing)\n", err)
 	} else if ok {
 		h.installSnapshot(cached)
+		fmt.Fprintf(os.Stdout, "config.Client: loaded cached snapshot (app=%s profile=%s version=%s)\n",
+			cached.Snapshot.App, cached.Snapshot.Profile, cached.Snapshot.Version)
 	}
 
-	// Step 2: fetch fresh from server.
+	// Step 2: fetch fresh from server. Loud "connecting" line so
+	// operators see exactly which URL the client is trying — the
+	// silent-stall path was a frequent confusion when the server
+	// was on a different port than expected.
+	fmt.Fprintf(os.Stdout, "config.Client: connecting to %s (app=%s profile=%s)\n",
+		h.cfg.serverURL, h.cfg.identity, h.cfg.profile)
 	fresh, err := h.fetchSnapshot(context.Background())
 	if err == nil {
 		h.installSnapshot(fresh)
 		_ = h.writeCachedSnapshot(fresh) // best-effort
+		fmt.Fprintf(os.Stdout, "config.Client: snapshot installed (app=%s profile=%s version=%s)\n",
+			fresh.Snapshot.App, fresh.Snapshot.Profile, fresh.Snapshot.Version)
 		return nil
 	}
 
@@ -463,6 +491,8 @@ func (h *clientHolder) pollLoop(ctx context.Context) {
 			}
 			h.installSnapshot(snap)
 			_ = h.writeCachedSnapshot(snap)
+			fmt.Fprintf(os.Stdout, "config.Client: snapshot refreshed via poll (version=%s)\n",
+				snap.Snapshot.Version)
 		}
 	}
 }

@@ -165,6 +165,8 @@ func (h *clientHolder) handleSubEvent(ctx context.Context, ev subscribeEvent) {
 	}
 	h.installSnapshot(snap)
 	_ = h.writeCachedSnapshot(snap)
+	fmt.Fprintf(os.Stdout, "config.Client: snapshot refreshed via WS push (version=%s)\n",
+		snap.Snapshot.Version)
 }
 
 // buildSubscribeURL turns the configured serverURL into the
