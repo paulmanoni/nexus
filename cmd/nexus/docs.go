@@ -205,6 +205,7 @@ var topicSummaries = map[string]string{
 	"frontend":   "ServeFrontend + FrontendAt — embed an SPA",
 	"peer":       "extension/peer — typed RPC between nexus apps",
 	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
+	"config":     "extension/config — Spring-style config server + nexus.Get",
 	"cli":        "Subcommand cheatsheet (new / init / dev / build / docs)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
 	"client":     "Embedded JS/TS SDK — connect a browser to your app",
@@ -1238,5 +1239,127 @@ Flags:
   --days N     leaf validity (default 180)
   --years N    CA validity (default 10, init only)
   --force      overwrite ca.key (init only — INVALIDATES every issued leaf)
+`,
+
+	"config": `
+CONFIG
+
+extension/config wires Spring-Cloud-Config-style configuration into a
+nexus mesh. Three entrypoints — pick one per app:
+
+  config.Server(source, ...opts)  hosts the source of truth
+  config.Client(serverURL, ...)   fetches + verifies + caches (sealed)
+  config.Local(yamlPath, ...)     reads a local plaintext yaml
+
+Every entrypoint installs the same package-level store; handlers
+read values via nexus.Get regardless of where they came from.
+
+──── Reading config from handlers ────────────────────────────
+
+    addr := nexus.Get[string]("config.server.addr")
+    port := nexus.Get[int]("config.server.port", 8080)       // default
+    ttl  := nexus.Get[time.Duration]("config.cache.ttl", 5*time.Minute)
+
+    // Strict — panics if missing; for keys whose absence is a boot bug
+    signKey := nexus.MustGet[string]("config.signing.key")
+
+    // Subtree → typed struct
+    var pay PaymentConfig
+    nexus.BindConfig("config.payment", &pay)
+
+    // Hot reload
+    nexus.OnConfigChange("config.api.timeout", func(v any) {
+        if d, ok := v.(time.Duration); ok { svc.timeout.Store(d) }
+    })
+
+Resolution priority (highest first):
+  1. Environment variable (CONFIG_API_TIMEOUT for "config.api.timeout")
+  2. Server snapshot / local yaml
+  3. Default arg (or T's zero value)
+
+──── config.Local — single yaml, plaintext on disk ───────────
+
+    nexus.Run(nexus.Config{...},
+        config.Local("nexus.config.yaml"),
+        appModule,
+    )
+
+The yaml stays human-readable + git-friendly. Profile-keyed:
+
+    # nexus.config.yaml
+    profiles:
+      default:
+        api:
+          timeout: 5s
+        app_name: my-service
+      prod:
+        api:
+          timeout: 30s
+
+Profile selected with config.LocalProfile("prod"); default is
+"default."
+
+──── config.Server — host the source of truth ────────────────
+
+    config.Server(config.FromYAML("configs/"))            // local folder
+    config.Server(config.FromGit("git@host:platform/cfg.git"))  // git repo
+
+Local layout (one file per app, profile-keyed):
+
+    configs/
+    ├── _common.nexus.config.yaml    optional shared base
+    ├── app1.nexus.config.yaml
+    └── app2.nexus.config.yaml
+
+Each app's yaml carries its identity + profiles:
+
+    app: app1
+    profiles:
+      default: {...}
+      prod:    {...}
+
+Dev one-liner runs out of the box (auth=none gated by
+NEXUS_CONFIG_DEV=1, self-signed TLS auto-generated, signing key
+auto-generated in .configd/). Production adds:
+
+    config.Server(config.FromGit("git@..."),
+        config.WithListen(":7100"),
+        config.WithSigning("/etc/configd/sign.key", "configd-2026-q2"),
+        config.WithTLS("/etc/configd/server.crt", "/etc/configd/server.key",
+                       "/etc/configd/ca.crt"),
+        config.WithAuth(config.AuthMTLS),
+        config.WithApps(map[string]config.AppPolicy{
+            "app1": {Profiles: []string{"prod", "staging"}},
+        }),
+    )
+
+──── config.Client — server-backed, cache sealed on disk ─────
+
+    config.Client("https://configd.internal:7100",
+        config.Identity("app1"),
+        config.Profile("prod"),
+        config.SignerKey("/etc/app1/configd-sign.pub"),
+        config.CachePath("/var/lib/app1/config.cache"),
+        config.WithClientTLS("/etc/ca.crt", "/etc/app1.crt", "/etc/app1.key"),
+        config.OnUnreachable(config.UseCacheOrFail),
+    )
+
+The cache file on disk is AES-256-GCM sealed; the framework
+manages the sealing key (sibling .key file, 0o600, generated at
+first boot). Operator never touches keys, never sees plaintext
+on the client — the server is the only entity with readable
+config.
+
+──── Safety summary ──────────────────────────────────────────
+
+  Wire           — TLS always; mTLS / HMAC / none (none is dev only)
+  Snapshot       — Ed25519 signed (mandatory); pinned signer key
+  Client cache   — AES-256-GCM sealed (mandatory, framework-managed)
+  Local yaml     — plaintext (operator owns the file)
+
+  A breached config server cannot forge config the client
+  accepts — the offline signing key is the integrity floor.
+
+Run 'nexus docs pki' for the cert-generation toolchain.
 `,
 }
