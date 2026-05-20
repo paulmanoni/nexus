@@ -504,6 +504,15 @@ profiles:
 
 Resolution = `_common.default → _common.<profile> → <app>.default → <app>.<profile>`, each layer overlaying via deep merge.
 
+**Identity vs Profile.** Two distinct addressing axes — easy to mix up:
+
+| Option | Selects | Example |
+|---|---|---|
+| `config.Identity("oats")` | **Which file** — the prefix before `.nexus.config.yaml` | `oats.nexus.config.yaml` |
+| `config.Profile("default")` | **Which section inside the file** | `profiles.default:`, or the whole body of a flat file |
+
+Flat files (no `profiles:` key) reach as `Profile("default")` automatically. If you get `app "X" not declared`, you typed an Identity that's not a filename in the source dir — the server's error names the available apps.
+
 ### The client side — sealed cache, signed snapshots
 
 ```go
@@ -521,6 +530,8 @@ nexus.Run(nexus.Config{...},
 ```
 
 The cache file is AES-256-GCM sealed; the framework auto-manages the sealing key (sibling `.key` file, `0600`, generated at first boot). Operators never see a key, never see plaintext on the client — the server is the only entity with readable config.
+
+**Dev shortcut.** `nexus dev` sets `NEXUS_CONFIG_DEV=1` on the child env, which makes `SignerKey` and `CachePath` optional and lets the server run with `auth: none`. A SEV1 warning loop fires every 60s while degraded knobs are in use — accidental ship-to-prod is loud, not silent. Bare host URLs work too (`config.Client("localhost:8077", ...)` auto-prepends `http://`).
 
 ### Safety baseline — three mandatory layers
 
