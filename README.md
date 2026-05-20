@@ -213,6 +213,98 @@ Mounted at `/__nexus/` when `Dashboard.Enabled` is true. Shows:
 
 ![Trace waterfall](docs/traces.png)
 
+## Listeners, scopes, and TLS
+
+In production you usually want the dashboard surface (`/__nexus/*`) reachable from operators but **not** from the public internet. Nexus does this with named listeners + scopes — one process binds multiple ports, each gated to a subset of routes.
+
+### Scopes
+
+```go
+nexus.Config{
+    Server: nexus.ServerConfig{
+        Listeners: map[string]nexus.Listener{
+            "public": {Addr: ":8080",          Scope: nexus.ScopePublic},
+            "admin":  {Addr: "127.0.0.1:9090", Scope: nexus.ScopeAdmin},
+        },
+    },
+}
+```
+
+- **`ScopePublic`** — user routes (REST / GraphQL / WebSocket) + `/__nexus/health` + `/__nexus/ready`. Dashboard hidden.
+- **`ScopeInternal`** — same as public; intended for sidecar / peer traffic.
+- **`ScopeAdmin`** — everything: dashboard + user routes (so the in-page testers' relative fetches still work).
+
+Routes outside the listener's scope return `404` — byte-equivalent to "not mounted", so scanners can't fingerprint the dashboard.
+
+### Introspection gate
+
+Belt-and-braces on top of scopes — defaults to **closed** so a misconfigured listener doesn't leak the dashboard:
+
+```go
+nexus.Config{
+    Introspection:         false,                  // closed in prod (default)
+    IntrospectionNetworks: []string{"10.0.0.0/8"}, // VPN bypass
+}
+```
+
+When closed, every `/__nexus/*` request 404s unless the caller's TCP peer matches an allowlisted CIDR. The gate uses `RemoteIP()`, not `ClientIP()` — `X-Forwarded-For` is spoofable, wrong default for a security gate. Behind an LB, prefer the admin-listener pattern over the CIDR allowlist.
+
+GraphQL field introspection (the `__schema` query) is gated by the same `Introspection` flag — closing the dashboard also closes in-band GraphQL introspection.
+
+### TLS on a listener
+
+Set `Listener.TLS` to terminate HTTPS on that port — the raw TCP listener gets wrapped at bind time:
+
+```go
+adminTLS, err := nexus.ServerTLSConfig(
+    "admin.crt",     // PEM cert
+    "admin.key",     // PEM private key
+    "admin-ca.crt",  // optional CA bundle; pass "" to skip mTLS
+)
+if err != nil { log.Fatal(err) }
+
+nexus.Config{
+    Server: nexus.ServerConfig{
+        Listeners: map[string]nexus.Listener{
+            "public": {Addr: ":8080",         Scope: nexus.ScopePublic},
+            "admin":  {Addr: "10.0.0.5:9443", Scope: nexus.ScopeAdmin, TLS: adminTLS},
+        },
+    },
+}
+```
+
+When the optional CA file is supplied, the listener requires clients to present a certificate signed by that CA — mTLS, enforced at the TLS layer before any HTTP request is dispatched. Pass `""` for server-only TLS.
+
+`ServerTLSConfig` sets `MinVersion = TLS 1.2` by default. For custom cipher suites or SNI via `GetCertificate`, build a `*tls.Config` directly and assign it to the `TLS` field — anything `crypto/tls` supports works.
+
+> For **public-internet HTTPS with Let's Encrypt auto-issuance**, prefer `extension/tls.Plugin` — it owns its own `:443`/`:80` pair and handles ACME challenges. `Listener.TLS` is the right tool for admin/internal ports fronted by your own cert material (internal CA, mTLS-protected dashboard, etc.).
+
+### Typical production recipe
+
+```go
+adminTLS, _ := nexus.ServerTLSConfig("admin.crt", "admin.key", "admin-ca.crt")
+
+nexus.Run(
+    nexus.Config{
+        Introspection:         false,
+        IntrospectionNetworks: []string{"10.0.0.0/8"},
+        Server: nexus.ServerConfig{
+            Listeners: map[string]nexus.Listener{
+                "public": {Addr: ":8080",         Scope: nexus.ScopePublic},
+                "admin":  {Addr: "10.0.0.5:9443", Scope: nexus.ScopeAdmin, TLS: adminTLS},
+            },
+        },
+    },
+    tls.Plugin(tls.Config{ // public :443 + :80, LE-issued cert for the user-facing port
+        Domains: []string{"app.example.com"},
+        Email:   "ops@example.com",
+    }),
+    // ... app modules
+)
+```
+
+Result: world-facing `:443` serves user traffic over LE-issued HTTPS. Dashboard is reachable only on the private `10.0.0.5:9443` with an mTLS client cert signed by `admin-ca.crt`. `/__nexus/*` is `404` on every other surface even if the network somehow leaks.
+
 ## Examples
 
 The framework ships a few self-contained examples under `examples/`:
