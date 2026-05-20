@@ -47,6 +47,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -62,60 +63,112 @@ func Module(cfg Config) nexus.Option {
 	if err := cfg.validate(); err != nil {
 		return nexus.Raw(fx.Error(fmt.Errorf("peer.Module: %w", err)))
 	}
-	srvHolder := &serverHolder{} // captured by the lifecycle hooks below
+	holder := &lifecycleHolder{} // captured by the closures below
+
+	// Capture the Registry into the holder via a normal fx.Invoke.
+	// Runs after NewRegistry resolves and before any Lifecycle
+	// callback, so OnBoot below can safely read holder.reg
+	// without racing the constructor. Cleaner than synthesizing
+	// an MustGet helper on *App that doesn't exist.
+	captureRegistry := nexus.Invoke(func(r *Registry) {
+		holder.reg = r
+	})
+
 	return extension.Use(extension.Plugin{
 		Name:    "peer",
 		Version: "1",
 		Options: []nexus.Option{
 			nexus.Supply(cfg),
 			nexus.Provide(NewRegistry),
+			captureRegistry,
+		},
+		Dashboard: &extension.Dashboard{
+			Tab: &extension.Tab{
+				ID:    "peers",
+				Label: "Peers",
+				Icon:  "link",
+			},
+			Routes: []extension.Route{
+				{Method: "GET", Path: "/list",
+					Handler: gin.HandlerFunc(func(c *gin.Context) {
+						// Closures capture holder.reg via late
+						// binding: by the time a dashboard
+						// request hits, OnBoot has populated it.
+						if holder.reg == nil {
+							c.JSON(503, map[string]string{"error": "registry not initialized"})
+							return
+						}
+						handlePeerList(holder.reg)(c)
+					}),
+				},
+				{Method: "GET", Path: "/schemas/:name",
+					Handler: gin.HandlerFunc(func(c *gin.Context) {
+						if holder.reg == nil {
+							c.JSON(503, map[string]string{"error": "registry not initialized"})
+							return
+						}
+						handlePeerSchema(holder.reg)(c)
+					}),
+				},
+			},
 		},
 		Lifecycle: &extension.Lifecycle{
-			OnBoot: func(ctx context.Context, app *nexus.App) error {
-				if cfg.Listen == "" {
-					return nil // client-only deployment
-				}
-				// Thread the app's trace bus into the
-				// dispatcher closure so inbound peer.handle
-				// spans land on the same waterfall as the
-				// rest of the app's traces.
-				srv, err := buildServer(cfg, app.Bus())
-				if err != nil {
-					return err
-				}
-				srvHolder.srv = srv
-				go func() {
-					// ListenAndServeTLS reads the cert paths
-					// passed in or, when both args are empty
-					// strings, falls back to the Certificates
-					// already wired into srv.TLSConfig (our
-					// case). The goroutine returns on Shutdown
-					// or on bind error; we log the latter so
-					// it doesn't disappear silently.
-					if err := srv.ListenAndServeTLS("", ""); err != nil &&
-						err != http.ErrServerClosed {
-						fmt.Printf("peer: listener exited: %v\n", err)
+			OnBoot: func(_ context.Context, app *nexus.App) error {
+				// Server side: build + start the peer listener.
+				// The app's trace bus is threaded into the
+				// dispatcher so inbound peer.handle spans land
+				// on the same waterfall as the rest of the
+				// app's traces.
+				if cfg.Listen != "" {
+					srv, err := buildServer(cfg, app.Bus())
+					if err != nil {
+						return err
 					}
-				}()
+					holder.srv = srv
+					go func() {
+						// ListenAndServeTLS reads the cert paths
+						// passed in or, when both args are empty
+						// strings, falls back to Certificates on
+						// srv.TLSConfig (our case). Returns on
+						// Shutdown or bind error.
+						if err := srv.ListenAndServeTLS("", ""); err != nil &&
+							err != http.ErrServerClosed {
+							fmt.Printf("peer: listener exited: %v\n", err)
+						}
+					}()
+				}
+				// Client side: boot the prober loop. It runs
+				// for the lifetime of the app and is cancelled
+				// from OnShutdown via holder.cancelProbers.
+				if len(cfg.Peers) > 0 && holder.reg != nil {
+					proberCtx, cancel := context.WithCancel(context.Background())
+					holder.cancelProbers = cancel
+					startProbers(proberCtx, holder.reg)
+				}
 				return nil
 			},
 			OnShutdown: func(ctx context.Context) error {
-				if srvHolder.srv == nil {
+				if holder.cancelProbers != nil {
+					holder.cancelProbers()
+				}
+				if holder.srv == nil {
 					return nil
 				}
-				return srvHolder.srv.Shutdown(ctx)
+				return holder.srv.Shutdown(ctx)
 			},
 		},
 	})
 }
 
-// serverHolder captures the *http.Server between OnBoot and
-// OnShutdown closures so Shutdown can reach the same instance that
-// OnBoot started. Plain struct field rather than a sync.Mutex —
-// the two callbacks run sequentially in the fx lifecycle, never
-// concurrently.
-type serverHolder struct {
-	srv *http.Server
+// lifecycleHolder captures the *http.Server, the *Registry, and
+// the prober cancel func across the captureRegistry invoke +
+// OnBoot + OnShutdown. fx runs all three callbacks sequentially
+// on the main lifecycle goroutine, so plain struct fields (no
+// mutex) are race-free.
+type lifecycleHolder struct {
+	srv           *http.Server
+	reg           *Registry
+	cancelProbers context.CancelFunc
 }
 
 // buildServer assembles the peer HTTP/2 server. It mounts the
@@ -131,12 +184,10 @@ type serverHolder struct {
 func buildServer(cfg Config, bus *trace.Bus) (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__peer/call", dispatchCall(cfg.AuthMode, cfg.HMACSecrets, bus, cfg.Identity))
+	mux.HandleFunc("/__peer/schema", emitSchema(cfg.Identity))
 	mux.HandleFunc("/__peer/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	// TODO schema.go: /__peer/schema emits the JSON-Schema
-	// document built from every registered AsCall, so clients
-	// can validate drift at first connect.
 
 	var tlsCfg *tls.Config
 	var err error

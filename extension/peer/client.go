@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -29,6 +30,11 @@ type Registry struct {
 	identity string
 	authMode AuthMode
 	secrets  map[string]string
+	// schemas caches each peer's /__peer/schema response. Lazy
+	// fetch on the first Call to a peer; reused thereafter so
+	// every subsequent call pays a single fast in-memory lookup
+	// for drift detection.
+	schemas *schemaCache
 }
 
 // peerConn is one tracked peer connection. The http.Client uses
@@ -53,6 +59,7 @@ func NewRegistry(cfg Config) (*Registry, error) {
 		identity: cfg.Identity,
 		authMode: cfg.AuthMode,
 		secrets:  cfg.HMACSecrets,
+		schemas:  newSchemaCache(),
 	}
 	for name, spec := range cfg.Peers {
 		client, err := buildPeerHTTPClient(cfg.TLS, spec, cfg.AuthMode)
@@ -147,6 +154,31 @@ func Call[Out any](
 		trace.Str("peer.url", pc.url))
 	defer func() { span.End(err) }()
 
+	// Drift check (lazy). On the first Call to a peer the
+	// schema is fetched and cached; subsequent calls hit the
+	// in-memory copy. A missing method on the peer is a hard
+	// error — saves us a confusing NOT_FOUND envelope round-trip
+	// and surfaces the misconfiguration at the call site instead
+	// of as an opaque wire error.
+	//
+	// Schema fetch failures are non-fatal here: drift is a
+	// safety net, not a precondition. If /__peer/schema is
+	// unreachable but /__peer/call works, the call still goes
+	// through and the network-level success/failure is what the
+	// caller sees.
+	if schema, schemaErr := r.schemas.get(peerName, func() (*PeerSchema, error) {
+		return fetchPeerSchema(ctx, pc)
+	}); schemaErr == nil {
+		var argsType, retType reflect.Type
+		if args != nil {
+			argsType = reflect.TypeOf(args)
+		}
+		retType = reflect.TypeOf(zero)
+		if err := verifyMethod(schema, method, argsType, retType); err != nil {
+			return zero, fmt.Errorf("peer.Call %q.%s: %w", peerName, method, err)
+		}
+	}
+
 	var argsRaw json.RawMessage
 	if args != nil {
 		raw, err := json.Marshal(args)
@@ -203,6 +235,33 @@ func Call[Out any](
 			peerName, method, zero, err)
 	}
 	return zero, nil
+}
+
+// fetchPeerSchema GETs /__peer/schema on the named peer and
+// decodes the body. Uses the same TLS-pinned http.Client as Call —
+// so the schema fetch enforces the same auth as a normal call.
+// HMAC mode currently fetches anonymously (the schema is non-
+// secret by design); production deployments behind sensitive
+// networks should rely on the mTLS path.
+func fetchPeerSchema(ctx context.Context, pc *peerConn) (*PeerSchema, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		pc.url+"/__peer/schema", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := pc.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("schema fetch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("schema fetch: HTTP %d", resp.StatusCode)
+	}
+	var s PeerSchema
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return nil, fmt.Errorf("schema decode: %w", err)
+	}
+	return &s, nil
 }
 
 // signHMACRequest computes the HMAC bearer token described in
