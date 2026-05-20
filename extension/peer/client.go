@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,15 +38,87 @@ type Registry struct {
 	schemas *schemaCache
 }
 
-// peerConn is one tracked peer connection. The http.Client uses
-// HTTP/2 by default (ForceAttemptHTTP2 + TLS); transport pooling
-// reuses one TCP/TLS session for every Call to this peer.
+// peerConn is the logical handle for a single named peer. With a
+// URL-only PeerSpec it has exactly one target; with an SRV spec it
+// has N (one per resolved record). The targets slice is guarded
+// by targetsMu so the SRV re-resolver can swap members without
+// racing in-flight Call lookups.
+//
+// http.Client + sem are shared across every target — one logical
+// peer, one concurrency budget, one TLS keepalive pool. Per-target
+// state (URL + health) lives in peerTarget.
 type peerConn struct {
 	name       string
-	url        string
 	httpClient *http.Client
-	sem        chan struct{} // per-peer concurrency limit
-	ready      atomic.Bool   // flipped false by the prober on probe failure
+	sem        chan struct{} // per-peer concurrency limit (across targets)
+
+	targetsMu sync.RWMutex
+	targets   []*peerTarget
+	// cursor drives round-robin target selection across calls.
+	// Atomic so the picker doesn't take targetsMu.Lock; combined
+	// with the snapshot we take under RLock it gives a stable
+	// view per Call without contending with the re-resolver.
+	cursor atomic.Uint64
+}
+
+// peerTarget is one resolvable address behind a logical peer.
+// For URL-only specs there's exactly one; for SRV specs there's
+// one per DNS record returned by net.LookupSRV.
+type peerTarget struct {
+	url   string      // "https://host:port"
+	ready atomic.Bool // flipped false by the prober on probe failure
+}
+
+// snapshotTargets returns a stable copy of the target list for
+// the caller's use. The targetsMu RLock is dropped before the
+// caller scans the slice so SRV re-resolution doesn't block
+// Call-side traversal — at worst a re-resolved target appears in
+// the NEXT call after the swap, never mid-iteration.
+func (pc *peerConn) snapshotTargets() []*peerTarget {
+	pc.targetsMu.RLock()
+	defer pc.targetsMu.RUnlock()
+	out := make([]*peerTarget, len(pc.targets))
+	copy(out, pc.targets)
+	return out
+}
+
+// anyReady reports whether at least one target is currently
+// marked ready. Used by IsHealthy and Call's fast-fail check —
+// when every target is down, the call is doomed and we want to
+// fail without paying a dial timeout per target.
+func (pc *peerConn) anyReady() bool {
+	for _, tgt := range pc.snapshotTargets() {
+		if tgt.ready.Load() {
+			return true
+		}
+	}
+	return false
+}
+
+// pickTarget chooses the next target for a Call. Prefers a
+// healthy one; falls back to round-robin across all targets when
+// every one is marked down (we still try — the prober may be
+// stale and the call could succeed). The cursor is per-peerConn,
+// so two concurrent calls to the same peer split across targets
+// instead of dog-piling on the first.
+func (pc *peerConn) pickTarget() *peerTarget {
+	targets := pc.snapshotTargets()
+	if len(targets) == 0 {
+		return nil
+	}
+	n := uint64(len(targets))
+	// Two passes: first scan for a ready target starting at
+	// cursor; if none, fall back to whichever target the cursor
+	// lands on. Single Add to the cursor either way so the
+	// distribution stays even.
+	start := pc.cursor.Add(1) % n
+	for i := uint64(0); i < n; i++ {
+		t := targets[(start+i)%n]
+		if t.ready.Load() {
+			return t
+		}
+	}
+	return targets[start]
 }
 
 // NewRegistry is provided into the fx graph by peer.Module. It
@@ -72,11 +145,24 @@ func NewRegistry(cfg Config) (*Registry, error) {
 		}
 		pc := &peerConn{
 			name:       name,
-			url:        spec.URL,
 			httpClient: client,
 			sem:        make(chan struct{}, concurrency),
 		}
-		pc.ready.Store(true) // optimistic until the prober proves otherwise
+		// Initial target population. URL-only specs land one
+		// target up front. SRV specs do a synchronous lookup
+		// here so the Registry has something usable on the
+		// first Call; the lifecycle resolver loop refreshes
+		// the list every SRVRefresh thereafter. A failed
+		// initial SRV lookup leaves zero targets — Call will
+		// fast-fail until the next resolve round succeeds.
+		initialTargets, err := resolveInitialTargets(spec)
+		if err != nil {
+			return nil, fmt.Errorf("peer %q: initial target resolution: %w", name, err)
+		}
+		for _, t := range initialTargets {
+			t.ready.Store(true) // optimistic until the prober proves otherwise
+		}
+		pc.targets = initialTargets
 		r.peers[name] = pc
 	}
 	return r, nil
@@ -88,7 +174,7 @@ func NewRegistry(cfg Config) (*Registry, error) {
 // mode" UX. Unknown peer names return false.
 func (r *Registry) IsHealthy(name string) bool {
 	pc, ok := r.peers[name]
-	return ok && pc.ready.Load()
+	return ok && pc.anyReady()
 }
 
 // Call dispatches a typed peer call. The generic parameter Out is
@@ -124,11 +210,13 @@ func Call[Out any](
 	if !ok {
 		return zero, fmt.Errorf("peer.Call: peer %q not declared in Config.Peers", peerName)
 	}
-	if !pc.ready.Load() {
+	if !pc.anyReady() {
 		// Fast-fail. Without this, every call to a known-down
 		// peer would queue behind the dial timeout, draining
 		// the per-peer semaphore until upstream callers stack
-		// up too.
+		// up too. anyReady considers ALL targets — for an
+		// SRV-resolved peer, the call still proceeds as long
+		// as at least one replica is reachable.
 		return zero, fmt.Errorf("peer.Call %q: peer marked unhealthy", peerName)
 	}
 
@@ -142,6 +230,14 @@ func Call[Out any](
 		return zero, fmt.Errorf("peer.Call %q: %w", peerName, ctx.Err())
 	}
 
+	// Pick a target now so the trace span can stamp the chosen
+	// URL — useful when an SRV-resolved call lands on a
+	// specific replica and an operator wants to know which one.
+	tgt := pc.pickTarget()
+	if tgt == nil {
+		return zero, fmt.Errorf("peer.Call %q: no targets resolved", peerName)
+	}
+
 	// Emit a peer.call span so the outbound shows up on the
 	// dashboard's trace waterfall as a child of the caller's
 	// inbound request span. trace.HTTPClient (wrapped into
@@ -151,7 +247,7 @@ func Call[Out any](
 	ctx, span := trace.StartSpan(ctx, "peer.call "+method,
 		trace.Str("peer.name", peerName),
 		trace.Str("peer.method", method),
-		trace.Str("peer.url", pc.url))
+		trace.Str("peer.url", tgt.url))
 	defer func() { span.End(err) }()
 
 	// Drift check (lazy). On the first Call to a peer the
@@ -194,7 +290,7 @@ func Call[Out any](
 	body, _ := json.Marshal(env)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		pc.url+"/__peer/call", bytes.NewReader(body))
+		tgt.url+"/__peer/call", bytes.NewReader(body))
 	if err != nil {
 		return zero, fmt.Errorf("peer.Call %q.%s: build request: %w", peerName, method, err)
 	}
@@ -243,9 +339,19 @@ func Call[Out any](
 // HMAC mode currently fetches anonymously (the schema is non-
 // secret by design); production deployments behind sensitive
 // networks should rely on the mTLS path.
+//
+// Picks a target via pickTarget so SRV-resolved peers fetch from
+// whichever replica is currently preferred; the schema is
+// process-uniform across replicas of the same service (every
+// replica answers the same /__peer/schema), so any healthy
+// target works equally well.
 func fetchPeerSchema(ctx context.Context, pc *peerConn) (*PeerSchema, error) {
+	tgt := pc.pickTarget()
+	if tgt == nil {
+		return nil, errors.New("schema fetch: no targets resolved")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		pc.url+"/__peer/schema", nil)
+		tgt.url+"/__peer/schema", nil)
 	if err != nil {
 		return nil, err
 	}

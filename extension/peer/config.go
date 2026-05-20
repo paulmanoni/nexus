@@ -51,8 +51,47 @@ type Config struct {
 }
 
 // PeerSpec configures the outbound connection to one peer.
+//
+// Two ways to point at the peer; exactly one must be set:
+//
+//	URL — single hard-coded target. Simplest, no DNS involvement.
+//	      Right for fixed-address deployments and dev.
+//
+//	SRV — DNS SRV record name (e.g. "_nexus._tcp.orders.internal").
+//	      Resolves to one or more targets; the framework round-
+//	      robins across them and re-resolves periodically so a
+//	      replica that joins or leaves the pool surfaces without
+//	      a caller redeploy. Right for production meshes where
+//	      orders-svc may have N replicas behind one logical name.
 type PeerSpec struct {
 	URL string // https://orders.internal:7000
+
+	// SRV is a DNS SRV record name resolving to N (host, port,
+	// priority, weight) targets. Standard format:
+	//   "_<service>._<proto>.<domain>"  e.g.  "_nexus._tcp.orders.internal"
+	//
+	// The framework calls net.LookupSRV at boot and re-resolves
+	// every SRVRefresh interval (default 30s) so target churn
+	// reaches the caller without a restart. RFC 2782 priority +
+	// weight are honored by the round-robin picker: lower-
+	// priority targets are preferred; within a priority,
+	// healthy targets are visited in weighted-random order.
+	SRV string
+
+	// SRVRefresh is how often net.LookupSRV is re-run. 0 falls
+	// back to 30 seconds. Set lower for fast-churning meshes
+	// (Kubernetes headless services with rolling restarts);
+	// higher for stable on-prem deployments.
+	SRVRefresh time.Duration
+
+	// ServerName, when non-empty, overrides the host portion of
+	// the URL when verifying the server's TLS certificate. Use
+	// with SRV when every replica presents the same logical
+	// service cert ("orders-svc") rather than per-host certs —
+	// otherwise per-replica certs need the resolved hostname
+	// as a SAN, which the nexus pki workflow supports via
+	// `--dns` flags.
+	ServerName string
 
 	// CACert pins the set of CAs willing to vouch for the server's
 	// cert. PEM file path. Empty falls back to the host's root
@@ -74,9 +113,9 @@ type PeerSpec struct {
 	// through the Envelope.Deadline field).
 	RequestTimeout time.Duration
 
-	// MaxConcurrent caps simultaneous in-flight calls to this peer.
-	// 0 falls back to a defensive default of 64. The cap exists
-	// so one slow peer can't drain the caller's goroutine pool.
+	// MaxConcurrent caps simultaneous in-flight calls to this peer
+	// (across every SRV-resolved target). 0 falls back to a
+	// defensive default of 64.
 	MaxConcurrent int
 }
 
@@ -138,8 +177,11 @@ func (c Config) validate() error {
 		return fmt.Errorf("peer.Module: unknown AuthMode %d", c.AuthMode)
 	}
 	for name, p := range c.Peers {
-		if p.URL == "" {
-			return fmt.Errorf("peer.Module: peer %q has empty URL", name)
+		switch {
+		case p.URL == "" && p.SRV == "":
+			return fmt.Errorf("peer.Module: peer %q needs either URL or SRV", name)
+		case p.URL != "" && p.SRV != "":
+			return fmt.Errorf("peer.Module: peer %q has both URL and SRV — pick one", name)
 		}
 	}
 	return nil
