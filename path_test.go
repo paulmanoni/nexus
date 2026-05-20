@@ -125,7 +125,7 @@ func TestPath_MultiServiceModuleAllMountUnderPath(t *testing.T) {
 		AsQuery(newGetUser),
 	)
 
-	app, err := newApp(Config{}, mod)
+	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
