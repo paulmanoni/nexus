@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // Registry holds one persistent HTTP/2 client per declared peer.
@@ -104,7 +106,9 @@ func Call[Out any](
 	r *Registry,
 	peerName, method string,
 	args any,
-) (Out, error) {
+) (out Out, err error) {
+	// Named return so the deferred span.End below can pick up the
+	// final error without an extra trailing variable.
 	var zero Out
 	if r == nil {
 		return zero, errors.New("peer.Call: nil Registry")
@@ -130,6 +134,18 @@ func Call[Out any](
 	case <-ctx.Done():
 		return zero, fmt.Errorf("peer.Call %q: %w", peerName, ctx.Err())
 	}
+
+	// Emit a peer.call span so the outbound shows up on the
+	// dashboard's trace waterfall as a child of the caller's
+	// inbound request span. trace.HTTPClient (wrapped into
+	// pc.httpClient at construction time) handles the actual
+	// traceparent header injection on the outbound request,
+	// reading the span ID off this ctx.
+	ctx, span := trace.StartSpan(ctx, "peer.call "+method,
+		trace.Str("peer.name", peerName),
+		trace.Str("peer.method", method),
+		trace.Str("peer.url", pc.url))
+	defer func() { span.End(err) }()
 
 	var argsRaw json.RawMessage
 	if args != nil {
@@ -234,8 +250,15 @@ func buildPeerHTTPClient(global TLSConfig, spec PeerSpec, mode AuthMode) (*http.
 		}
 		transport.TLSClientConfig = tlsCfg
 	}
-	return &http.Client{
+	// Wrap with trace.HTTPClient so every outbound request reads
+	// the current span off ctx and stamps a W3C traceparent
+	// header. The server side reads it via trace.ParseTraceparent
+	// + trace.WithRemoteParent, so the inbound peer.handle span
+	// parents to the caller's peer.call span on the dashboard's
+	// waterfall — no manual header plumbing in Call itself.
+	inner := &http.Client{
 		Transport: transport,
 		Timeout:   spec.RequestTimeout, // 0 = rely on ctx deadline
-	}, nil
+	}
+	return trace.HTTPClient(inner), nil
 }

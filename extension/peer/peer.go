@@ -51,6 +51,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // Module is the nexus extension entrypoint. Wire it into nexus.Run
@@ -74,7 +75,11 @@ func Module(cfg Config) nexus.Option {
 				if cfg.Listen == "" {
 					return nil // client-only deployment
 				}
-				srv, err := buildServer(cfg)
+				// Thread the app's trace bus into the
+				// dispatcher closure so inbound peer.handle
+				// spans land on the same waterfall as the
+				// rest of the app's traces.
+				srv, err := buildServer(cfg, app.Bus())
 				if err != nil {
 					return err
 				}
@@ -118,9 +123,14 @@ type serverHolder struct {
 // Gin engine — peer traffic is strictly separate from public
 // HTTP), wires the configured TLS, and returns a stopped Server
 // ready for ListenAndServeTLS.
-func buildServer(cfg Config) (*http.Server, error) {
+//
+// bus is the app's trace bus (may be nil); when non-nil, the
+// dispatcher publishes peer.handle spans parented to the
+// caller's traceparent so the dashboard waterfall stitches
+// across binaries.
+func buildServer(cfg Config, bus *trace.Bus) (*http.Server, error) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/__peer/call", dispatchCall(cfg.AuthMode, cfg.HMACSecrets))
+	mux.HandleFunc("/__peer/call", dispatchCall(cfg.AuthMode, cfg.HMACSecrets, bus, cfg.Identity))
 	mux.HandleFunc("/__peer/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

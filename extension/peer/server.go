@@ -19,6 +19,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // callEntry is one method registered via AsCall. Bound at fx.Start
@@ -111,7 +112,17 @@ func (e *Error) Error() string {
 // Decodes the envelope, looks up the registered method, decodes
 // args into the registered ArgsType, invokes the bound handler,
 // marshals the result back.
-func dispatchCall(authMode AuthMode, secrets map[string]string) http.HandlerFunc {
+//
+// bus is the app's trace bus, threaded through from peer.Module's
+// OnBoot. When non-nil, every inbound call publishes a peer.handle
+// span parented to the caller's traceparent (if present) so the
+// dashboard's waterfall stitches across binaries. nil bus = no
+// trace events, but the dispatcher still functions normally.
+//
+// identity is the local app's identity, used for the span's
+// service field so the dashboard renders "checkout-svc"
+// (callee) under the caller's trace tree.
+func dispatchCall(authMode AuthMode, secrets map[string]string, bus *trace.Bus, identity string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeEnvelope(w, http.StatusMethodNotAllowed, Envelope{
@@ -157,6 +168,23 @@ func dispatchCall(authMode AuthMode, secrets map[string]string) http.HandlerFunc
 			defer cancel()
 		}
 
+		// Trace stitching. Bus must be installed FIRST so any
+		// span emitted downstream sees it; then the synthetic
+		// remote parent is installed off the inbound
+		// traceparent header (no-op when the header is absent
+		// or malformed — local span becomes a fresh root); then
+		// the peer.handle span attaches to that parent.
+		ctx = trace.WithBus(ctx, bus)
+		callerPeer := r.Header.Get("X-Nexus-Peer")
+		if tid, pid, ok := trace.ParseTraceparent(r.Header.Get("traceparent")); ok {
+			ctx = trace.WithRemoteParent(ctx, tid, pid, callerPeer, env.Method)
+		}
+		var span *trace.Span
+		ctx, span = trace.StartSpan(ctx, "peer.handle "+env.Method,
+			trace.Str("peer.caller", callerPeer),
+			trace.Str("peer.method", env.Method),
+			trace.Str("peer.local", identity))
+
 		// Build args. The handler may declare no args (callTable
 		// entry.ArgsType == nil), a flat-args struct, or a
 		// Params[T] — Bound abstracts all three uniformly,
@@ -166,6 +194,7 @@ func dispatchCall(authMode AuthMode, secrets map[string]string) http.HandlerFunc
 			argsPtr := reflect.New(entry.ArgsType)
 			if len(env.Args) > 0 {
 				if err := json.Unmarshal(env.Args, argsPtr.Interface()); err != nil {
+					span.End(err)
 					writeEnvelope(w, http.StatusBadRequest, Envelope{
 						Err: &Error{Code: "BAD_ARGS", Msg: err.Error()},
 					})
@@ -175,9 +204,10 @@ func dispatchCall(authMode AuthMode, secrets map[string]string) http.HandlerFunc
 			argsVal = argsPtr.Elem().Interface()
 		}
 
-		result, err := entry.Bound(ctx, argsVal)
-		if err != nil {
-			writeEnvelope(w, http.StatusOK, Envelope{Err: errorToWire(err)})
+		result, hErr := entry.Bound(ctx, argsVal)
+		span.End(hErr)
+		if hErr != nil {
+			writeEnvelope(w, http.StatusOK, Envelope{Err: errorToWire(hErr)})
 			return
 		}
 		if result == nil {

@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/paulmanoni/nexus/trace"
 )
 
 // reflectTypeFor is a tiny helper so the tests can ask for the
@@ -39,7 +41,11 @@ func roundTripFixture(t *testing.T) (*Registry, func()) {
 	t.Setenv(devEnv, "1") // unlock AuthNone
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/__peer/call", dispatchCall(AuthNone, nil))
+	// Tests don't exercise the dashboard bus path; nil here is
+	// the documented no-trace-events mode. A separate test below
+	// (TestDispatchCall_StitchesTraceFromHeader) drives the bus
+	// branch with a real bus.
+	mux.HandleFunc("/__peer/call", dispatchCall(AuthNone, nil, nil, "test-server"))
 	mux.HandleFunc("/__peer/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -160,6 +166,84 @@ func TestCall_FastFailWhenPeerDown(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
 		t.Errorf("fast-fail took %s — should be sub-ms", elapsed)
+	}
+}
+
+// TestDispatchCall_StitchesTraceFromHeader proves the inbound side
+// of the traceparent wiring: a request that carries a W3C
+// traceparent header lands on the dispatcher's bus as a
+// peer.handle span whose TraceID matches the caller's. Without
+// stitching, every peer call would be the root of its own trace
+// and the dashboard waterfall would split mid-flight.
+func TestDispatchCall_StitchesTraceFromHeader(t *testing.T) {
+	resetCallTable()
+	defer resetCallTable()
+
+	callTable.Store("ping", &callEntry{
+		Method:   "ping",
+		ArgsType: nil,
+		Bound: func(_ context.Context, _ any) (any, error) {
+			return struct{}{}, nil
+		},
+	})
+
+	bus := trace.NewBus(64)
+	// Subscribe BEFORE issuing the call so we don't race the
+	// publisher. Buffered channel + Subscribe's snapshot guarantee
+	// no events drop between the dispatcher firing and the test
+	// reading them off.
+	_, events, cancelSub := bus.Subscribe(0, 32)
+	defer cancelSub()
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(
+		dispatchCall(AuthNone, nil, bus, "callee-svc")))
+	defer srv.Close()
+
+	// Use a fixed traceparent — easier to assert than minting one
+	// fresh and reading it back from headers. Caller side would
+	// pull this off ctx via trace.InjectHeader; we hard-code to
+	// isolate the inbound stitching from the outbound wiring.
+	const wantTrace = "0123456789abcdef0123456789abcdef"
+	const callerSpan = "fedcba9876543210"
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/__peer/call",
+		strings.NewReader(`{"method":"ping"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("traceparent", "00-"+wantTrace+"-"+callerSpan+"-01")
+	req.Header.Set("X-Nexus-Peer", "caller-svc")
+
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	resp.Body.Close()
+
+	// Collect events for up to 200ms; we expect a span.start +
+	// span.end pair for the peer.handle span, both tagged with
+	// the caller's traceID and our callerSpan as ParentID.
+	deadline := time.After(200 * time.Millisecond)
+	var saw []trace.Event
+loop:
+	for len(saw) < 2 {
+		select {
+		case e := <-events:
+			if strings.HasPrefix(e.Name, "peer.handle") {
+				saw = append(saw, e)
+			}
+		case <-deadline:
+			break loop
+		}
+	}
+	if len(saw) < 2 {
+		t.Fatalf("expected span.start + span.end for peer.handle, got %d events", len(saw))
+	}
+	for _, e := range saw {
+		if e.TraceID != wantTrace {
+			t.Errorf("TraceID = %q, want %q (caller's trace should stitch)", e.TraceID, wantTrace)
+		}
+		if e.ParentID != callerSpan {
+			t.Errorf("ParentID = %q, want %q (should parent to caller's span)", e.ParentID, callerSpan)
+		}
 	}
 }
 
