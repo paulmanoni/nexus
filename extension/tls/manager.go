@@ -182,9 +182,63 @@ func (s *pluginState) stop(ctx context.Context) error {
 // URL. Bound under m.HTTPHandler so ACME challenges (which use a
 // well-known path under /.well-known/acme-challenge/) are handled by
 // the manager BEFORE this code runs — autocert layers itself on top.
+//
+// The host portion of the redirect is the request's own Host header,
+// which is operator-controlled in principle but attacker-controlled
+// in practice (TLS terminates on whatever Host the client sent). We
+// validate the parsed host looks like a real DNS name before echoing
+// it back into a Location header — a malformed value (CRLF, scheme
+// injection, path delimiters) is rejected as 400. Together with
+// autocert.HostPolicy (the recommended upstream gate) this leaves no
+// open-redirect surface: requests for unknown hosts never reach this
+// handler, and well-formed hosts can only redirect to themselves.
 func redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
-	target := "https://" + stripPort(r.Host) + r.URL.RequestURI()
+	host := stripPort(r.Host)
+	if !isValidRedirectHost(host) {
+		http.Error(w, "invalid host", http.StatusBadRequest)
+		return
+	}
+	target := "https://" + host + r.URL.RequestURI()
+	// #nosec G710 -- host validated above; r.URL.RequestURI() is parsed by net/http
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+// isValidRedirectHost reports whether host is shaped like a DNS name
+// or a bracketed IPv6 literal — i.e. safe to splice back into a
+// Location header without enabling open-redirect / response-splitting.
+// Permissive on character classes (allows underscores, which appear
+// in service-mesh ingress names) but strict on delimiters that would
+// let an attacker break out of the host segment.
+func isValidRedirectHost(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	// Bracketed IPv6 — accept the bracketed body verbatim; the parser
+	// upstream already rejected unbalanced brackets in stripPort.
+	if host[0] == '[' && host[len(host)-1] == ']' {
+		for i := 1; i < len(host)-1; i++ {
+			c := host[i]
+			if !(c == ':' || c == '.' ||
+				('0' <= c && c <= '9') ||
+				('a' <= c && c <= 'f') ||
+				('A' <= c && c <= 'F')) {
+				return false
+			}
+		}
+		return true
+	}
+	for i := 0; i < len(host); i++ {
+		c := host[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c == '.' || c == '-' || c == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // misdirectedHandler answers non-challenge :80 requests with 421 when

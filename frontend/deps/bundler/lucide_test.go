@@ -96,7 +96,7 @@ func TestLucideVueNext_NamespaceImport_Bundles(t *testing.T) {
 	}
 
 	src := filepath.Join(tmp, "src")
-	if err := os.MkdirAll(src, 0o755); err != nil {
+	if err := os.MkdirAll(src, 0750); err != nil {
 		t.Fatal(err)
 	}
 	entry := filepath.Join(src, "app.js")

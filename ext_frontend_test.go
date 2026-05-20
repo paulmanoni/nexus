@@ -223,7 +223,7 @@ func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	dir := t.TempDir()
 	distDir := dir + "/web/dist"
-	if err := os.MkdirAll(distDir, 0o755); err != nil {
+	if err := os.MkdirAll(distDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	indexPath := distDir + "/index.html"
@@ -272,7 +272,7 @@ func TestServeFrontend_ProductionCachesIndexHTML(t *testing.T) {
 	t.Setenv(NexusDevEnv, "")
 	dir := t.TempDir()
 	distDir := dir + "/web/dist"
-	if err := os.MkdirAll(distDir, 0o755); err != nil {
+	if err := os.MkdirAll(distDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	indexPath := distDir + "/index.html"
@@ -307,7 +307,7 @@ func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	dir := t.TempDir()
 	distDir := dir + "/web/dist"
-	if err := os.MkdirAll(distDir+"/assets", 0o755); err != nil {
+	if err := os.MkdirAll(distDir+"/assets", 0750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(distDir+"/index.html", []byte("<html>fresh</html>"), 0o644); err != nil {

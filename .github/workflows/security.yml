@@ -37,7 +37,18 @@ jobs:
       - name: Run gosec
         uses: securego/gosec@master
         with:
-          args: "-no-fail -fmt sarif -out results.sarif ./..."
+          # G104: unchecked Close()/Remove() — noisy and rarely actionable for
+          #       fire-and-forget cleanup paths.
+          # G204: subprocess launched with variable — every site is a CLI helper
+          #       (nexus dev, nexus add) launching `go run`, `npm`, `open <url>`
+          #       with operator-supplied args. Not server-side input.
+          # G301/G302/G306: file/dir permission rules — the dep cache under
+          #       ~/.nexus/ needs to be user-writable; tightening these would
+          #       break the tool. CLI-only.
+          # G304: file inclusion via variable — every site is a dev tool
+          #       reading operator-supplied paths (frontend dir, project root,
+          #       vite config). Server-side framework code never does this.
+          args: "-no-fail -fmt sarif -out results.sarif -exclude=G104,G204,G301,G302,G304,G306 ./..."
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:

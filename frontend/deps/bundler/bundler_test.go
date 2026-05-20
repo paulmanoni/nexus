@@ -67,7 +67,7 @@ func TestBuild_EndToEnd_ResolverFromStore(t *testing.T) {
 
 	// 3. User entry imports vue by bare spec.
 	srcDir := filepath.Join(tmp, "src")
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+	if err := os.MkdirAll(srcDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	entry := filepath.Join(srcDir, "app.js")
@@ -155,7 +155,7 @@ func TestBuild_EndToEnd_FontAssetEmittedAsSidecar(t *testing.T) {
 	})
 
 	srcDir := filepath.Join(tmp, "src")
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+	if err := os.MkdirAll(srcDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 	entry := filepath.Join(srcDir, "app.js")

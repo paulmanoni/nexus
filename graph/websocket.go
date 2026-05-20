@@ -340,8 +340,12 @@ func (c *Connection) handleSubscribe(msg *WSMessage) {
 
 	variables, _ := msg.Payload["variables"].(map[string]interface{})
 
-	// Create subscription context (can be canceled independently)
-	subCtx, cancel := context.WithCancel(c.ctx)
+	// Create subscription context (can be canceled independently).
+	// The cancel is stored in c.subscriptions and released by
+	// releaseSub from executeSubscription's defer OR from
+	// handleComplete — whichever fires first. gosec's flow analysis
+	// can't follow the cancel through the map, hence the annotation.
+	subCtx, cancel := context.WithCancel(c.ctx) // #nosec G118 -- cancel released via releaseSub
 
 	// Store cancel function
 	c.mu.Lock()
@@ -353,7 +357,17 @@ func (c *Connection) handleSubscribe(msg *WSMessage) {
 }
 
 // executeSubscription runs the GraphQL subscription and sends events to the client.
+//
+// On exit (natural completion OR ctx cancel) the registered cancel
+// func is invoked and the subscription map entry is removed — without
+// this, a long-lived connection that opens N subs and lets them
+// complete naturally would retain N cancel closures (and the contexts
+// they reference) until the WebSocket itself closed. The releaseSub
+// path is idempotent against the handleComplete path: whichever runs
+// first deletes the entry, the second is a no-op.
 func (c *Connection) executeSubscription(ctx context.Context, subscriptionID, query string, variables map[string]interface{}) {
+	defer c.releaseSub(subscriptionID)
+
 	// Execute GraphQL subscription
 	params := graphql.Params{
 		Schema:         *c.manager.schema,
@@ -396,18 +410,28 @@ func (c *Connection) executeSubscription(ctx context.Context, subscriptionID, qu
 	}
 }
 
+// releaseSub cancels and removes the named subscription's cancel
+// func. Called on natural subscription completion (executeSubscription's
+// defer) and on client-initiated complete (handleComplete). Idempotent
+// — the second caller sees an empty map entry and falls through.
+func (c *Connection) releaseSub(subscriptionID string) {
+	c.mu.Lock()
+	cancel, exists := c.subscriptions[subscriptionID]
+	if exists {
+		delete(c.subscriptions, subscriptionID)
+	}
+	c.mu.Unlock()
+	if exists {
+		cancel()
+	}
+}
+
 // handleComplete stops an active subscription.
 func (c *Connection) handleComplete(msg *WSMessage) {
 	if msg.ID == "" {
 		return
 	}
-
-	c.mu.Lock()
-	if cancel, exists := c.subscriptions[msg.ID]; exists {
-		cancel()
-		delete(c.subscriptions, msg.ID)
-	}
-	c.mu.Unlock()
+	c.releaseSub(msg.ID)
 }
 
 // sendMessage sends a message to the client.

@@ -60,7 +60,7 @@ func inDepsTestSandbox(t *testing.T, registry string) (cwd string, cleanup func(
 
 	cwd = t.TempDir()
 	cache := filepath.Join(cwd, "_cache")
-	if err := os.MkdirAll(cache, 0o755); err != nil {
+	if err := os.MkdirAll(cache, 0750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chdir(cwd); err != nil {
@@ -116,7 +116,7 @@ func TestRunInstall_FetchesMissingBlobsForExistingLockfile(t *testing.T) {
 	// Drop the cache (simulate fresh clone) but keep the lockfile.
 	cache := os.Getenv("NEXUS_CACHE")
 	os.RemoveAll(cache)
-	os.MkdirAll(cache, 0o755)
+	os.MkdirAll(cache, 0750)
 
 	var stdout, stderr bytes.Buffer
 	if err := runInstall(context.Background(), &stdout, &stderr); err != nil {

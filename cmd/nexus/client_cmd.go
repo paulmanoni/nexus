@@ -99,7 +99,7 @@ Examples:
 }
 
 func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
-	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
+	if err := os.MkdirAll(opts.Out, 0750); err != nil {
 		return fmt.Errorf("nexus client: mkdir %s: %w", opts.Out, err)
 	}
 

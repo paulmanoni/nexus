@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"go.uber.org/fx"
 )
@@ -31,7 +32,16 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 	listeners := resolveListeners(app.listeners, cfg.Server.Addr)
 	servers := make([]*http.Server, 0, len(listeners))
 	for range listeners {
-		servers = append(servers, &http.Server{Handler: app})
+		// ReadHeaderTimeout caps how long a client can take to send the
+		// request line + headers; without it a slowloris-style attacker
+		// can hold a connection open indefinitely with a trickle of
+		// bytes, exhausting the listener's accept queue. 10s is wider
+		// than any reasonable real-world header upload and tight enough
+		// to make the attack uneconomic.
+		servers = append(servers, &http.Server{
+			Handler:           app,
+			ReadHeaderTimeout: 10 * time.Second,
+		})
 	}
 	// Filtering is opt-in: a single-listener back-compat run skips
 	// scope checks entirely so dashboard, REST, GraphQL all stay
