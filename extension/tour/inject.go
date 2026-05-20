@@ -16,6 +16,23 @@ import (
 //go:embed agent/inject.js
 var injectJS string
 
+// dashboardHTML is the management UI served at the plugin's
+// dashboard root (/__nexus/tour/). Vue 3 from esm.sh — no build
+// pipeline; ship the source HTML verbatim.
+//
+//go:embed dashboard/dashboard.html
+var dashboardHTML string
+
+// handleDashboard serves the tour-management Vue SPA at
+// /__nexus/tour/. text/html so AutoInject can splice in the
+// in-page agent's script tag for a "manage and demo from the
+// same page" flow.
+func handleDashboard(c *gin.Context) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.String(http.StatusOK, dashboardHTML)
+}
+
 // handleInjectJS serves the in-page agent at
 // /__nexus/tour/inject.js. Content-Type is application/javascript
 // and the response is cacheable for a short window — the script

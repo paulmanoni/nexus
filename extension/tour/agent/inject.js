@@ -449,13 +449,60 @@
       b.innerHTML = `
         <span>● Recording</span>
         <span class="count">0</span>
+        <button class="edit-last" disabled>✎ Edit last step</button>
         <button class="stop">Stop &amp; Save</button>
         <button class="danger cancel">Cancel</button>
       `;
       root.appendChild(b);
       b.querySelector('.stop').addEventListener('click', () => stop(true));
       b.querySelector('.cancel').addEventListener('click', () => stop(false));
+      b.querySelector('.edit-last').addEventListener('click', () => editLastStep());
       return b;
+    }
+
+    // editLastStep opens a small in-page form letting the
+    // operator override the default title/text on the most
+    // recently captured step. While the form is open the picker
+    // is paused so a stray click doesn't append a new step.
+    function editLastStep() {
+      if (!lastStep) return;
+      picker.stop();
+      const editor = document.createElement('div');
+      editor.className = 'editor';
+      editor.innerHTML = `
+        <div style="font-weight:600;margin-bottom:6px">Edit Step ${lastStep.title || ''}</div>
+        <label>Title</label>
+        <input class="ed-title" value="${escapeHtml(lastStep.title || '')}" />
+        <label>Text shown to the user</label>
+        <textarea class="ed-text">${escapeHtml(lastStep.text || '')}</textarea>
+        <label>Placement</label>
+        <select class="ed-place">
+          <option value="bottom">bottom</option>
+          <option value="top">top</option>
+          <option value="left">left</option>
+          <option value="right">right</option>
+        </select>
+        <div class="actions">
+          <button class="ghost ed-cancel">Cancel</button>
+          <button class="primary ed-save">Save</button>
+        </div>
+      `;
+      root.appendChild(editor);
+      const sel = editor.querySelector('.ed-place');
+      sel.value = lastStep.placement || 'bottom';
+
+      function close() {
+        editor.remove();
+        // Re-arm picker so the next click resumes recording.
+        if (active) picker.start(onPicked, () => stop(false));
+      }
+      editor.querySelector('.ed-cancel').addEventListener('click', close);
+      editor.querySelector('.ed-save').addEventListener('click', () => {
+        lastStep.title = editor.querySelector('.ed-title').value || lastStep.title;
+        lastStep.text  = editor.querySelector('.ed-text').value;
+        lastStep.placement = sel.value;
+        close();
+      });
     }
 
     function updateCount() {
@@ -466,7 +513,14 @@
         for (const s of steps) if (s.children) n += countTree(s.children);
         return n;
       }
-      bar.querySelector('.count').textContent = String(countTree(tour.steps));
+      const total = countTree(tour.steps);
+      bar.querySelector('.count').textContent = String(total);
+      // "Edit last step" is meaningless before the first capture
+      // — toggle the disabled state along with the counter so
+      // the affordance only lights up when there's something
+      // to edit.
+      const editBtn = bar.querySelector('.edit-last');
+      if (editBtn) editBtn.disabled = total === 0;
     }
 
     function onPicked(p) {
