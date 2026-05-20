@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -179,7 +180,12 @@ type clientOptionFunc func(*clientConfig)
 
 func (f clientOptionFunc) applyClient(c *clientConfig) { f(c) }
 
-// validate runs at boot before the fetch loop starts.
+// validate runs at boot before the fetch loop starts. Two
+// fields (SignerKey, CachePath) become optional under
+// NEXUS_CONFIG_DEV=1 — the dev runner shouldn't need a pinned
+// pubkey or a writable cache dir just to try things out. A loud
+// SEV1 warning loop fires at runtime so the operator sees the
+// trade-off.
 func (c *clientConfig) validate() error {
 	if c.serverURL == "" {
 		return errors.New("server URL is empty")
@@ -190,14 +196,25 @@ func (c *clientConfig) validate() error {
 	if c.profile == "" {
 		return errors.New("Profile required")
 	}
-	if len(c.signerKeyPaths) == 0 {
-		return errors.New("SignerKey required (pin at least one .pub file)")
+	devMode := envDev()
+
+	if len(c.signerKeyPaths) == 0 && !devMode {
+		return errors.New("SignerKey required (pin the server's sign.pub file). " +
+			"Dev hint: `nexus dev` (or NEXUS_CONFIG_DEV=1) skips this guard. " +
+			"The server auto-generates a sibling .pub next to its signing key at first boot (default .configd/sign.pub)")
 	}
-	if c.cachePath == "" {
-		return errors.New("CachePath required (opting out of caching breaks offline-boot)")
+	if c.cachePath == "" && !devMode {
+		return errors.New("CachePath required (opting out of caching breaks offline-boot). " +
+			"Dev hint: `nexus dev` (or NEXUS_CONFIG_DEV=1) skips this guard")
 	}
 	if c.onUnreachable == UseDefaults && len(c.defaults) == 0 {
 		return fmt.Errorf("OnUnreachable(UseDefaults) requires WithDefaults(...)")
 	}
 	return nil
+}
+
+// envDev reports whether NEXUS_CONFIG_DEV is set. Centralized so
+// the gate logic stays consistent across server + client.
+func envDev() bool {
+	return os.Getenv(devEnv) == "1"
 }

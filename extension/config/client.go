@@ -69,6 +69,7 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 					return err
 				}
 				holder.startSubscription(ctx)
+				startClientDevWarningLoop(ctx, holder)
 				return nil
 			},
 			OnShutdown: func(_ context.Context) error {
@@ -123,7 +124,7 @@ type clientHolder struct {
 // policy says to fail; otherwise installs the best-available
 // snapshot and lets the polling loop drive the rest.
 func initClient(h *clientHolder) error {
-	if len(h.pinnedKeys) == 0 {
+	if len(h.pinnedKeys) == 0 && len(h.cfg.signerKeyPaths) > 0 {
 		if err := h.loadPinnedKeys(); err != nil {
 			return fmt.Errorf("config.Client: load signer keys: %w", err)
 		}
@@ -133,7 +134,10 @@ func initClient(h *clientHolder) error {
 			return fmt.Errorf("config.Client: TLS: %w", err)
 		}
 	}
-	if len(h.sealKey) == 0 {
+	// Cache seal key is only needed when a CachePath was given.
+	// Dev mode skips both — SEV1 warning loop surfaces the
+	// trade-off so an accidental ship-to-prod is loud.
+	if len(h.sealKey) == 0 && h.cfg.cachePath != "" {
 		if err := h.ensureSealKey(); err != nil {
 			return fmt.Errorf("config.Client: seal key: %w", err)
 		}
@@ -307,8 +311,10 @@ func (h *clientHolder) fetchSnapshot(ctx context.Context) (*SignedSnapshot, erro
 	if err := json.NewDecoder(resp.Body).Decode(&signed); err != nil {
 		return nil, fmt.Errorf("decode snapshot: %w", err)
 	}
-	if err := Verify(signed, h.pinnedKeys); err != nil {
-		return nil, fmt.Errorf("verify snapshot: %w", err)
+	if len(h.pinnedKeys) > 0 {
+		if err := Verify(signed, h.pinnedKeys); err != nil {
+			return nil, fmt.Errorf("verify snapshot: %w", err)
+		}
 	}
 	if signed.Snapshot.App != h.cfg.identity {
 		return nil, fmt.Errorf("snapshot app=%q, expected %q", signed.Snapshot.App, h.cfg.identity)
@@ -350,6 +356,11 @@ func (h *clientHolder) fetchVersion(ctx context.Context) (string, error) {
 // false, nil) when no cache exists, (nil, false, err) on
 // tampering or corrupted bytes.
 func (h *clientHolder) loadCachedSnapshot() (*SignedSnapshot, bool, error) {
+	// Dev mode opts out of disk caching — bail before any IO so
+	// tests + scratch runs don't litter the working dir.
+	if h.cfg.cachePath == "" {
+		return nil, false, nil
+	}
 	body, err := os.ReadFile(h.cfg.cachePath) // #nosec G304 -- operator-supplied path
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -365,8 +376,10 @@ func (h *clientHolder) loadCachedSnapshot() (*SignedSnapshot, bool, error) {
 	if err := json.Unmarshal(plaintext, &signed); err != nil {
 		return nil, false, fmt.Errorf("decode cached snapshot: %w", err)
 	}
-	if err := Verify(signed, h.pinnedKeys); err != nil {
-		return nil, false, fmt.Errorf("verify cached snapshot: %w", err)
+	if len(h.pinnedKeys) > 0 {
+		if err := Verify(signed, h.pinnedKeys); err != nil {
+			return nil, false, fmt.Errorf("verify cached snapshot: %w", err)
+		}
 	}
 	return &signed, true, nil
 }
@@ -375,6 +388,9 @@ func (h *clientHolder) loadCachedSnapshot() (*SignedSnapshot, bool, error) {
 // Best-effort — failures here log but don't fail the boot path
 // (a fetched-and-installed snapshot is already in memory).
 func (h *clientHolder) writeCachedSnapshot(snap *SignedSnapshot) error {
+	if h.cfg.cachePath == "" {
+		return nil
+	}
 	plaintext, err := json.Marshal(snap)
 	if err != nil {
 		return err
@@ -440,6 +456,41 @@ func (h *clientHolder) pollLoop(ctx context.Context) {
 			_ = h.writeCachedSnapshot(snap)
 		}
 	}
+}
+
+// startClientDevWarningLoop fires a SEV1 log line every 60s while
+// the client is running in dev mode (NEXUS_CONFIG_DEV=1).
+// Mirrors the server's warning loop — operators see it loud in
+// journalctl / container logs so an accidental ship-to-prod with
+// missing SignerKey or CachePath is obvious instead of silent.
+func startClientDevWarningLoop(ctx context.Context, h *clientHolder) {
+	if os.Getenv(devEnv) != "1" {
+		return
+	}
+	go func() {
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				var degraded []string
+				if len(h.pinnedKeys) == 0 {
+					degraded = append(degraded, "signature verification OFF")
+				}
+				if h.cfg.cachePath == "" {
+					degraded = append(degraded, "cache OFF (offline-boot disabled)")
+				}
+				if len(degraded) == 0 {
+					return
+				}
+				fmt.Fprintf(os.Stderr,
+					"config.Client: SEV1 — running with NEXUS_CONFIG_DEV=1 (%s); harden before shipping to prod\n",
+					strings.Join(degraded, ", "))
+			}
+		}
+	}()
 }
 
 // silence unused-import warning while phase-1 boot wiring is
