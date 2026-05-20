@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -252,10 +253,25 @@ func (s *serverState) snapshotFor(app, profile string) (*SignedSnapshot, error) 
 	}
 	s.mu.RUnlock()
 
-	// Verify policy permits (app, profile).
+	// Verify policy permits (app, profile). The error message
+	// lists what IS available — operators see "app=oats-admin
+	// missing; declared apps: [oats]" instead of having to
+	// re-check the YAML by hand. Identity ↔ filename mapping is
+	// a common confusion (Identity = file prefix, Profile =
+	// inner section), so being explicit here is worth the bytes.
 	policy, ok := s.cfg.apps[app]
 	if !ok {
-		return nil, fmt.Errorf("app %q not declared", app)
+		declared := make([]string, 0, len(s.cfg.apps))
+		for name := range s.cfg.apps {
+			if name == "_common" {
+				continue
+			}
+			declared = append(declared, name)
+		}
+		sort.Strings(declared)
+		return nil, fmt.Errorf(
+			"app %q not declared (Identity must be the file prefix — declared apps: %v)",
+			app, declared)
 	}
 	if len(policy.Profiles) > 0 {
 		permitted := false
@@ -266,7 +282,9 @@ func (s *serverState) snapshotFor(app, profile string) (*SignedSnapshot, error) 
 			}
 		}
 		if !permitted {
-			return nil, fmt.Errorf("profile %q not permitted for app %q", profile, app)
+			return nil, fmt.Errorf(
+				"profile %q not permitted for app %q — declared profiles: %v",
+				profile, app, policy.Profiles)
 		}
 	}
 
