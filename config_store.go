@@ -303,6 +303,20 @@ func configConvertAny[T any](raw any) (T, error) {
 			return any(d).(T), nil
 		}
 	}
+	// String target with non-string source — JSON's number→string
+	// rule disallows the natural unmarshal here, so route everything
+	// non-trivial through fmt.Sprint. Picks up unquoted yaml ints
+	// (port: 5472) + bools (debug: true) + floats. Also routes
+	// through configConvertString so int/bool/float string targets
+	// get the same parsing logic env-var values do.
+	if _, isStr := any(zero).(string); isStr {
+		switch v := raw.(type) {
+		case string:
+			return any(v).(T), nil
+		case bool, int, int64, int32, float64, float32, uint, uint64:
+			return any(fmt.Sprint(v)).(T), nil
+		}
+	}
 	// JSON round-trip for everything else.
 	body, err := json.Marshal(raw)
 	if err != nil {
@@ -310,6 +324,13 @@ func configConvertAny[T any](raw any) (T, error) {
 	}
 	var out T
 	if err := json.Unmarshal(body, &out); err != nil {
+		// Last-resort: if the target is a numeric/bool primitive
+		// and raw was a string ("5472"), parse via the same logic
+		// as the env-var path. Symmetric with the string-target
+		// branch above.
+		if s, ok := raw.(string); ok {
+			return configConvertString[T](s)
+		}
 		return zero, err
 	}
 	return out, nil
