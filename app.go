@@ -97,27 +97,14 @@ type App struct {
 	introspect        bool
 	introspectionNets []*net.IPNet
 
-	// deployment is the unit name this binary boots as (from
-	// Config.Deployment / NEXUS_DEPLOYMENT). "" = monolith. Today only
-	// surfaced on /__nexus/config; future codegen'd clients will
-	// consult it to choose local-shortcut vs HTTP for cross-module calls.
-	deployment string
-
 	// environment is the named target this binary is booting into,
 	// resolved from Config.Environment / NEXUS_ENVIRONMENT / default
 	// ("production"). Drives the per-environment Override merge at
 	// fx.Start; surfaced on /__nexus/config.
 	environment string
-	// version is stamped on /__nexus/config so peer services in a split
-	// deployment can detect version skew. Defaults to "dev" via newApp
+	// version is the binary's release tag. Defaults to "dev" via newApp
 	// when the user doesn't pass one.
 	version string
-
-	// topology is the peer table consulted by codegen'd remote clients
-	// to resolve URL/Timeout/Auth/MinVersion/Retries by DeployAs tag.
-	// Populated from Config.Topology (or WithTopology). Empty Peers
-	// map = monolith — no peer lookups happen.
-	topology Topology
 
 	// wsEndpoints holds the per-path WebSocket state created by AsWS.
 	// Multiple AsWS calls on the same path share one endpoint — the first
@@ -186,15 +173,12 @@ type App struct {
 // endpoints/services on, but listeners aren't bound until Run is
 // invoked (either nexus.Run or App.Run for direct callers).
 func New(cfg Config) *App {
-	cfg = resolveConfig(cfg)
-
 	traceCapacity := cfg.TraceCapacity
 	if traceCapacity == 0 && cfg.Dashboard.Enabled {
 		// 1024 events covers a few hundred requests in a typical dev
 		// session; user override via Config.TraceCapacity.
 		traceCapacity = 1024
 	}
-	deployment := cfg.Deployment
 
 	dashboardName := cfg.Dashboard.Name
 	if dashboardName == "" {
@@ -234,9 +218,7 @@ func New(cfg Config) *App {
 		engine:        engine,
 		dashboardName: dashboardName,
 		version:       version,
-		deployment:    deployment,
 		environment:   cfg.Environment,
-		topology:      cfg.Topology,
 		graphqlPath:   cfg.GraphQL.Path,
 		dashboardOn:   cfg.Dashboard.Enabled,
 		cacheMgr:      cfg.Stores.Cache,
@@ -365,7 +347,6 @@ func New(cfg Config) *App {
 		dashboard.Mount(a.engine, a.registry, a.bus, a.cronSched, a.rlStore, a.metricsStore, a.liveNotifier, a.gqlStats, dashboard.Config{
 			Name:       a.dashboardName,
 			Middleware: a.dashboardMw,
-			Deployment: a.deployment,
 			Version:    a.version,
 			// Manifest closure builds against the live *App on every
 			// request — same Build() path print mode and `nexus build
@@ -427,13 +408,6 @@ func New(cfg Config) *App {
 		clientCfg := client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection)
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
 	}
-
-	// Cross-module + remote-service registrations from codegen'd
-	// init() blocks. Has to run after New so app.registry exists;
-	// before fx start so the dashboard's first /__nexus/endpoints
-	// poll already includes every peer module.
-	a.applyRemoteServicePlaceholders()
-	a.applyCrossModuleDeps()
 
 	// CORS lands first so preflights short-circuit before rate
 	// limiting eats the budget; cross-origin OPTIONS shouldn't
@@ -526,39 +500,15 @@ func (a *App) SetClientAuthInfo(fn func() client.ExtractorInfo) {
 func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
 func (a *App) RateLimiter() ratelimit.Store { return a.rlStore }
 
-// Deployment is the deployment-unit name this binary boots as, or "" for
-// monolith. Read by future cross-module clients to choose the in-process
-// shortcut over HTTP.
-func (a *App) Deployment() string { return a.deployment }
-
 // Environment returns the resolved environment name ("production",
 // "staging", "preview", ...) the binary is booting into. Set from
-// Config.Environment or NEXUS_ENVIRONMENT; never empty (resolveConfig
-// normalizes to "production" when neither is supplied).
+// Config.Environment or NEXUS_ENVIRONMENT; never empty.
 func (a *App) Environment() string { return a.environment }
 
 // Version is the binary's release tag, defaulting to "dev". Surfaced on
-// /__nexus/config so generated clients can detect peer-version skew.
+// /__nexus/config.
 func (a *App) Version() string { return a.version }
 
-// Peer returns the topology binding for the given DeployAs tag.
-// Generated remote clients call this at construction time to resolve
-// the peer's URL/Timeout/Auth/MinVersion/Retries. The second return is
-// false when the tag isn't declared in Config.Topology — codegen'd
-// factories use that signal to fail fast with a precise error message.
-func (a *App) Peer(tag string) (Peer, bool) {
-	if a.topology.Peers == nil {
-		return Peer{}, false
-	}
-	p, ok := a.topology.Peers[tag]
-	return p, ok
-}
-
-// Topology returns the configured peer table. Read-only — modifying
-// the returned map would not retroactively rewire already-constructed
-// clients. Used by the dashboard and by health-check loops that probe
-// every declared peer.
-func (a *App) Topology() Topology { return a.topology }
 func (a *App) Metrics() metrics.Store       { return a.metricsStore }
 func (a *App) Cache() *cache.Manager        { return a.cacheMgr }
 

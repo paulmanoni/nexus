@@ -1,3 +1,0 @@
-deployments:
-  monolith:
-    port: 8080

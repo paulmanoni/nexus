@@ -181,7 +181,6 @@ func TestAsCRUD_FxInjectedResolverAttachesResources(t *testing.T) {
 // ops outside any module card.
 func TestAsCRUD_TagsEndpointsWithModule(t *testing.T) {
 	mod := Module("ascrud_tagged",
-		DeployAs("notes-svc"),
 		Provide(func(app *App) *Service { return app.Service("notes-tagged") }),
 		AsCRUD[AscrudNote](MemoryResolver[AscrudNote](nil, nil), WithGraphQL()),
 	)
@@ -198,9 +197,6 @@ func TestAsCRUD_TagsEndpointsWithModule(t *testing.T) {
 	for _, e := range eps {
 		if e.Module != "ascrud_tagged" {
 			t.Errorf("%s %s: Module=%q, want %q", e.Method, e.Path, e.Module, "ascrud_tagged")
-		}
-		if e.Deployment != "notes-svc" {
-			t.Errorf("%s %s: Deployment=%q, want %q", e.Method, e.Path, e.Deployment, "notes-svc")
 		}
 	}
 }
