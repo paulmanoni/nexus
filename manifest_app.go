@@ -31,13 +31,13 @@ import (
 type manifestStore struct {
 	mu sync.Mutex
 
-	envs        []manifest.EnvVar
-	services    []manifest.ServiceNeed
-	volumes     []manifest.Volume
-	tasks       []manifest.StartupTask
-	envProvs    []manifest.EnvProvider
-	svcProvs    []manifest.ServiceDependencyProvider
-	volProvs    []manifest.VolumeProvider
+	envs     []manifest.EnvVar
+	services []manifest.ServiceNeed
+	volumes  []manifest.Volume
+	tasks    []manifest.StartupTask
+	envProvs []manifest.EnvProvider
+	svcProvs []manifest.ServiceDependencyProvider
+	volProvs []manifest.VolumeProvider
 
 	// inputs surface (v0.39+) — additive declarations the orchestration
 	// platform consumes. Empty for apps that haven't adopted the cloud
@@ -421,7 +421,6 @@ func (a *App) manifestInputs() manifest.Inputs {
 	in := manifest.Inputs{
 		Name:             a.dashboardName,
 		Version:          a.version,
-		Deployment:       a.deployment,
 		Ports:            collectPorts(a.listeners),
 		EnvProviders:     envProvs,
 		ServiceProviders: svcProvs,

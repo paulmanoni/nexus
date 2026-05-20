@@ -1,7 +1,6 @@
 package nexus
 
 import (
-	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -130,100 +129,3 @@ func mountHealth(e *gin.Engine, h *healthState) {
 	})
 }
 
-// peerProber polls every declared peer's /__nexus/health endpoint at
-// the configured interval and records reachability into healthState.
-// The active deployment's own entry is skipped — a binary doesn't
-// probe itself (the loopback succeeds trivially and the entry is a
-// placeholder that points at the listener bound to this process).
-//
-// The prober runs as a single goroutine — peer count is small (one
-// per deployment unit, typically a handful) so we don't fan out per
-// peer. ctx cancellation stops the loop on fx Stop.
-type peerProber struct {
-	topology   Topology
-	deployment string // active unit; skipped from probing
-	state      *healthState
-	httpClient *http.Client
-	interval   time.Duration
-}
-
-func newPeerProber(topology Topology, deployment string, state *healthState) *peerProber {
-	return &peerProber{
-		topology:   topology,
-		deployment: deployment,
-		state:      state,
-		httpClient: &http.Client{Timeout: 2 * time.Second},
-		interval:   5 * time.Second,
-	}
-}
-
-// run probes every peer once immediately, then on the prober's
-// interval until ctx is cancelled. The first probe runs synchronously
-// before returning so /__nexus/ready can answer truthfully on the
-// first request after fx Start finishes.
-func (p *peerProber) run(ctx context.Context) {
-	if p == nil || len(p.topology.Peers) == 0 {
-		return
-	}
-	// Seed every non-self peer as "not ready" so /__nexus/ready
-	// reports accurately even before the first probe completes — the
-	// JSON body lists them as not-yet-probed rather than missing.
-	for tag := range p.topology.Peers {
-		if tag == p.deployment {
-			continue
-		}
-		p.state.recordPeer(tag, false, "not yet probed")
-	}
-	p.probeAll(ctx)
-	t := time.NewTicker(p.interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			p.probeAll(ctx)
-		}
-	}
-}
-
-// probeAll fires one HTTP GET per peer in parallel and records the
-// result. Probes the first replica URL — health is a per-deployment
-// property (every replica of a unit ships the same binary), so one
-// probe is sufficient. Failures (network error, non-200) mark the
-// peer not ready with the reason string for the JSON body.
-func (p *peerProber) probeAll(ctx context.Context) {
-	var wg sync.WaitGroup
-	for tag, peer := range p.topology.Peers {
-		if tag == p.deployment || len(peer.URLs) == 0 {
-			continue
-		}
-		wg.Add(1)
-		go func(tag, baseURL string) {
-			defer wg.Done()
-			p.probeOne(ctx, tag, baseURL)
-		}(tag, peer.URLs[0])
-	}
-	wg.Wait()
-}
-
-func (p *peerProber) probeOne(ctx context.Context, tag, baseURL string) {
-	probeCtx, cancel := context.WithTimeout(ctx, p.httpClient.Timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, baseURL+dashboard.Prefix+"/health", nil)
-	if err != nil {
-		p.state.recordPeer(tag, false, err.Error())
-		return
-	}
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		p.state.recordPeer(tag, false, err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		p.state.recordPeer(tag, false, http.StatusText(resp.StatusCode))
-		return
-	}
-	p.state.recordPeer(tag, true, "")
-}

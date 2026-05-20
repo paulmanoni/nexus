@@ -87,7 +87,7 @@ func printManifestAndExitIfRequested(cfg Config, opts []Option) {
 	// listeners bind (registerLifecycle's OnStart never fires because
 	// fx.Populate doesn't fire lifecycle hooks), so the engine is
 	// just a registry-of-routes, never a server.
-	all := append([]fx.Option{fxEarlyOptions(cfg), autoClientOptions()}, unwrap(opts)...)
+	all := append([]fx.Option{fxEarlyOptions(cfg)}, unwrap(opts)...)
 	all = append(all, fxLateOptions())
 
 	// Drop the lifecycle invoke from fxEarlyOptions if it ever grows

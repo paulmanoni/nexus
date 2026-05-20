@@ -38,13 +38,6 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 	// reachable on the one listener as before.
 	scopeFilterOn := len(app.listeners) > 0
 
-	// Peer prober runs in the background while the app is alive, polling
-	// every declared peer's /__nexus/health to keep readiness honest in
-	// split deployments. Started in OnStart, stopped in OnStop via
-	// proberCancel — captured here so the closure can refer to a stable
-	// cancel func even when the prober isn't started (no peers).
-	var proberCancel context.CancelFunc
-
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			// Startup tasks run BEFORE listener bind. Migrations are
@@ -123,14 +116,6 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 			// Liveness flips after the listeners are up — premature true
 			// would let an LB route traffic before Serve actually accepts.
 			app.health.setAlive(true)
-			// Spawn the peer prober only when there's something to probe
-			// (declared peers other than self). Skip in monolith.
-			if hasRemotePeers(app.topology, app.deployment) {
-				proberCtx, cancel := context.WithCancel(context.Background())
-				proberCancel = cancel
-				prober := newPeerProber(app.topology, app.deployment, app.health)
-				go prober.run(proberCtx)
-			}
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
@@ -138,9 +123,6 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 			// pulling readiness during drain sees not-ready and stops
 			// sending new traffic.
 			app.health.setAlive(false)
-			if proberCancel != nil {
-				proberCancel()
-			}
 			app.cronSched.Stop()
 			var firstErr error
 			for _, s := range servers {
@@ -151,21 +133,6 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 			return firstErr
 		},
 	})
-}
-
-// hasRemotePeers reports whether topology declares any peer other than
-// the active deployment. Drives the prober's start gate — a monolith
-// (no Topology, or Topology with only self) has nothing to probe.
-func hasRemotePeers(topology Topology, deployment string) bool {
-	for tag, peer := range topology.Peers {
-		if tag == deployment {
-			continue
-		}
-		if len(peer.URLs) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // resolvedListener is one bound listener with its name and scope ready

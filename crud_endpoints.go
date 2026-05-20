@@ -239,14 +239,6 @@ func (g *optionGroupT) setRestPrefix(prefix string) {
 	}
 }
 
-func (g *optionGroupT) setDeployment(tag string) {
-	for _, c := range g.children {
-		if da, ok := c.(deploymentAnnotator); ok {
-			da.setDeployment(tag)
-		}
-	}
-}
-
 func optionGroup(opts ...Option) Option {
 	fxOpts := make([]fx.Option, 0, len(opts))
 	kept := make([]Option, 0, len(opts))

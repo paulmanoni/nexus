@@ -1,8 +1,6 @@
 package nexus
 
 import (
-	"context"
-	"os"
 	"time"
 
 	"github.com/paulmanoni/nexus/extension/cache"
@@ -105,19 +103,6 @@ type Config struct {
 	//	}
 	Stores StoreConfig
 
-	// Deployment names the deployment unit this binary runs as. Empty
-	// = monolith mode (every module is local — current behavior).
-	// When set, the framework knows which DeployAs-tagged modules are
-	// "local" vs "remote" so future codegen'd clients can pick the
-	// in-process or HTTP path accordingly. Today this field is
-	// metadata only — surfaced on /__nexus/config so the dashboard
-	// can render the active deployment.
-	//
-	// Convention: pass DeploymentFromEnv() in main() so a single
-	// binary can boot as different units across environments without
-	// recompiling.
-	Deployment string
-
 	// Environment is the named target the binary is booting into —
 	// "production", "staging", "preview", etc. Distinct from
 	// Deployment (which is the topology unit, e.g. "users-svc"):
@@ -186,27 +171,6 @@ type Config struct {
 	// deploys, prefer a separate internal listener bound to the
 	// loopback / VPN interface (Server.Listeners with ScopeAdmin).
 	IntrospectionNetworks []string
-
-	// Topology declares the peer table for split deployments — one
-	// entry per DeployAs tag the binary calls into. Codegen'd clients
-	// look up the active peer here at construction time instead of
-	// reading hard-coded env vars (USERS_SVC_URL, etc.), so peer URLs,
-	// timeouts, auth, and version floors live in one declarative place.
-	//
-	// Empty is the monolith default — every module is local, no peer
-	// lookups happen. When non-empty in split mode, the active
-	// Deployment must be a key in Peers (Run fails fast otherwise).
-	//
-	//	nexus.Config{
-	//	    Deployment: "checkout-svc",
-	//	    Topology: nexus.Topology{
-	//	        Peers: map[string]nexus.Peer{
-	//	            "users-svc":    {URL: os.Getenv("USERS_SVC_URL"), Timeout: 2 * time.Second},
-	//	            "checkout-svc": {},
-	//	        },
-	//	    },
-	//	}
-	Topology Topology
 }
 
 // DashboardConfig groups the /__nexus surface knobs. Both fields
@@ -420,78 +384,4 @@ type GraphQLConfig struct {
 	DocumentCacheSize int
 }
 
-// Topology is the peer table for cross-module HTTP calls in a split
-// deployment. Each entry names a deployment unit (matching a
-// DeployAs tag) and binds the transport details for reaching it.
-type Topology struct {
-	// Peers is keyed by DeployAs tag. The active deployment's own
-	// entry is permitted (URL is ignored for the active unit since
-	// it's never called over HTTP from itself); a placeholder entry
-	// keeps the map a complete inventory of every unit in the
-	// deployment, which is convenient for dashboards and validation.
-	Peers map[string]Peer
-}
 
-// Peer is the per-deployment binding consumed by codegen'd remote
-// clients. Every field is optional — zero values map to the
-// framework's default behavior for that knob.
-type Peer struct {
-	// URLs is the replica list for this peer. The runtime round-
-	// robins across entries and passively ejects any replica that
-	// returns transport errors / 5xx for a cooldown window — single-
-	// replica peers just declare a one-element slice.
-	//
-	//	"users-svc": {URLs: []string{
-	//	    "http://users-1.cluster.local:8080",
-	//	    "http://users-2.cluster.local:8080",
-	//	    "http://users-3.cluster.local:8080",
-	//	}},
-	//
-	// Required when the active deployment is not this peer's tag;
-	// ignored for the active peer's own entry.
-	URLs []string
-
-	// Timeout caps each remote call. Zero falls back to the
-	// RemoteCaller default (30s). Recommended: set to your
-	// infrastructure-level timeout minus a small slack so client-side
-	// errors fire before any LB resets the connection.
-	Timeout time.Duration
-
-	// Auth is invoked once per remote call to produce an
-	// Authorization header value (e.g. "Bearer <token>"). Returning
-	// an error aborts the call. Nil disables explicit auth — the
-	// default forwarding propagator still threads the inbound
-	// Authorization header from the request context, so most
-	// edge-token flows work without setting this.
-	Auth func(ctx context.Context) (string, error)
-
-	// MinVersion is the lowest peer Version (read from the peer's
-	// /__nexus/config) accepted on the first call. When non-empty
-	// it replaces the local-binary version as the comparison floor
-	// in the existing skew-probe path. Empty disables the floor and
-	// falls back to comparing against the local binary's Version.
-	// Soft-fail: a mismatch logs a single warning line and the call
-	// proceeds, same as today's WithLocalVersion behavior.
-	MinVersion string
-
-	// Retries caps the number of automatic retries on transport
-	// errors (connection reset, timeout, DNS failure). Only
-	// idempotent verbs (GET, HEAD, PUT, DELETE, OPTIONS, TRACE)
-	// retry — POST and PATCH never do, regardless of this value.
-	// Zero disables retries entirely. Backoff between attempts is
-	// 50ms * 2^n with full jitter.
-	Retries int
-}
-
-// DeploymentFromEnv reads NEXUS_DEPLOYMENT. The single-binary, multi-shape
-// pattern: the same compiled binary boots as different deployment units
-// based on the env var alone — no rebuild, no flags. Returns "" when
-// unset, which the framework treats as monolith mode.
-//
-//	func main() {
-//	    nexus.Run(nexus.Config{
-//	        Deployment: nexus.DeploymentFromEnv(),
-//	        // ...
-//	    }, allModules...)
-//	}
-func DeploymentFromEnv() string { return os.Getenv(nexusDeploymentEnv) }

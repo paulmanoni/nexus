@@ -39,16 +39,12 @@ func findViteConfig(frontendDir string) string {
 
 // newDevCmd builds `nexus dev` — runs `go run` on the target package
 // with a startup banner and auto-opens the dashboard once the configured
-// port responds. With --split, boots one subprocess per nexus.DeployAs
-// tag instead, wiring peer URLs between them so cross-module calls go
-// over real HTTP. Cobra wraps the runner.
+// port responds. Cobra wraps the runner.
 func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		addr        string
 		noOpen      bool
 		openDash    bool
-		split       bool
-		basePort    int
 		tui         bool
 		noWatch     bool
 		frontendDir string
@@ -64,26 +60,12 @@ auto-open the dashboard once the listen port responds.
 
 Use this instead of 'go run .' when you want one-command iteration. The
 dev runner kills the entire process group on SIGINT/SIGTERM so the
-compiled binary doesn't survive Ctrl-C as a zombie.
-
-With --split: discover every nexus.DeployAs(tag) declaration and boot
-one subprocess per tag. Each subprocess gets a unique PORT and an
-NEXUS_DEPLOYMENT env var; peer URLs are auto-wired via <TAG>_URL so
-the codegen'd cross-module clients hit the right peer over real HTTP.
-
-Your main() must read PORT to honor the assignment — see
-examples/microsplit for the convention.`,
+compiled binary doesn't survive Ctrl-C as a zombie.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			target := "."
 			if len(args) > 0 {
 				target = args[0]
-			}
-			if split && tui {
-				return errSplitTUI
-			}
-			if split {
-				return runDevSplit(target, basePort, stdout, stderr)
 			}
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
@@ -92,15 +74,11 @@ examples/microsplit for the convention.`,
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
-		"dashboard address to probe and open (single-process mode)")
+		"dashboard address to probe and open")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false,
 		"don't auto-open the browser when the port responds")
 	cmd.Flags().BoolVar(&openDash, "open-dash", false,
 		"open the /__nexus/ admin dashboard instead of the app's root URL")
-	cmd.Flags().BoolVar(&split, "split", false,
-		"boot one subprocess per nexus.DeployAs tag (split mode)")
-	cmd.Flags().IntVar(&basePort, "base-port", 8080,
-		"first port to assign in --split mode (subsequent units take +1, +2, ...)")
 	cmd.Flags().BoolVar(&tui, "tui", false,
 		"interactive Bubble Tea UI: log pane + restart hotkey + ready indicator")
 	cmd.Flags().BoolVar(&noWatch, "no-watch", false,
@@ -122,12 +100,6 @@ examples/microsplit for the convention.`,
 // flag is mostly a fallback for non-nexus apps; users running plain
 // nexus apps don't need to set it.
 const defaultDevAddr = ":8080"
-
-// errSplitTUI surfaces when both --tui and --split are passed. The
-// TUI takes over the whole terminal and assumes one child stream;
-// driving N subprocesses through it would shred the layout. Refuse
-// up front rather than silently degrading.
-var errSplitTUI = &userError{"--tui and --split are mutually exclusive (try --split alone with the prefixed log streams)"}
 
 type userError struct{ msg string }
 
@@ -161,33 +133,17 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// embed roots fall through to the explicit-flag path.
 	if frontendDir == "" {
 		root, _ := os.Getwd()
-		pkgDir, _ := devMainPackageDir(root, target)
+		pkgDir := filepath.Join(root, target)
 		if d := detectFrontendDir(pkgDir); d != "" {
 			frontendDir = d
 			fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
 		}
 	}
 
-	// Manifest-aware codegen has to run before the vite proxy
-	// injection — the proxy target needs the deployment's actual
-	// listen port (from nexus.deploy.yaml's `port:`), not the
-	// --addr flag's default :8080. Without this the SPA on :5173
-	// proxies /__nexus to :8080 while the binary bound on :9590,
-	// breaking every framework call from the dev frontend.
-	overlayPath, devDeployment, manifestAddr, manifestErr := prepareDevOverlay(target)
-	if manifestErr != nil {
-		fmt.Fprintf(stderr, "manifest codegen skipped: %v\n", manifestErr)
-	}
-	// proxyAddr is what we feed into the vite proxy + readiness
-	// banner. Manifest wins because that's what the binary will
-	// actually bind to; --addr is the fallback for projects with
-	// no manifest. The user's explicit --addr is left alone for
-	// the probe loop in waitAndOpen — addrFinder still catches the
-	// real bind line either way.
+	// Single binary — no manifest-aware overlay. The vite proxy points
+	// at the --addr flag's default :8080 unless the user overrides.
+	overlayPath := ""
 	proxyAddr := addr
-	if manifestAddr != "" {
-		proxyAddr = manifestAddr
-	}
 	// frontendURLCh receives vite's "Local: http://..." URL when the
 	// dev server (non-bundle mode) prints it. Buffered=1 so the
 	// watcher's pump never blocks if no one's listening yet.
@@ -288,16 +244,6 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// restarts skip the open-browser branch (user already has the tab).
 	first := true
 	for {
-		// Refresh the overlay on every restart so manifest edits and
-		// new modules picked up by the watcher land in the next boot.
-		// Skipped when the project has no manifest (overlayPath stays
-		// "" and `go run` runs without -overlay just like before).
-		if !first && manifestErr == nil {
-			if p, _, _, err := prepareDevOverlay(target); err == nil {
-				overlayPath = p
-			}
-		}
-		_ = devDeployment // currently informational; reserved for the banner
 		// Pass the frontend URL channel only on the first boot.
 		// Subsequent Go restarts shouldn't re-open browsers, and the
 		// vite dev server is already running anyway.
