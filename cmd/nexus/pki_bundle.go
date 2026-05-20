@@ -122,5 +122,12 @@ func copyForBundle(src, dst string, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", src, err)
 	}
-	return os.WriteFile(dst, body, perm) // #nosec G306 -- key file MUST be 0o600 (caller passes perm)
+	// perm comes from the caller — 0o600 for the leaf private
+	// key (the only file in the bundle that's actually a secret)
+	// and 0o644 for the two cert files (must be world-readable
+	// so the peer's process can serve them via TLS regardless of
+	// uid). gosec G306 flags any 0o644 generically; the
+	// suppression is correct because the caller has already
+	// classified the file.
+	return os.WriteFile(dst, body, perm) // #nosec G306 -- caller-classified: 0o600 for key, 0o644 for cert
 }
