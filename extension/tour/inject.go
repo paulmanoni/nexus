@@ -34,12 +34,29 @@ func handleDashboard(c *gin.Context) {
 }
 
 // handleInjectJS serves the in-page agent at
-// /__nexus/tour/inject.js. Content-Type is application/javascript
-// and the response is cacheable for a short window — the script
-// is small and changes only on plugin upgrade.
+// /__nexus/tour/inject.js.
+//
+// Cache-Control is no-cache + must-revalidate (NOT no-store): the
+// browser may keep the body, but MUST revalidate via conditional
+// request before reusing it. Two reasons:
+//
+//  1. The script changes between plugin versions; a stale 5-minute
+//     cached body caused the "FAB disappears on Cmd+R, returns on
+//     Cmd+Shift+R" bug — users ran the old script against a
+//     server that expected the new one.
+//
+//  2. No-store would force a full re-download on every page hit;
+//     no-cache + an ETag lets the browser send "are you still
+//     valid?" and get a cheap 304. The body's tiny anyway (~30KB)
+//     but the round-trip-skip is nice.
+//
+// gin's c.String doesn't set an ETag; we don't either — the
+// validator the browser sends is implicit (Last-Modified is set
+// by net/http when ServeContent is used; for raw body writes
+// we accept that no-cache always revalidates fresh).
 func handleInjectJS(c *gin.Context) {
 	c.Header("Content-Type", "application/javascript; charset=utf-8")
-	c.Header("Cache-Control", "public, max-age=300")
+	c.Header("Cache-Control", "no-cache, must-revalidate")
 	c.String(http.StatusOK, injectJS)
 }
 
