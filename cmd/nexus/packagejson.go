@@ -173,7 +173,7 @@ func (p *packageJSON) save(path string) error {
 	buf.WriteString("\n}\n")
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("package.json: mkdir %s: %w", dir, err)
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")

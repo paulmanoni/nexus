@@ -165,7 +165,7 @@ func (f *File) Save(path string) error {
 		return err
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("lockfile: mkdir %s: %w", dir, err)
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")

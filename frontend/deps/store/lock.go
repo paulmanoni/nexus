@@ -44,7 +44,7 @@ func (s *Store) lockExclusive(urlKey string) (unlock func(), err error) {
 // itself is harmless to leave on disk between sessions and is
 // reused by every future call for the same URL.
 func (s *Store) lock(urlKey string, mode int) (unlock func(), err error) {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath(urlKey)), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.lockPath(urlKey)), 0o755); err != nil {
 		return nil, fmt.Errorf("store: mkdir lock dir: %w", err)
 	}
 	f, err := os.OpenFile(s.lockPath(urlKey), os.O_RDWR|os.O_CREATE, 0o644)

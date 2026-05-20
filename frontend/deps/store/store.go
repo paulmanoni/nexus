@@ -83,7 +83,7 @@ type Metadata struct {
 // it doesn't exist. The typical caller passes ~/.nexus/cache (see
 // DefaultRoot below); tests pass a t.TempDir() to stay isolated.
 //
-// The directories are created with 0750 so that a project shared
+// The directories are created with 0o755 so a project shared
 // between users on the same machine (rare but legitimate) can still
 // read entries another user wrote.
 func New(root string) (*Store, error) {
@@ -91,7 +91,7 @@ func New(root string) (*Store, error) {
 		return nil, errors.New("store: root is empty")
 	}
 	for _, sub := range []string{"cas", "url", "lock"} {
-		if err := os.MkdirAll(filepath.Join(root, sub), 0750); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
 			return nil, fmt.Errorf("store: mkdir %s: %w", sub, err)
 		}
 	}
@@ -315,7 +315,7 @@ func (s *Store) metaPath(urlKey string) string {
 // filesystem is one inode update).
 func (s *Store) writeBlobAtomic(hash string, content []byte) (string, error) {
 	dst := s.casPath(hash)
-	if err := os.MkdirAll(filepath.Dir(dst), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", fmt.Errorf("store: mkdir cas shard: %w", err)
 	}
 	// Already-present blob is a hit — return without rewriting. Two

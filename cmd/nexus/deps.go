@@ -325,7 +325,7 @@ func appendShimIfMissing(path, spec string) bool {
 	}
 	out = append(out, []byte(line+"\n")...)
 	// #nosec G703 -- CLI helper writes operator-supplied tsconfig/jsconfig path
-	if err := os.WriteFile(path, out, 0600); err != nil {
+	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return false
 	}
 	return true
@@ -373,7 +373,7 @@ func pruneShimsForResolvedTypes(projectRoot string, specs []string) int {
 		return 0
 	}
 	// #nosec G703 -- CLI helper writes operator-supplied shims path
-	if err := os.WriteFile(shimsPath, []byte(updated), 0600); err != nil {
+	if err := os.WriteFile(shimsPath, []byte(updated), 0o644); err != nil {
 		return 0
 	}
 	return removed
@@ -724,7 +724,7 @@ func runVendor(stdout, stderr io.Writer, outDir string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(outDir, 0750); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("nexus vendor: mkdir %s: %w", outDir, err)
 	}
 

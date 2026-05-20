@@ -31,7 +31,7 @@ func withTempCwd(t *testing.T, build func(dir string)) func() {
 // downstream consumers that try to read it.
 func TestApplyFrontendDefaults_WebLayout(t *testing.T) {
 	defer withTempCwd(t, func(d string) {
-		_ = os.Mkdir(filepath.Join(d, "web"), 0750)
+		_ = os.Mkdir(filepath.Join(d, "web"), 0o755)
 		_ = os.WriteFile(filepath.Join(d, "web", "vite.config.ts"), []byte("//"), 0o644)
 		_ = os.WriteFile(filepath.Join(d, "web", "tsconfig.json"), []byte("{}"), 0o644)
 	})()
@@ -56,7 +56,7 @@ func TestApplyFrontendDefaults_AlternateDirs(t *testing.T) {
 	for _, dirName := range []string{"frontend", "client", "app"} {
 		t.Run(dirName, func(t *testing.T) {
 			defer withTempCwd(t, func(d string) {
-				_ = os.Mkdir(filepath.Join(d, dirName), 0750)
+				_ = os.Mkdir(filepath.Join(d, dirName), 0o755)
 				_ = os.WriteFile(filepath.Join(d, dirName, "vite.config.ts"), []byte("//"), 0o644)
 			})()
 			got := applyFrontendDefaults(Config{Enabled: true})
@@ -89,7 +89,7 @@ func TestApplyFrontendDefaults_NoFrontendDir(t *testing.T) {
 // stays out of the way.
 func TestApplyFrontendDefaults_ExplicitOverrides(t *testing.T) {
 	defer withTempCwd(t, func(d string) {
-		_ = os.Mkdir(filepath.Join(d, "web"), 0750)
+		_ = os.Mkdir(filepath.Join(d, "web"), 0o755)
 		_ = os.WriteFile(filepath.Join(d, "web", "vite.config.ts"), []byte("//"), 0o644)
 		_ = os.WriteFile(filepath.Join(d, "web", "tsconfig.json"), []byte("{}"), 0o644)
 	})()
@@ -145,7 +145,7 @@ func TestApplyVisibilityDefaults(t *testing.T) {
 // nonexistent file. OutDir + ViteConfig still light up.
 func TestApplyFrontendDefaults_TSConfigOnlyWhenPresent(t *testing.T) {
 	defer withTempCwd(t, func(d string) {
-		_ = os.Mkdir(filepath.Join(d, "web"), 0750)
+		_ = os.Mkdir(filepath.Join(d, "web"), 0o755)
 		_ = os.WriteFile(filepath.Join(d, "web", "vite.config.ts"), []byte("//"), 0o644)
 		// no tsconfig.json
 	})()

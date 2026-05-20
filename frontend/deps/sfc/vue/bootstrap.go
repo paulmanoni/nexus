@@ -113,10 +113,10 @@ func Bootstrap(ctx context.Context, opts BootstrapOptions) ([]byte, error) {
 		return nil, fmt.Errorf("vue: bootstrap: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cachedPath), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cachedPath), 0o755); err != nil {
 		return nil, fmt.Errorf("vue: mkdir bundle dir: %w", err)
 	}
-	if err := os.WriteFile(cachedPath, bundle, 0600); err != nil {
+	if err := os.WriteFile(cachedPath, bundle, 0o644); err != nil {
 		return nil, fmt.Errorf("vue: write cached bundle: %w", err)
 	}
 	return bundle, nil

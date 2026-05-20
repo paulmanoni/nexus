@@ -111,7 +111,7 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 			// Still write the import (helpful even if the array edit failed).
 			if changed {
 				// #nosec G703 -- CLI helper writes operator-supplied vite config path
-				if err := os.WriteFile(configPath, []byte(body), 0600); err != nil {
+				if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
 					return fmt.Errorf("write %s: %w", configPath, err)
 				}
 			}
@@ -131,7 +131,7 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 		return nil
 	}
 	// #nosec G703 -- CLI helper writes operator-supplied vite config path
-	if err := os.WriteFile(configPath, []byte(body), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	fmt.Fprintf(stdout, "[nexus] wired auto-select plugin into %s\n", configPath)
@@ -216,7 +216,7 @@ func SyncViteProxyForPrefixes(configPath, apiURL string, prefixes []string, stdo
 		return nil
 	}
 	// #nosec G703 -- CLI helper writes operator-supplied vite config path
-	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	fmt.Fprintf(stdout, "[nexus] synced vite proxy in %s — %d prefix(es), target %s\n",
@@ -432,7 +432,7 @@ func EnsureViteWatchExclude(configPath string, stdout io.Writer) error {
 		return nil
 	}
 	// #nosec G703 -- CLI helper writes operator-supplied vite config path
-	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	fmt.Fprintf(stdout, "[nexus] added build.watch.exclude for auto-imports.d.ts / components.d.ts in %s\n", configPath)

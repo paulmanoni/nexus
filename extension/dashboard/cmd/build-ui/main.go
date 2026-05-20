@@ -183,7 +183,7 @@ func run() error {
 	if err := os.RemoveAll(distDir); err != nil {
 		return fmt.Errorf("clean dist: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(distDir, "assets"), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Join(distDir, "assets"), 0o755); err != nil {
 		return fmt.Errorf("mkdir dist/assets: %w", err)
 	}
 
