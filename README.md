@@ -616,6 +616,7 @@ After restart, every HTML page the app serves carries a floating **● Tour** pi
 | `position: fixed; inset: 0; z-index: 2147483647` | Always on top, even above modal libraries using `z-index: 9999` |
 | `pointer-events: none` on root, `auto` on interactive UI | Host clicks pass through where the plugin isn't actively presenting |
 | Vanilla JS agent (no Vue/React runtime) | Zero conflicts with the host's framework |
+| MutationObserver re-attaches if removed | SPA route swaps, Vue Teleports, Vuetify portals, and `body.innerHTML = …` won't kill the overlay — it self-restores in the next tick |
 
 ### Drive it from the host
 
