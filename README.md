@@ -461,6 +461,10 @@ Resolution priority (highest first):
 2. **Server snapshot** / sealed cache / plaintext local yaml
 3. **Default arg** (or `T`'s zero value)
 
+**Type coercion is permissive.** Unquoted yaml ints + bools coerce both directions — `password: 12345` is readable as `Get[string]` ("12345") or `Get[int]` (12345), and a yaml string `port: "5472"` is readable as `Get[int]` (5472). You don't have to defensively quote every value.
+
+**Snapshot installs before `Run()` begins.** `config.Client(...)` and `config.Local(...)` fetch + install the snapshot synchronously, so `Get` works from every `Provide` constructor, `Invoke`, and any code between the option call and `Run`. Connection lifecycle is loud — watch for `config.Client: connecting to … (app=… profile=…)` followed by `config.Client: snapshot installed (… version=…)` in the boot logs.
+
 ### The server side
 
 ```go
