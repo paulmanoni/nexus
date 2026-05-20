@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -305,7 +306,15 @@ func (h *clientHolder) fetchSnapshot(ctx context.Context) (*SignedSnapshot, erro
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("snapshot fetch: HTTP %d", resp.StatusCode)
+		// Pull the body — the server's error message is what tells
+		// the operator e.g. "app \"oats-admin\" not declared",
+		// useless if we throw it away on the floor.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		msg := strings.TrimSpace(string(body))
+		if msg == "" {
+			return nil, fmt.Errorf("snapshot fetch: HTTP %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("snapshot fetch: HTTP %d — %s", resp.StatusCode, msg)
 	}
 	var signed SignedSnapshot
 	if err := json.NewDecoder(resp.Body).Decode(&signed); err != nil {
