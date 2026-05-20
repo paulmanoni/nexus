@@ -600,13 +600,17 @@ func (a *addrFinder) Write(p []byte) (int, error) {
 // ginListenRE matches the framework's own startup announcement plus
 // gin's debug- and release-mode listening lines:
 //
-//	nexus: listening on :8080                       ← framework (preferred)
+//	nexus: listening on http://:8080                ← framework (preferred)
+//	nexus: listening on :8080                       ← framework (legacy)
 //	[GIN-debug] Listening and serving HTTP on :8080 ← bare-gin user
 //	[GIN] Listening and serving HTTPS on :443
 //
 // First match wins — the framework line lands earlier and reports
-// the actual bound address even when the user passed :0.
-var ginListenRE = regexp.MustCompile(`(?:nexus: listening on|Listening and serving (?:HTTP|HTTPS) on) (\S+)`)
+// the actual bound address even when the user passed :0. The
+// optional scheme prefix on the framework line is stripped via the
+// non-capturing group so the (\S+) we keep is always a bare
+// host:port that clientURL / dashboardURL can prepend "http://" to.
+var ginListenRE = regexp.MustCompile(`(?:nexus: listening on|Listening and serving (?:HTTP|HTTPS) on) (?:https?://)?(\S+)`)
 
 // --- terminal styling ---
 //
