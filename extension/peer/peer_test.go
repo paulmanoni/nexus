@@ -62,16 +62,33 @@ func roundTripFixture(t *testing.T) (*Registry, func()) {
 		authMode: AuthNone,
 		schemas:  newSchemaCache(),
 		peers: map[string]*peerConn{
-			"target": {
-				name:       "target",
-				url:        srv.URL,
-				httpClient: srv.Client(), // already trusts the test cert
-				sem:        make(chan struct{}, 8),
-			},
+			"target": newTestPeerConn("target", srv.URL, srv.Client()),
 		},
 	}
-	reg.peers["target"].ready.Store(true)
 	return reg, srv.Close
+}
+
+// newTestPeerConn builds a single-target peerConn for tests. Hides
+// the targets-slice + sync.RWMutex plumbing so test bodies stay
+// focused on the behavior they exercise, not the internal shape.
+func newTestPeerConn(name, url string, httpClient *http.Client) *peerConn {
+	pc := &peerConn{
+		name:       name,
+		httpClient: httpClient,
+		sem:        make(chan struct{}, 8),
+		targets:    []*peerTarget{{url: url}},
+	}
+	pc.targets[0].ready.Store(true)
+	return pc
+}
+
+// setReady is a tiny helper for tests that want to flip every
+// target's ready flag in lockstep — the simulated up/down state
+// transitions the rc3 tests drove via pc.ready.Store directly.
+func setReady(pc *peerConn, up bool) {
+	for _, t := range pc.snapshotTargets() {
+		t.ready.Store(up)
+	}
 }
 
 type echoArgs struct {
@@ -160,7 +177,7 @@ func TestCall_FastFailWhenPeerDown(t *testing.T) {
 	reg, stop := roundTripFixture(t)
 	defer stop()
 
-	reg.peers["target"].ready.Store(false)
+	setReady(reg.peers["target"], false)
 
 	start := time.Now()
 	_, err := Call[struct{}](context.Background(), reg, "target", "anything", nil)
@@ -400,35 +417,29 @@ func TestProber_FlipsReadyOnFailure(t *testing.T) {
 	r := &Registry{
 		schemas: newSchemaCache(),
 		peers: map[string]*peerConn{
-			"target": {
-				name:       "target",
-				url:        srv.URL,
-				httpClient: srv.Client(),
-				sem:        make(chan struct{}, 8),
-			},
+			"target": newTestPeerConn("target", srv.URL, srv.Client()),
 		},
 	}
-	r.peers["target"].ready.Store(true)
 
 	// Drive probeOnce directly rather than spinning up the full
 	// prober loop — that path is what we want to exercise (and
 	// it's deterministic), without sleeping through 10s
 	// proberInterval ticks just to observe the state machine.
 	probeOnce(context.Background(), r, r.peers["target"])
-	if !r.peers["target"].ready.Load() {
-		t.Fatal("ready=false after healthy probe; should be true")
+	if !r.peers["target"].anyReady() {
+		t.Fatal("anyReady=false after healthy probe; should be true")
 	}
 
 	healthy.Store(false)
 	probeOnce(context.Background(), r, r.peers["target"])
-	if r.peers["target"].ready.Load() {
-		t.Fatal("ready=true after 503; should be false")
+	if r.peers["target"].anyReady() {
+		t.Fatal("anyReady=true after 503; should be false")
 	}
 
 	healthy.Store(true)
 	probeOnce(context.Background(), r, r.peers["target"])
-	if !r.peers["target"].ready.Load() {
-		t.Fatal("ready=false after recovery; should be true")
+	if !r.peers["target"].anyReady() {
+		t.Fatal("anyReady=false after recovery; should be true")
 	}
 }
 
@@ -442,10 +453,9 @@ func TestProber_ResetsSchemaOnDownTransition(t *testing.T) {
 	r := &Registry{
 		schemas: newSchemaCache(),
 		peers: map[string]*peerConn{
-			"target": {name: "target"},
+			"target": newTestPeerConn("target", "https://unused", nil),
 		},
 	}
-	r.peers["target"].ready.Store(true)
 	// Prime the schema cache.
 	r.schemas.schemas["target"] = &PeerSchema{Identity: "target"}
 
@@ -455,7 +465,7 @@ func TestProber_ResetsSchemaOnDownTransition(t *testing.T) {
 	}
 
 	// Re-prime; an up→up transition shouldn't reset.
-	r.peers["target"].ready.Store(true)
+	setReady(r.peers["target"], true)
 	r.schemas.schemas["target"] = &PeerSchema{Identity: "target"}
 	flipReady(r, r.peers["target"], true)
 	if _, ok := r.schemas.schemas["target"]; !ok {
@@ -472,7 +482,7 @@ func TestProber_ResetsSchemaOnDownTransition(t *testing.T) {
 // New-required-field case: peer's schema requires Currency that
 // the caller doesn't send.
 type driftV1Args struct {
-	UserID  string `json:"userId" validate:"required"`
+	UserID  string   `json:"userId" validate:"required"`
 	ItemIDs []string `json:"itemIds" validate:"required"`
 }
 type driftV2Args struct {
@@ -605,12 +615,11 @@ func TestDashboard_PeerListIncludesEveryPeer(t *testing.T) {
 		identity: "self",
 		schemas:  newSchemaCache(),
 		peers: map[string]*peerConn{
-			"alpha": {name: "alpha", url: "https://alpha:1", sem: make(chan struct{}, 4)},
-			"beta":  {name: "beta", url: "https://beta:2", sem: make(chan struct{}, 4)},
+			"alpha": newTestPeerConn("alpha", "https://alpha:1", nil),
+			"beta":  newTestPeerConn("beta", "https://beta:2", nil),
 		},
 	}
-	r.peers["alpha"].ready.Store(true)
-	r.peers["beta"].ready.Store(false)
+	setReady(r.peers["beta"], false)
 	// Prime alpha's schema cache so we can assert the
 	// SchemaCached flag flips per peer, not in aggregate.
 	r.schemas.schemas["alpha"] = &PeerSchema{Identity: "alpha"}

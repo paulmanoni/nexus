@@ -9,35 +9,52 @@ import (
 
 // PeerStatus is the wire shape served at GET /__nexus/peer/list —
 // one entry per declared peer with everything the dashboard's
-// Peers tab needs to render a row: identity, URL, current health,
-// and the in-flight call count (derived from the semaphore's
-// fullness).
+// Peers tab needs to render a row.
 //
-// Last error / latency stats are intentionally TODO for the first
-// dashboard pass; they need a rolling-window structure the
-// peerConn doesn't carry today. Adding them is a backfill on the
-// peerConn struct, not a dashboard-side change.
+// Targets is the per-replica detail: SRV-resolved peers may have
+// 1..N targets; URL-only peers always have exactly one. The
+// Healthy field at the peer level is true when at least one
+// target is currently reachable (matches Registry.IsHealthy).
 type PeerStatus struct {
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	Healthy   bool   `json:"healthy"`
-	InFlight  int    `json:"in_flight"` // calls currently holding a semaphore slot
-	SemBudget int    `json:"sem_budget"`
-	SchemaCached bool `json:"schema_cached"`
-	LastSeen  string `json:"last_seen,omitempty"` // RFC3339; "" before any probe
+	Name         string         `json:"name"`
+	Healthy      bool           `json:"healthy"`     // true when at least one target is up
+	Targets      []TargetStatus `json:"targets"`     // per-replica detail; always >= 1 in steady state
+	InFlight     int            `json:"in_flight"`   // calls currently holding a semaphore slot
+	SemBudget    int            `json:"sem_budget"`
+	SchemaCached bool           `json:"schema_cached"`
+}
+
+// TargetStatus is one row in PeerStatus.Targets — one URL +
+// current ready flag. Per-target latency / error history is
+// still TODO (rolling window backfill on peerTarget); the
+// dashboard renders "online/offline" only for now.
+type TargetStatus struct {
+	URL     string `json:"url"`
+	Healthy bool   `json:"healthy"`
 }
 
 // snapshotPeers walks the registry's peer map and produces one
 // PeerStatus per peer. Snapshot semantics: each row's Healthy /
-// InFlight values reflect a single moment in time; the dashboard
-// frontend polls (or subscribes via live updates) for refreshes.
+// InFlight / Targets values reflect a single moment in time;
+// the dashboard frontend polls (or subscribes via live updates)
+// for refreshes.
 func snapshotPeers(r *Registry) []PeerStatus {
 	out := make([]PeerStatus, 0, len(r.peers))
 	for name, pc := range r.peers {
+		targets := pc.snapshotTargets()
+		rows := make([]TargetStatus, 0, len(targets))
+		anyReady := false
+		for _, t := range targets {
+			ready := t.ready.Load()
+			rows = append(rows, TargetStatus{URL: t.url, Healthy: ready})
+			if ready {
+				anyReady = true
+			}
+		}
 		row := PeerStatus{
 			Name:      name,
-			URL:       pc.url,
-			Healthy:   pc.ready.Load(),
+			Healthy:   anyReady,
+			Targets:   rows,
 			InFlight:  len(pc.sem),
 			SemBudget: cap(pc.sem),
 		}

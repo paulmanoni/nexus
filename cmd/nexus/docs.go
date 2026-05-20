@@ -203,7 +203,8 @@ var topicSummaries = map[string]string{
 	"graphql":    "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":         "AsWS — typed WebSocket envelopes, session fan-out",
 	"frontend":   "ServeFrontend + FrontendAt — embed an SPA",
-	"deploy":     "nexus.deploy.yaml, owns shapes, IfDeployment, prefix",
+	"peer":       "extension/peer — typed RPC between nexus apps",
+	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
 	"cli":        "Subcommand cheatsheet (new / init / dev / build / docs)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
 	"client":     "Embedded JS/TS SDK — connect a browser to your app",
@@ -619,66 +620,6 @@ Manifest (see ` + "`nexus docs deploy`" + `):
 
 Boot fails fast if index.html is missing in the FS — stale bundles
 surface at start time, not at first request.
-`,
-
-	"deploy": `
-DEPLOYMENT (nexus.deploy.yaml)
-
-Single source of truth for which modules each binary owns and how
-peer services are reached.
-
-    deployments:
-      monolith:                 # owns: omitted → owns everything (dev)
-        port: 8080
-        listeners: { admin: { scope: admin } }
-      web-svc:
-        owns: []                # explicit empty → owns nothing (SPA-only)
-        port: 9000
-      uaa-svc:
-        owns: [uaa]
-        port: 9001
-      interview-svc:
-        owns: [interview]
-        port: 9002
-
-    peers:
-      uaa-svc:
-        timeout: 2s
-        urls:
-          - ${UAA_REPLICA_1_URL:-http://localhost:9001}
-        auth:
-          type: bearer
-          token: ${UAA_SVC_TOKEN}
-
-OWNS shape semantics:
-  omitted     → owns every module (monolith / dev)
-  []          → owns nothing (frontend-only / web-svc)
-  [a, b]      → owns those modules; everything else is HTTP-stub'd
-
-Per-deployment route prefix wraps every user-mounted route (REST +
-GraphQL + WebSocket + SPA). Framework routes (/__nexus, /health,
-/ready) stay unprefixed. NOTE: for SPA URL parity across
-monolith ↔ split, prefer module-level RoutePrefix(...) over
-deployment-level prefix:
-
-    deployments:
-      uaa-svc:
-        prefix: /v1/api         # adds another layer (rarely needed)
-
-Build:
-
-    nexus build --deployment monolith       # ./bin/monolith
-    nexus build --deployment uaa-svc        # interview is HTTP-stub'd
-    nexus dev --split                        # all units, one terminal
-
-Gate options on the active deployment:
-
-    nexus.IfDeployment([]string{"monolith", "web-svc"},
-        nexus.ServeFrontend(distFS, "web/dist"),
-    )
-
-Active deployment resolves: NEXUS_DEPLOYMENT env →
-DeploymentDefaults.Deployment (codegen'd at build) → "monolith".
 `,
 
 	"cli": `
@@ -1157,5 +1098,145 @@ Selected HTTP surface:
   GET  /__nexus/events             WebSocket: trace + request.op + auth.reject
 
 UI dev: cd dashboard/ui && npm install && npm run dev
+`,
+
+	"peer": `
+PEER
+
+extension/peer — typed RPC between nexus apps over HTTP/2 + JSON with
+mTLS, persistent multiplexed connections, schema-drift detection,
+health probing, and trace stitching across binaries.
+
+Server side:
+
+    import "github.com/paulmanoni/nexus/extension/peer"
+
+    nexus.Run(nexus.Config{...},
+        peer.Module(peer.Config{
+            Identity:       "orders-svc",
+            Listen:         ":7000",
+            TLS:            peer.TLSConfig{Cert: "/etc/orders.crt", Key: "/etc/orders.key", CACert: "/etc/ca.crt"},
+            AllowedClients: []string{"checkout-svc"},
+        }),
+        ordersModule,
+    )
+
+Expose methods via peer.AsCall — same reflective signature as AsRest:
+
+    var Module = nexus.Module("orders",
+        nexus.Provide(NewService),
+        nexus.AsRest("POST", "/orders", NewCreateOrderREST), // public HTTP
+        peer.AsCall("createOrder", NewCreateOrder),           // peer RPC
+    )
+
+Client side:
+
+    peer.Module(peer.Config{
+        Identity: "checkout-svc",
+        TLS:      peer.TLSConfig{Cert: "/etc/checkout.crt", Key: "/etc/checkout.key"},
+        Peers: map[string]peer.PeerSpec{
+            "orders-svc": {
+                URL:    "https://orders.internal:7000",
+                CACert: "/etc/ca.crt",
+            },
+        },
+    })
+
+Call peer methods via typed generics:
+
+    func NewSubmit(svc *Service, peers *peer.Registry) func(...) (Receipt, error) {
+        return func(p nexus.Params[Args]) (Receipt, error) {
+            order, err := peer.Call[*Order](p.Context, peers,
+                "orders-svc", "createOrder", CreateArgs{...})
+            if err != nil {
+                return Receipt{}, err
+            }
+            return Receipt{OrderID: order.ID}, nil
+        }
+    }
+
+Auth modes (Config.AuthMode):
+  AuthMTLS  (default) — mTLS with cert subject pinned to AllowedClients
+  AuthHMAC            — shared secret per peer, signed timestamp + body
+  AuthNone            — refuses to start unless NEXUS_PEER_DEV=1
+
+SRV discovery — for meshes where the peer has N replicas behind one
+DNS name:
+
+    Peers: map[string]peer.PeerSpec{
+        "orders-svc": {SRV: "_nexus._tcp.orders.internal", CACert: "/etc/ca.crt"},
+    },
+
+The plugin resolves the SRV record at boot, builds one target per
+response, round-robins across targets in Call, and re-resolves every
+SRVRefresh interval (default 30s).
+
+Built-in safety nets, all on by default:
+  - traceparent propagation: peer.call (caller) + peer.handle (callee)
+    spans share TraceID + parent linkage on the dashboard waterfall.
+  - schema drift: GET /__peer/schema lists every AsCall registration
+    with type names + JSON Schema. Client lazy-fetches on first Call;
+    hard-fails on missing method or required-field mismatch, passes
+    on forward-compat extra fields.
+  - health prober: per-target GET /__peer/health every 10s. Failures
+    flip IsHealthy → false and reset the schema cache so recovery
+    re-fetches a possibly-rolled-out new schema.
+  - dashboard "Peers" tab at /__nexus/peers (list, /__nexus/peers/schemas/:name).
+
+Generate certs with 'nexus pki' — see 'nexus docs pki'.
+`,
+
+	"pki": `
+PKI
+
+Stdlib-only PKI for the peer mesh. ECDSA P-256, PKCS#8 PEM-encoded
+keys, 128-bit random serials. No openssl shelling, no third-party
+deps.
+
+Bootstrap flow (production — key never travels):
+
+    # On the CA host, once:
+    nexus pki init                                  # → ca.crt + ca.key (0600)
+
+    # On each peer:
+    nexus pki request --cn peer-alpha --dns peer-alpha.internal
+    # → peer-alpha.key (0600, stays here) + peer-alpha.csr (0644, ship to CA)
+
+    # On the CA host:
+    nexus pki sign --csr peer-alpha.csr             # → peer-alpha.crt
+    # Ship peer-alpha.crt + ca.crt back to the peer.
+
+    # On the peer, bundle for the framework:
+    nexus pki bundle --cn peer-alpha                # → peer-alpha/{ca,peer-alpha}.{crt,key}
+
+Convenience (CA and peer on the same host — for dev / bootstraps):
+
+    nexus pki issue --cn peer-alpha --dns peer-alpha.internal
+    # → peer-alpha.key + peer-alpha.crt in one step (signs locally).
+
+Hard guarantee: 'nexus pki bundle' is physically incapable of
+including ca.key. It never reads or references the CA private key —
+audit by 'grep ca.key cmd/nexus/pki_bundle.go' (yields nothing).
+
+Cert shape:
+  CA   — IsCA, KeyUsageCertSign + KeyUsageCRLSign, MaxPathLen=0
+         (peers are leaves; no intermediates allowed). 10-year
+         default validity.
+  Leaf — KeyUsageDigitalSignature, ExtKeyUsage = {ServerAuth,
+         ClientAuth} (peers are both client and server in the
+         mesh). SANs copied verbatim from the CSR. 180-day default.
+
+The leaf CN is the peer identity matched against extension/peer's
+AllowedClients by the TLS handshake's VerifyConnection callback.
+Stable CNs (per-service, not per-host) keep rotation simple.
+
+Flags:
+  --out DIR    output directory (default ".")
+  --cn NAME    CommonName / peer identity
+  --dns LIST   DNS SANs (repeatable)
+  --ip LIST    IP SANs (repeatable)
+  --days N     leaf validity (default 180)
+  --years N    CA validity (default 10, init only)
+  --force      overwrite ca.key (init only — INVALIDATES every issued leaf)
 `,
 }

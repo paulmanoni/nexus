@@ -137,19 +137,32 @@ func Module(cfg Config) nexus.Option {
 						}
 					}()
 				}
-				// Client side: boot the prober loop. It runs
-				// for the lifetime of the app and is cancelled
-				// from OnShutdown via holder.cancelProbers.
+				// Client side: boot the prober loop AND any
+				// SRV resolvers. Both run for the lifetime of
+				// the app and are cancelled from OnShutdown
+				// via holder.cancelClientLoops.
 				if len(cfg.Peers) > 0 && holder.reg != nil {
-					proberCtx, cancel := context.WithCancel(context.Background())
-					holder.cancelProbers = cancel
-					startProbers(proberCtx, holder.reg)
+					clientCtx, cancel := context.WithCancel(context.Background())
+					holder.cancelClientLoops = cancel
+					startProbers(clientCtx, holder.reg)
+					// One resolver goroutine per peer with an
+					// SRV spec. URL-only peers don't need a
+					// resolver; the boot-time targets stay
+					// stable for the app's lifetime.
+					for name, spec := range cfg.Peers {
+						if spec.SRV == "" {
+							continue
+						}
+						if pc, ok := holder.reg.peers[name]; ok {
+							go runSRVResolver(clientCtx, pc, spec)
+						}
+					}
 				}
 				return nil
 			},
 			OnShutdown: func(ctx context.Context) error {
-				if holder.cancelProbers != nil {
-					holder.cancelProbers()
+				if holder.cancelClientLoops != nil {
+					holder.cancelClientLoops()
 				}
 				if holder.srv == nil {
 					return nil
@@ -161,14 +174,14 @@ func Module(cfg Config) nexus.Option {
 }
 
 // lifecycleHolder captures the *http.Server, the *Registry, and
-// the prober cancel func across the captureRegistry invoke +
-// OnBoot + OnShutdown. fx runs all three callbacks sequentially
-// on the main lifecycle goroutine, so plain struct fields (no
-// mutex) are race-free.
+// the single cancel func that stops every client-side background
+// loop (the prober + every SRV resolver). fx runs the lifecycle
+// callbacks sequentially on the main lifecycle goroutine, so
+// plain struct fields (no mutex) are race-free.
 type lifecycleHolder struct {
-	srv           *http.Server
-	reg           *Registry
-	cancelProbers context.CancelFunc
+	srv               *http.Server
+	reg               *Registry
+	cancelClientLoops context.CancelFunc
 }
 
 // buildServer assembles the peer HTTP/2 server. It mounts the
