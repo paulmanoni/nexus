@@ -22,26 +22,39 @@ import (
 // GraphQL resolvers otherwise produce. Parent and Child are Go
 // types; Key is the lookup key (typically int64 / string / UUID).
 //
-// The fetch argument is fully typed — your IDE autocompletes the
-// signature end-to-end and shape errors surface at compile time.
-// Use this form when the fetch has no fx-injected deps (you close
-// over them at module-construction time, or there are none):
+// The fetch argument is one of three shapes; the framework picks
+// the right path by reflecting on it at registration time:
 //
-//	nexus.LoadField[User, int64, *BankDetail](
-//	    "bankDetail",
+//	// (a) Direct fetch — no fx deps. Type-check at compile time.
+//	nexus.LoadField[User, int64, *Bank](
+//	    "bank",
 //	    func(u User) int64 { return u.ID },
-//	    func(ctx context.Context, ids []int64) (map[int64]*BankDetail, error) {
-//	        return db.BankDetailsByUserIDs(ctx, ids)
+//	    func(ctx context.Context, ids []int64) (map[int64]*Bank, error) {
+//	        return db.BanksByUserIDs(ctx, ids)
 //	    },
 //	)
 //
-// Need fx-injected deps in the fetch? Use LoadFieldFx instead —
-// same parent/key/child generics, but the factory argument is
-// `any` so it can accept a constructor (form b) or an inline
-// function with trailing deps (form c). The trade-off is less IDE
-// help at the call site since Go can't express "function with
-// these N fixed params plus M user-chosen params" at the type
-// level.
+//	// (b) Constructor returning Fetch[K, V] — fx resolves the
+//	//     constructor's params at boot. Inner Fetch is fully typed.
+//	func NewBankFetcher(db *DB) dataloader.Fetch[int64, *Bank] {
+//	    return func(ctx context.Context, ids []int64) (map[int64]*Bank, error) {
+//	        return db.BanksByUserIDs(ctx, ids)
+//	    }
+//	}
+//	nexus.LoadField[User, int64, *Bank]("bank", keyFn, NewBankFetcher)
+//
+//	// (c) Inline fetch with trailing fx-injected deps — fx resolves
+//	//     the deps at boot; ctx + keys remain the head of the fn.
+//	nexus.LoadField[User, int64, *Bank](
+//	    "bank",
+//	    func(u User) int64 { return u.ID },
+//	    func(ctx context.Context, ids []int64, db *DB, cache *Cache) (map[int64]*Bank, error) {
+//	        ...
+//	    },
+//	)
+//
+// Wrong shapes surface as an fx.Error at app start with a message
+// describing the expected signatures.
 //
 // Parent's SDL name is the Go type's reflect name (User → "User").
 // Type aliases unwrap to the original (`type User = users.Row`
@@ -50,7 +63,7 @@ import (
 func LoadField[Parent any, Key comparable, Child any](
 	fieldName string,
 	keyFn func(Parent) Key,
-	fetch dataloader.Fetch[Key, Child],
+	fetch any,
 ) Option {
 	if fieldName == "" {
 		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: fieldName cannot be empty"))}
@@ -66,226 +79,53 @@ func LoadField[Parent any, Key comparable, Child any](
 	if errOpt != nil {
 		return errOpt
 	}
-	field := buildLoadFieldResolver[Parent, Key, Child](
-		parentName, fieldName, outputType, keyFn, fetch,
-	)
-	return rawOption{o: fx.Invoke(func() {
-		graph.RegisterVirtualField(parentName, fieldName, field)
-	})}
-}
 
-// LoadField1 is LoadField with one fx-injected dep. fully typed —
-// gopls autocompletes the fetch signature end-to-end, and shape
-// errors surface at compile time. Use this over LoadFieldFx when
-// your fetch has exactly one trailing dep (the common case: a
-// database handle).
-//
-//	nexus.LoadField1[User, int64, *BankDetail, *DB](
-//	    "bankDetail",
-//	    func(u User) int64 { return u.ID },
-//	    func(ctx context.Context, ids []int64, db *DB) (map[int64]*BankDetail, error) {
-//	        return db.BankDetailsByUserIDs(ctx, ids)
-//	    },
-//	)
-//
-// fx resolves D1 at boot. Any type registered via Provide works.
-func LoadField1[Parent any, Key comparable, Child any, D1 any](
-	fieldName string,
-	keyFn func(Parent) Key,
-	fetch func(ctx context.Context, keys []Key, d1 D1) (map[Key]Child, error),
-) Option {
-	if errOpt := validateLoadFieldArgs(fieldName, keyFn, fetch); errOpt != nil {
-		return errOpt
-	}
-	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
-	if errOpt != nil {
-		return errOpt
-	}
-	return rawOption{o: fx.Invoke(func(d1 D1) {
-		typedFetch := func(ctx context.Context, keys []Key) (map[Key]Child, error) {
-			return fetch(ctx, keys, d1)
-		}
-		field := buildLoadFieldResolver[Parent, Key, Child](
-			parentName, fieldName, outputType, keyFn, typedFetch,
-		)
-		graph.RegisterVirtualField(parentName, fieldName, field)
-	})}
-}
-
-// LoadField2 is LoadField with two fx-injected deps. See LoadField1
-// for the design rationale; this is the same pattern with one more
-// type parameter for the second dep.
-//
-//	nexus.LoadField2[User, int64, *BankDetail, *DB, *CacheManager](
-//	    "bankDetail",
-//	    func(u User) int64 { return u.ID },
-//	    func(ctx context.Context, ids []int64, db *DB, cache *CacheManager) (map[int64]*BankDetail, error) {
-//	        ...
-//	    },
-//	)
-func LoadField2[Parent any, Key comparable, Child any, D1 any, D2 any](
-	fieldName string,
-	keyFn func(Parent) Key,
-	fetch func(ctx context.Context, keys []Key, d1 D1, d2 D2) (map[Key]Child, error),
-) Option {
-	if errOpt := validateLoadFieldArgs(fieldName, keyFn, fetch); errOpt != nil {
-		return errOpt
-	}
-	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
-	if errOpt != nil {
-		return errOpt
-	}
-	return rawOption{o: fx.Invoke(func(d1 D1, d2 D2) {
-		typedFetch := func(ctx context.Context, keys []Key) (map[Key]Child, error) {
-			return fetch(ctx, keys, d1, d2)
-		}
-		field := buildLoadFieldResolver[Parent, Key, Child](
-			parentName, fieldName, outputType, keyFn, typedFetch,
-		)
-		graph.RegisterVirtualField(parentName, fieldName, field)
-	})}
-}
-
-// LoadField3 is LoadField with three fx-injected deps. Past three,
-// declare your deps as a struct + use LoadFieldFx form (b), or
-// extract a service that wraps the dependencies — three fx-deps in
-// one resolver is usually a sign that the resolver wants to be its
-// own struct.
-//
-//	nexus.LoadField3[User, int64, *BankDetail, *DB, *CacheManager, *AuthManager](
-//	    "bankDetail",
-//	    func(u User) int64 { return u.ID },
-//	    func(ctx context.Context, ids []int64, db *DB, cache *CacheManager, auth *AuthManager) (map[int64]*BankDetail, error) {
-//	        ...
-//	    },
-//	)
-func LoadField3[Parent any, Key comparable, Child any, D1 any, D2 any, D3 any](
-	fieldName string,
-	keyFn func(Parent) Key,
-	fetch func(ctx context.Context, keys []Key, d1 D1, d2 D2, d3 D3) (map[Key]Child, error),
-) Option {
-	if errOpt := validateLoadFieldArgs(fieldName, keyFn, fetch); errOpt != nil {
-		return errOpt
-	}
-	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
-	if errOpt != nil {
-		return errOpt
-	}
-	return rawOption{o: fx.Invoke(func(d1 D1, d2 D2, d3 D3) {
-		typedFetch := func(ctx context.Context, keys []Key) (map[Key]Child, error) {
-			return fetch(ctx, keys, d1, d2, d3)
-		}
-		field := buildLoadFieldResolver[Parent, Key, Child](
-			parentName, fieldName, outputType, keyFn, typedFetch,
-		)
-		graph.RegisterVirtualField(parentName, fieldName, field)
-	})}
-}
-
-// validateLoadFieldArgs centralizes the nil-check trio every typed
-// LoadField variant performs. Each variant calls this with its own
-// fetch (different concrete func type), so the param is any.
-func validateLoadFieldArgs(fieldName string, keyFn any, fetch any) Option {
-	if fieldName == "" {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: fieldName cannot be empty"))}
-	}
-	if keyFn == nil {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: keyFn cannot be nil"))}
-	}
-	if fetch == nil {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: fetch cannot be nil"))}
-	}
-	return nil
-}
-
-// LoadFieldFx is LoadField for fetches that need fx-injected deps.
-// The factory argument is `any`, accepted in either of two shapes
-// the framework discriminates via reflection at registration time:
-//
-//	// (b) fx-factory — separate constructor, fully typed return.
-//	func NewBankDetailFetcher(db *DB) dataloader.Fetch[int64, *BankDetail] {
-//	    return func(ctx context.Context, ids []int64) (map[int64]*BankDetail, error) {
-//	        return db.BankDetailsByUserIDs(ctx, ids)
-//	    }
-//	}
-//	nexus.LoadFieldFx[User, int64, *BankDetail](
-//	    "bankDetail",
-//	    func(u User) int64 { return u.ID },
-//	    NewBankDetailFetcher,
-//	)
-//
-//	// (c) Inline with fx-injected deps — trailing positional args
-//	// after (ctx, []Key) are resolved from the fx graph at boot.
-//	// Any type fx can resolve is fair game.
-//	nexus.LoadFieldFx[User, int64, *BankDetail](
-//	    "bankDetail",
-//	    func(u User) int64 { return u.ID },
-//	    func(ctx context.Context, ids []int64, db *DB, cache *CacheManager) (map[int64]*BankDetail, error) {
-//	        ...
-//	    },
-//	)
-//
-// Wrong shapes surface as an fx.Error at app start. For typed-fetch
-// callsites (no deps), prefer LoadField — same generics, full IDE
-// help.
-func LoadFieldFx[Parent any, Key comparable, Child any](
-	fieldName string,
-	keyFn func(Parent) Key,
-	factory any,
-) Option {
-	if fieldName == "" {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadFieldFx: fieldName cannot be empty"))}
-	}
-	if keyFn == nil {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadFieldFx: keyFn cannot be nil"))}
-	}
-	if factory == nil {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadFieldFx: factory cannot be nil"))}
-	}
-
-	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
-	if errOpt != nil {
-		return errOpt
-	}
-
-	factoryType := reflect.TypeOf(factory)
-	if factoryType.Kind() != reflect.Func {
+	fetchType := reflect.TypeOf(fetch)
+	if fetchType.Kind() != reflect.Func {
 		return rawOption{o: fx.Error(fmt.Errorf(
-			"nexus.LoadFieldFx: factory must be a function, got %s", factoryType))}
+			"nexus.LoadField: fetch must be a function, got %s", fetchType))}
 	}
 
-	// Form (c) is a superset of (a) at NumIn>=3, so it's checked
-	// first. (a) isn't reachable here at all — that's what the
-	// typed LoadField is for; if a caller hands LoadFieldFx a
-	// no-deps fetch we point them at LoadField in the error.
-	if matchesInlineDepsSignature[Key, Child](factoryType) {
+	// Form (a): direct fetch matching dataloader.Fetch[Key, Child].
+	// Cheapest path — no fx graph involvement beyond registration.
+	if matchesFetchSignature[Key, Child](fetchType) {
+		typed := makeFetchFromValue[Key, Child](reflect.ValueOf(fetch))
+		field := buildLoadFieldResolver[Parent, Key, Child](
+			parentName, fieldName, outputType, keyFn, typed,
+		)
+		return rawOption{o: fx.Invoke(func() {
+			graph.RegisterVirtualField(parentName, fieldName, field)
+		})}
+	}
+
+	// Form (c): inline with trailing deps — `func(ctx, []K, deps...) (map[K]V, error)`.
+	// Checked before (b) because both can have NumIn>=3; the shape
+	// of the head params (ctx + []Key) is distinctive.
+	if matchesInlineDepsSignature[Key, Child](fetchType) {
 		return buildInlineDepsOption[Key, Child](
-			parentName, fieldName, outputType, keyFn, factory, factoryType,
+			parentName, fieldName, outputType, keyFn, fetch, fetchType,
 		)
 	}
 
-	if factoryType.NumOut() == 1 && matchesFetchSignature[Key, Child](factoryType.Out(0)) {
+	// Form (b): factory whose single return is dataloader.Fetch[K, V].
+	if fetchType.NumOut() == 1 && matchesFetchSignature[Key, Child](fetchType.Out(0)) {
 		return buildFactoryOption[Parent, Key, Child](
-			parentName, fieldName, outputType, keyFn, factory, factoryType,
+			parentName, fieldName, outputType, keyFn, fetch, fetchType,
 		)
-	}
-
-	if matchesFetchSignature[Key, Child](factoryType) {
-		return rawOption{o: fx.Error(fmt.Errorf(
-			"nexus.LoadFieldFx: factory has no fx deps — use nexus.LoadField for typed direct-fetch instead"))}
 	}
 
 	return rawOption{o: fx.Error(fmt.Errorf(
-		"nexus.LoadFieldFx: factory must be a constructor returning Fetch[K, V] or "+
-			"an inline fn (ctx, []K, deps...) (map[K]V, error); got %s",
-		factoryType))}
+		"nexus.LoadField: fetch must be one of: "+
+			"func(context.Context, []K) (map[K]V, error), "+
+			"func(deps...) dataloader.Fetch[K, V], or "+
+			"func(context.Context, []K, deps...) (map[K]V, error); got %s",
+		fetchType))}
 }
 
 // --- shared internals ---
 
 // resolveLoadFieldTypes resolves the parent SDL name and the child's
-// graphql.Output type from the generics. Shared by both entry points
-// so the error messages and unwrapping rules stay identical.
+// graphql.Output type from the generics.
 func resolveLoadFieldTypes[Parent any, Child any](fieldName string) (
 	parentName string, outputType graphql.Output, errOpt Option,
 ) {
@@ -433,7 +273,7 @@ func buildVirtualFieldFromUntypedKeyFn[Key comparable, Child any](
 			}
 			if !src.IsValid() || !src.Type().AssignableTo(parentT) {
 				return nil, fmt.Errorf(
-					"nexus.LoadFieldFx %s: cannot coerce source %T to %s",
+					"nexus.LoadField %s: cannot coerce source %T to %s",
 					loaderName, p.Source, parentT)
 			}
 			results := keyFnV.Call([]reflect.Value{src})
@@ -447,8 +287,8 @@ func buildVirtualFieldFromUntypedKeyFn[Key comparable, Child any](
 
 // matchesInlineDepsSignature returns true when t is the inline-deps
 // shape: `func(context.Context, []K, ...deps) (map[K]V, error)`.
-// At least one dep is required to distinguish from a no-deps fetch
-// (which LoadField is for).
+// At least one dep is required to distinguish from a direct fetch
+// (form a).
 func matchesInlineDepsSignature[K comparable, V any](t reflect.Type) bool {
 	if t == nil || t.Kind() != reflect.Func {
 		return false
@@ -468,8 +308,8 @@ func matchesInlineDepsSignature[K comparable, V any](t reflect.Type) bool {
 
 // matchesFetchSignature returns true when t structurally matches
 // `func(context.Context, []K) (map[K]V, error)` — the underlying
-// shape of dataloader.Fetch[K, V]. Used by LoadFieldFx to detect
-// factory return types (and to redirect a no-deps fetch to LoadField).
+// shape of dataloader.Fetch[K, V]. Used both to detect a direct
+// fetch (form a) and to detect a factory's return type (form b).
 func matchesFetchSignature[K comparable, V any](t reflect.Type) bool {
 	if t == nil || t.Kind() != reflect.Func {
 		return false
@@ -488,8 +328,7 @@ func matchesFetchSignature[K comparable, V any](t reflect.Type) bool {
 
 // makeFetchFromValue wraps a reflect.Value whose dynamic type is a
 // function matching the fetch signature into a typed
-// dataloader.Fetch[K, V]. Used by the factory form where we already
-// have the result Value from invoking the constructor.
+// dataloader.Fetch[K, V].
 func makeFetchFromValue[K comparable, V any](rv reflect.Value) dataloader.Fetch[K, V] {
 	return func(ctx context.Context, keys []K) (map[K]V, error) {
 		results := rv.Call([]reflect.Value{

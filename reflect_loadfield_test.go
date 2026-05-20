@@ -130,7 +130,7 @@ func TestLoadField_FactoryInjectsFxDeps(t *testing.T) {
 		// lfUser / lfBankDetail caches.
 		Provide(newFakeBankDB),
 		AsQuery(NewListLfxUsers, Op("listLfxUsers")),
-		LoadFieldFx[lfxUser, int64, *lfxBankDetail](
+		LoadField[lfxUser, int64, *lfxBankDetail](
 			"bankDetail",
 			func(u lfxUser) int64 { return u.ID },
 			NewLfxBankDetailFetcher, // ← fx injects *fakeBankDB
@@ -239,7 +239,7 @@ func TestLoadField_InlineDepsForm(t *testing.T) {
 	mod := Module("loadfield_inline_deps",
 		Provide(newFakeBankDB),
 		AsQuery(NewListLfyUsers, Op("listLfyUsers")),
-		LoadFieldFx[lfyUser, int64, *lfyBankDetail](
+		LoadField[lfyUser, int64, *lfyBankDetail](
 			"bankDetail",
 			func(u lfyUser) int64 { return u.ID },
 			// Form (c): db is an fx-injected dep, resolved at boot.
@@ -345,11 +345,12 @@ func TestLoadField1_TypedDep(t *testing.T) {
 	mod := Module("loadfield1",
 		Provide(newFakeBankDB),
 		AsQuery(NewListLfzUsers, Op("listLfzUsers")),
-		LoadField1[lfzUser, int64, *lfzBankDetail, *fakeBankDB](
+		LoadField[lfzUser, int64, *lfzBankDetail](
 			"bankDetail",
 			func(u lfzUser) int64 { return u.ID },
-			// Fully typed: ctx, keys []int64, db *fakeBankDB → map[int64]*lfzBankDetail.
-			// gopls knows every param's type here.
+			// Inline-deps form (c): ctx + keys followed by fx-resolved
+			// trailing deps. The framework reflects on the signature
+			// to discover the deps and wires them via fx at boot.
 			func(ctx context.Context, ids []int64, db *fakeBankDB) (map[int64]*lfzBankDetail, error) {
 				out := make(map[int64]*lfzBankDetail, len(ids))
 				for _, id := range ids {
