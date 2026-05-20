@@ -124,6 +124,8 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newDocsCmd(stdout, stderr),
 		newAPIDocsCmd(stdout, stderr),
 		newClientCmd(stdout, stderr),
+		// PKI for the peer mesh (extension/peer mTLS).
+		newPkiCmd(stdout, stderr),
 		// Frontend dependency manager (node-free; see
 		// frontend/deps/* for the implementation).
 		newAddCmd(stdout, stderr),
