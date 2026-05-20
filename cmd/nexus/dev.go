@@ -695,5 +695,6 @@ func openBrowser(url string) error {
 		name = "xdg-open"
 		args = []string{url}
 	}
+	// #nosec G204 -- CLI helper, url is operator-supplied
 	return exec.Command(name, args...).Start()
 }

@@ -49,10 +49,10 @@ func TestWatchSource_FiresOnGoFileChange(t *testing.T) {
 // directories (.git, bin/, dist/, .nexus/).
 func TestWatchSource_IgnoresIrrelevantPaths(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,7 +96,7 @@ func TestWatchSource_FiresOnEmbedTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	dist := filepath.Join(dir, "web", "dist")
-	if err := os.MkdirAll(dist, 0o755); err != nil {
+	if err := os.MkdirAll(dist, 0750); err != nil {
 		t.Fatal(err)
 	}
 	indexPath := filepath.Join(dist, "index.html")
@@ -138,7 +138,7 @@ func TestWatchSource_IgnoreSuppressesViteOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	dist := filepath.Join(dir, "web", "dist")
-	if err := os.MkdirAll(dist, 0o755); err != nil {
+	if err := os.MkdirAll(dist, 0750); err != nil {
 		t.Fatal(err)
 	}
 	indexPath := filepath.Join(dist, "index.html")
@@ -179,7 +179,7 @@ func TestWatchSource_IgnoreFiresOnGoUnderFrontend(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := filepath.Join(dir, "web")
-	if err := os.MkdirAll(web, 0o755); err != nil {
+	if err := os.MkdirAll(web, 0750); err != nil {
 		t.Fatal(err)
 	}
 	embedGo := filepath.Join(web, "embed.go")

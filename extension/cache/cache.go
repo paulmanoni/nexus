@@ -244,7 +244,7 @@ func (m *Manager) savePersistFile() {
 		return
 	}
 	if dir := filepath.Dir(m.config.PersistPath); dir != "" && dir != "." {
-		_ = os.MkdirAll(dir, 0o755)
+		_ = os.MkdirAll(dir, 0750)
 	}
 	if err := m.goCache.SaveFile(m.config.PersistPath); err != nil {
 		m.logger.Warn("cache: save persist file failed",

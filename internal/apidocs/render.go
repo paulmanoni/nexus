@@ -136,7 +136,10 @@ var funcMap = template.FuncMap{
 		//
 		// template.URL bypasses html/template's allowlist (vscode:// is
 		// not on it). Safe here because we build the string ourselves
-		// from collector-provided absolute paths and integer lines.
+		// from collector-provided absolute paths and integer lines —
+		// gosec G203 flags the typed-string conversion generically;
+		// the inputs aren't user-controlled.
+		// #nosec G203 -- file path is from compile-time collector, not user input
 		return template.URL(fmt.Sprintf("vscode://file/%s:%d", file, line))
 	},
 }

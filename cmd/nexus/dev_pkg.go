@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	devBuildScriptName = "dev:build"
-	devBuildScriptCmd  = "vite build --watch --emptyOutDir false"
+	devBuildScriptName  = "dev:build"
+	devBuildScriptCmd   = "vite build --watch --emptyOutDir false"
 	devServerScriptName = "dev"
 	devServerScriptCmd  = "vite"
 )
@@ -78,7 +78,7 @@ func ensureNamedScript(frontendDir, scriptName, scriptCmd string, stdout io.Writ
 		}
 		out := body[:openBrace+1] + insertion + body[openBrace+1:]
 		// #nosec G703 -- CLI helper writes operator-supplied frontend dir's package.json
-		if err := os.WriteFile(pkgPath, []byte(out), 0o644); err != nil {
+		if err := os.WriteFile(pkgPath, []byte(out), 0600); err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "%s●%s added %s script to %s\n", ansiCyan, ansiReset, scriptName, pkgPath)
@@ -111,7 +111,7 @@ func ensureNamedScript(frontendDir, scriptName, scriptCmd string, stdout io.Writ
 	}
 	out := trimmed + insertion + body[rootClose:]
 	// #nosec G703 -- CLI helper writes operator-supplied frontend dir's package.json
-	if err := os.WriteFile(pkgPath, []byte(out), 0o644); err != nil {
+	if err := os.WriteFile(pkgPath, []byte(out), 0600); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "%s●%s added scripts.%s to %s\n", ansiCyan, ansiReset, scriptName, pkgPath)

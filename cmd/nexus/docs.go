@@ -176,11 +176,11 @@ func openInBrowser(url string, stdout io.Writer) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", url) // #nosec G204 -- CLI helper, url is operator-supplied
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) // #nosec G204 -- CLI helper
 	default:
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", url) // #nosec G204 -- CLI helper, url is operator-supplied
 	}
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(stdout, url)

@@ -211,7 +211,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	}
 
 	outDir := filepath.Join(root, "islands")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0750); err != nil {
 		return fmt.Errorf("frontend watcher: mkdir %s: %w", outDir, err)
 	}
 
@@ -464,6 +464,7 @@ func startViteWatcher(ctx context.Context, dir, cmdline string, verbose bool, st
 	// (`sh -c`), which orphans `npm run dev` → vite/node and leaks
 	// the dev-server port. We watch ctx.Done() below and tear down
 	// the whole process group via killProcessGroup.
+	// #nosec G204 -- CLI dev helper, cmdline is operator-supplied via --frontend-cmd
 	cmd := exec.Command("sh", "-c", cmdline)
 	cmd.Dir = dir
 	stdoutPipe, err := cmd.StdoutPipe()

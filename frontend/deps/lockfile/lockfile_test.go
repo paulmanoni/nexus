@@ -244,7 +244,7 @@ func TestSave_AtomicWriteSurvivesPathBeingDirectory(t *testing.T) {
 	// confirm an error is returned, not which one.
 	dir := t.TempDir()
 	target := filepath.Join(dir, "subdir")
-	if err := os.MkdirAll(target, 0o755); err != nil {
+	if err := os.MkdirAll(target, 0750); err != nil {
 		t.Fatal(err)
 	}
 	f := New()

@@ -187,7 +187,7 @@ func TestClientCmd_TSConfigAlias(t *testing.T) {
 
 	// Pre-seed a realistic tsconfig with TS-only fields the merge
 	// must preserve.
-	if err := os.MkdirAll(filepath.Dir(tsconfig), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(tsconfig), 0750); err != nil {
 		t.Fatal(err)
 	}
 	existing := `{
@@ -238,7 +238,7 @@ func TestClientCmd_JSConfigMergesExisting(t *testing.T) {
 	out := filepath.Join(root, "web", "sdk")
 	jsconfig := filepath.Join(root, "web", "jsconfig.json")
 
-	if err := os.MkdirAll(filepath.Dir(jsconfig), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(jsconfig), 0750); err != nil {
 		t.Fatal(err)
 	}
 	existing := `{

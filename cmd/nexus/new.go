@@ -165,7 +165,7 @@ func scaffoldWithOpts(opts scaffoldOpts, stdout io.Writer) error {
 		return fmt.Errorf("%s exists and is not a directory", abs)
 	}
 
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	if err := os.MkdirAll(abs, 0o750); err != nil {
 		return err
 	}
 	files, err := buildFiles(opts)
@@ -174,7 +174,7 @@ func scaffoldWithOpts(opts scaffoldOpts, stdout io.Writer) error {
 	}
 	for relPath, content := range files {
 		full := filepath.Join(abs, relPath)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 			return fmt.Errorf("mkdir %s: %w", filepath.Dir(full), err)
 		}
 		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {

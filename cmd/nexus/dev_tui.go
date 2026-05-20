@@ -407,6 +407,7 @@ func (m *tuiModel) spawnChild() {
 
 	m.send(stateChangeMsg{state: tuiStarting, note: "go run " + m.target})
 
+	// #nosec G204 -- CLI dev helper, target is operator-supplied package path
 	cmd := exec.Command("go", "run", m.target)
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()

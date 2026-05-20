@@ -132,7 +132,7 @@ func (tf *typeFetcher) fetchOne(ctx context.Context, spec, version, nmRoot strin
 	// "typings" field, then ./index.d.ts) succeeds. The "types"
 	// path is RELATIVE to this package.json.
 	pjDir := filepath.Join(nmRoot, filepath.FromSlash(spec))
-	if err := os.MkdirAll(pjDir, 0o755); err != nil {
+	if err := os.MkdirAll(pjDir, 0750); err != nil {
 		return written, fmt.Errorf("mkdir %s: %w", pjDir, err)
 	}
 	// The entry file lives at nmRoot/<pkg>/<relPath>. We need a
@@ -154,7 +154,7 @@ func (tf *typeFetcher) fetchOne(ctx context.Context, spec, version, nmRoot strin
 	}
 	pjBytes, _ := json.MarshalIndent(pjContent, "", "  ")
 	pjBytes = append(pjBytes, '\n')
-	if err := os.WriteFile(filepath.Join(pjDir, "package.json"), pjBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pjDir, "package.json"), pjBytes, 0600); err != nil {
 		return written, fmt.Errorf("write package.json for %s: %w", spec, err)
 	}
 	return written, nil
@@ -283,10 +283,10 @@ func (tf *typeFetcher) fetchRecursive(ctx context.Context, typeURL, nmRoot strin
 		out = strings.ReplaceAll(out, r.from, r.to)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(localPath), err)
 	}
-	if err := os.WriteFile(localPath, []byte(out), 0o644); err != nil {
+	if err := os.WriteFile(localPath, []byte(out), 0600); err != nil {
 		return fmt.Errorf("write %s: %w", localPath, err)
 	}
 	return nil
@@ -386,7 +386,7 @@ func gitignoreEnsureNodeModules(projectRoot string) {
 	addition := "\n# nexus-managed type stubs for IntelliSense\n/node_modules/\n"
 	out := append(body, []byte(addition)...)
 	// #nosec G703 -- CLI helper writes operator-supplied frontend dir's .gitignore
-	_ = os.WriteFile(path, out, 0o644)
+	_ = os.WriteFile(path, out, 0600)
 }
 
 // ensure path is used — silences unused-import warnings during

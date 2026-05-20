@@ -1,7 +1,14 @@
 package oauth2
 
+// SHA1 is intentional and legacy-interop only: VerifySpringPassword
+// has to read passwords already on disk that were hashed with
+// Spring's StandardPasswordEncoder (pre-5.0). The framework never
+// produces new SHA1 hashes; only verifies existing ones for apps
+// migrating off Spring.
+//
+// #nosec G505 -- legacy Spring StandardPasswordEncoder interop
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- legacy interop, verify-only
 	"encoding/hex"
 	"strings"
 
@@ -63,7 +70,7 @@ func VerifySpringPassword(stored, input string) (ok bool, scheme string) {
 
 	if len(stored) == 40 && isLowerHex(stored[10:]) {
 		salt := stored[:10]
-		sum := sha1.Sum([]byte(salt + input))
+		sum := sha1.Sum([]byte(salt + input)) // #nosec G401 -- legacy Spring interop
 		expected := salt + hex.EncodeToString(sum[:])[:30]
 		return expected == stored, "salted-sha1"
 	}

@@ -18,13 +18,13 @@ import (
 // ignores unknowns); removing fields breaks rollback. Bump SchemaV
 // when shape changes.
 type persisted struct {
-	SchemaV     int                `json:"schemaVersion"`
-	TotalVisits int64              `json:"totalVisits"`
-	UniqueIDs   []string           `json:"uniqueIds"`
-	TodayKey    string             `json:"todayKey"`
-	TodayVisits int64              `json:"todayVisits"`
-	PathCounts  map[string]int64   `json:"pathCounts"`
-	SavedAt     time.Time          `json:"savedAt"`
+	SchemaV     int              `json:"schemaVersion"`
+	TotalVisits int64            `json:"totalVisits"`
+	UniqueIDs   []string         `json:"uniqueIds"`
+	TodayKey    string           `json:"todayKey"`
+	TodayVisits int64            `json:"todayVisits"`
+	PathCounts  map[string]int64 `json:"pathCounts"`
+	SavedAt     time.Time        `json:"savedAt"`
 }
 
 // schemaVersion bumps when the persisted shape changes incompatibly.
@@ -60,7 +60,7 @@ func (c *Counter) SaveToFile(path string) error {
 	}
 	c.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
@@ -68,7 +68,7 @@ func (c *Counter) SaveToFile(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
