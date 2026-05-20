@@ -187,38 +187,74 @@
 
   // mountOverlay attaches <nexus-tour-overlay> to document.body
   // AND keeps it there. A bare appendChild isn't enough — host
-  // frontends routinely remove our element via:
+  // frontends routinely remove or relocate our element via:
   //
   //   - SPA route changes that swap body.innerHTML wholesale
   //     (some Inertia + manual-DOM patterns do this)
-  //   - Vue 3 Teleports + Vuetify portals briefly detaching
-  //     siblings during transitions
+  //   - Vue 3 Teleports + Vuetify portals briefly detaching or
+  //     reparenting siblings during transitions
   //   - Any library doing document.body.replaceChildren(...)
+  //   - document.body being replaced wholesale (rare, but
+  //     a few Vue 3 + custom-element combos do this on mount)
   //
-  // Symptom: the FAB disappears mid-session and only comes back
-  // after a hard reload (Cmd+Shift+R) because the boot-guard
-  // global stops us from re-mounting on a soft refresh.
+  // Symptom: the FAB disappears mid-session, and even a soft
+  // refresh doesn't bring it back because the stale browser-
+  // cached script never expected to need to recover.
   //
-  // The MutationObserver watches body's direct children and
-  // re-appends us whenever we go missing. Cheap to run — the
-  // callback fires on body-level mutations only and the work
-  // is O(1) per fire.
+  // Defense layers, in order of cost:
+  //   1. Observe documentElement.childList so a body swap is
+  //      caught (re-observe the new body when it appears).
+  //   2. Observe the live body's childList so direct-child
+  //      removals trigger a re-append.
+  //   3. ensureMounted() asserts both "is connected" AND
+  //      "parent is document.body" — Vue Teleports can move
+  //      us under a non-body node, which counts as broken.
+  //   4. A 30-second post-load setInterval safety net catches
+  //      any race the observers missed during early init when
+  //      body might not be live yet.
   let mountObserver = null;
+  let docObserver = null;
+
+  function ensureMounted() {
+    if (!document.body) return;
+    if (overlayHost.parentNode !== document.body) {
+      document.body.appendChild(overlayHost);
+    }
+  }
+
+  function observeBody() {
+    if (mountObserver) mountObserver.disconnect();
+    mountObserver = new MutationObserver(ensureMounted);
+    mountObserver.observe(document.body, { childList: true });
+  }
+
   function mountOverlay() {
     if (!document.body) {
       document.addEventListener('DOMContentLoaded', mountOverlay, { once: true });
       return;
     }
-    if (!overlayHost.isConnected) {
-      document.body.appendChild(overlayHost);
+    ensureMounted();
+    observeBody();
+
+    if (!docObserver) {
+      // The body element itself can be replaced (rare). Watch
+      // documentElement's direct children and re-bind the body
+      // observer whenever a new body shows up.
+      docObserver = new MutationObserver(() => {
+        observeBody();
+        ensureMounted();
+      });
+      docObserver.observe(document.documentElement, { childList: true });
     }
-    if (mountObserver) return;
-    mountObserver = new MutationObserver(() => {
-      if (!overlayHost.isConnected) {
-        document.body.appendChild(overlayHost);
-      }
-    });
-    mountObserver.observe(document.body, { childList: true });
+
+    // Belt-and-suspenders: poll for 30s after mount in case the
+    // observers were set up while the host was still tearing
+    // the body around during early init.
+    let ticks = 0;
+    const safety = setInterval(() => {
+      ensureMounted();
+      if (++ticks >= 30) clearInterval(safety);
+    }, 1000);
   }
 
   // ---------------------------------------------------------------
