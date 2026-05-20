@@ -30,12 +30,19 @@ func Local(path string, opts ...LocalOption) nexus.Option {
 	for _, o := range opts {
 		o.applyLocal(&cfg)
 	}
+	// EAGER install — same parity as config.Client. The yaml
+	// is read + parsed + installed BEFORE returning the Option,
+	// so nexus.Get works from every constructor and invoke that
+	// follows. Failures surface via fx.Error so Run() boot
+	// stops cleanly with a real error message.
+	if err := initLocal(cfg); err != nil {
+		return nexus.Raw(fx.Error(err))
+	}
 	return extension.Use(extension.Plugin{
 		Name:    "config",
 		Version: "1",
 		Options: []nexus.Option{
 			nexus.Supply(cfg),
-			nexus.Invoke(initLocal),
 		},
 	})
 }
