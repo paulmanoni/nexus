@@ -31,7 +31,7 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	if err := os.MkdirAll(outDir, 0750); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("nexus client: mkdir %s: %w", outDir, err)
 	}
 
@@ -116,7 +116,7 @@ func WriteIfChanged(path string, body []byte, stdout io.Writer) error {
 		fdumpLine(stdout, ansiYellow, "unchanged", path, fmt.Sprintf("%d bytes", len(body)))
 		return nil
 	}
-	if err := os.WriteFile(path, body, 0600); err != nil {
+	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	fdumpLine(stdout, ansiGreen, "wrote", path, fmt.Sprintf("%d bytes", len(body)))
@@ -133,7 +133,7 @@ func WriteIfMissing(path string, body []byte, stdout io.Writer) error {
 		fdumpLine(stdout, ansiDim, "skipped", path, "already exists — edit freely")
 		return nil
 	}
-	if err := os.WriteFile(path, body, 0600); err != nil {
+	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	fdumpLine(stdout, ansiGreen, "wrote", path, fmt.Sprintf("%d bytes, scaffold — feel free to edit", len(body)))
@@ -190,7 +190,7 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(configPath), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return fmt.Errorf("nexus client: mkdir %s: %w", filepath.Dir(configPath), err)
 	}
 	return WriteIfChanged(configPath, body, stdout)

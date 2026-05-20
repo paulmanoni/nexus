@@ -30,7 +30,7 @@ func Write(outDir string, files []nexus.GeneratedFile, stdout io.Writer) (change
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	if err := os.MkdirAll(outDir, 0750); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return 0, 0, fmt.Errorf("frontend.Write: mkdir %s: %w", outDir, err)
 	}
 	for _, f := range files {
@@ -38,7 +38,7 @@ func Write(outDir string, files []nexus.GeneratedFile, stdout io.Writer) (change
 			return changed, unchanged, fmt.Errorf("frontend.Write: rejected unsafe path %q", f.Path)
 		}
 		dst := filepath.Join(outDir, filepath.FromSlash(f.Path))
-		if err := os.MkdirAll(filepath.Dir(dst), 0750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return changed, unchanged, fmt.Errorf("frontend.Write: mkdir parent of %s: %w", dst, err)
 		}
 		same, err := byteEqual(dst, f.Body)
@@ -50,7 +50,7 @@ func Write(outDir string, files []nexus.GeneratedFile, stdout io.Writer) (change
 			fmt.Fprintf(stdout, "unchanged %s\n", dst)
 			continue
 		}
-		if err := os.WriteFile(dst, f.Body, 0600); err != nil {
+		if err := os.WriteFile(dst, f.Body, 0o644); err != nil {
 			return changed, unchanged, fmt.Errorf("frontend.Write: write %s: %w", dst, err)
 		}
 		changed++

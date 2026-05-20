@@ -60,7 +60,7 @@ func (c *Counter) SaveToFile(path string) error {
 	}
 	c.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
@@ -68,7 +68,7 @@ func (c *Counter) SaveToFile(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

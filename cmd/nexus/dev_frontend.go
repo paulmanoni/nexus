@@ -211,7 +211,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	}
 
 	outDir := filepath.Join(root, "islands")
-	if err := os.MkdirAll(outDir, 0750); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("frontend watcher: mkdir %s: %w", outDir, err)
 	}
 

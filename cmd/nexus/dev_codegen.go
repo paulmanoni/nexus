@@ -151,7 +151,7 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyUR
 	}
 
 	outDir := filepath.Join(frontendDir, "src", "__nexus")
-	if err := os.MkdirAll(outDir, 0750); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", outDir, err)
 	}
 	generated := toGeneratedFiles(files)

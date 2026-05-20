@@ -12,7 +12,7 @@ func TestMergeViteConfig_AddsImportAndPluginEntry(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "vite.config.ts")
 	sdkDir := filepath.Join(dir, "src", "sdk")
-	if err := os.MkdirAll(sdkDir, 0750); err != nil {
+	if err := os.MkdirAll(sdkDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	original := `import { defineConfig } from 'vite'

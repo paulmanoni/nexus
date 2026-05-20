@@ -65,10 +65,10 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	}
 	for path, body := range files {
 		full := filepath.Join(abs, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", filepath.Dir(full), err)
 		}
-		if err := os.WriteFile(full, []byte(body), 0600); err != nil {
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", full, err)
 		}
 		fmt.Fprintf(stdout, "wrote %s\n", path)
@@ -220,7 +220,7 @@ func patchMainGoForFrontend(path string) (bool, error) {
 	if err := format.Node(&buf, fset, file); err != nil {
 		return false, fmt.Errorf("format: %w", err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0600); err != nil {
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		return false, fmt.Errorf("write: %w", err)
 	}
 	return true, nil

@@ -76,7 +76,7 @@ func TestVueFlow_RealWorldDashboardShape(t *testing.T) {
 	defer c.Close()
 
 	src := filepath.Join(tmp, "src")
-	if err := os.MkdirAll(src, 0750); err != nil {
+	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Real dashboard-shaped SFC: <script setup> + template

@@ -48,7 +48,7 @@ func TestFrontendBuild_EndToEnd_AddThenBundle(t *testing.T) {
 	}
 
 	// Step 2: stage a frontend entry under islands.src.
-	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	entry := filepath.Join(cwd, "islands.src", "Counter.ts")
@@ -96,7 +96,7 @@ func TestFrontendBuild_NoIslandsSrcIsNoOp(t *testing.T) {
 func TestFrontendBuild_EmptyIslandsSrcIsNoOp(t *testing.T) {
 	cwd, cleanup := inDepsTestSandbox(t, "http://127.0.0.1:0")
 	defer cleanup()
-	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -117,7 +117,7 @@ func TestFrontendBuild_DotVueProducesClearError(t *testing.T) {
 	}
 	cwd, cleanup := inDepsTestSandbox(t, "http://127.0.0.1:0")
 	defer cleanup()
-	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cwd, "islands.src", "Foo.vue"), []byte(`<template>x</template>`), 0o644); err != nil {
@@ -137,7 +137,7 @@ func TestFrontendBuild_DotVueProducesClearError(t *testing.T) {
 func TestFrontendBuild_MissingLockfileReportsClearly(t *testing.T) {
 	cwd, cleanup := inDepsTestSandbox(t, "http://127.0.0.1:0")
 	defer cleanup()
-	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Join(cwd, "islands.src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// Two bare imports in user code → error should suggest BOTH

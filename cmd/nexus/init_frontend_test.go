@@ -125,7 +125,7 @@ func TestInitFrontend_NoMainGo(t *testing.T) {
 func TestInitFrontend_ExistingIslandsBlocksWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644)
-	_ = os.MkdirAll(filepath.Join(dir, "islands.src"), 0750)
+	_ = os.MkdirAll(filepath.Join(dir, "islands.src"), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "islands.src", "App.vue"), []byte("<template>existing</template>"), 0o644)
 
 	var out bytes.Buffer

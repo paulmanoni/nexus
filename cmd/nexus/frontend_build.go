@@ -107,7 +107,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	}
 
 	outDir := filepath.Join(projectRoot, "islands")
-	if err := os.MkdirAll(outDir, 0750); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("frontend build: mkdir %s: %w", outDir, err)
 	}
 
