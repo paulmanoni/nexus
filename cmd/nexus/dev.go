@@ -355,7 +355,19 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	// the dev target so users running from a different CWD still
 	// resolve correctly. NEXUS_VERBOSE flips the framework's
 	// quiet-by-default policy off (keeps [Fx] + [GIN-debug] logs).
-	env := append(os.Environ(), "NEXUS_DEV=1", "NEXUS_DEV_ROOT="+target)
+	//
+	// NEXUS_PEER_DEV / NEXUS_CONFIG_DEV auto-unlock the dev gates
+	// in extension/peer and extension/config — `nexus dev` is
+	// literally the operator saying "I'm doing dev work," so the
+	// plugins' dev-mode guards should follow. Production runs
+	// don't go through `nexus dev`, so the guards still protect
+	// real deployments.
+	env := append(os.Environ(),
+		"NEXUS_DEV=1",
+		"NEXUS_DEV_ROOT="+target,
+		"NEXUS_PEER_DEV=1",
+		"NEXUS_CONFIG_DEV=1",
+	)
 	if verbose {
 		env = append(env, "NEXUS_VERBOSE=1")
 	}

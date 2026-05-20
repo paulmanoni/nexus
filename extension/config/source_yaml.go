@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,15 +83,19 @@ func (*yamlSource) isSource() {}
 // suffix); _common.nexus.config.yaml lands under the literal key
 // "_common".
 //
-// A file whose contents are bad YAML is logged-and-skipped, NOT a
-// boot-blocker — one malformed file shouldn't take down the
-// server. Operators see the parse error in logs + the dashboard.
+// A file whose contents are bad YAML fails Load loudly — the
+// boot-blocker is the right behavior. Silent-skip would let a
+// production deploy survive a malformed config commit serving
+// stale-or-empty values to clients; the alternative (fail-fast)
+// surfaces the bug at the operator's deploy step instead of
+// 30 minutes later as a confused page.
 func (s *yamlSource) Load(_ context.Context) (map[string]appBody, error) {
 	entries, err := os.ReadDir(s.cfg.path)
 	if err != nil {
 		return nil, fmt.Errorf("config: read source dir %s: %w", s.cfg.path, err)
 	}
 	out := map[string]appBody{}
+	seenFiles := 0
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -104,18 +107,23 @@ func (s *yamlSource) Load(_ context.Context) (map[string]appBody, error) {
 		if s.skipByIgnore(name) {
 			continue
 		}
-		app, body, err := readOneAppFile(filepath.Join(s.cfg.path, name))
+		seenFiles++
+		fullPath := filepath.Join(s.cfg.path, name)
+		app, body, err := readOneAppFile(fullPath)
 		if err != nil {
-			// Loud log; not a boot-blocker.
-			fmt.Fprintf(os.Stderr, "config: parse %s: %v (file skipped)\n",
-				filepath.Join(s.cfg.path, name), err)
-			continue
+			return nil, fmt.Errorf("config: parse %s: %w", fullPath, err)
 		}
 		out[app] = body
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("config: no readable %s files under %s",
-			configFileExt, s.cfg.path)
+		if seenFiles == 0 {
+			return nil, fmt.Errorf("config: no %s files under %s",
+				configFileExt, s.cfg.path)
+		}
+		// Should never happen — readOneAppFile either returns
+		// (entry, nil) or (zero, err). Keeping the branch for
+		// defense-in-depth.
+		return nil, fmt.Errorf("config: %d files found under %s but none populated", seenFiles, s.cfg.path)
 	}
 	return out, nil
 }
@@ -149,14 +157,29 @@ func (s *yamlSource) skipByIgnore(name string) bool {
 	return false
 }
 
-// readOneAppFile parses one app's yaml. The file's top-level
-// `app:` key MUST match the filename (typo guard — a misnamed
-// file would otherwise be silently misrouted). Returns the
-// (logical app name, parsed body) pair.
+// readOneAppFile parses one app's yaml. Two accepted shapes:
 //
-// _common.nexus.config.yaml is special-cased: filename gives
-// app="_common", file body's `app:` field is allowed to be empty
-// or "_common".
+//   1. Profile-keyed — when the top-level has `profiles:`,
+//      use that map as the per-profile structure:
+//
+//          profiles:
+//            default: {...}
+//            prod:    {...}
+//
+//   2. Flat — when `profiles:` is absent, treat the WHOLE
+//      top-level as the default profile. Right for simple
+//      apps with no per-env split:
+//
+//          app:
+//            name: My App
+//          api:
+//            timeout: 5s
+//
+// Filename is always authoritative for identity
+// (oats.nexus.config.yaml → "oats"). A top-level `app:` STRING
+// field, when present, must match the filename (typo guard).
+// A `app:` that's a map is treated as operator content under
+// the default profile.
 func readOneAppFile(path string) (string, appBody, error) {
 	base := filepath.Base(path)
 	app := strings.TrimSuffix(base, configFileExt)
@@ -164,21 +187,33 @@ func readOneAppFile(path string) (string, appBody, error) {
 	if err != nil {
 		return "", appBody{}, err
 	}
-	var parsed struct {
-		App      string                            `yaml:"app"`
-		Profiles map[string]map[string]any         `yaml:"profiles"`
-	}
-	if err := yaml.Unmarshal(body, &parsed); err != nil {
+	var raw map[string]any
+	if err := yaml.Unmarshal(body, &raw); err != nil {
 		return "", appBody{}, fmt.Errorf("yaml parse: %w", err)
 	}
-	if app != "_common" {
-		if parsed.App == "" {
-			return "", appBody{}, errors.New("missing top-level `app:` field")
+
+	// Profile-keyed shape.
+	if profilesRaw, ok := raw["profiles"]; ok {
+		profilesMap, ok := profilesRaw.(map[string]any)
+		if !ok {
+			return "", appBody{}, fmt.Errorf("`profiles:` must be a map, got %T", profilesRaw)
 		}
-		if parsed.App != app {
-			return "", appBody{}, fmt.Errorf("filename app=%q, body app=%q (rename one)",
-				app, parsed.App)
+		out := make(map[string]map[string]any, len(profilesMap))
+		for name, pbody := range profilesMap {
+			m, ok := pbody.(map[string]any)
+			if !ok {
+				return "", appBody{}, fmt.Errorf("`profiles.%s` must be a map, got %T", name, pbody)
+			}
+			out[name] = m
 		}
+		if appStr, ok := raw["app"].(string); ok && app != "_common" && appStr != app {
+			return "", appBody{}, fmt.Errorf("filename app=%q, body app=%q (rename one)", app, appStr)
+		}
+		return app, appBody{Profiles: out}, nil
 	}
-	return app, appBody{Profiles: parsed.Profiles}, nil
+
+	// Flat shape: whole body is the default profile.
+	return app, appBody{Profiles: map[string]map[string]any{
+		"default": raw,
+	}}, nil
 }
