@@ -122,12 +122,22 @@ func copyForBundle(src, dst string, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", src, err)
 	}
-	// perm comes from the caller — 0o600 for the leaf private
-	// key (the only file in the bundle that's actually a secret)
-	// and 0o644 for the two cert files (must be world-readable
-	// so the peer's process can serve them via TLS regardless of
-	// uid). gosec G306 flags any 0o644 generically; the
-	// suppression is correct because the caller has already
-	// classified the file.
-	return os.WriteFile(dst, body, perm) // #nosec G306 -- caller-classified: 0o600 for key, 0o644 for cert
+	// Two gosec rules fire on this line and both are suppressed:
+	//
+	//   G306 — WriteFile perm > 0o600. perm comes from the caller;
+	//          0o600 for the leaf private key (the only secret in
+	//          the bundle), 0o644 for the two cert files (must be
+	//          world-readable so the peer's process can serve them
+	//          via TLS regardless of uid). The caller has already
+	//          classified the file's sensitivity.
+	//
+	//   G703 — path traversal via taint analysis. dst is
+	//          filepath.Join(bundleDir, <hard-coded suffix>)
+	//          where bundleDir = <operator's --out>/<operator's
+	//          --cn>. Both flag values are operator input on a
+	//          CLI helper; this isn't a server-side vulnerability,
+	//          and there's no untrusted-network surface to defend
+	//          against. The caller deliberately picked the output
+	//          location.
+	return os.WriteFile(dst, body, perm) // #nosec G306,G703 -- caller-classified perm; dst from operator CLI flags
 }
