@@ -42,6 +42,7 @@ var Module = nexus.Module("adverts",
 - **Built-in auth, rate limits, metrics, traces.** Cross-transport bundles via `nexus.Use`. Per-op observability is free — every handler gets counters + traces with no user code.
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
 - **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext yaml (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. See [Configuration](#configuration) below.
+- **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots, edit text + reorder + promote substeps from `/__nexus/tour`, play back as numbered-badge highlights. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
 - **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. No `node_modules`, no `npm install`. See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
@@ -575,6 +576,56 @@ nexus.Run(nexus.Config{...},
 The yaml stays human-readable + git-friendly. Same `nexus.Get` facade as the server-backed path.
 
 Run `nexus docs config` for the full inline reference.
+
+## Tours
+
+`extension/tour` ships guided walkthroughs for any HTTP-served frontend — React, Vue, Angular, Svelte, vanilla, anything. The plugin captures click-by-click sequences with auto-screenshots, lets operators edit the text in a dashboard, then plays them back as numbered-badge highlights with tooltips on the live UI.
+
+The in-page agent renders inside a **closed Shadow DOM** rooted at `document.body` — host CSS can't bleed in, the plugin's UI can't bleed out, and the host frontend has no idea anything is on top of it.
+
+### Wire it in one line
+
+```go
+import "github.com/paulmanoni/nexus/extension/tour"
+
+nexus.Run(nexus.Config{...},
+    tour.Module(
+        tour.WithGORM(db.DB()),  // production; omit for in-memory
+        tour.AutoInject(true),    // splice <script> into every text/html response
+    ),
+    // ...
+)
+```
+
+After restart, every HTML page the app serves carries a floating **● Tour** pill (bottom-right). `AutoMigrate` runs on first use to create `nexus_tours` + `nexus_tour_steps`.
+
+### Record / Play / Manage
+
+| Mode | What happens |
+|---|---|
+| **Record** | Hover any element (blue rectangle follows the mouse), click to capture. Each click takes a screenshot with a numbered badge baked in (via `html2canvas-pro`, lazy-loaded). Clicks _inside_ the previous step's bounding box become **substeps** automatically. **✎ Edit last step** overrides the placeholder title/text/placement inline. |
+| **Play** | Fetches tours for the current `pathname`, walks the tree DFS, draws an orange ring + numbered badge on each target with a tooltip beside it. Back / Next / Skip / Done. `scrollIntoView` before measure so off-screen targets are pulled into view. Missing-target path shows the selector + Skip. |
+| **Manage** | Visit `/__nexus/tour` for the authoring dashboard — Vue 3 SPA from esm.sh, no framework rebuild. Edit name/route/description; per-step title/text/placement; **↑ ↓** reorder, **→** demote, **←** promote, **×** delete (children reparent). Inline screenshot thumbnails with click-to-zoom. |
+
+### Why "hover on top of any frontend" works
+
+| Property | Why |
+|---|---|
+| Mounted on `document.body` (outside host root) | Host render cycle can't unmount or rewrite it |
+| Closed Shadow DOM | Host CSS — Tailwind reset, Vuetify defaults — can't bleed in; plugin styles can't bleed out |
+| `position: fixed; inset: 0; z-index: 2147483647` | Always on top, even above modal libraries using `z-index: 9999` |
+| `pointer-events: none` on root, `auto` on interactive UI | Host clicks pass through where the plugin isn't actively presenting |
+| Vanilla JS agent (no Vue/React runtime) | Zero conflicts with the host's framework |
+
+### Drive it from the host
+
+The agent exposes `window.nexusTour = { record, play, stop }` so a host's own "Help" button can trigger a tour without using the pill:
+
+```js
+<button onClick={() => window.nexusTour.play()}>Show me how</button>
+```
+
+Run `nexus docs tour` for the full inline reference (when added) or browse `extension/tour/agent/inject.js` — the entire client runtime is one self-contained file.
 
 ## Examples
 
