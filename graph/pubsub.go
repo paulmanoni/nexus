@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 )
 
@@ -142,9 +143,11 @@ func (p *InMemoryPubSub) Publish(ctx context.Context, topic string, data interfa
 func (p *InMemoryPubSub) Subscribe(ctx context.Context, topic string) <-chan *Message {
 	p.mu.Lock()
 
-	// Generate unique subscription ID
+	// Generate unique subscription ID. Decimal string is stable past
+	// MaxRune; the prior string(rune(...)) silently produced mojibake
+	// for high IDs and risked collisions on values above 0x10FFFF.
 	p.nextSubID++
-	subID := string(rune(p.nextSubID))
+	subID := strconv.Itoa(p.nextSubID)
 
 	// Create buffered channel to prevent blocking publishers
 	ch := make(chan *Message, 100)

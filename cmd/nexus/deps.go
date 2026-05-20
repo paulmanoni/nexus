@@ -324,6 +324,7 @@ func appendShimIfMissing(path, spec string) bool {
 		out = append(out, '\n')
 	}
 	out = append(out, []byte(line+"\n")...)
+	// #nosec G703 -- CLI helper writes operator-supplied tsconfig/jsconfig path
 	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return false
 	}
@@ -371,6 +372,7 @@ func pruneShimsForResolvedTypes(projectRoot string, specs []string) int {
 	if updated == original {
 		return 0
 	}
+	// #nosec G703 -- CLI helper writes operator-supplied shims path
 	if err := os.WriteFile(shimsPath, []byte(updated), 0o644); err != nil {
 		return 0
 	}
@@ -809,6 +811,9 @@ func runGC(stdout, stderr io.Writer, keepLockfiles []string) error {
 
 // copyFile is a small helper used by `nexus vendor`. Streams via
 // io.Copy so a multi-MB blob doesn't all sit in memory at once.
+//
+// #nosec G703 -- CLI helper for `nexus vendor`; src/dst are derived
+// from internal cache state + operator-supplied vendor root.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

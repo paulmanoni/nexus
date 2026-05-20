@@ -95,13 +95,6 @@ func Options(opts ...Option) Option {
 	return rawOption{o: fx.Options(unwrap(opts)...)}
 }
 
-// activeDeploymentMatches always returns false — the deployment-split
-// feature has been removed. Kept as an unexported stub so the rest of
-// this file builds without further surgery; no caller uses it.
-func activeDeploymentMatches(names []string) bool {
-	return false
-}
-
 // moduleAnnotator is implemented by options that participate in the
 // nexus.Module grouping — specifically AsQuery/AsMutation/AsRest. The
 // Module() function walks its direct children and calls setModule on

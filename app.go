@@ -37,7 +37,7 @@ import (
 // token gating GET /__nexus/manifest. Empty value (or unset) leaves
 // the endpoint unmounted — fail-closed so a forgotten orchestrator
 // config doesn't expose declared services / env / crons.
-const EnvAdminToken = "NEXUS_ADMIN_TOKEN"
+const EnvAdminToken = "NEXUS_ADMIN_TOKEN" // #nosec G101 -- env var name, not a credential value
 
 const defaultDashboardName = "Nexus"
 

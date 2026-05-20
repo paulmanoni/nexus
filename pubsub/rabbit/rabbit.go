@@ -289,7 +289,16 @@ func (t *Transport) republishDirect(ctx context.Context, ch *amqp.Channel, queue
 	for k, v := range d.Headers {
 		headers[k] = v
 	}
-	headers["x-delivery-attempt"] = int32(attempt)
+	// Clamp the counter into int32 range. Retry budgets are tiny
+	// (single-digit attempts in practice); the clamp is paranoia for
+	// a runaway requeue loop.
+	clamped := attempt
+	if clamped < 0 {
+		clamped = 0
+	} else if clamped > math.MaxInt32 {
+		clamped = math.MaxInt32
+	}
+	headers["x-delivery-attempt"] = int32(clamped) // #nosec G115 -- clamped above
 	t.pubMu.Lock()
 	defer t.pubMu.Unlock()
 	return ch.PublishWithContext(ctx, "", queue, false, false, amqp.Publishing{

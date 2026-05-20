@@ -77,6 +77,7 @@ func ensureNamedScript(frontendDir, scriptName, scriptCmd string, stdout io.Writ
 			insertion = "\n" + twoLevel + entryLine + ","
 		}
 		out := body[:openBrace+1] + insertion + body[openBrace+1:]
+		// #nosec G703 -- CLI helper writes operator-supplied frontend dir's package.json
 		if err := os.WriteFile(pkgPath, []byte(out), 0o644); err != nil {
 			return err
 		}
@@ -109,6 +110,7 @@ func ensureNamedScript(frontendDir, scriptName, scriptCmd string, stdout io.Writ
 		insertion = ",\n" + scriptsBlock + suffix
 	}
 	out := trimmed + insertion + body[rootClose:]
+	// #nosec G703 -- CLI helper writes operator-supplied frontend dir's package.json
 	if err := os.WriteFile(pkgPath, []byte(out), 0o644); err != nil {
 		return err
 	}
