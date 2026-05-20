@@ -1350,6 +1350,26 @@ first boot). Operator never touches keys, never sees plaintext
 on the client — the server is the only entity with readable
 config.
 
+──── Live refresh ────────────────────────────────────────────
+
+config.Client opens a WebSocket to /__config/subscribe at boot
+and processes version-change events for the lifetime of the
+process. Server-side reloads (file save, future git webhook)
+fan out to every subscriber; clients re-fetch + verify + apply
++ re-seal the cache.
+
+Polling at WithPollInterval (default 30s) stays as the safety
+net — covers the WS reconnect window after a transient blip.
+Both paths converge at the same install site so duplicate
+events are no-ops via version-equality short-circuit.
+
+──── Dashboards ──────────────────────────────────────────────
+
+  GET /__nexus/config/server   apps, profiles, last reload,
+                               reload count, subscriber count
+  GET /__nexus/config/client   server URL, identity, profile,
+                               current version, cache state
+
 ──── Safety summary ──────────────────────────────────────────
 
   Wire           — TLS always; mTLS / HMAC / none (none is dev only)
