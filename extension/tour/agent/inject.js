@@ -38,7 +38,14 @@
   // 1. Boot guard + Shadow DOM mount
   // ---------------------------------------------------------------
 
-  if (window.__nexusTourMounted) return;
+  // Boot guard — multiple <script> tags must not double-init.
+  // The mount observer below handles re-attachment if the
+  // overlay gets stripped from body; we don't re-run the whole
+  // setup, just the appendChild.
+  if (window.__nexusTourMounted) {
+    if (window.__nexusTourRemount) window.__nexusTourRemount();
+    return;
+  }
   window.__nexusTourMounted = true;
 
   // The single overlay element — appended to document.body once.
@@ -178,9 +185,40 @@
   `;
   shadow.appendChild(style);
 
+  // mountOverlay attaches <nexus-tour-overlay> to document.body
+  // AND keeps it there. A bare appendChild isn't enough — host
+  // frontends routinely remove our element via:
+  //
+  //   - SPA route changes that swap body.innerHTML wholesale
+  //     (some Inertia + manual-DOM patterns do this)
+  //   - Vue 3 Teleports + Vuetify portals briefly detaching
+  //     siblings during transitions
+  //   - Any library doing document.body.replaceChildren(...)
+  //
+  // Symptom: the FAB disappears mid-session and only comes back
+  // after a hard reload (Cmd+Shift+R) because the boot-guard
+  // global stops us from re-mounting on a soft refresh.
+  //
+  // The MutationObserver watches body's direct children and
+  // re-appends us whenever we go missing. Cheap to run — the
+  // callback fires on body-level mutations only and the work
+  // is O(1) per fire.
+  let mountObserver = null;
   function mountOverlay() {
-    if (document.body) document.body.appendChild(overlayHost);
-    else document.addEventListener('DOMContentLoaded', mountOverlay, { once: true });
+    if (!document.body) {
+      document.addEventListener('DOMContentLoaded', mountOverlay, { once: true });
+      return;
+    }
+    if (!overlayHost.isConnected) {
+      document.body.appendChild(overlayHost);
+    }
+    if (mountObserver) return;
+    mountObserver = new MutationObserver(() => {
+      if (!overlayHost.isConnected) {
+        document.body.appendChild(overlayHost);
+      }
+    });
+    mountObserver.observe(document.body, { childList: true });
   }
 
   // ---------------------------------------------------------------
@@ -845,6 +883,12 @@
     }),
     stop:   () => { recorder.stop && recorder.stop(false); runner.stop(); },
   };
+
+  // Allow a re-loaded script tag (Vite HMR in dev, manual
+  // re-include, etc.) to nudge us back into body without going
+  // through full init. The boot-guard branch at the top of this
+  // IIFE calls __nexusTourRemount() and returns.
+  window.__nexusTourRemount = mountOverlay;
 
   mountOverlay();
 })();
