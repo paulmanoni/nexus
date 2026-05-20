@@ -56,8 +56,16 @@ func withStatusHolder(ctx context.Context) (context.Context, *statusHolder) {
 // adapter — useful for resolver code that runs in tests with a
 // bare graphql.Do call.
 func SetStatusCode(ctx context.Context, code int) {
+	if code < 0 || code > 999 {
+		// HTTP status codes are three-digit; clamp out-of-range
+		// inputs rather than letting them silently wrap on the
+		// int32 store. Anything outside [100, 599] is already a
+		// caller bug — drop to 0 (no override) so the default 200
+		// path fires and a stray int doesn't pretend to be a code.
+		return
+	}
 	if h, ok := ctx.Value(statusKey{}).(*statusHolder); ok {
-		h.code.Store(int32(code))
+		h.code.Store(int32(code)) // #nosec G115 -- bounds-checked above
 	}
 }
 

@@ -385,6 +385,7 @@ func gitignoreEnsureNodeModules(projectRoot string) {
 	}
 	addition := "\n# nexus-managed type stubs for IntelliSense\n/node_modules/\n"
 	out := append(body, []byte(addition)...)
+	// #nosec G703 -- CLI helper writes operator-supplied frontend dir's .gitignore
 	_ = os.WriteFile(path, out, 0o644)
 }
 

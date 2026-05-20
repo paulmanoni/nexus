@@ -110,6 +110,7 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 			fmt.Fprintf(stdout, "[nexus] couldn't locate a `plugins:` array in %s — add `nexus()` manually\n", configPath)
 			// Still write the import (helpful even if the array edit failed).
 			if changed {
+				// #nosec G703 -- CLI helper writes operator-supplied vite config path
 				if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
 					return fmt.Errorf("write %s: %w", configPath, err)
 				}
@@ -129,6 +130,7 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 	if !changed {
 		return nil
 	}
+	// #nosec G703 -- CLI helper writes operator-supplied vite config path
 	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
@@ -213,6 +215,7 @@ func SyncViteProxyForPrefixes(configPath, apiURL string, prefixes []string, stdo
 	if !ok || updated == body {
 		return nil
 	}
+	// #nosec G703 -- CLI helper writes operator-supplied vite config path
 	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
@@ -428,6 +431,7 @@ func EnsureViteWatchExclude(configPath string, stdout io.Writer) error {
 	if !ok {
 		return nil
 	}
+	// #nosec G703 -- CLI helper writes operator-supplied vite config path
 	if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}

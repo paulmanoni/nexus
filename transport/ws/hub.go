@@ -112,7 +112,7 @@ func (c *Connection) Send(message []byte) {
 	case c.send <- message:
 		c.drops.Store(0)
 	default:
-		if c.drops.Add(1) >= int32(c.hub.cfg.maxDropsBeforeClose) {
+		if c.drops.Add(1) >= c.hub.cfg.maxDropsBeforeClose {
 			c.hub.cfg.logf("closing slow client clientID=%s drops=%d", c.ClientID, c.drops.Load())
 			c.hub.unregister <- c
 		}
@@ -363,7 +363,7 @@ func (h *Hub) writeTo(c *Connection, data []byte) {
 	case c.send <- data:
 		c.drops.Store(0)
 	default:
-		if c.drops.Add(1) >= int32(h.cfg.maxDropsBeforeClose) {
+		if c.drops.Add(1) >= h.cfg.maxDropsBeforeClose {
 			h.unregister <- c
 		}
 	}
@@ -649,7 +649,7 @@ type hubConfig struct {
 	pongWait            time.Duration
 	pingPeriod          time.Duration
 	maxConnections      int
-	maxDropsBeforeClose int
+	maxDropsBeforeClose int32 // compared against atomic int32 drops counter
 	logf                func(format string, args ...any)
 }
 

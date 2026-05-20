@@ -271,6 +271,15 @@ func pathUnder(path string, roots []string) bool {
 // by walking into dist/.
 func scanEmbedTargets(root string) map[string]bool {
 	out := map[string]bool{}
+	// os.OpenRoot pins the walk to root; subsequent rt.Open calls
+	// refuse to traverse symlinks that point outside the root,
+	// closing the TOCTOU window between WalkDir resolving a path
+	// and os.Open following it.
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return out
+	}
+	defer rt.Close()
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -284,11 +293,14 @@ func scanEmbedTargets(root string) map[string]bool {
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
-		f, err := os.Open(path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
+		f, err := rt.Open(rel)
+		if err != nil {
+			return nil
+		}
 		dir := filepath.Dir(path)
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
@@ -305,6 +317,7 @@ func scanEmbedTargets(root string) map[string]bool {
 				addEmbedMatches(out, full)
 			}
 		}
+		f.Close()
 		return nil
 	})
 	return out
