@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -72,6 +73,22 @@ func Server(src Source, opts ...ServerOption) nexus.Option {
 			},
 			OnShutdown: func(ctx context.Context) error {
 				return holder.shutdown(ctx)
+			},
+		},
+		Dashboard: &extension.Dashboard{
+			Tab: &extension.Tab{
+				ID:    "config-server",
+				Label: "Config",
+				Icon:  "settings",
+			},
+			Routes: []extension.Route{
+				{Method: "GET", Path: "/server", Handler: gin.HandlerFunc(func(c *gin.Context) {
+					if holder.state == nil {
+						c.JSON(503, map[string]string{"error": "config server not initialized"})
+						return
+					}
+					handleServerStatus(holder.state)(c)
+				})},
 			},
 		},
 	})

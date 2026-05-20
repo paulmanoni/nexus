@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -64,11 +65,28 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 		},
 		Lifecycle: &extension.Lifecycle{
 			OnBoot: func(ctx context.Context, _ *nexus.App) error {
-				return holder.startPolling(ctx)
+				if err := holder.startPolling(ctx); err != nil {
+					return err
+				}
+				holder.startSubscription(ctx)
+				return nil
 			},
 			OnShutdown: func(_ context.Context) error {
+				holder.stopSubscription()
 				holder.stopPolling()
 				return nil
+			},
+		},
+		Dashboard: &extension.Dashboard{
+			Tab: &extension.Tab{
+				ID:    "config-client",
+				Label: "Config",
+				Icon:  "settings",
+			},
+			Routes: []extension.Route{
+				{Method: "GET", Path: "/client", Handler: gin.HandlerFunc(func(c *gin.Context) {
+					handleClientStatus(holder)(c)
+				})},
 			},
 		},
 	})
@@ -91,6 +109,13 @@ type clientHolder struct {
 
 	cancelPolling context.CancelFunc
 	pollWG        sync.WaitGroup
+
+	// Subscribe loop runs alongside polling. WS push delivers
+	// sub-second refresh during steady-state; polling catches
+	// anything missed during a WS reconnect window.
+	subMu           sync.Mutex
+	cancelSubscribe context.CancelFunc
+	subWG           sync.WaitGroup
 }
 
 // initClient is the fx.Invoke that runs the boot state machine.

@@ -37,6 +37,16 @@ type serverState struct {
 	signed    map[string]*SignedSnapshot
 	subsCount atomic.Int32 // for the dashboard
 
+	// subs is the WS push registry — one subscription per live
+	// /__config/subscribe/:app/:profile connection. fan-out
+	// fires from reload() after the source content updates.
+	subs *subscribers
+
+	// lastReload + reloadCount expose reload state to the
+	// dashboard. Cheap atomics; no contention on read.
+	lastReload  atomic.Pointer[time.Time]
+	reloadCount atomic.Int32
+
 	srv       *http.Server
 	watchStop func() // returned by Source.Watch; called on shutdown
 }
@@ -49,6 +59,7 @@ func newServerState(w serverWrapper) (*serverState, error) {
 		cfg:    w.cfg,
 		source: w.source,
 		signed: map[string]*SignedSnapshot{},
+		subs:   newSubscribers(),
 	}
 	// Apply dev-mode auto-generated material BEFORE loading the
 	// signing key, since the auto-gen path writes the key file.
@@ -75,7 +86,8 @@ func newServerState(w serverWrapper) (*serverState, error) {
 // reload re-reads the Source and clears the signed-snapshot cache
 // so subsequent requests trigger a fresh sign with the new
 // content. Called once at boot and again on every Source watch
-// event.
+// event. Notifies WS subscribers after content lands so they
+// can re-fetch the freshly-signed snapshots.
 func (s *serverState) reload(ctx context.Context) error {
 	content, err := s.source.Load(ctx)
 	if err != nil {
@@ -85,6 +97,14 @@ func (s *serverState) reload(ctx context.Context) error {
 	s.content = content
 	s.signed = map[string]*SignedSnapshot{}
 	s.mu.Unlock()
+
+	now := time.Now().UTC()
+	s.lastReload.Store(&now)
+	s.reloadCount.Add(1)
+
+	// Notify subscribers AFTER the content swap. Even if no
+	// subscribers are currently connected this is a no-op.
+	s.notifyReload()
 	return nil
 }
 
@@ -175,6 +195,7 @@ func (s *serverState) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /__config/snapshot/{app}/{profile}", s.handleSnapshot)
 	mux.HandleFunc("GET /__config/version/{app}/{profile}", s.handleVersion)
+	mux.HandleFunc("GET /__config/subscribe/{app}/{profile}", s.handleSubscribe)
 	return mux
 }
 
