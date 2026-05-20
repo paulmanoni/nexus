@@ -44,3 +44,33 @@ func TestHandleInjectJS(t *testing.T) {
 		t.Errorf("served body is %d bytes — looks like the Phase-1 stub, not Phase-2", len(body))
 	}
 }
+
+// TestHandleDashboard exercises the management UI route. The
+// served body should be HTML, contain Vue's mount target, and
+// reference the REST endpoints the SPA talks to.
+func TestHandleDashboard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/dash", handleDashboard)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest("GET", "/dash", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+	for _, signpost := range []string{
+		`id="app"`,                 // Vue mount target
+		"esm.sh/vue@3",             // CDN import
+		"/__nexus/tour/tours",      // REST endpoint reference
+		"promoteStep",              // tree-manip helper proves the editor logic landed
+	} {
+		if !strings.Contains(body, signpost) {
+			t.Errorf("dashboard body missing %q", signpost)
+		}
+	}
+}

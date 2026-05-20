@@ -134,6 +134,12 @@ func Module(opts ...Option) nexus.Option {
 		},
 		Dashboard: &extension.Dashboard{
 			Routes: []extension.Route{
+				// Path "" lands at /__nexus/tour — the
+				// management UI. Operators land here from the
+				// dashboard tab; the in-page agent script tag
+				// gets spliced in too (if AutoInject is on),
+				// so "edit + try it" is one page reload.
+				{Method: "GET", Path: "", Handler: handleDashboard},
 				{Method: "GET", Path: "/tours", Handler: h.listTours},
 				{Method: "GET", Path: "/tours/:id", Handler: h.getTour},
 				{Method: "POST", Path: "/tours", Handler: h.upsertTour},
