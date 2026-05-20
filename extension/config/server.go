@@ -159,7 +159,12 @@ func (st *serverState) boot(ctx context.Context) error {
 		Addr:              st.cfg.listen,
 		Handler:           st.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
-		TLSConfig:         buildServerTLSConfig(st.cfg),
+	}
+	// AuthNone = dev mode = plain HTTP. mTLS / HMAC need a TLS
+	// listener so the wire is encrypted regardless of which auth
+	// the application picks on top.
+	if st.cfg.authMode != AuthNone {
+		st.srv.TLSConfig = buildServerTLSConfig(st.cfg)
 	}
 	// Watch fires async; reload is cheap. The stop func is
 	// retained on st so shutdown can cancel it cleanly.
@@ -167,7 +172,24 @@ func (st *serverState) boot(ctx context.Context) error {
 		_ = st.reload(context.Background())
 	})
 	go func() {
-		err := st.srv.ListenAndServeTLS("", "")
+		scheme := "https"
+		if st.cfg.authMode == AuthNone {
+			scheme = "http"
+		}
+		// Loud announcement — config.Server runs on its own
+		// listener separate from the main app's port. New users
+		// hit Gin's 404 when they point Client at the app's port
+		// instead of this one. Matches the framework's
+		// "nexus: listening on …" pattern so the line survives
+		// in `nexus dev` output.
+		fmt.Fprintf(os.Stdout, "config.Server: listening on %s://%s (auth=%s)\n",
+			scheme, st.cfg.listen, authModeName(st.cfg.authMode))
+		var err error
+		if st.cfg.authMode == AuthNone {
+			err = st.srv.ListenAndServe()
+		} else {
+			err = st.srv.ListenAndServeTLS("", "")
+		}
 		if err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "config.Server: listener exited: %v\n", err)
 		}
@@ -403,7 +425,10 @@ func ensureDevDefaults(cfg *serverConfig) error {
 	if err := os.MkdirAll(".configd", 0o700); err != nil {
 		return fmt.Errorf("ensureDevDefaults: mkdir .configd: %w", err)
 	}
-	if cfg.tlsCert == "" || cfg.tlsKey == "" {
+	// AuthNone is plain HTTP — no point generating TLS material
+	// the server will never use. mTLS / HMAC still need a cert,
+	// so only the AuthNone branch skips.
+	if cfg.authMode != AuthNone && (cfg.tlsCert == "" || cfg.tlsKey == "") {
 		certPath := ".configd/server.crt"
 		keyPath := ".configd/server.key"
 		if _, err := os.Stat(certPath); os.IsNotExist(err) {
