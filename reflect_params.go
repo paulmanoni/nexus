@@ -3,6 +3,7 @@ package nexus
 import (
 	"context"
 	"reflect"
+	"sync"
 
 	"github.com/graphql-go/graphql"
 )
@@ -59,25 +60,58 @@ func paramsArgsField(t reflect.Type) reflect.Type {
 	return f.Type
 }
 
+// paramsIndices holds the field positions of the four well-known Params[T]
+// fields. -1 means the field is absent. Cached per Params[T] type so
+// buildParamsValue avoids a FieldByName string walk on every request.
+type paramsIndices struct {
+	ctx, args, source, info int
+}
+
+var paramsIndicesCache sync.Map // reflect.Type → paramsIndices
+
+func getParamsIndices(t reflect.Type) paramsIndices {
+	if v, ok := paramsIndicesCache.Load(t); ok {
+		return v.(paramsIndices)
+	}
+	pi := paramsIndices{ctx: -1, args: -1, source: -1, info: -1}
+	if t.Kind() == reflect.Struct {
+		for i := 0; i < t.NumField(); i++ {
+			switch t.Field(i).Name {
+			case "Context":
+				pi.ctx = i
+			case "Args":
+				pi.args = i
+			case "Source":
+				pi.source = i
+			case "Info":
+				pi.info = i
+			}
+		}
+	}
+	actual, _ := paramsIndicesCache.LoadOrStore(t, pi)
+	return actual.(paramsIndices)
+}
+
 // buildParamsValue constructs a Params[T] reflect.Value with the supplied
 // Context/Args/Source/Info. Used by as_graph and as_rest before calling a
 // handler that takes a Params[T] parameter.
 func buildParamsValue(paramsType reflect.Type, ctx context.Context, args reflect.Value, source any, info graphql.ResolveInfo) reflect.Value {
 	p := reflect.New(paramsType).Elem()
-	if f := p.FieldByName("Context"); f.IsValid() {
+	idx := getParamsIndices(paramsType)
+	if idx.ctx >= 0 {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		f.Set(reflect.ValueOf(ctx))
+		p.Field(idx.ctx).Set(reflect.ValueOf(ctx))
 	}
-	if f := p.FieldByName("Args"); f.IsValid() && args.IsValid() {
-		f.Set(args)
+	if idx.args >= 0 && args.IsValid() {
+		p.Field(idx.args).Set(args)
 	}
-	if f := p.FieldByName("Source"); f.IsValid() && source != nil {
-		f.Set(reflect.ValueOf(source))
+	if idx.source >= 0 && source != nil {
+		p.Field(idx.source).Set(reflect.ValueOf(source))
 	}
-	if f := p.FieldByName("Info"); f.IsValid() {
-		f.Set(reflect.ValueOf(info))
+	if idx.info >= 0 {
+		p.Field(idx.info).Set(reflect.ValueOf(info))
 	}
 	return p
 }

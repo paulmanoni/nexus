@@ -997,26 +997,57 @@ func decodeMap(src, dst any) error {
 	return dec.Decode(src)
 }
 
+// argBinding is the precomputed result of parseGraphQLTag for one field.
+// Computed once per args struct type and reused on every request.
+type argBinding struct {
+	name     string
+	fieldIdx int
+	required bool
+}
+
+// argBindingsCache memoises compiled bindings per args struct type. Args
+// structs are user types instantiated at registration and never change at
+// runtime, so the cache fills once and is read-only thereafter.
+var argBindingsCache sync.Map // reflect.Type → []argBinding
+
+// getArgBindings returns the cached bindings for t, compiling on first use.
+// Skips unexported fields and fields whose graphql tag is "-".
+func getArgBindings(t reflect.Type) []argBinding {
+	if v, ok := argBindingsCache.Load(t); ok {
+		return v.([]argBinding)
+	}
+	if t.Kind() != reflect.Struct {
+		argBindingsCache.Store(t, []argBinding(nil))
+		return nil
+	}
+	n := t.NumField()
+	bs := make([]argBinding, 0, n)
+	for i := 0; i < n; i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue
+		}
+		name, required := parseGraphQLTag(f)
+		if name == "" {
+			continue
+		}
+		bs = append(bs, argBinding{name: name, fieldIdx: i, required: required})
+	}
+	actual, _ := argBindingsCache.LoadOrStore(t, bs)
+	return actual.([]argBinding)
+}
+
 // bindGqlArgs assigns p.Args map entries into the args struct. Uses the
 // graphql: tag for the source key and best-effort type conversion.
 func bindGqlArgs(ptr any, args map[string]any) error {
 	pv := reflect.ValueOf(ptr).Elem()
-	pt := pv.Type()
-	for i := 0; i < pt.NumField(); i++ {
-		f := pt.Field(i)
-		if f.PkgPath != "" {
-			continue
-		}
-		name, _ := parseGraphQLTag(f)
-		if name == "" {
-			continue
-		}
-		raw, ok := args[name]
+	for _, b := range getArgBindings(pv.Type()) {
+		raw, ok := args[b.name]
 		if !ok || raw == nil {
 			continue
 		}
-		if err := assignArg(pv.Field(i), raw); err != nil {
-			return fmt.Errorf("bind %q: %w", name, err)
+		if err := assignArg(pv.Field(b.fieldIdx), raw); err != nil {
+			return fmt.Errorf("bind %q: %w", b.name, err)
 		}
 	}
 	return nil
