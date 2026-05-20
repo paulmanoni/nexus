@@ -2,55 +2,19 @@ package tour
 
 import (
 	"bytes"
+	_ "embed"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
-// injectJS is the in-page agent stub served at
-// /__nexus/tour/inject.js. Phase 1 ships a minimal bootstrap that
-// renders a floating "Tour" pill in a Shadow DOM so operators can
-// visually confirm the script is loading on their frontend.
-// Phase 2 replaces this body with the full TS-built bundle
-// (recorder + picker + runner).
+// injectJS is the in-page agent — vanilla JS, no toolchain, all
+// UI lives inside a closed Shadow DOM rooted at document.body.
+// See agent/inject.js for the source. Embedded at build time so
+// the binary ships without external assets.
 //
-// Why a placeholder now: the script-tag injection path + the
-// Shadow-DOM mount + the cross-frontend hover-on-top guarantees
-// all need real-world validation; shipping a 100-byte canary
-// proves the wiring is right without waiting for the full
-// recorder UI.
-const injectJS = `(function () {
-  // Idempotent — multiple <script> tags don't double-mount.
-  if (window.__nexusTourMounted) return;
-  window.__nexusTourMounted = true;
-
-  var host = document.createElement('nexus-tour-overlay');
-  host.setAttribute('data-version', '0.1.0-phase1');
-  host.style.cssText =
-    'all: initial; position: fixed; bottom: 16px; right: 16px;' +
-    'z-index: 2147483647; pointer-events: none;';
-
-  var shadow = host.attachShadow({ mode: 'closed' });
-  var btn = document.createElement('button');
-  btn.textContent = '🎬 Tour';
-  btn.style.cssText =
-    'all: initial; font: 14px/1 system-ui, sans-serif;' +
-    'background: #111; color: #fff; padding: 10px 14px;' +
-    'border-radius: 999px; box-shadow: 0 4px 12px rgba(0,0,0,.25);' +
-    'cursor: pointer; pointer-events: auto;';
-  btn.addEventListener('click', function () {
-    // Phase-1 stub — replaced by the recorder UI in Phase 2.
-    alert('Nexus Tour plugin loaded. Recorder UI lands in Phase 2.');
-  });
-  shadow.appendChild(btn);
-
-  function mount() {
-    if (document.body) document.body.appendChild(host);
-    else document.addEventListener('DOMContentLoaded', mount, { once: true });
-  }
-  mount();
-})();
-`
+//go:embed agent/inject.js
+var injectJS string
 
 // handleInjectJS serves the in-page agent at
 // /__nexus/tour/inject.js. Content-Type is application/javascript
