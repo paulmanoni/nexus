@@ -58,6 +58,27 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("frontend build: stat %s: %w", srcDir, err)
 	}
 
+	// .vue source files (anywhere under islands.src/, not just
+	// top-level entries) require the QuickJS-backed SFC compiler
+	// which is build-tagged behind cgo+vue. When the binary was
+	// built pure-Go (or without the vue tag), the vueCompilerHook
+	// stays nil and we reject .vue with the same clear message
+	// the v0.1 flow used.
+	//
+	// This check runs BEFORE the empty-entries short-circuit so a
+	// project with only `App.vue` (no bootstrap .ts) still surfaces
+	// the build-tag hint instead of silently producing nothing — a
+	// user staging vue components first and the entry later would
+	// otherwise see no output and have no clue why.
+	hasVue, err := hasVueSources(srcDir)
+	if err != nil {
+		return fmt.Errorf("frontend build: scan vue sources: %w", err)
+	}
+	if hasVue && vueCompilerHook == nil {
+		return errors.New("frontend build: .vue sources detected but this nexus was built without Vue SFC support — " +
+			"rebuild with `CGO_ENABLED=1 go install -tags vue ./cmd/nexus` to enable")
+	}
+
 	entries, err := collectFrontendEntries(srcDir)
 	if err != nil {
 		return err
@@ -66,21 +87,6 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		// islands.src exists but is empty — also skip; user may
 		// just be staging the directory.
 		return nil
-	}
-
-	// .vue source files (anywhere under islands.src/, not just
-	// top-level entries) require the QuickJS-backed SFC compiler
-	// which is build-tagged behind cgo+vue. When the binary was
-	// built pure-Go (or without the vue tag), the vueCompilerHook
-	// stays nil and we reject .vue with the same clear message
-	// the v0.1 flow used.
-	hasVue, err := hasVueSources(srcDir)
-	if err != nil {
-		return fmt.Errorf("frontend build: scan vue sources: %w", err)
-	}
-	if hasVue && vueCompilerHook == nil {
-		return errors.New("frontend build: .vue sources detected but this nexus was built without Vue SFC support — " +
-			"rebuild with `CGO_ENABLED=1 go install -tags vue ./cmd/nexus` to enable")
 	}
 
 	lockfilePath := filepath.Join(projectRoot, lockfile.Filename)
