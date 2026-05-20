@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -46,6 +47,7 @@ func roundTripFixture(t *testing.T) (*Registry, func()) {
 	// (TestDispatchCall_StitchesTraceFromHeader) drives the bus
 	// branch with a real bus.
 	mux.HandleFunc("/__peer/call", dispatchCall(AuthNone, nil, nil, "test-server"))
+	mux.HandleFunc("/__peer/schema", emitSchema("test-server"))
 	mux.HandleFunc("/__peer/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -58,6 +60,7 @@ func roundTripFixture(t *testing.T) (*Registry, func()) {
 	reg := &Registry{
 		identity: "test-client",
 		authMode: AuthNone,
+		schemas:  newSchemaCache(),
 		peers: map[string]*peerConn{
 			"target": {
 				name:       "target",
@@ -244,6 +247,401 @@ loop:
 		if e.ParentID != callerSpan {
 			t.Errorf("ParentID = %q, want %q (should parent to caller's span)", e.ParentID, callerSpan)
 		}
+	}
+}
+
+// TestCall_DriftCheck_MissingMethod proves the drift check fires
+// when the client tries to call a method the peer's schema
+// doesn't list. Without this, the framework would let the call
+// hit the wire and bounce off the server's NOT_FOUND envelope —
+// less direct than failing at the client and harder to debug.
+func TestCall_DriftCheck_MissingMethod(t *testing.T) {
+	resetCallTable()
+	defer resetCallTable()
+
+	// Only "ping" is registered; the test calls "pong".
+	callTable.Store("ping", &callEntry{
+		Method:   "ping",
+		ArgsType: nil,
+		Bound: func(_ context.Context, _ any) (any, error) {
+			return struct{}{}, nil
+		},
+	})
+
+	reg, stop := roundTripFixture(t)
+	defer stop()
+
+	_, err := Call[struct{}](context.Background(), reg, "target", "pong", nil)
+	if err == nil {
+		t.Fatal("expected drift error for unknown method")
+	}
+	var pe *Error
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *peer.Error, got %T (%v)", err, err)
+	}
+	if pe.Code != "METHOD_UNKNOWN" {
+		t.Errorf("error code = %q, want METHOD_UNKNOWN", pe.Code)
+	}
+	// The error should list available methods so the operator
+	// can diff the typo against what the peer actually exposes.
+	// Stored as []string in the in-process error path; would
+	// arrive as []any after a JSON round-trip across the wire,
+	// hence the type-switch.
+	var available []string
+	switch v := pe.Details["available_methods"].(type) {
+	case []string:
+		available = v
+	case []any:
+		for _, m := range v {
+			if s, ok := m.(string); ok {
+				available = append(available, s)
+			}
+		}
+	default:
+		t.Fatalf("details.available_methods = %T, want []string or []any", v)
+	}
+	found := false
+	for _, m := range available {
+		if m == "ping" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("available_methods missing 'ping': %v", available)
+	}
+}
+
+// TestEmitSchema_ListsRegisteredMethods drives the server side of
+// schema emission directly: register two methods, hit
+// /__peer/schema, assert the payload lists both with the right
+// type names. Catches "registered methods drift from emitted
+// schema" regressions early.
+func TestEmitSchema_ListsRegisteredMethods(t *testing.T) {
+	resetCallTable()
+	defer resetCallTable()
+
+	callTable.Store("alpha", &callEntry{
+		Method:   "alpha",
+		ArgsType: reflectTypeFor[echoArgs](),
+		RetType:  reflectTypeFor[echoReply](),
+		Bound:    func(_ context.Context, _ any) (any, error) { return nil, nil },
+	})
+	callTable.Store("beta", &callEntry{
+		Method: "beta",
+		// no args/return → omitted from the wire
+		Bound: func(_ context.Context, _ any) (any, error) { return nil, nil },
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(emitSchema("emitter-svc")))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got PeerSchema
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Identity != "emitter-svc" {
+		t.Errorf("Identity = %q, want emitter-svc", got.Identity)
+	}
+	if got.SchemaVersion != SchemaVersion {
+		t.Errorf("SchemaVersion = %q, want %q", got.SchemaVersion, SchemaVersion)
+	}
+	if len(got.Methods) != 2 {
+		t.Fatalf("got %d methods, want 2: %+v", len(got.Methods), got.Methods)
+	}
+	byName := map[string]MethodSchema{}
+	for _, m := range got.Methods {
+		byName[m.Name] = m
+	}
+	alpha, ok := byName["alpha"]
+	if !ok {
+		t.Fatal("alpha missing")
+	}
+	if !strings.Contains(alpha.ArgsType, "echoArgs") {
+		t.Errorf("alpha.ArgsType = %q, want contains echoArgs", alpha.ArgsType)
+	}
+	if !strings.Contains(alpha.ReturnType, "echoReply") {
+		t.Errorf("alpha.ReturnType = %q, want contains echoReply", alpha.ReturnType)
+	}
+	beta, ok := byName["beta"]
+	if !ok {
+		t.Fatal("beta missing")
+	}
+	if beta.ArgsType != "" || beta.ReturnType != "" {
+		t.Errorf("beta should have empty types (no args/return): %+v", beta)
+	}
+}
+
+// TestProber_FlipsReadyOnFailure exercises the prober side effects:
+// a peer that returns non-200 on /__peer/health should flip
+// ready=false within one probe interval, and a peer that recovers
+// should flip back. Uses a switch atomic that the test controls
+// to drive the up/down transitions.
+func TestProber_FlipsReadyOnFailure(t *testing.T) {
+	resetCallTable()
+	defer resetCallTable()
+
+	var healthy atomic.Bool
+	healthy.Store(true)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	r := &Registry{
+		schemas: newSchemaCache(),
+		peers: map[string]*peerConn{
+			"target": {
+				name:       "target",
+				url:        srv.URL,
+				httpClient: srv.Client(),
+				sem:        make(chan struct{}, 8),
+			},
+		},
+	}
+	r.peers["target"].ready.Store(true)
+
+	// Drive probeOnce directly rather than spinning up the full
+	// prober loop — that path is what we want to exercise (and
+	// it's deterministic), without sleeping through 10s
+	// proberInterval ticks just to observe the state machine.
+	probeOnce(context.Background(), r, r.peers["target"])
+	if !r.peers["target"].ready.Load() {
+		t.Fatal("ready=false after healthy probe; should be true")
+	}
+
+	healthy.Store(false)
+	probeOnce(context.Background(), r, r.peers["target"])
+	if r.peers["target"].ready.Load() {
+		t.Fatal("ready=true after 503; should be false")
+	}
+
+	healthy.Store(true)
+	probeOnce(context.Background(), r, r.peers["target"])
+	if !r.peers["target"].ready.Load() {
+		t.Fatal("ready=false after recovery; should be true")
+	}
+}
+
+// TestProber_ResetsSchemaOnDownTransition proves the prober's
+// side-effect contract: when a peer goes from ready→down, the
+// cached schema for that peer is dropped, so the next Call after
+// recovery re-fetches the (possibly-updated) schema. Without
+// this, a peer that ships a new method would never have it
+// surfaced on the caller's cache.
+func TestProber_ResetsSchemaOnDownTransition(t *testing.T) {
+	r := &Registry{
+		schemas: newSchemaCache(),
+		peers: map[string]*peerConn{
+			"target": {name: "target"},
+		},
+	}
+	r.peers["target"].ready.Store(true)
+	// Prime the schema cache.
+	r.schemas.schemas["target"] = &PeerSchema{Identity: "target"}
+
+	flipReady(r, r.peers["target"], false)
+	if _, ok := r.schemas.schemas["target"]; ok {
+		t.Error("schema cache should be reset on ready→down transition")
+	}
+
+	// Re-prime; an up→up transition shouldn't reset.
+	r.peers["target"].ready.Store(true)
+	r.schemas.schemas["target"] = &PeerSchema{Identity: "target"}
+	flipReady(r, r.peers["target"], true)
+	if _, ok := r.schemas.schemas["target"]; !ok {
+		t.Error("schema cache reset on up→up transition; should be preserved")
+	}
+}
+
+// driftCallerArgs / driftPeerArgs / driftPeerReturn / driftCallerReturn
+// are the per-fixture types the structural-drift tests below use.
+// Each pair differs from its counterpart in one specific dimension
+// (renamed field, new required field, mismatched primitive) so the
+// assertion can point at exactly the rule that fired.
+
+// New-required-field case: peer's schema requires Currency that
+// the caller doesn't send.
+type driftV1Args struct {
+	UserID  string `json:"userId" validate:"required"`
+	ItemIDs []string `json:"itemIds" validate:"required"`
+}
+type driftV2Args struct {
+	UserID   string   `json:"userId" validate:"required"`
+	ItemIDs  []string `json:"itemIds" validate:"required"`
+	Currency string   `json:"currency" validate:"required"`
+}
+
+// Type-swap case: peer expects a string where the caller sends an
+// integer. JSON decode would fail on the peer side either way; we
+// want fail-fast at the call site.
+type driftStringArgs struct {
+	Value string `json:"value" validate:"required"`
+}
+type driftIntArgs struct {
+	Value int `json:"value" validate:"required"`
+}
+
+// TestVerifyMethod_FailsOnMissingRequiredProperty drives the
+// structural check's new-required-field path. Peer says
+// driftV2Args (requires currency); caller's args type is
+// driftV1Args (no currency). Without this guard the call would
+// arrive at the peer with a zero-value Currency, fail handler
+// validation, and surface as a confusing generic INTERNAL error.
+func TestVerifyMethod_FailsOnMissingRequiredProperty(t *testing.T) {
+	peerSchema := &PeerSchema{
+		Identity: "orders-svc",
+		Methods: []MethodSchema{{
+			Name:       "createOrder",
+			ArgsType:   "peer.driftV2Args",
+			ArgsSchema: ReflectSchema(reflectTypeFor[driftV2Args]()),
+		}},
+	}
+	err := verifyMethod(peerSchema, "createOrder",
+		reflectTypeFor[driftV1Args](), nil)
+	if err == nil {
+		t.Fatal("expected drift error — caller missing required currency")
+	}
+	var pe *Error
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *peer.Error, got %T (%v)", err, err)
+	}
+	if pe.Code != "SCHEMA_MISSING_REQUIRED" {
+		t.Errorf("code = %q, want SCHEMA_MISSING_REQUIRED", pe.Code)
+	}
+	if prop, _ := pe.Details["property"].(string); prop != "currency" {
+		t.Errorf("details.property = %v, want currency", pe.Details["property"])
+	}
+}
+
+// TestVerifyMethod_FailsOnTypeMismatch covers the primitive-type
+// swap. The compare walks into Properties recursively so a
+// nested type swap on a leaf field surfaces too — not just the
+// top-level object-vs-array case.
+func TestVerifyMethod_FailsOnTypeMismatch(t *testing.T) {
+	peerSchema := &PeerSchema{
+		Identity: "echo-svc",
+		Methods: []MethodSchema{{
+			Name:       "set",
+			ArgsType:   "peer.driftStringArgs",
+			ArgsSchema: ReflectSchema(reflectTypeFor[driftStringArgs]()),
+		}},
+	}
+	err := verifyMethod(peerSchema, "set",
+		reflectTypeFor[driftIntArgs](), nil)
+	if err == nil {
+		t.Fatal("expected drift error — string vs integer mismatch")
+	}
+	var pe *Error
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *peer.Error, got %T (%v)", err, err)
+	}
+	if pe.Code != "SCHEMA_MISMATCH" {
+		t.Errorf("code = %q, want SCHEMA_MISMATCH", pe.Code)
+	}
+}
+
+// TestVerifyMethod_PassesOnForwardCompatibleAdd proves the
+// forward-compat policy: if the CALLER has extra fields the peer
+// doesn't know about, the call still succeeds. encoding/json on
+// the peer side silently drops unknown keys, so the call is
+// safe — failing here would block every rolling deploy where the
+// caller is ahead of the peer.
+func TestVerifyMethod_PassesOnForwardCompatibleAdd(t *testing.T) {
+	// Peer is on the older v1 shape; caller's args are v2 (added
+	// optional/required currency).
+	peerSchema := &PeerSchema{
+		Identity: "orders-svc",
+		Methods: []MethodSchema{{
+			Name:       "createOrder",
+			ArgsType:   "peer.driftV1Args",
+			ArgsSchema: ReflectSchema(reflectTypeFor[driftV1Args]()),
+		}},
+	}
+	err := verifyMethod(peerSchema, "createOrder",
+		reflectTypeFor[driftV2Args](), nil)
+	if err != nil {
+		t.Errorf("expected pass — caller with extra fields is forward-compat: %v", err)
+	}
+}
+
+// TestVerifyMethod_PassesOnNoSchema proves the graceful-degradation
+// path: an older peer that hasn't yet rolled out the JSON-Schema
+// emit (ArgsSchema=nil) still has a usable type-name comparison.
+// Without this fallback, every Call to a pre-rc4 peer would block.
+func TestVerifyMethod_PassesOnNoSchema(t *testing.T) {
+	peerSchema := &PeerSchema{
+		Identity: "legacy-svc",
+		Methods: []MethodSchema{{
+			Name:     "doThing",
+			ArgsType: "peer.driftV1Args",
+			// ArgsSchema deliberately nil — simulates a peer
+			// that hasn't shipped the new schema field yet.
+		}},
+	}
+	err := verifyMethod(peerSchema, "doThing",
+		reflectTypeFor[driftV1Args](), nil)
+	if err != nil {
+		t.Errorf("expected pass — nil ArgsSchema should not block call: %v", err)
+	}
+}
+
+// TestDashboard_PeerListIncludesEveryPeer proves the dashboard
+// handler enumerates every peer the registry knows about with
+// the right Healthy + SchemaCached state. Exercises the in-memory
+// projection used by the Peers tab without spinning up the whole
+// dashboard mount path.
+func TestDashboard_PeerListIncludesEveryPeer(t *testing.T) {
+	r := &Registry{
+		identity: "self",
+		schemas:  newSchemaCache(),
+		peers: map[string]*peerConn{
+			"alpha": {name: "alpha", url: "https://alpha:1", sem: make(chan struct{}, 4)},
+			"beta":  {name: "beta", url: "https://beta:2", sem: make(chan struct{}, 4)},
+		},
+	}
+	r.peers["alpha"].ready.Store(true)
+	r.peers["beta"].ready.Store(false)
+	// Prime alpha's schema cache so we can assert the
+	// SchemaCached flag flips per peer, not in aggregate.
+	r.schemas.schemas["alpha"] = &PeerSchema{Identity: "alpha"}
+
+	rows := snapshotPeers(r)
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	byName := map[string]PeerStatus{}
+	for _, row := range rows {
+		byName[row.Name] = row
+	}
+	alpha, ok := byName["alpha"]
+	if !ok {
+		t.Fatal("alpha missing from rows")
+	}
+	if !alpha.Healthy {
+		t.Errorf("alpha.Healthy = false, want true")
+	}
+	if !alpha.SchemaCached {
+		t.Errorf("alpha.SchemaCached = false, want true")
+	}
+	beta, ok := byName["beta"]
+	if !ok {
+		t.Fatal("beta missing from rows")
+	}
+	if beta.Healthy {
+		t.Errorf("beta.Healthy = true, want false")
+	}
+	if beta.SchemaCached {
+		t.Errorf("beta.SchemaCached = true, want false (never primed)")
 	}
 }
 
