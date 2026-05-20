@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -190,6 +191,14 @@ func (c *clientConfig) validate() error {
 	if c.serverURL == "" {
 		return errors.New("server URL is empty")
 	}
+	// Operator convenience — accept bare "host:port" and
+	// "host:port/path" and prepend "http://". net/http refuses
+	// anything without a scheme with the cryptic
+	// "unsupported protocol scheme" error.
+	if !strings.Contains(c.serverURL, "://") {
+		c.serverURL = "http://" + c.serverURL
+	}
+	c.serverURL = strings.TrimRight(c.serverURL, "/")
 	if c.identity == "" {
 		return errors.New("Identity required")
 	}
