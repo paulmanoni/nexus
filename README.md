@@ -41,6 +41,7 @@ var Module = nexus.Module("adverts",
 - **Live architecture view.** `nexus.Module` groups endpoints; constructor introspection draws service → service / service → resource edges automatically. Real traffic pulses on the edges.
 - **Built-in auth, rate limits, metrics, traces.** Cross-transport bundles via `nexus.Use`. Per-op observability is free — every handler gets counters + traces with no user code.
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
+- **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext yaml (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. See [Configuration](#configuration) below.
 - **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. No `node_modules`, no `npm install`. See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
@@ -426,6 +427,138 @@ For colocated CA + peer (dev / bootstrap), `nexus pki issue --cn name` is the on
 
 Run `nexus docs peer` or `nexus docs pki` for inline reference.
 
+## Configuration
+
+`extension/config` ships Spring-Cloud-Config-style configuration distribution as a nexus extension. Three entrypoints share one package-level store; handlers read values via `nexus.Get` regardless of where they came from.
+
+### Three entrypoints — pick one per app
+
+| | What it does | Disk state on the client |
+|---|---|---|
+| `config.Server(source, ...)` | Hosts the source of truth | Plaintext yaml files (operator owns them) |
+| `config.Client(url, ...)` | Fetches + verifies + caches | **Sealed** AES-256-GCM, framework-managed key |
+| `config.Local(path)` | Single-yaml, no server | **Plaintext** (operator edits with `$EDITOR`) |
+
+### Reading values from handlers
+
+```go
+addr := nexus.Get[string]("config.server.addr")              // "" if missing
+port := nexus.Get[int]("config.server.port", 8080)           // 8080 default
+ttl  := nexus.Get[time.Duration]("config.cache.ttl", 5*time.Minute)
+
+signKey := nexus.MustGet[string]("config.signing.key")       // panics if missing
+
+var pay PaymentConfig
+nexus.BindConfig("config.payment", &pay)                     // subtree → struct
+
+nexus.OnConfigChange("config.api.timeout", func(v any) {     // hot-reload
+    if d, ok := v.(time.Duration); ok { svc.timeout.Store(d) }
+})
+```
+
+Resolution priority (highest first):
+1. **Environment variable** — `CONFIG_API_TIMEOUT` overrides `config.api.timeout`
+2. **Server snapshot** / sealed cache / plaintext local yaml
+3. **Default arg** (or `T`'s zero value)
+
+### The server side
+
+```go
+nexus.Run(nexus.Config{...},
+    config.Server(config.FromYAML("configs/")),               // local folder
+)
+
+// Or backed by git:
+config.Server(config.FromGit("git@host:platform/config.git",
+    config.GitBranch("main"),
+    config.GitSSHKey("/etc/configd/id_ed25519"),
+))
+```
+
+Layout under the source dir (Spring-compatible, simplified to one file per app):
+
+```
+configs/
+├── _common.nexus.config.yaml      optional cross-app base
+├── app1.nexus.config.yaml
+└── app2.nexus.config.yaml
+```
+
+Each app's yaml accepts two shapes — pick whichever fits:
+
+```yaml
+# Simple — whole body is the default profile, no per-env split
+app:
+  name: My App
+api:
+  timeout: 5s
+```
+
+```yaml
+# Profile-keyed — when you need per-env overrides
+app: app1
+profiles:
+  default: {api: {timeout: "5s"}}
+  prod:    {api: {timeout: "30s"}}
+```
+
+Resolution = `_common.default → _common.<profile> → <app>.default → <app>.<profile>`, each layer overlaying via deep merge.
+
+### The client side — sealed cache, signed snapshots
+
+```go
+nexus.Run(nexus.Config{...},
+    config.Client("https://configd.internal:7100",
+        config.Identity("app1"),
+        config.Profile("prod"),
+        config.SignerKey("/etc/app1/configd-sign.pub"),
+        config.CachePath("/var/lib/app1/config.cache"),
+        config.WithClientTLS("/etc/ca.crt", "/etc/app1.crt", "/etc/app1.key"),
+        config.OnUnreachable(config.UseCacheOrFail),
+    ),
+    appModule,
+)
+```
+
+The cache file is AES-256-GCM sealed; the framework auto-manages the sealing key (sibling `.key` file, `0600`, generated at first boot). Operators never see a key, never see plaintext on the client — the server is the only entity with readable config.
+
+### Safety baseline — three mandatory layers
+
+| Layer | Enforced | Defends against |
+|---|---|---|
+| TLS on the wire | always | eavesdropping, MITM |
+| Ed25519 snapshot signatures | always | **a breached config server cannot forge config** — the offline signing key is the integrity floor |
+| AES-256-GCM sealed client cache | always (framework-managed key) | disk reads, backup tape leakage, container image inspection |
+
+Plus optional layers — `auth: mtls` (default), `auth: hmac`, or `auth: none` (refuses to start without `NEXUS_CONFIG_DEV=1` + SEV1 warning loop).
+
+### Live refresh — WebSocket push
+
+`config.Client` opens a WS to `/__config/subscribe` at boot. Server-side reloads (file save, future git webhook) fan out to every subscriber; clients re-fetch + verify + apply + re-seal within milliseconds. Polling at `WithPollInterval` (default 30s) stays as the safety net for the WS reconnect window.
+
+### `OnUnreachable` — what happens when the server is down at boot
+
+| Policy | Server up | Server down + valid cache | Server down + no cache |
+|---|---|---|---|
+| `UseCacheOrFail` (default) | fresh fetch | run on cache | **refuse to boot** |
+| `UseCacheAndWarn` | same | same | empty config, SEV1 every 60s |
+| `UseDefaults` | same | same | `WithDefaults` map, SEV1 every 60s |
+
+### Local mode — no server
+
+For dev / single-binary deployments:
+
+```go
+nexus.Run(nexus.Config{...},
+    config.Local("nexus.config.yaml"),
+    appModule,
+)
+```
+
+The yaml stays human-readable + git-friendly. Same `nexus.Get` facade as the server-backed path.
+
+Run `nexus docs config` for the full inline reference.
+
 ## Examples
 
 The framework ships a few self-contained examples under `examples/`:
@@ -446,7 +579,8 @@ The framework ships a few self-contained examples under `examples/`:
 ├── cmd/nexus/             CLI binary
 ├── frontend/deps/         node-free dep manager + bundler (see its README)
 ├── extension/             optional integrations (auth, oauth2, ratelimit,
-│                          metrics, cron, dashboard, frontend, peer, tls, …)
+│                          metrics, cron, dashboard, frontend, peer,
+│                          config, tls, …)
 ├── graph/                 GraphQL builder + resolver introspection
 ├── transport/             gin/REST + WS adapters
 ├── manifest/              app self-description JSON (served at /__nexus/manifest)
