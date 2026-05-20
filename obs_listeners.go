@@ -1,9 +1,12 @@
 package nexus
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,6 +79,63 @@ type Listener struct {
 	// Scope decides which routes this listener exposes. Zero value
 	// is ScopePublic — the conservative default for an exposed port.
 	Scope ListenerScope
+
+	// TLS, when non-nil, terminates TLS on this listener. The raw
+	// TCP listener is wrapped with tls.NewListener at bind time so
+	// the same http.Server serves HTTPS without a second code path.
+	// Leave nil for plain HTTP (today's behavior on every listener).
+	//
+	// Build via ServerTLSConfig for a typical cert/key (and optional
+	// client-CA for mTLS), or supply a *tls.Config directly when you
+	// need custom cipher suites, SNI via GetCertificate, etc.
+	//
+	// For public-internet HTTPS with Let's Encrypt auto-issuance,
+	// prefer extension/tls.Plugin — it owns its own :443/:80 pair
+	// and handles ACME challenges. This field is the right tool for
+	// an admin/internal listener fronted by your own cert material
+	// (e.g. an internal CA, mTLS-protected dashboard).
+	TLS *tls.Config
+}
+
+// ServerTLSConfig builds a *tls.Config for a server-terminating
+// Listener. certFile and keyFile are required (PEM-encoded server
+// cert + key). caFile is optional: when set, the listener requires
+// clients to present a certificate signed by that CA (mTLS), and
+// 1.3 handshakes for clients without one will fail at the TLS layer
+// before any HTTP request is dispatched. Pass "" to skip client auth.
+//
+// Defaults: TLS 1.2 minimum (1.0/1.1 are deprecated and unsafe);
+// modern cipher suite selection left to Go's defaults, which track
+// the IETF recommended list.
+//
+//	cfg, err := nexus.ServerTLSConfig("admin.crt", "admin.key", "admin-ca.crt")
+//	if err != nil { log.Fatal(err) }
+//	listener := nexus.Listener{Addr: "10.0.0.5:9443", Scope: nexus.ScopeAdmin, TLS: cfg}
+func ServerTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+	if certFile == "" || keyFile == "" {
+		return nil, fmt.Errorf("nexus: ServerTLSConfig: certFile and keyFile are required")
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("nexus: ServerTLSConfig: load keypair: %w", err)
+	}
+	cfg := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+	}
+	if caFile != "" {
+		caPEM, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("nexus: ServerTLSConfig: read CA: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("nexus: ServerTLSConfig: %q contains no valid PEM certificates", caFile)
+		}
+		cfg.ClientCAs = pool
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return cfg, nil
 }
 
 // listenerScopes is the runtime lookup table used by the scope filter

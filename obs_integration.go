@@ -2,6 +2,7 @@ package nexus
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -108,15 +109,26 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 					}
 					return fmt.Errorf("nexus: listen %s (%s): %w", l.name, l.Addr, err)
 				}
+				// Per-listener TLS: wrap the raw TCP listener so the
+				// http.Server speaks HTTPS on this port without a
+				// separate ServeTLS path. r.TLS is populated for
+				// downstream handlers via Go's standard TLS conn
+				// state — scheme detection (extension/openapi) and
+				// the scope filter both keep working unchanged.
+				scheme := "http"
+				if l.TLS != nil {
+					ln = tls.NewListener(ln, l.TLS)
+					scheme = "https"
+				}
 				servers[i].Addr = ln.Addr().String()
 				if scopeFilterOn {
 					app.listenerScopes.set(ln.Addr().String(), l.Scope)
 				}
 				if !strings.HasSuffix(servers[i].Addr, ":0") {
 					if scopeFilterOn {
-						fmt.Fprintf(os.Stdout, "nexus: listening on %s (%s, %s)\n", servers[i].Addr, l.name, l.Scope)
+						fmt.Fprintf(os.Stdout, "nexus: listening on %s://%s (%s, %s)\n", scheme, servers[i].Addr, l.name, l.Scope)
 					} else {
-						fmt.Fprintf(os.Stdout, "nexus: listening on %s\n", servers[i].Addr)
+						fmt.Fprintf(os.Stdout, "nexus: listening on %s://%s\n", scheme, servers[i].Addr)
 					}
 				}
 				srv := servers[i]
@@ -153,6 +165,7 @@ type resolvedListener struct {
 	name  string
 	Addr  string
 	Scope ListenerScope
+	TLS   *tls.Config
 }
 
 // resolveListeners flattens the listener config into a deterministic
@@ -177,7 +190,7 @@ func resolveListeners(ls map[string]Listener, fallbackAddr string) []resolvedLis
 	sort.Strings(names)
 	out := make([]resolvedListener, 0, len(names))
 	for _, n := range names {
-		out = append(out, resolvedListener{name: n, Addr: ls[n].Addr, Scope: ls[n].Scope})
+		out = append(out, resolvedListener{name: n, Addr: ls[n].Addr, Scope: ls[n].Scope, TLS: ls[n].TLS})
 	}
 	return out
 }
