@@ -371,7 +371,10 @@ createApp({
     <h2>
       Tours
       <span style="float:right">
-        <button v-if="tours.length > 1" @click="openMultiPreview" style="padding:2px 8px;font-size:12px" :title="filter ? 'Preview all tours for this route, in play order' : 'Preview every listed tour combined'">📄 Preview all</button>
+        <button v-if="tours.length >= 1" @click="openMultiPreview" style="padding:2px 8px;font-size:12px"
+                :title="filter ? 'Preview every tour for this route in play order' : 'Preview every listed tour combined'">
+          📄 {{ tours.length > 1 ? 'Preview all' : 'Preview' }}
+        </button>
         <span v-if="tours.length" style="color:#aaa;margin-left:8px">{{ tours.length }}</span>
       </span>
     </h2>
@@ -421,7 +424,11 @@ createApp({
 
       <div class="actions">
         <button v-if="editing.id" class="danger" @click="destroyTour">Delete tour</button>
-        <button v-if="editing.id" @click="openPreview" :disabled="dirty" :title="dirty ? 'Save first to preview' : ''">📄 Preview PDF</button>
+        <button @click="openPreview"
+                :disabled="!editing.id || dirty"
+                :title="!editing.id ? 'Save the tour first, then you can preview' : (dirty ? 'Save your changes first to include them in the preview' : 'Open the printable preview in a new tab')">
+          📄 Preview PDF
+        </button>
         <span style="flex:1"></span>
         <button class="primary" @click="save" :disabled="saving">{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>
