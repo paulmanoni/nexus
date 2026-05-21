@@ -62,19 +62,25 @@
     flex-shrink: 0;
   }
   .pin.sub .badge { background: var(--sub); color: #fff; }
-  /* Hover card — now ALWAYS visible by default (operators
-     asked for "open by default") so the printed PDF carries
-     the step text directly on the image. Sized tight so it
-     doesn't blanket the screenshot. Hover only changes z-index
-     so a clicked card stays on top of its neighbours when
-     they're close together. */
+  /* Hover card — always visible by default. Positioning is
+     decided per-pin from the rect's location in the image:
+     .card.below sits under the badge (default), .card.above
+     above, .card.right to the right, .card.left to the left.
+     Each modifier translates relative to the pin's centre so
+     the card stays attached visually. */
   .pin .card {
+    position: absolute;
     background: var(--card-bg); border: 1px solid var(--line);
-    border-radius: 6px; padding: 6px 10px; max-width: 220px;
+    border-radius: 6px; padding: 6px 10px;
+    width: 200px;
     box-shadow: 0 4px 12px rgba(0,0,0,.18);
     font-size: 11px; line-height: 1.4;
     z-index: 3;
   }
+  .pin .card.below { top: 22px; left: 50%; transform: translateX(-50%); }
+  .pin .card.above { bottom: 22px; left: 50%; transform: translateX(-50%); }
+  .pin .card.right { left: 36px;  top: 50%; transform: translateY(-50%); }
+  .pin .card.left  { right: 36px; top: 50%; transform: translateY(-50%); }
   .pin:hover .card { z-index: 4; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
   .pin .card h4 { margin: 0; font-size: 12px; font-weight: 700; }
   .pin .card p { margin: 2px 0 0; color: #333; }
@@ -223,12 +229,37 @@ async function resolveTours() {
   throw new Error('No tour id / ids / route in URL. Open this page via the dashboard.');
 }
 
+// cardPlacement picks a side for the hover card so it stays
+// inside the composite image. Tries below first (default), then
+// above, then right, then left — the first side that fits wins.
+// "Fits" = card extends from the pin centre without going past
+// the wrapper's edge (using percentages of base_width/height as
+// a proxy for the rendered wrapper).
+function cardPlacement(step, baseW, baseH) {
+  const CARD_W = 200, CARD_H = 60;  // card box in px (matches CSS)
+  const cx = step.rect_left + step.rect_width  / 2;
+  const cy = step.rect_top  + step.rect_height / 2;
+  // 22px badge offset (matches CSS .card.below top:22px etc.)
+  // is small relative to base dims, ignore in the fit check.
+  const half = CARD_W / 2;
+  const fitsBelow = cy + CARD_H <= baseH - 8;
+  const fitsAbove = cy - CARD_H >= 8;
+  const fitsRight = cx + CARD_W <= baseW - 8;
+  const fitsLeft  = cx - CARD_W >= 8;
+  // Also require horizontal room around centre for above/below
+  // placements (card is centred on pin).
+  const hRoom = cx - half >= 8 && cx + half <= baseW - 8;
+  if (fitsBelow && hRoom) return 'below';
+  if (fitsAbove && hRoom) return 'above';
+  if (fitsRight)          return 'right';
+  if (fitsLeft)           return 'left';
+  return 'below'; // fallback
+}
+
 function renderComposite(tour, steps) {
   // Use both base dimensions so left/top percentages are
   // dimensionally correct. Older tours that lack base_height
-  // (recorded against the v0.78.0 schema) fall back to
-  // base_width for the height too — wrong but bounded; the
-  // re-record fixes it.
+  // fall back to base_width — wrong but bounded; re-record fixes it.
   const baseW = tour.base_width  || 1280;
   const baseH = tour.base_height || tour.base_width || 720;
   const pctX = px => (px / baseW) * 100;
@@ -239,6 +270,7 @@ function renderComposite(tour, steps) {
     if (!w || !h) return ''; // no rect — skip badge (still appears in list)
     const cx = step.rect_left + w / 2;
     const cy = step.rect_top  + h / 2;
+    const place = cardPlacement(step, baseW, baseH);
     return `
       <div class="hi" style="
         left: ${pctX(step.rect_left)}%;
@@ -251,7 +283,7 @@ function renderComposite(tour, steps) {
         top:  ${pctY(cy)}%;
       ">
         <span class="badge">${escapeHtml(prefix)}</span>
-        <div class="card">
+        <div class="card ${place}">
           <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
           ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
         </div>
@@ -259,7 +291,9 @@ function renderComposite(tour, steps) {
   }).join('');
   // Step list comes FIRST — operator gets the labelled
   // numbered walkthrough up top, then sees the composite
-  // image beneath that anchors each entry on the page.
+  // image beneath. Selector is intentionally NOT rendered
+  // here — it's technical noise for the final-user reading
+  // a printed walkthrough.
   return `
     <div class="step-list">
       ${steps.map(({ step, prefix, depth }) => `
@@ -267,7 +301,6 @@ function renderComposite(tour, steps) {
           <div><span class="badge">${escapeHtml(prefix)}</span></div>
           <div>
             <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
-            ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
             ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
           </div>
         </div>`).join('')}
@@ -279,13 +312,13 @@ function renderComposite(tour, steps) {
 }
 
 function renderFallback(steps) {
+  // Selector intentionally omitted from end-user output.
   return steps.map(({ step, prefix, depth }) => `
     <section class="step ${depth > 0 ? 'sub' : ''}">
       <div class="head">
         <span class="badge">${escapeHtml(prefix)}</span>
         <h3>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h3>
       </div>
-      ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
       ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
       ${step.media_url ? `<div class="preview"><img src="${escapeHtml(step.media_url)}" alt="Step ${escapeHtml(prefix)} screenshot" /></div>` : ''}
     </section>`).join('');
@@ -326,6 +359,7 @@ async function load() {
   const toolbar = `
     <div class="toolbar">
       <button onclick="window.print()">Save as PDF</button>
+      <button class="ghost" id="dl-word">📝 Save as Word</button>
       <button class="ghost" onclick="history.back()">Back</button>
       <span class="grow"></span>
       <span class="meta">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${totalSteps} step${totalSteps === 1 ? '' : 's'}</span>
@@ -333,6 +367,83 @@ async function load() {
   const body = tours.map((t, i) => renderTour(t, i, tours.length))
                     .join('<hr class="tour-sep" />');
   document.getElementById('app').innerHTML = toolbar + body;
+  document.getElementById('dl-word').addEventListener('click', () => downloadAsWord(tours));
+}
+
+// downloadAsWord builds a Word-friendly HTML document and
+// triggers a download with the .doc extension. Microsoft Word
+// (and LibreOffice / Google Docs upload) opens HTML-with-the-
+// Word-MIME natively — no docx library required.
+//
+// The exported doc uses a simplified linear layout: cover →
+// step list → composite image. The absolutely-positioned
+// hover-card layout doesn't survive Word's flow-based rendering
+// so the cover image is presented as a single picture with the
+// text content listed beneath it.
+function downloadAsWord(tours) {
+  function tourBlock(tour, idx) {
+    const steps = flat(tour.steps || [], '', 0, []);
+    const cover = tour.cover_image_url
+      ? `<p><img src="${tour.cover_image_url}" style="max-width:100%; border:1px solid #ccc"/></p>`
+      : '';
+    const list = steps.map(({ step, prefix, depth }) => {
+      const indent = depth * 24;
+      const titleText = escapeHtml(step.title || step.label || `Step ${prefix}`);
+      const body = step.text ? `<p style="margin:4px 0">${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : '';
+      return `<div style="margin:10px 0; margin-left:${indent}px">
+        <strong style="background:#f59e0b; color:#111; padding:2px 8px; border-radius:999px; font-size:12px">${escapeHtml(prefix)}</strong>
+        <strong style="margin-left:8px">${titleText}</strong>
+        ${body}
+      </div>`;
+    }).join('');
+    return `
+      <h1>${escapeHtml(tour.name || 'Untitled tour')}</h1>
+      <p style="color:#666; font-family: Consolas, monospace">${escapeHtml(tour.route || '/')}</p>
+      ${tour.description ? `<p>${escapeHtml(tour.description)}</p>` : ''}
+      ${tours.length > 1 ? `<p style="color:#888"><em>Tour ${idx + 1} of ${tours.length}</em></p>` : ''}
+      ${list}
+      ${cover}
+      ${idx < tours.length - 1 ? '<br clear="all" style="page-break-before:always" />' : ''}
+    `;
+  }
+
+  // Wrap as a fake Word HTML doc. The xmlns + ProgId comment
+  // are what Word looks at to treat the file as a doc instead
+  // of plain HTML. Inline styles only — Word's CSS support is
+  // limited to a subset that doesn't include flex/grid.
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+                       xmlns:w="urn:schemas-microsoft-com:office:word"
+                       xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8" />
+<title>Tour walkthrough</title>
+<!--[if gte mso 9]><xml>
+<w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument>
+</xml><![endif]-->
+<style>
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #111; }
+  h1 { font-size: 18pt; margin: 14pt 0 6pt; }
+  p  { margin: 6pt 0; }
+</style>
+</head>
+<body>
+${tours.map(tourBlock).join('')}
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // Filename based on tour name (single) or count (many).
+  const safeName = (tours.length === 1
+    ? (tours[0].name || 'tour')
+    : `${tours.length}-tours`).replace(/[^a-z0-9-_]+/gi, '_');
+  a.download = `${safeName}.doc`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 load();
