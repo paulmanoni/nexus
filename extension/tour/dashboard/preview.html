@@ -1164,7 +1164,7 @@ function buildClipboardHTML(tours, imgsPerTour) {
   // ol for root steps (1, 2, 3); nested ol[type="a"] for
   // substeps (1.a, 1.b, …) — Word renders that as 'a.' under
   // its parent and joins the prefixes automatically.
-  function renderSteps(steps) {
+  function renderSteps(steps, sceneToFigure) {
     if (!steps.length) return '';
     // FLAT paragraph list, not nested <ol>. Nested <ol> in
     // Word restarts the count at 1 inside each <li>, producing
@@ -1173,14 +1173,24 @@ function buildClipboardHTML(tours, imgsPerTour) {
     // 2, 2.1, …" — flat() already computes those prefixes,
     // so render each step as a <p> with the prefix as bold
     // text + indent based on depth.
+    //
+    // sceneToFigure maps cover_index → figure number; when
+    // present we append "(see Figure N)" to each step so the
+    // reader can jump between the labelled walkthrough and the
+    // matching screenshot below.
     const items = flat(steps, '', 0, []);
     return items.map(({ step, prefix, depth }) => {
       const text = (step.text && step.text.trim())
         ? escapeForWord(step.text)
         : escapeForWord(step.title || step.label || '');
       const indent = 18 + depth * 18; // pt, deepens with nesting
+      const ci = Number.isInteger(step.cover_index) ? step.cover_index : 0;
+      const figNum = sceneToFigure && sceneToFigure.get(ci);
+      const figRef = figNum
+        ? ` <em style="color:#555;font-size:11pt">(see Figure ${figNum})</em>`
+        : '';
       return `<p style="${A}; font-size:12pt; margin:4pt 0 4pt ${indent}pt; color:#000; white-space:pre-wrap">
-        <strong>${escapeHtml(prefix)}.</strong>&nbsp;&nbsp;${text}
+        <strong>${escapeHtml(prefix)}.</strong>&nbsp;&nbsp;${text}${figRef}
       </p>`;
     }).join('');
   }
@@ -1189,14 +1199,21 @@ function buildClipboardHTML(tours, imgsPerTour) {
   const parts = tours.map((tour, idx) => {
     // Each tour may have multiple scenes (multi-cover) — emit
     // one figure per scene with its own caption. The caption
-    // names the tour AND the step the scene illustrates so the
-    // operator gets context without flipping back to the step
-    // list. We pick the FIRST step whose cover_index matches
-    // the scene as the representative; for scenes that have
-    // multiple steps we append "+ N more" so the count is
-    // visible at a glance.
+    // names the tour PLUS every step in the scene, comma-
+    // separated, so the operator can read straight from the
+    // figure heading what the picture shows. Long lists get
+    // truncated with "…" so a 20-step scene doesn't blow out
+    // the caption line.
     const tourImgs = (imgsPerTour && imgsPerTour[idx]) || [];
     const tourTitle = escapeHtml(tour.name || 'Tour overview');
+    // Pre-compute scene → figure-number map for this tour so
+    // renderSteps below can stamp "see Figure N" against each
+    // step. Peek at figureNumber without advancing — the
+    // figures loop below does the actual increment.
+    const sceneToFigure = new Map();
+    tourImgs.forEach((_, sceneIdx) => {
+      sceneToFigure.set(sceneIdx, figureNumber + sceneIdx + 1);
+    });
     const figures = tourImgs.map((url, sceneIdx) => {
       figureNumber++;
       const sceneSteps = flat(tour.steps || [], '', 0, [])
@@ -1204,13 +1221,18 @@ function buildClipboardHTML(tours, imgsPerTour) {
           const ci = Number.isInteger(step.cover_index) ? step.cover_index : 0;
           return ci === sceneIdx;
         });
-      const first = sceneSteps[0];
-      const stepTitle = first
-        ? escapeHtml(first.step.title || first.step.label || `Step ${first.prefix}`)
+      const titles = sceneSteps.map(({ step, prefix }) =>
+        escapeHtml(step.title || step.label || `Step ${prefix}`));
+      // Soft cap at 5 titles in the caption (keeps it readable
+      // in a single line). Anything beyond gets "+N more".
+      const MAX_TITLES = 5;
+      const visible = titles.slice(0, MAX_TITLES).join(', ');
+      const overflow = titles.length > MAX_TITLES
+        ? `, +${titles.length - MAX_TITLES} more`
         : '';
-      const more = sceneSteps.length > 1 ? ` (+${sceneSteps.length - 1} more)` : '';
-      const sceneLabel = stepTitle
-        ? `${tourTitle} — ${stepTitle}${more}`
+      const stepsLabel = visible + overflow;
+      const sceneLabel = stepsLabel
+        ? `${tourTitle} — ${stepsLabel}`
         : tourTitle;
       return `<p style="margin:12pt 0 6pt; text-align:center">
            <img src="${url}" style="max-width:100%; border:1pt solid #999"/>
@@ -1232,7 +1254,7 @@ function buildClipboardHTML(tours, imgsPerTour) {
       ${tourPos}
       ${tour.description ? `<p style="${para}">${escapeForWord(tour.description)}</p>` : ''}
       <h2 style="${h2}">Steps</h2>
-      ${renderSteps(tour.steps || [])}
+      ${renderSteps(tour.steps || [], sceneToFigure)}
       ${figures}
       ${pageBreak}
     `;
@@ -1269,21 +1291,34 @@ ${parts.join('')}
 // Letter prefixes for substeps so plaintext output reads the
 // same as Word's nested-list rendering.
 function buildClipboardPlain(tours) {
+  // Mirror buildClipboardHTML's figureNumber bookkeeping so
+  // plaintext "(see Figure N)" annotations stay aligned with
+  // the rich HTML version when the operator pastes either.
+  let plainFigureNumber = 0;
   return tours.map((tour, idx) => {
     const head = [
       tour.name || 'Untitled tour',
       tour.description || '',
       tours.length > 1 ? `Tour ${idx + 1} of ${tours.length}` : '',
     ].filter(Boolean).join('\n');
+    // Reserve a figure number per scene so step lines can
+    // reference them.
+    const tourImgCount = (tour.cover_images && tour.cover_images.length) || (tour.cover_image_url ? 1 : 0);
+    const sceneToFig = new Map();
+    for (let i = 0; i < tourImgCount; i++) sceneToFig.set(i, ++plainFigureNumber);
     // Use the same flat() prefix logic as the HTML output so
     // plaintext paste matches the rendered preview. Indent
     // grows with depth so the nesting reads clearly in
-    // monospace editors.
+    // monospace editors. Figure references appended in
+    // brackets when the step's scene has a matching figure.
     const items = flat(tour.steps || [], '', 0, []);
     const list = items.map(({ step, prefix, depth }) => {
       const indent = '   '.repeat(depth + 1);
       const body = (step.text && step.text.trim()) || step.title || step.label || '';
-      return `${indent}${prefix}. ${body}`;
+      const ci = Number.isInteger(step.cover_index) ? step.cover_index : 0;
+      const fig = sceneToFig.get(ci);
+      const ref = fig ? `  (see Figure ${fig})` : '';
+      return `${indent}${prefix}. ${body}${ref}`;
     }).join('\n');
     return head + '\n\nSteps\n' + list;
   }).join('\n\n----\n\n');
