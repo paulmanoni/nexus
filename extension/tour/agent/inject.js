@@ -590,34 +590,55 @@
     return _h2c;
   }
 
-  // waitForAnimations pauses until every running CSS animation
-  // and transition on the page reaches its end state.
+  // forceAnimationsComplete fires every CSS animation +
+  // transition to its end state immediately. We inject a
+  // !important stylesheet that zeroes durations + delays;
+  // the browser snaps elements to their final keyframe in
+  // one frame instead of playing them.
   //
-  // Why this matters: Vue/React SPAs commonly use "fade-up"
-  // entry animations (opacity:0 → 1 + translateY) with
-  // staggered animation-delays (0.08s, 0.16s, 0.24s, ...).
-  // If html2canvas snapshots mid-animation, the captured
-  // elements are partially or fully invisible because their
-  // computed opacity is still 0. The capture comes back
-  // looking like the page never finished loading.
+  // Why not just waitForAnimations(): Vue/React SPAs use a
+  // mix of CSS animations, JS-driven transitions, and IntersectionObserver-triggered
+  // "fade-up" libraries (AOS, motion-one, GSAP, custom Vue
+  // composables). document.getAnimations() catches the pure-
+  // CSS ones but misses anything driven by JS that hasn't
+  // started yet — so a staggered "card 5 fades in at +0.4s"
+  // pattern can still grab the card pre-fade.
   //
-  // document.getAnimations() returns Animation objects for
-  // every active CSS animation + transition. We wait for
-  // each one's finished promise; a 1500ms ceiling guards
-  // against pathological infinite animations stalling capture.
-  async function waitForAnimations() {
-    if (!document.getAnimations) {
-      // Older browsers without the Animations API: fixed wait.
-      await new Promise(r => setTimeout(r, 600));
-      return;
-    }
-    const running = document.getAnimations()
-      .filter(a => a.playState === 'running' || a.playState === 'pending');
-    if (!running.length) return;
-    await Promise.race([
-      Promise.all(running.map(a => a.finished.catch(() => {}))),
-      new Promise(r => setTimeout(r, 1500)),
-    ]);
+  // Forcing duration:0 on every element guarantees: every
+  // CSS-driven animation finishes; any JS-driven animation
+  // that runs after our injection inherits a 0-duration
+  // transition so it lands immediately too.
+  //
+  // Caller wraps capture work in returned `release()` callback
+  // — restores stylesheet after.
+  function forceAnimationsComplete() {
+    const style = document.createElement('style');
+    style.setAttribute('data-nexus-tour-freeze', '1');
+    // !important + the universal selector + ::before / ::after
+    // covers every animation surface CSS can produce.
+    style.textContent = `
+      *, *::before, *::after {
+        animation-duration: 0.001s !important;
+        animation-delay: 0s !important;
+        animation-iteration-count: 1 !important;
+        animation-fill-mode: forwards !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+      }
+    `;
+    document.head.appendChild(style);
+    // Force a reflow so the new rules take effect immediately.
+    void document.body.offsetHeight;
+    return () => style.remove();
+  }
+
+  // Convenience wrapper: settle animations, then yield two
+  // animation frames so the browser has a chance to paint the
+  // final state before html2canvas reads the DOM.
+  async function settleForCapture() {
+    const release = forceAnimationsComplete();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return release;
   }
 
   // captureClean takes a screenshot of the FULL document body
@@ -627,9 +648,10 @@
   // spot regardless of where the operator was scrolled when
   // they clicked.
   async function captureClean() {
-    // Let CSS entry animations finish so we don't snapshot
-    // a half-faded-in page (common on Vue/React SPAs).
-    await waitForAnimations();
+    // Freeze + fast-forward all animations so we don't snapshot
+    // a half-faded-in page (common on Vue/React SPAs with
+    // staggered entry animations).
+    const releaseAnims = await settleForCapture();
     const h2c = await loadHtml2Canvas();
     overlayHost.style.visibility = 'hidden';
     let canvas;
@@ -642,6 +664,7 @@
       });
     } finally {
       overlayHost.style.visibility = '';
+      releaseAnims();
     }
     return canvas.toDataURL('image/png');
   }
@@ -655,10 +678,10 @@
   // would force the agent's chrome (FAB, picker) into the
   // recording, which is exactly what we don't want.
   async function captureWithBadge(targetRect, badgeNum) {
-    // Same animation-settle wait as captureClean — per-step
+    // Same animation freeze as captureClean — per-step
     // screenshots fired right after a click on a freshly-
     // rendered route otherwise grab mid-fade-in content.
-    await waitForAnimations();
+    const releaseAnims = await settleForCapture();
     const h2c = await loadHtml2Canvas();
     // Hide our own overlay so it doesn't end up in the screenshot.
     overlayHost.style.visibility = 'hidden';
@@ -672,6 +695,7 @@
       });
     } finally {
       overlayHost.style.visibility = '';
+      releaseAnims();
     }
     const ctx = canvas.getContext('2d');
     const s = canvas.width / document.documentElement.clientWidth;
