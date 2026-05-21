@@ -664,51 +664,137 @@ async function loadHtml2Canvas() {
   return _h2c;
 }
 
+// buildClipboardHTML renders the tour(s) as a Word-conformant
+// document. Format models the classic technical-manual layout
+// (matches the OATS-style admin guides operators are used to):
+//
+//   <H1>  Tour name (e.g. "Steps to Open User Profile")
+//   <p>   route + description (italic grey, optional)
+//   <H2>  "Steps"
+//   <ol>  1. step text
+//         2. step text
+//             a. substep text   ← nested ol with lower-alpha
+//   <p>   "Figure N: …"   ← centred caption above each screenshot
+//   <img> screenshot
+//
+// All sizing in pt. Arial 12 for body, Arial bold larger for
+// headings. Word strips <style> blocks on paste, so every rule
+// is inline. Lists use <ol> + start= so step numbering survives
+// Word's autocorrect; substeps nest as <ol type="a">.
 function buildClipboardHTML(tours, imgs) {
+  const A = 'font-family:Arial, sans-serif';
+  const body = `${A}; font-size:12pt; color:#000; line-height:1.5`;
+  const h1   = `${A}; font-size:18pt; font-weight:bold; margin:18pt 0 6pt; color:#000`;
+  const h2   = `${A}; font-size:14pt; font-weight:bold; margin:14pt 0 6pt; color:#000`;
+  const meta = `${A}; font-size:11pt; font-style:italic; color:#555; margin:0 0 6pt`;
+  const para = `${A}; font-size:12pt; margin:6pt 0; color:#000`;
+  const li   = `${A}; font-size:12pt; margin:4pt 0; color:#000`;
+  const cap  = `${A}; font-size:10pt; font-style:italic; color:#444; margin:6pt 0; text-align:center`;
+
+  // renderSteps turns the step tree into ol/li markup. Numbered
+  // ol for root steps (1, 2, 3); nested ol[type="a"] for
+  // substeps (1.a, 1.b, …) — Word renders that as 'a.' under
+  // its parent and joins the prefixes automatically.
+  function renderSteps(steps) {
+    if (!steps.length) return '';
+    return `<ol style="${A}; font-size:12pt; margin:6pt 0 10pt 24pt; color:#000">${
+      steps.map(s => {
+        const text = (s.text && s.text.trim())
+          ? escapeHtml(s.text).replace(/\n/g, '<br/>')
+          : escapeHtml(s.title || s.label || '');
+        const children = s.children && s.children.length
+          ? `<ol type="a" style="${A}; font-size:12pt; margin:4pt 0 4pt 18pt; color:#000">${
+              s.children.map(c => {
+                const ctext = (c.text && c.text.trim())
+                  ? escapeHtml(c.text).replace(/\n/g, '<br/>')
+                  : escapeHtml(c.title || c.label || '');
+                return `<li style="${li}">${ctext}</li>`;
+              }).join('')
+            }</ol>`
+          : '';
+        return `<li style="${li}">${text}${children}</li>`;
+      }).join('')
+    }</ol>`;
+  }
+
+  let figureNumber = 0;
   const parts = tours.map((tour, idx) => {
-    const steps = flat(tour.steps || [], '', 0, []);
-    const list = steps.map(({ step, prefix, depth }) => {
-      const indent = depth * 24;
-      const titleText = escapeHtml(step.title || step.label || `Step ${prefix}`);
-      const body = step.text ? `<p style="margin:4px 0; font-size:11pt">${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : '';
-      return `<div style="margin:8pt 0; margin-left:${indent}px">
-        <span style="background:#f59e0b; color:#111; padding:2px 8px; border-radius:999px; font-size:10pt; font-weight:bold">${escapeHtml(prefix)}</span>
-        <strong style="margin-left:6pt; font-size:11pt">${titleText}</strong>
-        ${body}
-      </div>`;
-    }).join('');
+    figureNumber++;
     const img = imgs[idx]
-      ? `<p><img src="${imgs[idx]}" style="max-width:100%; border:1px solid #ccc"/></p>`
+      ? `<p style="${cap}">Figure ${figureNumber}: ${escapeHtml(tour.name || 'Tour overview')}</p>
+         <p style="margin:6pt 0 12pt; text-align:center">
+           <img src="${imgs[idx]}" style="max-width:100%; border:1pt solid #999"/>
+         </p>`
+      : '';
+    const pageBreak = idx < tours.length - 1
+      ? `<br clear="all" style="mso-special-character:line-break; page-break-before:always"/>`
       : '';
     return `
-      <h1 style="font-size:18pt; margin:12pt 0 6pt">${escapeHtml(tour.name || 'Untitled tour')}</h1>
-      <p style="color:#666; font-family:Consolas, monospace; font-size:10pt">${escapeHtml(tour.route || '/')}</p>
-      ${tour.description ? `<p style="font-size:11pt">${escapeHtml(tour.description)}</p>` : ''}
-      ${tours.length > 1 ? `<p style="color:#888; font-size:10pt"><em>Tour ${idx + 1} of ${tours.length}</em></p>` : ''}
-      ${list}
+      <h1 style="${h1}">${escapeHtml(tour.name || 'Untitled tour')}</h1>
+      <p style="${meta}">Route: ${escapeHtml(tour.route || '/')}${
+        tours.length > 1 ? ` &middot; Tour ${idx + 1} of ${tours.length}` : ''
+      }</p>
+      ${tour.description ? `<p style="${para}">${escapeHtml(tour.description)}</p>` : ''}
+      <h2 style="${h2}">Steps</h2>
+      ${renderSteps(tour.steps || [])}
       ${img}
-      ${idx < tours.length - 1 ? '<br/><br/>' : ''}
+      ${pageBreak}
     `;
   });
-  return `<html><head><meta charset="utf-8"></head><body style="font-family:Calibri, Arial, sans-serif">${parts.join('')}</body></html>`;
+  // Word-compatible HTML wrapper. The xmlns + ProgId comment
+  // tell Word to treat the fragment as a doc rather than plain
+  // HTML when the operator pastes into a fresh document.
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+                xmlns:w="urn:schemas-microsoft-com:office:word"
+                xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8"/>
+<!--[if gte mso 9]><xml>
+<w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument>
+</xml><![endif]-->
+</head>
+<body style="${body}">
+${parts.join('')}
+</body>
+</html>`;
 }
 
+// buildClipboardPlain mirrors the HTML structure for editors
+// that paste text-only (Notepad, Slack, GitHub Markdown):
+//
+//   Tour Name
+//   Route: /login
+//   Description...
+//   Steps
+//     1.  Click the user profile icon or username.
+//     2.  Select the Profile option from the dropdown menu.
+//          a. (substep)
+//
+// Letter prefixes for substeps so plaintext output reads the
+// same as Word's nested-list rendering.
 function buildClipboardPlain(tours) {
   return tours.map((tour, idx) => {
-    const steps = flat(tour.steps || [], '', 0, []);
     const head = [
       tour.name || 'Untitled tour',
       tour.route ? `Route: ${tour.route}` : '',
       tour.description || '',
-      tours.length > 1 ? `(Tour ${idx + 1} of ${tours.length})` : '',
-    ].filter(Boolean).join('\n') + '\n';
-    const list = steps.map(({ step, prefix, depth }) => {
-      const indent = '  '.repeat(depth);
-      const title = step.title || step.label || `Step ${prefix}`;
-      const body = step.text ? `\n${indent}    ${step.text.replace(/\n/g, '\n' + indent + '    ')}` : '';
-      return `${indent}${prefix}. ${title}${body}`;
-    }).join('\n');
-    return head + '\n' + list;
+      tours.length > 1 ? `Tour ${idx + 1} of ${tours.length}` : '',
+    ].filter(Boolean).join('\n');
+    function renderTextList(steps, parentPrefix) {
+      return steps.map((s, i) => {
+        const num = parentPrefix
+          ? `${parentPrefix}${String.fromCharCode(97 + i)}.`  // a. b. c.
+          : `${i + 1}.`;
+        const body = (s.text && s.text.trim()) || s.title || s.label || '';
+        const indent = parentPrefix ? '      ' : '   ';
+        const line = `${indent}${num.padEnd(4)} ${body}`;
+        const children = s.children && s.children.length
+          ? '\n' + renderTextList(s.children, num)
+          : '';
+        return line + children;
+      }).join('\n');
+    }
+    return head + '\n\nSteps\n' + renderTextList(tour.steps || [], '');
   }).join('\n\n----\n\n');
 }
 
