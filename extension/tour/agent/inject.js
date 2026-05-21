@@ -293,6 +293,15 @@
   // in-page agent uses the same paths.
 
   const API = {
+    // getTour fetches the hydrated tour by id (steps tree +
+    // covers + metadata). Used by the FAB menu's ✎ button to
+    // load an existing tour into the recorder for "add more
+    // scenes" mode.
+    async getTour(id) {
+      const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(id)}`);
+      if (!r.ok) throw new Error(`get tour: HTTP ${r.status}`);
+      return r.json();
+    },
     // listActive returns a {matched, others} pair so the FAB
     // menu can render route-matched tours prominently and ALSO
     // surface every other tour as a fallback. Operators kept
@@ -1160,41 +1169,89 @@
       return false;
     }
 
-    async function start(routePath) {
+    // countTreeSteps gives a fast total of root + nested
+    // steps, used to seed the default-title badge counter
+    // when continuing an existing tour ("Step 5" if 4
+    // already exist).
+    function countTreeSteps(arr) {
+      let n = 0;
+      for (const s of arr) {
+        n++;
+        if (s.children && s.children.length) n += countTreeSteps(s.children);
+      }
+      return n;
+    }
+
+    // start(routePath, existingTour?) — when existingTour is
+    // supplied, the recorder loads it in "continue" mode and
+    // appends new captures. Next click pushes a step into
+    // tour.steps; first captureClean takes a fresh cover that
+    // becomes a NEW scene at the end of tour.cover_images.
+    // Save uses the existing tour.id so the server treats it
+    // as an update (POST /tours is upsert).
+    async function start(routePath, existingTour) {
       if (active) return;
-      const meta = await promptStartMeta(routePath);
-      if (!meta) return; // operator cancelled
+      let meta;
+      if (existingTour) {
+        // Continue mode: reuse the saved tour's metadata
+        // without prompting. Rename happens in the dashboard
+        // editor, not here.
+        meta = {
+          name: existingTour.name || '',
+          description: existingTour.description || '',
+        };
+      } else {
+        meta = await promptStartMeta(routePath);
+        if (!meta) return; // operator cancelled
+      }
       active = true;
       paused = false;
       document.addEventListener('keydown', recorderHotkey, true);
       lastStep = null;
-      badge = 0;
-      tour = {
-        name: meta.name,
-        route: routePath, // kept internally for route-matching; not surfaced in previews
-        description: meta.description,
-        // base_* match the FULL document we capture (not just
-        // the viewport) — scrollWidth × scrollHeight. Step
-        // rects are stored in document coords too, so badges
-        // align with the cover image regardless of where the
-        // operator was scrolled when they clicked.
-        base_width:  document.documentElement.scrollWidth  || window.innerWidth,
-        base_height: document.documentElement.scrollHeight || window.innerHeight,
-        cover_images: [],
-        steps: [],
-      };
-      coverIndex = 0;
+
+      if (existingTour) {
+        tour = existingTour;
+        if (!tour.cover_images) tour.cover_images = [];
+        if (!tour.steps) tour.steps = [];
+        // base_* default if the existing tour predates that schema.
+        if (!tour.base_width)  tour.base_width  = document.documentElement.scrollWidth  || window.innerWidth;
+        if (!tour.base_height) tour.base_height = document.documentElement.scrollHeight || window.innerHeight;
+        badge = countTreeSteps(tour.steps);
+      } else {
+        badge = 0;
+        tour = {
+          name: meta.name,
+          route: routePath, // kept internally for route-matching; not surfaced in previews
+          description: meta.description,
+          // base_* match the FULL document we capture (not just
+          // the viewport) — scrollWidth × scrollHeight. Step
+          // rects are stored in document coords too, so badges
+          // align with the cover image regardless of where the
+          // operator was scrolled when they clicked.
+          base_width:  document.documentElement.scrollWidth  || window.innerWidth,
+          base_height: document.documentElement.scrollHeight || window.innerHeight,
+          cover_images: [],
+          steps: [],
+        };
+      }
+      coverIndex = tour.cover_images.length;
       bar = buildBar();
+      // Continue mode signals what's happening so the
+      // operator doesn't think they're starting fresh.
+      if (existingTour && bar) {
+        const status = bar.querySelector('.status');
+        if (status) status.innerHTML = `● Adding to: <strong>${escapeHtml(tour.name || 'tour')}</strong> <span style="opacity:.6;font-size:11px">(P pause · Enter capture hovered)</span>`;
+      }
       fab.classList.add('recording');
-      // Capture the clean cover image first (no overlays). The
-      // preview's single-cover view uses cover_image_url; the
-      // multi-cover grouping uses cover_images[]. We populate
-      // both so legacy preview paths still work.
+      // Capture the clean cover image. For fresh tours this is
+      // cover_image_url + cover_images[0]; for continue mode
+      // it becomes a NEW scene at the end of cover_images.
       captureClean()
         .then(url => {
           if (!url) return;
-          tour.cover_image_url = url;
+          if (!existingTour) tour.cover_image_url = url;
           tour.cover_images.push(url);
+          coverIndex = tour.cover_images.length - 1;
         })
         .catch(err => console.warn('tour: cover capture failed', err));
       // First click — kick off the picker; from now on each click
@@ -1429,6 +1486,7 @@
       return `
         <div style="display:flex;gap:2px">
           <button data-act="play" data-id="${t.id}" style="flex:1">▶ ${escapeHtml(label)}${routeBadge}</button>
+          <button data-act="continue" data-id="${t.id}" title="Add more scenes / steps to this tour" style="padding:8px 10px">✎</button>
           <button data-act="preview" data-id="${t.id}" title="Open printable preview" style="padding:8px 10px;display:flex;align-items:center;gap:4px">
             📄 <span style="font-size:11px;color:#666;max-width:80px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(label)}</span>
           </button>
@@ -1461,6 +1519,15 @@
       if (act === 'play') {
         const tour = allTours.find(x => x.id === id);
         if (tour) runner.start(tour);
+      }
+      if (act === 'continue' && id) {
+        // Fetch full hydrated tour (the catalogue list omits
+        // steps for size) + hand to the recorder in continue
+        // mode. The first captureClean lands as a NEW scene
+        // on top of the saved covers.
+        API.getTour(id)
+          .then(t => recorder.start(currentRoute(), t))
+          .catch(e => { console.warn('tour: continue fetch failed', e); alert('Could not load tour: ' + (e.message || e)); });
       }
       if (act === 'preview' && id) {
         window.open(`/__nexus/tour/tours/${encodeURIComponent(id)}/preview`, '_blank');
