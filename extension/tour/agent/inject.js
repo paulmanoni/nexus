@@ -150,21 +150,28 @@
       box-shadow: 0 0 0 9999px rgba(0,0,0,.35);
       transition: all 250ms;
     }
-    /* Badge: explicit font + line-height so host CSS resets
-       (e.g. host body { line-height: 0 }) can't push the number
-       outside the circle. min-width lets multi-digit numbers
-       (10, 11, …) stretch the circle into a pill instead of
-       overflowing it. */
+    /* Badge: line-height matches container height so the digit
+       centres reliably (flex + line-height:1 left a visible
+       optical offset because most sans-serif fonts have
+       asymmetric ascent/descent — the glyph appeared top-heavy).
+       text-align handles horizontal; line-height handles
+       vertical. min-width keeps single digits as a circle and
+       lets multi-digit numbers (10, 11, …) stretch into a pill
+       instead of overflowing. */
     .play-badge {
       position: fixed; pointer-events: none;
       background: #f59e0b; color: #111;
-      font: 700 13px/1 system-ui, -apple-system, sans-serif;
-      min-width: 28px; height: 28px; padding: 0 6px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-weight: 700; font-size: 14px;
+      line-height: 28px;
+      min-width: 28px; height: 28px; padding: 0 8px;
       border-radius: 999px;
-      display: flex; align-items: center; justify-content: center;
+      text-align: center;
       box-shadow: 0 2px 6px rgba(0,0,0,.3);
       box-sizing: border-box;
       white-space: nowrap;
+      display: inline-block;
+      font-variant-numeric: tabular-nums;
     }
     .play-tip {
       position: fixed; pointer-events: auto;
