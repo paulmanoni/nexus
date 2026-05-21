@@ -42,7 +42,7 @@ var Module = nexus.Module("adverts",
 - **Built-in auth, rate limits, metrics, traces.** Cross-transport bundles via `nexus.Use`. Per-op observability is free — every handler gets counters + traces with no user code.
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
 - **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext yaml (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. See [Configuration](#configuration) below.
-- **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots, edit text + reorder + promote substeps from `/__nexus/tour`, play back as numbered-badge highlights. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
+- **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots (multi-scene capture for dropdowns + modals), edit step text inline on the preview, play back as numbered-badge highlights, export to **PDF** or **Word** for handoff docs. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
 - **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. No `node_modules`, no `npm install`. See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
@@ -579,7 +579,7 @@ Run `nexus docs config` for the full inline reference.
 
 ## Tours
 
-`extension/tour` ships guided walkthroughs for any HTTP-served frontend — React, Vue, Angular, Svelte, vanilla, anything. The plugin captures click-by-click sequences with auto-screenshots, lets operators edit the text in a dashboard, then plays them back as numbered-badge highlights with tooltips on the live UI.
+`extension/tour` ships guided walkthroughs for any HTTP-served frontend — React, Vue, Angular, Svelte, vanilla, anything. The plugin captures click-by-click sequences with auto-screenshots, lets operators edit text inline, then plays them back as numbered-badge highlights with tooltips on the live UI. Exports to PDF or Word for handoff docs.
 
 The in-page agent renders inside a **closed Shadow DOM** rooted at `document.body` — host CSS can't bleed in, the plugin's UI can't bleed out, and the host frontend has no idea anything is on top of it.
 
@@ -599,13 +599,28 @@ nexus.Run(nexus.Config{...},
 
 After restart, every HTML page the app serves carries a floating **● Tour** pill (bottom-right). `AutoMigrate` runs on first use to create `nexus_tours` + `nexus_tour_steps`.
 
-### Record / Play / Manage
+### Record / Play / Manage / Export
 
 | Mode | What happens |
 |---|---|
-| **Record** | Hover any element (blue rectangle follows the mouse), click to capture. Each click takes a screenshot with a numbered badge baked in (via `html2canvas-pro`, lazy-loaded). Clicks _inside_ the previous step's bounding box become **substeps** automatically. **✎ Edit last step** overrides the placeholder title/text/placement inline. |
+| **Record** | Click the pill → **Record new tour** → modal prompts for **Title** + **Description**. After Start, hover any element (blue rectangle follows the mouse) and click to capture. Each capture pops an inline editor requiring step text before the next pick — placeholders can't slip through. Clicks inside the previous step's bounding box become **substeps** automatically. **Pause/Resume** (button or `P` key) lets you interact with the host without capturing — open a dropdown manually, then resume to capture items inside. **Enter** captures the hovered element without a synthetic click, so menus that close on outside-click stay open. |
 | **Play** | Fetches tours for the current `pathname`, walks the tree DFS, draws an orange ring + numbered badge on each target with a tooltip beside it. Back / Next / Skip / Done. `scrollIntoView` before measure so off-screen targets are pulled into view. Missing-target path shows the selector + Skip. |
-| **Manage** | Visit `/__nexus/tour` for the authoring dashboard — Vue 3 SPA from esm.sh, no framework rebuild. Edit name/route/description; per-step title/text/placement; **↑ ↓** reorder, **→** demote, **←** promote, **×** delete (children reparent). Inline screenshot thumbnails with click-to-zoom. |
+| **Manage** | Visit `/__nexus/tour` for the authoring dashboard — Vue 3 SPA from esm.sh, no framework rebuild. Edit name/route/description, per-step title/text/placement; **↑ ↓** reorder, **→** demote, **←** promote, **×** delete (children reparent). When filtered by route, ↑↓ also reorders **which tour plays first**. Inline screenshot thumbnails with click-to-zoom. |
+| **Preview / Export** | Every tour gets a print-friendly preview at `/__nexus/tour/tours/:id/preview` — one composite screenshot per "scene" with badges + callout cards in the screenshot's margins, connector lines tying each card to its badge. **📄 Save as PDF** uses the browser's print engine; **📋 Copy for Word** writes Arial-12 numbered-list HTML + the composite PNG to the clipboard, ready to paste into Word/Google Docs. **🗑 Delete tour** removes from the preview. Step text is **click-to-edit inline** on the preview page itself — changes save on blur, no need to bounce to the editor. |
+
+### Multi-cover scenes (dropdowns, modals, multi-step flows)
+
+Tours that span page-state changes — open a dropdown, capture an item inside, then close it — store **one cover screenshot per page state**. The recorder takes a fresh cover on every Resume from Pause; each step pins to the cover that was active when it was captured. The preview renders one composite per cover labelled "Scene N of M", so dropdown items land on the cover that shows the dropdown **open**, not the stale initial screenshot.
+
+### Keyboard shortcuts during recording
+
+| Key | What it does |
+|---|---|
+| `P` | Toggle pause / resume — no outside-click on the recorder bar, so transient UIs (menus, popovers) stay open |
+| `Enter` | Capture the currently-hovered element without a synthetic click — works on hosts that close menus on outside-click |
+| `Escape` | Cancel the picker (same as pause) |
+
+Both `P` and `Enter` walk `composedPath()` so they're ignored when typing in any input, textarea, or contenteditable — including across Shadow DOM boundaries (the agent's own editor UI).
 
 ### Why "hover on top of any frontend" works
 
@@ -617,6 +632,7 @@ After restart, every HTML page the app serves carries a floating **● Tour** pi
 | `pointer-events: none` on root, `auto` on interactive UI | Host clicks pass through where the plugin isn't actively presenting |
 | Vanilla JS agent (no Vue/React runtime) | Zero conflicts with the host's framework |
 | MutationObserver re-attaches if removed | SPA route swaps, Vue Teleports, Vuetify portals, and `body.innerHTML = …` won't kill the overlay — it self-restores in the next tick |
+| `pointerdown` capture + `elementFromPoint` hit-test | Disabled buttons + inputs (which swallow `click`) are still pickable |
 
 ### Drive it from the host
 
