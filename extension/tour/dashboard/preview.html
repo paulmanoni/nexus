@@ -26,7 +26,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin:0; padding:0; color:var(--ink); font:13px/1.5 system-ui, -apple-system, sans-serif; }
-  body { max-width: 1000px; margin: 0 auto; padding: 40px 32px; }
+  body { max-width: 1600px; margin: 0 auto; padding: 32px 40px; }
 
   .cover { margin-bottom: 32px; padding-bottom: 18px; border-bottom: 2px solid var(--line); }
   .cover h1 { margin: 0 0 6px; font-size: 28px; }
@@ -41,11 +41,15 @@
      it lives in the margin nearest its badge. Badges on the
      image stay as numbered pills only — the matching text is
      in the side card. */
+  /* Composite — full-width canvas. Cards live INSIDE on top
+     of the screenshot, smart-placed per pin by whichever side
+     of the target has the most empty space (right/left/below/
+     above). SVG connector lines point from each card back to
+     its badge so the operator can read direction at a glance.
+     Drag handles let the operator nudge any callout if the
+     auto-placement landed it awkwardly. */
   .composite-wrap {
     position: relative; margin: 16px 0 24px;
-    display: grid;
-    grid-template-columns: 220px 1fr 220px;
-    gap: 16px; align-items: start;
   }
   .composite {
     position: relative;
@@ -53,18 +57,24 @@
     background: #fff;
   }
   .composite img { display: block; width: 100%; height: 100%; }
-  .callouts {
-    position: relative; min-height: 100%;
+  /* Connector lines layer — between image and badges so cards
+     float above. Lines redrawn by JS after layout settles. */
+  .connectors {
+    position: absolute; inset: 0; pointer-events: none; z-index: 4;
+  }
+  .connectors line {
+    stroke: #f59e0b; stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,.25));
   }
   .callout {
-    position: absolute; left: 0; right: 0;
+    position: absolute;
     background: var(--card-bg); border: 1px solid var(--line);
     border-radius: 6px; padding: 8px 10px 8px 18px;
-    box-shadow: 0 4px 12px rgba(0,0,0,.10);
+    box-shadow: 0 4px 12px rgba(0,0,0,.22);
     font-size: 11px; line-height: 1.4;
-    transform: translateY(-50%);
-    --drag-dx: 0px;
-    --drag-dy: 0px;
+    width: 220px; max-width: 28%;
+    z-index: 5;
     transition: box-shadow 120ms;
   }
   /* Drag handle — a thin grip along the left edge of every
@@ -96,15 +106,14 @@
   .callout h4 { display: inline; margin: 0; font-size: 12px; font-weight: 700; vertical-align: middle; }
   .callout p { margin: 4px 0 0; color: #333; }
 
-  /* Narrow screens — drop the side columns, fall back to a
-     stacked layout (image + step-list provides everything). */
   @media (max-width: 900px) {
-    .composite-wrap { grid-template-columns: 1fr; }
-    .callouts { display: none; }
+    .callout { width: 180px; max-width: 35%; font-size: 10px; }
   }
   @media print {
-    .composite-wrap { grid-template-columns: 1fr; }
-    .callouts { display: none; }
+    /* Print keeps cards + connectors inline; drag grip is
+       useless on paper so hide it. */
+    .callout::before { display: none; }
+    .callout { padding-left: 10px; }
   }
   .pin {
     position: absolute; transform: translate(-50%, -50%);
@@ -283,26 +292,68 @@ function renderComposite(tour, steps) {
   // their badge's horizontal centre. Each callout's vertical
   // position matches the badge's centre as a % of image height,
   // so the eye traces straight across from card → badge.
-  // Balance callouts across left+right columns. The naive
-  // "side = cx < half" approach lumped every callout on one
-  // side when targets clustered near centre (a centred login
-  // form, say). Balance by preferring the leaned side only
-  // when that column isn't already heavier than the other.
-  const callouts = { left: [], right: [] };
+  // Per-pin placement: pick the side with most empty space
+  // around the target rect. Estimated card footprint = 22% of
+  // baseW wide × 8% of baseH tall (matches CSS sizing). We
+  // store the chosen anchor as percent coords; the connector
+  // SVG draws from card edge → badge centre after layout.
+  const CARD_WPCT = 22;
+  const CARD_HPCT = 10;
+  const CARD_GAP  = 1.5; // %
+
+  function placeCard(step) {
+    const lPct = pctX(step.rect_left);
+    const tPct = pctY(step.rect_top);
+    const wPct = pctX(step.rect_width);
+    const hPct = pctY(step.rect_height);
+    const rightSpace = 100 - (lPct + wPct);
+    const leftSpace  = lPct;
+    const belowSpace = 100 - (tPct + hPct);
+    const aboveSpace = tPct;
+    const candidates = [
+      { dir: 'right', space: rightSpace, fits: rightSpace >= CARD_WPCT },
+      { dir: 'left',  space: leftSpace,  fits: leftSpace  >= CARD_WPCT },
+      { dir: 'below', space: belowSpace, fits: belowSpace >= CARD_HPCT },
+      { dir: 'above', space: aboveSpace, fits: aboveSpace >= CARD_HPCT },
+    ];
+    // Prefer a direction that actually has room; fall back to
+    // whichever has most space if nothing fits cleanly.
+    const fit = candidates.find(c => c.fits);
+    const dir = (fit && fit.dir) || candidates.sort((a, b) => b.space - a.space)[0].dir;
+    let left, top;
+    switch (dir) {
+      case 'right':
+        left = lPct + wPct + CARD_GAP;
+        top  = Math.max(0.5, Math.min(100 - CARD_HPCT - 0.5, tPct + hPct / 2 - CARD_HPCT / 2));
+        break;
+      case 'left':
+        left = Math.max(0.5, lPct - CARD_WPCT - CARD_GAP);
+        top  = Math.max(0.5, Math.min(100 - CARD_HPCT - 0.5, tPct + hPct / 2 - CARD_HPCT / 2));
+        break;
+      case 'below':
+        left = Math.max(0.5, Math.min(100 - CARD_WPCT - 0.5, lPct + wPct / 2 - CARD_WPCT / 2));
+        top  = tPct + hPct + CARD_GAP;
+        break;
+      case 'above':
+      default:
+        left = Math.max(0.5, Math.min(100 - CARD_WPCT - 0.5, lPct + wPct / 2 - CARD_WPCT / 2));
+        top  = Math.max(0.5, tPct - CARD_HPCT - CARD_GAP);
+        break;
+    }
+    return { left, top, dir };
+  }
+
+  // Build pins + callouts in two passes. The pin array goes
+  // first inside the composite; callouts come after so their
+  // z-index naturally stacks above. Connector lines (SVG) are
+  // drawn in a JS pass once the DOM is in.
   const itemsByY = steps
     .filter(({ step }) => step.rect_width && step.rect_height)
     .map(it => {
-      const w = it.step.rect_width;
-      const h = it.step.rect_height;
-      return { ...it, cx: it.step.rect_left + w / 2, cy: it.step.rect_top + h / 2 };
-    })
-    .sort((a, b) => a.cy - b.cy);
-  for (const it of itemsByY) {
-    const wanted = it.cx <= baseW / 2 ? 'left' : 'right';
-    const other  = wanted === 'left' ? 'right' : 'left';
-    const side = callouts[wanted].length <= callouts[other].length ? wanted : other;
-    callouts[side].push({ ...it, topPct: pctY(it.cy) });
-  }
+      const cx = it.step.rect_left + it.step.rect_width / 2;
+      const cy = it.step.rect_top  + it.step.rect_height / 2;
+      return { ...it, cx, cy, placement: placeCard(it.step) };
+    });
 
   const pins = steps.map(({ step, prefix, depth }) => {
     const w = step.rect_width;
@@ -311,13 +362,13 @@ function renderComposite(tour, steps) {
     const cx = step.rect_left + w / 2;
     const cy = step.rect_top  + h / 2;
     return `
-      <div class="hi" style="
+      <div class="hi" data-step-id="${escapeHtml(step.id || '')}" style="
         left: ${pctX(step.rect_left)}%;
         top:  ${pctY(step.rect_top)}%;
         width: ${pctX(w)}%;
         height: ${pctY(h)}%;
       "></div>
-      <div class="pin ${depth > 0 ? 'sub' : ''}" style="
+      <div class="pin ${depth > 0 ? 'sub' : ''}" data-step-id="${escapeHtml(step.id || '')}" style="
         left: ${pctX(cx)}%;
         top:  ${pctY(cy)}%;
       ">
@@ -325,24 +376,15 @@ function renderComposite(tour, steps) {
       </div>`;
   }).join('');
 
-  function renderCallouts(items) {
-    if (!items.length) return '';
-    // Detect collisions: if two callouts would land within
-    // MIN_GAP% of each other vertically, nudge the second down.
-    // Crude but enough to keep adjacent steps readable.
-    const MIN_GAP = 12; // % of image height
-    const sorted = [...items].sort((a, b) => a.topPct - b.topPct);
-    for (let i = 1; i < sorted.length; i++) {
-      const gap = sorted[i].topPct - sorted[i - 1].topPct;
-      if (gap < MIN_GAP) sorted[i].topPct = sorted[i - 1].topPct + MIN_GAP;
-    }
-    return sorted.map(({ step, prefix, depth, topPct }) => `
-      <div class="callout ${depth > 0 ? 'sub' : ''}" style="top: ${topPct}%">
-        <span class="num">${escapeHtml(prefix)}</span>
-        <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
-        ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
-      </div>`).join('');
-  }
+  const calloutsHTML = itemsByY.map(({ step, prefix, depth, placement }) => `
+    <div class="callout ${depth > 0 ? 'sub' : ''}"
+         data-step-id="${escapeHtml(step.id || '')}"
+         data-dir="${placement.dir}"
+         style="left:${placement.left}%; top:${placement.top}%">
+      <span class="num">${escapeHtml(prefix)}</span>
+      <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
+      ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+    </div>`).join('');
 
   // Step list comes FIRST — operator gets the labelled
   // numbered walkthrough up top, then sees the composite
@@ -359,14 +401,19 @@ function renderComposite(tour, steps) {
         </div>`).join('')}
     </div>
     <div class="composite-wrap">
-      <div class="callouts">${renderCallouts(callouts.left)}</div>
       <div class="composite" style="aspect-ratio: ${baseW} / ${baseH}">
         <img src="${escapeHtml(tour.cover_image_url)}" alt="Tour overview" />
+        <svg class="connectors" preserveAspectRatio="none"></svg>
         ${pins}
+        ${calloutsHTML}
       </div>
-      <div class="callouts">${renderCallouts(callouts.right)}</div>
     </div>`;
 }
+
+// renderCallouts is retained for backward-compat with any
+// callers; new flow renders callouts inline inside the
+// composite via calloutsHTML.
+function renderCallouts() { return ''; }
 
 function renderFallback(steps) {
   // Selector intentionally omitted from end-user output.
@@ -425,7 +472,60 @@ async function load() {
                     .join('<hr class="tour-sep" />');
   document.getElementById('app').innerHTML = toolbar + body;
   document.getElementById('copy-clip').addEventListener('click', () => copyForWord(tours));
-  enableCalloutDrag();
+  // Draw connector lines from each callout to its badge inside
+  // every composite on the page. Re-run on window resize so
+  // the lines stay attached when the layout reflows.
+  drawAllConnectors();
+  window.addEventListener('resize', drawAllConnectors);
+  enableCalloutDrag(drawAllConnectors);
+}
+
+// drawAllConnectors walks every .composite on the page,
+// matches each callout to its badge by data-step-id, and
+// renders an SVG <line> from card edge → badge centre. The
+// SVG layer is sized to match the composite via inset:0; we
+// use absolute pixel coords inside it (no viewBox) so lines
+// stay aligned during resize without re-aspect math.
+function drawAllConnectors() {
+  document.querySelectorAll('.composite').forEach(comp => {
+    const svg = comp.querySelector('svg.connectors');
+    if (!svg) return;
+    const rect = comp.getBoundingClientRect();
+    svg.setAttribute('width', rect.width);
+    svg.setAttribute('height', rect.height);
+    // Clear + redraw — callout drag fires this too.
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    comp.querySelectorAll('.callout').forEach(card => {
+      const id = card.getAttribute('data-step-id');
+      const pin = comp.querySelector(`.pin[data-step-id="${CSS.escape(id)}"] .badge`);
+      if (!pin) return;
+      const cardRect = card.getBoundingClientRect();
+      const pinRect  = pin.getBoundingClientRect();
+      const px = pinRect.left + pinRect.width / 2 - rect.left;
+      const py = pinRect.top  + pinRect.height / 2 - rect.top;
+      // Anchor the line at the card edge closest to the pin —
+      // gives a clean direct line without overlapping the card body.
+      const cardCenterX = cardRect.left + cardRect.width / 2;
+      const cardCenterY = cardRect.top  + cardRect.height / 2;
+      const dx = px + rect.left - cardCenterX;
+      const dy = py + rect.top  - cardCenterY;
+      let cx, cy;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        // Pin is mostly horizontal from card — anchor on left/right edge
+        cx = (dx > 0 ? cardRect.right : cardRect.left) - rect.left;
+        cy = cardCenterY - rect.top;
+      } else {
+        cx = cardCenterX - rect.left;
+        cy = (dy > 0 ? cardRect.bottom : cardRect.top) - rect.top;
+      }
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', cx);
+      line.setAttribute('y1', cy);
+      line.setAttribute('x2', px);
+      line.setAttribute('y2', py);
+      svg.appendChild(line);
+    });
+  });
 }
 
 // enableCalloutDrag wires every .callout's left-edge handle to
@@ -433,56 +533,59 @@ async function load() {
 // when the auto-placement isn't quite right. The drag delta is
 // stored in localStorage keyed by tour id + step id so positions
 // survive page reloads.
-function enableCalloutDrag() {
-  const callouts = document.querySelectorAll('.callout');
-  callouts.forEach((el, i) => {
-    // Restore prior position if we stored one.
-    const key = `tour-callout:${location.pathname}:${location.search}:${i}`;
-    const saved = (() => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } })();
-    if (saved && typeof saved.dx === 'number') {
-      el.style.transform = `translate(${saved.dx}px, calc(-50% + ${saved.dy}px))`;
-    }
+function enableCalloutDrag(onMove) {
+  document.querySelectorAll('.composite').forEach(comp => {
+    const callouts = comp.querySelectorAll('.callout');
+    callouts.forEach(el => {
+      const id = el.getAttribute('data-step-id') || '';
+      const key = `tour-callout:${location.pathname}:${location.search}:${id}`;
+      // Restore prior position (px offsets layered on top of the
+      // base left/top% the auto-placer chose).
+      const saved = (() => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } })();
+      if (saved && typeof saved.left === 'number') {
+        el.style.left = saved.left + '%';
+        el.style.top  = saved.top  + '%';
+      }
 
-    const handle = el; // entire ::before pseudo, we listen on the host
-    let startX = 0, startY = 0, baseDx = 0, baseDy = 0, dragging = false;
+      let startPX = 0, startPY = 0, baseLeftPct = 0, baseTopPct = 0, dragging = false;
+      const compRect = () => comp.getBoundingClientRect();
 
-    function readDelta() {
-      // Parse the current translate so dragging picks up where
-      // we left off rather than snapping back to 0.
-      const m = el.style.transform.match(/translate\(([-\d.]+)px,\s*calc\(-50%\s*\+\s*([-\d.]+)px\)\)/);
-      if (m) return { dx: parseFloat(m[1]) || 0, dy: parseFloat(m[2]) || 0 };
-      return { dx: 0, dy: 0 };
-    }
-
-    function onDown(e) {
-      // Only drag from the left 14px (where the ::before handle
-      // visually lives). pointer offsetX is relative to the
-      // event target.
-      const rect = el.getBoundingClientRect();
-      if (e.clientX - rect.left > 18) return;
-      e.preventDefault();
-      const base = readDelta();
-      baseDx = base.dx; baseDy = base.dy;
-      startX = e.clientX; startY = e.clientY;
-      dragging = true;
-      el.classList.add('dragging');
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp, { once: true });
-    }
-    function onMove(e) {
-      if (!dragging) return;
-      const dx = baseDx + (e.clientX - startX);
-      const dy = baseDy + (e.clientY - startY);
-      el.style.transform = `translate(${dx}px, calc(-50% + ${dy}px))`;
-    }
-    function onUp() {
-      dragging = false;
-      el.classList.remove('dragging');
-      document.removeEventListener('pointermove', onMove);
-      const final = readDelta();
-      try { localStorage.setItem(key, JSON.stringify(final)); } catch { /* quota */ }
-    }
-    el.addEventListener('pointerdown', onDown);
+      function onDown(e) {
+        const r = el.getBoundingClientRect();
+        if (e.clientX - r.left > 18) return; // only the handle area
+        e.preventDefault();
+        const cr = compRect();
+        // Parse current left/top% so resume = where we left off.
+        baseLeftPct = parseFloat(el.style.left) || 0;
+        baseTopPct  = parseFloat(el.style.top)  || 0;
+        startPX = e.clientX; startPY = e.clientY;
+        dragging = true;
+        el.classList.add('dragging');
+        document.addEventListener('pointermove', onDrag);
+        document.addEventListener('pointerup', onUp, { once: true });
+      }
+      function onDrag(e) {
+        if (!dragging) return;
+        const cr = compRect();
+        const dxPct = ((e.clientX - startPX) / cr.width)  * 100;
+        const dyPct = ((e.clientY - startPY) / cr.height) * 100;
+        el.style.left = (baseLeftPct + dxPct) + '%';
+        el.style.top  = (baseTopPct  + dyPct) + '%';
+        if (onMove) onMove();
+      }
+      function onUp() {
+        dragging = false;
+        el.classList.remove('dragging');
+        document.removeEventListener('pointermove', onDrag);
+        const final = {
+          left: parseFloat(el.style.left),
+          top:  parseFloat(el.style.top),
+        };
+        try { localStorage.setItem(key, JSON.stringify(final)); } catch { /* quota */ }
+        if (onMove) onMove();
+      }
+      el.addEventListener('pointerdown', onDown);
+    });
   });
 }
 
