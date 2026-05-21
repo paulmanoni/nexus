@@ -35,36 +35,49 @@
   .cover .tour-pos { display:inline-block; margin-top:6px; color:var(--mute); font-size:12px; }
 
   /* Composite layout — single image with absolutely-positioned
-     badges over it. Wrapper holds the relative coords so badges
-     scale with the image (image is 100% wide, badges use % of
-     the wrapper from the step rects ÷ base_width). */
-  .composite { position: relative; margin: 16px 0 24px; }
-  .composite img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+     badges over it. Wrapper's aspect-ratio is locked to the
+     recorded viewport (base_width / base_height) so positions
+     scale correctly at any preview width. The image inside is
+     constrained to 100%/100% — html2canvas captures the
+     viewport so its intrinsic aspect ratio matches the wrapper. */
+  .composite {
+    position: relative; margin: 16px 0 24px;
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+    background: #fff;
+  }
+  .composite img { display: block; width: 100%; height: 100%; }
   .pin {
     position: absolute; transform: translate(-50%, -50%);
     z-index: 2; cursor: default;
+    display: flex; align-items: center; gap: 6px;
   }
   .pin .badge {
     background: var(--badge); color: var(--ink);
     font: 700 13px/28px system-ui, sans-serif;
     min-width: 28px; height: 28px; padding: 0 8px;
     border-radius: 999px; text-align: center;
-    box-shadow: 0 2px 6px rgba(0,0,0,.35);
+    box-shadow: 0 2px 6px rgba(0,0,0,.45);
     display: inline-block; box-sizing: border-box;
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
   }
   .pin.sub .badge { background: var(--sub); color: #fff; }
+  /* Hover card — now ALWAYS visible by default (operators
+     asked for "open by default") so the printed PDF carries
+     the step text directly on the image. Sized tight so it
+     doesn't blanket the screenshot. Hover only changes z-index
+     so a clicked card stays on top of its neighbours when
+     they're close together. */
   .pin .card {
-    position: absolute; top: 32px; left: 50%; transform: translateX(-50%);
     background: var(--card-bg); border: 1px solid var(--line);
-    border-radius: 8px; padding: 10px 12px; min-width: 200px; max-width: 280px;
-    box-shadow: 0 8px 24px rgba(0,0,0,.18);
-    display: none; z-index: 3;
+    border-radius: 6px; padding: 6px 10px; max-width: 220px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.18);
+    font-size: 11px; line-height: 1.4;
+    z-index: 3;
   }
-  .pin:hover .card { display: block; }
-  .pin .card h4 { margin: 0 0 4px; font-size: 13px; }
-  .pin .card .selector { font-family: ui-monospace, monospace; font-size: 10px; color: var(--mute); word-break: break-all; margin-bottom: 4px; }
-  .pin .card p { margin: 4px 0 0; font-size: 12px; color: #333; }
+  .pin:hover .card { z-index: 4; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+  .pin .card h4 { margin: 0; font-size: 12px; font-weight: 700; }
+  .pin .card p { margin: 2px 0 0; color: #333; }
   /* Faint outline rectangle for the highlighted control —
      uses the persisted rect_*, scaled. Same as .pin sizing
      but at the rect's actual extents. */
@@ -73,7 +86,7 @@
     outline: 2px solid var(--badge);
     outline-offset: 1px;
     border-radius: 4px;
-    background: rgba(245,158,11,.10);
+    background: rgba(245,158,11,.08);
     z-index: 1;
   }
 
@@ -211,8 +224,15 @@ async function resolveTours() {
 }
 
 function renderComposite(tour, steps) {
-  const baseW = tour.base_width || 1280;
-  const pct = (px, base) => (px / base) * 100;
+  // Use both base dimensions so left/top percentages are
+  // dimensionally correct. Older tours that lack base_height
+  // (recorded against the v0.78.0 schema) fall back to
+  // base_width for the height too — wrong but bounded; the
+  // re-record fixes it.
+  const baseW = tour.base_width  || 1280;
+  const baseH = tour.base_height || tour.base_width || 720;
+  const pctX = px => (px / baseW) * 100;
+  const pctY = px => (px / baseH) * 100;
   const pins = steps.map(({ step, prefix, depth }) => {
     const w = step.rect_width;
     const h = step.rect_height;
@@ -221,28 +241,26 @@ function renderComposite(tour, steps) {
     const cy = step.rect_top  + h / 2;
     return `
       <div class="hi" style="
-        left: ${pct(step.rect_left, baseW)}%;
-        top:  ${pct(step.rect_top, baseW)}%;
-        width: ${pct(w, baseW)}%;
-        height: ${pct(h, baseW)}%;
+        left: ${pctX(step.rect_left)}%;
+        top:  ${pctY(step.rect_top)}%;
+        width: ${pctX(w)}%;
+        height: ${pctY(h)}%;
       "></div>
       <div class="pin ${depth > 0 ? 'sub' : ''}" style="
-        left: ${pct(cx, baseW)}%;
-        top:  ${pct(cy, baseW)}%;
+        left: ${pctX(cx)}%;
+        top:  ${pctY(cy)}%;
       ">
         <span class="badge">${escapeHtml(prefix)}</span>
         <div class="card">
           <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
-          ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
           ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
         </div>
       </div>`;
   }).join('');
+  // Step list comes FIRST — operator gets the labelled
+  // numbered walkthrough up top, then sees the composite
+  // image beneath that anchors each entry on the page.
   return `
-    <div class="composite">
-      <img src="${escapeHtml(tour.cover_image_url)}" alt="Tour overview" />
-      ${pins}
-    </div>
     <div class="step-list">
       ${steps.map(({ step, prefix, depth }) => `
         <div class="row ${depth > 0 ? 'sub' : ''}">
@@ -253,6 +271,10 @@ function renderComposite(tour, steps) {
             ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
           </div>
         </div>`).join('')}
+    </div>
+    <div class="composite" style="aspect-ratio: ${baseW} / ${baseH}">
+      <img src="${escapeHtml(tour.cover_image_url)}" alt="Tour overview" />
+      ${pins}
     </div>`;
 }
 

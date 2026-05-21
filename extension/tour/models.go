@@ -31,11 +31,16 @@ type Tour struct {
 	// step screenshots when absent.
 	CoverImageURL string `json:"cover_image_url,omitempty" gorm:"type:text"`
 
-	// BaseWidth is document.documentElement.clientWidth at
-	// recording-start. The preview uses it to scale step rects
-	// down to the rendered image's display width — without it
-	// badges would land in the wrong spots on resized previews.
-	BaseWidth int `json:"base_width,omitempty"`
+	// BaseWidth / BaseHeight are window.innerWidth and innerHeight
+	// at recording-start. The preview locks the composite
+	// wrapper's aspect-ratio to BaseWidth/BaseHeight and
+	// positions each badge using rect_left/BaseWidth (horizontal)
+	// and rect_top/BaseHeight (vertical). Storing both keeps
+	// the math dimensionally correct — earlier versions used
+	// BaseWidth for both axes which packed every badge into the
+	// top-left corner of tall pages.
+	BaseWidth  int `json:"base_width,omitempty"`
+	BaseHeight int `json:"base_height,omitempty"`
 
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
