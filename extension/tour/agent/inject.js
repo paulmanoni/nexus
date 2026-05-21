@@ -1199,7 +1199,9 @@
           return `
           <div style="display:flex;gap:2px">
             <button data-act="play" data-id="${t.id}" style="flex:1">▶ Play: ${escapeHtml(label)}</button>
-            <button data-act="preview" data-id="${t.id}" title="📄 Preview: ${escapeHtml(label)}" style="padding:8px 10px">📄</button>
+            <button data-act="preview" data-id="${t.id}" title="Open printable preview" style="padding:8px 10px;display:flex;align-items:center;gap:4px">
+              📄 <span style="font-size:11px;color:#666;max-width:80px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(label)}</span>
+            </button>
           </div>`;
         }).join('')
       : `<div class="hint">No tour saved for this page.</div>`;
