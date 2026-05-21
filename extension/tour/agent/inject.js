@@ -577,38 +577,6 @@
     return _h2c;
   }
 
-  // mirrorVisibilityToClone is the onclone hook for html2canvas.
-  // The lib clones the document into a sandboxed iframe to
-  // render — that clone has no real cursor on it, so CSS
-  // :hover rules don't fire. Hover-driven dropdowns
-  // (.user-box:hover .dropdown-menu-custom etc), tooltips,
-  // popovers — anything kept visible by :hover in the live
-  // DOM — would otherwise vanish from the screenshot.
-  //
-  // We walk the live DOM, read each element's computed
-  // display + visibility, and copy those onto the matching
-  // clone element. Inline styles set this way have higher
-  // specificity than CSS rules, so the clone preserves the
-  // live page's actual visual state.
-  function mirrorVisibilityToClone(clonedDoc) {
-    const liveAll  = document.querySelectorAll('body *');
-    const cloneAll = clonedDoc.querySelectorAll('body *');
-    const n = Math.min(liveAll.length, cloneAll.length);
-    for (let i = 0; i < n; i++) {
-      const live = liveAll[i];
-      const cs = getComputedStyle(live);
-      // Skip currently-hidden elements — leaving them
-      // collapsed in the clone is correct.
-      if (cs.display === 'none') continue;
-      // Mirror display + visibility so :hover-revealed
-      // elements stay revealed in the snapshot. opacity is
-      // preserved by html2canvas's natural CSS engine, so we
-      // don't override that here.
-      cloneAll[i].style.display    = cs.display;
-      cloneAll[i].style.visibility = cs.visibility;
-    }
-  }
-
   // captureClean takes a screenshot of the FULL document body
   // with no overlays. We capture the whole document (not just
   // the viewport) and pair it with step rects stored in
@@ -625,7 +593,6 @@
         scale: Math.min(window.devicePixelRatio || 1, 2),
         logging: false,
         useCORS: true,
-        onclone: mirrorVisibilityToClone,
       });
     } finally {
       overlayHost.style.visibility = '';
@@ -652,7 +619,6 @@
         scale: Math.min(window.devicePixelRatio || 1, 2),
         logging: false,
         useCORS: true,
-        onclone: mirrorVisibilityToClone,
       });
     } finally {
       overlayHost.style.visibility = '';
