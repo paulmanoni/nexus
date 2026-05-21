@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Tour preview</title>
+<!--
+  Print-friendly tour preview. Opened in a new tab from the
+  dashboard's "Preview PDF" button; the operator hits Cmd/Ctrl+P
+  and saves to PDF. No PDF library on the wire — the browser's
+  own print engine renders it.
+
+  Page layout for printing:
+    * A4 portrait
+    * Cover page: tour name + route + description
+    * Each step: numbered badge + title + body text + screenshot
+    * Substeps indented + carry parent badge prefix (1.1, 1.2, …)
+-->
+<style>
+  :root {
+    --ink:#111; --mute:#555; --line:#d4d4d8; --badge:#f59e0b;
+    --sub:#a16207;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; color:var(--ink); font:13px/1.5 system-ui, -apple-system, sans-serif; }
+  body { max-width: 760px; margin: 0 auto; padding: 40px 32px; }
+
+  .cover { margin-bottom: 48px; padding-bottom: 24px; border-bottom: 2px solid var(--line); }
+  .cover h1 { margin: 0 0 6px; font-size: 28px; }
+  .cover .route { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--mute); font-size: 13px; }
+  .cover p { margin: 12px 0 0; color: var(--mute); }
+
+  .step {
+    margin: 24px 0; padding: 16px 18px;
+    border: 1px solid var(--line); border-radius: 8px;
+    break-inside: avoid; /* try to keep a step on one page */
+    page-break-inside: avoid;
+  }
+  .step.sub { background:#fafaf7; border-color:#e7e5e4; }
+  .step .head { display:flex; align-items:center; gap:10px; margin-bottom: 8px; }
+  .step .badge {
+    background: var(--badge); color: var(--ink);
+    font: 700 13px/1 system-ui, sans-serif;
+    min-width: 36px; height: 28px; padding: 0 10px;
+    border-radius: 999px;
+    display:inline-flex; align-items:center; justify-content:center;
+    box-sizing: border-box;
+  }
+  .step.sub .badge { background: var(--sub); color: #fff; }
+  .step h3 { margin: 0; font-size: 15px; }
+  .step .selector {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--mute); font-size: 11px; margin: 2px 0 6px;
+    word-break: break-all;
+  }
+  .step p { margin: 4px 0 8px; color: #222; }
+  .step .preview { margin-top: 10px; }
+  .step .preview img { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
+  .step.sub { margin-left: 28px; }
+
+  .empty { padding: 24px; color: var(--mute); text-align: center; }
+
+  .toolbar {
+    position: sticky; top: 0; background: #fff; padding: 8px 0;
+    border-bottom: 1px solid var(--line); margin-bottom: 20px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .toolbar button {
+    background: #111; color: #fff; border: 0;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer;
+    font: 13px/1 system-ui, sans-serif;
+  }
+  .toolbar button.ghost { background: #fff; color: #111; border: 1px solid var(--line); }
+  .toolbar .grow { flex: 1; }
+  .toolbar .meta { color: var(--mute); font-size: 12px; }
+
+  /* Print: hide the toolbar, fit the body to A4 margins, force
+     page breaks before each top-level step so each story beat
+     gets its own page when possible. */
+  @media print {
+    body { padding: 0 14mm; max-width: none; }
+    .toolbar { display: none; }
+    .cover { margin: 16mm 0; }
+    .step { box-shadow: none; }
+    .step:not(.sub) { page-break-before: auto; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="empty">Loading…</div>
+</div>
+
+<script type="module">
+// Preview supports three URL shapes, in priority order:
+//   * ?ids=a,b,c           - explicit comma-separated id list
+//                            (operator picks tours to combine)
+//   * ?route=/admin/users  - all tours for that route, in play order
+//   * path /tours/:id/preview - legacy single-tour (still works)
+const params = new URLSearchParams(location.search);
+const explicitIDs = (params.get('ids') || '').split(',').map(s => s.trim()).filter(Boolean);
+const routeFilter = params.get('route') || '';
+const pathID = location.pathname.match(/\/tours\/([^/]+)\/preview$/)?.[1] || '';
+const singleID = params.get('id') || pathID;
+
+const escapeHtml = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+// flat walks the tree DFS yielding { step, prefix } where prefix
+// is "1", "1.1", "1.2", "2" etc. — used as the badge text so
+// substeps carry their parent's number visually.
+function flat(steps, parentPrefix, depth, out) {
+  steps.forEach((s, i) => {
+    const prefix = parentPrefix ? `${parentPrefix}.${i + 1}` : `${i + 1}`;
+    out.push({ step: s, prefix, depth });
+    if (s.children && s.children.length) flat(s.children, prefix, depth + 1, out);
+  });
+  return out;
+}
+
+async function fetchTour(id) {
+  const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(id)}`);
+  if (!r.ok) throw new Error(`tour ${id}: HTTP ${r.status}`);
+  return r.json();
+}
+
+async function resolveTours() {
+  if (explicitIDs.length) {
+    return Promise.all(explicitIDs.map(fetchTour));
+  }
+  if (routeFilter) {
+    const r = await fetch(`/__nexus/tour/tours?route=${encodeURIComponent(routeFilter)}`);
+    if (!r.ok) throw new Error(`list: HTTP ${r.status}`);
+    const meta = (await r.json()).tours || [];
+    // The list endpoint omits step trees for size — hydrate
+    // each one in parallel.
+    return Promise.all(meta.map(t => fetchTour(t.id)));
+  }
+  if (singleID) {
+    return [await fetchTour(singleID)];
+  }
+  throw new Error('No tour id / ids / route in URL. Open this page via the dashboard.');
+}
+
+function renderTour(tour, tourIdx, tourCount) {
+  const steps = flat(tour.steps || [], '', 0, []);
+  const cover = `
+    <header class="cover">
+      <h1>${escapeHtml(tour.name || 'Untitled tour')}</h1>
+      <div class="route">${escapeHtml(tour.route || '/')}</div>
+      ${tour.description ? `<p>${escapeHtml(tour.description)}</p>` : ''}
+      ${tourCount > 1 ? `<p class="route">Tour ${tourIdx + 1} of ${tourCount}</p>` : ''}
+    </header>`;
+  const body = steps.length
+    ? steps.map(({ step, prefix, depth }) => `
+        <section class="step ${depth > 0 ? 'sub' : ''}" style="${depth > 0 ? `margin-left:${depth * 28}px` : ''}">
+          <div class="head">
+            <span class="badge">${escapeHtml(prefix)}</span>
+            <h3>${escapeHtml(step.title || step.label || 'Step')}</h3>
+          </div>
+          ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
+          ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+          ${step.media_url ? `<div class="preview"><img src="${escapeHtml(step.media_url)}" alt="Step ${escapeHtml(prefix)} screenshot" /></div>` : ''}
+        </section>`).join('')
+    : `<div class="empty">This tour has no steps yet.</div>`;
+  return `<article class="tour">${cover}${body}</article>`;
+}
+
+async function load() {
+  let tours;
+  try {
+    tours = await resolveTours();
+  } catch (e) {
+    document.getElementById('app').innerHTML = `<div class="empty">Failed to load: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  const totalSteps = tours.reduce((n, t) => n + flat(t.steps || [], '', 0, []).length, 0);
+  const titleParts = tours.length === 1
+    ? [tours[0].name || tours[0].id]
+    : routeFilter
+      ? [`${tours.length} tours for ${routeFilter}`]
+      : [`${tours.length} tours combined`];
+  document.title = `Preview · ${titleParts.join(' · ')}`;
+
+  const toolbar = `
+    <div class="toolbar">
+      <button onclick="window.print()">Save as PDF</button>
+      <button class="ghost" onclick="history.back()">Back</button>
+      <span class="grow"></span>
+      <span class="meta">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${totalSteps} step${totalSteps === 1 ? '' : 's'}</span>
+    </div>`;
+  const body = tours.map((t, i) => renderTour(t, i, tours.length)).join('<hr style="margin:40px 0;border:0;border-top:1px dashed #d4d4d8" />');
+  document.getElementById('app').innerHTML = toolbar + body;
+}
+
+load();
+</script>
+</body>
+</html>

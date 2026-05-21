@@ -32,11 +32,15 @@ func NewGormStore(db *gorm.DB) (*GormStore, error) {
 }
 
 // ListTours filters by route when set; otherwise returns all
-// tours sorted by name. Steps are intentionally not joined —
-// callers fetch the tree via GetTour.
+// tours. Steps are intentionally not joined — callers fetch the
+// tree via GetTour.
+//
+// Order is (route, order, name) so tours within a route come
+// back in play order, and across routes the dashboard list
+// stays stable.
 func (g *GormStore) ListTours(ctx context.Context, route string) ([]*Tour, error) {
 	var rows []*Tour
-	q := g.db.WithContext(ctx).Order("name ASC")
+	q := g.db.WithContext(ctx).Order(`route ASC, "order" ASC, name ASC`)
 	if route != "" {
 		q = q.Where("route = ?", route)
 	}
@@ -159,6 +163,31 @@ func (g *GormStore) DeleteStep(ctx context.Context, id string) error {
 		}
 		if err := tx.Where("id = ?", id).Delete(&Step{}).Error; err != nil {
 			return fmt.Errorf("delete step: %w", err)
+		}
+		return nil
+	})
+}
+
+// ReorderTours rewrites Order on each tour to its position in
+// the supplied id slice (0..n-1). Atomic. Used by the dashboard's
+// ↑/↓ controls on the tour-list view.
+func (g *GormStore) ReorderTours(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&Tour{}).Where("id IN ?", ids).Count(&count).Error; err != nil {
+			return fmt.Errorf("validate reorder tours: %w", err)
+		}
+		if int(count) != len(ids) {
+			return ErrNotFound
+		}
+		for i, id := range ids {
+			if err := tx.Model(&Tour{}).Where("id = ?", id).
+				Update("order", i).Error; err != nil {
+				return fmt.Errorf("apply reorder tours: %w", err)
+			}
 		}
 		return nil
 	})

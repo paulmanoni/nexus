@@ -23,6 +23,15 @@ var injectJS string
 //go:embed dashboard/dashboard.html
 var dashboardHTML string
 
+// previewHTML is the print-friendly tour preview served at
+// /__nexus/tour/tours/:id/preview. Operators open it from the
+// dashboard's "Preview PDF" button and use the browser's
+// Save-as-PDF (Cmd/Ctrl+P). No PDF library on the wire — the
+// browser's print engine handles rendering.
+//
+//go:embed dashboard/preview.html
+var previewHTML string
+
 // handleDashboard serves the tour-management Vue SPA at
 // /__nexus/tour/. text/html so AutoInject can splice in the
 // in-page agent's script tag for a "manage and demo from the
@@ -31,6 +40,21 @@ func handleDashboard(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.String(http.StatusOK, dashboardHTML)
+}
+
+// handlePreview serves the print-friendly preview page. The
+// same body powers three URL shapes (single tour by id, an
+// explicit ?ids=a,b,c list, or ?route=… for every tour pinned
+// to a route in play order); the client script reads the URL
+// and fetches accordingly.
+//
+// AutoInject is suppressed for this response — we don't want
+// the in-page agent's FAB cluttering a printable preview.
+func handlePreview(c *gin.Context) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Nexus-Tour-NoInject", "1")
+	c.String(http.StatusOK, previewHTML)
 }
 
 // handleInjectJS serves the in-page agent at
@@ -136,7 +160,12 @@ func (w *injectingWriter) flush() error {
 	}
 	ct := w.Header().Get("Content-Type")
 	enc := w.Header().Get("Content-Encoding")
-	if enc != "" || !isHTML(ct) {
+	// Handlers can opt out of injection by setting this header
+	// (e.g. the preview page wants a clean printable output).
+	// Strip it before flush so it doesn't leak to the client.
+	noInject := w.Header().Get("X-Nexus-Tour-NoInject") != ""
+	w.Header().Del("X-Nexus-Tour-NoInject")
+	if noInject || enc != "" || !isHTML(ct) {
 		// Not HTML, or encoded body we won't modify.
 		_, err := w.ResponseWriter.Write(w.buf.Bytes())
 		w.passthru = true

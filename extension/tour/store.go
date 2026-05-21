@@ -46,6 +46,11 @@ type Store interface {
 	// ReorderSteps applies a batch of (parent, order) updates
 	// for one tour. Atomic — either every row updates or none.
 	ReorderSteps(ctx context.Context, tourID string, items []ReorderItem) error
+
+	// ReorderTours rewrites the Order field on a batch of tours.
+	// Caller supplies ids in the new ordering; the store assigns
+	// 0..n-1 along that sequence. Atomic.
+	ReorderTours(ctx context.Context, ids []string) error
 }
 
 // ErrNotFound is returned by Store methods when the requested
