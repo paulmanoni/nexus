@@ -205,6 +205,16 @@
   .step-list h4 { margin: 0 0 2px; font-size: 13px; }
   .step-list .selector { font-family: ui-monospace, monospace; font-size: 10px; color: var(--mute); word-break: break-all; }
   .step-list p { margin: 4px 0 0; font-size: 12px; color: #333; }
+  /* Inline edit: any [contenteditable] becomes a click-to-edit
+     field. Hover signals editability; focus shows a dashed
+     outline so the operator knows they can type. Saved state
+     briefly flashes green via .save-flash. */
+  [data-edit] { cursor: text; border-radius: 3px; padding: 1px 3px; transition: background 120ms; }
+  [data-edit]:hover { background: #fff8e6; }
+  [data-edit]:focus { outline: 1px dashed var(--badge); outline-offset: 1px; background: #fff8e6; }
+  [data-edit].save-flash { background: #d1fae5; }
+  [data-edit].save-error { background: #fee2e2; outline: 1px solid var(--warn); }
+  @media print { [data-edit]:hover, [data-edit]:focus { background: transparent; outline: none; } }
 
   .empty { padding: 24px; color: var(--mute); text-align: center; }
 
@@ -398,8 +408,8 @@ function renderComposite(tour, steps) {
          data-dir="${placement.dir}"
          style="left:${placement.left}%; top:${placement.top}%">
       <span class="num">${escapeHtml(prefix)}</span>
-      <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
-      ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+      <h4 data-edit="title" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" contenteditable="plaintext-only">${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
+      <p data-edit="text" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" contenteditable="plaintext-only">${escapeHtml(step.text || '').replace(/\n/g, '<br>') || '<em style="color:#aaa">Click to add description</em>'}</p>
     </div>`).join('');
 
   // Step list comes FIRST — operator gets the labelled
@@ -411,8 +421,8 @@ function renderComposite(tour, steps) {
         <div class="row ${depth > 0 ? 'sub' : ''}">
           <div><span class="badge">${escapeHtml(prefix)}</span></div>
           <div>
-            <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
-            ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+            <h4 data-edit="title" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" contenteditable="plaintext-only">${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
+            <p data-edit="text" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" contenteditable="plaintext-only">${escapeHtml(step.text || '').replace(/\n/g, '<br>') || '<em style="color:#aaa">Click to add description</em>'}</p>
           </div>
         </div>`).join('')}
     </div>
@@ -507,11 +517,77 @@ async function load() {
     img.addEventListener('load', drawAllConnectors, { once: true });
   });
   window.addEventListener('resize', drawAllConnectors);
-  // Wire the Back button last so it can fall back to closing
-  // the tab when there's no history (preview is typically
-  // opened in a new tab via target=_blank).
   const backBtn = document.getElementById('btn-back');
   if (backBtn) backBtn.addEventListener('click', goBack);
+  // Inline edit: bind blur handlers to every editable element.
+  // Tours stay in module scope so the save handler can find the
+  // step by id and PUT a fresh tour to the server.
+  loadedTours = tours;
+  enableInlineEdit();
+}
+
+// loadedTours is the hydrated array the page is rendering. The
+// inline-edit save handler walks it to update the right step
+// (by step.id) before flushing the whole tour to the server.
+let loadedTours = [];
+
+// findStepInTour walks the tree DFS and returns the matching
+// step object so we can mutate its title/text in place. Returns
+// null when the id isn't found (stale edit after the tour was
+// deleted from another tab — silently ignored).
+function findStepInTour(tour, stepId) {
+  if (!tour || !tour.steps) return null;
+  const stack = [...tour.steps];
+  while (stack.length) {
+    const s = stack.shift();
+    if (s.id === stepId) return s;
+    if (s.children && s.children.length) stack.push(...s.children);
+  }
+  return null;
+}
+
+function enableInlineEdit() {
+  document.querySelectorAll('[data-edit]').forEach(el => {
+    // Clear the placeholder italic when focused so the operator
+    // types over it instead of around it.
+    el.addEventListener('focus', () => {
+      const ph = el.querySelector('em');
+      if (ph) el.textContent = '';
+    });
+    el.addEventListener('blur', () => saveInlineEdit(el));
+    // Enter on a title field commits + blurs (single-line
+    // semantics). On a textarea-like p, Shift+Enter inserts
+    // a newline; plain Enter commits.
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        el.blur();
+      }
+    });
+  });
+}
+
+async function saveInlineEdit(el) {
+  const tourId = el.getAttribute('data-tour-id');
+  const stepId = el.getAttribute('data-step-id');
+  const field  = el.getAttribute('data-edit'); // 'title' or 'text'
+  const value  = el.textContent.trim();
+  const tour = loadedTours.find(t => t.id === tourId);
+  const step = findStepInTour(tour, stepId);
+  if (!step) return;
+  // No-op when nothing actually changed — avoids a needless
+  // round trip every time the operator tabs past a field.
+  if ((step[field] || '') === value) return;
+  step[field] = value;
+  el.classList.remove('save-error', 'save-flash');
+  try {
+    await API.upsert(tour);
+    el.classList.add('save-flash');
+    setTimeout(() => el.classList.remove('save-flash'), 800);
+  } catch (e) {
+    console.error('inline save failed', e);
+    el.classList.add('save-error');
+  }
 }
 
 // goBack handles the Back button. The preview is normally
