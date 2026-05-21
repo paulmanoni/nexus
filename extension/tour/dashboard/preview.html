@@ -271,6 +271,21 @@ const routeFilter = params.get('route') || '';
 const pathID = location.pathname.match(/\/tours\/([^/]+)\/preview$/)?.[1] || '';
 const singleID = params.get('id') || pathID;
 
+// Preview-side API client. The dashboard SPA carries its own
+// copy; we duplicate the two methods the preview needs (upsert
+// for inline-edit + merge-scene saves) here so the page is
+// self-contained — operators may open the preview URL directly
+// without ever touching the dashboard.
+const API = {
+  upsert(tour) {
+    return fetch('/__nexus/tour/tours', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tour),
+    }).then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(new Error(t || `HTTP ${r.status}`))));
+  },
+};
+
 const escapeHtml = s => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
