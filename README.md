@@ -612,7 +612,7 @@ After restart, every HTML page the app serves carries a floating **● Tour** pi
 
 Tours that span page-state changes — open a dropdown, capture an item inside, then close it — store **one cover screenshot per page state**. The recorder takes a fresh cover automatically on every Resume from Pause; the **📸 Capture scene** button on the recorder bar also triggers one on demand for finer control (open the dropdown, click Capture scene, then capture items inside it). Each step pins to the cover that was active when it was captured. The preview renders one composite per cover labelled "Scene N of M", so dropdown items land on the cover that shows the dropdown **open**, not the stale initial screenshot.
 
-**CSS-only hover/focus dropdowns** are preserved in the screenshot too. html2canvas natively can't reproduce `:hover` (the cloned DOM has no cursor), so the agent's `onclone` hook mirrors the live DOM's computed `display` + `visibility` onto the clone. Anything visible in the live page — `:hover`-revealed menus, `:focus-within` tooltips, class-toggled popovers — stays visible in the capture without the host having to do anything.
+**Caveat — pure-CSS `:hover` dropdowns.** html2canvas clones the DOM into a sandboxed iframe to render, and the clone has no real cursor on it — so any element that's only visible via `:hover` (with no JS toggle) is collapsed in the snapshot even if it was open in the live page. Workaround: most production dropdowns toggle a class on click; those work as expected. For pure `:hover` cases the simplest fix is adding a `data-tour-stay-open` attribute (or any persistent class) you can target so the dropdown stays open during the brief capture window.
 
 ### Keyboard shortcuts + controls during recording
 
