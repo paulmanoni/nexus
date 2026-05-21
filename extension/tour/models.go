@@ -16,6 +16,14 @@ type Tour struct {
 	Name        string    `json:"name" gorm:"size:200;not null"`
 	Route       string    `json:"route" gorm:"size:255;index"`
 	Description string    `json:"description" gorm:"type:text"`
+
+	// Order is the play-order within a route. Lower = earlier.
+	// When multiple tours share a route, the agent lists them
+	// in this order and the "Preview all for this route" stitch
+	// uses it too. Defaults to MAX(order)+1 on insert so new
+	// tours land at the end.
+	Order int `json:"order" gorm:"default:0"`
+
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 

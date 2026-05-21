@@ -32,6 +32,10 @@ func NewMemoryStore() *MemoryStore {
 // ListTours returns tours filtered by route (or all if route is
 // empty). Steps are NOT hydrated — list views show metadata
 // only; callers fetch individual tours for the tree.
+//
+// Ordering: by (route, order) so tours within a route come back
+// in play order. Without route grouping we'd sort by route alpha
+// then order so the dashboard's list view is stable.
 func (m *MemoryStore) ListTours(_ context.Context, route string) ([]*Tour, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -45,7 +49,15 @@ func (m *MemoryStore) ListTours(_ context.Context, route string) ([]*Tour, error
 		cp.Steps = nil
 		out = append(out, &cp)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Route != out[j].Route {
+			return out[i].Route < out[j].Route
+		}
+		if out[i].Order != out[j].Order {
+			return out[i].Order < out[j].Order
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
@@ -166,6 +178,25 @@ func (m *MemoryStore) DeleteStep(_ context.Context, id string) error {
 		}
 	}
 	delete(m.steps, id)
+	return nil
+}
+
+// ReorderTours sets Order on each tour in the supplied id slice
+// to its position (0..n-1). Atomic — validates every id first.
+func (m *MemoryStore) ReorderTours(_ context.Context, ids []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range ids {
+		if _, ok := m.tours[id]; !ok {
+			return ErrNotFound
+		}
+	}
+	now := time.Now().UTC()
+	for i, id := range ids {
+		t := m.tours[id]
+		t.Order = i
+		t.UpdatedAt = now
+	}
 	return nil
 }
 

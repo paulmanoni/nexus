@@ -121,19 +121,26 @@
     .recbar button.danger { background: #ef4444; color: #fff; }
     .recbar .count { background: #6f6; color: #111; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 
+    /* Picker highlight: outline (not border) so it doesn't grow
+       the box and shift hit-testing. box-sizing reset guards
+       against host CSS that sets box-sizing: content-box on *. */
     .picker-hi {
       position: fixed; pointer-events: none;
-      border: 2px solid #2563eb;
+      outline: 2px solid #2563eb;
+      outline-offset: 1px;
       background: rgba(37,99,235,.10);
       border-radius: 4px;
+      box-sizing: border-box;
       transition: all 80ms;
     }
     .picker-label {
       position: fixed; pointer-events: none;
       background: #2563eb; color: #fff;
       padding: 3px 8px; border-radius: 4px;
-      font-size: 12px; max-width: 320px;
+      font: 12px/1.3 system-ui, sans-serif;
+      max-width: 320px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      box-sizing: border-box;
     }
 
     .play-ring {
@@ -143,12 +150,21 @@
       box-shadow: 0 0 0 9999px rgba(0,0,0,.35);
       transition: all 250ms;
     }
+    /* Badge: explicit font + line-height so host CSS resets
+       (e.g. host body { line-height: 0 }) can't push the number
+       outside the circle. min-width lets multi-digit numbers
+       (10, 11, …) stretch the circle into a pill instead of
+       overflowing it. */
     .play-badge {
       position: fixed; pointer-events: none;
-      background: #f59e0b; color: #111; font-weight: 700;
-      width: 28px; height: 28px; border-radius: 50%;
+      background: #f59e0b; color: #111;
+      font: 700 13px/1 system-ui, -apple-system, sans-serif;
+      min-width: 28px; height: 28px; padding: 0 6px;
+      border-radius: 999px;
       display: flex; align-items: center; justify-content: center;
       box-shadow: 0 2px 6px rgba(0,0,0,.3);
+      box-sizing: border-box;
+      white-space: nowrap;
     }
     .play-tip {
       position: fixed; pointer-events: auto;
@@ -375,17 +391,53 @@
       label.textContent = text;
     }
 
+    // hitTest finds the element under the cursor. We prefer
+    // document.elementFromPoint(x, y) over e.target because
+    // disabled <button>/<input>/etc. don't fire click events
+    // and may even let pointer events drop down to their
+    // parent — elementFromPoint gives us the true topmost
+    // element regardless of disabled state. We hide our own
+    // overlay's pointer-events at the host attribute level
+    // already, so it won't show up as the topmost hit.
+    function hitTest(e) {
+      // Try elementFromPoint first; fall back to e.target if
+      // for some reason the coords aren't usable yet.
+      let t = document.elementFromPoint(e.clientX, e.clientY);
+      if (!t) t = e.target;
+      // Skip text nodes and similar — picker only targets
+      // elements.
+      while (t && t.nodeType !== 1) t = t.parentNode;
+      return t;
+    }
+
     function onMove(e) {
-      const t = e.target;
+      const t = hitTest(e);
       if (!t || isOurs(t)) { hi.style.display = 'none'; label.style.display = 'none'; return; }
       moveTo(t.getBoundingClientRect(), describeElement(t));
     }
-    function onClick(e) {
-      const t = e.target;
+    // onDown handles selection. pointerdown is used instead of
+    // click because:
+    //   1. Disabled form controls (button, input, select,
+    //      textarea, option) silently swallow click events but
+    //      still fire pointerdown — operators frequently want
+    //      to point at a disabled "Submit" button to explain
+    //      why it's disabled, and without this fix that's
+    //      impossible.
+    //   2. Capture phase means we run before the host's own
+    //      onClick handlers, so the host doesn't navigate
+    //      during a recording pick.
+    function onDown(e) {
+      if (e.button !== undefined && e.button !== 0) return; // left click only
+      const t = hitTest(e);
       if (!t || isOurs(t)) return;
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
+      // Also suppress the trailing click + mouseup so the host
+      // can't react to either. Belt + suspenders.
+      ['click', 'mouseup'].forEach(ev => {
+        document.addEventListener(ev, suppressOnce, true);
+      });
       const rect = t.getBoundingClientRect();
       const out = {
         selector: buildSelector(t),
@@ -393,6 +445,17 @@
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
       };
       if (onPick) onPick(out);
+    }
+    // suppressOnce eats the next click/mouseup that lands after
+    // a pointerdown pick — otherwise the host's onClick can fire
+    // on the trailing click and navigate the page mid-recording.
+    function suppressOnce(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      ['click', 'mouseup'].forEach(ev => {
+        document.removeEventListener(ev, suppressOnce, true);
+      });
     }
     function onKey(e) { if (e.key === 'Escape' && onCancel) onCancel(); }
 
@@ -402,7 +465,7 @@
         active = true;
         onPick = onPickCb; onCancel = onCancelCb;
         document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('click', onClick, true);
+        document.addEventListener('pointerdown', onDown, true);
         document.addEventListener('keydown', onKey, true);
       },
       stop() {
@@ -411,7 +474,7 @@
         hi.style.display = 'none';
         label.style.display = 'none';
         document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('click', onClick, true);
+        document.removeEventListener('pointerdown', onDown, true);
         document.removeEventListener('keydown', onKey, true);
         onPick = null; onCancel = null;
       },
@@ -502,6 +565,7 @@
 
   function createRecorder() {
     let active = false;
+    let paused = false;     // set by togglePause(); picker is off while true
     let tour = null;        // { id?, name, route, description, steps: [] }
     let lastStep = null;    // for substep-rect heuristic
     let badge = 0;          // running badge number for screenshots
@@ -521,8 +585,9 @@
       const b = document.createElement('div');
       b.className = 'recbar';
       b.innerHTML = `
-        <span>● Recording</span>
+        <span class="status">● Recording</span>
         <span class="count">0</span>
+        <button class="pause">⏸ Pause</button>
         <button class="edit-last" disabled>✎ Edit last step</button>
         <button class="stop">Stop &amp; Save</button>
         <button class="danger cancel">Cancel</button>
@@ -531,7 +596,37 @@
       b.querySelector('.stop').addEventListener('click', () => stop(true));
       b.querySelector('.cancel').addEventListener('click', () => stop(false));
       b.querySelector('.edit-last').addEventListener('click', () => editLastStep());
+      b.querySelector('.pause').addEventListener('click', () => togglePause());
       return b;
+    }
+
+    // togglePause flips picker capture on/off without ending the
+    // recording. While paused the operator can navigate the host
+    // freely — log in, fill a form, open a drawer — without those
+    // clicks becoming phantom steps. Hitting Resume re-arms the
+    // picker for the next intentional click.
+    function togglePause() {
+      if (!active) return;
+      paused = !paused;
+      const btn = bar.querySelector('.pause');
+      const status = bar.querySelector('.status');
+      if (paused) {
+        picker.stop();
+        btn.textContent = '▶ Resume';
+        status.textContent = '⏸ Paused';
+        fab.classList.remove('recording');
+        // Visual cue inside the bar so the dim host page reads
+        // as "we're waiting on you" instead of "recording".
+        bar.style.background = '#f59e0b';
+        bar.style.color = '#111';
+      } else {
+        btn.textContent = '⏸ Pause';
+        status.textContent = '● Recording';
+        fab.classList.add('recording');
+        bar.style.background = '';
+        bar.style.color = '';
+        picker.start(onPicked, () => stop(false));
+      }
     }
 
     // editLastStep opens a small in-page form letting the
@@ -632,6 +727,7 @@
     async function start(routePath) {
       if (active) return;
       active = true;
+      paused = false;
       lastStep = null;
       badge = 0;
       tour = {
@@ -717,16 +813,35 @@
       if (tip)  tip.style.display  = 'none';
     }
 
+    // placeRing draws the orange outline + page-dim around the
+    // target. We pad by 4px on every side so the ring is clearly
+    // outside the target's border (not overlapping a button's
+    // own border in a confusing way).
     function placeRing(rect) {
       ring.style.left = (rect.left - 4) + 'px';
       ring.style.top  = (rect.top - 4) + 'px';
       ring.style.width  = (rect.width + 8) + 'px';
       ring.style.height = (rect.height + 8) + 'px';
     }
+    // placeBadge anchors the numbered pill at the target's
+    // top-left corner. Clamped to viewport so a target at (0,0)
+    // doesn't render the badge half-offscreen — the number
+    // disappearing was the most common report. Width may exceed
+    // 28px now (min-width pill), so we measure after assignment.
     function placeBadge(rect, n) {
       badgeEl.textContent = String(n);
-      badgeEl.style.left = (rect.left - 14) + 'px';
-      badgeEl.style.top  = (rect.top - 14) + 'px';
+      // Force layout to read the actual rendered width — the
+      // pill min-widths to 28 but can grow for "10"+.
+      const bw = badgeEl.offsetWidth || 28;
+      const bh = badgeEl.offsetHeight || 28;
+      let left = rect.left - Math.floor(bw / 2);
+      let top  = rect.top - Math.floor(bh / 2);
+      // Clamp so the entire pill stays inside the viewport
+      // (8px margin on each edge so it doesn't kiss the edge).
+      left = Math.max(8, Math.min(window.innerWidth - bw - 8, left));
+      top  = Math.max(8, Math.min(window.innerHeight - bh - 8, top));
+      badgeEl.style.left = left + 'px';
+      badgeEl.style.top  = top + 'px';
     }
     function placeTip(rect, placement) {
       // Default: under the target, left-aligned. Tip width is

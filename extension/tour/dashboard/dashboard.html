@@ -108,6 +108,16 @@ const API = {
     return fetch(`/__nexus/tour/tours/${encodeURIComponent(id)}`, { method:'DELETE' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('delete failed')));
   },
+  // reorderTours flushes a new (ids ordering) → the server
+  // rewrites each tour's Order field to its position in the slice.
+  // Used by the list view's ↑/↓ buttons when a route filter is
+  // active (reorder is only meaningful within a single route).
+  reorderTours(ids) {
+    return fetch('/__nexus/tour/tours/reorder', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ ids }),
+    }).then(r => r.ok ? r.json() : Promise.reject(new Error('reorder failed')));
+  },
 };
 
 // ============================================================
@@ -211,6 +221,49 @@ createApp({
       }
     }
 
+    function openPreview() {
+      if (!editing.value || !editing.value.id) return;
+      // Open in a new tab so the operator can keep editing while
+      // the preview is open + the print dialog lives in its own
+      // tab without modal-interrupting the editor.
+      window.open(`/__nexus/tour/tours/${encodeURIComponent(editing.value.id)}/preview`, '_blank');
+    }
+
+    // openMultiPreview combines tours into one printable page.
+    // When a route filter is active, we pre-fill ?route=... so
+    // the preview hydrates every tour for that route in play
+    // order. Otherwise we pass the ids of everything currently
+    // listed.
+    function openMultiPreview() {
+      if (!tours.value.length) return;
+      const params = filter.value.trim()
+        ? `route=${encodeURIComponent(filter.value.trim())}`
+        : `ids=${tours.value.map(t => encodeURIComponent(t.id)).join(',')}`;
+      window.open(`/__nexus/tour/preview?${params}`, '_blank');
+    }
+
+    // moveTour shifts a tour up/down within the current list.
+    // Only meaningful with a route filter applied — the server
+    // accepts the full id sequence and rewrites Order = index.
+    async function moveTour(id, delta) {
+      const idx = tours.value.findIndex(t => t.id === id);
+      if (idx < 0) return;
+      const next = idx + delta;
+      if (next < 0 || next >= tours.value.length) return;
+      const newOrder = [...tours.value];
+      const [item] = newOrder.splice(idx, 1);
+      newOrder.splice(next, 0, item);
+      // Optimistic UI — re-sort first, then flush. A failed
+      // server call rolls back via refresh().
+      tours.value = newOrder;
+      try {
+        await API.reorderTours(newOrder.map(t => t.id));
+      } catch (e) {
+        notify(e.message || 'reorder failed', 'error');
+        await refresh();
+      }
+    }
+
     async function destroyTour() {
       if (!editing.value || !editing.value.id) return;
       if (!confirm(`Delete tour "${editing.value.name}"?`)) return;
@@ -298,7 +351,8 @@ createApp({
 
     return {
       tours, filter, loading, selectedId, editing, dirty, saving, toast, previewSrc,
-      refresh, selectTour, newTour, save, destroyTour,
+      refresh, selectTour, newTour, save, destroyTour, openPreview,
+      openMultiPreview, moveTour,
       deleteStep, moveStep, promoteStep, demoteStep, markDirty,
       flatTree,
     };
@@ -314,18 +368,38 @@ createApp({
 
 <main>
   <section class="panel">
-    <h2>Tours <span v-if="tours.length" style="float:right;color:#aaa">{{ tours.length }}</span></h2>
+    <h2>
+      Tours
+      <span style="float:right">
+        <button v-if="tours.length > 1" @click="openMultiPreview" style="padding:2px 8px;font-size:12px" :title="filter ? 'Preview all tours for this route, in play order' : 'Preview every listed tour combined'">📄 Preview all</button>
+        <span v-if="tours.length" style="color:#aaa;margin-left:8px">{{ tours.length }}</span>
+      </span>
+    </h2>
     <ul class="list" v-if="tours.length">
-      <li v-for="t in tours" :key="t.id"
+      <li v-for="(t, i) in tours" :key="t.id"
           :class="{ active: t.id === selectedId }"
           @click="selectTour(t.id)">
-        <div class="name">{{ t.name || '(unnamed)' }}</div>
-        <div class="meta">{{ t.route || '/' }} · updated {{ new Date(t.updated_at).toLocaleString() }}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div class="name">
+              <span v-if="filter" style="background:#f59e0b;color:#111;font-weight:700;padding:1px 6px;border-radius:999px;font-size:11px;margin-right:6px">{{ i + 1 }}</span>
+              {{ t.name || '(unnamed)' }}
+            </div>
+            <div class="meta">{{ t.route || '/' }} · updated {{ new Date(t.updated_at).toLocaleString() }}</div>
+          </div>
+          <span v-if="filter" class="ctrl" @click.stop>
+            <button :disabled="i === 0" @click="moveTour(t.id, -1)" title="Move up — play earlier" style="padding:3px 7px;font-size:12px">↑</button>
+            <button :disabled="i === tours.length - 1" @click="moveTour(t.id, +1)" title="Move down — play later" style="padding:3px 7px;font-size:12px">↓</button>
+          </span>
+        </div>
       </li>
     </ul>
     <div v-else class="empty">
       <p v-if="loading">Loading…</p>
       <p v-else>No tours yet. Record one via the in-page <strong>● Tour</strong> pill.</p>
+    </div>
+    <div v-if="!filter && tours.length > 1" class="empty" style="padding:8px 14px;font-size:11px;border-top:1px solid var(--line)">
+      💡 Filter by route to reorder which tour plays first.
     </div>
   </section>
 
@@ -347,6 +421,7 @@ createApp({
 
       <div class="actions">
         <button v-if="editing.id" class="danger" @click="destroyTour">Delete tour</button>
+        <button v-if="editing.id" @click="openPreview" :disabled="dirty" :title="dirty ? 'Save first to preview' : ''">📄 Preview PDF</button>
         <span style="flex:1"></span>
         <button class="primary" @click="save" :disabled="saving">{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>

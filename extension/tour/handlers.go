@@ -67,10 +67,19 @@ func (h *handlers) upsertTour(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 		return
 	}
-	if body.ID == "" {
+	newTour := body.ID == ""
+	if newTour {
 		body.ID = newID()
 	}
 	assignIDsAndBadges(body.Steps, 1)
+	// For brand-new tours, slot them at the end of their route's
+	// play order. Existing tours keep their Order untouched on
+	// upsert — operators reorder via the explicit reorderTours
+	// endpoint, not by re-saving with a different order.
+	if newTour {
+		existing, _ := h.store.ListTours(c.Request.Context(), body.Route)
+		body.Order = len(existing)
+	}
 	if err := h.store.UpsertTour(c.Request.Context(), &body); err != nil {
 		writeStoreError(c, err)
 		return
@@ -141,6 +150,29 @@ func (h *handlers) reorderSteps(c *gin.Context) {
 		return
 	}
 	if err := h.store.ReorderSteps(c.Request.Context(), c.Param("id"), body.Items); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// reorderTours — POST /__nexus/tour/tours/reorder
+//
+// Body: { "ids": ["a", "b", "c"] } in the new ordering. The
+// store rewrites each tour's Order to its 0-based position in
+// the slice. Used by the dashboard's ↑/↓ buttons on the tour
+// list when a route filter is active.
+type reorderToursBody struct {
+	IDs []string `json:"ids"`
+}
+
+func (h *handlers) reorderTours(c *gin.Context) {
+	var body reorderToursBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.store.ReorderTours(c.Request.Context(), body.IDs); err != nil {
 		writeStoreError(c, err)
 		return
 	}
