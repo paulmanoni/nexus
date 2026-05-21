@@ -511,13 +511,15 @@
     return _h2c;
   }
 
-  // captureClean takes a screenshot of the page with no overlays.
-  // CAPTURES THE VIEWPORT (not the full body) so step rects —
-  // stored in viewport coordinates at click time — align with
-  // the image. The earlier "html2canvas(document.body)" path
-  // captured the full document height, which clustered every
-  // badge at the top-left of a tall page because step rects
-  // weren't translated into document coords.
+  // captureClean takes a screenshot of the FULL document body
+  // with no overlays. We capture the whole document (not just
+  // the viewport) and pair it with step rects stored in
+  // DOCUMENT coordinates — that way badges land on the right
+  // spot regardless of where the operator was scrolled when
+  // they clicked. Earlier viewport-only path was fragile:
+  // html2canvas's x/y options aren't reliable, so the image
+  // and rects ended up using different origins and badges
+  // clustered in the wrong corner.
   async function captureClean() {
     const h2c = await loadHtml2Canvas();
     overlayHost.style.visibility = 'hidden';
@@ -528,15 +530,6 @@
         scale: Math.min(window.devicePixelRatio || 1, 2),
         logging: false,
         useCORS: true,
-        // Lock the capture to the current viewport. width/height
-        // give the output canvas size; x/y are the source-page
-        // scroll offsets html2canvas should treat as the origin.
-        width:  window.innerWidth,
-        height: window.innerHeight,
-        x: window.scrollX,
-        y: window.scrollY,
-        windowWidth:  window.innerWidth,
-        windowHeight: window.innerHeight,
       });
     } finally {
       overlayHost.style.visibility = '';
@@ -704,8 +697,12 @@
       // Stop picker — auto-editor will re-arm after the operator
       // writes the step's text.
       picker.stop();
-      // Build step — rect fields persist so the composite preview
-      // can lay numbered badges at the original screen positions.
+      // Build step — rect fields persist in DOCUMENT coordinates
+      // (viewport rect + current scroll offset) so badges land
+      // on the right spot in the cover image regardless of where
+      // the operator was scrolled when they clicked.
+      const docLeft = p.rect.left + window.scrollX;
+      const docTop  = p.rect.top  + window.scrollY;
       const step = {
         selector: p.selector,
         label: p.label,
@@ -713,8 +710,8 @@
         text: '', // empty by default — editor requires the operator to fill it
         placement: 'bottom',
         children: [],
-        rect_left:   Math.round(p.rect.left),
-        rect_top:    Math.round(p.rect.top),
+        rect_left:   Math.round(docLeft),
+        rect_top:    Math.round(docTop),
         rect_width:  Math.round(p.rect.width),
         rect_height: Math.round(p.rect.height),
         // _rect kept for the in-recorder substep heuristic only.
@@ -893,11 +890,13 @@
         name: `Tour for ${routePath}`,
         route: routePath,
         description: '',
-        // Both dimensions captured — the preview wrapper locks
-        // its aspect-ratio to base_width/base_height so badge
-        // positions stay correct on any preview width.
-        base_width:  window.innerWidth,
-        base_height: window.innerHeight,
+        // base_* match the FULL document we capture (not just
+        // the viewport) — scrollWidth × scrollHeight. Step
+        // rects are stored in document coords too, so badges
+        // align with the cover image regardless of where the
+        // operator was scrolled when they clicked.
+        base_width:  document.documentElement.scrollWidth  || window.innerWidth,
+        base_height: document.documentElement.scrollHeight || window.innerHeight,
         steps: [],
       };
       bar = buildBar();
