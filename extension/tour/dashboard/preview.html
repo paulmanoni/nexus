@@ -274,13 +274,25 @@ function flat(steps, parentPrefix, depth, out) {
 }
 
 // hasComposite reports whether a tour can use the composite
-// preview (cover image + at least one step with a stored rect).
-// Tours recorded before v0.78 (no cover_image_url, no rect_*)
-// fall back to the per-step screenshot layout.
+// preview (cover image(s) + at least one step with a stored
+// rect). Accepts both the legacy single-cover path (just
+// cover_image_url) and the multi-cover path (cover_images[]).
 function hasComposite(tour) {
-  if (!tour.cover_image_url) return false;
+  const haveCover = (tour.cover_images && tour.cover_images.length) || tour.cover_image_url;
+  if (!haveCover) return false;
   const flatSteps = flat(tour.steps || [], '', 0, []);
   return flatSteps.some(({ step }) => step.rect_width && step.rect_height);
+}
+
+// allCovers returns the list of cover image data-URLs for a
+// tour, in capture order. New tours have cover_images[];
+// legacy tours fall back to a single-element array built from
+// cover_image_url so the multi-cover render path works either
+// way.
+function allCovers(tour) {
+  if (tour.cover_images && tour.cover_images.length) return tour.cover_images;
+  if (tour.cover_image_url) return [tour.cover_image_url];
+  return [];
 }
 
 async function fetchTour(id) {
@@ -301,10 +313,12 @@ async function resolveTours() {
   throw new Error('No tour id / ids / route in URL. Open this page via the dashboard.');
 }
 
-function renderComposite(tour, steps) {
-  // Use both base dimensions so left/top percentages are
-  // dimensionally correct. Older tours that lack base_height
-  // fall back to base_width — wrong but bounded; re-record fixes it.
+// renderOneCover builds a single composite block (one screenshot
+// + the steps whose cover_index points at it). renderComposite
+// calls this once per cover so dropdown-revealed items can sit
+// on the cover that shows the dropdown OPEN instead of trying
+// to land on the stale initial screenshot.
+function renderOneCover(tour, coverURL, coverIdx, steps) {
   const baseW = tour.base_width  || 1280;
   const baseH = tour.base_height || tour.base_width || 720;
   const pctX = px => (px / baseW) * 100;
@@ -412,9 +426,9 @@ function renderComposite(tour, steps) {
       <p data-edit="text" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" contenteditable="plaintext-only">${escapeHtml(step.text || '').replace(/\n/g, '<br>') || '<em style="color:#aaa">Click to add description</em>'}</p>
     </div>`).join('');
 
-  // Step list comes FIRST — operator gets the labelled
-  // numbered walkthrough up top, then sees the composite
-  // image (with side-margin callouts) beneath.
+  // Step list above the composite — labelled walkthrough,
+  // then the anchor image. Only the steps that belong to THIS
+  // cover (filtered by caller) render in this block.
   return `
     <div class="step-list">
       ${steps.map(({ step, prefix, depth }) => `
@@ -428,12 +442,39 @@ function renderComposite(tour, steps) {
     </div>
     <div class="composite-wrap">
       <div class="composite" style="aspect-ratio: ${baseW} / ${baseH}">
-        <img src="${escapeHtml(tour.cover_image_url)}" alt="Tour overview" />
+        <img src="${escapeHtml(coverURL)}" alt="Tour overview ${coverIdx + 1}" />
         <svg class="connectors" preserveAspectRatio="none"></svg>
         ${pins}
         ${calloutsHTML}
       </div>
     </div>`;
+}
+
+// renderComposite splits steps by their cover_index and renders
+// one full block per cover. The single-cover case (every step
+// has cover_index 0, or legacy tours with no field at all)
+// collapses naturally — one cover → one block. Tours captured
+// with pause-resume across page-state changes show one block
+// per state, each with its own step list + screenshot, in
+// recording order.
+function renderComposite(tour, steps) {
+  const covers = allCovers(tour);
+  if (!covers.length) return ''; // hasComposite() should've caught this
+  // Group: stepsByCover[i] = the items of `steps` whose
+  // step.cover_index === i (default 0).
+  const stepsByCover = covers.map(() => []);
+  for (const item of steps) {
+    const i = Number.isInteger(item.step.cover_index) ? item.step.cover_index : 0;
+    const safeIdx = Math.max(0, Math.min(covers.length - 1, i));
+    stepsByCover[safeIdx].push(item);
+  }
+  return covers.map((url, i) => {
+    if (!stepsByCover[i].length && covers.length > 1) return ''; // skip empty middle covers
+    const sectionHeader = covers.length > 1
+      ? `<h3 style="margin:18px 0 6px;font-size:14px;color:#374151">Scene ${i + 1} of ${covers.length}</h3>`
+      : '';
+    return sectionHeader + renderOneCover(tour, url, i, stepsByCover[i]);
+  }).join('');
 }
 
 // renderCallouts is retained for backward-compat with any
@@ -492,6 +533,7 @@ async function load() {
     <div class="toolbar">
       <button onclick="window.print()">Save as PDF</button>
       <button class="ghost" id="copy-clip">📋 Copy for Word</button>
+      <button class="ghost" id="btn-delete" style="color:#ef4444;border-color:#fecaca">🗑 Delete tour${tours.length > 1 ? 's' : ''}</button>
       <button class="ghost" id="btn-back">Back</button>
       <span class="grow"></span>
       <span class="meta">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${totalSteps} step${totalSteps === 1 ? '' : 's'}</span>
@@ -519,6 +561,8 @@ async function load() {
   window.addEventListener('resize', drawAllConnectors);
   const backBtn = document.getElementById('btn-back');
   if (backBtn) backBtn.addEventListener('click', goBack);
+  const deleteBtn = document.getElementById('btn-delete');
+  if (deleteBtn) deleteBtn.addEventListener('click', () => deleteCurrentTours(tours));
   // Inline edit: bind blur handlers to every editable element.
   // Tours stay in module scope so the save handler can find the
   // step by id and PUT a fresh tour to the server.
@@ -588,6 +632,37 @@ async function saveInlineEdit(el) {
     console.error('inline save failed', e);
     el.classList.add('save-error');
   }
+}
+
+// deleteCurrentTours wipes every tour currently on the preview
+// page after a confirm prompt. For multi-tour previews
+// (?route= or ?ids=) it deletes the whole batch in one go.
+// After the network calls land, we redirect to the dashboard
+// so the operator sees the updated list immediately.
+async function deleteCurrentTours(tours) {
+  const names = tours.map(t => t.name || t.id || 'untitled').join(', ');
+  const label = tours.length === 1
+    ? `Delete tour "${names}"?`
+    : `Delete ${tours.length} tours: ${names}?`;
+  if (!confirm(label + '\n\nThis cannot be undone.')) return;
+  const btn = document.getElementById('btn-delete');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+  const errs = [];
+  for (const t of tours) {
+    try {
+      const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(t.id)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      errs.push(`${t.name || t.id}: ${e.message || e}`);
+    }
+  }
+  if (errs.length) {
+    alert('Some deletes failed:\n\n' + errs.join('\n'));
+    if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete tour' + (tours.length > 1 ? 's' : ''); }
+    return;
+  }
+  // All gone — land the operator on the dashboard list.
+  window.location.href = '/__nexus/tour';
 }
 
 // goBack handles the Back button. The preview is normally

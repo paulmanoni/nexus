@@ -500,13 +500,17 @@
     // isInEditable lets the picker leave Enter alone when the
     // operator is typing in a host input — important because
     // the host may have a search box inside a dropdown that
-    // submits on Enter.
+    // submits on Enter. composedPath sees through Shadow DOM
+    // boundaries, so typing into our own editor UI is caught
+    // too.
     function isInEditable(e) {
-      const t = e.target;
-      if (!t) return false;
-      if (t.isContentEditable) return true;
-      const tag = t.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      const path = (e.composedPath && e.composedPath()) || [e.target];
+      for (const el of path) {
+        if (!el || !el.tagName) continue;
+        if (el.isContentEditable) return true;
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+      }
+      return false;
     }
 
     return {
@@ -646,6 +650,10 @@
     let lastStep = null;    // for substep-rect heuristic
     let badge = 0;          // running badge number for screenshots
     let bar = null;         // .recbar element
+    let coverIndex = 0;     // current Tour.CoverImages[] index. Bumps on each
+                            // successful resume so subsequent steps align with
+                            // a freshly-captured screenshot showing whatever
+                            // dropdown / modal / page state is now visible.
 
     function rectContains(outer, inner) {
       if (!outer || !inner) return false;
@@ -702,6 +710,19 @@
         fab.classList.add('recording');
         bar.style.background = '';
         bar.style.color = '';
+        // Resuming = potentially new page state (open dropdown,
+        // revealed modal, scrolled-into-view section). Capture
+        // a fresh cover so subsequent steps render against the
+        // current visual. Best-effort; if html2canvas fails the
+        // new steps just stay on the previous cover (degrades
+        // to the old single-cover behaviour, not to a broken
+        // preview).
+        captureClean().then(url => {
+          if (!url || !tour) return;
+          tour.cover_images = tour.cover_images || [];
+          tour.cover_images.push(url);
+          coverIndex = tour.cover_images.length - 1;
+        }).catch(err => console.warn('tour: resume cover failed', err));
         picker.start(onPicked, () => stop(false));
       }
     }
@@ -754,6 +775,11 @@
         rect_top:    Math.round(docTop),
         rect_width:  Math.round(p.rect.width),
         rect_height: Math.round(p.rect.height),
+        // cover_index pins the step to whichever cover was active
+        // at click time. Preview groups by this value so a step
+        // captured inside a dropdown renders on the cover that
+        // shows the dropdown OPEN.
+        cover_index: coverIndex,
         // _rect kept for the in-recorder substep heuristic only.
         _rect: p.rect,
       };
@@ -987,12 +1013,29 @@
     function recorderHotkey(e) {
       if (!active) return;
       if (e.key !== 'p' && e.key !== 'P') return;
-      const t = e.target;
-      if (t && (t.isContentEditable ||
-                /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
+      // Use composedPath so we see INTO shadow roots — events
+      // crossing a shadow boundary get retargeted to the host
+      // element, which means a plain e.target check misses
+      // inputs inside our own step-editor UI (the operator
+      // typing "p" in the description field would otherwise
+      // toggle pause).
+      if (isPathEditable(e)) return;
       e.preventDefault();
       e.stopPropagation();
       togglePause();
+    }
+    // isPathEditable returns true when any element along the
+    // event's composed path is an editable form control or
+    // contenteditable region. Lets keyboard shortcuts respect
+    // typing in inputs across shadow-DOM boundaries.
+    function isPathEditable(e) {
+      const path = (e.composedPath && e.composedPath()) || [e.target];
+      for (const el of path) {
+        if (!el || !el.tagName) continue;
+        if (el.isContentEditable) return true;
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+      }
+      return false;
     }
 
     async function start(routePath) {
@@ -1015,16 +1058,22 @@
         // operator was scrolled when they clicked.
         base_width:  document.documentElement.scrollWidth  || window.innerWidth,
         base_height: document.documentElement.scrollHeight || window.innerHeight,
+        cover_images: [],
         steps: [],
       };
+      coverIndex = 0;
       bar = buildBar();
       fab.classList.add('recording');
-      // Capture the clean cover image first (no overlays) — this
-      // is what the single-tour PDF preview lays badges over.
-      // Best-effort: if html2canvas fails, the preview falls
-      // back to per-step screenshots.
+      // Capture the clean cover image first (no overlays). The
+      // preview's single-cover view uses cover_image_url; the
+      // multi-cover grouping uses cover_images[]. We populate
+      // both so legacy preview paths still work.
       captureClean()
-        .then(url => { tour.cover_image_url = url; })
+        .then(url => {
+          if (!url) return;
+          tour.cover_image_url = url;
+          tour.cover_images.push(url);
+        })
         .catch(err => console.warn('tour: cover capture failed', err));
       // First click — kick off the picker; from now on each click
       // re-arms it inside onPicked.
@@ -1240,7 +1289,7 @@
     menu = document.createElement('div');
     menu.className = 'menu';
     const recordBtn  = `<button data-act="record">▶ Record new tour</button>`;
-    const playBlock  = tours.length
+    const playBlock  = tours.lengt
       ? tours.map(t => {
           // Defensive fallback chain — earlier recordings (pre-
           // v0.78.8 prompt flow) sometimes saved with empty
