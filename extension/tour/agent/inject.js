@@ -512,10 +512,12 @@
   }
 
   // captureClean takes a screenshot of the page with no overlays.
-  // Used as the tour's cover image — the preview overlays all
-  // step badges on this single image so the operator can see
-  // the whole walkthrough at a glance instead of N separate
-  // screenshots.
+  // CAPTURES THE VIEWPORT (not the full body) so step rects —
+  // stored in viewport coordinates at click time — align with
+  // the image. The earlier "html2canvas(document.body)" path
+  // captured the full document height, which clustered every
+  // badge at the top-left of a tall page because step rects
+  // weren't translated into document coords.
   async function captureClean() {
     const h2c = await loadHtml2Canvas();
     overlayHost.style.visibility = 'hidden';
@@ -526,6 +528,15 @@
         scale: Math.min(window.devicePixelRatio || 1, 2),
         logging: false,
         useCORS: true,
+        // Lock the capture to the current viewport. width/height
+        // give the output canvas size; x/y are the source-page
+        // scroll offsets html2canvas should treat as the origin.
+        width:  window.innerWidth,
+        height: window.innerHeight,
+        x: window.scrollX,
+        y: window.scrollY,
+        windowWidth:  window.innerWidth,
+        windowHeight: window.innerHeight,
       });
     } finally {
       overlayHost.style.visibility = '';
@@ -662,49 +673,13 @@
       }
     }
 
-    // editLastStep opens a small in-page form letting the
-    // operator override the default title/text on the most
-    // recently captured step. While the form is open the picker
-    // is paused so a stray click doesn't append a new step.
+    // editLastStep delegates to the shared openStepEditor —
+    // same form, same positioning rules, just with
+    // required=false so Cancel doesn't remove the step.
     function editLastStep() {
       if (!lastStep) return;
       picker.stop();
-      const editor = document.createElement('div');
-      editor.className = 'editor';
-      editor.innerHTML = `
-        <div style="font-weight:600;margin-bottom:6px">Edit Step ${lastStep.title || ''}</div>
-        <label>Title</label>
-        <input class="ed-title" value="${escapeHtml(lastStep.title || '')}" />
-        <label>Text shown to the user</label>
-        <textarea class="ed-text">${escapeHtml(lastStep.text || '')}</textarea>
-        <label>Placement</label>
-        <select class="ed-place">
-          <option value="bottom">bottom</option>
-          <option value="top">top</option>
-          <option value="left">left</option>
-          <option value="right">right</option>
-        </select>
-        <div class="actions">
-          <button class="ghost ed-cancel">Cancel</button>
-          <button class="primary ed-save">Save</button>
-        </div>
-      `;
-      root.appendChild(editor);
-      const sel = editor.querySelector('.ed-place');
-      sel.value = lastStep.placement || 'bottom';
-
-      function close() {
-        editor.remove();
-        // Re-arm picker so the next click resumes recording.
-        if (active) picker.start(onPicked, () => stop(false));
-      }
-      editor.querySelector('.ed-cancel').addEventListener('click', close);
-      editor.querySelector('.ed-save').addEventListener('click', () => {
-        lastStep.title = editor.querySelector('.ed-title').value || lastStep.title;
-        lastStep.text  = editor.querySelector('.ed-text').value;
-        lastStep.placement = sel.value;
-        close();
-      });
+      openStepEditor(lastStep, lastStep._rect || null, /* required = */ false);
     }
 
     function updateCount() {
@@ -726,8 +701,8 @@
     }
 
     function onPicked(p) {
-      // Re-arm the picker for the next click — recorders capture
-      // every click until the operator hits Stop.
+      // Stop picker — auto-editor will re-arm after the operator
+      // writes the step's text.
       picker.stop();
       // Build step — rect fields persist so the composite preview
       // can lay numbered badges at the original screen positions.
@@ -735,7 +710,7 @@
         selector: p.selector,
         label: p.label,
         title: `Step ${++badge}`,
-        text: `Click ${p.label}.`,
+        text: '', // empty by default — editor requires the operator to fill it
         placement: 'bottom',
         children: [],
         rect_left:   Math.round(p.rect.left),
@@ -758,8 +733,154 @@
       }
       lastStep = step;
       updateCount();
-      // Re-arm.
-      picker.start(onPicked, () => stop(false));
+      // Force the operator to label this step before the next
+      // click. openStepEditor blocks the picker until they Save
+      // (with non-empty text) or Cancel (removes the step).
+      openStepEditor(step, p.rect, /* required = */ true);
+    }
+
+    // openStepEditor renders the small in-page form for a step.
+    // When required=true, the Save button is disabled until the
+    // text field is non-empty, and Cancel removes the just-
+    // captured step (so the operator doesn't accumulate empty
+    // entries). When required=false (used by the "Edit last
+    // step" toolbar button), Cancel just closes without removing.
+    //
+    // Positioning: the card avoids overlapping the picked
+    // element's rect when one is supplied. If the rect occupies
+    // the right half of the viewport, the card opens on the
+    // left, and vice-versa. Vertical position is also clamped
+    // so the card never escapes the viewport.
+    function openStepEditor(step, anchorRect, required) {
+      const editor = document.createElement('div');
+      editor.className = 'editor';
+      editor.innerHTML = `
+        <div style="font-weight:600;margin-bottom:6px">${required ? '✏ Describe step ' + step.title : 'Edit step'}</div>
+        <label>Title</label>
+        <input class="ed-title" value="${escapeHtml(step.title || '')}" />
+        <label>Text shown to the user <span style="color:#ef4444">*</span></label>
+        <textarea class="ed-text" placeholder="What does this step do? (required)">${escapeHtml(step.text || '')}</textarea>
+        <label>Placement</label>
+        <select class="ed-place">
+          <option value="bottom">bottom</option>
+          <option value="top">top</option>
+          <option value="left">left</option>
+          <option value="right">right</option>
+        </select>
+        <div class="actions">
+          <button class="ghost ed-cancel">${required ? 'Discard step' : 'Cancel'}</button>
+          <button class="primary ed-save" disabled>Save</button>
+        </div>
+      `;
+      root.appendChild(editor);
+      editor.querySelector('.ed-place').value = step.placement || 'bottom';
+
+      // Position the editor away from the picked element.
+      positionEditor(editor, anchorRect);
+
+      const titleEl = editor.querySelector('.ed-title');
+      const textEl  = editor.querySelector('.ed-text');
+      const placeEl = editor.querySelector('.ed-place');
+      const saveBtn = editor.querySelector('.ed-save');
+      // Live-validate text presence so the Save button enables
+      // the moment the operator types anything (no empty saves).
+      function updateSaveEnabled() {
+        saveBtn.disabled = textEl.value.trim().length === 0;
+      }
+      updateSaveEnabled();
+      textEl.addEventListener('input', updateSaveEnabled);
+      // Focus the text area so the operator can start typing
+      // immediately — that's the only required field.
+      setTimeout(() => textEl.focus(), 0);
+
+      function close(rearm) {
+        editor.remove();
+        if (active && !paused && rearm) {
+          picker.start(onPicked, () => stop(false));
+        }
+      }
+      editor.querySelector('.ed-cancel').addEventListener('click', () => {
+        if (required) {
+          // Discarding a freshly-captured step — remove it from
+          // the tour so we don't accumulate empties.
+          removeStep(step);
+          badge = Math.max(0, badge - 1);
+          updateCount();
+        }
+        close(true);
+      });
+      saveBtn.addEventListener('click', () => {
+        step.title = titleEl.value || step.title;
+        step.text  = textEl.value.trim();
+        step.placement = placeEl.value;
+        close(true);
+      });
+    }
+
+    // positionEditor anchors the editor opposite to the picked
+    // element. Same as Shepherd's flip-on-overlap heuristic but
+    // simpler — three regions (left half / right half / no
+    // anchor) and clamp to viewport.
+    function positionEditor(editor, anchorRect) {
+      const margin = 16;
+      const cardW = 320; // matches .editor width
+      // Read offsetHeight after a tick so the browser has laid
+      // out the textarea + buttons.
+      requestAnimationFrame(() => {
+        const cardH = editor.offsetHeight || 280;
+        let left, top;
+        if (anchorRect && anchorRect.width && anchorRect.height) {
+          const midX = anchorRect.left + anchorRect.width / 2;
+          // If the picked element is in the LEFT half of the
+          // viewport, open the editor on the RIGHT, and vice-
+          // versa. Avoids covering the thing the operator just
+          // pointed at.
+          if (midX < window.innerWidth / 2) {
+            left = window.innerWidth - cardW - margin;
+          } else {
+            left = margin;
+          }
+          // Try to vertically centre on the anchor; clamp to
+          // viewport so the bottom doesn't escape.
+          top = anchorRect.top + anchorRect.height / 2 - cardH / 2;
+        } else {
+          // No anchor (Edit last step from toolbar) — top-right.
+          left = window.innerWidth - cardW - margin;
+          top  = 60;
+        }
+        top  = Math.max(margin, Math.min(window.innerHeight - cardH - margin, top));
+        left = Math.max(margin, Math.min(window.innerWidth - cardW - margin, left));
+        editor.style.left = left + 'px';
+        editor.style.top  = top + 'px';
+        editor.style.right = 'auto'; // override the default right:16px from CSS
+      });
+    }
+
+    // removeStep deletes a step from the tree (root or substep).
+    // Used when the operator discards a freshly-captured step.
+    function removeStep(step) {
+      function walk(arr) {
+        const i = arr.indexOf(step);
+        if (i >= 0) { arr.splice(i, 1); return true; }
+        for (const s of arr) {
+          if (s.children && walk(s.children)) return true;
+        }
+        return false;
+      }
+      walk(tour.steps);
+      // lastStep ↔ the popped item — if that's what we removed,
+      // bump back to the previous tail.
+      if (lastStep === step) {
+        const flat = [];
+        function collect(arr) {
+          for (const s of arr) {
+            flat.push(s);
+            if (s.children) collect(s.children);
+          }
+        }
+        collect(tour.steps);
+        lastStep = flat[flat.length - 1] || null;
+      }
     }
 
     async function start(routePath) {
@@ -772,9 +893,11 @@
         name: `Tour for ${routePath}`,
         route: routePath,
         description: '',
-        // base_width captured here so the preview can scale step
-        // rects down to the rendered cover image's display width.
-        base_width: document.documentElement.clientWidth,
+        // Both dimensions captured — the preview wrapper locks
+        // its aspect-ratio to base_width/base_height so badge
+        // positions stay correct on any preview width.
+        base_width:  window.innerWidth,
+        base_height: window.innerHeight,
         steps: [],
       };
       bar = buildBar();
