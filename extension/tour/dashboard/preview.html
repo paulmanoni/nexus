@@ -5,65 +5,132 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Tour preview</title>
 <!--
-  Print-friendly tour preview. Opened in a new tab from the
-  dashboard's "Preview PDF" button; the operator hits Cmd/Ctrl+P
-  and saves to PDF. No PDF library on the wire — the browser's
-  own print engine renders it.
+  Print-friendly tour preview. Two render paths per tour:
+    1. Composite — when the tour has a cover image AND step
+       rects: one screenshot of the page at recording-start with
+       every step's numbered badge overlaid. Each badge has a
+       hover card surfacing the step's title + text.
+    2. Per-step fallback — when those are missing (legacy tours
+       recorded before v0.78): the old stacked layout, one
+       screenshot per step.
 
-  Page layout for printing:
-    * A4 portrait
-    * Cover page: tour name + route + description
-    * Each step: numbered badge + title + body text + screenshot
-    * Substeps indented + carry parent badge prefix (1.1, 1.2, …)
+  Three URL shapes work the same way:
+    * ?ids=a,b,c          - explicit list to combine
+    * ?route=/admin/users - all tours for that route, play order
+    * /tours/:id/preview  - legacy single tour
 -->
 <style>
   :root {
     --ink:#111; --mute:#555; --line:#d4d4d8; --badge:#f59e0b;
-    --sub:#a16207;
+    --sub:#a16207; --card-bg:#fff;
   }
   * { box-sizing: border-box; }
   html, body { margin:0; padding:0; color:var(--ink); font:13px/1.5 system-ui, -apple-system, sans-serif; }
-  body { max-width: 760px; margin: 0 auto; padding: 40px 32px; }
+  body { max-width: 1000px; margin: 0 auto; padding: 40px 32px; }
 
-  .cover { margin-bottom: 48px; padding-bottom: 24px; border-bottom: 2px solid var(--line); }
+  .cover { margin-bottom: 32px; padding-bottom: 18px; border-bottom: 2px solid var(--line); }
   .cover h1 { margin: 0 0 6px; font-size: 28px; }
   .cover .route { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--mute); font-size: 13px; }
   .cover p { margin: 12px 0 0; color: var(--mute); }
+  .cover .tour-pos { display:inline-block; margin-top:6px; color:var(--mute); font-size:12px; }
 
-  .step {
-    margin: 24px 0; padding: 16px 18px;
-    border: 1px solid var(--line); border-radius: 8px;
-    break-inside: avoid; /* try to keep a step on one page */
-    page-break-inside: avoid;
+  /* Composite layout — single image with absolutely-positioned
+     badges over it. Wrapper holds the relative coords so badges
+     scale with the image (image is 100% wide, badges use % of
+     the wrapper from the step rects ÷ base_width). */
+  .composite { position: relative; margin: 16px 0 24px; }
+  .composite img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+  .pin {
+    position: absolute; transform: translate(-50%, -50%);
+    z-index: 2; cursor: default;
   }
-  .step.sub { background:#fafaf7; border-color:#e7e5e4; }
-  .step .head { display:flex; align-items:center; gap:10px; margin-bottom: 8px; }
-  .step .badge {
+  .pin .badge {
     background: var(--badge); color: var(--ink);
-    font: 700 13px/1 system-ui, sans-serif;
-    min-width: 36px; height: 28px; padding: 0 10px;
-    border-radius: 999px;
-    display:inline-flex; align-items:center; justify-content:center;
-    box-sizing: border-box;
+    font: 700 13px/28px system-ui, sans-serif;
+    min-width: 28px; height: 28px; padding: 0 8px;
+    border-radius: 999px; text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,.35);
+    display: inline-block; box-sizing: border-box;
+    font-variant-numeric: tabular-nums;
   }
-  .step.sub .badge { background: var(--sub); color: #fff; }
-  .step h3 { margin: 0; font-size: 15px; }
-  .step .selector {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: var(--mute); font-size: 11px; margin: 2px 0 6px;
-    word-break: break-all;
+  .pin.sub .badge { background: var(--sub); color: #fff; }
+  .pin .card {
+    position: absolute; top: 32px; left: 50%; transform: translateX(-50%);
+    background: var(--card-bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; min-width: 200px; max-width: 280px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    display: none; z-index: 3;
   }
-  .step p { margin: 4px 0 8px; color: #222; }
-  .step .preview { margin-top: 10px; }
+  .pin:hover .card { display: block; }
+  .pin .card h4 { margin: 0 0 4px; font-size: 13px; }
+  .pin .card .selector { font-family: ui-monospace, monospace; font-size: 10px; color: var(--mute); word-break: break-all; margin-bottom: 4px; }
+  .pin .card p { margin: 4px 0 0; font-size: 12px; color: #333; }
+  /* Faint outline rectangle for the highlighted control —
+     uses the persisted rect_*, scaled. Same as .pin sizing
+     but at the rect's actual extents. */
+  .hi {
+    position: absolute; pointer-events: none;
+    outline: 2px solid var(--badge);
+    outline-offset: 1px;
+    border-radius: 4px;
+    background: rgba(245,158,11,.10);
+    z-index: 1;
+  }
+
+  /* Per-step fallback layout (legacy tours w/o cover image). */
+  .step {
+    margin: 18px 0; padding: 12px 14px;
+    border: 1px solid var(--line); border-radius: 8px;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  .step.sub { background:#fafaf7; border-color:#e7e5e4; margin-left: 28px; }
+  .step .head { display:flex; align-items:center; gap:10px; margin-bottom: 6px; }
+  .step .head .badge {
+    background: var(--badge); color: var(--ink);
+    font: 700 13px/28px system-ui, sans-serif;
+    min-width: 28px; height: 28px; padding: 0 8px;
+    border-radius: 999px; text-align: center;
+    display: inline-block; box-sizing: border-box;
+    font-variant-numeric: tabular-nums;
+  }
+  .step.sub .head .badge { background: var(--sub); color: #fff; }
+  .step h3 { margin: 0; font-size: 14px; }
+  .step .selector { font-family: ui-monospace, monospace; font-size: 11px; color: var(--mute); word-break: break-all; margin-bottom: 6px; }
+  .step p { margin: 4px 0 8px; }
   .step .preview img { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; }
-  .step.sub { margin-left: 28px; }
+
+  /* Step list under composite — gives the operator the same
+     numbered text reference even when they're looking at the
+     composite image. Renders as a clean table for print. */
+  .step-list {
+    margin: 16px 0 24px; border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden;
+  }
+  .step-list .row {
+    display: grid; grid-template-columns: 44px 1fr; gap: 10px;
+    padding: 10px 12px; border-top: 1px solid var(--line); align-items: start;
+    break-inside: avoid;
+  }
+  .step-list .row:first-child { border-top: 0; }
+  .step-list .row.sub { background:#fafaf7; padding-left: 32px; }
+  .step-list .row .badge {
+    background: var(--badge); color: var(--ink);
+    font: 700 13px/28px system-ui, sans-serif;
+    min-width: 28px; height: 28px; padding: 0 8px;
+    border-radius: 999px; text-align: center; display: inline-block; box-sizing: border-box;
+    font-variant-numeric: tabular-nums;
+  }
+  .step-list .row.sub .badge { background: var(--sub); color: #fff; }
+  .step-list h4 { margin: 0 0 2px; font-size: 13px; }
+  .step-list .selector { font-family: ui-monospace, monospace; font-size: 10px; color: var(--mute); word-break: break-all; }
+  .step-list p { margin: 4px 0 0; font-size: 12px; color: #333; }
 
   .empty { padding: 24px; color: var(--mute); text-align: center; }
 
   .toolbar {
     position: sticky; top: 0; background: #fff; padding: 8px 0;
     border-bottom: 1px solid var(--line); margin-bottom: 20px;
-    display: flex; gap: 8px; align-items: center;
+    display: flex; gap: 8px; align-items: center; z-index: 10;
   }
   .toolbar button {
     background: #111; color: #fff; border: 0;
@@ -74,15 +141,18 @@
   .toolbar .grow { flex: 1; }
   .toolbar .meta { color: var(--mute); font-size: 12px; }
 
-  /* Print: hide the toolbar, fit the body to A4 margins, force
-     page breaks before each top-level step so each story beat
-     gets its own page when possible. */
+  hr.tour-sep { margin: 32px 0; border: 0; border-top: 1px dashed var(--line); page-break-after: always; }
+
+  /* Print: hide chrome + the hover cards (they're interactive
+     and don't make sense in PDF). Layout is page-friendly. */
   @media print {
     body { padding: 0 14mm; max-width: none; }
     .toolbar { display: none; }
-    .cover { margin: 16mm 0; }
-    .step { box-shadow: none; }
-    .step:not(.sub) { page-break-before: auto; }
+    .cover { margin: 12mm 0 8mm; }
+    .pin .card { display: none !important; }
+    .composite { break-inside: avoid; page-break-inside: avoid; }
+    .step-list { break-inside: auto; }
+    hr.tour-sep { page-break-after: always; }
   }
 </style>
 </head>
@@ -92,11 +162,6 @@
 </div>
 
 <script type="module">
-// Preview supports three URL shapes, in priority order:
-//   * ?ids=a,b,c           - explicit comma-separated id list
-//                            (operator picks tours to combine)
-//   * ?route=/admin/users  - all tours for that route, in play order
-//   * path /tours/:id/preview - legacy single-tour (still works)
 const params = new URLSearchParams(location.search);
 const explicitIDs = (params.get('ids') || '').split(',').map(s => s.trim()).filter(Boolean);
 const routeFilter = params.get('route') || '';
@@ -107,9 +172,7 @@ const escapeHtml = s => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-// flat walks the tree DFS yielding { step, prefix } where prefix
-// is "1", "1.1", "1.2", "2" etc. — used as the badge text so
-// substeps carry their parent's number visually.
+// flat walks the tree DFS yielding { step, prefix, depth }.
 function flat(steps, parentPrefix, depth, out) {
   steps.forEach((s, i) => {
     const prefix = parentPrefix ? `${parentPrefix}.${i + 1}` : `${i + 1}`;
@@ -119,6 +182,16 @@ function flat(steps, parentPrefix, depth, out) {
   return out;
 }
 
+// hasComposite reports whether a tour can use the composite
+// preview (cover image + at least one step with a stored rect).
+// Tours recorded before v0.78 (no cover_image_url, no rect_*)
+// fall back to the per-step screenshot layout.
+function hasComposite(tour) {
+  if (!tour.cover_image_url) return false;
+  const flatSteps = flat(tour.steps || [], '', 0, []);
+  return flatSteps.some(({ step }) => step.rect_width && step.rect_height);
+}
+
 async function fetchTour(id) {
   const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(id)}`);
   if (!r.ok) throw new Error(`tour ${id}: HTTP ${r.status}`);
@@ -126,21 +199,74 @@ async function fetchTour(id) {
 }
 
 async function resolveTours() {
-  if (explicitIDs.length) {
-    return Promise.all(explicitIDs.map(fetchTour));
-  }
+  if (explicitIDs.length) return Promise.all(explicitIDs.map(fetchTour));
   if (routeFilter) {
     const r = await fetch(`/__nexus/tour/tours?route=${encodeURIComponent(routeFilter)}`);
     if (!r.ok) throw new Error(`list: HTTP ${r.status}`);
     const meta = (await r.json()).tours || [];
-    // The list endpoint omits step trees for size — hydrate
-    // each one in parallel.
     return Promise.all(meta.map(t => fetchTour(t.id)));
   }
-  if (singleID) {
-    return [await fetchTour(singleID)];
-  }
+  if (singleID) return [await fetchTour(singleID)];
   throw new Error('No tour id / ids / route in URL. Open this page via the dashboard.');
+}
+
+function renderComposite(tour, steps) {
+  const baseW = tour.base_width || 1280;
+  const pct = (px, base) => (px / base) * 100;
+  const pins = steps.map(({ step, prefix, depth }) => {
+    const w = step.rect_width;
+    const h = step.rect_height;
+    if (!w || !h) return ''; // no rect — skip badge (still appears in list)
+    const cx = step.rect_left + w / 2;
+    const cy = step.rect_top  + h / 2;
+    return `
+      <div class="hi" style="
+        left: ${pct(step.rect_left, baseW)}%;
+        top:  ${pct(step.rect_top, baseW)}%;
+        width: ${pct(w, baseW)}%;
+        height: ${pct(h, baseW)}%;
+      "></div>
+      <div class="pin ${depth > 0 ? 'sub' : ''}" style="
+        left: ${pct(cx, baseW)}%;
+        top:  ${pct(cy, baseW)}%;
+      ">
+        <span class="badge">${escapeHtml(prefix)}</span>
+        <div class="card">
+          <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
+          ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
+          ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="composite">
+      <img src="${escapeHtml(tour.cover_image_url)}" alt="Tour overview" />
+      ${pins}
+    </div>
+    <div class="step-list">
+      ${steps.map(({ step, prefix, depth }) => `
+        <div class="row ${depth > 0 ? 'sub' : ''}">
+          <div><span class="badge">${escapeHtml(prefix)}</span></div>
+          <div>
+            <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
+            ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
+            ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderFallback(steps) {
+  return steps.map(({ step, prefix, depth }) => `
+    <section class="step ${depth > 0 ? 'sub' : ''}">
+      <div class="head">
+        <span class="badge">${escapeHtml(prefix)}</span>
+        <h3>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h3>
+      </div>
+      ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
+      ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+      ${step.media_url ? `<div class="preview"><img src="${escapeHtml(step.media_url)}" alt="Step ${escapeHtml(prefix)} screenshot" /></div>` : ''}
+    </section>`).join('');
 }
 
 function renderTour(tour, tourIdx, tourCount) {
@@ -150,20 +276,13 @@ function renderTour(tour, tourIdx, tourCount) {
       <h1>${escapeHtml(tour.name || 'Untitled tour')}</h1>
       <div class="route">${escapeHtml(tour.route || '/')}</div>
       ${tour.description ? `<p>${escapeHtml(tour.description)}</p>` : ''}
-      ${tourCount > 1 ? `<p class="route">Tour ${tourIdx + 1} of ${tourCount}</p>` : ''}
+      ${tourCount > 1 ? `<span class="tour-pos">Tour ${tourIdx + 1} of ${tourCount}</span>` : ''}
     </header>`;
-  const body = steps.length
-    ? steps.map(({ step, prefix, depth }) => `
-        <section class="step ${depth > 0 ? 'sub' : ''}" style="${depth > 0 ? `margin-left:${depth * 28}px` : ''}">
-          <div class="head">
-            <span class="badge">${escapeHtml(prefix)}</span>
-            <h3>${escapeHtml(step.title || step.label || 'Step')}</h3>
-          </div>
-          ${step.selector ? `<div class="selector">${escapeHtml(step.selector)}</div>` : ''}
-          ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
-          ${step.media_url ? `<div class="preview"><img src="${escapeHtml(step.media_url)}" alt="Step ${escapeHtml(prefix)} screenshot" /></div>` : ''}
-        </section>`).join('')
-    : `<div class="empty">This tour has no steps yet.</div>`;
+  const body = !steps.length
+    ? `<div class="empty">This tour has no steps yet.</div>`
+    : hasComposite(tour)
+      ? renderComposite(tour, steps)
+      : renderFallback(steps);
   return `<article class="tour">${cover}${body}</article>`;
 }
 
@@ -176,12 +295,11 @@ async function load() {
     return;
   }
   const totalSteps = tours.reduce((n, t) => n + flat(t.steps || [], '', 0, []).length, 0);
-  const titleParts = tours.length === 1
-    ? [tours[0].name || tours[0].id]
+  document.title = tours.length === 1
+    ? `Preview · ${tours[0].name || tours[0].id}`
     : routeFilter
-      ? [`${tours.length} tours for ${routeFilter}`]
-      : [`${tours.length} tours combined`];
-  document.title = `Preview · ${titleParts.join(' · ')}`;
+      ? `Preview · ${tours.length} tours for ${routeFilter}`
+      : `Preview · ${tours.length} tours`;
 
   const toolbar = `
     <div class="toolbar">
@@ -190,7 +308,8 @@ async function load() {
       <span class="grow"></span>
       <span class="meta">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${totalSteps} step${totalSteps === 1 ? '' : 's'}</span>
     </div>`;
-  const body = tours.map((t, i) => renderTour(t, i, tours.length)).join('<hr style="margin:40px 0;border:0;border-top:1px dashed #d4d4d8" />');
+  const body = tours.map((t, i) => renderTour(t, i, tours.length))
+                    .join('<hr class="tour-sep" />');
   document.getElementById('app').innerHTML = toolbar + body;
 }
 

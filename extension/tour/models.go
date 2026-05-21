@@ -24,6 +24,19 @@ type Tour struct {
 	// tours land at the end.
 	Order int `json:"order" gorm:"default:0"`
 
+	// CoverImageURL is one clean screenshot of the page taken at
+	// recording-start (before any clicks). Drives the single-tour
+	// PDF preview's "one screenshot with all badges overlaid"
+	// view. Empty for legacy tours; preview falls back to per-
+	// step screenshots when absent.
+	CoverImageURL string `json:"cover_image_url,omitempty" gorm:"type:text"`
+
+	// BaseWidth is document.documentElement.clientWidth at
+	// recording-start. The preview uses it to scale step rects
+	// down to the rendered image's display width — without it
+	// badges would land in the wrong spots on resized previews.
+	BaseWidth int `json:"base_width,omitempty"`
+
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 
@@ -59,6 +72,17 @@ type Step struct {
 	Text        string `json:"text" gorm:"type:text"`
 	Placement   string `json:"placement" gorm:"size:32;default:'bottom'"`
 	Label       string `json:"label" gorm:"size:200"`
+
+	// Rect (viewport-relative px at record time) drives the
+	// composite preview layout: badges land at the step's
+	// original screen position over the tour's cover image.
+	// All four default to 0 when the step was recorded by a
+	// pre-rect agent; the preview falls back to a stacked
+	// per-step layout in that case.
+	RectLeft   int `json:"rect_left,omitempty"`
+	RectTop    int `json:"rect_top,omitempty"`
+	RectWidth  int `json:"rect_width,omitempty"`
+	RectHeight int `json:"rect_height,omitempty"`
 
 	// MediaURL points at the screenshot/video for this step. May
 	// be a relative URL the plugin serves (Phase 3 will add a
