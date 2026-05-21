@@ -606,19 +606,23 @@ After restart, every HTML page the app serves carries a floating **● Tour** pi
 | **Record** | Click the pill → **Record new tour** → modal prompts for **Title** + **Description**. After Start, hover any element (blue rectangle follows the mouse) and click to capture. Each capture pops an inline editor requiring step text before the next pick — placeholders can't slip through. Clicks inside the previous step's bounding box become **substeps** automatically. **Pause/Resume** (button or `P` key) lets you interact with the host without capturing — open a dropdown manually, then resume to capture items inside. **Enter** captures the hovered element without a synthetic click, so menus that close on outside-click stay open. |
 | **Play** | Fetches tours for the current `pathname`, walks the tree DFS, draws an orange ring + numbered badge on each target with a tooltip beside it. Back / Next / Skip / Done. `scrollIntoView` before measure so off-screen targets are pulled into view. Missing-target path shows the selector + Skip. |
 | **Manage** | Visit `/__nexus/tour` for the authoring dashboard — Vue 3 SPA from esm.sh, no framework rebuild. Edit name/route/description, per-step title/text/placement; **↑ ↓** reorder, **→** demote, **←** promote, **×** delete (children reparent). When filtered by route, ↑↓ also reorders **which tour plays first**. Inline screenshot thumbnails with click-to-zoom. |
-| **Preview / Export** | Every tour gets a print-friendly preview at `/__nexus/tour/tours/:id/preview` — one composite screenshot per "scene" with badges + callout cards in the screenshot's margins, connector lines tying each card to its badge. **📄 Save as PDF** uses the browser's print engine; **📋 Copy for Word** writes Arial-12 numbered-list HTML + the composite PNG to the clipboard, ready to paste into Word/Google Docs. **🗑 Delete tour** removes from the preview. Step text is **click-to-edit inline** on the preview page itself — changes save on blur, no need to bounce to the editor. |
+| **Preview / Export** | Every tour gets a print-friendly preview at `/__nexus/tour/tours/:id/preview` — one composite screenshot per "scene" with badges + callout cards in the screenshot's margins, connector lines tying each card to its badge. **📄 Save as PDF** uses the browser's print engine; **📋 Copy for Word** writes Arial-12 numbered-list HTML + the composite PNG to the clipboard, ready to paste into Word/Google Docs. **🗑 Delete tour** prunes a single tour from the preview (per-tour buttons on multi-tour previews so you can keep some and drop others). Step text is **click-to-edit inline** on the preview page itself — changes save on blur, no need to bounce to the editor. Route lookup tolerates trailing-slash mismatches (`/foo` and `/foo/` resolve to the same tours). |
 
 ### Multi-cover scenes (dropdowns, modals, multi-step flows)
 
-Tours that span page-state changes — open a dropdown, capture an item inside, then close it — store **one cover screenshot per page state**. The recorder takes a fresh cover on every Resume from Pause; each step pins to the cover that was active when it was captured. The preview renders one composite per cover labelled "Scene N of M", so dropdown items land on the cover that shows the dropdown **open**, not the stale initial screenshot.
+Tours that span page-state changes — open a dropdown, capture an item inside, then close it — store **one cover screenshot per page state**. The recorder takes a fresh cover automatically on every Resume from Pause; the **📸 Capture scene** button on the recorder bar also triggers one on demand for finer control (open the dropdown, click Capture scene, then capture items inside it). Each step pins to the cover that was active when it was captured. The preview renders one composite per cover labelled "Scene N of M", so dropdown items land on the cover that shows the dropdown **open**, not the stale initial screenshot.
 
-### Keyboard shortcuts during recording
+**CSS-only hover/focus dropdowns** are preserved in the screenshot too. html2canvas natively can't reproduce `:hover` (the cloned DOM has no cursor), so the agent's `onclone` hook mirrors the live DOM's computed `display` + `visibility` onto the clone. Anything visible in the live page — `:hover`-revealed menus, `:focus-within` tooltips, class-toggled popovers — stays visible in the capture without the host having to do anything.
 
-| Key | What it does |
+### Keyboard shortcuts + controls during recording
+
+| Trigger | What it does |
 |---|---|
 | `P` | Toggle pause / resume — no outside-click on the recorder bar, so transient UIs (menus, popovers) stay open |
 | `Enter` | Capture the currently-hovered element without a synthetic click — works on hosts that close menus on outside-click |
 | `Escape` | Cancel the picker (same as pause) |
+| **📸 Capture scene** button | Manually take a fresh cover screenshot. Use after arranging the page (open dropdown, expand panel) — subsequent steps land on this new cover so dropdown items render against the dropdown-open state |
+| **✎ Edit last step** button | Override the placeholder title / text / placement on the most recent capture inline |
 
 Both `P` and `Enter` walk `composedPath()` so they're ignored when typing in any input, textarea, or contenteditable — including across Shadow DOM boundaries (the agent's own editor UI).
 
