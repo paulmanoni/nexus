@@ -1058,19 +1058,29 @@ function enableCalloutDrag(onMove) {
 // text/plain (numbered step list fallback). Word picks
 // text/html; raw paste in plain editors falls back to the
 // numbered list.
-async function copyForWord(tours) {
+// copyForWord — must call navigator.clipboard.write
+// SYNCHRONOUSLY within the click handler or Chrome rejects
+// with "Clipboard write was blocked due to lack of user
+// activation". User-activation expiry is ~1 second from the
+// click; html2canvas alone takes 200-1500ms, so awaiting it
+// before clipboard.write reliably misses the window.
+//
+// Fix: pass the html Blob as a PROMISE inside ClipboardItem.
+// The browser consumes user activation at the synchronous
+// .write() call and waits for the promise internally.
+// ClipboardItem supports Promise<Blob> values explicitly in
+// every browser that supports ClipboardItem at all.
+function copyForWord(tours) {
   const btn = document.getElementById('copy-clip');
   const origLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Capturing…'; }
 
-  try {
-    // Render every .composite (one per SCENE — multi-cover
-    // tours have multiple) and group the resulting PNGs by
-    // tour so multi-scene tours land in the Word doc as
-    // multiple labelled figures. Single-scene tours collapse
-    // to one figure naturally.
+  // Build the HTML payload asynchronously inside the Promise
+  // passed to ClipboardItem. The browser awaits this promise
+  // AFTER the synchronous .write() has captured user activation.
+  const htmlPromise = (async () => {
     const h2c = await loadHtml2Canvas();
-    const imgsPerTour = []; // string[][] — outer index = tour
+    const imgsPerTour = [];
     for (const tour of tours) {
       const article = document.querySelector(`article.tour[data-tour-id="${CSS.escape(tour.id || '')}"]`);
       const composites = article ? article.querySelectorAll('.composite') : [];
@@ -1086,34 +1096,34 @@ async function copyForWord(tours) {
       }
       imgsPerTour.push(tourImgs);
     }
+    return new Blob([buildClipboardHTML(tours, imgsPerTour)], { type: 'text/html' });
+  })();
 
-    const html = buildClipboardHTML(tours, imgsPerTour);
-    const plain = buildClipboardPlain(tours);
+  // Plain text fallback can be built sync — no canvas needed.
+  const plainBlob = new Blob([buildClipboardPlain(tours)], { type: 'text/plain' });
 
-    // ClipboardItem with multiple types is the modern way.
-    // Some browsers only allow image/png OR text/html, not
-    // both — we prefer text/html so the structured layout
-    // lands in Word.
-    if (navigator.clipboard && window.ClipboardItem) {
-      const item = new ClipboardItem({
-        'text/html': new Blob([html], { type: 'text/html' }),
-        'text/plain': new Blob([plain], { type: 'text/plain' }),
-      });
-      await navigator.clipboard.write([item]);
-    } else {
-      // Pre-ClipboardItem fallback (older Firefox): plain only.
-      await navigator.clipboard.writeText(plain);
-    }
-    if (btn) { btn.textContent = '✓ Copied! Paste in Word'; }
-  } catch (e) {
+  // The actual clipboard write. Must be called SYNCHRONOUSLY
+  // (no await, no setTimeout) so the click's user activation
+  // is still in scope.
+  const writePromise = (navigator.clipboard && window.ClipboardItem)
+    ? navigator.clipboard.write([new ClipboardItem({
+        'text/html':  htmlPromise,
+        'text/plain': plainBlob,
+      })])
+    : navigator.clipboard.writeText(buildClipboardPlain(tours));
+
+  // Status feedback once the promise settles.
+  writePromise.then(() => {
+    if (btn) btn.textContent = '✓ Copied! Paste in Word';
+  }).catch(e => {
     console.error('copy failed', e);
-    if (btn) { btn.textContent = '⚠ Copy failed'; }
+    if (btn) btn.textContent = '⚠ Copy failed';
     alert('Copy failed: ' + (e.message || e) + '\n\nClipboard write requires HTTPS or localhost.');
-  } finally {
+  }).finally(() => {
     if (btn) {
       setTimeout(() => { btn.disabled = false; btn.textContent = origLabel; }, 3000);
     }
-  }
+  });
 }
 
 // loadHtml2Canvas lazily pulls the lib from esm.sh — same
