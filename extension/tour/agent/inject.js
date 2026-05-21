@@ -293,33 +293,46 @@
   // in-page agent uses the same paths.
 
   const API = {
-    // listActive tries the exact pathname first, then a
-    // normalised form (no trailing slash). Hosts sometimes
-    // serve the same page at /foo and /foo/ depending on the
-    // router — operators record at one, hit the FAB at the
-    // other, and the strict equality lookup returns nothing.
-    // Two cheap queries beat that whole category of bug.
+    // listActive returns a {matched, others} pair so the FAB
+    // menu can render route-matched tours prominently and ALSO
+    // surface every other tour as a fallback. Operators kept
+    // hitting "No tour saved for this page" on dynamic routes
+    // (e.g. /admin/users/42 vs the /admin/users/9 they recorded
+    // on) and had no path forward without bouncing to the
+    // dashboard.
+    //
+    // Two queries per call: the exact path (with trailing-slash
+    // variant), then everything else. The unmatched fallback
+    // only triggers when the route-specific query is empty, so
+    // most calls stay one network request.
     async listActive(route) {
       const tried = [];
-      const seen = new Set();
       const variants = [route];
-      // Toggle trailing slash both ways.
       if (route.endsWith('/') && route !== '/') variants.push(route.replace(/\/+$/, ''));
       else if (!route.endsWith('/')) variants.push(route + '/');
+      let matched = [];
       for (const v of variants) {
         tried.push(v);
         const r = await fetch(`/__nexus/tour/active?route=${encodeURIComponent(v)}`);
         if (!r.ok) continue;
         const j = await r.json();
-        for (const t of (j.tours || [])) {
-          if (!seen.has(t.id)) { seen.add(t.id); }
-        }
-        if ((j.tours || []).length > 0) {
-          return j.tours;
-        }
+        if ((j.tours || []).length > 0) { matched = j.tours; break; }
       }
-      console.log('tour: no tours found for route(s):', tried);
-      return [];
+      if (matched.length > 0) return { matched, others: [] };
+      // No exact match — pull the whole catalogue so the
+      // operator can still play / preview any tour from the
+      // FAB instead of having to open the dashboard.
+      console.log('tour: no tours for', tried, '— showing full catalogue');
+      try {
+        const r = await fetch('/__nexus/tour/tours');
+        if (r.ok) {
+          const j = await r.json();
+          return { matched: [], others: j.tours || [] };
+        }
+      } catch (e) {
+        console.warn('tour: catalogue fetch failed', e);
+      }
+      return { matched: [], others: [] };
     },
     upsertTour(tour) {
       return fetch('/__nexus/tour/tours', {
@@ -1332,51 +1345,60 @@
 
   let menu = null;
   function closeMenu() { if (menu) { menu.remove(); menu = null; } }
-  function openMenu(tours) {
+  function openMenu(result) {
     closeMenu();
     menu = document.createElement('div');
     menu.className = 'menu';
+    // Backward-compat: callers used to pass a flat array. Wrap
+    // those into the {matched, others} shape we use internally.
+    if (Array.isArray(result)) result = { matched: result, others: [] };
+    const matched = result.matched || [];
+    const others  = result.others  || [];
+    const allTours = [...matched, ...others];
     const recordBtn  = `<button data-act="record">▶ Record new tour</button>`;
-    const playBlock  = tours.lengt
-      ? tours.map(t => {
-          // Defensive fallback chain — earlier recordings (pre-
-          // v0.78.8 prompt flow) sometimes saved with empty
-          // name when the description path overwrote it. Show
-          // a short id-derived label so the operator can still
-          // identify + open the tour to fix its title.
-          const label = (t.name && t.name.trim())
-            || t.label
-            || (t.route ? `Tour for ${t.route}` : '')
-            || (t.id ? `Untitled (${t.id.slice(0, 6)})` : 'Untitled tour');
-          if (!t.name || !t.name.trim()) {
-            console.warn('tour: missing name', t);
-          }
-          return `
-          <div style="display:flex;gap:2px">
-            <button data-act="play" data-id="${t.id}" style="flex:1">▶ Play: ${escapeHtml(label)}</button>
-            <button data-act="preview" data-id="${t.id}" title="Open printable preview" style="padding:8px 10px;display:flex;align-items:center;gap:4px">
-              📄 <span style="font-size:11px;color:#666;max-width:80px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(label)}</span>
-            </button>
-          </div>`;
-        }).join('')
-      : `<div class="hint">No tour saved for this page.</div>`;
-    // Multi-preview entry — only meaningful with 2+ tours on the
-    // current route. Opens every tour for this route stacked in
-    // play order.
-    const previewAllBtn = tours.length > 1
-      ? `<button data-act="preview-all">📄 Preview all (${tours.length}) as PDF</button>`
+    function tourRow(t) {
+      const label = (t.name && t.name.trim())
+        || t.label
+        || (t.route ? `Tour for ${t.route}` : '')
+        || (t.id ? `Untitled (${t.id.slice(0, 6)})` : 'Untitled tour');
+      if (!t.name || !t.name.trim()) console.warn('tour: missing name', t);
+      const routeBadge = t.route && t.route !== currentRoute()
+        ? `<span style="font-size:10px;color:#999;margin-left:4px">${escapeHtml(t.route)}</span>`
+        : '';
+      return `
+        <div style="display:flex;gap:2px">
+          <button data-act="play" data-id="${t.id}" style="flex:1">▶ ${escapeHtml(label)}${routeBadge}</button>
+          <button data-act="preview" data-id="${t.id}" title="Open printable preview" style="padding:8px 10px;display:flex;align-items:center;gap:4px">
+            📄 <span style="font-size:11px;color:#666;max-width:80px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(label)}</span>
+          </button>
+        </div>`;
+    }
+    const matchedBlock = matched.length
+      ? `<div style="font-size:11px;color:#888;padding:8px 12px 4px;text-transform:uppercase;letter-spacing:.05em">For this page</div>` +
+        matched.map(tourRow).join('') +
+        (matched.length > 1
+          ? `<button data-act="preview-all">📄 Preview all ${matched.length} as PDF</button>`
+          : '')
       : '';
-    menu.innerHTML = recordBtn + playBlock + previewAllBtn;
+    const othersBlock = others.length
+      ? `<div style="font-size:11px;color:#888;padding:8px 12px 4px;text-transform:uppercase;letter-spacing:.05em">${matched.length ? 'Other tours' : 'No tour for this page · Other tours'}</div>` +
+        others.map(tourRow).join('')
+      : '';
+    const emptyHint = allTours.length === 0
+      ? `<div class="hint">No tours saved yet — click ▶ Record new tour to start.</div>`
+      : '';
+    const dashboardLink = `<div style="border-top:1px solid #eee;margin-top:6px;padding-top:4px"><button data-act="dashboard">⚙ Manage in dashboard</button></div>`;
+    menu.innerHTML = recordBtn + matchedBlock + othersBlock + emptyHint + dashboardLink;
     root.appendChild(menu);
     menu.addEventListener('click', e => {
-      const t = e.target.closest('button');
-      if (!t) return;
-      const act = t.getAttribute('data-act');
-      const id  = t.getAttribute('data-id');
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const act = btn.getAttribute('data-act');
+      const id  = btn.getAttribute('data-id');
       closeMenu();
       if (act === 'record') return recorder.start(currentRoute());
       if (act === 'play') {
-        const tour = tours.find(x => x.id === id);
+        const tour = allTours.find(x => x.id === id);
         if (tour) runner.start(tour);
       }
       if (act === 'preview' && id) {
@@ -1384,6 +1406,9 @@
       }
       if (act === 'preview-all') {
         window.open(`/__nexus/tour/preview?route=${encodeURIComponent(currentRoute())}`, '_blank');
+      }
+      if (act === 'dashboard') {
+        window.open('/__nexus/tour', '_blank');
       }
     });
   }
