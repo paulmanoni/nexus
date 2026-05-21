@@ -34,18 +34,78 @@
   .cover p { margin: 12px 0 0; color: var(--mute); }
   .cover .tour-pos { display:inline-block; margin-top:6px; color:var(--mute); font-size:12px; }
 
-  /* Composite layout — single image with absolutely-positioned
-     badges over it. Wrapper's aspect-ratio is locked to the
-     recorded viewport (base_width / base_height) so positions
-     scale correctly at any preview width. The image inside is
-     constrained to 100%/100% — html2canvas captures the
-     viewport so its intrinsic aspect ratio matches the wrapper. */
-  .composite {
+  /* Composite layout — image in the centre, callout cards in
+     dedicated left + right MARGIN columns so they never sit
+     over the screenshot content. Each card is vertically
+     positioned to match its badge's y position; horizontally
+     it lives in the margin nearest its badge. Badges on the
+     image stay as numbered pills only — the matching text is
+     in the side card. */
+  .composite-wrap {
     position: relative; margin: 16px 0 24px;
+    display: grid;
+    grid-template-columns: 220px 1fr 220px;
+    gap: 16px; align-items: start;
+  }
+  .composite {
+    position: relative;
     border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
     background: #fff;
   }
   .composite img { display: block; width: 100%; height: 100%; }
+  .callouts {
+    position: relative; min-height: 100%;
+  }
+  .callout {
+    position: absolute; left: 0; right: 0;
+    background: var(--card-bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px 10px 8px 18px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.10);
+    font-size: 11px; line-height: 1.4;
+    transform: translateY(-50%);
+    --drag-dx: 0px;
+    --drag-dy: 0px;
+    transition: box-shadow 120ms;
+  }
+  /* Drag handle — a thin grip along the left edge of every
+     callout. cursor: grab signals draggability; the operator
+     drags to reposition manually when the auto-placement isn't
+     ideal. Position updates the translate offset; release
+     latches the new spot. */
+  .callout::before {
+    content: '⋮⋮';
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: 14px; display: flex; align-items: center; justify-content: center;
+    color: var(--mute); font-size: 10px; letter-spacing: -1px;
+    background: var(--line); border-radius: 6px 0 0 6px;
+    cursor: grab; user-select: none;
+  }
+  .callout.dragging { box-shadow: 0 8px 20px rgba(0,0,0,.22); z-index: 10; }
+  .callout.dragging::before { cursor: grabbing; }
+  .callout .num {
+    display: inline-block;
+    background: var(--badge); color: var(--ink);
+    font: 700 11px/22px system-ui, sans-serif;
+    min-width: 22px; height: 22px; padding: 0 6px;
+    border-radius: 999px; text-align: center;
+    font-variant-numeric: tabular-nums;
+    box-sizing: border-box; margin-right: 6px;
+    vertical-align: middle;
+  }
+  .callout.sub .num { background: var(--sub); color: #fff; }
+  .callout h4 { display: inline; margin: 0; font-size: 12px; font-weight: 700; vertical-align: middle; }
+  .callout p { margin: 4px 0 0; color: #333; }
+
+  /* Narrow screens — drop the side columns, fall back to a
+     stacked layout (image + step-list provides everything). */
+  @media (max-width: 900px) {
+    .composite-wrap { grid-template-columns: 1fr; }
+    .callouts { display: none; }
+  }
+  @media print {
+    .composite-wrap { grid-template-columns: 1fr; }
+    .callouts { display: none; }
+  }
   .pin {
     position: absolute; transform: translate(-50%, -50%);
     z-index: 2; cursor: default;
@@ -62,28 +122,9 @@
     flex-shrink: 0;
   }
   .pin.sub .badge { background: var(--sub); color: #fff; }
-  /* Hover card — always visible by default. Positioning is
-     decided per-pin from the rect's location in the image:
-     .card.below sits under the badge (default), .card.above
-     above, .card.right to the right, .card.left to the left.
-     Each modifier translates relative to the pin's centre so
-     the card stays attached visually. */
-  .pin .card {
-    position: absolute;
-    background: var(--card-bg); border: 1px solid var(--line);
-    border-radius: 6px; padding: 6px 10px;
-    width: 200px;
-    box-shadow: 0 4px 12px rgba(0,0,0,.18);
-    font-size: 11px; line-height: 1.4;
-    z-index: 3;
-  }
-  .pin .card.below { top: 22px; left: 50%; transform: translateX(-50%); }
-  .pin .card.above { bottom: 22px; left: 50%; transform: translateX(-50%); }
-  .pin .card.right { left: 36px;  top: 50%; transform: translateY(-50%); }
-  .pin .card.left  { right: 36px; top: 50%; transform: translateY(-50%); }
-  .pin:hover .card { z-index: 4; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
-  .pin .card h4 { margin: 0; font-size: 12px; font-weight: 700; }
-  .pin .card p { margin: 2px 0 0; color: #333; }
+  /* On-image pins are JUST badges now — the descriptive cards
+     live in the side margin columns so they don't overlap
+     screenshot content. */
   /* Faint outline rectangle for the highlighted control —
      uses the persisted rect_*, scaled. Same as .pin sizing
      but at the rect's actual extents. */
@@ -229,33 +270,6 @@ async function resolveTours() {
   throw new Error('No tour id / ids / route in URL. Open this page via the dashboard.');
 }
 
-// cardPlacement picks a side for the hover card so it stays
-// inside the composite image. Tries below first (default), then
-// above, then right, then left — the first side that fits wins.
-// "Fits" = card extends from the pin centre without going past
-// the wrapper's edge (using percentages of base_width/height as
-// a proxy for the rendered wrapper).
-function cardPlacement(step, baseW, baseH) {
-  const CARD_W = 200, CARD_H = 60;  // card box in px (matches CSS)
-  const cx = step.rect_left + step.rect_width  / 2;
-  const cy = step.rect_top  + step.rect_height / 2;
-  // 22px badge offset (matches CSS .card.below top:22px etc.)
-  // is small relative to base dims, ignore in the fit check.
-  const half = CARD_W / 2;
-  const fitsBelow = cy + CARD_H <= baseH - 8;
-  const fitsAbove = cy - CARD_H >= 8;
-  const fitsRight = cx + CARD_W <= baseW - 8;
-  const fitsLeft  = cx - CARD_W >= 8;
-  // Also require horizontal room around centre for above/below
-  // placements (card is centred on pin).
-  const hRoom = cx - half >= 8 && cx + half <= baseW - 8;
-  if (fitsBelow && hRoom) return 'below';
-  if (fitsAbove && hRoom) return 'above';
-  if (fitsRight)          return 'right';
-  if (fitsLeft)           return 'left';
-  return 'below'; // fallback
-}
-
 function renderComposite(tour, steps) {
   // Use both base dimensions so left/top percentages are
   // dimensionally correct. Older tours that lack base_height
@@ -264,13 +278,20 @@ function renderComposite(tour, steps) {
   const baseH = tour.base_height || tour.base_width || 720;
   const pctX = px => (px / baseW) * 100;
   const pctY = px => (px / baseH) * 100;
+
+  // Split steps into left- and right-margin callout columns by
+  // their badge's horizontal centre. Each callout's vertical
+  // position matches the badge's centre as a % of image height,
+  // so the eye traces straight across from card → badge.
+  const callouts = { left: [], right: [] };
   const pins = steps.map(({ step, prefix, depth }) => {
     const w = step.rect_width;
     const h = step.rect_height;
-    if (!w || !h) return ''; // no rect — skip badge (still appears in list)
+    if (!w || !h) return ''; // no rect — list-only step
     const cx = step.rect_left + w / 2;
     const cy = step.rect_top  + h / 2;
-    const place = cardPlacement(step, baseW, baseH);
+    const side = cx < baseW / 2 ? 'left' : 'right';
+    callouts[side].push({ step, prefix, depth, topPct: pctY(cy) });
     return `
       <div class="hi" style="
         left: ${pctX(step.rect_left)}%;
@@ -283,17 +304,31 @@ function renderComposite(tour, steps) {
         top:  ${pctY(cy)}%;
       ">
         <span class="badge">${escapeHtml(prefix)}</span>
-        <div class="card ${place}">
-          <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
-          ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
-        </div>
       </div>`;
   }).join('');
+
+  function renderCallouts(items) {
+    if (!items.length) return '';
+    // Detect collisions: if two callouts would land within
+    // MIN_GAP% of each other vertically, nudge the second down.
+    // Crude but enough to keep adjacent steps readable.
+    const MIN_GAP = 12; // % of image height
+    const sorted = [...items].sort((a, b) => a.topPct - b.topPct);
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i].topPct - sorted[i - 1].topPct;
+      if (gap < MIN_GAP) sorted[i].topPct = sorted[i - 1].topPct + MIN_GAP;
+    }
+    return sorted.map(({ step, prefix, depth, topPct }) => `
+      <div class="callout ${depth > 0 ? 'sub' : ''}" style="top: ${topPct}%">
+        <span class="num">${escapeHtml(prefix)}</span>
+        <h4>${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
+        ${step.text ? `<p>${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : ''}
+      </div>`).join('');
+  }
+
   // Step list comes FIRST — operator gets the labelled
   // numbered walkthrough up top, then sees the composite
-  // image beneath. Selector is intentionally NOT rendered
-  // here — it's technical noise for the final-user reading
-  // a printed walkthrough.
+  // image (with side-margin callouts) beneath.
   return `
     <div class="step-list">
       ${steps.map(({ step, prefix, depth }) => `
@@ -305,9 +340,13 @@ function renderComposite(tour, steps) {
           </div>
         </div>`).join('')}
     </div>
-    <div class="composite" style="aspect-ratio: ${baseW} / ${baseH}">
-      <img src="${escapeHtml(tour.cover_image_url)}" alt="Tour overview" />
-      ${pins}
+    <div class="composite-wrap">
+      <div class="callouts">${renderCallouts(callouts.left)}</div>
+      <div class="composite" style="aspect-ratio: ${baseW} / ${baseH}">
+        <img src="${escapeHtml(tour.cover_image_url)}" alt="Tour overview" />
+        ${pins}
+      </div>
+      <div class="callouts">${renderCallouts(callouts.right)}</div>
     </div>`;
 }
 
@@ -359,7 +398,7 @@ async function load() {
   const toolbar = `
     <div class="toolbar">
       <button onclick="window.print()">Save as PDF</button>
-      <button class="ghost" id="dl-word">📝 Save as Word</button>
+      <button class="ghost" id="copy-clip">📋 Copy for Word</button>
       <button class="ghost" onclick="history.back()">Back</button>
       <span class="grow"></span>
       <span class="meta">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${totalSteps} step${totalSteps === 1 ? '' : 's'}</span>
@@ -367,19 +406,194 @@ async function load() {
   const body = tours.map((t, i) => renderTour(t, i, tours.length))
                     .join('<hr class="tour-sep" />');
   document.getElementById('app').innerHTML = toolbar + body;
-  document.getElementById('dl-word').addEventListener('click', () => downloadAsWord(tours));
+  document.getElementById('copy-clip').addEventListener('click', () => copyForWord(tours));
+  enableCalloutDrag();
 }
 
-// downloadAsWord builds a Word-friendly HTML document and
-// triggers a download with the .doc extension. Microsoft Word
-// (and LibreOffice / Google Docs upload) opens HTML-with-the-
-// Word-MIME natively — no docx library required.
+// enableCalloutDrag wires every .callout's left-edge handle to
+// pointer events so the operator can reposition cards by hand
+// when the auto-placement isn't quite right. The drag delta is
+// stored in localStorage keyed by tour id + step id so positions
+// survive page reloads.
+function enableCalloutDrag() {
+  const callouts = document.querySelectorAll('.callout');
+  callouts.forEach((el, i) => {
+    // Restore prior position if we stored one.
+    const key = `tour-callout:${location.pathname}:${location.search}:${i}`;
+    const saved = (() => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } })();
+    if (saved && typeof saved.dx === 'number') {
+      el.style.transform = `translate(${saved.dx}px, calc(-50% + ${saved.dy}px))`;
+    }
+
+    const handle = el; // entire ::before pseudo, we listen on the host
+    let startX = 0, startY = 0, baseDx = 0, baseDy = 0, dragging = false;
+
+    function readDelta() {
+      // Parse the current translate so dragging picks up where
+      // we left off rather than snapping back to 0.
+      const m = el.style.transform.match(/translate\(([-\d.]+)px,\s*calc\(-50%\s*\+\s*([-\d.]+)px\)\)/);
+      if (m) return { dx: parseFloat(m[1]) || 0, dy: parseFloat(m[2]) || 0 };
+      return { dx: 0, dy: 0 };
+    }
+
+    function onDown(e) {
+      // Only drag from the left 14px (where the ::before handle
+      // visually lives). pointer offsetX is relative to the
+      // event target.
+      const rect = el.getBoundingClientRect();
+      if (e.clientX - rect.left > 18) return;
+      e.preventDefault();
+      const base = readDelta();
+      baseDx = base.dx; baseDy = base.dy;
+      startX = e.clientX; startY = e.clientY;
+      dragging = true;
+      el.classList.add('dragging');
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp, { once: true });
+    }
+    function onMove(e) {
+      if (!dragging) return;
+      const dx = baseDx + (e.clientX - startX);
+      const dy = baseDy + (e.clientY - startY);
+      el.style.transform = `translate(${dx}px, calc(-50% + ${dy}px))`;
+    }
+    function onUp() {
+      dragging = false;
+      el.classList.remove('dragging');
+      document.removeEventListener('pointermove', onMove);
+      const final = readDelta();
+      try { localStorage.setItem(key, JSON.stringify(final)); } catch { /* quota */ }
+    }
+    el.addEventListener('pointerdown', onDown);
+  });
+}
+
+// copyForWord puts the tour content on the clipboard as rich
+// HTML so the operator can paste straight into Word / Google
+// Docs / Outlook. The "image" portion is the composite element
+// (cover screenshot + numbered badges + side callouts)
+// rendered through html2canvas into a single PNG — preserves
+// the visual annotation that on-image badges + side cards
+// give in the browser preview.
 //
-// The exported doc uses a simplified linear layout: cover →
-// step list → composite image. The absolutely-positioned
-// hover-card layout doesn't survive Word's flow-based rendering
-// so the cover image is presented as a single picture with the
-// text content listed beneath it.
+// Clipboard write: writes BOTH text/html (rich body) AND
+// text/plain (numbered step list fallback). Word picks
+// text/html; raw paste in plain editors falls back to the
+// numbered list.
+async function copyForWord(tours) {
+  const btn = document.getElementById('copy-clip');
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Capturing…'; }
+
+  try {
+    // Find every composite block on the page and render each
+    // through html2canvas. Two render passes per tour (image +
+    // cards) would be cleaner but operators expect ONE picture
+    // they can drop into a doc.
+    const h2c = await loadHtml2Canvas();
+    const composites = document.querySelectorAll('.composite-wrap, .composite');
+    const imgs = []; // dataURL per tour
+    for (const el of composites) {
+      const canvas = await h2c(el, {
+        backgroundColor: '#ffffff',
+        scale: Math.min(window.devicePixelRatio || 1, 2),
+        logging: false,
+        useCORS: true,
+      });
+      imgs.push(canvas.toDataURL('image/png'));
+    }
+
+    const html = buildClipboardHTML(tours, imgs);
+    const plain = buildClipboardPlain(tours);
+
+    // ClipboardItem with multiple types is the modern way.
+    // Some browsers only allow image/png OR text/html, not
+    // both — we prefer text/html so the structured layout
+    // lands in Word.
+    if (navigator.clipboard && window.ClipboardItem) {
+      const item = new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
+      });
+      await navigator.clipboard.write([item]);
+    } else {
+      // Pre-ClipboardItem fallback (older Firefox): plain only.
+      await navigator.clipboard.writeText(plain);
+    }
+    if (btn) { btn.textContent = '✓ Copied! Paste in Word'; }
+  } catch (e) {
+    console.error('copy failed', e);
+    if (btn) { btn.textContent = '⚠ Copy failed'; }
+    alert('Copy failed: ' + (e.message || e) + '\n\nClipboard write requires HTTPS or localhost.');
+  } finally {
+    if (btn) {
+      setTimeout(() => { btn.disabled = false; btn.textContent = origLabel; }, 3000);
+    }
+  }
+}
+
+// loadHtml2Canvas lazily pulls the lib from esm.sh — same
+// origin as the in-page agent uses, so the operator's CSP
+// allow-list typically already includes it.
+let _h2c = null;
+async function loadHtml2Canvas() {
+  if (_h2c) return _h2c;
+  const mod = await import('https://esm.sh/html2canvas-pro@1.5.8');
+  _h2c = mod.default || mod;
+  return _h2c;
+}
+
+function buildClipboardHTML(tours, imgs) {
+  const parts = tours.map((tour, idx) => {
+    const steps = flat(tour.steps || [], '', 0, []);
+    const list = steps.map(({ step, prefix, depth }) => {
+      const indent = depth * 24;
+      const titleText = escapeHtml(step.title || step.label || `Step ${prefix}`);
+      const body = step.text ? `<p style="margin:4px 0; font-size:11pt">${escapeHtml(step.text).replace(/\n/g, '<br>')}</p>` : '';
+      return `<div style="margin:8pt 0; margin-left:${indent}px">
+        <span style="background:#f59e0b; color:#111; padding:2px 8px; border-radius:999px; font-size:10pt; font-weight:bold">${escapeHtml(prefix)}</span>
+        <strong style="margin-left:6pt; font-size:11pt">${titleText}</strong>
+        ${body}
+      </div>`;
+    }).join('');
+    const img = imgs[idx]
+      ? `<p><img src="${imgs[idx]}" style="max-width:100%; border:1px solid #ccc"/></p>`
+      : '';
+    return `
+      <h1 style="font-size:18pt; margin:12pt 0 6pt">${escapeHtml(tour.name || 'Untitled tour')}</h1>
+      <p style="color:#666; font-family:Consolas, monospace; font-size:10pt">${escapeHtml(tour.route || '/')}</p>
+      ${tour.description ? `<p style="font-size:11pt">${escapeHtml(tour.description)}</p>` : ''}
+      ${tours.length > 1 ? `<p style="color:#888; font-size:10pt"><em>Tour ${idx + 1} of ${tours.length}</em></p>` : ''}
+      ${list}
+      ${img}
+      ${idx < tours.length - 1 ? '<br/><br/>' : ''}
+    `;
+  });
+  return `<html><head><meta charset="utf-8"></head><body style="font-family:Calibri, Arial, sans-serif">${parts.join('')}</body></html>`;
+}
+
+function buildClipboardPlain(tours) {
+  return tours.map((tour, idx) => {
+    const steps = flat(tour.steps || [], '', 0, []);
+    const head = [
+      tour.name || 'Untitled tour',
+      tour.route ? `Route: ${tour.route}` : '',
+      tour.description || '',
+      tours.length > 1 ? `(Tour ${idx + 1} of ${tours.length})` : '',
+    ].filter(Boolean).join('\n') + '\n';
+    const list = steps.map(({ step, prefix, depth }) => {
+      const indent = '  '.repeat(depth);
+      const title = step.title || step.label || `Step ${prefix}`;
+      const body = step.text ? `\n${indent}    ${step.text.replace(/\n/g, '\n' + indent + '    ')}` : '';
+      return `${indent}${prefix}. ${title}${body}`;
+    }).join('\n');
+    return head + '\n' + list;
+  }).join('\n\n----\n\n');
+}
+
+// downloadAsWord — kept for the .doc fallback path. Same body
+// shape as the clipboard HTML but written to a Blob the operator
+// downloads, opens with Word, and saves natively as .docx.
 function downloadAsWord(tours) {
   function tourBlock(tour, idx) {
     const steps = flat(tour.steps || [], '', 0, []);
