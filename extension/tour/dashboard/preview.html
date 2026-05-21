@@ -292,9 +292,24 @@ function escapeForWord(s) {
 }
 
 // flat walks the tree DFS yielding { step, prefix, depth }.
+// Root steps are numbered 1, 2, 3; first-level substeps use
+// lowercase letters (1.a, 1.b, 1.c) so the operator can tell
+// at a glance which steps are children vs siblings. Deeper
+// nesting reverts to numbers — multi-letter depths get
+// ambiguous fast. Per-parent restart is preserved (each
+// children array starts from a / 1 again).
 function flat(steps, parentPrefix, depth, out) {
   steps.forEach((s, i) => {
-    const prefix = parentPrefix ? `${parentPrefix}.${i + 1}` : `${i + 1}`;
+    let label;
+    if (depth === 1) {
+      // a, b, c … z, then aa, ab if a substep list is huge
+      label = i < 26
+        ? String.fromCharCode(97 + i)
+        : `a${String.fromCharCode(97 + i - 26)}`;
+    } else {
+      label = String(i + 1);
+    }
+    const prefix = parentPrefix ? `${parentPrefix}.${label}` : label;
     out.push({ step: s, prefix, depth });
     if (s.children && s.children.length) flat(s.children, prefix, depth + 1, out);
   });
@@ -498,8 +513,25 @@ function renderComposite(tour, steps) {
   }
   return covers.map((url, i) => {
     if (!stepsByCover[i].length && covers.length > 1) return ''; // skip empty middle covers
+    // Header per scene. Scenes after the first get a "merge"
+    // button that demotes this scene's steps into substeps of
+    // the LAST step in the previous scene. Useful when the
+    // captured sequence is logically nested (open dropdown,
+    // click item) rather than parallel scenes.
+    const mergeBtn = covers.length > 1 && i > 0 && stepsByCover[i].length
+      ? `<button class="ghost merge-scene"
+                 data-tour-id="${escapeHtml(tour.id || '')}"
+                 data-from-cover="${i}"
+                 data-into-cover="${i - 1}"
+                 style="margin-left:12px;padding:3px 10px;font-size:11px;color:#374151"
+                 title="Move every step in this scene under the last step of the previous scene as substeps">
+           ↳ Merge into previous as substeps
+         </button>`
+      : '';
     const sectionHeader = covers.length > 1
-      ? `<h3 style="margin:18px 0 6px;font-size:14px;color:#374151">Scene ${i + 1} of ${covers.length}</h3>`
+      ? `<h3 style="margin:18px 0 6px;font-size:14px;color:#374151;display:flex;align-items:center;gap:6px">
+           Scene ${i + 1} of ${covers.length}${mergeBtn}
+         </h3>`
       : '';
     return sectionHeader + renderOneCover(tour, url, i, stepsByCover[i]);
   }).join('');
@@ -611,6 +643,17 @@ async function load() {
       await deleteOneTour(t, /* inPlace = */ true);
     });
   });
+  // Scene-merge buttons: demote a scene's steps into substeps
+  // of the previous scene's last step.
+  document.querySelectorAll('.merge-scene').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tourId = btn.getAttribute('data-tour-id');
+      const from = Number(btn.getAttribute('data-from-cover'));
+      const into = Number(btn.getAttribute('data-into-cover'));
+      const tour = tours.find(t => t.id === tourId);
+      if (tour) mergeScene(tour, from, into);
+    });
+  });
   // Inline edit: bind blur handlers to every editable element.
   // Tours stay in module scope so the save handler can find the
   // step by id and PUT a fresh tour to the server.
@@ -679,6 +722,63 @@ async function saveInlineEdit(el) {
   } catch (e) {
     console.error('inline save failed', e);
     el.classList.add('save-error');
+  }
+}
+
+// mergeScene moves every step whose cover_index === fromCover
+// under the LAST step whose cover_index === intoCover as
+// substeps. Re-saves the tour and reloads the preview so the
+// new tree + numbering renders.
+//
+// Tree restructure (in-memory before save):
+//   1. Walk the flat step list, locate the "target" step
+//      (last root-level step in intoCover) and the "movers"
+//      (every step with cover_index === fromCover).
+//   2. Remove movers from their current location (root or
+//      children of another step).
+//   3. Append movers to target.children. cover_index on the
+//      movers stays put so the previewer can still display
+//      their original screenshot when rendering substep
+//      callouts that have rect data.
+async function mergeScene(tour, fromCover, intoCover) {
+  if (!tour || !tour.steps || !tour.steps.length) return;
+  if (!confirm(`Merge Scene ${fromCover + 1}'s steps under the last step of Scene ${intoCover + 1}?\n\nThe steps move into a substep group (a, b, c…). This is reversible by re-recording.`)) return;
+
+  // Find target: the LAST root-level step belonging to intoCover.
+  let target = null;
+  for (const s of tour.steps) {
+    const ci = Number.isInteger(s.cover_index) ? s.cover_index : 0;
+    if (ci === intoCover) target = s;
+  }
+  if (!target) {
+    alert(`No step found in Scene ${intoCover + 1} to attach under. Add a step there first.`);
+    return;
+  }
+  if (!target.children) target.children = [];
+
+  // Collect movers + remove them from root step list. Mutates
+  // tour.steps in place.
+  const remaining = [];
+  for (const s of tour.steps) {
+    const ci = Number.isInteger(s.cover_index) ? s.cover_index : 0;
+    if (ci === fromCover && s !== target) {
+      target.children.push(s);
+    } else {
+      remaining.push(s);
+    }
+  }
+  tour.steps = remaining;
+
+  // Save the new tree.
+  const btn = document.querySelector(`.merge-scene[data-from-cover="${fromCover}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Merging…'; }
+  try {
+    await API.upsert(tour);
+    // Reload the preview from scratch so the layout reflects the new shape.
+    location.reload();
+  } catch (e) {
+    alert('Merge failed: ' + (e.message || e));
+    if (btn) { btn.disabled = false; btn.textContent = '↳ Merge into previous as substeps'; }
   }
 }
 
