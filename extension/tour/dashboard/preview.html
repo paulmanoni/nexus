@@ -821,10 +821,22 @@ function pickMergeTarget(tour, fromCover, anchorBtn) {
   });
 }
 
-// mergeScene moves every step whose cover_index === fromCover
-// under the step with id targetId as substeps. Re-saves the
-// tour and reloads the preview so the new tree + numbering
-// renders.
+// mergeScene moves every root-level step from the source scene
+// under the target step as substeps. Each moved step keeps its
+// own children intact (so a step that already had substeps
+// arrives as a 3-deep branch under target).
+//
+// Why only root-level: a scene is captured as a sequence of
+// clicks at the page level — those are the operator's
+// "intent" units. If a step somewhere deep also happens to
+// carry cover_index === fromCover, it's probably the result
+// of an earlier merge and shouldn't be torn out of its
+// current parent.
+//
+// Two-pass implementation kills the bug from the recursive
+// walk (a step would get dropped when the target came AFTER
+// the source steps in tour.steps — the recursion into target's
+// children stomped the freshly-attached movers).
 async function mergeScene(tour, fromCover, targetId) {
   if (!tour || !tour.steps || !tour.steps.length || !targetId) return;
   const target = findStepInTour(tour, targetId);
@@ -832,29 +844,34 @@ async function mergeScene(tour, fromCover, targetId) {
     alert('Selected target step no longer exists. Try again.');
     return;
   }
-  const targetLabel = target.title || target.label || 'the selected step';
-  if (!confirm(`Move Scene ${fromCover + 1}'s steps under "${targetLabel}" as substeps?\n\nThey become a substep group (a, b, c…). Reversible by editing the tour.`)) return;
 
-  if (!target.children) target.children = [];
-
-  // Detach the target itself defensively in case it lived under
-  // tour.steps — we don't want it to be both the parent and a
-  // mover candidate.
-  const remaining = [];
-  function detachFromCover(arr) {
-    const next = [];
-    for (const s of arr) {
-      const ci = Number.isInteger(s.cover_index) ? s.cover_index : 0;
-      if (ci === fromCover && s.id !== targetId) {
-        target.children.push(s);
-      } else {
-        if (s.children && s.children.length) s.children = detachFromCover(s.children);
-        next.push(s);
-      }
+  // Pass 1: split tour.steps into (movers, keepers). A mover is
+  // a ROOT step whose cover_index matches fromCover and isn't
+  // the target itself. The mover's own .children come along
+  // with it untouched.
+  const movers = [];
+  const keepers = [];
+  for (const s of tour.steps) {
+    const ci = Number.isInteger(s.cover_index) ? s.cover_index : 0;
+    if (ci === fromCover && s.id !== targetId) {
+      movers.push(s);
+    } else {
+      keepers.push(s);
     }
-    return next;
   }
-  tour.steps = detachFromCover(tour.steps);
+  if (!movers.length) {
+    alert(`Scene ${fromCover + 1} has no root-level steps to move.`);
+    return;
+  }
+
+  const targetLabel = target.title || target.label || 'the selected step';
+  if (!confirm(`Move ${movers.length} step${movers.length === 1 ? '' : 's'} from Scene ${fromCover + 1} under "${targetLabel}" as substeps?\n\nEvery step in this scene moves; their own children come along.`)) return;
+
+  // Pass 2: attach every mover to target.children in their
+  // original order.
+  if (!target.children) target.children = [];
+  for (const s of movers) target.children.push(s);
+  tour.steps = keepers;
 
   const btn = document.querySelector(`.merge-scene[data-from-cover="${fromCover}"]`);
   if (btn) { btn.disabled = true; btn.textContent = 'Merging…'; }
