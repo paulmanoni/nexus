@@ -590,6 +590,36 @@
     return _h2c;
   }
 
+  // waitForAnimations pauses until every running CSS animation
+  // and transition on the page reaches its end state.
+  //
+  // Why this matters: Vue/React SPAs commonly use "fade-up"
+  // entry animations (opacity:0 → 1 + translateY) with
+  // staggered animation-delays (0.08s, 0.16s, 0.24s, ...).
+  // If html2canvas snapshots mid-animation, the captured
+  // elements are partially or fully invisible because their
+  // computed opacity is still 0. The capture comes back
+  // looking like the page never finished loading.
+  //
+  // document.getAnimations() returns Animation objects for
+  // every active CSS animation + transition. We wait for
+  // each one's finished promise; a 1500ms ceiling guards
+  // against pathological infinite animations stalling capture.
+  async function waitForAnimations() {
+    if (!document.getAnimations) {
+      // Older browsers without the Animations API: fixed wait.
+      await new Promise(r => setTimeout(r, 600));
+      return;
+    }
+    const running = document.getAnimations()
+      .filter(a => a.playState === 'running' || a.playState === 'pending');
+    if (!running.length) return;
+    await Promise.race([
+      Promise.all(running.map(a => a.finished.catch(() => {}))),
+      new Promise(r => setTimeout(r, 1500)),
+    ]);
+  }
+
   // captureClean takes a screenshot of the FULL document body
   // with no overlays. We capture the whole document (not just
   // the viewport) and pair it with step rects stored in
@@ -597,6 +627,9 @@
   // spot regardless of where the operator was scrolled when
   // they clicked.
   async function captureClean() {
+    // Let CSS entry animations finish so we don't snapshot
+    // a half-faded-in page (common on Vue/React SPAs).
+    await waitForAnimations();
     const h2c = await loadHtml2Canvas();
     overlayHost.style.visibility = 'hidden';
     let canvas;
@@ -622,6 +655,10 @@
   // would force the agent's chrome (FAB, picker) into the
   // recording, which is exactly what we don't want.
   async function captureWithBadge(targetRect, badgeNum) {
+    // Same animation-settle wait as captureClean — per-step
+    // screenshots fired right after a click on a freshly-
+    // rendered route otherwise grab mid-fade-in content.
+    await waitForAnimations();
     const h2c = await loadHtml2Canvas();
     // Hide our own overlay so it doesn't end up in the screenshot.
     overlayHost.style.visibility = 'hidden';
