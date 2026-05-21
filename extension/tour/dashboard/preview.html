@@ -834,24 +834,30 @@ async function copyForWord(tours) {
   if (btn) { btn.disabled = true; btn.textContent = 'Capturing…'; }
 
   try {
-    // Find every composite block on the page and render each
-    // through html2canvas. Two render passes per tour (image +
-    // cards) would be cleaner but operators expect ONE picture
-    // they can drop into a doc.
+    // Render every .composite (one per SCENE — multi-cover
+    // tours have multiple) and group the resulting PNGs by
+    // tour so multi-scene tours land in the Word doc as
+    // multiple labelled figures. Single-scene tours collapse
+    // to one figure naturally.
     const h2c = await loadHtml2Canvas();
-    const composites = document.querySelectorAll('.composite-wrap, .composite');
-    const imgs = []; // dataURL per tour
-    for (const el of composites) {
-      const canvas = await h2c(el, {
-        backgroundColor: '#ffffff',
-        scale: Math.min(window.devicePixelRatio || 1, 2),
-        logging: false,
-        useCORS: true,
-      });
-      imgs.push(canvas.toDataURL('image/png'));
+    const imgsPerTour = []; // string[][] — outer index = tour
+    for (const tour of tours) {
+      const article = document.querySelector(`article.tour[data-tour-id="${CSS.escape(tour.id || '')}"]`);
+      const composites = article ? article.querySelectorAll('.composite') : [];
+      const tourImgs = [];
+      for (const el of composites) {
+        const canvas = await h2c(el, {
+          backgroundColor: '#ffffff',
+          scale: Math.min(window.devicePixelRatio || 1, 2),
+          logging: false,
+          useCORS: true,
+        });
+        tourImgs.push(canvas.toDataURL('image/png'));
+      }
+      imgsPerTour.push(tourImgs);
     }
 
-    const html = buildClipboardHTML(tours, imgs);
+    const html = buildClipboardHTML(tours, imgsPerTour);
     const plain = buildClipboardPlain(tours);
 
     // ClipboardItem with multiple types is the modern way.
@@ -908,7 +914,7 @@ async function loadHtml2Canvas() {
 // headings. Word strips <style> blocks on paste, so every rule
 // is inline. Lists use <ol> + start= so step numbering survives
 // Word's autocorrect; substeps nest as <ol type="a">.
-function buildClipboardHTML(tours, imgs) {
+function buildClipboardHTML(tours, imgsPerTour) {
   const A = 'font-family:Arial, sans-serif';
   const body = `${A}; font-size:12pt; color:#000; line-height:1.5`;
   const h1   = `${A}; font-size:18pt; font-weight:bold; margin:18pt 0 6pt; color:#000`;
@@ -946,18 +952,21 @@ function buildClipboardHTML(tours, imgs) {
 
   let figureNumber = 0;
   const parts = tours.map((tour, idx) => {
-    figureNumber++;
-    // Image first, then caption — matches the classic manual
-    // convention ("Figure N: ..." below the picture). Word and
-    // Google Docs both honour this ordering when the operator
-    // pastes; the caption stays attached to the image even
-    // after they reflow the layout.
-    const img = imgs[idx]
-      ? `<p style="margin:6pt 0; text-align:center">
-           <img src="${imgs[idx]}" style="max-width:100%; border:1pt solid #999"/>
+    // Each tour may have multiple scenes (multi-cover) — emit
+    // one figure per scene with its own caption. Pre-multi-cover
+    // tours collapse to a single figure since the per-tour
+    // array only has one entry.
+    const tourImgs = (imgsPerTour && imgsPerTour[idx]) || [];
+    const figures = tourImgs.map((url, sceneIdx) => {
+      figureNumber++;
+      const sceneLabel = tourImgs.length > 1
+        ? `${escapeHtml(tour.name || 'Tour overview')} — Scene ${sceneIdx + 1} of ${tourImgs.length}`
+        : `${escapeHtml(tour.name || 'Tour overview')}`;
+      return `<p style="margin:12pt 0 6pt; text-align:center">
+           <img src="${url}" style="max-width:100%; border:1pt solid #999"/>
          </p>
-         <p style="${cap}">Figure ${figureNumber}: ${escapeHtml(tour.name || 'Tour overview')}</p>`
-      : '';
+         <p style="${cap}">Figure ${figureNumber}: ${sceneLabel}</p>`;
+    }).join('');
     const pageBreak = idx < tours.length - 1
       ? `<br clear="all" style="mso-special-character:line-break; page-break-before:always"/>`
       : '';
@@ -974,7 +983,7 @@ function buildClipboardHTML(tours, imgs) {
       ${tour.description ? `<p style="${para}">${escapeHtml(tour.description)}</p>` : ''}
       <h2 style="${h2}">Steps</h2>
       ${renderSteps(tour.steps || [])}
-      ${img}
+      ${figures}
       ${pageBreak}
     `;
   });
