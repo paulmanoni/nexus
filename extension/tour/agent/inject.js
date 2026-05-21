@@ -956,19 +956,36 @@
     menu.className = 'menu';
     const recordBtn  = `<button data-act="record">▶ Record new tour</button>`;
     const playBlock  = tours.length
-      ? tours.map(t => `<button data-act="play" data-id="${t.id}">▶ Play: ${escapeHtml(t.name)}</button>`).join('')
+      ? tours.map(t => `
+          <div style="display:flex;gap:2px">
+            <button data-act="play" data-id="${t.id}" style="flex:1">▶ Play: ${escapeHtml(t.name)}</button>
+            <button data-act="preview" data-id="${t.id}" title="Open printable preview" style="padding:8px 10px">📄</button>
+          </div>`).join('')
       : `<div class="hint">No tour saved for this page.</div>`;
-    menu.innerHTML = recordBtn + playBlock;
+    // Multi-preview entry — only meaningful with 2+ tours on the
+    // current route. Opens every tour for this route stacked in
+    // play order.
+    const previewAllBtn = tours.length > 1
+      ? `<button data-act="preview-all">📄 Preview all (${tours.length}) as PDF</button>`
+      : '';
+    menu.innerHTML = recordBtn + playBlock + previewAllBtn;
     root.appendChild(menu);
     menu.addEventListener('click', e => {
       const t = e.target.closest('button');
       if (!t) return;
       const act = t.getAttribute('data-act');
+      const id  = t.getAttribute('data-id');
       closeMenu();
       if (act === 'record') return recorder.start(currentRoute());
       if (act === 'play') {
-        const tour = tours.find(x => x.id === t.getAttribute('data-id'));
+        const tour = tours.find(x => x.id === id);
         if (tour) runner.start(tour);
+      }
+      if (act === 'preview' && id) {
+        window.open(`/__nexus/tour/tours/${encodeURIComponent(id)}/preview`, '_blank');
+      }
+      if (act === 'preview-all') {
+        window.open(`/__nexus/tour/preview?route=${encodeURIComponent(currentRoute())}`, '_blank');
       }
     });
   }
