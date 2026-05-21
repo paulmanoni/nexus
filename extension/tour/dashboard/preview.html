@@ -497,21 +497,27 @@ function renderFallback(steps) {
 
 function renderTour(tour, tourIdx, tourCount) {
   const steps = flat(tour.steps || [], '', 0, []);
-  // Route is kept internally for matching but not shown — it's
-  // a deploy-side detail, not part of the user-facing manual.
-  // Description (the figure caption) replaces it as the lead-in.
+  // For multi-tour previews, attach a per-tour Delete button to
+  // the cover header — operators can prune one tour without
+  // wiping the whole combined preview. The single-tour case
+  // gets its Delete in the toolbar instead so it isn't tucked
+  // away below the cover.
+  const perTourDelete = tourCount > 1
+    ? `<button class="ghost" data-delete-tour="${escapeHtml(tour.id || '')}" style="margin-top:6px;color:#ef4444;border-color:#fecaca;background:#fff;padding:4px 10px;border-radius:6px;font:11px/1 system-ui,sans-serif;cursor:pointer">🗑 Delete this tour</button>`
+    : '';
   const cover = `
     <header class="cover">
       <h1>${escapeHtml(tour.name || 'Untitled tour')}</h1>
       ${tour.description ? `<p>${escapeHtml(tour.description)}</p>` : ''}
       ${tourCount > 1 ? `<span class="tour-pos">Tour ${tourIdx + 1} of ${tourCount}</span>` : ''}
+      ${perTourDelete}
     </header>`;
   const body = !steps.length
     ? `<div class="empty">This tour has no steps yet.</div>`
     : hasComposite(tour)
       ? renderComposite(tour, steps)
       : renderFallback(steps);
-  return `<article class="tour">${cover}${body}</article>`;
+  return `<article class="tour" data-tour-id="${escapeHtml(tour.id || '')}">${cover}${body}</article>`;
 }
 
 async function load() {
@@ -533,7 +539,9 @@ async function load() {
     <div class="toolbar">
       <button onclick="window.print()">Save as PDF</button>
       <button class="ghost" id="copy-clip">📋 Copy for Word</button>
-      <button class="ghost" id="btn-delete" style="color:#ef4444;border-color:#fecaca">🗑 Delete tour${tours.length > 1 ? 's' : ''}</button>
+      ${tours.length === 1
+        ? `<button class="ghost" id="btn-delete" style="color:#ef4444;border-color:#fecaca">🗑 Delete tour</button>`
+        : ''}
       <button class="ghost" id="btn-back">Back</button>
       <span class="grow"></span>
       <span class="meta">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${totalSteps} step${totalSteps === 1 ? '' : 's'}</span>
@@ -562,7 +570,19 @@ async function load() {
   const backBtn = document.getElementById('btn-back');
   if (backBtn) backBtn.addEventListener('click', goBack);
   const deleteBtn = document.getElementById('btn-delete');
-  if (deleteBtn) deleteBtn.addEventListener('click', () => deleteCurrentTours(tours));
+  if (deleteBtn) deleteBtn.addEventListener('click', () => deleteOneTour(tours[0]));
+  // Per-tour delete buttons (multi-tour previews). Click any
+  // 🗑 in a tour's header → confirm → DELETE that tour's id
+  // → remove the section from the page in place. Last tour
+  // deleted falls through to the dashboard.
+  document.querySelectorAll('[data-delete-tour]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-delete-tour');
+      const t = tours.find(x => x.id === id);
+      if (!t) return;
+      await deleteOneTour(t, /* inPlace = */ true);
+    });
+  });
   // Inline edit: bind blur handlers to every editable element.
   // Tours stay in module scope so the save handler can find the
   // step by id and PUT a fresh tour to the server.
@@ -634,34 +654,35 @@ async function saveInlineEdit(el) {
   }
 }
 
-// deleteCurrentTours wipes every tour currently on the preview
-// page after a confirm prompt. For multi-tour previews
-// (?route= or ?ids=) it deletes the whole batch in one go.
-// After the network calls land, we redirect to the dashboard
-// so the operator sees the updated list immediately.
-async function deleteCurrentTours(tours) {
-  const names = tours.map(t => t.name || t.id || 'untitled').join(', ');
-  const label = tours.length === 1
-    ? `Delete tour "${names}"?`
-    : `Delete ${tours.length} tours: ${names}?`;
-  if (!confirm(label + '\n\nThis cannot be undone.')) return;
-  const btn = document.getElementById('btn-delete');
-  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
-  const errs = [];
-  for (const t of tours) {
-    try {
-      const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(t.id)}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    } catch (e) {
-      errs.push(`${t.name || t.id}: ${e.message || e}`);
-    }
-  }
-  if (errs.length) {
-    alert('Some deletes failed:\n\n' + errs.join('\n'));
-    if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete tour' + (tours.length > 1 ? 's' : ''); }
+// deleteOneTour removes a single tour by id. inPlace=true
+// (multi-tour preview) strips just that tour's <article> from
+// the DOM and leaves the rest in place; inPlace=false (single-
+// tour preview) redirects to the dashboard list after delete.
+async function deleteOneTour(tour, inPlace) {
+  if (!tour || !tour.id) return;
+  if (!confirm(`Delete tour "${tour.name || tour.id}"?\n\nThis cannot be undone.`)) return;
+  try {
+    const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(tour.id)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    alert('Delete failed: ' + (e.message || e));
     return;
   }
-  // All gone — land the operator on the dashboard list.
+  if (inPlace) {
+    const article = document.querySelector(`article.tour[data-tour-id="${CSS.escape(tour.id)}"]`);
+    if (article) {
+      // Also drop the separator <hr> that precedes this article
+      // (or trails the last one), so the layout doesn't end
+      // with dangling dashed lines.
+      const sep = article.previousElementSibling;
+      if (sep && sep.classList && sep.classList.contains('tour-sep')) sep.remove();
+      const nextSep = article.nextElementSibling;
+      if (nextSep && nextSep.classList && nextSep.classList.contains('tour-sep')) nextSep.remove();
+      article.remove();
+    }
+    return;
+  }
+  // Single-tour preview → dashboard.
   window.location.href = '/__nexus/tour';
 }
 
