@@ -24,12 +24,27 @@ type Tour struct {
 	// tours land at the end.
 	Order int `json:"order" gorm:"default:0"`
 
-	// CoverImageURL is one clean screenshot of the page taken at
-	// recording-start (before any clicks). Drives the single-tour
-	// PDF preview's "one screenshot with all badges overlaid"
-	// view. Empty for legacy tours; preview falls back to per-
-	// step screenshots when absent.
+	// CoverImageURL is the FIRST clean screenshot of the page,
+	// taken at recording-start. Drives the simple single-cover
+	// preview path. Empty for legacy tours; preview falls back
+	// to per-step screenshots when absent.
 	CoverImageURL string `json:"cover_image_url,omitempty" gorm:"type:text"`
+
+	// CoverImages is the full series of cover snapshots — one
+	// at recording-start, plus one per Resume after Pause. Each
+	// Step carries a CoverIndex pointing into this slice so the
+	// preview can group steps by which page state was active
+	// when they were captured. Items revealed inside dropdowns,
+	// modals, or step-by-step flows render against the cover
+	// that was active when they were clicked, instead of the
+	// stale initial screenshot.
+	//
+	// Stored as JSON via gorm serializer; each entry is a base64
+	// data URL the size of one viewport-sized PNG (~50-200 KB
+	// each). For long tours that page through many states this
+	// adds up — Phase 4 work moves these to a blob endpoint
+	// with byte-range fetching.
+	CoverImages []string `json:"cover_images,omitempty" gorm:"serializer:json;type:text"`
 
 	// BaseWidth / BaseHeight are window.innerWidth and innerHeight
 	// at recording-start. The preview locks the composite
@@ -93,6 +108,15 @@ type Step struct {
 	// be a relative URL the plugin serves (Phase 3 will add a
 	// blob endpoint) or an external URL the operator pasted in.
 	MediaURL string `json:"media_url" gorm:"size:1000"`
+
+	// CoverIndex selects which Tour.CoverImages entry this step
+	// was captured against. 0 = the initial screenshot (matches
+	// tour.cover_image_url for backward compat). Bumps each
+	// time the operator resumes from a pause; the preview
+	// groups steps by this value so dropdown items render
+	// against the cover that shows the dropdown OPEN, not the
+	// stale recording-start state.
+	CoverIndex int `json:"cover_index"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
