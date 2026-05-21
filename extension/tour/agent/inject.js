@@ -97,12 +97,16 @@
       position: fixed; right: 16px; bottom: 64px;
       background: #fff; border-radius: 8px;
       box-shadow: 0 8px 24px rgba(0,0,0,.18);
-      padding: 6px; min-width: 180px; pointer-events: auto;
+      padding: 8px;
+      min-width: 320px;       /* enough for "▶ Play: Tour for /some/path" + 📄 */
+      max-width: 420px;       /* don't grow absurdly when tour names are long */
+      pointer-events: auto;
     }
     .menu button {
       display: block; width: 100%; text-align: left;
-      background: transparent; border: 0; padding: 8px 12px;
+      background: transparent; border: 0; padding: 9px 12px;
       border-radius: 6px; cursor: pointer; font: inherit; color: #111;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .menu button:hover { background: #f3f4f6; }
     .menu .hint { padding: 6px 12px; color: #666; font-size: 12px; }
