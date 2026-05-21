@@ -482,7 +482,7 @@ async function load() {
     <div class="toolbar">
       <button onclick="window.print()">Save as PDF</button>
       <button class="ghost" id="copy-clip">📋 Copy for Word</button>
-      <button class="ghost" onclick="history.back()">Back</button>
+      <button class="ghost" id="btn-back">Back</button>
       <span class="grow"></span>
       <span class="meta">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${totalSteps} step${totalSteps === 1 ? '' : 's'}</span>
     </div>`;
@@ -490,12 +490,49 @@ async function load() {
                     .join('<hr class="tour-sep" />');
   document.getElementById('app').innerHTML = toolbar + body;
   document.getElementById('copy-clip').addEventListener('click', () => copyForWord(tours));
-  // Draw connector lines from each callout to its badge inside
-  // every composite on the page. Re-run on window resize so
-  // the lines stay attached when the layout reflows.
-  drawAllConnectors();
-  window.addEventListener('resize', drawAllConnectors);
+  // Order matters here:
+  //   1. enableCalloutDrag — applies any localStorage-saved
+  //      positions from prior drags onto each .callout.
+  //   2. drawAllConnectors — measures the now-finalised
+  //      positions and draws SVG lines.
+  //   3. Image onload handlers — re-fire connectors once each
+  //      cover image has paint dimensions, since the composite's
+  //      aspect-ratio container can shift slightly when the
+  //      bitmap arrives.
+  //   4. Resize listener — keep lines attached as layout reflows.
   enableCalloutDrag(drawAllConnectors);
+  drawAllConnectors();
+  document.querySelectorAll('.composite img').forEach(img => {
+    if (img.complete) return; // already loaded — drawn above
+    img.addEventListener('load', drawAllConnectors, { once: true });
+  });
+  window.addEventListener('resize', drawAllConnectors);
+  // Wire the Back button last so it can fall back to closing
+  // the tab when there's no history (preview is typically
+  // opened in a new tab via target=_blank).
+  const backBtn = document.getElementById('btn-back');
+  if (backBtn) backBtn.addEventListener('click', goBack);
+}
+
+// goBack handles the Back button. The preview is normally
+// opened with window.open(..., '_blank') from the dashboard, so
+// the new tab has no useful history (length === 1, only the
+// preview URL). In that case window.close() works for tabs the
+// script opened. As a final fallback, navigate to the dashboard
+// root — at least lands the operator somewhere usable.
+function goBack() {
+  if (history.length > 1) {
+    history.back();
+    return;
+  }
+  // window.close() succeeds for tabs opened via window.open().
+  // Browsers silently no-op when the tab wasn't script-opened —
+  // detect that by checking after a tick and falling through
+  // to dashboard navigation.
+  try { window.close(); } catch { /* noop */ }
+  setTimeout(() => {
+    if (!window.closed) window.location.href = '/__nexus/tour';
+  }, 50);
 }
 
 // drawAllConnectors walks every .composite on the page,
