@@ -283,15 +283,33 @@ function renderComposite(tour, steps) {
   // their badge's horizontal centre. Each callout's vertical
   // position matches the badge's centre as a % of image height,
   // so the eye traces straight across from card → badge.
+  // Balance callouts across left+right columns. The naive
+  // "side = cx < half" approach lumped every callout on one
+  // side when targets clustered near centre (a centred login
+  // form, say). Balance by preferring the leaned side only
+  // when that column isn't already heavier than the other.
   const callouts = { left: [], right: [] };
+  const itemsByY = steps
+    .filter(({ step }) => step.rect_width && step.rect_height)
+    .map(it => {
+      const w = it.step.rect_width;
+      const h = it.step.rect_height;
+      return { ...it, cx: it.step.rect_left + w / 2, cy: it.step.rect_top + h / 2 };
+    })
+    .sort((a, b) => a.cy - b.cy);
+  for (const it of itemsByY) {
+    const wanted = it.cx <= baseW / 2 ? 'left' : 'right';
+    const other  = wanted === 'left' ? 'right' : 'left';
+    const side = callouts[wanted].length <= callouts[other].length ? wanted : other;
+    callouts[side].push({ ...it, topPct: pctY(it.cy) });
+  }
+
   const pins = steps.map(({ step, prefix, depth }) => {
     const w = step.rect_width;
     const h = step.rect_height;
     if (!w || !h) return ''; // no rect — list-only step
     const cx = step.rect_left + w / 2;
     const cy = step.rect_top  + h / 2;
-    const side = cx < baseW / 2 ? 'left' : 'right';
-    callouts[side].push({ step, prefix, depth, topPct: pctY(cy) });
     return `
       <div class="hi" style="
         left: ${pctX(step.rect_left)}%;
