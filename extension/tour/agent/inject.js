@@ -880,16 +880,77 @@
       }
     }
 
+    // promptStartMeta shows a modal asking the operator for the
+    // tour's title + description BEFORE the picker arms. The
+    // metadata typed here ends up as the H1 + intro paragraph
+    // in the printed preview / Word export, so it's worth
+    // gathering up-front instead of leaving "Tour for /login"
+    // placeholder names to clutter the list view.
+    function promptStartMeta(routePath) {
+      return new Promise(resolve => {
+        const modal = document.createElement('div');
+        modal.className = 'editor';
+        // Centre instead of top-right — it's a blocking prompt
+        // so it deserves the screen's attention.
+        modal.style.cssText = [
+          'left: 50%', 'top: 50%',
+          'transform: translate(-50%, -50%)',
+          'right: auto', 'width: 360px',
+        ].join('; ') + ';';
+        modal.innerHTML = `
+          <div style="font-weight:600; font-size:15px; margin-bottom:8px">New tour</div>
+          <label>Title <span style="color:#ef4444">*</span></label>
+          <input class="meta-title" placeholder="e.g. Steps to Open User Profile" />
+          <label>Description / figure caption</label>
+          <textarea class="meta-desc" placeholder="What does this walkthrough show? Appears as the intro paragraph in the printed preview."></textarea>
+          <div class="actions">
+            <button class="ghost meta-cancel">Cancel</button>
+            <button class="primary meta-start" disabled>Start recording</button>
+          </div>
+        `;
+        root.appendChild(modal);
+        const titleEl = modal.querySelector('.meta-title');
+        const descEl  = modal.querySelector('.meta-desc');
+        const startEl = modal.querySelector('.meta-start');
+        // Start button enables once Title is non-empty.
+        const sync = () => { startEl.disabled = titleEl.value.trim().length === 0; };
+        titleEl.addEventListener('input', sync);
+        setTimeout(() => titleEl.focus(), 0);
+
+        function finish(meta) {
+          modal.remove();
+          resolve(meta);
+        }
+        modal.querySelector('.meta-cancel').addEventListener('click', () => finish(null));
+        startEl.addEventListener('click', () => finish({
+          name: titleEl.value.trim(),
+          description: descEl.value.trim(),
+        }));
+        // Enter in the title field jumps to description; Enter
+        // in description submits when title is filled.
+        titleEl.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); descEl.focus(); }
+        });
+        descEl.addEventListener('keydown', e => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !startEl.disabled) {
+            e.preventDefault(); startEl.click();
+          }
+        });
+      });
+    }
+
     async function start(routePath) {
       if (active) return;
+      const meta = await promptStartMeta(routePath);
+      if (!meta) return; // operator cancelled
       active = true;
       paused = false;
       lastStep = null;
       badge = 0;
       tour = {
-        name: `Tour for ${routePath}`,
-        route: routePath,
-        description: '',
+        name: meta.name,
+        route: routePath, // kept internally for route-matching; not surfaced in previews
+        description: meta.description,
         // base_* match the FULL document we capture (not just
         // the viewport) — scrollWidth × scrollHeight. Step
         // rects are stored in document coords too, so badges
@@ -1125,7 +1186,7 @@
       ? tours.map(t => `
           <div style="display:flex;gap:2px">
             <button data-act="play" data-id="${t.id}" style="flex:1">▶ Play: ${escapeHtml(t.name)}</button>
-            <button data-act="preview" data-id="${t.id}" title="Open printable preview" style="padding:8px 10px">📄</button>
+            <button data-act="preview" data-id="${t.id}" title="📄 Preview: ${escapeHtml(t.name)}" style="padding:8px 10px">📄</button>
           </div>`).join('')
       : `<div class="hint">No tour saved for this page.</div>`;
     // Multi-preview entry — only meaningful with 2+ tours on the
