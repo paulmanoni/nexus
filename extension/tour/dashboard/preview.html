@@ -355,12 +355,16 @@ function renderComposite(tour, steps) {
       return { ...it, cx, cy, placement: placeCard(it.step) };
     });
 
+  // Badges are pinned to the OUTSIDE top-left corner of each
+  // highlight rect so they don't sit on top of the target and
+  // obscure what's being labelled. translate(-50%, -50%) on
+  // the .pin (CSS) centres the badge on the rect's corner, so
+  // roughly 3/4 of the pill lives in the margin above-left of
+  // the highlight — a clear "this step starts here" anchor.
   const pins = steps.map(({ step, prefix, depth }) => {
     const w = step.rect_width;
     const h = step.rect_height;
     if (!w || !h) return ''; // no rect — list-only step
-    const cx = step.rect_left + w / 2;
-    const cy = step.rect_top  + h / 2;
     return `
       <div class="hi" data-step-id="${escapeHtml(step.id || '')}" style="
         left: ${pctX(step.rect_left)}%;
@@ -369,8 +373,8 @@ function renderComposite(tour, steps) {
         height: ${pctY(h)}%;
       "></div>
       <div class="pin ${depth > 0 ? 'sub' : ''}" data-step-id="${escapeHtml(step.id || '')}" style="
-        left: ${pctX(cx)}%;
-        top:  ${pctY(cy)}%;
+        left: ${pctX(step.rect_left)}%;
+        top:  ${pctY(step.rect_top)}%;
       ">
         <span class="badge">${escapeHtml(prefix)}</span>
       </div>`;
@@ -430,10 +434,12 @@ function renderFallback(steps) {
 
 function renderTour(tour, tourIdx, tourCount) {
   const steps = flat(tour.steps || [], '', 0, []);
+  // Route is kept internally for matching but not shown — it's
+  // a deploy-side detail, not part of the user-facing manual.
+  // Description (the figure caption) replaces it as the lead-in.
   const cover = `
     <header class="cover">
       <h1>${escapeHtml(tour.name || 'Untitled tour')}</h1>
-      <div class="route">${escapeHtml(tour.route || '/')}</div>
       ${tour.description ? `<p>${escapeHtml(tour.description)}</p>` : ''}
       ${tourCount > 1 ? `<span class="tour-pos">Tour ${tourIdx + 1} of ${tourCount}</span>` : ''}
     </header>`;
@@ -729,11 +735,16 @@ function buildClipboardHTML(tours, imgs) {
     const pageBreak = idx < tours.length - 1
       ? `<br clear="all" style="mso-special-character:line-break; page-break-before:always"/>`
       : '';
+    // Route intentionally omitted — it's a deploy detail, not
+    // part of the user-facing manual. Description carries the
+    // human-readable intro that the operator typed at record
+    // time.
+    const tourPos = tours.length > 1
+      ? `<p style="${meta}">Tour ${idx + 1} of ${tours.length}</p>`
+      : '';
     return `
       <h1 style="${h1}">${escapeHtml(tour.name || 'Untitled tour')}</h1>
-      <p style="${meta}">Route: ${escapeHtml(tour.route || '/')}${
-        tours.length > 1 ? ` &middot; Tour ${idx + 1} of ${tours.length}` : ''
-      }</p>
+      ${tourPos}
       ${tour.description ? `<p style="${para}">${escapeHtml(tour.description)}</p>` : ''}
       <h2 style="${h2}">Steps</h2>
       ${renderSteps(tour.steps || [])}
@@ -776,7 +787,6 @@ function buildClipboardPlain(tours) {
   return tours.map((tour, idx) => {
     const head = [
       tour.name || 'Untitled tour',
-      tour.route ? `Route: ${tour.route}` : '',
       tour.description || '',
       tours.length > 1 ? `Tour ${idx + 1} of ${tours.length}` : '',
     ].filter(Boolean).join('\n');
