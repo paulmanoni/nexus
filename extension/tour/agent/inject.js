@@ -1183,11 +1183,25 @@
     menu.className = 'menu';
     const recordBtn  = `<button data-act="record">▶ Record new tour</button>`;
     const playBlock  = tours.length
-      ? tours.map(t => `
+      ? tours.map(t => {
+          // Defensive fallback chain — earlier recordings (pre-
+          // v0.78.8 prompt flow) sometimes saved with empty
+          // name when the description path overwrote it. Show
+          // a short id-derived label so the operator can still
+          // identify + open the tour to fix its title.
+          const label = (t.name && t.name.trim())
+            || t.label
+            || (t.route ? `Tour for ${t.route}` : '')
+            || (t.id ? `Untitled (${t.id.slice(0, 6)})` : 'Untitled tour');
+          if (!t.name || !t.name.trim()) {
+            console.warn('tour: missing name', t);
+          }
+          return `
           <div style="display:flex;gap:2px">
-            <button data-act="play" data-id="${t.id}" style="flex:1">▶ Play: ${escapeHtml(t.name)}</button>
-            <button data-act="preview" data-id="${t.id}" title="📄 Preview: ${escapeHtml(t.name)}" style="padding:8px 10px">📄</button>
-          </div>`).join('')
+            <button data-act="play" data-id="${t.id}" style="flex:1">▶ Play: ${escapeHtml(label)}</button>
+            <button data-act="preview" data-id="${t.id}" title="📄 Preview: ${escapeHtml(label)}" style="padding:8px 10px">📄</button>
+          </div>`;
+        }).join('')
       : `<div class="hint">No tour saved for this page.</div>`;
     // Multi-preview entry — only meaningful with 2+ tours on the
     // current route. Opens every tour for this route stacked in
