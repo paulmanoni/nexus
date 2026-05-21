@@ -104,7 +104,11 @@
   }
   .callout.sub .num { background: var(--sub); color: #fff; }
   .callout h4 { display: inline; margin: 0; font-size: 12px; font-weight: 700; vertical-align: middle; }
-  .callout p { margin: 4px 0 0; color: #333; }
+  /* pre-wrap preserves manual line breaks + indentation the
+     operator typed in the inline editor. Without it, runs of
+     whitespace collapsed into a single space and the
+     formatting that worked at edit-time vanished. */
+  .callout p { margin: 4px 0 0; color: #333; white-space: pre-wrap; }
 
   @media (max-width: 900px) {
     .callout { width: 180px; max-width: 35%; font-size: 10px; }
@@ -145,19 +149,20 @@
      Inner shadow draws the orange border-effect; the outer
      shadow softens the edge so the rectangle visually
      "sits on" the screenshot rather than cutting into it. */
-  /* Highlight rect: outline only — NO background fill. The
-     fill (even at low alpha) blanketed cover-image content
-     when html2canvas-pro composited it to PNG, producing a
-     solid orange block over whatever the step labelled.
-     Thin border via box-shadow is enough to mark the target
-     without obscuring it. */
+  /* Highlight rect: real CSS border, NOT box-shadow. The
+     previous box-shadow:inset trick is a known html2canvas-pro
+     bug — the lib fills the whole element with the shadow
+     colour instead of drawing a thin inset stroke, producing
+     a solid orange block in clipboard PNGs whenever the
+     labelled step pointed at a large container.
+     box-sizing:border-box keeps the border from inflating
+     the rect away from the target's actual extents. */
   .hi {
     position: absolute; pointer-events: none;
+    border: 1.5px solid var(--badge);
     border-radius: 3px;
     background: transparent;
-    box-shadow:
-      inset 0 0 0 1.5px var(--badge),
-      0 0 0 0.5px rgba(245,158,11,.4);
+    box-sizing: border-box;
     z-index: 1;
   }
 
@@ -919,12 +924,18 @@ async function loadHtml2Canvas() {
 // Word's autocorrect; substeps nest as <ol type="a">.
 function buildClipboardHTML(tours, imgsPerTour) {
   const A = 'font-family:Arial, sans-serif';
+  // white-space:pre-wrap on text-bearing styles so multi-space
+  // indentation + manual line breaks the operator typed in the
+  // editor survive into Word. Default white-space:normal
+  // collapses runs of whitespace and drops standalone newlines,
+  // which made carefully-formatted step descriptions read as
+  // one squashed run.
   const body = `${A}; font-size:12pt; color:#000; line-height:1.5`;
   const h1   = `${A}; font-size:18pt; font-weight:bold; margin:18pt 0 6pt; color:#000`;
   const h2   = `${A}; font-size:14pt; font-weight:bold; margin:14pt 0 6pt; color:#000`;
   const meta = `${A}; font-size:11pt; font-style:italic; color:#555; margin:0 0 6pt`;
-  const para = `${A}; font-size:12pt; margin:6pt 0; color:#000`;
-  const li   = `${A}; font-size:12pt; margin:4pt 0; color:#000`;
+  const para = `${A}; font-size:12pt; margin:6pt 0; color:#000; white-space:pre-wrap`;
+  const li   = `${A}; font-size:12pt; margin:4pt 0; color:#000; white-space:pre-wrap`;
   const cap  = `${A}; font-size:10pt; font-style:italic; color:#444; margin:6pt 0; text-align:center`;
 
   // renderSteps turns the step tree into ol/li markup. Numbered
