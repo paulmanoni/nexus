@@ -507,6 +507,28 @@
     return _h2c;
   }
 
+  // captureClean takes a screenshot of the page with no overlays.
+  // Used as the tour's cover image — the preview overlays all
+  // step badges on this single image so the operator can see
+  // the whole walkthrough at a glance instead of N separate
+  // screenshots.
+  async function captureClean() {
+    const h2c = await loadHtml2Canvas();
+    overlayHost.style.visibility = 'hidden';
+    let canvas;
+    try {
+      canvas = await h2c(document.body, {
+        backgroundColor: '#ffffff',
+        scale: Math.min(window.devicePixelRatio || 1, 2),
+        logging: false,
+        useCORS: true,
+      });
+    } finally {
+      overlayHost.style.visibility = '';
+    }
+    return canvas.toDataURL('image/png');
+  }
+
   // captureWithBadge takes a screenshot of the WHOLE page and
   // overlays a coloured ring + numbered badge centred on the
   // target's bounding rect. Returns a data: URL PNG.
@@ -703,7 +725,8 @@
       // Re-arm the picker for the next click — recorders capture
       // every click until the operator hits Stop.
       picker.stop();
-      // Build step
+      // Build step — rect fields persist so the composite preview
+      // can lay numbered badges at the original screen positions.
       const step = {
         selector: p.selector,
         label: p.label,
@@ -711,7 +734,11 @@
         text: `Click ${p.label}.`,
         placement: 'bottom',
         children: [],
-        // _rect kept on the local step only — stripped before save.
+        rect_left:   Math.round(p.rect.left),
+        rect_top:    Math.round(p.rect.top),
+        rect_width:  Math.round(p.rect.width),
+        rect_height: Math.round(p.rect.height),
+        // _rect kept for the in-recorder substep heuristic only.
         _rect: p.rect,
       };
       // Capture screenshot with badge (async — non-blocking).
@@ -741,15 +768,28 @@
         name: `Tour for ${routePath}`,
         route: routePath,
         description: '',
+        // base_width captured here so the preview can scale step
+        // rects down to the rendered cover image's display width.
+        base_width: document.documentElement.clientWidth,
         steps: [],
       };
       bar = buildBar();
       fab.classList.add('recording');
+      // Capture the clean cover image first (no overlays) — this
+      // is what the single-tour PDF preview lays badges over.
+      // Best-effort: if html2canvas fails, the preview falls
+      // back to per-step screenshots.
+      captureClean()
+        .then(url => { tour.cover_image_url = url; })
+        .catch(err => console.warn('tour: cover capture failed', err));
       // First click — kick off the picker; from now on each click
       // re-arms it inside onPicked.
       picker.start(onPicked, () => stop(false));
     }
 
+    // stripInternals removes recorder-only scratch fields before
+    // serialising the tour for save. The persisted rect_* ints
+    // stay; _rect (the live DOMRect) goes.
     function stripRects(steps) {
       for (const s of steps) {
         delete s._rect;
