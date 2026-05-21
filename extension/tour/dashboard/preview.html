@@ -307,23 +307,12 @@ function escapeForWord(s) {
 }
 
 // flat walks the tree DFS yielding { step, prefix, depth }.
-// Root steps are numbered 1, 2, 3; first-level substeps use
-// lowercase letters (1.a, 1.b, 1.c) so the operator can tell
-// at a glance which steps are children vs siblings. Deeper
-// nesting reverts to numbers — multi-letter depths get
-// ambiguous fast. Per-parent restart is preserved (each
-// children array starts from a / 1 again).
+// Every level uses numbers with dot separators: 1, 1.1, 1.2,
+// 1.2.1, 2, 2.1 … Restart per parent is preserved so each
+// children array starts at 1 again.
 function flat(steps, parentPrefix, depth, out) {
   steps.forEach((s, i) => {
-    let label;
-    if (depth === 1) {
-      // a, b, c … z, then aa, ab if a substep list is huge
-      label = i < 26
-        ? String.fromCharCode(97 + i)
-        : `a${String.fromCharCode(97 + i - 26)}`;
-    } else {
-      label = String(i + 1);
-    }
+    const label = String(i + 1);
     const prefix = parentPrefix ? `${parentPrefix}.${label}` : label;
     out.push({ step: s, prefix, depth });
     if (s.children && s.children.length) flat(s.children, prefix, depth + 1, out);
@@ -537,10 +526,9 @@ function renderComposite(tour, steps) {
       ? `<button class="ghost merge-scene"
                  data-tour-id="${escapeHtml(tour.id || '')}"
                  data-from-cover="${i}"
-                 data-into-cover="${i - 1}"
                  style="margin-left:12px;padding:3px 10px;font-size:11px;color:#374151"
-                 title="Move every step in this scene under the last step of the previous scene as substeps">
-           ↳ Merge into previous as substeps
+                 title="Pick any step from an earlier scene to attach this scene's steps under as substeps">
+           ↳ Merge as substeps of…
          </button>`
       : '';
     const sectionHeader = covers.length > 1
@@ -658,15 +646,21 @@ async function load() {
       await deleteOneTour(t, /* inPlace = */ true);
     });
   });
-  // Scene-merge buttons: demote a scene's steps into substeps
-  // of the previous scene's last step.
+  // Scene-merge buttons: open a picker so the operator can pick
+  // WHICH earlier step this scene's contents should become
+  // substeps of. The previous version always picked the LAST
+  // step of the immediately-preceding scene, which was wrong
+  // for tours where the dropdown belongs to a step from much
+  // earlier in the flow.
   document.querySelectorAll('.merge-scene').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const tourId = btn.getAttribute('data-tour-id');
       const from = Number(btn.getAttribute('data-from-cover'));
-      const into = Number(btn.getAttribute('data-into-cover'));
       const tour = tours.find(t => t.id === tourId);
-      if (tour) mergeScene(tour, from, into);
+      if (!tour) return;
+      const target = await pickMergeTarget(tour, from, btn);
+      if (!target) return; // operator cancelled
+      mergeScene(tour, from, target.stepId);
     });
   });
   // Inline edit: bind blur handlers to every editable element.
@@ -740,60 +734,136 @@ async function saveInlineEdit(el) {
   }
 }
 
-// mergeScene moves every step whose cover_index === fromCover
-// under the LAST step whose cover_index === intoCover as
-// substeps. Re-saves the tour and reloads the preview so the
-// new tree + numbering renders.
+// pickMergeTarget renders a small popover near the merge button
+// listing every step in the tour that comes BEFORE the source
+// scene. Operator clicks one to pick it as the parent. Returns
+// { stepId } on selection, null on cancel.
 //
-// Tree restructure (in-memory before save):
-//   1. Walk the flat step list, locate the "target" step
-//      (last root-level step in intoCover) and the "movers"
-//      (every step with cover_index === fromCover).
-//   2. Remove movers from their current location (root or
-//      children of another step).
-//   3. Append movers to target.children. cover_index on the
-//      movers stays put so the previewer can still display
-//      their original screenshot when rendering substep
-//      callouts that have rect data.
-async function mergeScene(tour, fromCover, intoCover) {
-  if (!tour || !tour.steps || !tour.steps.length) return;
-  if (!confirm(`Merge Scene ${fromCover + 1}'s steps under the last step of Scene ${intoCover + 1}?\n\nThe steps move into a substep group (a, b, c…). This is reversible by re-recording.`)) return;
+// We list every candidate (not just root steps) because the
+// operator may want to attach a dropdown's contents under a
+// SUBSTEP rather than always a root — e.g. "Step 1: Profile
+// menu → 1.a: Hover trigger → (merge here): 1.a.i: Click logout".
+function pickMergeTarget(tour, fromCover, anchorBtn) {
+  return new Promise(resolve => {
+    // Gather candidates: every step whose cover_index <
+    // fromCover, displayed in DFS order with their existing
+    // prefix labels so the operator sees the same numbers
+    // they see on the page.
+    const all = flat(tour.steps || [], '', 0, []);
+    const candidates = all.filter(({ step }) => {
+      const ci = Number.isInteger(step.cover_index) ? step.cover_index : 0;
+      return ci < fromCover && step.id;
+    });
+    if (!candidates.length) {
+      alert('No earlier steps to attach under. Capture a step in an earlier scene first.');
+      resolve(null);
+      return;
+    }
 
-  // Find target: the LAST root-level step belonging to intoCover.
-  let target = null;
-  for (const s of tour.steps) {
-    const ci = Number.isInteger(s.cover_index) ? s.cover_index : 0;
-    if (ci === intoCover) target = s;
-  }
+    // Build the picker. Positioned absolutely below the merge
+    // button so it visually anchors to the action that opened it.
+    const popover = document.createElement('div');
+    popover.style.cssText = `
+      position:absolute;
+      background:#fff; border:1px solid var(--line);
+      border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18);
+      padding:6px; min-width:280px; max-width:380px; max-height:340px;
+      overflow:auto; z-index:50;
+    `;
+    popover.innerHTML = `
+      <div style="font-size:11px;color:#888;padding:4px 8px;text-transform:uppercase;letter-spacing:.05em">
+        Attach Scene ${fromCover + 1}'s steps under
+      </div>` +
+      candidates.map(({ step, prefix }) => `
+        <button class="pick-target" data-step-id="${escapeHtml(step.id)}"
+                style="display:block;width:100%;text-align:left;background:transparent;border:0;padding:6px 10px;border-radius:6px;cursor:pointer;font:inherit;color:#111">
+          <span style="display:inline-block;background:#f59e0b;color:#111;font-weight:700;padding:1px 8px;border-radius:999px;font-size:11px;margin-right:6px">${escapeHtml(prefix)}</span>
+          ${escapeHtml(step.title || step.label || 'Step ' + prefix)}
+        </button>`).join('') +
+      `<button class="pick-cancel" style="display:block;width:100%;text-align:center;background:transparent;border:0;padding:6px 10px;margin-top:4px;border-top:1px solid var(--line);border-radius:0 0 6px 6px;cursor:pointer;font:inherit;color:#888">
+        Cancel
+      </button>`;
+    document.body.appendChild(popover);
+
+    // Anchor under the button. getBoundingClientRect is
+    // viewport-relative; popover is position:absolute so we
+    // add window.scrollY to get page coords.
+    const r = anchorBtn.getBoundingClientRect();
+    popover.style.left = (r.left + window.scrollX) + 'px';
+    popover.style.top  = (r.bottom + window.scrollY + 4) + 'px';
+
+    function close(value) {
+      popover.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    }
+    function onKey(e) { if (e.key === 'Escape') close(null); }
+    document.addEventListener('keydown', onKey);
+
+    popover.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      if (btn.classList.contains('pick-cancel')) return close(null);
+      if (btn.classList.contains('pick-target')) {
+        close({ stepId: btn.getAttribute('data-step-id') });
+      }
+    });
+    // Click outside the popover cancels.
+    setTimeout(() => {
+      function outside(e) {
+        if (!popover.contains(e.target)) {
+          document.removeEventListener('mousedown', outside, true);
+          close(null);
+        }
+      }
+      document.addEventListener('mousedown', outside, true);
+    }, 0);
+  });
+}
+
+// mergeScene moves every step whose cover_index === fromCover
+// under the step with id targetId as substeps. Re-saves the
+// tour and reloads the preview so the new tree + numbering
+// renders.
+async function mergeScene(tour, fromCover, targetId) {
+  if (!tour || !tour.steps || !tour.steps.length || !targetId) return;
+  const target = findStepInTour(tour, targetId);
   if (!target) {
-    alert(`No step found in Scene ${intoCover + 1} to attach under. Add a step there first.`);
+    alert('Selected target step no longer exists. Try again.');
     return;
   }
+  const targetLabel = target.title || target.label || 'the selected step';
+  if (!confirm(`Move Scene ${fromCover + 1}'s steps under "${targetLabel}" as substeps?\n\nThey become a substep group (a, b, c…). Reversible by editing the tour.`)) return;
+
   if (!target.children) target.children = [];
 
-  // Collect movers + remove them from root step list. Mutates
-  // tour.steps in place.
+  // Detach the target itself defensively in case it lived under
+  // tour.steps — we don't want it to be both the parent and a
+  // mover candidate.
   const remaining = [];
-  for (const s of tour.steps) {
-    const ci = Number.isInteger(s.cover_index) ? s.cover_index : 0;
-    if (ci === fromCover && s !== target) {
-      target.children.push(s);
-    } else {
-      remaining.push(s);
+  function detachFromCover(arr) {
+    const next = [];
+    for (const s of arr) {
+      const ci = Number.isInteger(s.cover_index) ? s.cover_index : 0;
+      if (ci === fromCover && s.id !== targetId) {
+        target.children.push(s);
+      } else {
+        if (s.children && s.children.length) s.children = detachFromCover(s.children);
+        next.push(s);
+      }
     }
+    return next;
   }
-  tour.steps = remaining;
+  tour.steps = detachFromCover(tour.steps);
 
-  // Save the new tree.
   const btn = document.querySelector(`.merge-scene[data-from-cover="${fromCover}"]`);
   if (btn) { btn.disabled = true; btn.textContent = 'Merging…'; }
   try {
     await API.upsert(tour);
-    // Reload the preview from scratch so the layout reflects the new shape.
     location.reload();
   } catch (e) {
     alert('Merge failed: ' + (e.message || e));
-    if (btn) { btn.disabled = false; btn.textContent = '↳ Merge into previous as substeps'; }
+    if (btn) { btn.disabled = false; btn.textContent = '↳ Merge as substeps of…'; }
   }
 }
 
@@ -1090,7 +1160,7 @@ function buildClipboardHTML(tours, imgsPerTour) {
           ? escapeForWord(s.text)
           : escapeForWord(s.title || s.label || '');
         const children = s.children && s.children.length
-          ? `<ol type="a" style="${A}; font-size:12pt; margin:4pt 0 4pt 18pt; color:#000">${
+          ? `<ol style="${A}; font-size:12pt; margin:4pt 0 4pt 18pt; color:#000">${
               s.children.map(c => {
                 const ctext = (c.text && c.text.trim())
                   ? escapeForWord(c.text)
@@ -1181,8 +1251,10 @@ function buildClipboardPlain(tours) {
     ].filter(Boolean).join('\n');
     function renderTextList(steps, parentPrefix) {
       return steps.map((s, i) => {
+        // All-numeric numbering at every depth: 1, 1.1, 1.2,
+        // 1.2.1 … Matches the HTML preview + Word export.
         const num = parentPrefix
-          ? `${parentPrefix}${String.fromCharCode(97 + i)}.`  // a. b. c.
+          ? `${parentPrefix}${i + 1}.`
           : `${i + 1}.`;
         const body = (s.text && s.text.trim()) || s.title || s.label || '';
         const indent = parentPrefix ? '      ' : '   ';
