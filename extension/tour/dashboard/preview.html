@@ -145,16 +145,19 @@
      Inner shadow draws the orange border-effect; the outer
      shadow softens the edge so the rectangle visually
      "sits on" the screenshot rather than cutting into it. */
+  /* Highlight rect: outline only — NO background fill. The
+     fill (even at low alpha) blanketed cover-image content
+     when html2canvas-pro composited it to PNG, producing a
+     solid orange block over whatever the step labelled.
+     Thin border via box-shadow is enough to mark the target
+     without obscuring it. */
   .hi {
     position: absolute; pointer-events: none;
     border-radius: 3px;
-    background: rgba(245,158,11,.08);
-    /* Thin 1px border via box-shadow (captures cleanly in
-       html2canvas-pro). 0.5px outer halo softens the edge so
-       the rectangle reads as marker, not as a cut. */
+    background: transparent;
     box-shadow:
-      inset 0 0 0 1px var(--badge),
-      0 0 0 0.5px rgba(245,158,11,.35);
+      inset 0 0 0 1.5px var(--badge),
+      0 0 0 0.5px rgba(245,158,11,.4);
     z-index: 1;
   }
 
