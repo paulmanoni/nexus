@@ -134,15 +134,24 @@
   /* On-image pins are JUST badges now — the descriptive cards
      live in the side margin columns so they don't overlap
      screenshot content. */
-  /* Faint outline rectangle for the highlighted control —
-     uses the persisted rect_*, scaled. Same as .pin sizing
-     but at the rect's actual extents. */
+  /* Faint highlight rectangle for the labelled control —
+     uses persisted rect_*, scaled to wrapper. We use
+     box-shadow inset+outset INSTEAD of outline because:
+       1. html2canvas-pro sometimes drops outline (the
+          screenshot copied to the clipboard ended up
+          without the rectangles around items).
+       2. box-shadow is universally captured by both
+          html2canvas variants and the browser print engine.
+     Inner shadow draws the orange border-effect; the outer
+     shadow softens the edge so the rectangle visually
+     "sits on" the screenshot rather than cutting into it. */
   .hi {
     position: absolute; pointer-events: none;
-    outline: 2px solid var(--badge);
-    outline-offset: 1px;
     border-radius: 4px;
-    background: rgba(245,158,11,.08);
+    background: rgba(245,158,11,.10);
+    box-shadow:
+      inset 0 0 0 2px var(--badge),
+      0 0 0 1px rgba(245,158,11,.4);
     z-index: 1;
   }
 
@@ -726,11 +735,16 @@ function buildClipboardHTML(tours, imgs) {
   let figureNumber = 0;
   const parts = tours.map((tour, idx) => {
     figureNumber++;
+    // Image first, then caption — matches the classic manual
+    // convention ("Figure N: ..." below the picture). Word and
+    // Google Docs both honour this ordering when the operator
+    // pastes; the caption stays attached to the image even
+    // after they reflow the layout.
     const img = imgs[idx]
-      ? `<p style="${cap}">Figure ${figureNumber}: ${escapeHtml(tour.name || 'Tour overview')}</p>
-         <p style="margin:6pt 0 12pt; text-align:center">
+      ? `<p style="margin:6pt 0; text-align:center">
            <img src="${imgs[idx]}" style="max-width:100%; border:1pt solid #999"/>
-         </p>`
+         </p>
+         <p style="${cap}">Figure ${figureNumber}: ${escapeHtml(tour.name || 'Tour overview')}</p>`
       : '';
     const pageBreak = idx < tours.length - 1
       ? `<br clear="all" style="mso-special-character:line-break; page-break-before:always"/>`
