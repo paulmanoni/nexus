@@ -624,7 +624,7 @@
       b.innerHTML = `
         <span class="status">● Recording</span>
         <span class="count">0</span>
-        <button class="pause">⏸ Pause</button>
+        <button class="pause" title="Pause to interact with the page without capturing — e.g. open a dropdown before clicking inside it">⏸ Pause</button>
         <button class="edit-last" disabled>✎ Edit last step</button>
         <button class="stop">Stop &amp; Save</button>
         <button class="danger cancel">Cancel</button>
@@ -650,10 +650,11 @@
       if (paused) {
         picker.stop();
         btn.textContent = '▶ Resume';
-        status.textContent = '⏸ Paused';
+        // Paused-state hint coaches the dropdown-capture flow:
+        // operators were getting stuck trying to point at items
+        // inside menus that close on the picker's preventDefault.
+        status.innerHTML = '⏸ Paused — interact with page, then Resume to capture inside dropdowns/menus';
         fab.classList.remove('recording');
-        // Visual cue inside the bar so the dim host page reads
-        // as "we're waiting on you" instead of "recording".
         bar.style.background = '#f59e0b';
         bar.style.color = '#111';
       } else {
