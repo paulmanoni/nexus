@@ -421,9 +421,17 @@
       return t;
     }
 
+    // lastHover tracks the most recently hovered target so the
+    // Enter-key path can capture it without a click. Clicks
+    // close transient UIs (dropdowns, menus, popovers) before
+    // the picker's preventDefault even fires in some hosts;
+    // keyboard capture sidesteps that entire class of bug.
+    let lastHover = null;
+
     function onMove(e) {
       const t = hitTest(e);
-      if (!t || isOurs(t)) { hi.style.display = 'none'; label.style.display = 'none'; return; }
+      if (!t || isOurs(t)) { lastHover = null; hi.style.display = 'none'; label.style.display = 'none'; return; }
+      lastHover = t;
       moveTo(t.getBoundingClientRect(), describeElement(t));
     }
     // onDown handles selection. pointerdown is used instead of
@@ -468,7 +476,38 @@
         document.removeEventListener(ev, suppressOnce, true);
       });
     }
-    function onKey(e) { if (e.key === 'Escape' && onCancel) onCancel(); }
+    function onKey(e) {
+      if (e.key === 'Escape' && onCancel) onCancel();
+      // Enter captures the currently hovered element WITHOUT
+      // a click — for transient UIs that close on outside
+      // click (Vuetify v-menu, MUI Menu, Bootstrap dropdown,
+      // etc.) this is the only way to reach items inside.
+      // Skip when the focus is in an editable field so Enter
+      // still inserts a newline / submits a form.
+      if (e.key === 'Enter' && lastHover && !isInEditable(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        const rect = lastHover.getBoundingClientRect();
+        const out = {
+          selector: buildSelector(lastHover),
+          label: describeElement(lastHover),
+          rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        };
+        if (onPick) onPick(out);
+      }
+    }
+    // isInEditable lets the picker leave Enter alone when the
+    // operator is typing in a host input — important because
+    // the host may have a search box inside a dropdown that
+    // submits on Enter.
+    function isInEditable(e) {
+      const t = e.target;
+      if (!t) return false;
+      if (t.isContentEditable) return true;
+      const tag = t.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    }
 
     return {
       start(onPickCb, onCancelCb) {
@@ -622,9 +661,9 @@
       const b = document.createElement('div');
       b.className = 'recbar';
       b.innerHTML = `
-        <span class="status">● Recording</span>
+        <span class="status">● Recording <span style="opacity:.6;font-size:11px">(P pause · Enter capture hovered)</span></span>
         <span class="count">0</span>
-        <button class="pause" title="Pause to interact with the page without capturing — e.g. open a dropdown before clicking inside it">⏸ Pause</button>
+        <button class="pause" title="Pause (P) — interact with the page (e.g. open a dropdown) then Resume to capture inside">⏸ Pause</button>
         <button class="edit-last" disabled>✎ Edit last step</button>
         <button class="stop">Stop &amp; Save</button>
         <button class="danger cancel">Cancel</button>
@@ -653,7 +692,7 @@
         // Paused-state hint coaches the dropdown-capture flow:
         // operators were getting stuck trying to point at items
         // inside menus that close on the picker's preventDefault.
-        status.innerHTML = '⏸ Paused — interact with page, then Resume to capture inside dropdowns/menus';
+        status.innerHTML = '⏸ Paused — interact, then press <b>P</b> to resume (keeps dropdowns open). Hover + <b>Enter</b> to capture without clicking.';
         fab.classList.remove('recording');
         bar.style.background = '#f59e0b';
         bar.style.color = '#111';
@@ -940,12 +979,29 @@
       });
     }
 
+    // recorderHotkey runs at the document level while recording
+    // is active. `P` toggles pause/resume without an outside-
+    // click on the recorder bar (which would close a hover-
+    // opened dropdown). Skipped while focused inside an
+    // editable element so typing the letter still works.
+    function recorderHotkey(e) {
+      if (!active) return;
+      if (e.key !== 'p' && e.key !== 'P') return;
+      const t = e.target;
+      if (t && (t.isContentEditable ||
+                /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      togglePause();
+    }
+
     async function start(routePath) {
       if (active) return;
       const meta = await promptStartMeta(routePath);
       if (!meta) return; // operator cancelled
       active = true;
       paused = false;
+      document.addEventListener('keydown', recorderHotkey, true);
       lastStep = null;
       badge = 0;
       tour = {
@@ -989,6 +1045,7 @@
     async function stop(save) {
       if (!active) return;
       active = false;
+      document.removeEventListener('keydown', recorderHotkey, true);
       picker.stop();
       if (bar) { bar.remove(); bar = null; }
       fab.classList.remove('recording');
