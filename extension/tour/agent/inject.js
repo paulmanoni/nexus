@@ -293,10 +293,33 @@
   // in-page agent uses the same paths.
 
   const API = {
-    listActive(route) {
-      return fetch(`/__nexus/tour/active?route=${encodeURIComponent(route)}`)
-        .then(r => r.ok ? r.json() : Promise.reject(new Error('list tours failed')))
-        .then(j => j.tours || []);
+    // listActive tries the exact pathname first, then a
+    // normalised form (no trailing slash). Hosts sometimes
+    // serve the same page at /foo and /foo/ depending on the
+    // router — operators record at one, hit the FAB at the
+    // other, and the strict equality lookup returns nothing.
+    // Two cheap queries beat that whole category of bug.
+    async listActive(route) {
+      const tried = [];
+      const seen = new Set();
+      const variants = [route];
+      // Toggle trailing slash both ways.
+      if (route.endsWith('/') && route !== '/') variants.push(route.replace(/\/+$/, ''));
+      else if (!route.endsWith('/')) variants.push(route + '/');
+      for (const v of variants) {
+        tried.push(v);
+        const r = await fetch(`/__nexus/tour/active?route=${encodeURIComponent(v)}`);
+        if (!r.ok) continue;
+        const j = await r.json();
+        for (const t of (j.tours || [])) {
+          if (!seen.has(t.id)) { seen.add(t.id); }
+        }
+        if ((j.tours || []).length > 0) {
+          return j.tours;
+        }
+      }
+      console.log('tour: no tours found for route(s):', tried);
+      return [];
     },
     upsertTour(tour) {
       return fetch('/__nexus/tour/tours', {
@@ -671,6 +694,7 @@
       b.innerHTML = `
         <span class="status">● Recording <span style="opacity:.6;font-size:11px">(P pause · Enter capture hovered)</span></span>
         <span class="count">0</span>
+        <button class="capture-scene" title="Take a fresh screenshot of the current page state — subsequent steps land on this new screenshot. Use after opening a dropdown / modal that wasn't visible at start.">📸 Capture scene</button>
         <button class="pause" title="Pause (P) — interact with the page (e.g. open a dropdown) then Resume to capture inside">⏸ Pause</button>
         <button class="edit-last" disabled>✎ Edit last step</button>
         <button class="stop">Stop &amp; Save</button>
@@ -681,7 +705,34 @@
       b.querySelector('.cancel').addEventListener('click', () => stop(false));
       b.querySelector('.edit-last').addEventListener('click', () => editLastStep());
       b.querySelector('.pause').addEventListener('click', () => togglePause());
+      b.querySelector('.capture-scene').addEventListener('click', () => captureScene());
       return b;
+    }
+
+    // captureScene grabs a fresh cover screenshot on demand and
+    // bumps coverIndex so subsequent steps land on it. Used when
+    // the operator has manually arranged the page (open
+    // dropdown, expanded panel, scrolled section) and the
+    // auto-capture-on-resume timing didn't catch it. Brief
+    // toast confirms the new scene number.
+    async function captureScene() {
+      if (!active) return;
+      const btn = bar && bar.querySelector('.capture-scene');
+      if (btn) { btn.disabled = true; btn.textContent = '📸 Capturing…'; }
+      try {
+        const url = await captureClean();
+        if (url && tour) {
+          tour.cover_images = tour.cover_images || [];
+          tour.cover_images.push(url);
+          coverIndex = tour.cover_images.length - 1;
+          toast(`Scene ${coverIndex + 1} captured`);
+        }
+      } catch (e) {
+        console.warn('tour: captureScene failed', e);
+        toast('Capture failed', 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '📸 Capture scene'; }
+      }
     }
 
     // togglePause flips picker capture on/off without ending the
