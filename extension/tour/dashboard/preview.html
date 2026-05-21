@@ -1166,43 +1166,52 @@ function buildClipboardHTML(tours, imgsPerTour) {
   // its parent and joins the prefixes automatically.
   function renderSteps(steps) {
     if (!steps.length) return '';
-    // escapeForWord (not escapeHtml) so multi-space indents +
-    // newlines survive Word's HTML import. CSS pre-wrap on
-    // the <li> styles is the belt; escapeForWord's
-    // &nbsp; substitution is the suspenders — Word strips
-    // pre-wrap in many configurations.
-    return `<ol style="${A}; font-size:12pt; margin:6pt 0 10pt 24pt; color:#000">${
-      steps.map(s => {
-        const text = (s.text && s.text.trim())
-          ? escapeForWord(s.text)
-          : escapeForWord(s.title || s.label || '');
-        const children = s.children && s.children.length
-          ? `<ol style="${A}; font-size:12pt; margin:4pt 0 4pt 18pt; color:#000">${
-              s.children.map(c => {
-                const ctext = (c.text && c.text.trim())
-                  ? escapeForWord(c.text)
-                  : escapeForWord(c.title || c.label || '');
-                return `<li style="${li}">${ctext}</li>`;
-              }).join('')
-            }</ol>`
-          : '';
-        return `<li style="${li}">${text}${children}</li>`;
-      }).join('')
-    }</ol>`;
+    // FLAT paragraph list, not nested <ol>. Nested <ol> in
+    // Word restarts the count at 1 inside each <li>, producing
+    // "1, 2, 3" followed by "1, 2, 3" again. We want the
+    // multilevel format the user expects: "1, 1.1, 1.2, 1.3,
+    // 2, 2.1, …" — flat() already computes those prefixes,
+    // so render each step as a <p> with the prefix as bold
+    // text + indent based on depth.
+    const items = flat(steps, '', 0, []);
+    return items.map(({ step, prefix, depth }) => {
+      const text = (step.text && step.text.trim())
+        ? escapeForWord(step.text)
+        : escapeForWord(step.title || step.label || '');
+      const indent = 18 + depth * 18; // pt, deepens with nesting
+      return `<p style="${A}; font-size:12pt; margin:4pt 0 4pt ${indent}pt; color:#000; white-space:pre-wrap">
+        <strong>${escapeHtml(prefix)}.</strong>&nbsp;&nbsp;${text}
+      </p>`;
+    }).join('');
   }
 
   let figureNumber = 0;
   const parts = tours.map((tour, idx) => {
     // Each tour may have multiple scenes (multi-cover) — emit
-    // one figure per scene with its own caption. Pre-multi-cover
-    // tours collapse to a single figure since the per-tour
-    // array only has one entry.
+    // one figure per scene with its own caption. The caption
+    // names the tour AND the step the scene illustrates so the
+    // operator gets context without flipping back to the step
+    // list. We pick the FIRST step whose cover_index matches
+    // the scene as the representative; for scenes that have
+    // multiple steps we append "+ N more" so the count is
+    // visible at a glance.
     const tourImgs = (imgsPerTour && imgsPerTour[idx]) || [];
+    const tourTitle = escapeHtml(tour.name || 'Tour overview');
     const figures = tourImgs.map((url, sceneIdx) => {
       figureNumber++;
-      const sceneLabel = tourImgs.length > 1
-        ? `${escapeHtml(tour.name || 'Tour overview')} — Scene ${sceneIdx + 1} of ${tourImgs.length}`
-        : `${escapeHtml(tour.name || 'Tour overview')}`;
+      const sceneSteps = flat(tour.steps || [], '', 0, [])
+        .filter(({ step }) => {
+          const ci = Number.isInteger(step.cover_index) ? step.cover_index : 0;
+          return ci === sceneIdx;
+        });
+      const first = sceneSteps[0];
+      const stepTitle = first
+        ? escapeHtml(first.step.title || first.step.label || `Step ${first.prefix}`)
+        : '';
+      const more = sceneSteps.length > 1 ? ` (+${sceneSteps.length - 1} more)` : '';
+      const sceneLabel = stepTitle
+        ? `${tourTitle} — ${stepTitle}${more}`
+        : tourTitle;
       return `<p style="margin:12pt 0 6pt; text-align:center">
            <img src="${url}" style="max-width:100%; border:1pt solid #999"/>
          </p>
@@ -1266,23 +1275,17 @@ function buildClipboardPlain(tours) {
       tour.description || '',
       tours.length > 1 ? `Tour ${idx + 1} of ${tours.length}` : '',
     ].filter(Boolean).join('\n');
-    function renderTextList(steps, parentPrefix) {
-      return steps.map((s, i) => {
-        // All-numeric numbering at every depth: 1, 1.1, 1.2,
-        // 1.2.1 … Matches the HTML preview + Word export.
-        const num = parentPrefix
-          ? `${parentPrefix}${i + 1}.`
-          : `${i + 1}.`;
-        const body = (s.text && s.text.trim()) || s.title || s.label || '';
-        const indent = parentPrefix ? '      ' : '   ';
-        const line = `${indent}${num.padEnd(4)} ${body}`;
-        const children = s.children && s.children.length
-          ? '\n' + renderTextList(s.children, num)
-          : '';
-        return line + children;
-      }).join('\n');
-    }
-    return head + '\n\nSteps\n' + renderTextList(tour.steps || [], '');
+    // Use the same flat() prefix logic as the HTML output so
+    // plaintext paste matches the rendered preview. Indent
+    // grows with depth so the nesting reads clearly in
+    // monospace editors.
+    const items = flat(tour.steps || [], '', 0, []);
+    const list = items.map(({ step, prefix, depth }) => {
+      const indent = '   '.repeat(depth + 1);
+      const body = (step.text && step.text.trim()) || step.title || step.label || '';
+      return `${indent}${prefix}. ${body}`;
+    }).join('\n');
+    return head + '\n\nSteps\n' + list;
   }).join('\n\n----\n\n');
 }
 
