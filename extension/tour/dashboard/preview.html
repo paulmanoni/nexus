@@ -361,10 +361,13 @@ async function resolveTours() {
 }
 
 // renderOneCover builds a single composite block (one screenshot
-// + the steps whose cover_index points at it). renderComposite
-// calls this once per cover so dropdown-revealed items can sit
-// on the cover that shows the dropdown OPEN instead of trying
-// to land on the stale initial screenshot.
+// + the steps whose cover_index points at it). Tagged with
+// data-cover-idx so the Copy-for-Word path can match each
+// rendered composite back to its slot in tour.cover_images.
+// Otherwise a tour with N covers where the middle one has no
+// steps (and gets skipped here) would leave the Copy loop
+// indexing by DOM order, shifting later images into earlier
+// slots.
 function renderOneCover(tour, coverURL, coverIdx, steps) {
   const baseW = tour.base_width  || 1280;
   const baseH = tour.base_height || tour.base_width || 720;
@@ -488,7 +491,7 @@ function renderOneCover(tour, coverURL, coverIdx, steps) {
         </div>`).join('')}
     </div>
     <div class="composite-wrap">
-      <div class="composite" style="aspect-ratio: ${baseW} / ${baseH}">
+      <div class="composite" data-cover-idx="${coverIdx}" style="aspect-ratio: ${baseW} / ${baseH}">
         <img src="${escapeHtml(coverURL)}" alt="Tour overview ${coverIdx + 1}" />
         <svg class="connectors" preserveAspectRatio="none"></svg>
         ${pins}
@@ -1083,16 +1086,32 @@ function copyForWord(tours) {
     const imgsPerTour = [];
     for (const tour of tours) {
       const article = document.querySelector(`article.tour[data-tour-id="${CSS.escape(tour.id || '')}"]`);
-      const composites = article ? article.querySelectorAll('.composite') : [];
-      const tourImgs = [];
+      // Pre-size by cover_images.length so missing rendered
+      // composites still leave a slot (filled with the raw
+      // capture below). Without this, a tour with covers
+      // [A, B, C] where B has no steps (skipped from the
+      // preview) would index C's screenshot at slot 1 instead
+      // of slot 2 — every step referencing cover 2 would then
+      // get C's image instead of its own.
+      const covers = allCovers(tour);
+      const tourImgs = new Array(covers.length).fill(null);
+      const composites = article ? article.querySelectorAll('.composite[data-cover-idx]') : [];
       for (const el of composites) {
+        const idx = Number(el.getAttribute('data-cover-idx'));
+        if (!Number.isInteger(idx) || idx < 0 || idx >= tourImgs.length) continue;
         const canvas = await h2c(el, {
           backgroundColor: '#ffffff',
           scale: Math.min(window.devicePixelRatio || 1, 2),
           logging: false,
           useCORS: true,
         });
-        tourImgs.push(canvas.toDataURL('image/png'));
+        tourImgs[idx] = canvas.toDataURL('image/png');
+      }
+      // Backfill: any cover the preview skipped (because it
+      // had no steps) keeps its raw capture in the slot so
+      // operators still get the screenshot they expected.
+      for (let i = 0; i < tourImgs.length; i++) {
+        if (!tourImgs[i] && covers[i]) tourImgs[i] = covers[i];
       }
       imgsPerTour.push(tourImgs);
     }
