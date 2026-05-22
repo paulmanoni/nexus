@@ -121,9 +121,16 @@
   }
   .pin {
     position: absolute; transform: translate(-50%, -50%);
-    z-index: 2; cursor: default;
+    z-index: 2;
     display: flex; align-items: center; gap: 6px;
+    /* Draggable — grab cursor signals the affordance. When
+       the badge moves, the matching .hi rectangle (same
+       data-step-id) moves with it so the operator can
+       reposition a step's anchor on the screenshot when the
+       auto-placement is off. */
+    cursor: grab; pointer-events: auto; user-select: none;
   }
+  .pin.dragging { cursor: grabbing; z-index: 6; }
   .pin .badge {
     background: var(--badge); color: var(--ink);
     font: 700 13px/28px system-ui, sans-serif;
@@ -133,8 +140,14 @@
     display: inline-block; box-sizing: border-box;
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;
+    pointer-events: none; /* clicks land on .pin, not the inner span */
   }
   .pin.sub .badge { background: var(--sub); color: #fff; }
+  @media print {
+    /* Hide grab cursor in printed PDFs — they're interactive
+       affordances, not document features. */
+    .pin { cursor: default; }
+  }
   /* On-image pins are JUST badges now — the descriptive cards
      live in the side margin columns so they don't overlap
      screenshot content. */
@@ -676,6 +689,7 @@ async function load() {
   //      bitmap arrives.
   //   4. Resize listener — keep lines attached as layout reflows.
   enableCalloutDrag(drawAllConnectors);
+  enablePinDrag(drawAllConnectors);
   drawAllConnectors();
   document.querySelectorAll('.composite img').forEach(img => {
     if (img.complete) return; // already loaded — drawn above
@@ -1096,6 +1110,110 @@ function enableCalloutDrag(onMove) {
       el.addEventListener('pointerdown', onDown);
     });
   });
+}
+
+// enablePinDrag makes every numbered badge on the composite
+// draggable. When the operator drags a .pin, the matching
+// .hi highlight rectangle (paired by data-step-id) moves in
+// lockstep so the rectangle stays around the new anchor
+// position. Both end up in localStorage so the move survives
+// reload.
+//
+// The drag adjusts the displayed position only — the saved
+// step.rect_left / rect_top values in the backend stay put
+// so the tour still PLAYS over the original control if
+// someone hits ▶ Play. Only the preview / Word-export
+// rendering reflects the manual nudge.
+function enablePinDrag(onMove) {
+  document.querySelectorAll('.composite').forEach(comp => {
+    const pins = comp.querySelectorAll('.pin');
+    pins.forEach(pin => {
+      const id = pin.getAttribute('data-step-id') || '';
+      const hi = comp.querySelector(`.hi[data-step-id="${CSS.escape(id)}"]`);
+      const key = `tour-pin:${location.pathname}:${location.search}:${id}`;
+      // Restore prior offsets (recorded as deltaLeft / deltaTop
+      // % from the original placement). Apply to both pin and
+      // hi so they move together.
+      const saved = (() => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } })();
+      if (saved && typeof saved.dxPct === 'number') {
+        applyDelta(pin, hi, saved.dxPct, saved.dyPct);
+      }
+
+      let startPX = 0, startPY = 0, baseDx = 0, baseDy = 0, dragging = false;
+      const compRect = () => comp.getBoundingClientRect();
+
+      function readDelta() {
+        // Cached on the pin element so we don't re-parse the
+        // style string on every move event.
+        return {
+          dx: parseFloat(pin.dataset.dxPct || '0') || 0,
+          dy: parseFloat(pin.dataset.dyPct || '0') || 0,
+        };
+      }
+
+      function onDown(e) {
+        // Ignore right-click + modifier-clicks.
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const base = readDelta();
+        baseDx = base.dx; baseDy = base.dy;
+        startPX = e.clientX; startPY = e.clientY;
+        dragging = true;
+        pin.classList.add('dragging');
+        pin.setPointerCapture && pin.setPointerCapture(e.pointerId);
+        document.addEventListener('pointermove', onDrag);
+        document.addEventListener('pointerup', onUp, { once: true });
+      }
+      function onDrag(e) {
+        if (!dragging) return;
+        const cr = compRect();
+        const dxPct = baseDx + ((e.clientX - startPX) / cr.width)  * 100;
+        const dyPct = baseDy + ((e.clientY - startPY) / cr.height) * 100;
+        applyDelta(pin, hi, dxPct, dyPct);
+        if (onMove) onMove();
+      }
+      function onUp() {
+        dragging = false;
+        pin.classList.remove('dragging');
+        document.removeEventListener('pointermove', onDrag);
+        const final = readDelta();
+        try { localStorage.setItem(key, JSON.stringify({ dxPct: final.dx, dyPct: final.dy })); } catch { /* quota */ }
+        if (onMove) onMove();
+      }
+      pin.addEventListener('pointerdown', onDown);
+    });
+  });
+}
+
+// applyDelta moves a pin + its hi rectangle by (dx, dy)
+// percentage points of the COMPOSITE's dimensions. We can't
+// use CSS transform translate(X%) for this — % in transform
+// is element-relative (50% of the element's own size), not
+// parent-relative. So we mutate left/top% instead, caching
+// the original baseline on first apply so subsequent drags
+// compose against the same anchor.
+function applyDelta(pin, hi, dxPct, dyPct) {
+  if (!('baseLeft' in pin.dataset)) {
+    pin.dataset.baseLeft = String(parseFloat(pin.style.left) || 0);
+    pin.dataset.baseTop  = String(parseFloat(pin.style.top)  || 0);
+  }
+  const baseLeft = parseFloat(pin.dataset.baseLeft);
+  const baseTop  = parseFloat(pin.dataset.baseTop);
+  pin.style.left = (baseLeft + dxPct) + '%';
+  pin.style.top  = (baseTop  + dyPct) + '%';
+  pin.dataset.dxPct = String(dxPct);
+  pin.dataset.dyPct = String(dyPct);
+  if (hi) {
+    if (!('baseLeft' in hi.dataset)) {
+      hi.dataset.baseLeft = String(parseFloat(hi.style.left) || 0);
+      hi.dataset.baseTop  = String(parseFloat(hi.style.top)  || 0);
+    }
+    const hiBaseLeft = parseFloat(hi.dataset.baseLeft);
+    const hiBaseTop  = parseFloat(hi.dataset.baseTop);
+    hi.style.left = (hiBaseLeft + dxPct) + '%';
+    hi.style.top  = (hiBaseTop  + dyPct) + '%';
+  }
 }
 
 // copyForWord puts the tour content on the clipboard as rich
