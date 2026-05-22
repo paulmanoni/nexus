@@ -776,6 +776,7 @@
         <span class="count">0</span>
         <button class="capture-scene" title="Take a fresh screenshot of the current page state — subsequent steps land on this new screenshot. Use after opening a dropdown / modal that wasn't visible at start.">📸 Capture scene</button>
         <button class="pause" title="Pause (P) — interact with the page (e.g. open a dropdown) then Resume to capture inside">⏸ Pause</button>
+        <button class="reuse-step" title="Copy steps from an existing tour into this one">📋 Reuse step</button>
         <button class="edit-last" disabled>✎ Edit last step</button>
         <button class="stop">Stop &amp; Save</button>
         <button class="danger cancel">Cancel</button>
@@ -786,6 +787,7 @@
       b.querySelector('.edit-last').addEventListener('click', () => editLastStep());
       b.querySelector('.pause').addEventListener('click', () => togglePause());
       b.querySelector('.capture-scene').addEventListener('click', () => captureScene());
+      b.querySelector('.reuse-step').addEventListener('click', () => openReusePicker());
       return b;
     }
 
@@ -813,6 +815,254 @@
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = '📸 Capture scene'; }
       }
+    }
+
+    // openReusePicker is the "copy from existing tour" flow.
+    // Operators starting a new tour often re-walk the same
+    // initial path as an existing one (login → dashboard →
+    // …). Re-recording the same clicks is tedious; this
+    // picker lets them grab the prefix from any saved tour
+    // and continue with fresh captures from there.
+    //
+    // Picker shape: modal in the agent's shadow DOM, lists
+    // every saved tour, each row expandable to its step
+    // tree. Multi-select via checkboxes; "Add N steps"
+    // clones the selection into the active tour with fresh
+    // ids and properly remapped cover_index references.
+    async function openReusePicker() {
+      if (!active) return;
+      picker.stop();
+      let catalogue;
+      try {
+        const r = await fetch('/__nexus/tour/tours');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        catalogue = (await r.json()).tours || [];
+      } catch (e) {
+        toast('Could not load tours: ' + (e.message || e), 'error');
+        if (!paused) picker.start(onPicked, () => stop(false));
+        return;
+      }
+      // Exclude the active tour from the picker — reusing
+      // steps from yourself just produces duplicates.
+      const otherTours = catalogue.filter(t => t.id && t.id !== tour.id);
+      if (!otherTours.length) {
+        toast('No other tours to reuse from.', 'error');
+        if (!paused) picker.start(onPicked, () => stop(false));
+        return;
+      }
+      buildReusePicker(otherTours);
+    }
+
+    function buildReusePicker(otherTours) {
+      const modal = document.createElement('div');
+      modal.className = 'editor';
+      modal.style.cssText = [
+        'left: 50%', 'top: 50%',
+        'transform: translate(-50%, -50%)',
+        'right: auto', 'width: 520px', 'max-height: 76vh',
+        'overflow: hidden', 'display: flex', 'flex-direction: column',
+      ].join('; ') + ';';
+      modal.innerHTML = `
+        <div style="font-weight:600;font-size:14px;margin-bottom:6px">📋 Reuse steps from an existing tour</div>
+        <div style="font-size:11px;color:#666;margin-bottom:8px">
+          Steps you tick get COPIED into the current recording with fresh ids.
+          Their screenshots come along automatically.
+        </div>
+        <div class="reuse-list" style="flex:1;overflow:auto;border:1px solid #e5e7eb;border-radius:6px;padding:6px;min-height:200px"></div>
+        <div class="actions">
+          <button class="ghost cancel">Cancel</button>
+          <button class="primary submit" disabled>Add 0 steps</button>
+        </div>
+      `;
+      root.appendChild(modal);
+
+      const list = modal.querySelector('.reuse-list');
+      const submitBtn = modal.querySelector('.submit');
+      // selected: stepId → { tourId, srcStep } for resolving
+      // on submit. We hydrate tours lazily on first expansion;
+      // catalogue.tours[*] lacks the .steps tree.
+      const selected = new Map();
+      const tourCache = new Map(); // tourId → hydrated tour
+
+      function updateSubmit() {
+        submitBtn.disabled = selected.size === 0;
+        submitBtn.textContent = `Add ${selected.size} step${selected.size === 1 ? '' : 's'}`;
+      }
+
+      otherTours.forEach(t => {
+        const row = document.createElement('div');
+        row.style.cssText = 'border-bottom:1px solid #f3f4f6;padding:6px 4px';
+        const safeName = escapeHtml(t.name || `Tour ${t.id.slice(0, 6)}`);
+        row.innerHTML = `
+          <button class="tour-toggle" style="background:transparent;border:0;width:100%;text-align:left;padding:4px 6px;cursor:pointer;font:inherit;display:flex;align-items:center;gap:6px">
+            <span class="caret" style="display:inline-block;width:10px;transition:transform 120ms">▶</span>
+            <strong style="flex:1">${safeName}</strong>
+            <span style="font-size:10px;color:#888">${escapeHtml(t.route || '')}</span>
+          </button>
+          <div class="tour-steps" style="display:none;padding:4px 0 4px 20px"></div>
+        `;
+        const toggle = row.querySelector('.tour-toggle');
+        const stepsBox = row.querySelector('.tour-steps');
+        const caret = row.querySelector('.caret');
+        toggle.addEventListener('click', async () => {
+          if (stepsBox.style.display === 'none') {
+            stepsBox.style.display = 'block';
+            caret.style.transform = 'rotate(90deg)';
+            if (!stepsBox.dataset.loaded) {
+              stepsBox.innerHTML = '<div style="color:#888;font-size:11px">Loading…</div>';
+              try {
+                const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(t.id)}`);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const full = await r.json();
+                tourCache.set(t.id, full);
+                renderStepCheckboxes(stepsBox, full);
+                stepsBox.dataset.loaded = '1';
+              } catch (e) {
+                stepsBox.innerHTML = `<div style="color:#ef4444;font-size:11px">Load failed: ${escapeHtml(e.message || String(e))}</div>`;
+              }
+            }
+          } else {
+            stepsBox.style.display = 'none';
+            caret.style.transform = '';
+          }
+        });
+        list.appendChild(row);
+      });
+
+      function renderStepCheckboxes(container, full) {
+        container.innerHTML = '';
+        const flat = [];
+        function walk(arr, depth, prefix) {
+          arr.forEach((s, i) => {
+            const label = prefix ? `${prefix}.${i + 1}` : `${i + 1}`;
+            flat.push({ step: s, depth, label });
+            if (s.children && s.children.length) walk(s.children, depth + 1, label);
+          });
+        }
+        walk(full.steps || [], 0, '');
+        if (!flat.length) {
+          container.innerHTML = '<div style="color:#888;font-size:11px">No steps in this tour.</div>';
+          return;
+        }
+        flat.forEach(({ step, depth, label }) => {
+          const item = document.createElement('label');
+          item.style.cssText = `display:flex;gap:6px;align-items:flex-start;padding:3px 0 3px ${depth * 14}px;cursor:pointer;font-size:12px`;
+          item.innerHTML = `
+            <input type="checkbox" data-step-id="${escapeHtml(step.id)}" style="margin-top:2px;flex-shrink:0">
+            <span style="background:#f59e0b;color:#111;font-weight:700;padding:0 6px;border-radius:999px;font-size:10px;line-height:18px;height:18px;display:inline-block">${escapeHtml(label)}</span>
+            <span style="flex:1">${escapeHtml(step.title || step.label || 'Step ' + label)}</span>
+          `;
+          const cb = item.querySelector('input');
+          cb.addEventListener('change', () => {
+            if (cb.checked) selected.set(step.id, { tourId: full.id, srcStep: step });
+            else selected.delete(step.id);
+            updateSubmit();
+          });
+          container.appendChild(item);
+        });
+      }
+
+      function close() { modal.remove(); }
+      modal.querySelector('.cancel').addEventListener('click', () => {
+        close();
+        if (active && !paused) picker.start(onPicked, () => stop(false));
+      });
+      submitBtn.addEventListener('click', () => {
+        const added = applyReuse(selected, tourCache);
+        close();
+        if (added > 0) toast(`Added ${added} step${added === 1 ? '' : 's'}.`);
+        if (active && !paused) picker.start(onPicked, () => stop(false));
+      });
+    }
+
+    // applyReuse takes the selected steps + the cache of
+    // hydrated source tours, then deep-clones each selected
+    // step (with all its descendants), remapping cover_index
+    // references so the source's covers come into the active
+    // tour's cover_images[]. Same source cover used by
+    // multiple cloned steps is deduped to a single entry.
+    // Returns the count of steps added (top-level + nested).
+    function applyReuse(selected, tourCache) {
+      // De-dup: if the operator ticked both a parent and one
+      // of its descendants, only the parent's branch clones
+      // (the descendant comes along inside the parent).
+      const finalSelections = [];
+      const allIds = new Set(Array.from(selected.values()).map(v => v.srcStep.id));
+      for (const { tourId, srcStep } of selected.values()) {
+        let parentTicked = false;
+        function hasTickedAncestor(s, srcTour) {
+          // Walk srcTour to find the path; if ANY ancestor's
+          // id is in allIds (and it's not s itself), skip.
+          function find(arr, ancestors) {
+            for (const node of arr) {
+              if (node.id === s.id) {
+                return ancestors.some(a => allIds.has(a.id) && a.id !== s.id);
+              }
+              if (node.children && node.children.length) {
+                const got = find(node.children, ancestors.concat(node));
+                if (got !== null) return got;
+              }
+            }
+            return null;
+          }
+          const srcTourFull = tourCache.get(srcTour);
+          if (!srcTourFull) return false;
+          return find(srcTourFull.steps || [], []) === true;
+        }
+        if (hasTickedAncestor(srcStep, tourId)) {
+          parentTicked = true;
+        }
+        if (!parentTicked) finalSelections.push({ tourId, srcStep });
+      }
+
+      let count = 0;
+      function cloneStep(srcStep, srcTour) {
+        const srcCovers = (srcTour.cover_images && srcTour.cover_images.length)
+          ? srcTour.cover_images
+          : (srcTour.cover_image_url ? [srcTour.cover_image_url] : []);
+        const srcCi = Number.isInteger(srcStep.cover_index) ? srcStep.cover_index : 0;
+        const srcImg = srcCovers[srcCi];
+        // Dedupe target cover by image data — same URL across
+        // cloned steps maps to the same slot in our cover_images.
+        let dstCi;
+        if (srcImg) {
+          let found = tour.cover_images.indexOf(srcImg);
+          if (found < 0) {
+            tour.cover_images.push(srcImg);
+            found = tour.cover_images.length - 1;
+          }
+          dstCi = found;
+        } else {
+          dstCi = coverIndex; // fallback to current scene
+        }
+        count++;
+        return {
+          id: (crypto && crypto.randomUUID)
+            ? crypto.randomUUID().replace(/-/g, '')
+            : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2),
+          selector: srcStep.selector,
+          label: srcStep.label || '',
+          title: srcStep.title || '',
+          text: srcStep.text || '',
+          placement: srcStep.placement || 'bottom',
+          rect_left:   srcStep.rect_left   || 0,
+          rect_top:    srcStep.rect_top    || 0,
+          rect_width:  srcStep.rect_width  || 0,
+          rect_height: srcStep.rect_height || 0,
+          media_url: srcStep.media_url || '',
+          cover_index: dstCi,
+          children: (srcStep.children || []).map(c => cloneStep(c, srcTour)),
+        };
+      }
+
+      for (const { tourId, srcStep } of finalSelections) {
+        const srcTour = tourCache.get(tourId);
+        if (!srcTour) continue;
+        const cloned = cloneStep(srcStep, srcTour);
+        tour.steps.push(cloned);
+      }
+      updateCount();
+      return count;
     }
 
     // togglePause flips picker capture on/off without ending the
