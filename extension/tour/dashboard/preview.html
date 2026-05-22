@@ -1208,7 +1208,16 @@ function buildClipboardHTML(tours, imgsPerTour) {
   function renderSteps(steps, sceneToFigure, tourImgs, tour) {
     if (!steps.length) return '';
     const items = flat(steps, '', 0, []);
-    const printed = new Set();
+    // Two dedupe sets:
+    //   * printedCovers — by cover_index, the common path.
+    //   * printedUrls — by image data-URL, catches the edge
+    //     case where two cover_indexes happen to point at the
+    //     same image bytes (operator pressed 📸 Capture scene
+    //     twice on the same page state). Without it those
+    //     surface as two visually-identical figures in the
+    //     Word doc.
+    const printedCovers = new Set();
+    const printedUrls = new Set();
     const ciOf = it => Number.isInteger(it.step.cover_index) ? it.step.cover_index : 0;
     const tourTitle = escapeHtml(tour && tour.name ? tour.name : 'Tour overview');
     let out = '';
@@ -1233,15 +1242,16 @@ function buildClipboardHTML(tours, imgsPerTour) {
           <strong>${escapeHtml(prefix)}.</strong>&nbsp;&nbsp;${text}${figRef}
         </p>`;
       }
-      // Emit figure once per cover_index, AT its first group.
+      // Emit figure once per (cover_index, url). After the
+      // first emit, every subsequent group with the same
+      // cover_index OR the same image data falls back to a
+      // bare "(see Figure N)" reference in the step text —
+      // no duplicate picture.
       const figNum = sceneToFigure && sceneToFigure.get(ci);
       const url = tourImgs && tourImgs[ci];
-      if (figNum && url && !printed.has(ci)) {
-        printed.add(ci);
-        // Caption lists every step (across the whole tour)
-        // that uses this cover so the reader sees the
-        // grouping at a glance even when references are
-        // scattered.
+      if (figNum && url && !printedCovers.has(ci) && !printedUrls.has(url)) {
+        printedCovers.add(ci);
+        printedUrls.add(url);
         const stepsForCover = items.filter(it => ciOf(it) === ci);
         const titles = stepsForCover.map(({ step, prefix }) =>
           escapeHtml(step.title || step.label || `Step ${prefix}`));
@@ -1353,7 +1363,11 @@ function buildClipboardPlain(tours) {
     // structure consistent with the rich HTML version.
     const items = flat(tour.steps || [], '', 0, []);
     const ciOf = it => Number.isInteger(it.step.cover_index) ? it.step.cover_index : 0;
-    const printed = new Set();
+    const tourCovers = (tour.cover_images && tour.cover_images.length)
+      ? tour.cover_images
+      : (tour.cover_image_url ? [tour.cover_image_url] : []);
+    const printedCovers = new Set();
+    const printedUrls = new Set();
     const lines = [];
     let i = 0;
     while (i < items.length) {
@@ -1368,8 +1382,14 @@ function buildClipboardPlain(tours) {
         const ref = fig ? `  (see Figure ${fig})` : '';
         lines.push(`${indent}${prefix}. ${body}${ref}`);
       }
-      if (fig && !printed.has(ci)) {
-        printed.add(ci);
+      // Same (cover, url) dedupe as the HTML output so
+      // plaintext doesn't print [Figure N] markers twice for
+      // tours where one image is shared across non-consecutive
+      // groups.
+      const url = tourCovers[ci];
+      if (fig && !printedCovers.has(ci) && (!url || !printedUrls.has(url))) {
+        printedCovers.add(ci);
+        if (url) printedUrls.add(url);
         lines.push(`   [Figure ${fig}]`);
       }
       i = j;
