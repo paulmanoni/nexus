@@ -1657,8 +1657,11 @@
       localStorage.removeItem('__nexus_tour_insert');
       return;
     }
-    // Small banner at the top so the operator knows what mode
-    // they're in and can bail out if they entered it by mistake.
+    // Banner stays at the top with a "Start capture" button.
+    // The picker is NOT armed at boot — operator may need to
+    // open a dropdown, scroll into view, or expand a panel
+    // before pointing at the target. Picker only goes live
+    // after they click Start (or close the banner via Cancel).
     const banner = document.createElement('div');
     banner.style.cssText = [
       'position:fixed','top:12px','left:50%','transform:translateX(-50%)',
@@ -1668,19 +1671,27 @@
       'font:13px/1 system-ui,sans-serif','display:flex','gap:10px','align-items:center',
     ].join(';');
     banner.innerHTML = `
-      <span>Insert mode — click the target element to capture step</span>
-      <button style="background:#fff;color:#2563eb;border:0;padding:5px 10px;border-radius:6px;cursor:pointer;font:inherit">Cancel</button>
+      <span>Insert mode — open / navigate to the target, then click Start</span>
+      <button class="start" style="background:#fff;color:#2563eb;border:0;padding:5px 12px;border-radius:6px;cursor:pointer;font:inherit;font-weight:600">▶ Start capture</button>
+      <button class="cancel" style="background:transparent;color:#fff;border:1px solid #fff;padding:5px 10px;border-radius:6px;cursor:pointer;font:inherit">Cancel</button>
     `;
-    overlayHost.appendChild
-      ? document.body.appendChild(banner)  // banner is sibling of overlay, not inside shadow
-      : null;
+    document.body.appendChild(banner);
+
     function cancel() {
       banner.remove();
       picker.stop();
       localStorage.removeItem('__nexus_tour_insert');
     }
-    banner.querySelector('button').addEventListener('click', cancel);
+    banner.querySelector('.cancel').addEventListener('click', cancel);
+    banner.querySelector('.start').addEventListener('click', () => {
+      // Swap banner text into "click the target" mode + hide
+      // the Start button so the operator can't double-arm.
+      banner.querySelector('span').textContent = 'Insert mode — click the target element';
+      banner.querySelector('.start').remove();
+      armPicker();
+    });
 
+    function armPicker() {
     picker.start(async (pick) => {
       banner.remove();
       picker.stop();
@@ -1732,7 +1743,8 @@
         location.reload();
       }
     }, cancel);
-  }
+    } // armPicker
+  } // runInsertCapture
 
   // insertNewStep walks tour.steps to find anchor, splices
   // newStep either as a sibling (after anchor) or as a child
