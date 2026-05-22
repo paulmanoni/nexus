@@ -441,6 +441,55 @@ function renderOneCover(tour, coverURL, coverIdx, steps) {
       return { ...it, cx, cy, placement: placeCard(it.step) };
     });
 
+  // Collision avoidance within each side group. Form inputs
+  // stacked vertically (Change Password modal: current / new
+  // / confirm) all want their card on the "right" side, but
+  // the cards are taller than the gap between inputs — without
+  // this pass they overlap badly. For each direction group,
+  // sort by the card's natural top, then push subsequent
+  // cards down until they clear the previous one.
+  const STACK_GAP = 1; // % gap between stacked cards
+  const groups = { right: [], left: [], below: [], above: [] };
+  for (const it of itemsByY) {
+    (groups[it.placement.dir] || groups.right).push(it);
+  }
+  for (const dir of Object.keys(groups)) {
+    const list = groups[dir];
+    if (list.length < 2) continue;
+    // Sort vertically by the card's intended top so we stack
+    // top-to-bottom. For left/right groups vertical order
+    // mirrors target order; for above/below groups we sort
+    // by left for horizontal cascading instead.
+    if (dir === 'right' || dir === 'left') {
+      list.sort((a, b) => a.placement.top - b.placement.top);
+      let lastBottom = -Infinity;
+      for (const it of list) {
+        if (it.placement.top < lastBottom + STACK_GAP) {
+          it.placement.top = lastBottom + STACK_GAP;
+        }
+        // Clamp inside the canvas.
+        if (it.placement.top + CARD_HPCT > 100) {
+          it.placement.top = Math.max(0.5, 100 - CARD_HPCT - 0.5);
+        }
+        lastBottom = it.placement.top + CARD_HPCT;
+      }
+    } else {
+      // above/below: stack horizontally instead so cards next
+      // to a row of buttons cascade right instead of piling.
+      list.sort((a, b) => a.placement.left - b.placement.left);
+      let lastRight = -Infinity;
+      for (const it of list) {
+        if (it.placement.left < lastRight + STACK_GAP) {
+          it.placement.left = lastRight + STACK_GAP;
+        }
+        if (it.placement.left + CARD_WPCT > 100) {
+          it.placement.left = Math.max(0.5, 100 - CARD_WPCT - 0.5);
+        }
+        lastRight = it.placement.left + CARD_WPCT;
+      }
+    }
+  }
+
   // Badges are pinned to the OUTSIDE top-left corner of each
   // highlight rect so they don't sit on top of the target and
   // obscure what's being labelled. translate(-50%, -50%) on
