@@ -1527,25 +1527,33 @@ async function loadHtml2Canvas() {
 //   <p>   "Figure N: …"   ← centred caption above each screenshot
 //   <img> screenshot
 //
-// All sizing in pt. Arial 12 for body, Arial bold larger for
-// headings. Word strips <style> blocks on paste, so every rule
-// is inline. Lists use <ol> + start= so step numbering survives
-// Word's autocorrect; substeps nest as <ol type="a">.
+// All sizing in pt. Arial 12pt for ALL text (operator preference
+// — matches the standard manual template). Bold + italic alone
+// distinguish headings / captions / metadata. Word strips
+// <style> blocks on paste, so every rule is inline.
+//
+// A "varied" Table of Contents leads the document, listing:
+//   1. Tours          — every tour and its descriptive intro
+//   2. Detailed steps — full step prefixes nested by depth
+//   3. Figures        — one entry per scene screenshot
+// All three views are emitted on the same page so the reader
+// can jump from any cross-reference.
 function buildClipboardHTML(tours, imgsPerTour) {
   const A = 'font-family:Arial, sans-serif';
-  // white-space:pre-wrap on text-bearing styles so multi-space
-  // indentation + manual line breaks the operator typed in the
-  // editor survive into Word. Default white-space:normal
-  // collapses runs of whitespace and drops standalone newlines,
-  // which made carefully-formatted step descriptions read as
-  // one squashed run.
-  const body = `${A}; font-size:12pt; color:#000; line-height:1.5`;
-  const h1   = `${A}; font-size:18pt; font-weight:bold; margin:18pt 0 6pt; color:#000`;
-  const h2   = `${A}; font-size:14pt; font-weight:bold; margin:14pt 0 6pt; color:#000`;
-  const meta = `${A}; font-size:11pt; font-style:italic; color:#555; margin:0 0 6pt`;
-  const para = `${A}; font-size:12pt; margin:6pt 0; color:#000; white-space:pre-wrap`;
-  const li   = `${A}; font-size:12pt; margin:4pt 0; color:#000; white-space:pre-wrap`;
-  const cap  = `${A}; font-size:10pt; font-style:italic; color:#444; margin:6pt 0; text-align:center`;
+  // Arial 12pt everywhere. Differentiation comes from weight
+  // (bold for headings) and style (italic for captions / meta),
+  // not from font-size. Operators specifically requested
+  // single-size output so the printed doc reads at a consistent
+  // visual density.
+  const SZ   = 'font-size:12pt';
+  const body = `${A}; ${SZ}; color:#000; line-height:1.5`;
+  const h1   = `${A}; ${SZ}; font-weight:bold; margin:18pt 0 6pt; color:#000`;
+  const h2   = `${A}; ${SZ}; font-weight:bold; margin:14pt 0 6pt; color:#000`;
+  const meta = `${A}; ${SZ}; font-style:italic; color:#555; margin:0 0 6pt`;
+  const para = `${A}; ${SZ}; margin:6pt 0; color:#000; white-space:pre-wrap`;
+  const li   = `${A}; ${SZ}; margin:4pt 0; color:#000; white-space:pre-wrap`;
+  const cap  = `${A}; ${SZ}; font-style:italic; color:#444; margin:6pt 0; text-align:center`;
+  const tocItem = `${A}; ${SZ}; margin:2pt 0; color:#000`;
 
   // renderSteps turns the step tree into ol/li markup. Numbered
   // ol for root steps (1, 2, 3); nested ol[type="a"] for
@@ -1594,9 +1602,9 @@ function buildClipboardHTML(tours, imgsPerTour) {
         const indent = 18 + depth * 18;
         const figNum = sceneToFigure && sceneToFigure.get(ci);
         const figRef = figNum
-          ? ` <em style="color:#555;font-size:11pt">(see Figure ${figNum})</em>`
+          ? ` <em style="color:#555">(see Figure ${figNum})</em>`
           : '';
-        out += `<p style="${A}; font-size:12pt; margin:4pt 0 4pt ${indent}pt; color:#000; white-space:pre-wrap">
+        out += `<p style="${A}; ${SZ}; margin:4pt 0 4pt ${indent}pt; color:#000; white-space:pre-wrap">
           <strong>${escapeHtml(prefix)}.</strong>&nbsp;&nbsp;${text}${figRef}
         </p>`;
       }
@@ -1627,26 +1635,110 @@ function buildClipboardHTML(tours, imgsPerTour) {
     return out;
   }
 
-  let figureNumber = 0;
-  const parts = tours.map((tour, idx) => {
-    // Each tour may have multiple scenes (multi-cover) — emit
-    // one figure per scene with its own caption. The caption
-    // names the tour PLUS every step in the scene, comma-
-    // separated, so the operator can read straight from the
-    // figure heading what the picture shows. Long lists get
-    // truncated with "…" so a 20-step scene doesn't blow out
-    // the caption line.
+  // Two-pass build:
+  //   Pass 1: compute scene→figure-number maps for every tour so
+  //           the TOC + the inline body share the same numbering.
+  //   Pass 2: emit the TOC, then each tour block.
+  // We pre-walk so the TOC entries reference figure numbers that
+  // match what renderSteps will later emit.
+  const tourMeta = tours.map((tour, idx) => {
     const tourImgs = (imgsPerTour && imgsPerTour[idx]) || [];
-    // Pre-compute scene → figure-number map. Figures now emit
-    // inline from renderSteps; we still need the mapping so
-    // step "(see Figure N)" references resolve. Advance the
-    // global counter by the scene count so the next tour
-    // starts at the right offset.
-    const sceneToFigure = new Map();
-    tourImgs.forEach((_, sceneIdx) => {
-      sceneToFigure.set(sceneIdx, figureNumber + sceneIdx + 1);
+    return { tour, idx, tourImgs };
+  });
+  let figureNumber = 0;
+  for (const m of tourMeta) {
+    m.sceneToFigure = new Map();
+    m.tourImgs.forEach((_, sceneIdx) => {
+      m.sceneToFigure.set(sceneIdx, figureNumber + sceneIdx + 1);
     });
-    figureNumber += tourImgs.length;
+    figureNumber += m.tourImgs.length;
+  }
+
+  // Build the TOC. Three sub-sections so the reader can navigate
+  // by tour, by step, or by figure depending on what they're
+  // looking for. Anchors use <a name="..."> so they survive
+  // Word's HTML-import — modern <a id> works in HTML but Word
+  // drops it on some paste paths.
+  const tocBlock = (() => {
+    if (!tours.length) return '';
+    // 1. Tours overview (one row per tour, with description).
+    const toursRows = tourMeta.map(({ tour, idx }) => {
+      const name = escapeHtml(tour.name || 'Untitled tour');
+      const desc = tour.description
+        ? ` <span style="color:#555">— ${escapeForWord(tour.description).replace(/<br\/>.*$/s, '')}</span>`
+        : '';
+      return `<p style="${tocItem}">
+        <strong>${idx + 1}.</strong>&nbsp;&nbsp;<a href="#tour-${idx + 1}" style="color:#000;text-decoration:none">${name}</a>${desc}
+      </p>`;
+    }).join('');
+
+    // 2. Detailed steps (every prefix nested by depth — gives
+    // the reader a click-through index into the actual procedure).
+    const stepsRows = tourMeta.map(({ tour, idx }) => {
+      const flatItems = flat(tour.steps || [], '', 0, []);
+      const tourLine = `<p style="${tocItem}; margin-top:6pt">
+        <strong>${idx + 1}. ${escapeHtml(tour.name || 'Untitled tour')}</strong>
+      </p>`;
+      if (!flatItems.length) {
+        return tourLine + `<p style="${tocItem}; margin-left:18pt; color:#888">(no steps yet)</p>`;
+      }
+      const lines = flatItems.map(({ step, prefix, depth }) => {
+        const indent = 18 + depth * 18;
+        const title = escapeHtml(step.title || step.label || `Step ${prefix}`);
+        return `<p style="${A}; ${SZ}; margin:1pt 0 1pt ${indent}pt; color:#000">
+          ${escapeHtml(prefix)}.&nbsp;&nbsp;${title}
+        </p>`;
+      }).join('');
+      return tourLine + lines;
+    }).join('');
+
+    // 3. Figures (one row per scene with its computed caption).
+    const figureRows = (() => {
+      const rows = [];
+      for (const { tour, sceneToFigure, tourImgs } of tourMeta) {
+        const tourTitle = escapeHtml(tour.name || 'Untitled tour');
+        const allSteps = flat(tour.steps || [], '', 0, []);
+        for (let sceneIdx = 0; sceneIdx < tourImgs.length; sceneIdx++) {
+          const figNum = sceneToFigure.get(sceneIdx);
+          if (!figNum) continue;
+          // Caption uses the same logic as renderSteps so TOC +
+          // body agree on what each figure shows.
+          const stepsForCover = allSteps.filter(it => (Number.isInteger(it.step.cover_index) ? it.step.cover_index : 0) === sceneIdx);
+          if (!stepsForCover.length) continue;
+          const titles = stepsForCover.map(({ step, prefix }) =>
+            escapeHtml(step.title || step.label || `Step ${prefix}`));
+          const MAX = 3;
+          const head = titles.slice(0, MAX).join(', ');
+          const overflow = titles.length > MAX ? `, +${titles.length - MAX} more` : '';
+          rows.push(`<p style="${tocItem}">
+            <strong>Figure ${figNum}:</strong>&nbsp;&nbsp;${tourTitle} — ${head}${overflow}
+          </p>`);
+        }
+      }
+      return rows.join('');
+    })();
+
+    // Assemble TOC. Each sub-section has a bold heading (same
+    // 12pt — distinguished by weight only, per the all-Arial-12
+    // requirement). Page break after the TOC so the body starts
+    // on a fresh page like a printed manual.
+    return `
+      <h1 style="${h1}">Table of Contents</h1>
+      <p style="${meta}">${tours.length} tour${tours.length === 1 ? '' : 's'} · ${tourMeta.reduce((n, m) => n + flat(m.tour.steps || [], '', 0, []).length, 0)} step${tourMeta.reduce((n, m) => n + flat(m.tour.steps || [], '', 0, []).length, 0) === 1 ? '' : 's'} · ${figureNumber} figure${figureNumber === 1 ? '' : 's'}</p>
+
+      <h2 style="${h2}">Tours</h2>
+      ${toursRows}
+
+      <h2 style="${h2}">Detailed steps</h2>
+      ${stepsRows}
+
+      ${figureRows ? `<h2 style="${h2}">Figures</h2>${figureRows}` : ''}
+
+      <br clear="all" style="mso-special-character:line-break; page-break-before:always"/>
+    `;
+  })();
+
+  const parts = tourMeta.map(({ tour, idx, tourImgs, sceneToFigure }) => {
     const pageBreak = idx < tours.length - 1
       ? `<br clear="all" style="mso-special-character:line-break; page-break-before:always"/>`
       : '';
@@ -1657,7 +1749,10 @@ function buildClipboardHTML(tours, imgsPerTour) {
     const tourPos = tours.length > 1
       ? `<p style="${meta}">Tour ${idx + 1} of ${tours.length}</p>`
       : '';
+    // <a name=...> anchor lets TOC entries link straight to the
+    // tour's section after paste into Word.
     return `
+      <a name="tour-${idx + 1}"></a>
       <h1 style="${h1}">${escapeHtml(tour.name || 'Untitled tour')}</h1>
       ${tourPos}
       ${tour.description ? `<p style="${para}">${escapeForWord(tour.description)}</p>` : ''}
@@ -1679,6 +1774,7 @@ function buildClipboardHTML(tours, imgsPerTour) {
 </xml><![endif]-->
 </head>
 <body style="${body}">
+${tocBlock}
 ${parts.join('')}
 </body>
 </html>`;
@@ -1702,7 +1798,54 @@ function buildClipboardPlain(tours) {
   // plaintext "(see Figure N)" annotations stay aligned with
   // the rich HTML version when the operator pastes either.
   let plainFigureNumber = 0;
-  return tours.map((tour, idx) => {
+  // Pre-walk for the TOC so figure numbers in the TOC match
+  // the body. Each tour's figure-count = number of cover
+  // images, same logic as the HTML path.
+  const figureCountPerTour = tours.map(t =>
+    (t.cover_images && t.cover_images.length) || (t.cover_image_url ? 1 : 0)
+  );
+  const tocFigStart = [];
+  let acc = 0;
+  for (const n of figureCountPerTour) { tocFigStart.push(acc); acc += n; }
+  // TOC sections: Tours / Detailed steps / Figures. Same
+  // structure as the HTML TOC so a Notepad / Slack paste reads
+  // the same way as a Word paste.
+  const tocLines = ['TABLE OF CONTENTS', ''];
+  tocLines.push('Tours');
+  tours.forEach((t, i) => {
+    tocLines.push(`  ${i + 1}. ${t.name || 'Untitled tour'}`);
+  });
+  tocLines.push('', 'Detailed steps');
+  tours.forEach((t, i) => {
+    tocLines.push(`  ${i + 1}. ${t.name || 'Untitled tour'}`);
+    const items = flat(t.steps || [], '', 0, []);
+    for (const { step, prefix, depth } of items) {
+      const indent = '    ' + '  '.repeat(depth);
+      tocLines.push(`${indent}${prefix}. ${step.title || step.label || 'Step ' + prefix}`);
+    }
+  });
+  if (acc > 0) {
+    tocLines.push('', 'Figures');
+    tours.forEach((t, ti) => {
+      const items = flat(t.steps || [], '', 0, []);
+      const tourCovers = (t.cover_images && t.cover_images.length)
+        ? t.cover_images
+        : (t.cover_image_url ? [t.cover_image_url] : []);
+      tourCovers.forEach((_, sceneIdx) => {
+        const stepsForCover = items.filter(it => (Number.isInteger(it.step.cover_index) ? it.step.cover_index : 0) === sceneIdx);
+        if (!stepsForCover.length) return;
+        const titles = stepsForCover.map(({ step, prefix }) =>
+          step.title || step.label || `Step ${prefix}`);
+        const head = titles.slice(0, 3).join(', ');
+        const overflow = titles.length > 3 ? `, +${titles.length - 3} more` : '';
+        const fig = tocFigStart[ti] + sceneIdx + 1;
+        tocLines.push(`  Figure ${fig}: ${t.name || 'Untitled tour'} — ${head}${overflow}`);
+      });
+    });
+  }
+  const toc = tocLines.join('\n') + '\n\n----\n\n';
+
+  return toc + tours.map((tour, idx) => {
     const head = [
       tour.name || 'Untitled tour',
       tour.description || '',

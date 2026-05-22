@@ -11,7 +11,8 @@
   the plugin's REST endpoints under /__nexus/tour/.
 
   Operator surface:
-    * List every tour + filter by route
+    * List every tour, grouped by route (or flat when filtered)
+    * Drag-and-drop reorder anywhere in the list — also ↑/↓ buttons
     * Inline edit tour-level fields (name, route, description)
     * Tree edit of steps:
         - per-step text (title, text, placement, label)
@@ -23,61 +24,347 @@
 -->
 <style>
   :root {
-    --bg:#f6f7f9; --panel:#fff; --ink:#111; --mute:#6b7280;
-    --line:#e5e7eb; --accent:#111; --warn:#ef4444;
-    --tag:#f59e0b; --tag-ink:#111;
+    --bg:#f4f5f8;
+    --bg-grad: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    --panel:#ffffff;
+    --ink:#0f172a;
+    --ink-soft:#334155;
+    --mute:#64748b;
+    --line:#e2e8f0;
+    --line-soft:#eef2f7;
+    --accent:#4f46e5;
+    --accent-soft:#eef2ff;
+    --warn:#ef4444;
+    --warn-soft:#fee2e2;
+    --tag:#f59e0b;
+    --tag-ink:#111;
+    --ok:#10b981;
+    --ok-soft:#d1fae5;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, .04), 0 1px 3px rgba(15, 23, 42, .06);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, .08), 0 2px 4px rgba(15, 23, 42, .04);
+    --shadow-lg: 0 12px 32px rgba(15, 23, 42, .12);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --radius-lg: 14px;
   }
   * { box-sizing: border-box; }
-  html, body { margin:0; padding:0; background:var(--bg); color:var(--ink); font:14px/1.4 system-ui, -apple-system, sans-serif; }
-  header { background:var(--panel); border-bottom:1px solid var(--line); padding:14px 22px; display:flex; align-items:center; gap:14px; }
-  header h1 { margin:0; font-size:18px; }
-  header .grow { flex:1; }
-  header .filter { padding:6px 10px; border:1px solid var(--line); border-radius:6px; min-width:240px; }
-  header button.primary { background:var(--accent); color:#fff; border:0; padding:7px 12px; border-radius:6px; cursor:pointer; }
-  main { display:grid; grid-template-columns: 460px 1fr; gap:18px; padding:18px 22px; align-items:flex-start; }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; }
-  .panel h2 { margin:0; padding:12px 14px; font-size:13px; color:var(--mute); border-bottom:1px solid var(--line); letter-spacing:.05em; text-transform:uppercase; }
-  .list { padding:0; margin:0; list-style:none; max-height: calc(100vh - 200px); overflow:auto; }
-  .list li { padding:10px 14px; border-bottom:1px solid var(--line); cursor:pointer; }
-  .list li:last-child { border-bottom:0; }
-  .list li:hover { background:#fafafa; }
-  .list li.active { background:#eef2ff; border-left:3px solid #4f46e5; padding-left:11px; }
-  .list .name { font-weight:600; }
-  .list .meta { color:var(--mute); font-size:12px; margin-top:2px; }
-  .empty { padding:30px 14px; text-align:center; color:var(--mute); }
-  .edit { padding:14px; }
-  .edit label { display:block; font-size:12px; color:var(--mute); margin:8px 0 4px; letter-spacing:.02em; }
-  .edit input, .edit textarea, .edit select {
-    width:100%; padding:6px 8px; font:inherit;
-    border:1px solid var(--line); border-radius:6px; background:#fff;
+  html, body {
+    margin:0; padding:0;
+    background: var(--bg-grad); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
   }
-  .edit textarea { min-height:60px; resize:vertical; }
-  .edit .actions { margin-top:14px; display:flex; gap:8px; justify-content:flex-end; }
-  .edit .actions .danger { color:var(--warn); }
-  button { background:#fff; border:1px solid var(--line); padding:6px 10px; border-radius:6px; font:inherit; cursor:pointer; }
-  button:hover { background:#fafafa; }
-  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button.danger { color:var(--warn); border-color:#fecaca; }
+  header.topbar {
+    background:#ffffff;
+    border-bottom:1px solid var(--line);
+    padding:14px 28px;
+    display:flex; align-items:center; gap:14px;
+    box-shadow: var(--shadow-sm);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header.topbar .brand {
+    display:flex; align-items:center; gap:10px;
+    font-weight:700; font-size:17px;
+  }
+  header.topbar .brand .logo {
+    width:32px; height:32px; border-radius:8px;
+    background: linear-gradient(135deg, #6366f1, #ec4899);
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:16px; box-shadow: var(--shadow-sm);
+  }
+  header.topbar .grow { flex:1; }
+  header.topbar .filter {
+    padding:9px 14px 9px 36px;
+    border:1px solid var(--line); border-radius: var(--radius);
+    min-width:280px;
+    background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>") no-repeat 12px center;
+    font: inherit; color: inherit;
+    transition: border-color 120ms, box-shadow 120ms;
+  }
+  header.topbar .filter:focus { outline:0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  header.topbar button.primary {
+    background: var(--accent); color:#fff; border:0;
+    padding:9px 16px; border-radius: var(--radius);
+    cursor:pointer; font: 600 13px/1 inherit;
+    box-shadow: var(--shadow-sm);
+    transition: transform 80ms, box-shadow 120ms;
+  }
+  header.topbar button.primary:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  header.topbar button.ghost {
+    background:#fff; color:var(--ink-soft);
+    border:1px solid var(--line); padding:9px 14px;
+    border-radius: var(--radius); cursor:pointer; font: 500 13px/1 inherit;
+  }
+  header.topbar button.ghost:hover { background:#f8fafc; }
+
+  main {
+    display:grid;
+    grid-template-columns: 480px 1fr;
+    gap:20px;
+    padding:24px 28px;
+    align-items:flex-start;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  .panel {
+    background:var(--panel);
+    border:1px solid var(--line); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  .panel-head {
+    padding:14px 18px;
+    border-bottom:1px solid var(--line-soft);
+    display:flex; align-items:center; gap:10px;
+  }
+  .panel-head h2 {
+    margin:0; font-size:13px; color:var(--mute);
+    letter-spacing:.08em; text-transform:uppercase; font-weight:700;
+  }
+  .panel-head .count {
+    background: var(--accent-soft); color: var(--accent);
+    font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px;
+  }
+  .panel-head .grow { flex:1; }
+
+  /* Tour list — grouped by route when unfiltered, flat when filtered. */
+  .route-group { border-top:1px solid var(--line-soft); }
+  .route-group:first-of-type { border-top:0; }
+  .route-group .route-head {
+    padding:10px 18px;
+    background: #f9fafb;
+    border-bottom:1px solid var(--line-soft);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size:12px; color: var(--mute);
+    display:flex; align-items:center; gap:8px;
+  }
+  .route-group .route-head .route-tag {
+    background: #1e293b; color:#fff;
+    padding:2px 8px; border-radius:4px;
+    font-size:10px; font-weight:700;
+    letter-spacing:.04em; text-transform: uppercase;
+  }
+  .tour-list { padding:8px; margin:0; list-style:none; }
+  .tour-card {
+    position: relative;
+    display:flex; align-items:center; gap:10px;
+    padding:10px 12px;
+    border-radius: var(--radius-sm);
+    cursor:pointer;
+    transition: background 100ms, box-shadow 120ms, transform 80ms;
+    border:1px solid transparent;
+    user-select: none;
+  }
+  .tour-card + .tour-card { margin-top:4px; }
+  .tour-card:hover {
+    background: #f8fafc;
+    border-color: var(--line-soft);
+  }
+  .tour-card.active {
+    background: var(--accent-soft);
+    border-color: #c7d2fe;
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .tour-card.dragging {
+    opacity:.55; box-shadow: var(--shadow-md);
+    transform: scale(.98);
+  }
+  .tour-card.drop-above::before,
+  .tour-card.drop-below::after {
+    content:''; position:absolute; left:8px; right:8px; height:2px;
+    background: var(--accent); border-radius:2px;
+  }
+  .tour-card.drop-above::before { top:-2px; }
+  .tour-card.drop-below::after  { bottom:-2px; }
+
+  .tour-card .drag {
+    color: var(--mute); font-size:14px; line-height:1;
+    cursor: grab; padding: 2px; opacity: .5;
+    transition: opacity 80ms;
+  }
+  .tour-card:hover .drag { opacity: 1; }
+  .tour-card .drag:active { cursor: grabbing; }
+
+  .tour-card .thumb {
+    width:48px; height:36px; border-radius:5px;
+    background: linear-gradient(135deg, #fef3c7, #fde68a);
+    flex-shrink:0; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    border:1px solid #fcd34d; font-size:18px;
+  }
+  .tour-card .thumb img {
+    width:100%; height:100%; object-fit:cover;
+  }
+
+  .tour-card .body { flex:1; min-width:0; }
+  .tour-card .name {
+    font-weight:600; color: var(--ink);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    display:flex; align-items:center; gap:6px;
+  }
+  .tour-card .pos-badge {
+    background: var(--tag); color:var(--tag-ink);
+    font-weight:700; padding:1px 7px; border-radius:999px;
+    font-size:10px; flex-shrink:0;
+  }
+  .tour-card .meta {
+    color: var(--mute); font-size:11px; margin-top:2px;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  }
+  .tour-card .meta .chip {
+    background: var(--line-soft); color: var(--ink-soft);
+    padding:1px 7px; border-radius:999px; font-size:10px; font-weight:600;
+  }
+
+  .tour-card .ctrl {
+    display:flex; align-items:center; gap:2px;
+    opacity: 0; transition: opacity 100ms;
+  }
+  .tour-card:hover .ctrl,
+  .tour-card.active .ctrl { opacity: 1; }
+  .tour-card .ctrl button {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    width:24px; height:24px; padding:0;
+    border-radius: 5px; font: 600 12px/1 inherit;
+    cursor: pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .tour-card .ctrl button:hover { background:#fff; border-color:#cbd5e1; color:var(--ink); }
+  .tour-card .ctrl button:disabled { opacity:.3; cursor:not-allowed; }
+
+  .empty {
+    padding:40px 24px; text-align:center; color:var(--mute);
+  }
+  .empty .icon { font-size: 36px; margin-bottom: 8px; opacity: .5; }
+  .empty .hint { font-size:12px; margin-top:8px; }
+
+  /* Editor panel. */
+  .editor { padding:18px 22px; }
+  .editor label {
+    display:block; font-size:11px; color:var(--mute);
+    margin:14px 0 4px; letter-spacing:.04em; font-weight:600;
+    text-transform: uppercase;
+  }
+  .editor label:first-child { margin-top:0; }
+  .editor input, .editor textarea, .editor select {
+    width:100%; padding:8px 10px; font:inherit;
+    border:1px solid var(--line); border-radius: var(--radius-sm);
+    background:#fff; transition: border-color 120ms, box-shadow 120ms;
+  }
+  .editor input:focus, .editor textarea:focus, .editor select:focus {
+    outline:0; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .editor textarea { min-height:70px; resize:vertical; font-family: inherit; }
+  .editor .actions {
+    margin-top:18px; padding-top:14px; border-top:1px solid var(--line-soft);
+    display:flex; gap:8px; align-items:center;
+  }
+  button {
+    background:#fff; border:1px solid var(--line);
+    padding:7px 12px; border-radius: var(--radius-sm);
+    font:inherit; cursor:pointer; color: var(--ink-soft);
+    transition: background 100ms, border-color 100ms;
+  }
+  button:hover { background:#f8fafc; border-color: #cbd5e1; }
+  button.primary {
+    background: var(--accent); color:#fff; border-color: var(--accent);
+    font-weight:600;
+  }
+  button.primary:hover { background:#4338ca; border-color:#4338ca; }
+  button.danger {
+    color:var(--warn); border-color: var(--warn-soft);
+    background: #fff;
+  }
+  button.danger:hover { background: var(--warn-soft); }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  .steps { padding:0 14px 14px; }
-  .step { background:#fafafa; border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:10px; }
-  .step.sub { margin-left:24px; border-left:3px solid var(--tag); }
-  .step .header { display:flex; align-items:center; gap:8px; }
-  .step .badge { background:var(--tag); color:var(--tag-ink); font-weight:700; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; }
-  .step .label { flex:1; font-weight:600; }
-  .step .ctrl button { padding:3px 7px; font-size:12px; }
-  .step .selector { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; color:var(--mute); margin-top:4px; word-break:break-all; }
-  .step .grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px; }
+
+  .steps-wrap { padding:0 22px 22px; }
+  .steps-head {
+    padding:14px 22px 4px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .steps-head h3 {
+    margin:0; font-size:12px; color:var(--mute);
+    letter-spacing:.08em; text-transform:uppercase; font-weight:700;
+  }
+  .step {
+    background:#fafbfc; border:1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+    padding:12px 14px; margin-top:10px;
+    transition: border-color 100ms;
+  }
+  .step:hover { border-color: var(--line); }
+  .step.sub { background:#fdfaf3; border-left:3px solid var(--tag); }
+  .step .step-head { display:flex; align-items:center; gap:10px; }
+  .step .badge {
+    background: var(--tag); color: var(--tag-ink);
+    font-weight:700; min-width:26px; height:26px; padding:0 7px;
+    border-radius:999px; display:flex; align-items:center; justify-content:center;
+    font-size:12px; flex-shrink:0;
+  }
+  .step .label { flex:1; font-weight:600; color:var(--ink); }
+  .step .ctrl {
+    display:flex; gap:3px;
+  }
+  .step .ctrl button {
+    padding:4px 8px; font-size:11px;
+    min-width:26px;
+  }
+  .step .selector {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size:10.5px; color: var(--mute);
+    margin-top:6px; word-break: break-all;
+    background:#fff; padding:4px 8px; border-radius:4px;
+    border:1px solid var(--line-soft);
+  }
+  .step .grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:10px; }
   .step .grid label { margin-top:0; }
-  .step textarea { min-height:50px; }
-  .step .preview { margin-top:8px; }
-  .step .preview img { max-width:100%; max-height:140px; border:1px solid var(--line); border-radius:6px; cursor:zoom-in; }
-  .crumbs { color:var(--mute); font-size:12px; margin:4px 0 0; }
-  .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#111; color:#fff; padding:10px 14px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.2); }
-  .toast.error { background:var(--warn); }
-  dialog.preview-modal { padding:0; border:0; border-radius:10px; max-width:90vw; max-height:90vh; }
-  dialog.preview-modal img { max-width:90vw; max-height:90vh; display:block; }
-  dialog.preview-modal::backdrop { background:rgba(0,0,0,.6); }
+  .step textarea { min-height:54px; }
+  .step .preview { margin-top:10px; }
+  .step .preview img {
+    max-width:100%; max-height:160px; border:1px solid var(--line);
+    border-radius:6px; cursor:zoom-in; display:block;
+  }
+
+  .toast {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:#0f172a; color:#fff; padding:11px 18px;
+    border-radius: var(--radius); box-shadow: var(--shadow-lg);
+    font: 500 13px/1.4 inherit;
+    z-index: 100;
+    animation: toast-in 180ms ease-out;
+  }
+  .toast.error { background: var(--warn); }
+  .toast.success { background: var(--ok); }
+  @keyframes toast-in { from { transform: translate(-50%, 12px); opacity:0; } to { transform: translate(-50%, 0); opacity:1; } }
+
+  dialog.preview-modal {
+    padding:0; border:0; border-radius: var(--radius);
+    max-width:92vw; max-height:92vh;
+    box-shadow: var(--shadow-lg);
+  }
+  dialog.preview-modal img { max-width:92vw; max-height:92vh; display:block; }
+  dialog.preview-modal::backdrop { background:rgba(15, 23, 42, .65); backdrop-filter: blur(4px); }
+
+  .dirty-dot {
+    display:inline-block; width:8px; height:8px;
+    background: var(--tag); border-radius:50%;
+    margin-left:8px; box-shadow: 0 0 0 4px rgba(245, 158, 11, .2);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+  }
+
+  .hint-row {
+    padding:10px 18px; font-size:12px; color: var(--mute);
+    background: var(--accent-soft);
+    border-top:1px solid var(--line-soft);
+    display:flex; align-items:center; gap:8px;
+  }
 </style>
 </head>
 <body>
@@ -87,8 +374,7 @@
 import { createApp, ref, computed, reactive, onMounted, watch } from 'https://esm.sh/vue@3.4.27/dist/vue.esm-browser.js';
 
 // ============================================================
-// API client. Same endpoints the in-page agent uses; thin
-// wrappers so the UI doesn't repeat fetch boilerplate.
+// API client.
 // ============================================================
 const API = {
   list(route) {
@@ -108,10 +394,6 @@ const API = {
     return fetch(`/__nexus/tour/tours/${encodeURIComponent(id)}`, { method:'DELETE' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('delete failed')));
   },
-  // reorderTours flushes a new (ids ordering) → the server
-  // rewrites each tour's Order field to its position in the slice.
-  // Used by the list view's ↑/↓ buttons when a route filter is
-  // active (reorder is only meaningful within a single route).
   reorderTours(ids) {
     return fetch('/__nexus/tour/tours/reorder', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -120,12 +402,8 @@ const API = {
   },
 };
 
-// ============================================================
-// Helpers: tree traversal.
-// stepPath finds an array of indices [i, j, k] from root to the
-// step with id `targetId`, so callers can splice the parent
-// without recursive predicate functions sprinkled everywhere.
-// ============================================================
+// stepPath / parentArrayByPath / flattenTree — tree helpers used
+// by the editor for ↑↓/promote/demote/delete actions.
 function stepPath(steps, targetId, acc = []) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i];
@@ -138,9 +416,6 @@ function stepPath(steps, targetId, acc = []) {
   return null;
 }
 function parentArrayByPath(steps, path) {
-  // Return the array containing the node at `path` and the
-  // index of that node within it. e.g. path=[0,2,1] → the .children
-  // array of steps[0].children[2], and 1.
   let arr = steps;
   for (let i = 0; i < path.length - 1; i++) arr = arr[path[i]].children;
   return { arr, idx: path[path.length - 1] };
@@ -153,24 +428,46 @@ function flattenTree(steps, out = [], depth = 0, n = { v: 1 }) {
   return out;
 }
 
-// ============================================================
-// Root component.
-// ============================================================
+// firstCover gives the tour-card thumbnail. Multi-cover tours
+// use cover_images[0]; legacy tours use cover_image_url.
+function firstCover(t) {
+  if (t.cover_images && t.cover_images.length) return t.cover_images[0];
+  return t.cover_image_url || '';
+}
+
+// groupByRoute turns the flat tour list into ordered groups:
+// every distinct route gets one group, tours preserve their
+// list-order inside each group. Used when no filter is active
+// so operators can see + reorder per route without losing the
+// global view.
+function groupByRoute(tours) {
+  const groups = new Map();
+  for (const t of tours) {
+    const r = t.route || '/';
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(t);
+  }
+  return Array.from(groups.entries()).map(([route, items]) => ({ route, items }));
+}
+
 createApp({
   setup() {
     const tours = ref([]);
     const filter = ref('');
     const loading = ref(false);
     const selectedId = ref(null);
-    const editing = ref(null);     // hydrated tour being edited (or null)
-    const dirty = ref(false);      // editor has unsaved changes
+    const editing = ref(null);
+    const dirty = ref(false);
     const saving = ref(false);
-    const toast = ref(null);       // { msg, kind }
+    const toast = ref(null);
     const previewSrc = ref(null);
+    const dragId = ref(null);
+    const dragOverId = ref(null);
+    const dragPos = ref(null);    // 'above' | 'below'
 
     function notify(msg, kind) {
-      toast.value = { msg, kind };
-      setTimeout(() => { if (toast.value && toast.value.msg === msg) toast.value = null; }, 3000);
+      toast.value = { msg, kind: kind || 'success' };
+      setTimeout(() => { if (toast.value && toast.value.msg === msg) toast.value = null; }, 2800);
     }
 
     async function refresh() {
@@ -208,11 +505,10 @@ createApp({
       saving.value = true;
       try {
         const saved = await API.upsert(editing.value);
-        notify('Saved.');
+        notify('Saved');
         dirty.value = false;
         selectedId.value = saved.id;
         editing.value = saved;
-        // Refresh list so the new/renamed entry appears.
         await refresh();
       } catch (e) {
         notify(e.message || 'save failed', 'error');
@@ -223,17 +519,9 @@ createApp({
 
     function openPreview() {
       if (!editing.value || !editing.value.id) return;
-      // Open in a new tab so the operator can keep editing while
-      // the preview is open + the print dialog lives in its own
-      // tab without modal-interrupting the editor.
       window.open(`/__nexus/tour/tours/${encodeURIComponent(editing.value.id)}/preview`, '_blank');
     }
 
-    // openMultiPreview combines tours into one printable page.
-    // When a route filter is active, we pre-fill ?route=... so
-    // the preview hydrates every tour for that route in play
-    // order. Otherwise we pass the ids of everything currently
-    // listed.
     function openMultiPreview() {
       if (!tours.value.length) return;
       const params = filter.value.trim()
@@ -242,26 +530,108 @@ createApp({
       window.open(`/__nexus/tour/preview?${params}`, '_blank');
     }
 
-    // moveTour shifts a tour up/down within the current list.
-    // Only meaningful with a route filter applied — the server
-    // accepts the full id sequence and rewrites Order = index.
+    // moveTour — the ↑/↓ buttons. Works regardless of filter:
+    //   * Filtered (single-route view): shift within the visible list.
+    //   * Unfiltered (grouped view): shift within the same route group.
+    // The server rewrites every tour's Order field to its new
+    // global index — that's correct for both shapes because (route
+    // ASC, order ASC, name ASC) preserves intra-route order even
+    // when Order is a global counter.
     async function moveTour(id, delta) {
       const idx = tours.value.findIndex(t => t.id === id);
       if (idx < 0) return;
-      const next = idx + delta;
-      if (next < 0 || next >= tours.value.length) return;
-      const newOrder = [...tours.value];
-      const [item] = newOrder.splice(idx, 1);
-      newOrder.splice(next, 0, item);
-      // Optimistic UI — re-sort first, then flush. A failed
-      // server call rolls back via refresh().
-      tours.value = newOrder;
+      const me = tours.value[idx];
+      // Unfiltered (grouped) view: stay within the same route.
+      // Filtered view: stay within the visible list.
+      const scope = filter.value.trim()
+        ? tours.value
+        : tours.value.filter(t => (t.route || '/') === (me.route || '/'));
+      const inScope = scope.findIndex(t => t.id === id);
+      const target = inScope + delta;
+      if (target < 0 || target >= scope.length) return;
+      // Build the new full ordering: replace the same-scope slice
+      // with its rearranged version. Across-scope tours keep their
+      // relative order untouched.
+      const reordered = [];
+      let scopeI = 0;
+      const newScope = [...scope];
+      const [item] = newScope.splice(inScope, 1);
+      newScope.splice(target, 0, item);
+      for (const t of tours.value) {
+        if ((t.route || '/') === (me.route || '/') && !filter.value.trim()) {
+          reordered.push(newScope[scopeI++]);
+        } else if (filter.value.trim()) {
+          reordered.push(newScope[scopeI++]);
+        } else {
+          reordered.push(t);
+        }
+      }
+      tours.value = reordered;
       try {
-        await API.reorderTours(newOrder.map(t => t.id));
+        await API.reorderTours(reordered.map(t => t.id));
       } catch (e) {
         notify(e.message || 'reorder failed', 'error');
         await refresh();
       }
+    }
+
+    // Drag and drop. dragstart/dragover/drop wire up across the
+    // whole tour list. Pos = 'above'|'below' decides whether to
+    // insert before or after the target. We restrict drops to
+    // within the same route group when unfiltered, so reorder
+    // semantics match the ↑/↓ buttons.
+    function onDragStart(id, ev) {
+      dragId.value = id;
+      try {
+        ev.dataTransfer.effectAllowed = 'move';
+        ev.dataTransfer.setData('text/plain', id);
+      } catch {}
+    }
+    function onDragOver(id, ev) {
+      if (!dragId.value || dragId.value === id) return;
+      // Same-route restriction when grouped view is active.
+      if (!filter.value.trim()) {
+        const a = tours.value.find(t => t.id === dragId.value);
+        const b = tours.value.find(t => t.id === id);
+        if (!a || !b || (a.route || '/') !== (b.route || '/')) return;
+      }
+      ev.preventDefault();
+      const rect = ev.currentTarget.getBoundingClientRect();
+      dragOverId.value = id;
+      dragPos.value = (ev.clientY - rect.top) < rect.height / 2 ? 'above' : 'below';
+    }
+    function onDragLeave() {
+      // Don't clear on every leave — drop targets fire leave+enter
+      // as the pointer moves between child elements. The drop or
+      // dragend listener clears state authoritatively.
+    }
+    async function onDrop(targetId, ev) {
+      ev.preventDefault();
+      const sourceId = dragId.value;
+      const pos = dragPos.value;
+      dragId.value = null; dragOverId.value = null; dragPos.value = null;
+      if (!sourceId || sourceId === targetId) return;
+      const srcIdx = tours.value.findIndex(t => t.id === sourceId);
+      const tgtIdx = tours.value.findIndex(t => t.id === targetId);
+      if (srcIdx < 0 || tgtIdx < 0) return;
+      const next = [...tours.value];
+      const [item] = next.splice(srcIdx, 1);
+      let insertAt = next.findIndex(t => t.id === targetId);
+      if (pos === 'below') insertAt += 1;
+      next.splice(insertAt, 0, item);
+      tours.value = next;
+      try {
+        await API.reorderTours(next.map(t => t.id));
+        notify('Order updated');
+      } catch (e) {
+        notify(e.message || 'reorder failed', 'error');
+        await refresh();
+      }
+    }
+    function onDragEnd() {
+      dragId.value = null;
+      dragOverId.value = null;
+      dragPos.value = null;
     }
 
     async function destroyTour() {
@@ -273,14 +643,9 @@ createApp({
         selectedId.value = null;
         dirty.value = false;
         await refresh();
-        notify('Deleted.');
+        notify('Deleted');
       } catch (e) { notify(e.message || 'delete failed', 'error'); }
     }
-
-    // ------------- Step operations -------------
-    // All operate on editing.value.steps (in-place) then flip
-    // dirty=true. Save flushes the whole tour at once via
-    // POST /tours, which the store treats as authoritative.
 
     function markDirty() { dirty.value = true; }
 
@@ -288,9 +653,6 @@ createApp({
       const path = stepPath(editing.value.steps, id);
       if (!path) return;
       const { arr, idx } = parentArrayByPath(editing.value.steps, path);
-      // Reparent children to the deleted step's parent so we
-      // don't lose substep work on a wrong click. Mirrors the
-      // server's DeleteStep semantics.
       const victim = arr[idx];
       if (victim.children && victim.children.length) {
         arr.splice(idx, 1, ...victim.children);
@@ -312,9 +674,6 @@ createApp({
     }
 
     function promoteStep(id) {
-      // Move a substep up one level. Becomes a sibling of its
-      // current parent, inserted right AFTER the parent. No-op
-      // for root steps.
       const path = stepPath(editing.value.steps, id);
       if (!path || path.length < 2) return;
       const child = (() => {
@@ -328,8 +687,6 @@ createApp({
     }
 
     function demoteStep(id) {
-      // Make this step a child of the step immediately above it.
-      // No-op for the first step in its array.
       const path = stepPath(editing.value.steps, id);
       if (!path) return;
       const { arr, idx } = parentArrayByPath(editing.value.steps, path);
@@ -344,75 +701,169 @@ createApp({
     onMounted(refresh);
     watch(filter, () => refresh());
 
-    // flatTree gives the template a single iterable with each
-    // node + its visual depth + its 1-based step number, so the
-    // template doesn't need to recurse.
     const flatTree = computed(() => editing.value ? flattenTree(editing.value.steps) : []);
+
+    // Grouped view (no filter) vs flat view (filter active).
+    const grouped = computed(() => filter.value.trim() ? null : groupByRoute(tours.value));
+
+    // Per-tour position-within-route (1-based) for the badge
+    // shown on the tour card. Used in both views to surface
+    // play order at a glance.
+    const posInRoute = computed(() => {
+      const map = new Map();
+      const counters = new Map();
+      for (const t of tours.value) {
+        const r = t.route || '/';
+        const n = (counters.get(r) || 0) + 1;
+        counters.set(r, n);
+        map.set(t.id, n);
+      }
+      return map;
+    });
 
     return {
       tours, filter, loading, selectedId, editing, dirty, saving, toast, previewSrc,
+      grouped, posInRoute,
+      dragId, dragOverId, dragPos,
       refresh, selectTour, newTour, save, destroyTour, openPreview,
       openMultiPreview, moveTour,
+      onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd,
       deleteStep, moveStep, promoteStep, demoteStep, markDirty,
       flatTree,
+      firstCover,
     };
   },
   template: `
-<header>
-  <h1>🎬 Tours</h1>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎬</span>
+    <span>Tours</span>
+  </div>
   <span class="grow"></span>
-  <input class="filter" v-model="filter" placeholder="filter by route, e.g. /admin/users" />
+  <input class="filter" v-model="filter" placeholder="Filter by route — e.g. /admin/users" />
   <button class="primary" @click="newTour">+ New tour</button>
-  <button @click="refresh" :disabled="loading">↻</button>
+  <button class="ghost" @click="refresh" :disabled="loading" :title="loading ? 'Loading…' : 'Refresh'">↻</button>
 </header>
 
 <main>
   <section class="panel">
-    <h2>
-      Tours
-      <span style="float:right">
-        <button v-if="tours.length >= 1" @click="openMultiPreview" style="padding:2px 8px;font-size:12px"
-                :title="filter ? 'Preview every tour for this route in play order' : 'Preview every listed tour combined'">
-          📄 {{ tours.length > 1 ? 'Preview all' : 'Preview' }}
-        </button>
-        <span v-if="tours.length" style="color:#aaa;margin-left:8px">{{ tours.length }}</span>
-      </span>
-    </h2>
-    <ul class="list" v-if="tours.length">
+    <div class="panel-head">
+      <h2>Tour Library</h2>
+      <span class="grow"></span>
+      <span class="count" v-if="tours.length">{{ tours.length }}</span>
+      <button v-if="tours.length >= 1" @click="openMultiPreview" style="padding:5px 10px;font-size:11px"
+              :title="filter ? 'Preview every tour for this route in play order' : 'Preview every listed tour combined'">
+        📄 {{ tours.length > 1 ? 'Preview all' : 'Preview' }}
+      </button>
+    </div>
+
+    <!-- Filtered view: flat list. -->
+    <ul class="tour-list" v-if="filter && tours.length">
       <li v-for="(t, i) in tours" :key="t.id"
-          :class="{ active: t.id === selectedId }"
+          class="tour-card"
+          :class="{
+            active: t.id === selectedId,
+            dragging: dragId === t.id,
+            'drop-above': dragOverId === t.id && dragPos === 'above',
+            'drop-below': dragOverId === t.id && dragPos === 'below',
+          }"
+          draggable="true"
+          @dragstart="onDragStart(t.id, $event)"
+          @dragover="onDragOver(t.id, $event)"
+          @dragleave="onDragLeave"
+          @drop="onDrop(t.id, $event)"
+          @dragend="onDragEnd"
           @click="selectTour(t.id)">
-        <div style="display:flex;align-items:center;gap:8px">
-          <div style="flex:1;min-width:0">
-            <div class="name">
-              <span v-if="filter" style="background:#f59e0b;color:#111;font-weight:700;padding:1px 6px;border-radius:999px;font-size:11px;margin-right:6px">{{ i + 1 }}</span>
-              {{ t.name || '(unnamed)' }}
-            </div>
-            <div class="meta">{{ t.route || '/' }} · updated {{ new Date(t.updated_at).toLocaleString() }}</div>
+        <span class="drag" title="Drag to reorder">⋮⋮</span>
+        <span class="thumb">
+          <img v-if="firstCover(t)" :src="firstCover(t)" alt="" />
+          <span v-else>🎬</span>
+        </span>
+        <div class="body">
+          <div class="name">
+            <span class="pos-badge">{{ i + 1 }}</span>
+            {{ t.name || '(unnamed)' }}
           </div>
-          <span v-if="filter" class="ctrl" @click.stop>
-            <button :disabled="i === 0" @click="moveTour(t.id, -1)" title="Move up — play earlier" style="padding:3px 7px;font-size:12px">↑</button>
-            <button :disabled="i === tours.length - 1" @click="moveTour(t.id, +1)" title="Move down — play later" style="padding:3px 7px;font-size:12px">↓</button>
-          </span>
+          <div class="meta">
+            <span class="chip">{{ t.route || '/' }}</span>
+            <span>· {{ new Date(t.updated_at).toLocaleDateString() }}</span>
+          </div>
         </div>
+        <span class="ctrl" @click.stop>
+          <button :disabled="i === 0" @click="moveTour(t.id, -1)" title="Move up — play earlier">↑</button>
+          <button :disabled="i === tours.length - 1" @click="moveTour(t.id, +1)" title="Move down — play later">↓</button>
+        </span>
       </li>
     </ul>
-    <div v-else class="empty">
-      <p v-if="loading">Loading…</p>
-      <p v-else>No tours yet. Record one via the in-page <strong>● Tour</strong> pill.</p>
+
+    <!-- Unfiltered view: grouped by route. -->
+    <div v-else-if="grouped && grouped.length">
+      <div v-for="g in grouped" :key="g.route" class="route-group">
+        <div class="route-head">
+          <span class="route-tag">Route</span>
+          <span>{{ g.route }}</span>
+          <span class="grow" style="flex:1"></span>
+          <span style="font-size:11px;color:var(--mute)">{{ g.items.length }} tour{{ g.items.length === 1 ? '' : 's' }}</span>
+        </div>
+        <ul class="tour-list">
+          <li v-for="(t, i) in g.items" :key="t.id"
+              class="tour-card"
+              :class="{
+                active: t.id === selectedId,
+                dragging: dragId === t.id,
+                'drop-above': dragOverId === t.id && dragPos === 'above',
+                'drop-below': dragOverId === t.id && dragPos === 'below',
+              }"
+              draggable="true"
+              @dragstart="onDragStart(t.id, $event)"
+              @dragover="onDragOver(t.id, $event)"
+              @dragleave="onDragLeave"
+              @drop="onDrop(t.id, $event)"
+              @dragend="onDragEnd"
+              @click="selectTour(t.id)">
+            <span class="drag" title="Drag to reorder within this route">⋮⋮</span>
+            <span class="thumb">
+              <img v-if="firstCover(t)" :src="firstCover(t)" alt="" />
+              <span v-else>🎬</span>
+            </span>
+            <div class="body">
+              <div class="name">
+                <span class="pos-badge">{{ posInRoute.get(t.id) }}</span>
+                {{ t.name || '(unnamed)' }}
+              </div>
+              <div class="meta">
+                <span>updated {{ new Date(t.updated_at).toLocaleDateString() }}</span>
+              </div>
+            </div>
+            <span class="ctrl" @click.stop>
+              <button :disabled="i === 0" @click="moveTour(t.id, -1)" title="Move up — play earlier">↑</button>
+              <button :disabled="i === g.items.length - 1" @click="moveTour(t.id, +1)" title="Move down — play later">↓</button>
+            </span>
+          </li>
+        </ul>
+      </div>
+      <div class="hint-row">
+        💡 Drag any tour or use ↑/↓ to reorder. Across-route moves: change the route field in the editor.
+      </div>
     </div>
-    <div v-if="!filter && tours.length > 1" class="empty" style="padding:8px 14px;font-size:11px;border-top:1px solid var(--line)">
-      💡 Filter by route to reorder which tour plays first.
+
+    <div v-else class="empty">
+      <div class="icon">🎬</div>
+      <p v-if="loading">Loading tours…</p>
+      <p v-else>No tours yet.</p>
+      <div v-if="!loading" class="hint">Record one via the in-page <strong>● Tour</strong> pill.</div>
     </div>
   </section>
 
   <section v-if="editing" class="panel">
-    <h2>
-      Editing
-      <span v-if="dirty" style="color:#f59e0b;margin-left:8px">● unsaved</span>
-    </h2>
+    <div class="panel-head">
+      <h2>Editor</h2>
+      <span v-if="dirty" style="color:var(--tag);font-size:12px;font-weight:600">
+        unsaved changes <span class="dirty-dot"></span>
+      </span>
+    </div>
 
-    <div class="edit">
+    <div class="editor">
       <label>Name</label>
       <input v-model="editing.name" @input="markDirty" />
 
@@ -423,27 +874,30 @@ createApp({
       <textarea v-model="editing.description" @input="markDirty" placeholder="What does this tour show the operator?"></textarea>
 
       <div class="actions">
-        <button v-if="editing.id" class="danger" @click="destroyTour">Delete tour</button>
+        <button v-if="editing.id" class="danger" @click="destroyTour">🗑 Delete</button>
         <button @click="openPreview"
                 :disabled="!editing.id || dirty"
                 :title="!editing.id ? 'Save the tour first, then you can preview' : (dirty ? 'Save your changes first to include them in the preview' : 'Open the printable preview in a new tab')">
-          📄 Preview PDF
+          📄 Preview
         </button>
         <span style="flex:1"></span>
         <button class="primary" @click="save" :disabled="saving">{{ saving ? 'Saving…' : 'Save' }}</button>
       </div>
     </div>
 
-    <h2>Steps <span style="float:right;color:#aaa">{{ flatTree.length }}</span></h2>
-    <div class="steps">
-      <div v-if="!flatTree.length" class="empty">
-        Record some steps with the in-page agent — they'll appear here for editing.
+    <div class="steps-head">
+      <h3>Steps</h3>
+      <span class="count">{{ flatTree.length }}</span>
+    </div>
+    <div class="steps-wrap">
+      <div v-if="!flatTree.length" class="empty" style="padding:24px 0">
+        Record steps with the in-page agent — they'll appear here for editing.
       </div>
       <div v-for="row in flatTree" :key="row.step.id || row.n"
            class="step"
            :class="{ sub: row.depth > 0 }"
            :style="{ marginLeft: (row.depth * 24) + 'px' }">
-        <div class="header">
+        <div class="step-head">
           <span class="badge">{{ row.n }}</span>
           <span class="label">{{ row.step.label || row.step.title || row.step.selector }}</span>
           <span class="ctrl">
@@ -484,14 +938,17 @@ createApp({
   </section>
 
   <section v-else class="panel">
-    <h2>Editor</h2>
+    <div class="panel-head">
+      <h2>Editor</h2>
+    </div>
     <div class="empty">
-      <p>Pick a tour from the list, or click <strong>+ New tour</strong> to start a blank one.</p>
+      <div class="icon">👈</div>
+      <p>Pick a tour from the library, or click <strong>+ New tour</strong> to start a fresh one.</p>
     </div>
   </section>
 </main>
 
-<div v-if="toast" class="toast" :class="{ error: toast.kind === 'error' }">{{ toast.msg }}</div>
+<div v-if="toast" class="toast" :class="toast.kind">{{ toast.msg }}</div>
 
 <dialog class="preview-modal"
         ref="previewModal"
