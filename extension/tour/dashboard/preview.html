@@ -604,14 +604,23 @@ function renderComposite(tour, steps) {
     const safeIdx = Math.max(0, Math.min(covers.length - 1, i));
     stepsByCover[safeIdx].push(item);
   }
+  // Renumber Scene labels based on what's actually VISIBLE
+  // (covers that still have at least one step). After
+  // removing every step from a scene or merging it into
+  // another, the empty scene gets dropped from the layout —
+  // but without renumbering, the remaining headers used to
+  // read "Scene 1 of 5, Scene 3 of 5, Scene 4 of 5, …",
+  // confusing operators who'd expect the M to reflect what
+  // they actually see.
+  const visibleTotal = stepsByCover.filter(arr => arr.length > 0).length;
+  let visibleIdx = 0;
   return covers.map((url, i) => {
     if (!stepsByCover[i].length && covers.length > 1) return ''; // skip empty middle covers
-    // Header per scene. Scenes after the first get a "merge"
-    // button that demotes this scene's steps into substeps of
-    // the LAST step in the previous scene. Useful when the
-    // captured sequence is logically nested (open dropdown,
-    // click item) rather than parallel scenes.
-    const mergeBtn = covers.length > 1 && i > 0 && stepsByCover[i].length
+    visibleIdx++;
+    // Header per scene. Scenes after the first VISIBLE one get
+    // a merge button that demotes this scene's steps into
+    // substeps of any earlier step.
+    const mergeBtn = visibleTotal > 1 && visibleIdx > 1 && stepsByCover[i].length
       ? `<button class="ghost merge-scene"
                  data-tour-id="${escapeHtml(tour.id || '')}"
                  data-from-cover="${i}"
@@ -620,9 +629,9 @@ function renderComposite(tour, steps) {
            ↳ Merge as substeps of…
          </button>`
       : '';
-    const sectionHeader = covers.length > 1
+    const sectionHeader = visibleTotal > 1
       ? `<h3 style="margin:18px 0 6px;font-size:14px;color:#374151;display:flex;align-items:center;gap:6px">
-           Scene ${i + 1} of ${covers.length}${mergeBtn}
+           Scene ${visibleIdx} of ${visibleTotal}${mergeBtn}
          </h3>`
       : '';
     return sectionHeader + renderOneCover(tour, url, i, stepsByCover[i]);
