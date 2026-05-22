@@ -1405,16 +1405,48 @@
       e.stopPropagation();
       togglePause();
     }
-    // isPathEditable returns true when any element along the
-    // event's composed path is an editable form control or
-    // contenteditable region. Lets keyboard shortcuts respect
-    // typing in inputs across shadow-DOM boundaries.
+    // isPathEditable returns true when the user is currently
+    // typing into a form control or contenteditable region.
+    // Checks both signals because each one alone has blind
+    // spots:
+    //   * composedPath() walks across shadow-DOM boundaries
+    //     and catches inputs inside our own step-editor UI,
+    //     but is empty for events synthesised programmatically.
+    //   * document.activeElement is authoritative for the
+    //     currently-focused element (the OS-level "you are
+    //     typing here") and walks open shadow roots via
+    //     shadowRoot.activeElement, which catches inputs in
+    //     web-component-based host apps where composedPath()
+    //     may stop at the host boundary.
+    //   * role-based widgets (role="textbox", "searchbox",
+    //     "combobox") behave like inputs to the user even
+    //     when their underlying element is a <div> — the P
+    //     hotkey must respect those too or apps built with
+    //     custom autocomplete fields silently toggle pause
+    //     mid-search.
+    function isEditableEl(el) {
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      if (el.tagName && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+      const role = el.getAttribute && el.getAttribute('role');
+      return !!(role && /^(textbox|searchbox|combobox|spinbutton)$/.test(role));
+    }
     function isPathEditable(e) {
+      // 1. The currently-focused element + its shadow chain.
+      let ae = document.activeElement;
+      while (ae) {
+        if (isEditableEl(ae)) return true;
+        if (ae.shadowRoot && ae.shadowRoot.activeElement) {
+          ae = ae.shadowRoot.activeElement;
+        } else {
+          break;
+        }
+      }
+      // 2. The event's composed path (catches keydowns that
+      //    arrive before focus has settled on the target).
       const path = (e.composedPath && e.composedPath()) || [e.target];
       for (const el of path) {
-        if (!el || !el.tagName) continue;
-        if (el.isContentEditable) return true;
-        if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+        if (isEditableEl(el)) return true;
       }
       return false;
     }
