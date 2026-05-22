@@ -1616,5 +1616,150 @@
   // IIFE calls __nexusTourRemount() and returns.
   window.__nexusTourRemount = mountOverlay;
 
+  // Check for a pending insertion intent left by the preview
+  // page's "Capture from page" choice. If found, the operator
+  // wants to record ONE step and have it inserted at a specific
+  // slot in an existing tour — not the full tour-recording
+  // flow. We fetch the tour, run the picker, splice the new
+  // step in, save, then navigate back to where the operator
+  // came from. Intent expires after 15 minutes so a stale
+  // localStorage entry doesn't ambush a later session.
+  function checkPendingInsert() {
+    let intent;
+    try {
+      const raw = localStorage.getItem('__nexus_tour_insert');
+      if (!raw) return;
+      intent = JSON.parse(raw);
+    } catch { return; }
+    if (!intent || !intent.tourId || !intent.anchorStepId) {
+      localStorage.removeItem('__nexus_tour_insert');
+      return;
+    }
+    const ageMs = Date.now() - (intent.ts || 0);
+    if (ageMs > 15 * 60 * 1000) {
+      localStorage.removeItem('__nexus_tour_insert');
+      return;
+    }
+    // Wait one paint so the host's frontend has had a chance
+    // to render — otherwise the picker might activate before
+    // the page's interactive elements are in the DOM.
+    setTimeout(() => runInsertCapture(intent), 200);
+  }
+
+  async function runInsertCapture(intent) {
+    let tour;
+    try {
+      const r = await fetch(`/__nexus/tour/tours/${encodeURIComponent(intent.tourId)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      tour = await r.json();
+    } catch (e) {
+      console.warn('tour: insert intent — failed to load tour', e);
+      localStorage.removeItem('__nexus_tour_insert');
+      return;
+    }
+    // Small banner at the top so the operator knows what mode
+    // they're in and can bail out if they entered it by mistake.
+    const banner = document.createElement('div');
+    banner.style.cssText = [
+      'position:fixed','top:12px','left:50%','transform:translateX(-50%)',
+      'background:#2563eb','color:#fff','padding:10px 16px',
+      'border-radius:999px','box-shadow:0 4px 12px rgba(0,0,0,.25)',
+      'z-index:2147483646','pointer-events:auto',
+      'font:13px/1 system-ui,sans-serif','display:flex','gap:10px','align-items:center',
+    ].join(';');
+    banner.innerHTML = `
+      <span>Insert mode — click the target element to capture step</span>
+      <button style="background:#fff;color:#2563eb;border:0;padding:5px 10px;border-radius:6px;cursor:pointer;font:inherit">Cancel</button>
+    `;
+    overlayHost.appendChild
+      ? document.body.appendChild(banner)  // banner is sibling of overlay, not inside shadow
+      : null;
+    function cancel() {
+      banner.remove();
+      picker.stop();
+      localStorage.removeItem('__nexus_tour_insert');
+    }
+    banner.querySelector('button').addEventListener('click', cancel);
+
+    picker.start(async (pick) => {
+      banner.remove();
+      picker.stop();
+      // Build a step shaped like the recorder's normal onPicked,
+      // minus the screenshot work — operators just want a
+      // pointer to the element, not a fresh cover capture.
+      const docLeft = pick.rect.left + window.scrollX;
+      const docTop  = pick.rect.top  + window.scrollY;
+      const newStep = {
+        id: (crypto && crypto.randomUUID)
+          ? crypto.randomUUID().replace(/-/g, '')
+          : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2),
+        selector: pick.selector,
+        label: pick.label,
+        title: `Click ${pick.label}`,
+        text: '',
+        placement: 'bottom',
+        children: [],
+        rect_left:   Math.round(docLeft),
+        rect_top:    Math.round(docTop),
+        rect_width:  Math.round(pick.rect.width),
+        rect_height: Math.round(pick.rect.height),
+        cover_index: 0, // updated below to match the anchor's scene
+      };
+      // Find anchor step + splice newStep in at the right slot.
+      const splice = insertNewStep(tour, intent.anchorStepId, intent.position, newStep);
+      if (!splice) {
+        alert('Could not find anchor step in tour. Insertion cancelled.');
+        localStorage.removeItem('__nexus_tour_insert');
+        return;
+      }
+      // Persist.
+      try {
+        const r = await fetch('/__nexus/tour/tours', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(tour),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      } catch (e) {
+        alert('Insert save failed: ' + (e.message || e));
+        return;
+      }
+      localStorage.removeItem('__nexus_tour_insert');
+      // Bounce back to the preview tab the operator came from.
+      if (intent.returnUrl) {
+        location.href = intent.returnUrl;
+      } else {
+        location.reload();
+      }
+    }, cancel);
+  }
+
+  // insertNewStep walks tour.steps to find anchor, splices
+  // newStep either as a sibling (after anchor) or as a child
+  // (at end of anchor.children). Inherits anchor's cover_index
+  // so the new step groups with the same scene in the preview.
+  function insertNewStep(tour, anchorId, position, newStep) {
+    function walk(arr, parent) {
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i].id === anchorId) {
+          newStep.cover_index = Number.isInteger(arr[i].cover_index) ? arr[i].cover_index : 0;
+          if (position === 'child') {
+            if (!arr[i].children) arr[i].children = [];
+            arr[i].children.push(newStep);
+          } else {
+            arr.splice(i + 1, 0, newStep);
+          }
+          return true;
+        }
+        if (arr[i].children && arr[i].children.length) {
+          if (walk(arr[i].children, arr[i])) return true;
+        }
+      }
+      return false;
+    }
+    return walk(tour.steps || [], null);
+  }
+
   mountOverlay();
+  checkPendingInsert();
 })();

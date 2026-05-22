@@ -1254,6 +1254,41 @@ function enableStepActions(tours) {
       const stepId = btn.getAttribute('data-step-id');
       const tour = tours.find(t => t.id === tourId);
       if (!tour || !stepId) return;
+
+      // Insert flow forks: text-only or capture from the page.
+      // The "Capture from page" path stashes an insertion intent
+      // in localStorage and navigates to the host route — the
+      // in-page agent picks it up at boot, captures ONE step,
+      // splices it into the tour at the right slot, then bounces
+      // back to this preview.
+      if (act === 'insert-sibling' || act === 'insert-child') {
+        const choice = confirm(
+          'Insert a new step.\n\n' +
+          'OK    → Capture from the page (click the target element)\n' +
+          'Cancel → Add as a text-only step (fill in title + body here)'
+        );
+        if (choice) {
+          try {
+            localStorage.setItem('__nexus_tour_insert', JSON.stringify({
+              tourId,
+              anchorStepId: stepId,
+              position: act === 'insert-child' ? 'child' : 'sibling',
+              returnUrl: location.href,
+              ts: Date.now(),
+            }));
+          } catch (e) {
+            alert('Could not save insertion intent: ' + e.message);
+            return;
+          }
+          // Navigate to the host page where the new step will be
+          // captured. tour.route is the operator-declared path
+          // for this tour.
+          location.href = tour.route || '/';
+          return;
+        }
+        // fall through to text-only insert
+      }
+
       btn.disabled = true;
       const orig = btn.textContent;
       btn.textContent = '…';
