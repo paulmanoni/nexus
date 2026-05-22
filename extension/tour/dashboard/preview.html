@@ -230,6 +230,25 @@
      HTML's pre-wrap so what they see here matches what lands
      in Word. */
   .step-list p { margin: 4px 0 0; font-size: 12px; color: #333; white-space: pre-wrap; }
+  /* Action buttons per step — surface on row hover so the
+     list doesn't look cluttered when scanning, but are
+     reachable when the operator wants to mutate the tree. */
+  .step-list .row { position: relative; }
+  .step-list .step-actions {
+    position: absolute; top: 6px; right: 8px;
+    display: flex; gap: 4px; opacity: 0;
+    transition: opacity 120ms;
+  }
+  .step-list .row:hover .step-actions,
+  .step-list .step-actions:focus-within { opacity: 1; }
+  .step-list .step-actions button {
+    background: #fff; border: 1px solid var(--line);
+    color: #555; font: 11px/1 system-ui, sans-serif;
+    padding: 3px 7px; border-radius: 5px; cursor: pointer;
+  }
+  .step-list .step-actions button:hover { background: #f3f4f6; }
+  .step-list .step-actions button.danger { color: var(--warn); border-color: #fecaca; }
+  @media print { .step-list .step-actions { display: none; } }
   /* Inline edit: any [contenteditable] becomes a click-to-edit
      field. Hover signals editability; focus shows a dashed
      outline so the operator knows they can type. Saved state
@@ -544,11 +563,16 @@ function renderOneCover(tour, coverURL, coverIdx, steps) {
   return `
     <div class="step-list">
       ${steps.map(({ step, prefix, depth }) => `
-        <div class="row ${depth > 0 ? 'sub' : ''}">
+        <div class="row ${depth > 0 ? 'sub' : ''}" data-step-id="${escapeHtml(step.id || '')}">
           <div><span class="badge">${escapeHtml(prefix)}</span></div>
           <div>
             <h4 data-edit="title" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" contenteditable="plaintext-only">${escapeHtml(step.title || step.label || 'Step ' + prefix)}</h4>
             <p data-edit="text" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" contenteditable="plaintext-only">${escapeHtml(step.text || '').replace(/\n/g, '<br>') || '<em style="color:#aaa">Click to add description</em>'}</p>
+          </div>
+          <div class="step-actions">
+            <button data-act="insert-sibling" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" title="Insert a new step right below this one">+ below</button>
+            ${depth < 2 ? `<button data-act="insert-child" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" title="Add a substep under this step">+ sub</button>` : ''}
+            <button data-act="remove-step" data-tour-id="${escapeHtml(tour.id || '')}" data-step-id="${escapeHtml(step.id || '')}" class="danger" title="Remove this step (children reparent to its parent)">×</button>
           </div>
         </div>`).join('')}
     </div>
@@ -690,6 +714,7 @@ async function load() {
   //   4. Resize listener — keep lines attached as layout reflows.
   enableCalloutDrag(drawAllConnectors);
   enablePinDrag(drawAllConnectors);
+  enableStepActions(tours);
   drawAllConnectors();
   document.querySelectorAll('.composite img').forEach(img => {
     if (img.complete) return; // already loaded — drawn above
@@ -1214,6 +1239,128 @@ function applyDelta(pin, hi, dxPct, dyPct) {
     hi.style.left = (hiBaseLeft + dxPct) + '%';
     hi.style.top  = (hiBaseTop  + dyPct) + '%';
   }
+}
+
+// enableStepActions wires the + below / + sub / × buttons on
+// every step row in the preview's step list. Each action
+// mutates loadedTours in place, flushes the changed tour to
+// the server, then reloads the page so numbering / nesting /
+// composite groupings all redraw cleanly.
+function enableStepActions(tours) {
+  document.querySelectorAll('.step-list .step-actions button').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const act = btn.getAttribute('data-act');
+      const tourId = btn.getAttribute('data-tour-id');
+      const stepId = btn.getAttribute('data-step-id');
+      const tour = tours.find(t => t.id === tourId);
+      if (!tour || !stepId) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '…';
+      try {
+        if (act === 'insert-sibling') {
+          insertStepAfter(tour.steps || [], stepId, makeBlankStep(tour, stepId));
+        } else if (act === 'insert-child') {
+          insertStepAsChild(tour.steps || [], stepId, makeBlankStep(tour, null));
+        } else if (act === 'remove-step') {
+          if (!confirm('Remove this step? Its children (if any) reparent to its parent.')) {
+            btn.disabled = false; btn.textContent = orig;
+            return;
+          }
+          removeStepById(tour.steps || [], stepId);
+        }
+        await API.upsert(tour);
+        location.reload();
+      } catch (e) {
+        alert('Action failed: ' + (e.message || e));
+        btn.disabled = false; btn.textContent = orig;
+      }
+    });
+  });
+}
+
+// makeBlankStep creates a brand-new step with a random id,
+// empty title/text, and the same cover_index as a reference
+// step (so it groups with neighbours in the right scene).
+// referenceStepId can be null when inserting a substep — the
+// child inherits the parent's cover_index instead, handled
+// by insertStepAsChild.
+function makeBlankStep(tour, referenceStepId) {
+  const id = (crypto && crypto.randomUUID)
+    ? crypto.randomUUID().replace(/-/g, '')
+    : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  let coverIndex = 0;
+  if (referenceStepId) {
+    const ref = findStepInTour(tour, referenceStepId);
+    if (ref && Number.isInteger(ref.cover_index)) coverIndex = ref.cover_index;
+  }
+  return {
+    id,
+    title: 'New step',
+    text: '',
+    placement: 'bottom',
+    children: [],
+    cover_index: coverIndex,
+    // No rect_* — the step shows up in the list but not as a
+    // pin on the screenshot. Operators can re-record + merge
+    // if they want a visual anchor, or just leave it as a
+    // text-only entry.
+  };
+}
+
+// insertStepAfter walks the tree, finds the step with
+// targetId, and splices newStep into the SAME array right
+// after it.
+function insertStepAfter(steps, targetId, newStep) {
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].id === targetId) {
+      steps.splice(i + 1, 0, newStep);
+      return true;
+    }
+    if (steps[i].children && steps[i].children.length) {
+      if (insertStepAfter(steps[i].children, targetId, newStep)) return true;
+    }
+  }
+  return false;
+}
+
+// insertStepAsChild appends newStep as the last child of the
+// step with parentId. Inherits parent's cover_index so the
+// substep groups under the right scene.
+function insertStepAsChild(steps, parentId, newStep) {
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].id === parentId) {
+      if (!steps[i].children) steps[i].children = [];
+      // Inherit cover_index from parent (overrides the 0 default).
+      if (Number.isInteger(steps[i].cover_index)) newStep.cover_index = steps[i].cover_index;
+      steps[i].children.push(newStep);
+      return true;
+    }
+    if (steps[i].children && steps[i].children.length) {
+      if (insertStepAsChild(steps[i].children, parentId, newStep)) return true;
+    }
+  }
+  return false;
+}
+
+// removeStepById walks the tree, removes the step with
+// targetId. Children of the removed step reparent to its
+// parent (matches the dashboard's deleteStep semantics so
+// substep work isn't lost on an accidental click).
+function removeStepById(steps, targetId) {
+  for (let i = 0; i < steps.length; i++) {
+    if (steps[i].id === targetId) {
+      const removed = steps.splice(i, 1)[0];
+      if (removed.children && removed.children.length) {
+        steps.splice(i, 0, ...removed.children);
+      }
+      return true;
+    }
+    if (steps[i].children && steps[i].children.length) {
+      if (removeStepById(steps[i].children, targetId)) return true;
+    }
+  }
+  return false;
 }
 
 // copyForWord puts the tour content on the clipboard as rich
