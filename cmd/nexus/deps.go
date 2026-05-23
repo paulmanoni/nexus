@@ -132,10 +132,17 @@ func newAddCmd(stdout, stderr io.Writer) *cobra.Command {
 follows transitive imports, hashes + caches every file in ~/.nexus/cache,
 and pins everything in nexus.lock.
 
+Special-cased: nexus-client (and its adapter subpaths) is fetched from
+a running nexus app's /__nexus/client/ endpoints instead of the registry.
+Override the origin with NEXUS_DEV_URL; default is http://localhost:8080.
+
 Examples:
   nexus add vue
   nexus add react react-dom
-  nexus add vue@3.4.21`,
+  nexus add vue@3.4.21
+  nexus add nexus-client            # SDK core (from running app)
+  nexus add nexus-client/vue        # SDK core + Vue composables
+  nexus add nexus-client/react      # SDK core + React hooks`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAdd(cmd.Context(), stdout, stderr, args)
@@ -170,6 +177,30 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 	// empty, a range, or out of date).
 	resolvedVersions := make(map[string]string, len(specs))
 	for _, spec := range specs {
+		// Fork: `nexus-client[/vue|/react]` is fetched from a
+		// running nexus app, not the public registry. Same
+		// lockfile shape lands afterwards so `nexus install` /
+		// `nexus update` / `nexus gc` work identically.
+		if isNexusClientSpec(spec) {
+			origin := resolveNexusClientOrigin("")
+			fmt.Fprintf(stdout, "nexus add %s — fetching from %s\n", spec, origin)
+			pkgs, version, err := addNexusClient(ctx, dc, spec, "")
+			if err != nil {
+				return fmt.Errorf("nexus add %s: %w", spec, err)
+			}
+			for _, p := range pkgs {
+				lf.Add(p)
+			}
+			// package.json gets ONE entry under the bare name
+			// (`nexus-client`) even when the spec was
+			// `nexus-client/vue` — the exports map inside the
+			// generated node_modules/nexus-client/package.json
+			// handles adapter resolution.
+			resolvedVersions[nexusClientName] = version
+			fmt.Fprintf(stdout, "  resolved %s @ %s — %d file%s into node_modules/%s/\n",
+				spec, version, len(pkgs), plural(len(pkgs)), nexusClientName)
+			continue
+		}
 		fmt.Fprintf(stdout, "nexus add %s — fetching from %s\n", spec, dc.fetcher.Registry)
 		res, err := dc.fetcher.Fetch(ctx, spec)
 		if err != nil {
@@ -234,6 +265,13 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 	if _, statErr := os.Stat(shimsPath); statErr == nil {
 		var added int
 		for _, spec := range specs {
+			// nexus-client ships its own real .d.ts files alongside
+			// the materialized node_modules — no ambient shim needed,
+			// and adding one would shadow the real types under
+			// tsserver and force imports to resolve as `any`.
+			if isNexusClientSpec(spec) {
+				continue
+			}
 			bare, _ := parseSpecForPJ(spec)
 			if appendShimIfMissing(shimsPath, bare) {
 				added++
@@ -257,6 +295,14 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 	// minimum slice of the dep graph the user's code can reach.
 	typeSpecs := make(map[string]string, len(specs))
 	for _, spec := range specs {
+		// nexus-client supplies its OWN .d.ts files via the
+		// app endpoint; trying to fetch them from esm.sh would
+		// 404. The materialized node_modules/nexus-client/
+		// directory already has the canonical type source so
+		// tsserver picks them up without help.
+		if isNexusClientSpec(spec) {
+			continue
+		}
 		name, _ := parseSpecForPJ(spec)
 		if v, ok := resolvedVersions[name]; ok && v != "" {
 			typeSpecs[name] = v
@@ -288,11 +334,23 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 // parseSpecForPJ splits a CLI spec into (bare name, version). Same
 // shape as lockfile.SplitKey but lives here to avoid a back-edge
 // dependency from cmd/nexus into a package that already imports it.
+//
+// nexus-client adapter subpaths (`nexus-client/vue`,
+// `nexus-client/react`) collapse to `nexus-client` for
+// package.json purposes — the generated
+// node_modules/nexus-client/package.json's exports map handles
+// adapter resolution, so we want a single top-level dep entry
+// regardless of which subpath the user added.
 func parseSpecForPJ(spec string) (name, version string) {
 	if i := strings.LastIndex(spec, "@"); i > 0 {
-		return spec[:i], spec[i+1:]
+		name, version = spec[:i], spec[i+1:]
+	} else {
+		name = spec
 	}
-	return spec, ""
+	if strings.HasPrefix(name, nexusClientName+"/") {
+		name = nexusClientName
+	}
+	return name, version
 }
 
 func plural(n int) string {
