@@ -154,6 +154,41 @@ func TestGenerateDTS_TinyManifestSnapshot(t *testing.T) {
 		t.Error("vue.d.ts should not wrap exports in a `declare module` block")
 	}
 
+	// React half — separate file, top-level hook exports,
+	// imports shared types from the './client.js' sibling. Return
+	// shapes are plain values (T | null, boolean) instead of Vue's
+	// Ref<T> — that's the key shape difference between the two.
+	reactOut := GenerateReactDTS(m)
+	wantReactSubstrings := []string{
+		"export function useNexus",
+		"export function useQuery<K extends keyof RestEndpoints>",
+		"export function useMutation<K extends keyof RestEndpoints>",
+		"export function useGqlQuery<K extends keyof GraphqlOps>",
+		"export function useGqlMutation<K extends keyof GraphqlOps>",
+		"export function useCrud<T = unknown>",
+		"export function useWS<P extends keyof WSMessages>",
+		"export function useAuth(opts?: UseAuthOptions): UseAuthHandle",
+		"export interface QueryHandle<T>",
+		"export interface CrudListHandle<T>",
+		"export interface UseAuthHandle",
+		"data: T | null",      // plain value, not Ref<T>
+		"loading: boolean",    // plain value, not Ref<boolean>
+		"from './client.js'",
+	}
+	for _, s := range wantReactSubstrings {
+		if !strings.Contains(reactOut, s) {
+			t.Errorf("react.d.ts missing substring %q\n--- output ---\n%s\n--- end ---", s, reactOut)
+		}
+	}
+	// React .d.ts must NOT carry Vue's Ref<...> wrappers — those
+	// only make sense inside Vue's reactive system.
+	if strings.Contains(reactOut, "Ref<") {
+		t.Error("react.d.ts must not reference Vue's Ref<T> type — React state is unwrapped at the hook return")
+	}
+	if strings.Contains(reactOut, "declare module '/__nexus/client/react.js'") {
+		t.Error("react.d.ts should not wrap exports in a `declare module` block")
+	}
+
 	// Stability — same inputs, byte-equal outputs (snapshot tests
 	// downstream rely on this).
 	if GenerateClientDTS(m) != out {

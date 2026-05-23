@@ -197,6 +197,7 @@ type Handler struct {
 	manifest  cachedAsset
 	dtsClient cachedAsset
 	dtsVue    cachedAsset
+	dtsReact  cachedAsset
 }
 
 // AutoDumpConfig returns the OutDir / TSConfig / ViteConfig the
@@ -223,6 +224,7 @@ func (h *Handler) Reload() {
 	h.manifest = cachedAsset{}
 	h.dtsClient = cachedAsset{}
 	h.dtsVue = cachedAsset{}
+	h.dtsReact = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -241,6 +243,7 @@ func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
 	h.manifest = cachedAsset{}
 	h.dtsClient = cachedAsset{}
 	h.dtsVue = cachedAsset{}
+	h.dtsReact = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -399,12 +402,14 @@ func (h *Handler) build() {
 		body, err := json.MarshalIndent(pub, "", "  ")
 		clientDTS := GenerateClientDTS(m)
 		vueDTS := GenerateVueDTS(m)
+		reactDTS := GenerateReactDTS(m)
 		h.mu.Lock()
 		if err == nil {
 			h.manifest = newCachedAsset(body)
 		}
 		h.dtsClient = newCachedAsset([]byte(clientDTS))
 		h.dtsVue = newCachedAsset([]byte(vueDTS))
+		h.dtsReact = newCachedAsset([]byte(reactDTS))
 		h.mu.Unlock()
 	})
 }
@@ -415,16 +420,21 @@ var clientJS []byte
 //go:embed ui/nexus-vue.js
 var vueJS []byte
 
+//go:embed ui/nexus-react.js
+var reactJS []byte
+
 //go:embed ui/nexus-vite-plugin.js
 var vitePluginJS []byte
 
 // Static JS assets never change at runtime (the bytes are baked
 // into the binary by go:embed), so hash + gzip them once at package
-// init. The eager init is fine — both files together gzip in well
-// under a millisecond, well-amortized over every subsequent request.
+// init. The eager init is fine — all three files together gzip in
+// well under a millisecond, well-amortized over every subsequent
+// request.
 var (
 	clientJSAsset = newCachedAsset(clientJS)
 	vueJSAsset    = newCachedAsset(vueJS)
+	reactJSAsset  = newCachedAsset(reactJS)
 )
 
 // RuntimeJS returns the embedded nexus-client.js bytes. Public so
@@ -436,6 +446,12 @@ func RuntimeJS() []byte { return clientJS }
 // VueJS returns the embedded nexus-vue.js bytes. Same role as
 // RuntimeJS for the Vue 3 composables module.
 func VueJS() []byte { return vueJS }
+
+// ReactJS returns the embedded nexus-react.js bytes. Same role as
+// VueJS for the React hooks module — pair the import with React's
+// own runtime (the host app must resolve 'react' via importmap,
+// CDN, or bundler entry).
+func ReactJS() []byte { return reactJS }
 
 // VitePluginJS returns the embedded nexus-vite-plugin.js bytes —
 // the build-time auto-select transformer that rewrites nx.query /
@@ -532,6 +548,16 @@ func MountWithContributions(e *gin.Engine, reg *registry.Registry, authInfo func
 			h.build()
 			h.mu.Lock()
 			asset := h.dtsVue
+			h.mu.Unlock()
+			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
+		})
+		g.GET("/react.js", func(c *gin.Context) {
+			serveCachedAsset(c, "application/javascript; charset=utf-8", reactJSAsset)
+		})
+		g.GET("/react.d.ts", func(c *gin.Context) {
+			h.build()
+			h.mu.Lock()
+			asset := h.dtsReact
 			h.mu.Unlock()
 			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
 		})
