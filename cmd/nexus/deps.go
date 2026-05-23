@@ -136,6 +136,12 @@ Special-cased: nexus-client (and its adapter subpaths) is fetched from
 a running nexus app's /__nexus/client/ endpoints instead of the registry.
 Override the origin with NEXUS_DEV_URL; default is http://localhost:8080.
 
+When the default origin is unreachable AND no NEXUS_DEV_URL is set, the
+install falls back to the bundle EMBEDDED IN THIS CLI BINARY — useful
+for scaffolding a frontend project before the app is up. The .d.ts in
+that case has no typed endpoints yet; re-run after starting the app to
+refresh it with the live-projected types.
+
 Examples:
   nexus add vue
   nexus add react react-dom
@@ -184,7 +190,7 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 		if isNexusClientSpec(spec) {
 			origin := resolveNexusClientOrigin("")
 			fmt.Fprintf(stdout, "nexus add %s — fetching from %s\n", spec, origin)
-			pkgs, version, err := addNexusClient(ctx, dc, spec, "")
+			pkgs, version, err := addNexusClient(ctx, dc, spec, "", stdout)
 			if err != nil {
 				return fmt.Errorf("nexus add %s: %w", spec, err)
 			}

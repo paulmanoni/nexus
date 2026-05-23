@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -152,7 +153,7 @@ func TestAddNexusClient_Core(t *testing.T) {
 	}
 	dc := &depsContext{store: st, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
 
-	pkgs, version, err := addNexusClient(context.Background(), dc, "nexus-client", server.URL)
+	pkgs, version, err := addNexusClient(context.Background(), dc, "nexus-client", server.URL, io.Discard)
 	if err != nil {
 		t.Fatalf("addNexusClient: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestAddNexusClient_VueAdapterPullsCorePlusVueFiles(t *testing.T) {
 	st, _ := store.New(storeRoot)
 	dc := &depsContext{store: st, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
 
-	pkgs, _, err := addNexusClient(context.Background(), dc, "nexus-client/vue", server.URL)
+	pkgs, _, err := addNexusClient(context.Background(), dc, "nexus-client/vue", server.URL, io.Discard)
 	if err != nil {
 		t.Fatalf("addNexusClient: %v", err)
 	}
@@ -271,7 +272,7 @@ func TestAddNexusClient_UnreachableOriginFailsClean(t *testing.T) {
 	dc := &depsContext{store: st, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
 
 	_, _, err := addNexusClient(context.Background(), dc, "nexus-client",
-		"http://127.0.0.1:1") // closed port — guaranteed-unreachable origin
+		"http://127.0.0.1:1", io.Discard) // closed port — guaranteed-unreachable origin
 	if err == nil {
 		t.Fatal("expected error on unreachable origin")
 	}
@@ -324,7 +325,7 @@ func TestAddNexusClient_LockfileEntryShape(t *testing.T) {
 	st, _ := store.New(storeRoot)
 	dc := &depsContext{store: st, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
 
-	pkgs, _, _ := addNexusClient(context.Background(), dc, "nexus-client/react", server.URL)
+	pkgs, _, _ := addNexusClient(context.Background(), dc, "nexus-client/react", server.URL, io.Discard)
 	for _, p := range pkgs {
 		if p.Spec == "" || p.Version == "" || p.Resolved == "" || p.Integrity == "" {
 			t.Errorf("incomplete pkg: %+v", p)
@@ -342,6 +343,109 @@ func TestAddNexusClient_LockfileEntryShape(t *testing.T) {
 	}
 	if len(lf.Packages) != 4 {
 		t.Errorf("lockfile got %d packages, want 4", len(lf.Packages))
+	}
+}
+
+// TestAddNexusClient_OfflineFallbackUsesEmbeddedBundle: when the
+// default origin (localhost:8080) is unreachable AND no explicit
+// override was set, the install pulls bytes from the CLI binary's
+// own go:embed copy. The lockfile entries get a synthetic
+// `embedded://` Resolved URL so `nexus install` doesn't try to
+// re-fetch over HTTP.
+func TestAddNexusClient_OfflineFallbackUsesEmbeddedBundle(t *testing.T) {
+	t.Setenv(nexusClientOriginEnv, "") // no explicit override
+
+	cwd := t.TempDir()
+	must(t, os.Chdir(cwd))
+	t.Cleanup(func() { _ = os.Chdir("/") })
+
+	storeRoot := t.TempDir()
+	st, _ := store.New(storeRoot)
+	dc := &depsContext{store: st, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+
+	// originOverride = "" means "use the default localhost:8080".
+	// Nothing's running there in the test env so the install must
+	// fall back to embedded bytes.
+	logBuf := &bytes.Buffer{}
+	pkgs, version, err := addNexusClient(context.Background(), dc, "nexus-client/react", "", logBuf)
+	if err != nil {
+		t.Fatalf("offline fallback should not error, got %v", err)
+	}
+	if len(pkgs) != 4 {
+		t.Fatalf("expected 4 packages (core + react adapter), got %d", len(pkgs))
+	}
+	if version == "" {
+		t.Error("offline install should still pin a version (the CLI's own)")
+	}
+
+	// Every Resolved URL must use the synthetic embedded:// scheme
+	// — that's what tells `nexus install` to skip the HTTP fetch.
+	for _, p := range pkgs {
+		if !strings.HasPrefix(p.Resolved, "embedded://nexus-client/") {
+			t.Errorf("offline Resolved %q must use embedded:// scheme", p.Resolved)
+		}
+		if !strings.HasPrefix(p.Integrity, "sha256-") {
+			t.Errorf("Integrity missing sha256- prefix: %q", p.Integrity)
+		}
+	}
+
+	// node_modules materialization must still happen — that's the
+	// whole point of the offline path.
+	for _, expected := range []string{"client.js", "client.d.ts", "react.js", "react.d.ts", "package.json"} {
+		p := filepath.Join(cwd, "node_modules", "nexus-client", expected)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("missing %s: %v", p, err)
+		}
+	}
+
+	// User feedback message should mention the fallback so the
+	// operator understands why typed endpoints aren't there yet.
+	if !strings.Contains(logBuf.String(), "embedded in CLI") {
+		t.Errorf("expected 'embedded in CLI' notice in stdout, got: %q", logBuf.String())
+	}
+}
+
+// TestAddNexusClient_ExplicitOriginFailureStillErrors: when the
+// operator EXPLICITLY pointed at an unreachable URL (--from or
+// NEXUS_DEV_URL), we must NOT fall back to embedded — that would
+// silently override their intent. Fail loud instead.
+func TestAddNexusClient_ExplicitOriginFailureStillErrors(t *testing.T) {
+	cwd := t.TempDir()
+	must(t, os.Chdir(cwd))
+	t.Cleanup(func() { _ = os.Chdir("/") })
+
+	storeRoot := t.TempDir()
+	st, _ := store.New(storeRoot)
+	dc := &depsContext{store: st, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+
+	_, _, err := addNexusClient(context.Background(), dc, "nexus-client",
+		"http://127.0.0.1:1", io.Discard) // explicit override → no fallback
+	if err == nil {
+		t.Fatal("explicit unreachable origin should error, not fall back")
+	}
+	if _, statErr := os.Stat(filepath.Join(cwd, "node_modules", "nexus-client")); statErr == nil {
+		t.Error("partial install: node_modules/nexus-client/ should not exist when explicit origin fails")
+	}
+}
+
+// TestAddNexusClient_OfflineFallbackHonoredViaEnv: NEXUS_DEV_URL
+// counts as explicit-intent — if the operator set it, an
+// unreachable origin must NOT silently fall back. Catches the
+// "I set NEXUS_DEV_URL=staging and forgot to start it" footgun.
+func TestAddNexusClient_OfflineFallbackHonoredViaEnv(t *testing.T) {
+	t.Setenv(nexusClientOriginEnv, "http://127.0.0.1:1")
+
+	cwd := t.TempDir()
+	must(t, os.Chdir(cwd))
+	t.Cleanup(func() { _ = os.Chdir("/") })
+
+	storeRoot := t.TempDir()
+	st, _ := store.New(storeRoot)
+	dc := &depsContext{store: st, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+
+	_, _, err := addNexusClient(context.Background(), dc, "nexus-client", "", io.Discard)
+	if err == nil {
+		t.Fatal("env-set unreachable origin should error, not fall back to embedded")
 	}
 }
 

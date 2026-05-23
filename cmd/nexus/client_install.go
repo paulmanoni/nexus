@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
 	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
@@ -176,17 +177,42 @@ type appManifest struct {
 //     re-fetch (e.g. someone tampered with the response) trips an
 //     IntegrityError just like the esm.sh path.
 //
-// Reachability + manifest are checked once up-front; a typo in
-// the --from URL surfaces before any blobs land in the cache.
-func addNexusClient(ctx context.Context, dc *depsContext, spec, originOverride string) ([]lockfile.Package, string, error) {
+// Reachability fallback: if no explicit origin was supplied (no
+// --from arg, no NEXUS_DEV_URL env) AND the default localhost
+// app isn't reachable, the install falls back to the BYTES
+// EMBEDDED IN THE CLI BINARY. That lets a developer scaffold a
+// fresh frontend project before standing up the nexus app — they
+// get the runtime + static type surface immediately, and a
+// follow-up `nexus add nexus-client/...` against the running app
+// replaces the .d.ts with the live-projected one (which adds
+// typed RestEndpoints / GraphqlOps / WSMessages for the app's
+// actual endpoints).
+//
+// Explicit-origin failures still surface as errors — that's the
+// operator's bug to fix, not something to paper over.
+func addNexusClient(ctx context.Context, dc *depsContext, spec, originOverride string, stdout io.Writer) ([]lockfile.Package, string, error) {
 	origin := resolveNexusClientOrigin(originOverride)
+	explicit := originOverride != "" || os.Getenv(nexusClientOriginEnv) != ""
 
 	// Probe the app's /manifest.json for the version. Doubles as a
 	// reachability check — a typo'd URL or stopped server fails
 	// here before the per-file fetches start writing cache entries.
 	mf, err := fetchAppManifest(ctx, origin)
 	if err != nil {
-		return nil, "", fmt.Errorf("origin %s unreachable: %w", origin, err)
+		if explicit {
+			// Operator pointed at a specific URL — that intent
+			// should not be silently overridden by the offline
+			// fallback. Fail loud so they can fix the URL or
+			// start the app at that origin.
+			return nil, "", fmt.Errorf("origin %s unreachable: %w", origin, err)
+		}
+		// No explicit origin: fall back to the bundle embedded in
+		// the CLI binary. Same bytes the framework binary serves
+		// at /__nexus/client/* — just sourced from inside the
+		// `client` Go package's go:embed.
+		fmt.Fprintf(stdout, "  app at %s not reachable — installing bundle embedded in CLI (v%s)\n", origin, Version)
+		fmt.Fprintf(stdout, "  re-run `nexus add %s` once the app is running to pick up typed endpoints\n", spec)
+		return addNexusClientOffline(spec)
 	}
 	version := mf.Version
 	if version == "" {
@@ -362,4 +388,98 @@ func writeNexusClientPkgStub(dir, version string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "package.json"), append(buf, '\n'), 0o644)
+}
+
+// addNexusClientOffline is the fallback when the install runs
+// without a reachable nexus app on the default origin. Bytes come
+// from the `client` Go package's go:embed (same source the
+// framework binary serves at /__nexus/client/*) and the .d.ts
+// content is generated from an EMPTY manifest — runtime + static
+// type surface only, no typed RestEndpoints / GraphqlOps /
+// WSMessages (those need the running app's projection).
+//
+// The lockfile entries pin a synthetic `embedded://` URL so a
+// subsequent `nexus install` doesn't try to re-fetch over HTTP.
+// When the operator brings their app online and re-runs `nexus
+// add`, the live path takes over and the lockfile entries are
+// rewritten with the real resolved URL + a typed .d.ts.
+//
+// Version is the CLI's own Version constant — the embedded
+// bundle is whatever ships with this CLI build, so that's the
+// honest pin.
+func addNexusClientOffline(spec string) ([]lockfile.Package, string, error) {
+	plan := filesForSpec(spec)
+	version := Version
+	if version == "" {
+		version = "0.0.0"
+	}
+
+	cwd, _ := os.Getwd()
+	nodeModulesDir := filepath.Join(cwd, "node_modules", nexusClientName)
+
+	files := append([]string{}, plan.core...)
+	files = append(files, plan.adapter...)
+
+	// Empty manifest → .d.ts emits the runtime surface + empty
+	// RestEndpoints/GraphqlOps/WSMessages stubs. Compiles cleanly;
+	// the `K extends keyof RestEndpoints` constraints resolve to
+	// `never` so typed-call sites give a useful "no endpoints
+	// declared yet" message until the app is running.
+	emptyManifest := client.Manifest{Version: "client.v1"}
+
+	pkgs := make([]lockfile.Package, 0, len(files))
+	for _, f := range files {
+		body, contentType, err := embeddedBundle(f, emptyManifest)
+		if err != nil {
+			return nil, "", err
+		}
+		sum := sha256.Sum256(body)
+		hash := hex.EncodeToString(sum[:])
+
+		if cwd != "" {
+			if err := writeNodeModulesFile(nodeModulesDir, f, body); err != nil {
+				return nil, "", fmt.Errorf("write %s: %w", filepath.Join(nodeModulesDir, f), err)
+			}
+		}
+
+		pkgs = append(pkgs, lockfile.Package{
+			Spec:        nexusClientName + "/" + f,
+			Version:     version,
+			Resolved:    "embedded://nexus-client/" + f,
+			Integrity:   "sha256-" + hash,
+			ContentType: contentType,
+		})
+	}
+
+	if cwd != "" {
+		if err := writeNexusClientPkgStub(nodeModulesDir, version); err != nil {
+			return nil, "", fmt.Errorf("write %s/package.json: %w", nodeModulesDir, err)
+		}
+	}
+
+	return pkgs, version, nil
+}
+
+// embeddedBundle returns the bytes + content-type for one
+// nexus-client artifact, sourced from the `client` Go package's
+// embed directives and (for .d.ts files) the static-manifest
+// projection. Unknown file names return an error so a typo in
+// the file plan surfaces loud rather than producing zero-byte
+// writes.
+func embeddedBundle(file string, m client.Manifest) ([]byte, string, error) {
+	switch file {
+	case "client.js":
+		return client.RuntimeJS(), "application/javascript; charset=utf-8", nil
+	case "vue.js":
+		return client.VueJS(), "application/javascript; charset=utf-8", nil
+	case "react.js":
+		return client.ReactJS(), "application/javascript; charset=utf-8", nil
+	case "client.d.ts":
+		return []byte(client.GenerateClientDTS(m)), "application/typescript; charset=utf-8", nil
+	case "vue.d.ts":
+		return []byte(client.GenerateVueDTS(m)), "application/typescript; charset=utf-8", nil
+	case "react.d.ts":
+		return []byte(client.GenerateReactDTS(m)), "application/typescript; charset=utf-8", nil
+	}
+	return nil, "", fmt.Errorf("nexus-client: unknown embedded file %q", file)
 }
