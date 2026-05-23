@@ -4,83 +4,87 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"github.com/pelletier/go-toml/v2"
 )
 
-// DeployYAMLInputs is the on-disk shape of the cloud-inputs surface
-// inside nexus.deploy.yaml. Distinct from the framework's runtime
-// Manifest type so the YAML schema can evolve independently of the
-// JSON one the binary emits at NEXUS_PRINT_MANIFEST=1 print time —
-// the two surfaces serve different consumers (operators vs. the
-// platform) and benefit from different conventions (snake_case YAML
-// keys, fewer required fields up-front).
+// DeployTOMLInputs is the on-disk shape of the cloud-inputs surface
+// inside nexus.toml. Distinct from the framework's runtime Manifest
+// type so the TOML schema can evolve independently of the JSON one
+// the binary emits at NEXUS_PRINT_MANIFEST=1 print time — the two
+// surfaces serve different consumers (operators vs. the platform)
+// and benefit from different conventions (snake_case TOML keys,
+// fewer required fields up-front).
 //
-// Top-level keys map to nexus.deploy.yaml entries the loader
-// recognizes today. Unknown keys are ignored so old manifests parse
-// without errors:
+// Top-level keys map to nexus.toml entries the loader recognizes
+// today. Unknown keys are ignored so old manifests parse without
+// errors:
 //
-//	environments:
-//	  production: { domain: app.example.com }
-//	  staging:    { domain: staging.example.com }
+//	[environments.production]
+//	domain = "app.example.com"
 //
-//	secrets:
-//	  JWT_SIGNING_KEY: { required: true, env_scoped: true }
+//	[environments.staging]
+//	domain = "staging.example.com"
 //
-//	files:
-//	  tls_bundle: { path: /etc/ssl/app/bundle.pem, mode: 0400 }
+//	[secrets.JWT_SIGNING_KEY]
+//	required   = true
+//	env_scoped = true
 //
-//	hooks:
-//	  build:     [go build ./...]
-//	  predeploy: [./bin/app migrate]
+//	[files.tls_bundle]
+//	path = "/etc/ssl/app/bundle.pem"
+//	mode = 0o400
 //
-//	environment_overrides:
-//	  production:
-//	    env: { LOG_LEVEL: warn }
-//	    services:
-//	      main_db: { size: large, backup: hourly }
+//	[hooks]
+//	build     = ["go build ./..."]
+//	predeploy = ["./bin/app migrate"]
+//
+//	[environment_overrides.production]
+//	env = { LOG_LEVEL = "warn" }
+//	[environment_overrides.production.services.main_db]
+//	size   = "large"
+//	backup = "hourly"
 //
 // Maps are keyed by logical name (env name, secret name, etc.) for
 // operator ergonomics. The loader converts to the framework's
 // slice-of-named-structs shape at Load time so the runtime path
 // stays unchanged.
-type DeployYAMLInputs struct {
-	Environments         map[string]EnvironmentYAML `yaml:"environments,omitempty"`
-	Secrets              map[string]Secret          `yaml:"secrets,omitempty"`
-	Files                map[string]File            `yaml:"files,omitempty"`
-	Hooks                *Hooks                     `yaml:"hooks,omitempty"`
-	TLS                  *TLSBlock                  `yaml:"tls,omitempty"`
-	CORS                 *CORSBlock                 `yaml:"cors,omitempty"`
-	Errors               *ErrorsBlock               `yaml:"errors,omitempty"`
-	EnvironmentOverrides map[string]Override        `yaml:"environment_overrides,omitempty"`
+type DeployTOMLInputs struct {
+	Environments         map[string]EnvironmentTOML `toml:"environments,omitempty"`
+	Secrets              map[string]Secret          `toml:"secrets,omitempty"`
+	Files                map[string]File            `toml:"files,omitempty"`
+	Hooks                *Hooks                     `toml:"hooks,omitempty"`
+	TLS                  *TLSBlock                  `toml:"tls,omitempty"`
+	CORS                 *CORSBlock                 `toml:"cors,omitempty"`
+	Errors               *ErrorsBlock               `toml:"errors,omitempty"`
+	EnvironmentOverrides map[string]Override        `toml:"environment_overrides,omitempty"`
 
 	// Pre-existing top-level blocks (auto-populated by `nexus
 	// reconcile` from binary print mode, or hand-written by
 	// operators). Not part of the v0.42 "cloud inputs" surface but
-	// surfaced through the same loader so tools that consume YAML
+	// surfaced through the same loader so tools that consume TOML
 	// only (doctor, lint) see the complete declared shape.
-	Env      map[string]EnvVar      `yaml:"env,omitempty"`
-	Services map[string]ServiceNeed `yaml:"services,omitempty"`
+	Env      map[string]EnvVar      `toml:"env,omitempty"`
+	Services map[string]ServiceNeed `toml:"services,omitempty"`
 }
 
-// EnvironmentYAML mirrors Environment but doesn't carry a Name field
-// (the map key in `environments:` is the name). Lifting Name out of
-// the value keeps the operator-facing YAML clean:
+// EnvironmentTOML mirrors Environment but doesn't carry a Name field
+// (the table key in [environments.X] is the name). Lifting Name out
+// of the value keeps the operator-facing TOML clean:
 //
-//	environments:
-//	  production: { domain: app.example.com }   # one line per env
+//	[environments.production]
+//	domain = "app.example.com"
 //
 // rather than the redundant:
 //
-//	environments:
-//	  - name: production
-//	    domain: app.example.com
-type EnvironmentYAML struct {
-	Domain    string     `yaml:"domain,omitempty"`
-	Autoscale *Autoscale `yaml:"autoscale,omitempty"`
-	TTL       string     `yaml:"ttl,omitempty"`
+//	[[environments]]
+//	name = "production"
+//	domain = "app.example.com"
+type EnvironmentTOML struct {
+	Domain    string     `toml:"domain,omitempty"`
+	Autoscale *Autoscale `toml:"autoscale,omitempty"`
+	TTL       string     `toml:"ttl,omitempty"`
 }
 
-// LoadInputsYAML parses a YAML document into a partial Manifest with
+// LoadInputsTOML parses a TOML document into a partial Manifest with
 // only the inputs surface populated (Environments, Secrets, Files,
 // Hooks, Overrides). The other Manifest fields stay zero-valued —
 // callers merge this result with the framework-built base manifest.
@@ -90,41 +94,41 @@ type EnvironmentYAML struct {
 //   - Top-level keys outside the inputs surface (deployments, peers,
 //     services from reconcile, etc.) are silently ignored. The same
 //     file can declare both surfaces without conflict.
-//   - Map-keyed inputs are converted to named-struct slices: the YAML
-//     map key fills the Name field of each entry.
+//   - Table-keyed inputs are converted to named-struct slices: the
+//     TOML table key fills the Name field of each entry.
 //   - Empty / missing sections produce nil slices and nil pointers
 //     (no allocations), so the result round-trips identically through
 //     MergeOverrides as if those sections were never declared.
 //
-// Returns an error only on YAML syntax problems. Schema validation
+// Returns an error only on TOML syntax problems. Schema validation
 // (duplicate names, malformed validation rules, unknown override
 // keys) lives in Lint — callers should run Lint after Load.
-func LoadInputsYAML(data []byte) (Manifest, error) {
-	var raw DeployYAMLInputs
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return Manifest{}, fmt.Errorf("manifest: parse YAML inputs: %w", err)
+func LoadInputsTOML(data []byte) (Manifest, error) {
+	var raw DeployTOMLInputs
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return Manifest{}, fmt.Errorf("manifest: parse TOML inputs: %w", err)
 	}
 	return materializeInputs(raw), nil
 }
 
-// LoadInputsYAMLFile is the file-path convenience over LoadInputsYAML.
+// LoadInputsTOMLFile is the file-path convenience over LoadInputsTOML.
 // Reads the file then delegates. Errors include the path so a missing
-// file or YAML syntax problem is easy to locate.
-func LoadInputsYAMLFile(path string) (Manifest, error) {
+// file or TOML syntax problem is easy to locate.
+func LoadInputsTOMLFile(path string) (Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("manifest: read %s: %w", path, err)
 	}
-	m, err := LoadInputsYAML(data)
+	m, err := LoadInputsTOML(data)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("manifest: %s: %w", path, err)
 	}
 	return m, nil
 }
 
-// materializeInputs converts the YAML DTO into the framework's
+// materializeInputs converts the TOML DTO into the framework's
 // runtime Manifest shape. Pure function — no I/O, no globals.
-func materializeInputs(raw DeployYAMLInputs) Manifest {
+func materializeInputs(raw DeployTOMLInputs) Manifest {
 	var m Manifest
 
 	if len(raw.Environments) > 0 {
@@ -144,7 +148,7 @@ func materializeInputs(raw DeployYAMLInputs) Manifest {
 	if len(raw.Secrets) > 0 {
 		m.Secrets = make([]Secret, 0, len(raw.Secrets))
 		for name, s := range raw.Secrets {
-			s.Name = name // map key wins over any inline name
+			s.Name = name // table key wins over any inline name
 			m.Secrets = append(m.Secrets, s)
 		}
 		sortInputsByName(m.Secrets, func(s Secret) string { return s.Name })
@@ -236,8 +240,6 @@ func materializeInputs(raw DeployYAMLInputs) Manifest {
 // sortInputsByName is a tiny generic sort helper. Keeps the
 // materialize* functions free of inline sort.Slice noise.
 func sortInputsByName[T any](items []T, name func(T) string) {
-	// Avoid pulling in sort just to sort small N? It's already
-	// imported by the package. Use it.
 	sortBy(items, func(a, b T) bool { return name(a) < name(b) })
 }
 

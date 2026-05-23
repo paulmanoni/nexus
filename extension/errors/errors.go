@@ -28,7 +28,7 @@
 //	    // ... rest of the app
 //	)
 //
-// Manifest integration: the `errors:` block in nexus.deploy.yaml
+// Manifest integration: the `errors:` block in nexus.toml
 // drives Environment, Release, Capacity, SampleRate, and
 // IgnorePaths per-environment, with environment_overrides letting
 // production / staging / preview each set its own sample rate or

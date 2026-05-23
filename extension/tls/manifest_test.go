@@ -8,7 +8,7 @@ import (
 )
 
 // TestResolveConfig_NoManifest is the v1 path — operator passed Config
-// directly, no nexus.deploy.yaml tls: block. Pure in-code config
+// directly, no nexus.toml tls: block. Pure in-code config
 // flows through unchanged after applyDefaults.
 func TestResolveConfig_NoManifest(t *testing.T) {
 	t.Parallel()

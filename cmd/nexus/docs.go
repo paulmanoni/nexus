@@ -45,7 +45,7 @@ README on GitHub instead.
 Examples:
     nexus docs                # list all topics
     nexus docs handlers       # reflective handler signature reference
-    nexus docs deploy         # nexus.deploy.yaml + IfDeployment
+    nexus docs deploy         # nexus.toml + IfDeployment
     nexus docs --web          # open the README on GitHub`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -626,10 +626,10 @@ surface at start time, not at first request.
 	"cli": `
 CLI CHEATSHEET
 
-  nexus new <dir>            Scaffold a minimal app + nexus.deploy.yaml.
+  nexus new <dir>            Scaffold a minimal app + nexus.toml.
                              --module <path> overrides go.mod path.
 
-  nexus init [dir]           Add nexus.deploy.yaml to an existing project.
+  nexus init [dir]           Add nexus.toml to an existing project.
                              Scans DeployAs tags. --force overwrites.
 
   nexus dev [dir]            go run + auto-open the dashboard.
@@ -639,7 +639,7 @@ CLI CHEATSHEET
                              --base-port N      starting port for --split
 
   nexus build                Build a deployment binary using go build -overlay.
-    --deployment <name>      (required) unit from nexus.deploy.yaml.
+    --deployment <name>      (required) unit from nexus.toml.
     --output  / -o <path>    output binary path (default ./bin/<name>).
     --package <pkg>          main package to compile (default ".").
 

@@ -10,7 +10,7 @@
 // Subcommands:
 //
 //	nexus new <dir>       Scaffold a minimal nexus app.
-//	nexus init [dir]      Add nexus.deploy.yaml to an existing project.
+//	nexus init [dir]      Add nexus.toml to an existing project.
 //	nexus dev [dir]       Run `go run` on the target package, open the dashboard.
 //	nexus build           Build a deployment binary using overlay-driven shadow code.
 //	nexus docs [topic]    Show inline documentation; --web opens the README.

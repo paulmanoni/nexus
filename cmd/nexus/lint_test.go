@@ -203,74 +203,62 @@ func TestLint_TextOutput_OrdersErrorsBeforeWarnings(t *testing.T) {
 	}
 }
 
-// writeYAMLFile writes raw YAML bytes to a temp file with the given
-// extension and returns the path. Tests use this to drive the YAML
-// input path of nexus lint without depending on Go struct → YAML
-// marshaling (the manifest types don't always round-trip cleanly
-// since YAML omits cleaner than JSON does).
-func writeYAMLFile(t *testing.T, ext, contents string) string {
+// writeTOMLFile writes raw TOML bytes to a temp file with the given
+// extension and returns the path. Tests use this to drive the TOML
+// input path of nexus lint without depending on Go struct → TOML
+// marshaling.
+func writeTOMLFile(t *testing.T, ext, contents string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "nexus.deploy"+ext)
+	path := filepath.Join(dir, "nexus"+ext)
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	return path
 }
 
-func TestLint_YAML_AutoDetectedByExtension(t *testing.T) {
-	// .yaml extension → YAML parser without --yaml flag.
-	path := writeYAMLFile(t, ".yaml", `
-environments:
-  production: { domain: app.example.com }
-secrets:
-  JWT_SIGNING_KEY: { required: true }
+func TestLint_TOML_AutoDetectedByExtension(t *testing.T) {
+	// .toml extension → TOML parser without --toml flag.
+	path := writeTOMLFile(t, ".toml", `
+[environments.production]
+domain = "app.example.com"
+
+[secrets.JWT_SIGNING_KEY]
+required = true
 `)
 	stdout := new(bytes.Buffer)
 	err := runLint(stdout, new(bytes.Buffer), lintOptions{filePath: path})
 	if err != nil {
-		t.Fatalf("expected success on clean YAML, got %v\n%s", err, stdout.String())
+		t.Fatalf("expected success on clean TOML, got %v\n%s", err, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "manifest is valid") {
 		t.Errorf("missing success line:\n%s", stdout.String())
 	}
 }
 
-func TestLint_YAML_DetectedFromYmlExtension(t *testing.T) {
-	path := writeYAMLFile(t, ".yml", `
-environments:
-  production: {}
-`)
-	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{filePath: path})
-	if err != nil {
-		t.Fatalf("expected success on .yml, got %v", err)
-	}
-}
-
-func TestLint_YAML_ExplicitFlagOverridesExtension(t *testing.T) {
-	// File has .json extension but contents are YAML — --yaml should
-	// force YAML parsing, beating the extension hint.
+func TestLint_TOML_ExplicitFlagOverridesExtension(t *testing.T) {
+	// File has .json extension but contents are TOML — --toml should
+	// force TOML parsing, beating the extension hint.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tricky.json")
-	if err := os.WriteFile(path, []byte("environments:\n  production: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("[environments.production]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{filePath: path, inputFormat: "yaml"})
+	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{filePath: path, inputFormat: "toml"})
 	if err != nil {
-		t.Fatalf("--yaml should force YAML parser despite .json extension: %v", err)
+		t.Fatalf("--toml should force TOML parser despite .json extension: %v", err)
 	}
 }
 
-func TestLint_YAML_OverrideMismatchCaught(t *testing.T) {
-	// YAML declares an override for an env var that doesn't exist in
+func TestLint_TOML_OverrideMismatchCaught(t *testing.T) {
+	// TOML declares an override for an env var that doesn't exist in
 	// base — lint should catch it (same rule the merger enforces at
 	// runtime, but now visible at write time).
-	path := writeYAMLFile(t, ".yaml", `
-environments:
-  production: {}
-environment_overrides:
-  production:
-    env: { NOT_DECLARED: foo }
+	path := writeTOMLFile(t, ".toml", `
+[environments.production]
+
+[environment_overrides.production]
+env = { NOT_DECLARED = "foo" }
 `)
 	stdout := new(bytes.Buffer)
 	err := runLint(stdout, new(bytes.Buffer), lintOptions{filePath: path})
@@ -282,45 +270,45 @@ environment_overrides:
 	}
 }
 
-func TestLint_YAML_BinaryConflict_Rejected(t *testing.T) {
+func TestLint_TOML_BinaryConflict_Rejected(t *testing.T) {
 	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{
-		inputFormat: "yaml",
+		inputFormat: "toml",
 		binaryPath:  "./bin",
 	})
 	if err == nil {
-		t.Fatal("expected error when --yaml combined with --binary")
+		t.Fatal("expected error when --toml combined with --binary")
 	}
-	if !strings.Contains(err.Error(), "yaml") {
-		t.Errorf("error should mention yaml: %v", err)
+	if !strings.Contains(err.Error(), "toml") {
+		t.Errorf("error should mention toml: %v", err)
 	}
 }
 
-func TestLint_YAML_MalformedRejected(t *testing.T) {
-	path := writeYAMLFile(t, ".yaml", "environments: {{ unclosed")
+func TestLint_TOML_MalformedRejected(t *testing.T) {
+	path := writeTOMLFile(t, ".toml", "environments = {{ unclosed")
 	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{filePath: path})
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "parse YAML") {
-		t.Errorf("error should explain YAML parse failure: %v", err)
+	if !strings.Contains(err.Error(), "parse TOML") {
+		t.Errorf("error should explain TOML parse failure: %v", err)
 	}
 }
 
-func TestLint_YAML_StdinWithFlag(t *testing.T) {
-	// Drive the stdin path with --yaml so the parser doesn't fall
+func TestLint_TOML_StdinWithFlag(t *testing.T) {
+	// Drive the stdin path with --toml so the parser doesn't fall
 	// back to JSON. We can't easily redirect os.Stdin in tests, so
 	// just verify the flag wiring via lintOptions directly.
 	dir := t.TempDir()
-	path := filepath.Join(dir, "passthrough.yaml")
-	if err := os.WriteFile(path, []byte("environments:\n  staging: {}\n"), 0o644); err != nil {
+	path := filepath.Join(dir, "passthrough.toml")
+	if err := os.WriteFile(path, []byte("[environments.staging]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := runLint(new(bytes.Buffer), new(bytes.Buffer), lintOptions{
 		filePath:    path,
-		inputFormat: "yaml",
+		inputFormat: "toml",
 	})
 	if err != nil {
-		t.Fatalf("clean YAML with explicit flag, got %v", err)
+		t.Fatalf("clean TOML with explicit flag, got %v", err)
 	}
 }
 

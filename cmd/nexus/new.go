@@ -48,7 +48,7 @@ the board (none everywhere — minimum viable scaffold).
 
 Generated layout:
 
-  ./go.mod ./main.go ./module.go ./nexus.deploy.yaml ./README.md
+  ./go.mod ./main.go ./module.go ./nexus.toml ./README.md
   resources/database.go     # only when --db is set
   resources/cache.go        # only when --cache is set
   web/                      # only when --frontend=vue is set

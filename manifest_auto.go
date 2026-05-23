@@ -11,11 +11,11 @@ import (
 
 // DefaultManifestPath is the file the framework auto-loads from the
 // current working directory at boot. Operators who need a different
-// path call `app.LoadDeployManifest("alt-path.yaml")` from their own
+// path call `app.LoadDeployManifest("alt-path.toml")` from their own
 // nexus.Invoke — that runs AFTER auto-load and the framework's
 // declarations are idempotent (last writer wins on each block) so
 // explicit overrides land cleanly.
-const DefaultManifestPath = "nexus.deploy.yaml"
+const DefaultManifestPath = "nexus.toml"
 
 // autoManifestEnvSkip lets operators opt out of auto-loading when
 // they need to run multiple manifest files via explicit
@@ -24,13 +24,13 @@ const DefaultManifestPath = "nexus.deploy.yaml"
 const autoManifestEnvSkip = "NEXUS_SKIP_MANIFEST_AUTOLOAD"
 
 // autoManifestOptions returns the fx.Invoke that auto-loads
-// nexus.deploy.yaml from the current working directory if it
-// exists. Lets plugins (extension/tls, /cors, /errors, ...) read
+// nexus.toml from the current working directory if it exists.
+// Lets plugins (extension/tls, /cors, /errors, ...) read
 // their per-environment config via app.EffectiveManifest() without
 // the operator having to write the boilerplate:
 //
 //	nexus.Invoke(func(app *nexus.App) {
-//	    if err := app.LoadDeployManifest("nexus.deploy.yaml"); err != nil {
+//	    if err := app.LoadDeployManifest("nexus.toml"); err != nil {
 //	        panic(err)
 //	    }
 //	})

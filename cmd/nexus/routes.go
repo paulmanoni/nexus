@@ -50,7 +50,7 @@ type routesOptions struct {
 // Input sources (same as lint / doctor):
 //
 //	nexus routes <manifest.json>      JSON manifest
-//	nexus routes <nexus.deploy.yaml>  YAML manifest (auto-detected)
+//	nexus routes <nexus.toml>  YAML manifest (auto-detected)
 //	nexus routes -                    stdin
 //	nexus routes --binary=PATH        exec binary in print mode
 //
@@ -81,7 +81,7 @@ No live app needed — `+"`nexus routes`"+` is a static analysis of the manifest
 
 Input sources:
   nexus routes <manifest.json>      JSON manifest file
-  nexus routes <nexus.deploy.yaml>  YAML manifest (auto-detected)
+  nexus routes <nexus.toml>  YAML manifest (auto-detected)
   nexus routes -                    read from stdin
   nexus routes --binary=PATH        exec binary in NEXUS_PRINT_MANIFEST=1
 

@@ -1,14 +1,14 @@
 // Package config wires Spring-Cloud-Config-style configuration
 // distribution into a nexus mesh. The plugin has three top-level
 // entrypoints — Server hosts the source of truth, Client fetches +
-// caches signed snapshots, Local reads a single yaml for app's
+// caches signed snapshots, Local reads a single TOML for app's
 // that don't need a server.
 //
 // Safety baseline (cannot be disabled):
 //   - Server-side TLS — every wire byte is encrypted
 //   - Signed snapshots — Ed25519 over canonical-JSON of the body;
 //     clients pin one or more public keys (allows rotation)
-//   - Sealed-on-disk client artifacts — local yaml AND server-
+//   - Sealed-on-disk client artifacts — local TOML AND server-
 //     backed cache are AES-256-GCM encrypted with a framework-
 //     managed sibling key. Plaintext exists only at the server's
 //     source directory; on the client side, the only plaintext
@@ -35,12 +35,12 @@ import (
 const devEnv = "NEXUS_CONFIG_DEV"
 
 // Server registers the config-server side of the plugin. Source
-// is one of FromYAML / FromGit (FromGit lands in phase 2); opts
+// is one of FromTOML / FromGit (FromGit lands in phase 2); opts
 // stack defaults onto the server's behavior. Returns the
 // nexus.Option to pass to nexus.Run.
 //
 //	nexus.Run(nexus.Config{...},
-//	    config.Server(config.FromYAML("configs/")),
+//	    config.Server(config.FromTOML("configs/")),
 //	    appModule,
 //	)
 //
@@ -117,7 +117,7 @@ func (h *serverHolder) shutdown(ctx context.Context) error {
 }
 
 // Module is an alias for Server kept for the canonical example
-// shape (config.Module(config.FromYAML("configs/"))). Both names
+// shape (config.Module(config.FromTOML("configs/"))). Both names
 // compile to the same Option.
 func Module(src Source, opts ...ServerOption) nexus.Option {
 	return Server(src, opts...)

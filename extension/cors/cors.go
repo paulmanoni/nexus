@@ -14,13 +14,13 @@
 // the only difference is where in the request graph the middleware
 // attaches.
 //
-// Manifest integration: a `cors:` block in nexus.deploy.yaml is read
+// Manifest integration: a `cors:` block in nexus.toml is read
 // by Plugin() at boot and overrides the in-code Config field-by-field
 // (manifest wins where set). environment_overrides can flip policies
 // per environment — typical pattern is permissive in preview, strict
 // in production.
 //
-//	# nexus.deploy.yaml
+//	# nexus.toml
 //	cors:
 //	  allow_origins: [https://app.example.com]
 //	  allow_credentials: true
@@ -125,7 +125,7 @@ type Config struct {
 
 // Plugin attaches CORS as a global application middleware. The
 // effective policy is the merge of the in-code Config and the
-// `cors:` block in nexus.deploy.yaml — manifest wins where set.
+// `cors:` block in nexus.toml — manifest wins where set.
 // Validation runs at OnBoot, so a misconfigured policy aborts boot
 // with a readable error before any listener binds.
 //

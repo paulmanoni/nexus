@@ -4,21 +4,21 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pelletier/go-toml/v2"
 	"go.uber.org/fx"
-	"gopkg.in/yaml.v3"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
 )
 
 // Local registers a no-server config entrypoint: a single
-// plaintext yaml at path that the framework reads + populates
+// plaintext TOML at path that the framework reads + populates
 // the package-level store from. Same nexus.Get(key) facade as
 // the server-backed Client.
 //
 // The file stays human-readable on disk — operators edit it
 // with $EDITOR, diff it with git, copy it between hosts as
-// regular yaml. Use Local for development, single-binary
+// regular TOML. Use Local for development, single-binary
 // deployments, and scenarios where the operator OWNS the file.
 //
 // For multi-app fleets or anywhere config carries secrets,
@@ -30,7 +30,7 @@ func Local(path string, opts ...LocalOption) nexus.Option {
 	for _, o := range opts {
 		o.applyLocal(&cfg)
 	}
-	// EAGER install — same parity as config.Client. The yaml
+	// EAGER install — same parity as config.Client. The TOML
 	// is read + parsed + installed BEFORE returning the Option,
 	// so nexus.Get works from every constructor and invoke that
 	// follows. Failures surface via fx.Error so Run() boot
@@ -61,13 +61,14 @@ func defaultLocalConfig(path string) localConfig {
 	return localConfig{path: path, profile: "default"}
 }
 
-// LocalProfile selects which profile inside the yaml to apply.
-// The yaml shape is the same as the server-side
-// <app>.nexus.config.yaml:
+// LocalProfile selects which profile inside the TOML to apply.
+// The TOML shape is the same as the server-side
+// <app>.nexus.config.toml:
 //
-//	profiles:
-//	  default: {...}
-//	  prod:    {...}
+//	[profiles.default]
+//	...
+//	[profiles.prod]
+//	...
 //
 // Defaults to "default" — apps with no per-env split need set
 // nothing.
@@ -80,14 +81,14 @@ type localOptionFunc func(*localConfig)
 func (f localOptionFunc) applyLocal(c *localConfig) { f(c) }
 
 // initLocal runs as fx.Invoke at app start. Reads the plaintext
-// yaml, merges default + selected profile, installs the
+// TOML, merges default + selected profile, installs the
 // resulting value tree into the root-package config store.
 func initLocal(cfg localConfig) error {
 	body, err := os.ReadFile(cfg.path) // #nosec G304 -- operator-supplied path
 	if err != nil {
 		return fmt.Errorf("config.Local: read %s: %w", cfg.path, err)
 	}
-	values, err := parseLocalYAML(body, cfg.profile)
+	values, err := parseLocalTOML(body, cfg.profile)
 	if err != nil {
 		return fmt.Errorf("config.Local: %w", err)
 	}
@@ -95,16 +96,16 @@ func initLocal(cfg localConfig) error {
 	return nil
 }
 
-// parseLocalYAML decodes the yaml body and applies the
+// parseLocalTOML decodes the TOML body and applies the
 // default → profile merge. Same algorithm as the server-side
 // per-app merge — kept here as a tiny duplicate so config.Local
 // doesn't pull in the server-side appBody machinery.
-func parseLocalYAML(body []byte, profile string) (map[string]any, error) {
+func parseLocalTOML(body []byte, profile string) (map[string]any, error) {
 	var parsed struct {
-		Profiles map[string]map[string]any `yaml:"profiles"`
+		Profiles map[string]map[string]any `toml:"profiles"`
 	}
-	if err := yaml.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("yaml parse: %w", err)
+	if err := toml.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("toml parse: %w", err)
 	}
 	out := map[string]any{}
 	if base, ok := parsed.Profiles["default"]; ok {

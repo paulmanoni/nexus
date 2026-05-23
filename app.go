@@ -81,7 +81,7 @@ type App struct {
 	// routePrefix is prepended to every user-mounted route (REST,
 	// GraphQL, WebSocket) at registration time. Set from
 	// Config.Server.RoutePrefix (which DeploymentDefaults populates
-	// from nexus.deploy.yaml's per-deployment `prefix:`). Empty
+	// from nexus.toml's per-deployment `prefix:`). Empty
 	// disables prefixing. Normalized once at newApp time so per-
 	// route mount sites can concatenate without re-trimming.
 	routePrefix string

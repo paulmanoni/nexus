@@ -9,7 +9,7 @@ import (
 )
 
 // TestFromGit_CloneAndLoad drives the headline path: a local
-// bare repo seeded with one app yaml, FromGit clones it, Load
+// bare repo seeded with one app TOML, FromGit clones it, Load
 // produces the expected appBody.
 //
 // Skips when git isn't on PATH — the framework documents this
@@ -28,15 +28,14 @@ func TestFromGit_CloneAndLoad(t *testing.T) {
 	workdir := filepath.Join(tmp, "src")
 	mustRunGit(t, tmp, "clone", bareRepo, workdir)
 
-	// Seed an app yaml + commit + push.
-	yamlBody := `app: app1
-profiles:
-  default:
-    api:
-      timeout: 5s
+	// Seed an app TOML + commit + push.
+	tomlBody := `app = "app1"
+
+[profiles.default.api]
+timeout = "5s"
 `
-	if err := os.WriteFile(filepath.Join(workdir, "app1.nexus.config.yaml"),
-		[]byte(yamlBody), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(workdir, "app1.nexus.config.toml"),
+		[]byte(tomlBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mustRunGit(t, workdir, "config", "user.email", "test@example.com")
@@ -83,13 +82,13 @@ func TestFromGit_FetchPicksUpUpstreamChanges(t *testing.T) {
 	mustRunGit(t, workdir, "config", "user.email", "test@example.com")
 	mustRunGit(t, workdir, "config", "user.name", "test")
 
-	writeAppYAML := func(timeout string) {
-		body := `app: app1
-profiles:
-  default:
-    api:
-      timeout: ` + timeout + "\n"
-		if err := os.WriteFile(filepath.Join(workdir, "app1.nexus.config.yaml"),
+	writeAppTOML := func(timeout string) {
+		body := `app = "app1"
+
+[profiles.default.api]
+timeout = "` + timeout + `"
+`
+		if err := os.WriteFile(filepath.Join(workdir, "app1.nexus.config.toml"),
 			[]byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +98,7 @@ profiles:
 		mustRunGit(t, workdir, "commit", "-m", msg)
 		mustRunGit(t, workdir, "push", "origin", "HEAD:main")
 	}
-	writeAppYAML("5s")
+	writeAppTOML("5s")
 	commit("v1")
 	mustRunGit(t, workdir, "branch", "-M", "main")
 	mustRunGit(t, workdir, "push", "-u", "origin", "main")
@@ -113,7 +112,7 @@ profiles:
 	}
 
 	// Upstream edit + push.
-	writeAppYAML("30s")
+	writeAppTOML("30s")
 	commit("v2")
 
 	// Second Load should pick up v2.

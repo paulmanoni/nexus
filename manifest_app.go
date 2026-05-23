@@ -48,7 +48,7 @@ type manifestStore struct {
 	hooks        *manifest.Hooks
 	overrides    map[string]manifest.Override
 
-	// Plugin-driven blocks read from nexus.deploy.yaml by
+	// Plugin-driven blocks read from nexus.toml by
 	// LoadDeployManifest. Each is opaque to the framework — the
 	// corresponding plugin reads it back via app.EffectiveManifest()
 	// at boot.
@@ -248,7 +248,7 @@ func (a *App) DeclareOverride(env string, ov manifest.Override) {
 	a.manifest.mu.Unlock()
 }
 
-// LoadDeployManifest reads nexus.deploy.yaml at path, parses its
+// LoadDeployManifest reads nexus.toml at path, parses its
 // inputs surface (environments / secrets / files / hooks /
 // environment_overrides), and registers each entry through the
 // existing Declare* methods. Idempotent: re-declaring an environment
@@ -276,7 +276,7 @@ func (a *App) DeclareOverride(env string, ov manifest.Override) {
 // silently produce an empty inputs surface. To make the call optional,
 // stat the file first or wrap in a guard.
 func (a *App) LoadDeployManifest(path string) error {
-	loaded, err := manifest.LoadInputsYAMLFile(path)
+	loaded, err := manifest.LoadInputsTOMLFile(path)
 	if err != nil {
 		return err
 	}

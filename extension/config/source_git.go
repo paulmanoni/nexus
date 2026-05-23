@@ -33,8 +33,8 @@ import (
 //	)
 //
 // After clone/fetch the working tree is read with the same
-// per-app yaml layout config.FromYAML expects — the git source
-// is essentially "FromYAML, but the directory is materialized
+// per-app TOML layout config.FromTOML expects — the git source
+// is essentially "FromTOML, but the directory is materialized
 // from a remote ref."
 //
 // Reload model (phase 2 elaborates): operators trigger refresh
@@ -141,9 +141,9 @@ type gitSource struct {
 func (*gitSource) isSource() {}
 
 // Load materializes the working tree (clone or fetch+checkout)
-// and reads it like a local directory. Reuses the FromYAML
+// and reads it like a local directory. Reuses the FromTOML
 // reader internally — git's job ends at "produce a directory of
-// yaml files."
+// TOML files."
 func (s *gitSource) Load(ctx context.Context) (map[string]appBody, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -151,13 +151,13 @@ func (s *gitSource) Load(ctx context.Context) (map[string]appBody, error) {
 	if err := s.ensureWorkingCopy(ctx); err != nil {
 		return nil, err
 	}
-	// Delegate to the YAML reader on the materialized directory.
+	// Delegate to the TOML reader on the materialized directory.
 	sourceDir := s.cfg.clonePath
 	if s.cfg.subdir != "" {
 		sourceDir = filepath.Join(sourceDir, s.cfg.subdir)
 	}
-	ys := &yamlSource{cfg: yamlSourceConfig{path: sourceDir}}
-	return ys.Load(ctx)
+	ts := &tomlSource{cfg: tomlSourceConfig{path: sourceDir}}
+	return ts.Load(ctx)
 }
 
 // Watch is a phase-1 stub. Webhook + poll-fallback land in

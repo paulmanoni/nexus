@@ -3,24 +3,10 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"text/template"
 )
-
-// stubManifestJSON is the placeholder dropped at web/sdk/manifest.json
-// during scaffold so vite.config.ts's `import './sdk/manifest.json'`
-// resolves before the user has run `nexus dev` for the first time.
-// nexus dev overwrites this with the real projection on its first
-// boot — the file is in web/.gitignore so the stub never reaches
-// version control.
-const stubManifestJSON = `{
-  "version": "client.v1",
-  "basePath": "",
-  "endpoints": [],
-  "refs": {},
-  "auth": {}
-}
-`
 
 // scaffoldOpts captures every choice the scaffolder needs. Flags
 // and the interactive prompt both fill the same struct so the
@@ -91,7 +77,7 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 	if err := add("README.md", tmplReadmeTpl); err != nil {
 		return nil, err
 	}
-	if err := add("nexus.deploy.yaml", tmplDeployYaml); err != nil {
+	if err := add("nexus.toml", tmplDeployTOML); err != nil {
 		return nil, err
 	}
 	if opts.HasResources() {
@@ -499,106 +485,6 @@ const tmplPackageJSONNexusReact = `{
 }
 `
 
-// tmplPackageJSONVueTpl ships the minimum dep set vite needs to
-// dev-server + build a vue 3 + ts project. Versions are loose
-// (^range) so npm install picks the latest patch automatically.
-const tmplPackageJSONVueTpl = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "version": "0.0.1",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "vue": "^3.4.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^5.0.0",
-    "typescript": "^5.0.0",
-    "vite": "^5.0.0",
-    "vue-tsc": "^2.0.0"
-  }
-}
-`
-
-const tmplPackageJSONReactTpl = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "version": "0.0.1",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@vitejs/plugin-react": "^4.2.0",
-    "typescript": "^5.0.0",
-    "vite": "^5.0.0"
-  }
-}
-`
-
-// tmplViteConfigTS is parameterized over .Frontend so the import +
-// plugins entry switches between vue() and react() while the
-// proxy / build sections stay shared. The nexus plugin is always
-// wired so the auto-select rewriter + loop-guard run on every
-// build; the manifest filter is opt-in via filter: 'usage'.
-const tmplViteConfigTS = `import { defineConfig } from 'vite'
-{{if .IsVue -}}
-import vue from '@vitejs/plugin-vue'
-{{- else if .IsReact -}}
-import react from '@vitejs/plugin-react'
-{{- end}}
-import nexus from './sdk/nexus-vite-plugin.js'
-
-// Proxy entries forward the framework's reserved paths back to Go
-// during dev. nexus dev keeps these in sync automatically; they're
-// pre-seeded here so a one-shot ` + "`npm run dev`" + ` works without nexus
-// dev too.
-export default defineConfig({
-  plugins: [
-    {{if .IsVue}}vue(),{{else if .IsReact}}react(),{{end}}
-    // The nexus plugin bundles three behaviors:
-    //   1. nexus-auto-select  — rewrites nx.query/mutate at build to
-    //      fetch only the fields the surrounding code reads.
-    //   2. nexus-manifest-filter — opt-in. Set filter: 'usage' to
-    //      project the bundled SDK manifest down to the endpoints
-    //      the app actually calls (production hardening — leaks
-    //      less schema in the JS bundle). 'off' (default) ships
-    //      the full manifest, which keeps autocomplete + ad-hoc
-    //      experimentation friction-free during early development.
-    //   3. nexus-loop-guard   — prevents unplugin-auto-import from
-    //      thrashing rebuilds in nexus dev.
-    nexus({
-      filter: 'off',
-      // filterMode: 'loose', // 'loose' (default) | 'strict'
-    }),
-  ],
-  server: {
-    proxy: {
-      '/__nexus': { target: 'http://localhost:8080', changeOrigin: true },
-      '/graphql': { target: 'http://localhost:8080', changeOrigin: true },
-      '/oauth':   { target: 'http://localhost:8080', changeOrigin: true },
-      '/ws':      { target: 'ws://localhost:8080', ws: true, changeOrigin: true },
-    },
-  },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-  },
-})
-`
-
 // tmplIndexHTMLTpl is the SPA shell that ships at
 // islands/index.html. Stable filenames from nexus build mean
 // the script reference doesn't need post-build patching — main.js
@@ -644,23 +530,6 @@ const count = ref(0)
 main { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; }
 button { padding: .5rem 1rem; border-radius: .25rem; cursor: pointer; }
 </style>
-`
-
-const tmplTSConfig = `{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "jsx": "preserve",
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"]
-  },
-  "include": ["src/**/*", "src/**/*.vue", "env.d.ts"]
-}
 `
 
 // tmplTSConfigForIDE is the IDE-only tsconfig the scaffold emits
@@ -759,19 +628,6 @@ declare module "react-dom/client";
 {{- end}}
 `
 
-const tmplWebGitignore = `node_modules/
-dist/
-sdk/
-auto-imports.d.ts
-components.d.ts
-`
-
-// tmplStubDistHTMLTpl was the placeholder shipped at web/dist/
-// index.html in the vite-driven scaffold. Unused in the new
-// islands.src/islands convention — kept here as a doc comment
-// rather than emit it. Removed entirely when the next round of
-// new_templates.go cleanup happens.
-
 const tmplReadmeTpl = `# {{.Name}}
 
 Generated with ` + "`nexus new`" + `.
@@ -840,7 +696,7 @@ nexus build --deployment monolith
 
 ## Split into microservices
 
-Edit ` + "`nexus.deploy.yaml`" + ` to declare additional deployments and tag
+Edit ` + "`nexus.toml`" + ` to declare additional deployments and tag
 your modules with ` + "`nexus.DeployAs(\"...\")`" + `. The manifest comments
 walk through each step. Then:
 
@@ -857,10 +713,8 @@ at compile time, based on the active deployment.
 // validChoice checks a value against the allowed set; returned err
 // includes the full set so users see the menu in the message.
 func validChoice(value, label string, choices []string) error {
-	for _, c := range choices {
-		if value == c {
-			return nil
-		}
+	if slices.Contains(choices, value) {
+		return nil
 	}
 	return fmt.Errorf("%s %q is not one of: %s", label, value, strings.Join(choices, ", "))
 }
@@ -957,11 +811,11 @@ func StubAuthenticator(ctx context.Context, clientID, username, password string)
 
 // ── deployment manifest ─────────────────────────────────────────────
 
-// tmplDeployYaml is the starter manifest. It declares a single
+// tmplDeployTOML is the starter manifest. It declares a single
 // monolith deployment and embeds a hand-walkthrough showing how to
 // split modules into independent services. The user edits this file
 // (not main.go) when topology changes.
-const tmplDeployYaml = `# nexus.deploy.yaml — deployment topology for this app.
+const tmplDeployTOML = `# nexus.toml — deployment topology for this app.
 #
 # 'nexus build --deployment NAME' reads this file to decide which
 # modules compile locally and which become HTTP-stub shadows.
@@ -971,21 +825,21 @@ const tmplDeployYaml = `# nexus.deploy.yaml — deployment topology for this app
 #
 # ── Concepts ──────────────────────────────────────────────────────
 #
-# deployments:    map of unit name → { owns: [...], port: N }
-#                 Empty 'owns' = "owns every module" (the monolith).
-#                 Listed 'owns' = real split unit; modules NOT
-#                 listed get replaced by HTTP-stub shadows in this
-#                 unit's binary.
-# peers:          map of DeployAs-tag → transport config (URL,
-#                 timeout, retries, min_version, auth). Codegen bakes
-#                 this into the binary as Config.Topology defaults.
+# [deployments.NAME]   one table per unit → { owns = [...], port = N }
+#                      Missing 'owns' = "owns every module" (monolith).
+#                      Listed 'owns' = real split unit; modules NOT
+#                      listed get replaced by HTTP-stub shadows in this
+#                      unit's binary.
+# [peers.TAG]          transport config (URL, timeout, retries,
+#                      min_version, auth) keyed by DeployAs-tag.
+#                      Codegen bakes this into the binary as
+#                      Config.Topology defaults.
 
-deployments:
-  # Monolith owns every module by default. Run with:
-  #     nexus build --deployment monolith
-  #     ./bin/monolith
-  monolith:
-    port: 8080
+# Monolith owns every module by default. Run with:
+#     nexus build --deployment monolith
+#     ./bin/monolith
+[deployments.monolith]
+port = 8080
 
 # ── How to split a module out ─────────────────────────────────────
 #
@@ -1000,18 +854,17 @@ deployments:
 # 2. Add a deployment for it here, and add it to monolith's owns
 #    list (or leave monolith empty so it auto-includes everything):
 #
-#        deployments:
-#          monolith:
-#            port: 8080
-#          orders-svc:
-#            owns: [orders]
-#            port: 8081
+#        [deployments.monolith]
+#        port = 8080
+#
+#        [deployments.orders-svc]
+#        owns = ["orders"]
+#        port = 8081
 #
 # 3. Add a peer entry so other services can reach it.
 #
-#        peers:
-#          orders-svc:
-#            timeout: 2s
+#        [peers.orders-svc]
+#        timeout = "2s"
 #
 # 4. Build (or run) per deployment:
 #

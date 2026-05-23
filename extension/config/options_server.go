@@ -111,7 +111,7 @@ func WithTLS(certPath, keyPath, caPath string) ServerOption {
 
 // WithApps pins the per-app policy. When omitted, the server
 // auto-derives policy from the filesystem (one entry per
-// <app>.nexus.config.yaml file in the source dir, all profiles
+// <app>.nexus.config.toml file in the source dir, all profiles
 // permitted). Auto-derive is dev-friendly; production should
 // declare apps explicitly.
 func WithApps(m map[string]AppPolicy) ServerOption {

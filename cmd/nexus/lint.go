@@ -90,14 +90,14 @@ affect the exit code unless --quiet is unset (the default — quiet means
 "suppress warnings entirely", not "treat warnings as errors").
 
 Input sources:
-  nexus lint <manifest.json>       JSON manifest file
-  nexus lint <nexus.deploy.yaml>   YAML inputs surface (auto-detected by extension)
-  nexus lint -                     read from stdin (default JSON; use --yaml for YAML)
-  nexus lint --binary=PATH         exec the binary with NEXUS_PRINT_MANIFEST=1
+  nexus lint <manifest.json>   JSON manifest file
+  nexus lint <nexus.toml>      TOML inputs surface (auto-detected by extension)
+  nexus lint -                 read from stdin (default JSON; use --toml for TOML)
+  nexus lint --binary=PATH     exec the binary with NEXUS_PRINT_MANIFEST=1
 
 Format detection (in priority order):
-  1. Explicit --yaml or --json flag
-  2. .yaml / .yml file extension → YAML
+  1. Explicit --toml or --json flag
+  2. .toml file extension → TOML
   3. Default → JSON (preserves the pipe-from-print-mode CI workflow)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -111,25 +111,25 @@ Format detection (in priority order):
 	// --json is overloaded: as a flag it means "emit JSON output";
 	// as an *input* format selector it's set via --json-in (rare,
 	// since JSON is the default). The asymmetry mirrors what
-	// operators actually type — `--yaml` is the new affordance.
+	// operators actually type — `--toml` is the new affordance.
 	cmd.Flags().BoolVar(&opts.jsonOut, "json", false, "emit issues as JSON instead of the text report")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress warning-severity issues from output")
 	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "exec the binary in NEXUS_PRINT_MANIFEST=1 mode and lint the result")
 
-	var yamlIn, jsonIn bool
-	cmd.Flags().BoolVar(&yamlIn, "yaml", false, "force YAML input parsing (overrides auto-detection)")
+	var tomlIn, jsonIn bool
+	cmd.Flags().BoolVar(&tomlIn, "toml", false, "force TOML input parsing (overrides auto-detection)")
 	cmd.Flags().BoolVar(&jsonIn, "json-in", false, "force JSON input parsing (overrides auto-detection)")
 
 	// Translate the two booleans into the single inputFormat field.
 	// PreRunE runs after flag parsing but before RunE, so the field
 	// is set before runLint sees it.
 	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
-		if yamlIn && jsonIn {
-			return errors.New("nexus lint: --yaml and --json-in are mutually exclusive")
+		if tomlIn && jsonIn {
+			return errors.New("nexus lint: --toml and --json-in are mutually exclusive")
 		}
 		switch {
-		case yamlIn:
-			opts.inputFormat = "yaml"
+		case tomlIn:
+			opts.inputFormat = "toml"
 		case jsonIn:
 			opts.inputFormat = "json"
 		}
@@ -146,10 +146,10 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 	if opts.filePath != "" && opts.binaryPath != "" {
 		return errors.New("nexus lint: cannot combine a manifest path with --binary")
 	}
-	if opts.inputFormat == "yaml" && opts.binaryPath != "" {
-		// Binary print mode always emits JSON; --yaml would be
+	if opts.inputFormat == "toml" && opts.binaryPath != "" {
+		// Binary print mode always emits JSON; --toml would be
 		// silently ignored otherwise. Surface the conflict.
-		return errors.New("nexus lint: --yaml is incompatible with --binary (binary print mode emits JSON)")
+		return errors.New("nexus lint: --toml is incompatible with --binary (binary print mode emits JSON)")
 	}
 
 	raw, source, err := readManifestSource(opts)
@@ -175,31 +175,31 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 }
 
 // resolveInputFormat picks the parser to use based on the explicit
-// --yaml/--json-in flag (highest priority), then the filename
+// --toml/--json-in flag (highest priority), then the filename
 // extension, then JSON as the default. Source for stdin / binary
 // inputs uses the synthetic names "stdin" / binary path; both fall
-// through to JSON unless --yaml is set.
+// through to JSON unless --toml is set.
 func resolveInputFormat(opts lintOptions, source string) string {
 	if opts.inputFormat != "" {
 		return opts.inputFormat
 	}
 	ext := strings.ToLower(filepath.Ext(source))
-	if ext == ".yaml" || ext == ".yml" {
-		return "yaml"
+	if ext == ".toml" {
+		return "toml"
 	}
 	return "json"
 }
 
-// parseManifest dispatches to the JSON or YAML parser based on
+// parseManifest dispatches to the JSON or TOML parser based on
 // format. Wrapping errors with source + format makes diagnostics
 // readable when a manifest is wrong AND someone forgot which parser
 // they wanted.
 func parseManifest(raw []byte, format, source string) (nexusmanifest.Manifest, error) {
 	switch format {
-	case "yaml":
-		m, err := nexusmanifest.LoadInputsYAML(raw)
+	case "toml":
+		m, err := nexusmanifest.LoadInputsTOML(raw)
 		if err != nil {
-			return nexusmanifest.Manifest{}, fmt.Errorf("nexus lint: parse YAML from %s: %w", source, err)
+			return nexusmanifest.Manifest{}, fmt.Errorf("nexus lint: parse TOML from %s: %w", source, err)
 		}
 		return m, nil
 	default:

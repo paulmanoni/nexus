@@ -7,48 +7,47 @@ import (
 	"testing"
 )
 
-func TestLoadInputsYAML_FullSchema(t *testing.T) {
-	yaml := []byte(`
-environments:
-  production:
-    domain: app.example.com
-    autoscale: { min: 2, max: 10 }
-  staging:
-    domain: staging.example.com
-    ttl: 7d
+func TestLoadInputsTOML_FullSchema(t *testing.T) {
+	doc := []byte(`
+[environments.production]
+domain = "app.example.com"
+autoscale = { min = 2, max = 10 }
 
-secrets:
-  JWT_SIGNING_KEY:
-    description: HS256 signing key
-    required: true
-    env_scoped: true
-    validation:
-      length: { min: 32 }
-  STRIPE_API_KEY:
-    required: true
-    env_scoped: true
+[environments.staging]
+domain = "staging.example.com"
+ttl    = "7d"
 
-files:
-  tls_bundle:
-    path: /etc/ssl/app/bundle.pem
-    mode: 0400
-    secret: true
+[secrets.JWT_SIGNING_KEY]
+description = "HS256 signing key"
+required    = true
+env_scoped  = true
+validation  = { length = { min = 32 } }
 
-hooks:
-  build: [go build ./..., go test ./...]
-  predeploy: [./bin/app migrate]
+[secrets.STRIPE_API_KEY]
+required   = true
+env_scoped = true
 
-environment_overrides:
-  production:
-    env: { LOG_LEVEL: warn }
-    services:
-      main_db: { size: large, backup: hourly }
-  staging:
-    env: { LOG_LEVEL: debug }
+[files.tls_bundle]
+path   = "/etc/ssl/app/bundle.pem"
+mode   = 0o400
+secret = true
+
+[hooks]
+build     = ["go build ./...", "go test ./..."]
+predeploy = ["./bin/app migrate"]
+
+[environment_overrides.production]
+env = { LOG_LEVEL = "warn" }
+[environment_overrides.production.services.main_db]
+size   = "large"
+backup = "hourly"
+
+[environment_overrides.staging]
+env = { LOG_LEVEL = "debug" }
 `)
-	m, err := LoadInputsYAML(yaml)
+	m, err := LoadInputsTOML(doc)
 	if err != nil {
-		t.Fatalf("LoadInputsYAML: %v", err)
+		t.Fatalf("LoadInputsTOML: %v", err)
 	}
 
 	// Environments sorted by name.
@@ -68,7 +67,7 @@ environment_overrides:
 		t.Errorf("staging.ttl: got %q", m.Environments[1].TTL)
 	}
 
-	// Secrets sorted by name, map key → Name field.
+	// Secrets sorted by name, table key → Name field.
 	if len(m.Secrets) != 2 {
 		t.Fatalf("Secrets len: got %d", len(m.Secrets))
 	}
@@ -130,10 +129,10 @@ environment_overrides:
 	}
 }
 
-func TestLoadInputsYAML_EmptyDocument(t *testing.T) {
-	m, err := LoadInputsYAML([]byte(""))
+func TestLoadInputsTOML_EmptyDocument(t *testing.T) {
+	m, err := LoadInputsTOML([]byte(""))
 	if err != nil {
-		t.Fatalf("empty YAML should parse without error: %v", err)
+		t.Fatalf("empty TOML should parse without error: %v", err)
 	}
 	if len(m.Environments) != 0 || len(m.Secrets) != 0 || len(m.Files) != 0 {
 		t.Errorf("empty manifest should have empty slices, got %+v", m)
@@ -143,53 +142,51 @@ func TestLoadInputsYAML_EmptyDocument(t *testing.T) {
 	}
 }
 
-func TestLoadInputsYAML_IgnoresUnknownTopLevelKeys(t *testing.T) {
-	// Existing nexus.deploy.yaml files have `deployments:` and `peers:`
+func TestLoadInputsTOML_IgnoresUnknownTopLevelKeys(t *testing.T) {
+	// Existing nexus.toml files may have [deployments.*] and [peers.*]
 	// at top level. The inputs loader must ignore them, not error.
-	yaml := []byte(`
-deployments:
-  monolith:
-    port: 8080
-peers:
-  users-svc:
-    timeout: 2s
-environments:
-  production: { domain: app.example.com }
+	doc := []byte(`
+[deployments.monolith]
+port = 8080
+
+[peers.users_svc]
+timeout = "2s"
+
+[environments.production]
+domain = "app.example.com"
 `)
-	m, err := LoadInputsYAML(yaml)
+	m, err := LoadInputsTOML(doc)
 	if err != nil {
-		t.Fatalf("LoadInputsYAML: %v", err)
+		t.Fatalf("LoadInputsTOML: %v", err)
 	}
 	if len(m.Environments) != 1 || m.Environments[0].Name != "production" {
 		t.Errorf("environments not loaded alongside deployments/peers: %+v", m.Environments)
 	}
 }
 
-func TestLoadInputsYAML_MalformedYAMLRejected(t *testing.T) {
-	_, err := LoadInputsYAML([]byte("environments: {{ bad"))
+func TestLoadInputsTOML_MalformedDocumentRejected(t *testing.T) {
+	_, err := LoadInputsTOML([]byte("environments = {{ bad"))
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
 }
 
-func TestLoadInputsYAML_RoundTripsThroughLintAndMerge(t *testing.T) {
-	yaml := []byte(`
-environments:
-  production: {}
-  staging: {}
-env:
-secrets:
-  API_KEY: { required: true }
-environment_overrides:
-  production:
-    secret_specs:
-      API_KEY: { env_scoped: true }
+func TestLoadInputsTOML_RoundTripsThroughLintAndMerge(t *testing.T) {
+	doc := []byte(`
+[environments.production]
+[environments.staging]
+
+[secrets.API_KEY]
+required = true
+
+[environment_overrides.production.secret_specs.API_KEY]
+env_scoped = true
 `)
-	// Note: `env:` is empty (no entries) — should not crash. The
-	// override's secret_specs uses snake_case (yaml tag).
-	m, err := LoadInputsYAML(yaml)
+	// Note: empty environment tables — should not crash. The
+	// override's secret_specs uses snake_case (toml tag).
+	m, err := LoadInputsTOML(doc)
 	if err != nil {
-		t.Fatalf("LoadInputsYAML: %v", err)
+		t.Fatalf("LoadInputsTOML: %v", err)
 	}
 
 	// Lint should report no issues (the manifest is structurally clean
@@ -217,27 +214,27 @@ environment_overrides:
 	}
 }
 
-func TestLoadInputsYAMLFile_ReadsFromDisk(t *testing.T) {
+func TestLoadInputsTOMLFile_ReadsFromDisk(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "nexus.deploy.yaml")
+	path := filepath.Join(dir, "nexus.toml")
 	contents := []byte(`
-environments:
-  production: { domain: app.example.com }
+[environments.production]
+domain = "app.example.com"
 `)
 	if err := os.WriteFile(path, contents, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, err := LoadInputsYAMLFile(path)
+	m, err := LoadInputsTOMLFile(path)
 	if err != nil {
-		t.Fatalf("LoadInputsYAMLFile: %v", err)
+		t.Fatalf("LoadInputsTOMLFile: %v", err)
 	}
 	if len(m.Environments) != 1 {
 		t.Fatalf("environments: %+v", m.Environments)
 	}
 }
 
-func TestLoadInputsYAMLFile_MissingFile(t *testing.T) {
-	_, err := LoadInputsYAMLFile("/does/not/exist.yaml")
+func TestLoadInputsTOMLFile_MissingFile(t *testing.T) {
+	_, err := LoadInputsTOMLFile("/does/not/exist.toml")
 	if err == nil {
 		t.Fatal("expected error on missing file")
 	}

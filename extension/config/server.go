@@ -135,7 +135,7 @@ func (s *serverState) deriveAppsFromContent() {
 func (s *serverState) validateAppsAgainstContent() error {
 	for app := range s.cfg.apps {
 		if _, ok := s.content[app]; !ok {
-			return fmt.Errorf("config.Server: app %q in apps policy has no <app>.nexus.config.yaml file", app)
+			return fmt.Errorf("config.Server: app %q in apps policy has no <app>.nexus.config.toml file", app)
 		}
 	}
 	for app := range s.content {
@@ -144,7 +144,7 @@ func (s *serverState) validateAppsAgainstContent() error {
 		}
 		if _, ok := s.cfg.apps[app]; !ok {
 			fmt.Fprintf(os.Stderr,
-				"config.Server: warning: %s.nexus.config.yaml present but not in apps policy — unreachable\n",
+				"config.Server: warning: %s.nexus.config.toml present but not in apps policy — unreachable\n",
 				app)
 		}
 	}

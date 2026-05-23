@@ -153,7 +153,7 @@ func removeEmbedFile(path string, stderr io.Writer) {
 }
 
 // simpleBuildOptions is the no-deployment variant of buildOptions.
-// Used when a project has no nexus.deploy.yaml — the user just
+// Used when a project has no nexus.toml — the user just
 // wants the embed-gen pass + plain `go build`.
 type simpleBuildOptions struct {
 	Output      string

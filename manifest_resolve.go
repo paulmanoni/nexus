@@ -57,7 +57,7 @@ func (a *App) resolveEffectiveManifest() error {
 			Op:    "manifest.resolve",
 			Msg:   fmt.Sprintf("override merge failed for environment %q", env),
 			Cause: err,
-			Hint:  "fix the override in nexus.deploy.yaml (or DeclareOverride) — check manifest.Lint() for write-time validation",
+			Hint:  "fix the override in nexus.toml (or DeclareOverride) — check manifest.Lint() for write-time validation",
 		}
 	}
 
