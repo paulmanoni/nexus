@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/evanw/esbuild/pkg/api"
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
@@ -160,22 +160,21 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 
 	srcName := islandsSrcName()
 	srcDir := filepath.Join(root, srcName)
-	if _, err := os.Stat(srcDir); errors.Is(err, fs.ErrNotExist) {
-		// Project has a lockfile but no source folder — nothing to
-		// watch. Print a one-liner so the user understands why
-		// no [web] output is appearing.
-		fmt.Fprintf(stdout, "%s●%s frontend watcher: no %s — skipping\n", ansiCyan, ansiReset, srcName)
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("frontend watcher: stat %s: %w", srcName, err)
-	}
-
-	entries, err := collectFrontendEntries(srcDir)
+	// Wait-for-entries loop. A fresh project commonly has the
+	// folder present but empty (or even absent), or the operator
+	// runs `nexus dev` before dropping in the first entry file.
+	// Rather than skip-and-exit (which forced a restart of nexus
+	// dev whenever the operator added their first entry), block
+	// here with an fsnotify watch on srcDir's parent (so we catch
+	// the dir's creation too) until at least one matching entry
+	// appears. ctx cancellation breaks the loop cleanly so a
+	// Ctrl-C during the wait doesn't hang.
+	entries, err := waitForFrontendEntries(ctx, srcDir, srcName, stdout)
 	if err != nil {
-		return fmt.Errorf("frontend watcher: %w", err)
+		return err
 	}
-	if len(entries) == 0 {
-		fmt.Fprintf(stdout, "%s●%s frontend watcher: %s is empty — skipping\n", ansiCyan, ansiReset, srcName)
+	if entries == nil {
+		// ctx cancelled while waiting — quiet exit.
 		return nil
 	}
 	// Walk islands.src/ recursively — a .vue file colocated under
@@ -782,4 +781,180 @@ func extractDuration(buffer []string) string {
 		}
 	}
 	return "?"
+}
+
+// waitForFrontendEntries blocks until srcDir contains at least one
+// entry file (.ts / .tsx / .jsx / .js at the top level). Handles
+// three starting states:
+//
+//   - srcDir doesn't exist: watches the parent for the dir's
+//     creation, then falls through to the empty-but-exists path.
+//   - srcDir exists but is empty: watches srcDir for any matching
+//     file Create / Rename / Write event.
+//   - srcDir has entries: returns them immediately, no fsnotify
+//     setup at all.
+//
+// Returns (entries, nil) on success, (nil, nil) on ctx
+// cancellation (caller exits quietly), or (nil, err) on a
+// genuine watcher / I/O failure. The two-channel error vs.
+// cancel split keeps the caller's main loop simple.
+//
+// Why we don't just skip + tell the operator to restart: a fresh
+// project commonly runs `nexus dev` BEFORE the first entry file
+// lands. Skipping there meant the operator had to Ctrl-C + relaunch
+// after adding the file — friction that boils down to a missing
+// fsnotify on the source folder.
+func waitForFrontendEntries(ctx context.Context, srcDir, srcName string, stdout io.Writer) ([]string, error) {
+	// First peek: if the dir already has entries we skip every
+	// watcher setup. Fast-path the steady-state case so the cost
+	// of this helper is one os.ReadDir.
+	if entries, err := readEntriesIfExists(srcDir); err != nil {
+		return nil, err
+	} else if len(entries) > 0 {
+		return entries, nil
+	}
+
+	// State 1: srcDir is missing → watch the parent for its
+	// creation. We can't watch a non-existent directory directly.
+	if _, err := os.Stat(srcDir); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: %s not present — waiting for it to be created (Ctrl-C to stop)\n",
+			ansiCyan, ansiReset, srcName)
+		if err := waitForDirCreate(ctx, srcDir); err != nil {
+			return nil, err
+		}
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		// dir exists now; re-check + fall through to State 2 if
+		// it's still empty.
+		if entries, err := readEntriesIfExists(srcDir); err != nil {
+			return nil, err
+		} else if len(entries) > 0 {
+			return entries, nil
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("frontend watcher: stat %s: %w", srcName, err)
+	}
+
+	// State 2: srcDir exists but is empty → watch for the first
+	// entry file to land. Recursive collectFrontendEntries on
+	// every fsnotify event so any .ts / .tsx / .jsx / .js at top
+	// level breaks the loop.
+	fmt.Fprintf(stdout, "%s●%s frontend watcher: %s is empty — waiting for first entry file (Ctrl-C to stop)\n",
+		ansiCyan, ansiReset, srcName)
+	return waitForDirEntries(ctx, srcDir)
+}
+
+// readEntriesIfExists is collectFrontendEntries with a missing-
+// directory check that returns (nil, nil) instead of a "no such
+// file" error. Keeps the polling loops above one-liner clean.
+func readEntriesIfExists(srcDir string) ([]string, error) {
+	if _, err := os.Stat(srcDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return collectFrontendEntries(srcDir)
+}
+
+// waitForDirCreate blocks until srcDir exists. Uses an fsnotify
+// watch on the parent directory; when an event names srcDir's
+// basename, we re-stat to confirm (mkdir + create are separate
+// events on some filesystems). 250ms backoff fallback covers
+// remote / network filesystems where fsnotify is unreliable.
+func waitForDirCreate(ctx context.Context, srcDir string) error {
+	parent := filepath.Dir(srcDir)
+	want := filepath.Base(srcDir)
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("frontend watcher: fsnotify: %w", err)
+	}
+	defer w.Close()
+	if err := w.Add(parent); err != nil {
+		return fmt.Errorf("frontend watcher: watch %s: %w", parent, err)
+	}
+	// Pre-check: the dir may have been created in the window
+	// between the caller's check and our watcher install.
+	if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+		return nil
+	}
+	poll := time.NewTicker(500 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case ev := <-w.Events:
+			if filepath.Base(ev.Name) != want {
+				continue
+			}
+			if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+				return nil
+			}
+		case <-poll.C:
+			// Defensive re-stat in case fsnotify missed the event
+			// (NFS, Docker volume mounts, etc.).
+			if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+				return nil
+			}
+		case err := <-w.Errors:
+			return fmt.Errorf("frontend watcher: %w", err)
+		}
+	}
+}
+
+// waitForDirEntries blocks until collectFrontendEntries on srcDir
+// returns a non-empty list. fsnotify on srcDir catches file
+// creation; the same 500ms poll guards against fsnotify gaps.
+//
+// Returns the entries on success, nil on ctx cancellation.
+func waitForDirEntries(ctx context.Context, srcDir string) ([]string, error) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("frontend watcher: fsnotify: %w", err)
+	}
+	defer w.Close()
+	if err := w.Add(srcDir); err != nil {
+		return nil, fmt.Errorf("frontend watcher: watch %s: %w", srcDir, err)
+	}
+	poll := time.NewTicker(500 * time.Millisecond)
+	defer poll.Stop()
+	check := func() ([]string, error) {
+		entries, err := collectFrontendEntries(srcDir)
+		if err != nil {
+			return nil, err
+		}
+		if len(entries) > 0 {
+			return entries, nil
+		}
+		return nil, nil
+	}
+	if entries, err := check(); err != nil || entries != nil {
+		return entries, err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case <-w.Events:
+			entries, err := check()
+			if err != nil {
+				return nil, err
+			}
+			if entries != nil {
+				return entries, nil
+			}
+		case <-poll.C:
+			entries, err := check()
+			if err != nil {
+				return nil, err
+			}
+			if entries != nil {
+				return entries, nil
+			}
+		case err := <-w.Errors:
+			return nil, fmt.Errorf("frontend watcher: %w", err)
+		}
+	}
 }
