@@ -99,13 +99,22 @@ type EnvironmentTOML struct {
 //   - Empty / missing sections produce nil slices and nil pointers
 //     (no allocations), so the result round-trips identically through
 //     MergeOverrides as if those sections were never declared.
+//   - ${VAR} and ${VAR:default} placeholders inside basic-string
+//     values are expanded from os.Environ BEFORE the TOML parser
+//     sees the document. Strict mode: a token without a default
+//     whose env var is unset / empty fails the load.
 //
-// Returns an error only on TOML syntax problems. Schema validation
-// (duplicate names, malformed validation rules, unknown override
-// keys) lives in Lint — callers should run Lint after Load.
+// Returns an error on TOML syntax problems or unresolved
+// placeholders. Schema validation (duplicate names, malformed
+// validation rules, unknown override keys) lives in Lint — callers
+// should run Lint after Load.
 func LoadInputsTOML(data []byte) (Manifest, error) {
+	expanded, err := expandEnvVars(data)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("manifest: %w", err)
+	}
 	var raw DeployTOMLInputs
-	if err := toml.Unmarshal(data, &raw); err != nil {
+	if err := toml.Unmarshal(expanded, &raw); err != nil {
 		return Manifest{}, fmt.Errorf("manifest: parse TOML inputs: %w", err)
 	}
 	return materializeInputs(raw), nil

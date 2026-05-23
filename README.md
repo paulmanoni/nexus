@@ -41,9 +41,7 @@ var Module = nexus.Module("adverts",
 - **Live architecture view.** `nexus.Module` groups endpoints; constructor introspection draws service → service / service → resource edges automatically. Real traffic pulses on the edges.
 - **Built-in auth, rate limits, metrics, traces.** Cross-transport bundles via `nexus.Use`. Per-op observability is free — every handler gets counters + traces with no user code.
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
-- **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext TOML (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. See [Configuration](#configuration) below.
-
-> **TOML over YAML.** As of v0.82, the framework's two on-disk config surfaces — the deploy manifest (`nexus.toml`, formerly `nexus.deploy.yaml`) and the config-extension app files (`<app>.nexus.config.toml`) — are TOML. Same field names; tables replace nested-map indentation. Parser is `github.com/pelletier/go-toml/v2`.
+- **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext TOML (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. `${VAR}` placeholders inside `nexus.toml` resolve from the process env (and optionally a `.env` file via `nexus.LoadDotenvIfPresent()`). See [Configuration](#configuration) below.
 - **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots (multi-scene capture for dropdowns + modals), edit step text inline on the preview, play back as numbered-badge highlights, export to **PDF** or **Word** for handoff docs. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
 - **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. No `node_modules`, no `npm install`. See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
@@ -432,7 +430,65 @@ Run `nexus docs peer` or `nexus docs pki` for inline reference.
 
 ## Configuration
 
-`extension/config` ships Spring-Cloud-Config-style configuration distribution as a nexus extension. Three entrypoints share one package-level store; handlers read values via `nexus.Get` regardless of where they came from.
+There are TWO config surfaces in a nexus app and they don't overlap:
+
+1. **`nexus.toml`** — the deploy manifest. Topology (deployments/peers), declared inputs (environments, secrets, files, hooks), plugin blocks (TLS, CORS, errors). Auto-loaded from `./nexus.toml` at boot. **What the platform sees + provisions.**
+2. **`extension/config`** — runtime key/value store (Spring-Cloud-Config-style). `nexus.Get[T]("key", default)` from any handler. **What the app reads at request time.**
+
+### `nexus.toml` env-var expansion
+
+`${VAR}` and `${VAR:default}` tokens inside basic-string values are resolved from the process environment before TOML parsing:
+
+```toml
+[environments.production]
+domain = "${APP_DOMAIN}"                       # required — fails boot if unset
+ttl    = "${APP_TTL:7d}"                       # default — falls back to 7d
+cdn    = "${CDN_HOST:${APP_DOMAIN:localhost}}" # one level of nesting
+
+[tls]
+email = "${LETSENCRYPT_EMAIL}"
+
+# Single-quoted strings are LITERAL — operators who want a raw
+# ${X} in a value use 'literal' instead of "expanded".
+note  = 'see ${SOME_VAR} in the docs'
+```
+
+Rules (strict mode — undefined vars without a default fail the load):
+
+| Token | Behavior |
+|---|---|
+| `${KEY}` | Must be set + non-empty; otherwise the loader errors with the variable name. |
+| `${KEY:default}` | Falls back to the literal default when `KEY` is unset or empty. |
+| `${A:${B:c}}` | One level of nesting; resolved inside-out. |
+| `$${X}` | Escape — produces literal `${X}` in the output. |
+| `'${X}'` | Literal string, not expanded (TOML's own raw-string semantics). |
+
+Empty env vars count as "unset" (matches bash's `${X:-default}`) so an exported-but-empty `APP_DOMAIN=` falls through to the default instead of silently substituting `""`.
+
+### `.env` for dev workflows
+
+Spring/12-factor convention: secrets and per-host values come in as OS environment variables. `.env` is just a dev convenience — your shell, docker-compose, or systemd sets the vars; the framework consumes them.
+
+For dev runs nexus ships an opt-in loader that populates `os.Environ` from a `.env` file before placeholders resolve:
+
+```go
+func main() {
+    nexus.Run(nexus.Config{...},
+        nexus.LoadDotenvIfPresent(),    // reads ./.env if present; no-op otherwise
+        appModule,
+    )
+}
+```
+
+Behavior:
+
+- Missing file is a silent no-op (production runs without `.env` boot normally).
+- Real env vars always win: a `DB_PASSWORD` set by the platform beats whatever `.env` says.
+- Malformed file fails boot loud (a broken `.env` should not silently produce a partially-loaded environment).
+- Accepts `KEY=value`, `KEY="value"`, `KEY='literal'`, `export KEY=value`, `# comments`, blank lines. No shell expansion inside values — keep the parser predictable.
+- `nexus.MustLoadDotenv()` is the strict variant: a missing file fails boot.
+
+Don't ship `.env` to production — that's what `nexus.toml`'s `[secrets]` declarations + your platform's secret injector are for. The scaffolder generates `.env.example` (commit) + `.env` in `.gitignore` (don't).
 
 ### Three entrypoints — pick one per app
 
