@@ -212,7 +212,7 @@ func addNexusClient(ctx context.Context, dc *depsContext, spec, originOverride s
 		// `client` Go package's go:embed.
 		fmt.Fprintf(stdout, "  app at %s not reachable — installing bundle embedded in CLI (v%s)\n", origin, Version)
 		fmt.Fprintf(stdout, "  re-run `nexus add %s` once the app is running to pick up typed endpoints\n", spec)
-		return addNexusClientOffline(spec)
+		return addNexusClientOffline(dc, spec)
 	}
 	version := mf.Version
 	if version == "" {
@@ -392,22 +392,23 @@ func writeNexusClientPkgStub(dir, version string) error {
 
 // addNexusClientOffline is the fallback when the install runs
 // without a reachable nexus app on the default origin. Bytes come
-// from the `client` Go package's go:embed (same source the
-// framework binary serves at /__nexus/client/*) and the .d.ts
-// content is generated from an EMPTY manifest — runtime + static
-// type surface only, no typed RestEndpoints / GraphqlOps /
+// from the `client` Go package's embed directives (same source
+// the framework binary serves at /__nexus/client/*) and the
+// .d.ts content is generated from an EMPTY manifest — runtime +
+// static type surface only, no typed RestEndpoints / GraphqlOps /
 // WSMessages (those need the running app's projection).
 //
-// The lockfile entries pin a synthetic `embedded://` URL so a
-// subsequent `nexus install` doesn't try to re-fetch over HTTP.
-// When the operator brings their app online and re-runs `nexus
-// add`, the live path takes over and the lockfile entries are
-// rewritten with the real resolved URL + a typed .d.ts.
+// Cache writes mirror the regular fetcher path: each embedded
+// file's bytes get a content-addressed Put under a synthetic
+// `embedded://nexus-client/<file>` URL key. That means a
+// subsequent `nexus install` walking the lockfile will see the
+// blob in the cache (Has(hash) → true) and skip the re-extract
+// — same UX as a normal esm.sh-pinned package.
 //
 // Version is the CLI's own Version constant — the embedded
 // bundle is whatever ships with this CLI build, so that's the
 // honest pin.
-func addNexusClientOffline(spec string) ([]lockfile.Package, string, error) {
+func addNexusClientOffline(dc *depsContext, spec string) ([]lockfile.Package, string, error) {
 	plan := filesForSpec(spec)
 	version := Version
 	if version == "" {
@@ -435,6 +436,23 @@ func addNexusClientOffline(spec string) ([]lockfile.Package, string, error) {
 		}
 		sum := sha256.Sum256(body)
 		hash := hex.EncodeToString(sum[:])
+		embeddedURL := "embedded://nexus-client/" + f
+
+		// Cache the bytes content-addressed so a follow-up
+		// `nexus install` walking the lockfile sees the blob and
+		// skips re-extraction. dc is nil only in older test paths;
+		// guarding keeps the function callable from both runAdd
+		// (which always has dc) and any straight-line caller.
+		if dc != nil && dc.store != nil {
+			if _, err := dc.store.Put(embeddedURL, bytes.NewReader(body), hash, store.Metadata{
+				URL:           embeddedURL,
+				ContentSHA256: hash,
+				ContentType:   contentType,
+				ResolvedURL:   embeddedURL,
+			}); err != nil {
+				return nil, "", fmt.Errorf("cache %s: %w", embeddedURL, err)
+			}
+		}
 
 		if cwd != "" {
 			if err := writeNodeModulesFile(nodeModulesDir, f, body); err != nil {
@@ -445,7 +463,7 @@ func addNexusClientOffline(spec string) ([]lockfile.Package, string, error) {
 		pkgs = append(pkgs, lockfile.Package{
 			Spec:        nexusClientName + "/" + f,
 			Version:     version,
-			Resolved:    "embedded://nexus-client/" + f,
+			Resolved:    embeddedURL,
 			Integrity:   "sha256-" + hash,
 			ContentType: contentType,
 		})
@@ -458,6 +476,54 @@ func addNexusClientOffline(spec string) ([]lockfile.Package, string, error) {
 	}
 
 	return pkgs, version, nil
+}
+
+// rehydrateEmbeddedFile pulls ONE nexus-client artifact from the
+// CLI's embedded bundle into both the deps cache and the
+// project's node_modules. Used by `nexus install` Phase 2 to
+// satisfy lockfile entries whose Resolved URL is `embedded://` —
+// the original `nexus add` ran offline against this CLI, and
+// re-extracting from the same embedded bundle reproduces the
+// bytes the lockfile pins.
+//
+// pkg.Spec must be of the form `nexus-client/<file>` (matches
+// what addNexusClientOffline writes). Unknown filenames return
+// an error via embeddedBundle.
+func rehydrateEmbeddedFile(dc *depsContext, pkg lockfile.Package) error {
+	file := strings.TrimPrefix(pkg.Spec, nexusClientName+"/")
+	body, contentType, err := embeddedBundle(file, client.Manifest{Version: "client.v1"})
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(body)
+	hash := hex.EncodeToString(sum[:])
+	if dc != nil && dc.store != nil {
+		if _, err := dc.store.Put(pkg.Resolved, bytes.NewReader(body), hash, store.Metadata{
+			URL:           pkg.Resolved,
+			ContentSHA256: hash,
+			ContentType:   contentType,
+			ResolvedURL:   pkg.Resolved,
+		}); err != nil {
+			return fmt.Errorf("cache %s: %w", pkg.Resolved, err)
+		}
+	}
+	// Materialize into ./node_modules/nexus-client/ so a fresh
+	// clone's `nexus install` puts the files where the bundler
+	// expects them — same UX as the regular esm.sh path's
+	// node_modules pulldown.
+	if cwd, _ := os.Getwd(); cwd != "" {
+		dir := filepath.Join(cwd, "node_modules", nexusClientName)
+		if err := writeNodeModulesFile(dir, file, body); err != nil {
+			return fmt.Errorf("write %s: %w", filepath.Join(dir, file), err)
+		}
+		// Best-effort: refresh the stub package.json too. Pinning
+		// the version from the lockfile entry keeps it stable
+		// across reinstalls.
+		if err := writeNexusClientPkgStub(dir, pkg.Version); err != nil {
+			return fmt.Errorf("write %s/package.json: %w", dir, err)
+		}
+	}
+	return nil
 }
 
 // embeddedBundle returns the bytes + content-type for one
