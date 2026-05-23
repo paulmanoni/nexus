@@ -41,7 +41,9 @@ var Module = nexus.Module("adverts",
 - **Live architecture view.** `nexus.Module` groups endpoints; constructor introspection draws service → service / service → resource edges automatically. Real traffic pulses on the edges.
 - **Built-in auth, rate limits, metrics, traces.** Cross-transport bundles via `nexus.Use`. Per-op observability is free — every handler gets counters + traces with no user code.
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
-- **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext yaml (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. See [Configuration](#configuration) below.
+- **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext TOML (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. See [Configuration](#configuration) below.
+
+> **TOML over YAML.** As of v0.82, the framework's two on-disk config surfaces — the deploy manifest (`nexus.toml`, formerly `nexus.deploy.yaml`) and the config-extension app files (`<app>.nexus.config.toml`) — are TOML. Same field names; tables replace nested-map indentation. Parser is `github.com/pelletier/go-toml/v2`.
 - **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots (multi-scene capture for dropdowns + modals), edit step text inline on the preview, play back as numbered-badge highlights, export to **PDF** or **Word** for handoff docs. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
 - **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. No `node_modules`, no `npm install`. See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
@@ -436,9 +438,9 @@ Run `nexus docs peer` or `nexus docs pki` for inline reference.
 
 | | What it does | Disk state on the client |
 |---|---|---|
-| `config.Server(source, ...)` | Hosts the source of truth | Plaintext yaml files (operator owns them) |
+| `config.Server(source, ...)` | Hosts the source of truth | Plaintext TOML files (operator owns them) |
 | `config.Client(url, ...)` | Fetches + verifies + caches | **Sealed** AES-256-GCM, framework-managed key |
-| `config.Local(path)` | Single-yaml, no server | **Plaintext** (operator edits with `$EDITOR`) |
+| `config.Local(path)` | Single-TOML, no server | **Plaintext** (operator edits with `$EDITOR`) |
 
 ### Reading values from handlers
 
@@ -459,10 +461,10 @@ nexus.OnConfigChange("config.api.timeout", func(v any) {     // hot-reload
 
 Resolution priority (highest first):
 1. **Environment variable** — `CONFIG_API_TIMEOUT` overrides `config.api.timeout`
-2. **Server snapshot** / sealed cache / plaintext local yaml
+2. **Server snapshot** / sealed cache / plaintext local TOML
 3. **Default arg** (or `T`'s zero value)
 
-**Type coercion is permissive.** Unquoted yaml ints + bools coerce both directions — `password: 12345` is readable as `Get[string]` ("12345") or `Get[int]` (12345), and a yaml string `port: "5472"` is readable as `Get[int]` (5472). You don't have to defensively quote every value.
+**Type coercion is permissive.** Unquoted TOML ints + bools coerce both directions — `password: 12345` is readable as `Get[string]` ("12345") or `Get[int]` (12345), and a TOML string `port: "5472"` is readable as `Get[int]` (5472). You don't have to defensively quote every value.
 
 **Snapshot installs before `Run()` begins.** `config.Client(...)` and `config.Local(...)` fetch + install the snapshot synchronously, so `Get` works from every `Provide` constructor, `Invoke`, and any code between the option call and `Run`. Connection lifecycle is loud — watch for `config.Client: connecting to … (app=… profile=…)` followed by `config.Client: snapshot installed (… version=…)` in the boot logs.
 
@@ -470,7 +472,7 @@ Resolution priority (highest first):
 
 ```go
 nexus.Run(nexus.Config{...},
-    config.Server(config.FromYAML("configs/")),               // local folder
+    config.Server(config.FromTOML("configs/")),               // local folder
 )
 
 // Or backed by git:
@@ -484,27 +486,30 @@ Layout under the source dir (Spring-compatible, simplified to one file per app):
 
 ```
 configs/
-├── _common.nexus.config.yaml      optional cross-app base
-├── app1.nexus.config.yaml
-└── app2.nexus.config.yaml
+├── _common.nexus.config.toml      optional cross-app base
+├── app1.nexus.config.toml
+└── app2.nexus.config.toml
 ```
 
-Each app's yaml accepts two shapes — pick whichever fits:
+Each app file accepts two shapes — pick whichever fits:
 
-```yaml
+```toml
 # Simple — whole body is the default profile, no per-env split
-app:
-  name: My App
-api:
-  timeout: 5s
+[app]
+name = "My App"
+[api]
+timeout = "5s"
 ```
 
-```yaml
+```toml
 # Profile-keyed — when you need per-env overrides
-app: app1
-profiles:
-  default: {api: {timeout: "5s"}}
-  prod:    {api: {timeout: "30s"}}
+app = "app1"
+
+[profiles.default.api]
+timeout = "5s"
+
+[profiles.prod.api]
+timeout = "30s"
 ```
 
 Resolution = `_common.default → _common.<profile> → <app>.default → <app>.<profile>`, each layer overlaying via deep merge.
@@ -513,7 +518,7 @@ Resolution = `_common.default → _common.<profile> → <app>.default → <app>.
 
 | Option | Selects | Example |
 |---|---|---|
-| `config.Identity("oats")` | **Which file** — the prefix before `.nexus.config.yaml` | `oats.nexus.config.yaml` |
+| `config.Identity("oats")` | **Which file** — the prefix before `.nexus.config.toml` | `oats.nexus.config.toml` |
 | `config.Profile("default")` | **Which section inside the file** | `profiles.default:`, or the whole body of a flat file |
 
 Flat files (no `profiles:` key) reach as `Profile("default")` automatically. If you get `app "X" not declared`, you typed an Identity that's not a filename in the source dir — the server's error names the available apps.
@@ -568,12 +573,12 @@ For dev / single-binary deployments:
 
 ```go
 nexus.Run(nexus.Config{...},
-    config.Local("nexus.config.yaml"),
+    config.Local("nexus.config.toml"),
     appModule,
 )
 ```
 
-The yaml stays human-readable + git-friendly. Same `nexus.Get` facade as the server-backed path.
+The TOML stays human-readable + git-friendly. Same `nexus.Get` facade as the server-backed path.
 
 Run `nexus docs config` for the full inline reference.
 

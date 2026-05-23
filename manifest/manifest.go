@@ -142,9 +142,9 @@ type Manifest struct {
 	// yet; framework plumbing populates them as registry/topology
 	// information becomes available.
 
-	// Deployments is the topology declared in nexus.deploy.yaml: every
+	// Deployments is the topology declared in nexus.toml: every
 	// deployment unit, what modules it owns, its peers, scaling hints.
-	// The framework's print mode does not read nexus.deploy.yaml — the
+	// The framework's print mode does not read nexus.toml — the
 	// `nexus build --emit-manifest` tool merges the YAML topology into
 	// the manifest before writing it out. Single-deployment ("monolith")
 	// apps still get one entry here for uniformity.
@@ -254,31 +254,31 @@ type Health struct {
 // orchestration: when a ServiceNeed exposes "host" via this var, the
 // platform can fill it automatically without operator intervention.
 type EnvVar struct {
-	Name        string `json:"name" yaml:"name"`
-	Description string `json:"description,omitempty" yaml:"description,omitempty"`
-	Required    bool   `json:"required,omitempty" yaml:"required,omitempty"`
-	Secret      bool   `json:"secret,omitempty" yaml:"secret,omitempty"`
-	Default     string `json:"default,omitempty" yaml:"default,omitempty"`
+	Name        string `json:"name" toml:"name"`
+	Description string `json:"description,omitempty" toml:"description,omitempty"`
+	Required    bool   `json:"required,omitempty" toml:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty" toml:"secret,omitempty"`
+	Default     string `json:"default,omitempty" toml:"default,omitempty"`
 	// BoundTo is a dotted reference into a ServiceNeed entry, e.g.
 	// "primary-db.host" means "fill this env var with the resolved host
 	// of the ServiceNeed named primary-db". Empty when the operator
 	// must supply the value directly.
-	BoundTo string `json:"boundTo,omitempty" yaml:"bound_to,omitempty"`
+	BoundTo string `json:"boundTo,omitempty" toml:"bound_to,omitempty"`
 
 	// EnvScoped means each environment gets its own value. Typical for
 	// LOG_LEVEL or feature flags that legitimately differ per env.
 	// When false (the default), one value applies across every
 	// environment that doesn't override it.
-	EnvScoped bool `json:"envScoped,omitempty" yaml:"env_scoped,omitempty"`
+	EnvScoped bool `json:"envScoped,omitempty" toml:"env_scoped,omitempty"`
 
 	// Validation constrains the effective value. Applied at boot or
 	// pre-render. nil = no validation beyond Required.
-	Validation *EnvValidation `json:"validation,omitempty" yaml:"validation,omitempty"`
+	Validation *EnvValidation `json:"validation,omitempty" toml:"validation,omitempty"`
 
 	// Source tracks where the effective value came from after merge:
 	// "default" | "override" | "platform" | "env". Populated by
 	// MergeOverrides; empty in the declared base manifest.
-	Source string `json:"source,omitempty" yaml:"source,omitempty"`
+	Source string `json:"source,omitempty" toml:"source,omitempty"`
 }
 
 // ServiceNeed is a logical sidecar this app needs to talk to. The
@@ -287,36 +287,36 @@ type EnvVar struct {
 // dependencies the platform may not natively support yet — operators
 // still see the requirement and can wire something manually.
 type ServiceNeed struct {
-	Name    string `json:"name" yaml:"name"`                          // unique within the app, e.g. "primary-db"
-	Kind    string `json:"kind" yaml:"kind"`                          // "postgres" | "redis" | "rabbitmq" | "s3" | ...
-	Version string `json:"version,omitempty" yaml:"version,omitempty"` // major or constraint, e.g. "16", ">=14"
+	Name    string `json:"name" toml:"name"`                          // unique within the app, e.g. "primary-db"
+	Kind    string `json:"kind" toml:"kind"`                          // "postgres" | "redis" | "rabbitmq" | "s3" | ...
+	Version string `json:"version,omitempty" toml:"version,omitempty"` // major or constraint, e.g. "16", ">=14"
 	// ExposeAs maps logical fields (host, port, user, password, url, ...)
 	// to env-var names the app reads. The orchestration platform fills
 	// each one once the sidecar is bound. Field names are advisory but
 	// the well-known set is "host", "port", "user", "password", "url",
 	// "database", "vhost", "exchange".
-	ExposeAs map[string]string `json:"exposeAs,omitempty" yaml:"expose_as,omitempty"`
+	ExposeAs map[string]string `json:"exposeAs,omitempty" toml:"expose_as,omitempty"`
 	// Optional indicates the app degrades gracefully without this
 	// sidecar (e.g. a Redis cache that falls back to in-memory). The
 	// platform may skip provisioning in dev environments.
-	Optional bool `json:"optional,omitempty" yaml:"optional,omitempty"`
+	Optional bool `json:"optional,omitempty" toml:"optional,omitempty"`
 
 	// Size is the platform-defined sizing tier ("small" | "medium" |
 	// "large" — exact set is platform-specific). Empty = platform
 	// default. Typically overridden per environment ("large" in prod,
 	// "small" in preview).
-	Size string `json:"size,omitempty" yaml:"size,omitempty"`
+	Size string `json:"size,omitempty" toml:"size,omitempty"`
 
 	// Backup is the platform-defined backup cadence ("none" | "daily"
 	// | "hourly" | "continuous"). Empty = platform default. Mostly
 	// relevant for stateful services (postgres, mysql); meaningless
 	// for caches.
-	Backup string `json:"backup,omitempty" yaml:"backup,omitempty"`
+	Backup string `json:"backup,omitempty" toml:"backup,omitempty"`
 
 	// Ephemeral=true tells the platform to tear down the provisioned
 	// resource when the environment is destroyed. Used for preview
 	// environments so per-PR databases don't accumulate.
-	Ephemeral bool `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	Ephemeral bool `json:"ephemeral,omitempty" toml:"ephemeral,omitempty"`
 }
 
 // Volume describes a path inside the container that must persist.
@@ -389,7 +389,7 @@ type AppIdentity struct {
 
 // Deployment is one unit in the app's topology. A monolith app emits a
 // single Deployment named "monolith"; a split app emits one per
-// nexus.deploy.yaml `deployments:` entry.
+// nexus.toml `deployments:` entry.
 type Deployment struct {
 	Name string `json:"name"` // matches NEXUS_DEPLOYMENT
 	Port int    `json:"port,omitempty"`
@@ -422,7 +422,7 @@ type Scaling struct {
 type Module struct {
 	Name string `json:"name"`
 	// Deployment is the resolved DeployAs tag (explicit or inferred from
-	// nexus.deploy.yaml `owns`). Empty string means "always local" —
+	// nexus.toml `owns`). Empty string means "always local" —
 	// runs in whichever deployment is active.
 	Deployment string `json:"deployment,omitempty"`
 	// Package is the Go import path of the module, used for dashboard
@@ -637,7 +637,7 @@ type Inputs struct {
 	Hooks         *Hooks
 	Overrides     map[string]Override
 
-	// Plugin-driven blocks read from nexus.deploy.yaml. Each plugin's
+	// Plugin-driven blocks read from nexus.toml. Each plugin's
 	// config (tls/cors/errors) lives at the top level of the YAML and
 	// is consumed by the extension at boot via app.EffectiveManifest.
 	// Nil = not declared; the corresponding plugin falls back to its

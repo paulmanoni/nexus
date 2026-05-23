@@ -18,34 +18,35 @@ func resetStore(t *testing.T) {
 }
 
 // TestLocal_ReadsPlaintextAndPopulatesGet drives the headline
-// path: a plaintext yaml on disk → values reachable via
+// path: a plaintext TOML on disk → values reachable via
 // nexus.Get. config.Local leaves the file alone — operators
-// expect their yaml to stay readable + editable.
+// expect their TOML to stay readable + editable.
 func TestLocal_ReadsPlaintextAndPopulatesGet(t *testing.T) {
 	resetStore(t)
 	dir := t.TempDir()
-	yamlPath := filepath.Join(dir, "nexus.config.yaml")
-	plaintext := `profiles:
-  default:
-    api:
-      timeout: 5s
-    app_name: test-app
-    port: 8080
-    enabled: true`
-	if err := os.WriteFile(yamlPath, []byte(plaintext), 0o644); err != nil {
+	tomlPath := filepath.Join(dir, "nexus.config.toml")
+	plaintext := `[profiles.default]
+app_name = "test-app"
+port     = 8080
+enabled  = true
+
+[profiles.default.api]
+timeout = "5s"
+`
+	if err := os.WriteFile(tomlPath, []byte(plaintext), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := initLocal(localConfig{path: yamlPath, profile: "default"}); err != nil {
+	if err := initLocal(localConfig{path: tomlPath, profile: "default"}); err != nil {
 		t.Fatal(err)
 	}
 	// Plaintext file MUST still be on disk in its original form
 	// — config.Local doesn't seal, doesn't move, doesn't touch.
-	body, err := os.ReadFile(yamlPath)
+	body, err := os.ReadFile(tomlPath)
 	if err != nil {
-		t.Fatalf("yaml file disappeared after initLocal: %v", err)
+		t.Fatalf("toml file disappeared after initLocal: %v", err)
 	}
 	if string(body) != plaintext {
-		t.Errorf("yaml file was modified by initLocal:\n  want: %q\n   got: %q", plaintext, string(body))
+		t.Errorf("toml file was modified by initLocal:\n  want: %q\n   got: %q", plaintext, string(body))
 	}
 
 	// And nexus.Get works across types.
@@ -66,19 +67,19 @@ func TestLocal_ReadsPlaintextAndPopulatesGet(t *testing.T) {
 func TestLocal_ProfileOverlay(t *testing.T) {
 	resetStore(t)
 	dir := t.TempDir()
-	yamlPath := filepath.Join(dir, "nexus.config.yaml")
-	plaintext := `profiles:
-  default:
-    timeout: 5s
-    features:
-      new_path: false
-  prod:
-    features:
-      new_path: true`
-	if err := os.WriteFile(yamlPath, []byte(plaintext), 0o644); err != nil {
+	tomlPath := filepath.Join(dir, "nexus.config.toml")
+	plaintext := `[profiles.default]
+timeout = "5s"
+[profiles.default.features]
+new_path = false
+
+[profiles.prod.features]
+new_path = true
+`
+	if err := os.WriteFile(tomlPath, []byte(plaintext), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := initLocal(localConfig{path: yamlPath, profile: "prod"}); err != nil {
+	if err := initLocal(localConfig{path: tomlPath, profile: "prod"}); err != nil {
 		t.Fatal(err)
 	}
 	// default value passes through unchanged
@@ -97,7 +98,7 @@ func TestLocal_ProfileOverlay(t *testing.T) {
 // startup rather than at first nexus.Get call site.
 func TestLocal_MissingFile(t *testing.T) {
 	resetStore(t)
-	err := initLocal(localConfig{path: "/nonexistent/nexus.config.yaml", profile: "default"})
+	err := initLocal(localConfig{path: "/nonexistent/nexus.config.toml", profile: "default"})
 	if err == nil {
 		t.Fatal("initLocal should error on missing file")
 	}

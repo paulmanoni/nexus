@@ -10,21 +10,20 @@ import (
 )
 
 // TestLoadDeployManifest_PopulatesDeclarations verifies that loading
-// a YAML file pushes its inputs into the App's manifest store via
+// a TOML file pushes its inputs into the App's manifest store via
 // the Declare* methods, then resolves into the effective manifest at
-// boot. End-to-end smoke from "YAML on disk" → "boot validation
+// boot. End-to-end smoke from "TOML on disk" → "boot validation
 // fails per the declared inputs."
 func TestLoadDeployManifest_PopulatesDeclarations(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "nexus.deploy.yaml")
+	path := filepath.Join(dir, "nexus.toml")
 	contents := []byte(`
-environments:
-  production: { domain: app.example.com }
+[environments.production]
+domain = "app.example.com"
 
-secrets:
-  API_KEY:
-    required: true
-    env_scoped: true
+[secrets.API_KEY]
+required   = true
+env_scoped = true
 `)
 	if err := os.WriteFile(path, contents, 0o644); err != nil {
 		t.Fatal(err)
@@ -39,7 +38,7 @@ secrets:
 	}
 
 	// API_KEY is required but unset; resolver should fail with that
-	// name in the error message — proof the YAML's `required: true`
+	// name in the error message — proof the TOML's `required = true`
 	// flowed through to the validator.
 	err := app.resolveEffectiveManifest()
 	if err == nil {
@@ -55,21 +54,19 @@ func TestLoadDeployManifest_MissingFile(t *testing.T) {
 		Environment: "production",
 		Server:      ServerConfig{Addr: "127.0.0.1:0"},
 	})
-	if err := app.LoadDeployManifest("/does/not/exist.yaml"); err == nil {
+	if err := app.LoadDeployManifest("/does/not/exist.toml"); err == nil {
 		t.Fatal("expected error on missing file")
 	}
 }
 
 func TestLoadDeployManifest_OverrideFlowsThroughToMerge(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "nexus.deploy.yaml")
+	path := filepath.Join(dir, "nexus.toml")
 	contents := []byte(`
-environments:
-  production: {}
+[environments.production]
 
-environment_overrides:
-  production:
-    env: { LOG_LEVEL: warn }
+[environment_overrides.production]
+env = { LOG_LEVEL = "warn" }
 `)
 	if err := os.WriteFile(path, contents, 0o644); err != nil {
 		t.Fatal(err)
@@ -79,7 +76,7 @@ environment_overrides:
 		Environment: "production",
 		Server:      ServerConfig{Addr: "127.0.0.1:0"},
 	})
-	// Realistic flow: Go declares the schema, YAML supplies the per-
+	// Realistic flow: Go declares the schema, TOML supplies the per-
 	// env values. The override should turn LOG_LEVEL's default from
 	// "info" into "warn".
 	app.DeclareEnv(manifest.EnvVar{Name: "LOG_LEVEL", Default: "info"})
@@ -110,18 +107,16 @@ environment_overrides:
 
 func TestLoadDeployManifest_HooksAndSecretsLanded(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "nexus.deploy.yaml")
+	path := filepath.Join(dir, "nexus.toml")
 	contents := []byte(`
-environments:
-  production: {}
+[environments.production]
 
-secrets:
-  JWT_SIGNING_KEY:
-    description: HS256 key
-    required: true
+[secrets.JWT_SIGNING_KEY]
+description = "HS256 key"
+required    = true
 
-hooks:
-  build: [go build ./...]
+[hooks]
+build = ["go build ./..."]
 `)
 	if err := os.WriteFile(path, contents, 0o644); err != nil {
 		t.Fatal(err)

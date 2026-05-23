@@ -16,7 +16,7 @@ import (
 
 // watchSource starts a recursive file watcher rooted at root and
 // emits debounced rebuild signals on out whenever a Go source file
-// (or go.mod / go.sum / nexus.deploy.yaml) under root changes.
+// (or go.mod / go.sum / nexus.toml) under root changes.
 //
 // Debounce: 200ms after the last burst event. Editors commonly write
 // several files for one Cmd-S (atomic-rename via .tmp, dotfile writes
@@ -193,7 +193,7 @@ func shouldSkipDir(name string) bool {
 // save. Chmod-only events are ignored (don't rebuild on `chmod +x`).
 //
 // File-name filter: .go source, plus go.mod / go.sum (dep changes
-// alter the build) and nexus.deploy.yaml (codegen consumes it). Any
+// alter the build) and nexus.toml (codegen consumes it). Any
 // non-hidden file under an //go:embed root also counts — the binary
 // has to recompile to repackage the new bundle bytes.
 //
@@ -223,13 +223,13 @@ func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool, ignore []strin
 
 // isGoBuildFile reports whether base names a file whose change
 // invalidates the Go build: any .go source, go.mod / go.sum (deps),
-// or nexus.deploy.yaml (codegen consumes it).
+// or nexus.toml (codegen consumes it).
 func isGoBuildFile(base string) bool {
 	if strings.HasSuffix(base, ".go") {
 		return true
 	}
 	switch base {
-	case "go.mod", "go.sum", "nexus.deploy.yaml":
+	case "go.mod", "go.sum", "nexus.toml":
 		return true
 	}
 	return false

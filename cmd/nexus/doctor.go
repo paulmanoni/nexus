@@ -31,7 +31,7 @@ type doctorOptions struct {
 // required with no validation rule."
 //
 //	nexus doctor <manifest.json>     read JSON from disk
-//	nexus doctor <nexus.deploy.yaml> read YAML (auto-detected by extension)
+//	nexus doctor <nexus.toml> read YAML (auto-detected by extension)
 //	nexus doctor -                   read from stdin
 //	nexus doctor --binary=PATH       exec binary in NEXUS_PRINT_MANIFEST=1
 //
@@ -62,10 +62,10 @@ Checks include:
   - Override keys not declared in the base manifest
 
 Input sources:
-  nexus doctor <manifest.json>      JSON manifest file
-  nexus doctor <nexus.deploy.yaml>  YAML inputs surface (auto-detected by extension)
-  nexus doctor -                    read from stdin (default JSON; use --yaml for YAML)
-  nexus doctor --binary=PATH        exec binary in NEXUS_PRINT_MANIFEST=1`,
+  nexus doctor <manifest.json>  JSON manifest file
+  nexus doctor <nexus.toml>     TOML inputs surface (auto-detected by extension)
+  nexus doctor -                read from stdin (default JSON; use --toml for TOML)
+  nexus doctor --binary=PATH    exec binary in NEXUS_PRINT_MANIFEST=1`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -79,16 +79,16 @@ Input sources:
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress warning-severity findings from output")
 	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "exec the binary in NEXUS_PRINT_MANIFEST=1 mode and check the result")
 
-	var yamlIn, jsonIn bool
-	cmd.Flags().BoolVar(&yamlIn, "yaml", false, "force YAML input parsing (overrides auto-detection)")
+	var tomlIn, jsonIn bool
+	cmd.Flags().BoolVar(&tomlIn, "toml", false, "force TOML input parsing (overrides auto-detection)")
 	cmd.Flags().BoolVar(&jsonIn, "json-in", false, "force JSON input parsing (overrides auto-detection)")
 	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
-		if yamlIn && jsonIn {
-			return errors.New("nexus doctor: --yaml and --json-in are mutually exclusive")
+		if tomlIn && jsonIn {
+			return errors.New("nexus doctor: --toml and --json-in are mutually exclusive")
 		}
 		switch {
-		case yamlIn:
-			opts.inputFormat = "yaml"
+		case tomlIn:
+			opts.inputFormat = "toml"
 		case jsonIn:
 			opts.inputFormat = "json"
 		}
@@ -105,8 +105,8 @@ func runDoctor(stdout, stderr io.Writer, opts doctorOptions) error {
 	if opts.filePath != "" && opts.binaryPath != "" {
 		return errors.New("nexus doctor: cannot combine a manifest path with --binary")
 	}
-	if opts.inputFormat == "yaml" && opts.binaryPath != "" {
-		return errors.New("nexus doctor: --yaml is incompatible with --binary (binary print mode emits JSON)")
+	if opts.inputFormat == "toml" && opts.binaryPath != "" {
+		return errors.New("nexus doctor: --toml is incompatible with --binary (binary print mode emits JSON)")
 	}
 
 	// Reuse lint's reader + parser via a lintOptions shim. Same

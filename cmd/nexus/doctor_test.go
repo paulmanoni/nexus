@@ -11,14 +11,14 @@ import (
 	nexusmanifest "github.com/paulmanoni/nexus/manifest"
 )
 
-// writeDoctorYAML drops a YAML doc into a temp file at .yaml so
-// auto-detection picks the YAML loader. Tests use this to drive
+// writeDoctorTOML drops a TOML doc into a temp file at .toml so
+// auto-detection picks the TOML loader. Tests use this to drive
 // the file-input path of the doctor CLI without coupling to Go
-// struct → YAML marshaling.
-func writeDoctorYAML(t *testing.T, contents string) string {
+// struct → TOML marshaling.
+func writeDoctorTOML(t *testing.T, contents string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "nexus.deploy.yaml")
+	path := filepath.Join(dir, "nexus.toml")
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -26,11 +26,10 @@ func writeDoctorYAML(t *testing.T, contents string) string {
 }
 
 func TestDoctor_CleanManifest_ExitZeroSuccessLine(t *testing.T) {
-	path := writeDoctorYAML(t, `
-environments:
-  production: {}
-env:
-  LOG_LEVEL: { default: info }
+	path := writeDoctorTOML(t, `
+[environments.production]
+[env.LOG_LEVEL]
+default = "info"
 `)
 	stdout := new(bytes.Buffer)
 	err := runDoctor(stdout, new(bytes.Buffer), doctorOptions{filePath: path})
@@ -43,12 +42,11 @@ env:
 }
 
 func TestDoctor_BrokenManifest_ExitOneWithReport(t *testing.T) {
-	path := writeDoctorYAML(t, `
-environments:
-  production: {}
-environment_overrides:
-  qa:
-    env: {}
+	path := writeDoctorTOML(t, `
+[environments.production]
+
+[environment_overrides.qa]
+env = {}
 `)
 	stdout := new(bytes.Buffer)
 	err := runDoctor(stdout, new(bytes.Buffer), doctorOptions{filePath: path})
@@ -65,11 +63,10 @@ environment_overrides:
 }
 
 func TestDoctor_JSON_EmitsStructuredOutput(t *testing.T) {
-	path := writeDoctorYAML(t, `
-environments:
-  production: {}
-environment_overrides:
-  qa: {}
+	path := writeDoctorTOML(t, `
+[environments.production]
+
+[environment_overrides.qa]
 `)
 	stdout := new(bytes.Buffer)
 	err := runDoctor(stdout, new(bytes.Buffer), doctorOptions{filePath: path, jsonOut: true})
@@ -93,12 +90,11 @@ environment_overrides:
 
 func TestDoctor_Quiet_DropsWarnings(t *testing.T) {
 	// Required env without default = warning, no error.
-	path := writeDoctorYAML(t, `
-environments:
-  production: {}
-env:
-  API_KEY:
-    required: true
+	path := writeDoctorTOML(t, `
+[environments.production]
+
+[env.API_KEY]
+required = true
 `)
 	stdout := new(bytes.Buffer)
 	err := runDoctor(stdout, new(bytes.Buffer), doctorOptions{filePath: path, quiet: true})
@@ -112,7 +108,7 @@ env:
 
 func TestDoctor_PathAndBinary_MutuallyExclusive(t *testing.T) {
 	err := runDoctor(new(bytes.Buffer), new(bytes.Buffer), doctorOptions{
-		filePath:   "x.yaml",
+		filePath:   "x.toml",
 		binaryPath: "./bin",
 	})
 	if err == nil {
@@ -123,22 +119,22 @@ func TestDoctor_PathAndBinary_MutuallyExclusive(t *testing.T) {
 	}
 }
 
-func TestDoctor_YamlBinaryCombo_Rejected(t *testing.T) {
+func TestDoctor_TomlBinaryCombo_Rejected(t *testing.T) {
 	err := runDoctor(new(bytes.Buffer), new(bytes.Buffer), doctorOptions{
-		inputFormat: "yaml",
+		inputFormat: "toml",
 		binaryPath:  "./bin",
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "yaml") {
-		t.Errorf("error should mention yaml: %v", err)
+	if !strings.Contains(err.Error(), "toml") {
+		t.Errorf("error should mention toml: %v", err)
 	}
 }
 
 func TestDoctor_MissingFile_Rejected(t *testing.T) {
 	err := runDoctor(new(bytes.Buffer), new(bytes.Buffer), doctorOptions{
-		filePath: "/nope/missing.yaml",
+		filePath: "/nope/missing.toml",
 	})
 	if err == nil {
 		t.Fatal("expected read error")

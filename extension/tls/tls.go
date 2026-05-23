@@ -114,10 +114,10 @@ type Config struct {
 // Config is treated as DEFAULTS — the effective manifest's tls:
 // block (read at boot via app.EffectiveManifest) overrides any
 // field also set there. Operators who manage configuration through
-// nexus.deploy.yaml can pass an empty Config{} and put everything
+// nexus.toml can pass an empty Config{} and put everything
 // in the manifest:
 //
-//	# nexus.deploy.yaml
+//	# nexus.toml
 //	tls:
 //	  domains: [app.example.com]
 //	  email: ops@example.com

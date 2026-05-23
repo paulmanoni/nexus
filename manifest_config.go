@@ -221,7 +221,7 @@ type ServerConfig struct {
 	// Typical use: per-deployment routing in a shared-domain setup,
 	// e.g. /oats-uaa/* on the uaa-svc binary and /oats-interview/*
 	// on the interview-svc binary. Set in source via Config or
-	// declaratively via nexus.deploy.yaml's `prefix:` per deployment;
+	// declaratively via nexus.toml's `prefix:` per deployment;
 	// the manifest value lands here through DeploymentDefaults.
 	//
 	// Leading slash is required; trailing slash is trimmed at apply
