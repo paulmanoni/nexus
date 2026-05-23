@@ -310,404 +310,46 @@ Result: world-facing `:443` serves user traffic over LE-issued HTTPS. Dashboard 
 
 ## Peer mesh
 
-`extension/peer` ships typed RPC between nexus apps over HTTP/2 + JSON. One persistent multiplexed connection per peer pair, mTLS by default, trace stitching across binaries, and schema-drift detection — explicit, type-safe, no codegen.
-
-### One app, two roles
-
-The same `peer.Module(...)` call wires both sides; pass `Listen` to accept calls, `Peers` to make them, both for the common case:
+Typed RPC between nexus apps over HTTP/2 + JSON. One persistent multiplexed connection per peer pair, mTLS by default, trace stitching across binaries, schema-drift detection — explicit, type-safe, no codegen.
 
 ```go
-import "github.com/paulmanoni/nexus/extension/peer"
+// callee
+peer.Module(peer.Config{Identity: "orders-svc", Listen: ":7000", ...})
+// + nexus.AsCall("createOrder", NewCreateOrder)
 
-// orders-svc: exposes createOrder to other apps in the mesh
-nexus.Run(nexus.Config{...},
-    peer.Module(peer.Config{
-        Identity:       "orders-svc",
-        Listen:         ":7000",
-        TLS:            peer.TLSConfig{Cert: "/etc/orders.crt", Key: "/etc/orders.key", CACert: "/etc/ca.crt"},
-        AllowedClients: []string{"checkout-svc"},
-    }),
-    ordersModule,
-)
+// caller
+peer.Module(peer.Config{Identity: "checkout-svc", Peers: map[string]peer.PeerSpec{...}})
+order, err := peer.Call[*Order](ctx, peers, "orders-svc", "createOrder", args)
 ```
 
-Add `peer.AsCall` next to your existing `AsRest`/`AsQuery` declarations — the handler signature is identical:
-
-```go
-var Module = nexus.Module("orders",
-    nexus.Provide(NewService),
-    nexus.AsRest("POST", "/orders", NewCreateOrderREST), // public HTTP
-    peer.AsCall("createOrder", NewCreateOrder),          // peer RPC
-)
-
-func NewCreateOrder(svc *Service, p nexus.Params[CreateArgs]) (*Order, error) { ... }
-```
-
-### Caller side — typed `Call[T]`
-
-```go
-// checkout-svc: calls orders-svc.createOrder
-nexus.Run(nexus.Config{...},
-    peer.Module(peer.Config{
-        Identity: "checkout-svc",
-        TLS:      peer.TLSConfig{Cert: "/etc/checkout.crt", Key: "/etc/checkout.key"},
-        Peers: map[string]peer.PeerSpec{
-            "orders-svc": {URL: "https://orders.internal:7000", CACert: "/etc/ca.crt"},
-        },
-    }),
-    checkoutModule,
-)
-
-// In a handler — explicit string method, typed return via generics:
-func NewSubmit(svc *Service, peers *peer.Registry, p nexus.Params[Args]) (*Receipt, error) {
-    order, err := peer.Call[*Order](p.Context, peers, "orders-svc", "createOrder",
-        CreateArgs{UserID: p.Args.UserID})
-    if err != nil { return nil, err }
-    return &Receipt{OrderID: order.ID}, nil
-}
-```
-
-The generic parameter is the only place a type appears — Go can't infer it from a string method name. Errors arrive as typed `*peer.Error` you can `errors.As` against; `pe.Code` (`"VALIDATION"`, `"METHOD_UNKNOWN"`, `"SCHEMA_MISSING_REQUIRED"`, …) lets cross-app code branch without rebuilding the error pyramid.
-
-### Built-in safety nets
-
-All on by default; nothing to configure.
-
-| | |
-|---|---|
-| **Schema drift** | `GET /__peer/schema` emits every method's args/return JSON-Schema. Client lazy-fetches on first call. Hard-fail on missing method or missing required field; pass on forward-compat extras (caller is ahead of peer). |
-| **Trace stitching** | `peer.call` (caller) + `peer.handle` (callee) spans share TraceID + parent linkage. Multi-binary traces appear on the dashboard waterfall stitched across processes. |
-| **Health prober** | Per-target `GET /__peer/health` every 10s. Failures flip `IsHealthy → false` (multi-target peers stay healthy if at least one replica is up). Schema cache resets on peer-level all-down → caller re-fetches a possibly-rolled-out new schema on recovery. |
-| **Concurrency cap** | Per-peer semaphore (default 64) honors `ctx.Done()` so blocked calls abort cleanly on deadline. One slow peer can't drain caller goroutines. |
-| **Dashboard tab** | `/__nexus/peers` lists every peer with per-target health, in-flight count, and cached schema state. |
-
-### SRV discovery for replicas
-
-When orders-svc has N replicas behind a service-mesh DNS record:
-
-```go
-Peers: map[string]peer.PeerSpec{
-    "orders-svc": {
-        SRV:    "_nexus._tcp.orders.internal",
-        CACert: "/etc/ca.crt",
-    },
-},
-```
-
-Resolves at boot, builds one target per record, round-robins across them, and re-resolves every `SRVRefresh` interval (default 30s). Identity-preserving reconcile means a stable DNS answer is a true no-op — ready state and prober history survive every tick.
-
-### Three auth modes
-
-| Mode | Use | What it pins to |
-|---|---|---|
-| `AuthMTLS` (default) | Production | Client cert subject against `AllowedClients` via `tls.Config.VerifyConnection` — non-allowlisted peers can't even complete the handshake |
-| `AuthHMAC` | Trusted internal networks | Shared secret per peer pair, signed timestamp + body hash; 30s replay window |
-| `AuthNone` | Dev only | Refuses to start without `NEXUS_PEER_DEV=1` in env |
-
-### Generating mTLS material — `nexus pki`
-
-Stdlib-only PKI tooling ships with the CLI. ECDSA P-256, 128-bit random serials, no openssl shelling:
-
-```bash
-# On the CA host, once:
-nexus pki init                                  # → ca.crt + ca.key (0600)
-
-# On each peer (key never travels):
-nexus pki request --cn peer-alpha --dns peer-alpha.internal
-
-# On the CA host:
-nexus pki sign --csr peer-alpha.csr             # → peer-alpha.crt
-
-# Package for shipping:
-nexus pki bundle --cn peer-alpha                # ca.crt + peer-alpha.{crt,key}
-```
-
-`nexus pki bundle` is **physically incapable** of including `ca.key` — the bundler never reads or references the CA private key. `grep ca.key cmd/nexus/pki_bundle.go` yields nothing.
-
-For colocated CA + peer (dev / bootstrap), `nexus pki issue --cn name` is the one-shot convenience.
-
-Run `nexus docs peer` or `nexus docs pki` for inline reference.
+Full reference: [**extension/peer/README.md**](extension/peer/README.md) covers the safety nets (schema drift, trace stitching, health prober, concurrency cap), SRV discovery for replicas, three auth modes (mTLS / HMAC / none), and the `nexus pki` PKI toolchain.
 
 ## Configuration
 
-There are TWO config surfaces in a nexus app and they don't overlap:
+Two on-disk config surfaces, distinct purposes:
 
-1. **`nexus.toml`** — the deploy manifest. Topology (deployments/peers), declared inputs (environments, secrets, files, hooks), plugin blocks (TLS, CORS, errors). Auto-loaded from `./nexus.toml` at boot. **What the platform sees + provisions.**
-2. **`extension/config`** — runtime key/value store (Spring-Cloud-Config-style). `nexus.Get[T]("key", default)` from any handler. **What the app reads at request time.**
-
-### `nexus.toml` env-var expansion
-
-`${VAR}` and `${VAR:default}` tokens inside basic-string values are resolved from the process environment before TOML parsing:
-
-```toml
-[environments.production]
-domain = "${APP_DOMAIN}"                       # required — fails boot if unset
-ttl    = "${APP_TTL:7d}"                       # default — falls back to 7d
-cdn    = "${CDN_HOST:${APP_DOMAIN:localhost}}" # one level of nesting
-
-[tls]
-email = "${LETSENCRYPT_EMAIL}"
-
-# Single-quoted strings are LITERAL — operators who want a raw
-# ${X} in a value use 'literal' instead of "expanded".
-note  = 'see ${SOME_VAR} in the docs'
-```
-
-Rules (strict mode — undefined vars without a default fail the load):
-
-| Token | Behavior |
-|---|---|
-| `${KEY}` | Must be set + non-empty; otherwise the loader errors with the variable name. |
-| `${KEY:default}` | Falls back to the literal default when `KEY` is unset or empty. |
-| `${A:${B:c}}` | One level of nesting; resolved inside-out. |
-| `$${X}` | Escape — produces literal `${X}` in the output. |
-| `'${X}'` | Literal string, not expanded (TOML's own raw-string semantics). |
-
-Empty env vars count as "unset" (matches bash's `${X:-default}`) so an exported-but-empty `APP_DOMAIN=` falls through to the default instead of silently substituting `""`.
-
-### `.env` for dev workflows
-
-Spring/12-factor convention: secrets and per-host values come in as OS environment variables. `.env` is just a dev convenience — your shell, docker-compose, or systemd sets the vars; the framework consumes them.
-
-For dev runs nexus ships an opt-in loader that populates `os.Environ` from a `.env` file before placeholders resolve:
-
-```go
-func main() {
-    nexus.Run(nexus.Config{...},
-        nexus.LoadDotenvIfPresent(),    // reads ./.env if present; no-op otherwise
-        appModule,
-    )
-}
-```
-
-Behavior:
-
-- Missing file is a silent no-op (production runs without `.env` boot normally).
-- Real env vars always win: a `DB_PASSWORD` set by the platform beats whatever `.env` says.
-- Malformed file fails boot loud (a broken `.env` should not silently produce a partially-loaded environment).
-- Accepts `KEY=value`, `KEY="value"`, `KEY='literal'`, `export KEY=value`, `# comments`, blank lines. No shell expansion inside values — keep the parser predictable.
-- `nexus.MustLoadDotenv()` is the strict variant: a missing file fails boot.
-
-Don't ship `.env` to production — that's what `nexus.toml`'s `[secrets]` declarations + your platform's secret injector are for. The scaffolder generates `.env.example` (commit) + `.env` in `.gitignore` (don't).
-
-### Three entrypoints — pick one per app
-
-| | What it does | Disk state on the client |
+| Surface | Auto-loaded | Purpose |
 |---|---|---|
-| `config.Server(source, ...)` | Hosts the source of truth | Plaintext TOML files (operator owns them) |
-| `config.Client(url, ...)` | Fetches + verifies + caches | **Sealed** AES-256-GCM, framework-managed key |
-| `config.Local(path)` | Single-TOML, no server | **Plaintext** (operator edits with `$EDITOR`) |
+| **`nexus.toml`** | yes (`./nexus.toml`) | Deploy manifest — topology, declared inputs, plugin blocks. What the platform sees + provisions. |
+| **`extension/config`** | opt-in | Runtime key/value store; `nexus.Get[T]("key", default)` from any handler. |
 
-### Reading values from handlers
+`nexus.toml` supports `${VAR}` / `${VAR:default}` placeholders (strict mode) and an opt-in `.env` loader via `nexus.LoadDotenvIfPresent()` for dev workflows.
 
-```go
-addr := nexus.Get[string]("config.server.addr")              // "" if missing
-port := nexus.Get[int]("config.server.port", 8080)           // 8080 default
-ttl  := nexus.Get[time.Duration]("config.cache.ttl", 5*time.Minute)
-
-signKey := nexus.MustGet[string]("config.signing.key")       // panics if missing
-
-var pay PaymentConfig
-nexus.BindConfig("config.payment", &pay)                     // subtree → struct
-
-nexus.OnConfigChange("config.api.timeout", func(v any) {     // hot-reload
-    if d, ok := v.(time.Duration); ok { svc.timeout.Store(d) }
-})
-```
-
-Resolution priority (highest first):
-1. **Environment variable** — `CONFIG_API_TIMEOUT` overrides `config.api.timeout`
-2. **Server snapshot** / sealed cache / plaintext local TOML
-3. **Default arg** (or `T`'s zero value)
-
-**Type coercion is permissive.** Unquoted TOML ints + bools coerce both directions — `password: 12345` is readable as `Get[string]` ("12345") or `Get[int]` (12345), and a TOML string `port: "5472"` is readable as `Get[int]` (5472). You don't have to defensively quote every value.
-
-**Snapshot installs before `Run()` begins.** `config.Client(...)` and `config.Local(...)` fetch + install the snapshot synchronously, so `Get` works from every `Provide` constructor, `Invoke`, and any code between the option call and `Run`. Connection lifecycle is loud — watch for `config.Client: connecting to … (app=… profile=…)` followed by `config.Client: snapshot installed (… version=…)` in the boot logs.
-
-### The server side
-
-```go
-nexus.Run(nexus.Config{...},
-    config.Server(config.FromTOML("configs/")),               // local folder
-)
-
-// Or backed by git:
-config.Server(config.FromGit("git@host:platform/config.git",
-    config.GitBranch("main"),
-    config.GitSSHKey("/etc/configd/id_ed25519"),
-))
-```
-
-Layout under the source dir (Spring-compatible, simplified to one file per app):
-
-```
-configs/
-├── _common.nexus.config.toml      optional cross-app base
-├── app1.nexus.config.toml
-└── app2.nexus.config.toml
-```
-
-Each app file accepts two shapes — pick whichever fits:
-
-```toml
-# Simple — whole body is the default profile, no per-env split
-[app]
-name = "My App"
-[api]
-timeout = "5s"
-```
-
-```toml
-# Profile-keyed — when you need per-env overrides
-app = "app1"
-
-[profiles.default.api]
-timeout = "5s"
-
-[profiles.prod.api]
-timeout = "30s"
-```
-
-Resolution = `_common.default → _common.<profile> → <app>.default → <app>.<profile>`, each layer overlaying via deep merge.
-
-**Identity vs Profile.** Two distinct addressing axes — easy to mix up:
-
-| Option | Selects | Example |
-|---|---|---|
-| `config.Identity("oats")` | **Which file** — the prefix before `.nexus.config.toml` | `oats.nexus.config.toml` |
-| `config.Profile("default")` | **Which section inside the file** | `profiles.default:`, or the whole body of a flat file |
-
-Flat files (no `profiles:` key) reach as `Profile("default")` automatically. If you get `app "X" not declared`, you typed an Identity that's not a filename in the source dir — the server's error names the available apps.
-
-### The client side — sealed cache, signed snapshots
-
-```go
-nexus.Run(nexus.Config{...},
-    config.Client("https://configd.internal:7100",
-        config.Identity("app1"),
-        config.Profile("prod"),
-        config.SignerKey("/etc/app1/configd-sign.pub"),
-        config.CachePath("/var/lib/app1/config.cache"),
-        config.WithClientTLS("/etc/ca.crt", "/etc/app1.crt", "/etc/app1.key"),
-        config.OnUnreachable(config.UseCacheOrFail),
-    ),
-    appModule,
-)
-```
-
-The cache file is AES-256-GCM sealed; the framework auto-manages the sealing key (sibling `.key` file, `0600`, generated at first boot). Operators never see a key, never see plaintext on the client — the server is the only entity with readable config.
-
-**Dev shortcut.** `nexus dev` sets `NEXUS_CONFIG_DEV=1` on the child env, which makes `SignerKey` and `CachePath` optional and lets the server run with `auth: none`. A SEV1 warning loop fires every 60s while degraded knobs are in use — accidental ship-to-prod is loud, not silent. Bare host URLs work too (`config.Client("localhost:7100", ...)` auto-prepends `http://`).
-
-**Two ports, not one.** `config.Server` binds its own listener (default `:7100`) — _not_ the main app's Gin port. Watch for `config.Server: listening on …` at boot to confirm the right URL. With `auth: none` the server speaks plain HTTP; `auth: hmac` / `auth: mtls` terminate TLS.
-
-### Safety baseline — three mandatory layers
-
-| Layer | Enforced | Defends against |
-|---|---|---|
-| TLS on the wire | always | eavesdropping, MITM |
-| Ed25519 snapshot signatures | always | **a breached config server cannot forge config** — the offline signing key is the integrity floor |
-| AES-256-GCM sealed client cache | always (framework-managed key) | disk reads, backup tape leakage, container image inspection |
-
-Plus optional layers — `auth: mtls` (default), `auth: hmac`, or `auth: none` (refuses to start without `NEXUS_CONFIG_DEV=1` + SEV1 warning loop).
-
-### Live refresh — WebSocket push
-
-`config.Client` opens a WS to `/__config/subscribe` at boot. Server-side reloads (file save, future git webhook) fan out to every subscriber; clients re-fetch + verify + apply + re-seal within milliseconds. Polling at `WithPollInterval` (default 30s) stays as the safety net for the WS reconnect window.
-
-### `OnUnreachable` — what happens when the server is down at boot
-
-| Policy | Server up | Server down + valid cache | Server down + no cache |
-|---|---|---|---|
-| `UseCacheOrFail` (default) | fresh fetch | run on cache | **refuse to boot** |
-| `UseCacheAndWarn` | same | same | empty config, SEV1 every 60s |
-| `UseDefaults` | same | same | `WithDefaults` map, SEV1 every 60s |
-
-### Local mode — no server
-
-For dev / single-binary deployments:
-
-```go
-nexus.Run(nexus.Config{...},
-    config.Local("nexus.config.toml"),
-    appModule,
-)
-```
-
-The TOML stays human-readable + git-friendly. Same `nexus.Get` facade as the server-backed path.
-
-Run `nexus docs config` for the full inline reference.
+Full reference: [**extension/config/README.md**](extension/config/README.md) covers both surfaces — `config.Server` / `config.Client` / `config.Local`, the sealed-cache + signed-snapshot security model, env-var expansion rules, and the dotenv contract.
 
 ## Tours
 
-`extension/tour` ships guided walkthroughs for any HTTP-served frontend — React, Vue, Angular, Svelte, vanilla, anything. The plugin captures click-by-click sequences with auto-screenshots, lets operators edit text inline, then plays them back as numbered-badge highlights with tooltips on the live UI. Exports to PDF or Word for handoff docs.
-
-The in-page agent renders inside a **closed Shadow DOM** rooted at `document.body` — host CSS can't bleed in, the plugin's UI can't bleed out, and the host frontend has no idea anything is on top of it.
-
-### Wire it in one line
+Guided walkthroughs for any HTTP-served frontend. Record click-by-click sequences with auto-screenshots, edit inline, replay as numbered-badge highlights, export to PDF / Word for handoff docs. Closed Shadow DOM mount — works on React, Vue, Angular, vanilla without CSS bleed in either direction.
 
 ```go
-import "github.com/paulmanoni/nexus/extension/tour"
-
 nexus.Run(nexus.Config{...},
-    tour.Module(
-        tour.WithGORM(db.DB()),  // production; omit for in-memory
-        tour.AutoInject(true),    // splice <script> into every text/html response
-    ),
-    // ...
+    tour.Module(tour.WithGORM(db.DB()), tour.AutoInject(true)),
 )
 ```
 
-After restart, every HTML page the app serves carries a floating **● Tour** pill (bottom-right). `AutoMigrate` runs on first use to create `nexus_tours` + `nexus_tour_steps`.
+After restart, every HTML page carries a floating **● Tour** pill; authoring dashboard is at `/__nexus/tour`.
 
-### Record / Play / Manage / Export
-
-| Mode | What happens |
-|---|---|
-| **Record** | Click the pill → **Record new tour** → modal prompts for **Title** + **Description**. After Start, hover any element (blue rectangle follows the mouse) and click to capture. Each capture pops an inline editor requiring step text before the next pick — placeholders can't slip through. Clicks inside the previous step's bounding box become **substeps** automatically. **Pause/Resume** (button or `P` key) lets you interact with the host without capturing — open a dropdown manually, then resume to capture items inside. **Enter** captures the hovered element without a synthetic click, so menus that close on outside-click stay open. |
-| **Play** | Fetches tours for the current `pathname`, walks the tree DFS, draws an orange ring + numbered badge on each target with a tooltip beside it. Back / Next / Skip / Done. `scrollIntoView` before measure so off-screen targets are pulled into view. Missing-target path shows the selector + Skip. |
-| **Manage** | Visit `/__nexus/tour` for the authoring dashboard — Vue 3 SPA from esm.sh, no framework rebuild. Edit name/route/description, per-step title/text/placement; **↑ ↓** reorder, **→** demote, **←** promote, **×** delete (children reparent). When filtered by route, ↑↓ also reorders **which tour plays first**. Inline screenshot thumbnails with click-to-zoom. |
-| **Preview / Export** | Every tour gets a print-friendly preview at `/__nexus/tour/tours/:id/preview` — one composite screenshot per "scene" with badges + callout cards in the screenshot's margins, connector lines tying each card to its badge. **📄 Save as PDF** uses the browser's print engine; **📋 Copy for Word** writes Arial-12 numbered-list HTML + the composite PNG to the clipboard, ready to paste into Word/Google Docs. **🗑 Delete tour** prunes a single tour from the preview (per-tour buttons on multi-tour previews so you can keep some and drop others). Step text is **click-to-edit inline** on the preview page itself — changes save on blur, no need to bounce to the editor. Route lookup tolerates trailing-slash mismatches (`/foo` and `/foo/` resolve to the same tours). |
-
-### Multi-cover scenes (dropdowns, modals, multi-step flows)
-
-Tours that span page-state changes — open a dropdown, capture an item inside, then close it — store **one cover screenshot per page state**. The recorder takes a fresh cover automatically on every Resume from Pause; the **📸 Capture scene** button on the recorder bar also triggers one on demand for finer control (open the dropdown, click Capture scene, then capture items inside it). Each step pins to the cover that was active when it was captured. The preview renders one composite per cover labelled "Scene N of M", so dropdown items land on the cover that shows the dropdown **open**, not the stale initial screenshot.
-
-**Caveat — pure-CSS `:hover` dropdowns.** html2canvas clones the DOM into a sandboxed iframe to render, and the clone has no real cursor on it — so any element that's only visible via `:hover` (with no JS toggle) is collapsed in the snapshot even if it was open in the live page. Workaround: most production dropdowns toggle a class on click; those work as expected. For pure `:hover` cases the simplest fix is adding a `data-tour-stay-open` attribute (or any persistent class) you can target so the dropdown stays open during the brief capture window.
-
-### Keyboard shortcuts + controls during recording
-
-| Trigger | What it does |
-|---|---|
-| `P` | Toggle pause / resume — no outside-click on the recorder bar, so transient UIs (menus, popovers) stay open |
-| `Enter` | Capture the currently-hovered element without a synthetic click — works on hosts that close menus on outside-click |
-| `Escape` | Cancel the picker (same as pause) |
-| **📸 Capture scene** button | Manually take a fresh cover screenshot. Use after arranging the page (open dropdown, expand panel) — subsequent steps land on this new cover so dropdown items render against the dropdown-open state |
-| **✎ Edit last step** button | Override the placeholder title / text / placement on the most recent capture inline |
-
-Both `P` and `Enter` walk `composedPath()` so they're ignored when typing in any input, textarea, or contenteditable — including across Shadow DOM boundaries (the agent's own editor UI).
-
-### Why "hover on top of any frontend" works
-
-| Property | Why |
-|---|---|
-| Mounted on `document.body` (outside host root) | Host render cycle can't unmount or rewrite it |
-| Closed Shadow DOM | Host CSS — Tailwind reset, Vuetify defaults — can't bleed in; plugin styles can't bleed out |
-| `position: fixed; inset: 0; z-index: 2147483647` | Always on top, even above modal libraries using `z-index: 9999` |
-| `pointer-events: none` on root, `auto` on interactive UI | Host clicks pass through where the plugin isn't actively presenting |
-| Vanilla JS agent (no Vue/React runtime) | Zero conflicts with the host's framework |
-| MutationObserver re-attaches if removed | SPA route swaps, Vue Teleports, Vuetify portals, and `body.innerHTML = …` won't kill the overlay — it self-restores in the next tick |
-| `pointerdown` capture + `elementFromPoint` hit-test | Disabled buttons + inputs (which swallow `click`) are still pickable |
-
-### Drive it from the host
-
-The agent exposes `window.nexusTour = { record, play, stop }` so a host's own "Help" button can trigger a tour without using the pill:
-
-```js
-<button onClick={() => window.nexusTour.play()}>Show me how</button>
-```
-
-Run `nexus docs tour` for the full inline reference (when added) or browse `extension/tour/agent/inject.js` — the entire client runtime is one self-contained file.
+Full reference: [**extension/tour/README.md**](extension/tour/README.md) covers recording semantics, multi-scene capture for dropdowns/modals, the preview-page editor, Word/PDF export with TOC, and the keyboard shortcuts.
 
 ## Examples
 
