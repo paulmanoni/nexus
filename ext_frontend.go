@@ -3,6 +3,7 @@ package nexus
 import (
 	"fmt"
 	"io/fs"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -173,7 +174,20 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	devMode := os.Getenv(NexusDevEnv) == "1"
 	bootIndex, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
-		return fmt.Errorf("nexus: ServeFrontend: index.html not found — did the bundle build? (%w)", err)
+		if !devMode {
+			// Production / standalone go-run: missing index.html
+			// is a deploy bug. Fail loud so the broken artifact
+			// surfaces at boot, not at first request.
+			return fmt.Errorf("nexus: ServeFrontend: index.html not found — did the bundle build? (%w)", err)
+		}
+		// Dev mode: the operator is iterating on the app. Maybe
+		// they haven't run `nexus add nexus-client/...` yet, or
+		// haven't created islands.src/, or haven't built the
+		// embedded bundle. Booting with a friendly placeholder
+		// keeps the API + dashboard reachable so they can keep
+		// working; visiting / shows them what to do next.
+		log.Printf("nexus: ServeFrontend: no index.html — serving placeholder until you build a bundle (see http://<host>/ for instructions)")
+		bootIndex = placeholderIndexHTML
 	}
 	readIndex := func() []byte {
 		if !devMode {
@@ -255,3 +269,72 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	})
 	return nil
 }
+
+// placeholderIndexHTML is the friendly fallback served when
+// ServeFrontend boots in dev mode without an index.html. Tells
+// the operator their API + dashboard are up + working and shows
+// the canonical "set up a frontend" recipe — no need to leave
+// the browser to figure out next steps.
+//
+// Inlined as a byte slice so the dev-fallback path stays a
+// zero-allocation pass-through (cached at boot like the real
+// index.html).
+var placeholderIndexHTML = []byte(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>nexus — no frontend yet</title>
+<style>
+  :root { --ink:#0f172a; --mute:#64748b; --accent:#4f46e5; --bg:#f8fafc; --line:#e2e8f0; }
+  * { box-sizing:border-box }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--ink);
+               font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px }
+  main { max-width: 640px; background:#fff; padding:36px 44px; border-radius:14px;
+         border:1px solid var(--line); box-shadow: 0 4px 14px rgba(15,23,42,.05) }
+  h1 { margin:0 0 6px; font-size:22px; display:flex; align-items:center; gap:10px }
+  h1 .logo { width:32px; height:32px; border-radius:8px;
+             background: linear-gradient(135deg, #6366f1, #ec4899);
+             display:inline-flex; align-items:center; justify-content:center;
+             color:#fff; font-size:16px }
+  p.lead { color:var(--mute); margin:0 0 22px }
+  h2 { font-size:13px; color:var(--mute); letter-spacing:.06em; text-transform:uppercase;
+       margin:24px 0 10px; font-weight:700 }
+  ol { padding-left:20px; margin:0 0 6px }
+  ol li { margin:8px 0 }
+  code { background:#f1f5f9; border:1px solid var(--line); border-radius:4px;
+         padding:1px 6px; font-size:13.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace }
+  pre { background:#0f172a; color:#f1f5f9; border-radius:8px; padding:14px 16px; margin:10px 0 0;
+        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; overflow:auto }
+  .links { margin-top:24px; display:flex; flex-wrap:wrap; gap:8px }
+  .links a { background:#eef2ff; color:var(--accent); padding:6px 12px; border-radius:6px;
+             text-decoration:none; font-weight:500; font-size:13px }
+  .links a:hover { background:#e0e7ff }
+  .small { font-size:12.5px; color:var(--mute); margin-top:14px }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="logo">N</span> No frontend yet</h1>
+  <p class="lead">Your nexus app is running. <strong>API, GraphQL, WebSockets, and the dashboard work right now</strong> — only the SPA shell is missing.</p>
+
+  <h2>Pick one</h2>
+  <ol>
+    <li>Use the typed SDK directly:
+<pre>nexus add nexus-client/vue     # or /react</pre>
+    </li>
+    <li>Build your own SPA into the embedded bundle path your <code>main.go</code> passes to <code>nexus.ServeFrontend(...)</code>.</li>
+    <li>Set up the islands pipeline: create <code>islands.src/</code> with one entry per page and rerun <code>nexus dev</code>.</li>
+  </ol>
+
+  <div class="links">
+    <a href="/__nexus/">Dashboard</a>
+    <a href="/__nexus/openapi/ui">OpenAPI</a>
+    <a href="/__nexus/client/manifest.json">Client manifest</a>
+  </div>
+  <p class="small">This placeholder shows only in dev mode. Production binaries fail to boot if <code>index.html</code> is missing.</p>
+</main>
+</body>
+</html>
+`)

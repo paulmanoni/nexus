@@ -84,7 +84,7 @@ func maybeMissingLockfileHint(dir string) string {
 		return ""
 	}
 	for _, candidate := range []string{cur, filepath.Dir(cur)} {
-		srcDir := filepath.Join(candidate, "islands.src")
+		srcDir := filepath.Join(candidate, islandsSrcName())
 		if info, err := os.Stat(srcDir); err != nil || !info.IsDir() {
 			continue
 		}
@@ -158,15 +158,16 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		return fmt.Errorf("frontend watcher: %w", err)
 	}
 
-	srcDir := filepath.Join(root, "islands.src")
+	srcName := islandsSrcName()
+	srcDir := filepath.Join(root, srcName)
 	if _, err := os.Stat(srcDir); errors.Is(err, fs.ErrNotExist) {
-		// Project has a lockfile but no islands.src — nothing to
+		// Project has a lockfile but no source folder — nothing to
 		// watch. Print a one-liner so the user understands why
 		// no [web] output is appearing.
-		fmt.Fprintf(stdout, "%s●%s frontend watcher: no islands.src — skipping\n", ansiCyan, ansiReset)
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: no %s — skipping\n", ansiCyan, ansiReset, srcName)
 		return nil
 	} else if err != nil {
-		return fmt.Errorf("frontend watcher: stat islands.src: %w", err)
+		return fmt.Errorf("frontend watcher: stat %s: %w", srcName, err)
 	}
 
 	entries, err := collectFrontendEntries(srcDir)
@@ -174,7 +175,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		return fmt.Errorf("frontend watcher: %w", err)
 	}
 	if len(entries) == 0 {
-		fmt.Fprintf(stdout, "%s●%s frontend watcher: islands.src is empty — skipping\n", ansiCyan, ansiReset)
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: %s is empty — skipping\n", ansiCyan, ansiReset, srcName)
 		return nil
 	}
 	// Walk islands.src/ recursively — a .vue file colocated under
@@ -210,7 +211,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		return fmt.Errorf("frontend watcher: build resolver: %w", err)
 	}
 
-	outDir := filepath.Join(root, "islands")
+	outDir := filepath.Join(root, islandsOutName())
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("frontend watcher: mkdir %s: %w", outDir, err)
 	}
@@ -236,6 +237,16 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		b.AddPlugin(vuePlugin)
 	}
 
+	// Initial build runs SYNCHRONOUSLY here — esbuild's Watch:true
+	// completes the first pass before returning, so by the time
+	// the function exits the bundle is already on disk under
+	// outDir. The watcher then fires OnRebuild for every
+	// subsequent file change. The Go child process is launched
+	// AFTER this returns (see startFrontendWatcher → dev.go
+	// orchestration), so on first boot the binary's //go:embed
+	// can pick up the freshly-bundled files.
+	fmt.Fprintf(stdout, "%s●%s frontend watcher: initial build of %d %s from %s…\n",
+		ansiCyan, ansiReset, len(entries), pluralize("entry", len(entries)), srcDir)
 	res, err := b.Build(bundler.Options{
 		Entries:   entries,
 		OutDir:    outDir,
@@ -255,8 +266,8 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 
 	// Banner: print after the initial report so the order reads
 	// "bundled N entries" then "watching — Ctrl-C to stop".
-	fmt.Fprintf(stdout, "%s●%s frontend watcher: watching %s (%d %s) — esbuild incremental\n",
-		ansiCyan, ansiReset, srcDir, len(entries), pluralize("entry", len(entries)))
+	fmt.Fprintf(stdout, "%s●%s frontend watcher: initial build done — watching %s for changes (esbuild incremental)\n",
+		ansiCyan, ansiReset, srcDir)
 
 	// Tear down esbuild's watcher on ctx cancel. Dispose closes
 	// the file watches + releases the build context; without it,
