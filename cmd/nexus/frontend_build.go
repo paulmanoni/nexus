@@ -159,6 +159,17 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		// from the same root cause typically.
 		return fmt.Errorf("frontend build: %s", res.Errors[0].Text)
 	}
+	// Vite-replacement step: if the project has an index.html
+	// (either next to the entries or one level up — the typical
+	// Vite layout has it at the source-root with entries under
+	// src/), rewrite its module + stylesheet refs to point at
+	// the bundled output names + drop the result into outDir.
+	// Without this the operator gets the framework's "no
+	// frontend yet" placeholder even though the JS bundled
+	// fine.
+	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout); err != nil {
+		fmt.Fprintf(stderr, "warning: index.html emit: %v\n", err)
+	}
 	fmt.Fprintf(stdout, "frontend build: wrote %d output %s to %s\n",
 		len(res.OutputFiles), pluralize("file", len(res.OutputFiles)), outDir)
 	return nil

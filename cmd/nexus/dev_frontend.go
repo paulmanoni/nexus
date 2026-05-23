@@ -259,6 +259,17 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// can pick up the freshly-bundled files.
 	fmt.Fprintf(stdout, "%s●%s frontend watcher: initial build of %d %s from %s…\n",
 		ansiCyan, ansiReset, len(entries), pluralize("entry", len(entries)), srcDir)
+	// Wrap the rebuild reporter so every rebuild — including
+	// the initial one — also refreshes the transformed
+	// index.html in outDir. Without that, edits to the source
+	// `index.html` (or to the entry list) wouldn't propagate
+	// to the served shell during a session.
+	onRebuild := func(br api.BuildResult) {
+		reporter.report(br)
+		// emitIndexHTML is best-effort; a fmt error shouldn't
+		// kill the watcher.
+		_ = emitIndexHTML(srcDir, outDir, br.OutputFiles, io.Discard)
+	}
 	res, err := b.Build(bundler.Options{
 		Entries:   entries,
 		OutDir:    outDir,
@@ -266,7 +277,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		Store:     st,
 		Minify:    false, // dev: readable output > smaller bytes
 		Watch:     true,
-		OnRebuild: reporter.report,
+		OnRebuild: onRebuild,
 	})
 	if err != nil {
 		return fmt.Errorf("frontend watcher: %w", err)
@@ -275,6 +286,9 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// the first banner line + any startup errors print the same
 	// way subsequent rebuilds do.
 	reporter.report(res.BuildResult)
+	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout); err != nil {
+		fmt.Fprintf(stderr, "%s●%s frontend watcher: index.html emit: %v\n", ansiYellow, ansiReset, err)
+	}
 
 	// Banner: print after the initial report so the order reads
 	// "bundled N entries" then "watching — Ctrl-C to stop".
