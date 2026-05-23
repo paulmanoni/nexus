@@ -79,7 +79,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 			"rebuild with `CGO_ENABLED=1 go install -tags vue ./cmd/nexus` to enable")
 	}
 
-	entries, err := collectFrontendEntries(srcDir)
+	actualSrcDir, entries, err := findFrontendEntries(srcDir)
 	if err != nil {
 		return err
 	}
@@ -87,6 +87,12 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		// islands.src exists but is empty — also skip; user may
 		// just be staging the directory.
 		return nil
+	}
+	if actualSrcDir != srcDir {
+		// Auto-descended into a conventional subdir (src/ / app/ /
+		// client/). Use the resolved path from here on so the
+		// bundler watches the right tree.
+		srcDir = actualSrcDir
 	}
 
 	lockfilePath := filepath.Join(projectRoot, lockfile.Filename)
@@ -204,6 +210,54 @@ func collectFrontendEntries(srcDir string) ([]string, error) {
 		}
 	}
 	return entries, nil
+}
+
+// nestedEntryFallbacks is the conventional subdirectory names
+// auto-detection checks when the top level of srcDir has no
+// matching entries. Vite + Webpack + most JS scaffolds put the
+// bootstrap under `src/`; nuxt and a few others use `app/` or
+// `client/`. Operators with a different layout can still
+// override via NEXUS_ISLANDS_SRC.
+//
+// Order matters: src first because it's by far the most common.
+var nestedEntryFallbacks = []string{"src", "app", "client"}
+
+// findFrontendEntries returns the dir + entry list to drive the
+// bundler. Tries top-level first (the canonical islands
+// convention), then falls back to conventional subdirs so
+// projects that keep their bootstrap under src/ — the Vite shape
+// every JS scaffold ships with — work out of the box.
+//
+// The returned `actualDir` is the directory that produced the
+// entries; callers should use it as the bundler's srcDir AND
+// the watcher's target. Same as srcDir when entries lived at
+// the top level; deeper when an auto-descent picked them up.
+//
+// Empty entries return (srcDir, nil, nil) so the caller's
+// empty-state logic still gets a chance to print its hint
+// against the originally-requested directory.
+func findFrontendEntries(srcDir string) (actualDir string, entries []string, err error) {
+	if entries, err = collectFrontendEntries(srcDir); err != nil {
+		return srcDir, nil, err
+	}
+	if len(entries) > 0 {
+		return srcDir, entries, nil
+	}
+	for _, name := range nestedEntryFallbacks {
+		sub := filepath.Join(srcDir, name)
+		info, statErr := os.Stat(sub)
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		nestedEntries, nestedErr := collectFrontendEntries(sub)
+		if nestedErr != nil {
+			continue
+		}
+		if len(nestedEntries) > 0 {
+			return sub, nestedEntries, nil
+		}
+	}
+	return srcDir, nil, nil
 }
 
 // hasVueSources reports whether srcDir (recursively) contains any

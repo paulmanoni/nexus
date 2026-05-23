@@ -169,13 +169,26 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// the dir's creation too) until at least one matching entry
 	// appears. ctx cancellation breaks the loop cleanly so a
 	// Ctrl-C during the wait doesn't hang.
-	entries, err := waitForFrontendEntries(ctx, srcDir, srcName, stdout)
+	actualSrcDir, entries, err := waitForFrontendEntries(ctx, srcDir, srcName, stdout)
 	if err != nil {
 		return err
 	}
 	if entries == nil {
 		// ctx cancelled while waiting — quiet exit.
 		return nil
+	}
+	if actualSrcDir != srcDir {
+		// Auto-descended into src/ (or app/ / client/). Switch
+		// srcDir for every downstream check + log path so the
+		// watch tree, vue scan, banner all reflect the resolved
+		// dir instead of the operator-requested one.
+		rel, _ := filepath.Rel(root, actualSrcDir)
+		if rel == "" {
+			rel = actualSrcDir
+		}
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: auto-detected entries under %s (no top-level entries in %s)\n",
+			ansiCyan, ansiReset, rel, srcName)
+		srcDir = actualSrcDir
 	}
 	// Walk islands.src/ recursively — a .vue file colocated under
 	// any subdirectory still needs the SFC compiler, even if no
@@ -804,14 +817,15 @@ func extractDuration(buffer []string) string {
 // lands. Skipping there meant the operator had to Ctrl-C + relaunch
 // after adding the file — friction that boils down to a missing
 // fsnotify on the source folder.
-func waitForFrontendEntries(ctx context.Context, srcDir, srcName string, stdout io.Writer) ([]string, error) {
-	// First peek: if the dir already has entries we skip every
-	// watcher setup. Fast-path the steady-state case so the cost
-	// of this helper is one os.ReadDir.
-	if entries, err := readEntriesIfExists(srcDir); err != nil {
-		return nil, err
+func waitForFrontendEntries(ctx context.Context, srcDir, srcName string, stdout io.Writer) (string, []string, error) {
+	// First peek: if the dir already has entries (or a conventional
+	// subdir does — Vite layouts), skip every watcher setup.
+	// Fast-path the steady-state case so the cost of this helper
+	// is one os.ReadDir.
+	if actualDir, entries, err := peekForEntries(srcDir); err != nil {
+		return srcDir, nil, err
 	} else if len(entries) > 0 {
-		return entries, nil
+		return actualDir, entries, nil
 	}
 
 	// State 1: srcDir is missing → watch the parent for its
@@ -820,42 +834,163 @@ func waitForFrontendEntries(ctx context.Context, srcDir, srcName string, stdout 
 		fmt.Fprintf(stdout, "%s●%s frontend watcher: %s not present — waiting for it to be created (Ctrl-C to stop)\n",
 			ansiCyan, ansiReset, srcName)
 		if err := waitForDirCreate(ctx, srcDir); err != nil {
-			return nil, err
+			return srcDir, nil, err
 		}
 		if ctx.Err() != nil {
-			return nil, nil
+			return srcDir, nil, nil
 		}
 		// dir exists now; re-check + fall through to State 2 if
 		// it's still empty.
-		if entries, err := readEntriesIfExists(srcDir); err != nil {
-			return nil, err
+		if actualDir, entries, err := peekForEntries(srcDir); err != nil {
+			return srcDir, nil, err
 		} else if len(entries) > 0 {
-			return entries, nil
+			return actualDir, entries, nil
 		}
 	} else if err != nil {
-		return nil, fmt.Errorf("frontend watcher: stat %s: %w", srcName, err)
+		return srcDir, nil, fmt.Errorf("frontend watcher: stat %s: %w", srcName, err)
 	}
 
-	// State 2: srcDir exists but is empty → watch for the first
-	// entry file to land. Recursive collectFrontendEntries on
-	// every fsnotify event so any .ts / .tsx / .jsx / .js at top
-	// level breaks the loop.
-	fmt.Fprintf(stdout, "%s●%s frontend watcher: %s is empty — waiting for first entry file (Ctrl-C to stop)\n",
-		ansiCyan, ansiReset, srcName)
-	return waitForDirEntries(ctx, srcDir)
+	// State 2: srcDir exists but has no matching entry → watch
+	// for the first one to land. Differentiate three sub-cases
+	// so the operator knows whether they need to drop a file in
+	// (truly empty), or add a bootstrap entry next to their
+	// existing components / .vue files (the common case for
+	// fresh Vue/React setups where they have `App.vue` /
+	// `App.tsx` but no `main.ts` yet).
+	switch describeEmptyState(srcDir) {
+	case emptyStateNoFiles:
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: %s is empty — waiting for first entry file (Ctrl-C to stop)\n",
+			ansiCyan, ansiReset, srcName)
+	case emptyStateOnlyVue:
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: %s has .vue files but no top-level .ts/.tsx entry — waiting\n",
+			ansiCyan, ansiReset, srcName)
+		fmt.Fprintf(stdout, "%s   create a bootstrap file (e.g. main.ts) that imports your components, like:%s\n",
+			ansiCyan, ansiReset)
+		fmt.Fprintf(stdout, "      import { createApp } from 'vue'\n")
+		fmt.Fprintf(stdout, "      import App from './App.vue'\n")
+		fmt.Fprintf(stdout, "      createApp(App).mount('#app')\n")
+	case emptyStateNoTopLevel:
+		// Common gotcha: Vite-style projects keep their bootstrap
+		// under `src/`, so the operator drops their existing
+		// repo under islands.src/ and ends up with the entry one
+		// directory too deep. Detect that exact shape and suggest
+		// NEXUS_ISLANDS_SRC=<srcName>/src so they don't have to
+		// restructure.
+		if nested := nestedEntryHint(srcDir, srcName); nested != "" {
+			fmt.Fprintf(stdout, "%s●%s frontend watcher: %s has no top-level entry, but %s does — waiting\n",
+				ansiCyan, ansiReset, srcName, nested)
+			fmt.Fprintf(stdout, "%s   point the bundler at the nested folder with:%s\n",
+				ansiCyan, ansiReset)
+			fmt.Fprintf(stdout, "      export NEXUS_ISLANDS_SRC=%s\n", nested)
+			fmt.Fprintf(stdout, "      nexus dev\n")
+			fmt.Fprintf(stdout, "%s   or move your bootstrap up one level into %s/.%s\n",
+				ansiCyan, srcName, ansiReset)
+		} else {
+			fmt.Fprintf(stdout, "%s●%s frontend watcher: %s has files but no top-level .ts/.tsx/.jsx/.js entry — waiting (Ctrl-C to stop)\n",
+				ansiCyan, ansiReset, srcName)
+			fmt.Fprintf(stdout, "%s   entries are top-level only; nested files are picked up via imports from a bootstrap.%s\n",
+				ansiCyan, ansiReset)
+		}
+	}
+	resolved, entries, err := waitForDirEntries(ctx, srcDir)
+	return resolved, entries, err
 }
 
-// readEntriesIfExists is collectFrontendEntries with a missing-
-// directory check that returns (nil, nil) instead of a "no such
-// file" error. Keeps the polling loops above one-liner clean.
-func readEntriesIfExists(srcDir string) ([]string, error) {
+// nestedEntryHint peeks one level down for a subdirectory that
+// DOES contain valid entries — the Vite-style layout where the
+// operator put main.ts under src/ instead of at the root.
+// Returns the relative path (e.g. "islands.src/src") when found,
+// or "" when no such subdir exists (truly no entries anywhere
+// nearby). Checks at most one level deep; deeper nesting is too
+// ambiguous to guess at.
+func nestedEntryHint(srcDir, srcName string) string {
+	dirents, err := os.ReadDir(srcDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range dirents {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "dist" || name == "public" {
+			continue
+		}
+		sub := filepath.Join(srcDir, name)
+		entries, err := collectFrontendEntries(sub)
+		if err != nil || len(entries) == 0 {
+			continue
+		}
+		return filepath.Join(srcName, name)
+	}
+	return ""
+}
+
+// describeEmptyState classifies why collectFrontendEntries
+// returned an empty list, so the wait-loop's log message can
+// point the operator at the right fix.
+type emptyState int
+
+const (
+	emptyStateNoFiles    emptyState = iota // dir contains no non-hidden files at all
+	emptyStateOnlyVue                      // dir has .vue (and maybe other) files but no .ts/.tsx/.jsx/.js
+	emptyStateNoTopLevel                   // dir has non-vue files / subdirs but still no matching entry
+)
+
+func describeEmptyState(srcDir string) emptyState {
+	dirents, err := os.ReadDir(srcDir)
+	if err != nil {
+		return emptyStateNoFiles
+	}
+	sawAny := false
+	sawVue := false
+	sawOther := false
+	for _, e := range dirents {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		sawAny = true
+		if e.IsDir() {
+			sawOther = true
+			continue
+		}
+		ext := filepath.Ext(name)
+		switch ext {
+		case ".vue":
+			sawVue = true
+		case ".jsx", ".tsx", ".ts", ".js":
+			// Should not happen: caller already filtered these
+			// out via collectFrontendEntries returning > 0.
+			// Treat as "no top-level" for safety.
+			sawOther = true
+		default:
+			sawOther = true
+		}
+	}
+	if !sawAny {
+		return emptyStateNoFiles
+	}
+	if sawVue && !sawOther {
+		return emptyStateOnlyVue
+	}
+	return emptyStateNoTopLevel
+}
+
+// peekForEntries is findFrontendEntries with a missing-directory
+// check that returns (srcDir, nil, nil) instead of a "no such
+// file" error. Auto-descends into conventional subdirs (src/ /
+// app/ / client/) — that's the headline UX win over the older
+// strict top-level-only behavior. Keeps the polling loops above
+// one-liner clean.
+func peekForEntries(srcDir string) (string, []string, error) {
 	if _, err := os.Stat(srcDir); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return srcDir, nil, nil
 		}
-		return nil, err
+		return srcDir, nil, err
 	}
-	return collectFrontendEntries(srcDir)
+	return findFrontendEntries(srcDir)
 }
 
 // waitForDirCreate blocks until srcDir exists. Uses an fsnotify
@@ -904,57 +1039,62 @@ func waitForDirCreate(ctx context.Context, srcDir string) error {
 	}
 }
 
-// waitForDirEntries blocks until collectFrontendEntries on srcDir
-// returns a non-empty list. fsnotify on srcDir catches file
-// creation; the same 500ms poll guards against fsnotify gaps.
+// waitForDirEntries blocks until findFrontendEntries on srcDir
+// returns a non-empty list — top-level OR via auto-descent into
+// src/ / app/ / client/. fsnotify on srcDir catches file
+// creation; the same 500ms poll guards against fsnotify gaps and
+// catches files dropped into a not-yet-existing subdir (the
+// fsnotify watcher only sees srcDir's direct children).
 //
-// Returns the entries on success, nil on ctx cancellation.
-func waitForDirEntries(ctx context.Context, srcDir string) ([]string, error) {
+// Returns (actualDir, entries, nil) on success — actualDir is
+// where entries were FOUND, which may differ from srcDir under
+// auto-descent. (srcDir, nil, nil) on ctx cancellation.
+func waitForDirEntries(ctx context.Context, srcDir string) (string, []string, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, fmt.Errorf("frontend watcher: fsnotify: %w", err)
+		return srcDir, nil, fmt.Errorf("frontend watcher: fsnotify: %w", err)
 	}
 	defer w.Close()
 	if err := w.Add(srcDir); err != nil {
-		return nil, fmt.Errorf("frontend watcher: watch %s: %w", srcDir, err)
+		return srcDir, nil, fmt.Errorf("frontend watcher: watch %s: %w", srcDir, err)
 	}
 	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
-	check := func() ([]string, error) {
-		entries, err := collectFrontendEntries(srcDir)
+	check := func() (string, []string, error) {
+		actualDir, entries, err := findFrontendEntries(srcDir)
 		if err != nil {
-			return nil, err
+			return srcDir, nil, err
 		}
 		if len(entries) > 0 {
-			return entries, nil
+			return actualDir, entries, nil
 		}
-		return nil, nil
+		return srcDir, nil, nil
 	}
-	if entries, err := check(); err != nil || entries != nil {
-		return entries, err
+	if actualDir, entries, err := check(); err != nil || entries != nil {
+		return actualDir, entries, err
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, nil
+			return srcDir, nil, nil
 		case <-w.Events:
-			entries, err := check()
+			actualDir, entries, err := check()
 			if err != nil {
-				return nil, err
+				return srcDir, nil, err
 			}
 			if entries != nil {
-				return entries, nil
+				return actualDir, entries, nil
 			}
 		case <-poll.C:
-			entries, err := check()
+			actualDir, entries, err := check()
 			if err != nil {
-				return nil, err
+				return srcDir, nil, err
 			}
 			if entries != nil {
-				return entries, nil
+				return actualDir, entries, nil
 			}
 		case err := <-w.Errors:
-			return nil, fmt.Errorf("frontend watcher: %w", err)
+			return srcDir, nil, fmt.Errorf("frontend watcher: %w", err)
 		}
 	}
 }
