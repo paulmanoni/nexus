@@ -57,6 +57,22 @@ func GenerateVueDTS(m Manifest) string {
 	return b.String()
 }
 
+// GenerateReactDTS projects a manifest into the .d.ts paired with
+// react.js. Same sibling-import shape as vue.d.ts: pulls the
+// discriminated maps + runtime classes from './client.js' and
+// re-exports them through React-shaped hook signatures.
+//
+// React primitives (useState / useEffect / etc.) are NOT imported
+// in the .d.ts — every export is a function with a plain return
+// type. The runtime's React import is the host app's responsibility,
+// same as Vue.
+func GenerateReactDTS(m Manifest) string {
+	var b strings.Builder
+	writeHeader(&b, m, "react.js")
+	writeReactRuntime(&b)
+	return b.String()
+}
+
 // GenerateDTS retained for back-compat — returns the client-paired
 // declaration. Older callers that wrote a single client.d.ts to
 // disk continue to work; they should migrate to also writing
@@ -610,6 +626,211 @@ export function useAuth(opts?: UseAuthOptions): UseAuthHandle
 
 // Default export — most-common composable, paired with
 //   import useNexus from './vue.js'
+export default useNexus
+`)
+}
+
+// writeReactRuntime emits the typed React hooks surface as
+// top-level exports — paired with react.js by file proximity.
+// Pulls the discriminated maps and runtime classes from the
+// sibling './client.js' (same directory whether dumped to disk
+// or served via path-mapped URL).
+//
+// Return shapes are plain values (T | null, boolean, etc.) rather
+// than Vue's Ref<T> — React components consume state directly.
+// The .d.ts deliberately does NOT import 'react' types: every
+// callback parameter / return type is described in plain TS so
+// the file works for any React version the host app pulls in.
+func writeReactRuntime(b *strings.Builder) {
+	b.WriteString(`// ── Typed React hooks surface ────────────────────────────────
+
+import type {
+  NexusClient,
+  NexusClientOptions,
+  NexusError,
+  CrudHandle,
+  WSHandle,
+  AuthNamespace,
+  TokenStore,
+  RestEndpoints,
+  GraphqlOps,
+  WSMessages,
+  ExtractRestMethod,
+  ExtractRestPath,
+} from './client.js'
+
+// Shared opts every hook accepts: pass an explicit client when an
+// app wants to drive a non-default backend without touching the
+// page-shared singleton.
+export interface UseOptions {
+  client?: NexusClient
+}
+
+// ──────── Singleton client ────────
+
+/** Get or lazy-construct the page-shared NexusClient. Stable across renders. */
+export function useNexus(opts?: NexusClientOptions): NexusClient
+/** Replace the shared client — for tests / SSR harnesses. */
+export function setNexus(client: NexusClient): void
+
+// ──────── REST: useQuery / useMutation ────────
+
+/**
+ * Reactive REST query handle. data/error/loading update as the
+ * call resolves; refresh() forces a new fetch with current args;
+ * abort() cancels the in-flight request.
+ */
+export interface QueryHandle<T> {
+  data: T | null
+  error: NexusError | null
+  loading: boolean
+  refresh(): Promise<void>
+  abort(): void
+}
+
+export interface UseQueryOptions extends UseOptions {
+  /** Request headers per call. */
+  headers?: Record<string, string>
+  /**
+   * When false, suppresses the args-keyed auto-refetch. Caller
+   * drives via refresh() manually. Default true.
+   */
+  watch?: boolean
+}
+
+/** Args supplied as a plain value or a getter (read on each refresh). */
+export type ArgsSource<A> = A | (() => A)
+
+/** Typed REST query — picks args + return from RestEndpoints. */
+export function useQuery<K extends keyof RestEndpoints>(
+  method: ExtractRestMethod<K>,
+  path: ExtractRestPath<K>,
+  args?: ArgsSource<RestEndpoints[K]['args']>,
+  opts?: UseQueryOptions,
+): QueryHandle<RestEndpoints[K]['return']>
+
+/** Untyped escape hatch for arbitrary REST calls. */
+export function useQuery<T = unknown>(
+  method: string, path: string,
+  args?: ArgsSource<object>,
+  opts?: UseQueryOptions,
+): QueryHandle<T>
+
+/**
+ * Manual-fire mutation handle. Does not run on mount; mutate()
+ * fires the call, populates data, and resolves with the response.
+ */
+export interface MutationHandle<A, T> {
+  mutate(args?: A, opts?: { headers?: Record<string, string>; signal?: AbortSignal }): Promise<T>
+  data: T | null
+  error: NexusError | null
+  loading: boolean
+}
+
+export function useMutation<K extends keyof RestEndpoints>(
+  method: ExtractRestMethod<K>,
+  path: ExtractRestPath<K>,
+  opts?: UseOptions,
+): MutationHandle<RestEndpoints[K]['args'], RestEndpoints[K]['return']>
+
+export function useMutation<A = object, T = unknown>(
+  method: string, path: string, opts?: UseOptions,
+): MutationHandle<A, T>
+
+// ──────── GraphQL: useGqlQuery / useGqlMutation ────────
+
+export function useGqlQuery<K extends keyof GraphqlOps>(
+  name: K,
+  args?: ArgsSource<GraphqlOps[K]['args']>,
+  opts?: UseQueryOptions,
+): QueryHandle<GraphqlOps[K]['return']>
+
+export function useGqlMutation<K extends keyof GraphqlOps>(
+  name: K, opts?: UseOptions,
+): MutationHandle<GraphqlOps[K]['args'], GraphqlOps[K]['return']>
+
+// ──────── CRUD ────────
+
+/**
+ * Reactive CRUD list with optimistic updates and optional WS-
+ * backed live sync. T is the entity shape; supply via the
+ * generic param when the entity name doesn't match a Refs key.
+ */
+export interface CrudListHandle<T> {
+  items: T[]
+  loading: boolean
+  error: NexusError | null
+  refresh(args?: object): Promise<void>
+  create(body: Partial<T>): Promise<T>
+  update(id: string | number, body: Partial<T>): Promise<T>
+  remove(id: string | number): Promise<void>
+  ws: WSHandle<keyof WSMessages> | null
+}
+
+export interface UseCrudOptions extends UseOptions {
+  /** WS path to subscribe for <name>.created / .updated / .deleted events. */
+  wsPath?: string
+  /** Disable the WS subscription entirely. Default true (subscribe). */
+  subscribe?: boolean
+  /** Skip the initial list() on mount; caller drives via refresh(). */
+  lazy?: boolean
+  /** Field used as the entity identifier. Defaults to 'id'. */
+  idField?: string
+  /** Args supplied to the initial list() call. */
+  initialArgs?: object
+}
+
+export function useCrud<T = unknown>(
+  name: string, opts?: UseCrudOptions,
+): CrudListHandle<T>
+
+// ──────── WebSocket ────────
+
+/** Reactive WebSocket handle scoped to one path. */
+export interface UseWSHandle<P extends keyof WSMessages> {
+  connected: boolean
+  handle: WSHandle<P>
+  on<T extends keyof WSMessages[P]>(
+    type: T, fn: (data: WSMessages[P][T]) => void,
+  ): WSHandle<P>
+  on(type: '*' | '@close' | '@error', fn: (data: unknown) => void): WSHandle<P>
+  send<T extends keyof WSMessages[P]>(type: T, data: WSMessages[P][T]): WSHandle<P>
+  connect(): Promise<WSHandle<P>>
+  close(): void
+}
+
+export interface UseWSOptions extends UseOptions {
+  /** Connect immediately on mount. Default true. */
+  eager?: boolean
+}
+
+export function useWS<P extends keyof WSMessages>(
+  path: P, opts?: UseWSOptions,
+): UseWSHandle<P>
+
+// ──────── Auth ────────
+
+/** Reactive auth state + login/logout/me actions. */
+export interface UseAuthHandle {
+  token: string | null
+  identity: unknown
+  loading: boolean
+  error: NexusError | null
+  isAuthenticated: boolean
+  login(creds: object): Promise<unknown>
+  logout(): Promise<void>
+  refresh(): Promise<void>
+}
+
+export interface UseAuthOptions extends UseOptions {
+  /** Bootstrap by calling /me on mount when a token is present. Default true. */
+  eager?: boolean
+}
+
+export function useAuth(opts?: UseAuthOptions): UseAuthHandle
+
+// Default export — most-common hook, paired with
+//   import useNexus from './react.js'
 export default useNexus
 `)
 }
