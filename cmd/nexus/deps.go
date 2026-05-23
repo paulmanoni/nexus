@@ -594,6 +594,23 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 			if clean != "" {
 				spec = name + "@" + clean
 			}
+			// Same fork as `nexus add`: nexus-client never goes to
+			// the public registry. Either the targeted app supplies
+			// the bytes (the typed path) or the CLI's embedded
+			// bundle does (offline fallback). esm.sh has no copy
+			// and would 404.
+			if isNexusClientSpec(spec) {
+				fmt.Fprintf(stdout, "nexus install: + %s\n", spec)
+				pkgs, _, err := addNexusClient(ctx, dc, spec, "", stdout)
+				if err != nil {
+					return fmt.Errorf("nexus install %s: %w", spec, err)
+				}
+				for _, p := range pkgs {
+					lf.Add(p)
+				}
+				added++
+				continue
+			}
 			fmt.Fprintf(stdout, "nexus install: + %s\n", spec)
 			res, ferr := dc.fetcher.Fetch(ctx, spec)
 			if ferr != nil {
@@ -620,6 +637,22 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 		hex := fetcher.IntegrityHex(pkg.Integrity)
 		if dc.store.Has(hex) {
 			skipped++
+			continue
+		}
+		// nexus-client entries pin a synthetic `embedded://` URL
+		// (when the original add used the offline fallback) — those
+		// must NOT go through the esm.sh fetcher. Re-materialize
+		// from the CLI's own embedded bundle instead. If the user
+		// originally added against a running app, the Resolved URL
+		// points back at that app and the regular fetch path is
+		// fine for refresh; the embedded-fallback case is the one
+		// we're guarding here.
+		if strings.HasPrefix(pkg.Resolved, "embedded://nexus-client/") {
+			fmt.Fprintf(stdout, "nexus install: extracting %s from embedded bundle\n", key)
+			if err := rehydrateEmbeddedFile(dc, pkg); err != nil {
+				return fmt.Errorf("nexus install %s: %w", key, err)
+			}
+			fetched++
 			continue
 		}
 		fmt.Fprintf(stdout, "nexus install: fetching %s\n", key)

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
 	"github.com/paulmanoni/nexus/frontend/deps/store"
@@ -420,6 +421,26 @@ func appendURLQuery(u, query string) string {
 // disclosed only via this header, and we can't extract a version
 // from the request URL alone.
 func (f *Fetcher) resolve(ctx context.Context, reqURL string) (resolved, contentType, etag, esmPath string, err error) {
+	var lastErr error
+	for attempt := 0; attempt < maxFetchAttempts; attempt++ {
+		if attempt > 0 {
+			if waitErr := sleepBackoff(ctx, attempt); waitErr != nil {
+				return "", "", "", "", waitErr
+			}
+		}
+		resolved, contentType, etag, esmPath, err = f.resolveOnce(ctx, reqURL)
+		if err == nil {
+			return resolved, contentType, etag, esmPath, nil
+		}
+		lastErr = err
+		if !isRetryableFetchError(err) {
+			return "", "", "", "", err
+		}
+	}
+	return "", "", "", "", fmt.Errorf("fetcher: resolve %s: %w (after %d attempts)", reqURL, lastErr, maxFetchAttempts)
+}
+
+func (f *Fetcher) resolveOnce(ctx context.Context, reqURL string) (resolved, contentType, etag, esmPath string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return "", "", "", "", err
@@ -439,7 +460,38 @@ func (f *Fetcher) resolve(ctx context.Context, reqURL string) (resolved, content
 
 // get downloads the body at url and returns its bytes. Errors carry
 // the URL for diagnosis.
+//
+// Transient transport-level errors (connection reset, EOF, timeout)
+// and rate-limit / server-error response codes (429, 5xx) retry
+// with exponential backoff up to maxFetchAttempts. The transitive
+// walk through esm.sh routinely sees Cloudflare flaking on one of
+// the many requests it makes; without retries a single TCP RST
+// fails the entire add. 4xx responses (404, 403, …) skip the
+// retry loop — those are stable misses, not flakes.
 func (f *Fetcher) get(ctx context.Context, url string) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxFetchAttempts; attempt++ {
+		if attempt > 0 {
+			if err := sleepBackoff(ctx, attempt); err != nil {
+				return nil, err
+			}
+		}
+		body, err := f.getOnce(ctx, url)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		if !isRetryableFetchError(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("fetcher: GET %s: %w (after %d attempts)", url, lastErr, maxFetchAttempts)
+}
+
+// getOnce is the single-attempt body fetch. Pulled out so the
+// retry loop in get() can decide whether to back off and retry
+// without duplicating the request construction or close logic.
+func (f *Fetcher) getOnce(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -457,6 +509,92 @@ func (f *Fetcher) get(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("fetcher: read body %s: %w", url, err)
 	}
 	return body, nil
+}
+
+// maxFetchAttempts caps the retry loop. 3 tries (initial + two
+// retries) with the exponential schedule below covers a ~3.5s
+// window — enough to ride out the typical Cloudflare hiccup
+// without making a long string of "real" failures take forever.
+const maxFetchAttempts = 3
+
+// sleepBackoff waits (1s, 2s, 4s, …) between attempts, honoring
+// ctx so a cancelled add doesn't burn the whole backoff window.
+// Pure exponential; the failures we're papering over are
+// independent CDN edge hiccups, no jitter needed for thundering
+// herd at the per-process scale we hit.
+//
+// Exposed as a package-level var so tests can swap in a tiny
+// sleep without making the suite take seven seconds per case.
+// Production callers don't need to touch it.
+var sleepBackoff = func(ctx context.Context, attempt int) error {
+	delay := time.Duration(1<<attempt) * time.Second
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// isRetryableFetchError reports whether err looks like a
+// transient failure worth retrying. Conservative whitelist: only
+// known-transient signatures count, everything else fails fast so
+// a real 404 doesn't sit through three sleeps.
+//
+// Retryable:
+//   - net.OpError "connection reset by peer", "broken pipe", EOF
+//   - context.DeadlineExceeded — server too slow, try again
+//   - HTTPError 429 (rate limit) or 5xx
+//
+// Not retryable:
+//   - HTTPError 4xx (except 429) — stable; bad URL or auth
+//   - JSON / protocol errors — body is well-formed but wrong
+//   - context.Canceled — caller asked to stop
+func isRetryableFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var herr *HTTPError
+	if errors.As(err, &herr) {
+		if herr.Status == http.StatusTooManyRequests {
+			return true
+		}
+		if herr.Status >= 500 && herr.Status < 600 {
+			return true
+		}
+		return false
+	}
+	// net.OpError wraps the syscall-level error; check the
+	// stringified form (cross-platform — syscall.ECONNRESET works
+	// on linux/darwin but not all targets, so substring-match the
+	// message text the way curl + every other HTTP client does).
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "connection reset by peer"):
+		return true
+	case strings.Contains(msg, "broken pipe"):
+		return true
+	case strings.Contains(msg, "EOF"):
+		return true
+	case strings.Contains(msg, "i/o timeout"):
+		return true
+	case strings.Contains(msg, "connection refused"):
+		return true
+	case strings.Contains(msg, "no such host"):
+		// DNS flake — retry; if the host truly doesn't exist the
+		// retries are cheap and consistent failure becomes a
+		// stable error after the loop exits.
+		return true
+	}
+	return false
 }
 
 // resolveAgainst joins an import specifier to its parent's URL.
