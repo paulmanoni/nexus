@@ -51,7 +51,7 @@ import (
 // error guides the user to either pre-compile or stay on vite for
 // .vue today.
 func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
-	srcDir := filepath.Join(projectRoot, "islands.src")
+	srcDir := filepath.Join(projectRoot, islandsSrcName())
 	if _, err := os.Stat(srcDir); errors.Is(err, fs.ErrNotExist) {
 		return nil // no frontend in this project — skip
 	} else if err != nil {
@@ -112,7 +112,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("frontend build: build resolver: %w", err)
 	}
 
-	outDir := filepath.Join(projectRoot, "islands")
+	outDir := filepath.Join(projectRoot, islandsOutName())
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return fmt.Errorf("frontend build: mkdir %s: %w", outDir, err)
 	}
