@@ -82,6 +82,67 @@ func TestServeFrontend(t *testing.T) {
 	}
 }
 
+// TestServeFrontend_DevModeNoCacheOnAssets pins the fix for the
+// "browser reloads but UI stays stale" bug: under NEXUS_DEV=1
+// every asset response must carry no-cache so the browser
+// refetches main.js / main.css after the dev-reload shim
+// triggers location.reload(). Heuristic caching otherwise serves
+// the previous bytes and the operator never sees their edits.
+func TestServeFrontend_DevModeNoCacheOnAssets(t *testing.T) {
+	t.Setenv(NexusDevEnv, "1")
+	t.Setenv("GIN_MODE", "test")
+	fsys := fstest.MapFS{
+		"index.html":         {Data: []byte("<html>app</html>")},
+		"main.js":            {Data: []byte("console.log('v1')")},
+		"main.css":           {Data: []byte(".x{}")},
+		"assets/hashed-a.js": {Data: []byte("// hashed")},
+	}
+
+	app := New(Config{})
+	if err := mountFrontend(app, fsys, noFrontendCfg); err != nil {
+		t.Fatalf("mountFrontend: %v", err)
+	}
+
+	cases := []struct {
+		path       string
+		wantCache  string
+		wantStatus int
+	}{
+		// Top-level bundler outputs — the user's main.js / main.css.
+		// Dev mode must NEVER let the browser cache these or the
+		// reload-after-rebuild story is broken.
+		{"/main.js", "no-cache", 200},
+		{"/main.css", "no-cache", 200},
+		// Hashed assets under /assets/ also lose their immutable
+		// cache header in dev mode — operators rarely rebuild
+		// to a fresh hash during dev, but if they do (Vite-style
+		// content hashing turned on locally) we still want
+		// fresh-on-reload.
+		{"/assets/hashed-a.js", "no-cache", 200},
+		// SPA fallback always no-cache regardless of dev mode.
+		{"/some/spa/route", "no-cache", 200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", tc.path, nil)
+			app.engine.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status: got %d want %d", rec.Code, tc.wantStatus)
+			}
+			got := rec.Header().Get("Cache-Control")
+			if !strings.Contains(got, tc.wantCache) {
+				t.Errorf("cache-control: got %q want substr %q", got, tc.wantCache)
+			}
+			// no-store guarantees the browser doesn't even hold a
+			// disk copy across the reload.
+			if !strings.Contains(got, "no-store") {
+				t.Errorf("dev assets must include no-store: got %q", got)
+			}
+		})
+	}
+}
+
 // TestServeFrontendMissingIndex verifies the boot-time guardrail:
 // without an index.html the mount fails fast so a stale or
 // unbuilt bundle surfaces at compile/start time, not at first
