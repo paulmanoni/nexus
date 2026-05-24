@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -70,6 +71,13 @@ func newDepsContext(stdout, stderr io.Writer) (*depsContext, error) {
 	// peer-dep'd by something CAN coexist at multiple versions
 	// without splitting state.
 	f.External = []string{"vue", "react", "react-dom"}
+
+	// Wire per-fetch progress to stdout so `nexus install` /
+	// `nexus add` aren't silent during the transitive recursion.
+	// vue@3.5 fans out into ~35 sub-package fetches; without
+	// this the operator stares at one "+ vue@3.5.26" line for
+	// 30 seconds wondering if anything's happening.
+	f.Progress = stdout
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -208,10 +216,14 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 			continue
 		}
 		fmt.Fprintf(stdout, "nexus add %s — fetching from %s\n", spec, dc.fetcher.Registry)
+		fmt.Fprintf(stdout, "  (walking transitive ESM imports — large packages like vue fan out into 30+ requests)\n")
+		started := time.Now()
 		res, err := dc.fetcher.Fetch(ctx, spec)
 		if err != nil {
 			return fmt.Errorf("nexus add %s: %w", spec, err)
 		}
+		fmt.Fprintf(stdout, "  done — %d transitive imports in %s\n",
+			len(res.Transitive), time.Since(started).Truncate(time.Millisecond))
 		lf.Add(res.Root)
 		for _, dep := range res.Transitive {
 			lf.Add(dep)
@@ -611,7 +623,8 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 				added++
 				continue
 			}
-			fmt.Fprintf(stdout, "nexus install: + %s\n", spec)
+			fmt.Fprintf(stdout, "nexus install: + %s — walking ESM imports\n", spec)
+			started := time.Now()
 			res, ferr := dc.fetcher.Fetch(ctx, spec)
 			if ferr != nil {
 				return fmt.Errorf("nexus install %s: %w", spec, ferr)
@@ -620,6 +633,8 @@ func runInstall(ctx context.Context, stdout, stderr io.Writer) error {
 			for _, dep := range res.Transitive {
 				lf.Add(dep)
 			}
+			fmt.Fprintf(stdout, "  done — %d transitive imports in %s\n",
+				len(res.Transitive), time.Since(started).Truncate(time.Millisecond))
 			added++
 		}
 		if added > 0 {

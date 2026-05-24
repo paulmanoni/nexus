@@ -91,6 +91,17 @@ type Fetcher struct {
 	// tests typically leave this empty.
 	External []string
 
+	// Progress receives one line per HTTP fetch the recursion makes:
+	// cache hits, cache misses with size + duration, and the
+	// transitive depth so the operator can SEE what `nexus install
+	// vue` is doing during the 30+ requests it fans out into.
+	//
+	// nil disables progress output entirely — Fetch is silent, same
+	// as the legacy behavior. The CLI's runAdd / runInstall wire
+	// this to stdout so the human-facing path always shows
+	// per-fetch lines.
+	Progress io.Writer
+
 	// PinnedVersions maps bare-spec names to the version transitive
 	// recursion must use. The companion to External: External tells
 	// esm.sh "leave this as a bare import in served bundles";
@@ -228,12 +239,15 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 		if contentType == "" {
 			contentType = meta.ContentType
 		}
+		f.logProgress("✓ cached", resolved, len(content), 0)
 	} else {
 		// Cache miss — pull the body.
+		started := time.Now()
 		content, err = f.get(ctx, resolved)
 		if err != nil {
 			return lockfile.Package{}, err
 		}
+		f.logProgress("↓ fetched", resolved, len(content), time.Since(started))
 		path, putErr := f.Store.Put(resolved, bytesReader(content), "", store.Metadata{
 			URL:         reqURL,
 			ResolvedURL: resolved,
@@ -837,4 +851,54 @@ func IntegrityHex(integrity string) string {
 		}
 	}
 	return ""
+}
+
+
+// logProgress prints a single line to f.Progress for each fetched
+// blob — used by the CLI to show "what's happening" during the
+// transitive recursion. Operators see one line per HTTP request
+// instead of staring at silence while vue's 35+ subpackages
+// download.
+//
+// Verb is the leading icon + word ("↓ fetched" / "✓ cached").
+// Pretty-prints the URL by trimming the registry prefix, and
+// shows size in human-readable units. duration=0 means no
+// network round-trip (cache hit) so we omit the timing.
+//
+// nil Progress writer = silent (legacy behavior). The CLI sets
+// it; library callers default to no output.
+func (f *Fetcher) logProgress(verb, resolved string, size int, duration time.Duration) {
+	if f.Progress == nil {
+		return
+	}
+	displayURL := resolved
+	if f.Registry != "" {
+		displayURL = strings.TrimPrefix(displayURL, f.Registry)
+		displayURL = strings.TrimPrefix(displayURL, "/")
+	}
+	// Truncate very long display URLs so the line doesn't wrap on
+	// 80-col terminals. The full URL goes to the lockfile anyway.
+	if len(displayURL) > 60 {
+		displayURL = "…" + displayURL[len(displayURL)-59:]
+	}
+	if duration > 0 {
+		fmt.Fprintf(f.Progress, "  %s  %-60s  %s  %dms\n",
+			verb, displayURL, humanBytes(size), duration.Milliseconds())
+	} else {
+		fmt.Fprintf(f.Progress, "  %s  %-60s  %s\n",
+			verb, displayURL, humanBytes(size))
+	}
+}
+
+// humanBytes formats a byte count as a tight 7-char field. KB / MB
+// (decimal) match what `ls -lh` and most package managers use.
+func humanBytes(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%5.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%5.1f KB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%5d  B", n)
+	}
 }
