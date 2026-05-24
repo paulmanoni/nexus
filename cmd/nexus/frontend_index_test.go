@@ -132,7 +132,7 @@ func TestEmitIndexHTML_FindsIndexOneLevelUp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := emitIndexHTML(srcSub, outDir, fakeOutputs("main.js"), &bytes.Buffer{})
+	err := emitIndexHTML(srcSub, outDir, fakeOutputs("main.js"), &bytes.Buffer{}, false)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
@@ -145,6 +145,61 @@ func TestEmitIndexHTML_FindsIndexOneLevelUp(t *testing.T) {
 	}
 }
 
+func TestEmitIndexHTML_DevModeInjectsReloadScript(t *testing.T) {
+	dir := t.TempDir()
+	srcSub := filepath.Join(dir, "src")
+	outDir := filepath.Join(dir, "out")
+	if err := os.MkdirAll(srcSub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	indexBody := []byte(`<head></head><body><script type="module" src="/src/main.ts"></script></body>`)
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), indexBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// devMode=true should inject the dev-reload shim before </body>.
+	if err := emitIndexHTML(srcSub, outDir, fakeOutputs("main.js"), &bytes.Buffer{}, true); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(outDir, "index.html"))
+	if !strings.Contains(string(body), `<script src="/__nexus/dev/script.js">`) {
+		t.Errorf("dev-reload shim missing:\n%s", body)
+	}
+	// Must come BEFORE </body>, not after it.
+	bodyIdx := strings.Index(strings.ToLower(string(body)), "</body>")
+	tagIdx := strings.Index(string(body), `<script src="/__nexus/dev/script.js">`)
+	if tagIdx < 0 || tagIdx > bodyIdx {
+		t.Errorf("dev-reload tag should sit before </body>; tagIdx=%d bodyIdx=%d:\n%s", tagIdx, bodyIdx, body)
+	}
+}
+
+func TestEmitIndexHTML_ProdModeDoesNotInjectReloadScript(t *testing.T) {
+	dir := t.TempDir()
+	srcSub := filepath.Join(dir, "src")
+	outDir := filepath.Join(dir, "out")
+	_ = os.MkdirAll(srcSub, 0o755)
+	indexBody := []byte(`<head></head><body><script type="module" src="/src/main.ts"></script></body>`)
+	_ = os.WriteFile(filepath.Join(dir, "index.html"), indexBody, 0o644)
+
+	if err := emitIndexHTML(srcSub, outDir, fakeOutputs("main.js"), &bytes.Buffer{}, false); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(filepath.Join(outDir, "index.html"))
+	if strings.Contains(string(body), "/__nexus/dev/script.js") {
+		t.Errorf("prod build must NOT carry dev-reload shim:\n%s", body)
+	}
+}
+
+func TestInjectDevReloadScript_NoBodyTagFallsBackToAppend(t *testing.T) {
+	// Malformed HTML missing </body> — shim should still land,
+	// just appended to the end so the page picks it up.
+	src := []byte(`<html><head></head><div>broken</div>`)
+	out := injectDevReloadScript(src)
+	if !strings.Contains(string(out), `/__nexus/dev/script.js`) {
+		t.Errorf("fallback append missing:\n%s", out)
+	}
+}
+
 func TestEmitIndexHTML_NoSourceIsNoop(t *testing.T) {
 	// No index.html anywhere: emit returns nil + writes nothing.
 	dir := t.TempDir()
@@ -152,7 +207,7 @@ func TestEmitIndexHTML_NoSourceIsNoop(t *testing.T) {
 	outDir := filepath.Join(dir, "out")
 	_ = os.MkdirAll(srcSub, 0o755)
 
-	if err := emitIndexHTML(srcSub, outDir, fakeOutputs("main.js"), &bytes.Buffer{}); err != nil {
+	if err := emitIndexHTML(srcSub, outDir, fakeOutputs("main.js"), &bytes.Buffer{}, false); err != nil {
 		t.Errorf("missing source should be no-op, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "index.html")); !os.IsNotExist(err) {

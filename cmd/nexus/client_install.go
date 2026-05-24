@@ -61,10 +61,15 @@ const (
 	// URL fetches from the same app the developer used at add time.
 	nexusClientOriginEnv = "NEXUS_DEV_URL"
 
-	// defaultNexusClientOrigin is the assumed app URL when nothing
-	// else is configured. Mirrors the scaffold's default Gin port.
-	defaultNexusClientOrigin = "http://localhost:8080"
 )
+
+// defaultNexusClientOrigin is the assumed app URL when nothing
+// else is configured. Mirrors the scaffold's default Gin port.
+// Declared as a var (not a const) so tests can swap it for a
+// guaranteed-closed port — the offline-fallback test asserts
+// against "default origin unreachable" and can't depend on
+// :8080 actually being closed on the developer's machine.
+var defaultNexusClientOrigin = "http://localhost:8080"
 
 // isNexusClientSpec reports whether spec targets the framework's
 // SDK package (with or without an adapter subpath, with or without

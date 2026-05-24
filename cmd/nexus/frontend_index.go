@@ -52,9 +52,14 @@ var indexHTMLSearchPaths = []string{
 // "main.css". The CSS sidecar gets a fresh <link> tag right
 // before the script tag — same convention vite uses.
 //
+// When the caller is the dev watcher (devMode=true), the dev-
+// reload shim is also injected before </body> so the browser
+// auto-refreshes on every rebuild. Production `nexus build`
+// calls with devMode=false so the released bundle stays clean.
+//
 // outputFiles is esbuild's api.OutputFile slice from the most
 // recent build; only their Path field matters for this pass.
-func emitIndexHTML(srcDir, outDir string, outputFiles []api.OutputFile, stdout io.Writer) error {
+func emitIndexHTML(srcDir, outDir string, outputFiles []api.OutputFile, stdout io.Writer, devMode bool) error {
 	srcPath, sourceBytes, err := findIndexHTML(srcDir)
 	if err != nil {
 		return err
@@ -65,6 +70,9 @@ func emitIndexHTML(srcDir, outDir string, outputFiles []api.OutputFile, stdout i
 		return nil
 	}
 	out := rewriteIndexHTML(sourceBytes, outputFiles)
+	if devMode {
+		out = injectDevReloadScript(out)
+	}
 	dest := filepath.Join(outDir, "index.html")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
@@ -305,4 +313,40 @@ func injectMissingCSSLinks(html []byte, outputs []api.OutputFile, outNames map[s
 func closingHeadIndex(html []byte) int {
 	lower := strings.ToLower(string(html))
 	return strings.Index(lower, "</head>")
+}
+
+// devReloadScriptTag is the marker the framework's mountDevReload
+// scripts off of. Duplicated here so cmd/nexus doesn't have a
+// build-time dep on the root pkg's internals.
+//
+// MUST stay in sync with ext_devreload.go's same-named const.
+const devReloadScriptTag = `<script src="/__nexus/dev/script.js"></script>`
+
+// injectDevReloadScript adds the dev-reload shim before </body>
+// so the served HTML opens an SSE connection back to the running
+// app + auto-reloads on every rebuild. Idempotent — re-injection
+// across rebuilds doesn't stack tags because the rewrite operates
+// on the SOURCE bytes (always fresh from disk), not on a
+// previously-emitted output.
+//
+// Falls back to appending when </body> is missing — broken HTML
+// shouldn't lose the reload wiring entirely.
+func injectDevReloadScript(html []byte) []byte {
+	tag := []byte("  " + devReloadScriptTag + "\n  </body>")
+	idx := closingBodyIndex(html)
+	if idx < 0 {
+		return append(html, []byte("\n"+devReloadScriptTag+"\n")...)
+	}
+	out := make([]byte, 0, len(html)+len(tag))
+	out = append(out, html[:idx]...)
+	out = append(out, tag...)
+	out = append(out, html[idx+len("</body>"):]...)
+	return out
+}
+
+// closingBodyIndex mirrors closingHeadIndex for the </body>
+// landing zone of injectDevReloadScript.
+func closingBodyIndex(html []byte) int {
+	lower := strings.ToLower(string(html))
+	return strings.Index(lower, "</body>")
 }
