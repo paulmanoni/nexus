@@ -354,6 +354,12 @@ func TestAddNexusClient_LockfileEntryShape(t *testing.T) {
 // re-fetch over HTTP.
 func TestAddNexusClient_OfflineFallbackUsesEmbeddedBundle(t *testing.T) {
 	t.Setenv(nexusClientOriginEnv, "") // no explicit override
+	// Point the default at a guaranteed-closed port so the test
+	// isn't flaky on machines that happen to have something
+	// running on :8080 (e.g. another `nexus dev` session).
+	orig := defaultNexusClientOrigin
+	defaultNexusClientOrigin = "http://127.0.0.1:1"
+	t.Cleanup(func() { defaultNexusClientOrigin = orig })
 
 	cwd := t.TempDir()
 	must(t, os.Chdir(cwd))

@@ -167,7 +167,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	// Without this the operator gets the framework's "no
 	// frontend yet" placeholder even though the JS bundled
 	// fine.
-	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout); err != nil {
+	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout, false); err != nil {
 		fmt.Fprintf(stderr, "warning: index.html emit: %v\n", err)
 	}
 	fmt.Fprintf(stdout, "frontend build: wrote %d output %s to %s\n",

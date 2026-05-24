@@ -267,8 +267,10 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	onRebuild := func(br api.BuildResult) {
 		reporter.report(br)
 		// emitIndexHTML is best-effort; a fmt error shouldn't
-		// kill the watcher.
-		_ = emitIndexHTML(srcDir, outDir, br.OutputFiles, io.Discard)
+		// kill the watcher. devMode=true so the dev-reload
+		// shim is injected — that's what the browser uses to
+		// auto-refresh when this rebuild lands.
+		_ = emitIndexHTML(srcDir, outDir, br.OutputFiles, io.Discard, true)
 	}
 	res, err := b.Build(bundler.Options{
 		Entries:   entries,
@@ -286,7 +288,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// the first banner line + any startup errors print the same
 	// way subsequent rebuilds do.
 	reporter.report(res.BuildResult)
-	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout); err != nil {
+	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout, true); err != nil {
 		fmt.Fprintf(stderr, "%s●%s frontend watcher: index.html emit: %v\n", ansiYellow, ansiReset, err)
 	}
 

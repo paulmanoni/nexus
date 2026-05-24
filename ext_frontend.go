@@ -203,6 +203,15 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	}
 	httpFS := http.FS(fsys)
 
+	// Dev mode: mount the live-reload SSE channel + script so
+	// the browser refreshes when a bundle file changes. Watches
+	// the dev-root dir (NEXUS_DEV_ROOT, defaulting to "."); the
+	// CLI's bundler is the producer of those file changes.
+	// Production binaries never run this branch.
+	if devMode {
+		mountDevReload(app.engine, devReloadWatchDir())
+	}
+
 	// Effective prefix is the concatenation of the deployment
 	// prefix and the per-frontend mount path. Both are normalized
 	// (leading slash, no trailing slash, "" or "/" become empty).
