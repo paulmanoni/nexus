@@ -201,3 +201,51 @@ func TestOnConfigChange_FiresOnChange(t *testing.T) {
 		t.Errorf("OnConfigChange got %v, want true", got)
 	}
 }
+
+// TestLocal_ExpandsEnvVarPlaceholders verifies that
+// ${VAR}/${VAR:default} placeholders inside a config.toml file
+// resolve the same way they do inside nexus.toml. Keeps the
+// two TOML surfaces consistent — operators learn one rule.
+func TestLocal_ExpandsEnvVarPlaceholders(t *testing.T) {
+	resetStore(t)
+	t.Setenv("CFG_DSN_HOST", "db.prod.example.com")
+
+	dir := t.TempDir()
+	tomlPath := filepath.Join(dir, "nexus.config.toml")
+	plaintext := `[profiles.default.db]
+dsn      = "postgres://${CFG_DSN_HOST}:5432/app"
+timeout  = "${CFG_DSN_TIMEOUT:5s}"
+`
+	if err := os.WriteFile(tomlPath, []byte(plaintext), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := initLocal(localConfig{path: tomlPath, profile: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := nexus.Get[string]("db.dsn"); got != "postgres://db.prod.example.com:5432/app" {
+		t.Errorf("db.dsn: got %q", got)
+	}
+	if got := nexus.Get[string]("db.timeout"); got != "5s" {
+		t.Errorf("db.timeout default: got %q", got)
+	}
+}
+
+// TestLocal_RejectsUndefinedEnvVar matches the nexus.toml
+// strict-mode behavior: an undefined ${VAR} without a default
+// fails the load loud rather than silently producing an empty
+// value that breaks downstream Get() calls.
+func TestLocal_RejectsUndefinedEnvVar(t *testing.T) {
+	resetStore(t)
+	dir := t.TempDir()
+	tomlPath := filepath.Join(dir, "nexus.config.toml")
+	plaintext := `[profiles.default]
+api_key = "${CFG_UNDEFINED_KEY}"
+`
+	if err := os.WriteFile(tomlPath, []byte(plaintext), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := initLocal(localConfig{path: tomlPath, profile: "default"})
+	if err == nil {
+		t.Fatal("expected error on undefined env var without default")
+	}
+}

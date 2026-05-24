@@ -9,6 +9,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/manifest"
 )
 
 // Local registers a no-server config entrypoint: a single
@@ -101,10 +102,18 @@ func initLocal(cfg localConfig) error {
 // per-app merge — kept here as a tiny duplicate so config.Local
 // doesn't pull in the server-side appBody machinery.
 func parseLocalTOML(body []byte, profile string) (map[string]any, error) {
+	// ${VAR} / ${VAR:default} expansion runs BEFORE TOML parsing
+	// so the same placeholder syntax `nexus.toml` supports also
+	// works in `<app>.nexus.config.toml`. Strict mode — undefined
+	// vars without a default fail the load with line numbers.
+	expanded, err := manifest.ExpandEnvVars(body)
+	if err != nil {
+		return nil, fmt.Errorf("env expand: %w", err)
+	}
 	var parsed struct {
 		Profiles map[string]map[string]any `toml:"profiles"`
 	}
-	if err := toml.Unmarshal(body, &parsed); err != nil {
+	if err := toml.Unmarshal(expanded, &parsed); err != nil {
 		return nil, fmt.Errorf("toml parse: %w", err)
 	}
 	out := map[string]any{}
