@@ -260,7 +260,21 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 		// users can side-step by routing through a query string or
 		// trailing slash, but the heuristic covers 99% of bundles.
 		if strings.Contains(relPath, ".") {
-			if strings.HasPrefix(relPath, "/assets/") {
+			switch {
+			case devMode:
+				// Dev mode: NEVER let the browser cache assets.
+				// The bundler rewrites main.js / main.css on every
+				// save and the dev-reload shim triggers
+				// location.reload(); without an explicit no-cache
+				// header the browser heuristically caches the
+				// previous bytes and the reload serves stale code.
+				// Combined no-cache + no-store + must-revalidate is
+				// the only combination that works across Chrome /
+				// Firefox / Safari in 2026.
+				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+				c.Header("Pragma", "no-cache")
+				c.Header("Expires", "0")
+			case strings.HasPrefix(relPath, "/assets/"):
 				// Vite/Webpack/esbuild content-hashed names — cache
 				// hard. The hash changes every release so a stale
 				// cached entry can't outlive its filename.
