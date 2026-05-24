@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/paulmanoni/nexus/manifest"
 )
 
 // FromTOML is the server-side source factory for a local directory
@@ -187,8 +189,17 @@ func readOneAppFile(path string) (string, appBody, error) {
 	if err != nil {
 		return "", appBody{}, err
 	}
+	// ${VAR} / ${VAR:default} expansion runs BEFORE TOML parsing —
+	// same syntax + semantics as nexus.toml. The server's
+	// environment supplies the resolved values, so a config file
+	// can carry `dsn = "${DB_DSN}"` without baking the DSN into
+	// version control.
+	expanded, err := manifest.ExpandEnvVars(body)
+	if err != nil {
+		return "", appBody{}, fmt.Errorf("env expand: %w", err)
+	}
 	var raw map[string]any
-	if err := toml.Unmarshal(body, &raw); err != nil {
+	if err := toml.Unmarshal(expanded, &raw); err != nil {
 		return "", appBody{}, fmt.Errorf("toml parse: %w", err)
 	}
 

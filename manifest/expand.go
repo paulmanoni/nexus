@@ -330,3 +330,11 @@ func expandPlaceholdersIn(s string) (string, error) {
 	}
 	return out.String(), nil
 }
+
+// ExpandEnvVars is the public alias for expandEnvVars — same rules,
+// same behavior, exported so extensions outside this package
+// (notably extension/config) can apply the placeholder syntax to
+// their own TOML files. Keeps `${VAR}` / `${VAR:default}` semantics
+// identical across every TOML the framework reads — operators
+// learn one rule, not three.
+func ExpandEnvVars(raw []byte) ([]byte, error) { return expandEnvVars(raw) }
