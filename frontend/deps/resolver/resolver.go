@@ -49,10 +49,36 @@ import (
 // injection, source map fix-up) has a stable hook to anchor on.
 const Namespace = "nexus-deps"
 
-// Options configures the plugin. Both fields are required.
+// Options configures the plugin. Lockfile + Store are required;
+// FetchOnDemand is optional but recommended.
 type Options struct {
 	Lockfile *lockfile.File
 	Store    *store.Store
+
+	// FetchOnDemand, when set, is invoked when a sub-path import
+	// (e.g. `@apollo/client/core`) resolves to a URL that isn't
+	// yet in the cache. The function is expected to fetch the
+	// URL — typically via a fetcher.Fetcher — and populate the
+	// store + (optionally) the lockfile.
+	//
+	// Why this exists: `nexus install` walks the import graph
+	// starting from package.json deps, which fetches package
+	// ROOTS plus whatever esm.sh links to from those roots
+	// (encoded /X-Z.../core.mjs URLs). When user code later
+	// imports `@apollo/client/core` directly, that URL shape
+	// (the clean sub-path form) isn't in the cache — esm.sh
+	// serves it but we hadn't asked for it at install time.
+	//
+	// Without this hook the user sees a confusing "no cached
+	// blob exists — run `nexus install`" error even though
+	// they JUST ran nexus install. With it, sub-path imports
+	// transparently fetch on first build and the lockfile
+	// records them for repeatability.
+	//
+	// nil disables on-demand fetching — sub-path misses surface
+	// the v0.1 error message unchanged. Useful for offline-only
+	// builds where any cache miss should fail loud.
+	FetchOnDemand func(url string) error
 }
 
 // New returns an esbuild plugin that wires OnResolve for every
@@ -220,6 +246,24 @@ func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, erro
 	// here; OnLoad re-fetches it via the same Path (= URL) key.
 	if _, _, err := opts.Store.Get(targetURL); err != nil {
 		if errors.Is(err, store.ErrNotCached) {
+			// On-demand fetch path: sub-path imports
+			// (`@apollo/client/core`, `vuetify/styles`)
+			// reference URLs the install-time graph walk
+			// didn't visit. If FetchOnDemand is wired, pull
+			// the URL now + retry the cache lookup.
+			if subpath != "" && opts.FetchOnDemand != nil {
+				if fetchErr := opts.FetchOnDemand(targetURL); fetchErr == nil {
+					if _, _, retryErr := opts.Store.Get(targetURL); retryErr == nil {
+						return api.OnResolveResult{
+							Path:      targetURL,
+							Namespace: Namespace,
+						}, nil
+					}
+				}
+				// Fetch failed or the cache still doesn't
+				// have it — fall through to the clear error
+				// so the user gets actionable output.
+			}
 			return api.OnResolveResult{
 				Errors: []api.Message{{
 					Text: fmt.Sprintf("nexus-deps: %s resolves to %s but no cached blob exists — run `nexus install` to populate the cache",

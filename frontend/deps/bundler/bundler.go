@@ -124,6 +124,46 @@ type Options struct {
 	TSConfig string
 }
 
+// assetLoaders is the default per-extension loader map handed to
+// esbuild. Images + fonts go through the file loader (emitted to
+// outDir with a content-hashed name, import returns the public URL
+// string) so projects can do:
+//
+//	import flagPNG from "@/assets/flag.png"  // → "/flag-A1B2C3.png"
+//	import "@mdi/font/css/icons.css"         // → bundled CSS
+//
+// Inline-friendly cases (.txt, .json) use loaders that produce JS
+// values directly. SVG defaults to `file` rather than `dataurl`
+// because most apps use it as <img src> not as inline CSS — easier
+// to override per-project later if needed.
+//
+// Operators wanting different behavior (e.g. inline tiny PNGs as
+// data URLs) can override via a future Options.Loaders field; for
+// now the defaults cover the common Vite-port case.
+var assetLoaders = map[string]api.Loader{
+	// Images.
+	".png":  api.LoaderFile,
+	".jpg":  api.LoaderFile,
+	".jpeg": api.LoaderFile,
+	".gif":  api.LoaderFile,
+	".webp": api.LoaderFile,
+	".avif": api.LoaderFile,
+	".svg":  api.LoaderFile,
+	".ico":  api.LoaderFile,
+	// Fonts.
+	".woff":  api.LoaderFile,
+	".woff2": api.LoaderFile,
+	".ttf":   api.LoaderFile,
+	".otf":   api.LoaderFile,
+	".eot":   api.LoaderFile,
+	// Misc.
+	".txt":  api.LoaderText,
+	".json": api.LoaderJSON,
+	// .css is handled natively by esbuild without a loader entry
+	// (CSS bundling is built in). Listing it here would override
+	// that to "treat as raw text" — DON'T add it.
+}
+
 // Bundler holds plugins applied across every Build call. The user
 // constructs one per project (or per CLI invocation), registers
 // plugins via AddPlugin, then calls Build with per-invocation
@@ -188,6 +228,23 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		// tsconfig and applies them during resolution. Empty
 		// string disables the integration cleanly.
 		Tsconfig: opts.TSConfig,
+		// Asset loaders for files imports typically reference
+		// from Vue / React code:
+		//
+		//   import flag from "@/assets/flag.png"  → URL string
+		//   import "./styles.css"                 → bundled CSS
+		//
+		// `file` loader emits the asset into outDir with a
+		// content-hashed filename and the import returns the
+		// public URL string. `css` loader bundles via esbuild's
+		// native CSS pipeline so @import + url() recurse.
+		// `text`/`json` cover the smaller cases.
+		//
+		// Without these, esbuild errors with "No loader is
+		// configured for .png files" which the operator can't
+		// fix without dropping into nexus internals — exactly
+		// the Vite-port friction this is meant to remove.
+		Loader: assetLoaders,
 		// Vue's esm-bundler distribution (which is what esm.sh
 		// serves) reads three compile-time flags as bare global
 		// identifiers — without build-time substitution they

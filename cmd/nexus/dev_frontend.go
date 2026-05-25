@@ -204,7 +204,8 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 			"rebuild with `CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest` to enable")
 	}
 
-	lf, err := lockfile.Load(filepath.Join(root, lockfile.Filename))
+	lockPath := filepath.Join(root, lockfile.Filename)
+	lf, err := lockfile.Load(lockPath)
 	if err != nil {
 		return fmt.Errorf("frontend watcher: load lockfile: %w", err)
 	}
@@ -218,7 +219,11 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		return fmt.Errorf("frontend watcher: open cache %s: %w", cacheRoot, err)
 	}
 
-	plugin, err := resolver.New(resolver.Options{Lockfile: lf, Store: st})
+	plugin, err := resolver.New(resolver.Options{
+		Lockfile:      lf,
+		Store:         st,
+		FetchOnDemand: makeOnDemandFetch(lf, st, lockPath, stdout),
+	})
 	if err != nil {
 		return fmt.Errorf("frontend watcher: build resolver: %w", err)
 	}
@@ -247,6 +252,16 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		}
 		closeVue = cv
 		b.AddPlugin(vuePlugin)
+	}
+
+	// Sass plugin is registered unconditionally — the .scss
+	// resolver only matches when the operator actually imports
+	// one. When sass isn't on PATH the plugin surfaces a clear
+	// install-suggestion error at compile time, which is more
+	// useful than esbuild's silent "no loader configured" miss.
+	b.AddPlugin(bundler.NewSassPlugin())
+	if bundler.SassAvailable() {
+		fmt.Fprintf(stdout, "%s[web]%s scss via system sass\n", ansiCyan, ansiReset)
 	}
 
 	// Initial build runs SYNCHRONOUSLY here — esbuild's Watch:true
