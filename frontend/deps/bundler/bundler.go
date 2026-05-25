@@ -100,6 +100,28 @@ type Options struct {
 	// Errors/Warnings off the BuildResult instead. CLI sets this
 	// to os.Stderr for interactive feedback.
 	LogTo io.Writer
+
+	// TSConfig is the project's tsconfig.json (or jsconfig.json)
+	// path. esbuild reads its compilerOptions.paths and honors
+	// them during resolution, so the Vite-classic
+	//
+	//	"paths": { "@/*": ["islands.src/src/*"] }
+	//
+	// pattern Just Works in nexus dev / nexus build without
+	// requiring the operator to rewrite every `@/views/...`
+	// import to a relative path.
+	//
+	// Empty disables tsconfig integration — esbuild falls back
+	// to its standard relative-/-absolute-only resolution. The
+	// CLI auto-detects ./tsconfig.json in the project root when
+	// this is unset, so library callers usually don't set it.
+	//
+	// Important: esbuild interprets the path field's "baseUrl"
+	// relative to the tsconfig location, not the working dir.
+	// Pass an absolute path here to avoid surprises in
+	// monorepo-style layouts where the bundler runs from a
+	// subdirectory.
+	TSConfig string
 }
 
 // Bundler holds plugins applied across every Build call. The user
@@ -162,6 +184,10 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		MinifySyntax:      opts.Minify,
 		Plugins:           b.Plugins,
 		LogLevel:          logLevel,
+		// esbuild reads compilerOptions.paths from the given
+		// tsconfig and applies them during resolution. Empty
+		// string disables the integration cleanly.
+		Tsconfig: opts.TSConfig,
 		// Vue's esm-bundler distribution (which is what esm.sh
 		// serves) reads three compile-time flags as bare global
 		// identifiers — without build-time substitution they
