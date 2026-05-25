@@ -174,3 +174,37 @@ func TestResolver_SubpathHookFailure_PropagatesError(t *testing.T) {
 		t.Fatal("expected 'no cached blob' error when hook fails")
 	}
 }
+
+// TestLooksLikePackageImport: regression for the v0.88.2 bug
+// where on-demand fetch fired for tsconfig-paths aliases like
+// `@/composables/foo`, hitting esm.sh with 400 + cluttering
+// operator output. Only REAL package shapes should be subject
+// to on-demand fetch.
+func TestLooksLikePackageImport(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		// Tsconfig aliases + tilde imports + node-imports —
+		// NEVER on esm.sh.
+		{"@/foo", false},
+		{"@/", false},
+		{"@/composables/useFoo", false},
+		{"~/foo/bar", false},
+		{"#internal", false},
+		{"", false},
+		{"@", false},
+		// Real package shapes.
+		{"vue", true},
+		{"vue-router", true},
+		{"@vue/runtime-dom", true},
+		{"@apollo/client/core", true},
+		{"@mdi/font/css/foo.css", true},
+	}
+	for _, c := range cases {
+		got := looksLikePackageImport(c.in)
+		if got != c.want {
+			t.Errorf("looksLikePackageImport(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

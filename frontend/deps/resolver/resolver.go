@@ -242,10 +242,33 @@ func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, erro
 	pkg, err := opts.Lockfile.Resolve(spec, "")
 	if err != nil {
 		if errors.Is(err, lockfile.ErrNotResolved) {
-			// Not in our lockfile — let esbuild's default
-			// resolver have a go. If the user wrote a typo
-			// it'll surface as a normal "could not resolve"
-			// error from esbuild itself.
+			// Not in our lockfile — but the user might have
+			// imported something that's a valid esm.sh path
+			// even though their `nexus install` didn't fetch
+			// it. Common case: `import "@mdi/font/css/foo.css"`
+			// where @mdi/font is stored under the file-path
+			// spec but not under the bare package name.
+			//
+			// Skip on-demand for tsconfig-paths aliases
+			// (`@/`, `~/`, etc.) — those are user-defined
+			// path prefixes that esbuild resolves against
+			// the tsconfig's paths map. Sending them to
+			// esm.sh would 400; the right resolver is
+			// esbuild's default which we fall through to.
+			if opts.FetchOnDemand != nil && looksLikePackageImport(p) {
+				if canonical, fetchErr := opts.FetchOnDemand(p); fetchErr == nil && canonical != "" {
+					if _, _, retryErr := opts.Store.Get(canonical); retryErr == nil {
+						return api.OnResolveResult{
+							Path:      canonical,
+							Namespace: Namespace,
+						}, nil
+					}
+				}
+			}
+			// Last resort: let esbuild's default resolver
+			// have a go. If the user wrote a typo it'll
+			// surface as a normal "could not resolve" from
+			// esbuild itself.
 			return api.OnResolveResult{}, nil
 		}
 		var ae *lockfile.AmbiguousError
@@ -514,6 +537,54 @@ func resolveRegistryURL(importerURL, imp string) (string, error) {
 
 // splitSpec separates a bare import path into (package, subpath).
 //
+// looksLikePackageImport screens out imports that LOOK bare to
+// the resolver but are actually tsconfig-paths aliases or other
+// non-package prefixes that have no chance of resolving on
+// esm.sh. Sending them to FetchOnDemand wastes a network round
+// trip (400 from esm.sh) and clutters operator output with
+// noisy "on-demand fetch failed" warnings.
+//
+// Rejected shapes:
+//
+//	"@/foo"        ← tsconfig alias (no scope name between @ and /)
+//	"@/"
+//	"~/foo"        ← tilde-style alias (vue-cli convention)
+//	"#foo"         ← node imports field (rare in browser code)
+//
+// Accepted shapes:
+//
+//	"vue"
+//	"@vue/runtime-dom"
+//	"@apollo/client/core"
+//	"@mdi/font/css/foo.css"
+//
+// The distinction: a real package import is either an unscoped
+// name (no leading @) OR a scoped name where the scope segment
+// between "@" and "/" is non-empty. Tsconfig aliases like "@/"
+// have an EMPTY scope segment, which the npm registry would
+// also reject.
+func looksLikePackageImport(p string) bool {
+	if p == "" {
+		return false
+	}
+	// Tilde aliases + node-imports never go to esm.sh.
+	if p[0] == '~' || p[0] == '#' {
+		return false
+	}
+	if p[0] == '@' {
+		// Scoped form. Need a non-empty scope segment between
+		// "@" and the first "/" — otherwise it's a tsconfig
+		// alias masquerading as a scoped package.
+		slash := strings.IndexByte(p, '/')
+		if slash <= 1 {
+			// slash == -1: just "@" or "@scope" — no path at all
+			// slash == 1: "@/..." — empty scope, classic tsconfig alias
+			return false
+		}
+	}
+	return true
+}
+
 //	"vue"                          → ("vue", "")
 //	"vue/dist/vue.esm.js"          → ("vue", "dist/vue.esm.js")
 //	"@vue/runtime-dom"             → ("@vue/runtime-dom", "")
