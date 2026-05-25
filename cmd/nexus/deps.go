@@ -957,7 +957,7 @@ func copyFile(src, dst string) error {
 // stream (sub-path fetches happen mid-build and the message gets
 // lost in the bundler's output), no concurrency tuning since
 // each call fetches exactly one URL.
-func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdout io.Writer) func(string) error {
+func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdout io.Writer) func(string) (string, error) {
 	if lf == nil || st == nil {
 		return nil
 	}
@@ -968,14 +968,22 @@ func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdo
 	f := fetcher.New(st, registry)
 	f.External = []string{"vue", "react", "react-dom"}
 
-	return func(reqURL string) error {
+	return func(reqURL string) (string, error) {
 		// Use a background ctx — the bundler hands us no ctx
 		// and the fetch should complete or hard-fail rather
 		// than hang. If this becomes a problem (slow CDN
 		// pinning a dev build for minutes), wire ctx through.
 		res, err := f.Fetch(context.Background(), reqURL)
 		if err != nil {
-			return err
+			// Surface the failure so operators can see WHY
+			// the on-demand path didn't recover the missing
+			// blob. Without this, the resolver's "no cached
+			// blob" error gives the impression nothing was
+			// tried, when in fact we tried + failed for a
+			// specific reason (network, 404, parse error
+			// in a fetched .mjs sibling, etc.).
+			fmt.Fprintf(stdout, "nexus dev: on-demand fetch %s failed: %v\n", reqURL, err)
+			return "", err
 		}
 		// Persist the new entry so subsequent installs +
 		// builds find it without another round-trip. Lockfile
@@ -990,6 +998,11 @@ func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdo
 				fmt.Fprintf(stdout, "nexus dev: warning: lockfile save after on-demand fetch failed: %v\n", werr)
 			}
 		}
-		return nil
+		// Return the resolved URL the fetcher actually used
+		// as the cache key. esm.sh sometimes 301-redirects
+		// (e.g. `.css.mjs` → `.css`) so the cache stores
+		// under a DIFFERENT URL than reqURL — the resolver
+		// uses this return value to find the blob.
+		return res.Root.Resolved, nil
 	}
 }
