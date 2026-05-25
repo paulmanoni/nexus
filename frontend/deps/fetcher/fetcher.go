@@ -262,9 +262,24 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 		hash = meta.ContentSHA256
 	}
 
-	pkgSpec, pkgVersion := parseSpec(spec)
-	if v := extractVersionFromURL(resolved); v != "" {
-		pkgVersion = v
+	// For file-path specs we record the WHOLE spec (pkg + path) as
+	// the lockfile Spec so subsequent `nexus install` can re-fetch
+	// the exact file. Plain bare specs use the parsed package name
+	// + version so dedup + PinnedVersions lookups continue to key
+	// off the package identity, not its path.
+	var pkgSpec, pkgVersion string
+	if _, _, _, isPath := splitSpecPath(spec); isPath {
+		pkgSpec = spec
+		// Version stays empty for file-path entries — the URL is
+		// what's pinned, not a semver. extractVersionFromURL may
+		// still find a version embedded in the resolved URL; we
+		// honor it for visibility but it's not load-bearing.
+		pkgVersion = extractVersionFromURL(resolved)
+	} else {
+		pkgSpec, pkgVersion = parseSpec(spec)
+		if v := extractVersionFromURL(resolved); v != "" {
+			pkgVersion = v
+		}
 	}
 	pkg := lockfile.Package{
 		Spec:        pkgSpec,
@@ -363,6 +378,17 @@ func (f *Fetcher) specToURL(spec string) (string, error) {
 		// 404. Apply only URLQuery here.
 		return appendURLQuery(spec, f.URLQuery), nil
 	}
+	// File-path spec: bare pkg (or @scope/pkg) followed by /<file/path>.
+	// Pass through to the registry without ?external= (CSS / fonts /
+	// JSON assets have no JS imports to externalize) and without
+	// PinnedVersions (the explicit path is the operator's deliberate
+	// intent — `nexus add @mdi/font/css/materialdesignicons.min.css`
+	// means "fetch THAT file", not "look up the latest @mdi/font and
+	// guess at the CSS path"). esm.sh serves arbitrary files inside
+	// a package via direct path access, no module-style query needed.
+	if isFilePathSpec(spec) {
+		return f.Registry + "/" + spec, nil
+	}
 	// Apply PinnedVersions when the caller passed a bare name with no
 	// version of its own — typically a transitive `import "vue"` that
 	// would otherwise resolve to whatever esm.sh redirects to today.
@@ -375,6 +401,96 @@ func (f *Fetcher) specToURL(spec string) (string, error) {
 	}
 	raw := f.Registry + "/" + spec
 	return appendURLQuery(raw, f.composeBareSpecQuery()), nil
+}
+
+// isFilePathSpec reports whether spec includes a file path inside a
+// package, instead of being a bare package reference. Recognized
+// shapes:
+//
+//	pkg/path                       → true   (vuetify/styles)
+//	pkg@version/path               → true   (vue@3.5.26/dist/vue.esm-browser.js)
+//	@scope/pkg/path                → true   (@mdi/font/css/materialdesignicons.min.css)
+//	@scope/pkg@version/path        → true
+//	pkg                            → false  (bare package)
+//	@scope/pkg                     → false  (scoped bare package)
+//	@scope/pkg@version             → false  (versioned scoped package)
+//
+// The distinction matters because file-path specs bypass
+// ?external= (no JS imports to externalize) and PinnedVersions
+// lookups (the path is an explicit ask), so the URL composition
+// is "pass through to the registry verbatim" instead of the
+// module-shaped construction the bare-spec path uses.
+func isFilePathSpec(spec string) bool {
+	// Strip leading "@" so the same slash-counting logic handles
+	// both scoped and unscoped specs without branching.
+	s := spec
+	scoped := false
+	if strings.HasPrefix(s, "@") {
+		s = s[1:]
+		scoped = true
+	}
+	firstSlash := strings.IndexByte(s, '/')
+	if firstSlash < 0 {
+		return false
+	}
+	if scoped {
+		// "scope/pkg" up to the first slash IS the package name.
+		// The path indicator is a SECOND slash anywhere after it.
+		return strings.IndexByte(s[firstSlash+1:], '/') >= 0
+	}
+	// Unscoped: any "/" means the rest is a file path.
+	return true
+}
+
+// splitSpecPath separates a file-path spec into its package-name,
+// version, and path components — handling both scoped + unscoped +
+// versioned + unversioned shapes. Returns ("", "", "", false) when
+// spec isn't a file-path spec (caller should fall back to plain
+// parseSpec).
+//
+//	"vuetify/styles"                       → ("vuetify", "", "styles")
+//	"vue@3.5.26/dist/vue.esm-browser.js"   → ("vue", "3.5.26", "dist/vue.esm-browser.js")
+//	"@mdi/font/css/foo.css"                → ("@mdi/font", "", "css/foo.css")
+//	"@mdi/font@7.4.47/css/foo.css"         → ("@mdi/font", "7.4.47", "css/foo.css")
+//
+// Used by the lockfile-population path so the recorded `Spec` is
+// the package-name only (not the full path), which keeps PinnedVersions
+// + dedup lookups working correctly — multiple `@mdi/font/css/*`
+// entries should resolve to one `@mdi/font` pin.
+func splitSpecPath(spec string) (name, version, path string, ok bool) {
+	if !isFilePathSpec(spec) {
+		return "", "", "", false
+	}
+	// Find the boundary between <package-shape> and <file/path>.
+	// For scoped specs the package-shape is "@scope/pkg[@version]" —
+	// the path begins after the second top-level slash. For unscoped
+	// specs the package-shape is "pkg[@version]" — path begins
+	// after the first slash.
+	rest := spec
+	scoped := strings.HasPrefix(rest, "@")
+	if scoped {
+		first := strings.IndexByte(rest[1:], '/')
+		if first < 0 {
+			return "", "", "", false
+		}
+		second := strings.IndexByte(rest[1+first+1:], '/')
+		if second < 0 {
+			return "", "", "", false
+		}
+		boundary := 1 + first + 1 + second
+		pkgShape := rest[:boundary]
+		path = rest[boundary+1:]
+		name, version = parseSpec(pkgShape)
+		return name, version, path, true
+	}
+	first := strings.IndexByte(rest, '/')
+	if first < 0 {
+		return "", "", "", false
+	}
+	pkgShape := rest[:first]
+	path = rest[first+1:]
+	name, version = parseSpec(pkgShape)
+	return name, version, path, true
 }
 
 // composeBareSpecQuery joins URLQuery and (when External is set)
