@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
@@ -90,6 +91,18 @@ type Fetcher struct {
 	// classic peer-dep singletons. Set via CLI in newDepsContext;
 	// tests typically leave this empty.
 	External []string
+
+	// Concurrency caps the number of in-flight HTTP fetches during
+	// transitive recursion. The default (8 when zero) is a sweet
+	// spot for esm.sh — high enough to overlap network latency
+	// across the tens of sub-package fetches a vue / vuetify install
+	// fans out into, low enough to avoid esm.sh's rate-limiter
+	// returning 429s on bursty installs.
+	//
+	// Set to 1 to fall back to the previous serial behavior (useful
+	// for deterministic test output where parallel goroutines would
+	// race on stdout). Negative values are clamped to the default.
+	Concurrency int
 
 	// Progress receives one line per HTTP fetch the recursion makes:
 	// cache hits, cache misses with size + duration, and the
@@ -162,15 +175,67 @@ type Result struct {
 // that's wired up in the CLI layer, not here, since the fetcher
 // doesn't see the lockfile by design (separation of concerns).
 func (f *Fetcher) Fetch(ctx context.Context, spec string) (Result, error) {
-	visited := map[string]lockfile.Package{}
-	root, err := f.fetchOne(ctx, spec, visited)
+	concurrency := f.Concurrency
+	if concurrency <= 0 {
+		concurrency = 8
+	}
+	w := &walkContext{
+		sem:     make(chan struct{}, concurrency),
+		visited: map[string]lockfile.Package{},
+	}
+	root, err := f.fetchOne(ctx, spec, w)
 	if err != nil {
 		return Result{}, err
 	}
 	// The root is in visited too; strip it from Transitive so the
-	// caller has a clean (Root, Transitive) split.
-	delete(visited, lockfile.Key(root.Spec, root.Version))
-	return Result{Root: root, Transitive: visited}, nil
+	// caller has a clean (Root, Transitive) split. Use the
+	// thread-safe accessor since the recursion goroutines may have
+	// just finished writing.
+	w.mu.Lock()
+	delete(w.visited, lockfile.Key(root.Spec, root.Version))
+	transitive := w.visited
+	w.mu.Unlock()
+	return Result{Root: root, Transitive: transitive}, nil
+}
+
+// walkContext is the shared state for one Fetch invocation —
+// bounded-concurrency semaphore, dedup map for already-finished
+// fetches, and per-resolved-URL "in-flight" tracker so concurrent
+// import paths into the same transitive don't race into duplicate
+// HTTP round-trips.
+//
+// One walkContext per top-level Fetch call. The same Fetcher can
+// host multiple concurrent Fetch invocations safely because the
+// only Fetcher-level mutable state (the http.Client) is itself
+// concurrent-safe.
+type walkContext struct {
+	// sem caps concurrency across the WHOLE recursion tree. Same
+	// semaphore is shared down the goroutine chain so 8 active
+	// fetches at the leaf level still count against the cap.
+	sem chan struct{}
+
+	// visited holds completed lockfile.Package entries keyed by
+	// lockfile.Key(spec, version). Mutated under mu since multiple
+	// goroutines append simultaneously.
+	visited map[string]lockfile.Package
+	mu      sync.Mutex
+
+	// inflight tracks per-resolved-URL fetches that are currently
+	// in progress. When goroutine A claims a URL, goroutine B
+	// reaching the same URL waits on A's done channel + returns
+	// A's result — avoids redundant HTTP requests + cache writes
+	// when diamond imports converge on the same blob.
+	inflight sync.Map // resolvedURL → *pendingFetch
+}
+
+// pendingFetch is the per-URL coordination primitive used by
+// inflight. The first goroutine to LoadOrStore wins the right
+// to do the actual fetch; subsequent goroutines wait on done
+// and return the cached result/err.
+type pendingFetch struct {
+	done   chan struct{}
+	result lockfile.Package
+	err    error
 }
 
 // fetchOne is the recursive worker. visited is the dedup map across
@@ -181,19 +246,67 @@ func (f *Fetcher) Fetch(ctx context.Context, spec string) (Result, error) {
 // different specs ("vue" and "vue@3.4.21") can resolve to the same
 // final URL after redirect-pinning; storing them separately in
 // `visited` would cause double-fetches.
-func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]lockfile.Package) (lockfile.Package, error) {
+func (f *Fetcher) fetchOne(ctx context.Context, spec string, w *walkContext) (lockfile.Package, error) {
 	reqURL, err := f.specToURL(spec)
 	if err != nil {
 		return lockfile.Package{}, err
 	}
 
-	// HEAD request first to get the redirect-pinned URL without
-	// downloading the body. esm.sh + ETag-aware registries are
-	// fast for HEAD; we skip a body transfer when the URL is
-	// already in the cache.
-	resolved, contentType, etag, esmPath, err := f.resolve(ctx, reqURL)
-	if err != nil {
-		return lockfile.Package{}, err
+	// FAST PATH: an absolute URL (recursion through CDN-internal
+	// paths) that's already in the cache skips the HEAD entirely.
+	// Cache keys are resolved URLs; absolute URLs ARE their
+	// resolved form (no redirect possible at the file-path level),
+	// so a hit here is authoritative + saves an HTTP round-trip.
+	//
+	// For bare specs we still need the HEAD — the bare URL may
+	// redirect to a versioned form we wouldn't know without
+	// asking. Skipping this fast-path on bare specs avoids
+	// drifting onto the wrong cached blob when a pin changed.
+	var (
+		resolved    string
+		contentType string
+		etag        string
+		esmPath     string
+		preCached   bool
+		preBodyPath string
+		preMeta     store.Metadata
+	)
+	if isAbsoluteURL(spec) {
+		// In-flight dedup BEFORE the cache lookup so a goroutine
+		// racing with us on the same absolute URL waits on our
+		// done channel instead of paying for a redundant resolve()
+		// after both pass the cache check. Only LoadOrStore once
+		// we're sure we're going to do work; if a peer beat us
+		// here, return its result.
+		if got, loaded := w.inflight.Load(reqURL); loaded {
+			p := got.(*pendingFetch)
+			select {
+			case <-p.done:
+				return p.result, p.err
+			case <-ctx.Done():
+				return lockfile.Package{}, ctx.Err()
+			}
+		}
+		if path, meta, gerr := f.Store.Get(reqURL); gerr == nil {
+			resolved = reqURL
+			contentType = meta.ContentType
+			preCached = true
+			preBodyPath = path
+			preMeta = meta
+		} else if !errors.Is(gerr, store.ErrNotCached) {
+			return lockfile.Package{}, fmt.Errorf("fetcher: read cache for %s: %w", reqURL, gerr)
+		}
+	}
+
+	if !preCached {
+		// HEAD request first to get the redirect-pinned URL without
+		// downloading the body. esm.sh + ETag-aware registries are
+		// fast for HEAD; we skip a body transfer when the URL is
+		// already in the cache (next branch below).
+		resolved, contentType, etag, esmPath, err = f.resolve(ctx, reqURL)
+		if err != nil {
+			return lockfile.Package{}, err
+		}
 	}
 
 	// Canonicalize the resolved URL when the registry exposed a
@@ -208,30 +321,72 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 	// header for those just points at the internal content path
 	// (e.g. /vue@3.5.34/es2022/vue.mjs) which we'd misuse if we
 	// also canonicalized it.
-	if esmPath != "" && extractVersionFromURL(resolved) == "" {
+	if !preCached && esmPath != "" && extractVersionFromURL(resolved) == "" {
 		if canon := canonicalizeResolvedURL(resolved, esmPath); canon != "" {
 			resolved = canon
 		}
 	}
 
-	// Dedup by resolved URL across the whole recursion.
-	for _, p := range visited {
+	// In-flight dedup: if another goroutine in this same Fetch
+	// invocation is already pulling THIS resolved URL, wait on
+	// its done channel and return its result. Avoids the
+	// double-fetch race when diamond imports (A imports B, A
+	// imports C, B imports C) converge on the same transitive.
+	pending := &pendingFetch{done: make(chan struct{})}
+	got, loaded := w.inflight.LoadOrStore(resolved, pending)
+	if loaded {
+		p := got.(*pendingFetch)
+		select {
+		case <-p.done:
+			return p.result, p.err
+		case <-ctx.Done():
+			return lockfile.Package{}, ctx.Err()
+		}
+	}
+	// We claimed the slot. Make sure done gets closed even on
+	// error paths so waiters don't block forever.
+	defer close(pending.done)
+	defer func() {
+		// On error, leave the slot but with the error set so
+		// retries from the same Fetch invocation see the same
+		// failure consistently. Subsequent Fetch calls get a
+		// fresh walkContext + fresh inflight map.
+	}()
+
+	// Final dedup check against finished entries — a sibling
+	// goroutine may have completed AND populated visited between
+	// our resolve() and the LoadOrStore above. The window is
+	// narrow; this catches it.
+	w.mu.Lock()
+	for _, p := range w.visited {
 		if p.Resolved == resolved {
+			w.mu.Unlock()
+			pending.result = p
 			return p, nil
 		}
 	}
+	w.mu.Unlock()
 
-	// Already in the store?
-	body, meta, gotErr := f.Store.Get(resolved)
-	if gotErr != nil && !errors.Is(gotErr, store.ErrNotCached) {
-		return lockfile.Package{}, fmt.Errorf("fetcher: read cache for %s: %w", resolved, gotErr)
+	// Already in the store? (Skip the lookup when the fast-path
+	// above already established a cache hit by the absolute URL.)
+	var bodyPath string
+	var meta store.Metadata
+	var gotErr error
+	if preCached {
+		bodyPath = preBodyPath
+		meta = preMeta
+	} else {
+		bodyPath, meta, gotErr = f.Store.Get(resolved)
+		if gotErr != nil && !errors.Is(gotErr, store.ErrNotCached) {
+			return lockfile.Package{}, fmt.Errorf("fetcher: read cache for %s: %w", resolved, gotErr)
+		}
 	}
 	var content []byte
 	var hash string
-	if gotErr == nil {
+	if preCached || gotErr == nil {
 		// Cache hit — read the blob bytes (we need the body for
 		// import-recursion).
-		content, err = readFile(body)
+		content, err = readFile(bodyPath)
 		if err != nil {
 			return lockfile.Package{}, fmt.Errorf("fetcher: read cached blob %s: %w", resolved, err)
 		}
@@ -288,64 +443,126 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, visited map[string]
 		Integrity:   "sha256-" + hash,
 		ContentType: contentType,
 	}
-	// Record now so concurrent recursion paths find this entry.
-	visited[lockfile.Key(pkg.Spec, pkg.Version)] = pkg
+	// Record now under the lockfile key so concurrent recursion
+	// paths racing on a DIFFERENT URL but the SAME (spec,version)
+	// key find this entry.
+	w.mu.Lock()
+	w.visited[lockfile.Key(pkg.Spec, pkg.Version)] = pkg
+	w.mu.Unlock()
 
-	// Recurse into imports. Two scan paths, one per body type:
-	//   - JS-shape: ExtractImports finds import / export / dynamic
-	//     import() specifiers.
-	//   - CSS-shape: ExtractCSSImports finds @import + url(...)
-	//     references. Without this, font packages and
-	//     stylesheet-with-image packages would fetch their CSS
-	//     but not the referenced woff2 / png / svg assets, and
-	//     esbuild would error at bundle time with "not in cache"
-	//     for every url().
-	//
-	// We treat sourcemaps + JSON + data files as terminal — no
-	// recursion. Same shape as before; the new branch is the
-	// CSS path.
+	finalPkg, err := f.recurseImports(ctx, pkg, content, w)
+	if err != nil {
+		pending.err = err
+		return lockfile.Package{}, err
+	}
+	pending.result = finalPkg
+	return finalPkg, nil
+}
+
+// recurseImports walks every import found in pkg's body and
+// concurrently fetches each child, bounded by w.sem. Updates
+// pkg.Deps with each child's lockfile key (under w.mu) and
+// returns the finalized package value.
+//
+// Two scan paths, one per body type:
+//
+//   - JS-shape: ExtractImports finds import / export / dynamic
+//     import() specifiers.
+//   - CSS-shape: ExtractCSSImports finds @import + url(...)
+//     references. Without this, font packages and stylesheet-
+//     with-image packages would fetch their CSS but not the
+//     referenced woff2 / png / svg assets, and esbuild would
+//     error at bundle time with "not in cache" for every url().
+//
+// We treat sourcemaps + JSON + data files as terminal — no
+// recursion.
+//
+// Parallel fan-out: each child fetch acquires a w.sem slot,
+// processes, releases. The semaphore is shared across the
+// entire walk tree so 8 active fetches at the leaf still count
+// against the same cap that 8 fetches at the root would.
+func (f *Fetcher) recurseImports(ctx context.Context, pkg lockfile.Package, body []byte, w *walkContext) (lockfile.Package, error) {
 	var imports []string
 	switch {
-	case isJSContent(contentType, resolved):
-		imports = ExtractImports(string(content))
-	case isCSSContent(contentType, resolved):
-		imports = ExtractCSSImports(string(content))
-	}
-	if len(imports) > 0 {
-		for _, imp := range imports {
-			// Resolve the import relative to the resolved URL so
-			// CDN-internal paths (e.g. /v135/@vue/x/foo.js) chase
-			// correctly.
-			childSpec, err := resolveAgainst(resolved, imp)
-			if err != nil {
-				// Unresolvable imports are non-fatal — esbuild's
-				// own resolver might still handle them (e.g. a
-				// data URI), or the user will see a clearer
-				// error at bundle time.
-				continue
-			}
-			// Bare specs ("shared", "@vue/runtime-dom") inside a
-			// registry-served body refer to OTHER packages in the
-			// same registry — esm.sh-served modules link to peer
-			// modules via bare specs, expecting the resolver to
-			// look them up. The fetcher does that lookup eagerly
-			// by recursing with the bare spec, which specToURL
-			// expands against f.Registry. Relative/absolute URLs
-			// recurse via the resolved URL as-is.
-			child, err := f.fetchOne(ctx, childSpec, visited)
-			if err != nil {
-				return lockfile.Package{}, fmt.Errorf("fetcher: recurse from %s into %s: %w", spec, imp, err)
-			}
-			depKey := lockfile.Key(child.Spec, child.Version)
-			// Add as a dependency on the parent package (mutate
-			// the visited entry, since pkg is a value copy).
-			existing := visited[lockfile.Key(pkg.Spec, pkg.Version)]
-			existing.Deps = appendUnique(existing.Deps, depKey)
-			visited[lockfile.Key(pkg.Spec, pkg.Version)] = existing
-		}
+	case isJSContent(pkg.ContentType, pkg.Resolved):
+		imports = ExtractImports(string(body))
+	case isCSSContent(pkg.ContentType, pkg.Resolved):
+		imports = ExtractCSSImports(string(body))
 	}
 
-	return visited[lockfile.Key(pkg.Spec, pkg.Version)], nil
+	if len(imports) == 0 {
+		w.mu.Lock()
+		w.visited[lockfile.Key(pkg.Spec, pkg.Version)] = pkg
+		w.mu.Unlock()
+		return pkg, nil
+	}
+
+	// Resolve each import to a child spec up-front (cheap), then
+	// dispatch in parallel. resolveAgainst failures are logged
+	// out — esbuild's own resolver may still handle them later
+	// (data URIs, package-conditional exports).
+	type childJob struct {
+		imp       string
+		childSpec string
+	}
+	var jobs []childJob
+	for _, imp := range imports {
+		childSpec, rerr := resolveAgainst(pkg.Resolved, imp)
+		if rerr != nil {
+			continue
+		}
+		jobs = append(jobs, childJob{imp: imp, childSpec: childSpec})
+	}
+
+	type childResult struct {
+		imp   string
+		child lockfile.Package
+		err   error
+	}
+	results := make([]childResult, len(jobs))
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Add(1)
+		go func(i int, j childJob) {
+			defer wg.Done()
+			// Acquire concurrency slot. Honors ctx cancellation
+			// so a Ctrl-C during the wait doesn't stick.
+			select {
+			case w.sem <- struct{}{}:
+			case <-ctx.Done():
+				results[i] = childResult{imp: j.imp, err: ctx.Err()}
+				return
+			}
+			defer func() { <-w.sem }()
+
+			child, err := f.fetchOne(ctx, j.childSpec, w)
+			results[i] = childResult{imp: j.imp, child: child, err: err}
+		}(i, j)
+	}
+	wg.Wait()
+
+	// First error wins. Wrap with the parent spec so the user
+	// sees the full recursion chain in the error message.
+	for _, r := range results {
+		if r.err != nil {
+			return lockfile.Package{}, fmt.Errorf("fetcher: recurse from %s into %s: %w", pkg.Spec, r.imp, r.err)
+		}
+		depKey := lockfile.Key(r.child.Spec, r.child.Version)
+		pkg.Deps = appendUnique(pkg.Deps, depKey)
+	}
+
+	w.mu.Lock()
+	w.visited[lockfile.Key(pkg.Spec, pkg.Version)] = pkg
+	w.mu.Unlock()
+	return pkg, nil
+}
+
+// isAbsoluteURL reports whether spec is an absolute http(s) URL.
+// Used by the fast-path cache-hit check — bare specs need a HEAD
+// to learn their resolved URL before they can be looked up in
+// the cache.
+func isAbsoluteURL(spec string) bool {
+	return strings.HasPrefix(spec, "http://") || strings.HasPrefix(spec, "https://")
 }
 
 // specToURL builds the registry URL for a bare spec. Three shapes:
