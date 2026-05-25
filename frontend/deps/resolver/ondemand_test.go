@@ -34,11 +34,11 @@ func TestResolver_SubpathCacheMiss_TriggersFetchOnDemand(t *testing.T) {
 	// Track which URL the hook was asked to fetch + populate
 	// the cache when called so the resolver's retry succeeds.
 	var fetched string
-	hook := func(u string) error {
+	hook := func(u string) (string, error) {
 		fetched = u
 		_, err := st.Put(u, strings.NewReader("export const x = 1;"), "",
 			store.Metadata{URL: u, ResolvedURL: u, ContentType: "application/javascript"})
-		return err
+		return u, err
 	}
 
 	res, err := resolveOne(Options{Lockfile: lf, Store: st, FetchOnDemand: hook},
@@ -90,6 +90,60 @@ func TestResolver_SubpathCacheMiss_NoHookPreservesOldError(t *testing.T) {
 	}
 }
 
+// TestResolver_SubpathHookCanonicalizesURL: the hook may return
+// a DIFFERENT URL than the resolver asked for — esm.sh
+// 301-redirects shapes like `*.css.mjs` → `*.css`, so the
+// fetcher stores under the post-redirect URL. The resolver must
+// use the hook's return value (not the original asked-for URL)
+// when retrying the cache lookup.
+//
+// Without this fix vuetify's per-component CSS files
+// (VSlider.css.mjs, VTextField.css.mjs, etc.) cache-miss after
+// successful on-demand fetch, surfacing a confusing "no cached
+// blob" error even though the bytes ARE on disk under a
+// neighboring key.
+func TestResolver_SubpathHookCanonicalizesURL(t *testing.T) {
+	tmp := t.TempDir()
+	st, err := store.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf := lockfile.New()
+	lf.Add(lockfile.Package{
+		Spec:     "vuetify",
+		Version:  "3.11.7",
+		Resolved: "https://esm.sh/vuetify@3.11.7",
+	})
+
+	// Simulate the .css.mjs → .css redirect: the hook gets
+	// asked for the .css.mjs URL, fetches the redirect target
+	// (.css), and returns THAT as the cache key.
+	const askedURL = "https://esm.sh/vuetify@3.11.7/lib/foo.css.mjs"
+	const canonicalURL = "https://esm.sh/vuetify@3.11.7/lib/foo.css"
+	hook := func(u string) (string, error) {
+		if u != askedURL {
+			t.Errorf("hook asked for %q, expected %q", u, askedURL)
+		}
+		// Write to the cache under the CANONICAL URL — the
+		// post-redirect key.
+		_, err := st.Put(canonicalURL, strings.NewReader(".foo { }"), "",
+			store.Metadata{URL: u, ResolvedURL: canonicalURL, ContentType: "text/css"})
+		return canonicalURL, err
+	}
+
+	res, err := resolveOne(Options{Lockfile: lf, Store: st, FetchOnDemand: hook},
+		api.OnResolveArgs{Path: "vuetify/lib/foo.css.mjs"})
+	if err != nil {
+		t.Fatalf("resolveOne: %v", err)
+	}
+	if len(res.Errors) > 0 {
+		t.Fatalf("expected no errors, got: %v", res.Errors)
+	}
+	if res.Path != canonicalURL {
+		t.Errorf("resolver should use the canonical URL as Path, got %q, want %q", res.Path, canonicalURL)
+	}
+}
+
 // TestResolver_SubpathHookFailure_PropagatesError: if the
 // FetchOnDemand hook returns an error (network failure, 404,
 // etc.), the resolver should fall through to the same "no
@@ -107,8 +161,8 @@ func TestResolver_SubpathHookFailure_PropagatesError(t *testing.T) {
 		Version:  "3.14.0",
 		Resolved: "https://esm.sh/@apollo/client@3.14.0",
 	})
-	failing := func(u string) error {
-		return errors.New("network borked")
+	failing := func(u string) (string, error) {
+		return "", errors.New("network borked")
 	}
 
 	res, err := resolveOne(Options{Lockfile: lf, Store: st, FetchOnDemand: failing},

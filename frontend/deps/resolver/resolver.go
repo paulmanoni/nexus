@@ -59,7 +59,11 @@ type Options struct {
 	// (e.g. `@apollo/client/core`) resolves to a URL that isn't
 	// yet in the cache. The function is expected to fetch the
 	// URL — typically via a fetcher.Fetcher — and populate the
-	// store + (optionally) the lockfile.
+	// store + (optionally) the lockfile. Returns the
+	// POST-REDIRECT URL the fetcher actually stored under (esm.sh
+	// 301-redirects e.g. `.css.mjs` → `.css`, so the cache key
+	// differs from the asked-for URL); the resolver retries the
+	// store lookup at this returned URL.
 	//
 	// Why this exists: `nexus install` walks the import graph
 	// starting from package.json deps, which fetches package
@@ -78,7 +82,7 @@ type Options struct {
 	// nil disables on-demand fetching — sub-path misses surface
 	// the v0.1 error message unchanged. Useful for offline-only
 	// builds where any cache miss should fail loud.
-	FetchOnDemand func(url string) error
+	FetchOnDemand func(url string) (resolvedURL string, err error)
 }
 
 // New returns an esbuild plugin that wires OnResolve for every
@@ -175,6 +179,28 @@ func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, erro
 					return api.OnResolveResult{Path: stripped, Namespace: Namespace}, nil
 				}
 			}
+			// On-demand fetch: install-time recursion didn't
+			// reach this URL (typically a vuetify lib/util
+			// helper, or a transitive utility that esm.sh
+			// links only when a specific top-level export
+			// from the project's code actually uses it).
+			// Pull now + retry — the same hook the sub-path
+			// branch below uses. esm.sh routinely
+			// 301-redirects internal paths (e.g. .css.mjs →
+			// .css), so the cache key the fetcher used may
+			// differ from absURL — use the returned
+			// post-redirect URL for the retry.
+			if opts.FetchOnDemand != nil {
+				if canonical, ferr := opts.FetchOnDemand(absURL); ferr == nil {
+					key := absURL
+					if canonical != "" {
+						key = canonical
+					}
+					if _, _, retryErr := opts.Store.Get(key); retryErr == nil {
+						return api.OnResolveResult{Path: key, Namespace: Namespace}, nil
+					}
+				}
+			}
 		}
 		// Registry-shaped import didn't hit the cache → clear
 		// error rather than letting esbuild try a useless
@@ -252,10 +278,14 @@ func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, erro
 			// didn't visit. If FetchOnDemand is wired, pull
 			// the URL now + retry the cache lookup.
 			if subpath != "" && opts.FetchOnDemand != nil {
-				if fetchErr := opts.FetchOnDemand(targetURL); fetchErr == nil {
-					if _, _, retryErr := opts.Store.Get(targetURL); retryErr == nil {
+				if canonical, fetchErr := opts.FetchOnDemand(targetURL); fetchErr == nil {
+					key := targetURL
+					if canonical != "" {
+						key = canonical
+					}
+					if _, _, retryErr := opts.Store.Get(key); retryErr == nil {
 						return api.OnResolveResult{
-							Path:      targetURL,
+							Path:      key,
 							Namespace: Namespace,
 						}, nil
 					}
