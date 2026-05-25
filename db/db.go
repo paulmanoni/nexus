@@ -1,5 +1,5 @@
 // Package db is nexus's driver-agnostic GORM manager. It mirrors the shape
-// of oats_admin_backend/database.DBManager (Start/Stop/GetDB/IsConnected)
+// of the legacy DBManager (Start/Stop/GetDB/IsConnected)
 // and keeps the same failsafe-go retry + circuit-breaker behavior, but
 // handles PostgreSQL, MySQL, and SQLite behind a single Config.Driver field.
 //
@@ -121,7 +121,7 @@ func defaultPool(d Driver) PoolConfig {
 }
 
 // Manager owns one *gorm.DB, reconnects in the background, and exposes the
-// same method set as oats_admin_backend/database.DatabaseManager so it can
+// same method set as the legacy DatabaseManager interface so it can
 // drop in wherever that interface is expected.
 type Manager struct {
 	cfg         Config
