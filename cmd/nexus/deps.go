@@ -940,3 +940,56 @@ func copyFile(src, dst string) error {
 	_, err = io.Copy(out, in)
 	return err
 }
+
+// makeOnDemandFetch returns the closure the resolver invokes
+// when a sub-path import (`@apollo/client/core`, `vuetify/styles`)
+// resolves to a URL that's not yet in the cache. The closure
+// builds a minimal fetcher inheriting the same External-singleton
+// list as `nexus install`, pulls the URL, persists it via the
+// lockfile so subsequent builds find it.
+//
+// Returns nil when prerequisites are missing — the resolver
+// treats nil as "on-demand disabled" and surfaces the v0.1 "run
+// nexus install" error.
+//
+// The fetcher created here is a minimal one — same registry +
+// store + external list as the install command, no progress
+// stream (sub-path fetches happen mid-build and the message gets
+// lost in the bundler's output), no concurrency tuning since
+// each call fetches exactly one URL.
+func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdout io.Writer) func(string) error {
+	if lf == nil || st == nil {
+		return nil
+	}
+	registry := os.Getenv("NEXUS_REGISTRY")
+	if registry == "" {
+		registry = fetcher.DefaultRegistry
+	}
+	f := fetcher.New(st, registry)
+	f.External = []string{"vue", "react", "react-dom"}
+
+	return func(reqURL string) error {
+		// Use a background ctx — the bundler hands us no ctx
+		// and the fetch should complete or hard-fail rather
+		// than hang. If this becomes a problem (slow CDN
+		// pinning a dev build for minutes), wire ctx through.
+		res, err := f.Fetch(context.Background(), reqURL)
+		if err != nil {
+			return err
+		}
+		// Persist the new entry so subsequent installs +
+		// builds find it without another round-trip. Lockfile
+		// writes are idempotent — re-adding an existing key
+		// just overwrites with the same content.
+		lf.Add(res.Root)
+		for _, t := range res.Transitive {
+			lf.Add(t)
+		}
+		if lockPath != "" {
+			if werr := lf.Save(lockPath); werr != nil {
+				fmt.Fprintf(stdout, "nexus dev: warning: lockfile save after on-demand fetch failed: %v\n", werr)
+			}
+		}
+		return nil
+	}
+}

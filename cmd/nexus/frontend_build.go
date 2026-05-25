@@ -113,7 +113,11 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("frontend build: open cache %s: %w", cacheRoot, err)
 	}
 
-	plugin, err := resolver.New(resolver.Options{Lockfile: lf, Store: st})
+	plugin, err := resolver.New(resolver.Options{
+		Lockfile:      lf,
+		Store:         st,
+		FetchOnDemand: makeOnDemandFetch(lf, st, lockfilePath, stdout),
+	})
 	if err != nil {
 		return fmt.Errorf("frontend build: build resolver: %w", err)
 	}
@@ -136,6 +140,14 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		}
 		defer closeVue()
 		b.AddPlugin(vuePlugin)
+	}
+
+	// Sass plugin — same semantics as `nexus dev`: registered
+	// unconditionally so .scss imports surface an actionable
+	// install-sass error when the binary isn't on PATH.
+	b.AddPlugin(bundler.NewSassPlugin())
+	if bundler.SassAvailable() {
+		fmt.Fprintln(stdout, "nexus build: scss via system sass")
 	}
 
 	noun := "entry"
