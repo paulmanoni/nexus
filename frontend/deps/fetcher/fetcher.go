@@ -17,6 +17,7 @@ package fetcher
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -252,16 +253,28 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, w *walkContext) (lo
 		return lockfile.Package{}, err
 	}
 
-	// FAST PATH: an absolute URL (recursion through CDN-internal
-	// paths) that's already in the cache skips the HEAD entirely.
-	// Cache keys are resolved URLs; absolute URLs ARE their
-	// resolved form (no redirect possible at the file-path level),
-	// so a hit here is authoritative + saves an HTTP round-trip.
+	// FAST PATH: try the local cache by reqURL BEFORE any HTTP work,
+	// for both absolute URLs AND bare specs. On hit, reqURL IS the
+	// cache key — we trust it and skip the HEAD entirely.
 	//
-	// For bare specs we still need the HEAD — the bare URL may
-	// redirect to a versioned form we wouldn't know without
-	// asking. Skipping this fast-path on bare specs avoids
-	// drifting onto the wrong cached blob when a pin changed.
+	// Originally guarded to absolute URLs only because bare specs
+	// MAY redirect to a canonical versioned form. But the install
+	// flow is dominated by VERSIONED bare specs (e.g.
+	// `vue@3.5.34?external=...`) that won't redirect since they're
+	// already canonical, and those were each paying ~200ms of HEAD
+	// per cached blob. For vuetify (~1000 transitive entries, mostly
+	// cached on the second install) that adds up to MINUTES of wall
+	// time on what should be a no-op refresh.
+	//
+	// Unversioned bare specs (`vue` with no `@version`) miss this
+	// fast-path on a cold cache because the canonical URL differs
+	// from reqURL — they fall through to resolve() and get pinned
+	// the first time. Once in the lockfile, subsequent installs
+	// always feed in the versioned form, hitting the fast-path.
+	//
+	// In-flight dedup runs FIRST so a goroutine racing with us on
+	// the same URL waits on our done channel instead of paying for
+	// a redundant resolve() + cache-check after both miss together.
 	var (
 		resolved    string
 		contentType string
@@ -271,31 +284,23 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, w *walkContext) (lo
 		preBodyPath string
 		preMeta     store.Metadata
 	)
-	if isAbsoluteURL(spec) {
-		// In-flight dedup BEFORE the cache lookup so a goroutine
-		// racing with us on the same absolute URL waits on our
-		// done channel instead of paying for a redundant resolve()
-		// after both pass the cache check. Only LoadOrStore once
-		// we're sure we're going to do work; if a peer beat us
-		// here, return its result.
-		if got, loaded := w.inflight.Load(reqURL); loaded {
-			p := got.(*pendingFetch)
-			select {
-			case <-p.done:
-				return p.result, p.err
-			case <-ctx.Done():
-				return lockfile.Package{}, ctx.Err()
-			}
+	if got, loaded := w.inflight.Load(reqURL); loaded {
+		p := got.(*pendingFetch)
+		select {
+		case <-p.done:
+			return p.result, p.err
+		case <-ctx.Done():
+			return lockfile.Package{}, ctx.Err()
 		}
-		if path, meta, gerr := f.Store.Get(reqURL); gerr == nil {
-			resolved = reqURL
-			contentType = meta.ContentType
-			preCached = true
-			preBodyPath = path
-			preMeta = meta
-		} else if !errors.Is(gerr, store.ErrNotCached) {
-			return lockfile.Package{}, fmt.Errorf("fetcher: read cache for %s: %w", reqURL, gerr)
-		}
+	}
+	if path, meta, gerr := f.Store.Get(reqURL); gerr == nil {
+		resolved = reqURL
+		contentType = meta.ContentType
+		preCached = true
+		preBodyPath = path
+		preMeta = meta
+	} else if !errors.Is(gerr, store.ErrNotCached) {
+		return lockfile.Package{}, fmt.Errorf("fetcher: read cache for %s: %w", reqURL, gerr)
 	}
 
 	if !preCached {
@@ -305,6 +310,23 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, w *walkContext) (lo
 		// already in the cache (next branch below).
 		resolved, contentType, etag, esmPath, err = f.resolve(ctx, reqURL)
 		if err != nil {
+			// CSS-only-package fallback: bare specs that 404 on
+			// esm.sh might still be valid packages — they just
+			// have no JS to serve. @mdi/font, bootstrap-icons,
+			// katex (CSS-side), etc. all fall here. Try the
+			// package.json to discover a `style` / asset entry
+			// and retry with the file-path spec.
+			if !isAbsoluteURL(spec) && !isFilePathSpec(spec) {
+				if herr := (*HTTPError)(nil); errors.As(err, &herr) && herr.Status == http.StatusNotFound {
+					if fallbackSpec, derr := f.discoverPackageEntry(ctx, herr.URL); derr == nil && fallbackSpec != "" {
+						// Retry with the discovered asset entry.
+						// Goes through the full fetchOne flow so
+						// progress logging + dedup + recursion
+						// all work the same way.
+						return f.fetchOne(ctx, fallbackSpec, w)
+					}
+				}
+			}
 			return lockfile.Package{}, err
 		}
 	}
@@ -798,7 +820,12 @@ func (f *Fetcher) resolveOnce(ctx context.Context, reqURL string) (resolved, con
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", "", "", &HTTPError{URL: reqURL, Status: resp.StatusCode}
+		// Capture the POST-redirect URL even on error so callers
+		// (the CSS-only-package fallback in fetchOne) can extract
+		// the resolved version from a 404 on a bare spec. esm.sh
+		// happily redirects `vue` → `vue@3.5.34` and only THEN
+		// 404s if the package can't be served as a JS module.
+		return "", "", "", "", &HTTPError{URL: resp.Request.URL.String(), Status: resp.StatusCode}
 	}
 	// resp.Request.URL is the final URL after redirects.
 	final := resp.Request.URL.String()
@@ -1234,4 +1261,146 @@ func humanBytes(n int) string {
 	default:
 		return fmt.Sprintf("%5d  B", n)
 	}
+}
+
+// discoverPackageEntry handles the "esm.sh 404s on a bare spec
+// because the package has no JS to serve" case (canonical
+// example: @mdi/font ships only CSS + woff2 files). Fetches the
+// package's package.json from the registry, inspects it for
+// asset-entry fields, and returns a file-path spec the caller
+// can retry with.
+//
+// Inspection order (first match wins):
+//
+//   1. `style`             ← npm convention for CSS-only packages
+//   2. `exports["./style"]` (string OR { default / require / etc. })
+//   3. `exports["."].style`
+//   4. `main`              ← when it ends in .css (rare; some
+//                            ancient packages put the CSS path
+//                            there before `style` was a thing)
+//
+// resolvedURL must be the post-redirect URL from the failing
+// resolve() — esm.sh's redirect-to-versioned step is what gives
+// us `@mdi/font@7.4.47?external=...` to extract the canonical
+// `<scope>/<pkg>@<version>` from. Returns ("", nil) when the
+// package has no recognizable asset entry — caller propagates
+// the original 404 unchanged.
+//
+// All work is best-effort: network failure on the package.json
+// fetch returns ("", nil) too. The original 404 is more
+// actionable to operators than a "tried to fall back but
+// couldn't" error.
+func (f *Fetcher) discoverPackageEntry(ctx context.Context, resolvedURL string) (string, error) {
+	canonical := canonicalSpecFromResolvedURL(resolvedURL)
+	if canonical == "" {
+		return "", nil
+	}
+	pkgJSONURL := f.Registry + "/" + canonical + "/package.json"
+	body, err := f.get(ctx, pkgJSONURL)
+	if err != nil {
+		// Best-effort — don't surface the secondary error.
+		return "", nil
+	}
+	entry := pickAssetEntry(body)
+	if entry == "" {
+		return "", nil
+	}
+	// Trim leading "./" so the composed spec doesn't carry the
+	// relative-path prefix into the registry URL.
+	entry = strings.TrimPrefix(entry, "./")
+	return canonical + "/" + entry, nil
+}
+
+// canonicalSpecFromResolvedURL extracts the bare
+// `<pkg>@<version>` from a resolved esm.sh URL. Mirrors
+// canonicalSpecFromESMPath but operates on the absolute URL
+// form (which is what HTTPError carries after a 4xx response).
+//
+//	"https://esm.sh/@mdi/font@7.4.47?external=vue"     → "@mdi/font@7.4.47"
+//	"https://esm.sh/vue@3.5.34/es2022/vue.mjs"          → "vue@3.5.34"
+//	"https://esm.sh/something-without-version"          → ""
+func canonicalSpecFromResolvedURL(resolvedURL string) string {
+	u, err := url.Parse(resolvedURL)
+	if err != nil {
+		return ""
+	}
+	// Path always starts with "/". Strip it.
+	p := strings.TrimPrefix(u.Path, "/")
+	// Find the first "@" in the path. For scoped packages
+	// ("@mdi/font@7.4.47/...") the package name starts with "@"
+	// so we look for the SECOND "@". For unscoped packages
+	// ("vue@3.5.34/...") it's the first.
+	startAt := 0
+	if strings.HasPrefix(p, "@") {
+		startAt = 1
+	}
+	atIdx := strings.IndexByte(p[startAt:], '@')
+	if atIdx < 0 {
+		return "" // no version embedded
+	}
+	atIdx += startAt
+	// Find the end of the version (next "/" or end of string).
+	endIdx := strings.IndexByte(p[atIdx:], '/')
+	if endIdx < 0 {
+		return p
+	}
+	return p[:atIdx+endIdx]
+}
+
+// pickAssetEntry parses a package.json body and returns the
+// most-likely CSS/asset entry path. Returns "" when nothing
+// recognizable is found.
+//
+// We do JSON decode → map walk rather than full struct binding
+// because the `exports` field has wildly variable shapes
+// (string / map / nested-map) across npm packages, and a typed
+// struct would need a union type Go doesn't natively have.
+func pickAssetEntry(body []byte) string {
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return ""
+	}
+	// 1. Top-level `style` — the strong convention for CSS-only
+	//    packages.
+	if s, ok := raw["style"].(string); ok && s != "" {
+		return s
+	}
+	// 2. exports["./style"] in its various shapes.
+	if exports, ok := raw["exports"].(map[string]any); ok {
+		if entry := readExportEntry(exports["./style"]); entry != "" {
+			return entry
+		}
+		// 3. exports["."]["style"]
+		if dot, ok := exports["."].(map[string]any); ok {
+			if entry := readExportEntry(dot["style"]); entry != "" {
+				return entry
+			}
+		}
+	}
+	// 4. `main` if it ends in .css.
+	if m, ok := raw["main"].(string); ok && strings.HasSuffix(m, ".css") {
+		return m
+	}
+	return ""
+}
+
+// readExportEntry handles the polymorphic shapes the `exports`
+// field uses. Accepts a plain string OR a conditional-exports
+// map (`{ "default": "...", "require": "...", ... }`).
+func readExportEntry(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case map[string]any:
+		// Prefer `default`; fall back to any string-valued entry.
+		if s, ok := val["default"].(string); ok && s != "" {
+			return s
+		}
+		for _, x := range val {
+			if s, ok := x.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
