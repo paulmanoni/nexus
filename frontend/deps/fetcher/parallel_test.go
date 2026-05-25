@@ -135,6 +135,73 @@ func TestFetcher_ParallelIsActuallyFasterThanSerial(t *testing.T) {
 	t.Logf("serial=%v parallel=%v ratio=%.2f×", serial, parallel, ratio)
 }
 
+// TestFetcher_DeepRecursionDoesNotDeadlock: regression for the
+// semaphore deadlock found when installing pinia (~20-node tree
+// at Concurrency=8). Earlier versions held the semaphore slot
+// ACROSS the recursive fetchOne call, so parents+children
+// competed for the same 8 slots and deeper trees stalled
+// forever. Fix: only hold the slot for HTTP work, never across
+// recursion.
+//
+// This test creates a tree DEEPER than Concurrency to prove the
+// slot is released before recursion: with the old design, a
+// 4-deep chain at Concurrency=2 would deadlock at depth 3.
+func TestFetcher_DeepRecursionDoesNotDeadlock(t *testing.T) {
+	mux := http.NewServeMux()
+	// 6-level chain: each level imports the next. With
+	// Concurrency=2, the old (broken) implementation would hang
+	// at level 3 — both slots held by ancestors waiting for
+	// descendants who can't acquire slots.
+	mux.HandleFunc("/level0.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`import './level1.js';`))
+	})
+	mux.HandleFunc("/level1.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`import './level2.js';`))
+	})
+	mux.HandleFunc("/level2.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`import './level3.js';`))
+	})
+	mux.HandleFunc("/level3.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`import './level4.js';`))
+	})
+	mux.HandleFunc("/level4.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`import './level5.js';`))
+	})
+	mux.HandleFunc("/level5.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`export const leaf = true;`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	st, _ := store.New(t.TempDir())
+	f := &Fetcher{
+		Registry:    srv.URL,
+		Store:       st,
+		HTTP:        srv.Client(),
+		Concurrency: 2, // shallower than the chain depth
+	}
+
+	// Hard timeout — if the deadlock returns, this test stalls
+	// rather than hangs forever and the harness will report it.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := f.Fetch(ctx, srv.URL+"/level0.js")
+	if err != nil {
+		t.Fatalf("Fetch: %v (deadlock returning? slot was held across recursion)", err)
+	}
+	// All 6 levels should be in the result.
+	if len(res.Transitive) != 5 {
+		t.Errorf("expected 5 transitive packages, got %d", len(res.Transitive))
+	}
+}
+
 // TestFetcher_InflightDedupAvoidsDoubleFetch: when two children
 // of the same root both import the same transitive (diamond
 // import), the transitive's body should be requested ONCE not

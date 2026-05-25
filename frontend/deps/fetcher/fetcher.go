@@ -303,7 +303,29 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, w *walkContext) (lo
 		return lockfile.Package{}, fmt.Errorf("fetcher: read cache for %s: %w", reqURL, gerr)
 	}
 
+	// Track semaphore ownership so we can release at the right
+	// moment regardless of which exit path we take. The slot is
+	// acquired ONLY for network work (resolve + body GET) — never
+	// held across recursion, which would deadlock when child
+	// goroutines also need slots while their parent is blocked
+	// waiting for them. Real bug: pinia's ~20-node tree at
+	// Concurrency=8 hung indefinitely with the previous design.
+	slotHeld := false
+	releaseSlot := func() {
+		if slotHeld {
+			<-w.sem
+			slotHeld = false
+		}
+	}
+	defer releaseSlot()
+
 	if !preCached {
+		select {
+		case w.sem <- struct{}{}:
+			slotHeld = true
+		case <-ctx.Done():
+			return lockfile.Package{}, ctx.Err()
+		}
 		// HEAD request first to get the redirect-pinned URL without
 		// downloading the body. esm.sh + ETag-aware registries are
 		// fast for HEAD; we skip a body transfer when the URL is
@@ -357,6 +379,9 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, w *walkContext) (lo
 	pending := &pendingFetch{done: make(chan struct{})}
 	got, loaded := w.inflight.LoadOrStore(resolved, pending)
 	if loaded {
+		// Release the semaphore slot BEFORE waiting on a peer —
+		// blocking with a slot held would starve other goroutines.
+		releaseSlot()
 		p := got.(*pendingFetch)
 		select {
 		case <-p.done:
@@ -438,6 +463,9 @@ func (f *Fetcher) fetchOne(ctx context.Context, spec string, w *walkContext) (lo
 		_ = path
 		hash = meta.ContentSHA256
 	}
+	// HTTP work is done — release the semaphore so child fetches
+	// can use the slot during the recursion below.
+	releaseSlot()
 
 	// For file-path specs we record the WHOLE spec (pkg + path) as
 	// the lockfile Spec so subsequent `nexus install` can re-fetch
@@ -545,18 +573,16 @@ func (f *Fetcher) recurseImports(ctx context.Context, pkg lockfile.Package, body
 	var wg sync.WaitGroup
 	for i, j := range jobs {
 		wg.Add(1)
+		// IMPORTANT: do NOT hold w.sem across the recursive fetchOne
+		// call. The semaphore bounds concurrent HTTP fetches, which
+		// fetchOne acquires/releases internally around its actual
+		// network work. Holding the slot here would deadlock:
+		// parents holding all 8 slots while waiting for their
+		// grandchildren — which also need slots — to complete.
+		// (Real symptom: pinia's ~20-node tree at Concurrency=8 hung
+		// indefinitely on the second-level recursion.)
 		go func(i int, j childJob) {
 			defer wg.Done()
-			// Acquire concurrency slot. Honors ctx cancellation
-			// so a Ctrl-C during the wait doesn't stick.
-			select {
-			case w.sem <- struct{}{}:
-			case <-ctx.Done():
-				results[i] = childResult{imp: j.imp, err: ctx.Err()}
-				return
-			}
-			defer func() { <-w.sem }()
-
 			child, err := f.fetchOne(ctx, j.childSpec, w)
 			results[i] = childResult{imp: j.imp, child: child, err: err}
 		}(i, j)
