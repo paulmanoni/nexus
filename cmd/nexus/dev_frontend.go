@@ -272,11 +272,16 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		// auto-refresh when this rebuild lands.
 		_ = emitIndexHTML(srcDir, outDir, br.OutputFiles, io.Discard, true)
 	}
+	tsconfig := findProjectTSConfig(root)
+	if tsconfig != "" {
+		fmt.Fprintf(stdout, "%s[web]%s tsconfig: %s\n", ansiCyan, ansiReset, tsconfig)
+	}
 	res, err := b.Build(bundler.Options{
 		Entries:   entries,
 		OutDir:    outDir,
 		Lockfile:  lf,
 		Store:     st,
+		TSConfig:  tsconfig,
 		Minify:    false, // dev: readable output > smaller bytes
 		Watch:     true,
 		OnRebuild: onRebuild,
@@ -1113,4 +1118,44 @@ func waitForDirEntries(ctx context.Context, srcDir string) (string, []string, er
 			return srcDir, nil, fmt.Errorf("frontend watcher: %w", err)
 		}
 	}
+}
+
+// findProjectTSConfig locates the tsconfig.json (or jsconfig.json)
+// the bundler should hand to esbuild. Search order:
+//
+//  1. <root>/islands.src/tsconfig.json — the convention for
+//     projects whose Vue/React source lives in islands.src/.
+//     This is also where the operator typically defines
+//     `paths` like `"@/*": ["./src/*"]` because the alias
+//     points INSIDE islands.src/.
+//
+//  2. <root>/islands.src/jsconfig.json — same shape but for
+//     JS-only projects (no TypeScript).
+//
+//  3. <root>/tsconfig.json — fallback when there's no
+//     islands.src-local config. Used when the project has a
+//     single root tsconfig that covers everything.
+//
+//  4. <root>/jsconfig.json — final fallback.
+//
+// Returns "" when no config exists; the bundler then runs with
+// esbuild's default behavior (auto-discovery still walks up
+// from input files, so this just means we couldn't lock onto
+// one explicit path).
+//
+// Always returns an absolute path so esbuild's baseUrl
+// resolution works correctly regardless of the bundler's cwd.
+func findProjectTSConfig(root string) string {
+	candidates := []string{
+		filepath.Join(root, islandsSrcName(), "tsconfig.json"),
+		filepath.Join(root, islandsSrcName(), "jsconfig.json"),
+		filepath.Join(root, "tsconfig.json"),
+		filepath.Join(root, "jsconfig.json"),
+	}
+	for _, p := range candidates {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return ""
 }

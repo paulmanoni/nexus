@@ -142,6 +142,10 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	if len(entries) != 1 {
 		noun = "entries"
 	}
+	tsconfig := findProjectTSConfig(projectRoot)
+	if tsconfig != "" {
+		fmt.Fprintf(stdout, "nexus build: tsconfig %s\n", tsconfig)
+	}
 	fmt.Fprintf(stdout, "nexus build: bundling %d frontend %s\n", len(entries), noun)
 	res, err := b.Build(bundler.Options{
 		Entries:  entries,
@@ -149,6 +153,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		Minify:   true,
 		Lockfile: lf,
 		Store:    st,
+		TSConfig: tsconfig,
 		LogTo:    stderr,
 	})
 	if err != nil {
