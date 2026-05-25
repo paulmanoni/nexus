@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -968,6 +969,13 @@ func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdo
 	f := fetcher.New(st, registry)
 	f.External = []string{"vue", "react", "react-dom"}
 
+	// esbuild fires OnResolve in parallel — without a mutex the
+	// lockfile's underlying map sees concurrent writes from
+	// multiple goroutines all populating their fetched results,
+	// crashing the build with `fatal error: concurrent map
+	// writes`. Serialize the Add + Save block per call;
+	// fetch.Fetch itself is concurrent-safe (its own walkContext).
+	var mu sync.Mutex
 	return func(reqURL string) (string, error) {
 		// Use a background ctx — the bundler hands us no ctx
 		// and the fetch should complete or hard-fail rather
@@ -989,6 +997,12 @@ func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdo
 		// builds find it without another round-trip. Lockfile
 		// writes are idempotent — re-adding an existing key
 		// just overwrites with the same content.
+		//
+		// Mutex protects against esbuild's parallel OnResolve
+		// dispatch — without it, concurrent goroutines all
+		// land here and crash the build with a "concurrent
+		// map writes" fatal during lf.Save.
+		mu.Lock()
 		lf.Add(res.Root)
 		for _, t := range res.Transitive {
 			lf.Add(t)
@@ -998,6 +1012,7 @@ func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdo
 				fmt.Fprintf(stdout, "nexus dev: warning: lockfile save after on-demand fetch failed: %v\n", werr)
 			}
 		}
+		mu.Unlock()
 		// Return the resolved URL the fetcher actually used
 		// as the cache key. esm.sh sometimes 301-redirects
 		// (e.g. `.css.mjs` → `.css`) so the cache stores
