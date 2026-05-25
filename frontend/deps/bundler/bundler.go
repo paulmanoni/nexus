@@ -24,6 +24,7 @@ package bundler
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/evanw/esbuild/pkg/api"
 
@@ -122,6 +123,43 @@ type Options struct {
 	// monorepo-style layouts where the bundler runs from a
 	// subdirectory.
 	TSConfig string
+
+	// Env carries the build-time environment variables exposed
+	// to bundled code via `import.meta.env.<NAME>`. Each entry
+	// becomes an esbuild Define substitution that inlines the
+	// value as a JSON-encoded literal at bundle time.
+	//
+	// Vite-port projects typically reference this as:
+	//
+	//	const api = import.meta.env.VITE_GATEWAY_API
+	//
+	// With Env["VITE_GATEWAY_API"] = "https://api.example.com"
+	// set, every occurrence of that expression is replaced with
+	// the literal string at compile time. Browser bundle has no
+	// runtime lookup — same shape Vite emits.
+	//
+	// SECURITY: this is build-time substitution. Anything in
+	// Env ends up in the public bundle. Don't put secrets here
+	// — use runtime config (nexus.Get[T]) for anything
+	// sensitive. The Vite convention is to only expose vars
+	// prefixed `VITE_` to prevent accidental leakage of server
+	// secrets that happen to be in the process env.
+	//
+	// nil disables import.meta.env substitution. Code that
+	// reads `import.meta.env.X` will see undefined at runtime
+	// (browser default), matching pre-v0.89 behavior.
+	Env map[string]string
+
+	// Mode is the build mode injected as `import.meta.env.MODE`
+	// alongside the boolean flags `import.meta.env.DEV` /
+	// `import.meta.env.PROD`. Vite convention values are
+	// "development" or "production"; anything else just lands
+	// as MODE verbatim with PROD=false / DEV=false.
+	//
+	// Empty disables all three substitutions — code reading
+	// MODE/DEV/PROD sees undefined. Most callers want
+	// "development" (nexus dev) or "production" (nexus build).
+	Mode string
 }
 
 // assetLoaders is the default per-extension loader map handed to
@@ -265,11 +303,7 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		// don't appear in non-Vue code, so the Define has no
 		// effect. Caller-supplied Define entries (future
 		// option) would merge here rather than replace.
-		Define: map[string]string{
-			"__VUE_PROD_DEVTOOLS__":                   "false",
-			"__VUE_OPTIONS_API__":                     "true",
-			"__VUE_PROD_HYDRATION_MISMATCH_DETAILS__": "false",
-		},
+		Define: buildDefines(opts),
 		// Runtime polyfill as a banner — runs at the top of
 		// every emitted JS file BEFORE any imports execute, so
 		// even if a Vue chunk somehow slipped past Define's
@@ -361,4 +395,94 @@ func (b *Bundler) applyDefaults(o *Options) {
 	if o.Sourcemap == 0 {
 		o.Sourcemap = api.SourceMapLinked
 	}
+}
+
+// buildDefines composes the full esbuild Define map for one
+// Build call. Three sources of substitutions, in precedence
+// order (later wins):
+//
+//  1. Vue compile-time globals (always emitted; harmless when
+//     no Vue code in the bundle since the identifiers don't
+//     appear)
+//  2. import.meta.env.{MODE,DEV,PROD} from Options.Mode
+//  3. import.meta.env.<NAME> for each entry in Options.Env
+//
+// Env values are JSON-encoded so quotes/escapes are handled
+// correctly — esbuild Define values must be valid JS literals,
+// not raw strings. `"foo"` is correct; `foo` would be treated
+// as an identifier.
+//
+// import.meta.env.* keys use the full dotted form esbuild
+// supports natively. Vite-port projects' references like
+//
+//	const api = import.meta.env.VITE_GATEWAY_API
+//
+// match these keys at the source level + get substituted
+// inline.
+func buildDefines(opts Options) map[string]string {
+	d := map[string]string{
+		"__VUE_PROD_DEVTOOLS__":                   "false",
+		"__VUE_OPTIONS_API__":                     "true",
+		"__VUE_PROD_HYDRATION_MISMATCH_DETAILS__": "false",
+	}
+	if opts.Mode != "" {
+		d["import.meta.env.MODE"] = jsonString(opts.Mode)
+		d["import.meta.env.DEV"] = boolLit(opts.Mode == "development")
+		d["import.meta.env.PROD"] = boolLit(opts.Mode == "production")
+		// Vite also exposes a BASE_URL convention — defaults to
+		// "/" since nexus apps are served from origin root.
+		// Operators wanting non-root deployments can override
+		// via Env["BASE_URL"] (Env wins by going LAST).
+		d["import.meta.env.BASE_URL"] = `"/"`
+	}
+	for k, v := range opts.Env {
+		d["import.meta.env."+k] = jsonString(v)
+	}
+	return d
+}
+
+// jsonString quotes s as a valid JS string literal. We can't
+// use the stdlib's strconv.Quote because that uses Go-flavored
+// escapes; we need JSON-compatible escapes (which the JS parser
+// also accepts). encoding/json.Marshal of a string produces
+// exactly this — a double-quoted, JSON-escaped string.
+func jsonString(s string) string {
+	// Minimal manual escaping covers the common cases without
+	// pulling encoding/json into the import set just for this.
+	// Vite env values are typically URLs, identifiers, simple
+	// strings — no embedded backslashes / control chars.
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '"', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if c < 0x20 {
+				// Fall back to \uXXXX for control chars.
+				fmt.Fprintf(&b, `\u%04x`, c)
+			} else {
+				b.WriteByte(c)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// boolLit produces a JS boolean literal — "true" or "false".
+func boolLit(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }

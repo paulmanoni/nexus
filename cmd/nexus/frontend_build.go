@@ -158,6 +158,10 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	if tsconfig != "" {
 		fmt.Fprintf(stdout, "nexus build: tsconfig %s\n", tsconfig)
 	}
+	viteEnv, envErr := loadViteEnv(projectRoot, "production", stdout)
+	if envErr != nil {
+		fmt.Fprintf(stderr, "nexus build: .env load: %v\n", envErr)
+	}
 	fmt.Fprintf(stdout, "nexus build: bundling %d frontend %s\n", len(entries), noun)
 	res, err := b.Build(bundler.Options{
 		Entries:  entries,
@@ -166,6 +170,8 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		Lockfile: lf,
 		Store:    st,
 		TSConfig: tsconfig,
+		Env:      viteEnv,
+		Mode:     "production",
 		LogTo:    stderr,
 	})
 	if err != nil {
