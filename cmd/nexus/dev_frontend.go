@@ -305,6 +305,12 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// patterns work out of the box.
 	b.AddPlugin(bundler.NewImportMetaGlobPlugin())
 
+	// ?raw / ?url / ?inline query suffix plugin — Vite-style
+	// import attribute queries that change how a file is
+	// loaded (inline as string, emit as URL, base64 data URL).
+	// No-op on imports without recognized suffixes.
+	b.AddPlugin(bundler.NewQuerySuffixPlugin())
+
 	// Initial build runs SYNCHRONOUSLY here — esbuild's Watch:true
 	// completes the first pass before returning, so by the time
 	// the function exits the bundle is already on disk under
