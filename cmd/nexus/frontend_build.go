@@ -174,6 +174,14 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, "nexus build: scss via system sass")
 	}
 
+	// Tailwind plugin — only fires when a .css file contains
+	// @tailwind / @apply directives. Transparent for non-
+	// Tailwind projects.
+	b.AddPlugin(bundler.NewTailwindPlugin())
+	if bundler.TailwindAvailable() {
+		fmt.Fprintln(stdout, "nexus build: tailwind via system tailwindcss")
+	}
+
 	noun := "entry"
 	if len(entries) != 1 {
 		noun = "entries"
