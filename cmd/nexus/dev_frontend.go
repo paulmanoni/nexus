@@ -311,6 +311,18 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// No-op on imports without recognized suffixes.
 	b.AddPlugin(bundler.NewQuerySuffixPlugin())
 
+	// ?worker plugin — bundles workers as separate entries +
+	// returns a Worker constructor class. Registered LAST so
+	// the sub-build inherits every other plugin (resolver,
+	// sass, tailwind, globs, env, etc.) — b.Plugins read
+	// here is a snapshot taken before we add the worker
+	// itself, so no recursion.
+	b.AddPlugin(bundler.NewWorkerPlugin(bundler.WorkerPluginOptions{
+		OutDir:        outDir,
+		PublicPath:    os.Getenv("NEXUS_PUBLIC_PATH"),
+		NestedPlugins: append([]api.Plugin(nil), b.Plugins...),
+	}))
+
 	// Initial build runs SYNCHRONOUSLY here — esbuild's Watch:true
 	// completes the first pass before returning, so by the time
 	// the function exits the bundle is already on disk under
