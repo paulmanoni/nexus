@@ -233,6 +233,19 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		return fmt.Errorf("frontend watcher: mkdir %s: %w", outDir, err)
 	}
 
+	// Mirror islands.src/public/* into the output dir so
+	// HTML-referenced assets (favicons, PWA icons, manifest.json,
+	// robots.txt) resolve at the same paths their <link>/<meta>
+	// tags claim. esbuild handles code-imported assets via the
+	// file loader; public/ is the parallel convention for assets
+	// the HTML hard-codes without an import statement.
+	publicDir := filepath.Join(srcDir, "public")
+	if n, perr := bundler.CopyPublicDir(publicDir, outDir); perr != nil {
+		fmt.Fprintf(stderr, "%s●%s frontend watcher: public/ copy: %v\n", ansiYellow, ansiReset, perr)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "%s[web]%s public: copied %d file(s) from %s\n", ansiCyan, ansiReset, n, publicDir)
+	}
+
 	tag := fmt.Sprintf("%s[web]%s ", ansiCyan, ansiReset)
 	reporter := newBundlerReporter(stdout, stderr, tag, verbose)
 

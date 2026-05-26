@@ -127,6 +127,15 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("frontend build: mkdir %s: %w", outDir, err)
 	}
 
+	// Mirror islands.src/public/* into outDir — see dev_frontend.go
+	// for the rationale (HTML-referenced static assets).
+	publicDir := filepath.Join(srcDir, "public")
+	if n, perr := bundler.CopyPublicDir(publicDir, outDir); perr != nil {
+		fmt.Fprintf(stderr, "nexus build: public/ copy: %v\n", perr)
+	} else if n > 0 {
+		fmt.Fprintf(stdout, "nexus build: public: copied %d file(s) from %s\n", n, publicDir)
+	}
+
 	b := bundler.New()
 	b.AddPlugin(plugin)
 
