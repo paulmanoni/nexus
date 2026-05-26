@@ -12,14 +12,42 @@ import (
 	"github.com/paulmanoni/nexus/manifest"
 )
 
-// LoadConfig reads nexus.toml at path and returns a Config
-// pre-populated from its `[runtime]` block. Fields not present
-// in the TOML keep their zero values; the caller is free to
-// mutate the result before passing it to nexus.Run.
+// DefaultConfigPath is the conventional file LoadConfig + MustLoadConfig
+// read from when no explicit path is provided. Resolved relative to
+// the binary's working directory, matching the rest of the framework's
+// "look in cwd" defaults (lockfile, deploy manifest).
+const DefaultConfigPath = "nexus.toml"
+
+// LoadConfig reads the runtime block from nexus.toml and returns a
+// Config pre-populated from it. Fields not present in the TOML
+// keep their zero values; the caller is free to mutate the result
+// before passing it to nexus.Run.
+//
+// Coexists with extension/config — distinct concerns:
+//
+//   - nexus.LoadConfig reads `nexus.toml`'s `[runtime]` block at
+//     STARTUP. Maps to the Config struct nexus.Run consumes
+//     (listen addr, dashboard name, GraphQL knobs, CORS, etc.).
+//     Values are frozen at boot — changing nexus.toml requires a
+//     process restart.
+//   - extension/config reads `nexus.config.toml` at RUNTIME and
+//     exposes a K/V store via nexus.Get[T]("key"). Hot-reload-able
+//     for per-deployment tuning (feature flags, sampling rates,
+//     etc.) without a restart.
+//
+// Use both: framework boot params in nexus.toml, app feature
+// values in nexus.config.toml. The file names are intentionally
+// distinct so editors + git diffs make the boundary visible.
+//
+// Path is optional — pass nothing to read DefaultConfigPath
+// ("nexus.toml") from the current working directory:
+//
+//	cfg, err := nexus.LoadConfig()             // reads nexus.toml
+//	cfg, err := nexus.LoadConfig("alt.toml")   // explicit path
 //
 // Typical usage in main():
 //
-//	cfg, err := nexus.LoadConfig("nexus.toml")
+//	cfg, err := nexus.LoadConfig()
 //	if err != nil { log.Fatal(err) }
 //	cfg.Version = buildVersion // Go-side override (ldflags)
 //	nexus.Run(cfg, /* opts */)
@@ -39,8 +67,12 @@ import (
 // Fields NOT representable in TOML (middleware function slices,
 // pluggable Store interfaces) stay Go-only — set those on the
 // returned cfg via direct field assignment before nexus.Run.
-func LoadConfig(path string) (Config, error) {
-	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
+func LoadConfig(path ...string) (Config, error) {
+	p := DefaultConfigPath
+	if len(path) > 0 && path[0] != "" {
+		p = path[0]
+	}
+	raw, err := os.ReadFile(p) // #nosec G304 -- operator-supplied path
 	if err != nil {
 		return Config{}, err
 	}
@@ -48,11 +80,11 @@ func LoadConfig(path string) (Config, error) {
 	// consistent with the rest of nexus.toml.
 	expanded, err := manifest.ExpandEnvVars(raw)
 	if err != nil {
-		return Config{}, fmt.Errorf("nexus: expand env vars in %s: %w", path, err)
+		return Config{}, fmt.Errorf("nexus: expand env vars in %s: %w", p, err)
 	}
 	var block runtimeConfigDoc
 	if err := toml.Unmarshal(expanded, &block); err != nil {
-		return Config{}, fmt.Errorf("nexus: parse %s: %w", path, err)
+		return Config{}, fmt.Errorf("nexus: parse %s: %w", p, err)
 	}
 	return block.Runtime.toConfig()
 }
@@ -61,13 +93,19 @@ func LoadConfig(path string) (Config, error) {
 // REQUIRE a nexus.toml and treat its absence as a fatal startup
 // error. Equivalent to:
 //
-//	cfg, err := nexus.LoadConfig(path)
+//	cfg, err := nexus.LoadConfig(path...)
 //	if err != nil { panic(err) }
+//
+// Path is optional — pass nothing to read DefaultConfigPath
+// ("nexus.toml") from cwd:
+//
+//	cfg := nexus.MustLoadConfig()             // reads nexus.toml
+//	cfg := nexus.MustLoadConfig("alt.toml")   // explicit path
 //
 // Use in main() when the operator has explicitly declared their
 // runtime config in the TOML; saves an `if err != nil` line.
-func MustLoadConfig(path string) Config {
-	cfg, err := LoadConfig(path)
+func MustLoadConfig(path ...string) Config {
+	cfg, err := LoadConfig(path...)
 	if err != nil {
 		panic(err)
 	}

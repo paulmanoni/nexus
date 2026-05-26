@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/paulmanoni/nexus"
 	nexusmanifest "github.com/paulmanoni/nexus/manifest"
 )
 
@@ -164,6 +165,21 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 	}
 
 	issues := nexusmanifest.Lint(m)
+
+	// When the input is a TOML file on disk, ALSO lint the
+	// [runtime] block via nexus.LintRuntimeFile. Catches
+	// listener/scope/CORS/CIDR misconfiguration that
+	// manifest.Lint can't see (different shape). Stdin +
+	// binary-print modes are JSON-only so they don't carry
+	// the runtime block.
+	if opts.filePath != "" && opts.filePath != "-" && format == "toml" {
+		runtimeIssues, rerr := nexus.LintRuntimeFile(opts.filePath)
+		if rerr != nil && !os.IsNotExist(rerr) {
+			fmt.Fprintf(stderr, "nexus lint: runtime block check: %v\n", rerr)
+		}
+		issues = append(issues, runtimeIssues...)
+	}
+
 	if opts.quiet {
 		issues = filterWarnings(issues)
 	}
