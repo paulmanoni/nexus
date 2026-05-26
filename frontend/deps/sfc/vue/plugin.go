@@ -36,7 +36,13 @@ func Plugin(c *Compiler) (api.Plugin, error) {
 				if err != nil {
 					return api.OnLoadResult{}, fmt.Errorf("vue: read %s: %w", args.Path, err)
 				}
-				res, err := c.Compile(string(source), args.Path)
+				// Vuetify auto-import: scan the SFC template
+				// for `<v-*>` tags and inject the matching
+				// imports into <script setup>. No-op when the
+				// file isn't a Vuetify-using SFC or already
+				// has manual `vuetify/components` import.
+				rewritten, _ := bundler.VuetifyAutoImport(string(source))
+				res, err := c.Compile(rewritten, args.Path)
 				if err != nil {
 					return api.OnLoadResult{
 						Errors: []api.Message{{

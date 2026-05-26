@@ -549,7 +549,18 @@ func (r *bundlerReporter) printDiag(w io.Writer, marker, color string, m api.Mes
 	}
 	fmt.Fprintf(w, "%s%s%s%s %s%s\n", r.tag, color, marker, loc, m.Text, ansiReset)
 	if m.Location != nil && m.Location.LineText != "" {
-		fmt.Fprintf(w, "%s     %s%s%s\n", r.tag, ansiDim, m.Location.LineText, ansiReset)
+		// Suppress source-context dumps for minified third-party
+		// code. esbuild reports LineText verbatim from the source
+		// — for minified bundles where the entire file is on one
+		// line (pdfmake.mjs being a frequent offender at ~200KB
+		// of body on a single line), the "context" floods the
+		// terminal with junk that masks every other error.
+		lineText := m.Location.LineText
+		const maxLineTextLen = 200
+		if len(lineText) > maxLineTextLen {
+			lineText = lineText[:maxLineTextLen] + "…"
+		}
+		fmt.Fprintf(w, "%s     %s%s%s\n", r.tag, ansiDim, lineText, ansiReset)
 	}
 }
 
