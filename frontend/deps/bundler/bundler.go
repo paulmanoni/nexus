@@ -283,6 +283,23 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		// fix without dropping into nexus internals — exactly
 		// the Vite-port friction this is meant to remove.
 		Loader: assetLoaders,
+		// PublicPath: "/" prefixes file-loader output (image,
+		// font, SVG references) with the site root so they
+		// resolve correctly from deep SPA routes. Without
+		// this, `import flag from "./flag.png"` becomes the
+		// literal string "flag-HASH.png" (relative), and when
+		// the browser is on `/invigilator-access/foo` the
+		// runtime fetch lands on
+		// `/invigilator-access/flag-HASH.png` → 404. With
+		// PublicPath="/" the same import becomes
+		// "/flag-HASH.png" (absolute) and resolves to the
+		// emitted file regardless of which route is active.
+		//
+		// Tradeoff: this assumes the app is served from the
+		// origin root. Operators deploying under a subpath
+		// (e.g. /admin/) would need PublicPath="/admin/" —
+		// future Options.PublicPath field once anyone asks.
+		PublicPath: "/",
 		// Vue's esm-bundler distribution (which is what esm.sh
 		// serves) reads three compile-time flags as bare global
 		// identifiers — without build-time substitution they
