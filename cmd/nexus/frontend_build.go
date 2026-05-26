@@ -182,6 +182,10 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, "nexus build: tailwind via system tailwindcss")
 	}
 
+	// import.meta.glob plugin — rewrites Vite-style glob calls
+	// at bundle time. Transparent for files that don't use it.
+	b.AddPlugin(bundler.NewImportMetaGlobPlugin())
+
 	noun := "entry"
 	if len(entries) != 1 {
 		noun = "entries"

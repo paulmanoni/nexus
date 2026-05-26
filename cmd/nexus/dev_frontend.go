@@ -299,6 +299,12 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		fmt.Fprintf(stdout, "%s[web]%s tailwind via system tailwindcss\n", ansiCyan, ansiReset)
 	}
 
+	// import.meta.glob plugin — rewrites Vite-style glob calls
+	// into object literals at bundle time. No-op on files
+	// that don't use it; Vue Router auto-discovery + similar
+	// patterns work out of the box.
+	b.AddPlugin(bundler.NewImportMetaGlobPlugin())
+
 	// Initial build runs SYNCHRONOUSLY here — esbuild's Watch:true
 	// completes the first pass before returning, so by the time
 	// the function exits the bundle is already on disk under
