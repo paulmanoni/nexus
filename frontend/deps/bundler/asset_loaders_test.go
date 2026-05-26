@@ -71,6 +71,38 @@ func TestBundler_PNGImportEmitsHashedFile(t *testing.T) {
 	}
 }
 
+// TestBundler_AssetReferencesAreRootAbsolute: SPA-routing
+// safety. With deep routes like /invigilator-access/foo, a
+// relative asset URL ("flag-HASH.png") would resolve to
+// /invigilator-access/flag-HASH.png and 404. PublicPath="/"
+// makes file-loader output absolute (/flag-HASH.png) so the
+// browser fetches from the root regardless of route.
+func TestBundler_AssetReferencesAreRootAbsolute(t *testing.T) {
+	tmp := t.TempDir()
+	mustWrite2(t, filepath.Join(tmp, "flag.svg"), `<svg xmlns="http://www.w3.org/2000/svg"/>`)
+	mustWrite2(t, filepath.Join(tmp, "entry.ts"), `
+		import flag from "./flag.svg";
+		document.body.dataset.flag = flag;
+	`)
+	outDir := filepath.Join(tmp, "out")
+	b := bundler.New()
+	res, err := b.Build(bundler.Options{
+		Entries: []string{filepath.Join(tmp, "entry.ts")},
+		OutDir:  outDir,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(res.Errors) > 0 {
+		t.Fatalf("expected zero build errors, got: %v", res.Errors)
+	}
+	bundle := mustReadOutput(t, outDir, "entry.js")
+	// The import value should be a root-absolute URL.
+	if !strings.Contains(bundle, `"/flag-`) {
+		t.Errorf("expected root-absolute /flag-HASH.svg in bundle (regression: SPA deep routes would 404), got:\n%s", bundle)
+	}
+}
+
 // TestBundler_SVGAndFontsAreFileLoaded: parallel cases —
 // SVG + woff2 should both go through the file loader, no
 // loader-configuration errors.
