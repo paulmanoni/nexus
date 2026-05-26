@@ -127,13 +127,28 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("frontend build: mkdir %s: %w", outDir, err)
 	}
 
-	// Mirror islands.src/public/* into outDir — see dev_frontend.go
-	// for the rationale (HTML-referenced static assets).
-	publicDir := filepath.Join(srcDir, "public")
-	if n, perr := bundler.CopyPublicDir(publicDir, outDir); perr != nil {
-		fmt.Fprintf(stderr, "nexus build: public/ copy: %v\n", perr)
-	} else if n > 0 {
-		fmt.Fprintf(stdout, "nexus build: public: copied %d file(s) from %s\n", n, publicDir)
+	// Mirror public/* into outDir — see dev_frontend.go for the
+	// rationale (HTML-referenced static assets). Two candidate
+	// locations because findFrontendEntries may have descended
+	// into islands.src/src (when there are no top-level entries
+	// directly under islands.src), and the public/ convention
+	// puts the dir alongside the entries' grand-parent. So try:
+	//   1. <islands.src>/public          ← Vite/CRA convention
+	//   2. <srcDir>/public               ← when entries are top-level
+	// First match wins; missing dirs are silently skipped.
+	for _, candidate := range []string{
+		filepath.Join(projectRoot, islandsSrcName(), "public"),
+		filepath.Join(srcDir, "public"),
+	} {
+		n, perr := bundler.CopyPublicDir(candidate, outDir)
+		if perr != nil {
+			fmt.Fprintf(stderr, "nexus build: public/ copy: %v\n", perr)
+			break
+		}
+		if n > 0 {
+			fmt.Fprintf(stdout, "nexus build: public: copied %d file(s) from %s\n", n, candidate)
+			break
+		}
 	}
 
 	b := bundler.New()
