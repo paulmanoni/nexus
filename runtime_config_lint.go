@@ -61,7 +61,49 @@ func LintRuntimeFile(path string) ([]manifest.Issue, error) {
 			Message:  fmt.Sprintf("parse %s: %v", path, err),
 		}}, nil
 	}
-	return lintRuntimeBlock(block.Runtime), nil
+	issues := lintRuntimeBlock(block.Runtime)
+	issues = append(issues, lintExtensionsFile(expanded)...)
+	return issues, nil
+}
+
+// lintExtensionsFile parses the [extensions.*] block out of
+// the TOML bytes and warns about declared-but-unregistered
+// extension names.
+//
+// Severity is WARNING (not error) because the lint command
+// runs in the CLI binary's process, which doesn't necessarily
+// import every extension the app binary does — and CAN'T
+// possibly import operator-side custom extensions. The lint
+// is a "did you forget the import?" reminder; the app's own
+// boot path is authoritative and fails loudly if the decoder
+// is genuinely missing.
+//
+// Framework extensions imported by the CLI (see
+// cmd/nexus/extensions_for_lint.go) get validated as expected
+// — only custom/uncommon extensions surface as warnings.
+func lintExtensionsFile(raw []byte) []manifest.Issue {
+	var doc extensionsDoc
+	if err := toml.Unmarshal(raw, &doc); err != nil {
+		// Parse errors already surface from the runtime
+		// loader; don't double-report.
+		return nil
+	}
+	if len(doc.Extensions) == 0 {
+		return nil
+	}
+	registered := RegisteredExtensionNames()
+	var out []manifest.Issue
+	for name := range doc.Extensions {
+		if LookupExtensionDecoder(name) == nil {
+			out = append(out, manifest.Issue{
+				Severity: manifest.SeverityWarning,
+				Code:     manifest.ErrCode("RUNTIME_UNKNOWN_EXTENSION"),
+				Path:     fmt.Sprintf("extensions.%s", name),
+				Message:  fmt.Sprintf("no decoder registered for [extensions.%s] in the lint binary — ensure the extension package is imported (blank-import is fine) in main.go; the app's boot will fail loudly if the decoder is also missing there. Registered here: %v", name, registered),
+			})
+		}
+	}
+	return out
 }
 
 // lintRuntimeBlock is the pure-function core of LintRuntimeFile,
