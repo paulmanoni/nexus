@@ -337,16 +337,17 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		fmt.Fprintf(stderr, "%s●%s frontend watcher: .env load: %v\n", ansiYellow, ansiReset, envErr)
 	}
 	res, err := b.Build(bundler.Options{
-		Entries:   entries,
-		OutDir:    outDir,
-		Lockfile:  lf,
-		Store:     st,
-		TSConfig:  tsconfig,
-		Env:       viteEnv,
-		Mode:      "development",
-		Minify:    false, // dev: readable output > smaller bytes
-		Watch:     true,
-		OnRebuild: onRebuild,
+		Entries:    entries,
+		OutDir:     outDir,
+		Lockfile:   lf,
+		Store:      st,
+		TSConfig:   tsconfig,
+		Env:        viteEnv,
+		Mode:       "development",
+		PublicPath: os.Getenv("NEXUS_PUBLIC_PATH"),
+		Minify:     false, // dev: readable output > smaller bytes
+		Watch:      true,
+		OnRebuild:  onRebuild,
 	})
 	if err != nil {
 		return fmt.Errorf("frontend watcher: %w", err)

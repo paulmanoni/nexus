@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/evanw/esbuild/pkg/api"
+
+	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 )
 
 // Plugin wraps a Compiler in an esbuild plugin so the bundler
@@ -57,6 +60,29 @@ func Plugin(c *Compiler) (api.Plugin, error) {
 					return api.OnLoadResult{Errors: msgs}, nil
 				}
 				contents := res.Code
+				// Run import.meta.glob rewriting on the compiled
+				// JS so calls inside <script setup> blocks (a
+				// common Vue Router auto-discovery pattern) get
+				// expanded. esbuild won't re-run OnLoad on a
+				// plugin's output, so we have to do this here
+				// or globs inside .vue files would ship to the
+				// browser as live calls and fail at runtime.
+				//
+				// baseDir is the .vue file's directory so
+				// relative patterns ('./pages/*.vue') resolve
+				// against the SFC's neighborhood, matching what
+				// import.meta.glob's call site in the SFC
+				// expects.
+				if rewritten, n, gerr := bundler.RewriteGlobCalls(contents, filepath.Dir(args.Path)); gerr == nil && n > 0 {
+					contents = rewritten
+				} else if gerr != nil {
+					return api.OnLoadResult{
+						Errors: []api.Message{{
+							Text:     fmt.Sprintf("vue: %v", gerr),
+							Location: &api.Location{File: args.Path},
+						}},
+					}, nil
+				}
 				// Use the TS loader so esbuild strips the type
 				// annotations @vue/compiler-sfc emits when the
 				// SFC uses `<script setup lang="ts">`. The

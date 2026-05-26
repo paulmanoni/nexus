@@ -200,15 +200,16 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "nexus build: bundling %d frontend %s\n", len(entries), noun)
 	res, err := b.Build(bundler.Options{
-		Entries:  entries,
-		OutDir:   outDir,
-		Minify:   true,
-		Lockfile: lf,
-		Store:    st,
-		TSConfig: tsconfig,
-		Env:      viteEnv,
-		Mode:     "production",
-		LogTo:    stderr,
+		Entries:    entries,
+		OutDir:     outDir,
+		Minify:     true,
+		Lockfile:   lf,
+		Store:      st,
+		TSConfig:   tsconfig,
+		Env:        viteEnv,
+		Mode:       "production",
+		PublicPath: os.Getenv("NEXUS_PUBLIC_PATH"),
+		LogTo:      stderr,
 	})
 	if err != nil {
 		return fmt.Errorf("frontend build: %w", err)
