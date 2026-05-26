@@ -186,6 +186,9 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	// at bundle time. Transparent for files that don't use it.
 	b.AddPlugin(bundler.NewImportMetaGlobPlugin())
 
+	// ?raw / ?url / ?inline query suffix plugin.
+	b.AddPlugin(bundler.NewQuerySuffixPlugin())
+
 	noun := "entry"
 	if len(entries) != 1 {
 		noun = "entries"
