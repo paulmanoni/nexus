@@ -289,6 +289,16 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		fmt.Fprintf(stdout, "%s[web]%s scss via system sass\n", ansiCyan, ansiReset)
 	}
 
+	// Tailwind plugin — same shape as sass: only fires when a
+	// CSS file actually contains @tailwind / @apply directives,
+	// otherwise transparent. Surfaces a clear install-suggestion
+	// error if directives are present but tailwindcss is
+	// missing from PATH.
+	b.AddPlugin(bundler.NewTailwindPlugin())
+	if bundler.TailwindAvailable() {
+		fmt.Fprintf(stdout, "%s[web]%s tailwind via system tailwindcss\n", ansiCyan, ansiReset)
+	}
+
 	// Initial build runs SYNCHRONOUSLY here — esbuild's Watch:true
 	// completes the first pass before returning, so by the time
 	// the function exits the bundle is already on disk under
