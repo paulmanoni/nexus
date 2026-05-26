@@ -189,6 +189,13 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	// ?raw / ?url / ?inline query suffix plugin.
 	b.AddPlugin(bundler.NewQuerySuffixPlugin())
 
+	// ?worker plugin — see dev_frontend.go for rationale.
+	b.AddPlugin(bundler.NewWorkerPlugin(bundler.WorkerPluginOptions{
+		OutDir:        outDir,
+		PublicPath:    os.Getenv("NEXUS_PUBLIC_PATH"),
+		NestedPlugins: append([]api.Plugin(nil), b.Plugins...),
+	}))
+
 	noun := "entry"
 	if len(entries) != 1 {
 		noun = "entries"
