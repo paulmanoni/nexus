@@ -983,14 +983,15 @@ func makeOnDemandFetch(lf *lockfile.File, st *store.Store, lockPath string, stdo
 		// pinning a dev build for minutes), wire ctx through.
 		res, err := f.Fetch(context.Background(), reqURL)
 		if err != nil {
-			// Surface the failure so operators can see WHY
-			// the on-demand path didn't recover the missing
-			// blob. Without this, the resolver's "no cached
-			// blob" error gives the impression nothing was
-			// tried, when in fact we tried + failed for a
-			// specific reason (network, 404, parse error
-			// in a fetched .mjs sibling, etc.).
-			fmt.Fprintf(stdout, "nexus dev: on-demand fetch %s failed: %v\n", reqURL, err)
+			// Don't log here — failures cascade to either
+			// esbuild's default resolver (via tsconfig paths
+			// or relative-path lookup) OR surface as the
+			// final "no cached blob" error in the build
+			// report. Logging at this layer creates noise
+			// when esbuild's fallback succeeds (e.g. a
+			// `nexus-client/vue` import that resolves to
+			// `src/sdk/vue.js` via tsconfig paths after
+			// esm.sh returns 404).
 			return "", err
 		}
 		// Persist the new entry so subsequent installs +
