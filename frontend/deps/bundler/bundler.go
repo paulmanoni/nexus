@@ -160,6 +160,25 @@ type Options struct {
 	// MODE/DEV/PROD sees undefined. Most callers want
 	// "development" (nexus dev) or "production" (nexus build).
 	Mode string
+
+	// PublicPath is the URL prefix esbuild stamps onto every
+	// file-loaded asset reference (image, font, SVG) so the
+	// browser can resolve them regardless of which SPA route
+	// is active. Default "/" (root-absolute) when empty.
+	//
+	// Override when deploying under a sub-path:
+	//
+	//	PublicPath: "/admin/"      // assets resolve to /admin/foo-HASH.png
+	//	PublicPath: "/v2/"
+	//
+	// Must include the trailing slash — esbuild concatenates
+	// it directly with the hashed filename. Missing slash =
+	// "/adminfoo-HASH.png" 404.
+	//
+	// Also exposed as `import.meta.env.BASE_URL` for Vite-port
+	// projects that read it at runtime (e.g. building absolute
+	// URLs for fetch requests or router base-path config).
+	PublicPath string
 }
 
 // assetLoaders is the default per-extension loader map handed to
@@ -197,6 +216,19 @@ var assetLoaders = map[string]api.Loader{
 	// Misc.
 	".txt":  api.LoaderText,
 	".json": api.LoaderJSON,
+	// CSS Modules: `.module.css` imports yield an object of
+	// hashed class names that JS code references by their
+	// original short name, e.g.
+	//
+	//	import styles from "./Button.module.css"
+	//	<button class={styles.primary}>
+	//
+	// esbuild's local-css loader does the scoping — each class
+	// name gets a content-hash suffix so collisions across
+	// modules are impossible. Plain `.css` files stay
+	// globally-scoped via esbuild's native CSS bundling, so
+	// existing imports `import "./styles.css"` keep working.
+	".module.css": api.LoaderLocalCSS,
 	// .css is handled natively by esbuild without a loader entry
 	// (CSS bundling is built in). Listing it here would override
 	// that to "treat as raw text" — DON'T add it.
@@ -283,23 +315,12 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		// fix without dropping into nexus internals — exactly
 		// the Vite-port friction this is meant to remove.
 		Loader: assetLoaders,
-		// PublicPath: "/" prefixes file-loader output (image,
-		// font, SVG references) with the site root so they
-		// resolve correctly from deep SPA routes. Without
-		// this, `import flag from "./flag.png"` becomes the
-		// literal string "flag-HASH.png" (relative), and when
-		// the browser is on `/invigilator-access/foo` the
-		// runtime fetch lands on
-		// `/invigilator-access/flag-HASH.png` → 404. With
-		// PublicPath="/" the same import becomes
-		// "/flag-HASH.png" (absolute) and resolves to the
-		// emitted file regardless of which route is active.
-		//
-		// Tradeoff: this assumes the app is served from the
-		// origin root. Operators deploying under a subpath
-		// (e.g. /admin/) would need PublicPath="/admin/" —
-		// future Options.PublicPath field once anyone asks.
-		PublicPath: "/",
+		// PublicPath prefixes file-loader output (image, font,
+		// SVG references) with the site root so assets resolve
+		// regardless of which SPA route is active. Default "/"
+		// when caller didn't set it. See Options.PublicPath
+		// godoc for sub-path deployment details.
+		PublicPath: defaultPublicPath(opts.PublicPath),
 		// Vue's esm-bundler distribution (which is what esm.sh
 		// serves) reads three compile-time flags as bare global
 		// identifiers — without build-time substitution they
@@ -446,11 +467,11 @@ func buildDefines(opts Options) map[string]string {
 		d["import.meta.env.MODE"] = jsonString(opts.Mode)
 		d["import.meta.env.DEV"] = boolLit(opts.Mode == "development")
 		d["import.meta.env.PROD"] = boolLit(opts.Mode == "production")
-		// Vite also exposes a BASE_URL convention — defaults to
-		// "/" since nexus apps are served from origin root.
-		// Operators wanting non-root deployments can override
-		// via Env["BASE_URL"] (Env wins by going LAST).
-		d["import.meta.env.BASE_URL"] = `"/"`
+		// Vite also exposes a BASE_URL convention — derived
+		// from the same PublicPath the file loader uses so
+		// runtime URL building stays consistent with what the
+		// bundler emits at compile time.
+		d["import.meta.env.BASE_URL"] = jsonString(defaultPublicPath(opts.PublicPath))
 	}
 	for k, v := range opts.Env {
 		d["import.meta.env."+k] = jsonString(v)
@@ -502,4 +523,21 @@ func boolLit(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// defaultPublicPath returns the operator's PublicPath when set
+// or "/" otherwise. Centralized so the file-loader prefix and
+// the import.meta.env.BASE_URL substitution stay in sync — an
+// operator can't accidentally have assets emitted at /admin/ but
+// runtime BASE_URL reading "/" (or vice versa).
+//
+// We don't validate the trailing slash; operators who omit it
+// will see 404s in the browser and the error path is
+// self-explanatory. Forcing the slash silently could mask
+// genuine "I meant `admin` not `/admin/`" typos.
+func defaultPublicPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	return p
 }

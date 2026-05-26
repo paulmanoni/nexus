@@ -5,6 +5,19 @@ import (
 	"strings"
 )
 
+// RewriteGlobCalls is the exported form of rewriteGlobCalls,
+// so downstream plugins (e.g. the Vue SFC compiler) can run the
+// glob transform on their generated JS before handing it back
+// to esbuild. esbuild doesn't re-run OnLoad on a plugin's
+// returned Contents, so each per-language compiler that wants
+// glob support inside its source has to call us explicitly.
+//
+// baseDir is the directory glob patterns are resolved against —
+// usually filepath.Dir of the source file being compiled.
+func RewriteGlobCalls(src, baseDir string) (string, int, error) {
+	return rewriteGlobCalls(src, baseDir)
+}
+
 // rewriteGlobCalls replaces every `import.meta.glob(...)` call
 // in src with an object literal expanding the glob against
 // baseDir. Returns the rewritten source and the number of
