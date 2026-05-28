@@ -149,6 +149,9 @@ type runtimeConfigDoc struct {
 //	enabled = true
 //	name = "My App"
 //
+//	[runtime.devreload]
+//	exclude = ["uploads", "*.tmp"]
+//
 //	[runtime.graphql]
 //	path = "/graphql"
 //	pretty = false
@@ -169,22 +172,28 @@ type runtimeConfigDoc struct {
 // Fields not in the TOML leave the corresponding Config field
 // zero-valued, so the framework's defaults apply.
 type RuntimeConfigBlock struct {
-	Server                ServerConfigBlock          `toml:"server"`
-	Dashboard             DashboardConfigBlock       `toml:"dashboard"`
-	GraphQL               GraphQLConfigBlock         `toml:"graphql"`
-	Middleware            MiddlewareConfigBlock      `toml:"middleware"`
-	Environment           string                     `toml:"environment"`
-	Version               string                     `toml:"version"`
-	Introspection         bool                       `toml:"introspection"`
-	IntrospectionNetworks []string                   `toml:"introspection_networks"`
-	TraceCapacity         int                        `toml:"trace_capacity"`
+	Server                ServerConfigBlock     `toml:"server"`
+	Dashboard             DashboardConfigBlock  `toml:"dashboard"`
+	GraphQL               GraphQLConfigBlock    `toml:"graphql"`
+	Middleware            MiddlewareConfigBlock `toml:"middleware"`
+	DevReload             DevReloadConfigBlock  `toml:"devreload"`
+	Environment           string                `toml:"environment"`
+	Version               string                `toml:"version"`
+	Introspection         bool                  `toml:"introspection"`
+	IntrospectionNetworks []string              `toml:"introspection_networks"`
+	TraceCapacity         int                   `toml:"trace_capacity"`
+}
+
+// DevReloadConfigBlock is the TOML shape of DevReloadConfig.
+type DevReloadConfigBlock struct {
+	Exclude []string `toml:"exclude"`
 }
 
 // ServerConfigBlock is the TOML shape of ServerConfig.
 type ServerConfigBlock struct {
-	Addr        string                          `toml:"addr"`
-	RoutePrefix string                          `toml:"route_prefix"`
-	Listeners   map[string]ListenerConfigBlock  `toml:"listeners"`
+	Addr        string                         `toml:"addr"`
+	RoutePrefix string                         `toml:"route_prefix"`
+	Listeners   map[string]ListenerConfigBlock `toml:"listeners"`
 }
 
 // ListenerConfigBlock is the TOML shape of a Listener. TLS is
@@ -257,6 +266,9 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 		Dashboard: DashboardConfig{
 			Enabled: b.Dashboard.Enabled,
 			Name:    b.Dashboard.Name,
+		},
+		DevReload: DevReloadConfig{
+			Exclude: b.DevReload.Exclude,
 		},
 		GraphQL: GraphQLConfig{
 			Path:              b.GraphQL.Path,

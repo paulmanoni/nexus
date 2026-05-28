@@ -19,14 +19,14 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/extension/dashboard"
-	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/trace"
@@ -42,16 +42,16 @@ const EnvAdminToken = "NEXUS_ADMIN_TOKEN" // #nosec G101 -- env var name, not a 
 const defaultDashboardName = "Nexus"
 
 type App struct {
-	engine        *gin.Engine
-	registry      *registry.Registry
-	bus           *trace.Bus
-	cronSched     *cron.Scheduler
-	rlStore       ratelimit.Store
-	metricsStore  metrics.Store
+	engine       *gin.Engine
+	registry     *registry.Registry
+	bus          *trace.Bus
+	cronSched    *cron.Scheduler
+	rlStore      ratelimit.Store
+	metricsStore metrics.Store
 	// liveNotifier signals "registry state changed" to the dashboard's
 	// live snapshot stream. Wired in New so registry mutations push
 	// snapshots instead of poll.
-	liveNotifier  *Notifier
+	liveNotifier *Notifier
 	// schemaRefsMu guards schemaRefs which holds the deduped pool of
 	// named-struct shapes referenced by endpoint ArgsSchema /
 	// ReturnSchema. Populated lazily as endpoints register; surfaced
@@ -149,6 +149,11 @@ type App struct {
 	// the dashboard (/__nexus/graphql/cache + live WS snapshot)
 	// so operators can verify the cache is hitting.
 	gqlStats *gql.StatsRegistry
+
+	// devReloadExclude holds the operator's extra live-reload ignore
+	// globs (Config.DevReload.Exclude / [runtime.devreload] exclude).
+	// Read by mountFrontend when it starts the NEXUS_DEV=1 watcher.
+	devReloadExclude []string
 }
 
 // New constructs an *App from a single Config. The canonical
@@ -215,18 +220,19 @@ func New(cfg Config) *App {
 	}
 
 	a := &App{
-		engine:        engine,
-		dashboardName: dashboardName,
-		version:       version,
-		environment:   cfg.Environment,
-		graphqlPath:   cfg.GraphQL.Path,
-		dashboardOn:   cfg.Dashboard.Enabled,
-		cacheMgr:      cfg.Stores.Cache,
-		rlStore:       cfg.Stores.RateLimit,
-		metricsStore:  cfg.Stores.Metrics,
-		listeners:     listeners,
-		routePrefix:   normalizeRoutePrefix(cfg.Server.RoutePrefix),
-		gqlStats:      gql.NewStatsRegistry(),
+		engine:           engine,
+		dashboardName:    dashboardName,
+		version:          version,
+		environment:      cfg.Environment,
+		graphqlPath:      cfg.GraphQL.Path,
+		dashboardOn:      cfg.Dashboard.Enabled,
+		cacheMgr:         cfg.Stores.Cache,
+		rlStore:          cfg.Stores.RateLimit,
+		metricsStore:     cfg.Stores.Metrics,
+		listeners:        listeners,
+		routePrefix:      normalizeRoutePrefix(cfg.Server.RoutePrefix),
+		gqlStats:         gql.NewStatsRegistry(),
+		devReloadExclude: cfg.DevReload.Exclude,
 	}
 	if traceCapacity > 0 {
 		a.bus = trace.NewBus(traceCapacity)
@@ -509,8 +515,8 @@ func (a *App) Environment() string { return a.environment }
 // /__nexus/config.
 func (a *App) Version() string { return a.version }
 
-func (a *App) Metrics() metrics.Store       { return a.metricsStore }
-func (a *App) Cache() *cache.Manager        { return a.cacheMgr }
+func (a *App) Metrics() metrics.Store { return a.metricsStore }
+func (a *App) Cache() *cache.Manager  { return a.cacheMgr }
 
 // RoutePrefix returns the deployment-wide path prefix applied to
 // every user-mounted route (REST, GraphQL, WebSocket). Empty when

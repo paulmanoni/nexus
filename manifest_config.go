@@ -3,11 +3,11 @@ package nexus
 import (
 	"time"
 
-	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/middleware"
 )
 
 // Config drives how nexus.Run builds the app. Supply it as the first
@@ -63,6 +63,11 @@ type Config struct {
 	// TraceCapacity is the ring-buffer size for request traces. 0 disables
 	// tracing — the Traces tab will stay empty.
 	TraceCapacity int
+
+	// DevReload tunes the dev-mode live-reload file watcher, which
+	// runs only under NEXUS_DEV=1. Production builds never start the
+	// watcher, so this field is inert there.
+	DevReload DevReloadConfig
 
 	// GraphQL bundles every environment-level GraphQL knob that
 	// applies across all services' mounted schemas. Set once on the
@@ -187,6 +192,26 @@ type DashboardConfig struct {
 	// over /__nexus/config so you can change it per-environment
 	// without rebuilding the UI.
 	Name string
+}
+
+// DevReloadConfig tunes the NEXUS_DEV=1 live-reload watcher. The
+// watcher already ignores hidden files, sourcemaps, and runtime data
+// artifacts (SQLite databases + their -wal/-shm/-journal sidecars,
+// .log files) out of the box; Exclude adds app-specific patterns on
+// top of those built-ins.
+type DevReloadConfig struct {
+	// Exclude lists glob patterns whose matches never trigger a
+	// browser reload. Each changed file is tested (via filepath.Match)
+	// three ways, and a match on any one excludes it:
+	//
+	//   - against the base name           → "*.tmp", "*.db"
+	//   - against the path relative to the
+	//     watch root                       → "cache/*.json"
+	//   - as a directory subtree prefix    → "uploads" skips
+	//     everything under uploads/ (a trailing slash is optional)
+	//
+	// Invalid patterns are logged once at boot and skipped.
+	Exclude []string
 }
 
 // ServerConfig groups the network-binding knobs. Addr is the
@@ -383,5 +408,3 @@ type GraphQLConfig struct {
 	// rate is suspiciously low.
 	DocumentCacheSize int
 }
-
-

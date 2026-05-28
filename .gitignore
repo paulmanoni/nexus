@@ -34,3 +34,6 @@ examples/*/bin/
 # Node / Vite (dashboard UI)
 dashboard/ui/node_modules/
 dashboard/ui/.vite/
+
+# Frontend build cache (nexus build short-circuit; safe to delete)
+.nexus-cache/
