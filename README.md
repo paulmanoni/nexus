@@ -70,7 +70,7 @@ nexus dev                 # go run + auto-open the dashboard
 | `nexus new <dir>` | Scaffold a runnable app (prompts for frontend / db / cache / auth). |
 | `nexus init [dir] --frontend=vue\|react` | Scaffold the frontend pipeline (`islands.src/`, embed) into an existing project. |
 | `nexus dev [dir]` | `go run` + auto-rebuild frontend on save; opens the dashboard. |
-| `nexus build [package]` | Bundle frontend sources under `islands.src/`, then `go build` the main package. |
+| `nexus build [package]` | Bundle frontend sources under `islands.src/` (content-cached — skips the bundler when nothing changed), then `go build` the main package. |
 | `nexus docs [topic]` | Inline reference (`handlers`, `frontend`, `auth`, …). |
 | `nexus add <spec>` | Fetch a frontend dep from esm.sh into `~/.nexus/cache`, write `nexus.lock`. |
 | `nexus install` | Sync the cache to `nexus.lock` (fresh clones, CI). |
@@ -204,6 +204,30 @@ nexus.Run(nexus.Config{...},
 ```
 
 Unknown paths fall through to `index.html` (SPA-aware). REST/GraphQL/WS/dashboard routes win on conflict.
+
+### Build cache
+
+`nexus build` short-circuits the bundler when none of its inputs changed since the last successful build, cutting the inner Go-edit loop substantially. It hashes every input that affects the bundle — the `islands.src/` tree, `nexus.lock`, `package.json`, `vite.config.*`, the resolved `tsconfig`/`jsconfig`, and the `.env` cascade — into `.nexus-cache/frontend-build.hash`, and skips the rebuild when the digest matches **and** the output directory is non-empty.
+
+```bash
+nexus build                          # cached: "frontend up to date" when nothing changed
+NEXUS_FRONTEND_NO_CACHE=1 nexus build # force a full rebuild (CI / debugging)
+```
+
+`.nexus-cache/` is project-local and safe to delete at any time; add it to `.gitignore`.
+
+### Dev-reload watcher
+
+Under `nexus dev` (`NEXUS_DEV=1`), the browser auto-reloads on source changes. The watcher ignores hidden files, sourcemaps, and **runtime data artifacts** out of the box — SQLite databases (`.db` / `.sqlite` / `.sqlite3`), their `-wal` / `-shm` / `-journal` sidecars, and `.log` files — so a request that writes the database can't trigger a reload loop.
+
+Add app-specific ignore globs via `Config.DevReload.Exclude` (or `[runtime.devreload]` in `nexus.toml`). Each changed file is matched against its base name, its path relative to the watch root, and as a directory-subtree prefix:
+
+```toml
+[runtime.devreload]
+exclude = ["uploads", "*.tmp", "cache/*.json"]
+```
+
+Invalid patterns are logged once at boot and skipped.
 
 ## Dashboard
 
