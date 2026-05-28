@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/banner.svg" alt="nexus" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/banner.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/banner-light.svg">
+    <img src="docs/banner.svg" alt="nexus" width="100%">
+  </picture>
 </p>
 
 <p align="center">
