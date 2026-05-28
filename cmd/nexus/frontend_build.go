@@ -242,6 +242,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		Env:        viteEnv,
 		Mode:       "production",
 		PublicPath: os.Getenv("NEXUS_PUBLIC_PATH"),
+		Splitting:  true,
 		LogTo:      stderr,
 	})
 	if err != nil {

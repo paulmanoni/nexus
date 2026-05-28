@@ -179,6 +179,26 @@ type Options struct {
 	// projects that read it at runtime (e.g. building absolute
 	// URLs for fetch requests or router base-path config).
 	PublicPath string
+
+	// Splitting enables esbuild's code splitting. When on, code
+	// shared across multiple entries — and anything behind a
+	// dynamic `import()` — is hoisted into separate chunk files
+	// (under "<OutDir>/chunks/") instead of being duplicated into
+	// every bundle. This is what makes route-level lazy loading
+	// (`import('./views/Settings.vue')`) actually shrink the
+	// initial payload, matching Vite's default behavior.
+	//
+	// Requires the ES-module output format (always set) and an
+	// output directory (always set), both of which the bundler
+	// already guarantees. Safe to leave on for single-entry
+	// projects with no dynamic imports: esbuild simply emits the
+	// one entry file and no chunks, so output is byte-identical to
+	// the unsplit build.
+	//
+	// Off by default so library callers that depend on a single
+	// self-contained bundle file aren't surprised; the CLI
+	// (`nexus build` / `nexus dev`) turns it on.
+	Splitting bool
 }
 
 // assetLoaders is the default per-extension loader map handed to
@@ -289,6 +309,13 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		Format:            api.FormatESModule,
 		Target:            opts.Target,
 		Sourcemap:         opts.Sourcemap,
+		// Code splitting hoists shared + dynamically-imported code
+		// into chunk files instead of duplicating it per entry.
+		// ChunkNames only takes effect when Splitting is true, so
+		// setting it unconditionally is harmless. The content hash
+		// makes chunks safe to cache far-future.
+		Splitting:  opts.Splitting,
+		ChunkNames: "chunks/[name]-[hash]",
 		MinifyWhitespace:  opts.Minify,
 		MinifyIdentifiers: opts.Minify,
 		MinifySyntax:      opts.Minify,

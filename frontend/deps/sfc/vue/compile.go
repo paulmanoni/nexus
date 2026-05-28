@@ -170,6 +170,18 @@ func (c *Compiler) Close() {
 // concurrent use; calls are serialized at the worker via the jobs
 // channel.
 func (c *Compiler) Compile(source, filename string) (CompileResult, error) {
+	// Check for shutdown BEFORE attempting the send. Close() closes
+	// c.jobs, and a send on a closed channel panics — in a select,
+	// the send case is "ready" (it would proceed and panic), so a
+	// plain select between the send and <-c.closed picks the panic
+	// path ~half the time once both are closed. This non-blocking
+	// guard returns the documented error first when we've already
+	// been closed.
+	select {
+	case <-c.closed:
+		return CompileResult{}, errors.New("vue: Compile called after Close")
+	default:
+	}
 	reply := make(chan compileReply, 1)
 	select {
 	case c.jobs <- compileJob{source: source, filename: filename, reply: reply}:

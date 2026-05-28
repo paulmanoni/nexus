@@ -1,0 +1,125 @@
+//go:build cgo
+// +build cgo
+
+package vue
+
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func TestNewPool_EmptyBundleErrors(t *testing.T) {
+	if _, err := NewPool(nil, "v", 4); err == nil {
+		t.Fatal("expected error on nil bundle")
+	}
+	if _, err := NewPool([]byte{}, "v", 4); err == nil {
+		t.Fatal("expected error on empty bundle")
+	}
+}
+
+func TestNewPool_SizeClampedToOne(t *testing.T) {
+	for _, size := range []int{0, -3} {
+		p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", size)
+		if err != nil {
+			t.Fatalf("NewPool(size=%d): %v", size, err)
+		}
+		if p.Size() != 1 {
+			t.Errorf("size=%d clamped to %d, want 1", size, p.Size())
+		}
+		p.Close()
+	}
+}
+
+func TestPool_SizeMatchesRequest(t *testing.T) {
+	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 4)
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer p.Close()
+	if p.Size() != 4 {
+		t.Errorf("Size() = %d, want 4", p.Size())
+	}
+	if p.Version() != "fake-1.0.0" {
+		t.Errorf("Version() = %q", p.Version())
+	}
+}
+
+func TestPool_CompileRoundTrip(t *testing.T) {
+	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 3)
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer p.Close()
+	res, err := p.Compile(`<template><h1>Hi</h1></template>`, "Card.vue")
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if !strings.Contains(res.Code, "export default") {
+		t.Errorf("Code missing export; got: %s", res.Code)
+	}
+	if !strings.Contains(res.Code, "Card.vue") {
+		t.Errorf("filename not threaded through; got: %s", res.Code)
+	}
+}
+
+// TestPool_ConcurrentCompilesDistinctFiles fires far more goroutines
+// than the pool size at distinct sources and checks every result
+// comes back correct — exercising the checkout/return free-list under
+// contention without panics, deadlocks, or cross-talk between
+// compilers.
+func TestPool_ConcurrentCompilesDistinctFiles(t *testing.T) {
+	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 4)
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer p.Close()
+
+	const N = 64
+	var wg sync.WaitGroup
+	wg.Add(N)
+	errs := make(chan error, N)
+	for i := range N {
+		go func() {
+			defer wg.Done()
+			file := fmt.Sprintf("View%d.vue", i)
+			res, cerr := p.Compile(`<template><p>x</p></template>`, file)
+			if cerr != nil {
+				errs <- fmt.Errorf("%s: %w", file, cerr)
+				return
+			}
+			// The fake adapter echoes the filename into the output,
+			// so a mismatch would prove a result got crossed between
+			// goroutines.
+			if !strings.Contains(res.Code, file) {
+				errs <- fmt.Errorf("%s: result missing own filename: %s", file, res.Code)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Error(e)
+	}
+}
+
+func TestPool_CloseIdempotent(t *testing.T) {
+	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 2)
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	p.Close()
+	p.Close() // must not panic or block
+}
+
+func TestPool_CompileAfterCloseErrors(t *testing.T) {
+	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 2)
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	p.Close()
+	if _, err := p.Compile(`<template><p>x</p></template>`, "Late.vue"); err == nil {
+		t.Fatal("expected error compiling after Close")
+	}
+}
