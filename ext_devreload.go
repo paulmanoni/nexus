@@ -90,7 +90,7 @@ func (h *devReloadHub) broadcast() {
 // Errors from the watcher are logged and swallowed; the dev
 // loop should not crash the app if fsnotify hits a per-platform
 // limit (e.g. macOS open-file cap).
-func mountDevReload(engine *gin.Engine, watchDir string) {
+func mountDevReload(engine *gin.Engine, watchDir string, exclude []string) {
 	hub := newDevReloadHub()
 
 	engine.GET("/__nexus/dev/reload", devReloadSSE(hub))
@@ -100,6 +100,10 @@ func mountDevReload(engine *gin.Engine, watchDir string) {
 		log.Printf("nexus: dev-reload: empty watch dir, SSE-only mode (no auto-broadcast)")
 		return
 	}
+	// Validate operator-supplied ignore globs once, here, so a typo
+	// surfaces at boot and the hot loop below never re-checks for
+	// ErrBadPattern.
+	exclude = validDevReloadGlobs(exclude)
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("nexus: dev-reload: fsnotify init failed: %v (SSE mounted but no auto-broadcast)", err)
@@ -126,7 +130,7 @@ func mountDevReload(engine *gin.Engine, watchDir string) {
 				if !ok {
 					return
 				}
-				if !devReloadRelevant(ev) {
+				if !devReloadRelevant(ev) || devReloadExcluded(ev.Name, watchDir, exclude) {
 					continue
 				}
 				// New directory? Recursively add so changes inside
@@ -181,6 +185,9 @@ func addRecursive(w *fsnotify.Watcher, dir string) error {
 //
 //   - .map files (sourcemaps refresh transparently via DevTools)
 //   - hidden files (.DS_Store, editor swap files like .#foo.vue)
+//   - runtime data the app writes itself (SQLite databases and
+//     their WAL/journal sidecars, log files) — see
+//     isRuntimeDataArtifact for why these must never reload
 //   - directory-only events on a Chmod (perm bit changes don't
 //     change page content)
 //
@@ -194,10 +201,97 @@ func devReloadRelevant(ev fsnotify.Event) bool {
 	if strings.HasSuffix(base, ".map") {
 		return false
 	}
+	if isRuntimeDataArtifact(base) {
+		return false
+	}
 	if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 		return false
 	}
 	return true
+}
+
+// isRuntimeDataArtifact reports whether base names a file the running
+// app mutates as data rather than source — most commonly its own
+// database. These never change the served frontend, and reloading on
+// them risks an infinite loop: a request writes the DB → the watcher
+// fires a reload → the reloaded page's bootstrap re-issues the request
+// → it writes the DB again, forever. (A SQLite app that tracks
+// per-request session state in the project root hits this the moment a
+// user logs in.) Matched:
+//
+//   - SQLite databases: .db / .sqlite / .sqlite3
+//   - SQLite sidecars: the -wal / -shm / -journal suffixes
+//   - log files: .log
+func isRuntimeDataArtifact(base string) bool {
+	lower := strings.ToLower(base)
+	switch {
+	case strings.HasSuffix(lower, ".db"),
+		strings.HasSuffix(lower, ".sqlite"),
+		strings.HasSuffix(lower, ".sqlite3"),
+		strings.HasSuffix(lower, ".log"):
+		return true
+	case strings.HasSuffix(lower, "-wal"),
+		strings.HasSuffix(lower, "-shm"),
+		strings.HasSuffix(lower, "-journal"):
+		return true
+	}
+	return false
+}
+
+// validDevReloadGlobs drops empty and malformed patterns from the
+// operator's [runtime.devreload] exclude list, logging each bad one
+// once so a config typo is visible at boot rather than silently
+// swallowing changes. filepath.Match only errors on the pattern (not
+// the input), so a single probe per pattern is sufficient.
+func validDevReloadGlobs(patterns []string) []string {
+	out := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(p)), "/")
+		if p == "" {
+			continue
+		}
+		if _, err := filepath.Match(p, "probe"); err != nil {
+			log.Printf("nexus: dev-reload: ignoring invalid exclude pattern %q: %v", p, err)
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// devReloadExcluded reports whether the changed file at name (an
+// absolute path inside watchDir) matches any operator-supplied ignore
+// glob. Each pattern is tested three ways — a hit on any one excludes
+// the file:
+//
+//   - against the base name           ("*.tmp" ignores foo.tmp anywhere)
+//   - against the path relative to the
+//     watch root                       ("cache/*.json")
+//   - as a directory subtree prefix    ("uploads" ignores uploads/a/b)
+//
+// Patterns are assumed pre-validated by validDevReloadGlobs, so
+// filepath.Match's error return is ignored here.
+func devReloadExcluded(name, watchDir string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	base := filepath.Base(name)
+	rel := base
+	if r, err := filepath.Rel(watchDir, name); err == nil && !strings.HasPrefix(r, "..") {
+		rel = filepath.ToSlash(r)
+	}
+	for _, p := range patterns {
+		if ok, _ := filepath.Match(p, base); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(p, rel); ok {
+			return true
+		}
+		if rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // devReloadSSE returns the long-lived SSE handler. Honors the

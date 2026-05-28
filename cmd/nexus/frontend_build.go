@@ -95,6 +95,29 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		srcDir = actualSrcDir
 	}
 
+	// Cache short-circuit. Computed BEFORE any of the heavy work
+	// below (lockfile load, store open, plugin init, bundler init)
+	// so a cached hit returns immediately. The hash covers every
+	// input that affects bundle output; see frontend_build_cache.go.
+	//
+	// Two guard conditions on the fast path:
+	//   1. NEXUS_FRONTEND_NO_CACHE not set (CI / debug bypass)
+	//   2. islands/ contains at least one prior artifact — an empty
+	//      output dir with a stale hash would silently produce a
+	//      binary that embeds nothing.
+	outDirEarly := filepath.Join(projectRoot, islandsOutName())
+	if !frontendCacheDisabled() {
+		currentHash, hashErr := frontendBuildHash(projectRoot)
+		if hashErr != nil {
+			// Hashing failed (e.g. unreadable file). Fall through to
+			// a real build; emit a one-line warning so it's traceable.
+			fmt.Fprintf(stderr, "nexus build: cache disabled this run: %v\n", hashErr)
+		} else if prior := readFrontendBuildHash(projectRoot); prior != "" && prior == currentHash && outputDirHasFiles(outDirEarly) {
+			fmt.Fprintf(stdout, "nexus build: frontend up to date (cached, set %s=1 to force rebuild)\n", envSkipFrontendCache)
+			return nil
+		}
+	}
+
 	lockfilePath := filepath.Join(projectRoot, lockfile.Filename)
 	lf, err := lockfile.Load(lockfilePath)
 	if err != nil {
@@ -242,6 +265,18 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "frontend build: wrote %d output %s to %s\n",
 		len(res.OutputFiles), pluralize("file", len(res.OutputFiles)), outDir)
+
+	// Persist the input digest so the next `nexus build` can skip
+	// this whole function when nothing changed. Failure here is a
+	// warning, not an error — the build itself succeeded; we just
+	// won't get the fast path next time.
+	if !frontendCacheDisabled() {
+		if hash, err := frontendBuildHash(projectRoot); err == nil {
+			if werr := writeFrontendBuildHash(projectRoot, hash); werr != nil {
+				fmt.Fprintf(stderr, "nexus build: cache write skipped: %v\n", werr)
+			}
+		}
+	}
 	return nil
 }
 

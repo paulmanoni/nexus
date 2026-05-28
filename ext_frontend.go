@@ -209,7 +209,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	// CLI's bundler is the producer of those file changes.
 	// Production binaries never run this branch.
 	if devMode {
-		mountDevReload(app.engine, devReloadWatchDir())
+		mountDevReload(app.engine, devReloadWatchDir(), app.devReloadExclude)
 	}
 
 	// Effective prefix is the concatenation of the deployment
