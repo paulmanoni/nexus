@@ -1,20 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" fill="none" role="img" aria-label="nexus">
   <defs>
     <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
-      <circle cx="2" cy="2" r="1.5" fill="#34d399" fill-opacity="0.16"/>
+      <circle cx="2" cy="2" r="1.5" fill="#059669" fill-opacity="0.14"/>
     </pattern>
   </defs>
 
   <!-- Base + dot-grid texture (the bold wordmark reads cleanly over it) -->
-  <rect width="1200" height="300" rx="16" fill="#053024"/>
+  <rect width="1200" height="300" rx="16" fill="#ecfdf5"/>
   <rect width="1200" height="300" rx="16" fill="url(#dots)"/>
 
   <!-- A few faint topology edges emerging from the grid on the open right side,
        echoing the dashboard's service graph. Structured, not scattered. -->
-  <g stroke="#34d399" stroke-opacity="0.18" stroke-width="1.6" stroke-linecap="round">
+  <g stroke="#059669" stroke-opacity="0.22" stroke-width="1.6" stroke-linecap="round">
     <path d="M860 80 L964 132 L1068 80 M964 132 L964 236 M964 236 L1068 184 M860 184 L964 132"/>
   </g>
-  <g fill="#34d399" fill-opacity="0.28">
+  <g fill="#059669" fill-opacity="0.32">
     <circle cx="860"  cy="80"  r="4"/>
     <circle cx="1068" cy="80"  r="4"/>
     <circle cx="964"  cy="132" r="5"/>
@@ -26,23 +26,23 @@
   <!-- N-as-graph-node mark (from logo.svg, viewBox 0 0 32), centered against the text block -->
   <g transform="translate(96,92) scale(3.8)">
     <path d="M6 6 L6 26 M6 26 L26 6 M26 6 L26 26"
-          stroke="#34d399" stroke-width="2.6"
+          stroke="#047857" stroke-width="2.6"
           stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="6"  cy="6"  r="3.4" fill="#34d399"/>
-    <circle cx="6"  cy="26" r="3.4" fill="#34d399"/>
-    <circle cx="26" cy="6"  r="3.4" fill="#34d399"/>
-    <circle cx="26" cy="26" r="3.4" fill="#34d399"/>
+    <circle cx="6"  cy="6"  r="3.4" fill="#047857"/>
+    <circle cx="6"  cy="26" r="3.4" fill="#047857"/>
+    <circle cx="26" cy="6"  r="3.4" fill="#047857"/>
+    <circle cx="26" cy="26" r="3.4" fill="#047857"/>
     <circle cx="16" cy="16" r="3.6" fill="#10b981"/>
   </g>
 
   <!-- Wordmark -->
   <text x="318" y="150" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-        font-size="100" font-weight="800" letter-spacing="-3" fill="#ffffff">nexus</text>
+        font-size="100" font-weight="800" letter-spacing="-3" fill="#064e3b">nexus</text>
 
   <!-- Accent rule -->
   <rect x="322" y="172" width="280" height="3" rx="1.5" fill="#10b981"/>
 
   <!-- Tagline, code-comment style -->
   <text x="322" y="214" font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace"
-        font-size="24" fill="#7fcfb1">// one handler &#8594; REST, GraphQL, WebSocket</text>
+        font-size="24" fill="#047857">// one handler &#8594; REST, GraphQL, WebSocket</text>
 </svg>
