@@ -14,7 +14,15 @@ import (
 	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 )
 
-// Plugin wraps a Compiler in an esbuild plugin so the bundler
+// SFCCompiler is the compile surface Plugin needs. Both *Compiler
+// (one QuickJS worker, serialized) and *Pool (N workers, concurrent)
+// satisfy it, so the caller picks the throughput/memory trade-off
+// without the plugin caring which it got.
+type SFCCompiler interface {
+	Compile(source, filename string) (CompileResult, error)
+}
+
+// Plugin wraps an SFCCompiler in an esbuild plugin so the bundler
 // picks up .vue files transparently. Register with
 // Bundler.AddPlugin AFTER the resolver plugin (resolver handles
 // bare imports; this one handles .vue file loads).
@@ -24,7 +32,7 @@ import (
 // do NOT emit any code when the compiler reports errors — better
 // to fail than to feed esbuild half-compiled JS that produces a
 // second cascade of errors.
-func Plugin(c *Compiler) (api.Plugin, error) {
+func Plugin(c SFCCompiler) (api.Plugin, error) {
 	if c == nil {
 		return api.Plugin{}, errors.New("vue: Plugin called with nil Compiler")
 	}

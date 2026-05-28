@@ -364,6 +364,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		Mode:       "development",
 		PublicPath: os.Getenv("NEXUS_PUBLIC_PATH"),
 		Minify:     false, // dev: readable output > smaller bytes
+		Splitting:  true,
 		Watch:      true,
 		OnRebuild:  onRebuild,
 	})

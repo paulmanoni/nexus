@@ -249,3 +249,84 @@ func TestBuild_DefaultsApplied(t *testing.T) {
 		t.Errorf("expected output file: %v", err)
 	}
 }
+
+// TestBuild_SplittingEmitsChunkForDynamicImport proves that with
+// Splitting on, code behind a dynamic import() is hoisted into a
+// separate chunk under chunks/ rather than inlined into the entry —
+// the behavior that makes route-level lazy loading shrink the initial
+// payload.
+func TestBuild_SplittingEmitsChunkForDynamicImport(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "lazy.js"),
+		[]byte(`export const heavy = "lazy-only-payload";`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(tmp, "main.js")
+	if err := os.WriteFile(entry,
+		[]byte(`export async function go(){ return (await import("./lazy.js")).heavy; }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := New()
+	outDir := filepath.Join(tmp, "out")
+	res, err := b.Build(Options{
+		Entries:   []string{entry},
+		OutDir:    outDir,
+		Minify:    false,
+		Splitting: true,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("errors: %v", res.Errors)
+	}
+
+	// Entry must still land at its base name (the index rewriter
+	// keys off this).
+	mainJS, err := os.ReadFile(filepath.Join(outDir, "main.js"))
+	if err != nil {
+		t.Fatalf("read entry: %v", err)
+	}
+	// A chunk dir must exist and the lazy payload must live there,
+	// not in the entry.
+	chunkEntries, err := os.ReadDir(filepath.Join(outDir, "chunks"))
+	if err != nil {
+		t.Fatalf("expected chunks/ dir: %v", err)
+	}
+	if len(chunkEntries) == 0 {
+		t.Fatal("chunks/ dir is empty; splitting produced no chunk")
+	}
+	if strings.Contains(string(mainJS), "lazy-only-payload") {
+		t.Error("lazy payload was inlined into the entry; splitting did not hoist it")
+	}
+}
+
+// TestBuild_NoSplittingKeepsSingleFile is the control: the same
+// dynamic-import source with Splitting off must NOT create a chunks/
+// directory (esbuild inlines or keeps a single output).
+func TestBuild_NoSplittingKeepsSingleFile(t *testing.T) {
+	tmp := t.TempDir()
+	entry := filepath.Join(tmp, "main.js")
+	if err := os.WriteFile(entry,
+		[]byte(`export const x = 1;`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := New()
+	outDir := filepath.Join(tmp, "out")
+	res, err := b.Build(Options{
+		Entries: []string{entry},
+		OutDir:  outDir,
+		Minify:  false,
+		// Splitting defaults to false.
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("errors: %v", res.Errors)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "chunks")); !os.IsNotExist(err) {
+		t.Errorf("unexpected chunks/ dir with splitting off (err=%v)", err)
+	}
+}
