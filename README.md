@@ -1,12 +1,28 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="nexus" width="120" height="120">
+  <img src="docs/banner.svg" alt="nexus" width="100%">
 </p>
-
-<h1 align="center">nexus</h1>
 
 <p align="center">
   A Go framework over <a href="https://github.com/gin-gonic/gin">Gin</a> that lets you write plain handlers,
   wires them into REST + GraphQL + WebSocket from one signature, and ships a live dashboard at <code>/__nexus/</code>.
+</p>
+
+<p align="center">
+  <a href="https://github.com/paulmanoni/nexus/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/paulmanoni/nexus?sort=semver&color=10b981&labelColor=064e3b"></a>
+  <a href="https://pkg.go.dev/github.com/paulmanoni/nexus"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/paulmanoni/nexus.svg"></a>
+  <a href="go.mod"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/paulmanoni/nexus?color=10b981&labelColor=064e3b"></a>
+  <a href="https://goreportcard.com/report/github.com/paulmanoni/nexus"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/paulmanoni/nexus"></a>
+  <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-10b981?labelColor=064e3b"></a>
+</p>
+
+<p align="center">
+  <a href="#why-nexus">Why</a> &#183;
+  <a href="#install">Install</a> &#183;
+  <a href="#quick-start">Quick start</a> &#183;
+  <a href="#reflective-handlers">Handlers</a> &#183;
+  <a href="#dashboard">Dashboard</a> &#183;
+  <a href="#peer-mesh">Peer mesh</a> &#183;
+  <a href="#configuration">Config</a>
 </p>
 
 ```go
