@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" fill="none" role="img" aria-label="nexus">
+  <rect width="1200" height="300" rx="16" fill="#053024"/>
+
+  <!-- N-as-graph-node mark (from logo.svg, viewBox 0 0 32), centered against the text block -->
+  <g transform="translate(96,92) scale(3.8)">
+    <path d="M6 6 L6 26 M6 26 L26 6 M26 6 L26 26"
+          stroke="#34d399" stroke-width="2.6"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="6"  cy="6"  r="3.4" fill="#34d399"/>
+    <circle cx="6"  cy="26" r="3.4" fill="#34d399"/>
+    <circle cx="26" cy="6"  r="3.4" fill="#34d399"/>
+    <circle cx="26" cy="26" r="3.4" fill="#34d399"/>
+    <circle cx="16" cy="16" r="3.6" fill="#10b981"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="318" y="150" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="100" font-weight="800" letter-spacing="-3" fill="#ffffff">nexus</text>
+
+  <!-- Accent rule -->
+  <rect x="322" y="172" width="280" height="3" rx="1.5" fill="#10b981"/>
+
+  <!-- Tagline, code-comment style -->
+  <text x="322" y="214" font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace"
+        font-size="24" fill="#7fcfb1">// one handler &#8594; REST, GraphQL, WebSocket</text>
+</svg>
