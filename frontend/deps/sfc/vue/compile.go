@@ -99,24 +99,6 @@ type compileReply struct {
 	err    error
 }
 
-// CompileResult is what Compiler.Compile returns: the synthesized
-// JS module plus any diagnostics the compiler produced. A non-nil
-// Errors slice means the result is partially valid — callers
-// typically surface the errors and abort the build before reaching
-// esbuild.
-type CompileResult struct {
-	Code   string
-	Errors []CompileError
-}
-
-// CompileError describes a single diagnostic from the SFC compiler.
-// Line/Column are 1-indexed if known, else zero.
-type CompileError struct {
-	Message string
-	Line    int
-	Column  int
-}
-
 // NewCompiler constructs a Compiler from the supplied bundle bytes.
 // The bundle MUST evaluate at top level to install a global
 // function named __nexus_compileSFC; see the adapter contract in
@@ -347,38 +329,3 @@ func doCompile(ctx *quickjs.Context, source, filename string) compileReply {
 // invalidation logic in the install command.
 func (c *Compiler) Version() string { return c.version }
 
-// decodeResult parses the JSON the adapter returned. We use JSON
-// rather than poking individual JS object fields via the binding's
-// reflection because:
-//
-//  1. The boundary stays string-shaped — easier to reason about.
-//  2. Fewer cross-CGo round trips per Compile (one JSONStringify
-//     in JS, one Unmarshal in Go) compared to N property reads.
-//  3. Errors in malformed adapter output surface as Unmarshal
-//     errors with line numbers, which beats "field was unexpected
-//     type" without context.
-func decodeResult(jsonStr string) (CompileResult, error) {
-	if jsonStr == "" || jsonStr == "undefined" || jsonStr == "null" {
-		return CompileResult{}, errors.New("vue: __nexus_compileSFC returned null/undefined")
-	}
-	var raw struct {
-		Code   string `json:"code"`
-		Errors []struct {
-			Message string `json:"message"`
-			Line    int    `json:"line,omitempty"`
-			Column  int    `json:"column,omitempty"`
-		} `json:"errors,omitempty"`
-	}
-	if err := jsonUnmarshalString(jsonStr, &raw); err != nil {
-		return CompileResult{}, fmt.Errorf("vue: parse adapter result: %w", err)
-	}
-	out := CompileResult{Code: raw.Code}
-	for _, e := range raw.Errors {
-		out.Errors = append(out.Errors, CompileError{
-			Message: e.Message,
-			Line:    e.Line,
-			Column:  e.Column,
-		})
-	}
-	return out, nil
-}
