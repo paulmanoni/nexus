@@ -200,8 +200,9 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		return fmt.Errorf("frontend watcher: scan vue sources: %w", err)
 	}
 	if hasVue && vueCompilerHook == nil {
-		return errors.New("frontend watcher: .vue sources detected but this nexus was built without Vue SFC support — " +
-			"rebuild with `CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest` to enable")
+		return errors.New("frontend watcher: .vue sources detected but no SFC compiler is wired — " +
+			"you built with `-tags vue` (native CGo backend) without cgo. Either set CGO_ENABLED=1, " +
+			"or drop `-tags vue` to use the default WASM backend (no cgo needed)")
 	}
 
 	lockPath := filepath.Join(root, lockfile.Filename)

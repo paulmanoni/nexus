@@ -10,18 +10,27 @@ import (
 	"testing"
 )
 
-func TestNewPool_EmptyBundleErrors(t *testing.T) {
-	if _, err := NewPool(nil, "v", 4); err == nil {
-		t.Fatal("expected error on nil bundle")
+// fakeFactory builds compilers from the fake adapter for pool tests.
+func fakeFactory(t *testing.T) func() (SFCCompiler, error) {
+	return func() (SFCCompiler, error) { return NewCompiler(loadFakeAdapter(t), "fake-1.0.0") }
+}
+
+func TestNewPool_NilFactoryErrors(t *testing.T) {
+	if _, err := NewPool(nil, 4); err == nil {
+		t.Fatal("expected error on nil factory")
 	}
-	if _, err := NewPool([]byte{}, "v", 4); err == nil {
-		t.Fatal("expected error on empty bundle")
+}
+
+func TestNewPool_FactoryErrorPropagates(t *testing.T) {
+	boom := func() (SFCCompiler, error) { return nil, fmt.Errorf("boom") }
+	if _, err := NewPool(boom, 4); err == nil {
+		t.Fatal("expected error when factory fails")
 	}
 }
 
 func TestNewPool_SizeClampedToOne(t *testing.T) {
 	for _, size := range []int{0, -3} {
-		p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", size)
+		p, err := NewPool(fakeFactory(t), size)
 		if err != nil {
 			t.Fatalf("NewPool(size=%d): %v", size, err)
 		}
@@ -33,7 +42,7 @@ func TestNewPool_SizeClampedToOne(t *testing.T) {
 }
 
 func TestPool_SizeMatchesRequest(t *testing.T) {
-	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 4)
+	p, err := NewPool(fakeFactory(t), 4)
 	if err != nil {
 		t.Fatalf("NewPool: %v", err)
 	}
@@ -41,13 +50,10 @@ func TestPool_SizeMatchesRequest(t *testing.T) {
 	if p.Size() != 4 {
 		t.Errorf("Size() = %d, want 4", p.Size())
 	}
-	if p.Version() != "fake-1.0.0" {
-		t.Errorf("Version() = %q", p.Version())
-	}
 }
 
 func TestPool_CompileRoundTrip(t *testing.T) {
-	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 3)
+	p, err := NewPool(fakeFactory(t), 3)
 	if err != nil {
 		t.Fatalf("NewPool: %v", err)
 	}
@@ -70,7 +76,7 @@ func TestPool_CompileRoundTrip(t *testing.T) {
 // contention without panics, deadlocks, or cross-talk between
 // compilers.
 func TestPool_ConcurrentCompilesDistinctFiles(t *testing.T) {
-	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 4)
+	p, err := NewPool(fakeFactory(t), 4)
 	if err != nil {
 		t.Fatalf("NewPool: %v", err)
 	}
@@ -105,7 +111,7 @@ func TestPool_ConcurrentCompilesDistinctFiles(t *testing.T) {
 }
 
 func TestPool_CloseIdempotent(t *testing.T) {
-	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 2)
+	p, err := NewPool(fakeFactory(t), 2)
 	if err != nil {
 		t.Fatalf("NewPool: %v", err)
 	}
@@ -114,7 +120,7 @@ func TestPool_CloseIdempotent(t *testing.T) {
 }
 
 func TestPool_CompileAfterCloseErrors(t *testing.T) {
-	p, err := NewPool(loadFakeAdapter(t), "fake-1.0.0", 2)
+	p, err := NewPool(fakeFactory(t), 2)
 	if err != nil {
 		t.Fatalf("NewPool: %v", err)
 	}
