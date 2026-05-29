@@ -59,24 +59,25 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	}
 
 	// .vue source files (anywhere under islands.src/, not just
-	// top-level entries) require the QuickJS-backed SFC compiler
-	// which is build-tagged behind cgo+vue. When the binary was
-	// built pure-Go (or without the vue tag), the vueCompilerHook
-	// stays nil and we reject .vue with the same clear message
-	// the v0.1 flow used.
+	// top-level entries) require an SFC compiler backend. The default
+	// build wires the CGo-free WASM backend, so vueCompilerHook is
+	// normally non-nil. It's only nil in one combination: the binary
+	// was built with `-tags vue` (asking for the native CGo backend)
+	// but without cgo, so neither backend registered.
 	//
 	// This check runs BEFORE the empty-entries short-circuit so a
 	// project with only `App.vue` (no bootstrap .ts) still surfaces
-	// the build-tag hint instead of silently producing nothing — a
-	// user staging vue components first and the entry later would
-	// otherwise see no output and have no clue why.
+	// the hint instead of silently producing nothing — a user staging
+	// vue components first and the entry later would otherwise see no
+	// output and have no clue why.
 	hasVue, err := hasVueSources(srcDir)
 	if err != nil {
 		return fmt.Errorf("frontend build: scan vue sources: %w", err)
 	}
 	if hasVue && vueCompilerHook == nil {
-		return errors.New("frontend build: .vue sources detected but this nexus was built without Vue SFC support — " +
-			"rebuild with `CGO_ENABLED=1 go install -tags vue ./cmd/nexus` to enable")
+		return errors.New("frontend build: .vue sources detected but no SFC compiler is wired — " +
+			"you built with `-tags vue` (native CGo backend) without cgo. Either set CGO_ENABLED=1, " +
+			"or drop `-tags vue` to use the default WASM backend (no cgo needed)")
 	}
 
 	actualSrcDir, entries, err := findFrontendEntries(srcDir)
