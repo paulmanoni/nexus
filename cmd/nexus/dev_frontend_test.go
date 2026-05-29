@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/evanw/esbuild/pkg/api"
 )
 
 const tag = "[web] "
@@ -201,5 +203,58 @@ func TestBuildBlockFilter_NonBuildLinesPassThrough(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-build line %q dropped", want)
 		}
+	}
+}
+func TestIsVendorDiag(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  api.Message
+		want bool
+	}{
+		{"vendor dep", api.Message{Location: &api.Location{File: "nexus-deps:https://esm.sh/pdfmake@0.3.5/build/pdfmake.mjs"}}, true},
+		{"user source", api.Message{Location: &api.Location{File: "islands.src/src/App.vue"}}, false},
+		{"no location", api.Message{Text: "some global warning"}, false},
+		{"lookalike prefix", api.Message{Location: &api.Location{File: "nexus-deps-fake/x.js"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isVendorDiag(tc.msg); got != tc.want {
+				t.Errorf("isVendorDiag(%q) = %v, want %v", tc.msg.Location, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReporter_HidesVendorWarnings(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	r := newBundlerReporter(&stdout, &stderr, tag, false) // verbose=false
+	r.report(api.BuildResult{
+		Warnings: []api.Message{
+			{Text: "Duplicate key", Location: &api.Location{File: "nexus-deps:https://esm.sh/pdfmake.mjs", Line: 1, Column: 1}},
+			{Text: "user mistake", Location: &api.Location{File: "islands.src/src/App.vue", Line: 3, Column: 5}},
+		},
+	})
+	out := stderr.String()
+	if strings.Contains(out, "Duplicate key") {
+		t.Errorf("vendor warning should be hidden; stderr:\n%s", out)
+	}
+	if !strings.Contains(out, "user mistake") {
+		t.Errorf("user warning should be shown; stderr:\n%s", out)
+	}
+	if !strings.Contains(out, "1 warning from cached dependencies hidden") {
+		t.Errorf("expected suppressed tally; stderr:\n%s", out)
+	}
+}
+
+func TestReporter_VerboseShowsVendorWarnings(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	r := newBundlerReporter(&stdout, &stderr, tag, true) // verbose=true
+	r.report(api.BuildResult{
+		Warnings: []api.Message{
+			{Text: "Duplicate key", Location: &api.Location{File: "nexus-deps:https://esm.sh/pdfmake.mjs", Line: 1, Column: 1}},
+		},
+	})
+	if !strings.Contains(stderr.String(), "Duplicate key") {
+		t.Errorf("verbose should show vendor warnings; stderr:\n%s", stderr.String())
 	}
 }
