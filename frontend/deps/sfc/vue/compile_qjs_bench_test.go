@@ -1,4 +1,4 @@
-//go:build cgo && vue_qjs && network
+//go:build cgo && network
 
 // Side-by-side benchmark of the two SFC compiler backends against the
 // real @vue/compiler-sfc bundle:
@@ -10,7 +10,7 @@
 // the engine cost. Network-gated (Bootstrap pulls the compiler from
 // esm.sh on a cold cache) and needs cgo for the native backend:
 //
-//	CGO_ENABLED=1 go test -tags "cgo vue_qjs network" \
+//	CGO_ENABLED=1 go test -tags "cgo network" \
 //	  -run TestQJS -bench 'Compile|Construct' -benchmem \
 //	  ./frontend/deps/sfc/vue
 //

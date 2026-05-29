@@ -12,12 +12,15 @@ import (
 // compile_qjs.go). It carries NO build tag so both backends — and a
 // pure-Go build that has neither — can reference these symbols.
 
-// SFCCompiler is the compile surface the esbuild Plugin needs. Every
-// backend (*Compiler, *Pool, *QJSCompiler) satisfies it, so the
-// caller picks the implementation without the plugin caring which it
-// got.
+// SFCCompiler is the compile surface the esbuild Plugin and the Pool
+// need. Every backend (*Compiler, *QJSCompiler) and the *Pool wrapper
+// satisfy it, so callers pick the implementation — and the Pool can
+// hold a homogeneous set of any backend — without anyone caring which
+// it got. Close is part of the contract so the Pool can tear members
+// down; Plugin simply never calls it.
 type SFCCompiler interface {
 	Compile(source, filename string) (CompileResult, error)
+	Close()
 }
 
 // CompileResult is what a compiler returns: the synthesized JS module

@@ -1,24 +1,14 @@
-//go:build vue_qjs
-
-// This file is a CGo-free alternative SFC compiler backend, gated
-// behind the `vue_qjs` build tag while we evaluate it against the
-// CGo QuickJS binding in compile.go. It runs the SAME
-// @vue/compiler-sfc bundle (produced by Bootstrap) inside
+// This file is the default, CGo-free SFC compiler backend. It runs
+// the SAME @vue/compiler-sfc bundle (produced by Bootstrap) inside
 // QuickJS-NG compiled to WebAssembly and driven by the Wazero
-// runtime — pure Go, no C toolchain, cross-compilable.
+// runtime — pure Go, no C toolchain, cross-compilable. Plain
+// `nexus build` uses it; the native CGo binding (compile.go) is the
+// opt-in alternative under `-tags vue`.
 //
-// It satisfies SFCCompiler (result.go), so the esbuild Plugin and
-// the Pool work against it unchanged. The headline difference from
-// *Compiler: no cgo, no runtime.LockOSThread worker goroutine —
-// Wazero has no C thread-affinity, so we just serialize calls on a
-// mutex.
-//
-// Opt in with:
-//
-//	go test -tags vue_qjs ./frontend/deps/sfc/vue
-//
-// (no CGO_ENABLED needed). Build both backends together for the
-// comparison benchmark with -tags "cgo vue_qjs network".
+// It satisfies SFCCompiler (result.go), so the esbuild Plugin and the
+// Pool work against it unchanged. The headline difference from
+// *Compiler: no cgo, no runtime.LockOSThread worker goroutine — Wazero
+// has no C thread-affinity, so we just serialize calls on a mutex.
 
 package vue
 

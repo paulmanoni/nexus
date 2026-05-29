@@ -63,7 +63,7 @@ var Module = nexus.Module("adverts",
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
 - **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext TOML (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. `${VAR}` placeholders inside `nexus.toml` resolve from the process env (and optionally a `.env` file via `nexus.LoadDotenvIfPresent()`). See [Configuration](#configuration) below.
 - **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots (multi-scene capture for dropdowns + modals), edit step text inline on the preview, play back as numbered-badge highlights, export to **PDF** or **Word** for handoff docs. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
-- **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. No `node_modules`, no `npm install`. See [frontend/deps](frontend/deps/README.md).
+- **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. `.vue` SFCs compile in-process by running `@vue/compiler-sfc` on QuickJS-NG via WebAssembly — no `node_modules`, no `npm install`, no cgo. See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
 ## Install
@@ -72,7 +72,9 @@ var Module = nexus.Module("adverts",
 go install github.com/paulmanoni/nexus/cmd/nexus@latest
 ```
 
-Go 1.25+. For `.vue` source compile support, opt into the QuickJS-backed Vue SFC compiler:
+Go 1.25+. That's it — `.vue` compilation works out of the box. The SFC compiler runs `@vue/compiler-sfc` through QuickJS-NG compiled to WebAssembly (via [wazero](https://github.com/tetratelabs/wazero)), so there's **no cgo and no C toolchain** — the default install cross-compiles to a single static binary.
+
+A native cgo backend is available as an opt-in; it's faster per SFC but needs a C compiler:
 
 ```bash
 CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
