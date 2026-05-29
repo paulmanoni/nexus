@@ -86,6 +86,11 @@ func LoadConfig(path ...string) (Config, error) {
 	if err := toml.Unmarshal(expanded, &block); err != nil {
 		return Config{}, fmt.Errorf("nexus: parse %s: %w", p, err)
 	}
+	// Stash the declarative [databases.*] structure blocks so
+	// DatabaseFromConfig[T] can resolve them when options are built.
+	// Secrets aren't here — only structure + the config-server
+	// key_prefix.
+	registerDatabaseSpecs(block.Databases)
 	return block.Runtime.toConfig()
 }
 
@@ -118,6 +123,11 @@ func MustLoadConfig(path ...string) Config {
 // document; we read the runtime sub-tree only.
 type runtimeConfigDoc struct {
 	Runtime RuntimeConfigBlock `toml:"runtime"`
+	// Databases holds the declarative [databases.<name>] blocks —
+	// connection structure (driver, sslmode, …) plus the config-server
+	// key_prefix to read secret values from. Consumed by
+	// DatabaseFromConfig[T], not by toConfig().
+	Databases map[string]DatabaseSpec `toml:"databases"`
 }
 
 // RuntimeConfigBlock is the TOML-tagged mirror of Config. Each
