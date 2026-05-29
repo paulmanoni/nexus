@@ -7,18 +7,34 @@ import (
 	"github.com/paulmanoni/nexus/db"
 )
 
-// DatabaseSpec is one [databases.<name>] block in nexus.toml. It
-// declares connection *structure* only — the secret values (host,
-// port, user, password, db name) are pulled from the config server at
-// boot using KeyPrefix, so credentials never live in nexus.toml.
+// DatabaseSpec is one [databases.<name>] block in nexus.toml. Each
+// connection value (host, port, user, password, db name) resolves
+// inline-first, then via the config server:
+//
+//   - if the inline field is set, it's used (supports ${ENV} expansion,
+//     applied by LoadConfig) — works with NO config server;
+//   - else, if KeyPrefix is set, the value is read from the config
+//     server at boot as <KeyPrefix>.{hostname,port,username,password,name}
+//     — keeping secrets out of nexus.toml.
+//
+// Config-server mode (secrets stay external):
 //
 //	[databases.uaa]
 //	driver     = "postgres"
-//	key_prefix = "db.uaa"      # reads db.uaa.{hostname,port,username,password,name}
+//	key_prefix = "db.uaa"
 //	sslmode    = "disable"
 //	timezone   = "Africa/Dar_es_Salaam"
-//	schema     = "main"        # optional, dashboard detail only
-//	default    = false
+//
+// Inline mode (no config server needed):
+//
+//	[databases.local]
+//	driver   = "postgres"
+//	host     = "localhost"
+//	port     = "5432"
+//	user     = "postgres"
+//	password = "${DB_PASSWORD}"
+//	name     = "myapp"
+//	sslmode  = "disable"
 type DatabaseSpec struct {
 	Driver    string `toml:"driver"`
 	KeyPrefix string `toml:"key_prefix"`
@@ -26,6 +42,15 @@ type DatabaseSpec struct {
 	TimeZone  string `toml:"timezone"`
 	Schema    string `toml:"schema"`
 	Default   bool   `toml:"default"`
+
+	// Inline values (optional). Each, when set, takes precedence over
+	// the config-server lookup for that field. ${ENV} placeholders are
+	// expanded by LoadConfig.
+	Host     string `toml:"host"`
+	Port     string `toml:"port"`
+	User     string `toml:"user"`
+	Password string `toml:"password"`
+	Name     string `toml:"name"`
 }
 
 var (
@@ -61,18 +86,18 @@ const (
 )
 
 // DatabaseFromConfig binds a marker type T to the [databases.<name>]
-// block declared in nexus.toml. Connection *structure* (driver,
-// sslmode, timezone) comes from the TOML; the host/port/credentials are
-// read from the config server at boot via the block's key_prefix —
-// secrets stay out of nexus.toml. Otherwise identical to Database[T]:
-// the framework manages lifecycle and dashboard registration, and
-// handlers inject *T unchanged.
+// block declared in nexus.toml. Structure (driver, sslmode, timezone)
+// comes from the TOML; each connection value resolves inline-first then
+// via the block's key_prefix against the config server (see
+// DatabaseSpec) — so it works with or without a config server.
+// Otherwise identical to Database[T]: the framework manages lifecycle
+// and dashboard registration, and handlers inject *T unchanged.
 //
 //	nexus.DatabaseFromConfig[OatsUAADB]("uaa")
 //
 // Requires nexus.LoadConfig / MustLoadConfig to have run first (it
-// parses the [databases.*] blocks). A missing or malformed block panics
-// at wiring time — fail-fast, never at request time.
+// parses the [databases.*] blocks). A missing block or an invalid
+// driver panics at wiring time — fail-fast, never at request time.
 func DatabaseFromConfig[T any](name string, opts ...DatabaseOption) Option {
 	spec, ok := databaseSpec(name)
 	if !ok {
@@ -84,9 +109,10 @@ func DatabaseFromConfig[T any](name string, opts ...DatabaseOption) Option {
 	default:
 		panic(fmt.Sprintf("nexus.DatabaseFromConfig[%q]: [databases.%s].driver = %q is not one of postgres/mysql/sqlite", name, name, spec.Driver))
 	}
-	if spec.KeyPrefix == "" {
-		panic(fmt.Sprintf("nexus.DatabaseFromConfig[%q]: [databases.%s] is missing key_prefix", name, name))
-	}
+	// No key_prefix requirement: a block may supply its values inline
+	// instead (works without a config server). A block with neither
+	// inline values nor key_prefix yields empty connection fields,
+	// surfaced through the manager's health rather than a panic.
 
 	// Spec-derived options first so explicit caller opts can override.
 	base := make([]DatabaseOption, 0, len(opts)+2)
@@ -106,17 +132,27 @@ func DatabaseFromConfig[T any](name string, opts ...DatabaseOption) Option {
 }
 
 // databaseConfigFor maps a spec + a key→value lookup into a db.Config.
-// Split out from the build closure so the key mapping is unit-testable
-// without a live config server (the closure passes nexus.Get as get).
+// Each field prefers the inline spec value; failing that, it reads
+// <key_prefix>.<suffix> via get (the config server). Split out from the
+// build closure so the resolution is unit-testable without a live
+// config server (the closure passes nexus.Get as get).
 func databaseConfigFor(spec DatabaseSpec, get func(string) string) db.Config {
-	p := spec.KeyPrefix
+	field := func(inline, suffix string) string {
+		if inline != "" {
+			return inline
+		}
+		if spec.KeyPrefix != "" {
+			return get(spec.KeyPrefix + suffix)
+		}
+		return ""
+	}
 	return db.Config{
 		Driver:   db.Driver(spec.Driver),
-		Host:     get(p + dbKeyHostname),
-		Port:     get(p + dbKeyPort),
-		User:     get(p + dbKeyUsername),
-		Password: get(p + dbKeyPassword),
-		Database: get(p + dbKeyName),
+		Host:     field(spec.Host, dbKeyHostname),
+		Port:     field(spec.Port, dbKeyPort),
+		User:     field(spec.User, dbKeyUsername),
+		Password: field(spec.Password, dbKeyPassword),
+		Database: field(spec.Name, dbKeyName),
 		SSLMode:  spec.SSLMode,
 		TimeZone: spec.TimeZone,
 	}

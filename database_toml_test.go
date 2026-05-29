@@ -72,18 +72,49 @@ func TestDatabaseConfigFor_KeyMapping(t *testing.T) {
 	}
 }
 
+func TestDatabaseConfigFor_InlineNoConfigServer(t *testing.T) {
+	// No key_prefix: all values inline. get must never be consulted.
+	spec := DatabaseSpec{
+		Driver: "postgres", Host: "localhost", Port: "5432",
+		User: "postgres", Password: "secret", Name: "myapp", SSLMode: "disable",
+	}
+	cfg := databaseConfigFor(spec, func(k string) string {
+		t.Fatalf("config server consulted for %q in inline mode", k)
+		return ""
+	})
+	want := db.Config{Driver: db.Postgres, Host: "localhost", Port: "5432",
+		User: "postgres", Password: "secret", Database: "myapp", SSLMode: "disable"}
+	if cfg != want {
+		t.Errorf("inline config mismatch:\n got %+v\nwant %+v", cfg, want)
+	}
+}
+
+func TestDatabaseConfigFor_InlineOverridesPrefix(t *testing.T) {
+	// Inline host wins; the rest fall back to key_prefix.
+	spec := DatabaseSpec{Driver: "postgres", KeyPrefix: "db.uaa", Host: "inline-host"}
+	get := map[string]string{
+		"db.uaa.hostname": "server-host", "db.uaa.port": "5432",
+		"db.uaa.username": "u", "db.uaa.password": "p", "db.uaa.name": "n",
+	}
+	cfg := databaseConfigFor(spec, func(k string) string { return get[k] })
+	if cfg.Host != "inline-host" {
+		t.Errorf("Host = %q, want inline-host (inline should win)", cfg.Host)
+	}
+	if cfg.Port != "5432" || cfg.User != "u" {
+		t.Errorf("non-inline fields should fall back to prefix: %+v", cfg)
+	}
+}
+
 func TestDatabaseFromConfig_Panics(t *testing.T) {
 	registerDatabaseSpecs(map[string]DatabaseSpec{
 		"good":     {Driver: "postgres", KeyPrefix: "db.good"},
 		"nodriver": {Driver: "mongo", KeyPrefix: "db.x"},
-		"noprefix": {Driver: "postgres"},
 	})
 	type H struct{ *db.Manager }
 
 	cases := []struct{ name, section string }{
 		{"missing block", "absent"},
 		{"bad driver", "nodriver"},
-		{"missing key_prefix", "noprefix"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
