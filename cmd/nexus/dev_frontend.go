@@ -468,8 +468,23 @@ func (r *bundlerReporter) report(res api.BuildResult) {
 	for _, e := range res.Errors {
 		r.printDiag(r.stderr, "✗", ansiRed, e)
 	}
+	// Warnings from cached third-party deps (esbuild's nexus-deps
+	// namespace) aren't actionable by the user — they live inside
+	// vendored/minified blobs like pdfmake — so they're noise in the
+	// dev console. Hide them by default, keeping warnings about the
+	// user's own source, and print a one-line tally so they're not
+	// invisible. --verbose shows everything.
+	var hiddenDepWarns int
 	for _, w := range res.Warnings {
+		if !r.verbose && isVendorDiag(w) {
+			hiddenDepWarns++
+			continue
+		}
 		r.printDiag(r.stderr, "⚠", ansiYellow, w)
+	}
+	if hiddenDepWarns > 0 {
+		fmt.Fprintf(r.stderr, "%s%s⚠ %d %s from cached dependencies hidden (run with --verbose to show)%s\n",
+			r.tag, ansiDim, hiddenDepWarns, pluralize("warning", hiddenDepWarns), ansiReset)
 	}
 
 	// Build a fresh sizes map keyed by basename, paired with full
@@ -544,6 +559,16 @@ func (r *bundlerReporter) report(res api.BuildResult) {
 // the message text. The first line in the build with errors gets
 // a fresh blank line before it so the diagnostic block stands
 // apart from prior output.
+// isVendorDiag reports whether a diagnostic originates from a cached
+// third-party dependency rather than the user's own source. The
+// resolver loads those blobs in esbuild's nexus-deps namespace, so
+// esbuild stamps their location file as "nexus-deps:<url>". Such
+// warnings (e.g. duplicate object keys in a minified vendor bundle)
+// aren't fixable from user code, so the reporter hides them by default.
+func isVendorDiag(m api.Message) bool {
+	return m.Location != nil && strings.HasPrefix(m.Location.File, resolver.Namespace+":")
+}
+
 func (r *bundlerReporter) printDiag(w io.Writer, marker, color string, m api.Message) {
 	loc := ""
 	if m.Location != nil {
