@@ -39,6 +39,20 @@ func Plugin(c SFCCompiler) (api.Plugin, error) {
 				// file isn't a Vuetify-using SFC or already
 				// has manual `vuetify/components` import.
 				rewritten, _ := bundler.VuetifyAutoImport(string(source))
+				// Compile inline <style lang="scss"|"sass"> blocks via
+				// the system sass CLI before the adapter sees them —
+				// the synchronous adapter has no preprocessor, so this
+				// is where scss support lives. No-op for SFCs with only
+				// plain-CSS styles.
+				rewritten, perr := preprocessSFCStyles(rewritten, filepath.Dir(args.Path))
+				if perr != nil {
+					return api.OnLoadResult{
+						Errors: []api.Message{{
+							Text:     fmt.Sprintf("vue: %v", perr),
+							Location: &api.Location{File: args.Path},
+						}},
+					}, nil
+				}
 				res, err := c.Compile(rewritten, args.Path)
 				if err != nil {
 					return api.OnLoadResult{

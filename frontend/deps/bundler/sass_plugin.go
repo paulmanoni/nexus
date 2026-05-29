@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/evanw/esbuild/pkg/api"
 )
@@ -118,6 +119,44 @@ func compileSass(path string) (api.OnLoadResult, error) {
 		Loader:     loader,
 		ResolveDir: filepath.Dir(path),
 	}, nil
+}
+
+// CompileSassSource compiles an in-memory SCSS/Sass string to CSS by
+// piping it through the system `sass` CLI's --stdin mode. Used for
+// inline SFC `<style lang="scss">` blocks, which never hit the
+// file-based OnLoad path above (they're embedded in .vue source, not
+// imported as .scss files).
+//
+// loadPath is added as a --load-path so `@use`/`@import` inside the
+// block resolve relative to the .vue file's directory. Pass
+// indented=true for `lang="sass"` (the indented syntax); scss is the
+// default.
+//
+// The sass binary lookup is per-invocation (not cached) so installing
+// sass mid-session starts working without a restart, matching
+// compileSass above.
+func CompileSassSource(src, loadPath string, indented bool) (string, error) {
+	sassBin, err := exec.LookPath("sass")
+	if err != nil {
+		return "", fmt.Errorf("the `sass` CLI is required for inline <style lang=\"scss\"> but is not on PATH — " +
+			"install dart-sass (`brew install sass` or `npm install -g sass`), or convert the block to plain CSS")
+	}
+	args := []string{"--stdin", "--no-source-map", "--style=expanded"}
+	if loadPath != "" {
+		args = append(args, "--load-path="+loadPath)
+	}
+	if indented {
+		args = append(args, "--indented")
+	}
+	cmd := exec.Command(sassBin, args...)
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("sass compile failed: %s", strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
 }
 
 // sassAvailable reports whether the system `sass` CLI is on
