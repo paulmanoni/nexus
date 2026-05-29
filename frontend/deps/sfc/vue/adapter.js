@@ -17,14 +17,17 @@
 import * as compiler from "@vue/compiler-sfc";
 
 (function () {
-    // Stable hashed scope id from a filename string. Avoids
+    // Stable hashed scope id from filename + source. Avoids
     // needing a crypto dep in the runtime — Vue only requires
     // the id be unique per component instance, not
-    // cryptographically opaque.
-    function scopeId(filename) {
-        var h = 0;
-        for (var i = 0; i < filename.length; i++) {
-            h = ((h << 5) - h + filename.charCodeAt(i)) | 0;
+    // cryptographically opaque. Folding the source in (not just
+    // the path) means two files whose paths happen to collide
+    // under this cheap hash still get distinct scope ids, so
+    // their `scoped` CSS can't cross-contaminate.
+    function scopeId(filename, source) {
+        var h = 0, str = filename + "\0" + source;
+        for (var i = 0; i < str.length; i++) {
+            h = ((h << 5) - h + str.charCodeAt(i)) | 0;
         }
         return "data-v-" + (h >>> 0).toString(36);
     }
@@ -43,6 +46,80 @@ import * as compiler from "@vue/compiler-sfc";
         };
     }
 
+    // Escape a literal segment for embedding inside a backtick
+    // template literal: backslash, backtick, and `$` (so a stray
+    // "${" in the CSS can't open an interpolation).
+    function escTemplate(s) {
+        return s
+            .replace(/\\/g, "\\\\")
+            .replace(/`/g, "\\`")
+            .replace(/\$/g, "\\$");
+    }
+
+    // Rewrite CSS url() references into bundler-resolvable ESM
+    // imports — the same trick @vue/compiler-sfc's template pass
+    // uses for `src="@/..."`. compileStyle only scopes selectors;
+    // it leaves url() verbatim (URL resolution is the bundler's
+    // job). Since we inject CSS as a runtime string rather than a
+    // real CSS module, esbuild never sees those url() tokens, so a
+    // bare `url('@/assets/x.png')` would ship as-is and 404.
+    //
+    // Here we hoist each resolvable url() to `import __nl_url_N
+    // from "<spec>"` (esbuild resolves it via tsconfig paths +
+    // the file loader → hashed public URL) and rebuild the CSS as
+    // a template literal interpolating those bindings. The result
+    // matches Vite: relative + aliased assets resolve and hash;
+    // absolute/external/data/fragment URLs pass through untouched.
+    //
+    // Returns { imports: [string], expr: string } where expr is a
+    // JS template-literal expression (backticks included).
+    function buildCssModule(css, startIdx) {
+        var imports = [];
+        var re = /url\(\s*(?:'([^']*)'|"([^"]*)"|([^)'"\s]+))\s*\)/g;
+        var out = "`";
+        var last = 0;
+        var idx = startIdx;
+        var m;
+        while ((m = re.exec(css)) !== null) {
+            var raw = m[1] != null ? m[1] : (m[2] != null ? m[2] : m[3]);
+            var spec = raw.trim();
+            out += escTemplate(css.slice(last, m.index));
+            last = re.lastIndex;
+
+            // Pass through anything the bundler shouldn't resolve:
+            // empty, protocol/protocol-relative, root-absolute,
+            // fragment-only, and data: URIs.
+            if (
+                spec === "" ||
+                /^(?:[a-z]+:)?\/\//i.test(spec) ||
+                spec.charAt(0) === "/" ||
+                spec.charAt(0) === "#" ||
+                spec.lastIndexOf("data:", 0) === 0
+            ) {
+                out += escTemplate(m[0]);
+                continue;
+            }
+
+            // Split off any ?query / #hash so the import specifier
+            // is clean, then re-append it to the resolved URL.
+            var suffix = "";
+            var importPath = spec;
+            var qh = spec.search(/[?#]/);
+            if (qh !== -1) {
+                suffix = spec.slice(qh);
+                importPath = spec.slice(0, qh);
+            }
+
+            var v = "__nl_url_" + idx;
+            idx++;
+            imports.push("import " + v + " from " + JSON.stringify(importPath) + ";");
+            out += 'url("${' + v + '}' + escTemplate(suffix) + '")';
+        }
+        out += escTemplate(css.slice(last));
+        out += "`";
+        return { imports: imports, expr: out, next: idx };
+    }
+
     globalThis.__nexus_compileSFC = function (source, filename) {
         try {
             var parsed = compiler.parse(source, { filename: filename });
@@ -57,7 +134,44 @@ import * as compiler from "@vue/compiler-sfc";
                 };
             }
 
-            var id = scopeId(filename);
+            // Loud guards for SFC features this synchronous adapter
+            // can't honor — fail with a clear message rather than
+            // emitting silently-wrong output. compileStyle /
+            // compileTemplate run synchronously here, so anything
+            // needing a preprocessor (scss/less/pug/...) or a
+            // post-parse binding injection (CSS Modules' $style) is
+            // out of scope until the async path lands.
+            var guardErrors = [];
+            for (var gi = 0; gi < descriptor.styles.length; gi++) {
+                var gst = descriptor.styles[gi];
+                if (gst.module) {
+                    guardErrors.push({
+                        message: "<style module> is not supported (" + filename + ")",
+                        line: 0, column: 0,
+                    });
+                }
+                var slang = gst.lang ? String(gst.lang).toLowerCase() : "";
+                if (slang && slang !== "css") {
+                    guardErrors.push({
+                        message: "<style lang=\"" + gst.lang + "\"> requires a preprocessor, which is not supported (" + filename + ")",
+                        line: 0, column: 0,
+                    });
+                }
+            }
+            if (descriptor.template && descriptor.template.lang) {
+                var tlang = String(descriptor.template.lang).toLowerCase();
+                if (tlang && tlang !== "html") {
+                    guardErrors.push({
+                        message: "<template lang=\"" + descriptor.template.lang + "\"> requires a preprocessor, which is not supported (" + filename + ")",
+                        line: 0, column: 0,
+                    });
+                }
+            }
+            if (guardErrors.length) {
+                return { code: "", errors: guardErrors };
+            }
+
+            var id = scopeId(filename, source);
             var hasScoped = descriptor.styles.some(function (s) { return s.scoped; });
             var allErrors = [];
             var assembled = "";
@@ -150,8 +264,17 @@ import * as compiler from "@vue/compiler-sfc";
             }
             if (cssChunks.length) {
                 var css = cssChunks.join("\n");
+                // Hoist url() refs to ESM imports so esbuild resolves
+                // + hashes them (Vite-equivalent behavior), then inject
+                // the interpolated CSS at runtime. Imports must sit at
+                // module top; esbuild hoists them regardless of order.
+                var cssMod = buildCssModule(css, 0);
+                var cssImports = cssMod.imports.length
+                    ? cssMod.imports.join("\n") + "\n"
+                    : "";
                 assembled =
-                    "const __css = " + JSON.stringify(css) + ";\n" +
+                    cssImports +
+                    "const __css = " + cssMod.expr + ";\n" +
                     "if (typeof document !== 'undefined') {\n" +
                     "  const __s = document.createElement('style');\n" +
                     "  __s.setAttribute('data-nl-sfc', " + JSON.stringify(id) + ");\n" +

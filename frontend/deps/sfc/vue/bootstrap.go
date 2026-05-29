@@ -2,7 +2,9 @@ package vue
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +17,16 @@ import (
 	"github.com/paulmanoni/nexus/frontend/deps/resolver"
 	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
+
+// adapterTag is a short content hash of the embedded adapter.js,
+// mixed into the cached-bundle path so editing the adapter
+// invalidates stale bundles. Without this the cache keys on the
+// compiler version alone, and an adapter change silently reuses an
+// old bundle.
+func adapterTag() string {
+	sum := sha256.Sum256([]byte(adapterJS))
+	return hex.EncodeToString(sum[:6])
+}
 
 // DefaultCompilerVersion is the @vue/compiler-sfc version Bootstrap
 // pins by default. Bumped per release; users override via
@@ -97,7 +109,7 @@ func Bootstrap(ctx context.Context, opts BootstrapOptions) ([]byte, error) {
 	if bundleDir == "" {
 		bundleDir = filepath.Join(opts.Store.Root(), "sfc-vue")
 	}
-	cachedPath := filepath.Join(bundleDir, version, "compiler.bundle.js")
+	cachedPath := filepath.Join(bundleDir, version+"-"+adapterTag(), "compiler.bundle.js")
 
 	// Cache hit fast path.
 	if b, err := os.ReadFile(cachedPath); err == nil && len(b) > 0 {
