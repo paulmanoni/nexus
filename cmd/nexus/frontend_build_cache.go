@@ -44,7 +44,7 @@ import (
 // Bumping cacheVersion is the kill-switch when we change something
 // that's not captured by any of the file inputs (a new built-in
 // plugin's default behavior, a default option flip, etc.).
-const cacheVersion = "v1"
+const cacheVersion = "v2"
 
 // frontendCacheDirName is the project-local cache dir. Kept short
 // + dot-prefixed so it stays out of the way + gets ignored by most
