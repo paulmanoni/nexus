@@ -83,6 +83,23 @@ type Options struct {
 	// the v0.1 error message unchanged. Useful for offline-only
 	// builds where any cache miss should fail loud.
 	FetchOnDemand func(url string) (resolvedURL string, err error)
+
+	// DevSpecRewrite, when set, is consulted for every BARE package
+	// spec in user code BEFORE the lockfile. If it returns a non-empty
+	// URL, that URL is fetched on-demand (FetchOnDemand) and used
+	// instead of the lockfile entry; the dev module's transitive
+	// imports then resolve through the normal registry-internal path.
+	//
+	// `nexus dev` uses this to swap `vue` → its `.development.mjs`
+	// esm.sh build so the Vue HMR runtime (__VUE_HMR_RUNTIME__, absent
+	// from the production build) is present. Generic on purpose — the
+	// resolver stays framework-agnostic; the Vue mapping lives in the
+	// CLI.
+	//
+	// nil (production builds) → no rewriting; the lockfile's pinned
+	// (production) URL is used unchanged. Requires FetchOnDemand to be
+	// set; without it the rewrite is skipped and the lockfile wins.
+	DevSpecRewrite func(spec, subpath string) string
 }
 
 // New returns an esbuild plugin that wires OnResolve for every
@@ -146,6 +163,7 @@ func New(opts Options) (api.Plugin, error) {
 //     lockfile.
 func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, error) {
 	p := args.Path
+
 
 	// --- registry-internal resolution path ---------------------------
 	// When the importer file is in our namespace, args.Importer
@@ -238,6 +256,32 @@ func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, erro
 	// is the spec, "@vue/runtime-dom/foo.js" splits as
 	// ("@vue/runtime-dom", "foo.js")).
 	spec, subpath := splitSpec(p)
+
+	// Dev-mode spec rewrite (e.g. vue → vue.development.mjs for HMR).
+	// Consulted before the lockfile; on any miss we fall through to the
+	// normal lockfile path so a bad rewrite never breaks resolution.
+	//
+	// HOT PATH IS READ-ONLY: the dev URL is pre-warmed into the store by
+	// the caller (single-threaded, before esbuild's parallel build), so
+	// the common case is a concurrent-safe Store.Get. FetchOnDemand
+	// (which writes the lockfile map) is only a cold-miss fallback — it
+	// must not run during the parallel build, where it would race the
+	// concurrent lf.Resolve reads ("concurrent map iteration and map
+	// write"). A warm pre-fetch keeps us off that branch.
+	if opts.DevSpecRewrite != nil {
+		if devURL := opts.DevSpecRewrite(spec, subpath); devURL != "" {
+			if _, _, gerr := opts.Store.Get(devURL); gerr == nil {
+				return api.OnResolveResult{Path: devURL, Namespace: Namespace}, nil
+			}
+			if opts.FetchOnDemand != nil {
+				if canonical, ferr := opts.FetchOnDemand(devURL); ferr == nil && canonical != "" {
+					if _, _, gerr := opts.Store.Get(canonical); gerr == nil {
+						return api.OnResolveResult{Path: canonical, Namespace: Namespace}, nil
+					}
+				}
+			}
+		}
+	}
 
 	pkg, err := opts.Lockfile.Resolve(spec, "")
 	if err != nil {

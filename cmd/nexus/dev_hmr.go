@@ -17,6 +17,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
 	"github.com/paulmanoni/nexus/frontend/deps/sfc/vue"
 )
 
@@ -139,6 +140,66 @@ func (h *hmrServer) handleClient(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	fmt.Fprintf(w, hmrClientJS, "http://"+h.addr)
+}
+
+// devVueRewrite returns a resolver.Options.DevSpecRewrite that swaps the
+// bare `vue` import for its `.development.mjs` esm.sh build, so the Vue
+// HMR runtime (__VUE_HMR_RUNTIME__, createRecord, rerender) — which is
+// stripped from the production build esm.sh serves by default — is
+// present in the dev bundle. Required groundwork for state-preserving
+// Vue HMR.
+//
+// Only the top-level `vue` spec is rewritten: esm.sh's vue.development.mjs
+// re-exports through runtime-dom.development.mjs → runtime-core.development.mjs,
+// and those transitive imports resolve through the resolver's normal
+// registry-internal path (already .development.mjs URLs), so the whole
+// dev chain follows from this one swap. Packages built with
+// `?external=vue` emit bare `import … from "vue"`, which also hits this
+// rewrite — so every consumer shares ONE dev Vue instance (mismatched
+// prod/dev instances would break reactivity).
+//
+// The version is read from the lockfile's pinned `vue` so the dev build
+// matches exactly what production would use. Returns nil when vue isn't
+// in the lockfile (non-Vue project) → no rewriting.
+//
+// CONCURRENCY: the dev URL is PRE-WARMED here (single-threaded, before
+// esbuild's parallel build starts) via onDemand, which populates the
+// store + lockfile. esbuild then fans OnResolve across goroutines; if
+// the rewrite triggered onDemand (→ lockfile map write) on the hot path
+// it would race the concurrent lf.Resolve reads ("concurrent map
+// iteration and map write"). Pre-warming means the resolver's dev block
+// hits a warm Store.Get and never writes the lockfile mid-build.
+func devVueRewrite(lf *lockfile.File, onDemand func(string) (string, error), stdout io.Writer) func(spec, subpath string) string {
+	pkg, err := lf.Resolve("vue", "")
+	if err != nil || pkg.Version == "" {
+		return nil
+	}
+	devURL := "https://esm.sh/vue@" + pkg.Version + "/es2022/vue.development.mjs"
+	// Return the CANONICAL (post-redirect) URL the pre-warm actually
+	// stored under, not the raw request URL — esm.sh may 301 to a
+	// different cache key, and the resolver's read-only hot path looks
+	// up exactly this string.
+	resolved := devURL
+	if onDemand != nil {
+		canonical, ferr := onDemand(devURL)
+		if ferr != nil {
+			// Pre-warm failed (offline / esm.sh hiccup). Skip the
+			// rewrite entirely so the build falls back to the pinned
+			// production vue rather than failing — HMR just won't be
+			// available this session.
+			fmt.Fprintf(stdout, "%s[hmr]%s vue dev build prefetch failed (%v); Vue HMR disabled, using production vue\n", ansiYellow, ansiReset, ferr)
+			return nil
+		}
+		if canonical != "" {
+			resolved = canonical
+		}
+	}
+	return func(spec, subpath string) string {
+		if spec == "vue" && subpath == "" {
+			return resolved
+		}
+		return ""
+	}
 }
 
 // preserveDevChunks keeps every code-split chunk this dev session has

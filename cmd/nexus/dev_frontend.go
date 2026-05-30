@@ -221,10 +221,17 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		return fmt.Errorf("frontend watcher: open cache %s: %w", cacheRoot, err)
 	}
 
+	onDemand := makeOnDemandFetch(lf, st, lockPath, stdout)
 	plugin, err := resolver.New(resolver.Options{
 		Lockfile:      lf,
 		Store:         st,
-		FetchOnDemand: makeOnDemandFetch(lf, st, lockPath, stdout),
+		FetchOnDemand: onDemand,
+		// Dev only: swap Vue's production build for its .development.mjs
+		// variant so the HMR runtime (__VUE_HMR_RUNTIME__) is present.
+		// nexus build's resolver leaves this nil → production unchanged.
+		// devVueRewrite pre-warms the dev URL via onDemand (here, single-
+		// threaded) so the resolver's hot path stays read-only.
+		DevSpecRewrite: devVueRewrite(lf, onDemand, stdout),
 	})
 	if err != nil {
 		return fmt.Errorf("frontend watcher: build resolver: %w", err)
