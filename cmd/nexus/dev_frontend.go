@@ -550,13 +550,20 @@ func (r *bundlerReporter) report(res api.BuildResult) {
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].name < changes[j].name })
 
-	// First report after the watcher starts: print every entry as
-	// an "+ N" line so the user sees the initial bundle shape.
+	// First report after the watcher starts: a one-line summary of the
+	// initial bundle shape. The full per-file list is verbose-only —
+	// code-split apps emit dozens of chunks, so the list is noise in
+	// the default console.
 	if !r.hadFirst {
 		r.hadFirst = true
 		if len(res.Errors) == 0 && len(curr) > 0 {
-			for _, c := range changes {
-				fmt.Fprintf(r.stdout, "%s  %s%s%s\n", r.tag, ansiGreen, c.kind, ansiReset)
+			if r.verbose {
+				for _, c := range changes {
+					fmt.Fprintf(r.stdout, "%s  %s%s%s\n", r.tag, ansiGreen, c.kind, ansiReset)
+				}
+			} else {
+				fmt.Fprintf(r.stdout, "%s  %s● bundled %d %s%s\n",
+					r.tag, ansiGreen, len(curr), pluralize("file", len(curr)), ansiReset)
 			}
 		}
 		r.prev = curr
@@ -566,6 +573,26 @@ func (r *bundlerReporter) report(res api.BuildResult) {
 
 	switch {
 	case len(changes) > 0:
+		// Default: a single summary line. Content-hashed code-splitting
+		// re-emits many chunks on every edit (a one-line CSS change can
+		// touch dozens of hashes), so listing each file drowns the
+		// console. --verbose restores the full +/~/- breakdown.
+		if !r.verbose {
+			var added, changed, removed int
+			for _, c := range changes {
+				switch {
+				case strings.HasPrefix(c.kind, "+ "):
+					added++
+				case strings.HasPrefix(c.kind, "- "):
+					removed++
+				default:
+					changed++
+				}
+			}
+			fmt.Fprintf(r.stdout, "%s  %s● rebuilt — %d changed, %d added, %d removed%s\n",
+				r.tag, ansiDim, changed, added, removed, ansiReset)
+			break
+		}
 		for _, c := range changes {
 			color := ansiYellow
 			if strings.HasPrefix(c.kind, "+ ") {

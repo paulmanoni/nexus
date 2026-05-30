@@ -258,3 +258,47 @@ func TestReporter_VerboseShowsVendorWarnings(t *testing.T) {
 		t.Errorf("verbose should show vendor warnings; stderr:\n%s", stderr.String())
 	}
 }
+
+func TestBundlerReporter_SummarizesByDefault(t *testing.T) {
+	mkResult := func(names ...string) api.BuildResult {
+		var out []api.OutputFile
+		for _, n := range names {
+			out = append(out, api.OutputFile{Path: "/o/" + n, Contents: []byte("x")})
+		}
+		return api.BuildResult{OutputFiles: out}
+	}
+
+	var stdout, stderr bytes.Buffer
+	r := newBundlerReporter(&stdout, &stderr, "[web] ", false)
+
+	// First build: one summary line, NOT a per-file dump.
+	r.report(mkResult("main.js", "chunks/A-1.js", "chunks/B-1.js"))
+	first := stdout.String()
+	if !strings.Contains(first, "bundled 3 files") {
+		t.Errorf("first build should summarize; got:\n%s", first)
+	}
+	if strings.Contains(first, "+ chunks/A-1.js") || strings.Contains(first, "A-1.js  ") {
+		t.Errorf("first build leaked per-file lines:\n%s", first)
+	}
+
+	// Rebuild that re-hashes a chunk (A-1 → A-2): summary, not a list.
+	stdout.Reset()
+	r.report(mkResult("main.js", "chunks/A-2.js", "chunks/B-1.js"))
+	rb := stdout.String()
+	if !strings.Contains(rb, "rebuilt —") {
+		t.Errorf("rebuild should summarize; got:\n%s", rb)
+	}
+	if strings.Contains(rb, "chunks/A-2.js") {
+		t.Errorf("rebuild leaked per-file lines:\n%s", rb)
+	}
+}
+
+func TestBundlerReporter_VerboseListsFiles(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	r := newBundlerReporter(&stdout, &stderr, "[web] ", true)
+	res := api.BuildResult{OutputFiles: []api.OutputFile{{Path: "/o/main.js", Contents: []byte("x")}}}
+	r.report(res)
+	if !strings.Contains(stdout.String(), "main.js") {
+		t.Errorf("verbose first build should list files; got:\n%s", stdout.String())
+	}
+}
