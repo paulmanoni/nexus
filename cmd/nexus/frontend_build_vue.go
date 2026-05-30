@@ -21,7 +21,7 @@ import (
 )
 
 func init() {
-	vueCompilerHook = func(_ *lockfile.File, st *store.Store) (func(), api.Plugin, error) {
+	vueCompilerHook = func(_ *lockfile.File, st *store.Store) (func(), api.Plugin, vue.SFCCompiler, error) {
 		return bootstrapVuePlugin(st, func(bundle []byte) (vue.SFCCompiler, error) {
 			return vue.NewCompiler(bundle, "@vue/compiler-sfc@"+vue.DefaultCompilerVersion)
 		})

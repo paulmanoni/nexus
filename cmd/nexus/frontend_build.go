@@ -14,6 +14,7 @@ import (
 	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
 	"github.com/paulmanoni/nexus/frontend/deps/resolver"
+	"github.com/paulmanoni/nexus/frontend/deps/sfc/vue"
 	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
 
@@ -182,7 +183,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	// compiler + register the SFC plugin. The hook owns the
 	// QuickJS lifecycle; we close it on return.
 	if hasVue && vueCompilerHook != nil {
-		closeVue, vuePlugin, err := vueCompilerHook(lf, st)
+		closeVue, vuePlugin, _, err := vueCompilerHook(lf, st)
 		if err != nil {
 			return fmt.Errorf("frontend build: vue compiler: %w", err)
 		}
@@ -294,7 +295,7 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 // project's lockfile (for resolving @vue/compiler-sfc) and the
 // shared store. Returns a teardown func + the esbuild plugin
 // the bundler should add.
-var vueCompilerHook func(*lockfile.File, *store.Store) (func(), api.Plugin, error)
+var vueCompilerHook func(*lockfile.File, *store.Store) (func(), api.Plugin, vue.SFCCompiler, error)
 
 // collectFrontendEntries walks srcDir and returns one entry path
 // per top-level JS/TS file. Vue SFCs (.vue) are NOT entries — they

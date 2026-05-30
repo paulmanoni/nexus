@@ -171,7 +171,7 @@ import * as compiler from "@vue/compiler-sfc";
                 return { code: "", errors: guardErrors };
             }
 
-            var id = scopeId(filename, source);
+            var id = scopeId(filename);
             var hasScoped = descriptor.styles.some(function (s) { return s.scoped; });
             var allErrors = [];
             var assembled = "";

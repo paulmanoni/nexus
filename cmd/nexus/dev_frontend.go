@@ -22,6 +22,7 @@ import (
 	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
 	"github.com/paulmanoni/nexus/frontend/deps/resolver"
+	"github.com/paulmanoni/nexus/frontend/deps/sfc/vue"
 	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
 
@@ -271,12 +272,14 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// closer fires from the ctx-cancellation goroutine below so a
 	// Ctrl-C / shutdown disposes the JS runtime cleanly.
 	var closeVue func()
+	var hmrCompiler vue.SFCCompiler // reused for CSS-hot-swap classification
 	if hasVue && vueCompilerHook != nil {
-		cv, vuePlugin, err := vueCompilerHook(lf, st)
+		cv, vuePlugin, c, err := vueCompilerHook(lf, st)
 		if err != nil {
 			return fmt.Errorf("frontend watcher: vue compiler: %w", err)
 		}
 		closeVue = cv
+		hmrCompiler = c
 		b.AddPlugin(vuePlugin)
 	}
 
@@ -339,6 +342,18 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// index.html in outDir. Without that, edits to the source
 	// `index.html` (or to the entry list) wouldn't propagate
 	// to the served shell during a session.
+	// Stage-1 HMR: loopback SSE server + source watcher. On success we
+	// swap the app's reload shim in the dev index.html for our client,
+	// so CSS-only edits hot-swap in place and everything else reloads.
+	// If the server can't bind we degrade to the app's full reload.
+	hmrHub, hmrBase, hmrErr := startHMRServer()
+	if hmrErr != nil {
+		fmt.Fprintf(stdout, "%s[hmr]%s disabled: %v (full reload only)\n", ansiYellow, ansiReset, hmrErr)
+	} else {
+		fmt.Fprintf(stdout, "%s[hmr]%s css hot-swap active (%s)\n", ansiCyan, ansiReset, hmrBase)
+		go startHMRSourceWatcher(ctx, srcDir, hmrCompiler, hmrHub, stdout)
+	}
+
 	onRebuild := func(br api.BuildResult) {
 		reporter.report(br)
 		// emitIndexHTML is best-effort; a fmt error shouldn't
@@ -346,6 +361,9 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		// shim is injected — that's what the browser uses to
 		// auto-refresh when this rebuild lands.
 		_ = emitIndexHTML(srcDir, outDir, br.OutputFiles, io.Discard, true)
+		if hmrHub != nil {
+			_ = swapInHMRClient(outDir, hmrBase)
+		}
 	}
 	tsconfig := findProjectTSConfig(root)
 	if tsconfig != "" {
@@ -378,6 +396,10 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	reporter.report(res.BuildResult)
 	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout, true); err != nil {
 		fmt.Fprintf(stderr, "%s●%s frontend watcher: index.html emit: %v\n", ansiYellow, ansiReset, err)
+	}
+	// First page load gets the HMR client too (onRebuild handles later rebuilds).
+	if hmrHub != nil {
+		_ = swapInHMRClient(outDir, hmrBase)
 	}
 
 	// Banner: print after the initial report so the order reads

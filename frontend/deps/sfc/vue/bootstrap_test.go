@@ -286,11 +286,13 @@ func TestBootstrap_UnsupportedFeaturesRejected(t *testing.T) {
 	}
 }
 
-// TestBootstrap_ScopeIdFoldsSource proves the scope id depends on
-// source content, not just the filename — two distinct sources
-// compiled under the SAME filename must get different scope ids so
-// their scoped CSS can't cross-contaminate.
-func TestBootstrap_ScopeIdFoldsSource(t *testing.T) {
+// TestBootstrap_ScopeIdStablePerPath proves the scope id is STABLE
+// across edits to a file (same path → same id) and DISTINCT per path.
+// Stability is required for CSS hot-swap + Vue HMR: the live DOM
+// carries data-v-<id> from the prior compile, so a hot update must
+// resolve to the same id to match. Distinctness keeps two different
+// files' scoped CSS from colliding.
+func TestBootstrap_ScopeIdStablePerPath(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test")
 	}
@@ -335,6 +337,7 @@ func TestBootstrap_ScopeIdFoldsSource(t *testing.T) {
 		return rest[start+1 : start+1+end]
 	}
 
+	// Same path, different source (an "edit") → SAME id (stable).
 	a, err := c.Compile("<template><p>A</p></template>\n<style scoped>.a{color:red}</style>", "Same.vue")
 	if err != nil {
 		t.Fatalf("Compile A: %v", err)
@@ -347,7 +350,16 @@ func TestBootstrap_ScopeIdFoldsSource(t *testing.T) {
 	if sa == "" || sb == "" {
 		t.Fatalf("could not extract scope ids: a=%q b=%q", sa, sb)
 	}
-	if sa == sb {
-		t.Errorf("same filename + different source produced identical scope id %q — source not folded into hash", sa)
+	if sa != sb {
+		t.Errorf("same path + edited source must keep the same scope id (HMR-stable); got %q vs %q", sa, sb)
+	}
+
+	// Different path → DISTINCT id.
+	d, err := c.Compile("<template><p>A</p></template>\n<style scoped>.a{color:red}</style>", "Other.vue")
+	if err != nil {
+		t.Fatalf("Compile D: %v", err)
+	}
+	if sd := extractScope(d.Code); sd == sa {
+		t.Errorf("distinct paths produced identical scope id %q", sd)
 	}
 }

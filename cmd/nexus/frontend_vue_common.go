@@ -25,7 +25,7 @@ import (
 // The 60s timeout covers a cold first build (fetch + esbuild bundle of
 // @vue/compiler-sfc takes 1-5s typically); warm calls hit the cache and
 // return in milliseconds.
-func bootstrapVuePlugin(st *store.Store, newCompiler func(bundle []byte) (vue.SFCCompiler, error)) (func(), api.Plugin, error) {
+func bootstrapVuePlugin(st *store.Store, newCompiler func(bundle []byte) (vue.SFCCompiler, error)) (func(), api.Plugin, vue.SFCCompiler, error) {
 	registry := os.Getenv("NEXUS_REGISTRY")
 	if registry == "" {
 		registry = fetcher.DefaultRegistry
@@ -37,7 +37,7 @@ func bootstrapVuePlugin(st *store.Store, newCompiler func(bundle []byte) (vue.SF
 
 	bundle, err := vue.Bootstrap(ctx, vue.BootstrapOptions{Store: st, Fetcher: f})
 	if err != nil {
-		return nil, api.Plugin{}, fmt.Errorf("bootstrap vue compiler: %w", err)
+		return nil, api.Plugin{}, nil, fmt.Errorf("bootstrap vue compiler: %w", err)
 	}
 
 	// Pool the compilers so .vue files compile concurrently: esbuild
@@ -46,14 +46,17 @@ func bootstrapVuePlugin(st *store.Store, newCompiler func(bundle []byte) (vue.SF
 	// whole Vue app's SFCs through one interpreter.
 	pool, err := vue.NewPool(func() (vue.SFCCompiler, error) { return newCompiler(bundle) }, vuePoolSize())
 	if err != nil {
-		return nil, api.Plugin{}, fmt.Errorf("init vue compiler: %w", err)
+		return nil, api.Plugin{}, nil, fmt.Errorf("init vue compiler: %w", err)
 	}
 	plugin, err := vue.Plugin(pool)
 	if err != nil {
 		pool.Close()
-		return nil, api.Plugin{}, fmt.Errorf("wire vue plugin: %w", err)
+		return nil, api.Plugin{}, nil, fmt.Errorf("wire vue plugin: %w", err)
 	}
-	return func() { pool.Close() }, plugin, nil
+	// pool is returned as the 4th value too: it implements SFCCompiler,
+	// so the dev watcher reuses it for HMR change-classification
+	// (compiling a single changed .vue) without a second runtime.
+	return func() { pool.Close() }, plugin, pool, nil
 }
 
 // vuePoolSize picks how many compilers to run in parallel. Defaults to
