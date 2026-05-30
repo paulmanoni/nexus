@@ -285,8 +285,30 @@ import * as compiler from "@vue/compiler-sfc";
 
             assembled +=
                 "__sfc__.__file = " + JSON.stringify(filename) + ";\n" +
-                "__sfc__.__scopeId = " + JSON.stringify(id) + ";\n" +
-                "export default __sfc__;\n";
+                "__sfc__.__scopeId = " + JSON.stringify(id) + ";\n";
+
+            // --- HMR registration (dev only, at RUNTIME) --------------------
+            // Stamp __hmrId and register the component with Vue's HMR
+            // runtime so a later hot update can target it. The block is
+            // gated on `globalThis.__VUE_HMR_RUNTIME__` being present —
+            // the dev Vue build installs it as `getGlobalThis()
+            // .__VUE_HMR_RUNTIME__` (a property on the global object, NOT
+            // a bare binding), so it must be read off globalThis. It's
+            // present only in the development build (nexus dev swaps
+            // vue→vue.development.mjs); in production it's undefined, so
+            // this is a dead no-op and the prod bundle is unaffected — no
+            // compile-time dev flag needed.
+            //
+            // createRecord(id, component) is idempotent per id; the scope
+            // id is path-stable, so re-running this module (or compiling
+            // the same file again) keeps the same record.
+            assembled +=
+                "__sfc__.__hmrId = " + JSON.stringify(id) + ";\n" +
+                "if (typeof globalThis !== 'undefined' && globalThis.__VUE_HMR_RUNTIME__) {\n" +
+                "  globalThis.__VUE_HMR_RUNTIME__.createRecord(__sfc__.__hmrId, __sfc__);\n" +
+                "}\n";
+
+            assembled += "export default __sfc__;\n";
 
             return { code: assembled, errors: allErrors };
         } catch (e) {
