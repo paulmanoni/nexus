@@ -114,3 +114,46 @@ func TestSwapInHMRClient_NoAppTag_InjectsBeforeBody(t *testing.T) {
 		t.Errorf("client should sit before </body>:\n%s", s)
 	}
 }
+func TestPreserveDevChunks_RestoresDeleted(t *testing.T) {
+	out := t.TempDir()
+	chunks := filepath.Join(out, "chunks")
+	if err := os.MkdirAll(chunks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Build 1: route chunk A exists.
+	a := filepath.Join(chunks, "RouteView-AAAA.js")
+	if err := os.WriteFile(a, []byte("export default 1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preserveDevChunks(out) // archives A
+
+	// Rebuild: esbuild deletes A's old hash, writes B.
+	os.Remove(a)
+	b := filepath.Join(chunks, "RouteView-BBBB.js")
+	if err := os.WriteFile(b, []byte("export default 2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preserveDevChunks(out) // should restore A and archive B
+
+	// A must be back (a live page's stale import() resolves)...
+	if _, err := os.Stat(a); err != nil {
+		t.Errorf("deleted old-hash chunk was not restored: %v", err)
+	}
+	// ...and B must still be present (fresh loads get the new graph).
+	if _, err := os.Stat(b); err != nil {
+		t.Errorf("new chunk missing: %v", err)
+	}
+	// No leftover temp files in the live dir.
+	if entries, _ := os.ReadDir(chunks); true {
+		for _, e := range entries {
+			if filepath.Ext(e.Name()) == ".tmp" {
+				t.Errorf("leftover temp file: %s", e.Name())
+			}
+		}
+	}
+}
+
+func TestPreserveDevChunks_NoChunksDir(t *testing.T) {
+	// Single-entry build (no chunks/) must be a clean no-op, not a panic.
+	preserveDevChunks(t.TempDir())
+}

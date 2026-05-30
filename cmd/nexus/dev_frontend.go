@@ -361,6 +361,9 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		// shim is injected — that's what the browser uses to
 		// auto-refresh when this rebuild lands.
 		_ = emitIndexHTML(srcDir, outDir, br.OutputFiles, io.Discard, true)
+		// Keep old-hash lazy chunks alive so a hot-swapped page's
+		// pending dynamic import()s don't 404 after esbuild GCs them.
+		preserveDevChunks(outDir)
 		if hmrHub != nil {
 			_ = swapInHMRClient(outDir, hmrBase)
 		}
@@ -397,6 +400,9 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout, true); err != nil {
 		fmt.Fprintf(stderr, "%s●%s frontend watcher: index.html emit: %v\n", ansiYellow, ansiReset, err)
 	}
+	// Seed the chunk archive from the initial build (onRebuild keeps it
+	// current thereafter).
+	preserveDevChunks(outDir)
 	// First page load gets the HMR client too (onRebuild handles later rebuilds).
 	if hmrHub != nil {
 		_ = swapInHMRClient(outDir, hmrBase)

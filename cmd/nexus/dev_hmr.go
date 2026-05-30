@@ -141,6 +141,85 @@ func (h *hmrServer) handleClient(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, hmrClientJS, "http://"+h.addr)
 }
 
+// preserveDevChunks keeps every code-split chunk this dev session has
+// ever emitted available on disk, even after esbuild's persistent-watch
+// rebuild deletes the old-hash files.
+//
+// Why: lazy routes compile to content-hashed chunks
+// (chunks/RouteView-HASH.js). On rebuild, esbuild writes new-hash files
+// and GARBAGE-COLLECTS the old ones. A live page that hot-swapped (CSS
+// HMR, no reload) still holds dynamic import() URLs pointing at the OLD
+// hash; once that file is gone, navigating to a not-yet-loaded route
+// 404s — which the SPA server returns as text/plain, so the browser
+// rejects it as a module ("disallowed MIME type"). Symptom: every
+// unvisited route dies after any edit.
+//
+// Fix: maintain a session archive (in the OS temp dir, keyed by outDir)
+// and on each rebuild (1) copy current chunks into the archive, then
+// (2) restore any archived chunk missing from the live dir. Both old and
+// new hashes coexist, so stale import() URLs keep resolving while fresh
+// page loads get the new graph. Content hashing is preserved, so there's
+// no anonymous-chunk name collision.
+//
+// Dev-only: the archive lives outside outDir (no embed/serve pollution),
+// and `nexus build` rebuilds islands/ from scratch so production is
+// unaffected. Stale chunks accrue only for the session.
+func preserveDevChunks(outDir string) {
+	chunksDir := filepath.Join(outDir, "chunks")
+	if _, err := os.Stat(chunksDir); err != nil {
+		return // no split chunks (single-entry build) — nothing to do
+	}
+	sum := sha256.Sum256([]byte(outDir))
+	cacheDir := filepath.Join(os.TempDir(), "nexus-devchunks", hex.EncodeToString(sum[:8]))
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return
+	}
+
+	live := map[string]bool{}
+	if entries, err := os.ReadDir(chunksDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			live[e.Name()] = true
+			// Archive the current chunk. Cheap content-skip: a
+			// content-hashed name that already exists in the archive
+			// has identical bytes, so don't recopy.
+			dst := filepath.Join(cacheDir, e.Name())
+			if _, err := os.Stat(dst); err == nil {
+				continue
+			}
+			_ = copyDevChunk(filepath.Join(chunksDir, e.Name()), dst)
+		}
+	}
+
+	// Restore any archived chunk esbuild deleted but a live page may
+	// still import.
+	if cached, err := os.ReadDir(cacheDir); err == nil {
+		for _, e := range cached {
+			if e.IsDir() || live[e.Name()] {
+				continue
+			}
+			_ = copyDevChunk(filepath.Join(cacheDir, e.Name()), filepath.Join(chunksDir, e.Name()))
+		}
+	}
+}
+
+// copyDevChunk copies src to dst (best-effort, atomic-ish via temp +
+// rename so a concurrently-loading browser never reads a half-written
+// chunk).
+func copyDevChunk(src, dst string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
+}
+
 // swapInHMRClient rewrites the on-disk dev index.html so it loads the
 // HMR client (from this CLI's loopback server) instead of the app's
 // reload shim. Replacing the tag — rather than adding ours alongside —
