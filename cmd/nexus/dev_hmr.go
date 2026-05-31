@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -52,6 +53,34 @@ type hmrServer struct {
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
 	addr    string // host:port the server actually bound to
+
+	// buildGen counts completed rebuilds. The bundler's OnRebuild bumps
+	// it AFTER the fresh bundle (+ index.html + preserved chunks) is on
+	// disk. The source watcher waits on it so a reload is broadcast only
+	// once the new bundle exists — otherwise the browser reloads into the
+	// PREVIOUS build ("reload shows the previous change"). The watcher is
+	// the single decision-maker (only it can tell a CSS-only edit, which
+	// hot-swaps without reload, from a reload-needing one), so OnRebuild
+	// never broadcasts a reload itself.
+	buildGen atomic.Int64
+}
+
+// bumpBuild signals a rebuild finished with its output on disk.
+func (h *hmrServer) bumpBuild() { h.buildGen.Add(1) }
+
+// waitBuildAfter blocks until buildGen advances past prev (a rebuild
+// completed after the caller's reference point) or timeout elapses.
+// Polls rather than using a cond var to keep the watcher and bundler
+// goroutines loosely coupled; the poll only runs on a reload-needing
+// edit and is cheap.
+func (h *hmrServer) waitBuildAfter(prev int64, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for h.buildGen.Load() <= prev {
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // startHMRServer binds a loopback SSE server on an OS-assigned port
@@ -348,15 +377,25 @@ func startHMRSourceWatcher(ctx context.Context, srcDir string, compiler vue.SFCC
 	pending := map[string]*time.Timer{}
 	var pmu sync.Mutex
 
-	fire := func(path string) {
+	fire := func(path string, prevGen int64) {
 		pmu.Lock()
 		delete(pending, path)
 		pmu.Unlock()
 		msg := classifyChange(compiler, path, cache)
-		hub.broadcast(msg)
 		if msg.Type == "css" {
+			// CSS hot-swap is bundle-independent (the compiled CSS rides
+			// in the message), so broadcast immediately — no reload.
+			hub.broadcast(msg)
 			fmt.Fprintf(stdout, "%s[hmr]%s css %s\n", ansiCyan, ansiReset, filepath.Base(path))
+			return
 		}
+		// Reload-needing change: wait until esbuild's rebuild lands on
+		// disk (buildGen advances past the value seen when this edit
+		// arrived) BEFORE telling the browser to reload — otherwise it
+		// reloads into the PREVIOUS bundle. Timeout guards a stalled or
+		// failed build; reload anyway so the user isn't stuck.
+		hub.waitBuildAfter(prevGen, 15*time.Second)
+		hub.broadcast(hmrMessage{Type: "reload"})
 	}
 
 	for {
@@ -381,11 +420,14 @@ func startHMRSourceWatcher(ctx context.Context, srcDir string, compiler vue.SFCC
 				continue
 			}
 			path := ev.Name
+			// Capture the build generation at EVENT time so a reload for
+			// this edit waits for a rebuild completing AFTER this point.
+			prevGen := hub.buildGen.Load()
 			pmu.Lock()
 			if t, ok := pending[path]; ok {
 				t.Stop()
 			}
-			pending[path] = time.AfterFunc(debounce, func() { fire(path) })
+			pending[path] = time.AfterFunc(debounce, func() { fire(path, prevGen) })
 			pmu.Unlock()
 		case _, ok := <-w.Errors:
 			if !ok {

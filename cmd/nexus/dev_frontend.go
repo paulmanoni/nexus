@@ -373,6 +373,15 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		preserveDevChunks(outDir)
 		if hmrHub != nil {
 			_ = swapInHMRClient(outDir, hmrBase)
+			// Signal that a fresh build is on disk. Does NOT broadcast a
+			// reload — the source watcher is the single decision-maker
+			// (only it distinguishes a CSS-only edit, already hot-swapped,
+			// from a reload-needing one). On a reload-needing edit the
+			// watcher is blocked in waitBuildAfter; bumping the generation
+			// here releases it to broadcast the reload now that the new
+			// bundle + index.html + preserved chunks are written. Bump even
+			// on a failed build so a waiter isn't stuck until timeout.
+			hmrHub.bumpBuild()
 		}
 	}
 	tsconfig := findProjectTSConfig(root)
