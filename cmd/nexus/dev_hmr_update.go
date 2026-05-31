@@ -72,6 +72,18 @@ func buildVueUpdateModule(compiledSFC, filename string, deps updateBuildDeps) (s
 	// second bundled copy). The resolver + SFC plugin handle everything
 	// else.
 	plugins := []api.Plugin{vueVirtualPlugin(vueShim)}
+	// assetStubPlugin must come BEFORE the resolver so it claims every
+	// CSS / image / font import (bare specs like
+	// "@vueup/vue-quill/.../x.css" or "@/assets/logo.png", AND relative
+	// ./style.css) and replaces it with an inert module. An HMR update
+	// module must NOT re-emit assets — the main bundle already loaded
+	// them — and this Write:false sub-build has no output path, so a
+	// real .css/.png/.woff2 import would error ("No loader is configured
+	// for .png" / "without an output path configured"). CSS → empty
+	// module; asset URLs → a string export so `import logo from '...png'`
+	// still binds (to a dev placeholder path; the rendered <img> already
+	// has the real hashed URL from the main bundle).
+	plugins = append(plugins, assetStubPlugin())
 	if deps.vuePlugin.Name != "" {
 		plugins = append(plugins, deps.vuePlugin)
 	}
@@ -102,6 +114,57 @@ func buildVueUpdateModule(compiledSFC, filename string, deps updateBuildDeps) (s
 		return "", fmt.Errorf("hmr update build: no output")
 	}
 	return string(result.OutputFiles[0].Contents), nil
+}
+
+// assetStubPlugin replaces CSS / image / font / media imports in an HMR
+// update sub-build with inert modules, so the Write:false sub-build never
+// needs a loader or an output path for them. The main bundle already
+// emitted these assets; an update module that only swaps a component must
+// not re-emit them.
+//
+//   - .css → empty module (no re-injected styles).
+//   - image/font/media → a default string export, so
+//     `import logo from '@/assets/logo.png'` still binds. The value is a
+//     dev placeholder; the already-rendered DOM keeps the real hashed URL
+//     from the main bundle, and HMR re-render reuses the same binding.
+//
+// The filter matches the trailing `?query` esm.sh appends (e.g.
+// foo.css?external=vue). Registered before the resolver so it claims the
+// specifier first.
+func assetStubPlugin() api.Plugin {
+	const ns = "nexus-hmr-asset-stub"
+	// Extensions whose import should become a URL-string export.
+	urlExt := `\.(png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot|mp4|webm|mp3|wav)(\?|$)`
+	return api.Plugin{
+		Name: ns,
+		Setup: func(b api.PluginBuild) {
+			b.OnResolve(api.OnResolveOptions{Filter: `\.css(\?|$)`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+				return api.OnResolveResult{Path: args.Path, Namespace: ns, PluginData: "css"}, nil
+			})
+			b.OnResolve(api.OnResolveOptions{Filter: urlExt}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+				return api.OnResolveResult{Path: args.Path, Namespace: ns, PluginData: "url"}, nil
+			})
+			b.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: ns}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
+				body := "" // css: empty module
+				if args.PluginData == "url" {
+					body = "export default \"\";"
+				}
+				return api.OnLoadResult{Contents: &body, Loader: api.LoaderJS}, nil
+			})
+
+			// Transitive CSS pulled in from INSIDE a cached dependency
+			// blob (e.g. vuetify auto-importing VSlider.css) is resolved
+			// by the deps resolver into its own "nexus-deps" namespace, so
+			// the OnResolve filters above never see it. Intercept those at
+			// OnLoad: this callback is registered before the resolver's,
+			// so for any nexus-deps path ending in .css we return an empty
+			// module instead of letting esbuild try to emit a CSS file.
+			b.OnLoad(api.OnLoadOptions{Filter: `\.css(\?|$)`, Namespace: "nexus-deps"}, func(api.OnLoadArgs) (api.OnLoadResult, error) {
+				empty := ""
+				return api.OnLoadResult{Contents: &empty, Loader: api.LoaderJS}, nil
+			})
+		},
+	}
 }
 
 // vueVirtualPlugin makes any `import ... from "vue"` resolve to an
