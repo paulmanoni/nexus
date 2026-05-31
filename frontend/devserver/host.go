@@ -19,6 +19,7 @@
 package devserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -59,6 +60,15 @@ type Config struct {
 	// tree before the dependency resolver is consulted.
 	Aliases []Alias
 
+	// Env carries import.meta.env.<NAME> substitutions (the VITE_* vars
+	// from .env files). Inlined as esbuild Defines during Transform so a
+	// real app's `import.meta.env.VITE_API` reads the value at dev time.
+	Env map[string]string
+
+	// Mode is the dev mode injected as import.meta.env.MODE alongside the
+	// DEV/PROD booleans. Typically "development".
+	Mode string
+
 	// DepPrefix is the URL namespace cached dependency blobs are served
 	// under. Defaults to "/@dep/".
 	DepPrefix string
@@ -71,6 +81,7 @@ type Host struct {
 	res       resolver.Options
 	compiler  vue.SFCCompiler
 	aliases   []Alias
+	defines   map[string]string
 
 	// deps maps a served DepPrefix path → the canonical registry URL its
 	// bytes are cached under. Populated by ResolveImport (which always
@@ -91,7 +102,44 @@ func New(cfg Config) *Host {
 		res:       cfg.Resolver,
 		compiler:  cfg.Compiler,
 		aliases:   cfg.Aliases,
+		defines:   buildDefines(cfg.Env, cfg.Mode),
 	}
+}
+
+// buildDefines composes the import.meta.env.* substitution map handed to
+// esbuild's Transform. Mirrors the bundler's dev Defines so unbundled dev
+// and `nexus build` expose the same env surface: MODE/DEV/PROD plus each
+// caller-supplied VITE_* var, all JSON-encoded to valid JS literals.
+func buildDefines(env map[string]string, mode string) map[string]string {
+	d := map[string]string{}
+	if mode != "" {
+		d["import.meta.env.MODE"] = jsLit(mode)
+		d["import.meta.env.DEV"] = boolLit(mode == "development")
+		d["import.meta.env.PROD"] = boolLit(mode == "production")
+		d["import.meta.env.BASE_URL"] = jsLit("/")
+	}
+	for k, v := range env {
+		d["import.meta.env."+k] = jsLit(v)
+	}
+	if len(d) == 0 {
+		return nil
+	}
+	return d
+}
+
+func jsLit(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
+}
+
+func boolLit(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // LoadModule returns the source bytes + kind for a served URL path.
@@ -166,7 +214,7 @@ func (h *Host) Transform(urlPath string, src []byte) ([]byte, error) {
 	case ".vue":
 		return h.transformVue(clean, src)
 	case ".ts", ".tsx", ".jsx", ".json":
-		return transformEsbuild(clean, src, ext)
+		return h.transformEsbuild(clean, src, ext)
 	default:
 		// .js / .mjs — already browser JS; passthrough (imports are
 		// rewritten by viteless afterwards).
@@ -216,7 +264,7 @@ if (import.meta.hot) {
 
 // transformEsbuild runs esbuild's single-file Transform to strip TS types /
 // compile JSX / turn JSON into an ESM default export.
-func transformEsbuild(urlPath string, src []byte, ext string) ([]byte, error) {
+func (h *Host) transformEsbuild(urlPath string, src []byte, ext string) ([]byte, error) {
 	loader := api.LoaderTS
 	switch ext {
 	case ".tsx":
@@ -232,6 +280,7 @@ func transformEsbuild(urlPath string, src []byte, ext string) ([]byte, error) {
 		Target:     api.ES2022,
 		Sourcefile: urlPath,
 		Sourcemap:  api.SourceMapInline,
+		Define:     h.defines,
 	})
 	if len(r.Errors) > 0 {
 		return nil, fmt.Errorf("%s: %s", urlPath, r.Errors[0].Text)

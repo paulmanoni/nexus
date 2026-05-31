@@ -52,8 +52,15 @@ var viteURLRE = regexp.MustCompile(`Local:\s*(https?://[^\s/]+/?)`)
 // Mode detection runs once at startup. We don't try to switch
 // modes mid-session if a user adds nexus.lock; that's a restart-
 // nexus-dev moment, not a runtime concern.
-func startFrontendWatcher(ctx context.Context, dir, cmdline string, verbose bool, stdout, stderr io.Writer, frontendURLCh chan<- string) error {
+func startFrontendWatcher(ctx context.Context, dir, appAddr, cmdline string, verbose bool, stdout, stderr io.Writer, frontendURLCh chan<- string) error {
 	if depsModeAvailable(dir) {
+		// Opt-in unbundled native-ESM dev server (the viteless path):
+		// one module per URL, one Vue instance, real state-preserving HMR.
+		// Gated behind NEXUS_DEV_ESM while it matures; the bundler watcher
+		// stays the default and `nexus build` is untouched.
+		if esmDevEnabled() {
+			return startESMWatcher(ctx, dir, appAddr, verbose, stdout, stderr, frontendURLCh)
+		}
 		return startBundlerWatcher(ctx, dir, verbose, stdout, stderr)
 	}
 	// Detect first-run-without-add: the project has frontend

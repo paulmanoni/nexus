@@ -214,7 +214,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				go watchAndResyncViteProxy(ctx, proxyAddr, cfg, proxyURL, stdout, stderr)
 			}
 		}
-		if err := startFrontendWatcher(ctx, frontendDir, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
+		if err := startFrontendWatcher(ctx, frontendDir, addr, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
 			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
 			frontendURLCh = nil
 		}
