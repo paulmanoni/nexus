@@ -187,8 +187,10 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		if rel == "" {
 			rel = actualSrcDir
 		}
-		fmt.Fprintf(stdout, "%s●%s frontend watcher: auto-detected entries under %s (no top-level entries in %s)\n",
-			ansiCyan, ansiReset, rel, srcName)
+		if verbose {
+			fmt.Fprintf(stdout, "%s●%s frontend watcher: auto-detected entries under %s (no top-level entries in %s)\n",
+				ansiCyan, ansiReset, rel, srcName)
+		}
 		srcDir = actualSrcDir
 	}
 	// Walk islands.src/ recursively — a .vue file colocated under
@@ -262,7 +264,9 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 			break
 		}
 		if n > 0 {
-			fmt.Fprintf(stdout, "%s[web]%s public: copied %d file(s) from %s\n", ansiCyan, ansiReset, n, candidate)
+			if verbose {
+				fmt.Fprintf(stdout, "%s[web]%s public: copied %d file(s) from %s\n", ansiCyan, ansiReset, n, candidate)
+			}
 			break
 		}
 	}
@@ -298,7 +302,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// install-suggestion error at compile time, which is more
 	// useful than esbuild's silent "no loader configured" miss.
 	b.AddPlugin(bundler.NewSassPlugin())
-	if bundler.SassAvailable() {
+	if bundler.SassAvailable() && verbose {
 		fmt.Fprintf(stdout, "%s[web]%s scss via system sass\n", ansiCyan, ansiReset)
 	}
 
@@ -308,7 +312,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// error if directives are present but tailwindcss is
 	// missing from PATH.
 	b.AddPlugin(bundler.NewTailwindPlugin())
-	if bundler.TailwindAvailable() {
+	if bundler.TailwindAvailable() && verbose {
 		fmt.Fprintf(stdout, "%s[web]%s tailwind via system tailwindcss\n", ansiCyan, ansiReset)
 	}
 
@@ -344,8 +348,10 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// AFTER this returns (see startFrontendWatcher → dev.go
 	// orchestration), so on first boot the binary's //go:embed
 	// can pick up the freshly-bundled files.
-	fmt.Fprintf(stdout, "%s●%s frontend watcher: initial build of %d %s from %s…\n",
-		ansiCyan, ansiReset, len(entries), pluralize("entry", len(entries)), srcDir)
+	if verbose {
+		fmt.Fprintf(stdout, "%s●%s frontend watcher: initial build of %d %s from %s…\n",
+			ansiCyan, ansiReset, len(entries), pluralize("entry", len(entries)), srcDir)
+	}
 	// Wrap the rebuild reporter so every rebuild — including
 	// the initial one — also refreshes the transformed
 	// index.html in outDir. Without that, edits to the source
@@ -371,7 +377,9 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	if hmrErr != nil {
 		fmt.Fprintf(stdout, "%s[hmr]%s disabled: %v (full reload only)\n", ansiYellow, ansiReset, hmrErr)
 	} else {
-		fmt.Fprintf(stdout, "%s[hmr]%s css hot-swap active (%s)\n", ansiCyan, ansiReset, hmrBase)
+		if verbose {
+			fmt.Fprintf(stdout, "%s[hmr]%s active (%s)\n", ansiCyan, ansiReset, hmrBase)
+		}
 		// The per-edit HMR update sub-build reuses the SAME resolver,
 		// SFC plugin, and tsconfig as the main build so a changed
 		// component's real imports (@apollo/client, stores, sibling
@@ -409,10 +417,14 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		}
 	}
 	tsconfig := findProjectTSConfig(root)
-	if tsconfig != "" {
+	if tsconfig != "" && verbose {
 		fmt.Fprintf(stdout, "%s[web]%s tsconfig: %s\n", ansiCyan, ansiReset, tsconfig)
 	}
-	viteEnv, envErr := loadViteEnv(root, "development", stdout)
+	envSink := stdout
+	if !verbose {
+		envSink = io.Discard // "env: loaded N file(s)…" is verbose-only noise
+	}
+	viteEnv, envErr := loadViteEnv(root, "development", envSink)
 	if envErr != nil {
 		fmt.Fprintf(stderr, "%s●%s frontend watcher: .env load: %v\n", ansiYellow, ansiReset, envErr)
 	}
@@ -438,7 +450,11 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// the first banner line + any startup errors print the same
 	// way subsequent rebuilds do.
 	reporter.report(res.BuildResult)
-	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout, true); err != nil {
+	indexSink := stdout
+	if !verbose {
+		indexSink = io.Discard // "↪ index.html" line is verbose-only
+	}
+	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, indexSink, true); err != nil {
 		fmt.Fprintf(stderr, "%s●%s frontend watcher: index.html emit: %v\n", ansiYellow, ansiReset, err)
 	}
 	// Seed the chunk archive from the initial build (onRebuild keeps it
@@ -451,8 +467,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 
 	// Banner: print after the initial report so the order reads
 	// "bundled N entries" then "watching — Ctrl-C to stop".
-	fmt.Fprintf(stdout, "%s●%s frontend watcher: initial build done — watching %s for changes (esbuild incremental)\n",
-		ansiCyan, ansiReset, srcDir)
+	fmt.Fprintf(stdout, "%s●%s frontend ready — watching for changes\n", ansiCyan, ansiReset)
 
 	// Tear down esbuild's watcher on ctx cancel. Dispose closes
 	// the file watches + releases the build context; without it,
@@ -551,7 +566,10 @@ func (r *bundlerReporter) report(res api.BuildResult) {
 		}
 		r.printDiag(r.stderr, "⚠", ansiYellow, w)
 	}
-	if hiddenDepWarns > 0 {
+	// Only tally hidden vendor warnings on the FIRST build — they're the
+	// same every rebuild (same cached blobs), so repeating the line on
+	// every save is pure noise.
+	if hiddenDepWarns > 0 && !r.hadFirst {
 		fmt.Fprintf(r.stderr, "%s%s⚠ %d %s from cached dependencies hidden (run with --verbose to show)%s\n",
 			r.tag, ansiDim, hiddenDepWarns, pluralize("warning", hiddenDepWarns), ansiReset)
 	}

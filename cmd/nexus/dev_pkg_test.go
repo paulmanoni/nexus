@@ -180,8 +180,10 @@ func TestEnsureDevBuildScript_MissingFile(t *testing.T) {
 	if err := ensureDevBuildScript(dir, &buf); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
-	if !strings.Contains(buf.String(), "skip script injection") {
-		t.Errorf("expected skip notice, got %q", buf.String())
+	// Missing package.json is normal in bundler mode (deps from
+	// nexus.lock) — it must be a silent no-op, not console noise.
+	if buf.String() != "" {
+		t.Errorf("expected silence for missing package.json, got %q", buf.String())
 	}
 }
 

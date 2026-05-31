@@ -42,7 +42,8 @@ func ensureNamedScript(frontendDir, scriptName, scriptCmd string, stdout io.Writ
 	src, err := os.ReadFile(pkgPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintf(stdout, "[nexus] %s not found — skip script injection\n", pkgPath)
+			// No package.json is normal in bundler mode (deps come from
+			// nexus.lock, not npm) — nothing to inject, nothing to say.
 			return nil
 		}
 		return err
