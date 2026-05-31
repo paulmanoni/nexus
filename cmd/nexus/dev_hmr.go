@@ -41,11 +41,18 @@ import (
 // hmrMessage is the JSON payload pushed to the browser client.
 //
 //	{"type":"css","id":"data-v-abc","css":"...compiled css..."}
+//	{"type":"vue-update","id":"data-v-abc","url":"http://.../update/x.js","kind":"rerender"}
 //	{"type":"reload"}
 type hmrMessage struct {
 	Type string `json:"type"`
 	ID   string `json:"id,omitempty"`
 	CSS  string `json:"css,omitempty"`
+	// URL + Kind carry a Stage 2c vue-update: URL is the loopback
+	// address of the freshly-built update module; Kind is "rerender"
+	// (template-only change) or "reload" (script change), selecting which
+	// Vue HMR runtime call the client makes.
+	URL  string `json:"url,omitempty"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // hmrServer is the SSE fanout + client-script host for dev HMR.
@@ -63,6 +70,11 @@ type hmrServer struct {
 	// hot-swaps without reload, from a reload-needing one), so OnRebuild
 	// never broadcasts a reload itself.
 	buildGen atomic.Int64
+
+	// updates holds per-edit Vue HMR update modules (Stage 2c), keyed by
+	// their URL path, served by the /__nexus_hmr/update/ handler. A miss
+	// (stale generation) just 404s, and the client falls back to reload.
+	updates *updateModuleCache
 }
 
 // bumpBuild signals a rebuild finished with its output on disk.
@@ -123,11 +135,16 @@ func startHMRServer() (*hmrServer, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("hmr: listen: %w", err)
 	}
-	h := &hmrServer{clients: make(map[chan []byte]struct{}), addr: ln.Addr().String()}
+	h := &hmrServer{
+		clients: make(map[chan []byte]struct{}),
+		addr:    ln.Addr().String(),
+		updates: newUpdateModuleCache(),
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__nexus_hmr/sse", h.handleSSE)
 	mux.HandleFunc("/__nexus_hmr/client.js", h.handleClient)
+	mux.HandleFunc("/__nexus_hmr/update/", h.handleUpdate)
 
 	go func() { _ = http.Serve(ln, mux) }()
 
@@ -198,6 +215,26 @@ func (h *hmrServer) handleClient(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	fmt.Fprintf(w, hmrClientJS, "http://"+h.addr)
+}
+
+// handleUpdate serves a per-edit Vue HMR update module (Stage 2c). The
+// browser import()s the URL from a vue-update SSE message. A cache miss
+// (stale generation, or updates never populated) returns 404, which the
+// client treats as "fall back to full reload".
+func (h *hmrServer) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if h.updates == nil {
+		http.NotFound(w, r)
+		return
+	}
+	js, ok := h.updates.get(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	fmt.Fprint(w, js)
 }
 
 // devVueRewrite returns a resolver.Options.DevSpecRewrite that swaps the
@@ -406,18 +443,41 @@ func startHMRSourceWatcher(ctx context.Context, srcDir string, compiler vue.SFCC
 	pending := map[string]*time.Timer{}
 	var pmu sync.Mutex
 
+	var updateGen int64 // monotonic per-session counter for update URLs
 	fire := func(path string, prevGen int64) {
 		pmu.Lock()
 		delete(pending, path)
 		pmu.Unlock()
-		msg := classifyChange(compiler, path, cache)
-		if msg.Type == "css" {
+		msg, code := classifyChange(compiler, path, cache)
+
+		switch msg.Type {
+		case "css":
 			// CSS hot-swap is bundle-independent (the compiled CSS rides
 			// in the message), so broadcast immediately — no reload.
 			hub.broadcast(msg)
 			fmt.Fprintf(stdout, "%s[hmr]%s css %s\n", ansiCyan, ansiReset, filepath.Base(path))
 			return
+
+		case "vue-update":
+			// Stage 2c: build a standalone update module (Vue externalized
+			// to the app's instance), cache + serve it, and tell the
+			// browser to swap the component in place. Self-contained, so
+			// no need to wait on the full rebuild. Any failure falls
+			// through to a full reload.
+			js, berr := buildVueUpdateModule(code, path)
+			if berr == nil && js != "" && hub.updates != nil {
+				updateGen++
+				urlPath := fmt.Sprintf("/__nexus_hmr/update/%s-%d.js", msg.ID, updateGen)
+				hub.updates.put(urlPath, js)
+				msg.URL = "http://" + hub.addr + urlPath
+				hub.broadcast(msg)
+				fmt.Fprintf(stdout, "%s[hmr]%s update %s\n", ansiCyan, ansiReset, filepath.Base(path))
+				return
+			}
+			fmt.Fprintf(stdout, "%s[hmr]%s update build failed for %s, reloading: %v\n", ansiYellow, ansiReset, filepath.Base(path), berr)
+			// fall through to reload
 		}
+
 		// Reload-needing change: wait until esbuild's rebuild lands on
 		// disk (buildGen advances past the value seen when this edit
 		// arrived) BEFORE telling the browser to reload — otherwise it
@@ -481,36 +541,45 @@ func isHMRSource(path string) bool {
 // compiled CSS changed (and it has no url() interpolations we can't
 // resolve here), a targeted css swap is returned; otherwise reload.
 // Non-.vue files always reload in Stage 1.
-func classifyChange(compiler vue.SFCCompiler, path string, cache map[string]vueSig) hmrMessage {
+func classifyChange(compiler vue.SFCCompiler, path string, cache map[string]vueSig) (hmrMessage, string) {
 	if compiler == nil || strings.ToLower(filepath.Ext(path)) != ".vue" {
-		return hmrMessage{Type: "reload"}
+		return hmrMessage{Type: "reload"}, ""
 	}
 	src, err := os.ReadFile(path)
 	if err != nil {
-		return hmrMessage{Type: "reload"}
+		return hmrMessage{Type: "reload"}, ""
 	}
 	res, err := compiler.Compile(string(src), path)
 	if err != nil || len(res.Errors) > 0 {
 		// Compile error → reload so esbuild's error overlay / a fresh
 		// load surfaces it; don't try to hot-swap broken output.
-		return hmrMessage{Type: "reload"}
+		return hmrMessage{Type: "reload"}, ""
 	}
 	cur := fingerprintVue(res.Code)
 	prev, had := cache[path]
 	cache[path] = cur
 
-	// First time we see this file, or the non-CSS parts changed, or
-	// the CSS uses url() interpolations we can't resolve here → reload.
-	if !had || cur.nonStyle != prev.nonStyle || cur.hasInterp || cur.css == "" {
-		return hmrMessage{Type: "reload"}
+	// CSS-only change: logic identical, style changed, and no url()
+	// interpolation we can't resolve outside the bundle → hot-swap.
+	if had && cur.nonStyle == prev.nonStyle {
+		if cur.css != prev.css && !cur.hasInterp && cur.css != "" {
+			return hmrMessage{Type: "css", ID: cur.id, CSS: cur.css}, res.Code
+		}
+		// Nothing meaningfully changed. This is the common duplicate
+		// fsnotify event after a real edit already handled — return a
+		// no-op so we don't fire a spurious reload that would undo the
+		// vue-update/css-swap the first event produced.
+		return hmrMessage{Type: "noop"}, ""
 	}
-	if cur.css == prev.css {
-		// Nothing visible changed (e.g. whitespace-only in script that
-		// hashed identically is impossible, but CSS identical means the
-		// edit was elsewhere and already handled by nonStyle compare).
-		return hmrMessage{Type: "reload"}
+
+	// Template/script change (or first sight): vue-update. The caller
+	// builds + serves the update module and fills in URL. Needs a scope
+	// id to target the component; Kind "reload" drives Vue's HMR reload()
+	// which handles both template and script changes.
+	if cur.id == "" {
+		return hmrMessage{Type: "reload"}, ""
 	}
-	return hmrMessage{Type: "css", ID: cur.id, CSS: cur.css}
+	return hmrMessage{Type: "vue-update", ID: cur.id, Kind: "reload"}, res.Code
 }
 
 // fingerprintVue splits a compiled SFC module into its CSS and
@@ -650,12 +719,37 @@ const hmrClientJS = `(function () {
     el.textContent = css;
     console.debug('[nexus-hmr] css updated', id);
   }
+  function applyVueUpdate(msg) {
+    var R = globalThis.__VUE_HMR_RUNTIME__;
+    if (!R) { location.reload(); return; }
+    import(msg.url).then(function (mod) {
+      var comp = mod && (mod.default || mod);
+      try {
+        if (msg.kind === 'rerender' && comp && comp.render) {
+          R.rerender(msg.id, comp.render);
+        } else if (comp) {
+          R.reload(msg.id, comp);
+        } else {
+          location.reload();
+          return;
+        }
+        console.debug('[nexus-hmr] component updated', msg.id);
+      } catch (err) {
+        console.warn('[nexus-hmr] update failed, reloading', err);
+        location.reload();
+      }
+    }).catch(function (err) {
+      console.warn('[nexus-hmr] update fetch failed, reloading', err);
+      location.reload();
+    });
+  }
   function connect() {
     var es = new EventSource(base + '/__nexus_hmr/sse');
     es.onmessage = function (e) {
       var msg;
       try { msg = JSON.parse(e.data); } catch (_) { return; }
       if (msg.type === 'css') { applyCss(msg.id, msg.css); return; }
+      if (msg.type === 'vue-update') { applyVueUpdate(msg); return; }
       if (msg.type === 'reload') { location.reload(); return; }
     };
     es.onerror = function () { /* EventSource retries automatically */ };
