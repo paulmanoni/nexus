@@ -1,39 +1,6 @@
 # Binaries
-/graphapp
-/microsplit
-/nexus
+*.exe
 *.test
 *.out
-# `go build ./examples/X` drops a binary at examples/X/X by default.
-examples/live/live
-examples/crons/crons
-examples/arch-canvas/arch-canvas
-# Node side-effects for the Vue island build steps.
-examples/arch-canvas/node_modules/
-cookbook/islands/node_modules/
-# `go build .` from the repo root drops named binaries here too.
-/crons
-/arch-canvas
-
-# nexus build cache (per-deployment shadow source + overlay.json)
-.nexus/build/
-examples/*/.nexus/
-examples/*/bin/
-
-# Editor / IDE
-.idea/
-.vscode/
-*.swp
-
-# macOS
+/dist/
 .DS_Store
-
-# Claude
-.claude/
-
-# Node / Vite (dashboard UI)
-dashboard/ui/node_modules/
-dashboard/ui/.vite/
-
-# Frontend build cache (nexus build short-circuit; safe to delete)
-.nexus-cache/

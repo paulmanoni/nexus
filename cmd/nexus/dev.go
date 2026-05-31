@@ -43,7 +43,7 @@ func findViteConfig(frontendDir string) string {
 func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		addr        string
-		noOpen      bool
+		open        bool
 		openDash    bool
 		tui         bool
 		noWatch     bool
@@ -54,9 +54,10 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
-		Short: "Run the app with go run + auto-open the dashboard",
+		Short: "Run the app with go run + a live dashboard",
 		Long: `Boot the user's app via 'go run', print a friendly banner, and
-auto-open the dashboard once the listen port responds.
+serve the dashboard once the listen port responds. Pass --open to also
+launch a browser.
 
 Use this instead of 'go run .' when you want one-command iteration. The
 dev runner kills the entire process group on SIGINT/SIGTERM so the
@@ -70,13 +71,13 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, !noOpen, openDash, !noWatch, frontendDir, frontendCmd, verbose, bundleMode, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, bundleMode, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
 		"dashboard address to probe and open")
-	cmd.Flags().BoolVar(&noOpen, "no-open", false,
-		"don't auto-open the browser when the port responds")
+	cmd.Flags().BoolVar(&open, "open", false,
+		"launch a browser when the port responds (off by default)")
 	cmd.Flags().BoolVar(&openDash, "open-dash", false,
 		"open the /__nexus/ admin dashboard instead of the app's root URL")
 	cmd.Flags().BoolVar(&tui, "tui", false,
@@ -136,7 +137,9 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		pkgDir := filepath.Join(root, target)
 		if d := detectFrontendDir(pkgDir); d != "" {
 			frontendDir = d
-			fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
+			if verbose {
+				fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
+			}
 		}
 	}
 
@@ -630,19 +633,58 @@ const (
 	ansiRed    = "\033[31m"
 )
 
-// printDevBanner writes a compact intro block that survives gin's
-// debug firehose. We deliberately omit the dashboard URL: at this
-// point we don't yet know what address the user's Config.Addr picked
-// — printing a guess (the --addr flag's default) and "correcting"
-// it later left a stale URL pinned at the top of the terminal even
-// after the right one rendered below. The URL appears once, on the
-// ready line, after the child binds.
+// nexusArt is the built-in NEXUS wordmark printed atop the dev banner.
+// Figlet "standard" font; kept as raw-string lines so the backslashes
+// in the glyphs survive verbatim. A project can replace it by dropping
+// a banner.txt in the directory nexus dev runs from (see loadBannerArt).
+var nexusArt = []string{
+	` _   _ _______  ___   _ ____`,
+	`| \ | | ____\ \/ / | | / ___|`,
+	`|  \| |  _|  \  /| | | \___ \`,
+	`| |\  | |___ /  \| |_| |___) |`,
+	`|_| \_|_____/_/\_\\___/|____/`,
+}
+
+// loadBannerArt returns the wordmark lines to print atop the dev banner.
+// When a banner.txt exists in dir (the directory nexus dev was invoked
+// from), its contents replace the built-in NEXUS art verbatim — only a
+// trailing newline is trimmed, so a project can ship its own wordmark
+// or message and have it rendered exactly. Any read error or an empty
+// file falls back to nexusArt.
+func loadBannerArt(dir string) []string {
+	b, err := os.ReadFile(filepath.Join(dir, "banner.txt"))
+	if err != nil {
+		return nexusArt
+	}
+	text := strings.TrimRight(string(b), "\n")
+	if text == "" {
+		return nexusArt
+	}
+	return strings.Split(text, "\n")
+}
+
+// printDevBanner writes the intro block that survives gin's debug
+// firehose: the NEXUS wordmark (or a project's banner.txt override),
+// a subtitle, and the target + starting rows. We deliberately omit the
+// dashboard URL here: at this point we don't yet know what address the
+// user's Config.Addr picked — printing a guess (the --addr flag's
+// default) and "correcting" it later left a stale URL pinned at the top
+// of the terminal even after the right one rendered below. The URL
+// appears once, on the ready line, after the child binds.
 func printDevBanner(w io.Writer, target string) {
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %snexus dev%s\n", ansiBold, ansiReset)
-	fmt.Fprintf(w, "  %s──────────%s\n", ansiDim, ansiReset)
+	for _, line := range loadBannerArt(root) {
+		fmt.Fprintf(w, "  %s%s%s%s\n", ansiBold, ansiCyan, line, ansiReset)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  %sdev server · ctrl-c to stop%s\n\n", ansiDim, ansiReset)
 	fmt.Fprintf(w, "  target     %s%s%s\n", ansiBold, target, ansiReset)
-	fmt.Fprintf(w, "  %s%s starting · ctrl-c to stop%s\n\n", ansiDim, ansiYellow+"●"+ansiDim, ansiReset)
+	fmt.Fprintf(w, "  %s%s starting…%s\n\n", ansiDim, ansiYellow+"●"+ansiDim, ansiReset)
 }
 
 // printReadyLine is the matching tail to the banner: a single green

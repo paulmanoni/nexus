@@ -84,14 +84,14 @@ CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
 
 ```bash
 nexus new my-app && cd my-app
-nexus dev                 # go run + auto-open the dashboard
+nexus dev                 # go run + live dashboard (add --open to launch a browser)
 ```
 
 | Command | What it does |
 |---|---|
 | `nexus new <dir>` | Scaffold a runnable app (prompts for frontend / db / cache / auth). |
 | `nexus init [dir] --frontend=vue\|react` | Scaffold the frontend pipeline (`islands.src/`, embed) into an existing project. |
-| `nexus dev [dir]` | `go run` + auto-rebuild frontend on save; opens the dashboard. |
+| `nexus dev [dir]` | `go run` + auto-rebuild frontend on save; serves the dashboard (pass `--open` to launch a browser). |
 | `nexus build [package]` | Bundle frontend sources under `islands.src/` (content-cached — skips the bundler when nothing changed), then `go build` the main package. |
 | `nexus docs [topic]` | Inline reference (`handlers`, `frontend`, `auth`, …). |
 | `nexus add <spec>` | Fetch a frontend dep from esm.sh into `~/.nexus/cache`, write `nexus.lock`. |
@@ -136,7 +136,7 @@ var helloModule = nexus.Module("hello",
 )
 ```
 
-`nexus dev` runs it, opens the dashboard at `http://localhost:8080/__nexus`, exposes the handler over GraphQL (`{ sayHello(name:"world") }`) and REST (`POST /hello/sayHello`).
+`nexus dev` runs it and serves the dashboard at `http://localhost:8080/__nexus` (add --open to launch a browser), exposing the handler over GraphQL (`{ sayHello(name:"world") }`) and REST (`POST /hello/sayHello`).
 
 ## Reflective handlers
 
@@ -250,6 +250,18 @@ exclude = ["uploads", "*.tmp", "cache/*.json"]
 ```
 
 Invalid patterns are logged once at boot and skipped.
+
+### Custom banner
+
+`nexus dev` prints a NEXUS wordmark on startup. Drop a `banner.txt` in the directory you run `nexus dev` from to replace it with your own — the file's contents are rendered verbatim above the `target` / `starting` rows, so a project can ship its own ASCII wordmark or message:
+
+```
+$ cat banner.txt
+  ~ acme admin ~
+  staging
+```
+
+An empty or missing `banner.txt` falls back to the built-in NEXUS banner.
 
 ## Dashboard
 
