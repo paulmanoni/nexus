@@ -219,7 +219,7 @@ func TestIsVendorDiag(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := isVendorDiag(tc.msg); got != tc.want {
-				t.Errorf("isVendorDiag(%q) = %v, want %v", tc.msg.Location, got, tc.want)
+				t.Errorf("isVendorDiag(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
 	}
