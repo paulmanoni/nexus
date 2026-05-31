@@ -54,11 +54,23 @@ type updateBuildDeps struct {
 func buildVueUpdateModule(compiledSFC, filename string, deps updateBuildDeps) (string, error) {
 	// Names the compiled SFC imports from "vue" — the virtual vue module
 	// must export exactly these as live bindings.
-	names := scanVueImports(compiledSFC)
+	// Union of (a) the well-known Vue runtime/template-compiler helper set
+	// and (b) whatever else this SFC imports from "vue". The baseline set
+	// makes the shim robust even if the import scan misses a name (e.g.
+	// multi-statement lines); the scan adds anything outside the baseline
+	// (compiler internals, newly-added helpers). esbuild satisfies
+	// `import { X } from "vue"` against the matching `export const X`.
+	nameSet := map[string]bool{}
+	for _, n := range vueRuntimeHelpers {
+		nameSet[n] = true
+	}
+	for _, n := range scanVueImports(compiledSFC) {
+		nameSet[n] = true
+	}
 	var shim strings.Builder
 	shim.WriteString("const __v = (globalThis.__nexus_vue__ || {});\n")
 	shim.WriteString("export default (__v.default || __v);\n")
-	for _, n := range names {
+	for n := range nameSet {
 		if n == "default" {
 			continue
 		}
@@ -184,6 +196,51 @@ func vueVirtualPlugin(shimJS string) api.Plugin {
 			})
 		},
 	}
+}
+
+// vueRuntimeHelpers is the closed set of named exports Vue's template
+// compiler + runtime can reference from a compiled SFC. Re-exporting all
+// of them from the virtual `vue` module guarantees any compiled template
+// resolves, regardless of import-scan gaps. Drawn from
+// @vue/runtime-core + @vue/runtime-dom public API; extras here are
+// harmless (they just bind to undefined on the global if absent).
+var vueRuntimeHelpers = []string{
+	// vnode / block construction
+	"openBlock", "createBlock", "createElementBlock", "createVNode",
+	"createElementVNode", "createCommentVNode", "createTextVNode",
+	"createStaticVNode", "Fragment", "Comment", "Text", "Static",
+	"normalizeClass", "normalizeStyle", "normalizeProps", "mergeProps",
+	"toDisplayString", "toHandlers", "toHandlerKey", "camelize",
+	"capitalize", "guardReactiveProps",
+	// rendering helpers
+	"renderList", "renderSlot", "createSlots", "withCtx", "withDirectives",
+	"withModifiers", "withKeys", "withMemo", "isMemoSame",
+	"resolveComponent", "resolveDynamicComponent", "resolveDirective",
+	"resolveFilter", "createPropsRestProxy", "setBlockTracking",
+	"pushScopeId", "popScopeId", "withScopeId", "createElementBlock",
+	// built-in components / directives
+	"Teleport", "Suspense", "KeepAlive", "BaseTransition", "Transition",
+	"TransitionGroup", "vShow", "vModelText", "vModelCheckbox",
+	"vModelRadio", "vModelSelect", "vModelDynamic",
+	// composition API
+	"ref", "shallowRef", "computed", "reactive", "shallowReactive",
+	"readonly", "shallowReadonly", "toRef", "toRefs", "toRaw", "unref",
+	"isRef", "isReactive", "isReadonly", "isProxy", "markRaw",
+	"customRef", "triggerRef", "effect", "effectScope", "getCurrentScope",
+	"onScopeDispose", "watch", "watchEffect", "watchPostEffect",
+	"watchSyncEffect", "provide", "inject", "hasInjectionContext",
+	"nextTick", "defineComponent", "defineAsyncComponent",
+	"getCurrentInstance", "h", "mergeDefaults", "useSlots", "useAttrs",
+	"useModel", "useTemplateRef", "useId", "useCssVars", "useCssModule",
+	// lifecycle
+	"onBeforeMount", "onMounted", "onBeforeUpdate", "onUpdated",
+	"onBeforeUnmount", "onUnmounted", "onActivated", "onDeactivated",
+	"onErrorCaptured", "onRenderTracked", "onRenderTriggered",
+	"onServerPrefetch",
+	// app / misc
+	"createApp", "createSSRApp", "createRenderer", "useTransitionState",
+	"resolveTransitionHooks", "setTransitionHooks",
+	"getTransitionRawChildren", "createBaseVNode", "isVNode", "cloneVNode",
 }
 
 // scanVueImports extracts the named identifiers a compiled SFC imports
