@@ -83,6 +83,35 @@ func (h *hmrServer) waitBuildAfter(prev int64, timeout time.Duration) {
 	}
 }
 
+// vueBridgeJS is auto-imported into every dev entry (via esbuild Inject).
+// It pins the app's own Vue instance onto globalThis.__nexus_vue__ so a
+// separately-served HMR update module can bind to the SAME instance —
+// Vue's HMR runtime requires single-instance vnode identity, and a 2nd
+// bundled Vue would silently break rerender/reload. The `import "vue"` is
+// a bare spec, so esbuild dedups it to the instance the app already
+// bundles. Dev-only: prod never sets Inject, so this never ships.
+const vueBridgeJS = `import * as __nexusVue from "vue";
+if (typeof globalThis !== "undefined" && !globalThis.__nexus_vue__) {
+  globalThis.__nexus_vue__ = __nexusVue;
+}
+`
+
+// writeVueBridge materializes vueBridgeJS to a stable path under outDir's
+// parent (NOT inside outDir — it must not be embedded/served) and returns
+// the absolute path for esbuild's Inject. esbuild Inject needs a real
+// file on disk, so we write it once per dev session.
+func writeVueBridge(root string) (string, error) {
+	dir := filepath.Join(root, ".nexus-cache")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, "vue-hmr-bridge.js")
+	if err := os.WriteFile(p, []byte(vueBridgeJS), 0o644); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
 // startHMRServer binds a loopback SSE server on an OS-assigned port
 // and serves the client shim. Returns the server (for broadcasting)
 // and the base URL the injected <script> should point at, or an

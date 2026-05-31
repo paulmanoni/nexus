@@ -199,6 +199,17 @@ type Options struct {
 	// self-contained bundle file aren't surprised; the CLI
 	// (`nexus build` / `nexus dev`) turns it on.
 	Splitting bool
+
+	// Inject lists files esbuild auto-imports into every entry point
+	// (esbuild's --inject). Used in dev to seed a Vue HMR bridge: a
+	// tiny module that does `import * as V from "vue"; globalThis
+	// .__nexus_vue__ = V`, so the running app and separately-served HMR
+	// update modules share ONE Vue instance (Vue's HMR runtime requires
+	// it). The `import "vue"` is a bare spec, so it dedups to the same
+	// instance the app already bundles.
+	//
+	// Empty (production builds) → no injection; the bundle is unchanged.
+	Inject []string
 }
 
 // assetLoaders is the default per-extension loader map handed to
@@ -385,6 +396,10 @@ func (b *Bundler) Build(opts Options) (Result, error) {
 		Banner: map[string]string{
 			"js": vueRuntimeFlagsBanner,
 		},
+		// Dev-only HMR bridge (empty in production). Auto-imported into
+		// every entry so globalThis.__nexus_vue__ points at the app's
+		// own Vue instance — shared with HMR update modules.
+		Inject: opts.Inject,
 	}
 
 	if opts.Watch {

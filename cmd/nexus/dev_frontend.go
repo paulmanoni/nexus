@@ -353,6 +353,18 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// swap the app's reload shim in the dev index.html for our client,
 	// so CSS-only edits hot-swap in place and everything else reloads.
 	// If the server can't bind we degrade to the app's full reload.
+	// Vue HMR bridge: a tiny module esbuild auto-imports (Inject) into
+	// every entry, pinning the app's own Vue onto globalThis.__nexus_vue__
+	// so HMR update modules can bind to the same instance. Dev-only.
+	// Best-effort: if it can't be written, HMR component updates fall back
+	// to full reload (still correct), so don't fail the watcher.
+	var hmrInject []string
+	if bridgePath, berr := writeVueBridge(root); berr == nil {
+		hmrInject = []string{bridgePath}
+	} else {
+		fmt.Fprintf(stdout, "%s[web]%s [hmr] vue bridge unavailable: %v (component HMR off)\n", ansiYellow, ansiReset, berr)
+	}
+
 	hmrHub, hmrBase, hmrErr := startHMRServer()
 	if hmrErr != nil {
 		fmt.Fprintf(stdout, "%s[hmr]%s disabled: %v (full reload only)\n", ansiYellow, ansiReset, hmrErr)
@@ -405,6 +417,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		Splitting:  true,
 		Watch:      true,
 		OnRebuild:  onRebuild,
+		Inject:     hmrInject, // dev-only Vue HMR bridge
 	})
 	if err != nil {
 		return fmt.Errorf("frontend watcher: %w", err)
