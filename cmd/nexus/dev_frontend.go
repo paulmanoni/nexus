@@ -280,6 +280,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 	// Ctrl-C / shutdown disposes the JS runtime cleanly.
 	var closeVue func()
 	var hmrCompiler vue.SFCCompiler // reused for CSS-hot-swap classification
+	var hmrVuePlugin api.Plugin     // reused for the per-edit HMR update sub-build
 	if hasVue && vueCompilerHook != nil {
 		cv, vuePlugin, c, err := vueCompilerHook(lf, st)
 		if err != nil {
@@ -287,6 +288,7 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		}
 		closeVue = cv
 		hmrCompiler = c
+		hmrVuePlugin = vuePlugin
 		b.AddPlugin(vuePlugin)
 	}
 
@@ -370,7 +372,17 @@ func startBundlerWatcher(ctx context.Context, dir string, verbose bool, stdout, 
 		fmt.Fprintf(stdout, "%s[hmr]%s disabled: %v (full reload only)\n", ansiYellow, ansiReset, hmrErr)
 	} else {
 		fmt.Fprintf(stdout, "%s[hmr]%s css hot-swap active (%s)\n", ansiCyan, ansiReset, hmrBase)
-		go startHMRSourceWatcher(ctx, srcDir, hmrCompiler, hmrHub, stdout)
+		// The per-edit HMR update sub-build reuses the SAME resolver,
+		// SFC plugin, and tsconfig as the main build so a changed
+		// component's real imports (@apollo/client, stores, sibling
+		// .vue, @/ aliases) resolve identically. Only `vue` is
+		// special-cased (bound to the app's live instance).
+		hmrDeps := updateBuildDeps{
+			resolverPlugin: plugin,
+			vuePlugin:      hmrVuePlugin,
+			tsconfig:       findProjectTSConfig(root),
+		}
+		go startHMRSourceWatcher(ctx, srcDir, hmrCompiler, hmrHub, hmrDeps, stdout)
 	}
 
 	onRebuild := func(br api.BuildResult) {

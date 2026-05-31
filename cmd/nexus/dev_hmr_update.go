@@ -30,13 +30,30 @@ import (
 // (Vue externalized to the global). The hmrServer caches it by URL and
 // serves it; the SSE message carries the URL.
 
-// buildVueUpdateModule compiles one .vue's already-compiled SFC JS into a
-// standalone ESM whose `vue` import binds to globalThis.__nexus_vue__.
-// Returns the module bytes ready to serve. compiledSFC is the output of
-// the SFC compiler (CompileResult.Code) for the changed file.
-func buildVueUpdateModule(compiledSFC, filename string) (string, error) {
-	// Names the compiled SFC imports from "vue" — esbuild needs the
-	// virtual vue module to export exactly these as live bindings.
+// updateBuildDeps carries the resolution context the per-edit sub-build
+// needs to resolve a real component's imports — the project resolver
+// (bare specs → cached blobs), the Vue SFC plugin (sibling .vue files),
+// and the tsconfig (@/ path aliases). These are the SAME plugins the
+// main dev build uses, so the update module's dependency graph resolves
+// identically to the running app's — except `vue`, which is intercepted
+// by the virtual plugin and bound to globalThis.__nexus_vue__.
+type updateBuildDeps struct {
+	resolverPlugin api.Plugin
+	vuePlugin      api.Plugin
+	tsconfig       string
+}
+
+// buildVueUpdateModule compiles one changed .vue into a standalone ESM
+// for in-place hot update. compiledSFC is the SFC compiler's output for
+// the file; deps supplies the project's resolver + SFC plugin + tsconfig
+// so the component's real imports (@apollo/client, stores, sibling .vue,
+// @/ aliases) resolve exactly as in the main build. Only `vue` is
+// special-cased: the virtual plugin binds it to the app's live instance
+// (globalThis.__nexus_vue__) so the update shares one Vue — required for
+// Vue's HMR runtime.
+func buildVueUpdateModule(compiledSFC, filename string, deps updateBuildDeps) (string, error) {
+	// Names the compiled SFC imports from "vue" — the virtual vue module
+	// must export exactly these as live bindings.
 	names := scanVueImports(compiledSFC)
 	var shim strings.Builder
 	shim.WriteString("const __v = (globalThis.__nexus_vue__ || {});\n")
@@ -49,6 +66,19 @@ func buildVueUpdateModule(compiledSFC, filename string) (string, error) {
 	}
 	vueShim := shim.String()
 
+	// Plugin order matters: esbuild dispatches OnResolve in registration
+	// order, so the vue-virtual plugin MUST come first to claim `vue`
+	// before the project resolver (which would otherwise resolve it to a
+	// second bundled copy). The resolver + SFC plugin handle everything
+	// else.
+	plugins := []api.Plugin{vueVirtualPlugin(vueShim)}
+	if deps.vuePlugin.Name != "" {
+		plugins = append(plugins, deps.vuePlugin)
+	}
+	if deps.resolverPlugin.Name != "" {
+		plugins = append(plugins, deps.resolverPlugin)
+	}
+
 	result := api.Build(api.BuildOptions{
 		Stdin: &api.StdinOptions{
 			Contents:   compiledSFC,
@@ -59,8 +89,10 @@ func buildVueUpdateModule(compiledSFC, filename string) (string, error) {
 		Bundle:   true,
 		Write:    false,
 		Format:   api.FormatESModule,
+		Target:   api.ES2022,
 		Platform: api.PlatformBrowser,
-		Plugins:  []api.Plugin{vueVirtualPlugin(vueShim)},
+		Tsconfig: deps.tsconfig,
+		Plugins:  plugins,
 		LogLevel: api.LogLevelSilent,
 	})
 	if len(result.Errors) > 0 {

@@ -425,7 +425,7 @@ type vueSig struct {
 // on-disk bundle (so a later full reload or a fresh page load is
 // correct), while this loop decides whether the browser needs a
 // reload at all or just a style swap.
-func startHMRSourceWatcher(ctx context.Context, srcDir string, compiler vue.SFCCompiler, hub *hmrServer, stdout io.Writer) {
+func startHMRSourceWatcher(ctx context.Context, srcDir string, compiler vue.SFCCompiler, hub *hmrServer, deps updateBuildDeps, stdout io.Writer) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		fmt.Fprintf(stdout, "%s●%s hmr: fsnotify init failed: %v (CSS hot-swap disabled)\n", ansiYellow, ansiReset, err)
@@ -464,7 +464,7 @@ func startHMRSourceWatcher(ctx context.Context, srcDir string, compiler vue.SFCC
 			// browser to swap the component in place. Self-contained, so
 			// no need to wait on the full rebuild. Any failure falls
 			// through to a full reload.
-			js, berr := buildVueUpdateModule(code, path)
+			js, berr := buildVueUpdateModule(code, path, deps)
 			if berr == nil && js != "" && hub.updates != nil {
 				updateGen++
 				urlPath := fmt.Sprintf("/__nexus_hmr/update/%s-%d.js", msg.ID, updateGen)

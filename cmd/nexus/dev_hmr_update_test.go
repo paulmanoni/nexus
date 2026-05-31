@@ -50,7 +50,9 @@ func TestBuildVueUpdateModule_ExternalizesVue(t *testing.T) {
 const __sfc__ = { render() { return _ob(), _ceb("div") } };
 export default __sfc__;
 `
-	out, err := buildVueUpdateModule(sfc, "/proj/src/Foo.vue")
+	// Empty deps: this SFC imports only vue, so no resolver/SFC plugin is
+	// needed — the vue-virtual plugin handles everything.
+	out, err := buildVueUpdateModule(sfc, "/proj/src/Foo.vue", updateBuildDeps{})
 	if err != nil {
 		t.Fatalf("buildVueUpdateModule: %v", err)
 	}
