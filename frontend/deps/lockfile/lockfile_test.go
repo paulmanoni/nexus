@@ -252,3 +252,31 @@ func TestSave_AtomicWriteSurvivesPathBeingDirectory(t *testing.T) {
 		t.Error("Save onto directory path should error")
 	}
 }
+
+// TestFile_ConcurrentAddResolve exercises the exact access pattern that
+// crashed `nexus dev`: the resolver runs Resolve across esbuild's
+// worker goroutines while the on-demand fetch hook calls Add. Without
+// the File.mu guard this panics under -race (and intermittently in
+// production) with "concurrent map iteration and map write". Run with
+// `go test -race` to catch regressions.
+func TestFile_ConcurrentAddResolve(t *testing.T) {
+	f := New()
+	// Seed so Resolve has entries to iterate.
+	for i := 0; i < 50; i++ {
+		f.Add(Package{Spec: "seed" + string(rune('a'+i%26)), Version: "1.0.0"})
+	}
+
+	done := make(chan struct{})
+	go func() { // writer
+		for i := 0; i < 2000; i++ {
+			f.Add(Package{Spec: "pkg", Version: string(rune('a' + i%26))})
+		}
+		close(done)
+	}()
+	for i := 0; i < 2000; i++ { // concurrent readers
+		_, _ = f.Resolve("seed", "")     // iterates the map
+		_, _ = f.Get("pkg@a")            // keyed read
+		_, _ = f.Resolve("pkg", "1.0.0") // keyed read
+	}
+	<-done
+}

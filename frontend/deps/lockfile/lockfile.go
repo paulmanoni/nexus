@@ -43,6 +43,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // CurrentVersion is the lockfile schema version this package writes.
@@ -63,6 +64,14 @@ const Filename = "nexus.lock"
 type File struct {
 	Version  int                `json:"version"`
 	Packages map[string]Package `json:"packages"`
+
+	// mu guards Packages against concurrent access. The resolver
+	// plugin runs OnResolve across esbuild's worker goroutines, so a
+	// Resolve/Get (map read/iterate) can race a concurrent Add (map
+	// write) from the on-demand fetch hook — Go panics with "concurrent
+	// map iteration and map write". Unexported, so encoding/json skips
+	// it and the on-disk format is unchanged; zero value is ready.
+	mu sync.RWMutex
 }
 
 // Package is one resolved dependency entry.
@@ -200,6 +209,8 @@ func (f *File) Bytes() ([]byte, error) {
 	// though Go 1.12+ sorts string-keyed maps in encoding/json
 	// (sticking to the explicit sort keeps the contract
 	// independent of std-lib implementation choices).
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	keys := make([]string, 0, len(f.Packages))
 	for k := range f.Packages {
 		keys = append(keys, k)
@@ -251,6 +262,8 @@ func (f *File) Bytes() ([]byte, error) {
 // existing entry for the same key; the caller is expected to have
 // already de-duplicated upstream.
 func (f *File) Add(pkg Package) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.Packages == nil {
 		f.Packages = map[string]Package{}
 	}
@@ -261,6 +274,8 @@ func (f *File) Add(pkg Package) {
 // Returns true when a deletion actually happened so callers can
 // distinguish "removed" from "wasn't there".
 func (f *File) Remove(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.Packages == nil {
 		return false
 	}
@@ -284,7 +299,12 @@ func (f *File) Remove(key string) bool {
 // spec — caller should treat this as "not in the lockfile yet" and
 // either fetch (during `nexus add`) or fail (during `nexus build`).
 func (f *File) Resolve(spec, version string) (Package, error) {
-	if f == nil || len(f.Packages) == 0 {
+	if f == nil {
+		return Package{}, ErrNotResolved
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if len(f.Packages) == 0 {
 		return Package{}, ErrNotResolved
 	}
 	if version != "" {
@@ -318,7 +338,12 @@ func (f *File) Resolve(spec, version string) (Package, error) {
 // accessor for callers that already have a "<spec>@<version>"
 // string in hand.
 func (f *File) Get(key string) (Package, bool) {
-	if f == nil || f.Packages == nil {
+	if f == nil {
+		return Package{}, false
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.Packages == nil {
 		return Package{}, false
 	}
 	p, ok := f.Packages[key]
