@@ -56,11 +56,21 @@ const INTERNET_ID = 'internet'
 // out rows desynced from their handles.
 const MAX_VISIBLE_ENDPOINTS = 12
 
+// loadSet / saveSet persist a Set of keys to localStorage so drill-down +
+// expand state survive a reload. Best-effort (private mode / quota safe).
+function loadSet(key) {
+  try { const r = localStorage.getItem(key); return new Set(r ? JSON.parse(r) : []) } catch { return new Set() }
+}
+function saveSet(key, set) {
+  try { localStorage.setItem(key, JSON.stringify([...set])) } catch { /* best effort */ }
+}
+
 // expandedGroups holds the set of group-keys whose cards are currently
 // rendering ALL their endpoints (toggle clicked). Survives WS snapshots
 // because it lives outside latestSnapshot. Mutating triggers a load()
-// rerun so dagre re-lays-out around the now-taller card.
-const expandedGroups = ref(new Set())
+// rerun so the layout reflows around the now-taller card.
+const expandedGroups = ref(loadSet('nexus.expandedGroups'))
+watch(expandedGroups, () => saveSet('nexus.expandedGroups', expandedGroups.value), { deep: true })
 function toggleExpanded(groupKey) {
   if (!groupKey) return
   // Replace the Set wholesale so Vue's reactivity fires; mutating the
@@ -79,7 +89,7 @@ provide('nexus.toggleExpanded', toggleExpanded)
 // members and reruns layout. Like expandedGroups it lives outside the
 // snapshot so it survives live frames; replaced wholesale so the watcher
 // fires.
-const expandedClusters = ref(new Set())
+const expandedClusters = ref(loadSet('nexus.expandedClusters'))
 function expandCluster(key) {
   if (!key || expandedClusters.value.has(key)) return
   const next = new Set(expandedClusters.value)
@@ -91,7 +101,10 @@ function collapseAllClusters() {
   expandedClusters.value = new Set()
 }
 provide('nexus.expandCluster', expandCluster)
-watch(expandedClusters, () => { if (latestSnapshot.value) load() })
+watch(expandedClusters, () => {
+  saveSet('nexus.expandedClusters', expandedClusters.value)
+  if (latestSnapshot.value) load()
+})
 
 // stampClusters tags each node with the cluster it belongs to (_cluster +
 // label + kind), which topology.buildClusters groups on. Grouping degrades
@@ -462,15 +475,14 @@ let lastTopologyFingerprint = ''
 // superseded run drops its result so positions never apply out of order.
 let layoutSeq = 0
 
-// userPositions tracks per-node drag overrides so polling doesn't
-// snap a card back to dagre's slot after the user dropped it
-// somewhere meaningful. Persisted in sessionStorage so a soft
-// browser refresh keeps the layout — but not localStorage, so the
-// arrangement resets on a fresh tab (avoids stale positions
-// surviving real topology changes for too long).
+// userPositions tracks per-node drag overrides so polling doesn't snap a
+// card back to the layout engine's slot after the user dropped it somewhere
+// meaningful. Persisted in localStorage (per id) so the arrangement — and
+// the drill-down state below — survives a full reload, not just a soft
+// refresh. Stale ids for nodes that no longer exist simply go unused.
 const userPositions = (() => {
   try {
-    const raw = sessionStorage.getItem('nexus.archPositions')
+    const raw = localStorage.getItem('nexus.archPositions')
     return raw ? new Map(Object.entries(JSON.parse(raw))) : new Map()
   } catch {
     return new Map()
@@ -478,9 +490,16 @@ const userPositions = (() => {
 })()
 function persistPositions() {
   try {
-    sessionStorage.setItem('nexus.archPositions', JSON.stringify(Object.fromEntries(userPositions)))
+    localStorage.setItem('nexus.archPositions', JSON.stringify(Object.fromEntries(userPositions)))
   } catch { /* quota / private mode — best effort */ }
 }
+
+// lastPositions caches the most recently committed node positions, keyed by
+// id. When a poll arrives with the SAME topology (same visible ids + LOD),
+// load() reuses these instead of re-running ELK — node DATA still refreshes
+// (traffic counts, errors), but the expensive layout is skipped. This is
+// what keeps idle 2s polling cheap at 1000 nodes.
+let lastPositions = new Map()
 onNodeDragStop(({ node }) => {
   if (!node || !node.id) return
   userPositions.set(node.id, { x: node.position.x, y: node.position.y })
@@ -1306,32 +1325,43 @@ async function load() {
       edges: visEdges.map(e => ({ id: e.id, source: e.source, target: e.target, count: e.data?.count ?? 1 })),
     }
   }
+  // Perf gate: a topology fingerprint of the visible ids + LOD state. When
+  // it's unchanged from the last commit, reuse cached positions and SKIP
+  // ELK entirely — node DATA is still rebuilt each poll (live traffic/error
+  // counts), but the expensive layout doesn't rerun. This is what keeps
+  // idle 2s polling cheap at 1000 nodes. fitView likewise only fires when
+  // the layout actually changed, so steady-state polling keeps pan + zoom.
+  const fp = visNodes.map(n => n.id).sort().join('|') + (lod ? '|lod' : '')
+  const unchanged = fp === lastTopologyFingerprint && lastPositions.size > 0
   const seq = ++layoutSeq
   let laid
-  try {
-    laid = await layout(visNodes, visEdges)
-  } catch (err) {
-    console.error('[nexus] Architecture layout failed:', err, { nodeCount: visNodes.length, edgeCount: visEdges.length })
-    return
+  if (unchanged) {
+    laid = visNodes.map(n => ({
+      ...n,
+      position: lastPositions.get(n.id) || { x: 0, y: 0 },
+      targetPosition: Position.Left,
+      sourcePosition: Position.Right,
+    }))
+  } else {
+    try {
+      laid = await layout(visNodes, visEdges)
+    } catch (err) {
+      console.error('[nexus] Architecture layout failed:', err, { nodeCount: visNodes.length, edgeCount: visEdges.length })
+      return
+    }
+    // A newer load() started while ELK was working — drop this stale result.
+    if (seq !== layoutSeq) return
   }
-  // A newer load() started while ELK was working — drop this stale result.
-  if (seq !== layoutSeq) return
   try {
     // Apply user-drag overrides so dragged cards don't snap back to the
-    // layout engine's slot on the next poll. ELK computes the baseline
-    // layout for first paint and for any node the user hasn't touched;
-    // the override map only kicks in for ids the user explicitly moved.
+    // layout engine's slot on the next poll. The override map only kicks in
+    // for ids the user explicitly moved.
     const nextNodes = laid.map(n => {
       const moved = userPositions.get(n.id)
       return moved ? { ...n, position: moved } : n
     })
-    // Topology fingerprint: a sorted list of node ids. fitView only
-    // fires when the set CHANGES — initial paint and when a new
-    // module/service/resource appears mid-session. Steady-state
-    // polling (every 5s) keeps the user's pan + zoom intact.
-    const nextFingerprint = nextNodes.map(n => n.id).sort().join('|')
-    const topologyChanged = nextFingerprint !== lastTopologyFingerprint
-    lastTopologyFingerprint = nextFingerprint
+    lastTopologyFingerprint = fp
+    lastPositions = new Map(nextNodes.map(n => [n.id, n.position]))
     nodes.value = nextNodes
     rawEdges.value = visEdges
     indexEndpointEdges(visEdges)
@@ -1339,7 +1369,7 @@ async function load() {
     // hidden, and the flash/packet animator must not target a missing node.
     indexEndpointGroups(groupNodes.filter(g => visIds.has(g.id)))
     edges.value = restyleEdges(visEdges, opSelection.value, flashedEdges.value)
-    if (topologyChanged) {
+    if (!unchanged) {
       nextTick(() => fitView(FIT_OPTS))
     }
   } catch (err) {
@@ -1515,6 +1545,22 @@ function restyleEdges(list, sel, flashed) {
 // style right now; entries clear themselves via setTimeout.
 const rawEdges = ref([])
 const flashedEdges = ref(new Map())
+
+// focusSet drives focus-mode dimming: when a row/op is selected, it's the
+// selected card plus everything one edge away. ServiceNode dims any card
+// not in the set so the selected neighbourhood pops out of a busy canvas.
+// null = nothing selected → no dimming.
+const focusSet = computed(() => {
+  const sel = opSelection.value
+  if (!sel || !sel.groupKey) return null
+  const set = new Set([sel.groupKey])
+  for (const e of rawEdges.value) {
+    if (e.source === sel.groupKey) set.add(e.target)
+    else if (e.target === sel.groupKey) set.add(e.source)
+  }
+  return set
+})
+provide('nexus.focusSet', focusSet)
 watch([opSelection, flashedEdges], () => {
   edges.value = restyleEdges(rawEdges.value, opSelection.value, flashedEdges.value)
 }, { deep: true })

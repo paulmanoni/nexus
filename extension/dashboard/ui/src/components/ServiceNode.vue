@@ -176,10 +176,12 @@ function onRowClick(e) {
 
 const hasSelection = computed(() => !!selection.value)
 
-// Module cards don't dim — they're the primary grouping, always
-// relevant. Dimming applies only to service-dep and resource nodes
-// when an op is selected.
-const cardDimmed = computed(() => false)
+// Focus mode: when a row/op is selected, Architecture provides the set of
+// the selected card + its one-edge neighbourhood. Cards outside it dim so
+// the focused path stands out on a busy canvas. No selection → no set → no
+// dimming (cards are the primary grouping and stay full-strength by default).
+const focusSet = inject('nexus.focusSet', { value: null })
+const cardDimmed = computed(() => focusSet.value ? !focusSet.value.has(props.data.groupKey) : false)
 
 // Header label + icon. The card represents a MODULE — the container
 // of endpoints. Service is a separate organizational unit (the wrapper
