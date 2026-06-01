@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/evanw/esbuild/pkg/api"
 )
@@ -98,6 +99,10 @@ func newPrebundler(h *Host) *prebundler {
 	// persists the dep blobs cross-restart; this adds the bundle output.
 	if h.res.Store != nil {
 		p.diskDir = filepath.Join(h.res.Store.Root(), "prebundle")
+		// Sweep stale builds (deps the project no longer imports) once at
+		// startup, off the hot path. loadFromDisk refreshes in-use dirs, so
+		// only genuinely-orphaned builds are reclaimed.
+		go p.gcDisk()
 	}
 	return p
 }
@@ -165,7 +170,52 @@ func (p *prebundler) loadFromDisk(pkg, sig string) *pkgBuild {
 	if len(files) == 0 {
 		return nil
 	}
+	// Mark the dir as recently used so the GC retention window is measured
+	// from last USE, not last build — a long-lived pinned dep stays cached
+	// across many sessions. Touch the directory (not the manifest, whose
+	// mtime callers use to detect rebuilds). Best-effort.
+	now := timeNow()
+	_ = os.Chtimes(dir, now, now)
 	return &pkgBuild{files: files, sig: sig}
+}
+
+// prebundleTTL is how long an unused on-disk package build is kept before
+// gcDisk sweeps it. Generous, since a reused dir is refreshed on every load
+// — this only reclaims builds for deps the project no longer imports (e.g.
+// after a version bump leaves the old pkg@ver's dir orphaned).
+const prebundleTTL = 14 * 24 * time.Hour
+
+// timeNow is a package var so tests can pin the clock.
+var timeNow = time.Now
+
+// gcDisk removes prebundle cache directories not used within prebundleTTL.
+// Run once at startup (cheap: one ReadDir + a Stat per entry). Best-effort
+// — any error is ignored, and an in-use dir is never at risk because
+// loadFromDisk refreshes its mtime. Returns the number of dirs removed.
+func (p *prebundler) gcDisk() int {
+	if p.diskDir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(p.diskDir)
+	if err != nil {
+		return 0 // no cache dir yet, or unreadable — nothing to do
+	}
+	cutoff := timeNow().Add(-prebundleTTL)
+	removed := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(p.diskDir, e.Name())
+		info, err := os.Stat(dir)
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if os.RemoveAll(dir) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 // saveToDisk writes a successful build to its cache dir (best-effort;
@@ -191,6 +241,11 @@ func (p *prebundler) saveToDisk(pkg string, b *pkgBuild) {
 	}
 	sort.Strings(bases)
 	_ = os.WriteFile(filepath.Join(dir, "manifest"), []byte(strings.Join(bases, "\n")+"\n"), 0o644)
+	// Stamp the dir's mtime via the same clock the GC reads, so freshness
+	// is consistent (and pinnable in tests). loadFromDisk refreshes it on
+	// reuse; gcDisk sweeps from it.
+	now := timeNow()
+	_ = os.Chtimes(dir, now, now)
 }
 
 // register records an entry store URL under its package so the next build

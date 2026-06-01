@@ -3,6 +3,7 @@ package devserver
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
 	"github.com/paulmanoni/nexus/frontend/deps/resolver"
@@ -133,6 +134,48 @@ func TestPrebundleDiskPersistence(t *testing.T) {
 	// A different entry-set signature must also MISS.
 	if got := p.loadFromDisk(pkg, "different-sig"); got != nil {
 		t.Error("expected disk miss when entry-set sig differs")
+	}
+}
+
+func TestPrebundleGC(t *testing.T) {
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(Config{
+		Root:      t.TempDir(),
+		Resolver:  resolver.Options{Lockfile: lockfile.New(), Store: st},
+		Prebundle: true,
+	})
+	p := h.pre
+
+	// Pin the clock; save two builds.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return base }
+	defer func() { timeNow = time.Now }()
+
+	mk := func(sig string) {
+		p.saveToDisk("pkg@1.0.0", &pkgBuild{sig: sig, files: map[string]string{"e-x.js": "export const x=1;"}})
+	}
+	mk("keep")  // will be refreshed (in use)
+	mk("stale") // will be left to age out
+
+	// Age everything by backdating: GC measures from dir mtime.
+	// "keep" gets refreshed via loadFromDisk; "stale" does not.
+	timeNow = func() time.Time { return base.Add(prebundleTTL + time.Hour) }
+	if got := p.loadFromDisk("pkg@1.0.0", "keep"); got == nil {
+		t.Fatal("expected hit for keep")
+	} // refreshes keep's mtime to now
+
+	removed := p.gcDisk()
+	if removed != 1 {
+		t.Errorf("gcDisk removed %d, want 1 (only the stale, unused dir)", removed)
+	}
+	if p.loadFromDisk("pkg@1.0.0", "keep") == nil {
+		t.Error("recently-used 'keep' build was wrongly swept")
+	}
+	if p.loadFromDisk("pkg@1.0.0", "stale") != nil {
+		t.Error("stale build should have been swept")
 	}
 }
 
