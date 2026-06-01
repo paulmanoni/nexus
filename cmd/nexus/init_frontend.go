@@ -96,6 +96,7 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	case "react":
 		fmt.Fprintln(stdout, "  nexus add react react-dom")
 	}
+	fmt.Fprintln(stdout, "  nexus types             # editor IntelliSense from nexus.lock — no npm (optional)")
 	fmt.Fprintln(stdout, "  nexus dev               # Go + frontend auto-rebuild")
 	if frontend == "vue" {
 		fmt.Fprintln(stdout, "                          # Vue SFC compile needs the cgo+vue install:")
