@@ -12,7 +12,6 @@ require (
 	github.com/eko/gocache/store/redis/v4 v4.2.6
 	github.com/evanw/esbuild v0.28.0
 	github.com/failsafe-go/failsafe-go v0.9.6
-	github.com/fastschema/qjs v0.0.6
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/glebarez/sqlite v1.11.0
@@ -127,6 +126,7 @@ require (
 	modernc.org/sqlite v1.23.1 // indirect
 )
 
-replace github.com/fastschema/qjs => github.com/paulmanoni/qjs v0.0.7-0.20260529000300-0c70d9cdb3f9
-
-require github.com/paulmanoni/viteless v0.1.0
+require (
+	github.com/paulmanoni/qjs v0.0.7
+	github.com/paulmanoni/viteless v0.1.0
+)

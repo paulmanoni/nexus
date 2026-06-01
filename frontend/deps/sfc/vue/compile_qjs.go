@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/fastschema/qjs"
+	"github.com/paulmanoni/qjs"
 )
 
 // QJSCompiler is the WASM-backed counterpart to *Compiler. One
