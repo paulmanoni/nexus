@@ -3,7 +3,8 @@ import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide, watc
 import { VueFlow, useVueFlow, Position, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { ShieldCheck, Layers } from 'lucide-vue-next'
+import { MiniMap } from '@vue-flow/minimap'
+import { ShieldCheck, Layers, Moon, Sun } from 'lucide-vue-next'
 import { elkLayout, applyPositions } from '../lib/elkLayout.js'
 
 import ServiceNode from '../components/ServiceNode.vue'
@@ -123,6 +124,40 @@ function stampClusters(allNodes, svcToDep) {
     }
   }
 }
+
+// Dark-mode theme toggle. tokens.css already ships a [data-theme="dark"]
+// block; we just flip the attribute on <html> and remember the choice.
+const theme = ref(typeof localStorage !== 'undefined' && localStorage.getItem('nexus.theme') === 'dark' ? 'dark' : 'light')
+function applyTheme() {
+  if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', theme.value)
+}
+function toggleTheme() {
+  theme.value = theme.value === 'dark' ? 'light' : 'dark'
+  if (typeof localStorage !== 'undefined') localStorage.setItem('nexus.theme', theme.value)
+  applyTheme()
+}
+applyTheme()
+
+// MiniMap node color — match each node's category so the overview reads as
+// a shrunk version of the canvas. SVG fill attribute can't resolve CSS
+// vars, so use the literal hues from tokens.css §3.
+function minimapNodeColor(n) {
+  switch (n.type) {
+    case 'cluster':   return '#0ea5e9'  // --cat-peer
+    case 'resource':  return '#3b82f6'  // --cat-database
+    case 'worker':    return '#f97316'  // --cat-worker
+    case 'cron':      return '#ec4899'  // --cat-cron
+    case 'internet':  return '#64748b'  // --cat-internet
+    case 'serviceDep':return '#6366f1'  // --cat-service
+    default:          return '#6366f1'  // service/module
+  }
+}
+
+// LOD_NODE_THRESHOLD: above this many VISIBLE nodes, module cards render in
+// a compact summary form (no endpoint rows) so a densely-expanded view
+// stays legible and light. Count-based (not zoom) so layout only reruns on
+// topology/expand changes, never on pan/zoom.
+const LOD_NODE_THRESHOLD = 40
 
 // Per-op selection store. ServiceNode writes here on click; ResourceNode
 // + edge-styling read from it. Single source of truth means no props need
@@ -494,6 +529,8 @@ function estimateServiceWidth(data) {
 }
 
 function estimateServiceHeight(data) {
+  // LOD compact: header (~60) + one summary line + footer padding. No rows.
+  if (data.lod) return 60 + 22 + 16
   // data.endpoints is the VISIBLE slice (sorted + truncated unless
   // expanded). The chip row's visual height grows with chip count
   // (chips wrap to 2-3 lines when many resources / middlewares pile
@@ -1248,6 +1285,15 @@ async function load() {
   const { nodes: visNodes, edges: visEdges } = computeVisible(all, edgeList, clusters, expandedClusters.value)
   const visIds = new Set(visNodes.map(n => n.id))
 
+  // Level-of-detail: when a lot is on screen, collapse module cards to a
+  // compact summary (header + counts, no rows) so the view stays readable
+  // and light. Stamped on data BEFORE layout so nodeBoxSize sizes the
+  // compact box and ELK packs them tighter.
+  const lod = visNodes.length > LOD_NODE_THRESHOLD
+  for (const n of visNodes) {
+    if (n.type === 'service') n.data.lod = lod
+  }
+
   // Diagnostic: surface the built graph to window so operators can
   // verify service-level edges from DevTools without re-reading this
   // file. Cheap (single assignment per poll) and invaluable when an
@@ -1694,6 +1740,9 @@ onUnmounted(() => {
            here because Background takes string props, not CSS vars. -->
       <Background pattern-color="#cbd5e1" :gap="18" :size="1.4" />
       <Controls :show-interactive="false" />
+      <!-- Overview minimap — essential for navigating a large graph. Node
+           dots colored by category so it reads as a shrunk canvas. -->
+      <MiniMap pannable zoomable :node-color="minimapNodeColor" />
     </VueFlow>
     <GlobalMiddlewareBar />
     <!-- Canvas-level utility strip (top-right). Currently just the
@@ -1702,6 +1751,14 @@ onUnmounted(() => {
          hosts everything that used to live in the top tab bar. -->
     <div class="canvas-utility">
       <TimeScrubber />
+      <button
+        class="utility-btn"
+        :title="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+        @click="toggleTheme"
+      >
+        <component :is="theme === 'dark' ? Sun : Moon" :size="14" :stroke-width="2" />
+        {{ theme === 'dark' ? 'Light' : 'Dark' }}
+      </button>
       <button
         v-if="expandedClusters.size > 0"
         class="utility-btn"

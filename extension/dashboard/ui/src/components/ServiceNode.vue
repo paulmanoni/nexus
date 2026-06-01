@@ -79,6 +79,19 @@ const hidden = computed(() => Math.max(total.value - displayed.value.length, 0))
 const isExpanded = computed(() => !!props.data.isExpanded)
 const toggleExpanded = inject('nexus.toggleExpanded', () => {})
 
+// LOD compact mode — set by Architecture when many nodes are on screen.
+// The card drops its endpoint rows for a one-line traffic summary so a
+// dense view stays readable. Per-op handles disappear with the rows, so
+// edges fall back to the card-level handle (which is why bundled edges are
+// the default at scale).
+const compact = computed(() => !!props.data.lod)
+const reqTotal = computed(() => (props.data.endpoints || []).reduce((s, e) => s + (e.Stats?.count || 0), 0))
+const errTotal = computed(() => (props.data.endpoints || []).reduce((s, e) => s + (e.Stats?.errors || 0), 0))
+// Card-level status: a left accent bar reads red when any visible endpoint
+// has errors, otherwise the service category hue. Calmer than tinting the
+// whole card and scannable across a dense canvas.
+const cardError = computed(() => errTotal.value > 0)
+
 function iconFor(t) {
   if (t === 'websocket') return Radio
   if (t === 'graphql') return Zap
@@ -195,7 +208,7 @@ const hasServiceSubtitle = computed(() => {
 <template>
   <div
     class="service-node"
-    :class="{ 'has-selection': hasSelection, dim: cardDimmed, remote: data.remote }"
+    :class="{ 'has-selection': hasSelection, dim: cardDimmed, remote: data.remote, 'has-errors': cardError }"
     :style="data.cardWidth ? { width: data.cardWidth + 'px' } : null"
   >
     <!-- Target handle at the card level for any inbound edge (rare today;
@@ -222,8 +235,14 @@ const hasServiceSubtitle = computed(() => {
         </div>
       </div>
     </div>
-    <div v-if="data.description" class="desc">{{ data.description }}</div>
-    <div class="endpoints">
+    <div v-if="data.description && !compact" class="desc">{{ data.description }}</div>
+    <!-- LOD compact: one-line summary instead of endpoint rows. -->
+    <div v-if="compact" class="lod-summary">
+      <span class="lod-stat">{{ total }} {{ total === 1 ? 'endpoint' : 'endpoints' }}</span>
+      <span v-if="reqTotal" class="lod-stat req"><Activity :size="9" :stroke-width="2.2" /> {{ reqTotal }}</span>
+      <span v-if="errTotal" class="lod-stat err"><AlertTriangle :size="9" :stroke-width="2.2" /> {{ errTotal }}</span>
+    </div>
+    <div v-else class="endpoints">
       <div
         v-for="(e, i) in displayed"
         :key="i"
@@ -394,6 +413,9 @@ const hasServiceSubtitle = computed(() => {
 }
 .service-node:hover { box-shadow: var(--shadow-lg); }
 .service-node.dim { opacity: 0.35; }
+/* Left status accent — category hue normally, red when any row errored. */
+.service-node { border-left: 3px solid var(--cat-service); }
+.service-node.has-errors { border-left-color: var(--st-error); }
 .header {
   display: flex;
   align-items: center;
@@ -450,6 +472,20 @@ const hasServiceSubtitle = computed(() => {
   border-bottom: 1px solid var(--border);
   line-height: var(--lh-body);
 }
+/* LOD compact summary — replaces the row list when the canvas is dense. */
+.lod-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.lod-stat {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.lod-stat.err { color: var(--st-error); font-weight: 600; }
 .endpoints {
   padding: var(--space-2);
   display: flex;
