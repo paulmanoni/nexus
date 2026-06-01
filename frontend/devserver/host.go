@@ -308,8 +308,10 @@ func (h *Host) ResolveImport(spec string, kind viteless.SpecKind, importerURL st
 	switch kind {
 	case viteless.SpecRelative:
 		// Resolve against the importer's served directory; stays in the
-		// source tree (served by loadSource).
-		return path.Clean(path.Join(path.Dir(importerURL), spec))
+		// source tree (served by loadSource). Apply Vite-style extension +
+		// index resolution so `./router` finds router.ts or router/index.ts.
+		served := path.Clean(path.Join(path.Dir(importerURL), spec))
+		return h.resolveSourceURL(served)
 	case viteless.SpecAbsolute:
 		// A root-absolute path ("/foo") is already a served URL; an
 		// absolute https:// URL is a registry reference.
@@ -345,9 +347,47 @@ func (h *Host) resolveAlias(spec string) (string, bool) {
 		if err != nil || strings.HasPrefix(rel, "..") {
 			return "", false // alias target outside Root — can't serve it
 		}
-		return "/" + filepath.ToSlash(rel), true
+		// Extension + index resolution so `@/router` finds router/index.ts.
+		return h.resolveSourceURL("/" + filepath.ToSlash(rel)), true
 	}
 	return "", false
+}
+
+// sourceResolveExts is the extension probe order for extensionless imports,
+// matching Vite's default resolve.extensions (TS first, then JS, JSX/TSX,
+// then .vue/.json/.mjs).
+var sourceResolveExts = []string{".ts", ".tsx", ".js", ".jsx", ".vue", ".mjs", ".json"}
+
+// resolveSourceURL applies Vite-style extension + index resolution to a
+// served source URL. Browsers request exactly the URL we return, so an
+// extensionless import like "/src/router" must be rewritten to the file
+// that actually exists ("/src/router/index.ts") or the fetch 404s. If the
+// path already resolves to a file (has an extension that exists, or is an
+// exact hit), it's returned unchanged; if nothing matches, the original is
+// returned so the miss surfaces normally.
+func (h *Host) resolveSourceURL(urlPath string) string {
+	clean := strings.TrimPrefix(path.Clean(urlPath), "/")
+	abs := filepath.Join(h.root, filepath.FromSlash(clean))
+
+	// Exact file hit (import already carried a real extension).
+	if fi, err := os.Stat(abs); err == nil && !fi.IsDir() {
+		return urlPath
+	}
+	// <path><ext>
+	for _, ext := range sourceResolveExts {
+		if fi, err := os.Stat(abs + ext); err == nil && !fi.IsDir() {
+			return urlPath + ext
+		}
+	}
+	// <path>/index<ext>
+	for _, ext := range sourceResolveExts {
+		if fi, err := os.Stat(filepath.Join(abs, "index"+ext)); err == nil && !fi.IsDir() {
+			return strings.TrimRight(urlPath, "/") + "/index" + ext
+		}
+	}
+	// No on-disk match — return as-is; loadSource will 404 and the dev
+	// sees a clear missing-module error rather than a silent wrong path.
+	return urlPath
 }
 
 // toDepPath encodes a canonical registry URL into a served DepPrefix path

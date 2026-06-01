@@ -38,6 +38,12 @@ func fixture(t *testing.T) (*httptest.Server, *Host) {
 	write("src/App.vue", "<template><div/></template>")
 	write("src/logo.png", "PNGDATA")
 	write("src/style.css", ".a{color:red}")
+	// Extensionless-import targets: a bare file (router.ts) and a
+	// directory with an index (plugins/index.ts), to exercise Vite-style
+	// extension + index resolution.
+	write("src/router.ts", `export default {};`)
+	write("src/plugins/index.ts", `export const p = 1;`)
+	write("src/withexts.ts", `import r from "./router";`+"\n"+`import { p } from "./plugins";`+"\n"+`console.log(r, p);`)
 
 	st, err := store.New(t.TempDir())
 	if err != nil {
@@ -119,6 +125,26 @@ func TestHost_StripsTypeScriptTypes(t *testing.T) {
 	_, body := get(t, ts.URL, "/src/main.ts")
 	if strings.Contains(body, "const x: number") {
 		t.Errorf("TS annotation not stripped:\n%s", body)
+	}
+}
+
+func TestHost_ResolvesExtensionlessImports(t *testing.T) {
+	ts, _ := fixture(t)
+	defer ts.Close()
+	_, body := get(t, ts.URL, "/src/withexts.ts")
+	// "./router" must resolve to router.ts; "./plugins" to plugins/index.ts.
+	if !strings.Contains(body, `"/src/router.ts"`) {
+		t.Errorf("extensionless ./router not resolved to router.ts:\n%s", body)
+	}
+	if !strings.Contains(body, `"/src/plugins/index.ts"`) {
+		t.Errorf("extensionless ./plugins not resolved to plugins/index.ts:\n%s", body)
+	}
+	// And both resolved modules must actually serve.
+	if code, _ := get(t, ts.URL, "/src/router.ts"); code != 200 {
+		t.Errorf("router.ts status %d", code)
+	}
+	if code, _ := get(t, ts.URL, "/src/plugins/index.ts"); code != 200 {
+		t.Errorf("plugins/index.ts status %d", code)
 	}
 }
 

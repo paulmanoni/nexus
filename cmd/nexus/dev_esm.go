@@ -83,7 +83,13 @@ func startESMWatcher(ctx context.Context, dir, appAddr string, verbose bool, std
 		return fmt.Errorf("esm dev: open cache %s: %w", cacheRoot, err)
 	}
 
-	onDemand := makeOnDemandFetch(lf, st, lockPath, stdout)
+	// Pass an empty lockPath so on-demand fetches populate the in-memory
+	// lockfile + the shared cache for THIS session but never rewrite the
+	// project's committed nexus.lock. The dev server pulls dev-only URLs
+	// (vue.development.mjs and friends) that must not leak into the
+	// checked-in lockfile — and a 2nd `vue` entry there would make
+	// lf.Resolve("vue") ambiguous on the next run, blanking the import.
+	onDemand := makeOnDemandFetch(lf, st, "", stdout)
 	resOpts := resolver.Options{
 		Lockfile:       lf,
 		Store:          st,

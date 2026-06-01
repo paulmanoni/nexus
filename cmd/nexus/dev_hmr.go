@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -266,7 +267,24 @@ func (h *hmrServer) handleUpdate(w http.ResponseWriter, r *http.Request) {
 // hits a warm Store.Get and never writes the lockfile mid-build.
 func devVueRewrite(lf *lockfile.File, onDemand func(string) (string, error), stdout io.Writer) func(spec, subpath string) string {
 	pkg, err := lf.Resolve("vue", "")
-	if err != nil || pkg.Version == "" {
+	if err != nil {
+		// A lockfile with two `vue` entries (e.g. a stray transitive pin
+		// alongside the direct dep) makes the version-less Resolve
+		// ambiguous. Rather than give up — which would leave bare `vue`
+		// imports unrewritten and break the app (injection symbols /
+		// "_s is undefined") — pick the highest pinned version. The dev
+		// build of that version is what we serve; production resolution
+		// (nexus build) is unaffected.
+		var ae *lockfile.AmbiguousError
+		if errors.As(err, &ae) && len(ae.Versions) > 0 {
+			// Versions are sorted ascending by Resolve; take the last.
+			pkg, err = lf.Resolve("vue", ae.Versions[len(ae.Versions)-1])
+		}
+		if err != nil {
+			return nil
+		}
+	}
+	if pkg.Version == "" {
 		return nil
 	}
 	devURL := "https://esm.sh/vue@" + pkg.Version + "/es2022/vue.development.mjs"
