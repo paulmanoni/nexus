@@ -3,6 +3,8 @@ package resolver
 import (
 	"errors"
 	"fmt"
+	neturl "net/url"
+	"regexp"
 	"strings"
 
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
@@ -111,6 +113,20 @@ func (o Options) ResolveURL(spec, importerURL string) (string, bool, error) {
 	return "", false, fmt.Errorf("resolver: %s resolves to %s but no cached blob exists — run `nexus install`", spec, targetURL)
 }
 
+// LocateBlobURL returns the canonical cache key a registry URL's bytes live
+// under, applying the same lookups + semver-range fallback ResolveURL uses.
+// The dev server calls this when serving a /@dep/ path whose decoded URL
+// misses the store directly — notably an unresolved range URL like
+// `.../graphql@^15.0.0 || ^16.0.0?target=es2022` that a previously-cached
+// blob baked into its imports. Returns ("", false) when the bytes can't be
+// located or fetched.
+func (o Options) LocateBlobURL(url string) (string, bool) {
+	if o.Store == nil {
+		return "", false
+	}
+	return o.lookupOrFetch(url)
+}
+
 // lookupOrFetch returns the cache key a URL's bytes live under. It tries
 // the URL as-is, then its query-stripped form (esm.sh path-encodes sibling
 // variants without a query), then — when FetchOnDemand is wired — pulls the
@@ -140,6 +156,71 @@ func (o Options) lookupOrFetch(url string) (string, bool) {
 				return key, true
 			}
 		}
+	}
+	// Semver-range fallback. esm.sh links some transitive deps by an
+	// UNRESOLVED range, e.g. `.../graphql@^15.0.0 || ^16.0.0?target=es2022`
+	// (it 302-redirects those at fetch time, so the bytes are cached under
+	// the concrete version, not the range). The range URL itself has
+	// spaces/`||` and isn't a cache key, so the lookups above all miss.
+	// Pin it to the concrete version the lockfile already resolved for that
+	// package and retry — the lockfile is the source of truth.
+	if pkg, ok := esmRangePackage(url); ok {
+		if p, err := o.Lockfile.Resolve(pkg, ""); err == nil && p.Resolved != "" {
+			if u, ok := o.lookupOrFetchConcrete(p.Resolved); ok {
+				return u, true
+			}
+		}
+	}
+	return "", false
+}
+
+// lookupOrFetchConcrete is lookupOrFetch WITHOUT the range fallback, used to
+// resolve the lockfile's already-concrete URL (avoids any recursion).
+func (o Options) lookupOrFetchConcrete(url string) (string, bool) {
+	if _, _, err := o.Store.Get(url); err == nil {
+		return url, true
+	}
+	if stripped := stripQuery(url); stripped != url {
+		if _, _, err := o.Store.Get(stripped); err == nil {
+			return stripped, true
+		}
+	}
+	if o.FetchOnDemand != nil {
+		if canonical, err := o.FetchOnDemand(url); err == nil && canonical != "" {
+			if _, _, err := o.Store.Get(canonical); err == nil {
+				return canonical, true
+			}
+		}
+	}
+	return "", false
+}
+
+// esmVersionRE captures an esm.sh URL's package + version-spec segment:
+//
+//	https://esm.sh/graphql@^15.0.0 || ^16.0.0?target=es2022
+//	https://esm.sh/@scope/pkg@^1.0.0/sub.mjs
+//
+// Group 1 = package name (incl. scope), group 2 = the version spec up to
+// the next /, ? or end. Handles %-encoded forms too (decoded before match).
+var esmVersionRE = regexp.MustCompile(`esm\.sh/((?:@[^/]+/)?[^/@]+)@([^/?]+)`)
+
+// esmRangePackage reports whether url is an esm.sh package URL whose version
+// segment is an unresolved SEMVER RANGE (not a concrete x.y.z), returning the
+// bare package name to re-resolve against the lockfile. A range contains any
+// of ^ ~ || * > < x or whitespace (after percent-decoding); a bare digits
+// version does not.
+func esmRangePackage(url string) (string, bool) {
+	dec, err := neturl.QueryUnescape(url)
+	if err != nil {
+		dec = url
+	}
+	m := esmVersionRE.FindStringSubmatch(dec)
+	if m == nil {
+		return "", false
+	}
+	pkg, ver := m[1], m[2]
+	if strings.ContainsAny(ver, "^~*<> |") || strings.Contains(ver, "||") {
+		return pkg, true
 	}
 	return "", false
 }

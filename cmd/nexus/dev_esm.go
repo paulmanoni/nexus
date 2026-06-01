@@ -294,19 +294,36 @@ func esmProxyTarget(appAddr string) string {
 	return "http://" + normalizeProbeAddr(appAddr)
 }
 
-// esmDevEnabled reports whether the unbundled native-ESM dev server is
-// opted into via NEXUS_DEV_ESM (any non-empty value except "0"/"false").
+// esmDevEnabled reports whether the unbundled native-ESM dev server is used.
+// It is now the DEFAULT for `nexus dev` (Vite-grade state-preserving HMR,
+// zero Node); set NEXUS_DEV_ESM=0 (or false/off/no) to fall back to the
+// legacy esbuild bundler watcher.
 func esmDevEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("NEXUS_DEV_ESM")))
-	return v != "" && v != "0" && v != "false"
+	return envBoolDefault("NEXUS_DEV_ESM", true)
 }
 
-// esmPrebundleEnabled reports whether dependency pre-bundling is on. Opt-in
-// via NEXUS_DEV_PREBUNDLE — it collapses each npm package's intra-module
-// fan-out into one file (Vuetify alone is ~1800 modules), cutting cold-load
-// HTTP requests dramatically. Off by default while it matures; the
-// per-module path remains the fallback for any package that fails to bundle.
+// esmPrebundleEnabled reports whether dependency pre-bundling is on. On by
+// DEFAULT alongside the ESM server — it collapses each npm package's
+// intra-module fan-out into one file (Vuetify alone is ~1800 modules),
+// cutting cold-load HTTP requests dramatically, with a cross-restart disk
+// cache. Set NEXUS_DEV_PREBUNDLE=0 to disable; the per-module path remains
+// the fallback for any package that fails to bundle.
 func esmPrebundleEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("NEXUS_DEV_PREBUNDLE")))
-	return v != "" && v != "0" && v != "false"
+	return envBoolDefault("NEXUS_DEV_PREBUNDLE", true)
+}
+
+// envBoolDefault reads a boolean-ish env var with an explicit default. An
+// unset/empty var yields def; "0"/"false"/"off"/"no" force false; any other
+// non-empty value forces true. Case-insensitive.
+func envBoolDefault(name string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
 }

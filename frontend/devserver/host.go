@@ -282,27 +282,28 @@ func (h *Host) loadDep(urlPath string) ([]byte, string, bool) {
 	if !ok {
 		return nil, "", false
 	}
-	blob, meta, err := h.res.Store.Get(canonical)
+	// Resolve the canonical URL to its actual cache key. LocateBlobURL
+	// applies the store / query-strip / on-demand lookups AND the
+	// semver-range fallback — so a /@dep/ path that decodes to an
+	// unresolved range URL (e.g. `graphql@^15.0.0 || ^16.0.0`, which a
+	// previously-cached blob baked into its imports) resolves to the
+	// concrete version the lockfile pinned instead of 404ing.
+	key, ok := h.res.LocateBlobURL(canonical)
+	if !ok {
+		return nil, "", false
+	}
+	blob, meta, err := h.res.Store.Get(key)
 	if err != nil {
-		// Cold miss: try an on-demand fetch through the shared resolver.
-		if h.res.FetchOnDemand != nil {
-			if c, ferr := h.res.FetchOnDemand(canonical); ferr == nil && c != "" {
-				if blob, meta, err = h.res.Store.Get(c); err == nil {
-					if body, rerr := os.ReadFile(blob); rerr == nil {
-						kind := kindForContentType(meta.ContentType, canonical)
-						return h.finishDep(body, kind, c), kind, true
-					}
-				}
-			}
-		}
 		return nil, "", false
 	}
 	body, err := os.ReadFile(blob)
 	if err != nil {
 		return nil, "", false
 	}
-	kind := kindForContentType(meta.ContentType, canonical)
-	return h.finishDep(body, kind, canonical), kind, true
+	kind := kindForContentType(meta.ContentType, key)
+	// finishDep rebases CSS url()s against the resolved key (its real
+	// registry location) so font/asset refs resolve correctly.
+	return h.finishDep(body, kind, key), kind, true
 }
 
 // finishDep post-processes a dep blob before it's served. For CSS it
