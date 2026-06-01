@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -47,22 +48,97 @@ func shortHash(s string) string {
 // served under (distinct from DepPrefix's per-module blobs).
 const PrebundlePrefix = "/@pre/"
 
-// prebundler bundles dependency package entries on demand and caches the
-// results. Safe for concurrent use.
+// prebundler bundles dependency packages on demand and caches the results.
+// Safe for concurrent use.
+//
+// Dedup model: a package's sub-path entries (vuetify, vuetify/components,
+// vuetify/directives, …) are NOT bundled independently — that inlined a
+// fresh copy of every shared internal module into each entry. Instead all
+// known entries of a package are built TOGETHER in one esbuild build with
+// code-splitting, so shared internals land in a common chunk both entries
+// import. Entries are registered (by ResolveImport via toPrebundle) as the
+// browser walks the graph; the build runs lazily on first fetch and is
+// rebuilt only if the entry set grew.
 type prebundler struct {
 	host *Host
 
-	mu    sync.Mutex
-	cache map[string]prebundleResult // entry storeURL → result
+	mu      sync.Mutex
+	entries map[string]map[string]bool // pkgKey → set of entry store URLs
+	built   map[string]*pkgBuild       // pkgKey → last build (nil until built)
 }
 
-type prebundleResult struct {
-	js  string
-	err error
+// pkgBuild is one package's grouped, code-split build: a map of served
+// basename → file contents (entries + shared chunks), plus the entry-set
+// signature it was built from (to detect when a rebuild is needed) and any
+// build error.
+type pkgBuild struct {
+	files map[string]string // basename (e-<hash>.js / chunk-<hash>.js) → JS
+	sig   string            // sorted entry-set fingerprint
+	err   error
 }
 
 func newPrebundler(h *Host) *prebundler {
-	return &prebundler{host: h, cache: map[string]prebundleResult{}}
+	return &prebundler{
+		host:    h,
+		entries: map[string]map[string]bool{},
+		built:   map[string]*pkgBuild{},
+	}
+}
+
+// register records an entry store URL under its package so the next build
+// of that package covers it. Returns the package key + the entry's stable
+// served basename (e-<hash>.js).
+func (p *prebundler) register(entryStoreURL string) (pkg, base string) {
+	pkg = pkgKey(entryStoreURL)
+	base = "e-" + shortHash(entryStoreURL) + ".js"
+	p.mu.Lock()
+	if p.entries[pkg] == nil {
+		p.entries[pkg] = map[string]bool{}
+	}
+	p.entries[pkg][entryStoreURL] = true
+	p.mu.Unlock()
+	return pkg, base
+}
+
+// serve returns the JS for a served prebundle basename within a package,
+// building (or rebuilding) the package's grouped split bundle as needed.
+func (p *prebundler) serve(pkg, base string) (string, error) {
+	p.mu.Lock()
+	want := p.entrySig(pkg)
+	b := p.built[pkg]
+	if b == nil || b.sig != want {
+		entries := make([]string, 0, len(p.entries[pkg]))
+		for u := range p.entries[pkg] {
+			entries = append(entries, u)
+		}
+		p.mu.Unlock()
+		nb := p.buildPackage(pkg, entries, want) // network/CPU outside the lock
+		p.mu.Lock()
+		// Keep the freshest build (another goroutine may have raced).
+		if cur := p.built[pkg]; cur == nil || cur.sig != want {
+			p.built[pkg] = nb
+		}
+		b = p.built[pkg]
+	}
+	p.mu.Unlock()
+
+	if b.err != nil {
+		return "", b.err
+	}
+	if js, ok := b.files[base]; ok {
+		return js, nil
+	}
+	return "", fmt.Errorf("prebundle: %s not in package build %s", base, pkg)
+}
+
+// entrySig fingerprints a package's current entry set (caller holds mu).
+func (p *prebundler) entrySig(pkg string) string {
+	es := make([]string, 0, len(p.entries[pkg]))
+	for u := range p.entries[pkg] {
+		es = append(es, u)
+	}
+	sort.Strings(es)
+	return strings.Join(es, "\n")
 }
 
 // pkgKeyRE pulls "pkg@ver" (incl. scoped) out of an esm.sh URL:
@@ -85,108 +161,115 @@ func pkgKey(url string) string {
 	return m[1]
 }
 
-// bundle returns the pre-bundled JS for a package entry identified by its
-// canonical store URL. Cached after the first build (including failures, so
-// a doomed package isn't retried every request). vue itself is never
-// pre-bundled — it's the shared-instance anchor and is tiny enough served
-// per-module; pre-bundling it would only add risk.
-func (p *prebundler) bundle(entryStoreURL string) (string, error) {
-	p.mu.Lock()
-	if r, ok := p.cache[entryStoreURL]; ok {
-		p.mu.Unlock()
-		return r.js, r.err
-	}
-	p.mu.Unlock()
-
-	js, err := p.build(entryStoreURL)
-	p.mu.Lock()
-	p.cache[entryStoreURL] = prebundleResult{js: js, err: err}
-	p.mu.Unlock()
-	return js, err
-}
-
-// build runs the esbuild sub-build for one package entry.
-func (p *prebundler) build(entryStoreURL string) (string, error) {
-	entryPkg := pkgKey(entryStoreURL)
-	if entryPkg == "" {
-		return "", fmt.Errorf("prebundle: not a package URL: %s", entryStoreURL)
-	}
-
-	// Entry contents = the entry blob itself (preserves its exact default +
-	// named exports). Its imports resolve through the plugin below.
-	entryBlob, _, ok := p.host.loadDepBytes(entryStoreURL)
-	if !ok {
-		return "", fmt.Errorf("prebundle: entry blob not in cache: %s", entryStoreURL)
+// buildPackage runs ONE esbuild build over ALL of a package's known entry
+// store URLs with code-splitting on, so modules shared between sub-path
+// entries (vuetify vs vuetify/components) land in a common chunk instead of
+// being inlined into each entry. Returns a pkgBuild mapping served basename
+// → JS (one e-<hash>.js per entry + chunk-*.js shared chunks). sig is the
+// entry-set fingerprint the build was made from.
+//
+// Resolution rules (unchanged from the per-entry build): same-package JS is
+// inlined/split internally; cross-package and non-JS imports stay EXTERNAL
+// pointed at /@dep/ URLs, preserving the single shared instance for vue and
+// serving CSS/assets as their usual modules.
+func (p *prebundler) buildPackage(entryPkg string, entryURLs []string, sig string) *pkgBuild {
+	if entryPkg == "" || len(entryURLs) == 0 {
+		return &pkgBuild{sig: sig, err: fmt.Errorf("prebundle: no entries for %q", entryPkg)}
 	}
 
 	const ns = "nexus-prebundle"
+	// Map each entry's synthetic input path → its store URL. OutputPath
+	// e-<hash> matches the served basename register() hands out.
+	entryURLByInput := map[string]string{}
+	var eps []api.EntryPoint
+	for _, u := range entryURLs {
+		input := "nexus-entry:" + u // synthetic; claimed in OnResolve below
+		entryURLByInput[input] = u
+		eps = append(eps, api.EntryPoint{InputPath: input, OutputPath: "e-" + shortHash(u)})
+	}
+
 	plugin := api.Plugin{
 		Name: "nexus-prebundle",
 		Setup: func(b api.PluginBuild) {
 			b.OnResolve(api.OnResolveOptions{Filter: ".*"}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-				// Base URL the import resolves against: the importer's own
-				// registry URL (in our namespace) or the entry URL (stdin).
-				base := entryStoreURL
+				// Entry points arrive as our synthetic "nexus-entry:" inputs.
+				if storeURL, ok := entryURLByInput[args.Path]; ok {
+					return api.OnResolveResult{Path: storeURL, Namespace: ns}, nil
+				}
+				// Otherwise resolve against the importer's registry URL.
+				base := ""
 				if args.Namespace == ns && args.Importer != "" {
 					base = args.Importer
 				}
 				storeURL, found, _ := p.host.res.ResolveURL(args.Path, base)
 				if !found || storeURL == "" {
-					// Can't resolve through the registry — leave it for
-					// esbuild's default (will usually error, surfacing a
-					// clear miss). Don't claim it.
-					return api.OnResolveResult{}, nil
+					return api.OnResolveResult{}, nil // leave to esbuild default
 				}
-				// Same package + JS → inline (read from store in OnLoad).
+				// Same package + JS → keep internal (inlined or split into a
+				// shared chunk by esbuild).
 				if pkgKey(storeURL) == entryPkg && p.host.depURLIsJS(storeURL) {
 					return api.OnResolveResult{Path: storeURL, Namespace: ns}, nil
 				}
-				// Cross-package, or non-JS (CSS/asset): keep EXTERNAL and
-				// point at the per-module /@dep/ URL. Cross-package externals
-				// preserve single-instance sharing; non-JS is served as the
-				// usual CSS/asset module.
+				// Cross-package or non-JS → EXTERNAL /@dep/ URL (shared
+				// instance for vue; CSS/asset served as usual).
 				return api.OnResolveResult{Path: p.host.toDepPath(storeURL), External: true}, nil
 			})
 			b.OnLoad(api.OnLoadOptions{Filter: ".*", Namespace: ns}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
-				body, kind, ok := p.host.loadDepBytes(args.Path)
+				body, _, ok := p.host.loadDepBytes(args.Path)
 				if !ok {
 					return api.OnLoadResult{}, fmt.Errorf("prebundle: blob not in cache: %s", args.Path)
 				}
-				loader := api.LoaderJS
-				if kind == "css" {
-					loader = api.LoaderCSS // shouldn't happen (CSS externalized), defensive
-				}
 				s := string(body)
-				return api.OnLoadResult{Contents: &s, Loader: loader}, nil
+				return api.OnLoadResult{Contents: &s, Loader: api.LoaderJS}, nil
 			})
 		},
 	}
 
-	entryStr := string(entryBlob)
 	result := api.Build(api.BuildOptions{
-		Stdin: &api.StdinOptions{
-			Contents:   entryStr,
-			Sourcefile: pkgKey(entryStoreURL) + ".js",
-			Loader:     api.LoaderJS,
-		},
-		Bundle:   true,
-		Write:    false,
-		Format:   api.FormatESModule,
-		Target:   api.ES2022,
-		Platform: api.PlatformBrowser,
-		Plugins:  []api.Plugin{plugin},
-		LogLevel: api.LogLevelSilent,
-		// Vue's esm-bundler flags as Defines — same as the main transform —
-		// so any flag references inside a pre-bundled dep are satisfied.
-		Define: p.host.defines,
+		EntryPointsAdvanced: eps,
+		Bundle:              true,
+		Write:               false,
+		Splitting:           true,             // shared internals → common chunk
+		Outdir:              "/nexus-pre-out", // virtual; Write:false
+		ChunkNames:          "chunk-[hash]",
+		Format:              api.FormatESModule,
+		Target:              api.ES2022,
+		Platform:            api.PlatformBrowser,
+		Plugins:             []api.Plugin{plugin},
+		LogLevel:            api.LogLevelSilent,
+		Define:              p.host.defines,
 	})
 	if len(result.Errors) > 0 {
-		return "", fmt.Errorf("prebundle %s: %s", entryPkg, result.Errors[0].Text)
+		return &pkgBuild{sig: sig, err: fmt.Errorf("prebundle %s: %s", entryPkg, result.Errors[0].Text)}
 	}
 	if len(result.OutputFiles) == 0 {
-		return "", fmt.Errorf("prebundle %s: no output", entryPkg)
+		return &pkgBuild{sig: sig, err: fmt.Errorf("prebundle %s: no output", entryPkg)}
 	}
-	return string(result.OutputFiles[0].Contents), nil
+
+	// Map outputs by basename. esbuild names entry outputs e-<hash>.js (our
+	// OutputPath) and shared chunks chunk-<hash>.js; both are imported by
+	// basename within the package, so a flat basename map suffices. Rewrite
+	// the entry/chunk cross-imports (relative "./chunk-X.js") to the served
+	// /@pre/<pkg>/ path so the browser fetches siblings from this package.
+	files := map[string]string{}
+	for _, f := range result.OutputFiles {
+		base := f.Path[strings.LastIndexByte(f.Path, '/')+1:]
+		files[base] = rewritePkgChunkImports(string(f.Contents), entryPkg)
+	}
+	return &pkgBuild{files: files, sig: sig}
+}
+
+// pkgChunkImportRE matches a relative import/export of a sibling chunk or
+// entry inside a package build, e.g. `from"./chunk-ABC.js"` or
+// `from "./e-123.js"`. esbuild emits these between split outputs.
+var pkgChunkImportRE = regexp.MustCompile(`(from\s*|import\s*|^\s*import\s+)(["'])\.?/?((?:chunk|e)-[A-Za-z0-9]+\.js)(["'])`)
+
+// rewritePkgChunkImports rewrites a split output's relative sibling imports
+// (./chunk-*.js, ./e-*.js) to absolute /@pre/<pkg>/ served paths so the
+// browser fetches the shared chunk from this package's namespace.
+func rewritePkgChunkImports(js, pkg string) string {
+	prefix := PrebundlePrefix + pkg + "/"
+	return pkgChunkImportRE.ReplaceAllString(js, `$1$2`+prefix+`$3$4`)
 }
 
 // prebundleEligible reports whether a resolved dependency store URL should be

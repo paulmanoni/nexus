@@ -1,6 +1,9 @@
 package devserver
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPkgKey(t *testing.T) {
 	cases := map[string]string{
@@ -50,17 +53,27 @@ func TestPrebundleEligible(t *testing.T) {
 
 func TestToPrebundleURLSafe(t *testing.T) {
 	h := New(Config{Root: t.TempDir(), Prebundle: true})
-	// A query-bearing entry URL must produce a path with NO query chars
-	// (they'd split at the server and break the preMap lookup).
-	sp := h.toPrebundle("https://esm.sh/pinia@3.0.4?external=vue,react-dom")
+	// A query-bearing entry URL must produce a served path with NO query
+	// chars (they'd split at the server and break the /@pre/ routing).
+	entryURL := "https://esm.sh/pinia@3.0.4?external=vue,react-dom"
+	sp := h.toPrebundle(entryURL)
 	for _, bad := range []string{"?", "&", " "} {
 		if containsStr(sp, bad) {
 			t.Errorf("prebundle path %q contains %q — would break routing", sp, bad)
 		}
 	}
-	// And it must round-trip through preMap.
-	if v, ok := h.preMap.Load(sp); !ok || v.(string) != "https://esm.sh/pinia@3.0.4?external=vue,react-dom" {
-		t.Errorf("preMap round-trip failed for %q", sp)
+	// Shape: /@pre/<pkg@ver>/e-<hash>.js
+	if !strings.HasPrefix(sp, PrebundlePrefix+"pinia@3.0.4/e-") || !strings.HasSuffix(sp, ".js") {
+		t.Errorf("unexpected prebundle path shape: %q", sp)
+	}
+	// toPrebundle must register the entry under its package, so loadPrebundle
+	// can split pkg/base back out and the package build covers it.
+	pkg := "pinia@3.0.4"
+	h.pre.mu.Lock()
+	registered := h.pre.entries[pkg][entryURL]
+	h.pre.mu.Unlock()
+	if !registered {
+		t.Errorf("toPrebundle did not register entry %q under %q", entryURL, pkg)
 	}
 }
 

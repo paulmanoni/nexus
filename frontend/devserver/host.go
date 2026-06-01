@@ -99,10 +99,10 @@ type Host struct {
 	// LoadModule; a deterministic encode/decode is the fallback.
 	deps sync.Map
 
-	// pre is the dependency pre-bundler (nil when Prebundle is off). preMap
-	// maps a served PrebundlePrefix path → the package entry's store URL.
-	pre    *prebundler
-	preMap sync.Map
+	// pre is the dependency pre-bundler (nil when Prebundle is off). It
+	// tracks each package's entry set internally and builds them grouped
+	// with code-splitting; the Host only encodes/decodes the served paths.
+	pre *prebundler
 }
 
 // New builds a Host from cfg.
@@ -172,17 +172,21 @@ func (h *Host) LoadModule(urlPath string) ([]byte, string, bool) {
 	return h.loadSource(urlPath)
 }
 
-// loadPrebundle serves a pre-bundled package entry. The served path maps
-// back to the package entry's store URL (recorded by ResolveImport); the
-// prebundler builds + caches the bundle. On any build error it returns
-// ok=false so the request 404s — but ResolveImport only ever points the
-// browser here when the build already succeeded, so a miss is rare.
+// loadPrebundle serves a file from a package's grouped, code-split build.
+// The path is /@pre/<pkg@ver>/<basename>, where basename is an entry
+// (e-<hash>.js) or a shared chunk (chunk-<hash>.js). It splits the package
+// key from the basename and asks the prebundler, which builds/rebuilds the
+// whole package lazily. On a build error it returns ok=false (404); but
+// ResolveImport only points entries here, and chunks are only referenced by
+// an already-built entry, so a miss is rare.
 func (h *Host) loadPrebundle(urlPath string) ([]byte, string, bool) {
-	v, ok := h.preMap.Load(urlPath)
-	if !ok {
+	rest := strings.TrimPrefix(urlPath, PrebundlePrefix)
+	slash := strings.LastIndexByte(rest, '/')
+	if slash < 0 {
 		return nil, "", false
 	}
-	js, err := h.pre.bundle(v.(string))
+	pkg, base := rest[:slash], rest[slash+1:]
+	js, err := h.pre.serve(pkg, base)
 	if err != nil {
 		return nil, "", false
 	}
@@ -517,15 +521,14 @@ func (h *Host) ResolveImport(spec string, kind viteless.SpecKind, importerURL st
 	}
 }
 
-// toPrebundle encodes a package entry's store URL into a served
-// PrebundlePrefix path and records the mapping for loadPrebundle's reverse
-// lookup. The path embeds the pkg@ver for readability + a stable hash of
-// the full entry URL (two entries of the same package — different sub-paths
-// — must not collide).
+// toPrebundle registers a package entry with the prebundler and returns its
+// served path /@pre/<pkg@ver>/e-<hash>.js. Registration accumulates the
+// package's entry set so the next build covers every sub-path entry the app
+// imports; the actual (grouped, code-split) build runs lazily on first
+// fetch. The e-<hash> basename is stable per entry URL.
 func (h *Host) toPrebundle(entryStoreURL string) string {
-	sp := PrebundlePrefix + pkgKey(entryStoreURL) + "/" + shortHash(entryStoreURL) + ".js"
-	h.preMap.Store(sp, entryStoreURL)
-	return sp
+	pkg, base := h.pre.register(entryStoreURL)
+	return PrebundlePrefix + pkg + "/" + base
 }
 
 // resolveAlias rewrites a tsconfig-style aliased import to its served path
