@@ -63,7 +63,7 @@ var Module = nexus.Module("adverts",
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
 - **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext TOML (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. `${VAR}` placeholders inside `nexus.toml` resolve from the process env (and optionally a `.env` file via `nexus.LoadDotenvIfPresent()`). See [Configuration](#configuration) below.
 - **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots (multi-scene capture for dropdowns + modals), edit step text inline on the preview, play back as numbered-badge highlights, export to **PDF** or **Word** for handoff docs. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
-- **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. `.vue` SFCs compile in-process by running `@vue/compiler-sfc` on QuickJS-NG via WebAssembly — no `node_modules`, no `npm install`, no cgo. Editor IntelliSense is covered without npm too: `nexus types` generates a types-only `node_modules` from `nexus.lock` (see [Frontend](#frontend)). See [frontend/deps](frontend/deps/README.md).
+- **Vite frontend, embedded.** `nexus new --frontend vue|react` scaffolds a standard Vite project under `web/`. `nexus dev` runs the Vite dev server (HMR) and proxies the API; `nexus build` runs `vite build` and `go build` embeds `web/dist` via `//go:embed`. Any Vite plugin, Tailwind, or component library works. Node/npm are build- and dev-time only — the runtime is a single Go binary. See [Frontend](#frontend).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
 ## Install
@@ -72,13 +72,11 @@ var Module = nexus.Module("adverts",
 go install github.com/paulmanoni/nexus/cmd/nexus@latest
 ```
 
-Go 1.25+. That's it — `.vue` compilation works out of the box. The SFC compiler runs `@vue/compiler-sfc` through QuickJS-NG compiled to WebAssembly (via [wazero](https://github.com/tetratelabs/wazero)), so there's **no cgo and no C toolchain** — the default install cross-compiles to a single static binary.
-
-A native cgo backend is available as an opt-in; it's faster per SFC but needs a C compiler:
-
-```bash
-CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
-```
+Go 1.25+. The CLI is pure Go — no cgo, no C toolchain, no build tags — so it
+cross-compiles to a single static binary. The frontend uses Vite, so building or
+running `nexus dev` on a project that has a `web/` frontend also needs **Node.js +
+npm** on PATH (build- and dev-time only; the compiled app embeds `web/dist` and needs
+neither at runtime).
 
 ## CLI
 
@@ -90,17 +88,12 @@ nexus dev                 # go run + live dashboard (add --open to launch a brow
 | Command | What it does |
 |---|---|
 | `nexus new <dir>` | Scaffold a runnable app (prompts for frontend / db / cache / auth). |
-| `nexus init [dir] --frontend=vue\|react` | Scaffold the frontend pipeline (`islands.src/`, embed) into an existing project. |
-| `nexus dev [dir]` | `go run` + auto-rebuild frontend on save; serves the dashboard (pass `--open` to launch a browser). |
-| `nexus build [package]` | Bundle frontend sources under `islands.src/` (content-cached — skips the bundler when nothing changed), then `go build` the main package. |
+| `nexus init [dir] --frontend=vue\|react` | Add a Vite frontend (`web/`, embed) to an existing project. |
+| `nexus dev [dir]` | `go run` + the Vite dev server (HMR on :5173); serves the dashboard and proxies `/__nexus`, `/graphql`, `/oauth`, `/ws` to the app. |
+| `nexus build [package]` | `npm install` (if needed) + `vite build` → `web/dist`, then `go build` embeds it via `//go:embed`. |
 | `nexus docs [topic]` | Inline reference (`handlers`, `frontend`, `auth`, …). |
-| `nexus add <spec>` | Fetch a frontend dep from esm.sh into `~/.nexus/cache`, write `nexus.lock`. |
-| `nexus install` | Sync the cache to `nexus.lock` (fresh clones, CI). |
-| `nexus types` | Generate a types-only `node_modules` from `nexus.lock` for editor IntelliSense (no npm). |
-| `nexus remove <spec>` | Drop entry from `nexus.lock`. |
-| `nexus update [spec]` | Re-resolve specs, bump `nexus.lock`. |
-| `nexus vendor` | Copy cached blobs to `./vendor/nexus/` for air-gapped builds. |
-| `nexus gc` | Reclaim cache space from unreferenced blobs. |
+| `nexus client [--out dir]` | Write the embedded JS/TS client SDK to disk. |
+| `nexus generate <kind>` | Code-generation helpers (e.g. `dockerfile`). |
 
 ## Quick start
 
@@ -205,16 +198,16 @@ Works identically on REST, GraphQL, and WS. Each middleware reads from `nexus.Co
 
 ## Frontend
 
-Two paths to a bundle the framework can serve:
-
-**1. `nexus add` + `nexus build` (recommended).** Node-free; pulls deps from esm.sh, bundles via esbuild. See [frontend/deps](frontend/deps/README.md).
+The frontend is a standard **Vite** project under `web/` — npm-managed, so any Vite plugin, Tailwind, PostCSS, or component library works. `nexus build` runs `vite build` and `go build` embeds the output into the binary; the runtime needs no Node.
 
 ```bash
-nexus add vue @vue-flow/core
-nexus build                       # islands.src/*.{ts,tsx,jsx,vue} → islands/
+nexus new my-app --frontend vue   # scaffold web/ (or --frontend react)
+cd my-app/web && npm install       # install frontend deps (one-time / on clone)
+cd .. && nexus dev                 # go run + Vite dev server (HMR) on :5173
+nexus build                        # vite build → web/dist, embedded via //go:embed
 ```
 
-**2. Bring your own bundle.** Mount any pre-built SPA from an `embed.FS`:
+`main.go` embeds the build output and serves it:
 
 ```go
 //go:embed all:web/dist
@@ -226,28 +219,11 @@ nexus.Run(nexus.Config{...},
 )
 ```
 
-Unknown paths fall through to `index.html` (SPA-aware). REST/GraphQL/WS/dashboard routes win on conflict.
+Unknown paths fall through to `index.html` (SPA-aware); `/assets/*` gets immutable cache; REST/GraphQL/WS/dashboard routes win on conflict. Boot fails fast if `index.html` is missing, so the scaffold commits a `web/dist/index.html` stub — the first `go build` compiles before any `vite build`. The frontend dir is `web/` by default (override with `NEXUS_FRONTEND_DIR`); to mount an existing pre-built SPA, just point `ServeFrontend` at its embedded dist.
 
-### Editor IntelliSense without npm
+### `nexus dev` — Vite dev server + API proxy
 
-There is **no `node_modules` at build or runtime** — `nexus add` caches deps under `~/.nexus/cache` and `nexus build` bundles from there. But your editor's TypeScript/Vue language server still needs type declarations to resolve bare imports like `import { ref } from "vue"`. `nexus types` provides them without reintroducing npm:
-
-```bash
-nexus types        # reads nexus.lock → <islands.src>/node_modules (types only)
-```
-
-It fetches each dependency's `.d.ts` from the same registry the build uses, rewrites the cross-package URL references esm.sh emits into local paths, and writes a minimal types-only tree. That `node_modules` is an **editor-only artifact**: the bundler and runtime never read it, and it's gitignored automatically (its own `node_modules/.gitignore`). Re-run after `nexus add` / `nexus update`. Zero-Node still holds end to end — `nexus types` is the same Go binary fetching from the same cache, not `npm install`.
-
-### Build cache
-
-`nexus build` short-circuits the bundler when none of its inputs changed since the last successful build, cutting the inner Go-edit loop substantially. It hashes every input that affects the bundle — the `islands.src/` tree, `nexus.lock`, `package.json`, `vite.config.*`, the resolved `tsconfig`/`jsconfig`, and the `.env` cascade — into `.nexus-cache/frontend-build.hash`, and skips the rebuild when the digest matches **and** the output directory is non-empty.
-
-```bash
-nexus build                          # cached: "frontend up to date" when nothing changed
-NEXUS_FRONTEND_NO_CACHE=1 nexus build # force a full rebuild (CI / debugging)
-```
-
-`.nexus-cache/` is project-local and safe to delete at any time; add it to `.gitignore`.
+`nexus dev` runs `npm run dev` (the Vite dev server, with HMR) on `http://localhost:5173/` alongside `go run` on `:8080`. It injects a managed proxy block into `web/vite.config.ts` (between `// @nexus:proxy-start` / `// @nexus:proxy-end` markers) so `/__nexus`, `/graphql`, `/oauth`, and `/ws` reach the Go app from the Vite origin. Open **:5173** for the SPA during dev; the embedded `web/dist` is served at the app port only in production. Override the dev-server command with `--frontend-cmd`.
 
 ### Dev-reload watcher
 
@@ -438,7 +414,6 @@ The framework ships a few self-contained examples under `examples/`:
 ```
 .                          framework root + public API surface
 ├── cmd/nexus/             CLI binary
-├── frontend/deps/         node-free dep manager + bundler (see its README)
 ├── extension/             optional integrations (auth, oauth2, ratelimit,
 │                          metrics, cron, dashboard, frontend, peer,
 │                          config, tls, …)

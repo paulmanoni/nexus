@@ -202,12 +202,12 @@ var topicSummaries = map[string]string{
 	"rest":       "AsRest — REST endpoints with reflective handlers",
 	"graphql":    "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":         "AsWS — typed WebSocket envelopes, session fan-out",
-	"frontend":   "ServeFrontend + FrontendAt — embed an SPA; nexus add/types",
+	"frontend":   "ServeFrontend + FrontendAt — embed a Vite SPA (web/dist)",
 	"nexustoml":  "nexus.toml — server, dashboard, introspection, env, extensions",
 	"peer":       "extension/peer — typed RPC between nexus apps",
 	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
 	"config":     "extension/config — Spring-style config server + nexus.Get",
-	"cli":        "Subcommand cheatsheet (new / init / add / types / dev / build)",
+	"cli":        "Subcommand cheatsheet (new / init / dev / build / client)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
 	"client":     "Embedded JS/TS SDK — connect a browser to your app",
 	"autoselect": "Vite plugin that auto-injects opts.select from accesses",
@@ -614,19 +614,22 @@ Mount under a sub-path when APIs live at the root:
 Boot fails fast if index.html is missing in the FS — stale bundles
 surface at start time, not at first request.
 
-Zero-Node toolchain: 'nexus new --frontend vue|react' (or 'nexus init
---frontend ...' in an existing project) scaffolds islands.src/ with NO
-package.json scripts, node_modules, or vite. Deps come from esm.sh into
-~/.nexus/cache, pinned in nexus.lock:
+Vite toolchain: 'nexus new --frontend vue|react' (or 'nexus init
+--frontend ...' in an existing project) scaffolds a standard Vite
+project under web/ — package.json, vite.config.ts, src/, and a
+committed web/dist/index.html stub so the first 'go build' compiles
+before any frontend build. Manage deps with npm; any Vite plugin,
+Tailwind, or component library works:
 
-    nexus add vue            # fetch a dep into the cache + nexus.lock
-    nexus types              # editor IntelliSense: mirror each dep's
-                             # .d.ts from esm.sh into a types-only
-                             # node_modules/ (gitignored, editor-only —
-                             # the bundler stays zero-Node). 'nexus dev'
-                             # refreshes it automatically.
-    nexus dev                # bundle + serve with HMR
-    nexus build              # production bundle, embedded via //go:embed
+    cd web && npm install    # one-time: install frontend deps
+    nexus dev                # go run + Vite dev server (HMR) on :5173;
+                             # injects a proxy so /__nexus, /graphql,
+                             # /oauth, /ws reach the Go app
+    nexus build              # npm run build -> web/dist, then go build
+                             # embeds it via //go:embed all:web/dist
+
+Node/npm are build- and dev-time only. The runtime is still a single
+Go binary serving the embedded web/dist.
 `,
 
 	"nexustoml": `
@@ -716,27 +719,27 @@ CLI CHEATSHEET
                              --module <path>       override go.mod path
                              --yes                 take defaults (no prompts)
 
-  nexus init [dir]           Add frontend scaffolding to an EXISTING
-                             project (islands.src/ + patches main.go to
-                             embed + ServeFrontend).
+  nexus init [dir]           Add a Vite frontend to an EXISTING project
+                             (scaffolds web/ + patches main.go to embed
+                             web/dist + ServeFrontend).
                              --frontend vue|react  (required)
-                             --force               overwrite islands.src/
+                             --force               overwrite web/
 
-  nexus add <pkg>...         Fetch a frontend dep from esm.sh into
-                             ~/.nexus/cache + pin it in nexus.lock.
-
-  nexus types                Generate a types-only node_modules/ from
-                             nexus.lock for editor IntelliSense — no npm.
-
-  nexus dev [dir]            go run + frontend auto-rebuild; serves the
-                             dashboard. Refreshes editor types too.
+  nexus dev [dir]            go run + the Vite dev server (HMR on :5173);
+                             serves the dashboard. Injects a proxy so
+                             /__nexus, /graphql, /oauth, /ws reach the app.
                              --addr host:port   listen address override
+                             --frontend-cmd <c> dev-server command (default
+                                                "npm run dev" in web/)
                              --no-open          skip opening the browser
 
-  nexus build                Build a single binary (frontend bundled +
-                             embedded via //go:embed).
+  nexus build                Build a single binary. Runs npm install (if
+                             node_modules is missing) + vite build, then
+                             go build embeds web/dist via //go:embed.
     --output / -o <path>     output binary path (default: go's default).
     --package <pkg>          main package to compile (default ".").
+
+  nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 
   nexus generate dockerfile  Emit a multi-stage Dockerfile.
 
