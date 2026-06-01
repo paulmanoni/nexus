@@ -3,8 +3,8 @@ import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide, watc
 import { VueFlow, useVueFlow, Position, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import dagre from 'dagre'
 import { ShieldCheck } from 'lucide-vue-next'
+import { elkLayout, applyPositions } from '../lib/elkLayout.js'
 
 import ServiceNode from '../components/ServiceNode.vue'
 import ServiceDepNode from '../components/ServiceDepNode.vue'
@@ -365,6 +365,12 @@ onNodesInitialized(() => fitView(FIT_OPTS))
 // 5s poll. A changed fingerprint (new module appeared, etc.) calls
 // fitView to bring the new node into view.
 let lastTopologyFingerprint = ''
+// layoutSeq guards against overlapping async layouts: ELK runs off the
+// synchronous path, and the /__nexus/live socket can fire another load()
+// before the previous layout resolves. Each load() claims the next seq;
+// when its layout resolves it only commits if it's still the latest — a
+// superseded run drops its result so positions never apply out of order.
+let layoutSeq = 0
 
 // userPositions tracks per-node drag overrides so polling doesn't
 // snap a card back to dagre's slot after the user dropped it
@@ -482,40 +488,23 @@ function estimateResourceHeight(data) {
 const NODE_WIDTH_RESOURCE = 200
 const GAP = 48
 
-function layout(ns, es) {
-  if (es.length > 0) return dagreLayout(ns, es)
-  return gridLayout(ns)
-}
-
-function dagreLayout(ns, es) {
-  const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
-  // nodesep controls vertical gap between cards in the same rank,
-  // ranksep the horizontal gap between ranks. Generous values so
-  // module cards with many endpoints (commonly 200-600px tall) keep
-  // visible air between them and never visibly overlap when
-  // estimateServiceHeight is slightly off.
-  g.setGraph({ rankdir: 'LR', nodesep: 120, ranksep: 220 })
-  ns.forEach(n => {
-    let w, h
-    if (n.type === 'internet') { w = 160; h = 90 }
-    else if (n.type === 'resource') { w = NODE_WIDTH_RESOURCE; h = estimateResourceHeight(n.data) }
-    else if (n.type === 'serviceDep') { w = NODE_WIDTH_RESOURCE; h = estimateServiceDepHeight(n.data) }
-    else if (n.type === 'worker') { w = NODE_WIDTH_RESOURCE; h = estimateWorkerHeight(n.data) }
-    else if (n.type === 'cron') { w = NODE_WIDTH_RESOURCE; h = estimateCronHeight(n.data) }
-    else { w = estimateServiceWidth(n.data); h = estimateServiceHeight(n.data) }
-    g.setNode(n.id, { width: w, height: h })
+// layout positions the graph with ELK (async). nodeBoxSize supplies each
+// node's reserved box; gridLayout is the synchronous fallback for the
+// edgeless case and for an ELK failure (returned via Promise.resolve so the
+// call site can always `await`).
+async function layout(ns, es) {
+  if (es.length === 0) return gridLayout(ns)
+  const sized = ns.map(n => {
+    const { w, h } = nodeBoxSize(n)
+    return { id: n.id, width: w, height: h }
   })
-  es.forEach(e => g.setEdge(e.source, e.target))
-  dagre.layout(g)
-  return ns.map(n => {
-    const p = g.node(n.id)
-    return {
-      ...n,
-      position: { x: p.x - p.width / 2, y: p.y - p.height / 2 },
-      targetPosition: Position.Left,
-      sourcePosition: Position.Right
-    }
-  })
+  try {
+    const pos = await elkLayout(sized, es)
+    return applyPositions(ns, pos)
+  } catch (err) {
+    console.warn('[nexus] ELK layout failed — falling back to grid:', err)
+    return gridLayout(ns)
+  }
 }
 
 function estimateServiceDepHeight(data) {
@@ -602,7 +591,7 @@ function gridLayout(ns) {
 // state for the architecture view. null until the first snapshot arrives.
 const latestSnapshot = ref(null)
 
-function load() {
+async function load() {
   const snap = latestSnapshot.value
   if (!snap) return
   // Shape the snapshot fields back into the {endpoints, services, …}
@@ -1198,13 +1187,21 @@ function load() {
       edges: edgeList.map(e => ({ id: e.id, source: e.source, target: e.target, op: e.data?.op ?? null, serviceLevel: !!e.data?.serviceLevel })),
     }
   }
-  const laid = layout(all, edgeList)
+  const seq = ++layoutSeq
+  let laid
   try {
-    // Apply user-drag overrides so dragged cards don't snap back to
-    // dagre's slot on the next 5s poll. dagre still computes the
-    // baseline layout for first paint and for any node the user
-    // hasn't touched; the override map only kicks in for ids the
-    // user explicitly moved.
+    laid = await layout(all, edgeList)
+  } catch (err) {
+    console.error('[nexus] Architecture layout failed:', err, { groupCount: groupNodes.length, edgeCount: edgeList.length })
+    return
+  }
+  // A newer load() started while ELK was working — drop this stale result.
+  if (seq !== layoutSeq) return
+  try {
+    // Apply user-drag overrides so dragged cards don't snap back to the
+    // layout engine's slot on the next poll. ELK computes the baseline
+    // layout for first paint and for any node the user hasn't touched;
+    // the override map only kicks in for ids the user explicitly moved.
     const nextNodes = laid.map(n => {
       const moved = userPositions.get(n.id)
       return moved ? { ...n, position: moved } : n
@@ -1593,8 +1590,9 @@ onUnmounted(() => {
       :nodes="nodes"
       :edges="edges"
       :node-types="nodeTypes"
-      :min-zoom="0.25"
+      :min-zoom="0.1"
       :max-zoom="1.5"
+      :only-render-visible-elements="true"
     >
       <!-- Dot grid (Vue Flow's Background defaults to dots). Color +
            gap match the --canvas-dot token in tokens.css; keep literals

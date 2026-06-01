@@ -339,6 +339,28 @@ func resolveOne(opts Options, args api.OnResolveArgs) (api.OnResolveResult, erro
 	// here; OnLoad re-fetches it via the same Path (= URL) key.
 	if _, _, err := opts.Store.Get(targetURL); err != nil {
 		if errors.Is(err, store.ErrNotCached) {
+			// Sub-path / file imports are fetched WITHOUT the
+			// `?external=` query (fetcher.specToURL's file-path
+			// branch strips it — external only affects a
+			// package's OWN js imports, which a direct file
+			// fetch has none of). But targetURL inherits the
+			// root entry's Resolved query via joinSubpath, so
+			// when External is set the lookup key carries an
+			// `?external=` the stored blob never had. Retry the
+			// query-stripped key — it matches how the fetcher
+			// actually stored the file blob. Additive: only runs
+			// on an otherwise-fatal miss, so it can't change a
+			// currently-resolving build.
+			if subpath != "" {
+				if bare := stripQuery(targetURL); bare != targetURL {
+					if _, _, bareErr := opts.Store.Get(bare); bareErr == nil {
+						return api.OnResolveResult{
+							Path:      bare,
+							Namespace: Namespace,
+						}, nil
+					}
+				}
+			}
 			// On-demand fetch path: sub-path imports
 			// (`@apollo/client/core`, `vuetify/styles`)
 			// reference URLs the install-time graph walk

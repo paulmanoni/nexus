@@ -139,29 +139,37 @@ func run() error {
 		fmt.Printf("      ✓ %s (+%d transitive)\n", spec, len(res.Transitive))
 	}
 
-	// Sub-path imports (e.g. "@vue-flow/core/dist/style.css")
-	// declared by user code aren't reachable from the package
-	// roots' own import graph, so the recursive fetcher above
-	// didn't pull them. Pre-scan the entry file for explicit
-	// "<pkg>/<subpath>" import statements and fetch each one
-	// directly. This is the script-side equivalent of a user
-	// running multiple `nexus add <pkg>/<subpath>` calls.
-	subPaths, err := scanSubPathImports(filepath.Join(uiDir, "src", "main.js"), pkgJSON.Dependencies)
+	// Sub-path imports (e.g. "@vue-flow/core/dist/style.css" or
+	// "elkjs/lib/elk.bundled.js") declared by user code aren't
+	// reachable from the package roots' own import graph, so the
+	// recursive fetcher above didn't pull them. Pre-scan the WHOLE
+	// src/ tree (not just main.js — sub-path imports live in any
+	// component or lib file) for explicit "<pkg>/<subpath>" import
+	// statements and fetch each one directly. This is the script-side
+	// equivalent of a user running multiple `nexus add <pkg>/<subpath>`.
+	subPaths, err := scanSubPathImports(filepath.Join(uiDir, "src"), pkgJSON.Dependencies)
 	if err != nil {
 		return fmt.Errorf("scan sub-paths: %w", err)
 	}
 	if len(subPaths) > 0 {
-		fmt.Printf("      sub-path imports found in main.js (%d):\n", len(subPaths))
+		fmt.Printf("      sub-path imports found in src/ (%d):\n", len(subPaths))
 		for _, sp := range subPaths {
-			res, err := f.Fetch(ctx, sp)
+			// Pin the version before fetching. esm.sh resolves an
+			// UNVERSIONED sub-path (e.g. "elkjs/lib/elk.bundled.js")
+			// to LATEST (elkjs@0.11.1) and caches the blob under that
+			// version, but the resolver later looks up the pinned
+			// version from package.json (elkjs@0.10.0) → cache miss.
+			// Pinning here makes the fetched key match the lookup.
+			pinned := pinSubPathVersion(sp, pkgJSON.Dependencies)
+			res, err := f.Fetch(ctx, pinned)
 			if err != nil {
-				return fmt.Errorf("fetch sub-path %s: %w", sp, err)
+				return fmt.Errorf("fetch sub-path %s: %w", pinned, err)
 			}
 			lf.Add(res.Root)
 			for _, p := range res.Transitive {
 				lf.Add(p)
 			}
-			fmt.Printf("      ✓ %s (+%d transitive)\n", sp, len(res.Transitive))
+			fmt.Printf("      ✓ %s (+%d transitive)\n", pinned, len(res.Transitive))
 		}
 	}
 
@@ -351,16 +359,57 @@ func writeIndexHTML(path string, outputs []outputFile) error {
 //
 // Returned strings are formatted as "<spec>" (no leading /, no
 // quotes) so the caller can pass them directly to f.Fetch.
-func scanSubPathImports(entryPath string, pkgDeps map[string]string) ([]string, error) {
-	body, err := os.ReadFile(entryPath)
-	if err != nil {
-		return nil, err
+// pinSubPathVersion rewrites a bare sub-path import spec to carry the
+// version pinned in package.json, so esm.sh serves the SAME version the
+// resolver later looks up. "elkjs/lib/elk.bundled.js" + {elkjs:"^0.10.0"}
+// → "elkjs@0.10.0/lib/elk.bundled.js"; scoped names work too
+// ("@vue-flow/core/dist/style.css" → "@vue-flow/core@1.48.2/dist/style.css").
+// Unpinned, esm.sh resolves the path to LATEST and caches the blob under a
+// version the pinned resolver never asks for.
+func pinSubPathVersion(spec string, deps map[string]string) string {
+	for name, ver := range deps {
+		if strings.HasPrefix(spec, name+"/") {
+			clean := strings.TrimLeft(ver, "^~>=< ")
+			if clean == "" {
+				return spec
+			}
+			return name + "@" + clean + spec[len(name):]
+		}
 	}
-	src := string(body)
+	return spec
+}
+
+func scanSubPathImports(srcRoot string, pkgDeps map[string]string) ([]string, error) {
+	// Gather every import spec across the src/ tree. Sub-path imports
+	// aren't confined to main.js — e.g. lib/elkLayout.js imports
+	// "elkjs/lib/elk.bundled.js" — so a single-file scan misses them and
+	// the bundler later fails with "no cached blob exists".
+	var src strings.Builder
+	walkErr := filepath.Walk(srcRoot, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		switch filepath.Ext(p) {
+		case ".js", ".mjs", ".vue", ".ts":
+			body, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return rerr
+			}
+			src.Write(body)
+			src.WriteByte('\n')
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
 	// Match either "import X from '...'" or "import '...'" or
 	// "import('...')" — capture group 1 is the spec.
 	re := regexp.MustCompile(`(?m)import\b[^'"]*['"]([^'"\n]+)['"]`)
-	matches := re.FindAllStringSubmatch(src, -1)
+	matches := re.FindAllStringSubmatch(src.String(), -1)
 	seen := map[string]bool{}
 	var out []string
 	for _, m := range matches {
