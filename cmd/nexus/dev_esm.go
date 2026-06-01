@@ -118,12 +118,13 @@ func startESMWatcher(ctx context.Context, dir, appAddr string, verbose bool, std
 	}
 
 	host := devserver.New(devserver.Config{
-		Root:     servedRoot,
-		Resolver: resOpts,
-		Compiler: compiler,
-		Aliases:  esmAliases(servedRoot),
-		Env:      viteEnv,
-		Mode:     "development",
+		Root:      servedRoot,
+		Resolver:  resOpts,
+		Compiler:  compiler,
+		Aliases:   esmAliases(servedRoot),
+		Env:       viteEnv,
+		Mode:      "development",
+		Prebundle: esmPrebundleEnabled(),
 	})
 	// Proxy unserved requests (API calls) to the app. The app's real bind
 	// port is discovered from its startup log AFTER this server is already
@@ -297,5 +298,15 @@ func esmProxyTarget(appAddr string) string {
 // opted into via NEXUS_DEV_ESM (any non-empty value except "0"/"false").
 func esmDevEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("NEXUS_DEV_ESM")))
+	return v != "" && v != "0" && v != "false"
+}
+
+// esmPrebundleEnabled reports whether dependency pre-bundling is on. Opt-in
+// via NEXUS_DEV_PREBUNDLE — it collapses each npm package's intra-module
+// fan-out into one file (Vuetify alone is ~1800 modules), cutting cold-load
+// HTTP requests dramatically. Off by default while it matures; the
+// per-module path remains the fallback for any package that fails to bundle.
+func esmPrebundleEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("NEXUS_DEV_PREBUNDLE")))
 	return v != "" && v != "0" && v != "false"
 }

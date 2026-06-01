@@ -74,6 +74,14 @@ type Config struct {
 	// DepPrefix is the URL namespace cached dependency blobs are served
 	// under. Defaults to "/@dep/".
 	DepPrefix string
+
+	// Prebundle enables dependency pre-bundling: each npm package is
+	// esbuild-bundled into one file on first request (intra-package
+	// siblings inlined, cross-package imports kept external + shared), so
+	// the browser fetches one file per dep instead of hundreds. Off by
+	// default — a pure perf layer over the per-module path, which stays
+	// the fallback for any package that fails to bundle.
+	Prebundle bool
 }
 
 // Host implements viteless.Host.
@@ -90,6 +98,11 @@ type Host struct {
 	// runs before the browser fetches the resolved URL) and read by
 	// LoadModule; a deterministic encode/decode is the fallback.
 	deps sync.Map
+
+	// pre is the dependency pre-bundler (nil when Prebundle is off). preMap
+	// maps a served PrebundlePrefix path → the package entry's store URL.
+	pre    *prebundler
+	preMap sync.Map
 }
 
 // New builds a Host from cfg.
@@ -98,7 +111,7 @@ func New(cfg Config) *Host {
 	if dp == "" {
 		dp = "/@dep/"
 	}
-	return &Host{
+	h := &Host{
 		root:      cfg.Root,
 		depPrefix: dp,
 		res:       cfg.Resolver,
@@ -106,6 +119,10 @@ func New(cfg Config) *Host {
 		aliases:   cfg.Aliases,
 		defines:   buildDefines(cfg.Env, cfg.Mode),
 	}
+	if cfg.Prebundle {
+		h.pre = newPrebundler(h)
+	}
+	return h
 }
 
 // buildDefines composes the import.meta.env.* substitution map handed to
@@ -146,10 +163,30 @@ func boolLit(b bool) string {
 
 // LoadModule returns the source bytes + kind for a served URL path.
 func (h *Host) LoadModule(urlPath string) ([]byte, string, bool) {
+	if h.pre != nil && strings.HasPrefix(urlPath, PrebundlePrefix) {
+		return h.loadPrebundle(urlPath)
+	}
 	if strings.HasPrefix(urlPath, h.depPrefix) {
 		return h.loadDep(urlPath)
 	}
 	return h.loadSource(urlPath)
+}
+
+// loadPrebundle serves a pre-bundled package entry. The served path maps
+// back to the package entry's store URL (recorded by ResolveImport); the
+// prebundler builds + caches the bundle. On any build error it returns
+// ok=false so the request 404s — but ResolveImport only ever points the
+// browser here when the build already succeeded, so a miss is rare.
+func (h *Host) loadPrebundle(urlPath string) ([]byte, string, bool) {
+	v, ok := h.preMap.Load(urlPath)
+	if !ok {
+		return nil, "", false
+	}
+	js, err := h.pre.bundle(v.(string))
+	if err != nil {
+		return nil, "", false
+	}
+	return []byte(js), "js", true
 }
 
 // loadSource serves a file from the project source tree under Root.
@@ -466,10 +503,29 @@ func (h *Host) ResolveImport(spec string, kind viteless.SpecKind, importerURL st
 		}
 		// Real package import → shared resolver → cached blob URL.
 		if u, ok, _ := h.res.ResolveURL(spec, ""); ok {
+			// Pre-bundle eligible packages (everything except the Vue
+			// family) into one file, collapsing the intra-package fan-out.
+			// Only JS entries are bundled — a CSS-only package like
+			// @mdi/font is served per-module as a style. A failed build
+			// later falls back to per-module via loadDep.
+			if h.pre != nil && prebundleEligible(u) && h.depURLIsJS(u) {
+				return h.toPrebundle(u)
+			}
 			return h.toDepPath(u)
 		}
 		return ""
 	}
+}
+
+// toPrebundle encodes a package entry's store URL into a served
+// PrebundlePrefix path and records the mapping for loadPrebundle's reverse
+// lookup. The path embeds the pkg@ver for readability + a stable hash of
+// the full entry URL (two entries of the same package — different sub-paths
+// — must not collide).
+func (h *Host) toPrebundle(entryStoreURL string) string {
+	sp := PrebundlePrefix + pkgKey(entryStoreURL) + "/" + shortHash(entryStoreURL) + ".js"
+	h.preMap.Store(sp, entryStoreURL)
+	return sp
 }
 
 // resolveAlias rewrites a tsconfig-style aliased import to its served path
