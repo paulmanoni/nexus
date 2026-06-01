@@ -63,12 +63,41 @@ func runTypes(stdout, stderr io.Writer, outDir string) error {
 		outDir = filepath.Join(root, islandsSrcName(), "node_modules")
 	}
 
+	res, err := emitLockfileTypes(lf, dc.fetcher.Registry, dc.fetcher.HTTP, outDir, stderr)
+	if err != nil {
+		return err
+	}
+	if res.Packages == 0 && res.Files == 0 && len(res.Skipped) == 0 {
+		fmt.Fprintln(stderr, "nexus types: no eligible packages in nexus.lock")
+		return nil
+	}
+
+	fmt.Fprintf(stdout, "nexus types: wrote types for %d package(s), %d file(s) → %s\n",
+		res.Packages, res.Files, outDir)
+	if len(res.Skipped) > 0 {
+		fmt.Fprintf(stdout, "nexus types: %d package(s) had no published types (skipped): %s\n",
+			len(res.Skipped), strings.Join(res.Skipped, ", "))
+	}
+	return nil
+}
+
+// emitLockfileTypes is the shared core behind `nexus types` and the
+// background type-sync `nexus dev` runs: it turns a loaded lockfile into a
+// types-only node_modules tree under outDir. registry/client name the source
+// (defaulting to esm.sh + a fresh client when empty/nil). It also writes the
+// editor-only node_modules/.gitignore. Returns a zero Result (no error) when
+// the lockfile has no eligible packages.
+func emitLockfileTypes(lf *lockfile.File, registry string, client *http.Client, outDir string, stderr io.Writer) (dts.Result, error) {
+	if registry == "" {
+		registry = "https://esm.sh"
+	}
+	registry = strings.TrimRight(registry, "/")
+
 	// Build the package list from the lockfile: one entry per distinct
 	// top-level spec (skip the registry-internal URL-spec entries, which
 	// have no bare name an editor would import). The probe URL is the
 	// versioned bare package on the registry; its X-TypeScript-Types header
 	// names the root .d.ts.
-	registry := strings.TrimRight(dc.fetcher.Registry, "/")
 	seen := map[string]bool{}
 	var pkgs []dts.Pkg
 	for _, p := range lf.Packages {
@@ -91,16 +120,12 @@ func runTypes(stdout, stderr io.Writer, outDir string) error {
 		})
 	}
 	if len(pkgs) == 0 {
-		fmt.Fprintln(stderr, "nexus types: no eligible packages in nexus.lock")
-		return nil
+		return dts.Result{}, nil
 	}
 
-	getter := newTypesGetter(dc.fetcher.HTTP)
-	writer := newTypesWriter(outDir)
-
-	res, err := dts.Emit(pkgs, getter, writer)
+	res, err := dts.Emit(pkgs, newTypesGetter(client), newTypesWriter(outDir))
 	if err != nil {
-		return fmt.Errorf("nexus types: %w", err)
+		return res, fmt.Errorf("nexus types: %w", err)
 	}
 
 	// Make the tree editor-only + invisible to git. A node_modules/.gitignore
@@ -109,14 +134,7 @@ func runTypes(stdout, stderr io.Writer, outDir string) error {
 	if werr := os.WriteFile(filepath.Join(outDir, ".gitignore"), []byte("*\n"), 0o644); werr != nil {
 		fmt.Fprintf(stderr, "nexus types: warning: could not write node_modules/.gitignore: %v\n", werr)
 	}
-
-	fmt.Fprintf(stdout, "nexus types: wrote types for %d package(s), %d file(s) → %s\n",
-		res.Packages, res.Files, outDir)
-	if len(res.Skipped) > 0 {
-		fmt.Fprintf(stdout, "nexus types: %d package(s) had no published types (skipped): %s\n",
-			len(res.Skipped), strings.Join(res.Skipped, ", "))
-	}
-	return nil
+	return res, nil
 }
 
 // newTypesGetter returns a dts.Getter backed by an http.Client. For a probe

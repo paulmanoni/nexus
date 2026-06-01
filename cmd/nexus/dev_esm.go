@@ -76,6 +76,14 @@ func startESMWatcher(ctx context.Context, dir, appAddr string, verbose bool, std
 		return fmt.Errorf("esm dev: load lockfile: %w", err)
 	}
 
+	// Refresh the editor-only types tree (same artifact `nexus types`
+	// produces) so IntelliSense tracks the lockfile without a manual step.
+	// Best-effort + off the boot path: it makes network calls to the
+	// registry, so a slow or offline run must not delay (or fail) the dev
+	// server. node_modules here is purely for the editor — the zero-Node
+	// build and runtime never read it.
+	go syncDevTypes(lf, srcDir, verbose, stdout, stderr)
+
 	cacheRoot := os.Getenv("NEXUS_CACHE")
 	if cacheRoot == "" {
 		cacheRoot = store.DefaultRoot()
@@ -237,6 +245,31 @@ func esmWatch(ctx context.Context, servedRoot string, host *devserver.Host, hub 
 			_ = host
 		case <-w.Errors:
 		}
+	}
+}
+
+// syncDevTypes regenerates the editor-only types tree (the same artifact
+// `nexus types` produces) under <srcDir>/node_modules so IntelliSense tracks
+// the lockfile automatically while `nexus dev` runs. It's best-effort: it
+// reaches the registry over the network, so any failure is logged (verbose
+// only for the success line) and never propagates to the dev server. The
+// tree is never a build/runtime input — zero-Node is preserved.
+func syncDevTypes(lf *lockfile.File, srcDir string, verbose bool, stdout, stderr io.Writer) {
+	registry := os.Getenv("NEXUS_REGISTRY")
+	outDir := filepath.Join(srcDir, "node_modules")
+	res, err := emitLockfileTypes(lf, registry, &http.Client{Timeout: 60 * time.Second}, outDir, io.Discard)
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(stderr, "%s●%s esm dev: types sync skipped: %v\n", ansiYellow, ansiReset, err)
+		}
+		return
+	}
+	if res.Packages == 0 && res.Files == 0 {
+		return
+	}
+	if verbose {
+		fmt.Fprintf(stdout, "%s●%s esm dev: synced editor types — %d package(s), %d file(s)\n",
+			ansiCyan, ansiReset, res.Packages, res.Files)
 	}
 }
 
