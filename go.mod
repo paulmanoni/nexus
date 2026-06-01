@@ -129,8 +129,4 @@ require (
 
 replace github.com/fastschema/qjs => github.com/paulmanoni/qjs v0.0.7-0.20260529000300-0c70d9cdb3f9
 
-require github.com/paulmanoni/viteless v0.0.0-00010101000000-000000000000
-
-// Co-development: viteless is built alongside nexus. Drop this replace and
-// pin a tagged version before release.
-replace github.com/paulmanoni/viteless => /Users/amtz/Documents/personal/viteless
+require github.com/paulmanoni/viteless v0.1.0

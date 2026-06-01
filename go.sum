@@ -172,6 +172,8 @@ github.com/patrickmn/go-cache v2.1.0+incompatible h1:HRMgzkcYKYpi3C8ajMPV8OFXaaR
 github.com/patrickmn/go-cache v2.1.0+incompatible/go.mod h1:3Qf8kWWT7OJRJbdiICTKqZju1ZixQ/KpMGzzAfe6+WQ=
 github.com/paulmanoni/qjs v0.0.7-0.20260529000300-0c70d9cdb3f9 h1:IQTwJrOWqb2lw6PzBP7FheGSxQ4LQWanBrQGwCMMFzk=
 github.com/paulmanoni/qjs v0.0.7-0.20260529000300-0c70d9cdb3f9/go.mod h1:bbg36wxXnx8g0FdKIe5+nCubrQvHa7XEVWqUptjHt/A=
+github.com/paulmanoni/viteless v0.1.0 h1:ohYsul7rcg66h3VAJ5I1rxufwGhuAxE0EtptWjx9AI4=
+github.com/paulmanoni/viteless v0.1.0/go.mod h1:qv879QAcrw2a+D60uG3gVUQkIN6Rh1bMMOvOEJhANIU=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
 github.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
