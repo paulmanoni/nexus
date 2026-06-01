@@ -127,11 +127,15 @@ func startESMWatcher(ctx context.Context, dir, appAddr string, verbose bool, std
 	})
 	srv := viteless.NewServer(host, viteless.WithProxy(esmProxyTarget(appAddr)))
 
-	ln, err := net.Listen("tcp", esmListenAddr())
+	ln, fellBack, err := esmListen()
 	if err != nil {
 		return fmt.Errorf("esm dev: bind: %w", err)
 	}
-	devURL := fmt.Sprintf("http://localhost:%d/", ln.Addr().(*net.TCPAddr).Port)
+	port := ln.Addr().(*net.TCPAddr).Port
+	devURL := fmt.Sprintf("http://localhost:%d/", port)
+	if fellBack {
+		fmt.Fprintf(stdout, "%s●%s esm dev: port %s busy — using %d instead\n", ansiYellow, ansiReset, esmPreferredPort(), port)
+	}
 
 	httpSrv := &http.Server{Handler: srv.Handler()}
 	go func() {
@@ -226,13 +230,43 @@ func esmAliases(servedRoot string) []devserver.Alias {
 	return []devserver.Alias{{Prefix: "@/", Dir: servedRoot}}
 }
 
-// esmListenAddr is the address the dev server binds. NEXUS_DEV_ESM_ADDR
-// overrides; default is an OS-assigned loopback port (":0").
-func esmListenAddr() string {
+// esmDefaultPort is the dev server's stable default — Vite's port, so it's
+// instantly familiar and bookmarkable across runs. A fixed port also means
+// the dev tab survives a `nexus dev` restart without changing the URL.
+const esmDefaultPort = "5173"
+
+// esmPreferredPort is the port the dev server tries first: NEXUS_DEV_ESM_ADDR
+// (full host:port) wins; otherwise the stable default on loopback.
+func esmPreferredPort() string {
 	if v := os.Getenv("NEXUS_DEV_ESM_ADDR"); v != "" {
 		return v
 	}
-	return "127.0.0.1:0"
+	return esmDefaultPort
+}
+
+// esmListen binds the dev server. It tries the preferred (stable) port
+// first; if that's already in use — a second project, a leftover process,
+// or real Vite — it falls back to an OS-assigned port so `nexus dev` never
+// fails to start over a port clash. Returns the listener, whether it fell
+// back, and any error.
+func esmListen() (net.Listener, bool, error) {
+	pref := esmPreferredPort()
+	addr := pref
+	// A bare port ("5173") or env value without host → bind on loopback.
+	if !strings.Contains(addr, ":") {
+		addr = "127.0.0.1:" + addr
+	} else if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	if ln, err := net.Listen("tcp", addr); err == nil {
+		return ln, false, nil
+	}
+	// Preferred port busy → OS-assigned fallback.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, false, err
+	}
+	return ln, true, nil
 }
 
 // esmProxyTarget turns the app's bind address into a proxy origin the dev
