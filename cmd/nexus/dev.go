@@ -50,7 +50,6 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		frontendDir string
 		frontendCmd string
 		verbose     bool
-		bundleMode  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -71,7 +70,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, bundleMode, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -87,9 +86,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 	cmd.Flags().StringVar(&frontendDir, "frontend", "",
 		"path to a frontend project (e.g. ./web); spawns its watcher alongside go run and prefixes its logs with [web]")
 	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "",
-		"command run inside --frontend dir; default is `npm run dev` (vite dev server, HMR) or `npm run dev:build` with --bundle")
-	cmd.Flags().BoolVar(&bundleMode, "bundle", false,
-		"use vite build --watch + Go-served dist instead of vite dev server (slower, but produces an embeddable bundle continuously)")
+		"command run inside --frontend dir; default `npm run dev` (Vite dev server + HMR)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
 	return cmd
@@ -113,7 +110,7 @@ func (e *userError) Error() string { return e.msg }
 // When watch is true, runs a fsnotify watcher on the target dir and
 // restarts `go run` on every coalesced source-file change. SIGINT
 // stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, bundleMode bool, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose bool, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -152,67 +149,27 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// watcher's pump never blocks if no one's listening yet.
 	frontendURLCh := make(chan string, 1)
 	if frontendDir != "" {
-		// Pick the right script + default command for the chosen
-		// mode. Bundle mode keeps the legacy `vite build --watch`
-		// path; the default mode runs vite's dev server with HMR.
-		// A user-supplied --frontend-cmd overrides both.
+		// Vite is the only frontend engine: run `npm run dev` (Vite dev
+		// server + HMR) unless the user overrode --frontend-cmd, ensure the
+		// "dev" script exists, and inject the managed proxy block into
+		// vite.config so the SPA (:5173) reaches /__nexus,/graphql,/oauth,/ws
+		// on the Go app.
 		if frontendCmd == "" {
-			if bundleMode {
-				frontendCmd = "npm run dev:build"
-			} else {
-				frontendCmd = "npm run dev"
-			}
+			frontendCmd = "npm run dev"
 		}
-		// Inject the matching script into package.json when needed.
-		// Idempotent against the named key, so projects that already
-		// declare their own version keep it.
-		if frontendCmd == "npm run dev:build" {
-			if err := ensureDevBuildScript(frontendDir, stdout); err != nil {
-				fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
-			}
+		if err := ensureDevServerScript(frontendDir, stdout); err != nil {
+			fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
 		}
-		if frontendCmd == "npm run dev" {
-			if err := ensureDevServerScript(frontendDir, stdout); err != nil {
-				fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
+		if cfg := findViteConfig(frontendDir); cfg != "" {
+			proxyURL := "http://localhost" + proxyAddr
+			if !strings.HasPrefix(proxyAddr, ":") {
+				proxyURL = "http://" + proxyAddr
 			}
-		}
-		// The watch.exclude injection only matters for bundle mode —
-		// the dev server doesn't re-bundle and doesn't loop on the
-		// auto-import-plugin .d.ts regen.
-		if bundleMode {
-			if cfg := findViteConfig(frontendDir); cfg != "" {
-				if err := client.EnsureViteWatchExclude(cfg, stdout); err != nil {
-					fmt.Fprintf(stderr, "vite watch.exclude injection skipped: %v\n", err)
-				}
+			if err := client.EnsureViteProxyForNexus(cfg, proxyURL, stdout); err != nil {
+				fmt.Fprintf(stderr, "vite proxy injection skipped: %v\n", err)
 			}
-		}
-		// Dev-server mode: the SPA fetches /__nexus/client/manifest.json
-		// (and friends) at runtime. Without a vite proxy entry those
-		// hit :8080 cross-origin from :5173 and CORS blocks them.
-		// One-time injection alongside the existing /graphql /oauth
-		// /ws rules. Bundle mode doesn't need this — same-origin
-		// because Go serves the SPA itself.
-		if !bundleMode {
-			if cfg := findViteConfig(frontendDir); cfg != "" {
-				apiURL := "http://localhost" + proxyAddr
-				if !strings.HasPrefix(proxyAddr, ":") {
-					apiURL = "http://" + proxyAddr
-				}
-				if err := client.EnsureViteProxyForNexus(cfg, apiURL, stdout); err != nil {
-					fmt.Fprintf(stderr, "vite proxy injection skipped: %v\n", err)
-				}
-				// Auto-heal: re-sync the managed block whenever the
-				// user edits vite.config.ts directly (e.g., deletes
-				// the proxy block). Without this watcher, the sync
-				// only fires on a Go restart and a manual config
-				// edit would leave the SPA broken until the user
-				// touches a .go file or restarts nexus dev.
-				proxyURL := "http://localhost" + proxyAddr
-				if !strings.HasPrefix(proxyAddr, ":") {
-					proxyURL = "http://" + proxyAddr
-				}
-				go watchAndResyncViteProxy(ctx, proxyAddr, cfg, proxyURL, stdout, stderr)
-			}
+			// Auto-heal the managed proxy block on direct vite.config edits.
+			go watchAndResyncViteProxy(ctx, proxyAddr, cfg, proxyURL, stdout, stderr)
 		}
 		if err := startFrontendWatcher(ctx, frontendDir, addr, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
 			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)

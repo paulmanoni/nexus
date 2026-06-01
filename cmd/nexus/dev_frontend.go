@@ -53,26 +53,12 @@ var viteURLRE = regexp.MustCompile(`Local:\s*(https?://[^\s/]+/?)`)
 // modes mid-session if a user adds nexus.lock; that's a restart-
 // nexus-dev moment, not a runtime concern.
 func startFrontendWatcher(ctx context.Context, dir, appAddr, cmdline string, verbose bool, stdout, stderr io.Writer, frontendURLCh chan<- string) error {
-	if depsModeAvailable(dir) {
-		// Opt-in unbundled native-ESM dev server (the viteless path):
-		// one module per URL, one Vue instance, real state-preserving HMR.
-		// Gated behind NEXUS_DEV_ESM while it matures; the bundler watcher
-		// stays the default and `nexus build` is untouched.
-		if esmDevEnabled() {
-			return startESMWatcher(ctx, dir, appAddr, verbose, stdout, stderr, frontendURLCh)
-		}
-		return startBundlerWatcher(ctx, dir, verbose, stdout, stderr)
-	}
-	// Detect first-run-without-add: the project has frontend
-	// sources under islands.src/ but no nexus.lock yet. Print a
-	// specific suggestion (with per-import nexus add commands)
-	// instead of falling through to the vite path, which would
-	// surface as "--frontend-cmd is empty" and leave the user
-	// guessing what to do.
-	if hint := maybeMissingLockfileHint(dir); hint != "" {
-		fmt.Fprintf(stderr, "%s%s%s\n", ansiYellow, hint, ansiReset)
-		return nil
-	}
+	// Vite is the only frontend engine: run the user's `npm run dev` (Vite
+	// dev server + HMR) and reverse-proxy /__nexus,/graphql,/oauth,/ws to the
+	// Go app (wired by runDev via EnsureViteProxyForNexus). appAddr is unused
+	// here now — the proxy target is injected into vite.config, not passed to
+	// the watcher.
+	_ = appAddr
 	return startViteWatcher(ctx, dir, cmdline, verbose, stdout, stderr, frontendURLCh)
 }
 
