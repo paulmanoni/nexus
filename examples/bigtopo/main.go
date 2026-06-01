@@ -14,7 +14,10 @@
 //	BIGTOPO_RESOURCES    (default 60)
 //	BIGTOPO_WORKERS      (default 50)
 //	BIGTOPO_CRONS        (default 40)
-//	BIGTOPO_DEPLOYMENTS  (default 8; set 0 to test tier-clustering instead)
+//	BIGTOPO_MODULES      (default 12; the graph groups by module. 0 = fall
+//	                      back to deployment grouping)
+//	BIGTOPO_DEPLOYMENTS  (default 8; used only when BIGTOPO_MODULES=0. Set
+//	                      both to 0 for the tier-clustering path)
 //	BIGTOPO_ADDR         (default :8080)
 //
 // The dashboard is at http://localhost:8080/__nexus/ (Introspection is
@@ -57,6 +60,7 @@ func main() {
 		nResources   = envInt("BIGTOPO_RESOURCES", 60)
 		nWorkers     = envInt("BIGTOPO_WORKERS", 50)
 		nCrons       = envInt("BIGTOPO_CRONS", 40)
+		nModules     = envInt("BIGTOPO_MODULES", 12)
 		nDeployments = envInt("BIGTOPO_DEPLOYMENTS", 8)
 		addr         = envStr("BIGTOPO_ADDR", ":8080")
 	)
@@ -173,17 +177,29 @@ func main() {
 	// deployments so the graph clusters by deployment. Set
 	// BIGTOPO_DEPLOYMENTS=0 to leave them untagged and exercise the
 	// tier-clustering fallback (Services / Data / Workers / Schedules). -
-	if nDeployments > 0 {
-		reg := app.Registry()
+	// Grouping: MODULE takes precedence in the dashboard. Stamp each
+	// endpoint's module round-robin so the graph clusters by module (the
+	// common shape — a handful of modules, each owning its controllers +
+	// resources). Set BIGTOPO_MODULES=0 to fall back to deployment tags
+	// (and BIGTOPO_DEPLOYMENTS=0 too for the tier-clustering path).
+	reg := app.Registry()
+	if nModules > 0 {
 		for _, e := range reg.Endpoints() {
-			dep := fmt.Sprintf("deploy-%d", svcIndex(e.Service)%nDeployments)
-			reg.SetEndpointDeployment(e.Service, e.Name, dep)
+			reg.SetEndpointModule(e.Service, e.Name, fmt.Sprintf("module-%02d", svcIndex(e.Service)%nModules))
+		}
+	} else if nDeployments > 0 {
+		for _, e := range reg.Endpoints() {
+			reg.SetEndpointDeployment(e.Service, e.Name, fmt.Sprintf("deploy-%d", svcIndex(e.Service)%nDeployments))
 		}
 	}
 
 	eps := app.Registry().Endpoints()
-	fmt.Printf("bigtopo: %d services, %d resources, %d workers, %d crons, %d endpoints across %d deployments\n",
-		nServices, nResources, nWorkers, nCrons, len(eps), nDeployments)
+	grouping := fmt.Sprintf("%d modules", nModules)
+	if nModules == 0 {
+		grouping = fmt.Sprintf("%d deployments", nDeployments)
+	}
+	fmt.Printf("bigtopo: %d services, %d resources, %d workers, %d crons, %d endpoints grouped into %s\n",
+		nServices, nResources, nWorkers, nCrons, len(eps), grouping)
 	fmt.Printf("bigtopo: dashboard at http://localhost%s/__nexus/\n", addr)
 	_ = app.Run(addr)
 }

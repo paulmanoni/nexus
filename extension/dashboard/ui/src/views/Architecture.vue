@@ -107,15 +107,77 @@ watch(expandedClusters, () => {
 })
 
 // stampClusters tags each node with the cluster it belongs to (_cluster +
-// label + kind), which topology.buildClusters groups on. Grouping degrades
-// gracefully: by DEPLOYMENT tag when the app uses them (the multi-service
-// mesh case), else by TIER (Services / Data / Workers / Schedules) so the
-// top level stays small no matter how many modules exist. Internet has no
-// cluster — it always renders standalone on the far left.
-function stampClusters(allNodes, svcToDep) {
+// label + kind), which topology.buildClusters groups on. Primary grouping is
+// by MODULE: each nexus.Module becomes a cluster holding its card plus the
+// resources / workers / crons it uses. A resource shared across modules goes
+// to a "Shared data" cluster; cross-cutting consumed services + anything
+// unattributable go to "Shared". Falls back to DEPLOYMENT tags, then TIER
+// (Services / Data / Workers / Schedules), for apps that don't use modules.
+// Internet has no cluster — it always renders standalone on the far left.
+//
+// ctx: { resolveCard(serviceName) -> cardId|null, svcToDep }
+function stampClusters(allNodes, ctx) {
+  const resolveCard = (ctx && ctx.resolveCard) || (() => null)
+  const svcToDep = (ctx && ctx.svcToDep) || {}
+  const isModuleId = (id) => typeof id === 'string' && id.startsWith('mod:')
+
+  const useModules = allNodes.some(n => n.type === 'service' && n.data.isModule)
+  if (useModules) {
+    const SHARED = 'grp:shared', DATA = 'grp:data', OTHER = 'grp:other'
+    const labelFor = (key) => {
+      if (key === SHARED) return 'Shared'
+      if (key === DATA) return 'Shared data'
+      if (key === OTHER) return 'Other services'
+      const i = key.indexOf(':')
+      return i >= 0 ? key.slice(i + 1) : key
+    }
+    const moduleCardFor = (svcName) => {
+      const c = resolveCard(svcName)
+      return isModuleId(c) ? c : null
+    }
+    const set = (n, key) => {
+      n.data._cluster = key
+      n.data._clusterLabel = labelFor(key)
+      n.data._clusterKind = key === DATA ? 'data' : 'module'
+    }
+    for (const n of allNodes) {
+      if (n.type === 'internet') { n.data._cluster = null; continue }
+      switch (n.type) {
+        case 'service':
+          // A module card is its own cluster; bare service cards (no module)
+          // pool into "Other services" so they don't each become a cluster.
+          set(n, n.data.isModule ? n.id : OTHER)
+          break
+        case 'resource': {
+          const mods = new Set()
+          for (const svc of n.data.attachedTo || []) {
+            const m = moduleCardFor(svc)
+            if (m) mods.add(m)
+          }
+          set(n, mods.size === 1 ? [...mods][0] : mods.size > 1 ? DATA : SHARED)
+          break
+        }
+        case 'worker': {
+          const m = moduleCardFor((n.data.serviceDeps || [])[0])
+          set(n, m || SHARED)
+          break
+        }
+        case 'cron': {
+          const m = n.data.service ? moduleCardFor(n.data.service) : null
+          set(n, m || SHARED)
+          break
+        }
+        default: // serviceDep + anything else: cross-cutting
+          set(n, SHARED)
+      }
+    }
+    return
+  }
+
+  // --- Fallback: deployment tags, then tiers (apps without modules). ----
   const depOf = (n) => {
     if (n.type === 'service' || n.type === 'worker' || n.type === 'cron') return n.data.deployment || ''
-    if (n.type === 'serviceDep') return (svcToDep && svcToDep[n.data.name]) || ''
+    if (n.type === 'serviceDep') return svcToDep[n.data.name] || ''
     return ''
   }
   const useDeployments = allNodes.some(n => depOf(n))
@@ -1299,7 +1361,7 @@ async function load() {
   // full graph; only the visible subgraph is laid out + rendered, which is
   // what keeps the canvas usable at 1000+ nodes. Edges crossing a collapsed
   // boundary are rerouted onto the cluster node (aggregated with a count).
-  stampClusters(all, svcToDep)
+  stampClusters(all, { resolveCard: resolveServiceCard, svcToDep })
   const clusters = buildClusters(all)
   const { nodes: visNodes, edges: visEdges } = computeVisible(all, edgeList, clusters, expandedClusters.value)
   const visIds = new Set(visNodes.map(n => n.id))
