@@ -328,11 +328,25 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 		}
 	}
 	if len(typeSpecs) > 0 {
+		// Write types into the frontend source dir's node_modules
+		// (islands.src/node_modules) — the SAME place `nexus types` and
+		// `nexus dev` use — so there's a single editor-only node_modules
+		// next to the frontend code, not a duplicate at the project root.
+		// Falls back to cwd when there's no islands.src/ (non-frontend layout).
+		typeDest := cwd
+		relLabel := "./node_modules/"
+		if sub := filepath.Join(cwd, islandsSrcName()); dirExists(sub) {
+			typeDest = sub
+			relLabel = "./" + islandsSrcName() + "/node_modules/"
+		}
 		tf := newTypeFetcher()
-		written, _ := tf.fetchAll(ctx, typeSpecs, cwd, stderr)
+		written, _ := tf.fetchAll(ctx, typeSpecs, typeDest, stderr)
 		if written > 0 {
-			fmt.Fprintf(stdout, "fetched %d type file%s into ./node_modules/\n", written, plural(written))
-			gitignoreEnsureNodeModules(cwd)
+			fmt.Fprintf(stdout, "fetched %d type file%s into %s\n", written, plural(written), relLabel)
+			// Keep the tree editor-only + out of git regardless of the
+			// project's root .gitignore patterns (matches `nexus types`).
+			_ = os.WriteFile(filepath.Join(typeDest, "node_modules", ".gitignore"), []byte("*\n"), 0o644)
+			gitignoreEnsureNodeModules(typeDest)
 		}
 		// Real types just landed for these specs — drop any
 		// `declare module "<spec>";` ambient shim that would
@@ -360,6 +374,12 @@ func runAdd(ctx context.Context, stdout, stderr io.Writer, specs []string) error
 // node_modules/nexus-client/package.json's exports map handles
 // adapter resolution, so we want a single top-level dep entry
 // regardless of which subpath the user added.
+// dirExists reports whether p is an existing directory.
+func dirExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
 func parseSpecForPJ(spec string) (name, version string) {
 	if i := strings.LastIndex(spec, "@"); i > 0 {
 		name, version = spec[:i], spec[i+1:]

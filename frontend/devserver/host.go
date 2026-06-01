@@ -58,6 +58,15 @@ type Config struct {
 	// here and a URL path "/x/y" maps to <Root>/x/y. Required.
 	Root string
 
+	// IndexHTML is an optional absolute path to the SPA shell when it
+	// doesn't live under Root. The nexus layout keeps source under
+	// islands.src/ (= Root) but the shell index.html under islands/ (the
+	// build-output dir); without this the dev server has no index to serve
+	// and the SPA can't boot. The entry <script> in it is rewritten to the
+	// real source entry on serve (its checked-in /main.js points at the
+	// production bundle, which doesn't exist in unbundled dev).
+	IndexHTML string
+
 	// Resolver carries the lockfile + store + on-demand/dev-rewrite hooks
 	// the shared resolver uses to turn bare specs into cached blob URLs.
 	Resolver resolver.Options
@@ -95,6 +104,7 @@ type Config struct {
 // Host implements viteless.Host.
 type Host struct {
 	root      string
+	indexHTML string
 	depPrefix string
 	res       resolver.Options
 	compiler  vue.SFCCompiler
@@ -121,6 +131,7 @@ func New(cfg Config) *Host {
 	}
 	h := &Host{
 		root:      cfg.Root,
+		indexHTML: cfg.IndexHTML,
 		depPrefix: dp,
 		res:       cfg.Resolver,
 		compiler:  cfg.Compiler,
@@ -219,6 +230,17 @@ func (h *Host) loadSource(urlPath string) ([]byte, string, bool) {
 	}
 	body, err := os.ReadFile(fsPath)
 	if err != nil {
+		// Shell fallback: the SPA index.html may live outside Root (nexus
+		// keeps source under islands.src/ but the shell under islands/).
+		// Serve the configured IndexHTML for the "/" → /index.html request
+		// so the dev server boots the app instead of proxying the broken
+		// production shell. Entry-script rewrite (below) re-points it at the
+		// source entry, resolved against Root.
+		if clean == "/index.html" && h.indexHTML != "" {
+			if ib, ierr := os.ReadFile(h.indexHTML); ierr == nil {
+				return h.rewriteEntryScripts(injectVueFlags(ib)), "html", true
+			}
+		}
 		// public/ convention: assets the HTML hard-codes (favicons, PWA
 		// icons, manifest.json) live in <Root>/public and are served at
 		// the site root — e.g. <link href="/arm-192.png"> resolves to
@@ -237,6 +259,7 @@ func (h *Host) loadSource(urlPath string) ([]byte, string, bool) {
 	switch {
 	case kind == "html":
 		body = injectVueFlags(body)
+		body = h.rewriteEntryScripts(body)
 	case ext == ".scss" || ext == ".sass":
 		// Standalone SCSS/SASS imports (`import "@/assets/styles/x.scss"`)
 		// must be compiled to CSS before viteless wraps them in a <style>
@@ -252,6 +275,38 @@ func (h *Host) loadSource(urlPath string) ([]byte, string, bool) {
 		}
 	}
 	return body, kind, true
+}
+
+// entryScriptRE matches a module script tag's src attribute pointing at a
+// root-absolute .js entry — e.g. <script type="module" src="/main.js">.
+var entryScriptRE = regexp.MustCompile(`(<script[^>]*\bsrc=")(/[^"]+\.js)(")`)
+
+// rewriteEntryScripts fixes the dev-mode entry mismatch: the project's
+// checked-in index.html references the PRODUCTION bundle name ("/main.js",
+// what `nexus build` emits), but in the unbundled dev server only the
+// SOURCE entry ("/main.ts") exists — so the browser's request for /main.js
+// 404s and the SPA never boots. When a referenced /X.js has no on-disk file
+// but a /X.ts (or .tsx/.jsx/.mjs) sibling does, rewrite the tag to the
+// source path so it flows through the normal transform pipeline. Vite does
+// the same by having index.html point at the source entry directly.
+func (h *Host) rewriteEntryScripts(html []byte) []byte {
+	return entryScriptRE.ReplaceAllFunc(html, func(m []byte) []byte {
+		sub := entryScriptRE.FindSubmatch(m)
+		jsURL := string(sub[2]) // "/main.js"
+		rel := strings.TrimPrefix(path.Clean(jsURL), "/")
+		// Already on disk as-is → leave it (a real prebuilt bundle).
+		if fi, err := os.Stat(filepath.Join(h.root, filepath.FromSlash(rel))); err == nil && !fi.IsDir() {
+			return m
+		}
+		base := strings.TrimSuffix(jsURL, ".js")
+		for _, ext := range []string{".ts", ".tsx", ".jsx", ".mjs", ".js"} {
+			cand := strings.TrimPrefix(base+ext, "/")
+			if fi, err := os.Stat(filepath.Join(h.root, filepath.FromSlash(cand))); err == nil && !fi.IsDir() {
+				return []byte(string(sub[1]) + base + ext + string(sub[3]))
+			}
+		}
+		return m
+	})
 }
 
 // vueFlagsScript defines Vue 3 esm-bundler's compile-time feature flags as
@@ -613,6 +668,18 @@ func (h *Host) resolveSourceURL(urlPath string) string {
 	for _, ext := range sourceResolveExts {
 		if fi, err := os.Stat(filepath.Join(abs, "index"+ext)); err == nil && !fi.IsDir() {
 			return strings.TrimRight(urlPath, "/") + "/index" + ext
+		}
+	}
+	// TS-style .js → .ts mapping: `import './x.js'` where only x.ts exists
+	// (TS source authored with explicit .js extensions). Swap the extension
+	// and retry the on-disk probe.
+	if jsExt := path.Ext(clean); jsExt == ".js" || jsExt == ".jsx" || jsExt == ".mjs" {
+		stem := strings.TrimSuffix(urlPath, jsExt)
+		stemAbs := strings.TrimSuffix(abs, jsExt)
+		for _, ext := range []string{".ts", ".tsx"} {
+			if fi, err := os.Stat(stemAbs + ext); err == nil && !fi.IsDir() {
+				return stem + ext
+			}
 		}
 	}
 	// No on-disk match — return as-is; loadSource will 404 and the dev

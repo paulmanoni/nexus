@@ -61,6 +61,19 @@ func startESMWatcher(ctx context.Context, dir, appAddr string, verbose bool, std
 		}
 	}
 
+	// Locate the SPA shell. Conventionally index.html sits under servedRoot;
+	// the nexus scaffold instead keeps it in the build-output dir (islands/)
+	// alongside the production bundle. When servedRoot has no index.html,
+	// point the dev server at the output-dir shell so it serves the app
+	// itself (with the entry rewritten to the source) rather than proxying
+	// the Go binary's stale/empty embedded shell.
+	shellIndex := ""
+	if _, e := os.Stat(filepath.Join(servedRoot, "index.html")); e != nil {
+		if out := filepath.Join(root, islandsOutName(), "index.html"); fileExistsESM(out) {
+			shellIndex = out
+		}
+	}
+
 	hasVue, err := hasVueSources(actualSrcDir)
 	if err != nil {
 		return fmt.Errorf("esm dev: scan vue sources: %w", err)
@@ -129,6 +142,7 @@ func startESMWatcher(ctx context.Context, dir, appAddr string, verbose bool, std
 
 	host := devserver.New(devserver.Config{
 		Root:      servedRoot,
+		IndexHTML: shellIndex,
 		Resolver:  resOpts,
 		Compiler:  compiler,
 		Aliases:   esmAliases(servedRoot),
@@ -271,6 +285,12 @@ func syncDevTypes(lf *lockfile.File, srcDir string, verbose bool, stdout, stderr
 		fmt.Fprintf(stdout, "%s●%s esm dev: synced editor types — %d package(s), %d file(s)\n",
 			ansiCyan, ansiReset, res.Packages, res.Files)
 	}
+}
+
+// fileExistsESM reports whether p is an existing regular file.
+func fileExistsESM(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }
 
 // esmAliases returns the import aliases the dev server honors, parsed from
