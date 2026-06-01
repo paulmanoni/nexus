@@ -632,18 +632,18 @@ package.json scripts, node_modules, or vite. Deps come from esm.sh into
 	"nexustoml": `
 NEXUS.TOML (runtime config)
 
-The per-app config file, loaded by main.go:
+Loaded by main.go:
 
-    cfg  := nexus.MustLoadConfig()      // the keys below -> nexus.Config
-    opts := nexus.MustLoadExtensions()  // [extensions.*] -> []Option
+    cfg  := nexus.MustLoadConfig()      // the [runtime] table -> nexus.Config
+    opts := nexus.MustLoadExtensions()  // [extensions.*]      -> []Option
     nexus.Run(cfg, append(opts, modules...)...)
 
-Edit settings here instead of in code. Any key absent from the file
-leaves its Config field zero-valued, so framework defaults apply.
-'nexus new' scaffolds a starter with the runtime block below.
+ALL runtime keys live under [runtime] (or a [runtime.<sub>] table). A key
+absent from the file leaves its Config field zero-valued, so framework
+defaults apply. 'nexus new' scaffolds this block.
 
-    # top-level keys
-    environment   = "development"   # "development" | "staging" | "production"
+    [runtime]
+    environment   = "development"   # development | staging | production
     version       = "1.0.0"         # shown on /__nexus/config
     trace_capacity = 1000           # request-trace ring buffer (0 = off)
 
@@ -651,34 +651,60 @@ leaves its Config field zero-valued, so framework defaults apply.
     # default — the surface 404s — so a prod binary is locked down.
     # Turn it on in dev; in prod prefer a CIDR allowlist instead.
     introspection          = true
-    introspection_networks = ["10.0.0.0/8"]   # allow even when off
+    introspection_networks = ["10.0.0.0/8"]   # allowed even when off
 
-    [server]
+    [runtime.server]
     addr         = ":8080"
     route_prefix = ""               # prepended to every REST/GraphQL/WS route
 
-    [dashboard]
+    [runtime.server.listeners.admin]   # optional multi-scope listeners
+    addr  = "127.0.0.1:7000"
+    scope = "admin"                 # public | internal | admin
+
+    [runtime.dashboard]
     enabled = true
     name    = "My App"
 
-    [graphql]
+    [runtime.graphql]
     path               = "/graphql"
     disable_playground = false
 
-    [middleware.cors]
+    [runtime.middleware.cors]
     allow_origins = ["*"]
 
-    [middleware.ratelimit]
-    rpm   = 600
+    [runtime.middleware.ratelimit]
+    rpm = 600
     burst = 50
 
-    # Extension blocks — decoded by nexus.MustLoadExtensions() when the
-    # matching extension is blank-imported (e.g. extension/config).
-    # [extensions.config]
-    #   ...
+DATABASES live at the TOP level (not under [runtime]). Wire each in code
+with nexus.DatabaseFromConfig[YourType]("name") (YourType embeds
+*db.Manager). Inline values OR a config-server key_prefix:
 
-Slice-of-middleware fields (Global, Dashboard) need Go funcs, so they
-stay in code; everything data-driven lives here.
+    [databases.main]                # inline (no config server needed)
+    driver   = "postgres"
+    host     = "localhost"
+    port     = "5432"
+    user     = "postgres"
+    password = "${DB_PASSWORD}"     # ${ENV} expanded at load
+    name     = "myapp"
+    sslmode  = "disable"
+    default  = true
+
+    [databases.uaa]                 # config-server mode (secrets external)
+    driver     = "postgres"
+    key_prefix = "db.uaa"           # reads db.uaa.{host,port,username,password,name}
+
+EXTENSIONS are decoded by nexus.MustLoadExtensions() when the matching
+extension is blank-imported (_ "github.com/paulmanoni/nexus/extension/config"):
+
+    [extensions.config]             # config server — values via nexus.Get[T]("key")
+    endpoint = "http://localhost:8078"
+    identity = "myapp"
+    profile  = "default"
+    poll_interval = "30s"
+
+Slice-of-middleware fields (Global, Dashboard) need Go funcs, so they stay
+in code; everything data-driven lives here.
 `,
 
 	"cli": `

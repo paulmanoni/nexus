@@ -819,10 +819,12 @@ func StubAuthenticator(ctx context.Context, clientID, username, password string)
 // code. Fields absent from the TOML fall back to framework defaults.
 const tmplDeployTOML = `# nexus.toml — runtime config for this app.
 #
-# main.go loads this via nexus.MustLoadConfig() (the keys below) and
-# nexus.MustLoadExtensions() ([extensions.*], none by default). Edit
-# settings here, not in code; absent fields use framework defaults.
+# main.go loads the [runtime] table via nexus.MustLoadConfig() and any
+# [extensions.*] blocks via nexus.MustLoadExtensions(). Edit settings here,
+# not in code; absent fields fall back to framework defaults. Every runtime
+# key lives UNDER [runtime] (or a [runtime.<sub>] table).
 
+[runtime]
 environment = "development"
 
 # Introspection opens the /__nexus dashboard + JSON APIs. It's OFF by
@@ -832,10 +834,27 @@ environment = "development"
 # admin CIDR instead — introspection_networks = ["10.0.0.0/8"].
 introspection = true
 
-[server]
+[runtime.server]
 addr = ":8080"
 
-[dashboard]
+[runtime.dashboard]
 enabled = true
 name = "{{.Name}}"
+
+# Databases live at the TOP level (not under [runtime]); wire each with
+# nexus.DatabaseFromConfig[YourType]("name") in code.
+# [databases.main]
+# driver   = "postgres"
+# host     = "localhost"
+# port     = "5432"
+# user     = "postgres"
+# password = "${DB_PASSWORD}"   # ${ENV} is expanded at load
+# name     = "{{.Name}}"
+# sslmode  = "disable"
+
+# Config server (optional) — read secrets/flags via nexus.Get[T]("key").
+# [extensions.config]
+# endpoint = "http://localhost:8078"
+# identity = "{{.Name}}"
+# profile  = "default"
 `

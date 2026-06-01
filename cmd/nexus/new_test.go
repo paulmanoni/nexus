@@ -51,7 +51,7 @@ func TestScaffoldAndBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	for _, want := range []string{"[server]", "[dashboard]", "introspection = true"} {
+	for _, want := range []string{"[runtime]", "[runtime.server]", "[runtime.dashboard]", "introspection = true"} {
 		if !strings.Contains(string(manifest), want) {
 			t.Fatalf("manifest missing %q:\n%s", want, manifest)
 		}

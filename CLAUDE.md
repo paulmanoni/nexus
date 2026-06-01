@@ -52,18 +52,50 @@ func main() {
 `index.html`, `/assets/*` gets immutable cache, and REST/GraphQL/WS routes win on
 conflict. Mount under a sub-path with `nexus.FrontendAt("/admin")`.
 
-### Workflow (the commands you'll use)
+### How frontend packages are managed (no npm)
+
+Three artifacts, each with a distinct job:
+
+| Artifact | Scope | Role |
+|----------|-------|------|
+| `~/.nexus/cache` (`NEXUS_CACHE`) | global, shared | content-addressed store of every fetched file (JS/CSS/`.d.ts`/fonts) from esm.sh. Hashed by URL; reused across all projects. |
+| `nexus.lock` | per project | **authoritative.** Pins every resolved package **including transitives** to an exact version + resolved esm.sh URL + integrity hash. This is what the bundler (`nexus dev`/`nexus build`) reads. |
+| `package.json` | per project | human/IDE/Renovate-facing list of **direct** deps under `dependencies` (no `scripts`, no `devDependencies`). Not the build source of truth, but `nexus install` reconciles it against the lock. |
+| `islands.src/node_modules` | per project | **editor-only** `.d.ts` tree from `nexus types` (gitignored). Never a build/runtime input. |
+
+The registry is **esm.sh** (`https://esm.sh`, override with `NEXUS_REGISTRY`). A bare
+`vue` 302-redirects to a pinned `vue@3.x`, which is what gets recorded. Framework
+singletons (`vue`, `react`, `react-dom`) are fetched with `?external=` so a
+dependency doesn't bundle its own copy of Vue (which would split reactivity state at
+runtime). Sub-path specs work too: `nexus add @mdi/font/css/materialdesignicons.min.css`.
+
+### Commands
 ```
-nexus add vue            # fetch a dep from esm.sh → ~/.nexus/cache + nexus.lock
-                         #   (also: nexus add react react-dom, nexus add pinia, …)
-nexus types              # editor IntelliSense WITHOUT npm: mirror each dep's real
-                         #   .d.ts from esm.sh into islands.src/node_modules
-                         #   (gitignored, editor-only). nexus dev refreshes it.
-nexus dev                # live dev server + HMR (see below)
+nexus add <pkg>[@ver]…   # resolve from esm.sh, follow transitive imports, hash +
+                         #   cache every file in ~/.nexus/cache, pin ALL (incl.
+                         #   transitives) in nexus.lock, mirror the direct dep into
+                         #   package.json, and fetch real .d.ts into
+                         #   islands.src/node_modules. e.g. nexus add vue / pinia /
+                         #   @vue-flow/core / react react-dom
+nexus remove <pkg>…      # drop from nexus.lock + package.json (cache left for gc)
+nexus install            # fresh-clone UX: walk nexus.lock + package.json and fetch
+                         #   any missing blobs into the cache (no network if warm)
+nexus update [<pkg>…]    # re-resolve to what the registry serves now; bump pins
+nexus types              # (re)generate islands.src/node_modules for IntelliSense
+nexus gc                 # reclaim cache space from unreferenced blobs
+```
+After `nexus add <pkg>`, just `import` it in `islands.src/*` — no separate install.
+At build/dev, the esbuild-in-Go resolver maps each import (bare, relative, sub-path,
+or tsconfig `paths` alias) to its cached blob via `nexus.lock`.
+
+### Build/serve commands
+```
+nexus dev                # live ESM dev server + HMR (see below)
 nexus build              # production bundle → islands/, embedded via //go:embed
 ```
-Add a dependency, then import it in `islands.src/*` — no install step beyond
-`nexus add`. `nexus remove <pkg>` drops it.
+**Zero-Node guarantee:** there is no `node_modules` at build or runtime — the only
+`node_modules` is the editor-only types tree under `islands.src/`, and the build
+ignores it.
 
 ### `nexus dev` — the dev model (IMPORTANT)
 `nexus dev` runs an **unbundled native-ESM dev server** (the "viteless" path):
@@ -109,21 +141,55 @@ nexus init --frontend vue           # add frontend to an EXISTING project
 `[extensions.*]` blocks via `nexus.MustLoadExtensions()`. Edit settings in the file,
 not in code; absent keys fall back to framework defaults.
 
+**All runtime keys live under `[runtime]`** (or a `[runtime.<sub>]` table) — a key at
+the top level is silently ignored. `[databases.*]` and `[extensions.*]` are top-level.
+
 ```toml
-# nexus.toml
+[runtime]
 environment    = "development"          # development | staging | production
 introspection  = true                   # opens /__nexus (OFF by default → 404s)
+introspection_networks = ["10.0.0.0/8"] # allowed even when introspection is off
 trace_capacity = 1000                    # request-trace ring buffer (0 = off)
 
-[server]
+[runtime.server]
 addr = ":8080"
+route_prefix = ""                        # prepended to every REST/GraphQL/WS route
 
-[dashboard]
+[runtime.server.listeners.admin]         # optional multi-scope listeners
+addr  = "127.0.0.1:7000"
+scope = "admin"                          # public | internal | admin
+
+[runtime.dashboard]
 enabled = true
 name    = "My App"
 
-[graphql]
+[runtime.graphql]
 path = "/graphql"
+
+[runtime.middleware.cors]
+allow_origins = ["*"]
+
+[runtime.middleware.ratelimit]
+rpm = 600
+burst = 50
+
+# Databases — TOP LEVEL (not under [runtime]); wired in code via
+# nexus.DatabaseFromConfig[T]("name"). Inline values OR a config-server key_prefix.
+[databases.main]
+driver   = "postgres"
+host     = "localhost"
+port     = "5432"
+user     = "postgres"
+password = "${DB_PASSWORD}"              # ${ENV} expanded at load
+name     = "myapp"
+sslmode  = "disable"
+default  = true
+
+# Config server (optional) — decoded by MustLoadExtensions; values via nexus.Get.
+[extensions.config]
+endpoint = "http://localhost:8078"
+identity = "myapp"
+profile  = "default"
 ```
 `nexus docs nexustoml` documents every key. You can also pass `nexus.Config{...}`
 inline to `nexus.Run` instead of the file.
@@ -201,6 +267,28 @@ Field name = constructor name minus `New`, first letter lowercased
 (`NewSearchUsers` → `searchUsers`). Fields are partitioned by service; service-less
 handlers mount on a default partition.
 
+**Related fields without N+1 — `LoadField`.** Add a batched (dataloader) field to a
+Go type so nested GraphQL resolvers don't fire one query per parent:
+```go
+nexus.LoadField[models.AcademicProgramme, int64, *models.AcademicLevel](
+    "level",                                                   // GraphQL field name
+    func(p models.AcademicProgramme) int64 { return *p.LevelID }, // parent → key
+    func(ctx context.Context, ids []int64, db *resources.DB) (map[int64]*models.AcademicLevel, error) {
+        var rows []models.AcademicLevel
+        db.GetDB().Where("id IN (?)", ids).Find(&rows)
+        out := make(map[int64]*models.AcademicLevel, len(rows))
+        for i := range rows { out[*rows[i].ID] = &rows[i] }   // map EACH key → its row
+        return out, nil
+    },
+)
+```
+`LoadField[Parent, Key, Child]("field", keyFn, fetch)` — the framework collects every
+parent's key across the query and calls `fetch` ONCE per batch. `fetch` is one of:
+(a) `func(ctx, []Key) (map[Key]Child, error)` — no deps; (b) a constructor returning
+`dataloader.Fetch[Key, Child]` (fx-injected); (c) inline with trailing fx-injected deps
+(`func(ctx, []Key, db *DB, …)`). Parent's SDL name is its Go type name. (Watch the loop:
+key each result by its own id — don't overwrite as the example's inner loop did.)
+
 ### WebSocket
 ```go
 func NewChatSend(svc *ChatService, sess *nexus.WSSession, p nexus.Params[ChatPayload]) error {
@@ -217,21 +305,57 @@ Built-in `ping/authenticate/subscribe/unsubscribe` are handled by the hub.
 
 ## 6. Resources (databases / caches / queues)
 
+**Typed helpers (idiomatic).** Define a wrapper that embeds the framework manager,
+then register it as an `Option`. The framework owns the lifecycle (Start on boot,
+Stop on shutdown), provides `*YourType` into the DI graph, and registers it as a
+dashboard resource (shown red if down):
 ```go
-import "github.com/paulmanoni/nexus/resource"
+import (
+    "github.com/paulmanoni/nexus"
+    "github.com/paulmanoni/nexus/db"
+    "github.com/paulmanoni/nexus/extension/cache"
+)
 
-func (m *DB) NexusResources() []resource.Resource {     // implement on your wrapper
-    return []resource.Resource{
-        resource.NewDatabase("main", "GORM — postgres",
-            map[string]any{"engine": "postgres"}, m.IsConnected, resource.AsDefault()),
+type DB struct{ *db.Manager }          // MUST embed *db.Manager
+type SourceDB struct{ *db.Manager }
+type CacheManager struct{ *cache.Manager }
+
+func DatabaseOptions() []nexus.Option {
+    return []nexus.Option{
+        nexus.DatabaseFromConfig[DB]("main"),        // reads [databases.main] from nexus.toml
+        nexus.DatabaseFromConfig[SourceDB]("source"),
     }
 }
+
+func CacheOption() nexus.Option {
+    return nexus.Cache[CacheManager]("session",
+        func() *cache.Config { return &cache.Config{} },
+        nexus.WithCacheDefault(),
+        nexus.WithCacheDescription("Redis + in-memory fallback"))
+}
 ```
-`NewDatabase` / `NewCache` / `NewQueue(name, desc, details, healthy, opts...)`;
-options `resource.AsDefault()`, `resource.DependsOn(...)`, `resource.WithDetails(fn)`.
-Register with `app.Register(r)` or `nexus.ProvideResources`. A constructor param that
-implements `NexusResources() []resource.Resource` is auto-detected → graph edges.
-Live runtime usage: `app.OnResourceUse(target)` records `target.UsingCtx(ctx, name)`.
+- `nexus.DatabaseFromConfig[T]("name", opts...)` — reads `[databases.name]` (needs
+  `MustLoadConfig` to have run); `T` embeds `*db.Manager`.
+- `nexus.Database[T]("name", func() db.Config {…}, opts...)` — inline config (no TOML).
+- `nexus.Cache[T]("name", func() *cache.Config {…}, opts...)` — `T` embeds `*cache.Manager`.
+- Options: `WithDatabaseDefault/Details/Description`, `WithCacheDefault/Description`.
+
+Handlers/services then take `*DB`, `*CacheManager` as constructor params (fx injects).
+
+**Manual API** (for queues or full control): `resource.NewDatabase/NewCache/NewQueue(name,
+desc, details, healthy, opts...)` with `resource.AsDefault()/DependsOn(...)/WithDetails(fn)`;
+register via `app.Register(r)`, or implement `NexusResources() []resource.Resource` on a
+constructor param for auto-detection. Live usage edges: `app.OnResourceUse(target)`.
+
+### Config server (`nexus.Get`)
+With `[extensions.config]` wired (blank-import `_ ".../extension/config"` + the TOML
+block), read values anywhere:
+```go
+addr := nexus.Get[string]("server.addr")
+port := nexus.Get[int]("db.port", 5432)              // 2nd arg = default
+ttl  := nexus.Get[time.Duration]("cache.ttl", 5*time.Minute)
+```
+Databases can pull secrets from it via `key_prefix` instead of inline values.
 
 ---
 
