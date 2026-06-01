@@ -38,6 +38,7 @@ func fixture(t *testing.T) (*httptest.Server, *Host) {
 	write("src/App.vue", "<template><div/></template>")
 	write("src/logo.png", "PNGDATA")
 	write("src/style.css", ".a{color:red}")
+	write("src/theme.scss", "$w: 250px;\n.sidebar { width: $w; }")
 	// Extensionless-import targets: a bare file (router.ts) and a
 	// directory with an index (plugins/index.ts), to exercise Vite-style
 	// extension + index resolution.

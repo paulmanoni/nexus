@@ -35,6 +35,28 @@ func TestPreprocessSFCStyles_NonSassLangLeftForGuard(t *testing.T) {
 	}
 }
 
+func TestPreprocessSource_CompilesInlineScss(t *testing.T) {
+	if !sassOnPath() {
+		t.Skip("system `sass` not installed")
+	}
+	// The exported entry the unbundled dev server uses — it must run the
+	// same scss preprocessing the bundler's SFC plugin does, so a .vue with
+	// inline <style lang="scss"> compiles instead of failing with
+	// "requires a preprocessor".
+	src := `<template><div/></template>` + "\n" +
+		`<style scoped lang="scss">$c: #d3e3fd; .row { &:hover { color: $c; } }</style>`
+	out, err := PreprocessSource(src, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out, `lang="scss"`) || strings.Contains(out, "&:hover") || strings.Contains(out, "$c") {
+		t.Errorf("scss not compiled by PreprocessSource; got: %q", out)
+	}
+	if !strings.Contains(out, ".row:hover") || !strings.Contains(out, "#d3e3fd") {
+		t.Errorf("expected compiled css; got: %q", out)
+	}
+}
+
 func TestPreprocessSFCStyles_ScssCompiledAndLangStripped(t *testing.T) {
 	if !sassOnPath() {
 		t.Skip("system `sass` not installed")

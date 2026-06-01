@@ -65,6 +65,20 @@ func preprocessSFCStyles(source, fileDir string) (string, error) {
 	return out, nil
 }
 
+// PreprocessSource runs the same pre-compile rewrites the esbuild SFC
+// Plugin applies before handing source to the compiler: Vuetify
+// auto-import (inject `<v-*>` component imports) followed by inline
+// <style lang="scss"|"sass"> compilation. fileDir is the .vue file's
+// directory (sass load-path). Exported so the unbundled dev server
+// (frontend/devserver) compiles .vue identically to `nexus build` instead
+// of duplicating the sequence. Returns the rewritten source; a sass error
+// is returned with the (partially) rewritten source so the caller can
+// surface it.
+func PreprocessSource(source, fileDir string) (string, error) {
+	rewritten, _ := bundler.VuetifyAutoImport(source)
+	return preprocessSFCStyles(rewritten, fileDir)
+}
+
 // firstNonEmpty returns the first non-empty string among its args, or "".
 func firstNonEmpty(ss ...string) string {
 	for _, s := range ss {

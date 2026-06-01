@@ -30,6 +30,7 @@ import (
 
 	"github.com/evanw/esbuild/pkg/api"
 
+	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 	"github.com/paulmanoni/nexus/frontend/deps/resolver"
 	"github.com/paulmanoni/nexus/frontend/deps/sfc/vue"
 	"github.com/paulmanoni/viteless"
@@ -182,9 +183,24 @@ func (h *Host) loadSource(urlPath string) ([]byte, string, bool) {
 		}
 		return nil, "", false
 	}
-	kind := kindForExt(strings.ToLower(path.Ext(clean)))
-	if kind == "html" {
+	ext := strings.ToLower(path.Ext(clean))
+	kind := kindForExt(ext)
+	switch {
+	case kind == "html":
 		body = injectVueFlags(body)
+	case ext == ".scss" || ext == ".sass":
+		// Standalone SCSS/SASS imports (`import "@/assets/styles/x.scss"`)
+		// must be compiled to CSS before viteless wraps them in a <style>
+		// tag — the browser can't parse $vars/@use/nesting, so an
+		// uncompiled block silently breaks all the styles it defines
+		// (e.g. layout/sidebar metrics). The bundler runs these through
+		// the sass plugin; mirror that here. --load-path is the file's
+		// own dir so @use/@import resolve. On a sass error or missing
+		// CLI, serve the raw source so the failure is visible rather than
+		// swallowed.
+		if css, serr := bundler.CompileSassSource(string(body), filepath.Dir(fsPath), ext == ".sass"); serr == nil {
+			body = []byte(css)
+		}
 	}
 	return body, kind, true
 }
@@ -326,7 +342,18 @@ func (h *Host) transformVue(urlPath string, src []byte) ([]byte, error) {
 	if h.compiler == nil {
 		return nil, fmt.Errorf("no Vue SFC compiler wired for %s", urlPath)
 	}
-	res, err := h.compiler.Compile(string(src), urlPath)
+	// Apply the same pre-compile rewrites the bundler's SFC plugin does:
+	// Vuetify auto-import + inline <style lang="scss"|"sass"> compilation.
+	// The QuickJS adapter has no preprocessor, so without this an inline
+	// `<style lang="scss">` makes Compile fail ("requires a preprocessor")
+	// → the module ships no default export → every importer breaks.
+	// fileDir = the .vue's own directory (sass load-path for @use/@import).
+	fileDir := filepath.Dir(filepath.Join(h.root, filepath.FromSlash(strings.TrimPrefix(urlPath, "/"))))
+	pre, perr := vue.PreprocessSource(string(src), fileDir)
+	if perr != nil {
+		return nil, perr
+	}
+	res, err := h.compiler.Compile(pre, urlPath)
 	if err != nil {
 		return nil, err
 	}
