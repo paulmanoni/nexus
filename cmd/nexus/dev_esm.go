@@ -210,17 +210,26 @@ func esmWatch(ctx context.Context, servedRoot string, host *devserver.Host, hub 
 			if rerr != nil || strings.HasPrefix(rel, "..") {
 				continue
 			}
+			base := filepath.Base(ev.Name)
 			urlPath := "/" + filepath.ToSlash(rel)
-			switch strings.ToLower(filepath.Ext(ev.Name)) {
-			case ".css", ".scss", ".sass":
+			switch {
+			case strings.HasSuffix(base, ".css"), strings.HasSuffix(base, ".scss"), strings.HasSuffix(base, ".sass"):
 				hub.Broadcast(viteless.Update{Type: "css", Path: urlPath})
-			case ".vue", ".ts", ".tsx", ".jsx", ".js", ".mjs":
+			case strings.HasSuffix(base, ".vue"), strings.HasSuffix(base, ".ts"),
+				strings.HasSuffix(base, ".tsx"), strings.HasSuffix(base, ".jsx"),
+				strings.HasSuffix(base, ".js"), strings.HasSuffix(base, ".mjs"):
 				// Self-accepting modules (.vue carry the HMR footer) hot-swap;
 				// the viteless client falls back to a reload for the rest.
 				hub.Broadcast(viteless.Update{Type: "update", Path: urlPath})
-			default:
-				// index.html, json config, anything else → full reload.
+			case base == "index.html":
+				// The shell changed — only a full reload picks that up.
 				hub.Reload()
+			default:
+				// Editor temp/swap/backup files, .map, dotfiles, partial
+				// atomic-rename artifacts, etc. IGNORE them. Reloading here
+				// raced the real source update (the editor writes a sibling
+				// temp on every save) and the reload won, so HMR never
+				// applied. Only the file types above drive HMR.
 			}
 			_ = host
 		case <-w.Errors:
