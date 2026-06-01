@@ -3,6 +3,10 @@ package devserver
 import (
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
+	"github.com/paulmanoni/nexus/frontend/deps/resolver"
+	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
 
 func TestPkgKey(t *testing.T) {
@@ -74,6 +78,61 @@ func TestToPrebundleURLSafe(t *testing.T) {
 	h.pre.mu.Unlock()
 	if !registered {
 		t.Errorf("toPrebundle did not register entry %q under %q", entryURL, pkg)
+	}
+}
+
+func TestPrebundleDiskPersistence(t *testing.T) {
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(Config{
+		Root:      t.TempDir(),
+		Resolver:  resolver.Options{Lockfile: lockfile.New(), Store: st},
+		Prebundle: true,
+		Mode:      "development",
+	})
+	p := h.pre
+	pkg, sig := "vuetify@3.11.7", "https://esm.sh/vuetify@3.11.7/x.mjs"
+
+	// Nothing cached yet.
+	if got := p.loadFromDisk(pkg, sig); got != nil {
+		t.Fatal("expected disk miss before any save")
+	}
+	// Save a build, then it must round-trip from disk byte-for-byte.
+	want := &pkgBuild{
+		sig: sig,
+		files: map[string]string{
+			"e-abc123.js": "export const a = 1;\nimport \"/@pre/vuetify@3.11.7/chunk-X.js\";",
+			"chunk-X.js":  "export const shared = 2;",
+		},
+	}
+	p.saveToDisk(pkg, want)
+	got := p.loadFromDisk(pkg, sig)
+	if got == nil {
+		t.Fatal("expected disk hit after save")
+	}
+	if len(got.files) != len(want.files) {
+		t.Fatalf("file count: got %d want %d", len(got.files), len(want.files))
+	}
+	for k, v := range want.files {
+		if got.files[k] != v {
+			t.Errorf("file %q: got %q want %q", k, got.files[k], v)
+		}
+	}
+	// A different defines signature must MISS (cache keyed on defines).
+	h2 := New(Config{
+		Root:      t.TempDir(),
+		Resolver:  resolver.Options{Lockfile: lockfile.New(), Store: st},
+		Prebundle: true,
+		Mode:      "production", // different defines → different key
+	})
+	if got := h2.pre.loadFromDisk(pkg, sig); got != nil {
+		t.Error("expected disk miss when defines differ (key must include defines)")
+	}
+	// A different entry-set signature must also MISS.
+	if got := p.loadFromDisk(pkg, "different-sig"); got != nil {
+		t.Error("expected disk miss when entry-set sig differs")
 	}
 }
 

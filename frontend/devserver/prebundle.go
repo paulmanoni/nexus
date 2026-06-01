@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,6 +19,13 @@ import (
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:8]
+}
+
+// shortHashLong is shortHash with more bits, for on-disk cache keys where
+// collisions across packages/entry-sets must be vanishingly unlikely.
+func shortHashLong(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // Dependency pre-bundling — the unbundled dev server's answer to the
@@ -65,6 +73,8 @@ type prebundler struct {
 	mu      sync.Mutex
 	entries map[string]map[string]bool // pkgKey → set of entry store URLs
 	built   map[string]*pkgBuild       // pkgKey → last build (nil until built)
+
+	diskDir string // <store>/prebundle; "" disables cross-restart persistence
 }
 
 // pkgBuild is one package's grouped, code-split build: a map of served
@@ -78,11 +88,109 @@ type pkgBuild struct {
 }
 
 func newPrebundler(h *Host) *prebundler {
-	return &prebundler{
+	p := &prebundler{
 		host:    h,
 		entries: map[string]map[string]bool{},
 		built:   map[string]*pkgBuild{},
 	}
+	// Persist built packages under the shared cache so a `nexus dev`
+	// restart reuses them instead of re-running esbuild. The store already
+	// persists the dep blobs cross-restart; this adds the bundle output.
+	if h.res.Store != nil {
+		p.diskDir = filepath.Join(h.res.Store.Root(), "prebundle")
+	}
+	return p
+}
+
+// definesSig fingerprints the esbuild Defines that feed every build, so a
+// changed Mode / VITE_* env invalidates the on-disk cache.
+func (p *prebundler) definesSig() string {
+	if len(p.host.defines) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(p.host.defines))
+	for k := range p.host.defines {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(p.host.defines[k])
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// diskKeyDir returns the on-disk directory a package build is cached in,
+// keyed by package + entry-set signature + defines signature. A changed
+// entry set or defines yields a different dir, so stale builds are never
+// served and old dirs simply accrue (swept by `nexus gc` / manual clean).
+// Returns "" when persistence is disabled (no store).
+func (p *prebundler) diskKeyDir(pkg, sig string) string {
+	if p.diskDir == "" {
+		return ""
+	}
+	h := shortHashLong(pkg + "\x00" + sig + "\x00" + p.definesSig())
+	// pkg may contain '/' and '@' (scoped, versioned) — hash is filesystem
+	// safe; keep a readable prefix for debugging.
+	safe := strings.NewReplacer("/", "_", "@", "-").Replace(pkg)
+	return filepath.Join(p.diskDir, safe+"-"+h)
+}
+
+// loadFromDisk reconstructs a pkgBuild from a cached directory, or nil on
+// any miss/corruption (caller rebuilds). The manifest lists the basenames;
+// each is a sibling file.
+func (p *prebundler) loadFromDisk(pkg, sig string) *pkgBuild {
+	dir := p.diskKeyDir(pkg, sig)
+	if dir == "" {
+		return nil
+	}
+	manifest, err := os.ReadFile(filepath.Join(dir, "manifest"))
+	if err != nil {
+		return nil
+	}
+	files := map[string]string{}
+	for _, base := range strings.Split(strings.TrimSpace(string(manifest)), "\n") {
+		if base == "" {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, base))
+		if err != nil {
+			return nil // incomplete cache dir — treat as miss
+		}
+		files[base] = string(body)
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return &pkgBuild{files: files, sig: sig}
+}
+
+// saveToDisk writes a successful build to its cache dir (best-effort;
+// errors are ignored — persistence is an optimisation). Writes files first,
+// then the manifest last, so loadFromDisk only succeeds on a complete dir.
+func (p *prebundler) saveToDisk(pkg string, b *pkgBuild) {
+	if b == nil || b.err != nil || len(b.files) == 0 {
+		return
+	}
+	dir := p.diskKeyDir(pkg, b.sig)
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	var bases []string
+	for base, js := range b.files {
+		if err := os.WriteFile(filepath.Join(dir, base), []byte(js), 0o644); err != nil {
+			return
+		}
+		bases = append(bases, base)
+	}
+	sort.Strings(bases)
+	_ = os.WriteFile(filepath.Join(dir, "manifest"), []byte(strings.Join(bases, "\n")+"\n"), 0o644)
 }
 
 // register records an entry store URL under its package so the next build
@@ -112,7 +220,14 @@ func (p *prebundler) serve(pkg, base string) (string, error) {
 			entries = append(entries, u)
 		}
 		p.mu.Unlock()
-		nb := p.buildPackage(pkg, entries, want) // network/CPU outside the lock
+		// Cross-restart cache: a prior `nexus dev` may have built this exact
+		// (package, entry-set, defines) before. Reuse it instead of running
+		// esbuild again.
+		nb := p.loadFromDisk(pkg, want)
+		if nb == nil {
+			nb = p.buildPackage(pkg, entries, want) // network/CPU outside the lock
+			p.saveToDisk(pkg, nb)
+		}
 		p.mu.Lock()
 		// Keep the freshest build (another goroutine may have raced).
 		if cur := p.built[pkg]; cur == nil || cur.sig != want {
