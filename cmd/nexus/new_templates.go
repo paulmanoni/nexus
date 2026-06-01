@@ -182,6 +182,9 @@ func nextStepsLines(opts scaffoldOpts) []string {
 				"  nexus add react react-dom",
 			)
 		}
+		lines = append(lines,
+			"  nexus types             # editor IntelliSense from nexus.lock — no npm (optional)",
+		)
 	}
 	if opts.HasResources() {
 		lines = append(lines,
@@ -243,11 +246,14 @@ import (
 var islandsFS embed.FS
 {{end}}
 func main() {
-	nexus.Run(
-		nexus.Config{
-			Server:    nexus.ServerConfig{Addr: ":8080"},
-			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "{{.Name}}"},
-		},
+	// Runtime config (server addr, dashboard, introspection, environment, …)
+	// is loaded from nexus.toml — edit that file to change settings without
+	// touching code. Fields absent from the TOML fall back to framework
+	// defaults. MustLoadExtensions picks up any [extensions.*] blocks.
+	cfg := nexus.MustLoadConfig()
+	opts := nexus.MustLoadExtensions()
+
+	opts = append(opts,
 {{- if .HasFrontend}}
 		nexus.ServeFrontend(islandsFS, "islands"),
 {{- end}}
@@ -265,6 +271,8 @@ func main() {
 {{- end}}
 		helloModule,
 	)
+
+	nexus.Run(cfg, opts...)
 }
 `
 
@@ -576,11 +584,13 @@ const tmplTSConfigForIDE = `{
 //     @vue-flow/core, lucide-vue-next, etc.) — ` + "`nexus add`" + ` appends
 //     to this file as new deps are pinned
 //
-// This is a v1 stopgap — the declarations are `declare module
-// 'foo';` (no signature), so the IDE stops complaining but you
-// don't get autocomplete on createApp / ref / etc. The follow-up
-// will fetch real .d.ts via esm.sh's X-TypeScript-Types header
-// and replace these stubs with proper type references.
+// These ambient `declare module 'foo';` lines (no signatures) just
+// stop the IDE complaining; they don't give autocomplete on
+// createApp / ref / etc. For REAL types, run `nexus types`: it
+// fetches each dep's .d.ts from esm.sh into a types-only
+// node_modules/ that the editor resolves against (the bundler still
+// ignores it). These shims are the no-network fallback for before
+// that runs.
 //
 // The file is meant to be committed; it's part of the project's
 // IDE-only build chain. Re-run ` + "`nexus install`" + ` to regenerate from
@@ -590,8 +600,9 @@ const tmplShimsDTS = `// nexus-shims.d.ts — IDE-only ambient declarations.
 //
 // Stops TypeScript from complaining about bare imports while
 // nexus.lock + ~/.nexus/cache do the actual resolution at build
-// time. Replace these stubs with real types by running
-// ` + "`nexus install --with-types`" + ` (coming soon).
+// time. For real types (full autocomplete), run ` + "`nexus types`" + ` —
+// it mirrors each dep's .d.ts from esm.sh into a types-only
+// node_modules/ the editor resolves against.
 
 // Asset imports — esbuild handles these at build time via the
 // resolver's content-type dispatch (CSS → injected, fonts →
@@ -659,6 +670,10 @@ No ` + "`node_modules`" + `, no ` + "`package.json`" + `, no vite.
 
   - Edit ` + "`islands.src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` rebuilds on save.
   - Add a frontend dependency: ` + "`nexus add <pkg>`" + ` (writes ` + "`nexus.lock`" + `).
+  - Editor IntelliSense without npm: ` + "`nexus types`" + ` reads ` + "`nexus.lock`" + ` and
+    fetches each dep's real ` + "`.d.ts`" + ` from esm.sh into a types-only
+    ` + "`node_modules/`" + ` (gitignored, editor-only — the build stays zero-Node).
+    ` + "`nexus dev`" + ` refreshes it automatically.
   - Production build is part of ` + "`nexus build`" + `:
 
 ` + "```" + `
@@ -687,27 +702,15 @@ constructor — fx will inject it.
 in-memory fallback. The fallback engages automatically when Redis
 is unreachable, so dev environments without Redis still boot.
 {{end}}
-## Build a deployable binary
+## Build
 
 ` + "```" + `
-nexus build --deployment monolith
-./bin/monolith
+nexus build -o ./bin/{{.Name}}
+./bin/{{.Name}}
 ` + "```" + `
 
-## Split into microservices
-
-Edit ` + "`nexus.toml`" + ` to declare additional deployments and tag
-your modules with ` + "`nexus.DeployAs(\"...\")`" + `. The manifest comments
-walk through each step. Then:
-
-` + "```" + `
-nexus dev --split           # all units in one terminal
-nexus build --deployment orders-svc
-` + "```" + `
-
-Application code stays unchanged — the framework swaps cross-module
-*Service struct bodies between the local impl and HTTP-stub shadows
-at compile time, based on the active deployment.
+Runtime settings (server address, dashboard, introspection) live in
+` + "`nexus.toml`" + ` — edit that file, not the code.
 `
 
 // validChoice checks a value against the allowed set; returned err
@@ -809,66 +812,30 @@ func StubAuthenticator(ctx context.Context, clientID, username, password string)
 }
 `
 
-// ── deployment manifest ─────────────────────────────────────────────
+// ── nexus.toml (runtime config) ─────────────────────────────────────
 
-// tmplDeployTOML is the starter manifest. It declares a single
-// monolith deployment and embeds a hand-walkthrough showing how to
-// split modules into independent services. The user edits this file
-// (not main.go) when topology changes.
-const tmplDeployTOML = `# nexus.toml — deployment topology for this app.
+// tmplDeployTOML is the starter config. main.go loads it via
+// nexus.MustLoadConfig(); operators edit settings here instead of in
+// code. Fields absent from the TOML fall back to framework defaults.
+const tmplDeployTOML = `# nexus.toml — runtime config for this app.
 #
-# 'nexus build --deployment NAME' reads this file to decide which
-# modules compile locally and which become HTTP-stub shadows.
-# 'nexus dev --split' reads it to launch one subprocess per split
-# unit. Application code (main.go, modules) stays
-# deployment-agnostic; everything per-environment lives here.
-#
-# ── Concepts ──────────────────────────────────────────────────────
-#
-# [deployments.NAME]   one table per unit → { owns = [...], port = N }
-#                      Missing 'owns' = "owns every module" (monolith).
-#                      Listed 'owns' = real split unit; modules NOT
-#                      listed get replaced by HTTP-stub shadows in this
-#                      unit's binary.
-# [peers.TAG]          transport config (URL, timeout, retries,
-#                      min_version, auth) keyed by DeployAs-tag.
-#                      Codegen bakes this into the binary as
-#                      Config.Topology defaults.
+# main.go loads this via nexus.MustLoadConfig() (the keys below) and
+# nexus.MustLoadExtensions() ([extensions.*], none by default). Edit
+# settings here, not in code; absent fields use framework defaults.
 
-# Monolith owns every module by default. Run with:
-#     nexus build --deployment monolith
-#     ./bin/monolith
-[deployments.monolith]
-port = 8080
+environment = "development"
 
-# ── How to split a module out ─────────────────────────────────────
-#
-# 1. Tag the module's declaration with DeployAs:
-#
-#        var Module = nexus.Module("orders",
-#            nexus.DeployAs("orders-svc"),  // names the deployment unit
-#            nexus.Provide(NewService),
-#            nexus.AsRest("GET", "/orders/:id", NewGet),
-#        )
-#
-# 2. Add a deployment for it here, and add it to monolith's owns
-#    list (or leave monolith empty so it auto-includes everything):
-#
-#        [deployments.monolith]
-#        port = 8080
-#
-#        [deployments.orders-svc]
-#        owns = ["orders"]
-#        port = 8081
-#
-# 3. Add a peer entry so other services can reach it.
-#
-#        [peers.orders-svc]
-#        timeout = "2s"
-#
-# 4. Build (or run) per deployment:
-#
-#        nexus build --deployment orders-svc   # ./bin/orders-svc
-#        nexus build --deployment monolith     # ./bin/monolith
-#        nexus dev --split                     # all units, one terminal
+# Introspection opens the /__nexus dashboard + JSON APIs. It's OFF by
+# default (the surface 404s) so a production binary is locked down out
+# of the box; "true" here makes the dashboard reachable in dev. Before
+# shipping, set this false and expose the dashboard to operators via an
+# admin CIDR instead — introspection_networks = ["10.0.0.0/8"].
+introspection = true
+
+[server]
+addr = ":8080"
+
+[dashboard]
+enabled = true
+name = "{{.Name}}"
 `
