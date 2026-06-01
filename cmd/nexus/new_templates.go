@@ -420,23 +420,6 @@ func (c *CacheManager) NexusResources() []resource.Resource {
 }
 `
 
-// ── frontend (vue) ──────────────────────────────────────────────────
-
-// tmplPackageJSONNexusVue is the minimal package.json the nexus
-// pipeline emits for Vue projects. NO scripts (no npm runner), NO
-// devDependencies (no vite/tsc) — every JS build step is handled
-// by the Go-side bundler reading nexus.lock. The file exists
-// because:
-//   - IDEs (VS Code, JetBrains) detect "this is a JS project" via
-//     package.json and only then load tsconfig.json / .d.ts shims
-//   - Dependabot / Renovate scan package.json for outdated deps
-//   - Humans want a one-glance answer to "what does this depend on?"
-//     that doesn't require reading the machine-formatted nexus.lock
-//
-// The `dependencies` field is the source of truth for what nexus
-// should install. `nexus add <pkg>` mirrors new pins here; `nexus
-// remove <pkg>` drops them. `nexus install` reads this list and
-// reconciles against nexus.lock.
 // ── Vite frontend (web/) ────────────────────────────────────────────
 
 const tmplViteVuePackageJSON = `{
@@ -544,50 +527,7 @@ const tmplViteDistStub = `<!DOCTYPE html>
 </html>
 `
 
-const tmplPackageJSONNexusVue = `{
-  "name": "{{.Name}}",
-  "type": "module",
-  "private": true,
-  "dependencies": {
-    "vue": "^3.4.0"
-  }
-}
-`
-
-// tmplPackageJSONNexusReact is the React counterpart. Same layout
-// rationale as tmplPackageJSONNexusVue; only the dep set differs.
-const tmplPackageJSONNexusReact = `{
-  "name": "{{.Name}}",
-  "type": "module",
-  "private": true,
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  }
-}
-`
-
-// tmplIndexHTMLTpl is the SPA shell that ships at
-// islands/index.html. Stable filenames from nexus build mean
-// the script reference doesn't need post-build patching — main.js
-// is always there, alongside the user-edited islands.src/main.ts.
-//
-// The user is free to add <link rel="stylesheet" href="/main.css">
-// after their first import of a .css file from main.ts (esbuild
-// emits a sidecar CSS bundle then).
-const tmplIndexHTMLTpl = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{{.Name}}</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/main.js"></script>
-  </body>
-</html>
-`
+// ── vue entry files (web/src) ───────────────────────────────────────
 
 const tmplMainTS = `import { createApp } from 'vue'
 import App from './App.vue'
@@ -603,7 +543,7 @@ const count = ref(0)
 <template>
   <main>
     <h1>{{.Name}}</h1>
-    <p>Edit <code>islands.src/App.vue</code> — <code>nexus dev</code> rebuilds on save.</p>
+    <p>Edit <code>web/src/App.vue</code> — <code>nexus dev</code> hot-reloads on save.</p>
     <button @click="count++">count is {{ "{{ count }}" }}</button>
   </main>
 </template>
@@ -614,105 +554,6 @@ button { padding: .5rem 1rem; border-radius: .25rem; cursor: pointer; }
 </style>
 `
 
-// tmplTSConfigForIDE is the IDE-only tsconfig the scaffold emits
-// for nexus-managed frontend projects. esbuild bypasses it (our
-// bundler infers loaders + targets independently); this exists
-// purely so the TypeScript server in VS Code / cursor / etc.
-// understands the project layout and stops emitting TS2307.
-//
-// skipLibCheck=true matters: nexus-shims.d.ts ships ambient
-// `declare module 'foo'` lines that don't match the real
-// package's type signatures. Without skipLibCheck the IDE would
-// emit "duplicate identifier" errors when real .d.ts files
-// eventually land alongside (the follow-up commit).
-//
-// jsx=preserve so .tsx files stay as JSX in the AST; esbuild's
-// pipeline handles the actual JSX-to-JS lowering.
-const tmplTSConfigForIDE = `{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "jsx": "preserve",
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true,
-    "noEmit": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"]
-  },
-  "include": ["islands.src/**/*", "nexus-shims.d.ts"]
-}
-`
-
-// tmplShimsDTS supplies ambient module declarations so the IDE
-// can resolve every bare import in islands.src/ without a real
-// node_modules tree.
-//
-// What's covered:
-//   - Asset imports (.vue, .css, .svg, .png, .jpg, .webp, .woff,
-//     .woff2) so things like 'import './style.css'' stop erroring
-//   - The npm package set the scaffold expects (vue, react,
-//     @vue-flow/core, lucide-vue-next, etc.) — ` + "`nexus add`" + ` appends
-//     to this file as new deps are pinned
-//
-// These ambient `declare module 'foo';` lines (no signatures) just
-// stop the IDE complaining; they don't give autocomplete on
-// createApp / ref / etc. For REAL types, run `nexus types`: it
-// fetches each dep's .d.ts from esm.sh into a types-only
-// node_modules/ that the editor resolves against (the bundler still
-// ignores it). These shims are the no-network fallback for before
-// that runs.
-//
-// The file is meant to be committed; it's part of the project's
-// IDE-only build chain. Re-run ` + "`nexus install`" + ` to regenerate from
-// the lockfile if it gets out of sync.
-const tmplShimsDTS = `// nexus-shims.d.ts — IDE-only ambient declarations.
-// Generated by nexus; safe to commit and re-generate via ` + "`nexus install`" + `.
-//
-// Stops TypeScript from complaining about bare imports while
-// nexus.lock + ~/.nexus/cache do the actual resolution at build
-// time. For real types (full autocomplete), run ` + "`nexus types`" + ` —
-// it mirrors each dep's .d.ts from esm.sh into a types-only
-// node_modules/ the editor resolves against.
-
-// Asset imports — esbuild handles these at build time via the
-// resolver's content-type dispatch (CSS → injected, fonts →
-// LoaderFile, etc.). The IDE just needs to know they're modules.
-declare module "*.vue" {
-  import type { DefineComponent } from "vue";
-  const component: DefineComponent<{}, {}, any>;
-  export default component;
-}
-declare module "*.css";
-declare module "*.scss";
-declare module "*.svg";
-declare module "*.png";
-declare module "*.jpg";
-declare module "*.jpeg";
-declare module "*.gif";
-declare module "*.webp";
-declare module "*.avif";
-declare module "*.woff";
-declare module "*.woff2";
-declare module "*.ttf";
-declare module "*.otf";
-
-// Per-package bare-spec shims for the dependencies the scaffold
-// pulls. ` + "`nexus add <pkg>`" + ` appends new entries here when the
-// project grows.
-{{- if .IsVue}}
-declare module "vue";
-{{- end}}
-{{- if .IsReact}}
-declare module "react";
-declare module "react-dom";
-declare module "react-dom/client";
-{{- end}}
-`
-
 const tmplReadmeTpl = `# {{.Name}}
 
 Generated with ` + "`nexus new`" + `.
@@ -721,9 +562,7 @@ Generated with ` + "`nexus new`" + `.
 
 ` + "```" + `
 go mod tidy
-{{if .HasFrontend}}{{if .IsVue}}nexus add vue           # one-time: pulls vue into ~/.nexus/cache
-{{else}}nexus add react react-dom
-{{end -}}
+{{if .HasFrontend}}cd web && npm install && cd ..   # one-time: install frontend deps
 {{end -}}
 {{if .HasResources}}cp .env.example .env    # then fill in real credentials
 {{end -}}

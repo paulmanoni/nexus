@@ -4,13 +4,11 @@ go 1.26.2
 
 require (
 	braces.dev/errtrace v0.4.0
-	github.com/buke/quickjs-go v0.7.6
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/eko/gocache/lib/v4 v4.2.3
 	github.com/eko/gocache/store/go_cache/v4 v4.2.5
 	github.com/eko/gocache/store/redis/v4 v4.2.6
-	github.com/evanw/esbuild v0.28.0
 	github.com/failsafe-go/failsafe-go v0.9.6
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-gonic/gin v1.12.0
@@ -30,7 +28,7 @@ require (
 	go.uber.org/fx v1.24.0
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.51.0
-	golang.org/x/sys v0.45.0
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/tools v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
@@ -94,7 +92,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/tidwall/btree v0.0.0-20191029221954-400434d76274 // indirect
 	github.com/tidwall/buntdb v1.1.2 // indirect
 	github.com/tidwall/gjson v1.12.1 // indirect
@@ -124,9 +121,4 @@ require (
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
-)
-
-require (
-	github.com/paulmanoni/qjs v0.0.8
-	github.com/paulmanoni/viteless v0.1.0
 )

@@ -126,17 +126,6 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newClientCmd(stdout, stderr),
 		// PKI for the peer mesh (extension/peer mTLS).
 		newPkiCmd(stdout, stderr),
-		// Frontend dependency manager (node-free; see
-		// frontend/deps/* for the implementation).
-		newAddCmd(stdout, stderr),
-		newRemoveCmd(stdout, stderr),
-		newInstallCmd(stdout, stderr),
-		newUpdateCmd(stdout, stderr),
-		newVendorCmd(stdout, stderr),
-		newGCCmd(stdout, stderr),
-		// Editor IntelliSense: types-only node_modules from nexus.lock
-		// (no npm; build/runtime stay zero-Node).
-		newTypesCmd(stdout, stderr),
 	)
 	return root
 }
