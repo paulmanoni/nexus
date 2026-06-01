@@ -452,7 +452,7 @@ function openErrors(payload) {
 function closeErrors() { errorDialog.value = { ...errorDialog.value, open: false } }
 provide('nexus.openErrors', openErrors)
 
-const { fitView, onNodesInitialized, onPaneClick, onNodeDragStop } = useVueFlow()
+const { fitView, onNodesInitialized, onPaneClick, onNodeDragStop, updateNodeInternals } = useVueFlow()
 // FIT_OPTS — shared between initial paint and topology-change re-fits.
 // minZoom floors the auto-fit so a busy topology (many modules /
 // endpoints) doesn't shrink cards into illegible postage stamps;
@@ -1368,10 +1368,23 @@ async function load() {
     // Only index groups that actually render — collapsed-cluster members are
     // hidden, and the flash/packet animator must not target a missing node.
     indexEndpointGroups(groupNodes.filter(g => visIds.has(g.id)))
-    edges.value = restyleEdges(visEdges, opSelection.value, flashedEdges.value)
-    if (!unchanged) {
-      nextTick(() => fitView(FIT_OPTS))
-    }
+    // Commit edges AFTER the nodes mount. Expanding a cluster adds member
+    // nodes in the same flush as the edges that reference them; if edges are
+    // assigned in the same tick, Vue Flow resolves them against nodes whose
+    // handles aren't measured yet (and onlyRenderVisibleElements means an
+    // off-viewport new node never measures) — so the edges silently fail to
+    // route until a refresh re-fits the graph. Deferring one tick lets the
+    // nodes mount; updateNodeInternals forces handle re-measure; and fitView
+    // (on a real change) brings new nodes into view so virtualization renders
+    // and measures them. This is the fix for "edges don't show until refresh
+    // after expanding a group".
+    nextTick(() => {
+      edges.value = restyleEdges(visEdges, opSelection.value, flashedEdges.value)
+      if (!unchanged) {
+        fitView(FIT_OPTS)
+        nextTick(() => updateNodeInternals(nextNodes.map(n => n.id)))
+      }
+    })
   } catch (err) {
     console.error('[nexus] Architecture render failed:', err, { groupCount: groupNodes.length, edgeCount: edgeList.length })
   }
