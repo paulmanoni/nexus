@@ -58,7 +58,7 @@ func generateEmbedFile(mainDir, mainPkg string, extraDirs []string, stderr io.Wr
 // removal dropped its embed-time wiring. Scaffolded projects
 // now own their own go:embed directives in main.go.
 func scanEmbedDirs(mainDir string, extraDirs []string) []string {
-	candidates := append([]string{"islands"}, extraDirs...)
+	candidates := append([]string{filepath.Join(frontendDirName(), "dist")}, extraDirs...)
 	seen := map[string]bool{}
 	out := make([]string, 0, len(candidates))
 	for _, d := range candidates {
@@ -168,16 +168,12 @@ type simpleBuildOptions struct {
 //
 // Pipeline order matters:
 //
-//  1. frontendBuild scans islands.src/ and produces islands/*.js
-//     via esbuild + the resolver plugin. Skipped silently when no
-//     islands.src directory exists (pure-Go projects).
-//  2. generateEmbedFile inspects the now-fresh islands/ + templates/
-//     and writes embed_gen.go so go:embed picks them up.
-//  3. go build absorbs both via the generated embed file.
-//
-// Without step 1 the project would have to run an external
-// frontend toolchain (npm/vite) first, which is exactly what the
-// new deps system replaces.
+//  1. frontendBuild runs Vite (npm install if needed + npm run build)
+//     in web/, producing web/dist. Skipped silently when there's no
+//     web/package.json (pure-Go projects).
+//  2. generateEmbedFile inspects the now-fresh web/dist and writes
+//     embed_gen.go so go:embed picks it up.
+//  3. go build absorbs it via the generated embed file → single binary.
 func runSimpleBuild(opts simpleBuildOptions) error {
 	pkg := opts.MainPackage
 	if pkg == "" {

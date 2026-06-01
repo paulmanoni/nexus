@@ -11,276 +11,60 @@ import (
 
 	"github.com/evanw/esbuild/pkg/api"
 
-	"github.com/paulmanoni/nexus/frontend/deps/bundler"
 	"github.com/paulmanoni/nexus/frontend/deps/lockfile"
-	"github.com/paulmanoni/nexus/frontend/deps/resolver"
 	"github.com/paulmanoni/nexus/frontend/deps/sfc/vue"
 	"github.com/paulmanoni/nexus/frontend/deps/store"
 )
 
-// frontendBuild scans <projectRoot>/islands.src for frontend entry
-// files (.jsx, .tsx, .ts, .js, .vue) and bundles each one through
-// our esbuild-based pipeline into <projectRoot>/islands. The
-// resulting bundles get picked up by the embed-gen step that runs
-// next, so `go build` ships them inside the binary.
+// frontendBuild builds the frontend with Vite so `go build` can embed the
+// output. It resolves <projectRoot>/web (or NEXUS_FRONTEND_DIR), runs
+// `npm ci`/`npm install` when node_modules is absent, then `npm run build`
+// (vite build → web/dist). The embed-gen step that runs next bakes web/dist
+// into the binary.
 //
-// This is the function `nexus build` calls before `go build` —
-// replaces the old "user must have run npm/vite separately" model.
+// This is the function `nexus build` calls before `go build`. It requires
+// Node/npm on PATH (the accepted build-time dependency of the Vite pipeline);
+// the runtime stays a single Go binary with the SPA embedded.
 //
-// Skips silently when:
-//   - islands.src does not exist (project doesn't use frontend
-//     dependencies)
-//   - islands.src exists but has no entry files (rare; user staged
-//     a directory but no sources yet)
-//
-// Returns an error when islands.src exists with sources AND any
-// of: nexus.lock is missing, the cache can't be opened, esbuild
-// reports build errors, the entries import unresolvable specs.
-//
-// Conservative defaults:
-//
-//   - srcDir: <projectRoot>/islands.src
-//   - outDir: <projectRoot>/islands
-//   - registry/cache: env-controlled via NEXUS_REGISTRY / NEXUS_CACHE
-//   - minify: true (production build path)
-//   - sourcemap: linked
-//
-// .vue files are accepted but the Vue SFC plugin is NOT wired in
-// v0.1 because the Goja-based compile pipeline has known
-// limitations on @vue/compiler-sfc 3.4 + esm.sh (see
-// frontend/deps/sfc/vue/bootstrap_test.go for details). A clear
-// error guides the user to either pre-compile or stay on vite for
-// .vue today.
+// Skips silently when <dir>/package.json is absent (a pure-Go app with no
+// frontend). Returns an error when npm/vite fail.
 func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
-	srcDir := filepath.Join(projectRoot, islandsSrcName())
-	if _, err := os.Stat(srcDir); errors.Is(err, fs.ErrNotExist) {
-		return nil // no frontend in this project — skip
+	dir := filepath.Join(projectRoot, frontendDirName())
+	pkgJSON := filepath.Join(dir, "package.json")
+	if _, err := os.Stat(pkgJSON); errors.Is(err, fs.ErrNotExist) {
+		return nil // no frontend project here — pure-Go app, skip
 	} else if err != nil {
-		return fmt.Errorf("frontend build: stat %s: %w", srcDir, err)
+		return fmt.Errorf("frontend build: stat %s: %w", pkgJSON, err)
 	}
 
-	// .vue source files (anywhere under islands.src/, not just
-	// top-level entries) require an SFC compiler backend. The default
-	// build wires the CGo-free WASM backend, so vueCompilerHook is
-	// normally non-nil. It's only nil in one combination: the binary
-	// was built with `-tags vue` (asking for the native CGo backend)
-	// but without cgo, so neither backend registered.
-	//
-	// This check runs BEFORE the empty-entries short-circuit so a
-	// project with only `App.vue` (no bootstrap .ts) still surfaces
-	// the hint instead of silently producing nothing — a user staging
-	// vue components first and the entry later would otherwise see no
-	// output and have no clue why.
-	hasVue, err := hasVueSources(srcDir)
-	if err != nil {
-		return fmt.Errorf("frontend build: scan vue sources: %w", err)
-	}
-	if hasVue && vueCompilerHook == nil {
-		return errors.New("frontend build: .vue sources detected but no SFC compiler is wired — " +
-			"you built with `-tags vue` (native CGo backend) without cgo. Either set CGO_ENABLED=1, " +
-			"or drop `-tags vue` to use the default WASM backend (no cgo needed)")
-	}
-
-	actualSrcDir, entries, err := findFrontendEntries(srcDir)
-	if err != nil {
-		return err
-	}
-	if len(entries) == 0 {
-		// islands.src exists but is empty — also skip; user may
-		// just be staging the directory.
-		return nil
-	}
-	if actualSrcDir != srcDir {
-		// Auto-descended into a conventional subdir (src/ / app/ /
-		// client/). Use the resolved path from here on so the
-		// bundler watches the right tree.
-		srcDir = actualSrcDir
-	}
-
-	// Cache short-circuit. Computed BEFORE any of the heavy work
-	// below (lockfile load, store open, plugin init, bundler init)
-	// so a cached hit returns immediately. The hash covers every
-	// input that affects bundle output; see frontend_build_cache.go.
-	//
-	// Two guard conditions on the fast path:
-	//   1. NEXUS_FRONTEND_NO_CACHE not set (CI / debug bypass)
-	//   2. islands/ contains at least one prior artifact — an empty
-	//      output dir with a stale hash would silently produce a
-	//      binary that embeds nothing.
-	outDirEarly := filepath.Join(projectRoot, islandsOutName())
-	if !frontendCacheDisabled() {
-		currentHash, hashErr := frontendBuildHash(projectRoot)
-		if hashErr != nil {
-			// Hashing failed (e.g. unreadable file). Fall through to
-			// a real build; emit a one-line warning so it's traceable.
-			fmt.Fprintf(stderr, "nexus build: cache disabled this run: %v\n", hashErr)
-		} else if prior := readFrontendBuildHash(projectRoot); prior != "" && prior == currentHash && outputDirHasFiles(outDirEarly) {
-			fmt.Fprintf(stdout, "nexus build: frontend up to date (cached, set %s=1 to force rebuild)\n", envSkipFrontendCache)
-			return nil
+	// Install deps when node_modules is absent. Prefer the reproducible
+	// `npm ci` when a lockfile exists, else `npm install`.
+	if _, err := os.Stat(filepath.Join(dir, "node_modules")); errors.Is(err, fs.ErrNotExist) {
+		sub := "install"
+		if _, lerr := os.Stat(filepath.Join(dir, "package-lock.json")); lerr == nil {
+			sub = "ci"
+		}
+		fmt.Fprintf(stdout, "%s●%s frontend: node_modules missing — npm %s in %s\n", ansiCyan, ansiReset, sub, dir)
+		if err := runFrontendNpm(dir, stdout, stderr, sub); err != nil {
+			return fmt.Errorf("frontend build: npm %s in %s: %w", sub, dir, err)
 		}
 	}
 
-	lockfilePath := filepath.Join(projectRoot, lockfile.Filename)
-	lf, err := lockfile.Load(lockfilePath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("frontend build: %s", formatMissingLockfileError(srcDir, entries))
-		}
-		return fmt.Errorf("frontend build: load lockfile: %w", err)
-	}
-
-	cacheRoot := os.Getenv("NEXUS_CACHE")
-	if cacheRoot == "" {
-		cacheRoot = store.DefaultRoot()
-	}
-	st, err := store.New(cacheRoot)
-	if err != nil {
-		return fmt.Errorf("frontend build: open cache %s: %w", cacheRoot, err)
-	}
-
-	plugin, err := resolver.New(resolver.Options{
-		Lockfile:      lf,
-		Store:         st,
-		FetchOnDemand: makeOnDemandFetch(lf, st, lockfilePath, stdout),
-	})
-	if err != nil {
-		return fmt.Errorf("frontend build: build resolver: %w", err)
-	}
-
-	outDir := filepath.Join(projectRoot, islandsOutName())
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return fmt.Errorf("frontend build: mkdir %s: %w", outDir, err)
-	}
-
-	// Mirror public/* into outDir — see dev_frontend.go for the
-	// rationale (HTML-referenced static assets). Two candidate
-	// locations because findFrontendEntries may have descended
-	// into islands.src/src (when there are no top-level entries
-	// directly under islands.src), and the public/ convention
-	// puts the dir alongside the entries' grand-parent. So try:
-	//   1. <islands.src>/public          ← Vite/CRA convention
-	//   2. <srcDir>/public               ← when entries are top-level
-	// First match wins; missing dirs are silently skipped.
-	for _, candidate := range []string{
-		filepath.Join(projectRoot, islandsSrcName(), "public"),
-		filepath.Join(srcDir, "public"),
-	} {
-		n, perr := bundler.CopyPublicDir(candidate, outDir)
-		if perr != nil {
-			fmt.Fprintf(stderr, "nexus build: public/ copy: %v\n", perr)
-			break
-		}
-		if n > 0 {
-			fmt.Fprintf(stdout, "nexus build: public: copied %d file(s) from %s\n", n, candidate)
-			break
-		}
-	}
-
-	b := bundler.New()
-	b.AddPlugin(plugin)
-
-	// When the vue hook is wired (cgo+vue build), bootstrap the
-	// compiler + register the SFC plugin. The hook owns the
-	// QuickJS lifecycle; we close it on return.
-	if hasVue && vueCompilerHook != nil {
-		closeVue, vuePlugin, _, err := vueCompilerHook(lf, st)
-		if err != nil {
-			return fmt.Errorf("frontend build: vue compiler: %w", err)
-		}
-		defer closeVue()
-		b.AddPlugin(vuePlugin)
-	}
-
-	// Sass plugin — same semantics as `nexus dev`: registered
-	// unconditionally so .scss imports surface an actionable
-	// install-sass error when the binary isn't on PATH.
-	b.AddPlugin(bundler.NewSassPlugin())
-	if bundler.SassAvailable() {
-		fmt.Fprintln(stdout, "nexus build: scss via system sass")
-	}
-
-	// Tailwind plugin — only fires when a .css file contains
-	// @tailwind / @apply directives. Transparent for non-
-	// Tailwind projects.
-	b.AddPlugin(bundler.NewTailwindPlugin())
-	if bundler.TailwindAvailable() {
-		fmt.Fprintln(stdout, "nexus build: tailwind via system tailwindcss")
-	}
-
-	// import.meta.glob plugin — rewrites Vite-style glob calls
-	// at bundle time. Transparent for files that don't use it.
-	b.AddPlugin(bundler.NewImportMetaGlobPlugin())
-
-	// ?raw / ?url / ?inline query suffix plugin.
-	b.AddPlugin(bundler.NewQuerySuffixPlugin())
-
-	// ?worker plugin — see dev_frontend.go for rationale.
-	b.AddPlugin(bundler.NewWorkerPlugin(bundler.WorkerPluginOptions{
-		OutDir:        outDir,
-		PublicPath:    os.Getenv("NEXUS_PUBLIC_PATH"),
-		NestedPlugins: append([]api.Plugin(nil), b.Plugins...),
-	}))
-
-	noun := "entry"
-	if len(entries) != 1 {
-		noun = "entries"
-	}
-	tsconfig := findProjectTSConfig(projectRoot)
-	if tsconfig != "" {
-		fmt.Fprintf(stdout, "nexus build: tsconfig %s\n", tsconfig)
-	}
-	viteEnv, envErr := loadViteEnv(projectRoot, "production", stdout)
-	if envErr != nil {
-		fmt.Fprintf(stderr, "nexus build: .env load: %v\n", envErr)
-	}
-	fmt.Fprintf(stdout, "nexus build: bundling %d frontend %s\n", len(entries), noun)
-	res, err := b.Build(bundler.Options{
-		Entries:    entries,
-		OutDir:     outDir,
-		Minify:     true,
-		Lockfile:   lf,
-		Store:      st,
-		TSConfig:   tsconfig,
-		Env:        viteEnv,
-		Mode:       "production",
-		PublicPath: os.Getenv("NEXUS_PUBLIC_PATH"),
-		Splitting:  true,
-		LogTo:      stderr,
-	})
-	if err != nil {
-		return fmt.Errorf("frontend build: %w", err)
-	}
-	if len(res.Errors) > 0 {
-		// One concrete bundler error is enough — the rest cascade
-		// from the same root cause typically.
-		return fmt.Errorf("frontend build: %s", res.Errors[0].Text)
-	}
-	// Vite-replacement step: if the project has an index.html
-	// (either next to the entries or one level up — the typical
-	// Vite layout has it at the source-root with entries under
-	// src/), rewrite its module + stylesheet refs to point at
-	// the bundled output names + drop the result into outDir.
-	// Without this the operator gets the framework's "no
-	// frontend yet" placeholder even though the JS bundled
-	// fine.
-	if err := emitIndexHTML(srcDir, outDir, res.OutputFiles, stdout, false); err != nil {
-		fmt.Fprintf(stderr, "warning: index.html emit: %v\n", err)
-	}
-	fmt.Fprintf(stdout, "frontend build: wrote %d output %s to %s\n",
-		len(res.OutputFiles), pluralize("file", len(res.OutputFiles)), outDir)
-
-	// Persist the input digest so the next `nexus build` can skip
-	// this whole function when nothing changed. Failure here is a
-	// warning, not an error — the build itself succeeded; we just
-	// won't get the fast path next time.
-	if !frontendCacheDisabled() {
-		if hash, err := frontendBuildHash(projectRoot); err == nil {
-			if werr := writeFrontendBuildHash(projectRoot, hash); werr != nil {
-				fmt.Fprintf(stderr, "nexus build: cache write skipped: %v\n", werr)
-			}
-		}
+	fmt.Fprintf(stdout, "%s●%s frontend: npm run build (vite) in %s\n", ansiCyan, ansiReset, dir)
+	if err := runFrontendNpm(dir, stdout, stderr, "run", "build"); err != nil {
+		return fmt.Errorf("frontend build: npm run build in %s: %w", dir, err)
 	}
 	return nil
+}
+
+// runFrontendNpm runs `npm <args...>` in dir, streaming output. execCommand
+// (build_embed.go) is the package-level seam tests stub out.
+func runFrontendNpm(dir string, stdout, stderr io.Writer, args ...string) error {
+	cmd := execCommand("npm", args...)
+	cmd.Dir = dir
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }
 
 // vueCompilerHook is the build-tagged registration point for the
