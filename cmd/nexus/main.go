@@ -134,6 +134,9 @@ with the same commands. Each subcommand is documented under nexus help <cmd>.`,
 		newUpdateCmd(stdout, stderr),
 		newVendorCmd(stdout, stderr),
 		newGCCmd(stdout, stderr),
+		// Editor IntelliSense: types-only node_modules from nexus.lock
+		// (no npm; build/runtime stay zero-Node).
+		newTypesCmd(stdout, stderr),
 	)
 	return root
 }

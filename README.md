@@ -63,7 +63,7 @@ var Module = nexus.Module("adverts",
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
 - **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext TOML (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. `${VAR}` placeholders inside `nexus.toml` resolve from the process env (and optionally a `.env` file via `nexus.LoadDotenvIfPresent()`). See [Configuration](#configuration) below.
 - **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots (multi-scene capture for dropdowns + modals), edit step text inline on the preview, play back as numbered-badge highlights, export to **PDF** or **Word** for handoff docs. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
-- **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. `.vue` SFCs compile in-process by running `@vue/compiler-sfc` on QuickJS-NG via WebAssembly — no `node_modules`, no `npm install`, no cgo. See [frontend/deps](frontend/deps/README.md).
+- **Node-free frontend.** `nexus add vue` pulls from esm.sh into `~/.nexus/cache`; `nexus build` bundles via esbuild. `.vue` SFCs compile in-process by running `@vue/compiler-sfc` on QuickJS-NG via WebAssembly — no `node_modules`, no `npm install`, no cgo. Editor IntelliSense is covered without npm too: `nexus types` generates a types-only `node_modules` from `nexus.lock` (see [Frontend](#frontend)). See [frontend/deps](frontend/deps/README.md).
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
 ## Install
@@ -96,6 +96,7 @@ nexus dev                 # go run + live dashboard (add --open to launch a brow
 | `nexus docs [topic]` | Inline reference (`handlers`, `frontend`, `auth`, …). |
 | `nexus add <spec>` | Fetch a frontend dep from esm.sh into `~/.nexus/cache`, write `nexus.lock`. |
 | `nexus install` | Sync the cache to `nexus.lock` (fresh clones, CI). |
+| `nexus types` | Generate a types-only `node_modules` from `nexus.lock` for editor IntelliSense (no npm). |
 | `nexus remove <spec>` | Drop entry from `nexus.lock`. |
 | `nexus update [spec]` | Re-resolve specs, bump `nexus.lock`. |
 | `nexus vendor` | Copy cached blobs to `./vendor/nexus/` for air-gapped builds. |
@@ -226,6 +227,16 @@ nexus.Run(nexus.Config{...},
 ```
 
 Unknown paths fall through to `index.html` (SPA-aware). REST/GraphQL/WS/dashboard routes win on conflict.
+
+### Editor IntelliSense without npm
+
+There is **no `node_modules` at build or runtime** — `nexus add` caches deps under `~/.nexus/cache` and `nexus build` bundles from there. But your editor's TypeScript/Vue language server still needs type declarations to resolve bare imports like `import { ref } from "vue"`. `nexus types` provides them without reintroducing npm:
+
+```bash
+nexus types        # reads nexus.lock → <islands.src>/node_modules (types only)
+```
+
+It fetches each dependency's `.d.ts` from the same registry the build uses, rewrites the cross-package URL references esm.sh emits into local paths, and writes a minimal types-only tree. That `node_modules` is an **editor-only artifact**: the bundler and runtime never read it, and it's gitignored automatically (its own `node_modules/.gitignore`). Re-run after `nexus add` / `nexus update`. Zero-Node still holds end to end — `nexus types` is the same Go binary fetching from the same cache, not `npm install`.
 
 ### Build cache
 
