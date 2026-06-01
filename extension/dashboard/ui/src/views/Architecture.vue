@@ -1435,10 +1435,30 @@ function restyleEdges(list, sel, flashed) {
       }
     }
 
+    // Bundle weight + badge. An edge that stands in for N real edges (a
+    // cluster-boundary reroute, or many ops sharing a source→target) reads
+    // thicker and carries a count so heavy dependencies are obvious without
+    // expanding. Flash keeps its own emphatic width; selection-dimmed edges
+    // skip the badge so faded scaffolding stays quiet.
+    const count = (e.data && e.data.count) || 1
+    if (count > 1 && !flashState) {
+      width = Math.max(width, Math.min(1.4 + Math.log2(count) * 0.5, 4))
+    }
     base.style = { stroke, strokeWidth: width, opacity }
     if (dashed) base.style.strokeDasharray = '5 4'
     base.animated = animated
     base.markerEnd = buildMarker(stroke)
+    const dimmed = sel && !flashState && !selectedMatches(sel, e)
+    if (count > 1 && !dimmed) {
+      base.label = String(count)
+      base.labelShowBg = true
+      base.labelBgPadding = [5, 3]
+      base.labelBgBorderRadius = 7
+      base.labelBgStyle = { fill: 'var(--bg-card)', stroke: 'var(--border)', strokeWidth: 1 }
+      base.labelStyle = { fill: 'var(--text-muted)', fontSize: '10px', fontFamily: 'var(--font-mono)', fontWeight: 600 }
+    } else {
+      base.label = undefined
+    }
     return base
   })
 }
