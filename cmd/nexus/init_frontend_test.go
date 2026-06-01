@@ -41,9 +41,11 @@ func main() {
 
 	// Files written.
 	for _, p := range []string{
-		"islands.src/main.ts",
-		"islands.src/App.vue",
-		"islands/index.html",
+		"web/src/main.ts",
+		"web/src/App.vue",
+		"web/index.html",
+		"web/vite.config.ts",
+		"web/dist/index.html",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
@@ -58,9 +60,9 @@ func main() {
 	patched := string(body)
 	for _, want := range []string{
 		`"embed"`,
-		"//go:embed all:islands",
-		"var islandsFS embed.FS",
-		`nexus.ServeFrontend(islandsFS, "islands")`,
+		"//go:embed all:web/dist",
+		"var webFS embed.FS",
+		`nexus.ServeFrontend(webFS, "web/dist")`,
 	} {
 		if !strings.Contains(patched, want) {
 			t.Errorf("main.go missing %q\n--- body ---\n%s", want, patched)
@@ -99,8 +101,8 @@ func main() {
 	if n := strings.Count(string(body), "nexus.ServeFrontend"); n != 1 {
 		t.Errorf("ServeFrontend appears %d times after re-run, want 1\n%s", n, body)
 	}
-	if n := strings.Count(string(body), "var islandsFS embed.FS"); n != 1 {
-		t.Errorf("islandsFS var appears %d times, want 1", n)
+	if n := strings.Count(string(body), "var webFS embed.FS"); n != 1 {
+		t.Errorf("webFS var appears %d times, want 1", n)
 	}
 }
 
@@ -125,19 +127,19 @@ func TestInitFrontend_NoMainGo(t *testing.T) {
 func TestInitFrontend_ExistingIslandsBlocksWithoutForce(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644)
-	_ = os.MkdirAll(filepath.Join(dir, "islands.src"), 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "islands.src", "App.vue"), []byte("<template>existing</template>"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "web"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "web", "App.vue"), []byte("<template>existing</template>"), 0o644)
 
 	var out bytes.Buffer
 	err := runInitFrontend(dir, "vue", false, &out)
 	if err == nil {
-		t.Fatal("expected error when islands.src exists without --force")
+		t.Fatal("expected error when web/ exists without --force")
 	}
 	if !strings.Contains(err.Error(), "--force") {
 		t.Errorf("err missing --force guidance: %v", err)
 	}
 	// Existing file untouched.
-	body, _ := os.ReadFile(filepath.Join(dir, "islands.src", "App.vue"))
+	body, _ := os.ReadFile(filepath.Join(dir, "web", "App.vue"))
 	if string(body) != "<template>existing</template>" {
 		t.Errorf("user's existing App.vue clobbered: %s", body)
 	}

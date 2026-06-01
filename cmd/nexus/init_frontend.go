@@ -18,7 +18,7 @@ import (
 // ServeFrontend call. Used by `nexus init --frontend=vue|react`.
 //
 // Refuses to clobber islands.src/ or to re-patch a main.go that
-// already references islandsFS, unless --force is supplied.
+// already references webFS, unless --force is supplied.
 //
 // The main.go patch is AST-based — we parse the file with
 // go/parser, insert the missing import + embed decl + ServeFrontend
@@ -44,10 +44,10 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 		return fmt.Errorf("nexus init --frontend: no main.go at %s — run nexus init in a project that already has a Go entry point", mainGoPath)
 	}
 
-	islandsSrc := filepath.Join(abs, "islands.src")
+	webDir := filepath.Join(abs, "web")
 	if !force {
-		if _, err := os.Stat(islandsSrc); err == nil {
-			return fmt.Errorf("nexus init --frontend: %s already exists — pass --force to overwrite", islandsSrc)
+		if _, err := os.Stat(webDir); err == nil {
+			return fmt.Errorf("nexus init --frontend: %s already exists — pass --force to overwrite", webDir)
 		}
 	}
 
@@ -82,7 +82,7 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	if patched {
 		fmt.Fprintf(stdout, "patched main.go\n")
 	} else {
-		fmt.Fprintln(stdout, "main.go already wires islandsFS — skipped")
+		fmt.Fprintln(stdout, "main.go already wires webFS — skipped")
 	}
 
 	// 3. Next steps. Don't auto-run network ops here; the user
@@ -90,18 +90,9 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	//    first.
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	switch frontend {
-	case "vue":
-		fmt.Fprintln(stdout, "  nexus add vue           # one-time: pull vue into ~/.nexus/cache")
-	case "react":
-		fmt.Fprintln(stdout, "  nexus add react react-dom")
-	}
-	fmt.Fprintln(stdout, "  nexus types             # editor IntelliSense from nexus.lock — no npm (optional)")
-	fmt.Fprintln(stdout, "  nexus dev               # Go + frontend auto-rebuild")
-	if frontend == "vue" {
-		fmt.Fprintln(stdout, "                          # Vue SFC compile needs the cgo+vue install:")
-		fmt.Fprintln(stdout, "                          #   CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest")
-	}
+	fmt.Fprintln(stdout, "  cd web && npm install   # install frontend deps (vite + framework)")
+	fmt.Fprintln(stdout, "  cd ..")
+	fmt.Fprintln(stdout, "  nexus dev               # go run + Vite dev server (HMR); SPA on :5173")
 	return nil
 }
 
@@ -119,34 +110,37 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 		out[path] = body
 		return nil
 	}
-	if err := add("islands/index.html", tmplIndexHTMLTpl); err != nil {
+	if err := add("web/index.html", tmplViteIndexHTML); err != nil {
 		return nil, err
 	}
-	if err := add("tsconfig.json", tmplTSConfigForIDE); err != nil {
+	if err := add("web/vite.config.ts", tmplViteConfig); err != nil {
 		return nil, err
 	}
-	if err := add("nexus-shims.d.ts", tmplShimsDTS); err != nil {
+	if err := add("web/tsconfig.json", tmplViteTSConfig); err != nil {
+		return nil, err
+	}
+	if err := add("web/dist/index.html", tmplViteDistStub); err != nil {
 		return nil, err
 	}
 	switch opts.Frontend {
 	case "vue":
-		if err := add("package.json", tmplPackageJSONNexusVue); err != nil {
+		if err := add("web/package.json", tmplViteVuePackageJSON); err != nil {
 			return nil, err
 		}
-		if err := add("islands.src/main.ts", tmplMainTS); err != nil {
+		if err := add("web/src/main.ts", tmplMainTS); err != nil {
 			return nil, err
 		}
-		if err := add("islands.src/App.vue", tmplAppVueTpl); err != nil {
+		if err := add("web/src/App.vue", tmplAppVueTpl); err != nil {
 			return nil, err
 		}
 	case "react":
-		if err := add("package.json", tmplPackageJSONNexusReact); err != nil {
+		if err := add("web/package.json", tmplViteReactPackageJSON); err != nil {
 			return nil, err
 		}
-		if err := add("islands.src/main.tsx", tmplMainTSXTpl); err != nil {
+		if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
 			return nil, err
 		}
-		if err := add("islands.src/App.tsx", tmplAppTSXTpl); err != nil {
+		if err := add("web/src/App.tsx", tmplAppTSXTpl); err != nil {
 			return nil, err
 		}
 	default:
@@ -159,8 +153,8 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 // in-place to add the three pieces a frontend-enabled main needs:
 //
 //  1. "embed" in the import list
-//  2. //go:embed all:islands + var islandsFS embed.FS at file scope
-//  3. nexus.ServeFrontend(islandsFS, "islands") as an extra
+//  2. //go:embed all:web/dist + var webFS embed.FS at file scope
+//  3. nexus.ServeFrontend(webFS, "web/dist") as an extra
 //     argument to the nexus.Run(...) call
 //
 // Returns (true, nil) when changes were written, (false, nil) when
@@ -194,8 +188,8 @@ func patchMainGoForFrontend(path string) (bool, error) {
 		added = true
 	}
 
-	// Step 2: ensure the islandsFS var + //go:embed decl exists.
-	if !hasVarDecl(file, "islandsFS") {
+	// Step 2: ensure the webFS var + //go:embed decl exists.
+	if !hasVarDecl(file, "webFS") {
 		appendEmbedDecl(file)
 		added = true
 	}
@@ -289,16 +283,16 @@ func hasVarDecl(file *ast.File, name string) bool {
 	return false
 }
 
-// appendEmbedDecl adds the //go:embed all:islands + var islandsFS
+// appendEmbedDecl adds the //go:embed all:web/dist + var webFS
 // embed.FS pair to the file. Inserted after the import block so
 // the embed directive lands at file scope (Go requires the
 // directive to be on a top-level var declaration).
 func appendEmbedDecl(file *ast.File) {
 	// Build:
-	//   //go:embed all:islands
-	//   var islandsFS embed.FS
+	//   //go:embed all:web/dist
+	//   var webFS embed.FS
 	spec := &ast.ValueSpec{
-		Names: []*ast.Ident{{Name: "islandsFS"}},
+		Names: []*ast.Ident{{Name: "webFS"}},
 		Type: &ast.SelectorExpr{
 			X:   &ast.Ident{Name: "embed"},
 			Sel: &ast.Ident{Name: "FS"},
@@ -309,7 +303,7 @@ func appendEmbedDecl(file *ast.File) {
 		Specs: []ast.Spec{spec},
 		Doc: &ast.CommentGroup{
 			List: []*ast.Comment{
-				{Text: "//go:embed all:islands"},
+				{Text: "//go:embed all:web/dist"},
 			},
 		},
 	}
@@ -325,7 +319,7 @@ func appendEmbedDecl(file *ast.File) {
 }
 
 // ensureServeFrontendArg finds the nexus.Run(...) call expression
-// inside func main and inserts nexus.ServeFrontend(islandsFS,
+// inside func main and inserts nexus.ServeFrontend(webFS,
 // "islands") as a new argument if one isn't already present.
 //
 // Returns (true, nil) when an arg was added; (false, nil) when the
@@ -376,15 +370,15 @@ func ensureServeFrontendArg(file *ast.File) (bool, error) {
 		}
 	}
 
-	// Build:  nexus.ServeFrontend(islandsFS, "islands")
+	// Build:  nexus.ServeFrontend(webFS, "web/dist")
 	newArg := &ast.CallExpr{
 		Fun: &ast.SelectorExpr{
 			X:   &ast.Ident{Name: "nexus"},
 			Sel: &ast.Ident{Name: "ServeFrontend"},
 		},
 		Args: []ast.Expr{
-			&ast.Ident{Name: "islandsFS"},
-			&ast.BasicLit{Kind: token.STRING, Value: `"islands"`},
+			&ast.Ident{Name: "webFS"},
+			&ast.BasicLit{Kind: token.STRING, Value: `"web/dist"`},
 		},
 	}
 

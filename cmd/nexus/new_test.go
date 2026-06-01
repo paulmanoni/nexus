@@ -127,36 +127,37 @@ func TestScaffoldWithOpts_FullStack(t *testing.T) {
 		"resources/database.go",
 		"resources/cache.go",
 		"auth/auth.go",
-		"islands.src/main.ts",
-		"islands.src/App.vue",
-		"islands/index.html",
+		"web/package.json",
+		"web/vite.config.ts",
+		"web/tsconfig.json",
+		"web/index.html",
+		"web/src/main.ts",
+		"web/src/App.vue",
+		"web/dist/index.html",
 		".env.example",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("expected %s, missing: %v", name, err)
 		}
 	}
-	// And these should NOT exist anymore (vite-era artifacts):
+	// And these should NOT exist anymore (pre-Vite islands artifacts):
 	for _, name := range []string{
-		"web/package.json",
-		"web/vite.config.ts",
-		"web/tsconfig.json",
-		"web/.gitignore",
-		"web/sdk/client.js",
-		"web/dist/index.html",
+		"islands.src/main.ts",
+		"islands/index.html",
+		"nexus-shims.d.ts",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			t.Errorf("vite-era artifact %s still scaffolded — should be gone", name)
+			t.Errorf("legacy islands artifact %s still scaffolded — should be gone", name)
 		}
 	}
 	mainGo, _ := os.ReadFile(filepath.Join(dir, "main.go"))
 	for _, want := range []string{
 		`"embed"`,
-		"//go:embed all:islands",
+		"//go:embed all:web/dist",
 		"resources.NewDB",
 		"resources.NewCacheManager",
 		"auth.Module",
-		"nexus.ServeFrontend(islandsFS",
+		"nexus.ServeFrontend(webFS",
 	} {
 		if !strings.Contains(string(mainGo), want) {
 			t.Errorf("main.go missing %q\n--- body ---\n%s", want, mainGo)
@@ -231,9 +232,12 @@ func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 		t.Fatalf("scaffold: %v", err)
 	}
 	for _, p := range []string{
-		"islands.src/main.ts",
-		"islands.src/App.vue",
-		"islands/index.html",
+		"web/src/main.ts",
+		"web/src/App.vue",
+		"web/index.html",
+		"web/vite.config.ts",
+		"web/package.json",
+		"web/dist/index.html",
 	} {
 		info, err := os.Stat(filepath.Join(dir, p))
 		if err != nil {
@@ -244,16 +248,21 @@ func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 			t.Errorf("%s exists but is empty", p)
 		}
 	}
-	// index.html references the bundle by stable filename.
-	html, _ := os.ReadFile(filepath.Join(dir, "islands/index.html"))
-	if !strings.Contains(string(html), `src="/main.js"`) {
-		t.Errorf("islands/index.html should reference /main.js\n--- body ---\n%s", html)
+	// Vite index.html references the source entry; the build hashes it.
+	html, _ := os.ReadFile(filepath.Join(dir, "web/index.html"))
+	if !strings.Contains(string(html), `src="/src/main.ts"`) {
+		t.Errorf("web/index.html should reference /src/main.ts\n--- body ---\n%s", html)
+	}
+	// vite.config wires the vue plugin.
+	cfg, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
+	if !strings.Contains(string(cfg), "@vitejs/plugin-vue") {
+		t.Errorf("web/vite.config.ts should use @vitejs/plugin-vue\n%s", cfg)
 	}
 	// main.ts kicks off Vue with createApp.
-	mainTS, _ := os.ReadFile(filepath.Join(dir, "islands.src/main.ts"))
+	mainTS, _ := os.ReadFile(filepath.Join(dir, "web/src/main.ts"))
 	for _, want := range []string{"createApp", "App", "mount"} {
 		if !strings.Contains(string(mainTS), want) {
-			t.Errorf("islands.src/main.ts missing %q", want)
+			t.Errorf("web/src/main.ts missing %q", want)
 		}
 	}
 }
@@ -268,17 +277,22 @@ func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
 		t.Fatalf("scaffold: %v", err)
 	}
 	for _, p := range []string{
-		"islands.src/main.tsx",
-		"islands.src/App.tsx",
-		"islands/index.html",
+		"web/src/main.tsx",
+		"web/src/App.tsx",
+		"web/index.html",
+		"web/vite.config.ts",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
 		}
 	}
-	main, _ := os.ReadFile(filepath.Join(dir, "islands.src/main.tsx"))
+	main, _ := os.ReadFile(filepath.Join(dir, "web/src/main.tsx"))
 	if !strings.Contains(string(main), "react") {
 		t.Errorf("main.tsx should import from react\n%s", main)
+	}
+	cfg, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
+	if !strings.Contains(string(cfg), "@vitejs/plugin-react") {
+		t.Errorf("web/vite.config.ts should use @vitejs/plugin-react\n%s", cfg)
 	}
 }
 

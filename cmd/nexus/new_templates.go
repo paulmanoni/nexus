@@ -96,58 +96,43 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		}
 	}
 	if opts.HasFrontend() {
-		// New-pipeline layout: source under islands.src/, build
-		// output under islands/, SPA shell at islands/index.html
-		// (checked in; bundle filenames are stable so the html's
-		// asset references don't need updating between builds).
-		//
-		// No package.json, no vite.config.ts, no node-side build
-		// config. The frontend dep set lives in nexus.lock
-		// (populated by `nexus add` post-scaffold).
-		//
-		// tsconfig.json + nexus-shims.d.ts ARE emitted — purely
-		// for the IDE's TypeScript server. esbuild ignores both;
-		// they only exist so VS Code (or any TS-aware editor)
-		// knows how to resolve `import 'vue'` without choking
-		// with TS2307 "Cannot find module". Real .d.ts fetching
-		// from esm.sh is a follow-up; today these are ambient
-		// declarations that silence the error without giving
-		// autocomplete on Vue APIs.
-		if err := add("islands/index.html", tmplIndexHTMLTpl); err != nil {
+		// Vite project under web/. Standard Node toolchain: npm-managed deps
+		// (package.json + package-lock), vite dev/build, real node_modules.
+		// `nexus dev` runs `npm run dev` (Vite + HMR) and injects the proxy;
+		// `nexus build` runs `npm run build` → web/dist, embedded via
+		// //go:embed all:web/dist in main.go. A committed web/dist/index.html
+		// stub makes the first `go build` (before any vite build) compile.
+		if err := add("web/index.html", tmplViteIndexHTML); err != nil {
 			return nil, err
 		}
-		if err := add("tsconfig.json", tmplTSConfigForIDE); err != nil {
+		if err := add("web/vite.config.ts", tmplViteConfig); err != nil {
 			return nil, err
 		}
-		if err := add("nexus-shims.d.ts", tmplShimsDTS); err != nil {
+		if err := add("web/tsconfig.json", tmplViteTSConfig); err != nil {
 			return nil, err
 		}
-		// package.json is the human/IDE/Renovate-facing dep spec.
-		// nexus.lock remains authoritative for resolved pins +
-		// integrity, but package.json lets `nexus install` mirror
-		// the `npm install`-on-fresh-clone UX: a contributor
-		// without nexus.lock yet can clone, run install, and have
-		// every dep listed here fetched in one shot. `nexus add`
-		// and `nexus remove` keep both files in sync going forward.
+		if err := add("web/dist/index.html", tmplViteDistStub); err != nil {
+			return nil, err
+		}
 		switch opts.Frontend {
 		case "vue":
-			if err := add("package.json", tmplPackageJSONNexusVue); err != nil {
+			if err := add("web/package.json", tmplViteVuePackageJSON); err != nil {
 				return nil, err
 			}
-			if err := add("islands.src/main.ts", tmplMainTS); err != nil {
+			if err := add("web/src/main.ts", tmplMainTS); err != nil {
 				return nil, err
 			}
-			if err := add("islands.src/App.vue", tmplAppVueTpl); err != nil {
+			if err := add("web/src/App.vue", tmplAppVueTpl); err != nil {
 				return nil, err
 			}
 		case "react":
-			if err := add("package.json", tmplPackageJSONNexusReact); err != nil {
+			if err := add("web/package.json", tmplViteReactPackageJSON); err != nil {
 				return nil, err
 			}
-			if err := add("islands.src/main.tsx", tmplMainTSXTpl); err != nil {
+			if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
 				return nil, err
 			}
-			if err := add("islands.src/App.tsx", tmplAppTSXTpl); err != nil {
+			if err := add("web/src/App.tsx", tmplAppTSXTpl); err != nil {
 				return nil, err
 			}
 		}
@@ -169,21 +154,10 @@ func nextStepsLines(opts scaffoldOpts) []string {
 		"  go mod tidy",
 	}
 	if opts.HasFrontend() {
-		// Frontend deps fetched into ~/.nexus/cache + pinned in
-		// nexus.lock. One-time per project; subsequent builds
-		// hit the warm cache.
-		switch opts.Frontend {
-		case "vue":
-			lines = append(lines,
-				"  nexus add vue           # one-time: pull vue from esm.sh into ~/.nexus/cache",
-			)
-		case "react":
-			lines = append(lines,
-				"  nexus add react react-dom",
-			)
-		}
+		// Vite project under web/ — install JS deps with npm (one-time).
 		lines = append(lines,
-			"  nexus types             # editor IntelliSense from nexus.lock — no npm (optional)",
+			"  cd web && npm install   # install frontend deps (vite + framework)",
+			"  cd ..",
 		)
 	}
 	if opts.HasResources() {
@@ -192,12 +166,11 @@ func nextStepsLines(opts scaffoldOpts) []string {
 		)
 	}
 	lines = append(lines,
-		"  nexus dev               # Go + frontend auto-rebuild; dashboard at /__nexus/",
+		"  nexus dev               # go run + Vite dev server (HMR); dashboard at /__nexus/",
 	)
-	if opts.IsVue() {
+	if opts.HasFrontend() {
 		lines = append(lines,
-			"                          # Vue SFC compile needs CGo + vue build tag:",
-			"                          #   CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest",
+			"                          # SPA on http://localhost:5173 ; nexus build embeds web/dist",
 		)
 	}
 	return lines
@@ -237,13 +210,13 @@ import (
 {{- end}}
 )
 {{if .HasFrontend}}
-// islandsFS holds the bundled SPA — JS, CSS, fonts, and the
-// hand-written index.html shell. nexus build runs the frontend
-// bundler before go build so islands/ is populated; the embed
-// directive then bakes everything into the binary.
+// webFS holds the Vite-built SPA (web/dist). nexus build runs npm run
+// build before go build, so web/dist is populated; this embed bakes it
+// into the binary. A committed web/dist/index.html stub lets go build
+// succeed before the first frontend build.
 //
-//go:embed all:islands
-var islandsFS embed.FS
+//go:embed all:web/dist
+var webFS embed.FS
 {{end}}
 func main() {
 	// Runtime config (server addr, dashboard, introspection, environment, …)
@@ -255,7 +228,7 @@ func main() {
 
 	opts = append(opts,
 {{- if .HasFrontend}}
-		nexus.ServeFrontend(islandsFS, "islands"),
+		nexus.ServeFrontend(webFS, "web/dist"),
 {{- end}}
 {{- if .HasResources}}
 		nexus.Provide(zap.NewExample),
@@ -319,18 +292,12 @@ const tmplGitignoreTpl = `/bin/
 .DS_Store
 .env
 {{if .HasFrontend}}
-# nexus-managed type stubs for IntelliSense — fetched on demand
-# by ` + "`nexus add`" + ` from esm.sh's X-TypeScript-Types and
-# mirrored into node_modules/<pkg>/. Don't commit; regenerated
-# next time anyone runs ` + "`nexus add`" + ` or ` + "`nexus install`" + `.
-/node_modules/
-
-# bundler output — regenerated by ` + "`nexus build`" + ` / ` + "`nexus dev`" + `
-/islands/*.js
-/islands/*.js.map
-/islands/*.css
-/islands/*.css.map
-/islands/assets/
+# Vite frontend (web/). npm deps + build output are not committed, EXCEPT
+# the web/dist/index.html stub so a fresh clone's first go build (before
+# any npm run build) can satisfy //go:embed all:web/dist.
+/web/node_modules/
+/web/dist/*
+!/web/dist/index.html
 {{end}}`
 
 const tmplEnvExampleTpl = `# Copy this file to .env and fill in real credentials.
@@ -470,6 +437,113 @@ func (c *CacheManager) NexusResources() []resource.Resource {
 // should install. `nexus add <pkg>` mirrors new pins here; `nexus
 // remove <pkg>` drops them. `nexus install` reads this list and
 // reconciles against nexus.lock.
+// ── Vite frontend (web/) ────────────────────────────────────────────
+
+const tmplViteVuePackageJSON = `{
+  "name": "{{.Name}}-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.0",
+    "vite": "^5.4.0"
+  }
+}
+`
+
+const tmplViteReactPackageJSON = `{
+  "name": "{{.Name}}-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^5.4.0"
+  }
+}
+`
+
+// tmplViteConfig — base '/' (the SPA is served at the app root). `nexus dev`
+// injects a managed proxy block into server.proxy (between @nexus:proxy
+// markers) so /__nexus,/graphql,/oauth,/ws reach the Go app from :5173.
+const tmplViteConfig = `import { defineConfig } from 'vite'
+{{if .IsReact}}import react from '@vitejs/plugin-react'{{else}}import vue from '@vitejs/plugin-vue'{{end}}
+
+export default defineConfig({
+  plugins: [{{if .IsReact}}react(){{else}}vue(){{end}}],
+  server: {
+    // ` + "`nexus dev`" + ` injects the /__nexus,/graphql,/oauth,/ws proxy here.
+    proxy: {},
+  },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+  },
+})
+`
+
+const tmplViteIndexHTML = `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{.Name}}</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.{{if .IsReact}}tsx{{else}}ts{{end}}"></script>
+  </body>
+</html>
+`
+
+const tmplViteTSConfig = `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "preserve",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src"]
+}
+`
+
+// tmplViteDistStub is a minimal valid SPA shell committed at web/dist/index.html
+// so the first ` + "`go build`" + ` (before any ` + "`vite build`" + `) compiles the
+// //go:embed all:web/dist directive and the binary boots. Overwritten by the
+// real build output on ` + "`nexus build`" + ` / ` + "`npm run build`" + `.
+const tmplViteDistStub = `<!DOCTYPE html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>{{.Name}}</title></head>
+  <body>
+    <div id="app"></div>
+    <p style="font-family:system-ui;padding:2rem">Frontend not built yet — run
+    <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code>
+    (or <code>nexus build</code>).</p>
+  </body>
+</html>
+`
+
 const tmplPackageJSONNexusVue = `{
   "name": "{{.Name}}",
   "type": "module",
@@ -664,30 +738,23 @@ curl 'http://localhost:8080/hello?name=Paul'
 {{if .HasFrontend}}
 ## Frontend
 
-The SPA lives under ` + "`islands.src/`" + ` (source) and ` + "`islands/`" + ` (build
-output, embedded in the binary via ` + "`//go:embed`" + ` in main.go).
-No ` + "`node_modules`" + `, no ` + "`package.json`" + `, no vite.
+A standard **Vite** project under ` + "`web/`" + ` ({{if .IsReact}}React{{else}}Vue{{end}} + TypeScript).
+Manage frontend deps with ` + "`npm`" + ` as usual — Tailwind, component
+libraries, any Vite plugin all work. The build output (` + "`web/dist`" + `) is
+embedded into the Go binary via ` + "`//go:embed`" + ` in main.go.
 
-  - Edit ` + "`islands.src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` rebuilds on save.
-  - Add a frontend dependency: ` + "`nexus add <pkg>`" + ` (writes ` + "`nexus.lock`" + `).
-  - Editor IntelliSense without npm: ` + "`nexus types`" + ` reads ` + "`nexus.lock`" + ` and
-    fetches each dep's real ` + "`.d.ts`" + ` from esm.sh into a types-only
-    ` + "`node_modules/`" + ` (gitignored, editor-only — the build stays zero-Node).
-    ` + "`nexus dev`" + ` refreshes it automatically.
-  - Production build is part of ` + "`nexus build`" + `:
+  - Install deps: ` + "`cd web && npm install`" + ` (add libs with ` + "`npm install <pkg>`" + `).
+  - Edit ` + "`web/src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` runs the Vite dev
+    server with HMR on http://localhost:5173 and proxies ` + "`/__nexus`" + `,
+    ` + "`/graphql`" + `, ` + "`/oauth`" + `, ` + "`/ws`" + ` to the Go app.
+  - Production build is part of ` + "`nexus build`" + ` (it runs ` + "`npm run build`" + ` then
+    embeds ` + "`web/dist`" + `):
 
 ` + "```" + `
 nexus build
 ./bin/{{.Name}}
 ` + "```" + `
-{{if .IsVue}}
-The QuickJS-backed Vue SFC compiler runs in-process when CGo is
-on. Install the nexus CLI with the ` + "`vue`" + ` build tag once per machine:
-
-` + "```" + `
-CGO_ENABLED=1 go install -tags vue github.com/paulmanoni/nexus/cmd/nexus@latest
-` + "```" + `
-{{end}}{{end}}
+{{end}}
 {{- if .HasDB}}
 ## Database
 
