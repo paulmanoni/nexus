@@ -45,7 +45,7 @@ README on GitHub instead.
 Examples:
     nexus docs                # list all topics
     nexus docs handlers       # reflective handler signature reference
-    nexus docs deploy         # nexus.toml + IfDeployment
+    nexus docs nexustoml      # nexus.toml runtime config reference
     nexus docs --web          # open the README on GitHub`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -202,11 +202,12 @@ var topicSummaries = map[string]string{
 	"rest":       "AsRest — REST endpoints with reflective handlers",
 	"graphql":    "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":         "AsWS — typed WebSocket envelopes, session fan-out",
-	"frontend":   "ServeFrontend + FrontendAt — embed an SPA",
+	"frontend":   "ServeFrontend + FrontendAt — embed an SPA; nexus add/types",
+	"nexustoml":  "nexus.toml — server, dashboard, introspection, env, extensions",
 	"peer":       "extension/peer — typed RPC between nexus apps",
 	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
 	"config":     "extension/config — Spring-style config server + nexus.Get",
-	"cli":        "Subcommand cheatsheet (new / init / dev / build / docs)",
+	"cli":        "Subcommand cheatsheet (new / init / add / types / dev / build)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
 	"client":     "Embedded JS/TS SDK — connect a browser to your app",
 	"autoselect": "Vite plugin that auto-injects opts.select from accesses",
@@ -239,8 +240,9 @@ A minimal nexus app: one module, one query, dashboard at /__nexus/.
     func main() {
         nexus.Run(
             nexus.Config{
-                Server:    nexus.ServerConfig{Addr: ":8080"},
-                Dashboard: nexus.DashboardConfig{Enabled: true, Name: "Adverts"},
+                Server:        nexus.ServerConfig{Addr: ":8080"},
+                Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Adverts"},
+                Introspection: true, // open /__nexus in dev (404s by default)
             },
             nexus.Module("adverts",
                 nexus.Provide(NewAdvertsService),
@@ -251,9 +253,15 @@ A minimal nexus app: one module, one query, dashboard at /__nexus/.
 
 Run it:
     go run .                        # plain
-    nexus dev                       # auto-opens dashboard
+    nexus dev                       # Go + frontend auto-rebuild
 
-Open http://localhost:9080/__nexus/ (admin port = Addr + 1000).
+Open http://localhost:8080/__nexus/ for the dashboard.
+
+Prefer config in a file? Load it from nexus.toml instead of the inline
+literal — that's what 'nexus new' scaffolds (see 'nexus docs nexustoml'):
+
+    cfg := nexus.MustLoadConfig()
+    nexus.Run(cfg, nexus.Module("adverts", ...))
 `,
 
 	"handlers": `
@@ -293,8 +301,8 @@ MODULE / PROVIDE
 
   nexus.Module(name, opts...)
     Named group; stamps module name on every endpoint registered
-    inside. Use nexus.RoutePrefix("/x") or nexus.DeployAs("svc")
-    among the opts.
+    inside (the dashboard's Architecture graph groups by module).
+    Use nexus.Path("/x") or nexus.RoutePrefix("/x") among the opts.
 
   nexus.Provide(fns...)
     Constructor(s) into the dep graph (fx-backed).
@@ -319,21 +327,19 @@ MODULE / PROVIDE
 
 Example:
 
-    var Module = nexus.Module("uaa",
-        nexus.Path("/oats-uaa"),                   // REST + GraphQL prefix in one
-        nexus.DeployAs("uaa-svc"),
+    var Module = nexus.Module("billing",
+        nexus.Path("/billing"),                    // REST + GraphQL prefix in one
         nexus.Provide(NewService),
-        nexus.AsRest("POST", "/oauth/token", TokenHandler),
-        nexus.AsQuery(NewSearchUsers),
+        nexus.AsRest("POST", "/charge", ChargeHandler),
+        nexus.AsQuery(NewListInvoices),
     )
 
-  nexus.Path("/oats-uaa")
+  nexus.Path("/billing")
     Sugar for "this module's URL prefix": REST endpoints mount
-    under /oats-uaa/*, AND app.Service("uaa") returns a Service
-    whose GraphQL mount is /oats-uaa/graphql automatically. One
-    declaration, kept in sync with monolith ↔ split. Use
-    nexus.RoutePrefix + service.AtGraphQL separately if you
-    need different paths for REST vs GraphQL.
+    under /billing/*, AND app.Service("billing") returns a Service
+    whose GraphQL mount is /billing/graphql automatically. One
+    declaration. Use nexus.RoutePrefix + service.AtGraphQL
+    separately if you need different paths for REST vs GraphQL.
 `,
 
 	"auth": `
@@ -605,45 +611,108 @@ Mount under a sub-path when APIs live at the root:
 
     nexus.ServeFrontend(distFS, "web/dist", nexus.FrontendAt("/admin"))
 
-Frontend-only deployment (web-svc shape) — only the binaries that
-should serve the SPA mount it:
-
-    nexus.IfDeployment([]string{"monolith", "web-svc"},
-        nexus.ServeFrontend(distFS, "web/dist"),
-    )
-
-Manifest (see ` + "`nexus docs deploy`" + `):
-
-    deployments:
-      web-svc:
-        owns: []        # owns nothing — frontend-only binary
-        port: 9000
-
 Boot fails fast if index.html is missing in the FS — stale bundles
 surface at start time, not at first request.
+
+Zero-Node toolchain: 'nexus new --frontend vue|react' (or 'nexus init
+--frontend ...' in an existing project) scaffolds islands.src/ with NO
+package.json scripts, node_modules, or vite. Deps come from esm.sh into
+~/.nexus/cache, pinned in nexus.lock:
+
+    nexus add vue            # fetch a dep into the cache + nexus.lock
+    nexus types              # editor IntelliSense: mirror each dep's
+                             # .d.ts from esm.sh into a types-only
+                             # node_modules/ (gitignored, editor-only —
+                             # the bundler stays zero-Node). 'nexus dev'
+                             # refreshes it automatically.
+    nexus dev                # bundle + serve with HMR
+    nexus build              # production bundle, embedded via //go:embed
+`,
+
+	"nexustoml": `
+NEXUS.TOML (runtime config)
+
+The per-app config file, loaded by main.go:
+
+    cfg  := nexus.MustLoadConfig()      // the keys below -> nexus.Config
+    opts := nexus.MustLoadExtensions()  // [extensions.*] -> []Option
+    nexus.Run(cfg, append(opts, modules...)...)
+
+Edit settings here instead of in code. Any key absent from the file
+leaves its Config field zero-valued, so framework defaults apply.
+'nexus new' scaffolds a starter with the runtime block below.
+
+    # top-level keys
+    environment   = "development"   # "development" | "staging" | "production"
+    version       = "1.0.0"         # shown on /__nexus/config
+    trace_capacity = 1000           # request-trace ring buffer (0 = off)
+
+    # Introspection opens /__nexus (dashboard + JSON APIs). OFF by
+    # default — the surface 404s — so a prod binary is locked down.
+    # Turn it on in dev; in prod prefer a CIDR allowlist instead.
+    introspection          = true
+    introspection_networks = ["10.0.0.0/8"]   # allow even when off
+
+    [server]
+    addr         = ":8080"
+    route_prefix = ""               # prepended to every REST/GraphQL/WS route
+
+    [dashboard]
+    enabled = true
+    name    = "My App"
+
+    [graphql]
+    path               = "/graphql"
+    disable_playground = false
+
+    [middleware.cors]
+    allow_origins = ["*"]
+
+    [middleware.ratelimit]
+    rpm   = 600
+    burst = 50
+
+    # Extension blocks — decoded by nexus.MustLoadExtensions() when the
+    # matching extension is blank-imported (e.g. extension/config).
+    # [extensions.config]
+    #   ...
+
+Slice-of-middleware fields (Global, Dashboard) need Go funcs, so they
+stay in code; everything data-driven lives here.
 `,
 
 	"cli": `
 CLI CHEATSHEET
 
-  nexus new <dir>            Scaffold a minimal app + nexus.toml.
-                             --module <path> overrides go.mod path.
+  nexus new <dir>            Scaffold a runnable app + nexus.toml.
+                             --frontend vue|react  add an SPA
+                             --db / --cache / --auth   wire resources
+                             --module <path>       override go.mod path
+                             --yes                 take defaults (no prompts)
 
-  nexus init [dir]           Add nexus.toml to an existing project.
-                             Scans DeployAs tags. --force overwrites.
+  nexus init [dir]           Add frontend scaffolding to an EXISTING
+                             project (islands.src/ + patches main.go to
+                             embed + ServeFrontend).
+                             --frontend vue|react  (required)
+                             --force               overwrite islands.src/
 
-  nexus dev [dir]            go run + auto-open the dashboard.
-                             --split            spawn one subprocess per unit
+  nexus add <pkg>...         Fetch a frontend dep from esm.sh into
+                             ~/.nexus/cache + pin it in nexus.lock.
+
+  nexus types                Generate a types-only node_modules/ from
+                             nexus.lock for editor IntelliSense — no npm.
+
+  nexus dev [dir]            go run + frontend auto-rebuild; serves the
+                             dashboard. Refreshes editor types too.
                              --addr host:port   listen address override
                              --no-open          skip opening the browser
-                             --base-port N      starting port for --split
 
-  nexus build                Build a deployment binary using go build -overlay.
-    --deployment <name>      (required) unit from nexus.toml.
-    --output  / -o <path>    output binary path (default ./bin/<name>).
+  nexus build                Build a single binary (frontend bundled +
+                             embedded via //go:embed).
+    --output / -o <path>     output binary path (default: go's default).
     --package <pkg>          main package to compile (default ".").
 
-  nexus generate dockerfile  Emit a Dockerfile (multi-stage, deployment-aware).
+  nexus generate dockerfile  Emit a multi-stage Dockerfile.
 
   nexus docs [topic]         This help. --web opens the README on GitHub.
 
@@ -682,12 +751,9 @@ One line on the Config literal:
         modules...,
     )
 
-…or via the option chain (composes with IfDeployment to ship the
-SDK only from the public-facing service):
+…or via the option chain instead of the Config.Client field:
 
-    nexus.IfDeployment([]string{"web-svc", "monolith"},
-        nexus.ClientUse(client.Config{}),
-    )
+    nexus.ClientUse(client.Config{Enabled: true})
 
 For TS / IDE-friendly setups, OutDir + TSConfig auto-write the
 SDK files + path mappings to disk on startup so frontend tooling
@@ -724,10 +790,6 @@ lookup at runtime — nx.query / nx.mutate / nx.crud. Most SPAs
 that vendor sdk/client.d.ts at build time can stay on the safe
 default and lose nothing in TS completion (types are vendored,
 not fetched).
-
-Compose with nexus.IfDeployment to flip the default per listener:
-internal admin services keep Public:true, public-facing services
-ride the safe default.
 
 OutDir produces:
 
@@ -971,7 +1033,6 @@ Plays cleanly with the rest of the framework:
 
   - ServeFrontend: SDK routes register before the SPA's NoRoute
     fallback, so /__nexus/client/* never gets swallowed.
-  - IfDeployment: gate per-deployment via nexus.ClientUse(...).
   - Multiple backends: construct two NexusClient instances from
     different origins; each fetches its own manifest + carries
     its own auth state.
@@ -1060,11 +1121,17 @@ is a perf win, NOT a security boundary.
 	"dashboard": `
 DASHBOARD
 
-Mounted at /__nexus/ (admin listener) when Dashboard.Enabled is
-true. Tabs:
+Mounted at /__nexus/ when Dashboard.Enabled is true — BUT the whole
+surface 404s unless introspection is open (Config.Introspection: true,
+or introspection = true in nexus.toml; see 'nexus docs nexustoml').
+It's off by default so prod binaries stay locked down; 'nexus dev' and
+the 'nexus new' scaffold turn it on. Tabs:
 
-  Architecture  Module containers + endpoints, service-dep nodes,
-                worker cards, resource nodes. Live traffic pulses
+  Architecture  Graph grouped by MODULE: each module is a cluster you
+                drill into (endpoints, service-deps, workers, crons,
+                resources). Collapsed by default at scale; edges bundle
+                with a count badge. ELK layout + minimap + dark mode.
+                Live traffic pulses
                 on edges (green ok, red ✕ on rejection).
   Endpoints     REST path / GraphQL op list; per-endpoint tester
                 (curl + Playground), arg validator chips.
