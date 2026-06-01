@@ -1312,6 +1312,12 @@ async function load() {
   for (const n of visNodes) {
     if (n.type === 'service') n.data.lod = lod
   }
+  // In compact (LOD) mode the cards drop their per-op row handles, so any
+  // edge still anchored to an `op:` handle would fail to route. Re-anchor
+  // every edge to the card-level handle when compact.
+  if (lod) {
+    for (const e of visEdges) { e.sourceHandle = null; e.targetHandle = null }
+  }
 
   // Diagnostic: surface the built graph to window so operators can
   // verify service-level edges from DevTools without re-reading this
@@ -1792,7 +1798,6 @@ onUnmounted(() => {
       :node-types="nodeTypes"
       :min-zoom="0.1"
       :max-zoom="1.5"
-      :only-render-visible-elements="true"
     >
       <!-- Dot grid (Vue Flow's Background defaults to dots). Color +
            gap match the --canvas-dot token in tokens.css; keep literals
