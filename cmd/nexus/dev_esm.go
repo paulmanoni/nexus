@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -238,16 +240,144 @@ func esmWatch(ctx context.Context, servedRoot string, host *devserver.Host, hub 
 	}
 }
 
-// esmAliases returns the tsconfig-style path aliases the dev server honors.
-// MVP covers the dominant Vite convention `@/* → <root>/src/*`; richer
-// tsconfig "paths" parsing can layer on later.
+// esmAliases returns the import aliases the dev server honors, parsed from
+// the project's tsconfig.json "paths" so EVERY mapping the editor resolves
+// (e.g. "nexus-client/vue" → src/sdk/vue.js, the generated GraphQL SDK)
+// also resolves at runtime — not just the "@/" convention. Each paths entry
+// becomes an alias:
+//
+//	"@/*":            ["./src/*"]          → wildcard  @/ → <base>/src
+//	"nexus-client":   ["src/sdk/client.js"] → exact    nexus-client → that file
+//	"nexus-client/vue":["src/sdk/vue.js"]   → exact
+//
+// Targets resolve against the tsconfig's baseUrl (default ".") which sits at
+// servedRoot. Falls back to the "@/" → src convention when there's no
+// tsconfig or no usable paths.
 func esmAliases(servedRoot string) []devserver.Alias {
-	srcSub := filepath.Join(servedRoot, "src")
-	if info, err := os.Stat(srcSub); err == nil && info.IsDir() {
-		return []devserver.Alias{{Prefix: "@/", Dir: srcSub}}
+	def := func() []devserver.Alias {
+		srcSub := filepath.Join(servedRoot, "src")
+		if info, err := os.Stat(srcSub); err == nil && info.IsDir() {
+			return []devserver.Alias{{Prefix: "@/", Dir: srcSub}}
+		}
+		return []devserver.Alias{{Prefix: "@/", Dir: servedRoot}}
 	}
-	return []devserver.Alias{{Prefix: "@/", Dir: servedRoot}}
+
+	paths, baseURL, ok := readTSConfigPaths(filepath.Join(servedRoot, "tsconfig.json"))
+	if !ok {
+		// also try jsconfig.json
+		paths, baseURL, ok = readTSConfigPaths(filepath.Join(servedRoot, "jsconfig.json"))
+	}
+	if !ok || len(paths) == 0 {
+		return def()
+	}
+	base := filepath.Join(servedRoot, filepath.FromSlash(baseURL))
+
+	var aliases []devserver.Alias
+	for key, targets := range paths {
+		if len(targets) == 0 {
+			continue
+		}
+		target := targets[0] // first candidate wins (TS tries in order)
+		if strings.HasSuffix(key, "/*") && strings.HasSuffix(target, "/*") {
+			// Wildcard: "@/*" → "./src/*" ⇒ prefix "@/" maps onto <base>/src.
+			prefix := strings.TrimSuffix(key, "*") // keep trailing "/" → "@/"
+			dir := filepath.Join(base, filepath.FromSlash(strings.TrimSuffix(target, "*")))
+			aliases = append(aliases, devserver.Alias{Prefix: prefix, Dir: dir})
+		} else if !strings.Contains(key, "*") {
+			// Exact: "nexus-client/vue" → "src/sdk/vue.js".
+			aliases = append(aliases, devserver.Alias{
+				Prefix: key,
+				Dir:    filepath.Join(base, filepath.FromSlash(target)),
+				Exact:  true,
+			})
+		}
+	}
+	if len(aliases) == 0 {
+		return def()
+	}
+	// Guarantee an "@/" fallback exists even if tsconfig omitted it.
+	hasAt := false
+	for _, a := range aliases {
+		if a.Prefix == "@/" {
+			hasAt = true
+		}
+	}
+	if !hasAt {
+		aliases = append(aliases, def()...)
+	}
+	return aliases
 }
+
+// readTSConfigPaths extracts compilerOptions.paths + baseUrl from a
+// tsconfig/jsconfig. Tolerant of JSONC (// and /* */ comments + trailing
+// commas) since TS allows them. baseUrl defaults to ".".
+func readTSConfigPaths(file string) (paths map[string][]string, baseURL string, ok bool) {
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, "", false
+	}
+	var cfg struct {
+		CompilerOptions struct {
+			BaseURL string              `json:"baseUrl"`
+			Paths   map[string][]string `json:"paths"`
+		} `json:"compilerOptions"`
+	}
+	if err := json.Unmarshal(stripJSONC(raw), &cfg); err != nil {
+		return nil, "", false
+	}
+	base := cfg.CompilerOptions.BaseURL
+	if base == "" {
+		base = "."
+	}
+	return cfg.CompilerOptions.Paths, base, true
+}
+
+// stripJSONC removes // line comments, /* */ block comments, and trailing
+// commas so a tsconfig with JSONC niceties parses as plain JSON. String
+// literals are preserved (so a "//" inside a value isn't mangled).
+func stripJSONC(b []byte) []byte {
+	var out []byte
+	inStr, esc, line, block := false, false, false, false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		switch {
+		case line:
+			if c == '\n' {
+				line = false
+				out = append(out, c)
+			}
+		case block:
+			if c == '*' && i+1 < len(b) && b[i+1] == '/' {
+				block = false
+				i++
+			}
+		case inStr:
+			out = append(out, c)
+			if esc {
+				esc = false
+			} else if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+			out = append(out, c)
+		case c == '/' && i+1 < len(b) && b[i+1] == '/':
+			line = true
+			i++
+		case c == '/' && i+1 < len(b) && b[i+1] == '*':
+			block = true
+			i++
+		default:
+			out = append(out, c)
+		}
+	}
+	// Drop trailing commas: ",}" → "}", ",]" → "]" (whitespace-tolerant).
+	return trailingCommaRE.ReplaceAll(out, []byte("$1"))
+}
+
+var trailingCommaRE = regexp.MustCompile(`,(\s*[}\]])`)
 
 // esmDefaultPort is the dev server's stable default — Vite's port, so it's
 // instantly familiar and bookmarkable across runs. A fixed port also means

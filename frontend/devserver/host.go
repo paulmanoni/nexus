@@ -36,12 +36,20 @@ import (
 	"github.com/paulmanoni/viteless"
 )
 
-// Alias maps an import prefix to a filesystem directory, mirroring a
-// tsconfig "paths" entry (e.g. {"@/", "<root>/src"} for "@/*": ["./src/*"]).
-// The target dir is expected to live under Root so it can be served.
+// Alias maps an import specifier to a filesystem target, mirroring a
+// tsconfig "paths" entry. Two shapes:
+//
+//   - Wildcard: Prefix "@/", Dir "<root>/src", Exact=false — from
+//     "@/*": ["./src/*"]. The text after Prefix is joined onto Dir.
+//   - Exact: Prefix "nexus-client", Dir "<root>/src/sdk/client.js",
+//     Exact=true — from "nexus-client": ["src/sdk/client.js"]. The whole
+//     specifier maps to that one file.
+//
+// The target is expected to live under Root so it can be served.
 type Alias struct {
-	Prefix string // e.g. "@/"
-	Dir    string // absolute directory the prefix maps to
+	Prefix string // import prefix (wildcard) or full specifier (exact)
+	Dir    string // target dir (wildcard) or target file (exact)
+	Exact  bool   // true → whole-specifier → single file mapping
 }
 
 // Config configures a Host.
@@ -533,22 +541,46 @@ func (h *Host) toPrebundle(entryStoreURL string) string {
 }
 
 // resolveAlias rewrites a tsconfig-style aliased import to its served path
-// under Root. Returns ok=false when no alias prefix matches.
+// under Root. Returns ok=false when no alias matches. Exact aliases
+// (whole-specifier → one file, e.g. "nexus-client/vue") are tried before
+// wildcard prefixes so a specific entry wins over a broad "@/"-style one.
 func (h *Host) resolveAlias(spec string) (string, bool) {
+	// Exact matches first.
 	for _, a := range h.aliases {
-		if a.Prefix == "" || !strings.HasPrefix(spec, a.Prefix) {
+		if a.Exact && spec == a.Prefix {
+			if served, ok := h.aliasServedPath(a.Dir); ok {
+				return served, true
+			}
+		}
+	}
+	// Then wildcard prefixes (longest prefix wins, so a deeper alias isn't
+	// shadowed by a shorter one like a bare "@/").
+	best := -1
+	var bestAlias Alias
+	for _, a := range h.aliases {
+		if a.Exact || a.Prefix == "" || !strings.HasPrefix(spec, a.Prefix) {
 			continue
 		}
-		rest := strings.TrimPrefix(spec, a.Prefix)
-		abs := filepath.Join(a.Dir, filepath.FromSlash(rest))
-		rel, err := filepath.Rel(h.root, abs)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return "", false // alias target outside Root — can't serve it
+		if len(a.Prefix) > best {
+			best, bestAlias = len(a.Prefix), a
 		}
-		// Extension + index resolution so `@/router` finds router/index.ts.
-		return h.resolveSourceURL("/" + filepath.ToSlash(rel)), true
 	}
-	return "", false
+	if best < 0 {
+		return "", false
+	}
+	rest := strings.TrimPrefix(spec, bestAlias.Prefix)
+	abs := filepath.Join(bestAlias.Dir, filepath.FromSlash(rest))
+	return h.aliasServedPath(abs)
+}
+
+// aliasServedPath turns an absolute filesystem target into a served URL
+// path (with extension/index resolution), or ok=false when it escapes Root.
+func (h *Host) aliasServedPath(abs string) (string, bool) {
+	rel, err := filepath.Rel(h.root, abs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", false // target outside Root — can't serve it
+	}
+	return h.resolveSourceURL("/" + filepath.ToSlash(rel)), true
 }
 
 // sourceResolveExts is the extension probe order for extensionless imports,
