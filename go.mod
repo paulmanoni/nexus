@@ -127,6 +127,6 @@ require (
 )
 
 require (
-	github.com/paulmanoni/qjs v0.0.7
+	github.com/paulmanoni/qjs v0.0.8
 	github.com/paulmanoni/viteless v0.1.0
 )
