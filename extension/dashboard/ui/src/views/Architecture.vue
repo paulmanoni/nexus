@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, markRaw, nextTick, provide, watc
 import { VueFlow, useVueFlow, Position, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { ShieldCheck } from 'lucide-vue-next'
+import { ShieldCheck, Layers } from 'lucide-vue-next'
 import { elkLayout, applyPositions } from '../lib/elkLayout.js'
 
 import ServiceNode from '../components/ServiceNode.vue'
@@ -25,7 +25,9 @@ import WorkerDetail from '../components/drawer/WorkerDetail.vue'
 import CronDetail from '../components/drawer/CronDetail.vue'
 import AuthDetail from '../components/drawer/AuthDetail.vue'
 import CmdK from '../components/CmdK.vue'
+import ClusterNode from '../components/ClusterNode.vue'
 import { subscribeEvents, subscribeLive } from '../lib/api.js'
+import { buildClusters, computeVisible } from '../lib/topology.js'
 
 const nodes = ref([])
 const edges = ref([])
@@ -39,6 +41,7 @@ const nodeTypes = {
   cron: markRaw(CronNode),
   resource: markRaw(ResourceNode),
   internet: markRaw(InternetNode),
+  cluster: markRaw(ClusterNode),
 }
 
 // INTERNET_ID is the fixed id of the single "Clients" node. Keep it a
@@ -68,6 +71,58 @@ function toggleExpanded(groupKey) {
 }
 provide('nexus.expandedGroups', expandedGroups)
 provide('nexus.toggleExpanded', toggleExpanded)
+
+// expandedClusters holds the keys of drill-down clusters the user has
+// opened. Empty = everything collapsed (the default at scale: a handful of
+// cluster cards instead of 1000 nodes). Expanding reveals a cluster's
+// members and reruns layout. Like expandedGroups it lives outside the
+// snapshot so it survives live frames; replaced wholesale so the watcher
+// fires.
+const expandedClusters = ref(new Set())
+function expandCluster(key) {
+  if (!key || expandedClusters.value.has(key)) return
+  const next = new Set(expandedClusters.value)
+  next.add(key)
+  expandedClusters.value = next
+}
+function collapseAllClusters() {
+  if (expandedClusters.value.size === 0) return
+  expandedClusters.value = new Set()
+}
+provide('nexus.expandCluster', expandCluster)
+watch(expandedClusters, () => { if (latestSnapshot.value) load() })
+
+// stampClusters tags each node with the cluster it belongs to (_cluster +
+// label + kind), which topology.buildClusters groups on. Grouping degrades
+// gracefully: by DEPLOYMENT tag when the app uses them (the multi-service
+// mesh case), else by TIER (Services / Data / Workers / Schedules) so the
+// top level stays small no matter how many modules exist. Internet has no
+// cluster — it always renders standalone on the far left.
+function stampClusters(allNodes, svcToDep) {
+  const depOf = (n) => {
+    if (n.type === 'service' || n.type === 'worker' || n.type === 'cron') return n.data.deployment || ''
+    if (n.type === 'serviceDep') return (svcToDep && svcToDep[n.data.name]) || ''
+    return ''
+  }
+  const useDeployments = allNodes.some(n => depOf(n))
+  for (const n of allNodes) {
+    if (n.type === 'internet') { n.data._cluster = null; continue }
+    if (useDeployments) {
+      const dep = depOf(n) || 'default'
+      n.data._cluster = 'dep:' + dep
+      n.data._clusterLabel = dep === 'default' ? 'Ungrouped' : dep
+      n.data._clusterKind = 'deployment'
+    } else {
+      let key = 'tier:services', label = 'Services', kind = 'services'
+      if (n.type === 'resource')   { key = 'tier:data';      label = 'Data';      kind = 'data' }
+      else if (n.type === 'worker') { key = 'tier:workers';   label = 'Workers';   kind = 'workers' }
+      else if (n.type === 'cron')   { key = 'tier:schedules'; label = 'Schedules'; kind = 'schedules' }
+      n.data._cluster = key
+      n.data._clusterLabel = label
+      n.data._clusterKind = kind
+    }
+  }
+}
 
 // Per-op selection store. ServiceNode writes here on click; ResourceNode
 // + edge-styling read from it. Single source of truth means no props need
@@ -540,6 +595,12 @@ function nodeBoxSize(n) {
   if (n.type === 'serviceDep') return { w: NODE_WIDTH_RESOURCE, h: estimateServiceDepHeight(n.data) }
   if (n.type === 'worker')     return { w: NODE_WIDTH_RESOURCE, h: estimateWorkerHeight(n.data) }
   if (n.type === 'cron')       return { w: NODE_WIDTH_RESOURCE, h: estimateCronHeight(n.data) }
+  // Collapsed cluster card: fixed-ish box (head + meta + optional stats row).
+  if (n.type === 'cluster') {
+    const s = n.data.summary || {}
+    const statsRow = (s.endpoints || s.requests || s.errors) ? 24 : 0
+    return { w: 260, h: 96 + statsRow }
+  }
   return { w: estimateServiceWidth(n.data), h: estimateServiceHeight(n.data) }
 }
 
@@ -1175,24 +1236,36 @@ async function load() {
   }
 
   const all = [internetNode, ...groupNodes, ...svcDepNodes, ...workerNodes, ...cronNodes, ...rsNodes]
+
+  // Hierarchical drill-down: tag every node with its cluster, group them,
+  // then collapse to the visible set for the current expand state. Default
+  // (nothing expanded) renders a handful of cluster cards instead of the
+  // full graph; only the visible subgraph is laid out + rendered, which is
+  // what keeps the canvas usable at 1000+ nodes. Edges crossing a collapsed
+  // boundary are rerouted onto the cluster node (aggregated with a count).
+  stampClusters(all, svcToDep)
+  const clusters = buildClusters(all)
+  const { nodes: visNodes, edges: visEdges } = computeVisible(all, edgeList, clusters, expandedClusters.value)
+  const visIds = new Set(visNodes.map(n => n.id))
+
   // Diagnostic: surface the built graph to window so operators can
   // verify service-level edges from DevTools without re-reading this
   // file. Cheap (single assignment per poll) and invaluable when an
   // expected dep edge doesn't render.
   if (typeof window !== 'undefined') {
     window.__nexusArch = {
-      groupNodes: groupNodes.map(n => n.id),
-      svcDepNodes: svcDepNodes.map(n => n.id),
-      resourceNodes: rsNodes.map(n => n.id),
-      edges: edgeList.map(e => ({ id: e.id, source: e.source, target: e.target, op: e.data?.op ?? null, serviceLevel: !!e.data?.serviceLevel })),
+      clusters: [...clusters.values()].map(c => ({ key: c.key, members: c.memberIds.size })),
+      expanded: [...expandedClusters.value],
+      visibleNodes: visNodes.map(n => n.id),
+      edges: visEdges.map(e => ({ id: e.id, source: e.source, target: e.target, count: e.data?.count ?? 1 })),
     }
   }
   const seq = ++layoutSeq
   let laid
   try {
-    laid = await layout(all, edgeList)
+    laid = await layout(visNodes, visEdges)
   } catch (err) {
-    console.error('[nexus] Architecture layout failed:', err, { groupCount: groupNodes.length, edgeCount: edgeList.length })
+    console.error('[nexus] Architecture layout failed:', err, { nodeCount: visNodes.length, edgeCount: visEdges.length })
     return
   }
   // A newer load() started while ELK was working — drop this stale result.
@@ -1214,10 +1287,12 @@ async function load() {
     const topologyChanged = nextFingerprint !== lastTopologyFingerprint
     lastTopologyFingerprint = nextFingerprint
     nodes.value = nextNodes
-    rawEdges.value = edgeList
-    indexEndpointEdges(edgeList)
-    indexEndpointGroups(groupNodes)
-    edges.value = restyleEdges(edgeList, opSelection.value, flashedEdges.value)
+    rawEdges.value = visEdges
+    indexEndpointEdges(visEdges)
+    // Only index groups that actually render — collapsed-cluster members are
+    // hidden, and the flash/packet animator must not target a missing node.
+    indexEndpointGroups(groupNodes.filter(g => visIds.has(g.id)))
+    edges.value = restyleEdges(visEdges, opSelection.value, flashedEdges.value)
     if (topologyChanged) {
       nextTick(() => fitView(FIT_OPTS))
     }
@@ -1607,6 +1682,15 @@ onUnmounted(() => {
          hosts everything that used to live in the top tab bar. -->
     <div class="canvas-utility">
       <TimeScrubber />
+      <button
+        v-if="expandedClusters.size > 0"
+        class="utility-btn"
+        title="Collapse all expanded groups back to the overview"
+        @click="collapseAllClusters"
+      >
+        <Layers :size="14" :stroke-width="2" />
+        Collapse all
+      </button>
       <button
         class="utility-btn"
         title="Open Auth drawer (cached identities + rejections)"
