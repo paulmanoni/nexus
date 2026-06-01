@@ -44,6 +44,8 @@ func fixture(t *testing.T) (*httptest.Server, *Host) {
 	write("src/router.ts", `export default {};`)
 	write("src/plugins/index.ts", `export const p = 1;`)
 	write("src/withexts.ts", `import r from "./router";`+"\n"+`import { p } from "./plugins";`+"\n"+`console.log(r, p);`)
+	// public/ asset the HTML hard-codes (favicon convention).
+	write("public/favicon.png", "FAVICON")
 
 	st, err := store.New(t.TempDir())
 	if err != nil {
@@ -88,6 +90,22 @@ func TestHost_ServesHTMLWithClient(t *testing.T) {
 	}
 	if !strings.Contains(body, `src="/src/main.ts"`) {
 		t.Errorf("entry script not preserved:\n%s", body)
+	}
+	// Vue esm-bundler feature flags must be defined before any module runs.
+	if !strings.Contains(body, "__VUE_OPTIONS_API__") {
+		t.Errorf("index.html missing Vue feature-flag script:\n%s", body)
+	}
+}
+
+func TestHost_ServesPublicAsset(t *testing.T) {
+	ts, _ := fixture(t)
+	defer ts.Close()
+	// <Root>/public/favicon.png is served at the site root (Vite
+	// convention). A browser resource fetch (?url, what a <link href>
+	// image load resolves to via viteless) returns the raw bytes.
+	code, body := get(t, ts.URL, "/favicon.png?url")
+	if code != 200 || body != "FAVICON" {
+		t.Errorf("public/ asset not served at root; got %d %q", code, body)
 	}
 }
 

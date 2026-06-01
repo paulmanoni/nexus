@@ -24,6 +24,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -160,16 +161,61 @@ func (h *Host) loadSource(urlPath string) ([]byte, string, bool) {
 	if strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
 		return nil, "", false
 	}
-	fsPath := filepath.Join(h.root, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
+	rel := filepath.FromSlash(strings.TrimPrefix(clean, "/"))
+	fsPath := filepath.Join(h.root, rel)
 	// Defense in depth: ensure the resolved path is still within Root.
-	if rel, err := filepath.Rel(h.root, fsPath); err != nil || strings.HasPrefix(rel, "..") {
+	if r, err := filepath.Rel(h.root, fsPath); err != nil || strings.HasPrefix(r, "..") {
 		return nil, "", false
 	}
 	body, err := os.ReadFile(fsPath)
 	if err != nil {
+		// public/ convention: assets the HTML hard-codes (favicons, PWA
+		// icons, manifest.json) live in <Root>/public and are served at
+		// the site root — e.g. <link href="/arm-192.png"> resolves to
+		// <Root>/public/arm-192.png. Mirrors Vite + the bundler's
+		// CopyPublicDir step. Only consulted on a direct-path miss.
+		pubPath := filepath.Join(h.root, "public", rel)
+		if pr, perr := filepath.Rel(filepath.Join(h.root, "public"), pubPath); perr == nil && !strings.HasPrefix(pr, "..") {
+			if pb, perr := os.ReadFile(pubPath); perr == nil {
+				return pb, kindForExt(strings.ToLower(path.Ext(clean))), true
+			}
+		}
 		return nil, "", false
 	}
-	return body, kindForExt(strings.ToLower(path.Ext(clean))), true
+	kind := kindForExt(strings.ToLower(path.Ext(clean)))
+	if kind == "html" {
+		body = injectVueFlags(body)
+	}
+	return body, kind, true
+}
+
+// vueFlagsScript defines Vue 3 esm-bundler's compile-time feature flags as
+// globals. The esm.sh Vue build reads these and warns when they're absent
+// (the production bundler sets them via Define/banner). A classic inline
+// script in <head> runs before any deferred module — so the flags exist by
+// the time vue.development.mjs evaluates. Values mirror the bundler's dev
+// defaults (frontend/deps/bundler vueRuntimeFlagsBanner).
+const vueFlagsScript = `<script>` +
+	`globalThis.__VUE_OPTIONS_API__=true;` +
+	`globalThis.__VUE_PROD_DEVTOOLS__=false;` +
+	`globalThis.__VUE_PROD_HYDRATION_MISMATCH_DETAILS__=false;` +
+	`</script>`
+
+// injectVueFlags inserts the feature-flag script as early as possible in
+// the HTML head (before the first <script>/<link>, else before </head>),
+// so it executes ahead of the entry module graph.
+func injectVueFlags(html []byte) []byte {
+	h := string(html)
+	if strings.Contains(h, "__VUE_OPTIONS_API__") {
+		return html // already present
+	}
+	if i := strings.Index(h, "<script"); i >= 0 {
+		return []byte(h[:i] + vueFlagsScript + "\n  " + h[i:])
+	}
+	if i := strings.Index(h, "</head>"); i >= 0 {
+		return []byte(h[:i] + vueFlagsScript + "\n" + h[i:])
+	}
+	return []byte(vueFlagsScript + "\n" + h)
 }
 
 // loadDep serves a cached dependency blob, reverse-mapping the served path
@@ -185,9 +231,9 @@ func (h *Host) loadDep(urlPath string) ([]byte, string, bool) {
 		if h.res.FetchOnDemand != nil {
 			if c, ferr := h.res.FetchOnDemand(canonical); ferr == nil && c != "" {
 				if blob, meta, err = h.res.Store.Get(c); err == nil {
-					body, rerr := os.ReadFile(blob)
-					if rerr == nil {
-						return body, kindForContentType(meta.ContentType, canonical), true
+					if body, rerr := os.ReadFile(blob); rerr == nil {
+						kind := kindForContentType(meta.ContentType, canonical)
+						return h.finishDep(body, kind, c), kind, true
 					}
 				}
 			}
@@ -198,7 +244,61 @@ func (h *Host) loadDep(urlPath string) ([]byte, string, bool) {
 	if err != nil {
 		return nil, "", false
 	}
-	return body, kindForContentType(meta.ContentType, canonical), true
+	kind := kindForContentType(meta.ContentType, canonical)
+	return h.finishDep(body, kind, canonical), kind, true
+}
+
+// finishDep post-processes a dep blob before it's served. For CSS it
+// rebases relative url() references (fonts, images) to absolute /@dep/
+// URLs: the CSS is injected as a <style> tag, so a relative url() like
+// `../fonts/x.woff2` would otherwise resolve against the PAGE origin
+// (localhost:5173) and 404. Resolving each against the CSS's own registry
+// URL — exactly how the bundler's registry-internal resolver handles it —
+// points the browser at the cached font blob instead.
+func (h *Host) finishDep(body []byte, kind, importerURL string) []byte {
+	if kind != "css" {
+		return body
+	}
+	return []byte(rewriteCSSURLs(string(body), func(ref string) string {
+		// Leave absolute URLs, data:, and bare #fragment refs untouched.
+		if ref == "" || strings.HasPrefix(ref, "data:") || strings.HasPrefix(ref, "#") ||
+			strings.Contains(ref, "://") {
+			return ref
+		}
+		// Resolve the WHOLE ref (query included — esm.sh keys font
+		// variants on ?v=…) against the CSS's registry URL. ResolveURL's
+		// registry-internal branch joins it via resolveRegistryURL and
+		// fetches the blob on demand, so the font is in the cache by the
+		// time the browser requests the rewritten /@dep/ URL.
+		if u, ok, _ := h.res.ResolveURL(ref, importerURL); ok {
+			return h.toDepPath(u)
+		}
+		return ref
+	}))
+}
+
+// cssURLRE matches a CSS url() token, capturing the (optionally quoted)
+// reference. Handles url(x), url('x'), url("x"). The captured groups are
+// the three quote variants; exactly one is non-empty per match.
+var cssURLRE = regexp.MustCompile(`url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)`)
+
+// rewriteCSSURLs rewrites every url() reference in css via map. The
+// rewritten value is re-emitted double-quoted. @import url()s and font/
+// image refs all flow through. map receives the raw reference (no quotes)
+// and returns the replacement.
+func rewriteCSSURLs(css string, mapRef func(string) string) string {
+	return cssURLRE.ReplaceAllStringFunc(css, func(m string) string {
+		sub := cssURLRE.FindStringSubmatch(m)
+		ref := sub[1]
+		if ref == "" {
+			ref = sub[2]
+		}
+		if ref == "" {
+			ref = sub[3]
+		}
+		out := mapRef(ref)
+		return `url("` + out + `")`
+	})
 }
 
 // Transform compiles one source file to browser JS. viteless only calls
@@ -240,11 +340,22 @@ func (h *Host) transformVue(urlPath string, src []byte) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("%s", b.String())
 	}
+	// @vue/compiler-sfc emits TypeScript when the SFC uses
+	// `<script setup lang="ts">` — and even pure-JS SFCs get a typed
+	// template-render wrapper (`(_ctx: any, _cache: any) => …`). The
+	// browser can't parse those annotations, so strip them with esbuild's
+	// single-file TS transform (the bundler path does the same via
+	// api.LoaderTS). Without this the served module dies with
+	// "missing ) after formal parameters" on the first typed signature.
+	stripped, err := h.transformEsbuild(urlPath, []byte(res.Code), ".ts")
+	if err != nil {
+		return nil, err
+	}
 	// The compiled SFC already sets __sfc__.__hmrId and registers the
 	// component with the Vue HMR runtime (createRecord). Append the
-	// accept footer so an edited module hot-swaps the live component
-	// in place (state preserved) instead of forcing a reload.
-	return []byte(res.Code + vueHMRFooter), nil
+	// accept footer (plain JS) so an edited module hot-swaps the live
+	// component in place (state preserved) instead of forcing a reload.
+	return append(stripped, []byte(vueHMRFooter)...), nil
 }
 
 // vueHMRFooter wires the standard Vue SFC hot-update path. It reads the

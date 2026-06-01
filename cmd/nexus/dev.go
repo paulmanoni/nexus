@@ -588,6 +588,11 @@ func (a *addrFinder) Write(p []byte) (int, error) {
 		a.buf = a.buf[i+1:]
 		if m := ginListenRE.FindSubmatch(line); m != nil {
 			if !a.done.Swap(true) {
+				// Publish the real bind addr for the ESM dev server's
+				// proxy resolver — it's constructed before the app boots
+				// and only learns the true port (e.g. :9590, not the
+				// --addr flag default) from this line.
+				detectedAppAddr.Store(string(m[1]))
 				select {
 				case a.ch <- string(m[1]):
 				default:
@@ -599,6 +604,12 @@ func (a *addrFinder) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// detectedAppAddr holds the application's real bind address once the
+// addrFinder has parsed it from the child's "nexus: listening on …" line.
+// The ESM dev server (started before the app boots) reads it lazily via
+// its proxy resolver. Empty until discovered.
+var detectedAppAddr atomic.Value // string
 
 // ginListenRE matches the framework's own startup announcement plus
 // gin's debug- and release-mode listening lines:

@@ -125,7 +125,16 @@ func startESMWatcher(ctx context.Context, dir, appAddr string, verbose bool, std
 		Env:      viteEnv,
 		Mode:     "development",
 	})
-	srv := viteless.NewServer(host, viteless.WithProxy(esmProxyTarget(appAddr)))
+	// Proxy unserved requests (API calls) to the app. The app's real bind
+	// port is discovered from its startup log AFTER this server is already
+	// listening, so resolve the target lazily: prefer the detected addr,
+	// fall back to the flag default until it's known.
+	srv := viteless.NewServer(host, viteless.WithProxyResolver(func() string {
+		if v, ok := detectedAppAddr.Load().(string); ok && v != "" {
+			return esmProxyTarget(v)
+		}
+		return esmProxyTarget(appAddr)
+	}))
 
 	ln, fellBack, err := esmListen()
 	if err != nil {
