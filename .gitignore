@@ -9,3 +9,8 @@
 # Leading slash anchors it to the root so it never matches the cmd/nexus/
 # package dir or import paths.
 /nexus
+
+# Other committed compiled binaries (Mach-O / ELF outputs of go build).
+# Anchored so only these exact paths are ignored, not source dirs.
+/arch-canvas
+/examples/wsecho/wsecho
