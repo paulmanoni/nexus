@@ -4,3 +4,8 @@
 *.out
 /dist/
 .DS_Store
+
+# Compiled CLI binary at repo root (produced by `go build`/`go install`).
+# Leading slash anchors it to the root so it never matches the cmd/nexus/
+# package dir or import paths.
+/nexus
