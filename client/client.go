@@ -42,6 +42,18 @@ type Config struct {
 	// Enabled gates the entire mount. Default false.
 	Enabled bool
 
+	// DevDisabled opts OUT of the dev-only auto-mount. Under
+	// `nexus dev` (NEXUS_DEV=1) the framework mounts the client SDK's
+	// manifest + runtime routes automatically when the app didn't
+	// enable them itself — so the SPA's vite proxy auto-syncs module
+	// RoutePrefixes (read from the live /__nexus/client/manifest.json)
+	// and the SDK is available without ceremony. The implicit dev
+	// mount never dumps files (OutDir is forced empty) — routes only.
+	// Set DevDisabled to keep the SDK closed even in dev ("closed
+	// manually"). No effect in production (NEXUS_DEV is never set
+	// there) or when Enabled is already true.
+	DevDisabled bool
+
 	// Path is the URL prefix the SDK routes mount under. Default
 	// DefaultPath ("/__nexus/client"). The dashboard at /__nexus/*
 	// and the SDK at /__nexus/client/* share an obvious namespace;

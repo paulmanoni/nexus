@@ -66,6 +66,11 @@ type App struct {
 	// chain can wire the AuthInfo bridge without forcing every app
 	// to thread auth.Manager through Mount manually.
 	clientHandler *client.Handler
+	// clientCfg retains Config.Client so the dev-only SDK fallback
+	// (devAutoMountClientSDK, wired in fxLateOptions) can honor the
+	// user's settings + the DevDisabled opt-out without threading cfg
+	// through the late invoke.
+	clientCfg client.Config
 	// cacheMgr is always non-nil — created by New() with a default
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
@@ -410,6 +415,8 @@ func New(cfg Config) *App {
 	// ClientUse-shaped registration so apps that haven't migrated
 	// keep working. The field is deprecated; new code declares
 	// frontend.Plugin(...) instead.
+	// Retain for the dev-only SDK fallback (devAutoMountClientSDK).
+	a.clientCfg = cfg.Client
 	if cfg.Client.Enabled {
 		clientCfg := client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection)
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
@@ -491,6 +498,36 @@ func (a *App) SchemaRefs() map[string]registry.NamedType {
 // code to thread the manager through Mount manually.
 func (a *App) ClientHandler() *client.Handler {
 	return a.clientHandler
+}
+
+// devAutoMountClientSDK mounts the client SDK's manifest + runtime
+// routes under `nexus dev` (NEXUS_DEV=1) when nothing else has — so a
+// plain ServeFrontend SPA still exposes /__nexus/client/manifest.json.
+// `nexus dev` reads that manifest to auto-sync the vite proxy (folding
+// in every module's RoutePrefix), and the SDK + auto-select plugin
+// consume it too. Wired into fxLateOptions so it runs AFTER user opts:
+// an explicit Config.Client.Enabled / nexus.ClientUse / frontend.Plugin
+// mount wins (idempotent — skips once a handler exists).
+//
+// Dev-only and side-effect-free: OutDir is forced empty so the start-
+// time SDK file dump + vite.config auto-edit never fire; only HTTP
+// routes are added. Production never sets NEXUS_DEV=1. Opt out with
+// Config.Client.DevDisabled — the "closed manually" escape hatch.
+func devAutoMountClientSDK(a *App) {
+	if !IsDev() || a.clientCfg.DevDisabled {
+		return
+	}
+	if a.clientHandler != nil {
+		return // already mounted via Enabled / ClientUse / frontend.Plugin
+	}
+	cc := a.clientCfg
+	cc.Enabled = true
+	cc.OutDir = "" // never dump files from the implicit dev mount
+	// Dev gets the FULL manifest (every module endpoint) so the proxy
+	// sync + nx.query/mutate/crud work — the same visibility
+	// introspection grants, which `nexus dev` already bypasses on.
+	clientCfg := client.ApplyVisibilityDefaults(cc, true)
+	a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
 }
 
 // SetClientAuthInfo installs the manifest's auth-section provider

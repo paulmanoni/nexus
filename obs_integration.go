@@ -238,5 +238,9 @@ func fxEarlyOptions(cfg Config) fx.Option {
 func fxLateOptions() fx.Option {
 	return fx.Options(
 		fx.Invoke(autoMountGraphQL),
+		// Dev-only: mount the client SDK manifest when the app didn't,
+		// so `nexus dev` can read it to auto-sync the vite proxy's
+		// module prefixes. Runs after user opts → explicit mounts win.
+		fx.Invoke(devAutoMountClientSDK),
 	)
 }
