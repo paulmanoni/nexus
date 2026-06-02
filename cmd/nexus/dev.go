@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/client"
+	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -62,10 +63,22 @@ Use this instead of 'go run .' when you want one-command iteration. The
 dev runner kills the entire process group on SIGINT/SIGTERM so the
 compiled binary doesn't survive Ctrl-C as a zombie.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			target := "."
 			if len(args) > 0 {
 				target = args[0]
+			}
+			// When the user didn't pass --addr, take the app's real bind
+			// address from nexus.toml ([runtime.server].addr). nexus dev
+			// PROBES and PROXIES this address: the SPA's vite proxy must
+			// target the port the binary actually listens on, not the
+			// flag's :8080 default. Without this an app pinned to, say,
+			// :9590 in nexus.toml gets a proxy pointed at :8080 and every
+			// /graphql + module call from the SPA 404s.
+			if !cmd.Flags().Changed("addr") {
+				if a := devAddrFromConfig(target); a != "" {
+					addr = a
+				}
 			}
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
@@ -98,6 +111,35 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 // flag is mostly a fallback for non-nexus apps; users running plain
 // nexus apps don't need to set it.
 const defaultDevAddr = ":8080"
+
+// devAddrFromConfig reads [runtime.server].addr from nexus.toml in the
+// dev target's directory, so `nexus dev` probes + proxies the address
+// the app actually binds. Returns "" when the file, the table, or the
+// key is absent (or unparsable) — the caller then keeps the --addr
+// flag. Deliberately decodes ONLY runtime.server.addr: a partial,
+// lenient parse that never fails the dev loop over an unrelated config
+// quirk, and stays independent of the framework's full config schema.
+func devAddrFromConfig(target string) string {
+	dir := target
+	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(target)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "nexus.toml"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Runtime struct {
+			Server struct {
+				Addr string `toml:"addr"`
+			} `toml:"server"`
+		} `toml:"runtime"`
+	}
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Runtime.Server.Addr)
+}
 
 type userError struct{ msg string }
 

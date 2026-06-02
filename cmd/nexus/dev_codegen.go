@@ -89,10 +89,36 @@ func devProbeReady(ctx context.Context, addr string, timeout time.Duration) bool
 // modules with a RoutePrefix shows up in the SPA without a manual
 // vite.config.ts edit.
 func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyURL string, stdout, stderr io.Writer) error {
-	// Detection short-circuit: ask the plugins endpoint whether the
-	// app has frontend.Plugin wired. A response missing the entry
-	// means codegen isn't expected — skip silently rather than
-	// printing a misleading "codegen: 0 files" line every restart.
+	// Fetch the manifest first — both the proxy sync and codegen need
+	// it. A failure here means the app isn't answering yet; bail and
+	// let the next boot retry.
+	m, err := devFetchManifest(ctx, baseURL)
+	if err != nil {
+		return fmt.Errorf("manifest fetch: %w", err)
+	}
+
+	// Re-sync the vite proxy against the manifest's actual prefixes.
+	// This runs for EVERY frontend-serving app — independent of
+	// frontend.Plugin. A plain `ServeFrontend` SPA (no codegen plugin)
+	// needs the proxy just as much: without it the SPA's /graphql, the
+	// SDK manifest fetch (/__nexus), and every module RoutePrefix call
+	// 404 through vite. manifestProxyPrefixes folds in each module's
+	// prefix (and route_prefix via the manifest BasePath) on top of the
+	// framework defaults. Failures are non-fatal.
+	if proxyURL != "" {
+		if cfg := findViteConfig(frontendDir); cfg != "" {
+			prefixes := manifestProxyPrefixes(m)
+			if err := client.SyncViteProxyForPrefixes(cfg, proxyURL, prefixes, stdout); err != nil {
+				fmt.Fprintf(stderr, "%svite proxy sync skipped:%s %v\n", ansiDim, ansiReset, err)
+			}
+		}
+	}
+
+	// Codegen is frontend.Plugin-only: ask the plugins endpoint whether
+	// the app has it wired. A response missing the entry means codegen
+	// isn't expected — skip silently rather than printing a misleading
+	// "codegen: 0 files" line every restart. (The proxy sync above has
+	// already run regardless, which is what SPA-only apps rely on.)
 	hasFrontend, err := devDetectFrontendPlugin(ctx, baseURL)
 	if err != nil {
 		// Network failure on the plugins endpoint is a real problem
@@ -102,25 +128,6 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyUR
 	}
 	if !hasFrontend {
 		return nil
-	}
-
-	m, err := devFetchManifest(ctx, baseURL)
-	if err != nil {
-		return fmt.Errorf("manifest fetch: %w", err)
-	}
-
-	// Re-sync vite proxy against the manifest's actual prefixes.
-	// Runs before codegen so a missing proxy entry doesn't make
-	// the first SPA request (manifest fetch from the browser) fail
-	// while codegen happens. Failures are non-fatal — the codegen
-	// itself is what the user cares about.
-	if proxyURL != "" {
-		if cfg := findViteConfig(frontendDir); cfg != "" {
-			prefixes := manifestProxyPrefixes(m)
-			if err := client.SyncViteProxyForPrefixes(cfg, proxyURL, prefixes, stdout); err != nil {
-				fmt.Fprintf(stderr, "%svite proxy sync skipped:%s %v\n", ansiDim, ansiReset, err)
-			}
-		}
 	}
 
 	contribs, err := devFetchContributions(ctx, baseURL, framework)

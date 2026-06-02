@@ -309,22 +309,31 @@ func findMarkerRange(body string) (int, int, bool) {
 // the right scaffold. Mirrors the legacy injector's ladder so
 // upgrading projects land identical structure to the prior path.
 func bootstrapManagedBlock(body, managed string) (string, bool) {
+	// NB: never append a comma directly after `managed`. The managed
+	// block ends with the `// @nexus:proxy-end` LINE comment, so any
+	// trailing comma is swallowed by the comment (`// …proxy-end,`) —
+	// cosmetically broken and, because it lands OUTSIDE the marker
+	// range, never cleaned up on later re-syncs. It's redundant anyway:
+	// renderManagedBlock already terminates the last entry with a comma,
+	// so the block is valid wherever it's spliced. Commas that separate
+	// the whole proxy/server object from its siblings go AFTER the
+	// closing brace (`},`), not after the comment.
 	proxyRe := regexp.MustCompile(`proxy\s*:\s*\{`)
 	if loc := proxyRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		ins := "\n      " + managed + ","
+		ins := "\n      " + managed
 		return body[:openBrace+1] + ins + body[openBrace+1:], true
 	}
 	serverRe := regexp.MustCompile(`server\s*:\s*\{`)
 	if loc := serverRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		ins := "\n    proxy: {\n      " + managed + ",\n    },"
+		ins := "\n    proxy: {\n      " + managed + "\n    },"
 		return body[:openBrace+1] + ins + body[openBrace+1:], true
 	}
 	cfgRe := regexp.MustCompile(`defineConfig\s*\(\s*\{`)
 	if loc := cfgRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		ins := "\n  server: { proxy: {\n    " + managed + ",\n  } },"
+		ins := "\n  server: { proxy: {\n    " + managed + "\n  } },"
 		return body[:openBrace+1] + ins + body[openBrace+1:], true
 	}
 	return body, false

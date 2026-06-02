@@ -302,6 +302,60 @@ export default defineConfig({
 	}
 }
 
+// TestEnsureViteProxyForNexus_NoCommaAfterEndMarker is the regression
+// test for the bootstrap bug where a comma was appended directly after
+// the managed block. Because the block ends in the `// @nexus:proxy-end`
+// LINE comment, that comma was swallowed by the comment (rendering
+// `// @nexus:proxy-end,`) — cosmetically broken and, since it lived
+// OUTSIDE the marker range, never cleaned up on re-sync. Covers all
+// three bootstrap scaffolds + an idempotent re-run, asserting the
+// stray comma never appears.
+func TestEnsureViteProxyForNexus_NoCommaAfterEndMarker(t *testing.T) {
+	scaffolds := map[string]string{
+		"proxy-exists": `import { defineConfig } from 'vite'
+export default defineConfig({
+  server: { proxy: {} },
+})
+`,
+		"server-no-proxy": `import { defineConfig } from 'vite'
+export default defineConfig({
+  server: { port: 5173 },
+})
+`,
+		"defineconfig-only": `import { defineConfig } from 'vite'
+export default defineConfig({
+  plugins: [],
+})
+`,
+	}
+	for name, original := range scaffolds {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "vite.config.ts")
+			if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// Bootstrap, then re-sync — a second pass must not creep a
+			// comma in either (the marker-present path preserves bytes
+			// after the end marker verbatim).
+			for i := 0; i < 2; i++ {
+				if err := EnsureViteProxyForNexus(cfgPath, "http://localhost:9590", io.Discard); err != nil {
+					t.Fatalf("pass %d: %v", i, err)
+				}
+			}
+			got, _ := os.ReadFile(cfgPath)
+			if strings.Contains(string(got), "@nexus:proxy-end,") {
+				t.Errorf("stray comma swallowed by end-marker comment\n--- body ---\n%s", got)
+			}
+			// The end marker should be followed by whitespace then a
+			// closing brace — never a comma token.
+			if !strings.Contains(string(got), "// @nexus:proxy-end") {
+				t.Fatalf("end marker missing\n--- body ---\n%s", got)
+			}
+		})
+	}
+}
+
 // TestEnsureViteProxyForPrefixes_CustomList covers the explicit-
 // prefix variant: apps with a custom /api or /v1 base path can pass
 // their own list. Defaults aren't auto-mixed in — the caller owns
