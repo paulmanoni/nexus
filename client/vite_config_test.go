@@ -344,13 +344,22 @@ export default defineConfig({
 				}
 			}
 			got, _ := os.ReadFile(cfgPath)
-			if strings.Contains(string(got), "@nexus:proxy-end,") {
-				t.Errorf("stray comma swallowed by end-marker comment\n--- body ---\n%s", got)
+			gs := string(got)
+			if strings.Contains(gs, "@nexus:proxy-end,") {
+				t.Errorf("stray comma swallowed by end-marker comment\n--- body ---\n%s", gs)
 			}
-			// The end marker should be followed by whitespace then a
-			// closing brace — never a comma token.
-			if !strings.Contains(string(got), "// @nexus:proxy-end") {
-				t.Fatalf("end marker missing\n--- body ---\n%s", got)
+			// Regression: an empty `proxy: {}` must not glue its closing
+			// `}` onto the end-marker comment line (`// …proxy-end}`),
+			// which would comment the brace out and break the object.
+			if strings.Contains(gs, "@nexus:proxy-end}") {
+				t.Errorf("proxy closing brace swallowed by end-marker comment\n--- body ---\n%s", gs)
+			}
+			if !strings.Contains(gs, "// @nexus:proxy-end") {
+				t.Fatalf("end marker missing\n--- body ---\n%s", gs)
+			}
+			// Braces must balance (the config must still parse).
+			if strings.Count(gs, "{") != strings.Count(gs, "}") {
+				t.Errorf("unbalanced braces after injection\n--- body ---\n%s", gs)
 			}
 		})
 	}
@@ -487,11 +496,12 @@ export default defineConfig({
 	}
 }
 
-// TestMergeViteConfig_InjectsWatchExcludeIntoExistingBuild verifies
-// the auto-fix for the unplugin-auto-import / @nuxt/ui rebuild loop:
-// when the user's config already has a build: { … } block, we
-// prepend watch: { exclude: [...] } without disturbing the rest.
-func TestMergeViteConfig_InjectsWatchExcludeIntoExistingBuild(t *testing.T) {
+// TestMergeViteConfig_DoesNotInjectBuildWatch is the regression test
+// for the build-hang bug: MergeViteConfig must NOT add `build.watch`.
+// Setting build.watch puts `vite build` (and `nexus build`) into
+// rollup watch mode, which never exits. The existing build block is
+// left untouched; only the plugin gets wired.
+func TestMergeViteConfig_DoesNotInjectBuildWatch(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "vite.config.ts")
 	original := `import { defineConfig } from 'vite'
@@ -511,36 +521,23 @@ export default defineConfig({
 	if err := MergeViteConfig(cfgPath, dir, io.Discard); err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	body, _ := os.ReadFile(cfgPath)
-	got := string(body)
-	for _, want := range []string{
-		"watch: { exclude:",
-		"'**/auto-imports.d.ts'",
-		"'**/components.d.ts'",
-		`outDir: "dist"`,    // unchanged
-		`emptyOutDir: true`, // unchanged
-	} {
+	rb, _ := os.ReadFile(cfgPath)
+	got := string(rb)
+	if strings.Contains(got, "watch:") {
+		t.Errorf("MergeViteConfig injected build.watch — this hangs `vite build`\n--- body ---\n%s", got)
+	}
+	// Plugin still wired; existing build block preserved.
+	for _, want := range []string{"nexus(", "import nexus from", `outDir: "dist"`, `emptyOutDir: true`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected %q in output\n--- body ---\n%s", want, got)
 		}
 	}
-	// Idempotency: second run must not duplicate the entry.
-	if err := MergeViteConfig(cfgPath, dir, io.Discard); err != nil {
-		t.Fatalf("second merge: %v", err)
-	}
-	again, _ := os.ReadFile(cfgPath)
-	if string(again) != got {
-		t.Errorf("watch-exclude injection is not idempotent")
-	}
-	if strings.Count(string(again), "auto-imports.d.ts") != 1 {
-		t.Errorf("auto-imports.d.ts appears more than once after second merge")
-	}
 }
 
-// TestMergeViteConfig_AddsBuildBlockWhenMissing verifies the second
-// branch: a config without any build: block gets a freshly-formed
-// build: { watch: { exclude: [...] } } added inside defineConfig.
-func TestMergeViteConfig_AddsBuildBlockWhenMissing(t *testing.T) {
+// TestMergeViteConfig_NoBuildBlockAdded verifies MergeViteConfig does
+// not fabricate a build block (it used to add build.watch). A config
+// with no build: block stays without one; only the plugin is wired.
+func TestMergeViteConfig_NoBuildBlockAdded(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "vite.config.ts")
 	original := `import { defineConfig } from 'vite'
@@ -556,13 +553,13 @@ export default defineConfig({
 	if err := MergeViteConfig(cfgPath, dir, io.Discard); err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	body, _ := os.ReadFile(cfgPath)
-	got := string(body)
-	if !strings.Contains(got, "build: { watch: { exclude:") {
-		t.Errorf("expected fresh build block with watch.exclude\n--- body ---\n%s", got)
+	rb, _ := os.ReadFile(cfgPath)
+	got := string(rb)
+	if strings.Contains(got, "build:") || strings.Contains(got, "watch:") {
+		t.Errorf("MergeViteConfig should not add a build/watch block\n--- body ---\n%s", got)
 	}
-	if !strings.Contains(got, "'**/auto-imports.d.ts'") {
-		t.Errorf("expected auto-imports glob\n--- body ---\n%s", got)
+	if !strings.Contains(got, "nexus(") {
+		t.Errorf("expected the nexus() plugin wired\n--- body ---\n%s", got)
 	}
 }
 

@@ -121,11 +121,13 @@ func MergeViteConfig(configPath, sdkDir string, stdout io.Writer) error {
 		changed = true
 	}
 
-	if updated, ok := insertWatchExclude(body, viteWatchExcludeGlobs); ok {
-		body = updated
-		changed = true
-		fmt.Fprintf(stdout, "[nexus] added build.watch.exclude for auto-imports.d.ts / components.d.ts in %s\n", configPath)
-	}
+	// NOTE: we deliberately do NOT inject `build.watch` here. Setting
+	// build.watch puts `vite build` (and therefore `nexus build`) into
+	// rollup WATCH mode, which never exits — it hung the build. The
+	// dev server doesn't use build.watch at all, and the
+	// auto-imports.d.ts / components.d.ts rebuild-loop it was meant to
+	// tame is handled by the nexus-vite-plugin's loop-guard (it
+	// restores those files' mtime when their contents are unchanged).
 
 	if !changed {
 		return nil
@@ -321,7 +323,13 @@ func bootstrapManagedBlock(body, managed string) (string, bool) {
 	proxyRe := regexp.MustCompile(`proxy\s*:\s*\{`)
 	if loc := proxyRe.FindStringIndex(body); loc != nil {
 		openBrace := loc[1] - 1
-		ins := "\n      " + managed
+		// Trailing newline matters: the managed block ENDS in the
+		// `// @nexus:proxy-end` line comment. For an empty `proxy: {}`,
+		// the original `}` sits immediately after `{`; without the
+		// newline it lands on the comment line (`// …proxy-end}`) and
+		// gets commented out, breaking the object. The newline drops
+		// the following `}` (or entry) onto its own line.
+		ins := "\n      " + managed + "\n"
 		return body[:openBrace+1] + ins + body[openBrace+1:], true
 	}
 	serverRe := regexp.MustCompile(`server\s*:\s*\{`)
