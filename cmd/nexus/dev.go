@@ -24,21 +24,6 @@ import (
 	"github.com/paulmanoni/viteless"
 )
 
-// findViteConfig returns the absolute path to the first
-// vite.config.{ts,js,mts,mjs} sitting at the root of frontendDir,
-// or "" when none exists. Probed in priority order so a project
-// using TypeScript wins over the legacy `.js` shape if both
-// happen to be present.
-func findViteConfig(frontendDir string) string {
-	for _, name := range []string{"vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs"} {
-		p := filepath.Join(frontendDir, name)
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
 // newDevCmd builds `nexus dev` — runs `go run` on the target package
 // with a startup banner and auto-opens the dashboard once the configured
 // port responds. Cobra wraps the runner.
