@@ -89,11 +89,9 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 			return err
 		}
 	}
-	if viteConfig != "" {
-		if err := MergeViteConfig(viteConfig, outDir, stdout); err != nil {
-			return err
-		}
-	}
+	// vite.config is no longer touched — viteless serves the frontend and
+	// owns the dev proxy, so there's no managed proxy block to inject.
+	_ = viteConfig
 	return nil
 }
 

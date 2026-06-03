@@ -127,8 +127,8 @@ func TestScaffoldWithOpts_FullStack(t *testing.T) {
 		"resources/database.go",
 		"resources/cache.go",
 		"auth/auth.go",
-		"web/package.json",
-		"web/vite.config.ts",
+		"web/viteless.config.ts",
+		"web/viteless-env.d.ts",
 		"web/tsconfig.json",
 		"web/index.html",
 		"web/src/main.ts",
@@ -235,8 +235,8 @@ func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 		"web/src/main.ts",
 		"web/src/App.vue",
 		"web/index.html",
-		"web/vite.config.ts",
-		"web/package.json",
+		"web/viteless.config.ts",
+		"web/viteless-env.d.ts",
 		"web/dist/index.html",
 	} {
 		info, err := os.Stat(filepath.Join(dir, p))
@@ -248,15 +248,15 @@ func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 			t.Errorf("%s exists but is empty", p)
 		}
 	}
-	// Vite index.html references the source entry; the build hashes it.
+	// index.html references the source entry; the build hashes it.
 	html, _ := os.ReadFile(filepath.Join(dir, "web/index.html"))
 	if !strings.Contains(string(html), `src="/src/main.ts"`) {
 		t.Errorf("web/index.html should reference /src/main.ts\n--- body ---\n%s", html)
 	}
-	// vite.config wires the vue plugin.
-	cfg, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
-	if !strings.Contains(string(cfg), "@vitejs/plugin-vue") {
-		t.Errorf("web/vite.config.ts should use @vitejs/plugin-vue\n%s", cfg)
+	// viteless.config.ts imports defineConfig from 'viteless' (no vite pkg).
+	cfg, _ := os.ReadFile(filepath.Join(dir, "web/viteless.config.ts"))
+	if !strings.Contains(string(cfg), `from 'viteless'`) {
+		t.Errorf("web/viteless.config.ts should import from 'viteless'\n%s", cfg)
 	}
 	// main.ts kicks off Vue with createApp.
 	mainTS, _ := os.ReadFile(filepath.Join(dir, "web/src/main.ts"))
@@ -280,7 +280,8 @@ func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
 		"web/src/main.tsx",
 		"web/src/App.tsx",
 		"web/index.html",
-		"web/vite.config.ts",
+		"web/viteless.config.ts",
+		"web/viteless-env.d.ts",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
@@ -290,9 +291,10 @@ func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
 	if !strings.Contains(string(main), "react") {
 		t.Errorf("main.tsx should import from react\n%s", main)
 	}
-	cfg, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
-	if !strings.Contains(string(cfg), "@vitejs/plugin-react") {
-		t.Errorf("web/vite.config.ts should use @vitejs/plugin-react\n%s", cfg)
+	// React is auto-detected from .tsx; the config just imports from 'viteless'.
+	cfg, _ := os.ReadFile(filepath.Join(dir, "web/viteless.config.ts"))
+	if !strings.Contains(string(cfg), `from 'viteless'`) {
+		t.Errorf("web/viteless.config.ts should import from 'viteless'\n%s", cfg)
 	}
 }
 

@@ -113,10 +113,13 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 	if err := add("web/index.html", tmplViteIndexHTML); err != nil {
 		return nil, err
 	}
-	if err := add("web/vite.config.ts", tmplViteConfig); err != nil {
+	if err := add("web/viteless.config.ts", tmplVitelessConfig); err != nil {
 		return nil, err
 	}
 	if err := add("web/tsconfig.json", tmplViteTSConfig); err != nil {
+		return nil, err
+	}
+	if err := add("web/viteless-env.d.ts", tmplVitelessEnvDTS); err != nil {
 		return nil, err
 	}
 	if err := add("web/dist/index.html", tmplViteDistStub); err != nil {
@@ -124,9 +127,6 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 	}
 	switch opts.Frontend {
 	case "vue":
-		if err := add("web/package.json", tmplViteVuePackageJSON); err != nil {
-			return nil, err
-		}
 		if err := add("web/src/main.ts", tmplMainTS); err != nil {
 			return nil, err
 		}
@@ -134,9 +134,6 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 			return nil, err
 		}
 	case "react":
-		if err := add("web/package.json", tmplViteReactPackageJSON); err != nil {
-			return nil, err
-		}
 		if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
 			return nil, err
 		}

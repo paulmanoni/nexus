@@ -1,61 +1,56 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/paulmanoni/viteless"
 )
 
-// frontendBuild builds the frontend with Vite so `go build` can embed the
-// output. It resolves <projectRoot>/web (or NEXUS_FRONTEND_DIR), runs
-// `npm ci`/`npm install` when node_modules is absent, then `npm run build`
-// (vite build → web/dist). The embed-gen step that runs next bakes web/dist
-// into the binary.
+// frontendBuild builds the frontend with the embedded viteless engine so
+// `go build` can embed the output. It resolves <projectRoot>/web (or
+// NEXUS_FRONTEND_DIR) and produces web/dist — no npm, no Node required (the
+// runtime and the build are a single Go binary). If a real Vite is installed
+// in the project, viteless delegates to it; otherwise it uses its own engine.
 //
-// This is the function `nexus build` calls before `go build`. It requires
-// Node/npm on PATH (the accepted build-time dependency of the Vite pipeline);
-// the runtime stays a single Go binary with the SPA embedded.
+// This is the function `nexus build` calls before `go build`; the embed-gen
+// step that runs next bakes web/dist into the binary.
 //
-// Skips silently when <dir>/package.json is absent (a pure-Go app with no
-// frontend). Returns an error when npm/vite fail.
+// Skips silently when the frontend dir has no source tree (a pure-Go app).
+// Returns an error when the build fails.
 func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 	dir := filepath.Join(projectRoot, frontendDirName())
-	pkgJSON := filepath.Join(dir, "package.json")
-	if _, err := os.Stat(pkgJSON); errors.Is(err, fs.ErrNotExist) {
-		return nil // no frontend project here — pure-Go app, skip
-	} else if err != nil {
-		return fmt.Errorf("frontend build: stat %s: %w", pkgJSON, err)
-	}
-
-	// Install deps when node_modules is absent. Prefer the reproducible
-	// `npm ci` when a lockfile exists, else `npm install`.
-	if _, err := os.Stat(filepath.Join(dir, "node_modules")); errors.Is(err, fs.ErrNotExist) {
-		sub := "install"
-		if _, lerr := os.Stat(filepath.Join(dir, "package-lock.json")); lerr == nil {
-			sub = "ci"
-		}
-		fmt.Fprintf(stdout, "%s●%s frontend: node_modules missing — npm %s in %s\n", ansiCyan, ansiReset, sub, dir)
-		if err := runFrontendNpm(dir, stdout, stderr, sub); err != nil {
-			return fmt.Errorf("frontend build: npm %s in %s: %w", sub, dir, err)
+	// A frontend project is identified by an index.html or a src/ tree —
+	// package.json is no longer required (viteless reads viteless.config.ts /
+	// vite.config.ts, or works with none).
+	hasFrontend := false
+	for _, marker := range []string{"index.html", "src"} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			hasFrontend = true
+			break
 		}
 	}
+	if !hasFrontend {
+		return nil // pure-Go app, skip
+	}
 
-	fmt.Fprintf(stdout, "%s●%s frontend: npm run build (vite) in %s\n", ansiCyan, ansiReset, dir)
-	if err := runFrontendNpm(dir, stdout, stderr, "run", "build"); err != nil {
-		return fmt.Errorf("frontend build: npm run build in %s: %w", dir, err)
+	fmt.Fprintf(stdout, "%s●%s frontend: viteless build → %s\n", ansiCyan, ansiReset, filepath.Join(dir, "dist"))
+	res, err := viteless.Build(viteless.BuildConfig{
+		Root: dir,
+		Logf: func(format string, args ...any) {
+			fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, fmt.Sprintf(format, args...))
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("frontend build: %w", err)
+	}
+	if len(res.Errors) > 0 {
+		for _, e := range res.Errors {
+			fmt.Fprintf(stderr, "%s●%s frontend build error: %s\n", ansiYellow, ansiReset, e)
+		}
+		return fmt.Errorf("frontend build: %d error(s)", len(res.Errors))
 	}
 	return nil
-}
-
-// runFrontendNpm runs `npm <args...>` in dir, streaming output. execCommand
-// (build_embed.go) is the package-level seam tests stub out.
-func runFrontendNpm(dir string, stdout, stderr io.Writer, args ...string) error {
-	cmd := execCommand("npm", args...)
-	cmd.Dir = dir
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	return cmd.Run()
 }

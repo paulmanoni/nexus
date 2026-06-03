@@ -18,9 +18,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/paulmanoni/nexus/client"
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
+
+	"github.com/paulmanoni/viteless"
 )
 
 // findViteConfig returns the absolute path to the first
@@ -182,40 +183,51 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		}
 	}
 
-	// Single binary — no manifest-aware overlay. The vite proxy points
-	// at the --addr flag's default :8080 unless the user overrides.
+	// Single binary — no manifest-aware overlay.
 	overlayPath := ""
+	// proxyAddr is the app's bind address used by the post-boot TS codegen
+	// to fetch the running manifest (manifest port from --addr).
 	proxyAddr := addr
-	// frontendURLCh receives vite's "Local: http://..." URL when the
+	// frontendURLCh receives the dev server's "Local: http://..." URL when the
 	// dev server (non-bundle mode) prints it. Buffered=1 so the
 	// watcher's pump never blocks if no one's listening yet.
 	frontendURLCh := make(chan string, 1)
 	if frontendDir != "" {
-		// Vite is the only frontend engine: run `npm run dev` (Vite dev
-		// server + HMR) unless the user overrode --frontend-cmd, ensure the
-		// "dev" script exists, and inject the managed proxy block into
-		// vite.config so the SPA (:5173) reaches /__nexus,/graphql,/oauth,/ws
-		// on the Go app.
-		if frontendCmd == "" {
-			frontendCmd = "npm run dev"
-		}
-		if err := ensureDevServerScript(frontendDir, stdout); err != nil {
-			fmt.Fprintf(stderr, "package.json injection skipped: %v\n", err)
-		}
-		if cfg := findViteConfig(frontendDir); cfg != "" {
-			proxyURL := "http://localhost" + proxyAddr
-			if !strings.HasPrefix(proxyAddr, ":") {
-				proxyURL = "http://" + proxyAddr
+		// The frontend is served by the embedded viteless engine (Vite for
+		// Go): a zero-Node HMR dev server that proxies unmatched requests
+		// (/__nexus, /graphql, /oauth, /ws, API calls) back to the Go app.
+		// If the project has a real Vite installed, viteless delegates to it;
+		// otherwise it uses its own engine — no npm, no managed vite.config
+		// proxy block. The Go app's real port is discovered from its startup
+		// log, so the proxy target is resolved lazily.
+		_ = frontendCmd // retained for flag compatibility; viteless owns the dev server
+		proxyResolver := func() string {
+			if v, ok := detectedAppAddr.Load().(string); ok && v != "" {
+				return "http://" + normalizeProbeAddr(v)
 			}
-			if err := client.EnsureViteProxyForNexus(cfg, proxyURL, stdout); err != nil {
-				fmt.Fprintf(stderr, "vite proxy injection skipped: %v\n", err)
+			a := addr
+			if strings.HasPrefix(a, ":") {
+				a = "127.0.0.1" + a
 			}
-			// Auto-heal the managed proxy block on direct vite.config edits.
-			go watchAndResyncViteProxy(ctx, proxyAddr, cfg, proxyURL, stdout, stderr)
+			return "http://" + a
 		}
-		if err := startFrontendWatcher(ctx, frontendDir, addr, frontendCmd, verbose, stdout, stderr, frontendURLCh); err != nil {
-			fmt.Fprintf(stderr, "frontend watcher disabled: %v\n", err)
+		d, err := viteless.Dev(viteless.DevConfig{
+			Root:          frontendDir,
+			ProxyResolver: proxyResolver,
+			Mode:          "development",
+			Logf: func(format string, args ...any) {
+				fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, fmt.Sprintf(format, args...))
+			},
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "frontend dev server disabled: %v\n", err)
 			frontendURLCh = nil
+		} else {
+			go func() { <-ctx.Done(); d.Close() }()
+			select {
+			case frontendURLCh <- d.URL():
+			default:
+			}
 		}
 	} else {
 		frontendURLCh = nil

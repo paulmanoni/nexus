@@ -96,19 +96,26 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		}
 	}
 	if opts.HasFrontend() {
-		// Vite project under web/. Standard Node toolchain: npm-managed deps
-		// (package.json + package-lock), vite dev/build, real node_modules.
-		// `nexus dev` runs `npm run dev` (Vite + HMR) and injects the proxy;
-		// `nexus build` runs `npm run build` → web/dist, embedded via
-		// //go:embed all:web/dist in main.go. A committed web/dist/index.html
-		// stub makes the first `go build` (before any vite build) compile.
+		// Frontend project under web/, served by the embedded viteless
+		// engine — zero-Node by default (deps from esm.sh, cached). No
+		// package.json, no node_modules, no npm. `nexus dev` runs the
+		// viteless HMR dev server; `nexus build` produces web/dist, embedded
+		// via //go:embed all:web/dist in main.go. A committed
+		// web/dist/index.html stub makes the first `go build` compile.
+		// viteless.config.ts is read for config (alias/proxy/plugins); the
+		// committed tsconfig.json + viteless-env.d.ts keep the editor's
+		// TypeScript happy with nothing installed. Run `npm install` to opt
+		// into node_modules (or an installed Vite) instead.
 		if err := add("web/index.html", tmplViteIndexHTML); err != nil {
 			return nil, err
 		}
-		if err := add("web/vite.config.ts", tmplViteConfig); err != nil {
+		if err := add("web/viteless.config.ts", tmplVitelessConfig); err != nil {
 			return nil, err
 		}
 		if err := add("web/tsconfig.json", tmplViteTSConfig); err != nil {
+			return nil, err
+		}
+		if err := add("web/viteless-env.d.ts", tmplVitelessEnvDTS); err != nil {
 			return nil, err
 		}
 		if err := add("web/dist/index.html", tmplViteDistStub); err != nil {
@@ -116,9 +123,6 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		}
 		switch opts.Frontend {
 		case "vue":
-			if err := add("web/package.json", tmplViteVuePackageJSON); err != nil {
-				return nil, err
-			}
 			if err := add("web/src/main.ts", tmplMainTS); err != nil {
 				return nil, err
 			}
@@ -126,9 +130,6 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 				return nil, err
 			}
 		case "react":
-			if err := add("web/package.json", tmplViteReactPackageJSON); err != nil {
-				return nil, err
-			}
 			if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
 				return nil, err
 			}
@@ -153,28 +154,54 @@ func nextStepsLines(opts scaffoldOpts) []string {
 		"  cd " + opts.Dir,
 		"  go mod tidy",
 	}
-	if opts.HasFrontend() {
-		// Vite project under web/ — install JS deps with npm (one-time).
-		lines = append(lines,
-			"  cd web && npm install   # install frontend deps (vite + framework)",
-			"  cd ..",
-		)
-	}
+	// Frontend under web/ needs no install — viteless fetches deps on first
+	// run (zero-Node). Run `npm install` only to opt into node_modules/Vite.
 	if opts.HasResources() {
 		lines = append(lines,
 			"  cp .env.example .env    # then fill in real credentials",
 		)
 	}
 	lines = append(lines,
-		"  nexus dev               # go run + Vite dev server (HMR); dashboard at /__nexus/",
+		"  nexus dev               # go run + viteless dev server (HMR); dashboard at /__nexus/",
 	)
 	if opts.HasFrontend() {
 		lines = append(lines,
-			"                          # SPA on http://localhost:5173 ; nexus build embeds web/dist",
+			"                          # SPA on http://localhost:5173 (zero-install) ; nexus build embeds web/dist",
 		)
 	}
 	return lines
 }
+
+// tmplVitelessConfig is the scaffolded web/viteless.config.ts. It imports
+// defineConfig from 'viteless' (no vite package needed) and sets the "@/"
+// alias. viteless reads it for config and compiles the framework natively.
+const tmplVitelessConfig = `import { defineConfig } from 'viteless'
+
+// viteless reads this config's static surface (base, plugins, resolve.alias,
+// server.proxy, build.outDir). Vue/React are detected and compiled natively
+// — no plugin needed. A relative alias is resolved against the project root.
+export default defineConfig({
+  resolve: {
+    alias: { '@': './src' },
+  },
+})
+`
+
+// tmplVitelessEnvDTS is the scaffolded web/viteless-env.d.ts — ambient types
+// so the editor resolves project imports with nothing installed.
+const tmplVitelessEnvDTS = `// Ambient declarations so TypeScript resolves a viteless project's imports
+// with nothing installed. viteless reads viteless.config.ts itself.
+
+declare module "viteless" {
+  export function defineConfig<T>(config: T): T
+}
+
+declare module "*.vue" {
+  import type { DefineComponent } from "vue"
+  const component: DefineComponent<{}, {}, any>
+  export default component
+}
+`
 
 // ── templates ───────────────────────────────────────────────────────
 
@@ -422,63 +449,8 @@ func (c *CacheManager) NexusResources() []resource.Resource {
 
 // ── Vite frontend (web/) ────────────────────────────────────────────
 
-const tmplViteVuePackageJSON = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "vue": "^3.4.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^5.1.0",
-    "vite": "^5.4.0"
-  }
-}
-`
 
-const tmplViteReactPackageJSON = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.0",
-    "vite": "^5.4.0"
-  }
-}
-`
 
-// tmplViteConfig — base '/' (the SPA is served at the app root). `nexus dev`
-// injects a managed proxy block into server.proxy (between @nexus:proxy
-// markers) so /__nexus,/graphql,/oauth,/ws reach the Go app from :5173.
-const tmplViteConfig = `import { defineConfig } from 'vite'
-{{if .IsReact}}import react from '@vitejs/plugin-react'{{else}}import vue from '@vitejs/plugin-vue'{{end}}
-
-export default defineConfig({
-  plugins: [{{if .IsReact}}react(){{else}}vue(){{end}}],
-  server: {
-    // ` + "`nexus dev`" + ` injects the /__nexus,/graphql,/oauth,/ws proxy here.
-    proxy: {},
-  },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-  },
-})
-`
 
 const tmplViteIndexHTML = `<!DOCTYPE html>
 <html lang="en">
@@ -505,9 +477,11 @@ const tmplViteTSConfig = `{
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "noEmit": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src"]
+  "include": ["src", "*.ts", "viteless-env.d.ts"]
 }
 `
 

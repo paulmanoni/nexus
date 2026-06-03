@@ -44,7 +44,7 @@ func main() {
 		"web/src/main.ts",
 		"web/src/App.vue",
 		"web/index.html",
-		"web/vite.config.ts",
+		"web/viteless.config.ts",
 		"web/dist/index.html",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {

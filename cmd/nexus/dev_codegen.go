@@ -9,10 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension"
 	"github.com/paulmanoni/nexus/extension/frontend"
@@ -97,22 +95,10 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyUR
 		return fmt.Errorf("manifest fetch: %w", err)
 	}
 
-	// Re-sync the vite proxy against the manifest's actual prefixes.
-	// This runs for EVERY frontend-serving app — independent of
-	// frontend.Plugin. A plain `ServeFrontend` SPA (no codegen plugin)
-	// needs the proxy just as much: without it the SPA's /graphql, the
-	// SDK manifest fetch (/__nexus), and every module RoutePrefix call
-	// 404 through vite. manifestProxyPrefixes folds in each module's
-	// prefix (and route_prefix via the manifest BasePath) on top of the
-	// framework defaults. Failures are non-fatal.
-	if proxyURL != "" {
-		if cfg := findViteConfig(frontendDir); cfg != "" {
-			prefixes := manifestProxyPrefixes(m)
-			if err := client.SyncViteProxyForPrefixes(cfg, proxyURL, prefixes, stdout); err != nil {
-				fmt.Fprintf(stderr, "%svite proxy sync skipped:%s %v\n", ansiDim, ansiReset, err)
-			}
-		}
-	}
+	// The dev server (viteless) proxies every unmatched request straight to
+	// the Go app, so the SPA's /graphql, the SDK manifest fetch (/__nexus),
+	// and module RoutePrefix calls reach the backend with no vite.config
+	// proxy block to maintain.
 
 	// Codegen is frontend.Plugin-only: ask the plugins endpoint whether
 	// the app has it wired. A response missing the entry means codegen
@@ -175,150 +161,6 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyUR
 	return nil
 }
 
-// watchAndResyncViteProxy watches the user's vite.config.ts and
-// re-runs SyncViteProxyForPrefixes whenever it changes. Without
-// this the proxy sync only fires on a Go restart, so editing the
-// vite config directly (e.g., deleting the managed block to test
-// what nexus puts back) doesn't trigger re-injection — the user
-// would have to bounce nexus dev to recover.
-//
-// Cost is low: the sync function is a no-op when bytes already
-// match, and the manifest fetch is local HTTP. When nexus itself
-// writes the file, fsnotify fires once more, the re-sync is
-// byte-identical, no infinite loop.
-//
-// Editor save styles: we watch both the file AND its parent
-// directory, since some editors atomic-rename a temp into place
-// (which fsnotify reports against the dir, not the original file
-// handle). Debounce coalesces the rename + write pair into a
-// single sync call.
-func watchAndResyncViteProxy(ctx context.Context, addr, viteConfigPath, proxyURL string, stdout, stderr io.Writer) {
-	if viteConfigPath == "" || proxyURL == "" {
-		return
-	}
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		fmt.Fprintf(stderr, "%svite proxy watcher disabled:%s %v\n", ansiDim, ansiReset, err)
-		return
-	}
-	defer w.Close()
-	if err := w.Add(viteConfigPath); err != nil {
-		fmt.Fprintf(stderr, "%svite proxy watcher disabled:%s %v\n", ansiDim, ansiReset, err)
-		return
-	}
-	// Atomic-rename saves (vim, JetBrains) only emit events on the
-	// containing dir against a new inode; watching the dir too is
-	// the only way to catch those.
-	_ = w.Add(filepath.Dir(viteConfigPath))
-
-	probe := normalizeProbeAddr(addr)
-	baseURL := "http://" + probe
-	base := filepath.Base(viteConfigPath)
-
-	var debounce *time.Timer
-	fire := func() {
-		// Re-fetch manifest each time so a module added/removed
-		// between syncs reflects in the prefix set. The endpoint is
-		// local, sub-millisecond; cheap to call.
-		ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		m, err := devFetchManifest(ctx2, baseURL)
-		if err != nil {
-			return // app probably restarting; the next Go boot will re-sync
-		}
-		cfg := findViteConfig(filepath.Dir(viteConfigPath))
-		if cfg == "" {
-			cfg = viteConfigPath
-		}
-		_ = client.SyncViteProxyForPrefixes(cfg, proxyURL, manifestProxyPrefixes(m), stdout)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			if debounce != nil {
-				debounce.Stop()
-			}
-			return
-		case ev, ok := <-w.Events:
-			if !ok {
-				return
-			}
-			// Filter to the config file (or a sibling named the same
-			// — atomic-rename writes hit the dir with the same base).
-			if filepath.Base(ev.Name) != base {
-				continue
-			}
-			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
-				continue
-			}
-			if debounce != nil {
-				debounce.Stop()
-			}
-			debounce = time.AfterFunc(250*time.Millisecond, fire)
-		case _, ok := <-w.Errors:
-			if !ok {
-				return
-			}
-		}
-	}
-}
-
-// manifestProxyPrefixes derives the set of URL prefixes the vite
-// dev server should proxy to the Go app. Combines the framework's
-// fixed prefixes (/__nexus, /graphql, /oauth, /ws) with one entry
-// per distinct top-level segment found across every endpoint in
-// the manifest. Each endpoint's effective URL is BasePath+Path;
-// we take its first segment so a module declared with
-// nexus.RoutePrefix("/oats-uaa") gets "/oats-uaa" proxied without
-// the SPA having to know about every sub-route.
-//
-// All transports count — REST, WebSocket, and GraphQL. A module
-// with RoutePrefix("/oats-uaa") mounts its GraphQL endpoint at
-// /oats-uaa/graphql; excluding graphql here would drop the only
-// signal we have for that prefix.
-//
-// Duplicates and overlaps with the framework defaults collapse
-// naturally — SyncViteProxyForPrefixes deduplicates.
-func manifestProxyPrefixes(m client.Manifest) []string {
-	out := append([]string{}, client.DefaultNexusProxyPrefixes...)
-	seen := map[string]bool{}
-	for _, p := range out {
-		seen[p] = true
-	}
-	for _, ep := range m.Endpoints {
-		seg := firstPathSegment(m.BasePath + ep.Path)
-		if seg == "" || seen[seg] {
-			continue
-		}
-		seen[seg] = true
-		out = append(out, seg)
-	}
-	return out
-}
-
-// firstPathSegment returns "/foo" for any path starting with "/foo/…"
-// or "/foo". Empty / root-only paths yield "" so the caller skips.
-// Used to derive a proxy prefix from an endpoint URL — the vite
-// proxy matches by prefix, so the first segment is the minimal
-// rule that catches every route under the same root.
-func firstPathSegment(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" || p == "/" {
-		return ""
-	}
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p
-	}
-	rest := p[1:]
-	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		rest = rest[:i]
-	}
-	if rest == "" {
-		return ""
-	}
-	return "/" + rest
-}
 
 // devDetectFrontendPlugin reads /__nexus/plugins and returns true
 // when an entry named "frontend" is present. We can't import the
