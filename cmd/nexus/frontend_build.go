@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/viteless"
 )
 
@@ -36,9 +37,14 @@ func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
 		return nil // pure-Go app, skip
 	}
 
+	// Expose the nexus.toml [env] table to the frontend build as
+	// import.meta.env.<dotted.name> (e.g. import.meta.env.client.id).
+	env, _ := nexus.EnvVars(filepath.Join(projectRoot, "nexus.toml"))
+
 	fmt.Fprintf(stdout, "%s●%s frontend: viteless build → %s\n", ansiCyan, ansiReset, filepath.Join(dir, "dist"))
 	res, err := viteless.Build(viteless.BuildConfig{
 		Root: dir,
+		Env:  env,
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, fmt.Sprintf(format, args...))
 		},

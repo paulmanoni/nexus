@@ -82,6 +82,12 @@ func LoadConfig(path ...string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("nexus: expand env vars in %s: %w", p, err)
 	}
+	// Publish the [env] table as process environment variables (dotted
+	// names) BEFORE building the config, so extensions, ${VAR} consumers,
+	// and nexus.Get can read them at startup.
+	if envVars, eerr := configEnvVars(expanded); eerr == nil {
+		applyConfigEnv(envVars)
+	}
 	var block runtimeConfigDoc
 	if err := toml.Unmarshal(expanded, &block); err != nil {
 		return Config{}, fmt.Errorf("nexus: parse %s: %w", p, err)

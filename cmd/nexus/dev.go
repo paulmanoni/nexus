@@ -21,8 +21,19 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 
+	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/viteless"
 )
+
+// nexusTOMLPath returns the nexus.toml path for a dev target (a package dir
+// or a file path).
+func nexusTOMLPath(target string) string {
+	dir := target
+	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(target)
+	}
+	return filepath.Join(dir, "nexus.toml")
+}
 
 // newDevCmd builds `nexus dev` — runs `go run` on the target package
 // with a startup banner and auto-opens the dashboard once the configured
@@ -196,10 +207,14 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			}
 			return "http://" + a
 		}
+		// Expose the nexus.toml [env] table to the frontend as
+		// import.meta.env.<dotted.name> (e.g. import.meta.env.client.id).
+		env, _ := nexus.EnvVars(nexusTOMLPath(target))
 		d, err := viteless.Dev(viteless.DevConfig{
 			Root:          frontendDir,
 			ProxyResolver: proxyResolver,
 			Mode:          "development",
+			Env:           env,
 			Logf: func(format string, args ...any) {
 				fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, fmt.Sprintf(format, args...))
 			},

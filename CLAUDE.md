@@ -153,7 +153,23 @@ default  = true
 endpoint = "http://localhost:8078"
 identity = "myapp"
 profile  = "default"
+
+# Env bridge — TOP LEVEL. [env.*] tables become process environment
+# variables AND are exposed to the frontend. The table path after `env.` is
+# the variable name, so this sets env vars "client.id" and "client.secret":
+[env.client]
+id     = "myapp-web"
+secret = "${CLIENT_SECRET}"        # ${ENV} expanded; keep real secrets in env
 ```
+**`[env.*]` bridge:** every key under `[env]` is published (a) as a process env
+var read by the Go app/extensions via `os.Getenv("client.id")`, and (b) to the
+frontend build as `import.meta.env.client.id` (dot form — esbuild substitutes
+the dotted member expression; the bracket form `import.meta.env["client.id"]` is
+NOT substituted). Nested tables flatten with dots (`[env.a.b] c` → `a.b.c`).
+SECURITY: frontend-exposed values land in the browser bundle — only put
+client-public data there (an OAuth client id, a public URL), never a real
+server secret.
+
 `nexus docs nexustoml` documents every key. You can also pass `nexus.Config{...}`
 inline to `nexus.Run` instead of the file.
 
