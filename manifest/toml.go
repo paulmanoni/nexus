@@ -62,8 +62,15 @@ type DeployTOMLInputs struct {
 	// operators). Not part of the v0.42 "cloud inputs" surface but
 	// surfaced through the same loader so tools that consume TOML
 	// only (doctor, lint) see the complete declared shape.
-	Env      map[string]EnvVar      `toml:"env,omitempty"`
-	Services map[string]ServiceNeed `toml:"services,omitempty"`
+	// Env is decoded permissively (raw tables) because nexus.toml's [env]
+	// table is ALSO the runtime "env bridge" (arbitrary string values like
+	// [env.client] id="..." secret="..." published as process env vars +
+	// import.meta.env). Only entries shaped like deploy EnvVar declarations
+	// are materialized into m.Env; bridge entries are owned by the runtime
+	// config loader and ignored here (see envVarFromTOML). Decoding straight
+	// into map[string]EnvVar would crash on a string-valued `secret`.
+	Env      map[string]map[string]any `toml:"env,omitempty"`
+	Services map[string]ServiceNeed    `toml:"services,omitempty"`
 }
 
 // EnvironmentTOML mirrors Environment but doesn't carry a Name field
@@ -219,10 +226,12 @@ func materializeInputs(raw DeployTOMLInputs) Manifest {
 	}
 
 	if len(raw.Env) > 0 {
-		m.Env = make([]EnvVar, 0, len(raw.Env))
 		for name, e := range raw.Env {
-			e.Name = name
-			m.Env = append(m.Env, e)
+			ev, ok := envVarFromTOML(name, e)
+			if !ok {
+				continue // runtime env-bridge entry, not a deploy EnvVar
+			}
+			m.Env = append(m.Env, ev)
 		}
 		sortInputsByName(m.Env, func(e EnvVar) string { return e.Name })
 	}
@@ -261,4 +270,44 @@ func sortBy[T any](items []T, less func(a, b T) bool) {
 			items[j], items[j-1] = items[j-1], items[j]
 		}
 	}
+}
+// envVarKnownKeys is the set of TOML keys a deploy EnvVar declaration uses.
+// A [env.<name>] table with any other key — or a non-bool secret/required/
+// env_scoped — is treated as a runtime env-bridge entry (arbitrary string
+// values), not a deploy declaration, and is skipped by the manifest loader.
+var envVarKnownKeys = map[string]bool{
+	"name": true, "description": true, "required": true, "secret": true,
+	"default": true, "bound_to": true, "env_scoped": true,
+	"validation": true, "source": true,
+}
+
+// envVarFromTOML builds a deploy EnvVar from a raw [env.<name>] table. It
+// returns ok=false when the table is a runtime env-bridge entry (e.g.
+// [env.client] id="..." secret="..."), which the runtime config loader owns
+// and the deploy manifest must ignore rather than crash on. Real EnvVar
+// declarations are re-decoded for full fidelity (including validation).
+func envVarFromTOML(name string, raw map[string]any) (EnvVar, bool) {
+	for k, v := range raw {
+		if !envVarKnownKeys[k] {
+			return EnvVar{}, false // unknown key (e.g. "id") → bridge entry
+		}
+		switch k {
+		case "secret", "required", "env_scoped":
+			if _, ok := v.(bool); !ok {
+				return EnvVar{}, false // string-valued flag → bridge entry
+			}
+		}
+	}
+	b, err := toml.Marshal(raw)
+	if err != nil {
+		return EnvVar{}, false
+	}
+	var ev EnvVar
+	if err := toml.Unmarshal(b, &ev); err != nil {
+		return EnvVar{}, false
+	}
+	if ev.Name == "" {
+		ev.Name = name
+	}
+	return ev, true
 }
