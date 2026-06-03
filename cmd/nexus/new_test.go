@@ -338,13 +338,14 @@ func TestPromptMissing_TakesNumericChoices(t *testing.T) {
 // TestPromptMissing_TakesNamedChoices verifies users can type
 // "vue" / "sqlite" / "redis" / "oauth2" instead of the index.
 func TestPromptMissing_TakesNamedChoices(t *testing.T) {
-	stdin := bytes.NewBufferString("vue\nsqlite\nredis\noauth2\n")
+	// Choosing a frontend inserts a "Frontend tooling?" prompt before db.
+	stdin := bytes.NewBufferString("vue\nvite\nsqlite\nredis\noauth2\n")
 	var stdout bytes.Buffer
 	opts := scaffoldOpts{}
 	if err := promptMissing(&opts, stdin, &stdout); err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
-	if opts.Frontend != "vue" || opts.DB != "sqlite" || opts.Cache != "redis" || opts.Auth != "oauth2" {
+	if opts.Frontend != "vue" || opts.Tooling != "vite" || opts.DB != "sqlite" || opts.Cache != "redis" || opts.Auth != "oauth2" {
 		t.Errorf("got %+v", opts)
 	}
 }
@@ -372,5 +373,36 @@ func TestCobra_UnknownCommand(t *testing.T) {
 	root.SetArgs([]string{"whatever"})
 	if err := root.Execute(); err == nil {
 		t.Fatal("expected error for unknown command")
+	}
+}
+// TestScaffoldWithOpts_ViteTooling covers the opt-in standard Vite project:
+// vite.config.ts + package.json (with the framework plugin) and NO
+// viteless.config.ts.
+func TestScaffoldWithOpts_ViteTooling(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "vt")
+	if err := scaffoldWithOpts(scaffoldOpts{
+		Dir: dir, Frontend: "vue", Tooling: "vite", DB: "none", Cache: "none", Auth: "none",
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	for _, p := range []string{"web/vite.config.ts", "web/package.json", "web/src/App.vue"} {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			t.Errorf("missing %s: %v", p, err)
+		}
+	}
+	// Vite mode does NOT scaffold the viteless config.
+	if _, err := os.Stat(filepath.Join(dir, "web/viteless.config.ts")); err == nil {
+		t.Error("vite tooling should not write viteless.config.ts")
+	}
+	cfg, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
+	if !strings.Contains(string(cfg), "@vitejs/plugin-vue") {
+		t.Errorf("vite.config.ts should register @vitejs/plugin-vue\n%s", cfg)
+	}
+	if !strings.Contains(string(cfg), "proxy") {
+		t.Errorf("vite.config.ts should include a dev proxy to the Go app\n%s", cfg)
+	}
+	pkg, _ := os.ReadFile(filepath.Join(dir, "web/package.json"))
+	if !strings.Contains(string(pkg), `"vite"`) {
+		t.Errorf("package.json should depend on vite\n%s", pkg)
 	}
 }

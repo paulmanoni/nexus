@@ -16,6 +16,7 @@ type scaffoldOpts struct {
 	ModulePath string
 	Name       string // basename of Dir, used for human-readable strings
 	Frontend   string // "none" | "vue" | "react"
+	Tooling    string // "viteless" (default) | "vite" — frontend build engine
 	DB         string // "none" | "postgres" | "mysql" | "sqlite"
 	Cache      string // "none" | "redis"
 	Auth       string // "none" | "oauth2"
@@ -33,6 +34,10 @@ func (o scaffoldOpts) HasResources() bool {
 }
 func (o scaffoldOpts) IsVue() bool   { return o.Frontend == "vue" }
 func (o scaffoldOpts) IsReact() bool { return o.Frontend == "react" }
+
+// HasVite reports whether the frontend should be scaffolded as a standard
+// npm-managed Vite project (vs the zero-install viteless default).
+func (o scaffoldOpts) HasVite() bool { return o.HasFrontend() && o.Tooling == "vite" }
 
 // renderTemplate executes a text/template string against opts and
 // returns the rendered bytes. Panic-free helper used by every
@@ -109,17 +114,35 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		if err := add("web/index.html", tmplViteIndexHTML); err != nil {
 			return nil, err
 		}
-		if err := add("web/viteless.config.ts", tmplVitelessConfig); err != nil {
-			return nil, err
-		}
 		if err := add("web/tsconfig.json", tmplViteTSConfig); err != nil {
-			return nil, err
-		}
-		if err := add("web/viteless-env.d.ts", tmplVitelessEnvDTS); err != nil {
 			return nil, err
 		}
 		if err := add("web/dist/index.html", tmplViteDistStub); err != nil {
 			return nil, err
+		}
+		if opts.HasVite() {
+			// Standard npm-managed Vite project: package.json + vite.config.ts
+			// (with a dev proxy to the Go app) + the framework's Vite plugin.
+			// viteless delegates to the installed Vite. `npm install` first.
+			if err := add("web/vite.config.ts", tmplViteConfig); err != nil {
+				return nil, err
+			}
+			pkg := tmplViteVuePackageJSON
+			if opts.IsReact() {
+				pkg = tmplViteReactPackageJSON
+			}
+			if err := add("web/package.json", pkg); err != nil {
+				return nil, err
+			}
+		} else {
+			// Zero-install viteless project: viteless.config.ts + ambient
+			// types; no package.json / node_modules.
+			if err := add("web/viteless.config.ts", tmplVitelessConfig); err != nil {
+				return nil, err
+			}
+			if err := add("web/viteless-env.d.ts", tmplVitelessEnvDTS); err != nil {
+				return nil, err
+			}
 		}
 		switch opts.Frontend {
 		case "vue":
@@ -154,8 +177,15 @@ func nextStepsLines(opts scaffoldOpts) []string {
 		"  cd " + opts.Dir,
 		"  go mod tidy",
 	}
-	// Frontend under web/ needs no install — viteless fetches deps on first
-	// run (zero-Node). Run `npm install` only to opt into node_modules/Vite.
+	if opts.HasVite() {
+		// Standard Vite project — install npm deps (one-time).
+		lines = append(lines,
+			"  cd web && npm install   # install Vite + framework plugin",
+			"  cd ..",
+		)
+	}
+	// Otherwise (viteless) the frontend needs no install — viteless fetches
+	// deps on first run (zero-Node).
 	if opts.HasResources() {
 		lines = append(lines,
 			"  cp .env.example .env    # then fill in real credentials",
@@ -200,6 +230,70 @@ declare module "*.vue" {
   import type { DefineComponent } from "vue"
   const component: DefineComponent<{}, {}, any>
   export default component
+}
+`
+
+// tmplViteConfig is the standard npm-Vite project's vite.config.ts. Unlike
+// the viteless engine (which proxies to the Go app automatically), a real
+// Vite dev server needs its own server.proxy to reach the backend — so the
+// nexus prefixes are proxied to :8080 here (adjust if your app binds
+// elsewhere).
+const tmplViteConfig = `import { defineConfig } from 'vite'
+{{if .IsReact}}import react from '@vitejs/plugin-react'{{else}}import vue from '@vitejs/plugin-vue'{{end}}
+
+export default defineConfig({
+  plugins: [{{if .IsReact}}react(){{else}}vue(){{end}}],
+  server: {
+    proxy: {
+      '/__nexus': 'http://localhost:8080',
+      '/graphql': 'http://localhost:8080',
+      '/oauth': 'http://localhost:8080',
+      '/ws': { target: 'http://localhost:8080', ws: true },
+    },
+  },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+  },
+})
+`
+
+const tmplViteVuePackageJSON = `{
+  "name": "{{.Name}}-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "vite": "^5.4.0"
+  }
+}
+`
+
+const tmplViteReactPackageJSON = `{
+  "name": "{{.Name}}-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^5.4.0"
+  }
 }
 `
 

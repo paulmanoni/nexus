@@ -20,6 +20,12 @@ var (
 	dbChoices       = []string{"none", "postgres", "mysql", "sqlite"}
 	cacheChoices    = []string{"none", "redis"}
 	authChoices     = []string{"none", "oauth2"}
+	// toolingChoices is the frontend build engine. "viteless" (default) is
+	// zero-install — no package.json/node_modules; viteless fetches deps and
+	// compiles Vue/React natively. "vite" scaffolds a standard npm-managed
+	// Vite project (package.json + vite.config.ts + plugin); viteless then
+	// delegates to the installed Vite.
+	toolingChoices = []string{"viteless", "vite"}
 )
 
 // newNewCmd builds the `nexus new` subcommand. Flags carry the
@@ -30,6 +36,7 @@ func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		modulePath string
 		frontend   string
+		tooling    string
 		db         string
 		cache      string
 		auth       string
@@ -40,20 +47,27 @@ func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Scaffold a nexus app (interactive — picks frontend / db / cache)",
 		Long: `Scaffold a runnable nexus app in <dir>.
 
-By default the command prompts for a frontend (vue or none),
-database (postgres / mysql / sqlite / none), and cache (redis or
-none) when stdin is a tty. Pass --frontend / --db / --cache to
-skip the prompt for any axis, or --yes to take defaults across
-the board (none everywhere — minimum viable scaffold).
+By default the command prompts for a frontend (vue / react / none),
+its build tooling (viteless or vite), a database, and a cache when
+stdin is a tty. Pass --frontend / --tooling / --db / --cache to skip
+the prompt for any axis, or --yes to take defaults (none everywhere).
+
+Frontend tooling:
+  viteless (default) — zero-install; no package.json/node_modules.
+                       viteless fetches deps and compiles Vue/React.
+  vite               — standard npm-managed Vite project (package.json
+                       + vite.config.ts); run npm install, then nexus
+                       delegates to the installed Vite.
 
 Generated layout:
 
   ./go.mod ./main.go ./module.go ./nexus.toml ./README.md
   resources/database.go     # only when --db is set
   resources/cache.go        # only when --cache is set
-  web/                      # only when --frontend=vue is set
-    package.json vite.config.ts index.html src/{main.ts,App.vue}
-    dist/index.html         # placeholder so ServeFrontend boots
+  web/                      # only when --frontend is vue/react
+    index.html tsconfig.json src/{main.ts,App.vue} dist/index.html
+    viteless.config.ts      # --tooling=viteless (default)
+    vite.config.ts package.json   # --tooling=vite
 
 ` + "`go mod tidy && nexus dev`" + ` then runs the app, opens the SPA via
 vite's dev server (HMR) when one's scaffolded, and mounts the
@@ -64,6 +78,7 @@ dashboard at /__nexus/.`,
 				Dir:        args[0],
 				ModulePath: modulePath,
 				Frontend:   frontend,
+				Tooling:    tooling,
 				DB:         db,
 				Cache:      cache,
 				Auth:       auth,
@@ -82,6 +97,11 @@ dashboard at /__nexus/.`,
 			if opts.Frontend == "" {
 				opts.Frontend = "none"
 			}
+			// Frontend tooling only applies when a frontend is scaffolded;
+			// default to the zero-install viteless engine.
+			if opts.HasFrontend() && opts.Tooling == "" {
+				opts.Tooling = "viteless"
+			}
 			if opts.DB == "" {
 				opts.DB = "none"
 			}
@@ -98,6 +118,8 @@ dashboard at /__nexus/.`,
 		"go.mod module path (default: derived from <dir>'s basename)")
 	cmd.Flags().StringVar(&frontend, "frontend", "",
 		"frontend stack: "+strings.Join(frontendChoices, " | ")+" (default: prompt)")
+	cmd.Flags().StringVar(&tooling, "tooling", "",
+		"frontend build engine: "+strings.Join(toolingChoices, " | ")+" (viteless = zero-install; default: prompt)")
 	cmd.Flags().StringVar(&db, "db", "",
 		"database driver: "+strings.Join(dbChoices, " | ")+" (default: prompt)")
 	cmd.Flags().StringVar(&cache, "cache", "",
@@ -143,8 +165,17 @@ func scaffoldWithOpts(opts scaffoldOpts, stdout io.Writer) error {
 	}
 	opts.Name = filepath.Base(abs)
 
+	// Default + validate frontend tooling (only meaningful with a frontend).
+	if opts.HasFrontend() && opts.Tooling == "" {
+		opts.Tooling = "viteless"
+	}
 	if err := validChoice(opts.Frontend, "--frontend", frontendChoices); err != nil {
 		return err
+	}
+	if opts.HasFrontend() {
+		if err := validChoice(opts.Tooling, "--tooling", toolingChoices); err != nil {
+			return err
+		}
 	}
 	if err := validChoice(opts.DB, "--db", dbChoices); err != nil {
 		return err
@@ -206,6 +237,14 @@ func promptMissing(opts *scaffoldOpts, stdin io.Reader, stdout io.Writer) error 
 			return err
 		}
 		opts.Frontend = v
+	}
+	// Only ask about build tooling when a frontend was chosen.
+	if opts.HasFrontend() && opts.Tooling == "" {
+		v, err := pickOne(r, stdout, "Frontend tooling? (viteless = zero-install, no npm)", toolingChoices, 0)
+		if err != nil {
+			return err
+		}
+		opts.Tooling = v
 	}
 	if opts.DB == "" {
 		v, err := pickOne(r, stdout, "Database?", dbChoices, 0)
