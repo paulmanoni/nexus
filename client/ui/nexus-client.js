@@ -810,10 +810,22 @@ function inferGqlType(v) {
 // every input object's name). Primitives and arrays compose the
 // usual GraphQL scalar / list syntax.
 function gqlTypeFromArgs(argsRef, refs, varKey) {
-  if (!argsRef || argsRef.kind !== 'ref') return ''
-  const nt = refs[argsRef.ref]
-  if (!nt || !nt.fields) return ''
-  for (const f of nt.fields) {
+  if (!argsRef) return ''
+  // Args come in two shapes: a named ref (refs[ref].fields) for a named
+  // struct, OR an inline anonymous struct (argsRef.object.fields) — e.g.
+  // nexus.Params[struct{ ID *int; ... }]. Resolve the field list from
+  // whichever this is; without the object case an anonymous arg falls
+  // through to value-based inference, which mistypes an omitted *int as
+  // String ("Variable $id of type String used in position expecting Int").
+  let fields = null
+  if (argsRef.kind === 'ref') {
+    const nt = refs[argsRef.ref]
+    fields = nt && nt.fields
+  } else if (argsRef.kind === 'object' && argsRef.object) {
+    fields = argsRef.object.fields
+  }
+  if (!fields) return ''
+  for (const f of fields) {
     if (wireFieldName(f) !== varKey) continue
     // Optionality may be carried on the field itself OR on its type
     // (the manifest emits it on the field for primitive/ref-typed
