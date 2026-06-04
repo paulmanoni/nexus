@@ -113,6 +113,7 @@ environment    = "development"          # development | staging | production
 introspection  = true                   # opens /__nexus (OFF by default → 404s)
 introspection_networks = ["10.0.0.0/8"] # allowed even when introspection is off
 trace_capacity = 1000                    # request-trace ring buffer (0 = off)
+sdk            = true                    # one switch: generate+serve the typed client SDK
 
 [runtime.server]
 addr = ":8080"
@@ -391,10 +392,19 @@ limits, Auth, Traces. Gate it behind your own middleware via
 
 ## 10. Client SDK (browser → app)
 
-A typed JS/TS SDK + Vue composables served from the binary (no npm package). Enable
-with `Config.Client.Enabled = true` or `nexus.ClientUse(client.Config{Enabled:true})`.
-Import in the frontend as `nexus-client` (resolved via tsconfig `paths`). See
-`nexus docs client`.
+A typed JS/TS SDK + Vue composables served from the binary (no npm package). It covers
+**all three transports** — `nx.rest`, `nx.query`/`nx.mutate` (GraphQL), `nx.ws`, plus
+`nx.crud` and `nx.auth.*`. Import in the frontend as `nexus-client` (resolved via tsconfig
+`paths`). See `nexus docs client`.
+
+**Simplest enable — one switch (`sdk = true`):** set `Config.SDK` (or `[runtime] sdk =
+true` in nexus.toml) and nexus generates + serves the full typed SDK and, when a frontend
+dir is present, dumps the SDK files + wires tsconfig so `import 'nexus-client'` resolves
+with types — no `client.Config` ceremony. PocketBase-style. It activates only under `nexus
+dev` OR when `introspection = true`, so a locked-down production binary never exposes the
+API surface from this flag alone. For finer control (custom path, route middleware,
+explicit OutDir, per-deployment gating) set `Config.Client` / `nexus.ClientUse(...)`
+directly instead.
 
 ---
 

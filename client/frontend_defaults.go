@@ -15,8 +15,14 @@ const frontendMarker = "vite.config.ts"
 //   - "web" matches `nexus new`'s scaffold layout (the canonical case)
 //   - "frontend" / "client" / "app" cover common conventions in
 //     hand-rolled projects that adopt the framework after the fact
+//
 // All paths are cwd-relative; absolute callers configure explicitly.
 var candidateFrontendDirs = []string{"web", "frontend", "client", "app"}
+
+// ApplyFrontendDefaults is the exported entry to applyFrontendDefaults,
+// for the nexus.Config.SDK one-switch path which builds a Config outside
+// this package and needs the same OutDir/TSConfig/ViteConfig auto-detection.
+func ApplyFrontendDefaults(cfg Config) Config { return applyFrontendDefaults(cfg) }
 
 // applyFrontendDefaults fills in OutDir / TSConfig / ViteConfig from
 // the project's frontend dir when the user left them empty. The

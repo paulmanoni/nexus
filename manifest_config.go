@@ -60,6 +60,27 @@ type Config struct {
 	// chain while Config is a static value across the binary.
 	Client client.Config
 
+	// SDK is the one-switch front door to the typed client SDK —
+	// PocketBase-style. Set it (Config.SDK or `[runtime] sdk = true`
+	// in nexus.toml) and nexus generates + serves the full typed
+	// client covering REST, GraphQL, and WebSocket — and, when a
+	// frontend dir is present, dumps the SDK files + wires tsconfig so
+	// `import 'nexus-client'` resolves with types. No client.Config
+	// ceremony, no manifest wiring.
+	//
+	// Gating (security): SDK only takes effect under `nexus dev`
+	// (NEXUS_DEV=1) OR when Introspection is true. A locked-down
+	// production binary (introspection off, not under dev) ignores it,
+	// so the API surface is never exposed by this flag alone. The file
+	// dump additionally requires a detected frontend dir, so production
+	// binaries serve SDK routes (when introspection is on) without
+	// writing to a project tree that isn't there.
+	//
+	// Equivalent to enabling Client with the full manifest + frontend
+	// defaults; for finer control (custom Path, middleware gating,
+	// explicit OutDir) set Client directly instead.
+	SDK bool
+
 	// TraceCapacity is the ring-buffer size for request traces. 0 disables
 	// tracing — the Traces tab will stay empty.
 	TraceCapacity int

@@ -198,6 +198,7 @@ type RuntimeConfigBlock struct {
 	Introspection         bool                  `toml:"introspection"`
 	IntrospectionNetworks []string              `toml:"introspection_networks"`
 	TraceCapacity         int                   `toml:"trace_capacity"`
+	SDK                   bool                  `toml:"sdk"`
 }
 
 // DevReloadConfigBlock is the TOML shape of DevReloadConfig.
@@ -275,6 +276,7 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 		Introspection:         b.Introspection,
 		IntrospectionNetworks: b.IntrospectionNetworks,
 		TraceCapacity:         b.TraceCapacity,
+		SDK:                   b.SDK,
 		Server: ServerConfig{
 			Addr:        b.Server.Addr,
 			RoutePrefix: b.Server.RoutePrefix,

@@ -56,3 +56,32 @@ func TestDevAutoMountClientSDK(t *testing.T) {
 		}
 	})
 }
+
+// TestSDKSwitch covers the one-switch Config.SDK front door: it mounts the
+// full client SDK under `nexus dev` OR when Introspection is on, and stays
+// closed in a locked-down production binary (neither dev nor introspection).
+func TestSDKSwitch(t *testing.T) {
+	t.Run("mounts under dev", func(t *testing.T) {
+		t.Setenv(NexusDevEnv, "1")
+		a := New(Config{SDK: true})
+		if a.ClientHandler() == nil {
+			t.Error("SDK=true should mount the client SDK under NEXUS_DEV=1")
+		}
+	})
+
+	t.Run("mounts when introspection is on, even outside dev", func(t *testing.T) {
+		t.Setenv(NexusDevEnv, "")
+		a := New(Config{SDK: true, Introspection: true})
+		if a.ClientHandler() == nil {
+			t.Error("SDK=true should mount when Introspection is true")
+		}
+	})
+
+	t.Run("stays closed in locked-down production", func(t *testing.T) {
+		t.Setenv(NexusDevEnv, "")
+		a := New(Config{SDK: true}) // introspection off, not in dev
+		if a.ClientHandler() != nil {
+			t.Error("SDK=true must NOT expose the SDK with introspection off outside dev")
+		}
+	})
+}

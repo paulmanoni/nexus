@@ -417,7 +417,18 @@ func New(cfg Config) *App {
 	// frontend.Plugin(...) instead.
 	// Retain for the dev-only SDK fallback (devAutoMountClientSDK).
 	a.clientCfg = cfg.Client
-	if cfg.Client.Enabled {
+	switch {
+	case cfg.SDK && (IsDev() || cfg.Introspection):
+		// One-switch SDK (PocketBase-style): full manifest across REST +
+		// GraphQL + WS, plus frontend defaults so the SDK files dump and
+		// tsconfig wires when a frontend dir is present. Gated to dev or
+		// introspection so the API surface is never exposed by this flag
+		// alone in a locked-down production binary. The OnStart dump hook
+		// (obs_integration.go) writes files only when a frontend dir was
+		// detected — a no-op in a fileless production tree.
+		sdkCfg := client.ApplyFrontendDefaults(client.Config{Enabled: true, Public: true})
+		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, sdkCfg)
+	case cfg.Client.Enabled:
 		clientCfg := client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection)
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
 	}

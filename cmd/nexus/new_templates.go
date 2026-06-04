@@ -808,6 +808,13 @@ environment = "development"
 # admin CIDR instead — introspection_networks = ["10.0.0.0/8"].
 introspection = true
 
+# sdk = true generates + serves the typed client SDK (REST + GraphQL +
+# WebSocket) and, when a frontend dir is present, dumps the SDK files +
+# wires tsconfig so the nexus-client import resolves with types — no other
+# wiring needed. Active only under "nexus dev" OR when introspection is on,
+# so a locked-down production binary never exposes the API surface from it.
+# sdk = true
+
 [runtime.server]
 addr = ":8080"
 
