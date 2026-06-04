@@ -11,7 +11,6 @@ import (
 
 	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/trace"
 )
 
@@ -201,10 +200,11 @@ func splitKey(key string) (service, op string) {
 }
 
 // clientIPFromGraphCtx extracts the caller IP from the resolve context
-// if a transport layer stashed one. Delegates to ratelimit's helper so
-// a single ctx-value key is shared across middleware that needs the IP.
+// if a transport layer stashed one. Reads the canonical key in the
+// middleware package — the single ctx-value key now shared across every
+// middleware that needs the IP (ratelimit, the RequestCtx carriers, here).
 func clientIPFromGraphCtx(p graph.ResolveParams) string {
-	return ratelimit.ClientIPFromCtx(p.Context)
+	return middleware.ClientIPFromCtx(p.Context)
 }
 
 // statusError is used when gin didn't attach a specific error but the

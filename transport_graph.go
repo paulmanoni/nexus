@@ -14,6 +14,7 @@ import (
 
 	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/middleware"
 )
 
 // AsQuery registers a GraphQL query from a plain Go handler. The handler's
@@ -225,6 +226,9 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	}
 	if cfg.opName == "" {
 		cfg.opName = opNameFromFunc(fn, string(kind))
+	}
+	if err := checkBundleTransports(cfg.bundles, middleware.TransportGraphQL, cfg.opName); err != nil {
+		return rawOption{o: fx.Error(err)}
 	}
 
 	if !(kind == graph.FieldKindQuery || kind == graph.FieldKindMutation) {

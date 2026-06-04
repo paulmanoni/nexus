@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
+	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -44,6 +45,9 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	cfg := &restConfig{}
 	for _, o := range opts {
 		o.applyToRest(cfg)
+	}
+	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
+		return rawOption{o: fx.Error(err)}
 	}
 	sh, err := inspectHandler(fn)
 	if err != nil {
@@ -83,6 +87,9 @@ func AsRestHandler(method, path string, factory any, opts ...RestOption) Option 
 	cfg := &restConfig{}
 	for _, o := range opts {
 		o.applyToRest(cfg)
+	}
+	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
+		return rawOption{o: fx.Error(err)}
 	}
 	rt := reflect.TypeOf(factory)
 	ginHandlerType := reflect.TypeOf(gin.HandlerFunc(nil))

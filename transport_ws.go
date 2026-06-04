@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
+	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 	"github.com/paulmanoni/nexus/transport/ws"
@@ -58,6 +59,9 @@ func AsWS(path, msgType string, fn any, opts ...WSOption) Option {
 	}
 	if msgType == "" {
 		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsWS(%q): message type is required", path))}
+	}
+	if err := checkBundleTransports(cfg.bundles, middleware.TransportWebSocket, "WS "+path+" "+msgType); err != nil {
+		return rawOption{o: fx.Error(err)}
 	}
 	sh, err := inspectHandler(fn)
 	if err != nil {

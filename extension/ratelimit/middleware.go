@@ -3,33 +3,28 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strconv"
+	"time"
 
-	"github.com/gin-gonic/gin"
-
-	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
 )
-
-// clientIPCtxKey is the canonical context-value key transports use to
-// stash the caller's IP for downstream middleware (rate-limit et al.)
-// to read. Lives in ratelimit because this is where the primary reader
-// sits; nexus exposes friendly helpers that thread through this key.
-type clientIPCtxKey struct{}
 
 // WithClientIP returns ctx carrying ip. Transports (gin REST handler,
 // gql adapter, WS upgrade) call this so middleware that scopes buckets
 // per IP can find it.
+//
+// Delegates to middleware.WithClientIP — the canonical key now lives in the
+// neutral middleware package so RequestCtx-backed carriers and this extension
+// share one key without an import cycle. These wrappers stay for back-compat.
 func WithClientIP(ctx context.Context, ip string) context.Context {
-	return context.WithValue(ctx, clientIPCtxKey{}, ip)
+	return middleware.WithClientIP(ctx, ip)
 }
 
 // ClientIPFromCtx returns the caller's IP a transport put in ctx, or
 // empty when absent.
 func ClientIPFromCtx(ctx context.Context) string {
-	if v, ok := ctx.Value(clientIPCtxKey{}).(string); ok {
-		return v
-	}
-	return ""
+	return middleware.ClientIPFromCtx(ctx)
 }
 
 // NewMiddleware returns a transport-agnostic middleware bundle that
@@ -56,44 +51,31 @@ func NewMiddleware(store Store, key string, limit Limit) middleware.Middleware {
 	if limit.PerIP {
 		desc += ", per-IP"
 	}
-	return middleware.Middleware{
-		Name:        "rate-limit",
-		Description: desc,
-		Kind:        middleware.KindBuiltin,
-		Gin:         ginEnforcer(store, key, limit),
-		Graph:       graphEnforcer(store, key, limit),
-	}
-}
 
-// ginEnforcer is GinMiddleware with PerIP-aware scope selection — we
-// respect Limit.PerIP to bucket per caller IP or share a single global
-// counter. Denial aborts with 429 + Retry-After header.
-func ginEnforcer(store Store, key string, limit Limit) gin.HandlerFunc {
-	scopeFn := func(c *gin.Context) string {
-		if limit.PerIP {
-			return c.ClientIP()
-		}
-		return ""
-	}
-	return GinMiddleware(store, key, scopeFn)
-}
-
-// graphEnforcer returns a graph.FieldMiddleware that runs before the
-// resolver. Denial bubbles up as a GraphQL error describing the
-// retry-after — clients see a coherent "rate limit exceeded" message.
-func graphEnforcer(store Store, key string, limit Limit) graph.FieldMiddleware {
-	return func(next graph.FieldResolveFn) graph.FieldResolveFn {
-		return func(p graph.ResolveParams) (any, error) {
+	// One implementation across every transport (redesign §1.2 / §3): the
+	// caller IP comes from rc.ClientIP() (no more c.ClientIP vs
+	// ClientIPFromCtx split), and denial sets the Retry-After header — a
+	// no-op on GraphQL — then rejects. FromHandler generates the per-
+	// transport realizations the bundle still carries.
+	mw := middleware.FromHandler(middleware.NewFunc("rate-limit", middleware.AllTransports,
+		func(rc *middleware.RequestCtx, next middleware.Next) error {
 			scope := ""
 			if limit.PerIP {
-				scope = ClientIPFromCtx(p.Context)
+				scope = rc.ClientIP()
 			}
-			ok, retry := store.Allow(p.Context, key, scope)
+			ok, retry := store.Allow(rc.Context, key, scope)
 			if !ok {
-				return nil, fmt.Errorf("rate limit exceeded — retry after %s", retry.Round(10_000_000))
+				secs := int(retry.Round(time.Second) / time.Second)
+				if secs < 1 {
+					secs = 1
+				}
+				rc.SetHeader("Retry-After", strconv.Itoa(secs))
+				return rc.Reject(http.StatusTooManyRequests,
+					fmt.Errorf("rate limit exceeded — retry after %s", retry.Round(10_000_000)))
 			}
-			return next(p)
-		}
-	}
+			return next(rc)
+		}))
+	mw.Description = desc
+	mw.Kind = middleware.KindBuiltin
+	return mw
 }
-

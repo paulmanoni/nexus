@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"fmt"
+
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/middleware"
@@ -72,4 +74,28 @@ func (m MiddlewareOption) applyToRest(c *restConfig) {
 // warning log).
 func (m MiddlewareOption) applyToWS(c *wsConfig) {
 	c.bundles = append(c.bundles, m.mw)
+}
+
+// checkBundleTransports enforces fail-closed attachment (redesign §5): a
+// bundle that declares some transports but not t is misattached, and the
+// registration errors at boot rather than silently no-opping — which is the
+// auth-bypass footgun the redesign exists to kill. opID identifies the
+// endpoint for the diagnostic ("POST /quick", "createAdvert", …).
+//
+// A bundle that declares NO transports at all (a pure dashboard label with
+// no Gin/Graph realization, e.g. a metadata marker) is left alone: it claims
+// to protect nothing, so attaching it anywhere is harmless. Only middleware
+// that genuinely enforces something on transport X — and is attached to
+// transport Y where it would silently not run — is rejected.
+func checkBundleTransports(bundles []middleware.Middleware, t middleware.Transport, opID string) error {
+	for _, b := range bundles {
+		set := middleware.AsHandler(b).Transports()
+		if set != 0 && !set.Has(t) {
+			return fmt.Errorf(
+				"nexus: middleware %q on %s op %q declares Transports = %s and cannot run on %s; "+
+					"scope it with nexus.UseOnRest/UseOnGraph/UseOnWS, or give it a %s realization",
+				b.Name, t, opID, set, t, t)
+		}
+	}
+	return nil
 }

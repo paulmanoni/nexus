@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -24,6 +23,10 @@ import (
 func ginAuthMiddleware(state *moduleState) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := withState(c.Request.Context(), state)
+		// Install the reject hook so a per-op Required/Requires gate's
+		// rc.Reject(401/403) runs this module's OnUnauthenticated/OnForbidden
+		// callbacks via the gin carrier (which holds the *gin.Context).
+		ctx = middleware.WithRejectHook(ctx, authRejectHook)
 
 		token, hasToken := state.cfg.Extract.Extract(c.Request)
 		if hasToken {
@@ -51,13 +54,14 @@ func ginAuthMiddleware(state *moduleState) gin.HandlerFunc {
 //
 //	nexus.AsMutation(NewCreateAdvert, auth.Required())
 func Required() nexus.MiddlewareOption {
-	return nexus.Use(middleware.Middleware{
-		Name:        "auth:required",
-		Description: "Requires an authenticated identity on ctx",
-		Kind:        middleware.KindBuiltin,
-		Gin:         ginRequired,
-		Graph:       graphRequired,
-	})
+	return nexus.Use(builtin("auth:required",
+		"Requires an authenticated identity on ctx",
+		func(rc *middleware.RequestCtx, next middleware.Next) error {
+			if _, ok := IdentityFrom(rc.Context); !ok {
+				return rejectAuth(rc, ErrUnauthenticated)
+			}
+			return next(rc)
+		}))
 }
 
 // Requires returns a cross-transport bundle that rejects requests whose
@@ -72,13 +76,18 @@ func Requires(perms ...string) nexus.MiddlewareOption {
 	if len(perms) > 0 {
 		name = "auth:requires:" + joinPerms(perms)
 	}
-	return nexus.Use(middleware.Middleware{
-		Name:        name,
-		Description: "Requires one or more permissions on the identity",
-		Kind:        middleware.KindBuiltin,
-		Gin:         ginRequires(perms),
-		Graph:       graphRequires(perms),
-	})
+	return nexus.Use(builtin(name,
+		"Requires one or more permissions on the identity",
+		func(rc *middleware.RequestCtx, next middleware.Next) error {
+			id, ok := IdentityFrom(rc.Context)
+			if !ok {
+				return rejectAuth(rc, ErrUnauthenticated)
+			}
+			if !checkPermissions(rc.Context, id, perms) {
+				return rejectAuth(rc, ErrForbidden)
+			}
+			return next(rc)
+		}))
 }
 
 // Optional is a no-op bundle that exists purely as dashboard signal —
@@ -86,94 +95,71 @@ func Requires(perms ...string) nexus.MiddlewareOption {
 // Useful for public endpoints that still personalize when a user is
 // logged in, so the UI surfaces "this endpoint reads identity".
 func Optional() nexus.MiddlewareOption {
-	noop := func(c *gin.Context) { c.Next() }
-	graphNoop := func(next graph.FieldResolveFn) graph.FieldResolveFn {
-		return func(p graph.ResolveParams) (any, error) { return next(p) }
-	}
-	return nexus.Use(middleware.Middleware{
-		Name:        "auth:optional",
-		Description: "Reads identity when present; does not enforce it",
-		Kind:        middleware.KindBuiltin,
-		Gin:         noop,
-		Graph:       graphNoop,
-	})
+	return nexus.Use(builtin("auth:optional",
+		"Reads identity when present; does not enforce it",
+		func(rc *middleware.RequestCtx, next middleware.Next) error { return next(rc) }))
 }
 
-// --- per-op enforcement primitives --------------------------------------
+// --- unified gate plumbing ----------------------------------------------
 
-func ginRequired(c *gin.Context) {
-	if _, ok := IdentityFrom(c.Request.Context()); !ok {
-		rejectUnauthenticated(c, ErrUnauthenticated)
-		return
-	}
-	c.Next()
+// builtin wraps a single transport-neutral Handler into a builtin bundle.
+// One implementation now serves REST, WS, and GraphQL — FromHandler generates
+// the per-transport realizations, replacing the old ginX/graphX pairs.
+func builtin(name, desc string, fn func(*middleware.RequestCtx, middleware.Next) error) middleware.Middleware {
+	mw := middleware.FromHandler(middleware.NewFunc(name, middleware.AllTransports, fn))
+	mw.Description = desc
+	mw.Kind = middleware.KindBuiltin
+	return mw
 }
 
-func graphRequired(next graph.FieldResolveFn) graph.FieldResolveFn {
-	return func(p graph.ResolveParams) (any, error) {
-		if _, ok := IdentityFrom(p.Context); !ok {
-			return nil, wrapGraphErr(p.Context, ErrUnauthenticated)
-		}
-		return next(p)
+// rejectAuth renders an auth denial for the active transport. GraphQL routes
+// through wrapGraphErr (Config.GraphQLErrorWrap + the auth.reject event);
+// REST/WS rc.Reject hands off to authRejectHook via the gin carrier, which
+// runs the app's OnUnauthenticated/OnForbidden callbacks. Status follows the
+// sentinel: ErrForbidden → 403, otherwise 401.
+func rejectAuth(rc *middleware.RequestCtx, err error) error {
+	if rc.Transport == middleware.TransportGraphQL {
+		return wrapGraphErr(rc.Context, err)
 	}
+	status := http.StatusUnauthorized
+	if err == ErrForbidden {
+		status = http.StatusForbidden
+	}
+	return rc.Reject(status, err)
 }
 
-func ginRequires(perms []string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id, ok := IdentityFrom(c.Request.Context())
-		if !ok {
-			rejectUnauthenticated(c, ErrUnauthenticated)
-			return
-		}
-		if !checkPermissions(c.Request.Context(), id, perms) {
-			rejectForbidden(c, ErrForbidden)
-			return
-		}
-		c.Next()
+// authRejectHook is installed on every REST request by ginAuthMiddleware and
+// invoked by the gin carrier on rc.Reject. It owns 401/403 (returning false
+// for any other status so unrelated middleware — e.g. rate limiting — keep the
+// carrier's default abort). Mirrors the old rejectUnauthenticated /
+// rejectForbidden exactly: emit the event, run the configured hook, and force
+// the status if a misconfigured hook didn't abort.
+func authRejectHook(c *gin.Context, status int, err error) bool {
+	reason := "unauthenticated"
+	if status == http.StatusForbidden {
+		reason = "forbidden"
+	} else if status != http.StatusUnauthorized {
+		return false
 	}
-}
+	emitReject(c.Request.Context(), reason, status, err)
 
-func graphRequires(perms []string) graph.FieldMiddleware {
-	return func(next graph.FieldResolveFn) graph.FieldResolveFn {
-		return func(p graph.ResolveParams) (any, error) {
-			id, ok := IdentityFrom(p.Context)
-			if !ok {
-				return nil, wrapGraphErr(p.Context, ErrUnauthenticated)
-			}
-			if !checkPermissions(p.Context, id, perms) {
-				return nil, wrapGraphErr(p.Context, ErrForbidden)
-			}
-			return next(p)
+	var hook func(*gin.Context, error)
+	if s, ok := stateFrom(c.Request.Context()); ok {
+		if status == http.StatusForbidden {
+			hook = s.cfg.OnForbidden
+		} else {
+			hook = s.cfg.OnUnauthenticated
 		}
 	}
-}
-
-// rejectUnauthenticated writes the 401 response. If the app supplied
-// Config.OnUnauthenticated, we defer to it and force a 401 fallback
-// if the hook returned without aborting (misconfigured hooks must
-// not accidentally let a request through).
-func rejectUnauthenticated(c *gin.Context, err error) {
-	emitReject(c.Request.Context(), "unauthenticated", http.StatusUnauthorized, err)
-	if s, ok := stateFrom(c.Request.Context()); ok && s.cfg.OnUnauthenticated != nil {
-		s.cfg.OnUnauthenticated(c, err)
+	if hook != nil {
+		hook(c, err)
 		if !c.IsAborted() {
-			c.AbortWithStatus(http.StatusUnauthorized)
+			c.AbortWithStatus(status)
 		}
-		return
+	} else {
+		c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
 	}
-	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-}
-
-func rejectForbidden(c *gin.Context, err error) {
-	emitReject(c.Request.Context(), "forbidden", http.StatusForbidden, err)
-	if s, ok := stateFrom(c.Request.Context()); ok && s.cfg.OnForbidden != nil {
-		s.cfg.OnForbidden(c, err)
-		if !c.IsAborted() {
-			c.AbortWithStatus(http.StatusForbidden)
-		}
-		return
-	}
-	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	return true
 }
 
 // wrapGraphErr routes the auth sentinels through Config.GraphQLErrorWrap
