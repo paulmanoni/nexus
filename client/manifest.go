@@ -137,6 +137,25 @@ type AuthInfo struct {
 	MeName          string `json:"meName,omitempty"`
 }
 
+// relPath strips the deployment-wide basePath from a stored (absolute)
+// endpoint path so the manifest carries paths RELATIVE to BasePath. Every SDK
+// consumer (the runtime client, the codegen'd client, the WS handle) composes
+// the request URL as origin + basePath + path; storing absolute paths while
+// also setting BasePath would double the prefix when route_prefix is set.
+//
+// A no-op when basePath is empty (the common case) or when path doesn't start
+// with it (defensive — all user paths go through app.PrefixPath, so they do).
+func relPath(path, basePath string) string {
+	if basePath == "" || !strings.HasPrefix(path, basePath) {
+		return path
+	}
+	rel := path[len(basePath):]
+	if rel == "" {
+		return "/"
+	}
+	return rel
+}
+
 // buildManifest projects the registry into the SDK manifest shape.
 // reads:
 //   - reg.Services()    → ServiceInfo[]
@@ -165,11 +184,18 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 
 	wsByPath := map[string]*WSPathInfo{}
 	for _, e := range reg.Endpoints() {
+		// Stored endpoint paths are absolute — app.PrefixPath baked the
+		// deployment-wide route prefix into them at registration. The
+		// manifest carries paths RELATIVE to BasePath, since every SDK
+		// consumer composes the URL as origin + basePath + path; emitting
+		// absolute paths here would double the prefix when route_prefix is
+		// set (e.g. /api + /api/x). relPath strips it back out.
+		relP := relPath(e.Path, basePath)
 		if e.Transport == registry.WebSocket {
-			grp, ok := wsByPath[e.Path]
+			grp, ok := wsByPath[relP]
 			if !ok {
-				grp = &WSPathInfo{Path: e.Path, Service: e.Service}
-				wsByPath[e.Path] = grp
+				grp = &WSPathInfo{Path: relP, Service: e.Service}
+				wsByPath[relP] = grp
 			}
 			grp.Messages = append(grp.Messages, WSMessage{
 				Type:        e.Method,
@@ -186,7 +212,7 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 			Module:            e.Module,
 			Transport:         string(e.Transport),
 			Method:            e.Method,
-			Path:              e.Path,
+			Path:              relP,
 			Name:              e.Name,
 			Description:       e.Description,
 			Args:              e.ArgsSchema,
