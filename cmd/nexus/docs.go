@@ -732,6 +732,11 @@ CLI CHEATSHEET
                              --frontend-cmd <c> dev-server command (default
                                                 "npm run dev" in web/)
                              --no-open          skip opening the browser
+                             --fast             strip DWARF (-ldflags=-w) for
+                                                ~3x faster per-restart rebuilds;
+                                                disables delve + trims panic
+                                                detail (compile is already sped
+                                                up unconditionally via -N -l)
 
   nexus build                Build a single binary. Runs npm install (if
                              node_modules is missing) + vite build, then
