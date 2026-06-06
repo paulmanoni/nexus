@@ -48,6 +48,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		frontendDir string
 		frontendCmd string
 		verbose     bool
+		fast        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -80,7 +81,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -99,6 +100,8 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"command run inside --frontend dir; default `npm run dev` (Vite dev server + HMR)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
+	cmd.Flags().BoolVar(&fast, "fast", false,
+		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking; disables delve and trims panic stack detail")
 	return cmd
 }
 
@@ -149,7 +152,7 @@ func (e *userError) Error() string { return e.msg }
 // When watch is true, runs a fsnotify watcher on the target dir and
 // restarts `go run` on every coalesced source-file change. SIGINT
 // stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose bool, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast bool, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -265,7 +268,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		if !first {
 			viteURLForOpen = nil
 		}
-		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, viteURLForOpen, stdout, stderr)
+		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, viteURLForOpen, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -346,10 +349,32 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // listeners, topology) gets compiled into the binary.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose bool, frontendURLCh <-chan string, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose, fast bool, frontendURLCh <-chan string, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	args := []string{"run"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
+	}
+	// Fast-dev compile: disable optimization (-N) and inlining (-l)
+	// for every package. The compiler skips its optimization passes,
+	// so each rebuild's compile step is markedly faster — and since
+	// dev binaries are never perf-sensitive, the lost runtime speed
+	// doesn't matter. `all=` keeps the flags stable across the whole
+	// build graph so the cache stays warm between restarts (changing
+	// the flag set would invalidate it). We deliberately leave the
+	// linker alone (no -ldflags=-w): DWARF stays in, so delve and
+	// full panic stack traces keep working. The SDK/frontend codegen
+	// runs post-boot and is untouched — every restart still
+	// regenerates the full typed surface.
+	args = append(args, "-gcflags=all=-N -l")
+	// --fast additionally strips DWARF (-ldflags=-w) so the linker has
+	// less to emit on every restart — the linker runs in full each
+	// reboot (unlike compilation, which the cache makes incremental),
+	// so this is the one knob that shaves the unavoidable per-restart
+	// cost. The tradeoff is delve can no longer attach and panic
+	// traces lose some detail, which is why it's opt-in rather than
+	// always-on like -N -l above.
+	if fast {
+		args = append(args, "-ldflags=-w")
 	}
 	args = append(args, target)
 	cmd := exec.Command("go", args...)
