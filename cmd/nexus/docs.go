@@ -257,11 +257,20 @@ Run it:
 
 Open http://localhost:8080/__nexus/ for the dashboard.
 
-Prefer config in a file? Load it from nexus.toml instead of the inline
-literal — that's what 'nexus new' scaffolds (see 'nexus docs nexustoml'):
+Prefer config in a file? nexus.Boot loads nexus.toml automatically —
+runtime Config, every [extensions.*] block, and the nexus.Get value
+store — then runs the app. That's what 'nexus new' scaffolds (see
+'nexus docs nexustoml'):
 
-    cfg := nexus.MustLoadConfig()
-    nexus.Run(cfg, nexus.Module("adverts", ...))
+    func main() {
+        nexus.Boot(nexus.Module("orders", ...))
+    }
+
+  - Boot is sugar for: nexus.Run(nexus.MustLoadConfig(),
+    append(nexus.MustLoadExtensions(), opts...)...).
+  - nexus.Get[T]("section.key") then reads any value from nexus.toml
+    (dotted key = TOML table path), no extension wiring needed.
+  - Use nexus.Run if you'd rather build Config in Go.
 `,
 
 	"handlers": `
@@ -697,10 +706,18 @@ with nexus.DatabaseFromConfig[YourType]("name") (YourType embeds
     driver     = "postgres"
     key_prefix = "db.uaa"           # reads db.uaa.{host,port,username,password,name}
 
-EXTENSIONS are decoded by nexus.MustLoadExtensions() when the matching
-extension is blank-imported (_ "github.com/paulmanoni/nexus/extension/config"):
+nexus.Get reads from nexus.toml directly: nexus.Get[T]("section.key")
+resolves any value declared here (dotted key = TOML table path, e.g.
+[runtime.storage] url -> nexus.Get[string]("runtime.storage.url")), with
+NO extension wired. ENV (STORAGE_URL) overrides it; [extensions.config]
+(when wired) overrides it too, hot-reloadably.
 
-    [extensions.config]             # config server — values via nexus.Get[T]("key")
+EXTENSIONS are decoded automatically by nexus.Boot (or explicitly by
+nexus.MustLoadExtensions) when the matching extension is blank-imported
+(_ "github.com/paulmanoni/nexus/extension/config" — Go links only
+imported code, so the import is still required):
+
+    [extensions.config]             # config server — hot-reloadable nexus.Get values
     endpoint = "http://localhost:8078"
     identity = "myapp"
     profile  = "default"

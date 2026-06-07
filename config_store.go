@@ -37,6 +37,26 @@ type configSnap struct {
 // reaches into. Set once by the config extension at boot.
 var activeConfigStore atomic.Pointer[configStore]
 
+// baseConfigStore is the lowest-priority config layer, seeded from
+// the full nexus.toml document by LoadConfig at startup. It lets
+// nexus.Get resolve any key declared in nexus.toml even when no
+// config extension is wired. The extension store (when installed)
+// and ENV overrides both win over it — see configResolveKey.
+var baseConfigStore atomic.Pointer[configSnap]
+
+// installBaseConfig seeds the nexus.toml base layer with the full
+// document tree. Called by LoadConfig at startup. Unlike the
+// extension store there's no install-once guard or listeners: it's a
+// static boot-time snapshot and the last LoadConfig call wins (a
+// process reads a single nexus.toml).
+func installBaseConfig(values map[string]any) {
+	baseConfigStore.Store(&configSnap{
+		values:    values,
+		version:   "nexus.toml",
+		updatedAt: time.Now().UTC(),
+	})
+}
+
 // pendingConfigListeners holds OnConfigChange callbacks
 // registered before any config entrypoint installed the store.
 // InstallConfigStore replays them once it lands.
@@ -121,6 +141,7 @@ func UpdateConfigStore(values map[string]any, version string) {
 // escape hatch — production never calls this.
 func ClearConfigStoreForTest() {
 	activeConfigStore.Store(nil)
+	baseConfigStore.Store(nil)
 	pendingConfigMu.Lock()
 	pendingConfigListeners = map[string][]func(any){}
 	pendingConfigMu.Unlock()
@@ -148,15 +169,25 @@ func configResolveKey(key string) (any, bool) {
 	if raw, ok := configEnvOverride(key); ok {
 		return raw, true
 	}
-	s := activeConfigStore.Load()
-	if s == nil {
-		return nil, false
+	// Extension store (config.Local/Client/Server) is the next
+	// authority — runtime-managed and hot-reloadable, so a key it
+	// carries overrides the static nexus.toml base layer. A miss here
+	// FALLS THROUGH rather than short-circuiting: the extension store
+	// need not be exhaustive.
+	if s := activeConfigStore.Load(); s != nil {
+		if cur := s.snap.Load(); cur != nil {
+			if v, ok := configResolvePath(cur.values, key); ok {
+				return v, true
+			}
+		}
 	}
-	cur := s.snap.Load()
-	if cur == nil {
-		return nil, false
+	// nexus.toml base layer (lowest priority), seeded by LoadConfig.
+	if b := baseConfigStore.Load(); b != nil {
+		if v, ok := configResolvePath(b.values, key); ok {
+			return v, true
+		}
 	}
-	return configResolvePath(cur.values, key)
+	return nil, false
 }
 
 func configResolvePath(tree map[string]any, key string) (any, bool) {

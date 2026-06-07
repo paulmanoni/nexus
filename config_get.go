@@ -18,13 +18,23 @@ import (
 // Resolution priority, highest first:
 //
 //   1. Environment variable (CONFIG_SERVER_PORT for "config.server.port")
-//   2. Snapshot from server / sealed local yaml
-//   3. The default arg (or T's zero value)
+//   2. Config-extension snapshot (config.Server / .Client / .Local)
+//   3. nexus.toml base layer (seeded by LoadConfig/Boot)
+//   4. The default arg (or T's zero value)
 //
-// The active store is installed at app start by config.Server /
-// config.Client / config.Local. Calls before installation return
-// the default (or zero) — package-init use is supported, but
-// values from a yet-uninstalled store can't materialize.
+// Layers 2 and 3 resolve per-key: a key absent from the extension
+// snapshot falls through to the nexus.toml layer rather than
+// returning the default. So nexus.Get reads any key declared in
+// nexus.toml — the dotted key mirrors the TOML table path, e.g.
+// [runtime.storage] url → Get("runtime.storage.url") — with NO
+// config extension wired. The extension snapshot (when installed)
+// overrides nexus.toml for keys it carries, since it's
+// runtime-managed and hot-reloadable.
+//
+// The nexus.toml layer lands when MustLoadConfig/LoadConfig/Boot
+// runs (typically the first line of main); the extension snapshot
+// lands a little later, at app start. Calls before either is
+// installed return the default (or zero).
 func Get[T any](key string, defaults ...T) T {
 	var zero T
 	pickDefault := func() T {

@@ -23,21 +23,23 @@ const DefaultConfigPath = "nexus.toml"
 // keep their zero values; the caller is free to mutate the result
 // before passing it to nexus.Run.
 //
-// Coexists with extension/config — distinct concerns:
+// LoadConfig also seeds the nexus.Get base layer with the FULL
+// nexus.toml document, so nexus.Get[T]("section.key") resolves any
+// value declared in nexus.toml (dotted key = TOML table path) with no
+// config extension wired. These values are frozen at boot.
 //
-//   - nexus.LoadConfig reads `nexus.toml`'s `[runtime]` block at
-//     STARTUP. Maps to the Config struct nexus.Run consumes
-//     (listen addr, dashboard name, GraphQL knobs, CORS, etc.).
-//     Values are frozen at boot — changing nexus.toml requires a
-//     process restart.
+// Coexists with extension/config — overlapping but distinct:
+//
+//   - nexus.LoadConfig reads `nexus.toml` at STARTUP → the Config
+//     struct nexus.Run consumes (listen addr, dashboard, GraphQL,
+//     CORS, …) AND the static nexus.Get base layer. Frozen at boot.
 //   - extension/config reads `nexus.config.toml` at RUNTIME and
-//     exposes a K/V store via nexus.Get[T]("key"). Hot-reload-able
-//     for per-deployment tuning (feature flags, sampling rates,
-//     etc.) without a restart.
+//     installs a higher-priority, hot-reloadable nexus.Get snapshot
+//     (feature flags, sampling rates, remote/server-pushed values).
+//     It overrides the nexus.toml base layer for keys it carries.
 //
-// Use both: framework boot params in nexus.toml, app feature
-// values in nexus.config.toml. The file names are intentionally
-// distinct so editors + git diffs make the boundary visible.
+// So nexus.toml alone covers the common case; reach for
+// extension/config when you need hot-reload or a remote source.
 //
 // Path is optional — pass nothing to read DefaultConfigPath
 // ("nexus.toml") from the current working directory:
@@ -91,6 +93,16 @@ func LoadConfig(path ...string) (Config, error) {
 	var block runtimeConfigDoc
 	if err := toml.Unmarshal(expanded, &block); err != nil {
 		return Config{}, fmt.Errorf("nexus: parse %s: %w", p, err)
+	}
+	// Seed the nexus.Get base layer with the FULL document tree so
+	// nexus.Get[T]("section.key") resolves anything declared in
+	// nexus.toml — not just the [runtime]/[extensions] blocks the
+	// typed loaders claim. Lowest priority: ENV and the config
+	// extension override it. Best-effort — the typed Unmarshal above
+	// already surfaced any parse error.
+	var full map[string]any
+	if err := toml.Unmarshal(expanded, &full); err == nil {
+		installBaseConfig(full)
 	}
 	// Stash the declarative [databases.*] structure blocks so
 	// DatabaseFromConfig[T] can resolve them when options are built.

@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"reflect"
 
@@ -295,6 +297,71 @@ func Raw(opt fx.Option) Option {
 // in subprocesses so the prefixed log streams don't drown in fx
 // scaffolding noise; users hitting framework-level issues can unset
 // it for full diagnostics.
+// Boot loads nexus.toml automatically — the [runtime] Config, every
+// [extensions.*] block, the [env] bridge, and the nexus.Get base
+// layer — then runs the app. It's the zero-boilerplate form of:
+//
+//	cfg  := nexus.MustLoadConfig()
+//	opts := nexus.MustLoadExtensions()
+//	nexus.Run(cfg, append(opts, userOpts...)...)
+//
+// so main() collapses to:
+//
+//	func main() {
+//	    nexus.Boot(
+//	        nexus.ServeFrontend(webFS, "web/dist"),
+//	        billing.Module,
+//	    )
+//	}
+//
+// A missing nexus.toml is tolerated (zero Config, no extensions) so
+// apps without one still boot; a malformed one panics, matching the
+// MustLoad* helpers. Override the path with the NEXUS_CONFIG env var,
+// or call BootFrom(path, opts...).
+//
+// Run stays available for apps that build Config in Go or want
+// explicit control over load order — Boot is sugar over it. Note that
+// extension PACKAGES still need their blank import (Go links only
+// imported code); Boot removes the load calls, not the imports.
+func Boot(opts ...Option) {
+	BootFrom(resolveConfigPath(), opts...)
+}
+
+// BootFrom is Boot with an explicit nexus.toml path.
+func BootFrom(path string, opts ...Option) {
+	cfg, extOpts := autoLoad(path)
+	Run(cfg, append(extOpts, opts...)...)
+}
+
+// resolveConfigPath picks the nexus.toml path: the NEXUS_CONFIG env
+// override when set, else the conventional DefaultConfigPath.
+func resolveConfigPath() string {
+	if p := os.Getenv("NEXUS_CONFIG"); p != "" {
+		return p
+	}
+	return DefaultConfigPath
+}
+
+// autoLoad reads runtime Config + extension options from path. A
+// missing file yields a zero Config and no extensions; any other
+// load/parse error panics so a malformed config fails loudly at
+// startup rather than silently dropping settings.
+func autoLoad(path string) (Config, []Option) {
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			cfg = Config{}
+		} else {
+			panic(err)
+		}
+	}
+	extOpts, err := LoadExtensionOptions(path)
+	if err != nil {
+		panic(err)
+	}
+	return cfg, extOpts
+}
+
 func Run(cfg Config, opts ...Option) {
 	// Print-mode short-circuit. When NEXUS_PRINT_MANIFEST=1 is set,
 	// the orchestration platform is invoking us at build/upload time
@@ -361,7 +428,6 @@ func Run(cfg Config, opts ...Option) {
 	}
 	fx.New(all...).Run()
 }
-
 
 // fxErrorOnlyLogger wraps an fxevent.Logger and only forwards events
 // that carry a non-nil error. Used in dev-quiet mode so fx graph

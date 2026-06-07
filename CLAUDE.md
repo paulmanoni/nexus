@@ -57,12 +57,17 @@ import "embed"
 var webFS embed.FS
 
 func main() {
-    cfg := nexus.MustLoadConfig()
-    opts := nexus.MustLoadExtensions()
-    opts = append(opts, nexus.ServeFrontend(webFS, "web/dist"), /* modules… */)
-    nexus.Run(cfg, opts...)
+    nexus.Boot(nexus.ServeFrontend(webFS, "web/dist") /*, modules… */)
 }
 ```
+`nexus.Boot(opts...)` loads `nexus.toml` automatically — runtime `Config`, every
+`[extensions.*]` block, the `[env]` bridge, and the `nexus.Get` value store — then
+runs the app. It's sugar for `nexus.Run(nexus.MustLoadConfig(),
+append(nexus.MustLoadExtensions(), opts...)...)`; a missing `nexus.toml` is tolerated,
+a malformed one panics. Override the path with `NEXUS_CONFIG` or use
+`nexus.BootFrom(path, opts...)`. Reach for `nexus.Run(cfg, opts...)` directly when you
+build `Config` in Go. (Extension packages still need their blank import — Go links only
+imported code; `Boot` removes the load calls, not the imports.)
 `ServeFrontend(fs, root, opts...)` is SPA-aware: extensionless paths fall back to
 `index.html`, `/assets/*` gets immutable cache, and REST/GraphQL/WS routes win on
 conflict. Mount under a sub-path with `nexus.FrontendAt("/admin")`. Boot fails fast if
@@ -100,12 +105,16 @@ After scaffolding: just `nexus dev` (zero install). Deps are fetched on first ru
 
 ## 2. App entry & config (`nexus.toml`)
 
-`main.go` loads runtime config from `nexus.toml` via `nexus.MustLoadConfig()` and
-`[extensions.*]` blocks via `nexus.MustLoadExtensions()`. Edit settings in the file,
-not in code; absent keys fall back to framework defaults.
+`nexus.Boot(opts...)` loads `nexus.toml` automatically (runtime config +
+`[extensions.*]` + the `[env]` bridge + the `nexus.Get` value store). Edit settings in
+the file, not in code; absent keys fall back to framework defaults. The explicit form
+(`nexus.MustLoadConfig()` + `nexus.MustLoadExtensions()` → `nexus.Run`) still works for
+apps that build `Config` in Go.
 
 **All runtime keys live under `[runtime]`** (or a `[runtime.<sub>]` table) — a key at
 the top level is silently ignored. `[databases.*]` and `[extensions.*]` are top-level.
+Any value (including custom sections) is readable via `nexus.Get[T]("section.key")` —
+the dotted key mirrors the TOML table path.
 
 ```toml
 [runtime]
@@ -327,15 +336,23 @@ desc, details, healthy, opts...)` with `resource.AsDefault()/DependsOn(...)/With
 register via `app.Register(r)`, or implement `NexusResources() []resource.Resource` on a
 constructor param for auto-detection. Live usage edges: `app.OnResourceUse(target)`.
 
-### Config server (`nexus.Get`)
-With `[extensions.config]` wired (blank-import `_ ".../extension/config"` + the TOML
-block), read values anywhere:
+### Config values (`nexus.Get`)
+`nexus.Get[T]("key", default...)` reads from, highest priority first: (1) an ENV
+override (`db.port` → `DB_PORT`), (2) the `[extensions.config]` snapshot when wired
+(hot-reloadable, remote-capable), (3) the **`nexus.toml` base layer** seeded by
+`Boot`/`MustLoadConfig`. Layers resolve per-key, so a key absent from a higher layer
+falls through. Read anywhere:
 ```go
-addr := nexus.Get[string]("server.addr")
+addr := nexus.Get[string]("runtime.server.addr")     // straight from nexus.toml
 port := nexus.Get[int]("db.port", 5432)              // 2nd arg = default
 ttl  := nexus.Get[time.Duration]("cache.ttl", 5*time.Minute)
 ```
-Databases can pull secrets from it via `key_prefix` instead of inline values.
+The dotted key mirrors the TOML table path — `[runtime.storage] url` →
+`nexus.Get[string]("runtime.storage.url")` — **no extension needed** for plain
+nexus.toml reads. Wire `[extensions.config]` (blank-import `_ ".../extension/config"` +
+the TOML block) only when you need hot-reload, profiles, or a remote config server;
+those values then override the nexus.toml base layer. Databases can pull secrets via
+`key_prefix` instead of inline values.
 
 ---
 

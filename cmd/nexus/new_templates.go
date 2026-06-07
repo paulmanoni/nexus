@@ -340,14 +340,13 @@ import (
 var webFS embed.FS
 {{end}}
 func main() {
-	// Runtime config (server addr, dashboard, introspection, environment, …)
-	// is loaded from nexus.toml — edit that file to change settings without
-	// touching code. Fields absent from the TOML fall back to framework
-	// defaults. MustLoadExtensions picks up any [extensions.*] blocks.
-	cfg := nexus.MustLoadConfig()
-	opts := nexus.MustLoadExtensions()
-
-	opts = append(opts,
+	// nexus.Boot loads nexus.toml automatically — runtime config (server
+	// addr, dashboard, introspection, environment, …), every [extensions.*]
+	// block, and the nexus.Get value store — then runs the app. Edit
+	// nexus.toml to change settings without touching code; absent fields
+	// fall back to framework defaults. (Use nexus.Run if you'd rather build
+	// Config in Go.)
+	nexus.Boot(
 {{- if .HasFrontend}}
 		nexus.ServeFrontend(webFS, "web/dist"),
 {{- end}}
@@ -365,8 +364,6 @@ func main() {
 {{- end}}
 		helloModule,
 	)
-
-	nexus.Run(cfg, opts...)
 }
 `
 
