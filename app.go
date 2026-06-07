@@ -9,6 +9,7 @@ package nexus
 
 import (
 	"context"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -473,6 +474,37 @@ func New(cfg Config) *App {
 func (a *App) Engine() *gin.Engine          { return a.engine }
 func (a *App) Registry() *registry.Registry { return a.registry }
 func (a *App) Bus() *trace.Bus              { return a.bus }
+
+// Static serves the files in the local directory dir at the URL
+// prefix urlPrefix — app.Static("/media", "media") makes
+// ./media/cat.png reachable at /media/cat.png. The prefix is mounted
+// under the deployment route prefix when one is set.
+//
+// This is the guarded counterpart to Engine().Static(). gin panics at
+// boot when a static mount registers a /*filepath catch-all at the
+// root, which is what happens whenever the prefix is blank or "/":
+// the catch-all collides with framework routes (the /__nexus
+// dashboard, your API, the SPA fallback) and takes the whole app
+// down. A blank/root prefix is exactly what an unset config value
+// yields — e.g. nexus.Get on a key that isn't in the config store
+// returns "" — so the failure is easy to hit by accident.
+//
+// Static refuses to crash for it: a blank, root, or /__nexus-shadowing
+// prefix is logged and skipped, the app keeps booting, and the
+// misconfiguration shows up in the logs instead of a panic stack. A
+// valid prefix mounts exactly like Engine().Static.
+func (a *App) Static(urlPrefix, dir string) {
+	p := a.routePrefix + normalizeRoutePrefix(urlPrefix)
+	switch {
+	case p == "":
+		log.Printf("nexus: Static(urlPrefix=%q, dir=%q): blank/root prefix would register a root catch-all that collides with framework routes — skipping (use a non-root prefix like %q)", urlPrefix, dir, "/media")
+		return
+	case p == "/__nexus" || strings.HasPrefix(p, "/__nexus/"):
+		log.Printf("nexus: Static(urlPrefix=%q): the /__nexus prefix is reserved by the dashboard — skipping", urlPrefix)
+		return
+	}
+	a.engine.Static(p, dir)
+}
 
 // schemaRefs returns the app's shared pool of walked named struct
 // types. Lazy-initialized so apps that never run the client SDK
