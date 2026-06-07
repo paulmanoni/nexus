@@ -49,13 +49,19 @@ import (
 // T is validated immediately: a T that doesn't embed *db.Manager panics
 // here, at wiring time, with a clear message — never at request time.
 func Database[T any](name string, build func() db.Config, opts ...DatabaseOption) Option {
+	return databaseOption[T](name, build, func() []DatabaseOption { return opts })
+}
+
+// databaseOption is the shared core behind Database and
+// DatabaseFromConfig. optsFn is evaluated at fx-invoke time (inside
+// register), NOT at option-construction time, so options derived from
+// data that's only available after startup — like a [databases.*]
+// block parsed by LoadConfig — can resolve lazily. This is what lets
+// DatabaseFromConfig work under nexus.Boot, which evaluates its option
+// arguments before it loads nexus.toml.
+func databaseOption[T any](name string, build func() db.Config, optsFn func() []DatabaseOption) Option {
 	fieldIdx := mustEmbeddedField[T](managerPtrType, "nexus.Database")
 	requireResourceArgs("nexus.Database", name, build == nil)
-
-	rc := resourceConfig{}
-	for _, o := range opts {
-		o(&rc)
-	}
 
 	ctor := func(lc fx.Lifecycle, logger *zap.Logger) (*T, error) {
 		m := db.NewManager(build(), db.WithLogger(logger))
@@ -68,6 +74,10 @@ func Database[T any](name string, build func() db.Config, opts ...DatabaseOption
 	}
 
 	register := func(app *App, h *T) {
+		rc := resourceConfig{}
+		for _, o := range optsFn() {
+			o(&rc)
+		}
 		m := reflect.ValueOf(h).Elem().Field(fieldIdx).Interface().(*db.Manager)
 		driver := string(m.Driver())
 		desc := rc.description

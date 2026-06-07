@@ -323,8 +323,10 @@ func CacheOption() nexus.Option {
         nexus.WithCacheDescription("Redis + in-memory fallback"))
 }
 ```
-- `nexus.DatabaseFromConfig[T]("name", opts...)` — reads `[databases.name]` (needs
-  `MustLoadConfig` to have run); `T` embeds `*db.Manager`.
+- `nexus.DatabaseFromConfig[T]("name", opts...)` — reads `[databases.name]`; `T` embeds
+  `*db.Manager`. The `[databases.*]` lookup is deferred to boot, so it works under
+  `nexus.Boot` even though Boot loads the TOML after building option args (a bad/missing
+  block still fails fast at boot).
 - `nexus.Database[T]("name", func() db.Config {…}, opts...)` — inline config (no TOML).
 - `nexus.Cache[T]("name", func() *cache.Config {…}, opts...)` — `T` embeds `*cache.Manager`.
 - Options: `WithDatabaseDefault/Details/Description`, `WithCacheDefault/Description`.

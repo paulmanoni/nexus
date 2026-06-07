@@ -118,12 +118,18 @@ func TestDatabaseFromConfig_Panics(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			// Construction must NOT panic — the spec lookup is deferred
+			// to boot so DatabaseFromConfig works under nexus.Boot,
+			// which builds option args before it loads nexus.toml.
+			_ = DatabaseFromConfig[H](c.section)
+
+			// ...but the deferred resolver still fails fast at boot.
 			defer func() {
 				if recover() == nil {
-					t.Fatalf("expected panic for %s", c.name)
+					t.Fatalf("expected boot-time panic for %s", c.name)
 				}
 			}()
-			_ = DatabaseFromConfig[H](c.section)
+			_ = resolveDatabaseSpec(c.section)
 		})
 	}
 }
@@ -135,5 +141,30 @@ func TestDatabaseFromConfig_ValidReturnsOption(t *testing.T) {
 	type H struct{ *db.Manager }
 	if DatabaseFromConfig[H]("good") == nil {
 		t.Fatal("expected non-nil Option")
+	}
+}
+
+// TestDatabaseFromConfig_BootOrdering guards the nexus.Boot ordering:
+// the option is BUILT before nexus.toml is loaded (Go evaluates Boot's
+// arguments before Boot runs LoadConfig), then the [databases.*] spec
+// registers, then resolution must succeed. Pre-v1.12.6 the eager spec
+// lookup panicked at build time, which is the bug this prevents.
+func TestDatabaseFromConfig_BootOrdering(t *testing.T) {
+	registerDatabaseSpecs(map[string]DatabaseSpec{}) // nothing loaded yet
+	type H struct{ *db.Manager }
+
+	// Building the option with no matching spec must not panic — this
+	// is exactly what Boot does before it reads nexus.toml.
+	_ = DatabaseFromConfig[H]("late")
+
+	// LoadConfig-equivalent (as Boot runs after evaluating its args).
+	registerDatabaseSpecs(map[string]DatabaseSpec{
+		"late": {Driver: "postgres", Host: "h", Name: "n", Default: true},
+	})
+
+	// The deferred resolution now succeeds.
+	spec := resolveDatabaseSpec("late")
+	if spec.Host != "h" || !spec.Default {
+		t.Errorf("resolved spec = %+v, want Host=h Default=true", spec)
 	}
 }

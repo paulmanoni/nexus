@@ -74,6 +74,30 @@ func databaseSpec(name string) (DatabaseSpec, bool) {
 	return s, ok
 }
 
+// resolveDatabaseSpec looks up a [databases.<name>] block and validates
+// its driver, panicking with a clear message on a missing block or an
+// unsupported driver. DatabaseFromConfig calls this lazily — from the
+// fx constructor / register invoke — so the spec need only exist by
+// boot, not at option-construction time (nexus.Boot builds options
+// before it loads nexus.toml). A bad spec still fails fast at boot.
+func resolveDatabaseSpec(name string) DatabaseSpec {
+	spec, ok := databaseSpec(name)
+	if !ok {
+		panic(fmt.Sprintf("nexus.DatabaseFromConfig[%q]: no [databases.%s] block found — "+
+			"declare it in nexus.toml (loaded by nexus.Boot or nexus.MustLoadConfig)", name, name))
+	}
+	switch db.Driver(spec.Driver) {
+	case db.Postgres, db.MySQL, db.SQLite:
+	default:
+		panic(fmt.Sprintf("nexus.DatabaseFromConfig[%q]: [databases.%s].driver = %q is not one of postgres/mysql/sqlite", name, name, spec.Driver))
+	}
+	// No key_prefix requirement: a block may supply its values inline
+	// (works without a config server). A block with neither inline
+	// values nor key_prefix yields empty connection fields, surfaced
+	// through the manager's health rather than a panic.
+	return spec
+}
+
 // The fixed config-key suffixes read under a database's key_prefix.
 // Chosen to match the conventional layout
 // (db.<name>.hostname/port/username/password/name).
@@ -95,40 +119,36 @@ const (
 //
 //	nexus.DatabaseFromConfig[OatsUAADB]("uaa")
 //
-// Requires nexus.LoadConfig / MustLoadConfig to have run first (it
-// parses the [databases.*] blocks). A missing block or an invalid
-// driver panics at wiring time — fail-fast, never at request time.
+// The [databases.*] blocks are parsed by nexus.LoadConfig /
+// MustLoadConfig / Boot. The spec lookup is DEFERRED to fx-construction
+// time (boot), so this option may be built before the config is loaded
+// — which is the case under nexus.Boot, since Go evaluates a call's
+// arguments before the call runs. A missing block or an invalid driver
+// still fails fast — at boot, never at request time.
 func DatabaseFromConfig[T any](name string, opts ...DatabaseOption) Option {
-	spec, ok := databaseSpec(name)
-	if !ok {
-		panic(fmt.Sprintf("nexus.DatabaseFromConfig[%q]: no [databases.%s] block found — "+
-			"declare it in nexus.toml and ensure nexus.MustLoadConfig() runs before options are built", name, name))
+	build := func() db.Config {
+		return databaseConfigFor(resolveDatabaseSpec(name), func(k string) string { return Get[string](k) })
 	}
-	switch db.Driver(spec.Driver) {
-	case db.Postgres, db.MySQL, db.SQLite:
-	default:
-		panic(fmt.Sprintf("nexus.DatabaseFromConfig[%q]: [databases.%s].driver = %q is not one of postgres/mysql/sqlite", name, name, spec.Driver))
-	}
-	// No key_prefix requirement: a block may supply its values inline
-	// instead (works without a config server). A block with neither
-	// inline values nor key_prefix yields empty connection fields,
-	// surfaced through the manager's health rather than a panic.
 
 	// Spec-derived options first so explicit caller opts can override.
-	base := make([]DatabaseOption, 0, len(opts)+2)
-	if spec.Default {
-		base = append(base, WithDatabaseDefault())
+	// Resolved lazily alongside build so the whole option defers the
+	// spec lookup past construction.
+	optsFn := func() []DatabaseOption {
+		spec := resolveDatabaseSpec(name)
+		base := make([]DatabaseOption, 0, len(opts)+2)
+		if spec.Default {
+			base = append(base, WithDatabaseDefault())
+		}
+		details := map[string]any{"engine": spec.Driver}
+		if spec.Schema != "" {
+			details["schema"] = spec.Schema
+		}
+		base = append(base, WithDatabaseDetails(details))
+		base = append(base, opts...)
+		return base
 	}
-	details := map[string]any{"engine": spec.Driver}
-	if spec.Schema != "" {
-		details["schema"] = spec.Schema
-	}
-	base = append(base, WithDatabaseDetails(details))
-	base = append(base, opts...)
 
-	return Database[T](name, func() db.Config {
-		return databaseConfigFor(spec, func(k string) string { return Get[string](k) })
-	}, base...)
+	return databaseOption[T](name, build, optsFn)
 }
 
 // databaseConfigFor maps a spec + a key→value lookup into a db.Config.
