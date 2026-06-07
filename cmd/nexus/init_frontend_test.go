@@ -70,6 +70,48 @@ func main() {
 	}
 }
 
+// TestInitFrontend_OnBootProject covers the `nexus new` default
+// shape since v1.12.4: main.go calls nexus.Boot(...) with no
+// nexus.Run, so the AST patcher must locate the Boot call to inject
+// ServeFrontend. Regression guard for new → init.
+func TestInitFrontend_OnBootProject(t *testing.T) {
+	dir := t.TempDir()
+	mainGo := `package main
+
+import "github.com/paulmanoni/nexus"
+
+func main() {
+	nexus.Boot(
+		helloModule,
+	)
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainGo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := runInitFrontend(dir, "vue", false, &out); err != nil {
+		t.Fatalf("runInitFrontend: %v\nout: %s", err, out.String())
+	}
+
+	body, err := os.ReadFile(filepath.Join(dir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := string(body)
+	for _, want := range []string{
+		"//go:embed all:web/dist",
+		"var webFS embed.FS",
+		`nexus.ServeFrontend(webFS, "web/dist")`,
+		"nexus.Boot(",
+	} {
+		if !strings.Contains(patched, want) {
+			t.Errorf("main.go missing %q\n--- body ---\n%s", want, patched)
+		}
+	}
+}
+
 // TestInitFrontend_Idempotent confirms re-running on a project
 // that's already had nexus init --frontend doesn't double-write
 // the islandsFS var or duplicate the ServeFrontend arg.

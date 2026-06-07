@@ -22,10 +22,11 @@ import (
 //
 // The main.go patch is AST-based — we parse the file with
 // go/parser, insert the missing import + embed decl + ServeFrontend
-// argument inside the existing nexus.Run call, then write the
-// reformatted source back. Robust against whitespace + comment
-// variations; fails clearly when the file doesn't follow the
-// conventional nexus shape (no nexus.Run call to locate).
+// argument inside the existing app-entry call (nexus.Run, nexus.Boot,
+// or nexus.BootFrom), then write the reformatted source back. Robust
+// against whitespace + comment variations; fails clearly when the
+// file doesn't follow the conventional nexus shape (no entry call to
+// locate).
 func runInitFrontend(target, frontend string, force bool, stdout io.Writer) error {
 	abs, err := filepath.Abs(target)
 	if err != nil {
@@ -315,17 +316,18 @@ func appendEmbedDecl(file *ast.File) {
 	file.Decls = append(file.Decls[:insertAt], append([]ast.Decl{gd}, file.Decls[insertAt:]...)...)
 }
 
-// ensureServeFrontendArg finds the nexus.Run(...) call expression
-// inside func main and inserts nexus.ServeFrontend(webFS,
-// "islands") as a new argument if one isn't already present.
+// ensureServeFrontendArg finds the app-entry call expression inside
+// func main — nexus.Run(...), nexus.Boot(...), or nexus.BootFrom(...)
+// — and inserts nexus.ServeFrontend(webFS, "web/dist") as a new
+// argument if one isn't already present. ServeFrontend is an Option,
+// so it slots in as just another trailing argument in every form.
 //
 // Returns (true, nil) when an arg was added; (false, nil) when the
-// call already had ServeFrontend; (false, err) when no nexus.Run
-// call was found (the file's shape doesn't match what we know how
-// to patch).
+// call already had ServeFrontend; (false, err) when no entry call
+// was found (the file's shape doesn't match what we know how to patch).
 //
-// We don't try to disambiguate multiple nexus.Run calls — the
-// first one wins. Real-world main.go's only have one anyway.
+// We don't try to disambiguate multiple entry calls — the first one
+// wins. Real-world main.go's only have one anyway.
 func ensureServeFrontendArg(file *ast.File) (bool, error) {
 	var found *ast.CallExpr
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -344,14 +346,16 @@ func ensureServeFrontendArg(file *ast.File) (bool, error) {
 		if !ok || ident.Name != "nexus" {
 			return true
 		}
-		if sel.Sel.Name != "Run" {
+		switch sel.Sel.Name {
+		case "Run", "Boot", "BootFrom":
+		default:
 			return true
 		}
 		found = ce
 		return false
 	})
 	if found == nil {
-		return false, fmt.Errorf("no nexus.Run(...) call in file — main.go's shape doesn't match what we know how to patch")
+		return false, fmt.Errorf("no nexus.Run/Boot(...) call in file — main.go's shape doesn't match what we know how to patch")
 	}
 
 	// Check whether one of the existing args is already
