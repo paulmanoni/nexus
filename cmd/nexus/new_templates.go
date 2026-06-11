@@ -821,7 +821,7 @@ enabled = true
 name = "{{.Name}}"
 
 # Databases live at the TOP level (not under [runtime]); wire each with
-# nexus.DatabaseFromConfig[YourType]("name") in code.
+# db.BindFromConfig[YourType]("name") in code.
 # [databases.main]
 # driver   = "postgres"
 # host     = "localhost"

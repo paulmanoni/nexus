@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/middleware"
@@ -387,7 +386,10 @@ type StoreConfig struct {
 	//
 	// Explicit RateLimit / Metrics settings still win; Cache is
 	// just the default when those are nil.
-	Cache *cache.Manager
+	//
+	// Typed as the root Cache interface so the core stays decoupled
+	// from extension/cache; *cache.Manager satisfies it.
+	Cache Cache
 }
 
 // GraphQLConfig groups the framework's environment-level GraphQL

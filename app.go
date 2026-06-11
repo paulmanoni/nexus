@@ -18,10 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"go.uber.org/zap"
-
 	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/extension/cache"
 	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/extension/dashboard"
 	"github.com/paulmanoni/nexus/extension/metrics"
@@ -76,7 +73,7 @@ type App struct {
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
 	// takes over automatically when env vars enable it.
-	cacheMgr      *cache.Manager
+	cacheMgr      Cache
 	dashboardOn   bool
 	dashboardName string
 	// graphqlPath is the default mount path used by (*App).Service
@@ -301,20 +298,19 @@ func New(cfg Config) *App {
 	a.registry.OnChange(a.liveNotifier.Notify)
 	a.cronSched = cron.NewScheduler(a.bus, 0)
 	a.cronSched.OnChange(a.liveNotifier.Notify)
-	// Cache is non-optional: if the caller didn't inject one, build a
-	// memory-backed Manager so downstream stores never branch on "is
-	// there a cache". Redis kicks in automatically when env vars ask
-	// for it (see cache.NewConfig).
-	if a.cacheMgr == nil {
-		a.cacheMgr = cache.NewManager(cache.NewConfig(), zap.NewNop())
-		a.cacheMgr.Start()
-	}
+	// Cache is OPTIONAL: the core never needs one. It's wired only when
+	// the app declares it (cache.Bind[T] / Config.Stores.Cache), which is
+	// also the only thing that pulls Redis/gocache into the build. A nil
+	// cacheMgr just means App.Cache() returns nil.
 	if a.rlStore == nil {
 		a.rlStore = ratelimit.NewMemoryStore()
 	}
 	a.rlStore.OnChange(a.liveNotifier.Notify)
 	if a.metricsStore == nil {
-		a.metricsStore = metrics.NewCacheStore(a.cacheMgr)
+		// Default to the in-process memory store — no cache dependency.
+		// Apps wanting cache-backed (multi-replica) counters set
+		// Config.Stores.Metrics = cache.NewMetricsStore(mgr).
+		a.metricsStore = metrics.NewMemoryStore()
 	}
 	// Register ratelimit + metrics as built-in plugins so App.Plugins()
 	// lists them alongside user-installed extensions. Routes for
@@ -596,7 +592,7 @@ func (a *App) Environment() string { return a.environment }
 func (a *App) Version() string { return a.version }
 
 func (a *App) Metrics() metrics.Store { return a.metricsStore }
-func (a *App) Cache() *cache.Manager  { return a.cacheMgr }
+func (a *App) Cache() Cache           { return a.cacheMgr }
 
 // RoutePrefix returns the deployment-wide path prefix applied to
 // every user-mounted route (REST, GraphQL, WebSocket). Empty when
