@@ -1,10 +1,19 @@
-// Package cache provides a Redis + in-memory hybrid cache for nexus apps,
-// ported from the oats_applicant implementation. A Manager always has the
-// in-memory store ready; in "production" mode it also tries to keep a Redis
-// connection, falling back to memory on outage and reconnecting on a 30s
-// tick.
+// Package cache provides a cache for nexus apps. The default Manager is
+// in-memory only and pulls NO heavy dependencies (no Redis client, no
+// gocache, no Prometheus) — values are stored in an in-process TTL map
+// (patrickmn/go-cache) and serialized with msgpack.
 //
-// Typical wiring with fx:
+// Redis is opt-in, database/sql-style: blank-import the redis backend and
+// it registers itself, after which a Manager in "production" mode keeps a
+// Redis connection and transparently fails over to memory on outage:
+//
+//	import (
+//	    "github.com/paulmanoni/nexus/extension/cache"
+//	    _ "github.com/paulmanoni/nexus/extension/cache/redis" // enable Redis
+//	)
+//
+// Without that import the binary never links go-redis. Typical wiring with
+// fx:
 //
 //	fx.New(
 //	    fx.Provide(zap.NewExample),
@@ -25,26 +34,25 @@ import (
 	"sync"
 	"time"
 
-	gcache "github.com/eko/gocache/lib/v4/cache"
-	"github.com/eko/gocache/lib/v4/marshaler"
-	"github.com/eko/gocache/lib/v4/store"
-	gocache_store "github.com/eko/gocache/store/go_cache/v4"
-	redis_store "github.com/eko/gocache/store/redis/v4"
-	"github.com/failsafe-go/failsafe-go"
-	"github.com/failsafe-go/failsafe-go/circuitbreaker"
-	retryPolicy "github.com/failsafe-go/failsafe-go/retrypolicy"
 	gocache "github.com/patrickmn/go-cache"
-	"github.com/redis/go-redis/v9"
+	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/resource"
 )
 
+// ErrNotFound is returned by Get when the key is absent (or the cache isn't
+// initialized). Distinct so callers can branch on a miss vs a real error.
+var ErrNotFound = errors.New("cache: key not found")
+
 // Config holds cache configuration. Populate via NewConfig (env-driven) or
 // construct directly.
 type Config struct {
 	// Environment controls Redis behavior. "production" attempts Redis and
-	// keeps reconnecting; anything else stays on memory.
+	// keeps reconnecting; anything else stays on memory. Redis only ever
+	// engages when the redis backend is registered (blank-import
+	// extension/cache/redis); otherwise this is a no-op and the Manager is
+	// memory-only regardless of Environment.
 	Environment string
 
 	RedisHost     string
@@ -52,7 +60,8 @@ type Config struct {
 	RedisPassword string
 	RedisDB       int
 
-	// DefaultExpiry is go-cache's default TTL. CleanupExpiry is its GC tick.
+	// DefaultExpiry is the in-memory store's default TTL. CleanupExpiry is
+	// its GC tick.
 	DefaultExpiry time.Duration
 	CleanupExpiry time.Duration
 
@@ -115,116 +124,136 @@ func (c *Config) RedisAddress() string {
 	return host + ":" + port
 }
 
-// Manager is the live cache. Its Get/Set/Delete are safe for concurrent use;
-// the underlying store flips between Redis and memory atomically under a
-// mutex when connectivity changes.
+// Backend is a cache storage tier. The memory backend (default) and the
+// optional Redis backend (extension/cache/redis) both implement it. Values
+// are passed already-typed; an implementation is responsible for its own
+// serialization. Get returns ErrNotFound (or any non-nil error) on a miss.
+type Backend interface {
+	Get(ctx context.Context, key string, out any) error
+	Set(ctx context.Context, key string, value any, ttl time.Duration) error
+	Delete(ctx context.Context, key string) error
+	Clear(ctx context.Context) error
+}
+
+// RedisSupervisor is the lifecycle the optional Redis backend installs.
+// Start kicks off the connect + reconnect loop (swapping the Manager's
+// active backend via ActivateRedis / FallBackToMemory); Stop tears it down.
+type RedisSupervisor interface {
+	Start()
+	Stop()
+}
+
+// newRedisSupervisor is set by extension/cache/redis's init via RegisterRedis.
+// nil means the Redis backend was never imported — the Manager stays
+// memory-only and never links go-redis.
+var newRedisSupervisor func(*Manager) RedisSupervisor
+
+// RegisterRedis installs the Redis supervisor factory. Called from
+// extension/cache/redis's init(), so a blank import is all an app needs to
+// enable Redis (the database/sql driver pattern). Not part of the surface
+// apps call directly.
+func RegisterRedis(f func(*Manager) RedisSupervisor) { newRedisSupervisor = f }
+
+// Manager is the live cache. Get/Set/Delete are safe for concurrent use; the
+// active backend flips between Redis and memory atomically under a mutex when
+// the Redis supervisor reports a connectivity change.
 type Manager struct {
-	config    *Config
-	logger    *zap.Logger
-	marshaler *marshaler.Marshaler
+	config *Config
+	logger *zap.Logger
 
-	mu           sync.RWMutex
-	redisStore   store.StoreInterface
-	goCache      *gocache.Cache
-	goCacheStore store.StoreInterface
-	cacheStore   store.StoreInterface
-	redisClient  *redis.Client
+	mu     sync.RWMutex
+	mem    *memoryBackend // always present
+	active Backend        // mem by default; the supervisor swaps in Redis
 
-	executor failsafe.Executor[*redis.Client]
+	sup              RedisSupervisor
+	isRedisConnected bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
-
-	isRedisConnected bool
 }
 
-// NewManager constructs a Manager with the in-memory store initialized.
-// Redis connection, when enabled via "production" mode, is attempted
-// asynchronously in Start() so an unreachable Redis never delays boot.
-// Call Start() to kick off the connect + reconnect loop.
+// NewManager constructs a memory-backed Manager. When the Redis backend is
+// registered (blank-import extension/cache/redis) and Environment is
+// "production", Start() launches the async connect + reconnect loop — an
+// unreachable Redis never delays boot; the Manager serves from memory until
+// Redis comes up, then flips atomically.
 func NewManager(cfg *Config, logger *zap.Logger) *Manager {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// Only 2 retries with a tight backoff on the initial connect — boot
-	// shouldn't spend minutes thrashing against a down Redis. The long-
-	// lived reconnect loop (maintainConnection) picks up availability
-	// on its ReconnectInterval cadence.
-	retry := retryPolicy.NewBuilder[*redis.Client]().
-		WithDelay(500*time.Millisecond).
-		WithBackoff(2, 2*time.Second).
-		WithMaxRetries(2).
-		WithJitter(25).
-		OnRetry(func(e failsafe.ExecutionEvent[*redis.Client]) {
-			logger.Warn("redis connect retrying",
-				zap.Int("attempt", e.Attempts()),
-				zap.Error(e.LastError()),
-			)
-		}).Build()
-
-	cb := circuitbreaker.NewBuilder[*redis.Client]().
-		WithFailureThreshold(5).
-		WithDelay(10 * time.Second).
-		WithSuccessThreshold(1).
-		Build()
-
-	executor := failsafe.With[*redis.Client](retry, cb)
-
-	goCache := gocache.New(cfg.DefaultExpiry, cfg.CleanupExpiry)
-	goCacheStore := gocache_store.NewGoCache(goCache)
-
-	m := &Manager{
-		config:       cfg,
-		logger:       logger,
-		goCache:      goCache,
-		goCacheStore: goCacheStore,
-		executor:     executor,
-		ctx:          ctx,
-		cancel:       cancel,
+	mem := &memoryBackend{c: gocache.New(cfg.DefaultExpiry, cfg.CleanupExpiry)}
+	return &Manager{
+		config: cfg,
+		logger: logger,
+		mem:    mem,
+		active: mem,
+		ctx:    ctx,
+		cancel: cancel,
 	}
-	m.setupMemoryCache()
-	return m
 }
 
-// Start kicks off the background reconnect/health loop and fires the
-// first Redis connect attempt asynchronously. Safe to call once.
-//
-// In addition: when PersistPath is set, restore the in-memory store
-// from the gob-encoded file on disk so the cache survives a process
-// restart (e.g., `nexus dev`'s auto-restart loop). Missing-file is
-// the normal first-boot case and not an error. Redis still wins when
-// reachable — the on-disk snapshot only seeds the memory tier.
-//
-// Callers never block on Redis availability — the manager serves
-// from memory until Redis comes up, then flips atomically under the
-// mutex.
-func (m *Manager) Start() {
-	m.loadPersistFile()
-	if m.config.Environment != "production" {
+// Config, Logger, and Context expose the bits the Redis supervisor needs
+// without it reaching into Manager internals.
+func (m *Manager) Config() *Config         { return m.config }
+func (m *Manager) Logger() *zap.Logger     { return m.logger }
+func (m *Manager) Context() context.Context { return m.ctx }
+
+// ActivateRedis swaps the active backend to b and marks Redis connected.
+// Called by the supervisor on a successful (re)connect.
+func (m *Manager) ActivateRedis(b Backend) {
+	m.mu.Lock()
+	m.active = b
+	m.isRedisConnected = true
+	m.mu.Unlock()
+	m.logger.Info("cache: switched to redis")
+}
+
+// FallBackToMemory reverts the active backend to the in-memory store.
+// Called by the supervisor when Redis goes away.
+func (m *Manager) FallBackToMemory() {
+	m.mu.Lock()
+	if !m.isRedisConnected {
+		m.mu.Unlock()
 		return
 	}
-	go m.maintainConnection()
+	m.isRedisConnected = false
+	m.active = m.mem
+	m.mu.Unlock()
+	m.logger.Warn("cache: redis unavailable, switched to memory")
 }
 
-// Stop cancels the background loop and, when PersistPath is set,
-// snapshots the in-memory store to disk so the next process boot
-// can pick up where this one left off. Idempotent.
+// Start restores the persist file (if any) and, when the Redis backend is
+// registered and Environment is "production", launches the supervisor. Safe
+// to call once.
+func (m *Manager) Start() {
+	m.loadPersistFile()
+	if m.config.Environment != "production" || newRedisSupervisor == nil {
+		return
+	}
+	m.sup = newRedisSupervisor(m)
+	m.sup.Start()
+}
+
+// Stop snapshots the persist file (if any), stops the supervisor, and
+// cancels the manager context. Idempotent.
 func (m *Manager) Stop() {
 	m.savePersistFile()
+	if m.sup != nil {
+		m.sup.Stop()
+	}
 	m.cancel()
 }
 
-// loadPersistFile best-effort restores the in-memory store from
-// PersistPath. Silent skip when no path is set or the file doesn't
-// yet exist; logs other errors but doesn't fail boot — a corrupt
-// dev cache shouldn't block the binary from coming up.
+// loadPersistFile best-effort restores the in-memory store from PersistPath.
+// Silent skip when no path is set or the file doesn't yet exist; logs other
+// errors but doesn't fail boot — a corrupt dev cache shouldn't block the
+// binary from coming up.
 func (m *Manager) loadPersistFile() {
-	if m.config.PersistPath == "" || m.goCache == nil {
+	if m.config.PersistPath == "" {
 		return
 	}
-	err := m.goCache.LoadFile(m.config.PersistPath)
+	err := m.mem.c.LoadFile(m.config.PersistPath)
 	switch {
 	case err == nil:
 		m.logger.Info("cache: restored from disk", zap.String("path", m.config.PersistPath))
@@ -236,17 +265,17 @@ func (m *Manager) loadPersistFile() {
 	}
 }
 
-// savePersistFile writes the in-memory store to PersistPath. Creates
-// the parent directory if needed. Save failures are logged but never
-// returned — Stop's contract is best-effort cleanup.
+// savePersistFile writes the in-memory store to PersistPath, creating the
+// parent dir if needed. Failures are logged but never returned — Stop's
+// contract is best-effort cleanup.
 func (m *Manager) savePersistFile() {
-	if m.config.PersistPath == "" || m.goCache == nil {
+	if m.config.PersistPath == "" {
 		return
 	}
 	if dir := filepath.Dir(m.config.PersistPath); dir != "" && dir != "." {
 		_ = os.MkdirAll(dir, 0o755)
 	}
-	if err := m.goCache.SaveFile(m.config.PersistPath); err != nil {
+	if err := m.mem.c.SaveFile(m.config.PersistPath); err != nil {
 		m.logger.Warn("cache: save persist file failed",
 			zap.String("path", m.config.PersistPath), zap.Error(err))
 		return
@@ -261,43 +290,35 @@ func (m *Manager) IsRedisConnected() bool {
 	return m.isRedisConnected
 }
 
-// Get deserializes the cached value under key into out. Returns an error if
-// the key is missing or the cache isn't initialized.
+func (m *Manager) backend() Backend {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.active
+}
+
+// Get deserializes the cached value under key into out. Returns ErrNotFound
+// when the key is missing.
 func (m *Manager) Get(ctx context.Context, key string, out any) error {
-	if m.marshaler == nil {
-		return errors.New("cache: not initialized")
-	}
-	_, err := m.marshaler.Get(ctx, key, out)
-	return err
+	return m.backend().Get(ctx, key, out)
 }
 
 // Set stores value under key with the given TTL.
 func (m *Manager) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
-	if m.marshaler == nil {
-		return errors.New("cache: not initialized")
-	}
-	return m.marshaler.Set(ctx, key, value, store.WithExpiration(ttl))
+	return m.backend().Set(ctx, key, value, ttl)
 }
 
 // Delete removes key from the active store.
 func (m *Manager) Delete(ctx context.Context, key string) error {
-	if m.marshaler == nil {
-		return errors.New("cache: not initialized")
-	}
-	return m.marshaler.Delete(ctx, key)
+	return m.backend().Delete(ctx, key)
 }
 
 // Clear wipes every key in the active store.
 func (m *Manager) Clear(ctx context.Context) error {
-	if m.marshaler == nil {
-		return errors.New("cache: not initialized")
-	}
-	return m.marshaler.Clear(ctx)
+	return m.backend().Clear(ctx)
 }
 
-// AsResource builds a nexus resource.Resource for this Manager. Mark it as
-// default with extra options passed through. Backend ("redis" vs "memory")
-// is reported live via WithDetails.
+// AsResource builds a nexus resource.Resource for this Manager. Backend
+// ("redis" vs "memory") is reported live via WithDetails.
 func (m *Manager) AsResource(name, description string, opts ...resource.Option) resource.Resource {
 	base := []resource.Option{
 		resource.WithDetails(func() map[string]any {
@@ -315,119 +336,46 @@ func (m *Manager) AsResource(name, description string, opts ...resource.Option) 
 	return resource.NewCache(name, description, nil, func() bool { return true }, append(base, opts...)...)
 }
 
-// --- internals -------------------------------------------------------------
+// --- memory backend --------------------------------------------------------
 
-func (m *Manager) setupMemoryCache() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cacheStore = m.goCacheStore
-	m.marshaler = marshaler.New(gcache.New[any](m.goCacheStore))
-	m.logger.Info("cache: using memory store")
+// memoryBackend is the default, dependency-light tier: an in-process TTL map
+// (patrickmn/go-cache) holding msgpack-serialized values. Serializing (rather
+// than storing values by reference) preserves value semantics — a cached
+// struct mutated by the caller after Set doesn't change the cached copy —
+// matching the Redis backend's behavior.
+type memoryBackend struct{ c *gocache.Cache }
+
+func (b *memoryBackend) Get(_ context.Context, key string, out any) error {
+	v, ok := b.c.Get(key)
+	if !ok {
+		return ErrNotFound
+	}
+	data, ok := v.([]byte)
+	if !ok {
+		return errors.New("cache: corrupt memory entry")
+	}
+	return msgpack.Unmarshal(data, out)
 }
 
-func (m *Manager) connectToRedis() {
-	client, err := m.executor.Get(func() (*redis.Client, error) {
-		c := redis.NewClient(&redis.Options{
-			Addr:     m.config.RedisAddress(),
-			Password: m.config.RedisPassword,
-			DB:       m.config.RedisDB,
-			// Keep the pool tight on failed attempts so its own reconnect
-			// loop doesn't spam pool.go logs between our retry ticks.
-			MaxRetries: -1,
-		})
-		ctx, cancel := context.WithTimeout(context.Background(), m.config.ConnectTimeout)
-		defer cancel()
-		if _, err := c.Ping(ctx).Result(); err != nil {
-			// Close the client so its background pool stops dialing —
-			// otherwise the orphaned goroutines keep logging until GC.
-			_ = c.Close()
-			m.logger.Error("cache: redis ping failed", zap.Error(err))
-			return nil, err
-		}
-		return c, nil
-	})
+func (b *memoryBackend) Set(_ context.Context, key string, value any, ttl time.Duration) error {
+	data, err := msgpack.Marshal(value)
 	if err != nil {
-		m.logger.Error("cache: redis connect failed, staying on memory", zap.Error(err))
-		return
+		return err
 	}
-	m.mu.Lock()
-	m.redisClient = client
-	m.redisStore = redis_store.NewRedis(client)
-	m.cacheStore = m.redisStore
-	m.marshaler = marshaler.New(gcache.New[any](m.redisStore))
-	m.isRedisConnected = true
-	m.mu.Unlock()
-	m.logger.Info("cache: switched to redis")
+	// ttl <= 0 → use the store's default expiry (gocache.DefaultExpiration).
+	if ttl <= 0 {
+		ttl = gocache.DefaultExpiration
+	}
+	b.c.Set(key, data, ttl)
+	return nil
 }
 
-func (m *Manager) switchToMemoryCache() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.isRedisConnected {
-		return
-	}
-	m.isRedisConnected = false
-	m.cacheStore = m.goCacheStore
-	m.marshaler = marshaler.New(gcache.New[any](m.goCacheStore))
-	// Close the stale client so its background pool stops dialing; a
-	// fresh client will be built on the next connectToRedis attempt.
-	if m.redisClient != nil {
-		_ = m.redisClient.Close()
-		m.redisClient = nil
-		m.redisStore = nil
-	}
-	m.logger.Warn("cache: redis unavailable, switched to memory")
+func (b *memoryBackend) Delete(_ context.Context, key string) error {
+	b.c.Delete(key)
+	return nil
 }
 
-func (m *Manager) maintainConnection() {
-	interval := m.config.ReconnectInterval
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
-	// Kick off the first connect attempt immediately so a reachable Redis
-	// is picked up without waiting a full ReconnectInterval. Runs in this
-	// goroutine — the caller already launched us in the background.
-	m.connectToRedis()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-m.ctx.Done():
-			m.logger.Info("cache: reconnect loop stopping")
-			return
-		case <-ticker.C:
-			if !m.IsRedisConnected() {
-				m.logger.Info("cache: redis disconnected, retrying")
-				m.connectToRedis()
-			} else {
-				m.checkRedisConnection()
-			}
-		}
-	}
-}
-
-func (m *Manager) checkRedisConnection() {
-	m.mu.RLock()
-	client := m.redisClient
-	m.mu.RUnlock()
-	if client == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	// PING the redis client directly. The previous implementation did
-	// Get("__nexus_cache_healthcheck__") which returned "value not
-	// found" on every tick (the key was never set), and the code
-	// couldn't distinguish that from a real transport error — so it
-	// flapped: switch to memory → reconnect succeeds → next tick
-	// health-checks a missing key → switch to memory → repeat.
-	//
-	// PING is the canonical Redis liveness probe: it requires no
-	// pre-existing state and returns a clean error only on transport
-	// failure. Same call connectToRedis already uses for the initial
-	// dial.
-	if _, err := client.Ping(ctx).Result(); err != nil {
-		m.logger.Error("cache: health check failed, switching to memory", zap.Error(err))
-		m.switchToMemoryCache()
-	}
+func (b *memoryBackend) Clear(_ context.Context) error {
+	b.c.Flush()
+	return nil
 }

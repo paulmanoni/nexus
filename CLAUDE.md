@@ -303,6 +303,7 @@ import (
     "github.com/paulmanoni/nexus"
     "github.com/paulmanoni/nexus/db"
     "github.com/paulmanoni/nexus/extension/cache"
+    _ "github.com/paulmanoni/nexus/extension/cache/redis" // opt into Redis (omit → memory-only)
 )
 
 type DB struct{ *db.Manager }          // MUST embed *db.Manager
@@ -333,6 +334,10 @@ app pays for those only when it calls a binder. This mirrors `pubsub.Broker`.
 - `db.Bind[T]("name", func() db.Config {…}, opts...)` — inline config (no TOML).
 - `cache.Bind[T]("name", func() *cache.Config {…}, opts...)` — `T` embeds `*cache.Manager`.
 - Options: `db.WithDefault/WithDetails/WithDescription`, `cache.WithDefault/WithDescription`.
+- **The default cache is in-memory only and pulls NO heavy deps** (no go-redis, gocache,
+  or Prometheus). Redis is opt-in database/sql-style: blank-import
+  `_ ".../extension/cache/redis"` and a `production`-mode Manager keeps a Redis connection
+  with transparent memory failover. Without that import the binary never links go-redis.
 - Cache-backed metrics (multi-replica counters) are opt-in via
   `Config.Stores.Metrics = cache.NewMetricsStore(mgr)`; the default is an in-process
   memory store with no cache dependency.
