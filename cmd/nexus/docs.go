@@ -689,8 +689,8 @@ defaults apply. 'nexus new' scaffolds this block.
     burst = 50
 
 DATABASES live at the TOP level (not under [runtime]). Wire each in code
-with nexus.DatabaseFromConfig[YourType]("name") (YourType embeds
-*db.Manager). Inline values OR a config-server key_prefix:
+with db.BindFromConfig[YourType]("name") (YourType embeds *db.Manager).
+Inline values OR a config-server key_prefix:
 
     [databases.main]                # inline (no config server needed)
     driver   = "postgres"

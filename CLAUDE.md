@@ -311,25 +311,31 @@ type CacheManager struct{ *cache.Manager }
 
 func DatabaseOptions() []nexus.Option {
     return []nexus.Option{
-        nexus.DatabaseFromConfig[DB]("main"),        // reads [databases.main] from nexus.toml
-        nexus.DatabaseFromConfig[SourceDB]("source"),
+        db.BindFromConfig[DB]("main"),        // reads [databases.main] from nexus.toml
+        db.BindFromConfig[SourceDB]("source"),
     }
 }
 
 func CacheOption() nexus.Option {
-    return nexus.Cache[CacheManager]("session",
+    return cache.Bind[CacheManager]("session",
         func() *cache.Config { return &cache.Config{} },
-        nexus.WithCacheDefault(),
-        nexus.WithCacheDescription("Redis + in-memory fallback"))
+        cache.WithDefault(),
+        cache.WithDescription("Redis + in-memory fallback"))
 }
 ```
-- `nexus.DatabaseFromConfig[T]("name", opts...)` — reads `[databases.name]`; `T` embeds
+The binders live in `db` / `extension/cache` (not the nexus root) so that importing
+`nexus` does NOT pull GORM, the SQL drivers, Redis, or Prometheus into the build — an
+app pays for those only when it calls a binder. This mirrors `pubsub.Broker`.
+- `db.BindFromConfig[T]("name", opts...)` — reads `[databases.name]`; `T` embeds
   `*db.Manager`. The `[databases.*]` lookup is deferred to boot, so it works under
   `nexus.Boot` even though Boot loads the TOML after building option args (a bad/missing
   block still fails fast at boot).
-- `nexus.Database[T]("name", func() db.Config {…}, opts...)` — inline config (no TOML).
-- `nexus.Cache[T]("name", func() *cache.Config {…}, opts...)` — `T` embeds `*cache.Manager`.
-- Options: `WithDatabaseDefault/Details/Description`, `WithCacheDefault/Description`.
+- `db.Bind[T]("name", func() db.Config {…}, opts...)` — inline config (no TOML).
+- `cache.Bind[T]("name", func() *cache.Config {…}, opts...)` — `T` embeds `*cache.Manager`.
+- Options: `db.WithDefault/WithDetails/WithDescription`, `cache.WithDefault/WithDescription`.
+- Cache-backed metrics (multi-replica counters) are opt-in via
+  `Config.Stores.Metrics = cache.NewMetricsStore(mgr)`; the default is an in-process
+  memory store with no cache dependency.
 
 Handlers/services then take `*DB`, `*CacheManager` as constructor params (fx injects).
 
