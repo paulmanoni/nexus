@@ -144,7 +144,7 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 			service+"."+opName,
 			string(registry.REST),
 			opName,
-			cfg.bundles, userHandler,
+			app.gateBundles(cfg.tags, cfg.bundles), userHandler,
 		)
 		app.engine.Handle(method, finalPath, chain...)
 
@@ -282,7 +282,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 			service+"."+opName,
 			string(registry.REST),
 			"",
-			cfg.bundles, handler,
+			app.gateBundles(cfg.tags, cfg.bundles), handler,
 		)
 		app.engine.Handle(method, finalPath, chain...)
 		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{

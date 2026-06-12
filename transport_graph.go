@@ -305,6 +305,14 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		for arg, vs := range cfg.argValidators {
 			r.WithArgValidator(arg, vs...)
 		}
+		// Deny-by-default gate (if an extension installed one and this
+		// field isn't Public()) runs ahead of the field's own middleware
+		// so the identity check precedes any permission check.
+		if gateApp := allDeps[appInjectedIdx].Interface().(*App); gateApp != nil {
+			if gate := gateApp.defaultGraphGate(cfg.tags); gate != nil {
+				r.WithNamedMiddleware(gate.Name, gate.AsInfo().Description, gate.Graph)
+			}
+		}
 		for _, m := range cfg.middlewares {
 			r.WithNamedMiddleware(m.name, m.description, m.mw)
 		}

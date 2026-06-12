@@ -361,20 +361,29 @@ func Module(cfg Config) nexus.Option {
 	}
 	manager := &Manager{state: state}
 
+	pluginOpts := []nexus.Option{
+		nexus.Raw(fx.Supply(manager)),
+		// Install the global auth middleware on the gin engine and
+		// capture the trace bus. Runs before the Dashboard slot
+		// mounts /__nexus/auth, so those routes inherit the
+		// middleware.
+		nexus.Invoke(func(app *nexus.App) {
+			state.bus = app.Bus()
+			app.Engine().Use(ginAuthMiddleware(state))
+		}),
+	}
+	// Deny-by-default: supply the "require identity" gate as the
+	// framework's default EndpointGate. The framework prepends it to every
+	// endpoint (REST/GraphQL/WS) unless the endpoint is nexus.Public().
+	if cfg.Authorization.Default.requireAuth {
+		pluginOpts = append(pluginOpts,
+			nexus.Raw(fx.Supply(&nexus.EndpointGate{Middleware: requiredMiddleware()})))
+	}
+
 	return extension.Use(extension.Plugin{
 		Name:    "auth",
 		Version: "1",
-		Options: []nexus.Option{
-			nexus.Raw(fx.Supply(manager)),
-			// Install the global auth middleware on the gin engine and
-			// capture the trace bus. Runs before the Dashboard slot
-			// mounts /__nexus/auth, so those routes inherit the
-			// middleware.
-			nexus.Invoke(func(app *nexus.App) {
-				state.bus = app.Bus()
-				app.Engine().Use(ginAuthMiddleware(state))
-			}),
-		},
+		Options: pluginOpts,
 		Dashboard: &extension.Dashboard{
 			Tab: &extension.Tab{ID: "auth", Label: "Auth"},
 			Routes: []extension.Route{

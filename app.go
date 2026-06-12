@@ -76,6 +76,12 @@ type App struct {
 	cacheMgr      Cache
 	dashboardOn   bool
 	dashboardName string
+	// defaultGate, when non-nil, is a middleware the framework prepends to
+	// every endpoint chain (REST/GraphQL/WS) unless the endpoint opts out
+	// with Public() — the primitive behind deny-by-default auth. Supplied
+	// by an extension (e.g. auth's Authorization.Default) and stashed here
+	// by applyDefaultGate before any endpoint mounts. See EndpointGate.
+	defaultGate *EndpointGate
 	// graphqlPath is the default mount path used by (*App).Service
 	// when AtGraphQL isn't called on the returned *Service. Empty
 	// means "/graphql" (the DefaultGraphQLPath const). Config.GraphQLPath

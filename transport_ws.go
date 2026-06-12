@@ -222,7 +222,7 @@ func mountWSEndpoint(app *App, lc fx.Lifecycle, ep *wsEndpoint, cfg *wsConfig, f
 		ep.service+".ws."+firstMsgType,
 		string(registry.WebSocket),
 		"",
-		cfg.bundles, hub.ServeGin,
+		app.gateBundles(cfg.tags, cfg.bundles), hub.ServeGin,
 	)
 	app.engine.GET(mountedPath, chain...)
 }

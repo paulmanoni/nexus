@@ -47,14 +47,22 @@ func ginAuthMiddleware(state *moduleState) gin.HandlerFunc {
 //
 //	nexus.AsMutation(NewCreateAdvert, auth.Required())
 func Required() nexus.MiddlewareOption {
-	return nexus.Use(builtin("auth:required",
+	return nexus.Use(requiredMiddleware())
+}
+
+// requiredMiddleware builds the "authenticated identity present" gate as a
+// raw middleware.Middleware. Required() wraps it for per-op attachment; the
+// deny-by-default path (Authorization.Default = Authenticated()) supplies it
+// to the framework as the default EndpointGate.
+func requiredMiddleware() middleware.Middleware {
+	return builtin("auth:required",
 		"Requires an authenticated identity on ctx",
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
 			if _, ok := IdentityFrom(rc.Context); !ok {
 				return rejectAuth(rc, ErrUnauthenticated)
 			}
 			return next(rc)
-		}))
+		})
 }
 
 // Requires returns a cross-transport bundle that rejects requests whose

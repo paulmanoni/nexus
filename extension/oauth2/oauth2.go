@@ -224,12 +224,19 @@ func Module(cfg Config) nexus.Option {
 		nexus.AsRestHandler("POST", cfg.TokenPath,
 			func(srv *Server) gin.HandlerFunc { return srv.HandleToken },
 			nexus.Description("OAuth2 token endpoint (password / refresh / client_credentials grants)."),
+			// The token endpoint mints credentials, so it must stay
+			// reachable under deny-by-default — you can't require a token
+			// to obtain one.
+			nexus.Public(),
 		),
 	}
 	if cfg.RevokePath != "" {
 		opts = append(opts, nexus.AsRestHandler("POST", cfg.RevokePath,
 			func(srv *Server) gin.HandlerFunc { return srv.HandleRevoke },
 			nexus.Description("OAuth2 token revocation endpoint."),
+			// Revoke authenticates by the token in the body it revokes, so
+			// it manages its own auth and opts out of the default gate.
+			nexus.Public(),
 		))
 	}
 

@@ -395,6 +395,11 @@ Authorization (how a required permission matches roles/scopes):
     auth.Authorization{Authority: auth.Wildcard()}  // admin:* grants admin:read
     auth.Authorization{Permissions: auth.AnyOf(...)} // full override
 
+Deny-by-default (every endpoint requires an identity unless opted out):
+    auth.Authorization{Default: auth.Authenticated()}  // secure by default
+    nexus.AsRest("GET", "/health", NewHealth, nexus.Public()) // opt out
+    // applies across REST/GraphQL/WS; AuthRoute("login") is auto-exempt
+
 Error rendering (one cross-transport handler replaces the old
 OnUnauthenticated / OnForbidden / GraphQLErrorWrap hooks):
     Config{OnError: myHandler}   // implements auth.ErrorHandler

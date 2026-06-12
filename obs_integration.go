@@ -226,6 +226,11 @@ func fxEarlyOptions(cfg Config) fx.Option {
 		// trivially cheap and the value is unused if no one
 		// depends on it.
 		fx.Provide(NewNotifier),
+		// Stash any extension-supplied default endpoint gate on the app
+		// BEFORE the per-endpoint invokes run, so deny-by-default applies
+		// uniformly regardless of where the supplying extension sits in
+		// the option list.
+		fx.Invoke(applyDefaultGate),
 		fx.Invoke(registerLifecycle),
 	)
 }

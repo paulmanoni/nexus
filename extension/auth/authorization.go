@@ -35,11 +35,33 @@ func Wildcard() Authority {
 	}
 }
 
-// Authorization is the "what may you do?" half of auth: how a required
-// permission named at a Requires(...) gate is matched against the
-// identity's roles and scopes. The zero value is the exact-match
+// Decision is the baseline applied to endpoints that declare no explicit
+// gate. The zero value (Permit) keeps today's opt-in model — endpoints are
+// open unless they attach auth.Required / auth.Requires. Authenticated()
+// flips to deny-by-default: every endpoint requires an identity unless
+// marked nexus.Public() (login flows via nexus.AuthRoute("login") are
+// auto-exempt). Enforced uniformly across REST, GraphQL, and WS.
+type Decision struct{ requireAuth bool }
+
+// Permit is the default baseline: endpoints are open unless explicitly
+// gated. Equivalent to the zero Decision.
+func Permit() Decision { return Decision{} }
+
+// Authenticated turns on deny-by-default — every endpoint requires an
+// authenticated identity unless it opts out with nexus.Public().
+func Authenticated() Decision { return Decision{requireAuth: true} }
+
+// Authorization is the "what may you do?" half of auth: the baseline
+// Default applied to ungated endpoints, plus how a required permission
+// named at a Requires(...) gate is matched against the identity's roles and
+// scopes. The zero value is permit-by-default with an exact-match
 // roles+scopes check (identical to DefaultPermissions).
 type Authorization struct {
+	// Default is the baseline gate for endpoints with no explicit
+	// auth.Required / auth.Requires. Zero value = Permit (opt-in gating);
+	// Authenticated() = deny-by-default.
+	Default Decision
+
 	// Authority matches a single granted permission against a single
 	// required one. nil means exact equality (ExactAuthority).
 	Authority Authority
