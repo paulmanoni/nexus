@@ -2,6 +2,7 @@ package registry
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 )
@@ -274,16 +275,55 @@ func splitTopLevelCommas(s string) []string {
 	return out
 }
 
+// collectedField is a FieldSchema plus the metadata encoding/json uses
+// to resolve same-name collisions across embedding: embedding depth
+// (shallower dominates) and whether the wire name came from an explicit
+// tag (a tagged field dominates an untagged one at equal depth). order
+// records source-traversal position so survivors emit in declaration
+// order regardless of how grouping shuffles them.
+type collectedField struct {
+	fs     FieldSchema
+	wire   string // effective wire name the collision is keyed on
+	depth  int
+	tagged bool
+	order  int
+}
+
 // walkStructFields builds the field list for a struct type. Skips
 // unexported fields, honors `json:"-"` (omits the field), reads
 // `json:"name,omitempty"` to derive JSONName + Optional, and uses the
 // field's `desc:"..."` tag for Description (already a framework
-// convention seen elsewhere).
+// convention seen elsewhere). Anonymous embedded structs are flattened
+// with their fields promoted, and same-wire-name collisions across
+// embedding levels are resolved exactly as encoding/json would.
 func walkStructFields(t reflect.Type, refs map[string]NamedType) NamedType {
-	out := NamedType{Fields: make([]FieldSchema, 0, t.NumField())}
+	order := 0
+	collected := collectStructFields(t, refs, 0, &order, nil)
+	return NamedType{Fields: resolveFieldCollisions(collected)}
+}
+
+// collectStructFields walks t recursively, flattening anonymous embedded
+// structs and tagging every field with its embedding depth so the caller
+// can resolve collisions. ancestors guards against cyclic embedding
+// (e.g. `type A struct{ *A }`) so the recursion terminates.
+func collectStructFields(t reflect.Type, refs map[string]NamedType, depth int, order *int, ancestors map[reflect.Type]bool) []collectedField {
+	out := make([]collectedField, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if !f.IsExported() {
+		// Mirror encoding/json's promotion rules. An anonymous embedded
+		// struct is walked for its exported fields even when the embedded
+		// type itself is unexported (`type User struct{ base }`) — Go
+		// promotes those fields onto the wire. Only drop non-embedded
+		// unexported fields and embedded unexported NON-struct fields.
+		if f.Anonymous {
+			et := f.Type
+			if et.Kind() == reflect.Ptr {
+				et = et.Elem()
+			}
+			if !f.IsExported() && et.Kind() != reflect.Struct {
+				continue
+			}
+		} else if !f.IsExported() {
 			continue
 		}
 		jsonTag := f.Tag.Get("json")
@@ -325,18 +365,30 @@ func walkStructFields(t reflect.Type, refs map[string]NamedType) NamedType {
 			jsonName = gqlName
 		}
 		// Anonymous embedded fields with no explicit json tag flatten
-		// into the parent struct on the wire. Walk the embedded type
-		// and splice its fields in to mirror that.
+		// into the parent struct on the wire: recurse one level deeper so
+		// the promoted fields carry the right depth for collision
+		// resolution, while the embedded type is still registered as its
+		// own SDK ref (exported case) so its standalone interface emits.
 		if f.Anonymous && jsonTag == "" {
-			embedded := WalkType(f.Type, refs)
-			if embedded.Kind == "ref" {
-				if nt, ok := refs[embedded.Ref]; ok {
-					out.Fields = append(out.Fields, nt.Fields...)
-					continue
-				}
+			et := f.Type
+			if et.Kind() == reflect.Ptr {
+				et = et.Elem()
 			}
-			if embedded.Kind == "object" && embedded.Object != nil {
-				out.Fields = append(out.Fields, embedded.Object.Fields...)
+			if et.Kind() == reflect.Struct {
+				// An exported embed remains a named type in the SDK
+				// surface; an unexported one only contributes fields, so
+				// its internal name never leaks into refs.
+				if f.IsExported() {
+					WalkType(f.Type, refs)
+				}
+				if ancestors[et] {
+					continue // cyclic embed — stop before recursing forever
+				}
+				next := map[reflect.Type]bool{et: true}
+				for k := range ancestors {
+					next[k] = true
+				}
+				out = append(out, collectStructFields(et, refs, depth+1, order, next)...)
 				continue
 			}
 		}
@@ -354,7 +406,66 @@ func walkStructFields(t reflect.Type, refs map[string]NamedType) NamedType {
 		if jsonName == f.Name {
 			fs.JSONName = ""
 		}
-		out.Fields = append(out.Fields, fs)
+		out = append(out, collectedField{
+			fs:     fs,
+			wire:   jsonName,
+			depth:  depth,
+			tagged: jsonExplicit || gqlName != "",
+			order:  *order,
+		})
+		*order++
 	}
 	return out
+}
+
+// resolveFieldCollisions reduces fields sharing a wire name to the single
+// dominant one using Go's embedding rules: the shallowest field wins; at
+// equal depth a tagged field beats an untagged one; and a genuine tie
+// (equal depth AND equal tag-presence) drops them all — exactly what
+// encoding/json does with an ambiguous selector. Survivors are returned
+// in source-declaration order.
+func resolveFieldCollisions(fields []collectedField) []FieldSchema {
+	groups := make(map[string][]collectedField)
+	seen := make([]string, 0, len(fields))
+	for _, cf := range fields {
+		if _, ok := groups[cf.wire]; !ok {
+			seen = append(seen, cf.wire)
+		}
+		groups[cf.wire] = append(groups[cf.wire], cf)
+	}
+	winners := make([]collectedField, 0, len(seen))
+	for _, name := range seen {
+		if w, ok := dominantField(groups[name]); ok {
+			winners = append(winners, w)
+		}
+	}
+	sort.Slice(winners, func(i, j int) bool { return winners[i].order < winners[j].order })
+	out := make([]FieldSchema, len(winners))
+	for i, w := range winners {
+		out[i] = w.fs
+	}
+	return out
+}
+
+// dominantField picks the winner among same-wire-name fields, or reports
+// false when the collision is ambiguous (and the field is dropped). Sort
+// by depth ascending then tagged-first; the head wins unless the top two
+// share both depth and tag-presence, which is a true tie.
+func dominantField(g []collectedField) (collectedField, bool) {
+	if len(g) == 1 {
+		return g[0], true
+	}
+	sort.Slice(g, func(i, j int) bool {
+		if g[i].depth != g[j].depth {
+			return g[i].depth < g[j].depth
+		}
+		if g[i].tagged != g[j].tagged {
+			return g[i].tagged
+		}
+		return g[i].order < g[j].order
+	})
+	if g[0].depth == g[1].depth && g[0].tagged == g[1].tagged {
+		return collectedField{}, false
+	}
+	return g[0], true
 }
