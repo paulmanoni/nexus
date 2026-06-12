@@ -354,20 +354,31 @@ Example:
 	"auth": `
 AUTH
 
-  auth.Module(auth.Config{Resolve: ...})
+  auth.Single(resolve)   //  or auth.Module(auth.Config{Authentication: ...})
 
-Wires the framework's auth surface: token extraction → cached
+Wires the framework's auth surface: credential extraction → cached
 identity resolution → per-op enforcement → trace events.
 
     import "github.com/paulmanoni/nexus/extension/auth"
 
+    resolve := func(ctx context.Context, tok string) (*auth.Identity, error) {
+        u, err := myAPI.ValidateToken(ctx, tok)
+        if err != nil { return nil, err }
+        return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
+    }
+
+    // One bearer scheme — the common case:
+    auth.Single(resolve, auth.CacheFor(15 * time.Minute))
+
+    // Several schemes (bearer JWT + API key), tried in order:
     auth.Module(auth.Config{
-        Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {
-            u, err := myAPI.ValidateToken(ctx, tok)
-            if err != nil { return nil, err }
-            return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
+        Authentication: auth.Authentication{
+            Schemes: []auth.Scheme{
+                {Resolve: resolve},                                    // defaults to Bearer()
+                {Name: "apikey", Extract: auth.APIKey("X-API-Key"), Resolve: resolveKey},
+            },
+            Cache: auth.CacheFor(15 * time.Minute),
         },
-        Cache: auth.CacheFor(15 * time.Minute),
     })
 
 Per-op gates (cross-transport):

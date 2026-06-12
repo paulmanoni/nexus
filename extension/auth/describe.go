@@ -48,14 +48,22 @@ func Describe(e Extractor) ExtractorInfo {
 
 // Info returns the auth module's runtime extractor configuration.
 // Used by the client SDK at manifest-build time so the generated
-// JS knows where to attach tokens. Returns the default Bearer
-// shape when no extractor was configured (matches the runtime
-// fallback in Module).
+// JS knows where to attach tokens. A single scheme surfaces its
+// extractor directly; multiple schemes surface as a "chain" so the
+// SDK sees every place a credential might go. Returns the default
+// Bearer shape when no scheme was configured.
 func (m *Manager) Info() ExtractorInfo {
-	if m == nil || m.state == nil {
+	if m == nil || m.state == nil || len(m.state.schemes) == 0 {
 		return ExtractorInfo{Strategy: "bearer", HeaderName: "Authorization"}
 	}
-	return Describe(m.state.cfg.Extract)
+	if len(m.state.schemes) == 1 {
+		return Describe(m.state.schemes[0].extract)
+	}
+	out := ExtractorInfo{Strategy: "chain"}
+	for i := range m.state.schemes {
+		out.Chain = append(out.Chain, Describe(m.state.schemes[i].extract))
+	}
+	return out
 }
 
 // describable wrappers — internal types whose Describe() returns the

@@ -34,8 +34,10 @@ func TestModule_EndToEnd(t *testing.T) {
 	}
 
 	addr := startTestApp(t, auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(500 * time.Millisecond),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(500 * time.Millisecond),
+		},
 	})
 
 	// Anonymous: handler sees nil identity. No 401 because the handler

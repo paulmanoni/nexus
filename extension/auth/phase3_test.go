@@ -25,8 +25,10 @@ func TestManager_InvalidateByIdentity(t *testing.T) {
 		return &auth.Identity{ID: uid}, nil
 	}
 	mgr := bootWithManager(t, "127.0.0.1:8793", auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(5 * time.Minute),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(5 * time.Minute),
+		},
 	})
 
 	ctx := context.Background()
@@ -57,8 +59,10 @@ func TestDashboard_AuthRoute(t *testing.T) {
 	}
 	addr := "127.0.0.1:8792"
 	mgr := bootWithManager(t, addr, auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(5 * time.Minute),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(5 * time.Minute),
+		},
 	})
 
 	// Seed two identities.
@@ -96,8 +100,10 @@ func TestDashboard_AuthInvalidate(t *testing.T) {
 	}
 	addr := "127.0.0.1:8791"
 	mgr := bootWithManager(t, addr, auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(5 * time.Minute),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(5 * time.Minute),
+		},
 	})
 	for _, tok := range []string{"t-1", "t-2", "t-3"} {
 		_, _ = mgr.Resolve(context.Background(), tok)
@@ -138,7 +144,7 @@ func TestRejectEvent_FiresOnUnauthenticated(t *testing.T) {
 	go func() {
 		nexus.Run(
 			nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 100},
-			auth.Module(auth.Config{Resolve: resolver}),
+			auth.Single(resolver),
 			nexus.Invoke(func(app *nexus.App) { appCh <- app }),
 			nexus.AsRest("GET", "/gated", func(ctx context.Context) (map[string]string, error) {
 				return map[string]string{"ok": "yes"}, nil

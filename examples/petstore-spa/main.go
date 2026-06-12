@@ -165,10 +165,7 @@ func main() {
 		// into the SDK manifest, so the browser SDK knows to send
 		// "Authorization: Bearer <token>" without any user-side
 		// configuration.
-		auth.Module(auth.Config{
-			Extract: auth.Bearer(),
-			Resolve: resolveToken,
-		}),
+		auth.Single(resolveToken),
 
 		// Auth flow endpoints — AuthRoute markers promote them
 		// into the SDK's auth namespace (auth.login / .logout /

@@ -28,18 +28,15 @@ func ginAuthMiddleware(state *moduleState) gin.HandlerFunc {
 		// callbacks via the gin carrier (which holds the *gin.Context).
 		ctx = middleware.WithRejectHook(ctx, authRejectHook)
 
-		token, hasToken := state.cfg.Extract.Extract(c.Request)
-		if hasToken {
-			id, err := state.resolve(ctx, token)
-			if err != nil {
-				if state.cfg.OnFail != nil {
-					state.cfg.OnFail(ctx, token, err)
-				}
-			} else if id != nil {
-				ctx = WithIdentity(ctx, id)
-				if state.cfg.OnResolve != nil {
-					state.cfg.OnResolve(ctx, id)
-				}
+		id, token, err := state.authenticate(ctx, c.Request)
+		if err != nil {
+			if state.cfg.OnFail != nil {
+				state.cfg.OnFail(ctx, token, err)
+			}
+		} else if id != nil {
+			ctx = WithIdentity(ctx, id)
+			if state.cfg.OnResolve != nil {
+				state.cfg.OnResolve(ctx, id)
 			}
 		}
 

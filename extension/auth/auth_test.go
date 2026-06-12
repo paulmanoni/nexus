@@ -45,16 +45,21 @@ func newTestServer(t *testing.T, cfg auth.Config, route gin.HandlerFunc, postMw 
 // small and readable.
 func testAuthMiddleware(t *testing.T, cfg auth.Config) gin.HandlerFunc {
 	t.Helper()
-	if cfg.Extract == nil {
-		cfg.Extract = auth.Bearer()
+	if len(cfg.Authentication.Schemes) == 0 {
+		t.Fatal("test harness requires at least one Authentication scheme")
 	}
-	if cfg.Resolve == nil {
-		t.Fatal("test harness requires Config.Resolve")
+	sc := cfg.Authentication.Schemes[0]
+	if sc.Resolve == nil {
+		t.Fatal("test harness requires a scheme Resolve")
+	}
+	ex := sc.Extract
+	if ex == nil {
+		ex = auth.Bearer()
 	}
 	return func(c *gin.Context) {
-		tok, ok := cfg.Extract.Extract(c.Request)
+		tok, ok := ex.Extract(c.Request)
 		if ok {
-			id, err := cfg.Resolve(c.Request.Context(), tok)
+			id, err := sc.Resolve(c.Request.Context(), tok)
 			if err == nil && id != nil {
 				c.Request = c.Request.WithContext(auth.WithIdentity(c.Request.Context(), id))
 			}
@@ -149,8 +154,10 @@ func TestCache_HitAvoidsResolve(t *testing.T) {
 		return &auth.Identity{ID: tok}, nil
 	}
 	cfg := auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(200 * time.Millisecond),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(200 * time.Millisecond),
+		},
 	}
 	srv := newTestServer(t, cfg, func(c *gin.Context) {
 		id, _ := auth.IdentityFrom(c.Request.Context())
@@ -161,11 +168,10 @@ func TestCache_HitAvoidsResolve(t *testing.T) {
 		c.String(200, id.ID)
 	})
 
-	// The test harness installs a plain in-line middleware that calls
-	// cfg.Resolve directly — no cache wrap — so this test only
-	// exercises the wrap path via Module(). Skip when cache not wired
-	// through module; keep this as a unit-only test of the cache.
-	// Instead, exercise wrapWithCache directly on the config level.
+	// The test harness installs a plain in-line middleware that calls the
+	// scheme's Resolve directly — no cache wrap — so this test asserts the
+	// BASELINE (a resolve per request). The shared-cache hit path is
+	// covered by TestResolveVia_SharedCacheHitsOnce.
 
 	get := func() string {
 		req, _ := http.NewRequest("GET", srv.URL, nil)

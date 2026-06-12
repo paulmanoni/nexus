@@ -117,8 +117,10 @@ type Config struct {
 	ServerCustomizer func(*server.Server)
 
 	// AuthExtra are auth.Config fields the caller wants to thread
-	// through (OnResolve, OnFail, Permissions, error rewriters).
-	// Resolve and Cache are owned by this package and ignored if set.
+	// through (OnResolve, OnFail, Permissions, error rewriters). The
+	// Authentication block (scheme + cache) is owned by this package —
+	// oauth2 contributes its own bearer scheme — and is overwritten if
+	// set.
 	AuthExtra auth.Config
 }
 
@@ -208,8 +210,10 @@ func Module(cfg Config) nexus.Option {
 	h := &holder{}
 
 	authCfg := cfg.AuthExtra
-	authCfg.Resolve = h.resolve
-	authCfg.Cache = auth.CacheFor(cfg.IdentityCache)
+	authCfg.Authentication = auth.Authentication{
+		Schemes: []auth.Scheme{{Name: "oauth2", Extract: auth.Bearer(), Resolve: h.resolve}},
+		Cache:   auth.CacheFor(cfg.IdentityCache),
+	}
 
 	opts := []nexus.Option{
 		nexus.Provide(func(app *nexus.App) *Server { return buildServer(app, cfg, h) }),

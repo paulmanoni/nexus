@@ -53,8 +53,10 @@ func TestManager_InvalidateDropsCache(t *testing.T) {
 		return &auth.Identity{ID: tok}, nil
 	}
 	mgr := bootWithManager(t, "127.0.0.1:8797", auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(5 * time.Minute),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(5 * time.Minute),
+		},
 	})
 
 	ctx := context.Background()
@@ -75,8 +77,10 @@ func TestManager_InvalidateAllClears(t *testing.T) {
 		return &auth.Identity{ID: tok}, nil
 	}
 	mgr := bootWithManager(t, "127.0.0.1:8796", auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(5 * time.Minute),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(5 * time.Minute),
+		},
 	})
 	for _, tok := range []string{"a", "b", "c"} {
 		_, _ = mgr.Resolve(context.Background(), tok)
@@ -95,8 +99,10 @@ func TestManager_IdentitiesRedactsTokens(t *testing.T) {
 		return &auth.Identity{ID: tok}, nil
 	}
 	mgr := bootWithManager(t, "127.0.0.1:8795", auth.Config{
-		Resolve: resolver,
-		Cache:   auth.CacheFor(5 * time.Minute),
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+			Cache:   auth.CacheFor(5 * time.Minute),
+		},
 	})
 	longToken := "very-long-secret-token-xyz123"
 	_, _ = mgr.Resolve(context.Background(), longToken)
@@ -118,7 +124,9 @@ func TestOnUnauthenticated_CustomEnvelope(t *testing.T) {
 	}
 	addr := "127.0.0.1:8794"
 	_ = bootWithManager(t, addr, auth.Config{
-		Resolve: resolver,
+		Authentication: auth.Authentication{
+			Schemes: []auth.Scheme{{Resolve: resolver}},
+		},
 		OnUnauthenticated: func(c *gin.Context, err error) {
 			c.AbortWithStatusJSON(401, gin.H{
 				"success": false,

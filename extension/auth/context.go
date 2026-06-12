@@ -1,6 +1,10 @@
 package auth
 
-import "context"
+import (
+	"context"
+	"reflect"
+	"strconv"
+)
 
 // ctxKey is private so only this package can stash/read values. Two
 // separate keys: one for the Identity itself, one for the moduleState
@@ -54,6 +58,66 @@ func User[T any](ctx context.Context) (*T, bool) {
 		return &v, true
 	}
 	return nil, false
+}
+
+// SubjectID is the set of types Subject / SubjectPtr can parse an
+// Identity.ID into: any string-kind or integer-kind type. Identity.ID
+// stays a string (it's the cache + invalidation key) — these helpers
+// hand you the typed value your domain actually uses without the
+// per-call-site parse + nil-pointer dance.
+type SubjectID interface {
+	~string |
+		~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+}
+
+// Subject returns the authenticated identity's ID parsed into T (a string
+// or integer type), and false when the request is anonymous or the ID
+// doesn't parse into T.
+//
+//	uid, ok := auth.Subject[uint](ctx)
+func Subject[T SubjectID](ctx context.Context) (T, bool) {
+	var zero T
+	id, ok := IdentityFrom(ctx)
+	if !ok || id.ID == "" {
+		return zero, false
+	}
+	rv := reflect.ValueOf(&zero).Elem()
+	switch rv.Kind() {
+	case reflect.String:
+		rv.SetString(id.ID)
+		return zero, true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n, err := strconv.ParseInt(id.ID, 10, 64)
+		if err != nil {
+			return zero, false
+		}
+		rv.SetInt(n)
+		return zero, true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n, err := strconv.ParseUint(id.ID, 10, 64)
+		if err != nil {
+			return zero, false
+		}
+		rv.SetUint(n)
+		return zero, true
+	default:
+		return zero, false
+	}
+}
+
+// SubjectPtr is the nullable form of Subject, for audit columns and
+// optional foreign keys: it returns a pointer to the typed ID, or nil
+// when the request is anonymous (or the ID doesn't parse). Collapses the
+// classic six-line "if identity, parse, guard, take address" prelude to
+// one call:
+//
+//	actorID := auth.SubjectPtr[uint](ctx) // *uint, nil if anonymous
+func SubjectPtr[T SubjectID](ctx context.Context) *T {
+	if v, ok := Subject[T](ctx); ok {
+		return &v
+	}
+	return nil
 }
 
 // withState stashes the moduleState for later read by per-op bundles.

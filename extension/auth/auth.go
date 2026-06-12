@@ -6,23 +6,29 @@
 // custom scheme, as long as the caller can turn a raw token into an
 // *auth.Identity.
 //
-// Minimal wiring:
+// Minimal wiring — one bearer scheme via the auth.Single shortcut:
 //
 //	nexus.Run(nexus.Config{...},
-//	    auth.Module(auth.Config{
-//	        Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {
-//	            u, err := myAPI.ValidateToken(ctx, tok)
-//	            if err != nil { return nil, err }
-//	            return &auth.Identity{
-//	                ID:    u.ID,
-//	                Roles: u.Roles,
-//	                Extra: u,
-//	            }, nil
-//	        },
-//	        Cache: auth.CacheFor(15 * time.Minute),
-//	    }),
+//	    auth.Single(func(ctx context.Context, tok string) (*auth.Identity, error) {
+//	        u, err := myAPI.ValidateToken(ctx, tok)
+//	        if err != nil { return nil, err }
+//	        return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
+//	    }, auth.CacheFor(15*time.Minute)),
 //	    advertsModule,
 //	)
+//
+// Several schemes (e.g. a bearer JWT for users and an API key for
+// service-to-service traffic), tried in declaration order:
+//
+//	auth.Module(auth.Config{
+//	    Authentication: auth.Authentication{
+//	        Schemes: []auth.Scheme{
+//	            {Resolve: resolveJWT},                                   // defaults to Bearer()
+//	            {Name: "apikey", Extract: auth.APIKey("X-API-Key"), Resolve: resolveKey},
+//	        },
+//	        Cache: auth.CacheFor(15 * time.Minute),
+//	    },
+//	})
 //
 // Per-op enforcement (cross-transport — same bundle works on REST +
 // GraphQL via the existing nexus.Use attachment):
@@ -52,6 +58,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -115,21 +122,46 @@ func DefaultPermissions(id *Identity, required []string) bool {
 	return true
 }
 
-// Config drives auth.Module. Only Resolve is required; everything else
-// has a sensible default.
-type Config struct {
-	// Extract pulls the raw token from the request. Defaults to Bearer()
-	// (Authorization: Bearer <token>). Combine strategies with Chain.
+// Scheme is one way to authenticate a request: an Extractor that pulls a
+// credential off the request paired with a Resolver that turns that
+// credential into an Identity. A request is authenticated by the FIRST
+// scheme whose Extractor finds a credential — that scheme's Resolver then
+// runs. List several to accept, say, a bearer JWT for users and an API
+// key for service-to-service traffic on the same app.
+type Scheme struct {
+	// Name labels the scheme in traces and the dashboard. Defaults to the
+	// extractor's strategy ("bearer", "apikey", "cookie", "chain") when
+	// empty.
+	Name string
+
+	// Extract pulls the raw credential from the request. Defaults to
+	// Bearer() (Authorization: Bearer <token>) when nil.
 	Extract Extractor
 
-	// Resolve is REQUIRED — the function that turns a raw token into an
-	// Identity. The package owns extraction, caching, and enforcement;
-	// Resolve is the single plug the caller supplies.
+	// Resolve turns the extracted credential into an Identity. REQUIRED —
+	// it's the single plug each scheme supplies; the package owns
+	// extraction ordering, caching, and enforcement.
 	Resolve Resolver
+}
 
-	// Cache memoizes resolved identities so the backend call fires at
-	// most once per TTL per token. Zero TTL disables caching entirely.
+// Authentication is the "who are you?" half of auth: the ordered list of
+// schemes tried per request plus the shared identity cache.
+type Authentication struct {
+	// Schemes are tried in declaration order; the first whose Extractor
+	// yields a credential owns the request. At least one is required.
+	Schemes []Scheme
+
+	// Cache memoizes resolved identities (keyed by credential) so a
+	// backend call fires at most once per TTL. Zero TTL disables it.
 	Cache CacheOption
+}
+
+// Config drives auth.Module. Authentication is required; everything else
+// has a sensible default.
+type Config struct {
+	// Authentication declares how requests are authenticated — one or
+	// more schemes plus the identity cache. Required.
+	Authentication Authentication
 
 	// Permissions overrides the default roles+scopes check. Useful when
 	// an app has a hierarchical role model or non-trivial scope matching.
@@ -201,7 +233,7 @@ var ErrForbidden = errors.New("auth: forbidden")
 // nexus apps in one process safe.
 type moduleState struct {
 	cfg         Config
-	resolve     Resolver
+	schemes     []boundScheme // normalized schemes, tried in order
 	permissions PermissionFn
 	cache       *identityCache // nil when Cache.TTL == 0
 	// bus is the app-level trace bus captured at Module wire time.
@@ -285,10 +317,23 @@ func (m *Manager) Identities() []CachedIdentity {
 
 // Resolve is a direct synchronous resolution path for code that has a
 // token in hand outside the HTTP request cycle — background jobs,
-// WS message handlers, CLI tools bolted onto the same app. Honors the
-// configured cache.
+// WS message handlers, CLI tools bolted onto the same app. With no
+// request to extract from, it tries each scheme's resolver in order and
+// returns the first success. Honors the configured cache.
 func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) {
-	return m.state.resolve(ctx, token)
+	st := m.state
+	var lastErr error
+	for i := range st.schemes {
+		id, err := st.resolveVia(ctx, st.schemes[i], token)
+		if err == nil {
+			return id, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = ErrUnauthenticated
+	}
+	return nil, lastErr
 }
 
 // Module wires auth into the nexus app. It builds an extension.Plugin
@@ -309,11 +354,9 @@ func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) 
 // UserDetailsFn hook continue to work alongside; migration is a
 // per-resolver switch from graph.GetRootInfo to auth.User[T].
 func Module(cfg Config) nexus.Option {
-	if cfg.Resolve == nil {
-		return nexus.Raw(fx.Error(fmt.Errorf("auth: Config.Resolve is required")))
-	}
-	if cfg.Extract == nil {
-		cfg.Extract = Bearer()
+	schemes, err := bindSchemes(cfg.Authentication.Schemes)
+	if err != nil {
+		return nexus.Raw(fx.Error(fmt.Errorf("auth: %w", err)))
 	}
 	if cfg.Permissions == nil {
 		cfg.Permissions = DefaultPermissions
@@ -321,12 +364,11 @@ func Module(cfg Config) nexus.Option {
 
 	state := &moduleState{
 		cfg:         cfg,
-		resolve:     cfg.Resolve,
+		schemes:     schemes,
 		permissions: cfg.Permissions,
 	}
-	if cfg.Cache.TTL > 0 {
-		state.cache = newIdentityCache(cfg.Cache)
-		state.resolve = wrapWithCache(cfg.Resolve, state.cache)
+	if cfg.Authentication.Cache.TTL > 0 {
+		state.cache = newIdentityCache(cfg.Authentication.Cache)
 	}
 	manager := &Manager{state: state}
 
@@ -373,6 +415,92 @@ func Module(cfg Config) nexus.Option {
 		// NexusContribute invocation).
 		Contributor: authContributor{},
 	})
+}
+
+// Single wires auth with one bearer-token scheme — the overwhelmingly
+// common case. Equivalent to Module(Config{Authentication: Authentication{
+// Schemes: []Scheme{{Resolve: resolve}}}}) with an optional cache:
+//
+//	auth.Single(myResolve)
+//	auth.Single(myResolve, auth.CacheFor(15*time.Minute))
+func Single(resolve Resolver, cache ...CacheOption) nexus.Option {
+	a := Authentication{Schemes: []Scheme{{Resolve: resolve}}}
+	if len(cache) > 0 {
+		a.Cache = cache[0]
+	}
+	return Module(Config{Authentication: a})
+}
+
+// boundScheme is a Scheme with its defaults resolved — used internally by
+// the middleware and Manager so the per-request path never re-checks
+// nil Extract / derived Name.
+type boundScheme struct {
+	name    string
+	extract Extractor
+	resolve Resolver
+}
+
+// bindSchemes validates and normalizes the configured schemes: every
+// scheme needs a Resolver, a nil Extract defaults to Bearer(), and an
+// empty Name derives from the extractor's strategy.
+func bindSchemes(in []Scheme) ([]boundScheme, error) {
+	if len(in) == 0 {
+		return nil, fmt.Errorf("Config.Authentication.Schemes must declare at least one scheme")
+	}
+	out := make([]boundScheme, 0, len(in))
+	for i, s := range in {
+		if s.Resolve == nil {
+			return nil, fmt.Errorf("Config.Authentication.Schemes[%d]: Resolve is required", i)
+		}
+		ex := s.Extract
+		if ex == nil {
+			ex = Bearer()
+		}
+		name := s.Name
+		if name == "" {
+			name = Describe(ex).Strategy
+		}
+		out = append(out, boundScheme{name: name, extract: ex, resolve: s.Resolve})
+	}
+	return out, nil
+}
+
+// resolveVia runs a single scheme's resolver through the shared identity
+// cache (keyed by credential). The cache is shared across schemes because
+// the public Manager.Resolve has only a token in hand — keying by token
+// keeps that path and the request path consistent.
+func (st *moduleState) resolveVia(ctx context.Context, sc boundScheme, token string) (*Identity, error) {
+	if st.cache != nil {
+		if id, ok := st.cache.get(token); ok {
+			return id, nil
+		}
+	}
+	id, err := sc.resolve(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if id != nil && st.cache != nil {
+		st.cache.set(token, id)
+	}
+	return id, nil
+}
+
+// authenticate walks the schemes in order and returns the Identity from
+// the first scheme whose Extractor finds a credential. That scheme owns
+// the request — a resolve error from it does NOT fall through to later
+// schemes (extractors rarely overlap, and falling through would muddy
+// which failure to report). Returns (nil, "", nil) for an anonymous
+// request (no scheme found a credential).
+func (st *moduleState) authenticate(ctx context.Context, r *http.Request) (*Identity, string, error) {
+	for i := range st.schemes {
+		tok, ok := st.schemes[i].extract.Extract(r)
+		if !ok {
+			continue
+		}
+		id, err := st.resolveVia(ctx, st.schemes[i], tok)
+		return id, tok, err
+	}
+	return nil, "", nil
 }
 
 // toClientExtractor adapts auth.ExtractorInfo (canonical) to
@@ -517,18 +645,3 @@ insert:
 	c.entries[token] = cacheEntry{id: id, expiresAt: time.Now().Add(c.ttl)}
 }
 
-func wrapWithCache(inner Resolver, cache *identityCache) Resolver {
-	return func(ctx context.Context, token string) (*Identity, error) {
-		if id, ok := cache.get(token); ok {
-			return id, nil
-		}
-		id, err := inner(ctx, token)
-		if err != nil {
-			return nil, err
-		}
-		if id != nil {
-			cache.set(token, id)
-		}
-		return id, nil
-	}
-}
