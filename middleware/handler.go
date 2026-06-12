@@ -1,6 +1,16 @@
 package middleware
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// errRejected is returned by RejectJSON to short-circuit the chain after a
+// custom response has been written. On REST/WS the response is already
+// committed (so this value is only seen by the 500-fallback guard, which
+// skips because the writer is aborted); a GraphQL ErrorHandler should
+// return its own (wrapped) error rather than call RejectJSON.
+var errRejected = errors.New("request rejected")
 
 // Handler is the unified middleware shape (see
 // docs/design/middleware-redesign.md §3). Transitional name — it becomes
@@ -44,6 +54,7 @@ type carrier interface {
 	path() string
 	setHeader(key, val string)
 	reject(status int, err error) error
+	rejectJSON(status int, body any) error
 }
 
 // RequestCtx is the transport-neutral request handle middleware sees (§3.2).
@@ -96,7 +107,19 @@ func (rc *RequestCtx) Get(key any) (any, bool) {
 
 // Reject short-circuits the chain. Returns the error so callers can write
 // `return rc.Reject(401, ErrUnauthenticated)`; the carrier renders the
-// transport-appropriate response.
+// transport-appropriate response (a default {"error": msg} body on
+// REST/WS, the error surfaced on GraphQL).
 func (rc *RequestCtx) Reject(status int, err error) error {
 	return rc.carrier.reject(status, err)
+}
+
+// RejectJSON short-circuits the chain with a CUSTOM response body on
+// REST/WS, rendered as JSON with the given status — the neutral way for an
+// extension to emit its own error envelope without importing gin. GraphQL
+// has no per-field response body, so there RejectJSON only short-circuits
+// (a GraphQL-facing ErrorHandler should branch on rc.Transport and return a
+// wrapped error instead). Returns a non-nil error so callers can write
+// `return rc.RejectJSON(401, MyEnvelope{...})` uniformly.
+func (rc *RequestCtx) RejectJSON(status int, body any) error {
+	return rc.carrier.rejectJSON(status, body)
 }

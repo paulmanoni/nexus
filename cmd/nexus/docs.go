@@ -391,8 +391,19 @@ Per-op gates (cross-transport):
 Token extractors:
   auth.Bearer(), auth.Cookie(name), auth.APIKey(header), auth.Chain(...)
 
-Resolver access (typed, generic):
-    user, ok := auth.User[MyUser](p.Context)
+Authorization (how a required permission matches roles/scopes):
+    auth.Authorization{Authority: auth.Wildcard()}  // admin:* grants admin:read
+    auth.Authorization{Permissions: auth.AnyOf(...)} // full override
+
+Error rendering (one cross-transport handler replaces the old
+OnUnauthenticated / OnForbidden / GraphQLErrorWrap hooks):
+    Config{OnError: myHandler}   // implements auth.ErrorHandler
+    // REST/WS: rc.RejectJSON(status, envelope); GraphQL: return wrapped err
+
+Identity access (typed, generic):
+    user, ok := auth.User[MyUser](p.Context) // the resolved Extra payload
+    uid,  ok := auth.Subject[uint](ctx)      // Identity.ID parsed into T
+    actor := auth.SubjectPtr[uint](ctx)      // *uint, nil if anonymous
 
 Logout flows: take *auth.Manager via fx, call:
     am.Invalidate(token)

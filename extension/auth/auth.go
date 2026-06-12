@@ -62,7 +62,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -163,9 +162,11 @@ type Config struct {
 	// more schemes plus the identity cache. Required.
 	Authentication Authentication
 
-	// Permissions overrides the default roles+scopes check. Useful when
-	// an app has a hierarchical role model or non-trivial scope matching.
-	Permissions PermissionFn
+	// Authorization declares how a required permission is matched against
+	// an identity's roles/scopes — exact by default, or pluggable via
+	// Authority (e.g. Wildcard()) / a full Permissions override. The zero
+	// value is the exact-match roles+scopes check.
+	Authorization Authorization
 
 	// OnResolve fires after every successful resolution — good for
 	// audit logging or per-user metrics.
@@ -176,26 +177,12 @@ type Config struct {
 	// the full token in production.
 	OnFail func(ctx context.Context, token string, err error)
 
-	// OnUnauthenticated customizes the REST 401 response. Default:
-	// AbortWithStatusJSON(401, {"error": err.Error()}). Override to
-	// match your app's error envelope (e.g. pkg.Response-style
-	// success:false payload).
-	//
-	// The handler is responsible for calling c.Abort* — return without
-	// aborting and auth falls back to its default 401 so a misconfigured
-	// hook never accidentally authorizes a request.
-	OnUnauthenticated func(c *gin.Context, err error)
-
-	// OnForbidden customizes the REST 403 response. Same contract as
-	// OnUnauthenticated.
-	OnForbidden func(c *gin.Context, err error)
-
-	// GraphQLErrorWrap transforms ErrUnauthenticated / ErrForbidden
-	// before they're returned from a resolver. Default: pass through
-	// so the standard "auth: unauthenticated" / "auth: forbidden"
-	// messages appear in the GraphQL errors array. Override to wrap
-	// in a typed error the client expects.
-	GraphQLErrorWrap func(err error) error
+	// OnError customizes how 401/403 denials render across every
+	// transport — one ErrorHandler replaces the old per-transport
+	// OnUnauthenticated / OnForbidden (REST) and GraphQLErrorWrap
+	// (GraphQL) fields. Nil uses the default ({"error": msg} on REST/WS,
+	// the sentinel error on GraphQL). See ErrorHandler.
+	OnError ErrorHandler
 }
 
 // CacheOption configures how resolved identities are memoized in-memory.
@@ -232,10 +219,11 @@ var ErrForbidden = errors.New("auth: forbidden")
 // so bundles can read it without a package singleton — keeps multiple
 // nexus apps in one process safe.
 type moduleState struct {
-	cfg         Config
-	schemes     []boundScheme // normalized schemes, tried in order
-	permissions PermissionFn
-	cache       *identityCache // nil when Cache.TTL == 0
+	cfg          Config
+	schemes      []boundScheme // normalized schemes, tried in order
+	permissions  PermissionFn
+	errorHandler ErrorHandler   // renders 401/403 denials; never nil after Module
+	cache        *identityCache // nil when Cache.TTL == 0
 	// bus is the app-level trace bus captured at Module wire time.
 	// We grab it here because the per-route trace.Middleware in AsRest
 	// runs AFTER auth bundles in the handler chain — so by the time
@@ -358,14 +346,15 @@ func Module(cfg Config) nexus.Option {
 	if err != nil {
 		return nexus.Raw(fx.Error(fmt.Errorf("auth: %w", err)))
 	}
-	if cfg.Permissions == nil {
-		cfg.Permissions = DefaultPermissions
+	eh := cfg.OnError
+	if eh == nil {
+		eh = defaultErrorHandler{}
 	}
-
 	state := &moduleState{
-		cfg:         cfg,
-		schemes:     schemes,
-		permissions: cfg.Permissions,
+		cfg:          cfg,
+		schemes:      schemes,
+		permissions:  cfg.Authorization.permissionFn(),
+		errorHandler: eh,
 	}
 	if cfg.Authentication.Cache.TTL > 0 {
 		state.cache = newIdentityCache(cfg.Authentication.Cache)

@@ -7,10 +7,12 @@ import (
 )
 
 // RejectHook lets a REST-aware extension customise how RequestCtx.Reject
-// renders on gin — running app-supplied callbacks the neutral carrier can't
-// know about (e.g. auth's OnUnauthenticated / OnForbidden, which take a
-// *gin.Context). The extension registers one via WithRejectHook; the gin
-// carrier invokes it before its default JSON abort.
+// renders on gin — running app-supplied callbacks that need the raw
+// *gin.Context, which the neutral carrier can't expose. The extension
+// registers one via WithRejectHook; the gin carrier invokes it before its
+// default JSON abort. (Most extensions don't need this: rc.RejectJSON
+// already emits a custom JSON envelope through the neutral handle — reach
+// for a RejectHook only when you need the gin.Context itself.)
 //
 // Return true when the hook fully handled the response (the carrier then does
 // nothing more); return false to fall through to the default abort — so a hook

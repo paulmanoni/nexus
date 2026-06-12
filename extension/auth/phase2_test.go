@@ -12,7 +12,26 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/middleware"
 )
+
+// customEnvelope is a test ErrorHandler: a {success,error,code} JSON body
+// on REST/WS (via rc.RejectJSON), the error surfaced on GraphQL.
+type customEnvelope struct{}
+
+func (customEnvelope) Unauthenticated(rc *middleware.RequestCtx, err error) error {
+	if rc.Transport == middleware.TransportGraphQL {
+		return err
+	}
+	return rc.RejectJSON(401, gin.H{"success": false, "error": err.Error(), "code": "UNAUTH"})
+}
+
+func (customEnvelope) Forbidden(rc *middleware.RequestCtx, err error) error {
+	if rc.Transport == middleware.TransportGraphQL {
+		return err
+	}
+	return rc.RejectJSON(403, gin.H{"success": false, "error": err.Error(), "code": "FORBIDDEN"})
+}
 
 // bootWithManager starts a nexus.Run app on a test port and captures the
 // *auth.Manager into a shared channel. The captured manager lets tests
@@ -118,7 +137,7 @@ func TestManager_IdentitiesRedactsTokens(t *testing.T) {
 	}
 }
 
-func TestOnUnauthenticated_CustomEnvelope(t *testing.T) {
+func TestOnError_CustomEnvelope(t *testing.T) {
 	resolver := func(ctx context.Context, tok string) (*auth.Identity, error) {
 		return &auth.Identity{ID: tok}, nil
 	}
@@ -127,23 +146,33 @@ func TestOnUnauthenticated_CustomEnvelope(t *testing.T) {
 		Authentication: auth.Authentication{
 			Schemes: []auth.Scheme{{Resolve: resolver}},
 		},
-		OnUnauthenticated: func(c *gin.Context, err error) {
-			c.AbortWithStatusJSON(401, gin.H{
-				"success": false,
-				"error":   err.Error(),
-				"code":    "UNAUTH",
-			})
-		},
-	}, nexus.AsRest("GET", "/gated", func(ctx context.Context) (map[string]string, error) {
-		return map[string]string{"ok": "yes"}, nil
-	}, auth.Required()))
+		OnError: customEnvelope{},
+	},
+		nexus.AsRest("GET", "/gated", func(ctx context.Context) (map[string]string, error) {
+			return map[string]string{"ok": "yes"}, nil
+		}, auth.Required()),
+		nexus.AsRest("GET", "/admin", func(ctx context.Context) (map[string]string, error) {
+			return map[string]string{"ok": "yes"}, nil
+		}, auth.Requires("ADMIN")),
+	)
 
+	// 401: no token → Unauthenticated envelope.
 	body, status := httpGet(t, "http://"+addr+"/gated", "")
 	if status != 401 {
 		t.Fatalf("status=%d body=%s", status, body)
 	}
 	if !strings.Contains(body, `"success":false`) || !strings.Contains(body, `"code":"UNAUTH"`) {
-		t.Errorf("custom envelope missing: %s", body)
+		t.Errorf("unauthenticated envelope missing: %s", body)
+	}
+
+	// 403: valid token but the identity (no roles) lacks ADMIN →
+	// Forbidden envelope.
+	body, status = httpGet(t, "http://"+addr+"/admin", "tok-without-roles")
+	if status != 403 {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	if !strings.Contains(body, `"success":false`) || !strings.Contains(body, `"code":"FORBIDDEN"`) {
+		t.Errorf("forbidden envelope missing: %s", body)
 	}
 }
 

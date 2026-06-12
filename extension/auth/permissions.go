@@ -6,7 +6,7 @@ package auth
 // spelling out the OR at the call site.
 //
 //	auth.Module(auth.Config{
-//	    Permissions: auth.AnyOf("admin", "editor"),
+//	    Authorization: auth.Authorization{Permissions: auth.AnyOf("admin", "editor")},
 //	})
 //
 // Note: the `required` argument to the returned PermissionFn is
@@ -40,11 +40,11 @@ func AnyOf(perms ...string) PermissionFn {
 // set at construction time. Useful for app-wide baseline policies:
 //
 //	auth.Module(auth.Config{
-//	    Permissions: auth.AllOf("authenticated"),
+//	    Authorization: auth.Authorization{Permissions: auth.AllOf("authenticated")},
 //	})
 //
 // Per-op Requires() can still add on top via the default path by
-// changing Permissions to a composite — see the docs example.
+// changing Authorization.Permissions to a composite — see the docs example.
 func AllOf(perms ...string) PermissionFn {
 	return func(id *Identity, _ []string) bool {
 		return DefaultPermissions(id, perms)

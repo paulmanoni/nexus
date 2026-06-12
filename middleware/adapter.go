@@ -56,6 +56,13 @@ func (g ginCarrier) reject(status int, err error) error {
 	return err
 }
 
+// rejectJSON writes a caller-supplied body verbatim (the extension's own
+// error envelope) and aborts the gin chain.
+func (g ginCarrier) rejectJSON(status int, body any) error {
+	g.c.AbortWithStatusJSON(status, body)
+	return errRejected
+}
+
 // ginAdapter runs a Handler inside gin's chain. next bridges to c.Next() so
 // downstream gin handlers run; a Handler that calls rc.Reject aborts via the
 // carrier (which sets the response), and we skip the fallback 500.
@@ -91,6 +98,11 @@ func (g graphCarrier) setHeader(string, string) {}
 // reject just surfaces the error — GraphQL has no status code; the error
 // bubbles into the response's errors array.
 func (g graphCarrier) reject(_ int, err error) error { return err }
+
+// rejectJSON cannot render a body on GraphQL (a field resolve has no
+// response envelope), so it only short-circuits. A GraphQL ErrorHandler
+// should return a wrapped error instead of calling RejectJSON.
+func (g graphCarrier) rejectJSON(_ int, _ any) error { return errRejected }
 
 // graphAdapter runs a Handler as a field middleware. next invokes the wrapped
 // resolver and threads any context the Handler injected via rc.WithContext.

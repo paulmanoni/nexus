@@ -23,10 +23,6 @@ import (
 func ginAuthMiddleware(state *moduleState) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := withState(c.Request.Context(), state)
-		// Install the reject hook so a per-op Required/Requires gate's
-		// rc.Reject(401/403) runs this module's OnUnauthenticated/OnForbidden
-		// callbacks via the gin carrier (which holds the *gin.Context).
-		ctx = middleware.WithRejectHook(ctx, authRejectHook)
 
 		id, token, err := state.authenticate(ctx, c.Request)
 		if err != nil {
@@ -109,73 +105,28 @@ func builtin(name, desc string, fn func(*middleware.RequestCtx, middleware.Next)
 	return mw
 }
 
-// rejectAuth renders an auth denial for the active transport. GraphQL routes
-// through wrapGraphErr (Config.GraphQLErrorWrap + the auth.reject event);
-// REST/WS rc.Reject hands off to authRejectHook via the gin carrier, which
-// runs the app's OnUnauthenticated/OnForbidden callbacks. Status follows the
-// sentinel: ErrForbidden → 403, otherwise 401.
+// rejectAuth renders an auth denial uniformly across transports: it emits
+// the auth.reject trace event, then hands off to the module's ErrorHandler
+// (Config.OnError, or the default), which owns the per-transport response.
+// Status follows the sentinel: ErrForbidden → 403, otherwise 401.
 func rejectAuth(rc *middleware.RequestCtx, err error) error {
-	if rc.Transport == middleware.TransportGraphQL {
-		return wrapGraphErr(rc.Context, err)
-	}
-	status := http.StatusUnauthorized
+	eh := errorHandlerFrom(rc.Context)
 	if err == ErrForbidden {
-		status = http.StatusForbidden
+		emitReject(rc.Context, "forbidden", http.StatusForbidden, err)
+		return eh.Forbidden(rc, err)
 	}
-	return rc.Reject(status, err)
+	emitReject(rc.Context, "unauthenticated", http.StatusUnauthorized, err)
+	return eh.Unauthenticated(rc, err)
 }
 
-// authRejectHook is installed on every REST request by ginAuthMiddleware and
-// invoked by the gin carrier on rc.Reject. It owns 401/403 (returning false
-// for any other status so unrelated middleware — e.g. rate limiting — keep the
-// carrier's default abort). Mirrors the old rejectUnauthenticated /
-// rejectForbidden exactly: emit the event, run the configured hook, and force
-// the status if a misconfigured hook didn't abort.
-func authRejectHook(c *gin.Context, status int, err error) bool {
-	reason := "unauthenticated"
-	if status == http.StatusForbidden {
-		reason = "forbidden"
-	} else if status != http.StatusUnauthorized {
-		return false
+// errorHandlerFrom returns the module's ErrorHandler from ctx, or the
+// default when auth.Module isn't wired (so unit tests that skip the global
+// middleware still render a sensible denial).
+func errorHandlerFrom(ctx context.Context) ErrorHandler {
+	if s, ok := stateFrom(ctx); ok && s.errorHandler != nil {
+		return s.errorHandler
 	}
-	emitReject(c.Request.Context(), reason, status, err)
-
-	var hook func(*gin.Context, error)
-	if s, ok := stateFrom(c.Request.Context()); ok {
-		if status == http.StatusForbidden {
-			hook = s.cfg.OnForbidden
-		} else {
-			hook = s.cfg.OnUnauthenticated
-		}
-	}
-	if hook != nil {
-		hook(c, err)
-		if !c.IsAborted() {
-			c.AbortWithStatus(status)
-		}
-	} else {
-		c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
-	}
-	return true
-}
-
-// wrapGraphErr routes the auth sentinels through Config.GraphQLErrorWrap
-// when set so the GraphQL errors array carries whatever shape the app
-// expects. Pass-through when no wrap is configured. Emits the same
-// auth.reject trace event the Gin reject path does so the dashboard
-// sees GraphQL denials too.
-func wrapGraphErr(ctx context.Context, err error) error {
-	status := http.StatusUnauthorized
-	reason := "unauthenticated"
-	if err == ErrForbidden {
-		status = http.StatusForbidden
-		reason = "forbidden"
-	}
-	emitReject(ctx, reason, status, err)
-	if s, ok := stateFrom(ctx); ok && s.cfg.GraphQLErrorWrap != nil {
-		return s.cfg.GraphQLErrorWrap(err)
-	}
-	return err
+	return defaultErrorHandler{}
 }
 
 // emitReject publishes an auth.reject trace event on the request's

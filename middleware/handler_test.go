@@ -13,12 +13,13 @@ import (
 // fakeCarrier is an in-package carrier so tests can build a RequestCtx without
 // a real transport adapter.
 type fakeCarrier struct {
-	headers    map[string]string
-	setHeaders map[string]string // captured response headers
-	ip         string
-	pathVal    string
-	rejectErr  error
-	rejectSeen int // captured status from the last reject call
+	headers      map[string]string
+	setHeaders   map[string]string // captured response headers
+	ip           string
+	pathVal      string
+	rejectErr    error
+	rejectSeen   int // captured status from the last reject call
+	rejectedBody any // captured body from the last rejectJSON call
 }
 
 func (f *fakeCarrier) header(key string) string { return f.headers[key] }
@@ -36,6 +37,11 @@ func (f *fakeCarrier) reject(status int, err error) error {
 		return f.rejectErr
 	}
 	return err
+}
+func (f *fakeCarrier) rejectJSON(status int, body any) error {
+	f.rejectSeen = status
+	f.rejectedBody = body
+	return errRejected
 }
 
 func TestTransportSet(t *testing.T) {
