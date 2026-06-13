@@ -61,14 +61,13 @@ type Config struct {
 	// Version is the Inertia asset version. Empty (AutoVersion) derives it
 	// from the manifest hash; a fixed string pins it.
 	Version string
-	// Head is raw HTML injected into the document shell's <head> — the place
-	// for the app's title, meta, favicon, fonts, and any global stylesheets
-	// (e.g. an icon font or a component-library CSS) that would otherwise live
-	// in index.html. The engine renders its own minimal shell, so anything
-	// index.html declared in <head> must be supplied here to reach a full-page
-	// load. The framework's charset/viewport meta and the Vite/manifest asset
-	// tags are added automatically.
-	Head string
+	// Head is the document <head> for the shell — the app's title, meta, and
+	// stylesheet/font links that would otherwise live in index.html. The engine
+	// renders its own minimal shell, so anything index.html declared in <head>
+	// must be supplied here to reach a full-page load. charset/viewport and the
+	// Vite/manifest asset tags are added automatically. See the Head type for a
+	// Raw escape hatch.
+	Head Head
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
@@ -119,7 +118,7 @@ func Module(cfg Config) nexus.Option {
 // graceful fallbacks: a dev server URL (NEXUS_VITE_DEV) when no manifest is
 // present, and an empty version when neither is available.
 func newEngine(cfg Config, shared []SharedProvider) *Engine {
-	e := &Engine{rootView: cfg.RootView, customHead: cfg.Head, shared: shared}
+	e := &Engine{rootView: cfg.RootView, customHead: cfg.Head.render(), shared: shared}
 
 	// Dev takes precedence: when a Vite/viteless dev server is running
 	// (`nexus dev` sets NEXUS_VITE_DEV), reference it for HMR and IGNORE any

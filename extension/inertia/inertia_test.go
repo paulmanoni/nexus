@@ -78,7 +78,10 @@ func bootInertia(t *testing.T, addr string, extra ...nexus.Option) {
 	}
 	ready := make(chan struct{})
 	opts := append([]nexus.Option{
-		inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", Head: `<title>NXHEAD</title>`}),
+		inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", Head: inertia.Head{
+			Title: "NXHEAD",
+			Links: []inertia.Link{{Rel: "stylesheet", Href: "/x.css"}},
+		}}),
 		inertia.Share(func(ctx context.Context) (string, any) { return "csrf", "tok-123" }),
 		inertia.Page("GET", "/widgets", "Widgets/Index", NewWidgets),
 		nexus.Invoke(func() { close(ready) }),
@@ -192,7 +195,7 @@ func TestFullVisit(t *testing.T) {
 	if !strings.Contains(body, "Widgets/Index") {
 		t.Fatalf("data-page should embed the component: %s", body)
 	}
-	if !strings.Contains(body, `<title>NXHEAD</title>`) {
+	if !strings.Contains(body, `<title>NXHEAD</title>`) || !strings.Contains(body, `<link rel="stylesheet" href="/x.css">`) {
 		t.Fatalf("Config.Head not injected into the shell: %s", body)
 	}
 	if !strings.Contains(body, `src="/assets/main-abc123.js"`) {
