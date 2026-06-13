@@ -389,9 +389,11 @@ Handler returns props (this IS page.props), not a JSON body:
         }, nil
     }
 
-Prop wrappers (the performance lever — Optional thunks run only when included):
+Prop wrappers (the performance lever — thunks run only when included):
   inertia.Optional(fn) / inertia.Lazy(fn)  — excluded from full visits
   inertia.Always(v)                        — always sent, even on partial reloads
+  inertia.Defer(fn)                        — excluded but auto-fetched after mount
+  inertia.Merge(fn)                        — sent + flagged for client-side merge
   plain field                              — full visit + when partially requested
 
 Shared props run per request with the request context:
@@ -400,9 +402,23 @@ Shared props run per request with the request context:
         u, _ := auth.User[Me](ctx); return "auth", map[string]any{"user": u}
     }
 
+Redirects — return as the handler's error:
+
+    return nil, inertia.Redirect("/users")              // 303 See Other
+    return nil, inertia.Location("https://ext/login")   // 409 + X-Inertia-Location
+
 Auth gates compose normally (auth.Required, deny-by-default, nexus.Public).
+For login-redirect-instead-of-401 on Inertia visits, use the auth bridge:
+
+    import "github.com/paulmanoni/nexus/extension/inertia/iauth"
+    auth.Module(auth.Config{ ..., OnError: iauth.ErrorHandler("/login") })
+
 Asset version = hash of the build manifest; a stale X-Inertia-Version on an
 XHR GET gets a 409 + X-Inertia-Location (forced full reload), handled for you.
+
+Dev: set [runtime.inertia] enabled = true in nexus.toml. nexus dev then
+serves pages from the app port (the browser lives there) and points the app's
+shell at the viteless dev server for HMR — the inverse of the SPA dev model.
 `,
 
 	"auth": `

@@ -25,6 +25,21 @@ type ResponseRenderer interface {
 	Render(c *gin.Context, result any) error
 }
 
+// ErrorRenderer is an optional companion to ResponseRenderer: when a renderer
+// also implements it, the framework offers handler *errors* to it before the
+// default error write. This is how Inertia turns a handler that returns
+// inertia.Redirect(...) / inertia.Location(...) into a 303/409 redirect rather
+// than a JSON 500.
+//
+// RenderError reports handled=true when it took ownership of the response (the
+// default error write, trace error-wrapping, and status mapping are then all
+// skipped — a redirect is not an error to log). Returning handled=false leaves
+// the error to the standard path unchanged. A non-nil error return is treated
+// like a renderer failure (500 if nothing was written).
+type ErrorRenderer interface {
+	RenderError(c *gin.Context, err error) (handled bool, rerr error)
+}
+
 // WithRenderer attaches a ResponseRenderer to a single AsRest registration,
 // replacing the default JSON success write. It is a REST-only option (GraphQL
 // and WebSocket returns are encoded by their own transports).

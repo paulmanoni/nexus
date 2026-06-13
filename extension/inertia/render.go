@@ -26,6 +26,13 @@ type pageObject struct {
 	Props     map[string]any `json:"props"`
 	URL       string         `json:"url"`
 	Version   string         `json:"version"`
+	// DeferredProps groups the keys of Defer props the client should
+	// auto-fetch after mount. Keyed by group name ("default" here);
+	// omitted when there are none.
+	DeferredProps map[string][]string `json:"deferredProps,omitempty"`
+	// MergeProps lists Merge prop keys the client should merge with the
+	// existing value rather than replace. Omitted when there are none.
+	MergeProps []string `json:"mergeProps,omitempty"`
 }
 
 // render writes the Inertia response for a page handler's return value. The
@@ -33,7 +40,7 @@ type pageObject struct {
 // initial browser navigation (HTML document shell). Either way the props are
 // resolved once, honoring partial-reload and Optional/Always rules.
 func (e *Engine) render(c *gin.Context, component string, result any) error {
-	props, err := e.resolveProps(c, component, result)
+	props, meta, err := e.resolveProps(c, component, result)
 	if err != nil {
 		return err
 	}
@@ -42,6 +49,12 @@ func (e *Engine) render(c *gin.Context, component string, result any) error {
 		Props:     props,
 		URL:       c.Request.URL.RequestURI(),
 		Version:   e.version,
+	}
+	if len(meta.deferred) > 0 {
+		page.DeferredProps = map[string][]string{"default": meta.deferred}
+	}
+	if len(meta.merge) > 0 {
+		page.MergeProps = meta.merge
 	}
 	blob, err := json.Marshal(page)
 	if err != nil {
@@ -77,24 +90,36 @@ func (e *Engine) render(c *gin.Context, component string, result any) error {
 // Optional/Always thunks are evaluated only for props that survive inclusion,
 // so excluded heavy props cost nothing. A thunk error aborts the render before
 // anything is written (surfaces as a 500 via the renderer).
-func (e *Engine) resolveProps(c *gin.Context, component string, result any) (map[string]any, error) {
+// propsMeta carries the page-object metadata that Defer/Merge props produce
+// alongside the resolved props map.
+type propsMeta struct {
+	deferred []string // Defer keys advertised on a full visit
+	merge    []string // Merge keys included in this response
+}
+
+func (e *Engine) resolveProps(c *gin.Context, component string, result any) (map[string]any, propsMeta, error) {
 	partial := c.GetHeader(headerPartialComponent) == component
 	only := parseList(c.GetHeader(headerPartialData))
 
+	// include reports whether a prop of the given kind is sent in this
+	// response. Defer follows the same exclusion rule as Optional; Merge
+	// follows the plain rule.
 	include := func(key string, kind propKind) bool {
-		switch {
-		case kind == kindAlways:
+		switch kind {
+		case kindAlways:
 			return true
-		case partial:
-			return only[key]
-		case kind == kindOptional:
-			return false
-		default:
+		case kindOptional, kindDefer:
+			return partial && only[key]
+		default: // kindPlain, kindMerge
+			if partial {
+				return only[key]
+			}
 			return true
 		}
 	}
 
 	out := make(map[string]any)
+	var meta propsMeta
 
 	// Shared props participate as plain props.
 	ctx := c.Request.Context()
@@ -110,12 +135,12 @@ func (e *Engine) resolveProps(c *gin.Context, component string, result any) (map
 	rv := reflect.ValueOf(result)
 	for rv.Kind() == reflect.Ptr {
 		if rv.IsNil() {
-			return out, nil
+			return out, meta, nil
 		}
 		rv = rv.Elem()
 	}
 	if rv.Kind() != reflect.Struct {
-		return out, nil
+		return out, meta, nil
 	}
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
@@ -128,16 +153,25 @@ func (e *Engine) resolveProps(c *gin.Context, component string, result any) (map
 			continue
 		}
 		kind, resolve := classifyProp(rv.Field(i))
+
+		// A deferred prop that isn't being sent this round is advertised
+		// on full visits so the client knows to request it next.
+		if kind == kindDefer && !partial {
+			meta.deferred = append(meta.deferred, key)
+		}
 		if !include(key, kind) {
 			continue
 		}
 		val, err := resolve()
 		if err != nil {
-			return nil, err
+			return nil, propsMeta{}, err
 		}
 		out[key] = val
+		if kind == kindMerge {
+			meta.merge = append(meta.merge, key)
+		}
 	}
-	return out, nil
+	return out, meta, nil
 }
 
 // classifyProp inspects a struct field value: a Prop carries its own kind and

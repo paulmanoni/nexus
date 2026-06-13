@@ -33,6 +33,24 @@ func NewWidgets(ctx context.Context) (pageProps, error) {
 	}, nil
 }
 
+// feedProps exercises Merge (sent + flagged) and Defer (excluded + advertised).
+type feedProps struct {
+	Items inertia.Prop `json:"items"`
+	More  inertia.Prop `json:"more"`
+}
+
+func NewFeed(ctx context.Context) (feedProps, error) {
+	return feedProps{
+		Items: inertia.Merge(func() ([]int, error) { return []int{1, 2}, nil }),
+		More:  inertia.Defer(func() (string, error) { return "later", nil }),
+	}, nil
+}
+
+func NewSave(ctx context.Context) (any, error) { return nil, inertia.Redirect("/users") }
+func NewExternal(ctx context.Context) (any, error) {
+	return nil, inertia.Location("https://ext.example/login")
+}
+
 const manifestJSON = `{"src/main.ts":{"file":"assets/main-abc123.js","isEntry":true,"css":["assets/main-xyz.css"]}}`
 
 func wantVersion() string {
@@ -68,11 +86,21 @@ func bootInertia(t *testing.T, addr string, extra ...nexus.Option) {
 
 func req(t *testing.T, addr, path string, headers map[string]string) (*http.Response, string) {
 	t.Helper()
-	r, _ := http.NewRequest("GET", "http://"+addr+path, nil)
+	return doReq(t, "GET", addr, path, headers)
+}
+
+// doReq issues a request without following redirects so redirect statuses can
+// be asserted directly.
+func doReq(t *testing.T, method, addr, path string, headers map[string]string) (*http.Response, string) {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	r, _ := http.NewRequest(method, "http://"+addr+path, nil)
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
-	res, err := http.DefaultClient.Do(r)
+	res, err := client.Do(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,5 +245,77 @@ func TestVersionMismatch(t *testing.T) {
 	})
 	if res2.StatusCode != 200 {
 		t.Fatalf("matching version should pass, got %d", res2.StatusCode)
+	}
+}
+
+// TestRedirect asserts inertia.Redirect → 303 See Other + Location, and
+// inertia.Location (external) → 409 + X-Inertia-Location for an XHR visit.
+func TestRedirect(t *testing.T) {
+	addr := "127.0.0.1:8814"
+	bootInertia(t, addr,
+		inertia.Page("POST", "/save", "Save", NewSave),
+		inertia.Page("GET", "/ext", "Ext", NewExternal),
+	)
+
+	res, _ := doReq(t, "POST", addr, "/save", map[string]string{"X-Inertia": "true"})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("internal redirect should 303, got %d", res.StatusCode)
+	}
+	if loc := res.Header.Get("Location"); loc != "/users" {
+		t.Fatalf("Location=%q want /users", loc)
+	}
+
+	res2, _ := doReq(t, "GET", addr, "/ext", map[string]string{"X-Inertia": "true"})
+	if res2.StatusCode != http.StatusConflict {
+		t.Fatalf("external redirect on XHR should 409, got %d", res2.StatusCode)
+	}
+	if loc := res2.Header.Get("X-Inertia-Location"); loc != "https://ext.example/login" {
+		t.Fatalf("X-Inertia-Location=%q", loc)
+	}
+}
+
+// TestDeferAndMerge asserts that on a full visit a Merge prop is sent and
+// flagged in mergeProps, a Defer prop is excluded but advertised in
+// deferredProps, and that a partial reload then delivers the deferred prop.
+func TestDeferAndMerge(t *testing.T) {
+	addr := "127.0.0.1:8815"
+	bootInertia(t, addr, inertia.Page("GET", "/feed", "Feed/Index", NewFeed))
+
+	_, body := req(t, addr, "/feed", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Props         map[string]any      `json:"props"`
+		DeferredProps map[string][]string `json:"deferredProps"`
+		MergeProps    []string            `json:"mergeProps"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Props["items"] == nil {
+		t.Fatalf("Merge prop should be sent on full visit: %v", page.Props)
+	}
+	if len(page.MergeProps) != 1 || page.MergeProps[0] != "items" {
+		t.Fatalf("mergeProps=%v want [items]", page.MergeProps)
+	}
+	if _, present := page.Props["more"]; present {
+		t.Fatalf("Defer prop must be excluded on full visit: %v", page.Props)
+	}
+	if got := page.DeferredProps["default"]; len(got) != 1 || got[0] != "more" {
+		t.Fatalf("deferredProps[default]=%v want [more]", got)
+	}
+
+	// The client's follow-up partial fetches the deferred prop.
+	_, body2 := req(t, addr, "/feed", map[string]string{
+		"X-Inertia":                   "true",
+		"X-Inertia-Partial-Component": "Feed/Index",
+		"X-Inertia-Partial-Data":      "more",
+	})
+	var partial struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(body2), &partial); err != nil {
+		t.Fatal(err)
+	}
+	if partial.Props["more"] != "later" {
+		t.Fatalf("deferred prop should resolve on partial request: %v", partial.Props)
 	}
 }

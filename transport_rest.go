@@ -202,10 +202,10 @@ type restPrefixAnnotator interface {
 
 // routePrefixOption carries a prefix string. Can be used two ways:
 //
-//   1. Inside nexus.Module's opts list — Module picks it up and stamps
-//      the prefix onto every REST child option.
-//   2. As a per-endpoint option to AsRest / AsRestHandler — applied
-//      directly via applyToRest.
+//  1. Inside nexus.Module's opts list — Module picks it up and stamps
+//     the prefix onto every REST child option.
+//  2. As a per-endpoint option to AsRest / AsRestHandler — applied
+//     directly via applyToRest.
 //
 // Always safe to include; GraphQL / worker opts silently ignore it.
 type routePrefixOption struct{ prefix string }
@@ -391,6 +391,21 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			GinCtx: c, // available to handlers that take *gin.Context as a param
 		}, deps, args)
 		if err != nil {
+			// Offer the error to a renderer first (e.g. Inertia turning
+			// a Redirect/Location sentinel into a 303/409). If it takes
+			// ownership we skip the trace error-wrap + status mapping
+			// below — a redirect is a normal outcome, not a 500.
+			if er, ok := renderer.(ErrorRenderer); ok {
+				if handled, rerr := er.RenderError(c, err); handled {
+					if rerr != nil {
+						_ = c.Error(errtrace.Wrap(rerr))
+						if !c.Writer.Written() {
+							c.JSON(http.StatusInternalServerError, gin.H{"error": rerr.Error()})
+						}
+					}
+					return
+				}
+			}
 			// errtrace.Wrap captures THIS frame as a bottom-of-stack
 			// marker (the framework's REST boundary). User code that
 			// chained `errtrace.Wrap` at each return appends frames

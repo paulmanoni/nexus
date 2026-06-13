@@ -141,6 +141,35 @@ func devAddrFromConfig(target string) string {
 	return strings.TrimSpace(cfg.Runtime.Server.Addr)
 }
 
+// devInertiaEnabled reports whether the app opts into the Inertia dev
+// topology via `[runtime.inertia] enabled = true` in nexus.toml. Inertia
+// inverts the normal dev model: pages are server-rendered by the Go app, so
+// the browser must live at the app's port (not viteless's), and the app's
+// document shell references the viteless dev server for HMR/assets. When this
+// is off, `nexus dev` behaves exactly as before (browser at the viteless SPA
+// URL, viteless proxying to the app).
+func devInertiaEnabled(target string) bool {
+	dir := target
+	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(target)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "nexus.toml"))
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		Runtime struct {
+			Inertia struct {
+				Enabled bool `toml:"enabled"`
+			} `toml:"inertia"`
+		} `toml:"runtime"`
+	}
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		return false
+	}
+	return cfg.Runtime.Inertia.Enabled
+}
+
 type userError struct{ msg string }
 
 func (e *userError) Error() string { return e.msg }
@@ -157,6 +186,13 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Inertia dev topology (opt-in via nexus.toml). When on, the Go app
+	// owns page navigation, so the browser opens the app port and the app
+	// shell references viteless for HMR (NEXUS_VITE_DEV). frontendBaseURL
+	// captures the viteless dev URL once it starts.
+	inertiaDev := devInertiaEnabled(target)
+	var frontendBaseURL string
 
 	// Optional frontend watcher — runs alongside the Go process. Logs
 	// stream into the same terminal under a [web] prefix so build
@@ -227,6 +263,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			frontendURLCh = nil
 		} else {
 			go func() { <-ctx.Done(); d.Close() }()
+			frontendBaseURL = d.URL()
 			select {
 			case frontendURLCh <- d.URL():
 			default:
@@ -268,7 +305,13 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		if !first {
 			viteURLForOpen = nil
 		}
-		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, viteURLForOpen, stdout, stderr)
+		// In Inertia mode, hand the child the viteless dev URL (every
+		// restart) so the app's document shell can reference it for HMR.
+		inertiaViteURL := ""
+		if inertiaDev {
+			inertiaViteURL = frontendBaseURL
+		}
+		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, viteURLForOpen, inertiaViteURL, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -349,7 +392,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // listeners, topology) gets compiled into the binary.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose, fast bool, frontendURLCh <-chan string, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose, fast bool, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	args := []string{"run"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
@@ -410,6 +453,11 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	if verbose {
 		env = append(env, "NEXUS_VERBOSE=1")
 	}
+	// Inertia: tell the app where the viteless dev server lives so its
+	// document shell can load the HMR client + entry from there.
+	if inertiaViteURL != "" {
+		env = append(env, "NEXUS_VITE_DEV="+inertiaViteURL)
+	}
 	cmd.Env = env
 	setProcessGroup(cmd)
 
@@ -422,7 +470,7 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	// on openOnReady. When the vite dev server is running, prefer
 	// its URL (HMR-aware, the right tab to live in); fall back to
 	// the gin/probe URL when bundle mode owns the frontend.
-	go waitAndOpen(ctx, addr, openOnReady, openDash, stdout, detectedCh, frontendURLCh)
+	go waitAndOpen(ctx, addr, openOnReady, openDash, inertiaViteURL != "", stdout, detectedCh, frontendURLCh)
 
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
@@ -459,7 +507,7 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 // as --addr, we surface a correction line — a misleading banner is
 // the symptom that drove this code, so making the discrepancy
 // visible is part of the fix.
-func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash bool, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string) {
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash, inertia bool, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string) {
 	flagAddr := normalizeProbeAddr(addr)
 
 	probeOnce := func(target string) bool {
@@ -565,9 +613,17 @@ done:
 	}
 
 	var primaryURL string
-	if viteURL != "" {
+	switch {
+	case inertia && ready != "":
+		// Inertia: the app serves pages, so the browser lives at the app
+		// port; viteless is only the HMR/asset origin the shell references.
+		primaryURL = clientURL(ready)
+		if openDash {
+			primaryURL = dashboardURL(ready)
+		}
+	case viteURL != "":
 		primaryURL = strings.TrimRight(viteURL, "/") + "/"
-	} else if ready != "" {
+	case ready != "":
 		primaryURL = clientURL(ready)
 		if openDash {
 			primaryURL = dashboardURL(ready)
@@ -577,7 +633,9 @@ done:
 		return
 	}
 	printReadyLine(stdout, primaryURL, openBrowserOnReady)
-	if viteURL != "" && ready != "" {
+	if inertia && viteURL != "" {
+		fmt.Fprintf(stdout, "  %sHMR/assets: %s%s\n", ansiDim, strings.TrimRight(viteURL, "/")+"/", ansiReset)
+	} else if viteURL != "" && ready != "" {
 		// In dev-server mode the user lives at vite's URL, but the
 		// framework dashboard is a separate Vue bundle baked into
 		// the Go binary. Going through vite's proxy adds edge

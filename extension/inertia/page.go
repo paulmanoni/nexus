@@ -45,3 +45,14 @@ func (p pageRenderer) Render(c *gin.Context, result any) error {
 	}
 	return eng.render(c, p.component, result)
 }
+
+// RenderError implements nexus.ErrorRenderer: it claims inertia.Redirect /
+// inertia.Location sentinels and writes them as 303/409 redirects. Any other
+// error is left to the framework's standard error path (handled=false).
+func (p pageRenderer) RenderError(c *gin.Context, err error) (bool, error) {
+	var rd *redirect
+	if errors.As(err, &rd) {
+		return true, rd.write(c)
+	}
+	return false, nil
+}

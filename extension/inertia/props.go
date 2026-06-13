@@ -10,6 +10,8 @@ const (
 	kindPlain    propKind = iota // always on full visit; on partial only if requested
 	kindOptional                 // NEVER on full visit; only on partial when requested
 	kindAlways                   // always sent, even on partials that don't request it
+	kindDefer                    // like Optional, but advertised so the client auto-fetches it
+	kindMerge                    // like plain, but flagged so the client merges (pagination)
 )
 
 // Prop is a typed wrapper that overrides a props-struct field's evaluation
@@ -64,4 +66,24 @@ func Lazy[T any](fn func() (T, error)) Prop { return Optional(fn) }
 //	Menu: inertia.Always(menu),
 func Always[T any](v T) Prop {
 	return Prop{kind: kindAlways, val: v}
+}
+
+// Defer marks a prop that is excluded from the initial visit but advertised in
+// the page object's deferredProps, so the Inertia client automatically fetches
+// it in a follow-up partial request right after the page mounts. Use it to get
+// the page on screen fast, then stream in slower data.
+//
+//	Activity: inertia.Defer(func() (Feed, error) { return svc.RecentActivity() }),
+func Defer[T any](fn func() (T, error)) Prop {
+	return Prop{kind: kindDefer, fn: func() (any, error) { return fn() }}
+}
+
+// Merge marks a prop that is sent normally but flagged in the page object's
+// mergeProps, telling the client to merge it with the existing prop value
+// instead of replacing it — the basis for "load more" pagination and infinite
+// scroll.
+//
+//	Items: inertia.Merge(func() ([]Item, error) { return svc.Page(cursor) }),
+func Merge[T any](fn func() (T, error)) Prop {
+	return Prop{kind: kindMerge, fn: func() (any, error) { return fn() }}
 }
