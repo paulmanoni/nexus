@@ -40,7 +40,13 @@ const EnvAdminToken = "NEXUS_ADMIN_TOKEN" // #nosec G101 -- env var name, not a 
 const defaultDashboardName = "Nexus"
 
 type App struct {
-	engine       *gin.Engine
+	engine *gin.Engine
+	// extValues is a per-app key/value store extensions use to stash
+	// boot-time state they must read at request time without relying on
+	// gin-middleware install ordering (which fx.Module route registration
+	// can run ahead of). The Inertia engine lives here; the page renderer
+	// pulls it via AppFromGin(c) → App.Value(...). See SetValue/Value.
+	extValues    sync.Map
 	registry     *registry.Registry
 	bus          *trace.Bus
 	cronSched    *cron.Scheduler

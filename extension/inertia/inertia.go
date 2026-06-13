@@ -23,7 +23,6 @@ package inertia
 
 import (
 	"io/fs"
-	"net/http"
 	"os"
 	"strings"
 
@@ -43,10 +42,9 @@ const AutoVersion = ""
 // shell can reference the HMR client when no build manifest is present.
 const devURLEnv = "NEXUS_VITE_DEV"
 
-// ginEngineKey stores the *Engine on each gin.Context so a page's renderer can
-// reach the per-app engine without a package-level singleton (which would be
-// wrong with multiple apps in one process — e.g. tests).
-const ginEngineKey = "nexus.inertia.engine"
+// engineKeyT keys the per-app Inertia engine in App.SetValue/Value. A private
+// type avoids any collision with other extensions' keys.
+type engineKeyT struct{}
 
 // Config configures the Inertia engine.
 type Config struct {
@@ -96,8 +94,13 @@ func Module(cfg Config) nexus.Option {
 			nexus.Raw(fx.Provide(func(in engineParams) *Engine {
 				return newEngine(cfg, in.Shared)
 			})),
+			// Stash the engine on the app at boot. The page renderer pulls it
+			// back via AppFromGin(c) → App.Value at request time — independent
+			// of gin-middleware install ordering, which fx.Module route
+			// registration can (and does) run ahead of. A plain engine.Use()
+			// here would miss any inertia.Page declared inside a nexus.Module.
 			nexus.Invoke(func(app *nexus.App, eng *Engine) {
-				app.Engine().Use(eng.middleware())
+				app.SetValue(engineKeyT{}, eng)
 			}),
 		},
 	})
@@ -132,26 +135,14 @@ func newEngine(cfg Config, shared []SharedProvider) *Engine {
 	return e
 }
 
-// middleware exposes the engine on the request context and runs the Inertia
-// asset-version guard: a GET XHR visit carrying a stale X-Inertia-Version gets
-// a 409 + X-Inertia-Location, telling the client to do a fresh full load.
-func (e *Engine) middleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Set(ginEngineKey, e)
-		if c.Request.Method == http.MethodGet && c.GetHeader(headerInertia) != "" {
-			if v := c.GetHeader(headerVersion); v != "" && v != e.version {
-				c.Header(headerLocation, c.Request.URL.RequestURI())
-				c.AbortWithStatus(http.StatusConflict)
-				return
-			}
-		}
-		c.Next()
-	}
-}
-
-// engineFromGin retrieves the per-app engine a page renderer needs.
+// engineFromGin retrieves the per-app engine a page renderer needs, pulling it
+// from the app stashed on the request context by the framework.
 func engineFromGin(c *gin.Context) (*Engine, bool) {
-	v, ok := c.Get(ginEngineKey)
+	app, ok := nexus.AppFromGin(c)
+	if !ok {
+		return nil, false
+	}
+	v, ok := app.Value(engineKeyT{})
 	if !ok {
 		return nil, false
 	}

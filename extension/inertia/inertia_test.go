@@ -287,6 +287,23 @@ func TestRedirect(t *testing.T) {
 	}
 }
 
+// TestPageInsideModule guards the fx-ordering fix: an inertia.Page declared
+// inside a nexus.Module (whose route registration runs ahead of root-level
+// invokes) must still find the engine. Before the App-pull fix this 500'd with
+// "engine not installed".
+func TestPageInsideModule(t *testing.T) {
+	addr := "127.0.0.1:8817"
+	bootInertia(t, addr, nexus.Module("sub", inertia.Page("GET", "/sub", "Sub/Index", NewWidgets)))
+
+	res, body := req(t, addr, "/sub", map[string]string{"X-Inertia": "true"})
+	if res.StatusCode != 200 {
+		t.Fatalf("module-wrapped page status=%d body=%s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "Sub/Index") {
+		t.Fatalf("expected the module page to render, got: %s", body)
+	}
+}
+
 // TestMultiMethodPage asserts a single inertia.Page registered for "GET,POST"
 // serves both verbs through one handler that branches on Params.Method.
 func TestMultiMethodPage(t *testing.T) {

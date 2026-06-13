@@ -278,7 +278,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		// even when the same handler is reused across routes. See the
 		// AsRestHandler comment above for context.
 		opName := method + " " + finalPath
-		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath, cfg.renderer)
+		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath, cfg.renderer, app)
 
 		// AsRest's reflective path threads tracing inside buildGinHandler
 		// (so the handler can read the span back); pass an empty
@@ -355,8 +355,15 @@ func unwrapService(v reflect.Value, t reflect.Type) (*Service, bool) {
 // when an option like nexus.WithRenderer / inertia.Page supplies one, it owns
 // the success write instead. The error path is unchanged — renderers only
 // shape successful returns in this release.
-func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer) gin.HandlerFunc {
+func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer, app *App) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Expose the app to a custom renderer (e.g. Inertia) so it can pull
+		// per-app state via AppFromGin — order-independent, unlike global
+		// middleware. Only when a renderer is attached, so ordinary JSON
+		// endpoints pay nothing.
+		if renderer != nil {
+			c.Set(ginAppKey, app)
+		}
 		// Tracing mirrors what transport/rest does: a request.start/end pair
 		// bracketing the handler. We do it inline because AsRest bypasses the
 		// rest.Builder path.

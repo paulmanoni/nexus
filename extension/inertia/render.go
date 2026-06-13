@@ -40,6 +40,18 @@ type pageObject struct {
 // initial browser navigation (HTML document shell). Either way the props are
 // resolved once, honoring partial-reload and Optional/Always rules.
 func (e *Engine) render(c *gin.Context, component string, result any) error {
+	// Asset-version guard: a stale X-Inertia-Version on a GET XHR visit forces
+	// a fresh full load (the client follows X-Inertia-Location). Checked here
+	// (rather than in global middleware) so it works regardless of route
+	// registration order — see Module.
+	if c.Request.Method == http.MethodGet && c.GetHeader(headerInertia) != "" {
+		if v := c.GetHeader(headerVersion); v != "" && v != e.version {
+			c.Header(headerLocation, c.Request.URL.RequestURI())
+			c.AbortWithStatus(http.StatusConflict)
+			return nil
+		}
+	}
+
 	props, meta, err := e.resolveProps(c, component, result)
 	if err != nil {
 		return err
