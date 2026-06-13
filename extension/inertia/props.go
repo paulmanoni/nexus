@@ -1,0 +1,67 @@
+package inertia
+
+// propKind classifies how a prop participates in Inertia's prop-evaluation
+// rules (see Engine.resolveProps). The zero value, kindPlain, is the ordinary
+// case: a value that is always sent on a full visit and sent on a partial
+// reload only when explicitly requested.
+type propKind int
+
+const (
+	kindPlain    propKind = iota // always on full visit; on partial only if requested
+	kindOptional                 // NEVER on full visit; only on partial when requested
+	kindAlways                   // always sent, even on partials that don't request it
+)
+
+// Prop is a typed wrapper that overrides a props-struct field's evaluation
+// rules. Construct one with Optional / Lazy / Always and use it as a field
+// type on a page's props struct:
+//
+//	type DashboardProps struct {
+//	    User  User          `json:"user"`           // plain: always sent
+//	    Stats inertia.Prop  `json:"stats"`          // = inertia.Optional(...)
+//	    Menu  inertia.Prop  `json:"menu"`           // = inertia.Always(...)
+//	}
+//
+// A Prop carries either an eager value (Always) or a thunk (Optional/Lazy)
+// that the engine evaluates ONLY when the prop is actually included in the
+// response — so an expensive Optional prop costs nothing on the (common)
+// visits that don't request it.
+type Prop struct {
+	kind propKind
+	val  any
+	fn   func() (any, error)
+}
+
+// resolve returns the prop's value, invoking the thunk if it has one. Called
+// by the engine only for props that survive the inclusion rules, so the thunk
+// never runs for an excluded Optional prop.
+func (p Prop) resolve() (any, error) {
+	if p.fn != nil {
+		return p.fn()
+	}
+	return p.val, nil
+}
+
+// Optional marks a prop that is excluded from the initial (full) page visit
+// and evaluated only when a partial reload explicitly asks for it via
+// X-Inertia-Partial-Data. This is the primary performance lever: wrap heavy
+// data (aggregates, counts, related lists) so it isn't computed on every
+// navigation.
+//
+//	Stats: inertia.Optional(func() (Stats, error) { return svc.ExpensiveStats() }),
+func Optional[T any](fn func() (T, error)) Prop {
+	return Prop{kind: kindOptional, fn: func() (any, error) { return fn() }}
+}
+
+// Lazy is the historical Inertia name for Optional; identical behaviour.
+func Lazy[T any](fn func() (T, error)) Prop { return Optional(fn) }
+
+// Always marks a prop that is sent on every response — including partial
+// reloads that do not list it in X-Inertia-Partial-Data. Use sparingly for
+// data the client must never lose across partial updates (flash messages,
+// nav state).
+//
+//	Menu: inertia.Always(menu),
+func Always[T any](v T) Prop {
+	return Prop{kind: kindAlways, val: v}
+}

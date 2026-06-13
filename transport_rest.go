@@ -170,6 +170,12 @@ type restConfig struct {
 	// an opt to nexus.Module — the framework stamps it on every REST
 	// child of that module.
 	pathPrefix string
+	// renderer, when set via WithRenderer, replaces the default
+	// c.JSON(...) success write with a custom encoding (e.g. the
+	// Inertia page protocol). Nil for the overwhelming majority of
+	// endpoints, which JSON-marshal their return value. See
+	// routing_renderer.go.
+	renderer ResponseRenderer
 }
 
 // restOption is the Option returned by AsRest. Parallels gqlFieldOption —
@@ -272,7 +278,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		// even when the same handler is reused across routes. See the
 		// AsRestHandler comment above for context.
 		opName := method + " " + finalPath
-		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath)
+		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath, cfg.renderer)
 
 		// AsRest's reflective path threads tracing inside buildGinHandler
 		// (so the handler can read the span back); pass an empty
@@ -344,7 +350,12 @@ func unwrapService(v reflect.Value, t reflect.Type) (*Service, bool) {
 
 // buildGinHandler synthesizes the gin.HandlerFunc that binds the args struct
 // (if any), calls the user handler reflectively, and writes the response.
-func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string) gin.HandlerFunc {
+//
+// renderer is nil for ordinary endpoints (the default c.JSON success write);
+// when an option like nexus.WithRenderer / inertia.Page supplies one, it owns
+// the success write instead. The error path is unchanged — renderers only
+// shape successful returns in this release.
+func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Tracing mirrors what transport/rest does: a request.start/end pair
 		// bracketing the handler. We do it inline because AsRest bypasses the
@@ -414,6 +425,15 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 		}
 		if sh.resultIdx < 0 {
 			c.Status(defaultSuccessStatus(method))
+			return
+		}
+		if renderer != nil {
+			if rerr := renderer.Render(c, result); rerr != nil {
+				_ = c.Error(errtrace.Wrap(rerr))
+				if !c.Writer.Written() {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": rerr.Error()})
+				}
+			}
 			return
 		}
 		c.JSON(defaultSuccessStatus(method), result)

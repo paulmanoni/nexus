@@ -203,6 +203,7 @@ var topicSummaries = map[string]string{
 	"graphql":    "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":         "AsWS — typed WebSocket envelopes, session fan-out",
 	"frontend":   "ServeFrontend + FrontendAt — embed a Vite SPA (web/dist)",
+	"inertia":    "extension/inertia — Inertia.js pages: props handlers, no API",
 	"nexustoml":  "nexus.toml — server, dashboard, introspection, env, extensions",
 	"peer":       "extension/peer — typed RPC between nexus apps",
 	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
@@ -349,6 +350,59 @@ Example:
     whose GraphQL mount is /billing/graphql automatically. One
     declaration. Use nexus.RoutePrefix + service.AtGraphQL
     separately if you need different paths for REST vs GraphQL.
+`,
+
+	"inertia": `
+INERTIA
+
+  inertia.Module(inertia.Config{...})  +  inertia.Page(...)
+
+Server-driven pages (https://inertiajs.com) with no client API layer: a
+page handler is an ordinary reflective handler that returns a typed props
+struct; the engine wraps it into the Inertia page protocol — JSON for XHR
+visits, a full HTML document for initial loads. Params binding, validation,
+DI, auth gates, tracing and metrics behave exactly like any REST endpoint.
+
+    import "github.com/paulmanoni/nexus/extension/inertia"
+
+    //go:embed all:web/dist
+    var webFS embed.FS
+
+    nexus.Boot(
+        nexus.ServeFrontend(webFS, "web/dist"),        // hashed JS/CSS assets
+        inertia.Module(inertia.Config{                 // the page protocol
+            Frontend: webFS, Root: "web/dist",         // reads .vite/manifest.json
+        }),
+        inertia.Share(SharedAuth),                     // props on every page
+        inertia.Page("GET", "/users", "Users/Index", NewListUsers),
+    )
+
+Handler returns props (this IS page.props), not a JSON body:
+
+    func NewListUsers(svc *UserService, p nexus.Params[ListArgs]) (UsersProps, error) {
+        return UsersProps{
+            Users: svc.Page(p.Args),                              // plain: always sent
+            Stats: inertia.Optional(func() (Stats, error) {       // only on partial request
+                return svc.ExpensiveStats()
+            }),
+            Menu:  inertia.Always(menu),                          // sent even on partials
+        }, nil
+    }
+
+Prop wrappers (the performance lever — Optional thunks run only when included):
+  inertia.Optional(fn) / inertia.Lazy(fn)  — excluded from full visits
+  inertia.Always(v)                        — always sent, even on partial reloads
+  plain field                              — full visit + when partially requested
+
+Shared props run per request with the request context:
+
+    func SharedAuth(ctx context.Context) (string, any) {
+        u, _ := auth.User[Me](ctx); return "auth", map[string]any{"user": u}
+    }
+
+Auth gates compose normally (auth.Required, deny-by-default, nexus.Public).
+Asset version = hash of the build manifest; a stale X-Inertia-Version on an
+XHR GET gets a 409 + X-Inertia-Location (forced full reload), handled for you.
 `,
 
 	"auth": `
