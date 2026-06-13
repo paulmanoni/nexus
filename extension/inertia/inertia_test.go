@@ -261,6 +261,23 @@ func TestVersionMismatch(t *testing.T) {
 	}
 }
 
+// TestDevTagsPreferViteServer asserts that when NEXUS_VITE_DEV is set, the
+// document shell references the Vite dev server for HMR and ignores the build
+// manifest (whose hashed assets go stale in dev).
+func TestDevTagsPreferViteServer(t *testing.T) {
+	t.Setenv("NEXUS_VITE_DEV", "http://localhost:5173")
+	addr := "127.0.0.1:8818"
+	bootInertia(t, addr) // bootInertia supplies a build manifest
+
+	_, body := req(t, addr, "/widgets", nil) // full (non-XHR) visit
+	if !strings.Contains(body, "http://localhost:5173/@vite/client") {
+		t.Fatalf("dev shell should reference the vite dev server, got: %s", body)
+	}
+	if strings.Contains(body, "/assets/main-abc123.js") {
+		t.Fatalf("dev shell must ignore the build manifest, got: %s", body)
+	}
+}
+
 // TestRedirect asserts inertia.Redirect → 303 See Other + Location, and
 // inertia.Location (external) → 409 + X-Inertia-Location for an XHR visit.
 func TestRedirect(t *testing.T) {

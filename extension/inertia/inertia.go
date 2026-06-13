@@ -112,21 +112,27 @@ func Module(cfg Config) nexus.Option {
 func newEngine(cfg Config, shared []SharedProvider) *Engine {
 	e := &Engine{rootView: cfg.RootView, shared: shared}
 
+	// Dev takes precedence: when a Vite/viteless dev server is running
+	// (`nexus dev` sets NEXUS_VITE_DEV), reference it for HMR and IGNORE any
+	// build manifest. The embedded manifest is frozen at go-build time and goes
+	// stale the moment the frontend rebuilds — pointing the shell at hashed
+	// /assets/* that no longer exist. No asset version in dev; the dev server
+	// owns reloads, so the version guard stays off (e.version == "").
+	if dev := strings.TrimRight(os.Getenv(devURLEnv), "/"); dev != "" {
+		e.head = devHeadTags(dev)
+		return e
+	}
+
+	// Production: resolve hashed assets + version from the build manifest.
 	var man manifest
 	if cfg.Frontend != nil {
 		if m, err := loadManifest(cfg.Frontend, cfg.Root); err == nil {
 			man = m
 		}
 	}
-	switch {
-	case man.found:
+	if man.found {
 		e.head = man.headTags()
-	default:
-		if dev := strings.TrimRight(os.Getenv(devURLEnv), "/"); dev != "" {
-			e.head = devHeadTags(dev)
-		}
 	}
-
 	if cfg.Version != AutoVersion {
 		e.version = cfg.Version
 	} else {

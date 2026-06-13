@@ -44,7 +44,7 @@ func (e *Engine) render(c *gin.Context, component string, result any) error {
 	// a fresh full load (the client follows X-Inertia-Location). Checked here
 	// (rather than in global middleware) so it works regardless of route
 	// registration order — see Module.
-	if c.Request.Method == http.MethodGet && c.GetHeader(headerInertia) != "" {
+	if e.version != "" && c.Request.Method == http.MethodGet && c.GetHeader(headerInertia) != "" {
 		if v := c.GetHeader(headerVersion); v != "" && v != e.version {
 			c.Header(headerLocation, c.Request.URL.RequestURI())
 			c.AbortWithStatus(http.StatusConflict)
