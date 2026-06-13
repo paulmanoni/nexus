@@ -35,6 +35,10 @@ type Params[T any] struct {
 	Args    T
 	Source  any
 	Info    graphql.ResolveInfo
+	// Method is the HTTP verb for REST handlers ("GET", "POST", …). It lets
+	// one handler registered for several methods (e.g. an Inertia page
+	// mounted for GET+POST) branch on the verb. Empty for GraphQL / WS.
+	Method string
 }
 
 // isNexusParams is a marker method that lets the reflective handler walker
@@ -64,7 +68,7 @@ func paramsArgsField(t reflect.Type) reflect.Type {
 // fields. -1 means the field is absent. Cached per Params[T] type so
 // buildParamsValue avoids a FieldByName string walk on every request.
 type paramsIndices struct {
-	ctx, args, source, info int
+	ctx, args, source, info, method int
 }
 
 var paramsIndicesCache sync.Map // reflect.Type → paramsIndices
@@ -73,7 +77,7 @@ func getParamsIndices(t reflect.Type) paramsIndices {
 	if v, ok := paramsIndicesCache.Load(t); ok {
 		return v.(paramsIndices)
 	}
-	pi := paramsIndices{ctx: -1, args: -1, source: -1, info: -1}
+	pi := paramsIndices{ctx: -1, args: -1, source: -1, info: -1, method: -1}
 	if t.Kind() == reflect.Struct {
 		for i := 0; i < t.NumField(); i++ {
 			switch t.Field(i).Name {
@@ -85,6 +89,8 @@ func getParamsIndices(t reflect.Type) paramsIndices {
 				pi.source = i
 			case "Info":
 				pi.info = i
+			case "Method":
+				pi.method = i
 			}
 		}
 	}
@@ -95,7 +101,7 @@ func getParamsIndices(t reflect.Type) paramsIndices {
 // buildParamsValue constructs a Params[T] reflect.Value with the supplied
 // Context/Args/Source/Info. Used by as_graph and as_rest before calling a
 // handler that takes a Params[T] parameter.
-func buildParamsValue(paramsType reflect.Type, ctx context.Context, args reflect.Value, source any, info graphql.ResolveInfo) reflect.Value {
+func buildParamsValue(paramsType reflect.Type, ctx context.Context, args reflect.Value, source any, info graphql.ResolveInfo, method string) reflect.Value {
 	p := reflect.New(paramsType).Elem()
 	idx := getParamsIndices(paramsType)
 	if idx.ctx >= 0 {
@@ -103,6 +109,9 @@ func buildParamsValue(paramsType reflect.Type, ctx context.Context, args reflect
 			ctx = context.Background()
 		}
 		p.Field(idx.ctx).Set(reflect.ValueOf(ctx))
+	}
+	if idx.method >= 0 && method != "" {
+		p.Field(idx.method).SetString(method)
 	}
 	if idx.args >= 0 && args.IsValid() {
 		p.Field(idx.args).Set(args)

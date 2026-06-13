@@ -402,6 +402,12 @@ Shared props run per request with the request context:
         u, _ := auth.User[Me](ctx); return "auth", map[string]any{"user": u}
     }
 
+Multiple methods on one page (Django-style) — comma/space-separated verbs
+route to ONE handler that branches on nexus.Params[T].Method:
+
+    inertia.Page("GET,POST", "/login", "Login", NewLogin, nexus.Public())
+    // NewLogin: if p.Method == "GET" → render; else authenticate + redirect.
+
 Redirects — return as the handler's error:
 
     return nil, inertia.Redirect("/users")              // 303 See Other

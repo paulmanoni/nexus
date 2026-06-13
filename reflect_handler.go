@@ -66,24 +66,24 @@ const (
 )
 
 type paramSlot struct {
-	kind    paramKind
-	depPos  int // index into depTypes when kind == paramDep
+	kind   paramKind
+	depPos int // index into depTypes when kind == paramDep
 }
 
 type handlerShape struct {
-	funcType   reflect.Type
-	funcVal    reflect.Value
-	slots      []paramSlot     // one entry per function param, in order
-	depTypes   []reflect.Type  // types of fx-injected deps only
-	argsType   reflect.Type    // the args struct type (tagged fields). For
-	                           // Params[T] handlers it's the T inside Params.
-	                           // For legacy flat-args handlers it's the last
-	                           // param type directly.
-	hasArgs    bool            // true when argsType is set
-	hasCtx     bool            // true when the handler takes a context.Context
-	paramsType reflect.Type    // the concrete Params[T] type; nil if unused
-	hasParams  bool            // true when argsType came from a Params[T] param
-	returnType reflect.Type    // nil for handlers returning only error
+	funcType reflect.Type
+	funcVal  reflect.Value
+	slots    []paramSlot    // one entry per function param, in order
+	depTypes []reflect.Type // types of fx-injected deps only
+	argsType reflect.Type   // the args struct type (tagged fields). For
+	// Params[T] handlers it's the T inside Params.
+	// For legacy flat-args handlers it's the last
+	// param type directly.
+	hasArgs    bool         // true when argsType is set
+	hasCtx     bool         // true when the handler takes a context.Context
+	paramsType reflect.Type // the concrete Params[T] type; nil if unused
+	hasParams  bool         // true when argsType came from a Params[T] param
+	returnType reflect.Type // nil for handlers returning only error
 	hasError   bool
 	errorIdx   int // index of the error return; -1 if none
 	resultIdx  int // index of the result return; -1 if none
@@ -219,7 +219,11 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 	in := make([]reflect.Value, len(sh.slots))
 	var paramsVal reflect.Value
 	if sh.hasParams {
-		paramsVal = buildParamsValue(sh.paramsType, ci.Ctx, args, ci.Source, ci.Info)
+		method := ""
+		if ci.GinCtx != nil {
+			method = ci.GinCtx.Request.Method
+		}
+		paramsVal = buildParamsValue(sh.paramsType, ci.Ctx, args, ci.Source, ci.Info, method)
 	}
 	for i, slot := range sh.slots {
 		switch slot.kind {

@@ -46,6 +46,19 @@ func NewFeed(ctx context.Context) (feedProps, error) {
 	}, nil
 }
 
+// authProps + NewAuthForm exercise a single handler mounted for GET+POST that
+// branches on nexus.Params.Method.
+type authProps struct {
+	Mode string `json:"mode"`
+}
+
+func NewAuthForm(p nexus.Params[struct{}]) (authProps, error) {
+	if p.Method == http.MethodGet {
+		return authProps{Mode: "form"}, nil
+	}
+	return authProps{Mode: "submitted"}, nil
+}
+
 func NewSave(ctx context.Context) (any, error) { return nil, inertia.Redirect("/users") }
 func NewExternal(ctx context.Context) (any, error) {
 	return nil, inertia.Location("https://ext.example/login")
@@ -271,6 +284,22 @@ func TestRedirect(t *testing.T) {
 	}
 	if loc := res2.Header.Get("X-Inertia-Location"); loc != "https://ext.example/login" {
 		t.Fatalf("X-Inertia-Location=%q", loc)
+	}
+}
+
+// TestMultiMethodPage asserts a single inertia.Page registered for "GET,POST"
+// serves both verbs through one handler that branches on Params.Method.
+func TestMultiMethodPage(t *testing.T) {
+	addr := "127.0.0.1:8816"
+	bootInertia(t, addr, inertia.Page("GET,POST", "/auth", "Auth", NewAuthForm))
+
+	_, getBody := req(t, addr, "/auth", map[string]string{"X-Inertia": "true"})
+	if !strings.Contains(getBody, `"mode":"form"`) {
+		t.Fatalf("GET should render the form mode, got: %s", getBody)
+	}
+	_, postBody := doReq(t, "POST", addr, "/auth", map[string]string{"X-Inertia": "true"})
+	if !strings.Contains(postBody, `"mode":"submitted"`) {
+		t.Fatalf("POST should hit the submit branch, got: %s", postBody)
 	}
 }
 

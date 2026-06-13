@@ -2,6 +2,7 @@ package inertia
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -25,11 +26,46 @@ import (
 // compose normally — except its successful return is rendered through the
 // Inertia protocol (JSON page object for XHR visits, HTML shell for full
 // loads) by the engine installed via Module.
+//
+// method may name several HTTP verbs (comma- or space-separated, e.g.
+// "GET,POST") to mount the SAME handler for each — a Django-style view that
+// renders on GET and mutates on POST. The handler branches on the verb via
+// nexus.Params[T].Method:
+//
+//	inertia.Page("GET,POST", "/login", "Login", NewLogin, nexus.Public())
+//
+//	func NewLogin(c *gin.Context, p nexus.Params[LoginArgs]) (any, error) {
+//	    if p.Method == http.MethodGet { return LoginProps{}, nil } // render
+//	    // POST: authenticate, set cookie…
+//	    return nil, inertia.Redirect("/dashboard")
+//	}
 func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexus.Option {
 	full := make([]nexus.RestOption, 0, len(opts)+1)
 	full = append(full, nexus.WithRenderer(pageRenderer{component: component}))
 	full = append(full, opts...)
-	return nexus.AsRest(method, path, fn, full...)
+
+	methods := splitMethods(method)
+	if len(methods) == 1 {
+		return nexus.AsRest(methods[0], path, fn, full...)
+	}
+	out := make([]nexus.Option, 0, len(methods))
+	for _, m := range methods {
+		out = append(out, nexus.AsRest(m, path, fn, full...))
+	}
+	return nexus.Options(out...)
+}
+
+// splitMethods parses a method spec like "GET", "GET,POST", or "GET POST"
+// into uppercased verbs. A spec with no separators returns the single verb.
+func splitMethods(spec string) []string {
+	fields := strings.FieldsFunc(spec, func(r rune) bool { return r == ',' || r == ' ' })
+	if len(fields) == 0 {
+		return []string{strings.ToUpper(strings.TrimSpace(spec))}
+	}
+	for i := range fields {
+		fields[i] = strings.ToUpper(fields[i])
+	}
+	return fields
 }
 
 // pageRenderer is the nexus.ResponseRenderer bound to a single page route. It
