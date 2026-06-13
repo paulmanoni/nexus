@@ -467,6 +467,15 @@ Per-op gates (cross-transport):
 Token extractors:
   auth.Bearer(), auth.Cookie(name), auth.APIKey(header), auth.Chain(...)
 
+Cookie sessions (for server-rendered navigations — e.g. Inertia pages — that
+carry no Authorization header). auth.SessionCookie owns the cookie name +
+attributes and yields a matching extractor so read and write can't drift:
+
+    var session = auth.SessionCookie{Name: "access_token", MaxAge: 7*24*time.Hour}
+    // scheme:  Extract: auth.Chain(auth.Bearer(), session.Extractor())
+    // login:   session.Set(c, token)     // HttpOnly cookie
+    // logout:  session.Clear(c)
+
 Authorization (how a required permission matches roles/scopes):
     auth.Authorization{Authority: auth.Wildcard()}  // admin:* grants admin:read
     auth.Authorization{Permissions: auth.AnyOf(...)} // full override
