@@ -417,7 +417,8 @@ Auth gates compose normally (auth.Required, deny-by-default, nexus.Public).
 For login-redirect-instead-of-401 on Inertia visits, use the auth bridge:
 
     import "github.com/paulmanoni/nexus/extension/inertia/iauth"
-    auth.Module(auth.Config{ ..., OnError: iauth.ErrorHandler("/login") })
+    // page nav → /login redirect; GraphQL → error; API → your envelope:
+    auth.Module(auth.Config{ ..., OnError: iauth.ErrorHandler("/login", apiErrors{}) })
 
 Asset version = hash of the build manifest; a stale X-Inertia-Version on an
 XHR GET gets a 409 + X-Inertia-Location (forced full reload), handled for you.
