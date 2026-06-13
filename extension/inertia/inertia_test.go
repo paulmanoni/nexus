@@ -78,7 +78,7 @@ func bootInertia(t *testing.T, addr string, extra ...nexus.Option) {
 	}
 	ready := make(chan struct{})
 	opts := append([]nexus.Option{
-		inertia.Module(inertia.Config{Frontend: fsys, Root: "dist"}),
+		inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", Head: `<title>NXHEAD</title>`}),
 		inertia.Share(func(ctx context.Context) (string, any) { return "csrf", "tok-123" }),
 		inertia.Page("GET", "/widgets", "Widgets/Index", NewWidgets),
 		nexus.Invoke(func() { close(ready) }),
@@ -191,6 +191,9 @@ func TestFullVisit(t *testing.T) {
 	}
 	if !strings.Contains(body, "Widgets/Index") {
 		t.Fatalf("data-page should embed the component: %s", body)
+	}
+	if !strings.Contains(body, `<title>NXHEAD</title>`) {
+		t.Fatalf("Config.Head not injected into the shell: %s", body)
 	}
 	if !strings.Contains(body, `src="/assets/main-abc123.js"`) {
 		t.Fatalf("missing manifest entry script: %s", body)

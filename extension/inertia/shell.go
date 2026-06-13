@@ -20,7 +20,8 @@ func (e *Engine) shell(dataPage []byte) []byte {
 	b.WriteString("<!doctype html>\n<html>\n<head>\n")
 	b.WriteString(`<meta charset="utf-8">`)
 	b.WriteString(`<meta name="viewport" content="width=device-width, initial-scale=1">`)
-	b.WriteString(e.head)
+	b.WriteString(e.customHead) // app title/meta/fonts/global CSS (Config.Head)
+	b.WriteString(e.head)       // Vite/manifest asset tags
 	b.WriteString("\n</head>\n<body>\n")
 	b.WriteString(`<div id="`)
 	b.WriteString(e.rootView)
