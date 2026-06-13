@@ -93,6 +93,12 @@ func (m manifest) headTags() string {
 // dev-topology handling lands in a later release; this keeps `nexus dev`
 // usable for Inertia apps in the meantime.
 func devHeadTags(devURL string) string {
-	return `<script type="module" src="` + devURL + `/@vite/client"></script>` +
+	// /__nexus/dev/script.js is the framework's live-reload shim (mounted by
+	// ServeFrontend under NEXUS_DEV=1): it full-reloads the browser on any file
+	// change under the project root, so editing a Go page handler or a .vue
+	// restarts the page without a manual refresh. The Vite client handles
+	// module loading + HMR.
+	return `<script src="/__nexus/dev/script.js"></script>` +
+		`<script type="module" src="` + devURL + `/@vite/client"></script>` +
 		`<script type="module" src="` + devURL + `/src/main.ts"></script>`
 }

@@ -276,6 +276,9 @@ func TestDevTagsPreferViteServer(t *testing.T) {
 	if strings.Contains(body, "/assets/main-abc123.js") {
 		t.Fatalf("dev shell must ignore the build manifest, got: %s", body)
 	}
+	if !strings.Contains(body, "/__nexus/dev/script.js") {
+		t.Fatalf("dev shell should include the live-reload script, got: %s", body)
+	}
 }
 
 // TestRedirect asserts inertia.Redirect → 303 See Other + Location, and

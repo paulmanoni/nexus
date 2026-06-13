@@ -255,7 +255,14 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			Mode:          "development",
 			Env:           env,
 			Logf: func(format string, args ...any) {
-				fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, fmt.Sprintf(format, args...))
+				msg := fmt.Sprintf(format, args...)
+				// Inertia dev is browser-at-the-app-port: the Vite server is
+				// just an asset/HMR origin the user never visits, so keep its
+				// routine chatter quiet and surface only errors.
+				if inertiaDev && !strings.Contains(strings.ToLower(msg), "error") {
+					return
+				}
+				fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, msg)
 			},
 		})
 		if err != nil {
@@ -633,8 +640,9 @@ done:
 		return
 	}
 	printReadyLine(stdout, primaryURL, openBrowserOnReady)
-	if inertia && viteURL != "" {
-		fmt.Fprintf(stdout, "  %sHMR/assets: %s%s\n", ansiDim, strings.TrimRight(viteURL, "/")+"/", ansiReset)
+	if inertia {
+		// Inertia: the Vite server is an internal asset/HMR origin the user
+		// never opens — don't advertise its port.
 	} else if viteURL != "" && ready != "" {
 		// In dev-server mode the user lives at vite's URL, but the
 		// framework dashboard is a separate Vue bundle baked into
