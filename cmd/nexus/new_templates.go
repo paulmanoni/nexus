@@ -20,6 +20,7 @@ type scaffoldOpts struct {
 	DB         string // "none" | "postgres" | "mysql" | "sqlite"
 	Cache      string // "none" | "redis"
 	Auth       string // "none" | "oauth2"
+	Inertia    bool   // Inertia.js server-driven pages (Vue) on top of the frontend
 }
 
 // Predicate helpers for the templates so they stay free of empty-
@@ -34,6 +35,10 @@ func (o scaffoldOpts) HasResources() bool {
 }
 func (o scaffoldOpts) IsVue() bool   { return o.Frontend == "vue" }
 func (o scaffoldOpts) IsReact() bool { return o.Frontend == "react" }
+
+// IsInertia reports whether to scaffold Inertia.js server-driven pages.
+// Gated on a Vue frontend — Inertia rides on top of the Vue project.
+func (o scaffoldOpts) IsInertia() bool { return o.Inertia && o.IsVue() }
 
 // HasVite reports whether the frontend should be scaffolded as a standard
 // npm-managed Vite project (vs the zero-install viteless default).
@@ -131,6 +136,9 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 			if opts.IsReact() {
 				pkg = tmplViteReactPackageJSON
 			}
+			if opts.IsInertia() {
+				pkg = tmplViteInertiaPackageJSON
+			}
 			if err := add("web/package.json", pkg); err != nil {
 				return nil, err
 			}
@@ -140,25 +148,45 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 			if err := add("web/viteless.config.ts", tmplVitelessConfig); err != nil {
 				return nil, err
 			}
-			if err := add("web/viteless-env.d.ts", tmplVitelessEnvDTS); err != nil {
+			envDTS := tmplVitelessEnvDTS
+			if opts.IsInertia() {
+				envDTS = tmplVitelessInertiaEnvDTS
+			}
+			if err := add("web/viteless-env.d.ts", envDTS); err != nil {
 				return nil, err
 			}
 		}
-		switch opts.Frontend {
-		case "vue":
+		switch {
+		case opts.IsInertia():
+			// Inertia entry + a sample page component; the page's props
+			// come from the Go handler in pages.go (added below).
+			if err := add("web/src/main.ts", tmplInertiaMainTS); err != nil {
+				return nil, err
+			}
+			if err := add("web/src/Pages/Home.vue", tmplInertiaHomeVue); err != nil {
+				return nil, err
+			}
+		case opts.IsVue():
 			if err := add("web/src/main.ts", tmplMainTS); err != nil {
 				return nil, err
 			}
 			if err := add("web/src/App.vue", tmplAppVueTpl); err != nil {
 				return nil, err
 			}
-		case "react":
+		case opts.IsReact():
 			if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
 				return nil, err
 			}
 			if err := add("web/src/App.tsx", tmplAppTSXTpl); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// Inertia adds a Go page module (a server-rendered "/" page) alongside
+	// the REST hello example.
+	if opts.IsInertia() {
+		if err := add("pages.go", tmplPagesGo); err != nil {
+			return nil, err
 		}
 	}
 	if opts.HasAuth() {
@@ -313,6 +341,9 @@ import (
 	"embed"
 {{end}}
 	"github.com/paulmanoni/nexus"
+{{- if .IsInertia}}
+	"github.com/paulmanoni/nexus/extension/inertia"
+{{- end}}
 {{- if .HasResources}}
 	"go.uber.org/zap"
 {{- end}}
@@ -350,6 +381,11 @@ func main() {
 {{- if .HasFrontend}}
 		nexus.ServeFrontend(webFS, "web/dist"),
 {{- end}}
+{{- if .IsInertia}}
+		// Inertia pages render through the engine; ServeFrontend above
+		// still serves the built JS/CSS assets the shell references.
+		inertia.Module(inertia.Config{Frontend: webFS, Root: "web/dist"}),
+{{- end}}
 {{- if .HasResources}}
 		nexus.Provide(zap.NewExample),
 {{- end}}
@@ -361,6 +397,9 @@ func main() {
 {{- end}}
 {{- if .HasAuth}}
 		auth.Module,
+{{- end}}
+{{- if .IsInertia}}
+		pagesModule,
 {{- end}}
 		helloModule,
 	)
@@ -540,9 +579,6 @@ func (c *CacheManager) NexusResources() []resource.Resource {
 
 // ── Vite frontend (web/) ────────────────────────────────────────────
 
-
-
-
 const tmplViteIndexHTML = `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -617,6 +653,126 @@ const count = ref(0)
 main { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; }
 button { padding: .5rem 1rem; border-radius: .25rem; cursor: pointer; }
 </style>
+`
+
+// ── inertia entry files (web/src) ───────────────────────────────────
+
+// tmplInertiaMainTS bootstraps the Inertia Vue adapter. Page components
+// under src/Pages are resolved by the name the Go handler passes to
+// inertia.Page (e.g. "Home" → src/Pages/Home.vue).
+const tmplInertiaMainTS = `import { createInertiaApp } from '@inertiajs/vue3'
+import { createApp, h } from 'vue'
+
+createInertiaApp({
+  resolve: (name) => {
+    const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
+    return pages['./Pages/' + name + '.vue']
+  },
+  setup({ el, App, props, plugin }) {
+    createApp({ render: () => h(App, props) }).use(plugin).mount(el)
+  },
+})
+`
+
+// tmplInertiaHomeVue is the sample page component. Its props (message)
+// are supplied by NewHome in pages.go — no client API call.
+const tmplInertiaHomeVue = `<script setup lang="ts">
+defineProps<{ message: string }>()
+</script>
+
+<template>
+  <main>
+    <h1>{{.Name}}</h1>
+    <p>{{ "{{ message }}" }}</p>
+    <p>Inertia page — edit <code>web/src/Pages/Home.vue</code>. Props come from
+    <code>NewHome</code> in <code>pages.go</code>; ` + "`nexus dev`" + ` hot-reloads on save.</p>
+  </main>
+</template>
+
+<style scoped>
+main { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; }
+</style>
+`
+
+// tmplPagesGo defines the Go side of the sample Inertia page: a reflective
+// handler returning a typed props struct, mounted with inertia.Page.
+const tmplPagesGo = `package main
+
+import (
+	"context"
+
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/extension/inertia"
+)
+
+// HomeProps is the prop bag the "Home" page component receives. Each
+// exported field (honoring its json tag) becomes a prop on the client.
+type HomeProps struct {
+	Message string ` + "`json:\"message\"`" + `
+}
+
+// NewHome renders the "/" page. It's an ordinary nexus handler — returning
+// props instead of a JSON body. inertia.Page wraps the return into the
+// Inertia page protocol: a JSON page object for XHR visits, a full HTML
+// document for the initial load.
+func NewHome(ctx context.Context) (HomeProps, error) {
+	return HomeProps{Message: "Welcome to {{.Name}} — this page is server-rendered via Inertia."}, nil
+}
+
+var pagesModule = nexus.Module("pages",
+	inertia.Page("GET", "/", "Home", NewHome),
+)
+`
+
+// tmplVitelessInertiaEnvDTS extends the base ambient types with the
+// Inertia adapter + import.meta.glob so the editor resolves a zero-install
+// Inertia project.
+const tmplVitelessInertiaEnvDTS = `// Ambient declarations so TypeScript resolves a viteless Inertia project's
+// imports with nothing installed. viteless reads viteless.config.ts itself.
+
+declare module "viteless" {
+  export function defineConfig<T>(config: T): T
+}
+
+declare module "*.vue" {
+  import type { DefineComponent } from "vue"
+  const component: DefineComponent<{}, {}, any>
+  export default component
+}
+
+declare module "@inertiajs/vue3" {
+  export const createInertiaApp: any
+  export const Link: any
+  export const router: any
+  export function usePage<T = any>(): { props: T }
+  export function useForm<T = any>(data?: T): any
+}
+
+interface ImportMeta {
+  glob: (pattern: string, opts?: { eager?: boolean }) => Record<string, any>
+}
+`
+
+// tmplViteInertiaPackageJSON is the npm-managed Inertia project manifest —
+// Vue + the Inertia adapter.
+const tmplViteInertiaPackageJSON = `{
+  "name": "{{.Name}}-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@inertiajs/vue3": "^1.2.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "vite": "^5.4.0"
+  }
+}
 `
 
 const tmplReadmeTpl = `# {{.Name}}
@@ -815,7 +971,13 @@ introspection = true
 
 [runtime.server]
 addr = ":8080"
-
+{{if .IsInertia}}
+# Inertia dev topology. With this on, "nexus dev" serves pages from the
+# app port (the browser lives there) and points the app's HTML shell at
+# the viteless dev server for HMR — the inverse of the SPA dev model.
+[runtime.inertia]
+enabled = true
+{{end}}
 [runtime.dashboard]
 enabled = true
 name = "{{.Name}}"

@@ -77,6 +77,72 @@ func TestScaffoldAndBuild(t *testing.T) {
 	}
 }
 
+// TestScaffold_Inertia_Builds scaffolds an Inertia app and compiles it
+// against the in-repo nexus (which carries extension/inertia). Proves the
+// generated Go wiring — inertia.Module, pagesModule, the page handler — is
+// API-correct, and asserts the Inertia-specific file layout.
+func TestScaffold_Inertia_Builds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping build test in -short mode")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not on PATH")
+	}
+	_, here, _, _ := runtime.Caller(0)
+	repoRoot, _ := filepath.Abs(filepath.Join(filepath.Dir(here), "..", ".."))
+
+	dir := filepath.Join(t.TempDir(), "inertiaapp")
+	var stdout bytes.Buffer
+	if err := scaffoldWithOpts(scaffoldOpts{
+		Dir:      dir,
+		Frontend: "vue",
+		Inertia:  true,
+		DB:       "none",
+		Cache:    "none",
+		Auth:     "none",
+	}, &stdout); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	// Inertia-specific layout: page entry + Pages component + Go page
+	// module; no App.vue (Inertia replaces the SPA root).
+	for _, name := range []string{"pages.go", "web/src/main.ts", "web/src/Pages/Home.vue"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "web/src/App.vue")); err == nil {
+		t.Fatalf("Inertia scaffold should not emit App.vue")
+	}
+
+	mainGo, _ := os.ReadFile(filepath.Join(dir, "main.go"))
+	for _, want := range []string{`extension/inertia`, "inertia.Module(", "pagesModule"} {
+		if !strings.Contains(string(mainGo), want) {
+			t.Fatalf("main.go missing %q:\n%s", want, mainGo)
+		}
+	}
+	toml, _ := os.ReadFile(filepath.Join(dir, "nexus.toml"))
+	if !strings.Contains(string(toml), "[runtime.inertia]") || !strings.Contains(string(toml), "enabled = true") {
+		t.Fatalf("nexus.toml missing [runtime.inertia] enabled:\n%s", toml)
+	}
+
+	addReplace := exec.Command("go", "mod", "edit",
+		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
+		"-require", "github.com/paulmanoni/nexus@v0.0.0",
+	)
+	addReplace.Dir = dir
+	if out, err := addReplace.CombinedOutput(); err != nil {
+		t.Fatalf("go mod edit: %v\n%s", err, out)
+	}
+	for _, step := range [][]string{{"go", "mod", "tidy"}, {"go", "build", "."}} {
+		cmd := exec.Command(step[0], step[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s failed: %v\n%s", strings.Join(step, " "), err, out)
+		}
+	}
+}
+
 func TestScaffold_RejectsNonEmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("x"), 0o644); err != nil {
@@ -375,6 +441,7 @@ func TestCobra_UnknownCommand(t *testing.T) {
 		t.Fatal("expected error for unknown command")
 	}
 }
+
 // TestScaffoldWithOpts_ViteTooling covers the opt-in standard Vite project:
 // vite.config.ts + package.json (with the framework plugin) and NO
 // viteless.config.ts.

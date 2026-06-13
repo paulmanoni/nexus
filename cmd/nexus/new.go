@@ -40,6 +40,7 @@ func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
 		db         string
 		cache      string
 		auth       string
+		inertia    bool
 		yes        bool
 	)
 	cmd := &cobra.Command{
@@ -82,6 +83,12 @@ dashboard at /__nexus/.`,
 				DB:         db,
 				Cache:      cache,
 				Auth:       auth,
+				Inertia:    inertia,
+			}
+			// --inertia implies a frontend; default it to vue so the
+			// common `nexus new app --inertia` (no --frontend) just works.
+			if opts.Inertia && opts.Frontend == "" {
+				opts.Frontend = "vue"
 			}
 			// Interactive prompts fill any axis the user didn't pin
 			// via flags. Skipped on a non-tty stdin or when --yes is
@@ -126,6 +133,8 @@ dashboard at /__nexus/.`,
 		"cache backend: "+strings.Join(cacheChoices, " | ")+" (default: prompt)")
 	cmd.Flags().StringVar(&auth, "auth", "",
 		"authentication: "+strings.Join(authChoices, " | ")+" (default: prompt)")
+	cmd.Flags().BoolVar(&inertia, "inertia", false,
+		"scaffold an Inertia.js app (server-driven pages; implies --frontend vue)")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip prompts and accept defaults on any axis not passed via flags")
 	return cmd
@@ -176,6 +185,11 @@ func scaffoldWithOpts(opts scaffoldOpts, stdout io.Writer) error {
 		if err := validChoice(opts.Tooling, "--tooling", toolingChoices); err != nil {
 			return err
 		}
+	}
+	// Inertia currently targets Vue only; fail clearly rather than emit a
+	// half-wired React/none project.
+	if opts.Inertia && opts.Frontend != "vue" {
+		return fmt.Errorf("--inertia currently requires --frontend vue (got %q)", opts.Frontend)
 	}
 	if err := validChoice(opts.DB, "--db", dbChoices); err != nil {
 		return err
