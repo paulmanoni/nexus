@@ -402,9 +402,10 @@ type GraphQLConfig struct {
 	// ("/graphql").
 	Path string
 
-	// DisablePlayground turns OFF the GraphQL Playground served on
-	// GET <service>/<path>. Default is enabled — flip in prod
-	// wiring to hide the interactive console.
+	// DisablePlayground turns OFF the in-browser GraphQL IDE served on
+	// GET <service>/<path>. The IDE is Apollo Sandbox by default.
+	// Enabled by default — flip in prod wiring to hide the interactive
+	// console.
 	DisablePlayground bool
 
 	// Debug skips query validation + response sanitization in

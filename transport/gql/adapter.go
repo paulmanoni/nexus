@@ -152,6 +152,21 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 	} else {
 		getHandler = simpleHandler(schema)
 	}
+	// When the Playground is enabled, browser visits to the GraphQL path
+	// get Apollo Sandbox as the default IDE instead of go-graph's bundled
+	// Playground. GET queries from tooling (?query=) and Sandbox's own
+	// POST traffic still flow through the inner handler untouched.
+	if cfg.Playground {
+		inner := getHandler
+		sandbox := apolloSandboxHandler()
+		getHandler = func(c *gin.Context) {
+			if isBrowserIDEVisit(c) {
+				sandbox(c)
+				return
+			}
+			inner(c)
+		}
+	}
 
 	build := func(h gin.HandlerFunc) []gin.HandlerFunc {
 		var hs []gin.HandlerFunc
