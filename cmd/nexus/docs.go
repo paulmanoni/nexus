@@ -420,6 +420,17 @@ For login-redirect-instead-of-401 on Inertia visits, use the auth bridge:
     // page nav → /login redirect; GraphQL → error; API → your envelope:
     auth.Module(auth.Config{ ..., OnError: iauth.ErrorHandler("/login", apiErrors{}) })
 
+The engine renders its own HTML shell, so the app's <head> (title, meta,
+stylesheet/font links that index.html would carry) goes in Config.Head — a
+typed Head{Title, Meta, Links, Raw}; charset/viewport + asset tags are added
+for you:
+
+    inertia.Config{ Frontend: webFS, Root: "web/dist", Head: inertia.Head{
+        Title: "My App",
+        Meta:  []inertia.Meta{{Name: "description", Content: "..."}},
+        Links: []inertia.Link{{Rel: "stylesheet", Href: "/icons/font.css"}},
+    }}
+
 Asset version = hash of the build manifest; a stale X-Inertia-Version on an
 XHR GET gets a 409 + X-Inertia-Location (forced full reload), handled for you.
 
