@@ -792,7 +792,7 @@ defaults apply. 'nexus new' scaffolds this block.
 
     [runtime.graphql]
     path               = "/graphql"
-    disable_playground = false
+    disable_playground = false   # browser GET /graphql → Apollo Sandbox IDE; true hides it
 
     [runtime.middleware.cors]
     allow_origins = ["*"]
@@ -1298,7 +1298,7 @@ the 'nexus new' scaffold turn it on. Tabs:
                 Live traffic pulses
                 on edges (green ok, red ✕ on rejection).
   Endpoints     REST path / GraphQL op list; per-endpoint tester
-                (curl + Playground), arg validator chips.
+                (curl + Apollo Sandbox), arg validator chips.
   Crons         Schedule, last run/result, pause/resume, trigger.
   Rate limits   Declared vs effective limit; inline edit (RPM /
                 burst / perIP) with save/reset (hot-swappable).
