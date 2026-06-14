@@ -63,7 +63,8 @@ var Module = nexus.Module("adverts",
 - **Typed peer mesh.** `peer.AsCall` exposes a handler to other apps; `peer.Call[T]` calls one. HTTP/2 + JSON over mTLS, persistent multiplexed connections, schema drift detection, trace stitching across binaries. See [Peer mesh](#peer-mesh) below.
 - **Configuration server.** Spring-Cloud-Config-style distribution: `config.Server` hosts plaintext TOML (local folder or git); `config.Client` fetches signed snapshots with a sealed cache; `nexus.Get[T]("key", default)` reads typed values from anywhere. WS push for sub-second hot reload. `${VAR}` placeholders inside `nexus.toml` resolve from the process env (and optionally a `.env` file via `nexus.LoadDotenvIfPresent()`). See [Configuration](#configuration) below.
 - **Guided tours for any frontend.** `extension/tour` mounts a Shadow-DOM overlay on every HTML response — record click-by-click walkthroughs with auto-screenshots (multi-scene capture for dropdowns + modals), edit step text inline on the preview, play back as numbered-badge highlights, export to **PDF** or **Word** for handoff docs. Works on React, Vue, Angular, vanilla — host CSS can't leak in. See [Tours](#tours) below.
-- **Vite frontend, embedded.** `nexus new --frontend vue|react` scaffolds a standard Vite project under `web/`. `nexus dev` runs the Vite dev server (HMR) and proxies the API; `nexus build` runs `vite build` and `go build` embeds `web/dist` via `//go:embed`. Any Vite plugin, Tailwind, or component library works. Node/npm are build- and dev-time only — the runtime is a single Go binary. See [Frontend](#frontend).
+- **Viteless frontend, embedded — no Node required.** `nexus new --frontend vue|react` scaffolds a `web/` SPA served by the embedded **viteless** engine (a zero-Node "Vite for Go": esbuild + a WASM QuickJS runtime). `nexus dev` gives you HMR; `nexus build` produces `web/dist` and `go build` embeds it via `//go:embed`. **No npm, no `node_modules`** at dev, build, or run time — deps are fetched from the esm.sh CDN (cached). If real Vite or Node *is* present, viteless transparently uses it for higher fidelity. See [Frontend](#frontend).
+- **GraphQL IDE built in.** Open `/graphql` in a browser and you get **Apollo Sandbox** — schema explorer + query builder against the live app, no wiring. On by default in dev; hide it in prod with `disable_playground = true`.
 - **fx under the hood, not in your imports.** `nexus.Run/Module/Provide/Invoke` wrap fx so you get DI + lifecycle without the import.
 
 ## Install
@@ -72,11 +73,10 @@ var Module = nexus.Module("adverts",
 go install github.com/paulmanoni/nexus/cmd/nexus@latest
 ```
 
-Go 1.25+. The CLI is pure Go — no cgo, no C toolchain, no build tags — so it
-cross-compiles to a single static binary. The frontend uses Vite, so building or
-running `nexus dev` on a project that has a `web/` frontend also needs **Node.js +
-npm** on PATH (build- and dev-time only; the compiled app embeds `web/dist` and needs
-neither at runtime).
+Go 1.26+. The CLI is pure Go — no cgo, no C toolchain, no build tags — so it
+cross-compiles to a single static binary. The frontend uses the embedded **viteless**
+engine, so **no Node.js or npm is required** at dev, build, or run time. (If Node or a
+real Vite install *is* on PATH, viteless uses it automatically for higher fidelity.)
 
 ## CLI
 
@@ -88,9 +88,9 @@ nexus dev                 # go run + live dashboard (add --open to launch a brow
 | Command | What it does |
 |---|---|
 | `nexus new <dir>` | Scaffold a runnable app (prompts for frontend / db / cache / auth). |
-| `nexus init [dir] --frontend=vue\|react` | Add a Vite frontend (`web/`, embed) to an existing project. |
-| `nexus dev [dir]` | `go run` + the Vite dev server (HMR on :5173); serves the dashboard and proxies `/__nexus`, `/graphql`, `/oauth`, `/ws` to the app. |
-| `nexus build [package]` | `npm install` (if needed) + `vite build` → `web/dist`, then `go build` embeds it via `//go:embed`. |
+| `nexus init [dir] --frontend=vue\|react` | Add a `web/` frontend (embed) to an existing project. |
+| `nexus dev [dir]` | `go run` + the viteless HMR dev server (on :5173); serves the dashboard and proxies `/__nexus`, `/graphql`, `/oauth`, `/ws` to the app. |
+| `nexus build [package]` | viteless build → `web/dist`, then `go build` embeds it via `//go:embed`. No npm step. |
 | `nexus docs [topic]` | Inline reference (`handlers`, `frontend`, `auth`, …). |
 | `nexus client [--out dir]` | Write the embedded JS/TS client SDK to disk. |
 | `nexus generate <kind>` | Code-generation helpers (e.g. `dockerfile`). |
@@ -198,13 +198,18 @@ Works identically on REST, GraphQL, and WS. Each middleware reads from `nexus.Co
 
 ## Frontend
 
-The frontend is a standard **Vite** project under `web/` — npm-managed, so any Vite plugin, Tailwind, PostCSS, or component library works. `nexus build` runs `vite build` and `go build` embeds the output into the binary; the runtime needs no Node.
+The frontend is a `web/` SPA served by the embedded **viteless** engine — a zero-Node
+implementation of the Vite dev/build model in Go (esbuild + a WASM QuickJS runtime).
+**No npm, no `node_modules`** is required: deps are fetched from the esm.sh CDN (cached)
+or, if you've run `npm install`, taken from `web/node_modules` for offline/exact-version
+builds. `nexus build` produces `web/dist` and `go build` embeds it into the binary; the
+runtime needs no Node. Vue, React, and Tailwind are handled natively. If a real Vite
+install or Node is present, viteless delegates to it for 100% fidelity.
 
 ```bash
-nexus new my-app --frontend vue   # scaffold web/ (or --frontend react)
-cd my-app/web && npm install       # install frontend deps (one-time / on clone)
-cd .. && nexus dev                 # go run + Vite dev server (HMR) on :5173
-nexus build                        # vite build → web/dist, embedded via //go:embed
+nexus new my-app --frontend vue   # scaffold web/ (or --frontend react) — no install needed
+cd my-app && nexus dev            # go run + viteless HMR dev server on :5173
+nexus build                       # viteless build → web/dist, embedded via //go:embed
 ```
 
 `main.go` embeds the build output and serves it:
@@ -219,11 +224,11 @@ nexus.Run(nexus.Config{...},
 )
 ```
 
-Unknown paths fall through to `index.html` (SPA-aware); `/assets/*` gets immutable cache; REST/GraphQL/WS/dashboard routes win on conflict. Boot fails fast if `index.html` is missing, so the scaffold commits a `web/dist/index.html` stub — the first `go build` compiles before any `vite build`. The frontend dir is `web/` by default (override with `NEXUS_FRONTEND_DIR`); to mount an existing pre-built SPA, just point `ServeFrontend` at its embedded dist.
+Unknown paths fall through to `index.html` (SPA-aware); `/assets/*` gets immutable cache; REST/GraphQL/WS/dashboard routes win on conflict. Boot fails fast if `index.html` is missing, so the scaffold commits a `web/dist/index.html` stub — the first `go build` compiles before any `nexus build`. The frontend dir is `web/` by default (override with `NEXUS_FRONTEND_DIR`); to mount an existing pre-built SPA, just point `ServeFrontend` at its embedded dist.
 
-### `nexus dev` — Vite dev server + API proxy
+### `nexus dev` — viteless HMR dev server + API proxy
 
-`nexus dev` runs `npm run dev` (the Vite dev server, with HMR) on `http://localhost:5173/` alongside `go run` on `:8080`. It injects a managed proxy block into `web/vite.config.ts` (between `// @nexus:proxy-start` / `// @nexus:proxy-end` markers) so `/__nexus`, `/graphql`, `/oauth`, and `/ws` reach the Go app from the Vite origin. Open **:5173** for the SPA during dev; the embedded `web/dist` is served at the app port only in production. Override the dev-server command with `--frontend-cmd`.
+`nexus dev` runs the viteless HMR dev server on `http://localhost:5173/` alongside `go run` on `:8080`. viteless **proxies** every unmatched request (`/__nexus`, `/graphql`, `/oauth`, `/ws`, your API) straight to the Go app — no managed `vite.config` proxy block to maintain. Open **:5173** for the SPA during dev; the embedded `web/dist` is served at the app port only in production.
 
 ### Dev-reload watcher
 
@@ -255,6 +260,7 @@ An empty or missing `banner.txt` falls back to the built-in NEXUS banner.
 Mounted at `/__nexus/` when `Dashboard.Enabled` is true. Shows:
 
 - **Architecture**: services, resources, endpoints, dependency edges. Live updates as registry mutates.
+- **Endpoints**: per-op tester (curl + Apollo Sandbox for GraphQL), arg validator chips.
 - **Traces**: request waterfalls across services; cross-transport stitched.
 - **Crons**: scheduled jobs + last/next-run.
 - **Rate limits**: per-key bucket state.
@@ -408,6 +414,7 @@ The framework ships a few self-contained examples under `examples/`:
 | `wsecho`, `wstest` | WebSocket patterns |
 | `graphapp` | GraphQL-first app with cross-resolver auth |
 | `fxapp` | Direct fx wiring without the nexus.Run wrapper |
+| `bigtopo` | Large-topology stress test for the architecture graph |
 
 ## Layout
 
