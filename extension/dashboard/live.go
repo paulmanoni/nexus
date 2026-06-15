@@ -105,7 +105,7 @@ func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler,
 				Kind:      "snapshot",
 				TS:        time.Now(),
 				Services:  reg.Services(),
-				Endpoints: reg.Endpoints(),
+				Endpoints: reg.VisibleEndpoints(),
 				Resources: reg.Resources(),
 				Workers:   reg.Workers(),
 			}

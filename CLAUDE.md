@@ -418,6 +418,12 @@ minimap, dark mode; live traffic pulses), Endpoints (per-op tester), Crons, Rate
 limits, Auth, Traces. Gate it behind your own middleware via
 `Config.Middleware.Dashboard`.
 
+**Exempt an endpoint from the dashboard** with `nexus.HideFromDashboard()` —
+a cross-transport per-op option (REST / GraphQL / WS) that drops the endpoint
+from `/__nexus/endpoints`, the live snapshot, and the architecture graph while
+the route keeps serving normally (dashboard-only, not a 404):
+`nexus.AsRest("GET", "/internal/debug", NewDebug, nexus.HideFromDashboard())`.
+
 ---
 
 ## 10. Client SDK (browser → app)

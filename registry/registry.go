@@ -407,6 +407,29 @@ func (r *Registry) Endpoints() []Endpoint {
 	return out
 }
 
+// HiddenTag is the Endpoint.Tags key set by nexus.HideFromDashboard().
+// Endpoints carrying it ("true") still route + serve normally; they are
+// only omitted from the introspection dashboard's endpoint list, the live
+// snapshot, and the architecture graph.
+const HiddenTag = "dashboard.hidden"
+
+// VisibleEndpoints returns a copy of all registered endpoints EXCEPT those
+// marked hidden via nexus.HideFromDashboard() (the HiddenTag tag). The
+// dashboard uses this instead of Endpoints() so internal/debug ops can be
+// kept off the introspection surface without un-registering the route.
+func (r *Registry) VisibleEndpoints() []Endpoint {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Endpoint, 0, len(r.endpoints))
+	for _, e := range r.endpoints {
+		if e.Tags[HiddenTag] == "true" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func (r *Registry) Services() []Service {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

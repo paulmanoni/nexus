@@ -4,7 +4,10 @@ import { VueFlow, useVueFlow, Position, MarkerType } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
-import { ShieldCheck, Layers, Moon, Sun } from 'lucide-vue-next'
+import {
+  Hexagon, Search, SlidersHorizontal, Sun, Moon, LayoutGrid, Workflow,
+  Maximize2, Zap, AlertTriangle, Gauge, ShieldCheck, Layers,
+} from 'lucide-vue-next'
 import { elkLayout, applyPositions } from '../lib/elkLayout.js'
 
 import ServiceNode from '../components/ServiceNode.vue'
@@ -13,12 +16,9 @@ import WorkerNode from '../components/WorkerNode.vue'
 import CronNode from '../components/CronNode.vue'
 import ResourceNode from '../components/ResourceNode.vue'
 import InternetNode from '../components/InternetNode.vue'
+import LaneNode from '../components/LaneNode.vue'
 import ErrorDialog from '../components/ErrorDialog.vue'
 import PacketOverlay from '../components/PacketOverlay.vue'
-import GlobalMiddlewareBar from '../components/GlobalMiddlewareBar.vue'
-import ActivityRail from '../components/ActivityRail.vue'
-import OverlayToggles from '../components/OverlayToggles.vue'
-import TimeScrubber from '../components/TimeScrubber.vue'
 import Drawer from '../components/Drawer.vue'
 import OpDetail from '../components/drawer/OpDetail.vue'
 import ResourceDetail from '../components/drawer/ResourceDetail.vue'
@@ -27,7 +27,10 @@ import CronDetail from '../components/drawer/CronDetail.vue'
 import AuthDetail from '../components/drawer/AuthDetail.vue'
 import CmdK from '../components/CmdK.vue'
 import ClusterNode from '../components/ClusterNode.vue'
-import { subscribeEvents, subscribeLive } from '../lib/api.js'
+import Inspector from '../components/Inspector.vue'
+import TweaksPanel from '../components/TweaksPanel.vue'
+import PluginChips from '../components/PluginChips.vue'
+import { subscribeEvents, subscribeLive, fetchConfig } from '../lib/api.js'
 import { buildClusters, computeVisible } from '../lib/topology.js'
 
 const nodes = ref([])
@@ -43,6 +46,7 @@ const nodeTypes = {
   resource: markRaw(ResourceNode),
   internet: markRaw(InternetNode),
   cluster: markRaw(ClusterNode),
+  lane: markRaw(LaneNode),
 }
 
 // INTERNET_ID is the fixed id of the single "Clients" node. Keep it a
@@ -202,29 +206,111 @@ function stampClusters(allNodes, ctx) {
 
 // Dark-mode theme toggle. tokens.css already ships a [data-theme="dark"]
 // block; we just flip the attribute on <html> and remember the choice.
-const theme = ref(typeof localStorage !== 'undefined' && localStorage.getItem('nexus.theme') === 'dark' ? 'dark' : 'light')
+// Dark is the redesign's default identity; honour a saved preference.
+const theme = ref(typeof localStorage !== 'undefined' && localStorage.getItem('nexus.theme') === 'light' ? 'light' : 'dark')
 function applyTheme() {
   if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', theme.value)
 }
-function toggleTheme() {
-  theme.value = theme.value === 'dark' ? 'light' : 'dark'
+function setTheme(v) {
+  theme.value = v
   if (typeof localStorage !== 'undefined') localStorage.setItem('nexus.theme', theme.value)
   applyTheme()
 }
+function toggleTheme() { setTheme(theme.value === 'dark' ? 'light' : 'dark') }
 applyTheme()
+
+// ─── Redesign chrome state ─────────────────────────────────────────
+// All persisted to localStorage so a reload keeps the operator's
+// arrangement. `mode` switches ELK between the layered (LR ranks) and
+// flow (organic stress) layouts; `live` gates the traffic pulse; the
+// rest drive the Tweaks panel (density / accent / client glyph / lanes).
+function lsGet(k, d) {
+  try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) } catch { return d }
+}
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch { /* best effort */ } }
+
+const mode = ref(lsGet('nexus.mode', 'layered'))
+const live = ref(lsGet('nexus.live', true))
+const density = ref(lsGet('nexus.density', 'regular'))
+const laneLabels = ref(lsGet('nexus.laneLabels', true))
+const clientIcon = ref(lsGet('nexus.clientIcon', 'globe'))
+const tweaksOpen = ref(false)
+const selectedNodeId = ref(lsGet('nexus.selNode', null))
+
+const DEFAULT_ACCENT = ''   // '' = the token default (teal / dark, signal / light)
+const accent = ref(lsGet('nexus.accent', DEFAULT_ACCENT))
+
+provide('nexus.selectedNodeId', selectedNodeId)
+provide('nexus.density', density)
+provide('nexus.clientIcon', clientIcon)
+
+// applyAccent overrides the --accent family on <html> from a single hex,
+// matching the redesign's live accent picker. Empty restores the token
+// default for the active theme.
+function hexA(hex, a) {
+  const m = hex.replace('#', '')
+  const r = parseInt(m.slice(0, 2), 16), g = parseInt(m.slice(2, 4), 16), b = parseInt(m.slice(4, 6), 16)
+  return `rgba(${r},${g},${b},${a})`
+}
+function applyAccent(c) {
+  if (typeof document === 'undefined') return
+  const s = document.documentElement.style
+  const keys = ['--accent', '--accent-2', '--accent-soft', '--accent-line', '--accent-glow', '--canvas-glow']
+  if (!c) { keys.forEach(k => s.removeProperty(k)); return }
+  s.setProperty('--accent', c)
+  s.setProperty('--accent-2', c)
+  s.setProperty('--accent-soft', hexA(c, 0.13))
+  s.setProperty('--accent-line', hexA(c, 0.42))
+  s.setProperty('--accent-glow', hexA(c, 0.42))
+  s.setProperty('--canvas-glow', hexA(c, 0.09))
+}
+applyAccent(accent.value)
+
+// Tweak setters — mutate + persist; layout-affecting ones rerun load().
+function setAccent(c) { accent.value = (c === accent.value ? '' : c); applyAccent(accent.value); lsSet('nexus.accent', accent.value) }
+function setDensity(d) { density.value = d; lsSet('nexus.density', d) }
+function setMode(m) { mode.value = m }
+function setLane(v) { laneLabels.value = v }
+function setLive(v) { live.value = v }
+function setClient(ic) { clientIcon.value = ic; lsSet('nexus.clientIcon', ic) }
+function toggleLive() { setLive(!live.value) }
+
+watch(mode, v => { lsSet('nexus.mode', v); if (latestSnapshot.value) load(); nextTick(() => fitView(FIT_OPTS)) })
+watch(laneLabels, v => { lsSet('nexus.laneLabels', v); if (latestSnapshot.value) load() })
+watch(live, v => lsSet('nexus.live', v))
+watch(selectedNodeId, v => lsSet('nexus.selNode', v))
+
+// App identity for the header brand block.
+const config = ref({ Name: 'Nexus', Deployment: '', Version: '' })
+const brandName = computed(() => config.value.Name || 'Nexus')
+const brandEnv = computed(() => config.value.Deployment || 'development')
+const brandBase = computed(() => (typeof location !== 'undefined' && location.port ? ':' + location.port : ':8080'))
+// Background dot color — literal because SVG fill attrs don't resolve CSS
+// vars; track the theme so dark/light stay correct.
+const gridColor = computed(() => (theme.value === 'dark' ? '#161d27' : '#dde3ea'))
+
+// onCanvasNodeClick — node selection drives the Inspector + edge focus.
+// Lanes are inert; clusters drill in; everything else selects.
+function onCanvasNodeClick({ node }) {
+  if (!node || node.type === 'lane') return
+  if (node.type === 'cluster') { expandCluster(node.data.clusterKey); return }
+  selectedNodeId.value = node.id
+  clearOp()
+}
 
 // MiniMap node color — match each node's category so the overview reads as
 // a shrunk version of the canvas. SVG fill attribute can't resolve CSS
 // vars, so use the literal hues from tokens.css §3.
 function minimapNodeColor(n) {
   switch (n.type) {
-    case 'cluster':   return '#0ea5e9'  // --cat-peer
-    case 'resource':  return '#3b82f6'  // --cat-database
-    case 'worker':    return '#f97316'  // --cat-worker
-    case 'cron':      return '#ec4899'  // --cat-cron
-    case 'internet':  return '#64748b'  // --cat-internet
-    case 'serviceDep':return '#6366f1'  // --cat-service
-    default:          return '#6366f1'  // service/module
+    case 'lane':      return 'transparent'
+    case 'cluster':   return '#2fb8e0'  // --cat-peer
+    case 'resource':  return '#6aa6ff'  // --cat-database
+    case 'worker':    return '#ff8a4c'  // --cat-worker
+    case 'cron':      return '#f25fb0'  // --cat-cron
+    case 'internet':  return '#8693a3'  // --cat-internet
+    case 'serviceDep':return '#8b8bf0'  // --cat-service
+    default:          return '#8b8bf0'  // service/module
   }
 }
 
@@ -514,7 +600,8 @@ function openErrors(payload) {
 function closeErrors() { errorDialog.value = { ...errorDialog.value, open: false } }
 provide('nexus.openErrors', openErrors)
 
-const { fitView, onNodesInitialized, onPaneClick, onNodeDragStop, updateNodeInternals } = useVueFlow()
+const { fitView, onNodesInitialized, onPaneClick, onNodeClick, onNodeDragStop, updateNodeInternals } = useVueFlow()
+onNodeClick(onCanvasNodeClick)
 // FIT_OPTS — shared between initial paint and topology-change re-fits.
 // minZoom floors the auto-fit so a busy topology (many modules /
 // endpoints) doesn't shrink cards into illegible postage stamps;
@@ -574,6 +661,7 @@ onNodeDragStop(({ node }) => {
 onPaneClick(() => {
   clearOp()
   closeDrawer()
+  selectedNodeId.value = null
 })
 
 // estimateServiceWidth scales the card width with the longest endpoint
@@ -583,74 +671,13 @@ onPaneClick(() => {
 // element actually renders that wide). Clamped between a comfortable
 // minimum and a sensible maximum — past the cap, long paths fall back
 // to truncation rather than letting one outlier card dominate the row.
-const SERVICE_WIDTH_MIN = 280
-const SERVICE_WIDTH_MAX = 460
-function estimateServiceWidth(data) {
-  const eps = data.endpoints || []
-  // Row content geometry: 18px transport tile + 8px gap + label +
-  // ~80px reserved for the right-aligned stat badges + 24px outer
-  // row padding. Mono font at 11px ≈ 6.6px per char.
-  const ROW_RESERVED = 18 + 8 + 80 + 24
-  const MONO_CHAR_W = 6.6
-  let longestLabelChars = 0
-  for (const e of eps) {
-    let lbl
-    if (e.Transport === 'rest')         lbl = `${e.Method || ''} ${e.Path || ''}`
-    else if (e.Transport === 'graphql') lbl = `${e.Method || ''} ${e.Name || ''}`
-    else                                lbl = e.Path || e.Name || ''
-    if (lbl.length > longestLabelChars) longestLabelChars = lbl.length
-  }
-  const rowDesired = Math.ceil(longestLabelChars * MONO_CHAR_W) + ROW_RESERVED
-  // Header geometry: 32px icon + 8px gap + sans title (≈8px/char at
-  // 16px) + ~40px for deployment / remote tags + 24px outer padding.
-  const headerName = (data.name || '') + (data.service && data.service !== data.name ? ` (${data.service})` : '')
-  const headerDesired = 32 + 8 + Math.ceil(headerName.length * 8) + 40 + 24
-  const desired = Math.max(rowDesired, headerDesired, SERVICE_WIDTH_MIN)
-  return Math.min(desired, SERVICE_WIDTH_MAX)
-}
-
-function estimateServiceHeight(data) {
-  // LOD compact: header (~60) + one summary line + footer padding. No rows.
-  if (data.lod) return 60 + 22 + 16
-  // data.endpoints is the VISIBLE slice (sorted + truncated unless
-  // expanded). The chip row's visual height grows with chip count
-  // (chips wrap to 2-3 lines when many resources / middlewares pile
-  // on); approximate by bucketing into 0/1/2 extra rows so cards
-  // don't overlap in dagre's layout without post-render measurement.
-  const eps = data.endpoints || []
-  const total = data.totalEndpoints ?? eps.length
-  const desc = data.description ? 32 : 0
-  let rows = 0
-  for (const e of eps) {
-    const hasOwnerChip = !e.ServiceAutoRouted
-    const resCount = Array.isArray(e.Resources) ? e.Resources.length : 0
-    const sdCount = Array.isArray(e.ServiceDeps) ? e.ServiceDeps.length : 0
-    const mwCount = Array.isArray(e.Middleware)
-      ? e.Middleware.filter(m => m !== 'metrics').length
-      : 0
-    const chipCount = (hasOwnerChip ? 1 : 0) + resCount + sdCount + mwCount
-    if (chipCount === 0)       rows += 1
-    else if (chipCount <= 3)   rows += 2
-    else if (chipCount <= 6)   rows += 3
-    else                       rows += 4
-  }
-  // Toggle button row — present whenever the card hides some endpoints
-  // (collapsed and total > visible) OR shows them all (expanded with
-  // a "Show fewer" affordance). About one row's worth of vertical real
-  // estate including its top margin.
-  const showToggle = total > eps.length || (data.isExpanded && total > 0)
-  const toggleH = showToggle ? 36 : 0
-  // Header now hosts a 32px CategoryIcon tile + a two-line title (name
-  // + "service · N endpoints"); padding 12px top+bottom. ~56-60px tall.
-  // Old 38 underestimated by ~20px and let dagre pack neighbouring
-  // cards under the header → visible overlap.
-  const HEADER = 60
-  const FOOTER = 16 + 16
-  // ROW_H matches the tightened row metrics in ServiceNode.css
-  // (5px+5px vertical padding, 1px gap between rows, ~12px content).
-  const ROW_H = 22
-  return HEADER + desc + rows * ROW_H + toggleH + FOOTER
-}
+// Calm module cards are a fixed size in the redesign — a header row + one
+// muted meta line. ELK packs uniform boxes; the rendered padding flexes
+// with density but the layout box stays constant.
+const SERVICE_NODE_WIDTH = 214
+const SERVICE_NODE_HEIGHT = 64
+function estimateServiceWidth() { return SERVICE_NODE_WIDTH }
+function estimateServiceHeight() { return SERVICE_NODE_HEIGHT }
 
 function estimateResourceHeight(data) {
   const detailKeys = Object.keys(data.details || {}).slice(0, 3).length
@@ -665,14 +692,22 @@ const GAP = 48
 // node's reserved box; gridLayout is the synchronous fallback for the
 // edgeless case and for an ELK failure (returned via Promise.resolve so the
 // call site can always `await`).
-async function layout(ns, es) {
+// FLOW_OPTS swaps ELK's layered ranks for the stress (force-directed)
+// algorithm so "Flow" mode reads as an organic web rather than tidy
+// columns — matching the redesign's two layout personalities.
+const FLOW_OPTS = {
+  'elk.algorithm': 'org.eclipse.elk.stress',
+  'elk.stress.desiredEdgeLength': '170',
+  'elk.spacing.nodeNode': '70',
+}
+async function layout(ns, es, mode = 'layered') {
   if (es.length === 0) return gridLayout(ns)
   const sized = ns.map(n => {
     const { w, h } = nodeBoxSize(n)
     return { id: n.id, width: w, height: h }
   })
   try {
-    const pos = await elkLayout(sized, es)
+    const pos = await elkLayout(sized, es, mode === 'flow' ? FLOW_OPTS : {})
     return applyPositions(ns, pos)
   } catch (err) {
     console.warn('[nexus] ELK layout failed — falling back to grid:', err)
@@ -763,6 +798,73 @@ function gridLayout(ns) {
       sourcePosition: Position.Right
     }
   })
+}
+
+// mergeCardEdges collapses parallel edges between the same (source,target)
+// pair into one card-level bundle. Calm cards expose no per-op handles, so
+// the dozens of per-endpoint edges a module emits toward one resource become
+// a single wire that accumulates the contributing ops (for flash lookups)
+// and a count (for the bundle badge). Self-loops are dropped.
+function mergeCardEdges(list) {
+  const byPair = new Map()
+  for (const e of list) {
+    const s = e.source, t = e.target
+    if (s === t) continue
+    const k = s + ' ' + t
+    const opsOf = Array.isArray(e.data && e.data.ops) ? e.data.ops
+      : (e.data && e.data.op ? [e.data.op] : [])
+    const prev = byPair.get(k)
+    if (!prev) {
+      byPair.set(k, {
+        ...e,
+        sourceHandle: null,
+        targetHandle: null,
+        data: { ...e.data, ops: [...opsOf], count: (e.data && e.data.count) || 1 },
+      })
+    } else {
+      prev.data.count += (e.data && e.data.count) || 1
+      const set = new Set(prev.data.ops || [])
+      for (const o of opsOf) set.add(o)
+      prev.data.ops = [...set]
+      // A bundle of >1 distinct ops loses its single-op identity (op=null
+      // marks it aggregated for restyle); preserve semantic flags.
+      prev.data.op = prev.data.ops.length === 1 ? prev.data.ops[0] : null
+      if (e.data && e.data.inbound) prev.data.inbound = true
+      if (e.data && e.data.worker) prev.data.worker = true
+      if (e.data && e.data.serviceLevel) prev.data.serviceLevel = true
+      if (e.data && e.data.resourceLevel) prev.data.resourceLevel = true
+    }
+  }
+  return [...byPair.values()]
+}
+
+// buildLaneNodes places a tier label above each populated column of the
+// layered layout (Clients / Services / Data / Jobs). Rendered as inert Vue
+// Flow nodes so they pan + zoom with the canvas, matching the redesign's
+// lane bands. Only used in layered mode with lane labels enabled.
+function buildLaneNodes(positioned) {
+  const TIERS = [
+    { key: 'clients', text: 'Clients', test: n => n.type === 'internet' },
+    { key: 'services', text: 'Services', test: n => n.type === 'service' || n.type === 'serviceDep' || (n.type === 'cluster' && n.data.kind !== 'data') },
+    { key: 'data', text: 'Data', test: n => n.type === 'resource' || (n.type === 'cluster' && n.data.kind === 'data') },
+    { key: 'jobs', text: 'Jobs', test: n => n.type === 'worker' || n.type === 'cron' },
+  ]
+  const real = positioned.filter(n => n.type !== 'lane')
+  if (!real.length) return []
+  const minY = Math.min(...real.map(n => n.position.y))
+  const lanes = []
+  for (const t of TIERS) {
+    const xs = real.filter(t.test).map(n => n.position.x)
+    if (!xs.length) continue
+    lanes.push({
+      id: 'lane:' + t.key,
+      type: 'lane',
+      position: { x: Math.min(...xs), y: minY - 70 },
+      draggable: false, selectable: false, connectable: false,
+      data: { text: t.text }, zIndex: 0,
+    })
+  }
+  return lanes
 }
 
 // latestSnapshot holds the most recent /__nexus/live frame. load() reads
@@ -876,7 +978,10 @@ async function load() {
   const sortedGroups = [...groups.values()].map(g => {
     const sorted = sortEndpoints(g.endpoints)
     const isExpanded = expandedGroups.value.has(g.key)
-    const displayed = isExpanded ? sorted : sorted.slice(0, MAX_VISIBLE_ENDPOINTS)
+    // Calm cards don't render rows, so there's no per-card truncation —
+    // the full endpoint set ships in node data for health/auth tallies +
+    // flash indexing, and the Inspector shows them grouped on selection.
+    const displayed = sorted
     return { g, displayed, sorted, isExpanded, total: g.endpoints.length }
   })
 
@@ -1319,38 +1424,18 @@ async function load() {
   // collapsed groups whose top-N happens to be empty — rare) fall back
   // to one card-level inbound so the topology still shows the module
   // gets traffic conceptually.
-  for (const { g, displayed } of sortedGroups) {
-    if (displayed.length === 0) {
-      edgeList.push({
-        id: `e:internet->${g.key}`,
-        source: INTERNET_ID,
-        target: g.key,
-        markerEnd: MarkerType.ArrowClosed,
-        data: { service: g.service, target: g.name, targetKind: 'module', op: null, inbound: true, groupKey: g.key },
-      })
-      continue
-    }
-    for (const e of displayed) {
-      const opName = e.Name || `${e.Method} ${e.Path}`
-      edgeList.push({
-        id: `e:internet->${g.key}@${opName}`,
-        source: INTERNET_ID,
-        target: g.key,
-        targetHandle: 'op:' + opName,
-        markerEnd: MarkerType.ArrowClosed,
-        data: {
-          service: e.Service,
-          target: g.name,
-          targetKind: 'module',
-          op: opName,
-          // ops singleton so indexEndpointEdges + selectedMatches treat
-          // it like a per-op edge for flash/highlight purposes.
-          ops: [opName],
-          inbound: true,
-          groupKey: g.key,
-        },
-      })
-    }
+  // Inbound entry lane — one aggregated Internet → module edge per group.
+  // Calm cards have no per-row handles to anchor a per-op inbound to, so a
+  // single card-level lane carries all inbound traffic; the flash animator
+  // lights it on any request.op for the module.
+  for (const { g } of sortedGroups) {
+    edgeList.push({
+      id: `e:internet->${g.key}`,
+      source: INTERNET_ID,
+      target: g.key,
+      markerEnd: MarkerType.ArrowClosed,
+      data: { service: g.service, target: g.name, targetKind: 'module', op: null, inbound: true, groupKey: g.key },
+    })
   }
 
   const all = [internetNode, ...groupNodes, ...svcDepNodes, ...workerNodes, ...cronNodes, ...rsNodes]
@@ -1363,23 +1448,21 @@ async function load() {
   // boundary are rerouted onto the cluster node (aggregated with a count).
   stampClusters(all, { resolveCard: resolveServiceCard, svcToDep })
   const clusters = buildClusters(all)
-  const { nodes: visNodes, edges: visEdges } = computeVisible(all, edgeList, clusters, expandedClusters.value)
+  // Clustering exists to keep 1000-node apps legible — but for normal-sized
+  // topologies the redesign wants the calm module + resource cards shown
+  // directly (the lane'd look from the screenshots), not collapsed cluster
+  // pucks. Below the threshold we auto-expand every cluster so members
+  // render; at scale we honour the user's manual drill-down state.
+  const AUTO_EXPAND_BELOW = 90
+  const effectiveExpanded = all.length <= AUTO_EXPAND_BELOW
+    ? new Set(clusters.keys())
+    : expandedClusters.value
+  const { nodes: visNodes, edges: visEdges } = computeVisible(all, edgeList, clusters, effectiveExpanded)
   const visIds = new Set(visNodes.map(n => n.id))
 
-  // Level-of-detail: when a lot is on screen, collapse module cards to a
-  // compact summary (header + counts, no rows) so the view stays readable
-  // and light. Stamped on data BEFORE layout so nodeBoxSize sizes the
-  // compact box and ELK packs them tighter.
-  const lod = visNodes.length > LOD_NODE_THRESHOLD
-  for (const n of visNodes) {
-    if (n.type === 'service') n.data.lod = lod
-  }
-  // In compact (LOD) mode the cards drop their per-op row handles, so any
-  // edge still anchored to an `op:` handle would fail to route. Re-anchor
-  // every edge to the card-level handle when compact.
-  if (lod) {
-    for (const e of visEdges) { e.sourceHandle = null; e.targetHandle = null }
-  }
+  // Calm cards expose no per-op handles — collapse parallel edges to one
+  // card-level bundle per (source,target) pair.
+  const finalEdges = mergeCardEdges(visEdges)
 
   // Diagnostic: surface the built graph to window so operators can
   // verify service-level edges from DevTools without re-reading this
@@ -1390,16 +1473,16 @@ async function load() {
       clusters: [...clusters.values()].map(c => ({ key: c.key, members: c.memberIds.size })),
       expanded: [...expandedClusters.value],
       visibleNodes: visNodes.map(n => n.id),
-      edges: visEdges.map(e => ({ id: e.id, source: e.source, target: e.target, count: e.data?.count ?? 1 })),
+      edges: finalEdges.map(e => ({ id: e.id, source: e.source, target: e.target, count: e.data?.count ?? 1 })),
     }
   }
-  // Perf gate: a topology fingerprint of the visible ids + LOD state. When
-  // it's unchanged from the last commit, reuse cached positions and SKIP
+  // Perf gate: a topology fingerprint of the visible ids + layout mode.
+  // When unchanged from the last commit, reuse cached positions and SKIP
   // ELK entirely — node DATA is still rebuilt each poll (live traffic/error
   // counts), but the expensive layout doesn't rerun. This is what keeps
   // idle 2s polling cheap at 1000 nodes. fitView likewise only fires when
   // the layout actually changed, so steady-state polling keeps pan + zoom.
-  const fp = visNodes.map(n => n.id).sort().join('|') + (lod ? '|lod' : '')
+  const fp = visNodes.map(n => n.id).sort().join('|') + '|' + mode.value + (laneLabels.value ? '|lanes' : '')
   const unchanged = fp === lastTopologyFingerprint && lastPositions.size > 0
   const seq = ++layoutSeq
   let laid
@@ -1412,9 +1495,9 @@ async function load() {
     }))
   } else {
     try {
-      laid = await layout(visNodes, visEdges)
+      laid = await layout(visNodes, finalEdges, mode.value)
     } catch (err) {
-      console.error('[nexus] Architecture layout failed:', err, { nodeCount: visNodes.length, edgeCount: visEdges.length })
+      console.error('[nexus] Architecture layout failed:', err, { nodeCount: visNodes.length, edgeCount: finalEdges.length })
       return
     }
     // A newer load() started while ELK was working — drop this stale result.
@@ -1424,15 +1507,18 @@ async function load() {
     // Apply user-drag overrides so dragged cards don't snap back to the
     // layout engine's slot on the next poll. The override map only kicks in
     // for ids the user explicitly moved.
-    const nextNodes = laid.map(n => {
+    const placed = laid.map(n => {
       const moved = userPositions.get(n.id)
       return moved ? { ...n, position: moved } : n
     })
+    // Lane labels float above each populated column in layered mode.
+    const laneNodes = (mode.value === 'layered' && laneLabels.value) ? buildLaneNodes(placed) : []
+    const nextNodes = [...placed, ...laneNodes]
     lastTopologyFingerprint = fp
-    lastPositions = new Map(nextNodes.map(n => [n.id, n.position]))
+    lastPositions = new Map(placed.map(n => [n.id, n.position]))
     nodes.value = nextNodes
-    rawEdges.value = visEdges
-    indexEndpointEdges(visEdges)
+    rawEdges.value = finalEdges
+    indexEndpointEdges(finalEdges)
     // Only index groups that actually render — collapsed-cluster members are
     // hidden, and the flash/packet animator must not target a missing node.
     indexEndpointGroups(groupNodes.filter(g => visIds.has(g.id)))
@@ -1447,7 +1533,7 @@ async function load() {
     // and measures them. This is the fix for "edges don't show until refresh
     // after expanding a group".
     nextTick(() => {
-      edges.value = restyleEdges(visEdges, opSelection.value, flashedEdges.value)
+      edges.value = restyleEdges(finalEdges, selectedNodeId.value, flashedEdges.value)
       if (!unchanged) {
         fitView(FIT_OPTS)
         nextTick(() => updateNodeInternals(nextNodes.map(n => n.id)))
@@ -1506,19 +1592,37 @@ function buildMarker(color) {
   return { type: MarkerType.ArrowClosed, width: 14, height: 14, color }
 }
 
+// edgePalette resolves the live theme + accent colors from CSS vars so
+// edges restyle correctly across light/dark and the Tweaks accent picker.
+// SVG path strokes + marker fills need literal colors (CSS vars don't
+// resolve in the marker attribute), so we read the computed values once per
+// restyle pass rather than per edge.
+function edgePalette() {
+  const fb = { accent: '#2fe0c6', edge: '#2b333f', edgeStrong: '#3c4655', internet: '#8693a3', worker: '#ff8a4c', resource: '#6aa6ff', error: '#ff6166' }
+  if (typeof document === 'undefined') return fb
+  const cs = getComputedStyle(document.documentElement)
+  const v = (n, f) => { const x = cs.getPropertyValue(n).trim(); return x || f }
+  return {
+    accent: v('--accent', fb.accent),
+    edge: v('--edge', fb.edge),
+    edgeStrong: v('--edge-strong', fb.edgeStrong),
+    internet: v('--cat-internet', fb.internet),
+    worker: v('--cat-worker', fb.worker),
+    resource: v('--cat-database', fb.resource),
+    error: v('--err', fb.error),
+  }
+}
+
 // restyleEdges returns a fresh edges array with type/path/style applied
-// based on the current op selection + live-traffic flash state. Every
-// edge becomes a smoothstep (orthogonal with rounded corners) so the
-// canvas reads as infrastructure, not a tangle of bezier curves. Five
-// semantic kinds get distinct idle styling: inbound (entry lane from
-// Internet), service-level (constructor wires — dashed), aggregated
-// (multi-op shared edge), per-op (specific endpoint use), and selected.
-function restyleEdges(list, sel, flashed) {
+// based on the current NODE selection + live-traffic flash state. Every
+// edge is a smoothstep (orthogonal, rounded) so the canvas reads as
+// infrastructure. When a node is selected, edges touching it pop in the
+// accent and everything else fades to scaffolding; idle edges paint by
+// semantic kind (inbound / worker / resource-level / service-level / flow).
+function restyleEdges(list, nodeSel, flashed) {
+  const C = edgePalette()
   return list.map(e => {
     const base = { ...e }
-    // Orthogonal routing with rounded corners — AWS-console-style. The
-    // offset gives the path a generous "elbow" before turning, which
-    // keeps lines from cramming into a node's edge.
     base.type = 'smoothstep'
     base.pathOptions = { borderRadius: 12, offset: 20 }
 
@@ -1528,75 +1632,30 @@ function restyleEdges(list, sel, flashed) {
     const isServiceLvl   = !!e.data.serviceLevel
     const isResourceLvl  = !!e.data.resourceLevel
     const flashState     = flashed && flashed.get(e.id)
+    const touches        = nodeSel && (e.source === nodeSel || e.target === nodeSel)
 
     let stroke, width, opacity, animated = false, dashed = false
 
     if (flashState) {
-      // Live traffic — brightest, always animated. Color reflects request
-      // outcome so error flows visually distinct from successes.
-      stroke = flashState === 'error' ? EDGE_COLOR.error : EDGE_COLOR.accent
-      width = 2.2
-      opacity = 1
-      animated = true
-    } else if (sel) {
-      // Selection mode: highlight the matching edges, fade everything else
-      // down to a barely-there scaffolding so the focused path pops.
-      if (selectedMatches(sel, e)) {
-        stroke = EDGE_COLOR.accent
-        width = 2
-        opacity = 1
-        animated = true
-      } else {
-        stroke = EDGE_COLOR.border
-        width = 1
-        opacity = 0.12
-      }
+      stroke = flashState === 'error' ? C.error : C.accent
+      width = 2.2; opacity = 1; animated = true
+    } else if (nodeSel) {
+      if (touches) { stroke = C.accent; width = 2; opacity = 1; animated = true }
+      else { stroke = C.edge; width = 1; opacity = 0.12 }
+    } else if (isWorker) {
+      stroke = C.worker; width = 1.5; opacity = 0.85
+    } else if (isInbound) {
+      stroke = C.internet; width = 1.4; opacity = 0.7
+    } else if (isResourceLvl) {
+      stroke = C.resource; width = 1.4; opacity = 0.9; dashed = true
+    } else if (isServiceLvl) {
+      stroke = C.edgeStrong; width = 1.4; opacity = 0.9; dashed = true
+    } else if (isAggregated) {
+      stroke = C.edgeStrong; width = 1.4; opacity = 0.9
     } else {
-      // Idle baselines — semantic by edge kind. Worker edges paint in
-      // the worker category color (orange) so an active background task
-      // stays visible against the constructor-wires/inbound styling.
-      // Constructor wires get a dashed stroke so they read as "wired
-      // but not actively used per request"; inbound lanes use the
-      // slate internet color so the entry boundary is visually distinct
-      // from intra-service traffic.
-      if (isWorker) {
-        stroke = EDGE_COLOR.worker
-        width = 1.5
-        opacity = 0.85
-      } else if (isInbound) {
-        stroke = EDGE_COLOR.internet
-        width = 1.4
-        opacity = 0.7
-      } else if (isResourceLvl) {
-        // Resource → resource (cache → db, queue → db, etc). Painted in
-        // the data-tier color so the dependency layer reads as its own
-        // visual band, distinct from constructor-wire grey. Dashed
-        // because it's a declarative dep, not a per-request flow.
-        stroke = EDGE_COLOR.resource
-        width = 1.4
-        opacity = 0.9
-        dashed = true
-      } else if (isServiceLvl) {
-        stroke = EDGE_COLOR.borderStr
-        width = 1.4
-        opacity = 0.9
-        dashed = true
-      } else if (isAggregated) {
-        stroke = EDGE_COLOR.borderStr
-        width = 1.4
-        opacity = 0.9
-      } else {
-        stroke = EDGE_COLOR.accent
-        width = 1.3
-        opacity = 0.65
-      }
+      stroke = C.accent; width = 1.3; opacity = 0.6
     }
 
-    // Bundle weight + badge. An edge that stands in for N real edges (a
-    // cluster-boundary reroute, or many ops sharing a source→target) reads
-    // thicker and carries a count so heavy dependencies are obvious without
-    // expanding. Flash keeps its own emphatic width; selection-dimmed edges
-    // skip the badge so faded scaffolding stays quiet.
     const count = (e.data && e.data.count) || 1
     if (count > 1 && !flashState) {
       width = Math.max(width, Math.min(1.4 + Math.log2(count) * 0.5, 4))
@@ -1605,14 +1664,14 @@ function restyleEdges(list, sel, flashed) {
     if (dashed) base.style.strokeDasharray = '5 4'
     base.animated = animated
     base.markerEnd = buildMarker(stroke)
-    const dimmed = sel && !flashState && !selectedMatches(sel, e)
+    const dimmed = nodeSel && !flashState && !touches
     if (count > 1 && !dimmed) {
       base.label = String(count)
       base.labelShowBg = true
       base.labelBgPadding = [5, 3]
       base.labelBgBorderRadius = 7
-      base.labelBgStyle = { fill: 'var(--bg-card)', stroke: 'var(--border)', strokeWidth: 1 }
-      base.labelStyle = { fill: 'var(--text-muted)', fontSize: '10px', fontFamily: 'var(--font-mono)', fontWeight: 600 }
+      base.labelBgStyle = { fill: 'var(--surface)', stroke: 'var(--line)', strokeWidth: 1 }
+      base.labelStyle = { fill: 'var(--ink-3)', fontSize: '10px', fontFamily: 'var(--font-mono)', fontWeight: 600 }
     } else {
       base.label = undefined
     }
@@ -1632,18 +1691,18 @@ const flashedEdges = ref(new Map())
 // not in the set so the selected neighbourhood pops out of a busy canvas.
 // null = nothing selected → no dimming.
 const focusSet = computed(() => {
-  const sel = opSelection.value
-  if (!sel || !sel.groupKey) return null
-  const set = new Set([sel.groupKey])
+  const id = selectedNodeId.value
+  if (!id) return null
+  const set = new Set([id])
   for (const e of rawEdges.value) {
-    if (e.source === sel.groupKey) set.add(e.target)
-    else if (e.target === sel.groupKey) set.add(e.source)
+    if (e.source === id) set.add(e.target)
+    else if (e.target === id) set.add(e.source)
   }
   return set
 })
 provide('nexus.focusSet', focusSet)
-watch([opSelection, flashedEdges], () => {
-  edges.value = restyleEdges(rawEdges.value, opSelection.value, flashedEdges.value)
+watch([selectedNodeId, flashedEdges], () => {
+  edges.value = restyleEdges(rawEdges.value, selectedNodeId.value, flashedEdges.value)
 }, { deep: true })
 
 // flashEdges triggers the live-traffic pulse: adds ids to the flashed
@@ -1718,6 +1777,9 @@ function indexEndpointGroups(groupNodes) {
 }
 
 function onTraceEvent(ev, force = false) {
+  // Live toggle off → no edge pulses / packet flights (scrubber replay
+  // passes force=true and is exempt so rewinding still animates).
+  if (!live.value && !force) return
   // request.op carries the specific op name in Endpoint (emitted by the
   // metrics middleware per handler exit). request.start from the
   // framework trace layer only carries the HTTP path — too coarse to
@@ -1806,6 +1868,203 @@ watch(expandedGroups, () => {
   if (latestSnapshot.value) load()
 }, { deep: true })
 
+// ─── Inspector model + live activity ──────────────────────────────
+// `now` ticks once a second so relative "ago" labels + the rolling
+// rate windows recompute without a per-event watcher.
+const now = ref(0)
+
+function iconForResource(kind) {
+  if (kind === 'cache') return 'cache'
+  if (kind === 'queue') return 'queue'
+  if (kind === 'database') return 'database'
+  return 'database'
+}
+
+// epAuth best-effort derives the redesign's auth label (null / 'required'
+// / 'requires:<perm>') from an endpoint's middleware names.
+function epAuth(e) {
+  const mw = Array.isArray(e.Middleware) ? e.Middleware : []
+  const perm = mw.find(m => m.startsWith('permission') || m.startsWith('requires'))
+  if (perm) { const i = perm.indexOf(':'); return i >= 0 ? 'requires:' + perm.slice(i + 1) : 'required' }
+  if (mw.some(m => m === 'auth' || m.startsWith('auth'))) return 'required'
+  return null
+}
+function epKind(e) {
+  if (e.Transport === 'rest') return 'rest'
+  if (e.Transport === 'websocket') return 'ws'
+  return (e.Method || '').toLowerCase().includes('mut') ? 'mutation' : 'query'
+}
+
+// rollingRps counts request.op events in the trailing 1.5s window
+// (optionally filtered to a set of service names) and reports a per-second
+// rate. Reads `now` so it refreshes on the tick.
+function rollingRps(serviceSet) {
+  void now.value
+  const cut = Date.now() - 1500
+  let n = 0
+  for (const ev of eventHistory.value) {
+    if (ev.kind !== 'request.op') continue
+    if (serviceSet && !serviceSet.has(ev.service)) continue
+    const ts = ev.timestamp ? new Date(ev.timestamp).getTime() : 0
+    if (ts >= cut) n++
+  }
+  return Math.round(n / 1.5)
+}
+
+function agoLabel(ts) {
+  const s = Math.max(1, Math.round((Date.now() - ts) / 1000))
+  return s < 60 ? s + 's' : Math.round(s / 60) + 'm'
+}
+
+const totals = computed(() => {
+  const snap = latestSnapshot.value
+  if (!snap) return { services: 0, eps: 0, rps: 0, errs: 0 }
+  const mods = new Set()
+  for (const e of snap.endpoints || []) mods.add(e.Module ? 'mod:' + e.Module : 'svc:' + e.Service)
+  let errs = 0
+  for (const s of snap.stats || []) errs += s.errors || 0
+  return { services: mods.size, eps: (snap.endpoints || []).length, rps: rollingRps(null), errs }
+})
+const liveActivity = computed(() => ({ rps: totals.value.rps, errs: totals.value.errs }))
+
+const inspectorTarget = computed(() => {
+  const id = selectedNodeId.value
+  const snap = latestSnapshot.value
+  if (!id || !snap) return null
+
+  if (id === 'internet') {
+    return { id, kind: 'clients', kindLabel: 'client', icon: 'internet', label: 'Clients',
+      desc: 'External traffic — web, mobile & partner integrations' }
+  }
+  if (id.startsWith('res:')) {
+    const r = (snap.resources || []).find(x => 'res:' + x.name === id)
+    if (!r) return null
+    return { id, kind: r.kind || 'resource', kindLabel: r.kind || 'resource', icon: iconForResource(r.kind), label: r.name, desc: r.description || '' }
+  }
+  if (id.startsWith('wk:')) {
+    const w = (snap.workers || []).find(x => 'wk:' + x.Name === id)
+    if (!w) return null
+    return { id, kind: 'worker', kindLabel: 'worker', icon: 'worker', label: w.Name, desc: 'Background worker · ' + (w.Status || 'unknown') }
+  }
+  if (id.startsWith('cron:')) {
+    const c = (snap.crons || []).find(x => 'cron:' + x.name === id)
+    if (!c) return null
+    return { id, kind: 'cron', kindLabel: 'cron', icon: 'cron', label: c.name, desc: 'Scheduled job · ' + (c.schedule || '') }
+  }
+  if (id.startsWith('dep:')) {
+    const name = id.slice(4)
+    const s = (snap.services || []).find(x => x.Name === name)
+    return { id, kind: 'service', kindLabel: 'service', icon: 'service', label: name, desc: (s && s.Description) || 'Consumed service' }
+  }
+  if (id.startsWith('cluster:')) return null
+
+  // Module / service group card.
+  const groupKeyOf = (e) => e.Module ? 'mod:' + e.Module : 'svc:' + e.Service
+  const eps = (snap.endpoints || []).filter(e => groupKeyOf(e) === id)
+  if (!eps.length && !id.startsWith('mod:') && !id.startsWith('svc:')) return null
+  const statsByKey = {}
+  for (const s of snap.stats || []) statsByKey[s.key] = s
+  const rlByKey = {}
+  for (const r of snap.ratelimits || []) rlByKey[r.key] = r
+  const serviceSet = new Set(eps.map(e => e.Service).filter(Boolean))
+
+  let reqs = 0, errs = 0, limited = false, maxRpm = 0, maxBurst = 0
+  const items = eps.map(e => {
+    const st = statsByKey[`${e.Service}.${e.Name}`] || null
+    const cnt = st ? st.count || 0 : 0
+    const err = st ? st.errors || 0 : 0
+    reqs += cnt; errs += err
+    const rl = e.RateLimit && e.RateLimit.rpm ? e.RateLimit : null
+    if (rl) { limited = true; maxRpm = Math.max(maxRpm, rl.rpm || 0); maxBurst = Math.max(maxBurst, rl.burst || 0) }
+    const kind = epKind(e)
+    const name = e.Transport === 'rest' ? e.Path : (e.Name || e.Path || '')
+    return {
+      kind,
+      name,
+      method: e.Transport === 'rest' ? e.Method : null,
+      auth: epAuth(e),
+      p50: st && st.p50 != null ? st.p50 : null,
+      reqs: cnt,
+      errors: err,
+      endpoint: { ...e, Stats: st, RateLimitRecord: rlByKey[`${e.Service}.${e.Name}`] || null },
+    }
+  })
+
+  // Crons + workers attributed to this module.
+  const crons = []
+  for (const c of snap.crons || []) {
+    if (c.service && serviceSet.has(c.service)) {
+      crons.push({ name: c.name, kind: 'cron', schedule: c.schedule || '—', last: c.lastRun ? agoLabel(new Date(c.lastRun.at || c.lastRun.time || Date.now()).getTime()) : 'idle' })
+    }
+  }
+  for (const w of snap.workers || []) {
+    if ((w.ServiceDeps || []).some(s => serviceSet.has(s))) {
+      crons.push({ name: w.Name, kind: 'worker', schedule: 'long-running', last: 'streaming' })
+    }
+  }
+
+  // Recent traces for this module from the live event ring.
+  void now.value
+  const traces = []
+  for (let i = eventHistory.value.length - 1; i >= 0 && traces.length < 12; i--) {
+    const ev = eventHistory.value[i]
+    if (ev.kind !== 'request.op' || !serviceSet.has(ev.service)) continue
+    const status = typeof ev.status === 'number' ? ev.status : (ev.error ? 500 : 200)
+    const ms = typeof ev.durationMs === 'number' ? Math.round(ev.durationMs) : (typeof ev.duration === 'number' ? Math.round(ev.duration) : 0)
+    const ts = ev.timestamp ? new Date(ev.timestamp).getTime() : Date.now()
+    traces.push({ op: ev.endpoint || '—', method: (ev.method || '').toUpperCase() || 'OP', status, ms, ago: agoLabel(ts) })
+  }
+
+  const limits = limited ? {
+    rpm: maxRpm || 0,
+    burst: maxBurst || 0,
+    used: 0,
+    pct: 0,
+  } : null
+
+  const errPct = reqs ? Math.round((errs / reqs) * 1000) / 10 : 0
+  const groupName = eps[0] ? (eps[0].Module || eps[0].Service) : id.replace(/^(mod:|svc:)/, '')
+  const isModule = id.startsWith('mod:')
+  return {
+    id,
+    kind: 'module',
+    icon: isModule ? 'module' : 'service',
+    label: groupName,
+    desc: '',
+    count: eps.length,
+    rps: rollingRps(serviceSet),
+    errPct,
+    limited,
+    endpoints: items,
+    crons,
+    traces,
+    limits,
+  }
+})
+
+// Highlight chips (errors / limits / auth) toggle the diagnostic overlay
+// set; nodes + edges dim/pop accordingly via the injected overlays.
+function toggleOverlay(id) {
+  const next = new Set(overlays.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  setOverlay(next)
+}
+function fit() { fitView(FIT_OPTS) }
+
+// Inspector → drawer bridges: clicking an endpoint row opens the deep-dive
+// drawer (tester / waterfall / rate-limit editor); the error badge opens
+// the recent-errors dialog.
+function onInspectorOp(endpoint) {
+  if (!endpoint) return
+  openDrawer({ kind: 'op', key: `${endpoint.Service}.${endpoint.Name}` })
+}
+function onInspectorErrors(epView) {
+  const e = epView && epView.endpoint
+  if (!e) return
+  openErrors({ service: e.Service, op: e.Name || `${e.Method} ${e.Path}` })
+}
+
 let traceSub = null
 let liveSub = null
 onMounted(() => {
@@ -1843,81 +2102,126 @@ onMounted(() => {
   // Cmd-K toggle. CmdK owns its own internal navigation keys; we just
   // own the open/close shortcut here.
   window.addEventListener('keydown', onGlobalKey)
+  // App identity for the header brand block.
+  fetchConfig().then(cfg => { if (cfg) { config.value = cfg; if (cfg.Name) document.title = cfg.Name } })
+  // 1s heartbeat drives relative "ago" labels + rolling rate windows.
+  nowTimer = setInterval(() => { now.value = (now.value + 1) % 100000 }, 1000)
 })
+let nowTimer = null
 onUnmounted(() => {
   if (traceSub) traceSub.close()
   if (liveSub) liveSub.close()
   flashTimers.forEach(t => clearTimeout(t))
+  if (nowTimer) clearInterval(nowTimer)
   window.removeEventListener('keydown', onGlobalKey)
 })
 </script>
 
 <template>
-  <div class="arch" ref="canvasEl">
-    <VueFlow
-      :nodes="nodes"
-      :edges="edges"
-      :node-types="nodeTypes"
-      :min-zoom="0.1"
-      :max-zoom="1.5"
-    >
-      <!-- Dot grid (Vue Flow's Background defaults to dots). Color +
-           gap match the --canvas-dot token in tokens.css; keep literals
-           here because Background takes string props, not CSS vars. -->
-      <Background pattern-color="#cbd5e1" :gap="18" :size="1.4" />
-      <Controls :show-interactive="false" />
-      <!-- Overview minimap — essential for navigating a large graph. Node
-           dots colored by category so it reads as a shrunk canvas. -->
-      <MiniMap pannable zoomable :node-color="minimapNodeColor" />
-    </VueFlow>
-    <GlobalMiddlewareBar />
-    <!-- Canvas-level utility strip (top-right). Currently just the
-         Auth opener, but reserved as the home for future global
-         actions (theme toggle, settings, …) so the canvas itself
-         hosts everything that used to live in the top tab bar. -->
-    <div class="canvas-utility">
-      <TimeScrubber />
-      <button
-        class="utility-btn"
-        :title="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
-        @click="toggleTheme"
-      >
-        <component :is="theme === 'dark' ? Sun : Moon" :size="14" :stroke-width="2" />
-        {{ theme === 'dark' ? 'Light' : 'Dark' }}
-      </button>
-      <button
-        v-if="expandedClusters.size > 0"
-        class="utility-btn"
-        title="Collapse all expanded groups back to the overview"
-        @click="collapseAllClusters"
-      >
-        <Layers :size="14" :stroke-width="2" />
-        Collapse all
-      </button>
-      <button
-        class="utility-btn"
-        title="Open Auth drawer (cached identities + rejections)"
-        @click="openDrawer({ kind: 'auth' })"
-      >
-        <ShieldCheck :size="14" :stroke-width="2" />
-        Auth
-      </button>
+  <div class="app" :class="'density-' + density">
+    <!-- Header — brand, single Architecture tab, plugins / jump / tweaks / theme -->
+    <header class="hdr">
+      <div class="brand">
+        <div class="brand-mark"><Hexagon :size="18" :stroke-width="2" /></div>
+        <div>
+          <div class="brand-name">{{ brandName }}</div>
+          <div class="brand-sub">nexus · {{ brandEnv }} · {{ brandBase }}</div>
+        </div>
+      </div>
+      <nav class="tabs"><button class="tab is-active">Architecture</button></nav>
+      <div class="hdr-spacer"></div>
+      <div class="hdr-tools">
+        <PluginChips />
+        <button class="icon-btn" @click="cmdkOpen = true" title="Jump to anything">
+          <Search :size="15" :stroke-width="2" /><span class="kbd">⌘K</span><span>jump</span>
+        </button>
+        <button class="icon-btn" :class="{ 'is-on': tweaksOpen }" @click="tweaksOpen = !tweaksOpen" title="Tweaks">
+          <SlidersHorizontal :size="15" :stroke-width="2" />
+        </button>
+        <button class="icon-btn" @click="toggleTheme" :title="theme === 'dark' ? 'Light theme' : 'Dark theme'">
+          <component :is="theme === 'dark' ? Sun : Moon" :size="15" :stroke-width="2" />
+        </button>
+      </div>
+    </header>
+
+    <div class="body">
+      <div class="canvas-wrap" :class="{ 'has-hl': overlays.size }" ref="canvasEl">
+        <VueFlow
+          :nodes="nodes"
+          :edges="edges"
+          :node-types="nodeTypes"
+          :min-zoom="0.1"
+          :max-zoom="1.5"
+          style="width: 100%; height: 100%"
+        >
+          <Background :pattern-color="gridColor" :gap="22" :size="1.4" />
+          <Controls :show-interactive="false" />
+          <MiniMap pannable zoomable :node-color="minimapNodeColor" />
+        </VueFlow>
+
+        <!-- Floating toolbar (top-left): layout mode + fit/live -->
+        <div class="float-tl">
+          <div class="seg">
+            <button :class="{ 'is-active': mode === 'layered' }" @click="setMode('layered')"><LayoutGrid :size="14" :stroke-width="2" />Layered</button>
+            <button :class="{ 'is-active': mode === 'flow' }" @click="setMode('flow')"><Workflow :size="14" :stroke-width="2" />Flow</button>
+          </div>
+          <div class="seg">
+            <button @click="fit"><Maximize2 :size="14" :stroke-width="2" />Fit</button>
+            <button :class="{ 'is-active': live }" @click="toggleLive"><Zap :size="14" :stroke-width="2" />Live</button>
+          </div>
+          <div class="seg" v-if="expandedClusters.size > 0">
+            <button @click="collapseAllClusters"><Layers :size="14" :stroke-width="2" />Collapse</button>
+          </div>
+        </div>
+
+        <!-- Highlight filter cluster (bottom-left) -->
+        <div class="float-bl">
+          <span class="hl-label">Highlight</span>
+          <button class="hl-chip" data-k="errors" :class="{ 'is-on': overlays.has('errors') }" @click="toggleOverlay('errors')"><AlertTriangle :size="14" :stroke-width="2" />Errors</button>
+          <button class="hl-chip" data-k="limits" :class="{ 'is-on': overlays.has('limits') }" @click="toggleOverlay('limits')"><Gauge :size="14" :stroke-width="2" />Limits</button>
+          <button class="hl-chip" data-k="auth" :class="{ 'is-on': overlays.has('auth') }" @click="toggleOverlay('auth')"><ShieldCheck :size="14" :stroke-width="2" />Auth</button>
+        </div>
+
+        <!-- Activity pill (top-right) -->
+        <div class="activity">
+          <span class="live"><span class="live-dot"></span>Live</span>
+          <span class="meta"><b>{{ liveActivity.rps }}</b>/s · <b>{{ liveActivity.errs }}</b> errors</span>
+        </div>
+
+        <PacketOverlay ref="packetOverlay" />
+        <div v-if="!nodes.length" class="empty">No services registered yet.</div>
+      </div>
+
+      <Inspector
+        :target="inspectorTarget"
+        :totals="totals"
+        :app-name="brandName"
+        @open-op="onInspectorOp"
+        @open-errors="onInspectorErrors"
+        @close="selectedNodeId = null"
+      />
     </div>
-    <PacketOverlay ref="packetOverlay" />
-    <!-- Overlay toggles — diagnostic paint mode. Floating chip group
-         that dims non-matching op rows so error / limit / auth
-         coverage is visible at a glance across the whole canvas. -->
-    <OverlayToggles />
-    <!-- Activity rail — bottom strip with the live trace feed. Folds
-         what used to be the Traces tab onto the canvas. Subscribes
-         independently from the canvas's own event listener (which
-         only watches request.op for edge pulses) so the rail always
-         reflects the full /__nexus/events stream, including spans +
-         auth rejects + errors. -->
-    <ActivityRail />
-    <div v-if="!nodes.length" class="empty">
-      No services registered yet.
-    </div>
+
+    <TweaksPanel
+      v-if="tweaksOpen"
+      :theme="theme"
+      :accent="accent"
+      :density="density"
+      :mode="mode"
+      :lane-labels="laneLabels"
+      :live="live"
+      :client-icon="clientIcon"
+      @set-theme="setTheme"
+      @set-accent="setAccent"
+      @set-density="setDensity"
+      @set-mode="setMode"
+      @set-lane="setLane"
+      @set-live="setLive"
+      @set-client="setClient"
+      @close="tweaksOpen = false"
+    />
+
+    <!-- Teleported overlays: deep-dive drawer, error dialog, Cmd-K -->
     <ErrorDialog
       :open="errorDialog.open"
       :service="errorDialog.service"
@@ -1946,60 +2250,132 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.arch { width: 100%; height: 100%; position: relative; background: var(--canvas-bg); }
+.app { display: flex; flex-direction: column; height: 100%; background: var(--bg); font-family: var(--font-sans); }
 
-/* Canvas-level utility strip — sits on top of the VueFlow surface in
-   the top-right, above any node. Reserved for global controls (Auth
-   drawer opener for now; theme + settings can land here next). z-
-   index above the canvas grid but below the drawer's backdrop. */
-.canvas-utility {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 12;
-  display: flex;
-  gap: var(--space-2);
+/* ---- header ---- */
+.hdr {
+  display: flex; align-items: center; gap: 18px;
+  height: 56px; padding: 0 16px 0 18px;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  position: relative; z-index: 30; flex-shrink: 0;
 }
-.utility-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: background 120ms, color 120ms, border-color 120ms;
+.brand { display: flex; align-items: center; gap: 11px; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
+  display: grid; place-items: center; color: var(--accent-ink);
+  box-shadow: 0 3px 14px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, .3);
 }
-.utility-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-  border-color: var(--border-strong);
+.brand-name { font-weight: 600; font-size: 14.5px; letter-spacing: -.01em; color: var(--ink); }
+.brand-sub { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); margin-top: 1px; letter-spacing: .02em; }
+
+.tabs { display: flex; align-items: center; gap: 2px; margin-left: 6px; }
+.tab {
+  font-size: 13px; color: var(--ink-2); font-weight: 480;
+  padding: 7px 12px; border-radius: var(--r-sm); cursor: pointer;
+  border: none; background: none; font-family: inherit; position: relative;
 }
+.tab.is-active { color: var(--ink); background: var(--surface-3); font-weight: 560; }
+.tab.is-active::after {
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px;
+  background: var(--accent); border-radius: 2px; box-shadow: 0 0 8px var(--accent-glow);
+}
+.hdr-spacer { flex: 1; }
+.hdr-tools { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  height: 34px; min-width: 34px; padding: 0 9px; border-radius: var(--r-sm);
+  border: 1px solid var(--glass-line); background: var(--glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+  color: var(--ink-2); display: inline-flex; align-items: center; gap: 7px;
+  cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 500;
+  transition: all var(--speed) var(--ease);
+}
+.icon-btn:hover { border-color: var(--accent-line); color: var(--ink); }
+.icon-btn .kbd {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; background: var(--surface-2);
+}
+.icon-btn.is-on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* ---- body / canvas ---- */
+.body { flex: 1; display: flex; min-height: 0; position: relative; }
+.canvas-wrap {
+  flex: 1; min-width: 0; position: relative;
+  background:
+    radial-gradient(1200px 600px at 56% 13%, var(--canvas-glow), transparent 70%),
+    var(--bg);
+}
+
+/* floating toolbar (top-left) */
+.float-tl { position: absolute; top: 14px; left: 14px; z-index: 12; display: flex; gap: 10px; align-items: flex-start; }
+.seg {
+  display: inline-flex; border-radius: var(--r-sm); padding: 3px; gap: 2px;
+  background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+}
+.seg button {
+  font-family: inherit; font-size: 12.5px; font-weight: 520; color: var(--ink-2);
+  border: none; background: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px; transition: all var(--speed) var(--ease);
+}
+.seg button:hover { color: var(--ink); }
+.seg button.is-active { background: var(--surface-3); color: var(--ink); box-shadow: var(--glow); }
+
+/* highlight cluster (bottom-left) */
+.float-bl {
+  position: absolute; bottom: 14px; left: 14px; z-index: 12;
+  display: flex; align-items: center; gap: 4px;
+  border-radius: var(--r-sm); padding: 5px 6px 5px 12px;
+  background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+}
+.float-bl .hl-label {
+  font-size: 10.5px; font-weight: 650; letter-spacing: .09em; color: var(--ink-3);
+  text-transform: uppercase; margin-right: 6px;
+}
+.hl-chip {
+  font-family: inherit; font-size: 12.5px; font-weight: 520; color: var(--ink-2);
+  border: 1px solid transparent; background: none; padding: 5px 11px; border-radius: 7px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all var(--speed) var(--ease);
+}
+.hl-chip:hover { background: var(--surface-3); color: var(--ink); }
+.hl-chip[data-k="errors"].is-on { color: var(--err); background: var(--err-soft); border-color: var(--err); }
+.hl-chip[data-k="limits"].is-on { color: var(--warn); background: var(--warn-soft); border-color: var(--warn); }
+.hl-chip[data-k="auth"].is-on { color: var(--authc); background: var(--auth-soft); border-color: var(--authc); }
+
+/* activity pill (top-right) */
+.activity {
+  position: absolute; top: 14px; right: 14px; z-index: 12;
+  display: flex; align-items: center; gap: 12px;
+  border-radius: var(--r-sm); padding: 8px 13px;
+  background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+}
+.activity .live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 560; color: var(--accent); }
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 10px 1px var(--accent-glow); animation: pulse 1.8s infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.activity .meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); }
+.activity .meta b { color: var(--ink); font-weight: 600; }
 
 .empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--text-dim);
-  pointer-events: none;
-  font-size: 13px;
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--ink-3); pointer-events: none; font-size: 13px;
 }
 
-/* Vue Flow edge polish — smooth transitions on stroke + opacity changes
-   so the selection / flash state-machine reads as movement, not as a
-   hard cut. Hover lifts opacity to 1 so a user can confirm "yes, this
-   line goes there" by mousing over without committing to a click. */
+/* lane labels honour the dim state when a highlight overlay is active */
+.canvas-wrap.has-hl :deep(.vue-flow__edge.hl-edge .vue-flow__edge-path) { filter: drop-shadow(0 0 5px var(--accent-glow)); }
+
+/* edge polish */
 :deep(.vue-flow__edge .vue-flow__edge-path) {
   transition: stroke 160ms ease, opacity 160ms ease, stroke-width 160ms ease;
 }
-:deep(.vue-flow__edge:hover .vue-flow__edge-path) {
-  opacity: 1 !important;
-}
+:deep(.vue-flow__edge:hover .vue-flow__edge-path) { opacity: 1 !important; }
 :deep(.vue-flow__edge:hover) { cursor: pointer; }
 </style>

@@ -1,102 +1,38 @@
 /* ----------------------------------------------------------------------
  * tokens.css — single source of truth for the dashboard's visual system.
  *
- * Imported by style.css; nothing else should define design tokens. New
- * components should reference these vars rather than literal hex values
- * so dark mode + theming stay coherent.
+ * "signal" identity (Nexus endpoint redesign). Imported by style.css;
+ * nothing else should define design tokens. New components reference these
+ * vars rather than literal hex so light + dark + accent theming stay
+ * coherent.
  *
- * Sections:
- *   1. Surfaces / borders / text   — neutrals + theme switch
- *   2. Brand accent
- *   3. Category colors             — node taxonomy (service, db, cache, …)
- *   4. Status set                  — healthy / warn / error / throttled / inactive
- *   5. Transport hues              — REST / GraphQL / WebSocket
- *   6. Typography                  — families + size scale + line heights
- *   7. Spacing + radii + shadows
- *   8. Vue Flow canvas
+ * The redesign's own token names (--surface, --ink, --line, --accent-line,
+ * --glass, role colors, …) live here alongside the legacy names every
+ * existing component already references (--bg-card, --border, --text,
+ * --cat-*, --st-*). The legacy names are MAPPED onto the signal palette so
+ * the whole component tree inherits the new look without a per-file rewrite.
+ *
+ * Dark is the default identity (matches the redesign + screenshots); the
+ * bare :root mirrors dark for FOUC safety, [data-theme="light"] overrides.
  * -------------------------------------------------------------------- */
 
 :root {
-  /* 1 — Surfaces / borders / text -------------------------------------- */
-  --bg:           #ffffff;
-  --bg-subtle:    #f7f8fa;
-  --bg-card:      #ffffff;
-  --bg-hover:     #f3f4f6;
-  --bg-active:    #eef2ff;
-  --bg-error:     #fef2f2;
-
-  --border:        #e5e7eb;
-  --border-strong: #d1d5db;
-
-  --text:        #111827;
-  --text-muted:  #4b5563;
-  --text-dim:    #6b7280;
-
-  /* 2 — Brand accent --------------------------------------------------- */
-  --accent:       #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft:  #eef2ff;
-
-  /* 3 — Category colors -----------------------------------------------
-   * One color per node type. Used as the left icon-tile fill (12% alpha)
-   * and the icon stroke. Pick once, reuse everywhere.
-   */
-  --cat-service:    #6366f1;   /* indigo  */
-  --cat-database:   #3b82f6;   /* blue    */
-  --cat-cache:      #f59e0b;   /* amber   */
-  --cat-queue:      #a855f7;   /* purple  */
-  --cat-cron:       #ec4899;   /* pink    */
-  --cat-worker:     #f97316;   /* orange  */
-  --cat-internet:   #64748b;   /* slate   */
-  --cat-peer:       #0ea5e9;   /* sky     */
-  --cat-auth:       #64748b;   /* slate   */
-
-  /* 4 — Status set ----------------------------------------------------
-   * Independent of category. A node has BOTH a category color (what it is)
-   * and a status color (how it's doing). Two-axis system; don't fold.
-   */
-  --st-healthy:        #10b981;
-  --st-healthy-soft:   #d1fae5;
-  --st-warn:           #f59e0b;
-  --st-warn-soft:      #fef3c7;
-  --st-error:          #ef4444;
-  --st-error-soft:     #fee2e2;
-  --st-throttled:      #0ea5e9;
-  --st-throttled-soft: #e0f2fe;
-  --st-inactive:       #9ca3af;
-  --st-inactive-soft:  #f3f4f6;
-
-  /* Back-compat shims for existing code that referenced --success / --error
-     before the status set existed. Map onto the new tokens so a refactor
-     doesn't have to touch every component at once. */
-  --success:        var(--st-healthy);
-  --success-soft:   var(--st-healthy-soft);
-  --error:          var(--st-error);
-  --error-soft:     var(--st-error-soft);
-
-  /* 5 — Transport hues ------------------------------------------------ */
-  --rest:        #15803d;
-  --rest-soft:   #dcfce7;
-  --graphql:     #be185d;
-  --graphql-soft:#fce7f3;
-  --ws:          #b45309;
-  --ws-soft:     #fef3c7;
-
-  /* 6 — Typography ---------------------------------------------------- */
-  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  /* — Typography ------------------------------------------------------ */
+  --font-sans: 'Geist Variable', 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* legacy aliases kept for any literal references */
+  --font-ui: var(--font-sans);
 
-  --fs-xs: 11px;     /* metrics, badges, chips */
-  --fs-sm: 12px;     /* subtitles, labels */
-  --fs-md: 13px;     /* body */
-  --fs-lg: 14px;     /* node titles, drawer headers */
-  --fs-xl: 16px;     /* section headers */
-  --fs-xxl: 20px;    /* modal headers */
-
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+  --fs-xl: 16px;
+  --fs-xxl: 20px;
   --lh-tight: 1.2;
-  --lh-body:  1.5;
+  --lh-body: 1.5;
 
-  /* 7 — Spacing + radii + shadows ------------------------------------ */
+  /* — Spacing / radii ------------------------------------------------- */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -105,39 +41,213 @@
   --space-6: 32px;
 
   --radius-sm: 4px;
-  --radius:    6px;     /* legacy alias */
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius:    6px;
+  --radius-md: 9px;
+  --radius-lg: 14px;
+  /* redesign radius aliases */
+  --r-card: 14px;
+  --r-sm:   9px;
+  --r-pill: 999px;
 
-  --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.04);
-  --shadow-md: 0 1px 3px rgba(17, 24, 39, 0.08), 0 1px 2px rgba(17, 24, 39, 0.04);
-  --shadow-lg: 0 4px 6px -1px rgba(17, 24, 39, 0.08), 0 2px 4px -2px rgba(17, 24, 39, 0.04);
+  --speed: 240ms;
+  --ease: cubic-bezier(.4, .12, .15, 1);
 
-  /* 8 — Vue Flow canvas ---------------------------------------------- */
-  --canvas-bg:  #f8fafc;
-  --canvas-dot: #cbd5e1;
+  /* — Role colors (endpoint transport kinds) — shared baseline -------- */
+  --rest:     #4fd08a;
+  --query:    #6aa6ff;
+  --mutation: #ff7b74;
+  --ws:       #f0b54a;
+  --worker:   #7c5cff;
+  --cron:     #0e9888;
 }
 
-/* Dark mode tokens — opt-in via [data-theme="dark"] on <html>. Wired but
-   not yet toggled from the UI; the next step ships a theme switch in the
-   header. Until then this just makes sure the foundation is ready. */
-[data-theme="dark"] {
-  --bg:           #0b0f19;
-  --bg-subtle:    #11151f;
-  --bg-card:      #161b27;
-  --bg-hover:     #1c2230;
-  --bg-active:    #1e2438;
-  --bg-error:     #2a1414;
+/* ===================================================================== */
+/*  DARK (default identity)                                              */
+/* ===================================================================== */
+:root,
+:root[data-theme="dark"] {
+  /* Surfaces / lines / text (signal names) */
+  --surface:    #11151d;
+  --surface-2:  #161b24;
+  --surface-3:  #1c222d;
+  --ink:        #eef2f7;
+  --ink-2:      #aab4c0;
+  --ink-3:      #69737f;
+  --line:        #232b35;
+  --line-2:      #1a212a;
+  --line-strong: #2e3744;
 
-  --border:        #1f2532;
-  --border-strong: #2a3042;
+  /* Legacy neutral aliases → signal surfaces */
+  --bg:         #07090d;
+  --bg-2:       #0a0e13;
+  --bg-subtle:  #0a0e13;
+  --bg-card:    var(--surface);
+  --bg-hover:   var(--surface-3);
+  --bg-active:  var(--surface-2);
+  --bg-error:   #2a1414;
+  --border:        var(--line);
+  --border-strong: var(--line-strong);
+  --text:       var(--ink);
+  --text-muted: var(--ink-2);
+  --text-dim:   var(--ink-3);
 
-  --text:        #e5e7eb;
-  --text-muted:  #9ca3af;
-  --text-dim:    #6b7280;
+  /* Accent (teal) — overridable live by the Tweaks accent picker */
+  --accent:      #2fe0c6;
+  --accent-2:    #25c4ae;
+  --accent-hover:#25c4ae;
+  --accent-ink:  #04211d;
+  --accent-soft: rgba(47, 224, 198, .13);
+  --accent-line: rgba(47, 224, 198, .42);
+  --accent-glow: rgba(47, 224, 198, .42);
+  --canvas-glow: rgba(47, 224, 198, .09);
+  --violet:      #8b8bf0;
+  --violet-soft: rgba(139, 139, 240, .14);
 
-  --accent-soft: #1e1b4b;
+  /* Diagnostic / status hues */
+  --err:        #ff6166;
+  --err-soft:   rgba(255, 97, 102, .14);
+  --warn:       #f5a623;
+  --warn-soft:  rgba(245, 166, 35, .14);
+  --authc:      #9b7bff;
+  --auth-soft:  rgba(155, 123, 255, .14);
 
-  --canvas-bg:  #0e131c;
-  --canvas-dot: #1f2532;
+  /* Status set (legacy names) */
+  --st-healthy:        #35c489;
+  --st-healthy-soft:   rgba(53, 196, 137, .16);
+  --st-warn:           var(--warn);
+  --st-warn-soft:      var(--warn-soft);
+  --st-error:          var(--err);
+  --st-error-soft:     var(--err-soft);
+  --st-throttled:      #0ea5e9;
+  --st-throttled-soft: rgba(14, 165, 233, .16);
+  --st-inactive:       var(--ink-3);
+  --st-inactive-soft:  rgba(105, 115, 127, .18);
+  --success:      var(--st-healthy);
+  --success-soft: var(--st-healthy-soft);
+  --error:        var(--st-error);
+  --error-soft:   var(--st-error-soft);
+
+  /* Category colors (node taxonomy) */
+  --cat-service:  #8b8bf0;
+  --cat-database: #6aa6ff;
+  --cat-cache:    #f5a623;
+  --cat-queue:    #b18bff;
+  --cat-cron:     #f25fb0;
+  --cat-worker:   #ff8a4c;
+  --cat-internet: #8693a3;
+  --cat-peer:     #2fb8e0;
+  --cat-auth:     var(--authc);
+
+  /* Transport hues (soft backers for chips) */
+  --rest-soft:    rgba(79, 208, 138, .15);
+  --graphql:      #ff7b74;
+  --graphql-soft: rgba(255, 123, 116, .15);
+  --ws-soft:      rgba(240, 181, 74, .15);
+
+  /* Edges / grid */
+  --edge:        #2b333f;
+  --edge-strong: #3c4655;
+  --grid:        #161d27;
+  --grid-2:      #131922;
+
+  /* Shadows / glass / sheen */
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-md:  0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px rgba(0, 0, 0, .28);
+  --shadow-lg:  0 2px 6px rgba(0, 0, 0, .45), 0 12px 36px rgba(0, 0, 0, .4);
+  --shadow-card: var(--shadow-md);
+  --shadow-pop:  0 12px 40px rgba(0, 0, 0, .55);
+  --shadow-sel:  0 0 0 1.5px var(--accent), 0 0 28px var(--accent-glow);
+  --glow:        0 0 0 1px rgba(47, 224, 198, .05);
+  --hi:          rgba(255, 255, 255, .055);
+  --glass:       rgba(16, 20, 28, .6);
+  --glass-line:  rgba(255, 255, 255, .08);
+
+  /* Vue Flow canvas */
+  --canvas-bg:  var(--bg);
+  --canvas-dot: var(--grid);
+}
+
+/* ===================================================================== */
+/*  LIGHT                                                                 */
+/* ===================================================================== */
+:root[data-theme="light"] {
+  --surface:    #ffffff;
+  --surface-2:  #f8fafc;
+  --surface-3:  #f2f5f8;
+  --ink:        #0f141b;
+  --ink-2:      #4b5663;
+  --ink-3:      #8b95a2;
+  --line:        #e3e8ee;
+  --line-2:      #edf1f5;
+  --line-strong: #d3dae2;
+
+  --bg:         #f1f4f7;
+  --bg-2:       #e9edf2;
+  --bg-subtle:  #e9edf2;
+  --bg-card:    var(--surface);
+  --bg-hover:   var(--surface-3);
+  --bg-active:  var(--surface-2);
+  --bg-error:   #fef2f2;
+  --border:        var(--line);
+  --border-strong: var(--line-strong);
+  --text:       var(--ink);
+  --text-muted: var(--ink-2);
+  --text-dim:   var(--ink-3);
+
+  --accent:      #0d9488;
+  --accent-2:    #0b7c72;
+  --accent-hover:#0b7c72;
+  --accent-ink:  #ffffff;
+  --accent-soft: rgba(13, 148, 136, .10);
+  --accent-line: rgba(13, 148, 136, .32);
+  --accent-glow: rgba(13, 148, 136, .22);
+  --canvas-glow: rgba(13, 148, 136, .06);
+  --violet:      #5b5bd6;
+  --violet-soft: rgba(91, 91, 214, .10);
+
+  --err:        #e0453f;
+  --err-soft:   rgba(224, 69, 63, .10);
+  --warn:       #c47d09;
+  --warn-soft:  rgba(196, 125, 9, .12);
+  --authc:      #6d4dff;
+  --auth-soft:  rgba(109, 77, 255, .10);
+
+  --st-healthy:        #2f9e6a;
+  --st-healthy-soft:   rgba(47, 158, 106, .12);
+  --st-throttled:      #0284c7;
+  --st-throttled-soft: rgba(2, 132, 199, .12);
+
+  --cat-service:  #5b5bd6;
+  --cat-database: #2d6fe0;
+  --cat-cache:    #c47d09;
+  --cat-queue:    #7c5cff;
+  --cat-cron:     #d6489b;
+  --cat-worker:   #d96a26;
+  --cat-internet: #6b7785;
+  --cat-peer:     #0d8ec0;
+
+  --rest:     #2f8f5b;
+  --query:    #2d6fe0;
+  --mutation: #d4564f;
+  --ws:       #b8791a;
+  --rest-soft:    rgba(47, 143, 91, .12);
+  --graphql:      #d4564f;
+  --graphql-soft: rgba(212, 86, 79, .12);
+  --ws-soft:      rgba(184, 121, 26, .14);
+
+  --edge:        #c2cad4;
+  --edge-strong: #9aa6b4;
+  --grid:        #dde3ea;
+  --grid-2:      #e9edf2;
+
+  --shadow-sm:  0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-md:  0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
+  --shadow-lg:  0 2px 6px rgba(16, 24, 40, .08), 0 12px 30px rgba(16, 24, 40, .12);
+  --shadow-card: var(--shadow-md);
+  --shadow-pop:  0 8px 30px rgba(16, 24, 40, .14), 0 2px 6px rgba(16, 24, 40, .08);
+  --shadow-sel:  0 0 0 1.5px var(--accent), 0 10px 30px rgba(13, 148, 136, .18);
+  --glow:        none;
+  --hi:          rgba(255, 255, 255, .8);
+  --glass:       rgba(255, 255, 255, .64);
+  --glass-line:  rgba(15, 22, 30, .07);
 }

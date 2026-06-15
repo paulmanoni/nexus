@@ -21,7 +21,7 @@ func MountDashboard(g *gin.RouterGroup, reg *Registry) {
 	g.GET("/endpoints", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"services":  reg.Services(),
-			"endpoints": reg.Endpoints(),
+			"endpoints": reg.VisibleEndpoints(),
 		})
 	})
 	g.GET("/resources", func(c *gin.Context) {
