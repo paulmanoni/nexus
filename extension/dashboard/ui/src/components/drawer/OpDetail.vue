@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Save, RotateCcw, Gauge } from 'lucide-vue-next'
 import OpTester from './OpTester.vue'
 import StackTrace from '../StackTrace.vue'
+import TraceWaterfall from '../TraceWaterfall.vue'
 import { subscribeEvents, configureRateLimit, resetRateLimit } from '../../lib/api.js'
 
 // OpDetail is the drawer content for a selected endpoint. Reads a
@@ -57,6 +58,7 @@ function pushEvent(ev) {
     duration: typeof ev.durationMs === 'number' ? ev.durationMs : 0,
     error: ev.error || '',
     stack: ev.stack || '',
+    traceId: ev.traceId || '',
   }
   const next = [entry, ...recent.value]
   if (next.length > RECENT_CAP) next.length = RECENT_CAP
@@ -78,6 +80,11 @@ onUnmounted(() => { if (sub) sub.close() })
 function formatTime(iso) {
   try { return new Date(iso).toLocaleTimeString() } catch { return '' }
 }
+
+// Expand a recent call into its full span waterfall (on-demand fetch of
+// /__nexus/traces/:id via TraceWaterfall — click-triggered, not polled).
+const openTrace = ref('')
+function toggleTrace(r) { openTrace.value = openTrace.value === r.id ? '' : r.id }
 
 // ─── Rate limit ────────────────────────────────────────────────────
 // Live data path:
@@ -306,8 +313,12 @@ async function rlReset() {
             </span>
             <span class="rlat" v-if="r.duration">{{ r.duration }} ms</span>
             <span v-if="r.error" class="rerr" :title="r.error">{{ r.error }}</span>
+            <button v-if="r.traceId" class="trace-toggle" @click="toggleTrace(r)">
+              {{ openTrace === r.id ? 'hide trace' : 'trace' }}
+            </button>
           </div>
           <StackTrace :stack="r.stack" />
+          <TraceWaterfall v-if="r.traceId && openTrace === r.id" :trace-id="r.traceId" />
         </div>
       </div>
       <div v-else class="placeholder">
@@ -504,6 +515,17 @@ async function rlReset() {
   align-items: center;
 }
 .recent-row.err { border-color: color-mix(in srgb, var(--st-error) 25%, var(--border)); }
+.trace-toggle {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 7px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-pill, 999px);
+}
+.trace-toggle:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .when { color: var(--text-dim); }
 .rstatus {
   display: inline-flex;

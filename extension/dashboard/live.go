@@ -13,6 +13,7 @@ import (
 	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/transport/gql"
 )
@@ -51,6 +52,15 @@ type liveSnapshot struct {
 	Crons       []cron.Snapshot             `json:"crons,omitempty"`
 	RateLimits  []ratelimit.Record          `json:"ratelimits,omitempty"`
 	GraphQLCache []gql.MountCacheStats      `json:"graphqlCache,omitempty"`
+	// Middlewares + Global stream the registered middleware catalogue and
+	// the ordered global chain so the dashboard renders them live instead
+	// of polling GET /__nexus/middlewares.
+	Middlewares []middleware.Info `json:"middlewares,omitempty"`
+	Global      []string          `json:"global,omitempty"`
+	// Extra carries optional plugin-contributed payloads (e.g. auth's
+	// cached-identity summary) registered via RegisterSnapshotExtra, so
+	// plugin live state streams over the WS rather than being polled.
+	Extra map[string]any `json:"extra,omitempty"`
 }
 
 // streamLive is the WS handler at /__nexus/live. Push-driven: a
@@ -102,12 +112,15 @@ func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler,
 
 		buildSnap := func() liveSnapshot {
 			snap := liveSnapshot{
-				Kind:      "snapshot",
-				TS:        time.Now(),
-				Services:  reg.Services(),
-				Endpoints: reg.VisibleEndpoints(),
-				Resources: reg.Resources(),
-				Workers:   reg.Workers(),
+				Kind:        "snapshot",
+				TS:          time.Now(),
+				Services:    reg.Services(),
+				Endpoints:   reg.VisibleEndpoints(),
+				Resources:   reg.Resources(),
+				Workers:     reg.Workers(),
+				Middlewares: reg.Middlewares(),
+				Global:      reg.GlobalMiddlewares(),
+				Extra:       snapshotExtras(),
 			}
 			if ms != nil {
 				snap.Stats = ms.Snapshot()

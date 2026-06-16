@@ -1,49 +1,27 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { ShieldCheck, ShieldOff, Trash2, RefreshCw, AlertCircle } from 'lucide-vue-next'
-import { fetchAuth, invalidateAuth, subscribeEvents } from '../../lib/api.js'
+import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
+import { ShieldOff, Trash2, AlertCircle } from 'lucide-vue-next'
+import { invalidateAuth, subscribeEvents } from '../../lib/api.js'
 import { formatRelative } from '../../lib/time.js'
 
-// AuthDetail is the drawer content for the global Auth surface — the
-// only drawer kind without an ownership relationship to a canvas node.
-// It packs both panels of the legacy Auth tab into the drawer's narrow
-// 480px column:
-//   - Cached identities                   (each = compact card)
-//   - Recent 401/403 rejections (live)    (chronological list)
-// Plus header actions: refresh + invalidate-all.
-//
-// Wraps the same /__nexus/auth REST + /__nexus/events WS the legacy
-// view used. Lifecycle: subscribe on mount, unsubscribe on unmount,
-// poll every 5s so cache TTL expirations show up while the drawer is
-// open without needing a manual refresh.
+// AuthDetail — cached identities + live 401/403 rejections, both
+// WebSocket-driven (no polling). Identities ride the /__nexus/live
+// snapshot: the auth plugin contributes them via RegisterSnapshotExtra,
+// and Architecture surfaces that here as the injected `nexus.authSummary`
+// (null when auth.Module isn't wired). Rejections stream from
+// /__nexus/events. Cache-TTL expirations show up on the next live frame
+// (≤5s heartbeat) without a manual refresh or a poll loop.
+const authSummary = inject('nexus.authSummary', { value: null })
 
-// state shapes:
-//   loading        — first fetch pending
-//   configured     — auth.Module is wired; snapshot is valid
-//   not-configured — /__nexus/auth returned 404
-//   error          — transport / server failure
-const state = ref({ kind: 'loading', snapshot: null, error: '' })
+const state = computed(() => ({ kind: authSummary.value == null ? 'not-configured' : 'configured' }))
+const identities = computed(() => (authSummary.value && authSummary.value.identities) || [])
+const cachingEnabled = computed(() => !!(authSummary.value && authSummary.value.cachingEnabled))
+
 const rejects = ref([])
 const REJECT_CAP = 50
-
 let traceSub = null
-let pollTimer = null
-
-async function refresh() {
-  try {
-    const data = await fetchAuth()
-    if (data === null) {
-      state.value = { kind: 'not-configured', snapshot: null, error: '' }
-      return
-    }
-    state.value = { kind: 'configured', snapshot: data, error: '' }
-  } catch (err) {
-    state.value = { kind: 'error', snapshot: null, error: err.message || String(err) }
-  }
-}
 
 onMounted(() => {
-  refresh()
   traceSub = subscribeEvents(ev => {
     if (ev.kind !== 'auth.reject') return
     rejects.value.unshift({
@@ -57,16 +35,8 @@ onMounted(() => {
     })
     if (rejects.value.length > REJECT_CAP) rejects.value.length = REJECT_CAP
   }, null, 0)
-  // Light polling so cache expiries surface without a manual click.
-  pollTimer = setInterval(refresh, 5000)
 })
-onUnmounted(() => {
-  if (traceSub) traceSub.close()
-  if (pollTimer) clearInterval(pollTimer)
-})
-
-const identities = computed(() => state.value.snapshot?.identities || [])
-const cachingEnabled = computed(() => !!state.value.snapshot?.cachingEnabled)
+onUnmounted(() => { if (traceSub) traceSub.close() })
 
 const invalidating = ref('')
 async function forceLogout(id) {
@@ -74,17 +44,13 @@ async function forceLogout(id) {
   invalidating.value = id
   try {
     const res = await invalidateAuth({ id })
-    await refresh()
     rejects.value.unshift({
-      at: new Date().toISOString(),
-      service: '', endpoint: '',
-      reason: 'admin-invalidate',
-      identity: id,
-      error: `dropped ${res.dropped} session(s)`,
-      status: 200,
+      at: new Date().toISOString(), service: '', endpoint: '',
+      reason: 'admin-invalidate', identity: id,
+      error: `dropped ${res.dropped} session(s)`, status: 200,
     })
   } catch (err) {
-    state.value.error = err.message || String(err)
+    console.error('[nexus] invalidate failed:', err)
   } finally {
     invalidating.value = ''
   }
@@ -94,8 +60,6 @@ const invalidatingAll = ref(false)
 async function invalidateAllSessions() {
   if (invalidatingAll.value) return
   // No server "invalidate all" endpoint — sweep the visible snapshot.
-  // Best-effort; sessions arriving between fetches survive but the
-  // operator can re-run.
   invalidatingAll.value = true
   let dropped = 0
   for (const row of identities.value) {
@@ -105,14 +69,10 @@ async function invalidateAllSessions() {
       dropped += res.dropped || 0
     } catch { /* keep going */ }
   }
-  await refresh()
   rejects.value.unshift({
-    at: new Date().toISOString(),
-    service: '', endpoint: '',
-    reason: 'admin-invalidate',
-    identity: '<all>',
-    error: `dropped ${dropped} session(s)`,
-    status: 200,
+    at: new Date().toISOString(), service: '', endpoint: '',
+    reason: 'admin-invalidate', identity: '<all>',
+    error: `dropped ${dropped} session(s)`, status: 200,
   })
   invalidatingAll.value = false
 }
@@ -131,10 +91,6 @@ async function invalidateAllSessions() {
           <span class="dot" :class="{ on: cachingEnabled }" />
           cache {{ cachingEnabled ? 'enabled' : 'disabled' }}
         </span>
-        <button class="action ghost" @click="refresh" title="Refresh now">
-          <RefreshCw :size="13" :stroke-width="2" />
-          Refresh
-        </button>
         <button
           v-if="state.kind === 'configured' && identities.length > 0"
           class="action danger"

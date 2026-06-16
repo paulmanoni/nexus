@@ -67,7 +67,10 @@ const overlayClass = computed(() => {
         <span v-if="data.remote" class="nremote"><Cloud :size="12" :stroke-width="1.8" /></span>
         <span v-else-if="hasAuth" class="nlock"><Lock :size="12" :stroke-width="1.8" /></span>
       </div>
-      <div class="nmeta">{{ headerKind }} · {{ total }} {{ total === 1 ? 'endpoint' : 'endpoints' }}</div>
+      <div class="nmeta">
+        {{ headerKind }} · {{ total }} {{ total === 1 ? 'endpoint' : 'endpoints' }}
+        <span v-if="data.deployment" class="ndep" :title="'Deployment: ' + data.deployment">{{ data.deployment }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -103,7 +106,12 @@ const overlayClass = computed(() => {
 .nspacer { flex: 1; }
 .nlock, .nremote { color: var(--ink-3); display: inline-flex; opacity: .55; flex: none; }
 .nremote { color: var(--cat-peer); opacity: .9; }
-.nmeta { font-size: 11px; color: var(--ink-3); margin-top: 6px; }
+.nmeta { font-size: 11px; color: var(--ink-3); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+.ndep {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: .02em;
+  color: var(--cat-peer); background: color-mix(in srgb, var(--cat-peer) 14%, transparent);
+  border-radius: 4px; padding: 1px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px;
+}
 
 .health { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .health.ok { background: var(--st-healthy); }

@@ -67,6 +67,7 @@ import (
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/extension/dashboard"
 	"github.com/paulmanoni/nexus/trace"
 )
 
@@ -360,6 +361,17 @@ func Module(cfg Config) nexus.Option {
 		state.cache = newIdentityCache(cfg.Authentication.Cache)
 	}
 	manager := &Manager{state: state}
+
+	// Stream the auth summary (cached identities + caching flag) over the
+	// dashboard's live WS instead of letting the frontend poll GET
+	// /__nexus/auth. Live rejection events already flow via the trace bus
+	// (LiveEvents: "auth.reject"), so this completes a poll-free auth panel.
+	dashboard.RegisterSnapshotExtra("auth", func() any {
+		return map[string]any{
+			"identities":     manager.Identities(),
+			"cachingEnabled": state.cache != nil,
+		}
+	})
 
 	pluginOpts := []nexus.Option{
 		nexus.Raw(fx.Supply(manager)),

@@ -418,6 +418,14 @@ minimap, dark mode; live traffic pulses), Endpoints (per-op tester), Crons, Rate
 limits, Auth, Traces. Gate it behind your own middleware via
 `Config.Middleware.Dashboard`.
 
+The dashboard is **WebSocket-driven, not polled**: `/__nexus/live` pushes one
+state snapshot (services, endpoints, resources, workers, stats, crons,
+ratelimits, graphqlCache, middlewares, auth) on change + a 5s heartbeat, and
+`/__nexus/events` streams traces — gathered only while a client is connected,
+so endpoints pay nothing per request. Plugins add their live state to the
+snapshot's `extra` map via `dashboard.RegisterSnapshotExtra(name, func() any)`
+(auth does this for cached identities) instead of exposing a polled endpoint.
+
 **Exempt an endpoint from the dashboard** with `nexus.HideFromDashboard()` —
 a cross-transport per-op option (REST / GraphQL / WS) that drops the endpoint
 from `/__nexus/endpoints`, the live snapshot, and the architecture graph while

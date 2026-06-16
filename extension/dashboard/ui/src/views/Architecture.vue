@@ -30,7 +30,7 @@ import ClusterNode from '../components/ClusterNode.vue'
 import Inspector from '../components/Inspector.vue'
 import TweaksPanel from '../components/TweaksPanel.vue'
 import PluginChips from '../components/PluginChips.vue'
-import { subscribeEvents, subscribeLive, fetchConfig } from '../lib/api.js'
+import { subscribeEvents, subscribeLive, fetchConfig, triggerCron, setCronPaused } from '../lib/api.js'
 import { buildClusters, computeVisible } from '../lib/topology.js'
 
 const nodes = ref([])
@@ -1927,6 +1927,35 @@ const totals = computed(() => {
 })
 const liveActivity = computed(() => ({ rps: totals.value.rps, errs: totals.value.errs }))
 
+// Overview extras — all from the live WS snapshot (no polling). The global
+// middleware chain, GraphQL document-cache stats, and the auth summary the
+// auth plugin contributes via RegisterSnapshotExtra.
+const globalMiddleware = computed(() => {
+  const snap = latestSnapshot.value
+  if (!snap) return []
+  return snap.global || []
+})
+const graphqlCache = computed(() => {
+  const snap = latestSnapshot.value
+  if (!snap || !Array.isArray(snap.graphqlCache)) return []
+  return snap.graphqlCache.map(m => {
+    const hits = m.Hits || 0, misses = m.Misses || 0
+    const total = hits + misses
+    return {
+      path: m.path,
+      hits, misses, size: m.Size || 0, capacity: m.Capacity || 0,
+      hitRate: total ? Math.round((hits / total) * 100) : 0,
+    }
+  })
+})
+const authSummary = computed(() => {
+  const snap = latestSnapshot.value
+  const a = snap && snap.extra && snap.extra.auth
+  if (!a) return null
+  return { identities: a.identities || [], cachingEnabled: !!a.cachingEnabled }
+})
+provide('nexus.authSummary', authSummary)
+
 const inspectorTarget = computed(() => {
   const id = selectedNodeId.value
   const snap = latestSnapshot.value
@@ -1934,22 +1963,42 @@ const inspectorTarget = computed(() => {
 
   if (id === 'internet') {
     return { id, kind: 'clients', kindLabel: 'client', icon: 'internet', label: 'Clients',
-      desc: 'External traffic — web, mobile & partner integrations' }
+      desc: 'External traffic — web, mobile & partner integrations', rps: rollingRps(null) }
   }
   if (id.startsWith('res:')) {
     const r = (snap.resources || []).find(x => 'res:' + x.name === id)
     if (!r) return null
-    return { id, kind: r.kind || 'resource', kindLabel: r.kind || 'resource', icon: iconForResource(r.kind), label: r.name, desc: r.description || '' }
+    return {
+      id, kind: 'resource', kindLabel: r.kind || 'resource', icon: iconForResource(r.kind),
+      label: r.name, desc: r.description || '',
+      resource: {
+        healthy: r.healthy !== false, kind: r.kind || 'resource',
+        details: r.details || {}, attachedTo: r.attachedTo || [], dependsOn: r.dependsOn || [],
+      },
+    }
   }
   if (id.startsWith('wk:')) {
     const w = (snap.workers || []).find(x => 'wk:' + x.Name === id)
     if (!w) return null
-    return { id, kind: 'worker', kindLabel: 'worker', icon: 'worker', label: w.Name, desc: 'Background worker · ' + (w.Status || 'unknown') }
+    return {
+      id, kind: 'worker', kindLabel: 'worker', icon: 'worker', label: w.Name, desc: w.Description || '',
+      worker: {
+        status: w.Status || 'unknown', lastError: w.LastError || '',
+        resourceDeps: w.ResourceDeps || [], serviceDeps: w.ServiceDeps || [],
+      },
+    }
   }
   if (id.startsWith('cron:')) {
     const c = (snap.crons || []).find(x => 'cron:' + x.name === id)
     if (!c) return null
-    return { id, kind: 'cron', kindLabel: 'cron', icon: 'cron', label: c.name, desc: 'Scheduled job · ' + (c.schedule || '') }
+    return {
+      id, kind: 'cron', kindLabel: 'cron', icon: 'cron', label: c.name, desc: c.description || '',
+      cron: {
+        schedule: c.schedule || '—', paused: !!c.paused, running: !!c.running,
+        nextRun: c.nextRun || null, lastRun: c.lastRun || null,
+        history: Array.isArray(c.history) ? c.history.slice(0, 10) : [], service: c.service || '',
+      },
+    }
   }
   if (id.startsWith('dep:')) {
     const name = id.slice(4)
@@ -1968,19 +2017,15 @@ const inspectorTarget = computed(() => {
   for (const r of snap.ratelimits || []) rlByKey[r.key] = r
   const serviceSet = new Set(eps.map(e => e.Service).filter(Boolean))
 
-  let reqs = 0, errs = 0, limited = false, maxRpm = 0, maxBurst = 0
+  let reqs = 0, errs = 0
   const items = eps.map(e => {
     const st = statsByKey[`${e.Service}.${e.Name}`] || null
     const cnt = st ? st.count || 0 : 0
     const err = st ? st.errors || 0 : 0
     reqs += cnt; errs += err
-    const rl = e.RateLimit && e.RateLimit.rpm ? e.RateLimit : null
-    if (rl) { limited = true; maxRpm = Math.max(maxRpm, rl.rpm || 0); maxBurst = Math.max(maxBurst, rl.burst || 0) }
-    const kind = epKind(e)
-    const name = e.Transport === 'rest' ? e.Path : (e.Name || e.Path || '')
     return {
-      kind,
-      name,
+      kind: epKind(e),
+      name: e.Transport === 'rest' ? e.Path : (e.Name || e.Path || ''),
       method: e.Transport === 'rest' ? e.Method : null,
       auth: epAuth(e),
       p50: st && st.p50 != null ? st.p50 : null,
@@ -1994,51 +2039,57 @@ const inspectorTarget = computed(() => {
   const crons = []
   for (const c of snap.crons || []) {
     if (c.service && serviceSet.has(c.service)) {
-      crons.push({ name: c.name, kind: 'cron', schedule: c.schedule || '—', last: c.lastRun ? agoLabel(new Date(c.lastRun.at || c.lastRun.time || Date.now()).getTime()) : 'idle' })
+      crons.push({ name: c.name, kind: 'cron', schedule: c.schedule || '—', last: c.paused ? 'paused' : (c.lastRun ? 'ran' : 'idle') })
     }
   }
   for (const w of snap.workers || []) {
     if ((w.ServiceDeps || []).some(s => serviceSet.has(s))) {
-      crons.push({ name: w.Name, kind: 'worker', schedule: 'long-running', last: 'streaming' })
+      crons.push({ name: w.Name, kind: 'worker', schedule: 'long-running', last: (w.Status || 'running') })
     }
   }
 
-  // Recent traces for this module from the live event ring.
+  // Recent traces for this module from the live event ring (WS, not polled).
   void now.value
   const traces = []
   for (let i = eventHistory.value.length - 1; i >= 0 && traces.length < 12; i--) {
     const ev = eventHistory.value[i]
     if (ev.kind !== 'request.op' || !serviceSet.has(ev.service)) continue
     const status = typeof ev.status === 'number' ? ev.status : (ev.error ? 500 : 200)
-    const ms = typeof ev.durationMs === 'number' ? Math.round(ev.durationMs) : (typeof ev.duration === 'number' ? Math.round(ev.duration) : 0)
+    const ms = typeof ev.durationMs === 'number' ? Math.round(ev.durationMs) : 0
     const ts = ev.timestamp ? new Date(ev.timestamp).getTime() : Date.now()
-    traces.push({ op: ev.endpoint || '—', method: (ev.method || '').toUpperCase() || 'OP', status, ms, ago: agoLabel(ts) })
+    traces.push({ op: ev.endpoint || '—', method: (ev.method || '').toUpperCase() || 'OP', status, ms, ago: agoLabel(ts), traceId: ev.traceId || '' })
   }
 
-  const limits = limited ? {
-    rpm: maxRpm || 0,
-    burst: maxBurst || 0,
-    used: 0,
-    pct: 0,
-  } : null
+  // Live rate limits — effective limit + operator-override badge per op,
+  // straight from the WS ratelimits snapshot (falls back to the declared
+  // limit on the endpoint when no live record exists yet).
+  const limitOps = []
+  let anyOverridden = false
+  for (const e of eps) {
+    const rec = rlByKey[`${e.Service}.${e.Name}`]
+    const eff = rec ? rec.effective : (e.RateLimit && e.RateLimit.rpm ? e.RateLimit : null)
+    if (eff && eff.rpm > 0) {
+      const overridden = !!(rec && rec.overridden)
+      if (overridden) anyOverridden = true
+      limitOps.push({
+        op: e.Name || `${e.Method} ${e.Path}`,
+        rpm: eff.rpm, burst: eff.burst || 0, perIP: !!eff.perIP, overridden,
+      })
+    }
+  }
+  limitOps.sort((a, b) => b.rpm - a.rpm)
+  const limited = limitOps.length > 0
+  const limits = limited
+    ? { ops: limitOps, count: limitOps.length, overridden: anyOverridden, maxRpm: limitOps[0].rpm }
+    : null
 
   const errPct = reqs ? Math.round((errs / reqs) * 1000) / 10 : 0
   const groupName = eps[0] ? (eps[0].Module || eps[0].Service) : id.replace(/^(mod:|svc:)/, '')
   const isModule = id.startsWith('mod:')
   return {
-    id,
-    kind: 'module',
-    icon: isModule ? 'module' : 'service',
-    label: groupName,
-    desc: '',
-    count: eps.length,
-    rps: rollingRps(serviceSet),
-    errPct,
-    limited,
-    endpoints: items,
-    crons,
-    traces,
-    limits,
+    id, kind: 'module', icon: isModule ? 'module' : 'service', label: groupName, desc: '',
+    count: eps.length, rps: rollingRps(serviceSet), errPct, limited,
+    endpoints: items, crons, traces, limits,
   }
 })
 
@@ -2063,6 +2114,22 @@ function onInspectorErrors(epView) {
   const e = epView && epView.endpoint
   if (!e) return
   openErrors({ service: e.Service, op: e.Name || `${e.Method} ${e.Path}` })
+}
+// Cross-link from a detail panel (e.g. a resource's attached service) to
+// select that node.
+function onInspectorPick(nodeId) {
+  if (nodeId) selectedNodeId.value = nodeId
+}
+// Cron actions from the Inspector — trigger / pause / resume. The /__nexus/live
+// WS pushes the updated cron state right after, so no manual refetch.
+async function onCronAction({ name, action }) {
+  try {
+    if (action === 'trigger') await triggerCron(name)
+    else if (action === 'pause') await setCronPaused(name, true)
+    else if (action === 'resume') await setCronPaused(name, false)
+  } catch (err) {
+    console.error('[nexus] cron action failed:', action, name, err)
+  }
 }
 
 let traceSub = null
@@ -2196,8 +2263,13 @@ onUnmounted(() => {
         :target="inspectorTarget"
         :totals="totals"
         :app-name="brandName"
+        :global-middleware="globalMiddleware"
+        :graphql-cache="graphqlCache"
+        :auth-summary="authSummary"
         @open-op="onInspectorOp"
         @open-errors="onInspectorErrors"
+        @cron="onCronAction"
+        @pick="onInspectorPick"
         @close="selectedNodeId = null"
       />
     </div>
