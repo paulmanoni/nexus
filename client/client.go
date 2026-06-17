@@ -191,6 +191,19 @@ type Config struct {
 	// client.Mount / nexus.ClientUse callers default to false
 	// (assets served), preserving back-compat.
 	SkipAssets bool
+
+	// Unguarded disables the introspection-network gate that nexus.New
+	// otherwise prepends to the SDK routes. By default the client
+	// surface — the manifest (a full API map when Public) and the
+	// .d.ts (the full type surface) — is locked down to the same peers
+	// the dashboard allows: open under `nexus dev` / Introspection,
+	// 404 to everyone else in a locked-down production binary. Set
+	// Unguarded only when you deliberately serve the runtime SDK to the
+	// public (e.g. a public SPA that fetches the runtime manifest at
+	// load time instead of vendoring sdk/ at build time). Prefer
+	// build-time vendoring (`nexus client --out`) over flipping this —
+	// a public manifest is an attacker's API map.
+	Unguarded bool
 }
 
 // Handler holds the live state of a mounted SDK surface — the
@@ -204,12 +217,69 @@ type Handler struct {
 	schemaRefs func() map[string]registry.NamedType
 	basePath   string
 
+	authMeta AuthMeta
+
 	mu        sync.Mutex
 	once      *sync.Once
 	manifest  cachedAsset
 	dtsClient cachedAsset
 	dtsVue    cachedAsset
 	dtsReact  cachedAsset
+}
+
+// Default auth-section hints applied when auth.Config leaves them
+// unset (see AuthMeta.WithDefaults). The CSRF pair follows the
+// Django / Laravel convention (csrftoken + X-CSRFToken) rather than
+// the Angular one (XSRF-TOKEN + X-XSRF-TOKEN) so the common
+// server-rendered-cookie setup works with zero config; the token
+// field targets the {status, data:{token}} envelope Go REST handlers
+// typically ship, with the SDK's heuristic walk as a safety net for
+// top-level {token} responses (see extractLoginToken in
+// nexus-client.js — these constants are mirrored there).
+const (
+	DefaultTokenField = "data.token"
+	DefaultCSRFCookie = "csrftoken"
+	DefaultCSRFHeader = "X-CSRFToken"
+)
+
+// AuthMeta carries the auth-section hints that come from auth.Config
+// rather than from the registry's endpoints — where the login token
+// lives in a response, and the CSRF double-submit cookie/header names.
+// nexus.New bridges these from auth.Module via App.SetClientAuthMeta;
+// buildManifest derives the login/logout/me paths from endpoints while
+// this overlay fills the config-sourced fields. Zero value = no
+// overlay (every empty field is skipped, so a manifest with no auth
+// module is untouched); pass through WithDefaults to materialize the
+// framework defaults.
+type AuthMeta struct {
+	TokenField string // dotted path to the login-response token ("data.token")
+	CSRFCookie string // non-HttpOnly cookie the SDK reads for CSRF double-submit
+	CSRFHeader string // header the SDK echoes the cookie value into
+}
+
+// WithDefaults returns a copy of m with every empty field filled from
+// the Default* constants. auth.Module runs config through this before
+// bridging, so an app that sets nothing still gets the Django-style
+// CSRF pair and the data.token field in its manifest. Fields the app
+// set explicitly are preserved.
+func (m AuthMeta) WithDefaults() AuthMeta {
+	if m.TokenField == "" {
+		m.TokenField = DefaultTokenField
+	}
+	if m.CSRFCookie == "" {
+		m.CSRFCookie = DefaultCSRFCookie
+	}
+	if m.CSRFHeader == "" {
+		m.CSRFHeader = DefaultCSRFHeader
+	}
+	return m
+}
+
+// Empty reports whether m carries no hints, letting callers skip the
+// overlay (and the cache invalidation it implies) when auth.Config set
+// nothing.
+func (m AuthMeta) Empty() bool {
+	return m.TokenField == "" && m.CSRFCookie == "" && m.CSRFHeader == ""
 }
 
 // AutoDumpConfig returns the OutDir / TSConfig / ViteConfig the
@@ -259,6 +329,21 @@ func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
 	h.mu.Unlock()
 }
 
+// SetAuthMeta installs the auth-config hints (login-token location +
+// CSRF names) overlaid onto the manifest's Auth section on next build.
+// Wired by auth.Module alongside SetAuthInfo. Calls Reload semantics
+// internally so the cached manifest rebuilds with the new hints.
+func (h *Handler) SetAuthMeta(meta AuthMeta) {
+	h.mu.Lock()
+	h.authMeta = meta
+	h.once = &sync.Once{}
+	h.manifest = cachedAsset{}
+	h.dtsClient = cachedAsset{}
+	h.dtsVue = cachedAsset{}
+	h.dtsReact = cachedAsset{}
+	h.mu.Unlock()
+}
+
 // Manifest returns the projected SDK manifest, building it from
 // the registry on first call and caching the result. Exposed so
 // tests can introspect the manifest without going through the HTTP
@@ -280,7 +365,23 @@ func (h *Handler) Manifest() Manifest {
 	if h.schemaRefs != nil {
 		refs = h.schemaRefs()
 	}
-	return buildManifest(h.reg, h.authInfo, refs, h.basePath)
+	m := buildManifest(h.reg, h.authInfo, refs, h.basePath)
+	// Overlay the auth-config hints. buildManifest creates a fresh
+	// *AuthInfo each call, so mutating it here can't race a shared
+	// value. Only non-empty fields win, so a hint left unset keeps the
+	// SDK's own default (heuristic token walk / XSRF-TOKEN names).
+	if m.Auth != nil && !h.authMeta.Empty() {
+		if h.authMeta.TokenField != "" {
+			m.Auth.TokenField = h.authMeta.TokenField
+		}
+		if h.authMeta.CSRFCookie != "" {
+			m.Auth.CSRFCookie = h.authMeta.CSRFCookie
+		}
+		if h.authMeta.CSRFHeader != "" {
+			m.Auth.CSRFHeader = h.authMeta.CSRFHeader
+		}
+	}
+	return m
 }
 
 // publicManifest returns the manifest shape served to anonymous
@@ -300,9 +401,10 @@ func (h *Handler) publicManifest() Manifest {
 		return full
 	}
 	skinny := Manifest{
-		Version:  full.Version,
-		BasePath: full.BasePath,
-		Auth:     full.Auth,
+		Version:   full.Version,
+		BasePath:  full.BasePath,
+		Auth:      full.Auth,
+		Projected: true,
 	}
 	// Keep auth-flagged endpoints (login/logout/me) so the SDK's
 	// auth namespace can resolve their paths post-construct.

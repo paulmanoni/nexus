@@ -184,6 +184,29 @@ type Config struct {
 	// (GraphQL) fields. Nil uses the default ({"error": msg} on REST/WS,
 	// the sentinel error on GraphQL). See ErrorHandler.
 	OnError ErrorHandler
+
+	// LoginTokenField names where the access token sits in a login
+	// response body, as a dotted path ("token", "accessToken",
+	// "data.token"). Bridged into the client SDK manifest so the
+	// generated client reads the token from the declared location.
+	// Empty → defaults to "data.token" (client.DefaultTokenField), the
+	// {status, data:{token}} envelope Go REST handlers typically ship;
+	// the SDK still falls back to its heuristic walk (bare/nested token
+	// + accessToken) when that path misses, so top-level {token}
+	// responses keep working.
+	LoginTokenField string
+
+	// CSRFCookie / CSRFHeader name the double-submit CSRF pair the client
+	// SDK uses under cookie-based auth strategies: it reads CSRFCookie (a
+	// non-HttpOnly cookie the server set) and echoes it in CSRFHeader on
+	// state-changing requests so a cross-site post — which rides cookies
+	// but can't read this cookie or set the header — is rejected. Empty →
+	// defaults to "csrftoken" / "X-CSRFToken" (client.DefaultCSRFCookie /
+	// DefaultCSRFHeader, the Django/Laravel convention). Set when your
+	// server emits a differently-named pair (e.g. Angular's "XSRF-TOKEN"
+	// / "X-XSRF-TOKEN").
+	CSRFCookie string
+	CSRFHeader string
 }
 
 // CacheOption configures how resolved identities are memoized in-memory.
@@ -414,6 +437,16 @@ func Module(cfg Config) nexus.Option {
 				app.SetClientAuthInfo(func() client.ExtractorInfo {
 					return toClientExtractor(manager.Info())
 				})
+				// Overlay the auth-config hints (login-token location +
+				// CSRF names) onto the manifest's Auth section. Static —
+				// they come from cfg, not the registry — so a plain set
+				// (no closure) is enough. No-op fields keep the SDK's own
+				// defaults.
+				app.SetClientAuthMeta(client.AuthMeta{
+					TokenField: cfg.LoginTokenField,
+					CSRFCookie: cfg.CSRFCookie,
+					CSRFHeader: cfg.CSRFHeader,
+				}.WithDefaults())
 				return nil
 			},
 		},
@@ -654,4 +687,3 @@ func (c *identityCache) set(token string, id *Identity) {
 insert:
 	c.entries[token] = cacheEntry{id: id, expiresAt: time.Now().Add(c.ttl)}
 }
-
