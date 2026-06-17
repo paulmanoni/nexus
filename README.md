@@ -157,6 +157,53 @@ nexus new my-app --frontend vue   # or react
 nexus dev                         # SPA with hot-reload on :5173, API on :8080
 ```
 
+## Client SDK
+
+Flip one switch and nexus generates **and** serves a typed JS/TS client for all three
+transports — no npm package, no codegen step to run:
+
+```toml
+[runtime]
+sdk = true
+```
+
+Then, in your frontend:
+
+```ts
+import { NexusClient } from 'nexus-client'
+
+const nx = new NexusClient()
+
+await nx.rest('GET', '/pets/:id', { id })   // REST
+await nx.query('searchPets', { q: 'cat' })  // GraphQL
+await nx.auth.login({ username, password }) // auth flow
+nx.ws('/events').on('chat.message', render) // WebSocket
+```
+
+Vue composables (`useQuery`, `useMutation`, `useAuth`, …) and React hooks ship alongside.
+`sdk = true` activates only under `nexus dev` or when `introspection = true`, so a
+locked-down production binary never exposes the API surface from this flag alone.
+
+**Secure by default.** Tokens live in memory (cleared on reload) so an XSS can't lift a
+long-lived credential — opt into `localStorage` explicitly when you want persistence.
+Cookie-based auth gets automatic CSRF double-submit, and the SDK routes
+(`/__nexus/client/*`) sit behind the same introspection gate as the dashboard.
+
+Tune the auth wiring from `auth.Config` — where the login token lives and the CSRF pair
+(values shown are the defaults):
+
+```go
+auth.Module(auth.Config{
+    // ... schemes ...
+    LoginTokenField: "data.token",  // dotted path to the token in a login response
+    CSRFCookie:      "csrftoken",   // Django/Laravel convention
+    CSRFHeader:      "X-CSRFToken",
+})
+```
+
+For production, vendor the SDK at build time instead of serving it at runtime:
+`nexus client --out ./web/sdk`.
+
 ## Going further
 
 When you're ready for more, each area has its own focused guide:
@@ -174,7 +221,6 @@ When you're ready for more, each area has its own focused guide:
 A couple of handy extras:
 
 - **`nexus.HideFromDashboard()`** — drop an internal endpoint from the dashboard while it keeps serving.
-- **`[runtime] sdk = true`** — generate + serve a typed JS/TS client (`import 'nexus-client'`), no npm package.
 
 ## License
 
