@@ -112,7 +112,7 @@ Same function, three transports. Add `nexus.AsMutation(...)` for a GraphQL mutat
 Visit `/__nexus/` (enabled above) and you get a live map of your app, built automatically
 from what you registered — no setup:
 
-![Architecture dashboard](docs/dashboard.png)
+![Architecture dashboard](docs/dashboard-signal.png)
 
 - **See everything** — every module, endpoint, resource, worker, and cron, with the
   dependency edges between them. Real traffic pulses on the wires.
