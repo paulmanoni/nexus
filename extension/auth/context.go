@@ -37,8 +37,24 @@ func IdentityFrom(ctx context.Context) (*Identity, bool) {
 	return id, true
 }
 
-// User is the typed convenience accessor: pulls the Identity from ctx
-// and type-asserts Extra to T. Returns (zero, false) if either step
+// Principal lets a wrapper Extra expose the underlying domain user. Resolvers
+// commonly store a richer value in Identity.Extra than the bare user — e.g. a
+// struct that also carries roles/permissions for a shared "me" payload. By
+// implementing Principal on that wrapper, User[T] can still reach the typed
+// user inside it:
+//
+//	type MeData struct{ User *User; Roles []Role /* … */ }
+//	func (m *MeData) Principal() any { return m.User }
+//
+//	// resolver: Extra: &MeData{User: u, …}
+//	user, ok := auth.User[User](ctx) // unwraps MeData → *User
+//
+// Principal may return another Principal; User[T] unwraps repeatedly.
+type Principal interface{ Principal() any }
+
+// User is the typed convenience accessor: pulls the Identity from ctx and
+// type-asserts Extra to T. If Extra isn't a T (or *T) but implements Principal,
+// its Principal() is unwrapped and retried. Returns (zero, false) if every step
 // fails — a single check at the top of a resolver suffices.
 //
 //	user, ok := auth.User[MyUser](ctx)
@@ -48,14 +64,30 @@ func User[T any](ctx context.Context) (*T, bool) {
 	if !ok || id.Extra == nil {
 		return nil, false
 	}
-	u, ok := id.Extra.(*T)
-	if ok {
-		return u, true
-	}
-	// Value-typed Extra — dereference into a pointer so callers always
-	// get the same shape whether they stored a pointer or a value.
-	if v, vok := id.Extra.(T); vok {
-		return &v, true
+	return asType[T](id.Extra)
+}
+
+// asType resolves v to *T: a direct *T, a value T (returned as a pointer so
+// callers get one shape either way), or — for wrapper Extras — the result of
+// unwrapping Principal(). The visited guard stops a self-referential Principal
+// from looping forever.
+func asType[T any](v any) (*T, bool) {
+	for range 64 { // bounded unwrap depth; guards against Principal cycles
+		if u, ok := v.(*T); ok {
+			return u, true
+		}
+		if u, ok := v.(T); ok {
+			return &u, true
+		}
+		w, ok := v.(Principal)
+		if !ok || w == nil {
+			return nil, false
+		}
+		next := w.Principal()
+		if next == nil || next == v {
+			return nil, false
+		}
+		v = next
 	}
 	return nil, false
 }
