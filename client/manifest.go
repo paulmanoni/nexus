@@ -27,6 +27,13 @@ type Manifest struct {
 	WS        []WSPathInfo                  `json:"ws,omitempty"`
 	Auth      *AuthInfo                     `json:"auth,omitempty"`
 	Refs      map[string]registry.NamedType `json:"refs,omitempty"`
+
+	// Projected marks the stripped (non-Public) manifest served to
+	// anonymous browsers — auth flows only, no schemas, no GraphQL/CRUD
+	// ops. The runtime SDK reads it to turn the otherwise-cryptic
+	// "no op named X" miss into a "the server is serving the stripped
+	// manifest" hint. Omitted (false) on the full manifest.
+	Projected bool `json:"projected,omitempty"`
 }
 
 // ServiceInfo is the SDK-friendly view of a service. Drops topology
@@ -126,6 +133,23 @@ type ExtractorInfo struct {
 // mount path) so older SDK builds continue to resolve auth flows.
 type AuthInfo struct {
 	ExtractorInfo
+	// TokenField, when set, names where the access token lives in a
+	// login response — a dotted path like "token", "accessToken", or
+	// "data.token". The SDK reads it instead of guessing common shapes
+	// (see extractLoginToken in nexus-client.js). Empty by default; the
+	// framework leaves it unset so apps/extensions populate it via a
+	// custom client.Config.Manifest projection when their login handler
+	// uses a non-standard envelope.
+	TokenField string `json:"tokenField,omitempty"`
+	// CSRFCookie / CSRFHeader configure the double-submit CSRF defense
+	// the SDK applies to state-changing requests under cookie-based auth
+	// strategies (cookie/chain/custom). Empty falls back to the SDK
+	// defaults ("csrftoken" / "X-CSRFToken", the Django/Laravel
+	// convention; see DefaultCSRFCookie / DefaultCSRFHeader). auth.Module
+	// populates these from auth.Config (defaulted via AuthMeta.WithDefaults)
+	// so a wired app carries them explicitly.
+	CSRFCookie      string `json:"csrfCookie,omitempty"`
+	CSRFHeader      string `json:"csrfHeader,omitempty"`
 	LoginPath       string `json:"loginPath,omitempty"`
 	LoginTransport  string `json:"loginTransport,omitempty"`
 	LoginName       string `json:"loginName,omitempty"`

@@ -81,6 +81,22 @@ export function localStorageTokenStore(key = 'nexus.token') {
   }
 }
 
+// readCookie returns the value of a document cookie by name, or "".
+// Used for CSRF double-submit on cookie-based auth strategies. Returns
+// "" in non-browser contexts (SSR / tests) where document is absent,
+// so _authorize stays a no-op there.
+function readCookie(name) {
+  if (typeof document === 'undefined' || !document.cookie) return ''
+  const prefix = name + '='
+  for (const part of document.cookie.split('; ')) {
+    if (part.startsWith(prefix)) {
+      const raw = part.slice(prefix.length)
+      try { return decodeURIComponent(raw) } catch { return raw }
+    }
+  }
+  return ''
+}
+
 // -- NexusClient ---------------------------------------------------
 
 // extractLoginToken walks a login response body looking for the
@@ -97,8 +113,24 @@ export function localStorageTokenStore(key = 'nexus.token') {
 // token store untouched, and the next authenticated call surfaces
 // the "auth: unauthenticated" error the user expects when the
 // response shape doesn't include a credential.
-function extractLoginToken(r) {
+function extractLoginToken(r, field) {
   if (!r || typeof r !== 'object') return ''
+  // A field path (manifest.auth.tokenField or the client's tokenField
+  // opt) is tried first — apps that declare where the token lives get
+  // an exact read, and the framework default "data.token" targets the
+  // common {status, data:{token}} envelope. Dotted paths resolve nested
+  // envelopes. When the path misses we fall through to the heuristic
+  // walk below, so the default never regresses a top-level {token}
+  // response (and a misconfigured path degrades gracefully).
+  if (field) {
+    let cur = r
+    let ok = true
+    for (const key of String(field).split('.')) {
+      if (cur && typeof cur === 'object' && key in cur) cur = cur[key]
+      else { ok = false; break }
+    }
+    if (ok && typeof cur === 'string' && cur) return cur
+  }
   if (typeof r.token === 'string' && r.token) return r.token
   if (typeof r.accessToken === 'string' && r.accessToken) return r.accessToken
   if (r.data && typeof r.data === 'object') {
@@ -127,7 +159,27 @@ export class NexusClient {
     this.origin = opts.origin ?? (typeof location !== 'undefined' ? location.origin : '')
     this.manifestPath = opts.manifestPath ?? DEFAULT_MANIFEST_PATH
     this._fetch = opts.fetch ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null)
-    this._tokenStore = opts.tokenStore ?? localStorageTokenStore()
+    // Token persistence is OPT-IN. The default is in-memory: the token
+    // lives for the page session and is gone on reload, so an XSS
+    // payload can't lift a long-lived credential out of localStorage.
+    // Apps that want cross-reload persistence pass
+    //   tokenStore: localStorageTokenStore()
+    // explicitly (accepting the XSS exposure readable storage carries)
+    // — or, better, use a cookie auth strategy with HttpOnly+SameSite
+    // so the token never touches JS at all.
+    this._tokenStore = opts.tokenStore ?? memoryTokenStore()
+    // CSRF double-submit names for cookie-based strategies. On
+    // state-changing requests the SDK echoes the value of _csrfCookie
+    // into _csrfHeader. Defaults follow the Django/Laravel convention
+    // and mirror client.DefaultCSRFCookie / DefaultCSRFHeader on the Go
+    // side; manifest.auth.csrfCookie / .csrfHeader (set from auth.Config)
+    // override them, and opts here override that.
+    this._csrfCookie = opts.csrfCookie ?? 'csrftoken'
+    this._csrfHeader = opts.csrfHeader ?? 'X-CSRFToken'
+    // Optional explicit login-token location ("token", "accessToken",
+    // "data.token", …). Unset → read manifest.auth.tokenField, then fall
+    // back to walking the common shapes (see extractLoginToken).
+    this._tokenField = opts.tokenField ?? null
     // opts.manifest seeds the cache so ready() never makes a network
     // request. Production-friendly: the bundler inlines the
     // sdk/manifest.json file at build time, so the prod bundle has
@@ -291,6 +343,16 @@ export class NexusClient {
       ep = this._findGqlEndpoint(m, kind, name)
     }
     if (!ep) {
+      if (m.projected) {
+        // The server is serving the stripped (non-Public) manifest,
+        // which omits every non-auth op — so the lookup can never
+        // succeed regardless of whether `name` exists server-side.
+        // Surface the real cause instead of "no op named X".
+        throw new NexusError(
+          `nexus: GraphQL ${kind} '${name}' is absent from the manifest because the server is serving the stripped (non-public) manifest — only auth flows are exposed at runtime. Vendor the SDK at build time (\`nexus client --out\`) so ops + types come from disk, or set Public/Introspection to serve the full manifest.`,
+          { endpoint: name },
+        )
+      }
       throw new NexusError(`nexus: no GraphQL ${kind} named ${name}`, { endpoint: name })
     }
     const url = this._url(ep.path)
@@ -380,6 +442,7 @@ export class NexusClient {
     const auth = manifest?.auth
     if (!auth) return
     const tok = this._tokenStore.get()
+    let cookieMode = false
     switch (auth.strategy) {
       case 'bearer':
         if (tok) init.headers[auth.headerName || 'Authorization'] = 'Bearer ' + tok
@@ -391,12 +454,14 @@ export class NexusClient {
         // Browser sends cookies automatically when we opt in; nothing
         // to add to headers. credentials:'include' covers cross-origin.
         init.credentials = 'include'
+        cookieMode = true
         break
       case 'chain':
         // Best-effort: try Bearer first, then cookie credentials. App
         // can call .auth.setToken() to drive the bearer side.
         if (tok) init.headers['Authorization'] = 'Bearer ' + tok
         init.credentials = 'include'
+        cookieMode = true
         break
       case 'custom':
         // App-supplied extractor — we don't know the shape. Fall
@@ -404,7 +469,23 @@ export class NexusClient {
         // schemes still work; bearer-style apps must pass tokens
         // via opts.headers per-call.
         init.credentials = 'include'
+        cookieMode = true
         break
+    }
+    // CSRF defense for cookie-bearing strategies: because the browser
+    // attaches the auth cookie automatically, a cross-site form post
+    // could ride it. Defend state-changing requests with a double-submit
+    // token — read a non-HttpOnly cookie the server set and echo it in a
+    // header a cross-origin page can neither read nor forge. Safe methods
+    // (GET/HEAD) don't mutate state, so they're skipped. No cookie set →
+    // no header (apps without CSRF cookies are unaffected).
+    const method = (init.method || 'GET').toUpperCase()
+    if (cookieMode && method !== 'GET' && method !== 'HEAD') {
+      const headerName = auth.csrfHeader || this._csrfHeader
+      const xsrf = readCookie(auth.csrfCookie || this._csrfCookie)
+      if (xsrf && init.headers[headerName] === undefined) {
+        init.headers[headerName] = xsrf
+      }
     }
   }
 
@@ -456,7 +537,7 @@ class AuthNamespace {
     const r = (m.auth.loginTransport === 'graphql')
       ? await this._c._gql('mutation', m.auth.loginName, creds, {})
       : await this._c.rest('POST', m.auth.loginPath, creds)
-    const tok = extractLoginToken(r)
+    const tok = extractLoginToken(r, this._c._tokenField || m.auth?.tokenField)
     if (tok) this.setToken(tok)
     return r
   }

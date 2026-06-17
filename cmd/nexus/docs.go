@@ -907,7 +907,7 @@ on the framework side. Browsers fetch the SDK at runtime; tooling
 
 Routes mounted under cfg.Client.Path (default /__nexus/client):
 
-    GET <path>/manifest.json    SDK-tailored manifest (public, no admin gate)
+    GET <path>/manifest.json    SDK-tailored manifest (behind the introspection gate)
     GET <path>/client.js        runtime ESM — REST/GraphQL/WS/CRUD/auth
     GET <path>/client.d.ts      TS types paired with client.js
     GET <path>/vue.js           Vue 3 composables built on client.js
@@ -965,6 +965,12 @@ lookup at runtime — nx.query / nx.mutate / nx.crud. Most SPAs
 that vendor sdk/client.d.ts at build time can stay on the safe
 default and lose nothing in TS completion (types are vendored,
 not fetched).
+
+Beyond the Public flag, the whole /__nexus/client surface sits
+behind the introspection gate (open under nexus dev / when
+introspection is on, 404 otherwise) — same as the dashboard. Serve
+the runtime SDK from a locked-down production binary only by setting
+Client.Unguarded; prefer vendoring sdk/ at build time instead.
 
 OutDir produces:
 
@@ -1034,9 +1040,23 @@ the SDK knows where to put the token. Browser side:
     const me = await nx.auth.me()      // current Identity
     await nx.auth.logout()              // clears local + posts /logout
 
-Token storage defaults to localStorage (with a private-mode safe
-fallback). Pass tokenStore: ... to swap in sessionStorage,
-encrypted, cookie-only, etc.
+Token storage defaults to IN-MEMORY (cleared on reload) so an XSS
+can't lift a long-lived credential. Opt into persistence with
+tokenStore: localStorageTokenStore() — or, better, use cookie auth
+with HttpOnly+SameSite so the token never touches JS. Under cookie /
+chain / custom strategies the SDK also adds CSRF double-submit on
+state-changing requests (reads the csrftoken cookie, echoes
+X-CSRFToken — the Django/Laravel defaults).
+
+The login token is read from auth.Config.LoginTokenField (default
+"data.token"), falling back to a heuristic walk (bare/nested token +
+accessToken). Configure the token field + CSRF pair on the server:
+
+    auth.Module(auth.Config{ /* schemes */
+        LoginTokenField: "data.token",
+        CSRFCookie:      "csrftoken",
+        CSRFHeader:      "X-CSRFToken",
+    })
 
 
 ─── CRUD ─────────────────────────────────────────────────────────────

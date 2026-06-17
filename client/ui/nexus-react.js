@@ -45,9 +45,10 @@ let _shared = null
 //                    trip CORS. The setting is still honored for
 //                    production builds where the SPA and API
 //                    legitimately live on different hosts.
-// VITE_NEXUS_TOKEN → localStorage key for the bearer token; default
-//                    'access_token' so it pairs with the common
-//                    auth-store conventions.
+// VITE_NEXUS_TOKEN → localStorage key for the bearer token. UNSET by
+//                    default → in-memory token (XSS-safe, cleared on
+//                    reload). Set it (e.g. 'access_token') to opt into
+//                    localStorage persistence and its XSS exposure.
 function envDefaults() {
   const env = (typeof import.meta !== 'undefined' && import.meta.env) || {}
   let origin = String(env.VITE_NEXUS_API ?? '').replace(/\/+$/, '')
@@ -59,13 +60,17 @@ function envDefaults() {
       origin = ''
     }
   }
-  const tokenKey = String(env.VITE_NEXUS_TOKEN ?? 'access_token')
+  // Token persistence is opt-in, matching NexusClient's secure default:
+  // in-memory unless the app explicitly names a localStorage key via
+  // VITE_NEXUS_TOKEN. A persisted bearer token is readable by any XSS,
+  // so apps choose that tradeoff deliberately rather than inherit it.
+  const tokenKey = env.VITE_NEXUS_TOKEN
   return {
     origin: origin || undefined,
     tokenStore:
-      typeof window === 'undefined'
+      typeof window === 'undefined' || !tokenKey
         ? memoryTokenStore()
-        : localStorageTokenStore(tokenKey),
+        : localStorageTokenStore(String(tokenKey)),
   }
 }
 

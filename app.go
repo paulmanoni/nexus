@@ -435,10 +435,10 @@ func New(cfg Config) *App {
 		// alone in a locked-down production binary. The OnStart dump hook
 		// (obs_integration.go) writes files only when a frontend dir was
 		// detected — a no-op in a fileless production tree.
-		sdkCfg := client.ApplyFrontendDefaults(client.Config{Enabled: true, Public: true})
+		sdkCfg := a.guardClientSDK(client.ApplyFrontendDefaults(client.Config{Enabled: true, Public: true}))
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, sdkCfg)
 	case cfg.Client.Enabled:
-		clientCfg := client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection)
+		clientCfg := a.guardClientSDK(client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection))
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
 	}
 
@@ -577,8 +577,28 @@ func devAutoMountClientSDK(a *App) {
 	// Dev gets the FULL manifest (every module endpoint) so the proxy
 	// sync + nx.query/mutate/crud work — the same visibility
 	// introspection grants, which `nexus dev` already bypasses on.
-	clientCfg := client.ApplyVisibilityDefaults(cc, true)
+	clientCfg := a.guardClientSDK(client.ApplyVisibilityDefaults(cc, true))
 	a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, clientCfg)
+}
+
+// guardClientSDK prepends the introspection gate to the SDK route
+// middleware so the client surface — the manifest (a full API map when
+// Public) and the .d.ts (the full type surface) — is locked to the
+// same peers the dashboard allows. introspectionGate returns nil (a
+// no-op) whenever introspection is on or under `nexus dev`, so this
+// only restricts a locked-down production binary: exactly the case
+// where an explicit Config.Client.Enabled mount would otherwise serve
+// an anonymous /__nexus/client/* and leak the API map. Apps that
+// deliberately serve the runtime SDK to the public opt back out with
+// Config.Client.Unguarded (prefer vendoring sdk/ at build time).
+func (a *App) guardClientSDK(cfg client.Config) client.Config {
+	if cfg.Unguarded {
+		return cfg
+	}
+	if gate := introspectionGate(a.introspect, a.introspectionNets); gate != nil {
+		cfg.Middleware = append([]gin.HandlerFunc{gate}, cfg.Middleware...)
+	}
+	return cfg
 }
 
 // SetClientAuthInfo installs the manifest's auth-section provider
@@ -589,6 +609,16 @@ func devAutoMountClientSDK(a *App) {
 func (a *App) SetClientAuthInfo(fn func() client.ExtractorInfo) {
 	if a.clientHandler != nil {
 		a.clientHandler.SetAuthInfo(fn)
+	}
+}
+
+// SetClientAuthMeta overlays the auth-config hints (login-token
+// location + CSRF cookie/header names) onto the SDK manifest's Auth
+// section. No-op when the SDK isn't mounted. Called by auth.Module's
+// client bridge alongside SetClientAuthInfo.
+func (a *App) SetClientAuthMeta(meta client.AuthMeta) {
+	if a.clientHandler != nil {
+		a.clientHandler.SetAuthMeta(meta)
 	}
 }
 func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
