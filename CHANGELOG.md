@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-06-18
+
 ### Security — Client SDK
 
 - **SDK routes now sit behind the introspection gate.** An explicit
