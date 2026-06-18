@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // callInput is the per-invocation environment callHandler consults to fill
@@ -20,11 +20,11 @@ type callInput struct {
 	Source any
 	Info   graphql.ResolveInfo
 	// GinCtx is set by the REST transport for handlers that take a
-	// *gin.Context parameter — lets them reach body / path / query /
+	// *httpx.Ctx parameter — lets them reach body / path / query /
 	// header parsing helpers (multipart file upload, custom status
 	// codes, c.Param("...") etc.) while still participating in the
 	// reflective registration shape.
-	GinCtx *gin.Context
+	GinCtx *httpx.Ctx
 	// WS is set by the WebSocket transport (AsWS) for handlers that
 	// take a *WSSession — gives them a typed handle for Send / Emit /
 	// room ops tied to the current connection.
@@ -35,7 +35,7 @@ type callInput struct {
 // are filled in by the framework at call time rather than fx-injected.
 var (
 	contextType      = reflect.TypeOf((*context.Context)(nil)).Elem()
-	ginContextType   = reflect.TypeOf((*gin.Context)(nil))
+	ginContextType   = reflect.TypeOf((*httpx.Ctx)(nil))
 	wsSessionType    = reflect.TypeOf((*WSSession)(nil))
 	paramsMarkerType = reflect.TypeOf((*nexusParamsMarker)(nil)).Elem()
 )
@@ -150,7 +150,7 @@ func inspectHandler(fn any) (handlerShape, error) {
 			sh.slots[i] = paramSlot{kind: paramCtx}
 			sh.hasCtx = true
 		case sh.funcType.In(i) == ginContextType:
-			// *gin.Context — REST-only. GraphQL resolvers don't have
+			// *httpx.Ctx — REST-only. GraphQL resolvers don't have
 			// a Gin context available; callHandler leaves the slot nil
 			// in that case which would panic on first use, which is the
 			// right signal to the author that the handler is REST-only.

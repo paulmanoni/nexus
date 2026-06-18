@@ -3,7 +3,7 @@ package registry
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // MountDashboard mounts the registry introspection surface onto the
@@ -17,21 +17,21 @@ import (
 // Called by the dashboard package — keeps the routes declared in the
 // package that owns the data so the dashboard stays a thin
 // orchestrator.
-func MountDashboard(g *gin.RouterGroup, reg *Registry) {
-	g.GET("/endpoints", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
+func MountDashboard(g httpx.Group, reg *Registry) {
+	g.GET("/endpoints", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{
 			"services":  reg.Services(),
 			"endpoints": reg.VisibleEndpoints(),
 		})
 	})
-	g.GET("/resources", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"resources": reg.Resources()})
+	g.GET("/resources", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{"resources": reg.Resources()})
 	})
-	g.GET("/workers", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"workers": reg.Workers()})
+	g.GET("/workers", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{"workers": reg.Workers()})
 	})
-	g.GET("/middlewares", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
+	g.GET("/middlewares", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{
 			"middlewares": reg.Middlewares(),
 			"global":      reg.GlobalMiddlewares(),
 		})

@@ -26,7 +26,7 @@
 package tour
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 	"gorm.io/gorm"
 
@@ -167,6 +167,6 @@ func Module(opts ...Option) nexus.Option {
 
 // _ guards: ensures every handler is referenced from this file so
 // future refactors don't quietly drop one from the route table.
-var _ = []gin.HandlerFunc{
+var _ = []httpx.HandlerFunc{
 	handleInjectJS,
 }

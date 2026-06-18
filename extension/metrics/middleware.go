@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"braces.dev/errtrace"
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
@@ -47,8 +47,8 @@ func NewMiddleware(store Store, key string) middleware.Middleware {
 // dashboard. With the defer we capture the panic value + stack here,
 // record it as the request's error, and re-panic so the outer
 // recoveryMiddleware can still finalize the 500 response.
-func ginRecorder(store Store, key string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func ginRecorder(store Store, key string) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		defer func() {
 			ip := c.ClientIP()
 			if r := recover(); r != nil {
@@ -78,8 +78,8 @@ func ginRecorder(store Store, key string) gin.HandlerFunc {
 			status := c.Writer.Status()
 			var recErr error
 			if status >= 400 {
-				if len(c.Errors) > 0 {
-					recErr = c.Errors.Last().Err
+				if len(c.Errors()) > 0 {
+					recErr = c.LastError()
 				} else {
 					recErr = statusError{code: status}
 				}

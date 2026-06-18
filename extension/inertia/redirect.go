@@ -3,7 +3,7 @@ package inertia
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // redirect is the sentinel a page handler returns (as its error) to issue an
@@ -23,7 +23,7 @@ func (r *redirect) Error() string { return "inertia: redirect to " + r.url }
 // transparently and try to parse a non-Inertia response), so they use the
 // 409 + X-Inertia-Location protocol that tells the client to do a hard
 // window.location change; a non-XHR request just gets a normal 302.
-func (r *redirect) write(c *gin.Context) error {
+func (r *redirect) write(c *httpx.Ctx) error {
 	if r.external {
 		if c.GetHeader(headerInertia) != "" {
 			c.Header(headerLocation, r.url)

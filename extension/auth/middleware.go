@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/middleware"
@@ -20,8 +20,8 @@ import (
 //   - On resolver failure we do NOT 401 here — that's per-op Required's
 //     job. A public endpoint on the same app should stay accessible
 //     even if a bogus Authorization header comes along.
-func ginAuthMiddleware(state *moduleState) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func ginAuthMiddleware(state *moduleState) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		ctx := withState(c.Request.Context(), state)
 
 		id, token, err := state.authenticate(ctx, c.Request)

@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/extension/cron"
-	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 	"github.com/paulmanoni/nexus/transport/gql"
@@ -25,8 +25,8 @@ const Prefix = "/__nexus"
 // fetches at startup + any gin middleware that should guard the
 // /__nexus surface (auth, permission, allowlist, etc.).
 type Config struct {
-	Name       string            `json:"Name"`
-	Middleware []gin.HandlerFunc `json:"-"`
+	Name       string              `json:"Name"`
+	Middleware []httpx.HandlerFunc `json:"-"`
 	// Deployment is the unit name this binary boots as ("" = monolith).
 	// Surfaced over /__nexus/config so the dashboard can render the
 	// active deployment, and so peer services in a split deployment
@@ -104,7 +104,7 @@ type TabInfo struct {
 // silently expose service/env/cron declarations to the public. The
 // cron + rate-limit + metrics endpoints are always mounted — their
 // stores just return empty lists when nothing has been registered.
-func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier Notifier, gqlStats *gql.StatsRegistry, cfg Config) {
+func Mount(e httpx.Router, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier Notifier, gqlStats *gql.StatsRegistry, cfg Config) {
 	if cfg.Name == "" {
 		cfg.Name = "Nexus"
 	}
@@ -120,15 +120,15 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 		}
 	}
 	// /config is dashboard-owned metadata — stays inline.
-	g.GET("/config", func(c *gin.Context) {
+	g.GET("/config", func(c *httpx.Ctx) {
 		c.JSON(http.StatusOK, cfg)
 	})
 	// /plugins enumerates everything registered via app.RegisterPlugin
 	// — built-ins (auth, oauth2, cron, ratelimit, metrics, cache,
 	// dashboard) and any third-party extension.Use calls.
 	if cfg.Plugins != nil {
-		g.GET("/plugins", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"plugins": cfg.Plugins()})
+		g.GET("/plugins", func(c *httpx.Ctx) {
+			c.JSON(http.StatusOK, httpx.H{"plugins": cfg.Plugins()})
 		})
 	}
 	// Every other introspection surface lives in the package that owns
@@ -158,7 +158,7 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 	// admin-token gate to the whole group would change behavior for
 	// every existing endpoint.
 	if cfg.Manifest != nil && cfg.AdminToken != "" {
-		g.GET("/manifest", adminTokenGate(cfg.AdminToken), func(c *gin.Context) {
+		g.GET("/manifest", adminTokenGate(cfg.AdminToken), func(c *httpx.Ctx) {
 			c.JSON(http.StatusOK, cfg.Manifest())
 		})
 	}
@@ -182,13 +182,13 @@ func Mount(e *gin.Engine, reg *registry.Registry, bus *trace.Bus, sched *cron.Sc
 // whatever auth middleware the app's operator wired for the rest of
 // /__nexus. A built-in gate makes the orchestrator's assumption
 // stable across apps.
-func adminTokenGate(expected string) gin.HandlerFunc {
+func adminTokenGate(expected string) httpx.HandlerFunc {
 	expectedBytes := []byte(expected)
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		header := c.GetHeader("Authorization")
 		const prefix = "Bearer "
 		if !strings.HasPrefix(header, prefix) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or malformed Authorization header"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, httpx.H{"error": "missing or malformed Authorization header"})
 			return
 		}
 		got := []byte(header[len(prefix):])
@@ -197,7 +197,7 @@ func adminTokenGate(expected string) gin.HandlerFunc {
 		// lengths fail without short-circuiting, which is exactly
 		// what we want to avoid leaking token length.
 		if subtle.ConstantTimeCompare(got, expectedBytes) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid admin token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, httpx.H{"error": "invalid admin token"})
 			return
 		}
 		c.Next()

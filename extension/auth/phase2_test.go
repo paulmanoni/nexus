@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension/auth"
@@ -23,14 +23,14 @@ func (customEnvelope) Unauthenticated(rc *middleware.RequestCtx, err error) erro
 	if rc.Transport == middleware.TransportGraphQL {
 		return err
 	}
-	return rc.RejectJSON(401, gin.H{"success": false, "error": err.Error(), "code": "UNAUTH"})
+	return rc.RejectJSON(401, httpx.H{"success": false, "error": err.Error(), "code": "UNAUTH"})
 }
 
 func (customEnvelope) Forbidden(rc *middleware.RequestCtx, err error) error {
 	if rc.Transport == middleware.TransportGraphQL {
 		return err
 	}
-	return rc.RejectJSON(403, gin.H{"success": false, "error": err.Error(), "code": "FORBIDDEN"})
+	return rc.RejectJSON(403, httpx.H{"success": false, "error": err.Error(), "code": "FORBIDDEN"})
 }
 
 // bootWithManager starts a nexus.Run app on a test port and captures the

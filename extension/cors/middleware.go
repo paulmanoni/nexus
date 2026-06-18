@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // ginHandler builds the per-request CORS middleware. Two paths run
@@ -25,7 +25,7 @@ import (
 // reflect a specific origin. Without it, an HTTP cache that saw an
 // allowed origin's response could serve it back to a blocked
 // origin's request — silent leak. The fetch spec demands this.
-func ginHandler(cfg *Config, m matcher) gin.HandlerFunc {
+func ginHandler(cfg *Config, m matcher) httpx.HandlerFunc {
 	// Pre-build the static header values that don't depend on the
 	// request. Saves an allocation per request for the common case.
 	allowMethods := strings.Join(cfg.AllowMethods, ", ")
@@ -36,7 +36,7 @@ func ginHandler(cfg *Config, m matcher) gin.HandlerFunc {
 	allowHeadersStatic := strings.Join(cfg.AllowHeaders, ", ")
 	wildHeaders := len(cfg.AllowHeaders) == 1 && cfg.AllowHeaders[0] == "*"
 
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		origin := c.GetHeader("Origin")
 		if origin == "" {
 			// Not cross-origin — pass through with no CORS headers.
@@ -109,7 +109,7 @@ func ginHandler(cfg *Config, m matcher) gin.HandlerFunc {
 // Access-Control-Request-Method header. Other OPTIONS uses (clients
 // querying allowed methods on their own server) don't carry that
 // header and shouldn't be hijacked.
-func isPreflight(c *gin.Context) bool {
+func isPreflight(c *httpx.Ctx) bool {
 	if c.Request.Method != http.MethodOptions {
 		return false
 	}

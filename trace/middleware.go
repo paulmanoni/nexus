@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 const (
@@ -19,7 +19,7 @@ type busCtxKey struct{}
 
 // SpanFromCtx reads the current span from any context.Context — root or child,
 // whichever was pushed last. Use this from code paths that don't have a
-// *gin.Context (GraphQL resolvers via p.Context, GORM callbacks, worker code
+// *httpx.Ctx (GraphQL resolvers via p.Context, GORM callbacks, worker code
 // called from a request).
 func SpanFromCtx(ctx context.Context) (*Span, bool) {
 	if ctx == nil {
@@ -59,8 +59,8 @@ func NewTraceID() string { return newTraceID() }
 // If the inbound request carries a valid W3C traceparent header, the root
 // span reuses its TraceID (and records ParentID from the upstream span) so
 // the trace is stitched across services. Otherwise a fresh TraceID is minted.
-func Middleware(bus *Bus, service, endpoint, transport string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func Middleware(bus *Bus, service, endpoint, transport string) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		traceID, parentSpanID, remote := parseTraceparent(c.Request.Header.Get("traceparent"))
 		if !remote {
 			traceID = newTraceID()
@@ -102,8 +102,8 @@ func Middleware(bus *Bus, service, endpoint, transport string) gin.HandlerFunc {
 		})
 		c.Next()
 		var errStr string
-		if len(c.Errors) > 0 {
-			errStr = c.Errors.String()
+		if len(c.Errors()) > 0 {
+			errStr = c.ErrorsString()
 		}
 		bus.Publish(Event{
 			TraceID:    span.TraceID,
@@ -123,7 +123,7 @@ func Middleware(bus *Bus, service, endpoint, transport string) gin.HandlerFunc {
 	}
 }
 
-func SpanFrom(c *gin.Context) (*Span, bool) {
+func SpanFrom(c *httpx.Ctx) (*Span, bool) {
 	v, ok := c.Get(spanKey)
 	if !ok {
 		return nil, false
@@ -132,7 +132,7 @@ func SpanFrom(c *gin.Context) (*Span, bool) {
 	return s, ok
 }
 
-func BusFrom(c *gin.Context) (*Bus, bool) {
+func BusFrom(c *httpx.Ctx) (*Bus, bool) {
 	v, ok := c.Get(busKey)
 	if !ok {
 		return nil, false
@@ -151,9 +151,9 @@ func BusFrom(c *gin.Context) (*Bus, bool) {
 //	trace.Record(c, "db.users.get", start, err)
 //
 // Prefer trace.In / trace.StartSpan for new code — they compose with ctx
-// instead of needing *gin.Context. Record remains for handlers already
+// instead of needing *httpx.Ctx. Record remains for handlers already
 // written against gin.
-func Record(c *gin.Context, name string, start time.Time, err error) {
+func Record(c *httpx.Ctx, name string, start time.Time, err error) {
 	span, ok := SpanFrom(c)
 	if !ok {
 		return

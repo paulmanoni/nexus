@@ -38,7 +38,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -222,7 +222,7 @@ type Tab struct {
 type Route struct {
 	Method  string // "GET", "POST", etc.
 	Path    string // "" or "/subpath"
-	Handler gin.HandlerFunc
+	Handler httpx.HandlerFunc
 }
 
 // Client contribution: declares an SDK namespace + a one-shot Apply

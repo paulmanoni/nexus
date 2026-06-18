@@ -42,7 +42,7 @@
 package openapi
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
@@ -216,4 +216,4 @@ func (s *pluginState) includeGraphQL() bool { return boolOr(s.cfg.IncludeGraphQL
 
 // _ avoids an unused-import error when gin is referenced only via
 // handler signatures defined in other files of this package.
-var _ gin.HandlerFunc = nil
+var _ httpx.HandlerFunc = nil

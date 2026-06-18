@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // MountDashboard mounts the trace introspection surface onto the
@@ -18,7 +18,7 @@ import (
 //
 // Called by the dashboard package — keeps the handlers in the package
 // that owns the Bus.
-func MountDashboard(g *gin.RouterGroup, bus *Bus) {
+func MountDashboard(g httpx.Group, bus *Bus) {
 	g.GET("/events", streamEvents(bus))
 	g.GET("/traces/:id", traceByID(bus))
 }
@@ -48,12 +48,12 @@ type traceSpan struct {
 // request.start / request.end (the root) and span.start / span.end
 // (children) into one node per SpanID. Events without a SpanID (e.g.
 // KindDownstream markers) are skipped — they'd have no bar to render.
-func traceByID(bus *Bus) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func traceByID(bus *Bus) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		id := c.Param("id")
 		events := bus.SnapshotByTrace(id)
 		if len(events) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "trace not found"})
+			c.JSON(http.StatusNotFound, httpx.H{"error": "trace not found"})
 			return
 		}
 		base := events[0].Timestamp
@@ -119,12 +119,12 @@ func traceByID(bus *Bus) gin.HandlerFunc {
 			}
 			return out[i].SpanID < out[j].SpanID
 		})
-		c.JSON(http.StatusOK, gin.H{"traceId": id, "spans": out})
+		c.JSON(http.StatusOK, httpx.H{"traceId": id, "spans": out})
 	}
 }
 
-func streamEvents(bus *Bus) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func streamEvents(bus *Bus) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		var since int64
 		if s := c.Query("since"); s != "" {
 			since, _ = strconv.ParseInt(s, 10, 64)

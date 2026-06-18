@@ -1,7 +1,7 @@
 package nexus
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/middleware"
@@ -28,9 +28,9 @@ func buildEndpointChain(
 	transport string,
 	traceEndpoint string,
 	bundles []middleware.Middleware,
-	handler gin.HandlerFunc,
-) (chain []gin.HandlerFunc, mwNames []string) {
-	chain = make([]gin.HandlerFunc, 0, len(bundles)+3)
+	handler httpx.HandlerFunc,
+) (chain []httpx.HandlerFunc, mwNames []string) {
+	chain = make([]httpx.HandlerFunc, 0, len(bundles)+3)
 	mwNames = make([]string, 0, len(bundles)+1)
 
 	if traceEndpoint != "" && app.bus != nil {

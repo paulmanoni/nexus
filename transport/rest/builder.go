@@ -3,7 +3,7 @@
 package rest
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/middleware"
@@ -12,7 +12,7 @@ import (
 )
 
 type Builder struct {
-	engine          *gin.Engine
+	engine          httpx.Router
 	reg             *registry.Registry
 	bus             *trace.Bus
 	metrics         metrics.Store
@@ -20,7 +20,7 @@ type Builder struct {
 	method          string
 	path            string
 	description     string
-	middleware      []gin.HandlerFunc
+	middleware      []httpx.HandlerFunc
 	middlewareNames []string
 	tags            map[string]string
 }
@@ -31,7 +31,7 @@ type Builder struct {
 // are skipped, and the endpoint renders without live traffic pulses.
 // Pass a non-nil store (typically app.Metrics()) to get parity with
 // endpoints registered via nexus.AsRest.
-func New(e *gin.Engine, r *registry.Registry, bus *trace.Bus, ms metrics.Store, service, method, path string) *Builder {
+func New(e httpx.Router, r *registry.Registry, bus *trace.Bus, ms metrics.Store, service, method, path string) *Builder {
 	return &Builder{
 		engine:  e,
 		reg:     r,
@@ -52,7 +52,7 @@ func (b *Builder) Describe(s string) *Builder {
 // Use attaches a named middleware. The name shows up in the dashboard; prefer
 // something meaningful ("auth", "rate-limit") over runtime-generated strings.
 // If the name isn't already registered, it's auto-added as a Custom middleware.
-func (b *Builder) Use(name string, mw gin.HandlerFunc) *Builder {
+func (b *Builder) Use(name string, mw httpx.HandlerFunc) *Builder {
 	b.middleware = append(b.middleware, mw)
 	b.middlewareNames = append(b.middlewareNames, name)
 	b.reg.EnsureMiddleware(name)
@@ -72,9 +72,9 @@ func (b *Builder) Tag(k, v string) *Builder {
 // pulse on the Architecture dashboard when traffic hits it — without
 // it the UI animator has no request.op event to key off and rows
 // stay dark. Nil metrics.Store skips that slot cleanly.
-func (b *Builder) Handler(h gin.HandlerFunc) {
+func (b *Builder) Handler(h httpx.HandlerFunc) {
 	endpoint := b.method + " " + b.path
-	var handlers []gin.HandlerFunc
+	var handlers []httpx.HandlerFunc
 	var mwNames []string
 	if b.bus != nil {
 		handlers = append(handlers, trace.Middleware(b.bus, b.service, endpoint, string(registry.REST)))

@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
 
 // TestCachedAsset_HashesAndCompresses asserts the basic invariants:
@@ -59,7 +60,7 @@ func TestServeCachedAsset_ReturnsETag(t *testing.T) {
 	a := newCachedAsset(body)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := httpx.NewCtx(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	c.Request = httptest.NewRequest(http.MethodGet, "/x", nil)
 
 	serveCachedAsset(c, "application/json", a)
@@ -84,10 +85,8 @@ func TestServeCachedAsset_ReturnsETag(t *testing.T) {
 func TestServeCachedAsset_Returns304(t *testing.T) {
 	body := bytes.Repeat([]byte("a"), 1024)
 	a := newCachedAsset(body)
-
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.GET("/x", func(c *gin.Context) {
+	r := stdrouter.New()
+	r.GET("/x", func(c *httpx.Ctx) {
 		serveCachedAsset(c, "application/json", a)
 	})
 
@@ -113,7 +112,7 @@ func TestServeCachedAsset_ReturnsCompressed(t *testing.T) {
 	a := newCachedAsset(body)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := httpx.NewCtx(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.Header.Set("Accept-Encoding", "gzip, deflate")
 	c.Request = req
@@ -148,7 +147,7 @@ func TestServeCachedAsset_PlainWhenNoGzip(t *testing.T) {
 	a := newCachedAsset(body)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := httpx.NewCtx(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	c.Request = httptest.NewRequest(http.MethodGet, "/x", nil) // no Accept-Encoding
 
 	serveCachedAsset(c, "application/json", a)

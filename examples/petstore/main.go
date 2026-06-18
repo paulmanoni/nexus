@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/trace"
@@ -23,19 +23,19 @@ func main() {
 
 	pets.REST("GET", "/pets").
 		Describe("List all pets").
-		Handler(func(c *gin.Context) {
+		Handler(func(c *httpx.Ctx) {
 			// Simulate a downstream call so the trace shows a child event.
 			start := time.Now()
 			time.Sleep(5 * time.Millisecond)
 			trace.Record(c, "db.pets.list", start, nil)
 
-			c.JSON(http.StatusOK, gin.H{"pets": []string{"Rex", "Whiskers"}})
+			c.JSON(http.StatusOK, httpx.H{"pets": []string{"Rex", "Whiskers"}})
 		})
 
 	pets.REST("POST", "/pets").
 		Describe("Create a pet").
-		Handler(func(c *gin.Context) {
-			c.JSON(http.StatusCreated, gin.H{"ok": true})
+		Handler(func(c *httpx.Ctx) {
+			c.JSON(http.StatusCreated, httpx.H{"ok": true})
 		})
 
 	pets.WebSocket("/pets/stream").

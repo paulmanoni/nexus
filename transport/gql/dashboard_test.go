@@ -7,8 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 	"github.com/paulmanoni/nexus/registry"
 )
 
@@ -17,12 +16,11 @@ import (
 // GET /__nexus/graphql/cache reflects the live hit/miss counters.
 // This is the contract the dashboard relies on.
 func TestStatsRegistry_DashboardEndpoint(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
 
 	schema := buildEchoSchema(t)
 	reg := NewStatsRegistry()
 
-	e := gin.New()
+	e := stdrouter.New()
 	Mount(e, registry.New(), nil, "test", "/graphql", &schema,
 		WithDocumentCache(8),
 		WithStatsRegistry(reg),
@@ -75,9 +73,8 @@ func TestStatsRegistry_DashboardEndpoint(t *testing.T) {
 // well-formed empty list when the registry hasn't seen any caches —
 // the dashboard polls unconditionally so this case has to be tidy.
 func TestStatsRegistry_EmptyWhenNoMounts(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
 	reg := NewStatsRegistry()
-	e := gin.New()
+	e := stdrouter.New()
 	MountDashboard(e.Group("/__nexus"), reg)
 
 	req, _ := http.NewRequest("GET", "/__nexus/graphql/cache", nil)

@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
 
 // TestBuildTree_RootsAndChildren covers the happy path: a flat
@@ -171,9 +172,8 @@ func TestMemoryStore_DeleteStepReparentsChildren(t *testing.T) {
 // the full POST → GET cycle. Confirms IDs are minted, badge
 // numbers assigned, and the response carries the canonical tree.
 func TestHandlers_UpsertAndFetchTour(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	h := &handlers{store: NewMemoryStore()}
-	r := gin.New()
+	r := stdrouter.New()
 	r.POST("/tours", h.upsertTour)
 	r.GET("/tours/:id", h.getTour)
 	r.GET("/active", h.activeForRoute)
@@ -230,15 +230,14 @@ func TestHandlers_UpsertAndFetchTour(t *testing.T) {
 // TestAutoInjectMiddleware confirms the script tag splices into
 // the right spot for HTML responses and leaves non-HTML alone.
 func TestAutoInjectMiddleware(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
+	r := stdrouter.New()
 	r.Use(autoInjectMiddleware())
-	r.GET("/page", func(c *gin.Context) {
+	r.GET("/page", func(c *httpx.Ctx) {
 		c.Data(http.StatusOK, "text/html; charset=utf-8",
 			[]byte("<html><body>hi</body></html>"))
 	})
-	r.GET("/api", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
+	r.GET("/api", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{"ok": true})
 	})
 
 	rec := httptest.NewRecorder()

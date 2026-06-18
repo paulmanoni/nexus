@@ -3,7 +3,7 @@ package cron
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // MountDashboard mounts the cron introspection + control surface onto
@@ -16,29 +16,29 @@ import (
 //
 // Called by the dashboard package — keeps the routes declared in the
 // package that owns the Scheduler type.
-func MountDashboard(g *gin.RouterGroup, sched *Scheduler) {
-	g.GET("/crons", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"crons": sched.Snapshots()})
+func MountDashboard(g httpx.Group, sched *Scheduler) {
+	g.GET("/crons", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{"crons": sched.Snapshots()})
 	})
-	g.POST("/crons/:name/trigger", func(c *gin.Context) {
+	g.POST("/crons/:name/trigger", func(c *httpx.Ctx) {
 		if !sched.Trigger(c.Param("name")) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "unknown cron"})
+			c.JSON(http.StatusNotFound, httpx.H{"error": "unknown cron"})
 			return
 		}
-		c.JSON(http.StatusAccepted, gin.H{"ok": true})
+		c.JSON(http.StatusAccepted, httpx.H{"ok": true})
 	})
-	g.POST("/crons/:name/pause", func(c *gin.Context) {
+	g.POST("/crons/:name/pause", func(c *httpx.Ctx) {
 		if !sched.SetPaused(c.Param("name"), true) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "unknown cron"})
+			c.JSON(http.StatusNotFound, httpx.H{"error": "unknown cron"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"paused": true})
+		c.JSON(http.StatusOK, httpx.H{"paused": true})
 	})
-	g.POST("/crons/:name/resume", func(c *gin.Context) {
+	g.POST("/crons/:name/resume", func(c *httpx.Ctx) {
 		if !sched.SetPaused(c.Param("name"), false) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "unknown cron"})
+			c.JSON(http.StatusNotFound, httpx.H{"error": "unknown cron"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"paused": false})
+		c.JSON(http.StatusOK, httpx.H{"paused": false})
 	})
 }

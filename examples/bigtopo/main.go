@@ -31,7 +31,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/registry"
@@ -64,7 +64,6 @@ func main() {
 		nDeployments = envInt("BIGTOPO_DEPLOYMENTS", 8)
 		addr         = envStr("BIGTOPO_ADDR", ":8080")
 	)
-	gin.SetMode(gin.ReleaseMode)
 
 	app := nexus.New(nexus.Config{
 		Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Big Topology"},
@@ -111,7 +110,7 @@ func main() {
 		app.Register(r)
 	}
 
-	noop := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) }
+	noop := func(c *httpx.Ctx) { c.JSON(http.StatusOK, httpx.H{"ok": true}) }
 
 	// --- Services + endpoints. Each service attaches 1-3 resources by a
 	// stride that makes many services share the same resource → exercises

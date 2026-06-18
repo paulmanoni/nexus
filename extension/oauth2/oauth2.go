@@ -8,17 +8,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	oauth2lib "github.com/go-oauth2/oauth2/v4"
 	"github.com/go-oauth2/oauth2/v4/errors"
 	"github.com/go-oauth2/oauth2/v4/manage"
 	"github.com/go-oauth2/oauth2/v4/server"
 	"github.com/go-oauth2/oauth2/v4/store"
 	"github.com/google/uuid"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
 	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/extension/auth"
 )
 
 // PasswordAuthenticator validates a (username, password) pair against
@@ -168,14 +168,14 @@ func (s *Server) Resolve(ctx context.Context, token string) (*auth.Identity, err
 }
 
 // HandleToken is the OAuth2 token endpoint. Mounted under TokenPath.
-func (s *Server) HandleToken(c *gin.Context) {
+func (s *Server) HandleToken(c *httpx.Ctx) {
 	_ = s.Srv.HandleTokenRequest(c.Writer, c.Request)
 }
 
 // HandleRevoke removes the bearer token from the TokenStore. Mounted
 // under RevokePath when set. Returns 204 on success / unknown token
 // (idempotent) so clients can safely retry.
-func (s *Server) HandleRevoke(c *gin.Context) {
+func (s *Server) HandleRevoke(c *httpx.Ctx) {
 	tok := bearerFromHeader(c.GetHeader("Authorization"))
 	if tok == "" {
 		c.AbortWithStatus(http.StatusBadRequest)
@@ -222,7 +222,7 @@ func Module(cfg Config) nexus.Option {
 		// in app.Plugins(), no special handling needed.
 		auth.Module(authCfg),
 		nexus.AsRestHandler("POST", cfg.TokenPath,
-			func(srv *Server) gin.HandlerFunc { return srv.HandleToken },
+			func(srv *Server) httpx.HandlerFunc { return srv.HandleToken },
 			nexus.Description("OAuth2 token endpoint (password / refresh / client_credentials grants)."),
 			// The token endpoint mints credentials, so it must stay
 			// reachable under deny-by-default — you can't require a token
@@ -232,7 +232,7 @@ func Module(cfg Config) nexus.Option {
 	}
 	if cfg.RevokePath != "" {
 		opts = append(opts, nexus.AsRestHandler("POST", cfg.RevokePath,
-			func(srv *Server) gin.HandlerFunc { return srv.HandleRevoke },
+			func(srv *Server) httpx.HandlerFunc { return srv.HandleRevoke },
 			nexus.Description("OAuth2 token revocation endpoint."),
 			// Revoke authenticates by the token in the body it revokes, so
 			// it manages its own auth and opts out of the default gate.

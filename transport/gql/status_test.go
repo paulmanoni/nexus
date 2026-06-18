@@ -9,13 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/registry"
 )
-
-func init() { gin.SetMode(gin.TestMode) }
 
 // schemaWithMiddleware builds a minimal one-field schema whose
 // resolver runs `mw` (an inline middleware-shaped function) before
@@ -40,7 +39,7 @@ func schemaWithMiddleware(mw func(p graphql.ResolveParams) (any, error)) *graphq
 	return &s
 }
 
-func postQuery(t *testing.T, e *gin.Engine, body string) *httptest.ResponseRecorder {
+func postQuery(t *testing.T, e httpx.Router, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/graphql", bytes.NewBufferString(body))
@@ -58,7 +57,7 @@ func TestSetStatusCode_OverridesDefault(t *testing.T) {
 		SetStatusCode(p.Context, http.StatusUnauthorized)
 		return nil, errors.New("unauthorized")
 	})
-	e := gin.New()
+	e := stdrouter.New()
 	e.POST("/graphql", simpleHandler(schema))
 
 	w := postQuery(t, e, `{"query":"{ hello }"}`)
@@ -75,7 +74,7 @@ func TestSetStatusCode_OverridesDefault(t *testing.T) {
 // behavior for resolvers that just return data.
 func TestSetStatusCode_DefaultsTo200(t *testing.T) {
 	schema := schemaWithMiddleware(func(p graphql.ResolveParams) (any, error) { return nil, nil })
-	e := gin.New()
+	e := stdrouter.New()
 	e.POST("/graphql", simpleHandler(schema))
 
 	w := postQuery(t, e, `{"query":"{ hello }"}`)
@@ -97,7 +96,7 @@ func TestSetStatusCode_LastWriteWins(t *testing.T) {
 		SetStatusCode(p.Context, http.StatusTooManyRequests)
 		return nil, errors.New("rate limited")
 	})
-	e := gin.New()
+	e := stdrouter.New()
 	e.POST("/graphql", simpleHandler(schema))
 
 	w := postQuery(t, e, `{"query":"{ hello }"}`)
@@ -144,7 +143,7 @@ func TestSetStatusCode_ThroughMount_E2E(t *testing.T) {
 	})
 	schema, _ := graphql.NewSchema(graphql.SchemaConfig{Query: rootQuery})
 
-	e := gin.New()
+	e := stdrouter.New()
 	Mount(e, registry.New(), nil, "graphtest", "/graphql", &schema)
 	srv := httptest.NewServer(e)
 	defer srv.Close()
@@ -191,7 +190,7 @@ func TestSetStatusCode_GoGraphHandler(t *testing.T) {
 	})
 	schema, _ := graphql.NewSchema(graphql.SchemaConfig{Query: rootQuery})
 
-	e := gin.New()
+	e := stdrouter.New()
 	// Pretty=true forces the goGraphHandler branch in Mount.
 	Mount(e, registry.New(), nil, "graphtest-debug", "/graphql", &schema, WithPretty(true), WithDEBUG(true))
 	srv := httptest.NewServer(e)

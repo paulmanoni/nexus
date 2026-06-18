@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
@@ -196,9 +196,9 @@ func NewAdvertsService(app *App, users *UsersService, db *fakeDB) *AdvertsServic
 // DeploymentController) are the use-case this shape targets.
 type testRestHandlerCtrl struct{ counter *int }
 
-func (c *testRestHandlerCtrl) Ping(gc *gin.Context) {
+func (c *testRestHandlerCtrl) Ping(gc *httpx.Ctx) {
 	*c.counter++
-	gc.JSON(200, gin.H{"ok": true})
+	gc.JSON(200, httpx.H{"ok": true})
 }
 
 func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
@@ -210,7 +210,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Supply(ctrl).nexusOption(),
 		AsRestHandler("GET", "/ping",
-			func(c *testRestHandlerCtrl) gin.HandlerFunc { return c.Ping },
+			func(c *testRestHandlerCtrl) httpx.HandlerFunc { return c.Ping },
 			Description("ping"),
 		).nexusOption(),
 		fx.Populate(&app),

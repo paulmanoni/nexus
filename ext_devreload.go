@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // Dev-only live reload. When ServeFrontend boots under NEXUS_DEV=1,
@@ -90,7 +90,7 @@ func (h *devReloadHub) broadcast() {
 // Errors from the watcher are logged and swallowed; the dev
 // loop should not crash the app if fsnotify hits a per-platform
 // limit (e.g. macOS open-file cap).
-func mountDevReload(engine *gin.Engine, watchDir string, exclude []string) {
+func mountDevReload(engine httpx.Router, watchDir string, exclude []string) {
 	hub := newDevReloadHub()
 
 	engine.GET("/__nexus/dev/reload", devReloadSSE(hub))
@@ -302,22 +302,19 @@ func devReloadExcluded(name, watchDir string, patterns []string) bool {
 // proxies close idle SSE streams at 30-60s. The keepalive uses
 // the `:` prefix so it doesn't trigger event listeners on the
 // client side.
-func devReloadSSE(hub *devReloadHub) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func devReloadSSE(hub *devReloadHub) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no") // disable nginx response buffering
-		flusher, ok := c.Writer.(http.Flusher)
-		if !ok {
-			c.String(http.StatusInternalServerError, "streaming unsupported")
-			return
-		}
+		// *httpx.ResponseWriter forwards Flush() to the backend writer
+		// (a no-op if the backend can't stream).
 		ch := hub.subscribe()
 		defer hub.unsubscribe(ch)
 
 		fmt.Fprint(c.Writer, ": connected\n\n")
-		flusher.Flush()
+		c.Writer.Flush()
 
 		keepalive := time.NewTicker(25 * time.Second)
 		defer keepalive.Stop()
@@ -328,10 +325,10 @@ func devReloadSSE(hub *devReloadHub) gin.HandlerFunc {
 				return
 			case <-ch:
 				fmt.Fprint(c.Writer, "event: reload\ndata: {}\n\n")
-				flusher.Flush()
+				c.Writer.Flush()
 			case <-keepalive.C:
 				fmt.Fprint(c.Writer, ": ping\n\n")
-				flusher.Flush()
+				c.Writer.Flush()
 			}
 		}
 	}
@@ -344,7 +341,7 @@ func devReloadSSE(hub *devReloadHub) gin.HandlerFunc {
 //
 // Cache-Control: no-store so an inadvertent CDN / browser cache
 // doesn't keep an old shim alive across an SDK upgrade.
-func devReloadScript() gin.HandlerFunc {
+func devReloadScript() httpx.HandlerFunc {
 	const body = `// nexus dev-reload shim — auto-injected by emitIndexHTML when NEXUS_DEV=1.
 (function () {
   if (!window.EventSource) return;
@@ -367,7 +364,7 @@ func devReloadScript() gin.HandlerFunc {
   connect();
 })();
 `
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		c.Header("Cache-Control", "no-store")
 		c.Data(http.StatusOK, "application/javascript; charset=utf-8", []byte(body))
 	}

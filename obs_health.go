@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/extension/dashboard"
 )
@@ -100,15 +100,15 @@ func (h *healthState) recordPeer(tag string, ready bool, errStr string) {
 // /__nexus/ready: 200 when alive AND every tracked peer is ready,
 // 503 otherwise. JSON body lists per-peer state for human debugging
 // — invaluable when "why isn't this pod ready?" is the question.
-func mountHealth(e *gin.Engine, h *healthState) {
-	e.GET(dashboard.Prefix+"/health", func(c *gin.Context) {
+func mountHealth(e httpx.Router, h *healthState) {
+	e.GET(dashboard.Prefix+"/health", func(c *httpx.Ctx) {
 		if !h.isAlive() {
 			c.Status(http.StatusServiceUnavailable)
 			return
 		}
 		c.Status(http.StatusOK)
 	})
-	e.GET(dashboard.Prefix+"/ready", func(c *gin.Context) {
+	e.GET(dashboard.Prefix+"/ready", func(c *httpx.Ctx) {
 		alive, peers := h.snapshot()
 		ready := alive
 		for _, p := range peers {
@@ -121,11 +121,10 @@ func mountHealth(e *gin.Engine, h *healthState) {
 		if !ready {
 			status = http.StatusServiceUnavailable
 		}
-		c.JSON(status, gin.H{
+		c.JSON(status, httpx.H{
 			"alive": alive,
 			"ready": ready,
 			"peers": peers,
 		})
 	})
 }
-

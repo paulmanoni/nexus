@@ -23,7 +23,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -82,7 +82,7 @@ func Server(src Source, opts ...ServerOption) nexus.Option {
 				Icon:  "settings",
 			},
 			Routes: []extension.Route{
-				{Method: "GET", Path: "/server", Handler: gin.HandlerFunc(func(c *gin.Context) {
+				{Method: "GET", Path: "/server", Handler: httpx.HandlerFunc(func(c *httpx.Ctx) {
 					if holder.state == nil {
 						c.JSON(503, map[string]string{"error": "config server not initialized"})
 						return

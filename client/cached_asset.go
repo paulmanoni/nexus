@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // cachedAsset bundles a static byte body with the precomputed
@@ -66,7 +66,7 @@ func newCachedAsset(body []byte) cachedAsset {
 // Falls through to a plain c.Data when asset is zero — keeps the
 // old behavior for code paths that haven't migrated to cachedAsset
 // yet (none today, but the seam matters during refactors).
-func serveCachedAsset(c *gin.Context, contentType string, a cachedAsset) {
+func serveCachedAsset(c *httpx.Ctx, contentType string, a cachedAsset) {
 	if len(a.body) == 0 {
 		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 		c.Status(http.StatusOK)
@@ -112,6 +112,6 @@ func etagMatches(ifNoneMatch, etag string) bool {
 // libraries that opt into gzip always include the literal "gzip" in
 // Accept-Encoding; clients that explicitly disable it ("identity")
 // won't, and we'll fall through to the uncompressed body.
-func acceptsGzip(c *gin.Context) bool {
+func acceptsGzip(c *httpx.Ctx) bool {
 	return strings.Contains(c.GetHeader("Accept-Encoding"), "gzip")
 }

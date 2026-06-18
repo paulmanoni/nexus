@@ -7,8 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/registry"
 )
@@ -19,12 +20,11 @@ import (
 // contract: a cache hit must produce a byte-identical envelope to a
 // miss, so callers can't tell whether parse+validate ran.
 func TestCachedHandler_HitProducesSameResult(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
 
 	schema := buildEchoSchema(t)
 	cache := NewDocumentCache(16)
 
-	e := gin.New()
+	e := stdrouter.New()
 	Mount(e, registry.New(), nil, "test", "/graphql", &schema,
 		func(o *Options) { o.DocumentCache = cache },
 	)
@@ -55,12 +55,11 @@ func TestCachedHandler_HitProducesSameResult(t *testing.T) {
 // references a non-existent field) should be cached as "invalid"
 // so the validation walker doesn't re-run on every repeat.
 func TestCachedHandler_InvalidQueryCachedAsErrors(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
 
 	schema := buildEchoSchema(t)
 	cache := NewDocumentCache(16)
 
-	e := gin.New()
+	e := stdrouter.New()
 	Mount(e, registry.New(), nil, "test", "/graphql", &schema,
 		func(o *Options) { o.DocumentCache = cache },
 	)
@@ -115,7 +114,7 @@ func buildEchoSchema(t *testing.T) graphql.Schema {
 	return s
 }
 
-func doPost(t *testing.T, e *gin.Engine, path string, body []byte) []byte {
+func doPost(t *testing.T, e httpx.Router, path string, body []byte) []byte {
 	t.Helper()
 	req, _ := http.NewRequest("POST", path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

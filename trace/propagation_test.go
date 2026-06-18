@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
 
 func TestParseTraceparent_Valid(t *testing.T) {
@@ -25,13 +26,13 @@ func TestParseTraceparent_Valid(t *testing.T) {
 func TestParseTraceparent_Invalid(t *testing.T) {
 	cases := []string{
 		"",
-		"01-0123456789abcdef0123456789abcdef-0123456789abcdef-01",                   // wrong version
-		"00-0123456789abcdef0123456789abcdef-0123456789abcdef",                      // too few parts
-		"00-0123456789abcdef0123456789abcde-0123456789abcdef-01",                    // trace id wrong length
-		"00-0123456789abcdef0123456789abcdef-0123456789abcde-01",                    // span id wrong length
-		"00-00000000000000000000000000000000-0123456789abcdef-01",                   // trace id all zeros
-		"00-0123456789abcdef0123456789abcdef-0000000000000000-01",                   // span id all zeros
-		"00-0123456789abcdefg123456789abcdef-0123456789abcdef-01",                   // non-hex
+		"01-0123456789abcdef0123456789abcdef-0123456789abcdef-01", // wrong version
+		"00-0123456789abcdef0123456789abcdef-0123456789abcdef",    // too few parts
+		"00-0123456789abcdef0123456789abcde-0123456789abcdef-01",  // trace id wrong length
+		"00-0123456789abcdef0123456789abcdef-0123456789abcde-01",  // span id wrong length
+		"00-00000000000000000000000000000000-0123456789abcdef-01", // trace id all zeros
+		"00-0123456789abcdef0123456789abcdef-0000000000000000-01", // span id all zeros
+		"00-0123456789abcdefg123456789abcdef-0123456789abcdef-01", // non-hex
 	}
 	for _, h := range cases {
 		if _, _, ok := parseTraceparent(h); ok {
@@ -44,11 +45,8 @@ func TestMiddleware_HonorsInboundTraceparent(t *testing.T) {
 	bus := NewBus(16)
 	_, ch, cancel := bus.Subscribe(0, 16)
 	defer cancel()
-
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(Middleware(bus, "svc", "op", "rest"))
-	r.GET("/x", func(c *gin.Context) {
+	r := stdrouter.New()
+	r.GET("/x", Middleware(bus, "svc", "op", "rest"), func(c *httpx.Ctx) {
 		span, _ := SpanFrom(c)
 		if !span.Remote {
 			t.Errorf("expected span.Remote=true for inbound traceparent")
@@ -83,11 +81,8 @@ func TestMiddleware_MintsFreshWhenNoHeader(t *testing.T) {
 	bus := NewBus(16)
 	_, ch, cancel := bus.Subscribe(0, 16)
 	defer cancel()
-
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(Middleware(bus, "svc", "op", "rest"))
-	r.GET("/x", func(c *gin.Context) { c.String(200, "ok") })
+	r := stdrouter.New()
+	r.GET("/x", Middleware(bus, "svc", "op", "rest"), func(c *httpx.Ctx) { c.String(200, "ok") })
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/x", nil))

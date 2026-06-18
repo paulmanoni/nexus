@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-
-	"github.com/gin-gonic/gin"
 )
 
 // End-to-end benchmarks. The micro-benchmarks in bench_test.go measure
@@ -33,7 +31,6 @@ func init() {
 	// Silence gin's per-request log and route-registration spam during
 	// benchmark runs — they would otherwise dominate the cost being
 	// measured.
-	gin.SetMode(gin.ReleaseMode)
 }
 
 // --- handler shapes used below -------------------------------------

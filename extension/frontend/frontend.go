@@ -51,7 +51,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -141,7 +141,7 @@ type Config struct {
 	// Equivalent to client.Config.Middleware; lifted here so apps
 	// declare it once on the frontend Plugin instead of plumbing a
 	// separate client.Config alongside.
-	ClientMiddleware []gin.HandlerFunc
+	ClientMiddleware []httpx.HandlerFunc
 
 	// SDKOutDir, when non-empty, makes the client SDK route group
 	// also dump client.js / vue.js / *.d.ts / manifest.json to disk

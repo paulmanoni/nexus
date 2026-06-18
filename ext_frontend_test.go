@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // helper for tests — keeps the empty-config call sites readable.
@@ -33,7 +33,7 @@ func TestServeFrontend(t *testing.T) {
 	}
 
 	app := New(Config{})
-	app.engine.GET("/api/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
+	app.engine.GET("/api/ping", func(c *httpx.Ctx) { c.String(http.StatusOK, "pong") })
 
 	if err := mountFrontend(app, fsys, noFrontendCfg); err != nil {
 		t.Fatalf("mountFrontend: %v", err)
@@ -164,7 +164,7 @@ func TestServeFrontendMissingIndex(t *testing.T) {
 // handlers — the standard "REST at /api, SPA at /admin" shape.
 func TestServeFrontendAtSubPath(t *testing.T) {
 	app := New(Config{})
-	app.engine.GET("/api/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
+	app.engine.GET("/api/ping", func(c *httpx.Ctx) { c.String(http.StatusOK, "pong") })
 
 	fsys := fstest.MapFS{
 		"index.html":     {Data: []byte("<html>app</html>")},

@@ -24,7 +24,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/registry"
 )
@@ -102,7 +102,7 @@ type Config struct {
 	// Middleware applies to every SDK route. Empty by default. For
 	// the manifest specifically, prefer the Public flag — Middleware
 	// gates the runtime .js files too, which most apps don't want.
-	Middleware []gin.HandlerFunc
+	Middleware []httpx.HandlerFunc
 
 	// Manifest overrides the default per-build manifest projection.
 	// Most apps leave this nil; the framework's default reads the
@@ -594,7 +594,7 @@ func VitePluginJS() []byte { return vitePluginJS }
 // can resolve types/imports without a manual `nexus client --out`
 // step. Dump errors are logged but don't fail Mount — dev-tool
 // convenience shouldn't crash boot.
-func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config) *Handler {
+func Mount(e httpx.Router, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config) *Handler {
 	return MountWithContributions(e, reg, authInfo, schemaRefs, basePath, cfg, nil)
 }
 
@@ -610,7 +610,7 @@ func Mount(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo,
 // frontend.Plugin is the canonical caller of the with-contributions
 // form; it's the only place that has the *App pointer needed to
 // build the closure.
-func MountWithContributions(e *gin.Engine, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config, contributions ContributionsBuilder) *Handler {
+func MountWithContributions(e httpx.Router, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config, contributions ContributionsBuilder) *Handler {
 	if cfg.Path == "" {
 		cfg.Path = DefaultPath
 	}
@@ -632,7 +632,7 @@ func MountWithContributions(e *gin.Engine, reg *registry.Registry, authInfo func
 	}
 	// Manifest is always served — the codegen CLI needs it
 	// regardless of whether the runtime SDK assets are exposed.
-	g.GET("/manifest.json", func(c *gin.Context) {
+	g.GET("/manifest.json", func(c *httpx.Ctx) {
 		h.build()
 		h.mu.Lock()
 		asset := h.manifest
@@ -645,30 +645,30 @@ func MountWithContributions(e *gin.Engine, reg *registry.Registry, authInfo func
 	// keeping the routes registered is dead weight and a small
 	// attack surface (anonymous reads of bundled JS body).
 	if !cfg.SkipAssets {
-		g.GET("/client.js", func(c *gin.Context) {
+		g.GET("/client.js", func(c *httpx.Ctx) {
 			serveCachedAsset(c, "application/javascript; charset=utf-8", clientJSAsset)
 		})
-		g.GET("/client.d.ts", func(c *gin.Context) {
+		g.GET("/client.d.ts", func(c *httpx.Ctx) {
 			h.build()
 			h.mu.Lock()
 			asset := h.dtsClient
 			h.mu.Unlock()
 			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
 		})
-		g.GET("/vue.js", func(c *gin.Context) {
+		g.GET("/vue.js", func(c *httpx.Ctx) {
 			serveCachedAsset(c, "application/javascript; charset=utf-8", vueJSAsset)
 		})
-		g.GET("/vue.d.ts", func(c *gin.Context) {
+		g.GET("/vue.d.ts", func(c *httpx.Ctx) {
 			h.build()
 			h.mu.Lock()
 			asset := h.dtsVue
 			h.mu.Unlock()
 			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
 		})
-		g.GET("/react.js", func(c *gin.Context) {
+		g.GET("/react.js", func(c *httpx.Ctx) {
 			serveCachedAsset(c, "application/javascript; charset=utf-8", reactJSAsset)
 		})
-		g.GET("/react.d.ts", func(c *gin.Context) {
+		g.GET("/react.d.ts", func(c *httpx.Ctx) {
 			h.build()
 			h.mu.Lock()
 			asset := h.dtsReact

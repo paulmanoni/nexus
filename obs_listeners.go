@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/extension/dashboard"
 )
@@ -292,8 +292,8 @@ func fillListenerAddrs(in map[string]Listener, publicAddr string) map[string]Lis
 // context under http.LocalAddrContextKey. We stringify it and look up
 // the scope. Bound addresses (after net.Listen returns) are what land
 // here, so :0 (random port) resolves to the actually-bound port.
-func scopeFilterMiddleware(scopes *listenerScopes) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func scopeFilterMiddleware(scopes *listenerScopes) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		if scopes == nil || scopes.empty() {
 			c.Next()
 			return

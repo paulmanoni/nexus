@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"gopkg.in/yaml.v3"
 
 	"github.com/paulmanoni/nexus/client"
@@ -14,7 +14,7 @@ import (
 // Content-Type ("application/json") satisfies every tool we've
 // surveyed; some prefer "application/vnd.oai.openapi+json" but
 // nothing demands it.
-func (s *pluginState) handleSpecJSON(c *gin.Context) {
+func (s *pluginState) handleSpecJSON(c *httpx.Ctx) {
 	doc := s.currentSpec(c)
 	c.JSON(http.StatusOK, doc)
 }
@@ -22,11 +22,11 @@ func (s *pluginState) handleSpecJSON(c *gin.Context) {
 // handleSpecYAML serves the same document as YAML. SDK generators
 // accept both; humans tend to read YAML more easily, so this is here
 // for the "open the URL in a browser tab" path.
-func (s *pluginState) handleSpecYAML(c *gin.Context) {
+func (s *pluginState) handleSpecYAML(c *httpx.Ctx) {
 	doc := s.currentSpec(c)
 	out, err := yaml.Marshal(doc)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 		return
 	}
 	c.Data(http.StatusOK, "application/yaml; charset=utf-8", out)
@@ -42,7 +42,7 @@ func (s *pluginState) handleSpecYAML(c *gin.Context) {
 // by mounting their own handler at /__nexus/openapi/ui — the
 // framework's last-route-wins means a later registration replaces
 // this one.
-func (s *pluginState) handleUI(c *gin.Context) {
+func (s *pluginState) handleUI(c *httpx.Ctx) {
 	specPath := s.specURL()
 	html := fmt.Sprintf(swaggerUIHTML, s.cfg.SwaggerUIVersion, s.cfg.Title, s.cfg.SwaggerUIVersion, s.cfg.SwaggerUIVersion, specPath)
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
@@ -58,7 +58,7 @@ func (s *pluginState) handleUI(c *gin.Context) {
 // /__nexus/openapi/spec.json from a browser still produces a usable
 // "Try it out" URL in Swagger UI. Explicit Config.Servers overrides
 // this; production deployments should set it to their canonical URL.
-func (s *pluginState) currentSpec(c *gin.Context) Document {
+func (s *pluginState) currentSpec(c *httpx.Ctx) Document {
 	mf := s.fetchManifest()
 	doc := s.buildDocument(mf)
 	if len(doc.Servers) == 0 {
@@ -113,7 +113,7 @@ func (s *pluginState) specURL() string {
 // scheme detects whether the request came in over TLS — needed for
 // the synthesized server URL in currentSpec(). Honors the standard
 // proxy headers so a deployment behind an LB still gets "https".
-func scheme(c *gin.Context) string {
+func scheme(c *httpx.Ctx) string {
 	if c.Request.TLS != nil {
 		return "https"
 	}
@@ -126,11 +126,11 @@ func scheme(c *gin.Context) string {
 // swaggerUIHTML is the format string for the /ui page. Five %s
 // placeholders, in order:
 //
-//	1. swagger-ui-dist CSS link version
-//	2. document title
-//	3. swagger-ui-dist bundle JS version
-//	4. swagger-ui-dist standalone preset version
-//	5. spec URL the bundle should load
+//  1. swagger-ui-dist CSS link version
+//  2. document title
+//  3. swagger-ui-dist bundle JS version
+//  4. swagger-ui-dist standalone preset version
+//  5. spec URL the bundle should load
 //
 // Stylistically minimal — no theming, no auth UI overrides. Teams
 // with stricter design requirements should mount their own /ui

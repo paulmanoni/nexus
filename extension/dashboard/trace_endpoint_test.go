@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
-
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -44,8 +43,7 @@ func publishTrace(bus *trace.Bus, traceID string) {
 }
 
 func TestTraceByID_ReturnsWaterfall(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	e := gin.New()
+	e := stdrouter.New()
 	bus := trace.NewBus(32)
 	Mount(e, registry.New(), bus, nil, nil, nil, nil, nil, Config{})
 
@@ -101,8 +99,7 @@ func TestTraceByID_ReturnsWaterfall(t *testing.T) {
 }
 
 func TestTraceByID_NotFound(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	e := gin.New()
+	e := stdrouter.New()
 	bus := trace.NewBus(16)
 	Mount(e, registry.New(), bus, nil, nil, nil, nil, nil, Config{})
 

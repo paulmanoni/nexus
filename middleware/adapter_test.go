@@ -7,12 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/graph"
 )
-
-func init() { gin.SetMode(gin.TestMode) }
 
 func TestFromHandlerRealizations(t *testing.T) {
 	pass := func(rc *RequestCtx, next Next) error { return next(rc) }
@@ -51,8 +50,8 @@ func TestGinAdapterPassThrough(t *testing.T) {
 	})
 	mw := FromHandler(h)
 
-	r := gin.New()
-	r.GET("/x", mw.Gin, func(c *gin.Context) { seen = true; c.Status(http.StatusOK) })
+	r := stdrouter.New()
+	r.GET("/x", mw.Gin, func(c *httpx.Ctx) { seen = true; c.Status(http.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.RemoteAddr = "203.0.113.5:1234"
@@ -74,8 +73,8 @@ func TestGinAdapterReject(t *testing.T) {
 	})
 	mw := FromHandler(h)
 
-	r := gin.New()
-	r.GET("/x", mw.Gin, func(*gin.Context) { downstream = true })
+	r := stdrouter.New()
+	r.GET("/x", mw.Gin, func(*httpx.Ctx) { downstream = true })
 
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()

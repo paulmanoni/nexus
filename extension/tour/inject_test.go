@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
 
 // TestHandleInjectJS confirms the embedded agent is reachable
@@ -15,8 +15,7 @@ import (
 // placeholder): the boot guard variable name and the recorder
 // bar selector.
 func TestHandleInjectJS(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
+	r := stdrouter.New()
 	r.GET("/__nexus/tour/inject.js", handleInjectJS)
 
 	rec := httptest.NewRecorder()
@@ -49,8 +48,7 @@ func TestHandleInjectJS(t *testing.T) {
 // served body should be HTML, contain Vue's mount target, and
 // reference the REST endpoints the SPA talks to.
 func TestHandleDashboard(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
+	r := stdrouter.New()
 	r.GET("/dash", handleDashboard)
 
 	rec := httptest.NewRecorder()
@@ -64,10 +62,10 @@ func TestHandleDashboard(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, signpost := range []string{
-		`id="app"`,                 // Vue mount target
-		"esm.sh/vue@3",             // CDN import
-		"/__nexus/tour/tours",      // REST endpoint reference
-		"promoteStep",              // tree-manip helper proves the editor logic landed
+		`id="app"`,            // Vue mount target
+		"esm.sh/vue@3",        // CDN import
+		"/__nexus/tour/tours", // REST endpoint reference
+		"promoteStep",         // tree-manip helper proves the editor logic landed
 	} {
 		if !strings.Contains(body, signpost) {
 			t.Errorf("dashboard body missing %q", signpost)

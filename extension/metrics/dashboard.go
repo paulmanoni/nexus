@@ -3,7 +3,7 @@ package metrics
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // MountDashboard mounts the metrics introspection surface onto the
@@ -19,15 +19,15 @@ import (
 // /stats/errors is lazy-loaded by the dashboard when an operator
 // opens the error dialog for a specific endpoint — keeps /stats lean
 // even when RecentErrorsCap is in the thousands.
-func MountDashboard(g *gin.RouterGroup, store Store) {
-	g.GET("/stats", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"stats": store.Snapshot()})
+func MountDashboard(g httpx.Group, store Store) {
+	g.GET("/stats", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{"stats": store.Snapshot()})
 	})
-	g.GET("/stats/errors", func(c *gin.Context) {
+	g.GET("/stats/errors", func(c *httpx.Ctx) {
 		s := c.Query("service")
 		o := c.Query("op")
 		key := s + "." + o
-		c.JSON(http.StatusOK, gin.H{
+		c.JSON(http.StatusOK, httpx.H{
 			"key":    key,
 			"events": store.Errors(key),
 		})

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // Header names defined by the Inertia protocol.
@@ -39,7 +39,7 @@ type pageObject struct {
 // header X-Inertia distinguishes an XHR visit (JSON page object) from an
 // initial browser navigation (HTML document shell). Either way the props are
 // resolved once, honoring partial-reload and Optional/Always rules.
-func (e *Engine) render(c *gin.Context, component string, result any) error {
+func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	// Asset-version guard: a stale X-Inertia-Version on a GET XHR visit forces
 	// a fresh full load (the client follows X-Inertia-Location). Checked here
 	// (rather than in global middleware) so it works regardless of route
@@ -109,7 +109,7 @@ type propsMeta struct {
 	merge    []string // Merge keys included in this response
 }
 
-func (e *Engine) resolveProps(c *gin.Context, component string, result any) (map[string]any, propsMeta, error) {
+func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[string]any, propsMeta, error) {
 	partial := c.GetHeader(headerPartialComponent) == component
 	only := parseList(c.GetHeader(headerPartialData))
 

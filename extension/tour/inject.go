@@ -5,7 +5,7 @@ import (
 	_ "embed"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // injectJS is the in-page agent — vanilla JS, no toolchain, all
@@ -36,7 +36,7 @@ var previewHTML string
 // /__nexus/tour/. text/html so AutoInject can splice in the
 // in-page agent's script tag for a "manage and demo from the
 // same page" flow.
-func handleDashboard(c *gin.Context) {
+func handleDashboard(c *httpx.Ctx) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.String(http.StatusOK, dashboardHTML)
@@ -50,7 +50,7 @@ func handleDashboard(c *gin.Context) {
 //
 // AutoInject is suppressed for this response — we don't want
 // the in-page agent's FAB cluttering a printable preview.
-func handlePreview(c *gin.Context) {
+func handlePreview(c *httpx.Ctx) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.Header("X-Nexus-Tour-NoInject", "1")
@@ -78,7 +78,7 @@ func handlePreview(c *gin.Context) {
 // validator the browser sends is implicit (Last-Modified is set
 // by net/http when ServeContent is used; for raw body writes
 // we accept that no-cache always revalidates fresh).
-func handleInjectJS(c *gin.Context) {
+func handleInjectJS(c *httpx.Ctx) {
 	c.Header("Content-Type", "application/javascript; charset=utf-8")
 	c.Header("Cache-Control", "no-cache, must-revalidate")
 	c.String(http.StatusOK, injectJS)
@@ -98,17 +98,21 @@ func handleInjectJS(c *gin.Context) {
 //     ending up with two copies).
 //   - Inserts before </body> when present; appends to the body
 //     otherwise (degrades to an end-of-document mount).
-func autoInjectMiddleware() gin.HandlerFunc {
+func autoInjectMiddleware() httpx.HandlerFunc {
 	scriptTag := []byte(`<script src="/__nexus/tour/inject.js" defer></script>`)
 	bodyClose := []byte("</body>")
 
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
+		// httpx.Ctx.Writer is a concrete *httpx.ResponseWriter, so we
+		// can't swap the whole writer (as the gin version did with an
+		// interface). Instead wrap its embedded backend writer: all
+		// writes through c.Writer now funnel into our buffer.
 		writer := &injectingWriter{
-			ResponseWriter: c.Writer,
+			ResponseWriter: c.Writer.ResponseWriter,
 			scriptTag:      scriptTag,
 			bodyClose:      bodyClose,
 		}
-		c.Writer = writer
+		c.Writer.ResponseWriter = writer
 		c.Next()
 		_ = writer.flush()
 	}
@@ -123,31 +127,26 @@ func autoInjectMiddleware() gin.HandlerFunc {
 // non-HTML response the early-out at WriteHeader avoids the
 // buffering entirely.
 type injectingWriter struct {
-	gin.ResponseWriter
+	http.ResponseWriter
 	scriptTag []byte
 	bodyClose []byte
 
+	status   int // captured; sent at flush so Content-Length can be rewritten
 	buf      bytes.Buffer
 	passthru bool // true → write straight through, skip injection
 }
 
-// Write is called by gin (or the user's handler) to emit the
-// response body. If we've decided the response isn't HTML, write
-// straight through; otherwise buffer for later splicing.
+// WriteHeader defers the status to flush time — we may rewrite
+// Content-Length after splicing, so headers can't go out early.
+func (w *injectingWriter) WriteHeader(code int) { w.status = code }
+
+// Write buffers the response body so flush can scan for </body> and
+// splice in the script tag (unless we've switched to passthru).
 func (w *injectingWriter) Write(p []byte) (int, error) {
 	if w.passthru {
 		return w.ResponseWriter.Write(p)
 	}
 	return w.buf.Write(p)
-}
-
-// WriteString mirrors Write for the string variant gin uses for
-// small responses (c.String / c.Redirect bodies).
-func (w *injectingWriter) WriteString(s string) (int, error) {
-	if w.passthru {
-		return w.ResponseWriter.WriteString(s)
-	}
-	return w.buf.WriteString(s)
 }
 
 // flush is called after the handler returns. Decide HTML-or-not
@@ -167,6 +166,7 @@ func (w *injectingWriter) flush() error {
 	w.Header().Del("X-Nexus-Tour-NoInject")
 	if noInject || enc != "" || !isHTML(ct) {
 		// Not HTML, or encoded body we won't modify.
+		w.sendHeader()
 		_, err := w.ResponseWriter.Write(w.buf.Bytes())
 		w.passthru = true
 		return err
@@ -176,6 +176,7 @@ func (w *injectingWriter) flush() error {
 	if bytes.Contains(body, w.scriptTag) {
 		// Operator already included the tag manually — don't
 		// duplicate it.
+		w.sendHeader()
 		_, err := w.ResponseWriter.Write(body)
 		w.passthru = true
 		return err
@@ -198,9 +199,20 @@ func (w *injectingWriter) flush() error {
 	// Rewrite Content-Length if the host set one — otherwise the
 	// browser truncates at the old size and never reads our tag.
 	w.Header().Del("Content-Length")
+	w.sendHeader()
 	_, err := w.ResponseWriter.Write(out)
 	w.passthru = true
 	return err
+}
+
+// sendHeader flushes the deferred status line (default 200) to the real
+// writer exactly once, after Content-Length/headers have been finalized.
+func (w *injectingWriter) sendHeader() {
+	code := w.status
+	if code == 0 {
+		code = http.StatusOK
+	}
+	w.ResponseWriter.WriteHeader(code)
 }
 
 // isHTML reports whether the Content-Type header names HTML.

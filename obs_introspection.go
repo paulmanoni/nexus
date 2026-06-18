@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // devModeBypass reports whether the framework is running under
@@ -48,7 +48,7 @@ func parseIntrospectionNetworks(cidrs []string) ([]*net.IPNet, error) {
 //
 // Empty networks + introspect=false = strict mode: every gated
 // route 404s.
-func introspectionAllowed(c *gin.Context, introspect bool, networks []*net.IPNet) bool {
+func introspectionAllowed(c *httpx.Ctx, introspect bool, networks []*net.IPNet) bool {
 	if introspect {
 		return true
 	}
@@ -70,7 +70,7 @@ func introspectionAllowed(c *gin.Context, introspect bool, networks []*net.IPNet
 	return false
 }
 
-// introspectionGate returns a gin.HandlerFunc that 404s requests
+// introspectionGate returns a httpx.HandlerFunc that 404s requests
 // when the Introspection gate is closed AND the peer IP is not in
 // the allowlist. 404 (rather than 401/403) is intentional — it
 // makes the gated routes look indistinguishable from "never
@@ -81,7 +81,7 @@ func introspectionAllowed(c *gin.Context, introspect bool, networks []*net.IPNet
 // the caller skips installing the middleware in that case so the
 // hot path stays empty for dev/internal deploys that don't need
 // gating.
-func introspectionGate(introspect bool, networks []*net.IPNet) gin.HandlerFunc {
+func introspectionGate(introspect bool, networks []*net.IPNet) httpx.HandlerFunc {
 	if introspect {
 		return nil
 	}
@@ -93,7 +93,7 @@ func introspectionGate(introspect bool, networks []*net.IPNet) gin.HandlerFunc {
 	if devModeBypass() {
 		return nil
 	}
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		if introspectionAllowed(c, false, networks) {
 			c.Next()
 			return
