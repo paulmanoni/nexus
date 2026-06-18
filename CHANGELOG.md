@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-06-18
+
+### Added — Pluggable HTTP router (`httpx` seam)
+
+- **The HTTP router is now pluggable behind `github.com/paulmanoni/nexus/httpx`.**
+  Handlers and middleware see a transport-neutral `*httpx.Ctx`; the concrete
+  router is an adapter selected at boot via `nexus.WithRouter(...)` (or
+  `Config.Router`). Three backends ship:
+  - `httpx/stdrouter` — **the new default**, Go 1.22 `net/http.ServeMux`, with
+    **zero third-party router dependencies**. The default binary no longer links
+    gin (or its sonic/golang-asm/goccy/validator tree).
+  - `httpx/chirouter` — opt-in (`go-chi`).
+  - `httpx/ginrouter` — opt-in; the only package that imports gin now.
+- Chain execution (`Next`/`Abort`, panic recovery, error accumulation) lives in
+  `httpx.Ctx`, so every middleware runs identically on any backend; the router
+  only matches paths and returns params. App-level middleware wraps the whole
+  mux (runs even on 404/405, e.g. CORS preflight); per-op middleware runs inside
+  the matched route. Route strings keep the canonical `:id` / `*rest` syntax on
+  every backend.
+
+### Changed (BREAKING) — gin no longer in the public surface
+
+- `App.Engine() *gin.Engine` → **`App.Router() httpx.Router`**.
+- Low-level handlers that took a `*gin.Context` parameter now take **`*httpx.Ctx`**.
+- `gin.H` → **`httpx.H`**. `AsRestHandler` factories return `httpx.HandlerFunc`.
+- To keep gin, add `nexus.WithRouter(ginrouter.New())` and blank-import the
+  adapter — selecting gin/chi pulls their dependency trees back into the build;
+  the stdlib default links none.
+
 ## [1.18.1] - 2026-06-18
 
 ### Security — Client SDK

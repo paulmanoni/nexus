@@ -9,13 +9,13 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/parser"
 	"github.com/graphql-go/graphql/language/source"
 	"github.com/paulmanoni/nexus/dataloader"
 	graph "github.com/paulmanoni/nexus/graph"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
@@ -56,7 +56,7 @@ type Options struct {
 	// means introspection is allowed unconditionally (the dev/internal
 	// default; nexus.New supplies a closure that reads
 	// Config.Introspection + IntrospectionNetworks).
-	AllowIntrospection func(c *gin.Context) bool
+	AllowIntrospection func(c *httpx.Ctx) bool
 
 	// DocumentCache memoizes parse + validate for repeat queries.
 	// Profiling shows ~89% of a GraphQL request's allocations come
@@ -95,7 +95,7 @@ func WithServiceForField(fn func(name string) string) Option {
 // resolving. Used by nexus.New to wire Config.Introspection +
 // IntrospectionNetworks through to the GraphQL handler so the gate is
 // consistent with the dashboard.
-func WithAllowIntrospection(fn func(c *gin.Context) bool) Option {
+func WithAllowIntrospection(fn func(c *httpx.Ctx) bool) Option {
 	return func(o *Options) { o.AllowIntrospection = fn }
 }
 
@@ -126,7 +126,7 @@ func WithStatsRegistry(r *StatsRegistry) Option {
 // When any option touches auth (UserDetailsFn), playground, or debug, the
 // adapter routes requests through graph.NewHTTP. Otherwise the default plain
 // graphql.Do handler is used — keeping graphql-go-only users unaffected.
-func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path string, schema *graphql.Schema, opts ...Option) {
+func Mount(e httpx.Router, r *registry.Registry, bus *trace.Bus, service, path string, schema *graphql.Schema, opts ...Option) {
 	var cfg Options
 	for _, o := range opts {
 		o(&cfg)
@@ -146,7 +146,7 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 	// when Playground is on, since that path also serves the HTML
 	// UI for browser visits.
 	postHandler := cachedHandler(schema, cfg)
-	var getHandler gin.HandlerFunc
+	var getHandler httpx.HandlerFunc
 	if cfg.UserDetailsFn != nil || cfg.Playground || cfg.DEBUG {
 		getHandler = goGraphHandler(schema, cfg)
 	} else {
@@ -159,7 +159,7 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 	if cfg.Playground {
 		inner := getHandler
 		sandbox := apolloSandboxHandler()
-		getHandler = func(c *gin.Context) {
+		getHandler = func(c *httpx.Ctx) {
 			if isBrowserIDEVisit(c) {
 				sandbox(c)
 				return
@@ -168,8 +168,8 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 		}
 	}
 
-	build := func(h gin.HandlerFunc) []gin.HandlerFunc {
-		var hs []gin.HandlerFunc
+	build := func(h httpx.HandlerFunc) []httpx.HandlerFunc {
+		var hs []httpx.HandlerFunc
 		if bus != nil {
 			hs = append(hs, trace.Middleware(bus, service, "POST "+path, string(registry.GraphQL)))
 		}
@@ -182,12 +182,12 @@ func Mount(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path st
 		// allow returns true, validation is skipped (dev / admin /
 		// allowlisted peer keeps the loose experience).
 		if cfg.AllowIntrospection != nil {
-			hs = append([]gin.HandlerFunc{productionGate(cfg.AllowIntrospection, schema)}, hs...)
+			hs = append([]httpx.HandlerFunc{productionGate(cfg.AllowIntrospection, schema)}, hs...)
 		}
 		// Stash the caller IP in the request context so per-op middleware
 		// downstream (rate-limit, metrics error recorder) can attribute the
 		// request without the gql adapter leaking gin.Context into graph.
-		hs = append(hs, func(c *gin.Context) {
+		hs = append(hs, func(c *httpx.Ctx) {
 			ctx := ratelimit.WithClientIP(c.Request.Context(), c.ClientIP())
 			c.Request = c.Request.WithContext(ctx)
 			c.Next()
@@ -205,8 +205,8 @@ type request struct {
 	Variables     map[string]any `json:"variables"`
 }
 
-func simpleHandler(schema *graphql.Schema) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func simpleHandler(schema *graphql.Schema) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		var req request
 		if c.Request.Method == http.MethodGet {
 			req.Query = c.Query("query")
@@ -216,7 +216,7 @@ func simpleHandler(schema *graphql.Schema) gin.HandlerFunc {
 			}
 		} else {
 			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 				return
 			}
 		}
@@ -250,13 +250,13 @@ func simpleHandler(schema *graphql.Schema) gin.HandlerFunc {
 // to the legacy goGraphHandler / simpleHandler path for unusual
 // content types (form-encoded GraphQL queries are rare in
 // practice; rather than reimplement that branch we delegate).
-func cachedHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
+func cachedHandler(schema *graphql.Schema, cfg Options) httpx.HandlerFunc {
 	fallback := simpleHandler(schema)
 	if cfg.UserDetailsFn != nil || cfg.Playground || cfg.DEBUG {
 		fallback = goGraphHandler(schema, cfg)
 	}
 	cache := cfg.DocumentCache
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		// Only JSON POSTs go through the cached fast path. Anything
 		// else (form-encoded, multipart, etc.) falls back to the
 		// existing handler so we don't have to re-implement those
@@ -268,7 +268,7 @@ func cachedHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
 		}
 		var req request
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 			return
 		}
 		// Install the status holder before resolvers run so field
@@ -400,7 +400,7 @@ func isJSONContentType(ct string) bool {
 // (no hook between "compute result" and "send headers"), so the
 // handler buffers the inner response via statusCaptureWriter, then
 // replays it onto c.Writer with any override applied.
-func goGraphHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
+func goGraphHandler(schema *graphql.Schema, cfg Options) httpx.HandlerFunc {
 	h := graph.NewHTTP(&graph.GraphContext{
 		Schema:        schema,
 		Playground:    cfg.Playground,
@@ -408,7 +408,7 @@ func goGraphHandler(schema *graphql.Schema, cfg Options) gin.HandlerFunc {
 		DEBUG:         cfg.DEBUG,
 		UserDetailsFn: cfg.UserDetailsFn,
 	})
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		ctx, _ := withStatusHolder(c.Request.Context())
 		ctx = dataloader.WithRegistry(ctx, dataloader.NewRegistry())
 		req := c.Request.WithContext(ctx)

@@ -47,7 +47,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -90,7 +90,7 @@ func Module(cfg Config) nexus.Option {
 			},
 			Routes: []extension.Route{
 				{Method: "GET", Path: "/list",
-					Handler: gin.HandlerFunc(func(c *gin.Context) {
+					Handler: httpx.HandlerFunc(func(c *httpx.Ctx) {
 						// Closures capture holder.reg via late
 						// binding: by the time a dashboard
 						// request hits, OnBoot has populated it.
@@ -102,7 +102,7 @@ func Module(cfg Config) nexus.Option {
 					}),
 				},
 				{Method: "GET", Path: "/schemas/:name",
-					Handler: gin.HandlerFunc(func(c *gin.Context) {
+					Handler: httpx.HandlerFunc(func(c *httpx.Ctx) {
 						if holder.reg == nil {
 							c.JSON(503, map[string]string{"error": "registry not initialized"})
 							return

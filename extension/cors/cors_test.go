@@ -6,31 +6,28 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/manifest"
 )
 
-func init() {
-	gin.SetMode(gin.TestMode)
-}
-
 // newTestEngine wires a gin engine with the CORS middleware applied
 // and a single route the tests can hit. Returns the engine so tests
 // can fire arbitrary requests at it.
-func newTestEngine(t *testing.T, cfg Config) *gin.Engine {
+func newTestEngine(t *testing.T, cfg Config) httpx.Router {
 	t.Helper()
 	applyDefaults(&cfg)
 	if err := validate(&cfg); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	r := gin.New()
+	r := stdrouter.New()
 	r.Use(ginHandler(&cfg, buildMatcher(&cfg)))
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"ok": true})
+	r.GET("/ping", func(c *httpx.Ctx) {
+		c.JSON(200, httpx.H{"ok": true})
 	})
-	r.POST("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"ok": true})
+	r.POST("/ping", func(c *httpx.Ctx) {
+		c.JSON(200, httpx.H{"ok": true})
 	})
 	return r
 }
@@ -136,9 +133,9 @@ func TestSubdomainWildcardMatches(t *testing.T) {
 	}{
 		{"https://app.example.com", true},
 		{"https://api.example.com", true},
-		{"https://example.com", false},      // bare apex doesn't match
-		{"https://a.b.example.com", false},  // multi-level rejected
-		{"http://app.example.com", false},   // wrong scheme
+		{"https://example.com", false},     // bare apex doesn't match
+		{"https://a.b.example.com", false}, // multi-level rejected
+		{"http://app.example.com", false},  // wrong scheme
 		{"https://app.evil.com", false},
 	}
 	for _, tc := range cases {
@@ -174,12 +171,12 @@ func TestPreflightShortCircuits(t *testing.T) {
 	if err := validate(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	r := gin.New()
+	r := stdrouter.New()
 	r.Use(ginHandler(&cfg, buildMatcher(&cfg)))
 	// Register an OPTIONS handler that 500s if the middleware
 	// didn't abort. If we see 500, the preflight short-circuit
 	// silently failed.
-	r.OPTIONS("/ping", func(c *gin.Context) {
+	r.OPTIONS("/ping", func(c *httpx.Ctx) {
 		c.AbortWithStatus(http.StatusInternalServerError)
 	})
 

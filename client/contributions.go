@@ -3,7 +3,7 @@ package client
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // ContributionsResponse is the wire format served at
@@ -53,12 +53,12 @@ type ContributionsBuilder func(framework string) (ContributionsResponse, error)
 // contributionsHandler returns the gin handler for the contributions
 // route. Kept distinct from the Mount registration so tests can
 // drive the handler directly without spinning a full engine.
-func contributionsHandler(build ContributionsBuilder) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func contributionsHandler(build ContributionsBuilder) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		framework := c.Query("framework")
 		resp, err := build(framework)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 			return
 		}
 		if resp.Version == "" {

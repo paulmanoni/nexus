@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/middleware"
@@ -331,7 +331,7 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 // oats_applicant's convention: prefer an auth-middleware-set `user` in
 // Gin context, fall back to `?userId=` query, and stash the full claim
 // on the connection metadata for handler access via sess.Metadata().
-func identifyFromGin(c *gin.Context) (string, map[string]any) {
+func identifyFromGin(c *httpx.Ctx) (string, map[string]any) {
 	meta := map[string]any{}
 	if raw, ok := c.Get("user"); ok {
 		meta["user"] = raw
@@ -344,4 +344,3 @@ func identifyFromGin(c *gin.Context) (string, map[string]any) {
 	}
 	return "", meta
 }
-

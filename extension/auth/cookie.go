@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // DefaultSessionCookieName is used when SessionCookie.Name is empty.
@@ -25,8 +25,8 @@ const DefaultSessionCookieName = "session"
 //	    }},
 //	}})
 //
-//	func login(c *gin.Context, …) { session.Set(c, token) }   // on success
-//	func logout(c *gin.Context)   { session.Clear(c) }         // on sign-out
+//	func login(c *httpx.Ctx, …) { session.Set(c, token) }   // on success
+//	func logout(c *httpx.Ctx)   { session.Clear(c) }         // on sign-out
 //
 // The cookie is always HttpOnly (never readable by JS). Set Secure once you are
 // behind TLS.
@@ -69,7 +69,7 @@ func (s SessionCookie) sameSite() http.SameSite {
 }
 
 // Set writes the session cookie carrying token (HttpOnly).
-func (s SessionCookie) Set(c *gin.Context, token string) {
+func (s SessionCookie) Set(c *httpx.Ctx, token string) {
 	maxAge := int(s.MaxAge.Seconds())
 	if maxAge <= 0 {
 		maxAge = int((7 * 24 * time.Hour).Seconds())
@@ -79,7 +79,7 @@ func (s SessionCookie) Set(c *gin.Context, token string) {
 }
 
 // Clear expires the session cookie (used on logout).
-func (s SessionCookie) Clear(c *gin.Context) {
+func (s SessionCookie) Clear(c *httpx.Ctx) {
 	c.SetSameSite(s.sameSite())
 	c.SetCookie(s.name(), "", -1, s.path(), s.Domain, s.Secure, true)
 }

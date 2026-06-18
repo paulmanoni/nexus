@@ -8,12 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
-
-func init() {
-	gin.SetMode(gin.TestMode)
-}
 
 // TestContributionsHandler_HappyPath serves a stub builder and
 // asserts the JSON shape matches the ContributionsResponse contract.
@@ -33,7 +29,7 @@ func TestContributionsHandler_HappyPath(t *testing.T) {
 			},
 		}, nil
 	}
-	r := gin.New()
+	r := stdrouter.New()
 	r.GET("/contributions.json", contributionsHandler(build))
 
 	srv := httptest.NewServer(r)
@@ -74,7 +70,7 @@ func TestContributionsHandler_FrameworkPassedToBuilder(t *testing.T) {
 		got = framework
 		return ContributionsResponse{}, nil
 	}
-	r := gin.New()
+	r := stdrouter.New()
 	r.GET("/contributions.json", contributionsHandler(build))
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -98,7 +94,7 @@ func TestContributionsHandler_BuilderErrorReturns500(t *testing.T) {
 	build := func(string) (ContributionsResponse, error) {
 		return ContributionsResponse{}, errors.New("auth contributor exploded")
 	}
-	r := gin.New()
+	r := stdrouter.New()
 	r.GET("/contributions.json", contributionsHandler(build))
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -126,7 +122,7 @@ func TestContributionsHandler_BuilderErrorReturns500(t *testing.T) {
 // the typed codegen tree set this to drop unused surface from the
 // HTTP listener.
 func TestMount_SkipAssetsOmitsStaticRoutes(t *testing.T) {
-	e := gin.New()
+	e := stdrouter.New()
 	Mount(e, nil, nil, nil, "", Config{SkipAssets: true})
 
 	// Walk the registered routes and assert which paths exist.
@@ -154,7 +150,7 @@ func TestMount_SkipAssetsOmitsStaticRoutes(t *testing.T) {
 // caller's option chain) keeps every legacy route alive. Nothing
 // that worked before SkipAssets landed should regress.
 func TestMount_DefaultMountsAllAssets(t *testing.T) {
-	e := gin.New()
+	e := stdrouter.New()
 	Mount(e, nil, nil, nil, "", Config{})
 
 	have := map[string]bool{}
@@ -182,12 +178,15 @@ func TestContributionsHandler_RespectsBuilderVersion(t *testing.T) {
 	build := func(string) (ContributionsResponse, error) {
 		return ContributionsResponse{Version: "test.v9"}, nil
 	}
-	r := gin.New()
+	r := stdrouter.New()
 	r.GET("/contributions.json", contributionsHandler(build))
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
-	res, _ := http.Get(srv.URL + "/contributions.json")
+	res, err := http.Get(srv.URL + "/contributions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer res.Body.Close()
 	var got ContributionsResponse
 	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {

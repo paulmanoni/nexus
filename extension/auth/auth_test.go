@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/extension/auth"
 )
@@ -23,15 +24,14 @@ type testUser struct {
 // The behavior under test (extraction → resolve → WithIdentity →
 // per-op bundle enforcement) lives in the auth package, not in
 // nexus's fx boot layer.
-func newTestServer(t *testing.T, cfg auth.Config, route gin.HandlerFunc, postMw ...gin.HandlerFunc) *httptest.Server {
+func newTestServer(t *testing.T, cfg auth.Config, route httpx.HandlerFunc, postMw ...httpx.HandlerFunc) *httptest.Server {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
-	eng := gin.New()
+	eng := stdrouter.New()
 	// Construct the middleware directly via the exported machinery —
 	// the extraction + resolve + context plumbing is what we're
 	// verifying here. auth.Module wraps this for the nexus fx path.
 	eng.Use(testAuthMiddleware(t, cfg))
-	handlers := append([]gin.HandlerFunc{}, postMw...)
+	handlers := append([]httpx.HandlerFunc{}, postMw...)
 	handlers = append(handlers, route)
 	eng.GET("/", handlers...)
 	srv := httptest.NewServer(eng)
@@ -43,7 +43,7 @@ func newTestServer(t *testing.T, cfg auth.Config, route gin.HandlerFunc, postMw 
 // but without fx, for test convenience. Public helpers (WithIdentity,
 // extractors, Resolver) are all we touch, so the middleware stays
 // small and readable.
-func testAuthMiddleware(t *testing.T, cfg auth.Config) gin.HandlerFunc {
+func testAuthMiddleware(t *testing.T, cfg auth.Config) httpx.HandlerFunc {
 	t.Helper()
 	if len(cfg.Authentication.Schemes) == 0 {
 		t.Fatal("test harness requires at least one Authentication scheme")
@@ -56,7 +56,7 @@ func testAuthMiddleware(t *testing.T, cfg auth.Config) gin.HandlerFunc {
 	if ex == nil {
 		ex = auth.Bearer()
 	}
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		tok, ok := ex.Extract(c.Request)
 		if ok {
 			id, err := sc.Resolve(c.Request.Context(), tok)
@@ -159,7 +159,7 @@ func TestCache_HitAvoidsResolve(t *testing.T) {
 			Cache:   auth.CacheFor(200 * time.Millisecond),
 		},
 	}
-	srv := newTestServer(t, cfg, func(c *gin.Context) {
+	srv := newTestServer(t, cfg, func(c *httpx.Ctx) {
 		id, _ := auth.IdentityFrom(c.Request.Context())
 		if id == nil {
 			c.String(401, "nope")

@@ -16,7 +16,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension/cron"
@@ -40,7 +41,7 @@ const EnvAdminToken = "NEXUS_ADMIN_TOKEN" // #nosec G101 -- env var name, not a 
 const defaultDashboardName = "Nexus"
 
 type App struct {
-	engine *gin.Engine
+	engine httpx.Router
 	// extValues is a per-app key/value store extensions use to stash
 	// boot-time state they must read at request time without relying on
 	// gin-middleware install ordering (which fx.Module route registration
@@ -100,10 +101,10 @@ type App struct {
 	// disables prefixing. Normalized once at newApp time so per-
 	// route mount sites can concatenate without re-trimming.
 	routePrefix string
-	// dashboardMw is the ordered list of gin.HandlerFunc realizations
+	// dashboardMw is the ordered list of httpx.HandlerFunc realizations
 	// that guard /__nexus. WithDashboardMiddleware + Config.DashboardMiddleware
 	// populate it; Mount applies them to the route group.
-	dashboardMw []gin.HandlerFunc
+	dashboardMw []httpx.HandlerFunc
 
 	// introspect + introspectionNets are the parsed Config knobs used
 	// to gate GraphQL __schema queries (in addition to the dashboard).
@@ -218,21 +219,19 @@ func New(cfg Config) *App {
 		listeners = fillListenerAddrs(cfg.Server.Listeners, cfg.Server.Addr)
 	}
 
-	// Engine. Recovery middleware first so panics surface as 500s.
-	// We use the framework's own recoveryMiddleware (instead of
-	// gin.Recovery()) so panic stacks land on the dashboard via the
-	// trace + metrics pipeline — see recovery.go.
-	engine := gin.New()
-	engine.Use(recoveryMiddleware())
-	// Per-request access log when gin is in debug mode (the default
-	// for `nexus dev`). Mirrors gin.Default()'s behavior. In release
-	// mode the logger is suppressed — operators usually wire their
-	// own structured logger via Config.Middleware.Global, so we
-	// don't compete with that. Set GIN_MODE=release in prod to
-	// silence the dev access log.
-	if gin.IsDebugging() {
-		engine.Use(gin.Logger())
+	// Router. Recovery middleware first so panics surface as 500s.
+	// We use the framework's own recoveryMiddleware so panic stacks
+	// land on the dashboard via the trace + metrics pipeline — see
+	// recovery.go. The backend defaults to the zero-dependency stdlib
+	// router; opt into gin/chi via Config.Router (nexus.WithRouter).
+	var engine httpx.Router = cfg.Router
+	if engine == nil {
+		engine = stdrouter.New()
 	}
+	engine.Use(recoveryMiddleware())
+	// TODO(router-seam): a per-request access log used to ride on
+	// gin.Logger() in debug mode. The stdlib router has no built-in
+	// logger; reintroduce one as an httpx middleware if desired.
 
 	a := &App{
 		engine:           engine,
@@ -479,7 +478,7 @@ func New(cfg Config) *App {
 	return a
 }
 
-func (a *App) Engine() *gin.Engine          { return a.engine }
+func (a *App) Engine() httpx.Router         { return a.engine }
 func (a *App) Registry() *registry.Registry { return a.registry }
 func (a *App) Bus() *trace.Bus              { return a.bus }
 
@@ -596,7 +595,7 @@ func (a *App) guardClientSDK(cfg client.Config) client.Config {
 		return cfg
 	}
 	if gate := introspectionGate(a.introspect, a.introspectionNets); gate != nil {
-		cfg.Middleware = append([]gin.HandlerFunc{gate}, cfg.Middleware...)
+		cfg.Middleware = append([]httpx.HandlerFunc{gate}, cfg.Middleware...)
 	}
 	return cfg
 }
@@ -660,7 +659,7 @@ func (a *App) PrefixPath(p string) string {
 // Config.IntrospectionNetworks. Exposed so transport adapters
 // outside the nexus package (notably gql) can consult one source
 // of truth.
-func (a *App) AllowIntrospection(c *gin.Context) bool {
+func (a *App) AllowIntrospection(c *httpx.Ctx) bool {
 	if devModeBypass() {
 		return true
 	}

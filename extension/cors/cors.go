@@ -43,7 +43,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
@@ -186,8 +186,8 @@ func NewMiddleware(cfg Config) middleware.Middleware {
 			Name:        "cors",
 			Description: "CORS preflight + header policy",
 			Kind:        middleware.KindBuiltin,
-			Gin: func(c *gin.Context) {
-				c.AbortWithStatusJSON(500, gin.H{"error": msg})
+			Gin: func(c *httpx.Ctx) {
+				c.AbortWithStatusJSON(500, httpx.H{"error": msg})
 			},
 		}
 	}
@@ -286,4 +286,3 @@ func validate(cfg *Config) error {
 	}
 	return nil
 }
-

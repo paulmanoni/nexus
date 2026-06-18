@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // apolloSandboxHTML is the embedded Apollo Sandbox IDE. Sandbox is the
@@ -43,9 +43,9 @@ const apolloSandboxHTML = `<!DOCTYPE html>
 </html>`
 
 // apolloSandboxHandler serves the Apollo Sandbox IDE page.
-func apolloSandboxHandler() gin.HandlerFunc {
+func apolloSandboxHandler() httpx.HandlerFunc {
 	body := []byte(apolloSandboxHTML)
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Status(http.StatusOK)
 		_, _ = c.Writer.Write(body)
@@ -58,7 +58,7 @@ func apolloSandboxHandler() gin.HandlerFunc {
 // param; a browser navigation carries an Accept: text/html preference
 // and no query. Sandbox's own operations are POSTs, so they never reach
 // this path.
-func isBrowserIDEVisit(c *gin.Context) bool {
+func isBrowserIDEVisit(c *httpx.Ctx) bool {
 	if c.Query("query") != "" {
 		return false
 	}

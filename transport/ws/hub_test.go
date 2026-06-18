@@ -10,16 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
 
-func init() { gin.SetMode(gin.TestMode) }
-
 func newHubServer(hub *Hub) *httptest.Server {
-	e := gin.New()
+	e := stdrouter.New()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	e.GET("/ws", func(c *gin.Context) { hub.serve(c, upgrader) })
+	e.GET("/ws", func(c *httpx.Ctx) { hub.serve(c, upgrader) })
 	return httptest.NewServer(e)
 }
 

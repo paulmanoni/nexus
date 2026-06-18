@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -21,8 +21,8 @@ import (
 // Functionally equivalent to gin.Recovery() for the response surface
 // (HTTP 500 + abort) — the value-add is the captured-stack pipeline
 // for the framework's own observability.
-func recoveryMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
+func recoveryMiddleware() httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		defer func() {
 			r := recover()
 			if r == nil {

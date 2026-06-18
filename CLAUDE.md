@@ -189,6 +189,40 @@ inline to `nexus.Run` instead of the file.
 admin CIDR allowlist (`introspection_networks = ["10.0.0.0/8"]`). `nexus dev` runs
 with it open.
 
+### HTTP router backend (pluggable; stdlib by default)
+
+nexus is **router-agnostic** behind the `github.com/paulmanoni/nexus/httpx` seam.
+Handlers and middleware see an `*httpx.Ctx` (a transport-neutral request handle);
+the concrete router is an adapter chosen at boot. **The default is the stdlib
+`net/http.ServeMux` (`httpx/stdrouter`) — zero third-party router deps, so the
+default binary links no gin/sonic/etc.** gin and chi are opt-in:
+
+```go
+import (
+    "github.com/paulmanoni/nexus"
+    "github.com/paulmanoni/nexus/httpx/ginrouter" // or .../httpx/chirouter
+)
+
+nexus.Boot(nexus.WithRouter(ginrouter.New()))     // one line; or Config.Router
+nexus.Run(cfg, nexus.WithRouter(chirouter.New()))
+```
+
+`nexus.WithRouter(...)` (equivalently `Config.Router`) is the only switch — no
+nexus.toml key (an adapter must be imported to link anyway). Selecting gin/chi pulls
+their dependency trees back in; the stdlib default does not. Route strings use the
+canonical `:id` / `*rest` syntax on every backend (chi/std adapters translate).
+
+Chain execution (the `c.Next()` / `c.Abort()` flow, recovery, error accumulation)
+lives in `httpx.Ctx`, not the router — so every middleware runs identically on any
+backend, and the router only matches paths + returns params. App-level middleware
+(`Config.Middleware.Global`, etc.) wraps the whole mux so it runs even on 404/405
+(CORS preflight relies on this); per-op middleware runs inside the matched route.
+
+`App.Router() httpx.Router` exposes the live router (replaces the old
+`App.Engine() *gin.Engine`). Low-level handlers that need raw HTTP take an
+`*httpx.Ctx` parameter (replaces `*gin.Context`); `httpx.H` is the JSON map
+shorthand (replaces `gin.H`).
+
 ---
 
 ## 3. Modules & dependency injection

@@ -3,12 +3,12 @@ package middleware
 import (
 	"context"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // RejectHook lets a REST-aware extension customise how RequestCtx.Reject
 // renders on gin — running app-supplied callbacks that need the raw
-// *gin.Context, which the neutral carrier can't expose. The extension
+// *httpx.Ctx, which the neutral carrier can't expose. The extension
 // registers one via WithRejectHook; the gin carrier invokes it before its
 // default JSON abort. (Most extensions don't need this: rc.RejectJSON
 // already emits a custom JSON envelope through the neutral handle — reach
@@ -21,7 +21,7 @@ import (
 // This is the one HTTP-leaning escape that keeps package middleware free of
 // any extension dependency: the hook closure lives in the extension; only the
 // plumbing lives here.
-type RejectHook func(c *gin.Context, status int, err error) bool
+type RejectHook func(c *httpx.Ctx, status int, err error) bool
 
 type rejectHookKey struct{}
 

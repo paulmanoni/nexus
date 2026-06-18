@@ -6,18 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
 
 func TestRecord_EmitsLeafSpanPairUnderRoot(t *testing.T) {
 	bus := NewBus(16)
 	_, ch, cancel := bus.Subscribe(0, 16)
 	defer cancel()
-
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(Middleware(bus, "svc", "op", "rest"))
-	r.GET("/x", func(c *gin.Context) {
+	r := stdrouter.New()
+	r.GET("/x", Middleware(bus, "svc", "op", "rest"), func(c *httpx.Ctx) {
 		Record(c, "db.query", time.Now().Add(-5*time.Millisecond), errors.New("nope"))
 		c.String(200, "ok")
 	})

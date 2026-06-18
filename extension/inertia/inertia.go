@@ -26,7 +26,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -151,7 +151,7 @@ func newEngine(cfg Config, shared []SharedProvider) *Engine {
 
 // engineFromGin retrieves the per-app engine a page renderer needs, pulling it
 // from the app stashed on the request context by the framework.
-func engineFromGin(c *gin.Context) (*Engine, bool) {
+func engineFromGin(c *httpx.Ctx) (*Engine, bool) {
 	app, ok := nexus.AppFromGin(c)
 	if !ok {
 		return nil, false

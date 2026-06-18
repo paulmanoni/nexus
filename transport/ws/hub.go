@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // --- Event -----------------------------------------------------------------
@@ -168,7 +168,7 @@ type sendJob struct {
 
 // Hooks the caller can install.
 type (
-	IdentifyFunc     func(c *gin.Context) (userID string, meta map[string]any)
+	IdentifyFunc     func(c *httpx.Ctx) (userID string, meta map[string]any)
 	OnConnectFunc    func(conn *Connection)
 	OnMessageFunc    func(conn *Connection, msgType int, data []byte) error
 	OnDisconnectFunc func(conn *Connection)
@@ -487,23 +487,23 @@ func (h *Hub) fanoutEvent(e *Event) {
 //
 // For the no-op upgrader default (AllowAll origins), see ServeGin — a
 // zero-config sibling.
-func (h *Hub) Serve(gctx *gin.Context, upgrader websocket.Upgrader) {
+func (h *Hub) Serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {
 	h.serve(gctx, upgrader)
 }
 
 // ServeGin is Serve with the hub's default upgrader (CheckOrigin: always
 // true). Convenient for callers that don't need to customize upgrade
 // behavior — matches the upgrader the Builder installs.
-func (h *Hub) ServeGin(gctx *gin.Context) {
+func (h *Hub) ServeGin(gctx *httpx.Ctx) {
 	h.Serve(gctx, websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }})
 }
 
 // serve is what the Builder wires into Gin when WithHub is used. It upgrades
 // the HTTP connection, runs the identify hook, registers the conn, and starts
 // the read/write pumps.
-func (h *Hub) serve(gctx *gin.Context, upgrader websocket.Upgrader) {
+func (h *Hub) serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {
 	if h.cfg.maxConnections > 0 && h.ConnectionCount() >= h.cfg.maxConnections {
-		gctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "websocket at capacity"})
+		gctx.JSON(http.StatusServiceUnavailable, httpx.H{"error": "websocket at capacity"})
 		return
 	}
 	ws, err := upgrader.Upgrade(gctx.Writer, gctx.Request, nil)

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/extension/cron"
 	"github.com/paulmanoni/nexus/extension/metrics"
@@ -42,16 +42,16 @@ const debounceWindow = 50 * time.Millisecond
 // ratelimits) poll fan-out. Optional subsystems (ms / sched / rl) emit nil
 // fields — `omitempty` keeps the payload tight.
 type liveSnapshot struct {
-	Kind        string                      `json:"kind"` // always "snapshot"
-	TS          time.Time                   `json:"ts"`
-	Services    []registry.Service          `json:"services,omitempty"`
-	Endpoints   []registry.Endpoint         `json:"endpoints,omitempty"`
-	Resources   []registry.ResourceSnapshot `json:"resources,omitempty"`
-	Workers     []registry.Worker           `json:"workers,omitempty"`
-	Stats       []metrics.EndpointStats     `json:"stats,omitempty"`
-	Crons       []cron.Snapshot             `json:"crons,omitempty"`
-	RateLimits  []ratelimit.Record          `json:"ratelimits,omitempty"`
-	GraphQLCache []gql.MountCacheStats      `json:"graphqlCache,omitempty"`
+	Kind         string                      `json:"kind"` // always "snapshot"
+	TS           time.Time                   `json:"ts"`
+	Services     []registry.Service          `json:"services,omitempty"`
+	Endpoints    []registry.Endpoint         `json:"endpoints,omitempty"`
+	Resources    []registry.ResourceSnapshot `json:"resources,omitempty"`
+	Workers      []registry.Worker           `json:"workers,omitempty"`
+	Stats        []metrics.EndpointStats     `json:"stats,omitempty"`
+	Crons        []cron.Snapshot             `json:"crons,omitempty"`
+	RateLimits   []ratelimit.Record          `json:"ratelimits,omitempty"`
+	GraphQLCache []gql.MountCacheStats       `json:"graphqlCache,omitempty"`
 	// Middlewares + Global stream the registered middleware catalogue and
 	// the ordered global chain so the dashboard renders them live instead
 	// of polling GET /__nexus/middlewares.
@@ -89,8 +89,8 @@ type Notifier interface {
 	Subscribe() (<-chan struct{}, func())
 }
 
-func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, gqlStats *gql.StatsRegistry, notifier Notifier) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, gqlStats *gql.StatsRegistry, notifier Notifier) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			return

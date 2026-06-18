@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 )
 
@@ -220,7 +220,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	// deployments.
 	effectivePrefix := app.routePrefix + normalizeRoutePrefix(cfg.mountPath)
 
-	app.engine.NoRoute(func(c *gin.Context) {
+	app.engine.NoRoute(func(c *httpx.Ctx) {
 		urlPath := c.Request.URL.Path
 
 		// When a prefix is set, only paths under it are SPA

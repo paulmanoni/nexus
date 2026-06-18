@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // handlers binds the Store to gin route handlers. Created once
@@ -31,18 +31,18 @@ func newID() string {
 }
 
 // listTours — GET /__nexus/tour/tours?route=...
-func (h *handlers) listTours(c *gin.Context) {
+func (h *handlers) listTours(c *httpx.Ctx) {
 	route := strings.TrimSpace(c.Query("route"))
 	tours, err := h.store.ListTours(c.Request.Context(), route)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"tours": tours})
+	c.JSON(http.StatusOK, httpx.H{"tours": tours})
 }
 
 // getTour — GET /__nexus/tour/tours/:id (returns the hydrated tree)
-func (h *handlers) getTour(c *gin.Context) {
+func (h *handlers) getTour(c *httpx.Ctx) {
 	t, err := h.store.GetTour(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		writeStoreError(c, err)
@@ -57,14 +57,14 @@ func (h *handlers) getTour(c *gin.Context) {
 // row missing one (new tour + new steps recorded in-session both
 // arrive without IDs). The badge_number defaults to the row's
 // 1-based position so operators don't have to manage it manually.
-func (h *handlers) upsertTour(c *gin.Context) {
+func (h *handlers) upsertTour(c *httpx.Ctx) {
 	var body Tour
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 		return
 	}
 	if strings.TrimSpace(body.Name) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": "name is required"})
 		return
 	}
 	newTour := body.ID == ""
@@ -88,19 +88,19 @@ func (h *handlers) upsertTour(c *gin.Context) {
 	// timestamps the store wrote.
 	saved, err := h.store.GetTour(c.Request.Context(), body.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, saved)
 }
 
 // deleteTour — DELETE /__nexus/tour/tours/:id
-func (h *handlers) deleteTour(c *gin.Context) {
+func (h *handlers) deleteTour(c *httpx.Ctx) {
 	if err := h.store.DeleteTour(c.Request.Context(), c.Param("id")); err != nil {
 		writeStoreError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, httpx.H{"ok": true})
 }
 
 // upsertStep — POST /__nexus/tour/steps
@@ -109,14 +109,14 @@ func (h *handlers) deleteTour(c *gin.Context) {
 // every time it captures a click rather than rewriting the whole
 // tour, which keeps the recorded sequence stable even if the
 // session is interrupted.
-func (h *handlers) upsertStep(c *gin.Context) {
+func (h *handlers) upsertStep(c *httpx.Ctx) {
 	var s Step
 	if err := c.ShouldBindJSON(&s); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 		return
 	}
 	if s.TourID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "tour_id is required"})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": "tour_id is required"})
 		return
 	}
 	if s.ID == "" {
@@ -130,12 +130,12 @@ func (h *handlers) upsertStep(c *gin.Context) {
 }
 
 // deleteStep — DELETE /__nexus/tour/steps/:id
-func (h *handlers) deleteStep(c *gin.Context) {
+func (h *handlers) deleteStep(c *httpx.Ctx) {
 	if err := h.store.DeleteStep(c.Request.Context(), c.Param("id")); err != nil {
 		writeStoreError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, httpx.H{"ok": true})
 }
 
 // reorderSteps — POST /__nexus/tour/tours/:id/reorder
@@ -143,17 +143,17 @@ type reorderBody struct {
 	Items []ReorderItem `json:"items"`
 }
 
-func (h *handlers) reorderSteps(c *gin.Context) {
+func (h *handlers) reorderSteps(c *httpx.Ctx) {
 	var body reorderBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 		return
 	}
 	if err := h.store.ReorderSteps(c.Request.Context(), c.Param("id"), body.Items); err != nil {
 		writeStoreError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, httpx.H{"ok": true})
 }
 
 // reorderTours — POST /__nexus/tour/tours/reorder
@@ -166,17 +166,17 @@ type reorderToursBody struct {
 	IDs []string `json:"ids"`
 }
 
-func (h *handlers) reorderTours(c *gin.Context) {
+func (h *handlers) reorderTours(c *httpx.Ctx) {
 	var body reorderToursBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 		return
 	}
 	if err := h.store.ReorderTours(c.Request.Context(), body.IDs); err != nil {
 		writeStoreError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, httpx.H{"ok": true})
 }
 
 // activeForRoute — GET /__nexus/tour/active?route=...
@@ -184,15 +184,15 @@ func (h *handlers) reorderTours(c *gin.Context) {
 // The in-page agent hits this on every navigation to learn whether
 // a tour exists for the current URL. Returns the FULL hydrated tree
 // so the runner can render without a second round trip.
-func (h *handlers) activeForRoute(c *gin.Context) {
+func (h *handlers) activeForRoute(c *httpx.Ctx) {
 	route := strings.TrimSpace(c.Query("route"))
 	if route == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "route is required"})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": "route is required"})
 		return
 	}
 	tours, err := h.store.ListTours(c.Request.Context(), route)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 		return
 	}
 	// Hydrate each match — list view dropped the steps for size,
@@ -205,17 +205,17 @@ func (h *handlers) activeForRoute(c *gin.Context) {
 		}
 		out = append(out, full)
 	}
-	c.JSON(http.StatusOK, gin.H{"tours": out})
+	c.JSON(http.StatusOK, httpx.H{"tours": out})
 }
 
 // writeStoreError maps Store errors to HTTP status codes. ErrNotFound
 // is the only typed signal we expose; everything else becomes 500.
-func writeStoreError(c *gin.Context, err error) {
+func writeStoreError(c *httpx.Ctx, err error) {
 	if errors.Is(err, ErrNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, httpx.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 }
 
 // assignIDsAndBadges walks the tree assigning random IDs to any

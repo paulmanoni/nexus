@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 )
@@ -34,7 +34,7 @@ import (
 //
 //	inertia.Page("GET,POST", "/login", "Login", NewLogin, nexus.Public())
 //
-//	func NewLogin(c *gin.Context, p nexus.Params[LoginArgs]) (any, error) {
+//	func NewLogin(c *httpx.Ctx, p nexus.Params[LoginArgs]) (any, error) {
 //	    if p.Method == http.MethodGet { return LoginProps{}, nil } // render
 //	    // POST: authenticate, set cookie…
 //	    return nil, inertia.Redirect("/dashboard")
@@ -74,7 +74,7 @@ func splitMethods(spec string) []string {
 // across multiple apps in one process.
 type pageRenderer struct{ component string }
 
-func (p pageRenderer) Render(c *gin.Context, result any) error {
+func (p pageRenderer) Render(c *httpx.Ctx, result any) error {
 	eng, ok := engineFromGin(c)
 	if !ok {
 		return errors.New("inertia: engine not installed — add inertia.Module(...) to your app")
@@ -85,7 +85,7 @@ func (p pageRenderer) Render(c *gin.Context, result any) error {
 // RenderError implements nexus.ErrorRenderer: it claims inertia.Redirect /
 // inertia.Location sentinels and writes them as 303/409 redirects. Any other
 // error is left to the framework's standard error path (handled=false).
-func (p pageRenderer) RenderError(c *gin.Context, err error) (bool, error) {
+func (p pageRenderer) RenderError(c *httpx.Ctx, err error) (bool, error) {
 	var rd *redirect
 	if errors.As(err, &rd) {
 		return true, rd.write(c)

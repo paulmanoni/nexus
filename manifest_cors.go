@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
-// corsMiddleware builds a gin.HandlerFunc from a CORSConfig. The
+// corsMiddleware builds a httpx.HandlerFunc from a CORSConfig. The
 // implementation is deliberately compact — it covers the cases
 // browsers actually exercise (origin allowlist, preflight cache,
 // credentials, custom headers) without bringing in the
@@ -17,7 +17,7 @@ import (
 //
 // Nil CORSConfig is filtered out by the caller, so this always
 // receives a populated struct.
-func corsMiddleware(cfg CORSConfig) gin.HandlerFunc {
+func corsMiddleware(cfg CORSConfig) httpx.HandlerFunc {
 	allowed := buildOriginMatcher(cfg.AllowOrigins)
 	methods := strings.Join(defaultStrings(cfg.AllowMethods, defaultCORSMethods), ", ")
 	headers := strings.Join(defaultStrings(cfg.AllowHeaders, defaultCORSHeaders), ", ")
@@ -28,7 +28,7 @@ func corsMiddleware(cfg CORSConfig) gin.HandlerFunc {
 	}
 	maxAgeSecs := strconv.Itoa(int(maxAge.Seconds()))
 
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		origin := c.Request.Header.Get("Origin")
 		if origin == "" {
 			c.Next()

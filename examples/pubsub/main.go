@@ -19,7 +19,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/pubsub"
@@ -46,17 +46,17 @@ type AdoptionService struct{}
 
 func NewAdoptionService() *AdoptionService { return &AdoptionService{} }
 
-func (s *AdoptionService) Adopt(c *gin.Context) {
+func (s *AdoptionService) Adopt(c *httpx.Ctx) {
 	var body PetAdopted
 	if err := c.BindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 		return
 	}
 	if err := PetAdoptedTopic.Publish(c.Request.Context(), body); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"ok": true})
+	c.JSON(http.StatusAccepted, httpx.H{"ok": true})
 }
 
 var adoptionModule = nexus.Module("adoption",

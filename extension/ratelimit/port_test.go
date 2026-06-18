@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/graph"
 )
@@ -17,15 +18,14 @@ import (
 // with a "rate limit exceeded" error. Both realizations come from one Handler.
 
 func TestNewMiddlewareREST(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	s := NewMemoryStore()
 	mw := NewMiddleware(s, "rest.key", Limit{RPM: 600, Burst: 1})
 	if mw.Gin == nil {
 		t.Fatal("expected a Gin realization")
 	}
 
-	r := gin.New()
-	r.GET("/x", mw.Gin, func(c *gin.Context) { c.Status(http.StatusOK) })
+	r := stdrouter.New()
+	r.GET("/x", mw.Gin, func(c *httpx.Ctx) { c.Status(http.StatusOK) })
 	do := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
@@ -69,12 +69,11 @@ func TestNewMiddlewareGraphQL(t *testing.T) {
 }
 
 func TestNewMiddlewarePerIP(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	s := NewMemoryStore()
 	mw := NewMiddleware(s, "perip.key", Limit{RPM: 600, Burst: 1, PerIP: true})
 
-	r := gin.New()
-	r.GET("/x", mw.Gin, func(c *gin.Context) { c.Status(http.StatusOK) })
+	r := stdrouter.New()
+	r.GET("/x", mw.Gin, func(c *httpx.Ctx) { c.Status(http.StatusOK) })
 	req := func(ip string) int {
 		w := httptest.NewRecorder()
 		rq := httptest.NewRequest(http.MethodGet, "/x", nil)

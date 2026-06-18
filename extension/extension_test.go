@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 )
 
 func TestValidate(t *testing.T) {
-	okHandler := func(c *gin.Context) {}
+	okHandler := func(c *httpx.Ctx) {}
 
 	cases := []struct {
 		name    string
@@ -104,7 +104,7 @@ func TestUse_ReturnsOption(t *testing.T) {
 		},
 		Dashboard: &Dashboard{
 			Tab:        &Tab{ID: "smoke", Label: "Smoke"},
-			Routes:     []Route{{Method: "GET", Path: "/p", Handler: func(c *gin.Context) {}}},
+			Routes:     []Route{{Method: "GET", Path: "/p", Handler: func(c *httpx.Ctx) {}}},
 			LiveEvents: []string{"smoke.evt"},
 		},
 		Client: &Client{

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
+	"github.com/paulmanoni/nexus/httpx"
 
 	graph "github.com/paulmanoni/nexus/graph"
 )
@@ -31,11 +31,11 @@ import (
 // set and returns true (peer is on the allowlist or
 // Config.Introspection is on), validation is skipped — dev/admin
 // retains the loose dev-mode experience including __schema lookup.
-func productionGate(allow func(c *gin.Context) bool, schema *graphql.Schema) gin.HandlerFunc {
+func productionGate(allow func(c *httpx.Ctx) bool, schema *graphql.Schema) httpx.HandlerFunc {
 	if allow == nil || schema == nil {
-		return func(c *gin.Context) { c.Next() }
+		return func(c *httpx.Ctx) { c.Next() }
 	}
-	return func(c *gin.Context) {
+	return func(c *httpx.Ctx) {
 		// Allowed peer (introspection unlocked) — skip validation
 		// entirely. Matches go-graph's DEBUG: true semantics.
 		if allow(c) {
@@ -68,7 +68,7 @@ func productionGate(allow func(c *gin.Context) bool, schema *graphql.Schema) gin
 // Returns "" when the query can't be located — the gate falls
 // through to the regular handler in that case, which surfaces the
 // parse error in its own response shape.
-func extractQuery(c *gin.Context) string {
+func extractQuery(c *httpx.Ctx) string {
 	if c.Request.Method == http.MethodGet {
 		return c.Query("query")
 	}

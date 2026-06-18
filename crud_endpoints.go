@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 )
 
@@ -163,8 +163,8 @@ type crudOnlyOption struct {
 	apply func(*crudConfig)
 }
 
-func (c crudOnlyOption) nexusOption() fx.Option       { return fx.Options() }
-func (c crudOnlyOption) applyToCRUD(cc *crudConfig)   { c.apply(cc) }
+func (c crudOnlyOption) nexusOption() fx.Option     { return fx.Options() }
+func (c crudOnlyOption) applyToCRUD(cc *crudConfig) { c.apply(cc) }
 
 // WithGraphQL turns on GraphQL op generation for AsCRUD. By default
 // AsCRUD only registers REST endpoints; pass this option (and
@@ -273,7 +273,7 @@ func restOpts(opts []Option) []RestOption {
 //
 //	func(deps..., p Params[Args]) (Result, error)
 //
-// We pass *gin.Context where path-params are needed (Update / Delete
+// We pass *httpx.Ctx where path-params are needed (Update / Delete
 // when paired with body), and Params[T] / Params[ListOptions] /
 // Params[idArg] for the rest.
 //
@@ -347,7 +347,7 @@ func makeUpdateHandler[T any](resolver CRUDResolver[T]) any {
 	// gin.Context dep gives us :id without needing the body struct
 	// to also carry a uri:"id" field — JSON-bound bodies don't
 	// reliably surface URI params alongside.
-	return func(c *gin.Context, p Params[T]) (*T, error) {
+	return func(c *httpx.Ctx, p Params[T]) (*T, error) {
 		id := c.Param("id")
 		store, err := resolver(p.Context)
 		if err != nil {

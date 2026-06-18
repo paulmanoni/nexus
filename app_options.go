@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
@@ -19,6 +20,25 @@ type Option interface{ nexusOption() fx.Option }
 type rawOption struct{ o fx.Option }
 
 func (r rawOption) nexusOption() fx.Option { return r.o }
+
+// routerOption carries a chosen HTTP router backend. It is consumed BEFORE the
+// fx graph is built (Run scans for it and seeds Config.Router, since the router
+// is constructed inside New(cfg) which runs ahead of user options). Its fx
+// contribution is therefore a no-op.
+type routerOption struct{ r httpx.Router }
+
+func (routerOption) nexusOption() fx.Option { return fx.Options() }
+
+// WithRouter selects the HTTP router backend (default: the zero-dependency
+// stdlib net/http router). Pass an opt-in adapter to switch:
+//
+//	nexus.Boot(nexus.WithRouter(ginrouter.New()))
+//	nexus.Run(cfg, nexus.WithRouter(chirouter.New()))
+//
+// Equivalent to setting Config.Router. One line, no nexus.toml plumbing, and
+// trivial to change — selecting gin/chi pulls their deps into the build, while
+// the default links no third-party router at all.
+func WithRouter(r httpx.Router) Option { return routerOption{r: r} }
 
 // Module groups options under a name. Mirrors fx.Module's logging — the
 // group name appears in startup/shutdown logs and in error messages, which
@@ -406,6 +426,14 @@ func Run(cfg Config, opts ...Option) {
 	// any plugin the user declares can read its per-environment
 	// block from app.EffectiveManifest() at boot without the
 	// operator having to write a LoadDeployManifest invoke.
+	// Resolve the router backend before the graph is built: New(cfg)
+	// (inside fxEarlyOptions) constructs the default router, so a
+	// WithRouter option must seed Config.Router up front.
+	for _, o := range opts {
+		if ro, ok := o.(routerOption); ok {
+			cfg.Router = ro.r
+		}
+	}
 	all := append([]fx.Option{
 		fxEarlyOptions(cfg),
 		autoManifestOptions(),

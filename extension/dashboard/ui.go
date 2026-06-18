@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"path"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 //go:embed all:ui/dist
@@ -15,7 +15,7 @@ var uiFS embed.FS
 
 // mountUI serves the Vite-built Vue dashboard under /__nexus.
 // If ui/dist has never been built, a stub index.html ships instead.
-func mountUI(g *gin.RouterGroup) {
+func mountUI(g httpx.Group) {
 	distFS, err := fs.Sub(uiFS, "ui/dist")
 	if err != nil {
 		return
@@ -23,14 +23,14 @@ func mountUI(g *gin.RouterGroup) {
 	serveIndex := serveFromFS(distFS, "index.html")
 	g.GET("/", serveIndex)
 	g.GET("/index.html", serveIndex)
-	g.GET("/assets/*filepath", func(c *gin.Context) {
+	g.GET("/assets/*filepath", func(c *httpx.Ctx) {
 		name := "assets" + c.Param("filepath")
 		serveFromFS(distFS, name)(c)
 	})
 }
 
-func serveFromFS(distFS fs.FS, name string) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func serveFromFS(distFS fs.FS, name string) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		data, err := fs.ReadFile(distFS, name)
 		if err != nil {
 			c.Status(http.StatusNotFound)

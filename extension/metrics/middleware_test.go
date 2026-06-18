@@ -4,7 +4,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 
 	"github.com/paulmanoni/nexus/trace"
 )
@@ -15,15 +16,14 @@ import (
 // handler writes c.JSON(400, ...) and the dashboard animator needs
 // to see that as a failure.
 func TestGinRecorder_Publishes4xxStatus(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	bus := trace.NewBus(16)
 	_, ch, cancel := bus.Subscribe(0, 16)
 	defer cancel()
 
 	store := NewMemoryStore()
-	eng := gin.New()
-	eng.GET("/boom", ginTraceBus(bus), ginRecorder(store, "svc.boom"), func(c *gin.Context) {
-		c.JSON(400, gin.H{"error": "bad"})
+	eng := stdrouter.New()
+	eng.GET("/boom", ginTraceBus(bus), ginRecorder(store, "svc.boom"), func(c *httpx.Ctx) {
+		c.JSON(400, httpx.H{"error": "bad"})
 	})
 
 	req := httptest.NewRequest("GET", "/boom", nil)
@@ -60,6 +60,6 @@ func TestGinRecorder_Publishes4xxStatus(t *testing.T) {
 
 // ginTraceBus mirrors what the REST transport does: attach the bus to
 // context so publishOpEventWithStatus can find it.
-func ginTraceBus(bus *trace.Bus) gin.HandlerFunc {
+func ginTraceBus(bus *trace.Bus) httpx.HandlerFunc {
 	return trace.Middleware(bus, "svc", "GET /boom", "rest")
 }

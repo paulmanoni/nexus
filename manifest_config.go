@@ -6,6 +6,7 @@ import (
 	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension/metrics"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/httpx"
 	"github.com/paulmanoni/nexus/middleware"
 )
 
@@ -27,6 +28,13 @@ type Config struct {
 	//	    },
 	//	}
 	Server ServerConfig
+
+	// Router selects the HTTP router backend. Nil means the default
+	// stdlib net/http.ServeMux (zero third-party deps). Set it to an
+	// opt-in adapter — ginrouter.New() / chirouter.New() — or use the
+	// nexus.WithRouter(...) option, which sets this field. Not decoded
+	// from nexus.toml (an interface value); code-only.
+	Router httpx.Router `toml:"-"`
 
 	// Dashboard bundles the /__nexus surface knobs (whether it
 	// mounts at all, the brand label). Middleware that gates the

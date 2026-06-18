@@ -6,19 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
-
-func init() { gin.SetMode(gin.TestMode) }
 
 // newCORSEngine wires the CORS middleware onto a bare engine with one
 // stub handler. Tests inspect the response headers + status to verify
 // the middleware behavior end-to-end (handler reach + preflight
 // short-circuit are both observable from outside).
-func newCORSEngine(cfg CORSConfig) *gin.Engine {
-	e := gin.New()
+func newCORSEngine(cfg CORSConfig) httpx.Router {
+	e := stdrouter.New()
 	e.Use(corsMiddleware(cfg))
-	e.Any("/x", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	e.Any("/x", func(c *httpx.Ctx) { c.String(http.StatusOK, "ok") })
 	return e
 }
 

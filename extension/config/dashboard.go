@@ -5,20 +5,20 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // ServerStatus is the wire shape served at GET
 // /__nexus/config/server. One row per declared app + summary
 // metadata about the source + last reload + subscriber count.
 type ServerStatus struct {
-	Listen      string         `json:"listen"`
-	AuthMode    string         `json:"auth_mode"`
-	SigningKID  string         `json:"signing_kid"`
-	LastReload  string         `json:"last_reload,omitempty"`  // RFC3339; "" before first reload
-	ReloadCount int            `json:"reload_count"`
-	SubCount    int            `json:"subscriber_count"`
-	Apps        []AppStatus    `json:"apps"`
+	Listen      string      `json:"listen"`
+	AuthMode    string      `json:"auth_mode"`
+	SigningKID  string      `json:"signing_kid"`
+	LastReload  string      `json:"last_reload,omitempty"` // RFC3339; "" before first reload
+	ReloadCount int         `json:"reload_count"`
+	SubCount    int         `json:"subscriber_count"`
+	Apps        []AppStatus `json:"apps"`
 }
 
 // AppStatus is one row in the Apps table.
@@ -90,16 +90,16 @@ func snapshotClientStatus(h *clientHolder) ClientStatus {
 
 // handleServerStatus is the gin handler bound to
 // /__nexus/config/server.
-func handleServerStatus(st *serverState) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func handleServerStatus(st *serverState) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		c.JSON(http.StatusOK, snapshotServerStatus(st))
 	}
 }
 
 // handleClientStatus is the gin handler bound to
 // /__nexus/config/client.
-func handleClientStatus(h *clientHolder) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func handleClientStatus(h *clientHolder) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		c.JSON(http.StatusOK, snapshotClientStatus(h))
 	}
 }

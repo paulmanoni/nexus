@@ -7,7 +7,7 @@ import (
 	"reflect"
 
 	"braces.dev/errtrace"
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/middleware"
@@ -57,10 +57,10 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 }
 
 // AsRestHandler registers a REST endpoint whose handler is a plain
-// gin.HandlerFunc supplied by a *factory* function. The factory is
+// httpx.HandlerFunc supplied by a *factory* function. The factory is
 // the fx-resolved piece: its parameters are the deps needed to build
 // the handler (controllers, resources, other services), its single
-// return is the gin.HandlerFunc that serves requests.
+// return is the httpx.HandlerFunc that serves requests.
 //
 // Use this when the handler already manages its own request binding
 // and response shaping (typical for code migrated from ad-hoc Gin
@@ -69,7 +69,7 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 //
 //	nexus.Module("oats-rest",
 //	    nexus.AsRestHandler("POST", "/api/devices/register",
-//	        func(d *DeviceController) gin.HandlerFunc { return d.RegisterDevice },
+//	        func(d *DeviceController) httpx.HandlerFunc { return d.RegisterDevice },
 //	        nexus.Description("Register a device"),
 //	        auth.Required(),
 //	    ),
@@ -77,7 +77,7 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 //
 // Factory signature requirements:
 //   - Zero or more parameters (fx-injected deps).
-//   - Exactly one return value of type gin.HandlerFunc.
+//   - Exactly one return value of type httpx.HandlerFunc.
 //
 // On the dashboard this endpoint appears under its enclosing
 // nexus.Module (same grouping as AsRest / AsQuery), with metrics +
@@ -92,12 +92,12 @@ func AsRestHandler(method, path string, factory any, opts ...RestOption) Option 
 		return rawOption{o: fx.Error(err)}
 	}
 	rt := reflect.TypeOf(factory)
-	ginHandlerType := reflect.TypeOf(gin.HandlerFunc(nil))
+	ginHandlerType := reflect.TypeOf(httpx.HandlerFunc(nil))
 	if rt == nil || rt.Kind() != reflect.Func {
 		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsRestHandler factory must be a function"))}
 	}
 	if rt.NumOut() != 1 || rt.Out(0) != ginHandlerType {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsRestHandler factory must return exactly gin.HandlerFunc (got %s)", rt))}
+		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsRestHandler factory must return exactly httpx.HandlerFunc (got %s)", rt))}
 	}
 	return asRestHandlerInvoke(method, path, cfg, factory)
 }
@@ -105,7 +105,7 @@ func AsRestHandler(method, path string, factory any, opts ...RestOption) Option 
 // asRestHandlerInvoke synthesizes the fx.Invoke for AsRestHandler.
 // Parallel to asRestInvoke but simpler: instead of building a
 // reflective per-request handler, we resolve the factory's deps once
-// at boot, call the factory to get the gin.HandlerFunc, and mount
+// at boot, call the factory to get the httpx.HandlerFunc, and mount
 // it directly. The middleware chain (trace → metrics → user .Use()
 // bundles → handler) mirrors asRestInvoke's so the dashboard sees
 // the same shape either way.
@@ -135,9 +135,9 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		// per-op edges + per-op stats lookups.
 		opName := method + " " + finalPath
 
-		// Invoke the factory once to extract the gin.HandlerFunc.
+		// Invoke the factory once to extract the httpx.HandlerFunc.
 		out := reflect.ValueOf(factory).Call(deps)
-		userHandler := out[0].Interface().(gin.HandlerFunc)
+		userHandler := out[0].Interface().(httpx.HandlerFunc)
 
 		chain, mwNames := buildEndpointChain(
 			app, service,
@@ -348,15 +348,15 @@ func unwrapService(v reflect.Value, t reflect.Type) (*Service, bool) {
 	return nil, false
 }
 
-// buildGinHandler synthesizes the gin.HandlerFunc that binds the args struct
+// buildGinHandler synthesizes the httpx.HandlerFunc that binds the args struct
 // (if any), calls the user handler reflectively, and writes the response.
 //
 // renderer is nil for ordinary endpoints (the default c.JSON success write);
 // when an option like nexus.WithRenderer / inertia.Page supplies one, it owns
 // the success write instead. The error path is unchanged — renderers only
 // shape successful returns in this release.
-func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer, app *App) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer, app *App) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		// Expose the app to a custom renderer (e.g. Inertia) so it can pull
 		// per-app state via AppFromGin — order-independent, unlike global
 		// middleware. Only when a renderer is attached, so ordinary JSON
@@ -387,7 +387,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 		if sh.hasArgs {
 			ptr := reflect.New(sh.argsType)
 			if err := bindArgs(c, ptr.Interface()); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 				return
 			}
 			args = ptr.Elem()
@@ -395,7 +395,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 
 		result, err := sh.callHandler(callInput{
 			Ctx:    c.Request.Context(),
-			GinCtx: c, // available to handlers that take *gin.Context as a param
+			GinCtx: c, // available to handlers that take *httpx.Ctx as a param
 		}, deps, args)
 		if err != nil {
 			// Offer the error to a renderer first (e.g. Inertia turning
@@ -407,7 +407,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 					if rerr != nil {
 						_ = c.Error(errtrace.Wrap(rerr))
 						if !c.Writer.Written() {
-							c.JSON(http.StatusInternalServerError, gin.H{"error": rerr.Error()})
+							c.JSON(http.StatusInternalServerError, httpx.H{"error": rerr.Error()})
 						}
 					}
 					return
@@ -435,10 +435,10 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			if mapped, ok := MapCRUDError(err); ok {
 				status = mapped
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			c.JSON(status, httpx.H{"error": err.Error()})
 			return
 		}
-		// A handler that takes *gin.Context may have already written the
+		// A handler that takes *httpx.Ctx may have already written the
 		// response itself (custom status codes, streamed body, etc.).
 		// Skip the automatic success write in that case to avoid clobbering
 		// the handler's own reply.
@@ -453,7 +453,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			if rerr := renderer.Render(c, result); rerr != nil {
 				_ = c.Error(errtrace.Wrap(rerr))
 				if !c.Writer.Written() {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": rerr.Error()})
+					c.JSON(http.StatusInternalServerError, httpx.H{"error": rerr.Error()})
 				}
 			}
 			return
@@ -467,7 +467,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 // on the tags present on the struct. Multiple tag families may coexist —
 // e.g. uri:"id" alongside json:"payload" — and each binder runs against its
 // own fields.
-func bindArgs(c *gin.Context, ptr any) error {
+func bindArgs(c *httpx.Ctx, ptr any) error {
 	t := reflect.TypeOf(ptr).Elem()
 	hasURI, hasQuery, hasHeader, hasForm, hasJSON := tagSurvey(t)
 

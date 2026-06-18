@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // handleListCerts answers GET /__nexus/tls/certs. Returns one row
@@ -18,11 +18,11 @@ import (
 // the user is waiting. If the cache is wedged we'd rather error
 // than hang the request — operators can hit /__nexus/tls/status
 // for the underlying details.
-func (s *pluginState) handleListCerts(c *gin.Context) {
+func (s *pluginState) handleListCerts(c *httpx.Ctx) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
 	certs := s.snapshotCerts(ctx)
-	c.JSON(http.StatusOK, gin.H{"certs": certs})
+	c.JSON(http.StatusOK, httpx.H{"certs": certs})
 }
 
 // handleRenew answers POST /__nexus/tls/renew/:domain. Forces a
@@ -34,10 +34,10 @@ func (s *pluginState) handleListCerts(c *gin.Context) {
 // framework's listenerScope filters guard. In a self-hosted setup
 // the operator is expected to put the dashboard on a private
 // listener; in a cloud setup the platform brokers access.
-func (s *pluginState) handleRenew(c *gin.Context) {
+func (s *pluginState) handleRenew(c *httpx.Ctx) {
 	domain := c.Param("domain")
 	if domain == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "domain is required"})
+		c.JSON(http.StatusBadRequest, httpx.H{"error": "domain is required"})
 		return
 	}
 
@@ -51,21 +51,21 @@ func (s *pluginState) handleRenew(c *gin.Context) {
 		// Refuse to renew a domain we wouldn't issue for anyway —
 		// surfaces typo'd domains immediately rather than burning
 		// an ACME round-trip.
-		c.JSON(http.StatusBadRequest, gin.H{
+		c.JSON(http.StatusBadRequest, httpx.H{
 			"error":  "domain not in whitelist",
 			"domain": domain,
 		})
 		return
 	}
 	if m == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "tls manager not started"})
+		c.JSON(http.StatusServiceUnavailable, httpx.H{"error": "tls manager not started"})
 		return
 	}
 
 	// Delete-then-fetch: removing the cached cert forces the next
 	// GetCertificate call to run the full ACME flow.
 	if err := cache.Delete(c.Request.Context(), domain); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(http.StatusInternalServerError, httpx.H{
 			"error":  "cache delete failed",
 			"detail": err.Error(),
 		})
@@ -91,7 +91,7 @@ func (s *pluginState) handleRenew(c *gin.Context) {
 	select {
 	case err := <-done:
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{
+			c.JSON(http.StatusBadGateway, httpx.H{
 				"error":  "issuance failed",
 				"domain": domain,
 				"detail": err.Error(),
@@ -99,14 +99,14 @@ func (s *pluginState) handleRenew(c *gin.Context) {
 			return
 		}
 	case <-ctx.Done():
-		c.JSON(http.StatusGatewayTimeout, gin.H{
+		c.JSON(http.StatusGatewayTimeout, httpx.H{
 			"error":  "issuance timed out",
 			"domain": domain,
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, httpx.H{
 		"ok":     true,
 		"domain": domain,
 		"info":   inspectCert(ctx, m, cache, domain),
@@ -117,7 +117,7 @@ func (s *pluginState) handleRenew(c *gin.Context) {
 // summary suitable for an oncall glance: are we running, how many
 // certs are present, when's the next renewal due. Cheaper than
 // /certs because it doesn't parse every cache entry.
-func (s *pluginState) handleStatus(c *gin.Context) {
+func (s *pluginState) handleStatus(c *httpx.Ctx) {
 	s.mu.RLock()
 	started := s.started
 	startErr := s.startErr
@@ -128,7 +128,7 @@ func (s *pluginState) handleStatus(c *gin.Context) {
 	redirect := s.cfg.Redirect != nil && *s.cfg.Redirect
 	s.mu.RUnlock()
 
-	payload := gin.H{
+	payload := httpx.H{
 		"started":   started,
 		"staging":   staging,
 		"domains":   domains,

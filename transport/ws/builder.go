@@ -5,19 +5,19 @@ package ws
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )
 
-type ConnectFunc func(c *gin.Context, conn *websocket.Conn) error
+type ConnectFunc func(c *httpx.Ctx, conn *websocket.Conn) error
 type MessageFunc func(conn *websocket.Conn, msgType int, data []byte) error
 type CloseFunc func(conn *websocket.Conn)
 
 type Builder struct {
-	engine          *gin.Engine
+	engine          httpx.Router
 	reg             *registry.Registry
 	bus             *trace.Bus
 	service         string
@@ -28,12 +28,12 @@ type Builder struct {
 	onMessage       MessageFunc
 	onClose         CloseFunc
 	hub             *Hub
-	middleware      []gin.HandlerFunc
+	middleware      []httpx.HandlerFunc
 	middlewareNames []string
 	tags            map[string]string
 }
 
-func New(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path string) *Builder {
+func New(e httpx.Router, r *registry.Registry, bus *trace.Bus, service, path string) *Builder {
 	return &Builder{
 		engine:   e,
 		reg:      r,
@@ -47,7 +47,7 @@ func New(e *gin.Engine, r *registry.Registry, bus *trace.Bus, service, path stri
 
 func (b *Builder) Describe(s string) *Builder { b.description = s; return b }
 
-func (b *Builder) Use(name string, mw gin.HandlerFunc) *Builder {
+func (b *Builder) Use(name string, mw httpx.HandlerFunc) *Builder {
 	b.middleware = append(b.middleware, mw)
 	b.middlewareNames = append(b.middlewareNames, name)
 	b.reg.EnsureMiddleware(name)
@@ -79,7 +79,7 @@ func (b *Builder) WithHub(h *Hub) *Builder { b.hub = h; return b }
 // it.
 func (b *Builder) Mount() {
 	endpoint := "WS " + b.path
-	handlers := append([]gin.HandlerFunc(nil), b.middleware...)
+	handlers := append([]httpx.HandlerFunc(nil), b.middleware...)
 	handlers = append(handlers, b.serve)
 	b.engine.GET(b.path, handlers...)
 	b.reg.RegisterEndpoint(registry.Endpoint{
@@ -93,7 +93,7 @@ func (b *Builder) Mount() {
 	})
 }
 
-func (b *Builder) serve(c *gin.Context) {
+func (b *Builder) serve(c *httpx.Ctx) {
 	if b.hub != nil {
 		b.hub.serve(c, b.upgrader)
 		return

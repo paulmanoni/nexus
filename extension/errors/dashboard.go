@@ -3,62 +3,62 @@ package errors
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // handleRecent answers GET /__nexus/errors/recent. Returns the
 // ring buffer in newest-first order. Capped by Config.Capacity; the
 // dashboard typically pages through this via the "Recent errors"
 // feed in the trace rail.
-func (s *pluginState) handleRecent(c *gin.Context) {
+func (s *pluginState) handleRecent(c *httpx.Ctx) {
 	s.mu.RLock()
 	store := s.store
 	s.mu.RUnlock()
 	if store == nil {
-		c.JSON(http.StatusOK, gin.H{"errors": []Event{}})
+		c.JSON(http.StatusOK, httpx.H{"errors": []Event{}})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"errors": store.recentSnapshot()})
+	c.JSON(http.StatusOK, httpx.H{"errors": store.recentSnapshot()})
 }
 
 // handleIssues answers GET /__nexus/errors/issues. Returns one row
 // per fingerprint with count + first/last seen + sample event.
 // Equivalent to Sentry's issues list — what operators glance at to
 // triage the noisiest failure modes.
-func (s *pluginState) handleIssues(c *gin.Context) {
+func (s *pluginState) handleIssues(c *httpx.Ctx) {
 	s.mu.RLock()
 	store := s.store
 	s.mu.RUnlock()
 	if store == nil {
-		c.JSON(http.StatusOK, gin.H{"issues": []*Issue{}})
+		c.JSON(http.StatusOK, httpx.H{"issues": []*Issue{}})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"issues": store.issueSnapshot()})
+	c.JSON(http.StatusOK, httpx.H{"issues": store.issueSnapshot()})
 }
 
 // handleIssue answers GET /__nexus/errors/issue/:fingerprint. Single
 // issue with its latest sample event (stack trace + request meta).
-func (s *pluginState) handleIssue(c *gin.Context) {
+func (s *pluginState) handleIssue(c *httpx.Ctx) {
 	fp := c.Param("fingerprint")
 	s.mu.RLock()
 	store := s.store
 	s.mu.RUnlock()
 	if store == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "store not initialized"})
+		c.JSON(http.StatusNotFound, httpx.H{"error": "store not initialized"})
 		return
 	}
 	issue, ok := store.issueByFingerprint(fp)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no issue with that fingerprint"})
+		c.JSON(http.StatusNotFound, httpx.H{"error": "no issue with that fingerprint"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"issue": issue})
+	c.JSON(http.StatusOK, httpx.H{"issue": issue})
 }
 
 // handleStatus answers GET /__nexus/errors/status. Plugin-level
 // summary: configuration knobs + transport names + counts. Designed
 // to fit on the dashboard's plugin chip card.
-func (s *pluginState) handleStatus(c *gin.Context) {
+func (s *pluginState) handleStatus(c *httpx.Ctx) {
 	s.mu.RLock()
 	cfg := s.cfg
 	store := s.store
@@ -73,7 +73,7 @@ func (s *pluginState) handleStatus(c *gin.Context) {
 	if store != nil {
 		recent, issues = store.stats()
 	}
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, httpx.H{
 		"started":     started,
 		"disabled":    cfg.Disabled,
 		"environment": cfg.Environment,
@@ -94,7 +94,7 @@ func (s *pluginState) handleStatus(c *gin.Context) {
 //
 // Returns 204 with no body — matches REST conventions for "command
 // accepted, no response payload".
-func (s *pluginState) handleClear(c *gin.Context) {
+func (s *pluginState) handleClear(c *httpx.Ctx) {
 	s.mu.RLock()
 	store := s.store
 	s.mu.RUnlock()

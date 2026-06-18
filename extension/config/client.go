@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
@@ -31,19 +31,19 @@ import (
 //
 // Boot-time state machine:
 //
-//   1. Read sealed cache from disk (if present + key + valid sig).
-//      → installs the cached snapshot immediately so handlers
-//        boot with a usable value tree even if step 2 stalls.
+//  1. Read sealed cache from disk (if present + key + valid sig).
+//     → installs the cached snapshot immediately so handlers
+//     boot with a usable value tree even if step 2 stalls.
 //
-//   2. Fetch fresh snapshot from server.
-//      → success: verify, install (overlaying step 1's snapshot),
-//        write sealed cache, schedule polling refresh loop.
-//      → failure: apply OnUnreachable policy:
-//          UseCacheOrFail   — if cache exists, use it; else fail boot
-//          UseCacheAndWarn  — if cache exists, use it; else install
-//                             empty store + SEV1 warning loop
-//          UseDefaults      — if cache exists, use it; else install
-//                             WithDefaults + SEV1 warning loop
+//  2. Fetch fresh snapshot from server.
+//     → success: verify, install (overlaying step 1's snapshot),
+//     write sealed cache, schedule polling refresh loop.
+//     → failure: apply OnUnreachable policy:
+//     UseCacheOrFail   — if cache exists, use it; else fail boot
+//     UseCacheAndWarn  — if cache exists, use it; else install
+//     empty store + SEV1 warning loop
+//     UseDefaults      — if cache exists, use it; else install
+//     WithDefaults + SEV1 warning loop
 //
 // Polling loop runs every WithPollInterval (30s default), hitting
 // /__config/version first; the full /__config/snapshot is only
@@ -97,7 +97,7 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 				Icon:  "settings",
 			},
 			Routes: []extension.Route{
-				{Method: "GET", Path: "/client", Handler: gin.HandlerFunc(func(c *gin.Context) {
+				{Method: "GET", Path: "/client", Handler: httpx.HandlerFunc(func(c *httpx.Ctx) {
 					handleClientStatus(holder)(c)
 				})},
 			},

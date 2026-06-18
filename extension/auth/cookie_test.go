@@ -7,16 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 func TestSessionCookie_SetClearExtract(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	sc := SessionCookie{Name: "access_token", MaxAge: time.Hour}
 
 	// Set writes an HttpOnly cookie with the token and a positive Max-Age.
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := httpx.NewCtx(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	sc.Set(c, "tok-123")
 	set := w.Header().Get("Set-Cookie")
 	for _, want := range []string{"access_token=tok-123", "HttpOnly", "Max-Age=3600", "Path=/"} {
@@ -34,7 +33,7 @@ func TestSessionCookie_SetClearExtract(t *testing.T) {
 
 	// Clear expires it.
 	w2 := httptest.NewRecorder()
-	c2, _ := gin.CreateTestContext(w2)
+	c2 := httpx.NewCtx(w2, httptest.NewRequest(http.MethodGet, "/", nil))
 	sc.Clear(c2)
 	if got := w2.Header().Get("Set-Cookie"); !strings.Contains(got, "access_token=") || !strings.Contains(got, "Max-Age=0") {
 		t.Fatalf("Clear should expire the cookie, got %q", got)
@@ -42,10 +41,9 @@ func TestSessionCookie_SetClearExtract(t *testing.T) {
 }
 
 func TestSessionCookie_Defaults(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	var sc SessionCookie // zero value
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	c := httpx.NewCtx(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	sc.Set(c, "x")
 	set := w.Header().Get("Set-Cookie")
 	if !strings.Contains(set, DefaultSessionCookieName+"=x") {

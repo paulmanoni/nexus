@@ -21,7 +21,7 @@
 package middleware
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/graph"
 )
@@ -54,8 +54,8 @@ type Info struct {
 type Middleware struct {
 	Name        string
 	Description string
-	Kind        Kind            // defaults to KindCustom when unset by factories
-	Gin         gin.HandlerFunc // REST + WS upgrade path
+	Kind        Kind              // defaults to KindCustom when unset by factories
+	Gin         httpx.HandlerFunc // REST + WS upgrade path
 	Graph       graph.FieldMiddleware
 }
 

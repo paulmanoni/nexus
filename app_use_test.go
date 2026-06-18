@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
 )
 
 func ginOnlyBundle(name string) middleware.Middleware {
-	return middleware.Middleware{Name: name, Gin: func(*gin.Context) {}}
+	return middleware.Middleware{Name: name, Gin: func(*httpx.Ctx) {}}
 }
 
 func graphOnlyBundle(name string) middleware.Middleware {
@@ -24,7 +24,7 @@ func graphOnlyBundle(name string) middleware.Middleware {
 func bothBundle(name string) middleware.Middleware {
 	return middleware.Middleware{
 		Name:  name,
-		Gin:   func(*gin.Context) {},
+		Gin:   func(*httpx.Ctx) {},
 		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
 	}
 }

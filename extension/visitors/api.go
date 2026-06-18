@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // trackBody is the payload the SPA sends to /track. Path is the
@@ -27,7 +27,7 @@ type trackBody struct {
 // set the cookie. If present, we trust it. The cookie is HttpOnly
 // + Secure + SameSite=Lax — the SPA doesn't need to read it, only
 // the server tracks against it.
-func (s *pluginState) handleTrack(c *gin.Context) {
+func (s *pluginState) handleTrack(c *httpx.Ctx) {
 	if s.cfg.Disabled || s.counter == nil {
 		c.Status(http.StatusNoContent)
 		return
@@ -41,7 +41,7 @@ func (s *pluginState) handleTrack(c *gin.Context) {
 			visitorID,
 			s.cfg.CookieMaxAgeDays*86400,
 			"/",
-			"",        // domain — empty = current host
+			"",                   // domain — empty = current host
 			c.Request.TLS != nil, // Secure when over HTTPS
 			true,                 // HttpOnly
 		)
@@ -64,7 +64,7 @@ func (s *pluginState) handleTrack(c *gin.Context) {
 // Cache-Control: no-store keeps poll responses from being cached
 // by proxies. The SPA polls every 30s; a CDN caching the response
 // for 60s would freeze the "online now" widget at zero.
-func (s *pluginState) handlePublicStats(c *gin.Context) {
+func (s *pluginState) handlePublicStats(c *httpx.Ctx) {
 	if s.cfg.Disabled || s.counter == nil {
 		c.JSON(http.StatusOK, Stats{})
 		return
@@ -77,7 +77,7 @@ func (s *pluginState) handlePublicStats(c *gin.Context) {
 // as the public one for now, kept distinct so we can layer admin-
 // only fields here later (e.g. the unique IDs list, raw lastSeen
 // timestamps) without leaking them on the public endpoint.
-func (s *pluginState) handleAdminStats(c *gin.Context) {
+func (s *pluginState) handleAdminStats(c *httpx.Ctx) {
 	if s.cfg.Disabled || s.counter == nil {
 		c.JSON(http.StatusOK, Stats{})
 		return
@@ -88,9 +88,9 @@ func (s *pluginState) handleAdminStats(c *gin.Context) {
 // handleTopPaths returns the top N paths by view count. Query
 // param `n` (default 20, clamped to 1..maxPaths) controls how many
 // rows to return. The admin tab uses this for the "Top pages" panel.
-func (s *pluginState) handleTopPaths(c *gin.Context) {
+func (s *pluginState) handleTopPaths(c *httpx.Ctx) {
 	if s.cfg.Disabled || s.counter == nil {
-		c.JSON(http.StatusOK, gin.H{"paths": []PathCount{}})
+		c.JSON(http.StatusOK, httpx.H{"paths": []PathCount{}})
 		return
 	}
 	n := 20
@@ -102,21 +102,21 @@ func (s *pluginState) handleTopPaths(c *gin.Context) {
 	if n < 1 {
 		n = 1
 	}
-	c.JSON(http.StatusOK, gin.H{"paths": s.counter.Top(n)})
+	c.JSON(http.StatusOK, httpx.H{"paths": s.counter.Top(n)})
 }
 
 // handleReset wipes the counter + saves the empty state to disk.
 // Used after a counter-pollution event (bot flood, accidental
 // production test). Returns 204 — the new shape is recoverable
 // from a follow-up /stats hit.
-func (s *pluginState) handleReset(c *gin.Context) {
+func (s *pluginState) handleReset(c *httpx.Ctx) {
 	if s.cfg.Disabled || s.counter == nil {
 		c.Status(http.StatusNoContent)
 		return
 	}
 	s.counter.Reset()
 	if err := s.counter.SaveToFile(s.cfg.StorePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 		return
 	}
 	c.Status(http.StatusNoContent)

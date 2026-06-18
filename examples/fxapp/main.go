@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/resource"
@@ -20,15 +20,15 @@ type PetService struct{}
 
 func NewPetService() *PetService { return &PetService{} }
 
-func (s *PetService) List(c *gin.Context) {
+func (s *PetService) List(c *httpx.Ctx) {
 	start := time.Now()
 	time.Sleep(3 * time.Millisecond) // fake DB call
 	trace.Record(c, "db.pets.list", start, nil)
-	c.JSON(http.StatusOK, gin.H{"pets": []string{"Rex", "Whiskers"}})
+	c.JSON(http.StatusOK, httpx.H{"pets": []string{"Rex", "Whiskers"}})
 }
 
-func (s *PetService) Create(c *gin.Context) {
-	c.JSON(http.StatusCreated, gin.H{"ok": true})
+func (s *PetService) Create(c *httpx.Ctx) {
+	c.JSON(http.StatusCreated, httpx.H{"ok": true})
 }
 
 var petsModule = nexus.Module("pets",
@@ -46,8 +46,8 @@ type OwnerService struct{}
 
 func NewOwnerService() *OwnerService { return &OwnerService{} }
 
-func (s *OwnerService) List(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"owners": []string{"Amara", "Juma"}})
+func (s *OwnerService) List(c *httpx.Ctx) {
+	c.JSON(http.StatusOK, httpx.H{"owners": []string{"Amara", "Juma"}})
 }
 
 var ownersModule = nexus.Module("owners",

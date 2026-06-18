@@ -3,7 +3,7 @@ package ratelimit
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // MountDashboard mounts the rate-limit introspection + override
@@ -24,30 +24,30 @@ import (
 //
 // The key format is "<service>.<op>" — matches what auto-mount
 // registers at boot so dashboard and store talk the same dialect.
-func MountDashboard(g *gin.RouterGroup, store Store) {
-	g.GET("/ratelimits", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"limits": store.Snapshot(c.Request.Context())})
+func MountDashboard(g httpx.Group, store Store) {
+	g.GET("/ratelimits", func(c *httpx.Ctx) {
+		c.JSON(http.StatusOK, httpx.H{"limits": store.Snapshot(c.Request.Context())})
 	})
-	g.POST("/ratelimits", func(c *gin.Context) {
+	g.POST("/ratelimits", func(c *httpx.Ctx) {
 		var body Limit
 		if err := c.ShouldBindJSON(&body); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 			return
 		}
 		key := c.Query("service") + "." + c.Query("op")
 		rec, err := store.Configure(c.Request.Context(), key, body)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, rec)
 	})
-	g.DELETE("/ratelimits", func(c *gin.Context) {
+	g.DELETE("/ratelimits", func(c *httpx.Ctx) {
 		key := c.Query("service") + "." + c.Query("op")
 		if err := store.Reset(c.Request.Context(), key); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true})
+		c.JSON(http.StatusOK, httpx.H{"ok": true})
 	})
 }

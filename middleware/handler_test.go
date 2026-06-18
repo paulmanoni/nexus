@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/graph"
 )
@@ -98,7 +98,7 @@ func TestFunc(t *testing.T) {
 }
 
 func TestLegacyBundleTransports(t *testing.T) {
-	ginOnly := AsHandler(Middleware{Name: "g", Gin: func(*gin.Context) {}})
+	ginOnly := AsHandler(Middleware{Name: "g", Gin: func(*httpx.Ctx) {}})
 	if got := ginOnly.Transports(); got != Transports(TransportREST, TransportWebSocket) {
 		t.Fatalf("gin-only Transports = %s, want {REST, WebSocket}", got)
 	}
@@ -110,7 +110,7 @@ func TestLegacyBundleTransports(t *testing.T) {
 
 	both := AsHandler(Middleware{
 		Name:  "b",
-		Gin:   func(*gin.Context) {},
+		Gin:   func(*httpx.Ctx) {},
 		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
 	})
 	if got := both.Transports(); got != Transports(TransportREST, TransportWebSocket, TransportGraphQL) {
@@ -183,7 +183,7 @@ func TestLegacyBundleHandle(t *testing.T) {
 
 	// REST transport: guard error mentioning the transport (gin runs natively in step 3).
 	hr := newRequestCtx(context.Background(), TransportREST, &fakeCarrier{})
-	err := AsHandler(Middleware{Name: "r", Gin: func(*gin.Context) {}}).
+	err := AsHandler(Middleware{Name: "r", Gin: func(*httpx.Ctx) {}}).
 		Handle(hr, func(*RequestCtx) error { return nil })
 	if err == nil {
 		t.Fatalf("REST Handle should return the step-3 guard error")

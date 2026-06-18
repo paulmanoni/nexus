@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // PeerStatus is the wire shape served at GET /__nexus/peer/list —
@@ -17,9 +17,9 @@ import (
 // target is currently reachable (matches Registry.IsHealthy).
 type PeerStatus struct {
 	Name         string         `json:"name"`
-	Healthy      bool           `json:"healthy"`     // true when at least one target is up
-	Targets      []TargetStatus `json:"targets"`     // per-replica detail; always >= 1 in steady state
-	InFlight     int            `json:"in_flight"`   // calls currently holding a semaphore slot
+	Healthy      bool           `json:"healthy"`   // true when at least one target is up
+	Targets      []TargetStatus `json:"targets"`   // per-replica detail; always >= 1 in steady state
+	InFlight     int            `json:"in_flight"` // calls currently holding a semaphore slot
 	SemBudget    int            `json:"sem_budget"`
 	SchemaCached bool           `json:"schema_cached"`
 }
@@ -71,8 +71,8 @@ func snapshotPeers(r *Registry) []PeerStatus {
 // handlePeerList returns the JSON shape the dashboard's Peers tab
 // fetches. Mounted at GET /__nexus/peer/list by the extension.Use
 // Routes wiring in peer.go.
-func handlePeerList(r *Registry) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func handlePeerList(r *Registry) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		c.JSON(http.StatusOK, map[string]any{
 			"identity":  r.identity,
 			"peers":     snapshotPeers(r),
@@ -85,8 +85,8 @@ func handlePeerList(r *Registry) gin.HandlerFunc {
 // for the named peer (or an empty body when no schema has been
 // fetched yet). Useful for "what does my peer actually expose?"
 // inspection right from the dashboard.
-func handlePeerSchema(r *Registry) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func handlePeerSchema(r *Registry) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		name := c.Param("name")
 		r.schemas.mu.Lock()
 		schema, ok := r.schemas.schemas[name]

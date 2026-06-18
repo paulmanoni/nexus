@@ -1,6 +1,6 @@
 package nexus
 
-import "github.com/gin-gonic/gin"
+import "github.com/paulmanoni/nexus/httpx"
 
 // SetValue stashes a key/value on the app. Extensions use it to record
 // boot-time state (typically in an fx.Invoke) that they must read back at
@@ -21,7 +21,7 @@ const ginAppKey = "nexus.app"
 // state (e.g. App.Value) that can't be threaded through the
 // Render(c, result) signature. Returns (nil, false) outside a renderer-bearing
 // request.
-func AppFromGin(c *gin.Context) (*App, bool) {
+func AppFromGin(c *httpx.Ctx) (*App, bool) {
 	v, ok := c.Get(ginAppKey)
 	if !ok {
 		return nil, false

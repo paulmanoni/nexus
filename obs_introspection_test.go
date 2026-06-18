@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 )
@@ -97,9 +98,9 @@ func TestIntrospectionGate_BlocksByDefault(t *testing.T) {
 	if gate == nil {
 		t.Fatal("gate should be installed when Introspection is false")
 	}
-	r := gin.New()
+	r := stdrouter.New()
 	r.Use(gate)
-	r.GET("/__nexus/secret", func(c *gin.Context) {
+	r.GET("/__nexus/secret", func(c *httpx.Ctx) {
 		c.String(http.StatusOK, "leaked")
 	})
 	w := httptest.NewRecorder()
@@ -120,9 +121,9 @@ func TestIntrospectionGate_BlocksByDefault(t *testing.T) {
 func TestIntrospectionGate_AllowedNetworkBypasses(t *testing.T) {
 	nets, _ := parseIntrospectionNetworks([]string{"127.0.0.0/8", "192.168.1.0/24"})
 	gate := introspectionGate(false, nets)
-	r := gin.New()
+	r := stdrouter.New()
 	r.Use(gate)
-	r.GET("/__nexus/secret", func(c *gin.Context) {
+	r.GET("/__nexus/secret", func(c *httpx.Ctx) {
 		c.String(http.StatusOK, "ok")
 	})
 	for _, c := range []struct {
@@ -164,9 +165,9 @@ func TestIntrospectionGate_OpenWhenIntrospectionTrue(t *testing.T) {
 func TestIntrospectionGate_IgnoresXForwardedFor(t *testing.T) {
 	nets, _ := parseIntrospectionNetworks([]string{"127.0.0.0/8"})
 	gate := introspectionGate(false, nets)
-	r := gin.New()
+	r := stdrouter.New()
 	r.Use(gate)
-	r.GET("/__nexus/secret", func(c *gin.Context) {
+	r.GET("/__nexus/secret", func(c *httpx.Ctx) {
 		c.String(http.StatusOK, "ok")
 	})
 

@@ -1,6 +1,6 @@
 package nexus
 
-import "github.com/gin-gonic/gin"
+import "github.com/paulmanoni/nexus/httpx"
 
 // ResponseRenderer overrides how a REST endpoint's *successful* return value
 // is written to the response. By default an AsRest handler's return is encoded
@@ -16,13 +16,13 @@ import "github.com/gin-gonic/gin"
 // params binding, validation, DI, tracing, and metrics behave identically to
 // every other REST endpoint.
 //
-// Render receives the live *gin.Context (headers, request URL, the
+// Render receives the live *httpx.Ctx (headers, request URL, the
 // ResponseWriter) and the handler's return value. Returning an error is
 // reported through gin.Context.Error and, if nothing has been written yet,
 // produces a 500 — same as a handler error. Only successful returns reach a
 // renderer; the error path is untouched.
 type ResponseRenderer interface {
-	Render(c *gin.Context, result any) error
+	Render(c *httpx.Ctx, result any) error
 }
 
 // ErrorRenderer is an optional companion to ResponseRenderer: when a renderer
@@ -37,7 +37,7 @@ type ResponseRenderer interface {
 // the error to the standard path unchanged. A non-nil error return is treated
 // like a renderer failure (500 if nothing was written).
 type ErrorRenderer interface {
-	RenderError(c *gin.Context, err error) (handled bool, rerr error)
+	RenderError(c *httpx.Ctx, err error) (handled bool, rerr error)
 }
 
 // WithRenderer attaches a ResponseRenderer to a single AsRest registration,

@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/paulmanoni/nexus/httpx"
 
 	"github.com/paulmanoni/nexus/graph"
 )
@@ -39,7 +39,7 @@ func FromHandler(h Handler) Middleware {
 
 // --- gin (REST + WS upgrade) -------------------------------------------------
 
-type ginCarrier struct{ c *gin.Context }
+type ginCarrier struct{ c *httpx.Ctx }
 
 func (g ginCarrier) header(key string) string  { return g.c.GetHeader(key) }
 func (g ginCarrier) clientIP() string          { return g.c.ClientIP() }
@@ -52,7 +52,7 @@ func (g ginCarrier) reject(status int, err error) error {
 	if h, ok := rejectHookFrom(g.c.Request.Context()); ok && h(g.c, status, err) {
 		return err
 	}
-	g.c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
+	g.c.AbortWithStatusJSON(status, httpx.H{"error": err.Error()})
 	return err
 }
 
@@ -66,8 +66,8 @@ func (g ginCarrier) rejectJSON(status int, body any) error {
 // ginAdapter runs a Handler inside gin's chain. next bridges to c.Next() so
 // downstream gin handlers run; a Handler that calls rc.Reject aborts via the
 // carrier (which sets the response), and we skip the fallback 500.
-func ginAdapter(h Handler) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func ginAdapter(h Handler) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
 		rc := newRequestCtx(c.Request.Context(), TransportREST, ginCarrier{c: c})
 		err := h.Handle(rc, func(r *RequestCtx) error {
 			c.Request = c.Request.WithContext(r.Context)
@@ -77,7 +77,7 @@ func ginAdapter(h Handler) gin.HandlerFunc {
 		// A Handler that returned an error WITHOUT rejecting (didn't write a
 		// response) gets a generic 500 so the failure isn't swallowed.
 		if err != nil && !c.IsAborted() && !c.Writer.Written() {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.AbortWithStatusJSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 		}
 	}
 }

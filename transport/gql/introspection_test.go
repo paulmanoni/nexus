@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/graphql-go/graphql"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/httpx/stdrouter"
 )
 
 // schemaWithDummyField is a minimal schema for the gate tests —
@@ -63,10 +64,9 @@ func TestHasIntrospectionToken(t *testing.T) {
 // installGate wires the gate + simpleHandler the same way Mount
 // does — without the registry coupling, so tests stay focused on
 // the gate's behavior.
-func installGate(allow func(c *gin.Context) bool, schema *graphql.Schema) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	e := gin.New()
-	handlers := []gin.HandlerFunc{}
+func installGate(allow func(c *httpx.Ctx) bool, schema *graphql.Schema) httpx.Router {
+	e := stdrouter.New()
+	handlers := []httpx.HandlerFunc{}
 	if allow != nil {
 		handlers = append(handlers, productionGate(allow, schema))
 	}
@@ -80,7 +80,7 @@ func installGate(allow func(c *gin.Context) bool, schema *graphql.Schema) *gin.E
 // the gate + simpleHandler with AllowIntrospection returning false.
 // __schema POST gets 404; legitimate POST passes through.
 func TestIntrospectionGate_BlocksPostBody(t *testing.T) {
-	e := installGate(func(c *gin.Context) bool { return false }, schemaWithDummyField())
+	e := installGate(func(c *httpx.Ctx) bool { return false }, schemaWithDummyField())
 
 	// Introspection POST → 404 (not 401/403; matches the dashboard
 	// gate's "indistinguishable from no route" pattern).
@@ -113,7 +113,7 @@ func TestIntrospectionGate_BlocksPostBody(t *testing.T) {
 // in URL params, used by Playground bookmarks and curl) is gated
 // the same way — different code path, same outcome.
 func TestIntrospectionGate_BlocksGetQuery(t *testing.T) {
-	e := installGate(func(c *gin.Context) bool { return false }, schemaWithDummyField())
+	e := installGate(func(c *httpx.Ctx) bool { return false }, schemaWithDummyField())
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/graphql?query=%7B+__schema+%7B+types+%7B+name+%7D+%7D+%7D", nil)
@@ -128,7 +128,7 @@ func TestIntrospectionGate_BlocksGetQuery(t *testing.T) {
 // true) reaches the resolver even on an introspection query.
 // Keeps the dev/internal experience intact when CIDRs are set.
 func TestIntrospectionGate_AllowsWhenAllowReturnsTrue(t *testing.T) {
-	e := installGate(func(c *gin.Context) bool { return true }, schemaWithDummyField())
+	e := installGate(func(c *httpx.Ctx) bool { return true }, schemaWithDummyField())
 
 	w := httptest.NewRecorder()
 	body := `{"query":"{ __schema { types { name } } }"}`
@@ -152,7 +152,7 @@ func TestIntrospectionGate_AllowsWhenAllowReturnsTrue(t *testing.T) {
 // single field violates MaxAliasesLimiter regardless of depth /
 // complexity arithmetic.
 func TestProductionGate_BlocksRuleViolations(t *testing.T) {
-	e := installGate(func(c *gin.Context) bool { return false }, schemaWithDummyField())
+	e := installGate(func(c *httpx.Ctx) bool { return false }, schemaWithDummyField())
 
 	// 5 aliases on a single field — exceeds maxAliases=4.
 	body := `{"query":"{ a:hello b:hello c:hello d:hello e:hello }"}`
@@ -170,7 +170,7 @@ func TestProductionGate_BlocksRuleViolations(t *testing.T) {
 // well under every limit. Critical regression test: a too-strict
 // gate would break the prod flow for normal users.
 func TestProductionGate_AllowsLegitimateQueries(t *testing.T) {
-	e := installGate(func(c *gin.Context) bool { return false }, schemaWithDummyField())
+	e := installGate(func(c *httpx.Ctx) bool { return false }, schemaWithDummyField())
 
 	body := `{"query":"{ hello }"}`
 	w := httptest.NewRecorder()
