@@ -14,6 +14,7 @@
   <a href="https://github.com/paulmanoni/nexus/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/paulmanoni/nexus?sort=semver&color=10b981&labelColor=064e3b"></a>
   <a href="https://pkg.go.dev/github.com/paulmanoni/nexus"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/paulmanoni/nexus.svg"></a>
   <a href="go.mod"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/paulmanoni/nexus?color=10b981&labelColor=064e3b"></a>
+  <a href="https://deps.dev/go/github.com%2Fpaulmanoni%2Fnexus"><img alt="Dependencies" src="https://img.shields.io/badge/deps.dev-insights-10b981?labelColor=064e3b"></a>
   <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-10b981?labelColor=064e3b"></a>
 </p>
 
@@ -27,11 +28,13 @@
 
 ---
 
-**nexus** is a Go framework built on [Gin](https://github.com/gin-gonic/gin). You write one
-plain function; nexus exposes it over **REST, GraphQL, and WebSocket** from the same
-signature, wires up dependencies for you, and ships a live **dashboard** at `/__nexus/`
-that draws your whole app and shows traffic in real time. No code generation, no schema
-files, and **no Node.js** for the frontend.
+**nexus** is a Go framework. You write one plain function; nexus exposes it over
+**REST, GraphQL, and WebSocket** from the same signature, wires up dependencies for
+you, and ships a live **dashboard** at `/__nexus/` that draws your whole app and shows
+traffic in real time. No code generation, no schema files, and **no Node.js** for the
+frontend. The HTTP router is pluggable behind a small seam — the default backend is the
+standard library (`net/http`, zero third-party router deps); [Gin](https://github.com/gin-gonic/gin)
+and [chi](https://github.com/go-chi/chi) are opt-in via `nexus.WithRouter(...)`.
 
 ## Install
 
