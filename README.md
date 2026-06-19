@@ -33,8 +33,9 @@
 you, and ships a live **dashboard** at `/__nexus/` that draws your whole app and shows
 traffic in real time. No code generation, no schema files, and **no Node.js** for the
 frontend. The HTTP router is pluggable behind a small seam — the default backend is the
-standard library (`net/http`, zero third-party router deps); [Gin](https://github.com/gin-gonic/gin)
-and [chi](https://github.com/go-chi/chi) are opt-in via `nexus.WithRouter(...)`.
+standard library (`net/http`, zero third-party router deps); [chi](https://github.com/go-chi/chi)
+and [Gin](https://github.com/gin-gonic/gin) are opt-in via `nexus.WithRouter(...)` (the Gin
+adapter is a separate module, so gin never enters a default build's dependency graph).
 
 ## Install
 
