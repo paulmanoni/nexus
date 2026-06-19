@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.20.4] - 2026-06-19
+
+### Fixed — wildcard route params now match gin's convention on every backend
+
+- **`c.Param("rest")` for a `*rest` route again returns a leading-slash suffix
+  on the stdlib and chi backends.** gin exposes a `*filepath` capture as
+  `/app.js` (leading slash); after the router-seam migration the stdlib backend
+  returned `app.js` (ServeMux's `{rest...}` drops the slash) and the chi backend
+  returned `""` (chi stores the capture under the key `*`, so the original name
+  missed entirely). Handlers that build a path from the capture — notably the
+  dashboard's `"assets" + c.Param("filepath")` — resolved to `assetsapp.js` /
+  `assets`, 404'd, and served assets with an **empty MIME type**, so browsers
+  blocked the dashboard's own JS module (`/__nexus/assets/index-*.js`). The
+  seam now normalizes the wildcard capture to gin's leading-slash form via the
+  new `httpx.WildcardName` helper, so `c.Param` behaves identically on gin,
+  chi, and stdlib. Named (`:id`) params are unaffected.
+
 ## [1.20.3] - 2026-06-19
 
 ### Fixed — `stdrouter` treated `GET /` as a catch-all, swallowing assets

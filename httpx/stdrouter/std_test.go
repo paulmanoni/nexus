@@ -46,8 +46,8 @@ func TestTrailingSlashExactVsWildcard(t *testing.T) {
 
 	cases := map[string]string{
 		"/admin/":       "admin-root",
-		"/admin/users":  "miss",       // exact: sub-path is NOT swallowed
-		"/files/a/b.js": "file:a/b.js", // ServeMux {rest...} drops the leading slash
+		"/admin/users":  "miss",        // exact: sub-path is NOT swallowed
+		"/files/a/b.js": "file:/a/b.js", // wildcard param keeps gin's leading slash
 	}
 	for path, want := range cases {
 		req := httptest.NewRequest("GET", path, nil)
@@ -56,6 +56,23 @@ func TestTrailingSlashExactVsWildcard(t *testing.T) {
 		if w.Body.String() != want {
 			t.Fatalf("GET %s = %q, want %q", path, w.Body.String(), want)
 		}
+	}
+}
+
+// The wildcard param must carry gin's leading slash so the dashboard's
+// `name := "assets" + c.Param("filepath")` resolves to "assets/index.js", not
+// "assetsindex.js" (which 404s and serves the JS with an empty MIME type).
+func TestWildcardParamLeadingSlash(t *testing.T) {
+	r := New()
+	var got string
+	r.Handle("GET", "/assets/*filepath", func(c *httpx.Ctx) {
+		got = "assets" + c.Param("filepath")
+		c.String(200, got)
+	})
+	req := httptest.NewRequest("GET", "/assets/index-Cv7AL3WY.js", nil)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+	if got != "assets/index-Cv7AL3WY.js" {
+		t.Fatalf(`c.Param("filepath") path = %q, want assets/index-Cv7AL3WY.js`, got)
 	}
 }
 

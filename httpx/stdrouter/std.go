@@ -23,8 +23,9 @@ func New() *Router { return &Router{mux: http.NewServeMux()} }
 func (r *Router) Handle(method, path string, chain ...httpx.HandlerFunc) {
 	r.routes = append(r.routes, httpx.RouteInfo{Method: method, Path: path})
 	full := append([]httpx.HandlerFunc{}, chain...)
+	wild := httpx.WildcardName(path)
 	r.mux.HandleFunc(method+" "+toStd(path), func(w http.ResponseWriter, req *http.Request) {
-		httpx.Serve(full, w, req, path, req.PathValue)
+		httpx.Serve(full, w, req, path, paramFn(req, wild))
 	})
 }
 
@@ -44,9 +45,27 @@ func (r *Router) Any(path string, chain ...httpx.HandlerFunc) {
 	// matching HEAD, so an explicit "GET /x" + "HEAD /x" pair conflicts.
 	r.routes = append(r.routes, httpx.RouteInfo{Method: "ANY", Path: path})
 	full := append([]httpx.HandlerFunc{}, chain...)
+	wild := httpx.WildcardName(path)
 	r.mux.HandleFunc(toStd(path), func(w http.ResponseWriter, req *http.Request) {
-		httpx.Serve(full, w, req, path, req.PathValue)
+		httpx.Serve(full, w, req, path, paramFn(req, wild))
 	})
+}
+
+// paramFn returns a path-param lookup that matches gin's convention. ServeMux's
+// "{rest...}" wildcard yields the matched suffix WITHOUT a leading slash
+// ("app.js"); gin's "*rest" includes it ("/app.js"). For the wildcard param we
+// re-add the slash so handlers that do "assets"+c.Param("rest") work the same on
+// every backend. Non-wildcard params pass straight through.
+func paramFn(req *http.Request, wild string) func(string) string {
+	if wild == "" {
+		return req.PathValue
+	}
+	return func(k string) string {
+		if k == wild {
+			return "/" + req.PathValue(k)
+		}
+		return req.PathValue(k)
+	}
 }
 
 func (r *Router) Use(mw ...httpx.HandlerFunc) { r.global = append(r.global, mw...) }

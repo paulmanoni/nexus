@@ -223,6 +223,21 @@ func (c *Ctx) Param(key string) string {
 	return c.param(key)
 }
 
+// WildcardName returns the name of the trailing wildcard segment in a canonical
+// route path ("/assets/*filepath" -> "filepath"), or "" when the path has no
+// wildcard. Router adapters use it to normalize the wildcard param value to
+// gin's convention — a leading-slash suffix (gin's c.Param("filepath") for
+// /assets/app.js is "/app.js") — on every backend, so handlers that build paths
+// like "assets"+c.Param("filepath") behave identically on gin, chi, and stdlib.
+func WildcardName(path string) string {
+	for _, seg := range strings.Split(path, "/") {
+		if strings.HasPrefix(seg, "*") {
+			return seg[1:]
+		}
+	}
+	return ""
+}
+
 func (c *Ctx) Query(key string) string { return c.Request.URL.Query().Get(key) }
 
 func (c *Ctx) DefaultQuery(key, def string) string {

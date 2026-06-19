@@ -24,8 +24,9 @@ func New() *Router { return &Router{mux: chi.NewRouter()} }
 func (r *Router) Handle(method, path string, chain ...httpx.HandlerFunc) {
 	r.routes = append(r.routes, httpx.RouteInfo{Method: method, Path: path})
 	full := append([]httpx.HandlerFunc{}, chain...)
+	wild := httpx.WildcardName(path)
 	r.mux.Method(method, toChi(path), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		httpx.Serve(full, w, req, path, func(k string) string { return chi.URLParam(req, k) })
+		httpx.Serve(full, w, req, path, paramFn(req, wild))
 	}))
 }
 
@@ -42,9 +43,24 @@ func (r *Router) HEAD(path string, chain ...httpx.HandlerFunc) { r.Handle("HEAD"
 func (r *Router) Any(path string, chain ...httpx.HandlerFunc) {
 	r.routes = append(r.routes, httpx.RouteInfo{Method: "ANY", Path: path})
 	full := append([]httpx.HandlerFunc{}, chain...)
+	wild := httpx.WildcardName(path)
 	r.mux.HandleFunc(toChi(path), func(w http.ResponseWriter, req *http.Request) {
-		httpx.Serve(full, w, req, path, func(k string) string { return chi.URLParam(req, k) })
+		httpx.Serve(full, w, req, path, paramFn(req, wild))
 	})
+}
+
+// paramFn returns a path-param lookup that matches gin's convention. chi rewrites
+// "*rest" to its "*" catch-all and stores the suffix under the key "*" without a
+// leading slash; gin exposes it under the original name WITH a leading slash
+// ("/app.js"). Map the route's wildcard name onto chi's "*" key and re-add the
+// slash so c.Param("rest") behaves identically on every backend.
+func paramFn(req *http.Request, wild string) func(string) string {
+	return func(k string) string {
+		if wild != "" && k == wild {
+			return "/" + chi.URLParam(req, "*")
+		}
+		return chi.URLParam(req, k)
+	}
 }
 
 func (r *Router) Use(mw ...httpx.HandlerFunc) { r.global = append(r.global, mw...) }
