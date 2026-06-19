@@ -66,7 +66,12 @@ func (r *Router) NoRoute(chain ...httpx.HandlerFunc) {
 
 func (r *Router) Static(prefix, dir string) {
 	p := strings.TrimSuffix(prefix, "/") + "/"
-	r.mux.Handle(p, http.StripPrefix(p, http.FileServer(http.Dir(dir))))
+	// Scope to GET (ServeMux serves HEAD off a GET pattern too). A method-less
+	// "/media/" matches every method, so it is NOT a subset of an app's catch-all
+	// "GET /" — ServeMux flags that as an ambiguous overlap and panics. A static
+	// server only needs GET/HEAD anyway, and "GET /media/" is a strict path
+	// refinement of "GET /", so the conflict disappears.
+	r.mux.Handle("GET "+p, http.StripPrefix(p, http.FileServer(http.Dir(dir))))
 }
 
 func (r *Router) Routes() []httpx.RouteInfo { return r.routes }

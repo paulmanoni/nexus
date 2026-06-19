@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.20.2] - 2026-06-19
+
+### Fixed — `stdrouter.Static` no longer panics next to a catch-all route
+
+- **`Static` is now scoped to `GET`.** It previously registered its prefix
+  method-less (`/media/`), which Go 1.22's `ServeMux` treats as ambiguous
+  against an app's catch-all `GET /` (the static pattern has a more specific
+  path but matches *more* methods, so neither is a strict subset) and panics at
+  boot — e.g. an SPA frontend plus a `Static("/media", …)` upload dir. A static
+  file server only serves GET/HEAD, and `ServeMux` serves HEAD off a GET
+  pattern, so registering `GET /media/` keeps full behavior while making the
+  static route a strict path-refinement of `GET /` — no conflict. (gin's radix
+  router tolerated the overlap; the stdlib default did not.)
+
 ## [1.20.1] - 2026-06-19
 
 ### Added — form accessors on `httpx.Ctx`
