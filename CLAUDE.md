@@ -212,6 +212,11 @@ nexus.toml key (an adapter must be imported to link anyway). Selecting gin/chi p
 their dependency trees back in; the stdlib default does not. Route strings use the
 canonical `:id` / `*rest` syntax on every backend (chi/std adapters translate).
 
+**`ginrouter` is a SEPARATE module** so gin stays out of the main module's
+dependency graph entirely — `go get github.com/paulmanoni/nexus/httpx/ginrouter`
+to use it (the import path is unchanged; it just versions independently). `stdrouter`
+and `chirouter` ship inside the main module (chi has no transitive deps).
+
 Chain execution (the `c.Next()` / `c.Abort()` flow, recovery, error accumulation)
 lives in `httpx.Ctx`, not the router — so every middleware runs identically on any
 backend, and the router only matches paths + returns params. App-level middleware

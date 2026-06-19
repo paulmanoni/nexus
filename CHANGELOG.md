@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-06-19
+
+### Changed — `ginrouter` is now its own module (gin out of the main graph)
+
+- **`github.com/paulmanoni/nexus/httpx/ginrouter` is a separate Go module.** gin
+  (and its sonic / golang-asm / goccy / validator / json-iterator tree) is no
+  longer a dependency of the main `github.com/paulmanoni/nexus` module at all —
+  the module graph drops from 182 to 161 modules. The default build was already
+  gin-free at link time (v1.19.0); now it's gin-free at the `go.mod`/`go.sum`
+  level too, so `go get github.com/paulmanoni/nexus` pulls none of gin's tree.
+- **The import path is unchanged** (`.../httpx/ginrouter`); it just versions
+  independently. To use the Gin backend, add the module explicitly:
+
+  ```bash
+  go get github.com/paulmanoni/nexus/httpx/ginrouter
+  ```
+  ```go
+  nexus.Boot(nexus.WithRouter(ginrouter.New()))
+  ```
+- `stdrouter` (default) and `chirouter` remain inside the main module — chi has
+  no transitive dependencies, so it costs nothing to keep bundled.
+
 ## [1.19.0] - 2026-06-18
 
 ### Added — Pluggable HTTP router (`httpx` seam)
