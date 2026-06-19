@@ -92,7 +92,18 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	httpx.Serve(chain, w, req, req.URL.Path, nil)
 }
 
-// toStd rewrites canonical ":id" -> "{id}" and "*rest" -> "{rest...}".
+// toStd rewrites canonical ":id" -> "{id}" and "*rest" -> "{rest...}", and
+// pins trailing-slash routes to an exact match.
+//
+// gin treats a registered route as an EXACT path match (its catch-all is the
+// "*rest" wildcard). net/http.ServeMux instead treats any pattern ending in
+// "/" as a SUBTREE match — so a literal "GET /" would shadow every unmatched
+// GET path (e.g. /assets/app.js), stealing requests an app expects to reach a
+// more specific route or the NoRoute fallback. Appending ServeMux's "{$}"
+// end-of-path marker to a trailing-slash route ("/" -> "/{$}", "/admin/" ->
+// "/admin/{$}") restores gin's exact-match semantics. Wildcard routes end in
+// "}" after rewriting, so they keep their intended subtree behavior; NoRoute
+// and Static register their patterns directly and never pass through here.
 func toStd(path string) string {
 	parts := strings.Split(path, "/")
 	for i, p := range parts {
@@ -103,5 +114,9 @@ func toStd(path string) string {
 			parts[i] = "{" + p[1:] + "...}"
 		}
 	}
-	return strings.Join(parts, "/")
+	std := strings.Join(parts, "/")
+	if strings.HasSuffix(std, "/") {
+		std += "{$}"
+	}
+	return std
 }

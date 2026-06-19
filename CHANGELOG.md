@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.20.3] - 2026-06-19
+
+### Fixed — `stdrouter` treated `GET /` as a catch-all, swallowing assets
+
+- **Trailing-slash routes are now exact matches.** gin treats a registered
+  route as an exact path (its catch-all is the `*rest` wildcard), but
+  `net/http.ServeMux` treats any pattern ending in `/` as a *subtree* match. So
+  a home-page route like `GET /` (e.g. `inertia.Page("GET", "/", …)`) silently
+  became a catch-all that shadowed every unmatched `GET` path — including
+  `GET /assets/*` — so the SPA's JS/CSS never reached the `ServeFrontend`
+  `NoRoute` fallback and the page loaded with **no assets**. `stdrouter` now
+  appends ServeMux's `{$}` end-of-path marker to trailing-slash routes
+  (`/` → `/{$}`, `/admin/` → `/admin/{$}`), restoring gin's exact-match
+  semantics. Wildcard (`*rest`) routes keep their subtree behavior, and
+  `NoRoute` / `Static` register their patterns directly, so the intended
+  catch-alls are unaffected.
+
 ## [1.20.2] - 2026-06-19
 
 ### Fixed — `stdrouter.Static` no longer panics next to a catch-all route
