@@ -3,6 +3,9 @@ package httpx
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -60,6 +63,96 @@ func (c *Ctx) ShouldBind(ptr any) error {
 		vs, ok := form[name]
 		return vs, ok
 	})
+}
+
+// defaultMultipartMemory caps how much of a multipart body is buffered in
+// memory before spilling to temp files — gin's 32 MiB default.
+const defaultMultipartMemory = 32 << 20
+
+// parseForm parses the request body (url-encoded and, best-effort, multipart)
+// so the PostForm* / FormFile / MultipartForm accessors can read it. net/http
+// caches the parsed values on the request, so repeated calls are cheap.
+func (c *Ctx) parseForm() {
+	_ = c.Request.ParseForm()
+	_ = c.Request.ParseMultipartForm(defaultMultipartMemory)
+}
+
+// PostForm returns the first value for the named POST/PUT body form key, or ""
+// if absent (gin's c.PostForm).
+func (c *Ctx) PostForm(key string) string {
+	v, _ := c.GetPostForm(key)
+	return v
+}
+
+// DefaultPostForm returns the form value for key, or def when it is absent
+// (gin's c.DefaultPostForm).
+func (c *Ctx) DefaultPostForm(key, def string) string {
+	if v, ok := c.GetPostForm(key); ok {
+		return v
+	}
+	return def
+}
+
+// GetPostForm returns the first form value for key and whether it was present
+// (gin's c.GetPostForm) — present-but-empty reports ok=true.
+func (c *Ctx) GetPostForm(key string) (string, bool) {
+	c.parseForm()
+	if vs, ok := c.Request.PostForm[key]; ok {
+		if len(vs) > 0 {
+			return vs[0], true
+		}
+		return "", true
+	}
+	return "", false
+}
+
+// PostFormArray returns all values for a repeated form key (gin's
+// c.PostFormArray).
+func (c *Ctx) PostFormArray(key string) []string {
+	c.parseForm()
+	return c.Request.PostForm[key]
+}
+
+// FormFile returns the first uploaded file for the named multipart form key
+// (gin's c.FormFile).
+func (c *Ctx) FormFile(name string) (*multipart.FileHeader, error) {
+	if c.Request.MultipartForm == nil {
+		if err := c.Request.ParseMultipartForm(defaultMultipartMemory); err != nil {
+			return nil, err
+		}
+	}
+	f, fh, err := c.Request.FormFile(name)
+	if err != nil {
+		return nil, err
+	}
+	_ = f.Close()
+	return fh, nil
+}
+
+// MultipartForm parses and returns the full multipart form (gin's
+// c.MultipartForm).
+func (c *Ctx) MultipartForm() (*multipart.Form, error) {
+	if err := c.Request.ParseMultipartForm(defaultMultipartMemory); err != nil {
+		return nil, err
+	}
+	return c.Request.MultipartForm, nil
+}
+
+// SaveUploadedFile writes an uploaded file header to dst on disk (gin's
+// c.SaveUploadedFile).
+func (c *Ctx) SaveUploadedFile(file *multipart.FileHeader, dst string) error {
+	src, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, src)
+	return err
 }
 
 // ShouldBindJSON decodes the request body as JSON into ptr.

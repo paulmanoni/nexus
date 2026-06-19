@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.20.1] - 2026-06-19
+
+### Added — form accessors on `httpx.Ctx`
+
+- **`httpx.Ctx` now carries gin-compatible form helpers**, closing a gap from the
+  router-seam migration where low-level handlers that read POST bodies had no
+  neutral equivalent for gin's form methods: `PostForm`, `DefaultPostForm`,
+  `GetPostForm`, `PostFormArray`, `FormFile`, `MultipartForm`, and
+  `SaveUploadedFile`. They read `*http.Request` directly, so they behave
+  identically on the stdlib, chi, and gin backends — no adapter changes. Empty
+  string for a missing key; `GetPostForm`/`DefaultPostForm` distinguish
+  present-but-empty from absent (the latter falls back to the default).
+
 ## [1.20.0] - 2026-06-19
 
 ### Changed — `ginrouter` is now its own module (gin out of the main graph)
