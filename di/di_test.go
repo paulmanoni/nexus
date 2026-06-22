@@ -111,6 +111,50 @@ func TestValueGroupViaAnnotate(t *testing.T) {
 	}
 }
 
+// TestVariadicConstructorIgnoresVariadic mirrors dig/fx: an unannotated
+// variadic parameter is NOT resolved by type, so a stdlib-style constructor
+// like zap.NewExample(...Option) runs with zero variadic args instead of
+// failing with "no provider for []Option".
+func TestVariadicConstructorIgnoresVariadic(t *testing.T) {
+	type opt func()
+	var got *pinger
+	app := New(
+		Provide(func(opts ...opt) *pinger { return &pinger{name: "variadic"} }),
+		Invoke(func(p *pinger) { got = p }),
+	)
+	if err := app.Err(); err != nil {
+		t.Fatalf("Err: %v", err)
+	}
+	if got == nil || got.name != "variadic" {
+		t.Fatalf("variadic constructor not called correctly: %+v", got)
+	}
+}
+
+// TestVariadicConstructorWithGroup feeds a value group through the variadic
+// parameter via an explicit group tag (CallSlice path).
+func TestVariadicConstructorWithGroup(t *testing.T) {
+	type opt struct{ n int }
+	var got int
+	app := New(
+		Provide(Annotate(func() opt { return opt{n: 2} }, ResultTags(`group:"opts"`))),
+		Provide(Annotate(func() opt { return opt{n: 5} }, ResultTags(`group:"opts"`))),
+		Provide(Annotate(func(opts ...opt) *pinger {
+			s := 0
+			for _, o := range opts {
+				s += o.n
+			}
+			return &pinger{name: string(rune('0' + s))}
+		}, ParamTags(`group:"opts"`))),
+		Invoke(func(p *pinger) { got = int(p.name[0] - '0') }),
+	)
+	if err := app.Err(); err != nil {
+		t.Fatalf("Err: %v", err)
+	}
+	if got != 7 {
+		t.Fatalf("variadic group sum = %d, want 7", got)
+	}
+}
+
 func TestLifecycleOrder(t *testing.T) {
 	var order []string
 	app := New(

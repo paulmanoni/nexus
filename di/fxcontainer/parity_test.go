@@ -133,6 +133,38 @@ func assertSeq(t *testing.T, name string, o *obs, hooks int) {
 	}
 }
 
+// TestParity_VariadicConstructor pins that both backends ignore an unannotated
+// variadic parameter (dig already does; the builtin matches it) — so a
+// stdlib-style ctor like zap.NewExample(...Option) builds on either backend
+// without a provider for the []Option slice.
+func TestParity_VariadicConstructor(t *testing.T) {
+	type opt func()
+	type svc struct{ ok bool }
+	build := func(backend di.Backend) (bool, error) {
+		var got *svc
+		inst := backend.Build(di.Collect(
+			di.Provide(func(opts ...opt) *svc { return &svc{ok: true} }),
+			di.Invoke(func(s *svc) { got = s }),
+		))
+		if err := inst.Err(); err != nil {
+			return false, err
+		}
+		return got != nil && got.ok, nil
+	}
+	for _, tc := range []struct {
+		name    string
+		backend di.Backend
+	}{{"builtin", di.Builtin()}, {"fx", New()}} {
+		ok, err := build(tc.backend)
+		if err != nil {
+			t.Fatalf("%s: variadic ctor failed: %v", tc.name, err)
+		}
+		if !ok {
+			t.Fatalf("%s: variadic ctor did not run", tc.name)
+		}
+	}
+}
+
 func TestParity_LazinessMatches(t *testing.T) {
 	// Neither backend should construct anything that nothing demands.
 	build := func(backend di.Backend) int64 {
