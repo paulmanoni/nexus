@@ -51,8 +51,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/client"
@@ -182,7 +182,7 @@ type Config struct {
 
 // Plugin returns a nexus.Option that registers the frontend extension.
 // Validation runs synchronously: a misconfigured Config produces an
-// fx.Error wrapped in extension.Use rather than a confusing boot
+// di.Error wrapped in extension.Use rather than a confusing boot
 // failure later. The Option composes:
 //
 //   - the runtime ServeFrontend mount, and
@@ -193,10 +193,10 @@ type Config struct {
 // their templates ship.
 func Plugin(cfg Config) nexus.Option {
 	if err := cfg.Validate(); err != nil {
-		return nexus.Raw(fx.Error(err))
+		return nexus.Raw(di.Error(err))
 	}
 	if err := cfg.validateRuntime(); err != nil {
-		return nexus.Raw(fx.Error(err))
+		return nexus.Raw(di.Error(err))
 	}
 	cfg = cfg.defaults()
 

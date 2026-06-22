@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"go.uber.org/fx"
-
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/manifest"
 )
 
@@ -80,29 +79,27 @@ func printManifestAndExitIfRequested(cfg Config, opts []Option) {
 	// listeners bind (registerLifecycle's OnStart never fires because
 	// fx.Populate doesn't fire lifecycle hooks), so the engine is
 	// just a registry-of-routes, never a server.
-	all := append([]fx.Option{fxEarlyOptions(cfg)}, unwrap(opts)...)
+	all := append([]di.Option{fxEarlyOptions(cfg)}, unwrap(opts)...)
 	all = append(all, fxLateOptions())
 
 	// Drop the lifecycle invoke from fxEarlyOptions if it ever grows
 	// side-effecting OnStart hooks beyond listener bind (today
 	// registerLifecycle's OnStart binds listeners — we'd rather not
 	// run that loop at all, so we'd ideally swap fxEarlyOptions for
-	// a print-only variant. Tracked as an open item; the simpler
-	// route below uses fx.Populate before .Start() is called, which
-	// keeps OnStart hooks unfired.
-
-	all = append(all, fx.NopLogger)
+	// a print-only variant. Tracked as an open item; di.Populate runs
+	// provides + invokes eagerly but never fires lifecycle OnStart
+	// hooks (those wait for Start, which we never call here).
 
 	var app *App
-	all = append(all, fx.Populate(&app))
+	all = append(all, di.Populate(&app))
 
-	fxApp := fx.New(all...)
-	if err := fxApp.Err(); err != nil {
+	built := di.New(all...)
+	if err := built.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, "nexus: print-manifest: graph error:", err)
 		os.Exit(2)
 	}
 	if app == nil {
-		// fx.New ran but Populate didn't fill *App — should not
+		// New ran but Populate didn't fill *App — should not
 		// happen given fxEarlyOptions provides New, but guard anyway
 		// so a future refactor doesn't silently print {}.
 		fmt.Fprintln(os.Stderr, "nexus: print-manifest: *App not provided by graph")

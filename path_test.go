@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // TestPath_RegistersForServiceLookup verifies the round-trip:
@@ -156,9 +156,15 @@ func TestPath_MultiServiceModuleAllMountUnderPath(t *testing.T) {
 // route table.
 func newApp(cfg Config, opts ...Option) (*testApp, error) {
 	var captured *App
-	capture := fx.Invoke(func(a *App) { captured = a })
-	all := append([]fx.Option{fx.NopLogger, fxBootOptions(cfg), capture}, unwrap(opts)...)
-	fxApp := fx.New(all...)
+	capture := di.Invoke(func(a *App) { captured = a })
+	// Mirror nexus.Run's ordering: early options, then user options, then
+	// late options (autoMountGraphQL). The builtin container runs invokes in
+	// registration order, so autoMount must come AFTER user opts — otherwise
+	// the schema is built before LoadField registers its virtual fields.
+	all := []di.Option{fxEarlyOptions(cfg)}
+	all = append(all, unwrap(opts)...)
+	all = append(all, capture, fxLateOptions())
+	fxApp := di.New(all...)
 	if err := fxApp.Err(); err != nil {
 		return nil, err
 	}
@@ -172,7 +178,7 @@ func newApp(cfg Config, opts ...Option) (*testApp, error) {
 
 type testApp struct {
 	*App
-	fx *fx.App
+	fx *di.App
 }
 
 func (a *testApp) Stop() {

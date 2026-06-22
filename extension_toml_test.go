@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // TestExtensionRegistry_RegisterAndLookup: the basic
@@ -290,5 +290,5 @@ func noopDecoder(raw []byte) ([]Option, error) {
 // actually doing anything. Sufficient for tests that count
 // Options without applying them.
 func stubOption(_ string) Option {
-	return Raw(fx.Options())
+	return Raw(di.Options())
 }

@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/resource"
@@ -18,9 +18,9 @@ type fakeMgr struct {
 	connected        atomic.Bool
 }
 
-func (m *fakeMgr) Start()              { m.started.Store(true); m.connected.Store(true) }
-func (m *fakeMgr) Stop()               { m.stopped.Store(true); m.connected.Store(false) }
-func (m *fakeMgr) IsConnected() bool   { return m.connected.Load() }
+func (m *fakeMgr) Start()            { m.started.Store(true); m.connected.Store(true) }
+func (m *fakeMgr) Stop()             { m.stopped.Store(true); m.connected.Store(false) }
+func (m *fakeMgr) IsConnected() bool { return m.connected.Load() }
 
 // fakeHandle is the marker, with an extra field (cfg) like the real
 // RabbitMQ — proving build-constructs-the-whole-T (no reflection).
@@ -43,11 +43,11 @@ func TestManaged_LifecycleAndInjectionAndResource(t *testing.T) {
 		},
 	)
 
-	fxapp := fx.New(
-		fx.Supply(app),
-		fx.Supply(zap.NewNop()),
+	fxapp := di.New(
+		di.Supply(app),
+		di.Supply(zap.NewNop()),
 		opt.nexusOption(),
-		fx.Populate(&got),
+		di.Populate(&got),
 	)
 	ctx := context.Background()
 	if err := fxapp.Start(ctx); err != nil {
@@ -87,7 +87,7 @@ func TestManaged_ClosePathAndNilResource(t *testing.T) {
 		func(_ *zap.Logger) (*h, error) { return &h{&closerMgr{}}, nil },
 		nil, // no dashboard resource
 	)
-	fxapp := fx.New(fx.Supply(app), fx.Supply(zap.NewNop()), opt.nexusOption(), fx.Populate(&got))
+	fxapp := di.New(di.Supply(app), di.Supply(zap.NewNop()), opt.nexusOption(), di.Populate(&got))
 	ctx := context.Background()
 	if err := fxapp.Start(ctx); err != nil {
 		t.Fatalf("start: %v", err)

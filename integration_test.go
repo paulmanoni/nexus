@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxtest"
 
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
@@ -21,14 +20,14 @@ import (
 
 func TestRun_StartsAndStops(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{
 			Server:        ServerConfig{Addr: "127.0.0.1:0"},
 			Dashboard:     DashboardConfig{Enabled: true, Name: "Test"},
 			Introspection: true, // test starts the app + exercises mounts
 			TraceCapacity: 100,
 		}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -54,8 +53,8 @@ func TestRun_BindFailureAbortsStart(t *testing.T) {
 	}
 	defer busy.Close()
 
-	fxApp := fx.New(
-		fx.NopLogger,
+	fxApp := di.New(
+		di.Options(),
 		fxBootOptions(Config{Server: ServerConfig{Addr: busy.Addr().String()}}),
 	)
 
@@ -69,9 +68,9 @@ func TestRun_BindFailureAbortsStart(t *testing.T) {
 
 func TestRun_TracingDisabledWhenZero(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 0}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -88,8 +87,8 @@ func TestOption_UnwrapChain(t *testing.T) {
 		Provide(func() string { return "hello" }),
 		Invoke(func(s string) { got = s }),
 	)
-	fxApp := fxtest.New(t,
-		fx.NopLogger,
+	fxApp := newTestApp(t,
+		di.Options(),
 		mod.nexusOption(),
 	)
 	fxApp.RequireStart()
@@ -107,7 +106,7 @@ func TestSupply_IntoGraph(t *testing.T) {
 		Supply(tag{name: "from-supply"}),
 		Invoke(func(t tag) { seen = t }),
 	)
-	fxApp := fxtest.New(t, fx.NopLogger, mod.nexusOption())
+	fxApp := newTestApp(t, di.Options(), mod.nexusOption())
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
 	if seen.name != "from-supply" {
@@ -119,10 +118,10 @@ func TestRaw_AcceptsFxOption(t *testing.T) {
 	// Raw gives users access to fx features nexus hasn't mirrored.
 	var got int
 	mod := Module("raw-test",
-		Raw(fx.Provide(func() int { return 42 })),
+		Raw(di.Provide(func() int { return 42 })),
 		Invoke(func(i int) { got = i }),
 	)
-	fxApp := fxtest.New(t, fx.NopLogger, mod.nexusOption())
+	fxApp := newTestApp(t, di.Options(), mod.nexusOption())
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
 	if got != 42 {
@@ -150,10 +149,10 @@ func TestAutoMount_StampsModuleName(t *testing.T) {
 	mod := Module("adverts",
 		AsQuery(NewNoSvcQuery()),
 	)
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		mod.nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -206,14 +205,14 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 	ctrl := &testRestHandlerCtrl{counter: &counter}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Supply(ctrl).nexusOption(),
 		AsRestHandler("GET", "/ping",
 			func(c *testRestHandlerCtrl) httpx.HandlerFunc { return c.Ping },
 			Description("ping"),
 		).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -243,12 +242,12 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 
 func TestProvideService_RecordsConstructorDeps(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
 		Provide(NewUsersService).nexusOption(),
 		Provide(NewAdvertsService).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -277,10 +276,10 @@ func TestAutoMount_ZeroServiceFallback(t *testing.T) {
 	// registered, auto-mount should synthesize a default one rather than
 	// failing. Proves the minimal-app case boots.
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsQuery(NewNoSvcQuery()).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()

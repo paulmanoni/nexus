@@ -47,8 +47,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
@@ -61,11 +61,11 @@ import (
 // peer-only HTTP/2 listener on app start.
 func Module(cfg Config) nexus.Option {
 	if err := cfg.validate(); err != nil {
-		return nexus.Raw(fx.Error(fmt.Errorf("peer.Module: %w", err)))
+		return nexus.Raw(di.Error(fmt.Errorf("peer.Module: %w", err)))
 	}
 	holder := &lifecycleHolder{} // captured by the closures below
 
-	// Capture the Registry into the holder via a normal fx.Invoke.
+	// Capture the Registry into the holder via a normal di.Invoke.
 	// Runs after NewRegistry resolves and before any Lifecycle
 	// callback, so OnBoot below can safely read holder.reg
 	// without racing the constructor. Cleaner than synthesizing

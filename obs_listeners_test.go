@@ -17,9 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxtest"
 )
 
 // listenerBoundAddr returns "127.0.0.1:<port>" for the listener whose
@@ -54,7 +53,7 @@ func httpGetStatus(t *testing.T, addr, path string) int {
 // on public, dashboard visible on admin, user routes hidden on admin.
 func TestListeners_ScopeFilter(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{
 			Dashboard:     DashboardConfig{Enabled: true},
 			Introspection: true, // test exercises gated routes; opt in
@@ -67,7 +66,7 @@ func TestListeners_ScopeFilter(t *testing.T) {
 				},
 			},
 		}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -122,7 +121,7 @@ func TestListeners_ScopeFilter(t *testing.T) {
 // bind (the common case).
 func TestListeners_DualStackBindResolves(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{
 			Dashboard:     DashboardConfig{Enabled: true},
 			Introspection: true, // test exercises gated routes; opt in
@@ -136,7 +135,7 @@ func TestListeners_DualStackBindResolves(t *testing.T) {
 				},
 			},
 		}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -243,7 +242,7 @@ func TestListeners_TLS(t *testing.T) {
 	}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{
 			Dashboard:     DashboardConfig{Enabled: true},
 			Introspection: true,
@@ -255,7 +254,7 @@ func TestListeners_TLS(t *testing.T) {
 				},
 			},
 		}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -308,14 +307,14 @@ func TestListeners_TLS(t *testing.T) {
 // path keeps working: /__nexus/* stays reachable when Listeners is empty.
 func TestListeners_BackCompat_NoConfig(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{
 			Server:        ServerConfig{Addr: "127.0.0.1:0"},
 			Dashboard:     DashboardConfig{Enabled: true},
 			Introspection: true, // test exercises gated routes; opt in
 			TraceCapacity: 100,
 		}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()

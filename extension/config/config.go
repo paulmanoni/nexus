@@ -23,8 +23,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
@@ -55,7 +55,7 @@ func Server(src Source, opts ...ServerOption) nexus.Option {
 		o.applyServer(&cfg)
 	}
 	if err := cfg.validate(); err != nil {
-		return nexus.Raw(fx.Error(fmt.Errorf("config.Server: %w", err)))
+		return nexus.Raw(di.Error(fmt.Errorf("config.Server: %w", err)))
 	}
 	holder := &serverHolder{}
 	captureState := nexus.Invoke(func(s *serverState) { holder.state = s })

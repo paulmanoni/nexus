@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // DefaultManifestPath is the file the framework auto-loads from the
@@ -23,7 +23,7 @@ const DefaultManifestPath = "nexus.toml"
 // first one. Set NEXUS_SKIP_MANIFEST_AUTOLOAD=1 to disable.
 const autoManifestEnvSkip = "NEXUS_SKIP_MANIFEST_AUTOLOAD"
 
-// autoManifestOptions returns the fx.Invoke that auto-loads
+// autoManifestOptions returns the di.Invoke that auto-loads
 // nexus.toml from the current working directory if it exists.
 // Lets plugins (extension/tls, /cors, /errors, ...) read
 // their per-environment config via app.EffectiveManifest() without
@@ -38,25 +38,25 @@ const autoManifestEnvSkip = "NEXUS_SKIP_MANIFEST_AUTOLOAD"
 // Behavior:
 //
 //   - File missing  → silent skip. Apps without a manifest boot
-//                     normally; the operator hasn't adopted the
-//                     cloud-shaped input surface yet.
+//     normally; the operator hasn't adopted the
+//     cloud-shaped input surface yet.
 //   - File present  → parse + Declare each block. Existing Declare*
-//                     calls from user code keep their semantics
-//                     (last writer wins per block).
+//     calls from user code keep their semantics
+//     (last writer wins per block).
 //   - Parse error   → panic with a clear message. A malformed
-//                     manifest is an operator bug; failing fast at
-//                     boot is the right behavior. Same shape as
-//                     LoadDeployManifest's documented contract.
+//     manifest is an operator bug; failing fast at
+//     boot is the right behavior. Same shape as
+//     LoadDeployManifest's documented contract.
 //   - Other I/O err → logged + skipped. Permission glitches in a
-//                     dev environment shouldn't crash the app.
+//     dev environment shouldn't crash the app.
 //
 // Disable with NEXUS_SKIP_MANIFEST_AUTOLOAD=1 for the rare case
 // where two manifest files must be loaded in a specific order.
-func autoManifestOptions() fx.Option {
+func autoManifestOptions() di.Option {
 	if os.Getenv(autoManifestEnvSkip) == "1" {
-		return fx.Options()
+		return di.Options()
 	}
-	return fx.Invoke(func(app *App) {
+	return di.Invoke(func(app *App) {
 		path := DefaultManifestPath
 		if _, err := os.Stat(path); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {

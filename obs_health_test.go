@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxtest"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // TestHealth_AliveFlagsToggle verifies /__nexus/health returns 200 once
@@ -15,9 +14,9 @@ import (
 // liveness contract orchestrators rely on.
 func TestHealth_AliveFlagsToggle(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 
@@ -39,9 +38,9 @@ func TestHealth_AliveFlagsToggle(t *testing.T) {
 // becomes ready as soon as it's alive — the monolith case.
 func TestReady_MonolithReadyImmediately(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()

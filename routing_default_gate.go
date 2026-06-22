@@ -1,8 +1,6 @@
 package nexus
 
 import (
-	"go.uber.org/fx"
-
 	"github.com/paulmanoni/nexus/middleware"
 )
 
@@ -26,11 +24,11 @@ type EndpointGate struct {
 // supplied gate is resolved from the graph regardless of where the
 // extension that supplied it sits in the option list). The gate is
 // optional: apps without deny-by-default supply nothing and pay nothing.
-func applyDefaultGate(app *App, in struct {
-	fx.In
-	Gate *EndpointGate `optional:"true"`
-}) {
-	app.defaultGate = in.Gate
+// The *EndpointGate parameter is optional — wired via di.ParamTags
+// (`optional:"true"`) on the applyDefaultGate invoke in fxEarlyOptions — so
+// apps that supply no gate resolve it to nil and pay nothing.
+func applyDefaultGate(app *App, gate *EndpointGate) {
+	app.defaultGate = gate
 }
 
 // gateBundles prepends the default endpoint gate ahead of an endpoint's own

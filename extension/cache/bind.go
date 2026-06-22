@@ -4,7 +4,7 @@ import (
 	"context"
 	"reflect"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus"
@@ -47,11 +47,11 @@ func Bind[T any](name string, build func() *Config, opts ...BindOption) nexus.Op
 		o(&bc)
 	}
 
-	ctor := func(lc fx.Lifecycle, logger *zap.Logger) (*T, error) {
+	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
 		m := NewManager(build(), logger)
 		h := new(T)
 		reflect.ValueOf(h).Elem().Field(fieldIdx).Set(reflect.ValueOf(m))
-		lc.Append(fx.Hook{
+		lc.Append(di.Hook{
 			OnStart: func(context.Context) error { m.Start(); return nil },
 			OnStop:  func(context.Context) error { m.Stop(); return nil },
 		})

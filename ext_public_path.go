@@ -3,7 +3,7 @@ package nexus
 import (
 	"sync"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // pathOption is the marker carrying a module's public URL
@@ -12,7 +12,7 @@ import (
 // to register the module's GraphQL mount path under <path>/graphql.
 type pathOption struct{ path string }
 
-func (pathOption) nexusOption() fx.Option { return fx.Options() }
+func (pathOption) nexusOption() di.Option { return di.Options() }
 
 // Apply lets pathOption satisfy Option for nexus.Module. The
 // dual ComponentOption role was dropped with the .nlt template

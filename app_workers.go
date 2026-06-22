@@ -6,45 +6,48 @@ import (
 	"fmt"
 	"reflect"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/trace"
 )
 
 // AsWorker registers a long-lived background worker. The framework
-// owns lifecycle — it starts the worker on fx.Start in its own
-// goroutine, cancels its context on fx.Stop, and records status +
+// owns lifecycle — it starts the worker on di.Start in its own
+// goroutine, cancels its context on di.Stop, and records status +
 // last-error on the registry so the dashboard can surface it.
 //
 // Signature requirements:
+//
 //   - First parameter MUST be context.Context. The framework supplies
 //     a context that cancels when the app stops; workers are expected
 //     to honor it and return.
+//
 //   - Remaining parameters are fx-injected deps (same rules as a
 //     constructor — they must exist in the graph).
+//
 //   - Return is optional: a single (error) return lets the worker
 //     report a fatal error. context.Canceled / nil is treated as a
 //     clean stop; anything else sets Status="failed" + LastError.
 //
-//	nexus.AsWorker("cache-invalidation",
-//	    func(ctx context.Context, db *OatsDB, cache *CacheManager, logger *zap.Logger) error {
-//	        for !db.IsConnected() {
-//	            select {
-//	            case <-ctx.Done(): return ctx.Err()
-//	            case <-time.After(time.Second):
-//	            }
-//	        }
-//	        listener := pq.NewListener(db.ConnectionString(), ...)
-//	        defer listener.Close()
-//	        _ = listener.Listen("cache_invalidation")
-//	        for {
-//	            select {
-//	            case <-ctx.Done(): return nil
-//	            case n := <-listener.Notify: handle(n, cache)
-//	            }
-//	        }
-//	    })
+//     nexus.AsWorker("cache-invalidation",
+//     func(ctx context.Context, db *OatsDB, cache *CacheManager, logger *zap.Logger) error {
+//     for !db.IsConnected() {
+//     select {
+//     case <-ctx.Done(): return ctx.Err()
+//     case <-time.After(time.Second):
+//     }
+//     }
+//     listener := pq.NewListener(db.ConnectionString(), ...)
+//     defer listener.Close()
+//     _ = listener.Listen("cache_invalidation")
+//     for {
+//     select {
+//     case <-ctx.Done(): return nil
+//     case n := <-listener.Notify: handle(n, cache)
+//     }
+//     }
+//     })
 //
 // Resource / service deps (for the architecture graph) are detected
 // the same way nexus.ProvideService does it — any param implementing
@@ -57,25 +60,25 @@ import (
 // the app.
 func AsWorker(name string, fn any) Option {
 	if name == "" {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsWorker requires a non-empty name"))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsWorker requires a non-empty name"))}
 	}
 	rt := reflect.TypeOf(fn)
 	if rt == nil || rt.Kind() != reflect.Func {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsWorker fn must be a function"))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsWorker fn must be a function"))}
 	}
 	if rt.NumIn() < 1 {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsWorker %q fn's first param must be context.Context", name))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsWorker %q fn's first param must be context.Context", name))}
 	}
 	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
 	if rt.In(0) != ctxType {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsWorker %q fn's first param must be context.Context (got %s)", name, rt.In(0)))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsWorker %q fn's first param must be context.Context (got %s)", name, rt.In(0)))}
 	}
 
-	// Invoke signature: (*App, fx.Lifecycle, ...depParams) — we strip
+	// Invoke signature: (*App, di.Lifecycle, ...depParams) — we strip
 	// ctx because fx injects the REMAINING deps at invoke time, and
 	// we fill ctx at run time with our managed lifecycle context.
 	appType := reflect.TypeOf((*App)(nil))
-	lcType := reflect.TypeOf((*fx.Lifecycle)(nil)).Elem()
+	lcType := reflect.TypeOf((*di.Lifecycle)(nil)).Elem()
 	errType := reflect.TypeOf((*error)(nil)).Elem()
 	in := make([]reflect.Type, 0, rt.NumIn()+1)
 	in = append(in, appType, lcType)
@@ -86,7 +89,7 @@ func AsWorker(name string, fn any) Option {
 
 	invokeFn := reflect.MakeFunc(invokeType, func(args []reflect.Value) []reflect.Value {
 		app := args[0].Interface().(*App)
-		lc := args[1].Interface().(fx.Lifecycle)
+		lc := args[1].Interface().(di.Lifecycle)
 		deps := args[2:]
 
 		// Detect resource / service deps from the typed params, same
@@ -125,7 +128,7 @@ func AsWorker(name string, fn any) Option {
 		// observability-dark — spans started inside it find no bus
 		// and silently drop.
 		ctx, cancel := context.WithCancel(trace.WithBus(context.Background(), app.bus))
-		lc.Append(fx.Hook{
+		lc.Append(di.Hook{
 			OnStart: func(_ context.Context) error {
 				go runWorker(name, fn, ctx, deps, errType, app)
 				return nil
@@ -137,7 +140,7 @@ func AsWorker(name string, fn any) Option {
 		})
 		return nil
 	})
-	return rawOption{o: fx.Invoke(invokeFn.Interface())}
+	return rawOption{o: di.Invoke(invokeFn.Interface())}
 }
 
 // runWorker invokes the user's function reflectively on a dedicated

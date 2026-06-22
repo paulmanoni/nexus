@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/trace"
@@ -13,7 +13,7 @@ import (
 
 // Subscribe registers a subscription against topic. Returns a
 // nexus.Option intended to live inside a nexus.Module (or directly in
-// nexus.Run's option list). The option resolves to an fx.Invoke that
+// nexus.Run's option list). The option resolves to an di.Invoke that
 // starts a long-running consumer once the app boots — same lifecycle
 // shape as nexus.AsWorker.
 //
@@ -76,11 +76,11 @@ func Subscribe[T any](topic *Topic[T], name string, handler func(ctx context.Con
 //   - JSON-decode failure → straight to DLQ (poison; retrying
 //     against the same bytes is futile).
 //   - Else: derive a per-message ctx that
-//       (1) inherits the worker's bus (AsWorker stashed it),
-//       (2) installs a remote-parent span when Attrs["traceparent"]
-//           is a valid W3C header, so the consume span links into
-//           the publisher's trace,
-//       (3) bounds handler runtime by AckDeadline.
+//     (1) inherits the worker's bus (AsWorker stashed it),
+//     (2) installs a remote-parent span when Attrs["traceparent"]
+//     is a valid W3C header, so the consume span links into
+//     the publisher's trace,
+//     (3) bounds handler runtime by AckDeadline.
 //   - Emit pubsub.consume:<topic>:<sub> span; End it with the
 //     handler's error (nil = ack, error = retry).
 func dispatch[T any](
@@ -163,19 +163,19 @@ func (c SubscriptionConfig) withDefaults() SubscriptionConfig {
 //
 // Wiring sequence at boot:
 //
-//   1. fx constructs *InMemoryTransport (Provide).
-//   2. fx Provide also exposes it as Transport (the interface
-//      Subscribe's worker depends on).
-//   3. An Invoke walks the topic registry and calls bindTransport
-//      on each — so Topic[T].Publish has a live transport ref by
-//      the time fx.Start unblocks.
-//   4. fx.Stop closes the transport, which closes every queue and
-//      lets blocked Consume goroutines exit.
+//  1. fx constructs *InMemoryTransport (Provide).
+//  2. fx Provide also exposes it as Transport (the interface
+//     Subscribe's worker depends on).
+//  3. An Invoke walks the topic registry and calls bindTransport
+//     on each — so Topic[T].Publish has a live transport ref by
+//     the time di.Start unblocks.
+//  4. di.Stop closes the transport, which closes every queue and
+//     lets blocked Consume goroutines exit.
 func UseInMemory() nexus.Option {
 	return nexus.Options(
-		nexus.Provide(func(lc fx.Lifecycle) (Transport, *InMemoryTransport) {
+		nexus.Provide(func(lc di.Lifecycle) (Transport, *InMemoryTransport) {
 			t := NewInMemoryTransport()
-			lc.Append(fx.Hook{
+			lc.Append(di.Hook{
 				OnStop: func(_ context.Context) error { return t.Close() },
 			})
 			return t, t
@@ -191,7 +191,7 @@ func UseInMemory() nexus.Option {
 // boilerplate.
 //
 // The transport's lifecycle is the caller's responsibility — they
-// own the fx.Lifecycle hook for OnStart/OnStop.
+// own the di.Lifecycle hook for OnStart/OnStop.
 func UseTransport(t Transport) nexus.Option {
 	return nexus.Options(
 		nexus.Supply(t),
@@ -225,9 +225,9 @@ func BindTopics(t Transport) {
 }
 
 // failOption surfaces a constructor-time error through fx so a
-// misuse like `pubsub.Subscribe(nil, ...)` halts boot at fx.New
+// misuse like `pubsub.Subscribe(nil, ...)` halts boot at di.New
 // with a readable message instead of nil-pointer-panicking when
 // the worker tries to consume.
 func failOption(err error) nexus.Option {
-	return nexus.Raw(fx.Error(err))
+	return nexus.Raw(di.Error(err))
 }

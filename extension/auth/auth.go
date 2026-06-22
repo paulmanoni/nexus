@@ -62,7 +62,7 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/client"
@@ -256,7 +256,7 @@ type moduleState struct {
 	bus *trace.Bus
 }
 
-// Manager is the runtime handle for auth state. fx.Provide'd by Module
+// Manager is the runtime handle for auth state. di.Provide'd by Module
 // so application code can inject it wherever it needs to invalidate
 // cached identities (logout flows) or inspect current auth state
 // (admin dashboards).
@@ -368,7 +368,7 @@ func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) 
 func Module(cfg Config) nexus.Option {
 	schemes, err := bindSchemes(cfg.Authentication.Schemes)
 	if err != nil {
-		return nexus.Raw(fx.Error(fmt.Errorf("auth: %w", err)))
+		return nexus.Raw(di.Error(fmt.Errorf("auth: %w", err)))
 	}
 	eh := cfg.OnError
 	if eh == nil {
@@ -397,7 +397,7 @@ func Module(cfg Config) nexus.Option {
 	})
 
 	pluginOpts := []nexus.Option{
-		nexus.Raw(fx.Supply(manager)),
+		nexus.Raw(di.Supply(manager)),
 		// Install the global auth middleware on the gin engine and
 		// capture the trace bus. Runs before the Dashboard slot
 		// mounts /__nexus/auth, so those routes inherit the
@@ -412,7 +412,7 @@ func Module(cfg Config) nexus.Option {
 	// endpoint (REST/GraphQL/WS) unless the endpoint is nexus.Public().
 	if cfg.Authorization.Default.requireAuth {
 		pluginOpts = append(pluginOpts,
-			nexus.Raw(fx.Supply(&nexus.EndpointGate{Middleware: requiredMiddleware()})))
+			nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: requiredMiddleware()})))
 	}
 
 	return extension.Use(extension.Plugin{

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // TestIsDev covers the env-var gate. With NEXUS_DEV unset / not
@@ -39,7 +39,7 @@ func TestIsDev_FalseForNon1Values(t *testing.T) {
 // when fx executes it. Used to verify IfDev / IfNotDev actually
 // skip their wrapped invokes vs. just returning quietly.
 func flagInvokeOption(flag *bool) Option {
-	return rawOption{o: fx.Invoke(func() { *flag = true })}
+	return rawOption{o: di.Invoke(func() { *flag = true })}
 }
 
 func TestIfNotDev_AppliesInProduction(t *testing.T) {
@@ -47,7 +47,7 @@ func TestIfNotDev_AppliesInProduction(t *testing.T) {
 	var fired bool
 	opt := IfNotDev(flagInvokeOption(&fired))
 
-	app := fx.New(fx.NopLogger, unwrap([]Option{opt})[0])
+	app := di.New(di.Options(), unwrap([]Option{opt})[0])
 	defer app.Stop(context.Background())
 	if err := app.Start(context.Background()); err != nil {
 		t.Fatalf("fx start: %v", err)
@@ -62,7 +62,7 @@ func TestIfNotDev_SkipsInDev(t *testing.T) {
 	var fired bool
 	opt := IfNotDev(flagInvokeOption(&fired))
 
-	app := fx.New(fx.NopLogger, unwrap([]Option{opt})[0])
+	app := di.New(di.Options(), unwrap([]Option{opt})[0])
 	defer app.Stop(context.Background())
 	if err := app.Start(context.Background()); err != nil {
 		t.Fatalf("fx start: %v", err)
@@ -77,7 +77,7 @@ func TestIfDev_AppliesInDev(t *testing.T) {
 	var fired bool
 	opt := IfDev(flagInvokeOption(&fired))
 
-	app := fx.New(fx.NopLogger, unwrap([]Option{opt})[0])
+	app := di.New(di.Options(), unwrap([]Option{opt})[0])
 	defer app.Stop(context.Background())
 	if err := app.Start(context.Background()); err != nil {
 		t.Fatalf("fx start: %v", err)
@@ -92,7 +92,7 @@ func TestIfDev_SkipsInProduction(t *testing.T) {
 	var fired bool
 	opt := IfDev(flagInvokeOption(&fired))
 
-	app := fx.New(fx.NopLogger, unwrap([]Option{opt})[0])
+	app := di.New(di.Options(), unwrap([]Option{opt})[0])
 	defer app.Stop(context.Background())
 	if err := app.Start(context.Background()); err != nil {
 		t.Fatalf("fx start: %v", err)
@@ -115,7 +115,7 @@ func TestIfNotDev_VariadicComposesMultipleOptions(t *testing.T) {
 		flagInvokeOption(&c),
 	)
 
-	app := fx.New(fx.NopLogger, unwrap([]Option{opt})[0])
+	app := di.New(di.Options(), unwrap([]Option{opt})[0])
 	defer app.Stop(context.Background())
 	if err := app.Start(context.Background()); err != nil {
 		t.Fatalf("fx start: %v", err)
@@ -132,7 +132,7 @@ func TestIfNotDev_EmptyInputIsNoop(t *testing.T) {
 	t.Setenv(NexusDevEnv, "")
 	opt := IfNotDev()
 
-	app := fx.New(fx.NopLogger, unwrap([]Option{opt})[0])
+	app := di.New(di.Options(), unwrap([]Option{opt})[0])
 	defer app.Stop(context.Background())
 	if err := app.Start(context.Background()); err != nil {
 		t.Fatalf("fx start: %v", err)

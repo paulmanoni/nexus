@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/resource"
@@ -25,24 +25,25 @@ import (
 //     error-returning forms are detected, so db/cache/queue managers
 //     (Start()/Stop()) and transport-style handles (Close() error) all
 //     work without the caller wiring hooks.
+//
 //   - registers a dashboard resource via resourceFor (pass nil to skip
 //     — useful for a managed handle that isn't a topology node).
 //
-//	type RabbitMQ struct {
-//	    *rabbitmq.RabbitMQManager
-//	    cfg *rabbitmq.RabbitMQConfig
-//	}
+//     type RabbitMQ struct {
+//     *rabbitmq.RabbitMQManager
+//     cfg *rabbitmq.RabbitMQConfig
+//     }
 //
-//	nexus.Managed("rabbitmq",
-//	    func(logger *zap.Logger) (*RabbitMQ, error) {
-//	        cfg := rabbitmq.NewRabbitMQConfig()
-//	        return &RabbitMQ{rabbitmq.NewRabbitMQManager(cfg, logger), cfg}, nil
-//	    },
-//	    func(r *RabbitMQ) resource.Resource {
-//	        return resource.NewQueue("rabbitmq", "RabbitMQ broker",
-//	            map[string]any{"broker": "rabbitmq"}, r.IsConnected)
-//	    },
-//	)
+//     nexus.Managed("rabbitmq",
+//     func(logger *zap.Logger) (*RabbitMQ, error) {
+//     cfg := rabbitmq.NewRabbitMQConfig()
+//     return &RabbitMQ{rabbitmq.NewRabbitMQManager(cfg, logger), cfg}, nil
+//     },
+//     func(r *RabbitMQ) resource.Resource {
+//     return resource.NewQueue("rabbitmq", "RabbitMQ broker",
+//     map[string]any{"broker": "rabbitmq"}, r.IsConnected)
+//     },
+//     )
 //
 // Handlers inject *RabbitMQ unchanged.
 func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFor func(*T) resource.Resource) Option {
@@ -53,7 +54,7 @@ func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFo
 		panic("nexus.Managed: build func must not be nil")
 	}
 
-	ctor := func(lc fx.Lifecycle, logger *zap.Logger) (*T, error) {
+	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
 		t, err := build(logger)
 		if err != nil {
 			return nil, fmt.Errorf("nexus.Managed[%q]: %w", name, err)
@@ -61,7 +62,7 @@ func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFo
 		if t == nil {
 			return nil, fmt.Errorf("nexus.Managed[%q]: build returned a nil handle", name)
 		}
-		lc.Append(fx.Hook{
+		lc.Append(di.Hook{
 			OnStart: func(context.Context) error { return runManagedStart(t) },
 			OnStop:  func(context.Context) error { return runManagedStop(t) },
 		})
@@ -74,7 +75,7 @@ func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFo
 		}
 	}
 
-	return rawOption{o: fx.Options(fx.Provide(ctor), fx.Invoke(register))}
+	return rawOption{o: di.Options(di.Provide(ctor), di.Invoke(register))}
 }
 
 // runManagedStart invokes the handle's start lifecycle if it has one.

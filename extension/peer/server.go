@@ -16,13 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/trace"
 )
 
-// callEntry is one method registered via AsCall. Bound at fx.Start
+// callEntry is one method registered via AsCall. Bound at di.Start
 // after fx has resolved every dep the user's handler declared; read
 // by the inbound dispatcher on every /__peer/call request.
 type callEntry struct {
@@ -45,7 +45,7 @@ var callTable sync.Map // string method → *callEntry
 //
 //	func(svc *Service, deps..., p nexus.Params[Args]) (Result, error)
 //
-// At fx.Start, every dep is resolved once and bound into a closure;
+// At di.Start, every dep is resolved once and bound into a closure;
 // the dispatcher invokes that closure on each inbound /__peer/call,
 // decoding the JSON body into Args and JSON-encoding the Result.
 //
@@ -59,11 +59,11 @@ var callTable sync.Map // string method → *callEntry
 // registrations fail at boot with a clear error.
 func AsCall(method string, fn any) nexus.Option {
 	if method == "" {
-		return nexus.Raw(fx.Error(errors.New("peer.AsCall: method name is required")))
+		return nexus.Raw(di.Error(errors.New("peer.AsCall: method name is required")))
 	}
 	sh, err := nexus.InspectHandlerForExt(fn)
 	if err != nil {
-		return nexus.Raw(fx.Error(fmt.Errorf("peer.AsCall(%q): %w", method, err)))
+		return nexus.Raw(di.Error(fmt.Errorf("peer.AsCall(%q): %w", method, err)))
 	}
 	return sh.BuildInvokeOption(func(_ *nexus.App, bound nexus.BoundHandler) error {
 		entry := &callEntry{
