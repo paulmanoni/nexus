@@ -209,11 +209,16 @@ func (c *container) execute(p *provider) error {
 	p.executing = true
 	defer func() { p.executing = false }()
 
-	args, err := c.resolveParams(p.ft, p.paramTags)
+	args, callSlice, err := c.resolveParams(p.ft, p.paramTags)
 	if err != nil {
 		return err
 	}
-	outs := p.fn.Call(args)
+	var outs []reflect.Value
+	if callSlice {
+		outs = p.fn.CallSlice(args)
+	} else {
+		outs = p.fn.Call(args)
+	}
 
 	for i := 0; i < p.ft.NumOut(); i++ {
 		ot := p.ft.Out(i)
@@ -258,33 +263,49 @@ func (c *container) spreadOut(t reflect.Type, v reflect.Value) {
 // group (via ParamTags) collects a slice; a param tagged `optional:"true"`
 // resolves to its zero value when no provider exists; otherwise it resolves by
 // type, with In structs handled by resolveIn.
-func (c *container) resolveParams(ft reflect.Type, paramTags []string) ([]reflect.Value, error) {
+//
+// A trailing variadic parameter is, like dig/fx, NOT resolved by type: an
+// unannotated `...T` is ignored (the constructor runs with zero variadic args),
+// so stdlib-style constructors such as zap.NewExample(...zap.Option) work
+// without a provider for []T. A variadic param explicitly group-tagged collects
+// the value group and is passed through as the variadic slice (callSlice=true).
+func (c *container) resolveParams(ft reflect.Type, paramTags []string) (args []reflect.Value, callSlice bool, err error) {
 	n := ft.NumIn()
-	args := make([]reflect.Value, n)
+	variadic := ft.IsVariadic()
+	args = make([]reflect.Value, 0, n)
 	for i := 0; i < n; i++ {
 		pt := ft.In(i)
+		isVariadicParam := variadic && i == n-1
 		if g := tagGroup(paramTags, i); g != "" {
 			if pt.Kind() != reflect.Slice {
-				return nil, fmt.Errorf("di: group param %d of %s must be a slice", i, ft)
+				return nil, false, fmt.Errorf("di: group param %d of %s must be a slice", i, ft)
 			}
-			slice, err := c.resolveGroup(g, pt)
-			if err != nil {
-				return nil, err
+			slice, gerr := c.resolveGroup(g, pt)
+			if gerr != nil {
+				return nil, false, gerr
 			}
-			args[i] = slice
+			args = append(args, slice)
+			if isVariadicParam {
+				// The collected group IS the variadic slice; hand it to
+				// CallSlice rather than letting Call re-wrap it.
+				return args, true, nil
+			}
 			continue
 		}
-		v, err := c.resolve(pt)
-		if err != nil {
+		if isVariadicParam {
+			break // ignore the variadic argument (dig/fx parity)
+		}
+		v, rerr := c.resolve(pt)
+		if rerr != nil {
 			if tagOptional(paramTags, i) {
-				args[i] = reflect.Zero(pt)
+				args = append(args, reflect.Zero(pt))
 				continue
 			}
-			return nil, err
+			return nil, false, rerr
 		}
-		args[i] = v
+		args = append(args, v)
 	}
-	return args, nil
+	return args, false, nil
 }
 
 // tagGroup returns the `group` value of the i-th raw tag, or "".
@@ -311,11 +332,16 @@ func (c *container) invoke(spec InvokeSpec) error {
 	if ft.Kind() != reflect.Func {
 		return fmt.Errorf("di: Invoke expects a function, got %T", spec.Fn)
 	}
-	args, err := c.resolveParams(ft, spec.ParamTags)
+	args, callSlice, err := c.resolveParams(ft, spec.ParamTags)
 	if err != nil {
 		return err
 	}
-	outs := rv.Call(args)
+	var outs []reflect.Value
+	if callSlice {
+		outs = rv.CallSlice(args)
+	} else {
+		outs = rv.Call(args)
+	}
 	for i := 0; i < ft.NumOut(); i++ {
 		if ft.Out(i) == errorType {
 			if e := outs[i]; !e.IsNil() {
