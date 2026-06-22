@@ -323,11 +323,11 @@ func NewOp(svc *XService, deps..., p nexus.Params[ArgsStruct]) (*Response, error
 - Last param `nexus.Params[T]` exposes `.Context` and `.Args`.
 - Return `(T, error)` — `T` is the GraphQL type / REST JSON body.
 - `NewListPets` → op name `ListPets` (the `New` prefix is stripped).
-- Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `path:"id"` for REST path params.
+- Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `uri:"id"` for REST path params (also `query:"x"`, `header:"X"`, `form:"x"`, `json:"x"`).
 
 ### REST
 ```go
-type GetArgs struct { ID string `path:"id"` }
+type GetArgs struct { ID string `uri:"id"` }   // path param `:id` binds via the `uri` tag
 nexus.AsRest("GET", "/users/:id", NewGet)
 ```
 

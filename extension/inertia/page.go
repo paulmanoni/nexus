@@ -39,9 +39,15 @@ import (
 //	    // POST: authenticate, set cookie…
 //	    return nil, inertia.Redirect("/dashboard")
 //	}
+// Icon is the lucide-style icon inertia brands its pages and dashboard entry
+// with. Pages registered via Page (explicitly or through the //@inertia.Page
+// decorator) carry it so the dashboard shows them as inertia pages.
+const Icon = "app-window"
+
 func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexus.Option {
-	full := make([]nexus.RestOption, 0, len(opts)+1)
+	full := make([]nexus.RestOption, 0, len(opts)+2)
 	full = append(full, nexus.WithRenderer(pageRenderer{component: component}))
+	full = append(full, nexus.WithIcon(Icon))
 	full = append(full, opts...)
 
 	methods := splitMethods(method)

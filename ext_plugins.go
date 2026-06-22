@@ -14,6 +14,7 @@ import (
 type PluginRecord struct {
 	Name         string
 	Version      string
+	Icon         string     // lucide-style icon name; dashboard falls back to a default extension icon
 	Namespace    string     // SDK accessor, "" if none
 	HasDashboard bool       // declares Dashboard contribution
 	HasClient    bool       // declares Client contribution

@@ -413,6 +413,13 @@ func (r *Registry) Endpoints() []Endpoint {
 // snapshot, and the architecture graph.
 const HiddenTag = "dashboard.hidden"
 
+// IconTag is the Endpoint.Tags key set by nexus.WithIcon(name). It carries a
+// lucide-style icon name the dashboard renders on the endpoint's node, letting
+// an extension that registers endpoints through a custom decorator brand them
+// with its own icon (e.g. inertia.Page / widgets.Panel). Empty/absent → the
+// dashboard falls back to the per-transport default icon.
+const IconTag = "dashboard.icon"
+
 // VisibleEndpoints returns a copy of all registered endpoints EXCEPT those
 // marked hidden via nexus.HideFromDashboard() (the HiddenTag tag). The
 // dashboard uses this instead of Endpoints() so internal/debug ops can be

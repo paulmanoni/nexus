@@ -58,6 +58,11 @@ type Plugin struct {
 	// dashboard. Semver recommended but not enforced.
 	Version string
 
+	// Icon is a lucide-style icon name shown next to the plugin in the
+	// dashboard. Optional — when empty the dashboard falls back to the
+	// plugin's Tab icon (if any) and then to a default extension icon.
+	Icon string
+
 	// Options is the standard nexus option slice — same values you'd
 	// pass to nexus.Module: Provide, Invoke, AsRest, AsQuery, Use, etc.
 	// They run in order before the contribution-slot invokes below,
@@ -261,6 +266,7 @@ func Use(p Plugin) nexus.Option {
 	rec := nexus.PluginRecord{
 		Name:         p.Name,
 		Version:      p.Version,
+		Icon:         pluginIcon(p),
 		HasDashboard: p.Dashboard != nil,
 		HasClient:    p.Client != nil,
 		HasGenerate:  p.Generate != nil,
@@ -450,6 +456,19 @@ func tabRecord(d *Dashboard) *nexus.TabRecord {
 		return nil
 	}
 	return &nexus.TabRecord{ID: d.Tab.ID, Label: d.Tab.Label, Icon: d.Tab.Icon}
+}
+
+// pluginIcon resolves the icon shown for a plugin: its explicit Icon, else its
+// dashboard Tab's icon, else "" (the dashboard UI then renders a default
+// extension icon).
+func pluginIcon(p Plugin) string {
+	if p.Icon != "" {
+		return p.Icon
+	}
+	if p.Dashboard != nil && p.Dashboard.Tab != nil {
+		return p.Dashboard.Tab.Icon
+	}
+	return ""
 }
 
 func liveEvents(d *Dashboard) []string {

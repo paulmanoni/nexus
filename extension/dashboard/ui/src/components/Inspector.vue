@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { Info, Lock, ShieldCheck, Globe, AlertTriangle, Gauge, X, Play, Pause, RotateCcw } from 'lucide-vue-next'
+import * as lucide from 'lucide-vue-next'
 import CategoryIcon from './CategoryIcon.vue'
 
 // Inspector — the persistent right-hand panel of the redesigned dashboard.
@@ -72,6 +73,17 @@ const limits = computed(() => (t.value && t.value.limits) || null)
 
 const GLYPH = { rest: 'REST', query: 'Q', mutation: 'M', ws: 'WS', worker: 'WK', cron: 'CR' }
 function glyph(kind) { return GLYPH[kind] || '?' }
+
+// epIcon returns the lucide component for an endpoint's custom dashboard icon
+// (set by nexus.WithIcon, e.g. an extension branding endpoints it registered
+// through a custom decorator), or null to fall back to the text glyph.
+function epIcon(e) {
+  const tags = e && e.endpoint && e.endpoint.Tags
+  const name = tags && tags['dashboard.icon']
+  if (!name) return null
+  const pascal = name.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('')
+  return lucide[pascal] || null
+}
 function authLabel(a) {
   if (!a) return { txt: 'public', cls: 'public', perm: false }
   if (a === 'required') return { txt: 'auth required', cls: '', perm: false }
@@ -127,7 +139,10 @@ function workerState(s) {
             <div v-for="g in epGroups" :key="g.key">
               <div class="grp-head"><span class="tdot" :class="g.key">{{ g.label }}</span><span class="n">{{ g.items.length }}</span></div>
               <div v-for="(e, ei) in g.items" :key="ei" class="ep" @click="e.endpoint && emit('open-op', e.endpoint)">
-                <span class="ep-glyph" :class="e.kind">{{ glyph(e.kind) }}</span>
+                <span class="ep-glyph" :class="e.kind">
+                  <component v-if="epIcon(e)" :is="epIcon(e)" :size="11" :stroke-width="2.25" />
+                  <template v-else>{{ glyph(e.kind) }}</template>
+                </span>
                 <div class="ep-main">
                   <div class="ep-name"><span v-if="e.method" class="verb">{{ e.method }} </span>{{ e.name }}</div>
                   <span class="ep-auth" :class="authLabel(e.auth).cls">

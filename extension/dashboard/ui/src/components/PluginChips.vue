@@ -1,7 +1,17 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import * as lucide from 'lucide-vue-next'
 import { Puzzle } from 'lucide-vue-next'
 import { fetchPlugins } from '../lib/api.js'
+
+// iconFor maps a plugin's lucide-style icon name (kebab-case, e.g.
+// "layout-dashboard") to its component, falling back to Puzzle — the default
+// extension icon — when the plugin declares none or the name is unknown.
+function iconFor(name) {
+  if (!name) return Puzzle
+  const pascal = name.split('-').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join('')
+  return lucide[pascal] || Puzzle
+}
 
 const plugins = ref([])
 const open = ref(false)
@@ -49,6 +59,7 @@ function onKey(e) {
       <div class="title">Registered plugins</div>
       <ul>
         <li v-for="p in plugins" :key="p.name">
+          <component :is="iconFor(p.icon)" :size="13" :stroke-width="2" class="plugin-icon" />
           <span class="name">{{ p.name }}</span>
           <span class="version" v-if="p.version">v{{ p.version }}</span>
           <span class="badges">
@@ -137,6 +148,10 @@ li {
   align-items: center;
   gap: 8px;
   padding: 3px 0;
+}
+.plugin-icon {
+  color: var(--text-muted);
+  flex: none;
 }
 .name {
   font-weight: 500;
