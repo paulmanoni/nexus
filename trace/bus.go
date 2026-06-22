@@ -36,17 +36,20 @@ func (b *Bus) Publish(e Event) {
 		e.Timestamp = time.Now()
 	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.buf[b.next] = e
 	b.next = (b.next + 1) % b.capacity
 	if b.size < b.capacity {
 		b.size++
 	}
-	subs := make([]chan Event, 0, len(b.subscribers))
+	// Non-blocking sends under the lock: a full or slow subscriber drops the
+	// event rather than blocking the producer (the request path must never be
+	// held up by a stalled UI). Sending while holding the lock — rather than
+	// copying the subscriber list and sending after unlocking — is what makes
+	// cancellation race-free: a channel is only ever sent to while it is still
+	// in the map, and cancel() deletes-then-closes it under this same lock, so
+	// a send can never land on a closed channel.
 	for _, c := range b.subscribers {
-		subs = append(subs, c)
-	}
-	b.mu.Unlock()
-	for _, c := range subs {
 		select {
 		case c <- e:
 		default:
@@ -98,10 +101,13 @@ func (b *Bus) Subscribe(sinceID int64, buffer int) ([]Event, <-chan Event, func(
 	var once sync.Once
 	cancel := func() {
 		once.Do(func() {
+			// Delete and close under the same lock Publish holds while sending,
+			// so the channel is removed from the subscriber set before it is
+			// closed and no in-flight Publish can send to it afterwards.
 			b.mu.Lock()
 			delete(b.subscribers, id)
-			b.mu.Unlock()
 			close(ch)
+			b.mu.Unlock()
 		})
 	}
 	return backlog, ch, cancel

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,9 +30,12 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 		sess.Emit("chat.echo", map[string]string{"text": p.Args.Text, "user": sess.UserID()})
 		return nil
 	}
-	typingCount := 0
+	// typingCount is written from the hub's readPump goroutine and read by the
+	// test goroutine, so it must be atomic (the reads are only loosely ordered
+	// by a sleep below).
+	var typingCount atomic.Int32
 	typingHandler := func(sess *WSSession, p Params[chatPayload]) error {
-		typingCount++
+		typingCount.Add(1)
 		return nil
 	}
 
@@ -114,16 +118,16 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 	// this one.
 	mustSend("chat.typing", "keystroke")
 	time.Sleep(100 * time.Millisecond)
-	if typingCount != 1 {
-		t.Fatalf("typing handler count = %d, want 1", typingCount)
+	if typingCount.Load() != 1 {
+		t.Fatalf("typing handler count = %d, want 1", typingCount.Load())
 	}
 
 	// Unknown types silently pass through — client can send anything,
 	// framework only dispatches registered types.
 	mustSend("chat.unregistered", "ignored")
 	time.Sleep(50 * time.Millisecond)
-	if typingCount != 1 {
-		t.Fatalf("unknown type leaked to typing handler (count=%d)", typingCount)
+	if typingCount.Load() != 1 {
+		t.Fatalf("unknown type leaked to typing handler (count=%d)", typingCount.Load())
 	}
 }
 

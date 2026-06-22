@@ -26,9 +26,9 @@ import (
 // stays out of the way.
 type fakeWSServer struct {
 	*fakeServer
-	subs     *subscribers
-	srv      *httptest.Server
-	tlsURL   string
+	subs   *subscribers
+	srv    *httptest.Server
+	tlsURL string
 }
 
 func newFakeWSServer(t *testing.T, app, profile string, initial map[string]any) *fakeWSServer {
@@ -63,9 +63,7 @@ func (ws *fakeWSServer) handleSubscribe(w http.ResponseWriter, r *http.Request) 
 	}
 	defer conn.Close()
 
-	sub := ws.subs.add()
-	sub.app = r.PathValue("app")
-	sub.profile = r.PathValue("profile")
+	sub := ws.subs.add(r.PathValue("app"), r.PathValue("profile"))
 	defer ws.subs.remove(sub)
 
 	// Initial push.
@@ -201,10 +199,10 @@ func TestSubscribe_AutoReconnects(t *testing.T) {
 // https→wss) + path construction across server URL shapes.
 func TestBuildSubscribeURL(t *testing.T) {
 	cases := []struct {
-		in       string
-		app      string
-		profile  string
-		want     string
+		in      string
+		app     string
+		profile string
+		want    string
 	}{
 		{"http://localhost:8080", "app1", "prod", "ws://localhost:8080/__config/subscribe/app1/prod"},
 		{"https://configd.internal:7100", "app1", "prod", "wss://configd.internal:7100/__config/subscribe/app1/prod"},

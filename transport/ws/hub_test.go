@@ -169,6 +169,7 @@ func TestHub_SlowClientIsClosed(t *testing.T) {
 	// on the hub without going through the WS upgrade path.
 	conn := &Connection{
 		send:     make(chan []byte, 1),
+		done:     make(chan struct{}),
 		ClientID: "fake",
 		Metadata: map[string]any{},
 		hub:      hub,
