@@ -26,8 +26,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
@@ -83,7 +83,7 @@ type Engine struct {
 // engineParams collects the registered SharedProviders from the fx value group
 // populated by Share. The group defaults to empty when none are registered.
 type engineParams struct {
-	fx.In
+	di.In
 	Shared []SharedProvider `group:"inertia.shared"`
 }
 
@@ -99,12 +99,12 @@ func Module(cfg Config) nexus.Option {
 		Name:    "inertia",
 		Version: "1",
 		Options: []nexus.Option{
-			nexus.Raw(fx.Provide(func(in engineParams) *Engine {
+			nexus.Raw(di.Provide(func(in engineParams) *Engine {
 				return newEngine(cfg, in.Shared)
 			})),
 			// Stash the engine on the app at boot. The page renderer pulls it
 			// back via AppFromGin(c) → App.Value at request time — independent
-			// of gin-middleware install ordering, which fx.Module route
+			// of gin-middleware install ordering, which di.Module route
 			// registration can (and does) run ahead of. A plain engine.Use()
 			// here would miss any inertia.Page declared inside a nexus.Module.
 			nexus.Invoke(func(app *nexus.App, eng *Engine) {

@@ -94,6 +94,7 @@ const (
 type Connection struct {
 	ws       *websocket.Conn
 	send     chan []byte
+	done     chan struct{} // closed exactly once by close(); signals shutdown
 	ClientID string
 	UserID   string
 	Metadata map[string]any
@@ -105,12 +106,12 @@ type Connection struct {
 // Send queues a raw message. If the send buffer is repeatedly full the hub
 // closes the connection — slow clients do not hold up the fan-out loop.
 func (c *Connection) Send(message []byte) {
-	if c.closed.Load() {
-		return
-	}
 	select {
 	case c.send <- message:
 		c.drops.Store(0)
+	case <-c.done:
+		// Connection is shutting down; drop rather than queue into a dying conn.
+		return
 	default:
 		if c.drops.Add(1) >= c.hub.cfg.maxDropsBeforeClose {
 			c.hub.cfg.logf("closing slow client clientID=%s drops=%d", c.ClientID, c.drops.Load())
@@ -129,9 +130,14 @@ func (c *Connection) SendEvent(e *Event) error {
 	return nil
 }
 
+// close signals shutdown by closing done (exactly once). It deliberately does
+// NOT close c.send: that channel has multiple producers (Send/writeTo from the
+// hub loop, dispatch goroutines), and closing a channel out from under a
+// concurrent sender is a data race / "send on closed channel" panic. Senders
+// and writePump instead observe done; c.send is left to be garbage-collected.
 func (c *Connection) close() {
 	if c.closed.CompareAndSwap(false, true) {
-		close(c.send)
+		close(c.done)
 	}
 }
 
@@ -356,12 +362,11 @@ func (h *Hub) sendWorker() {
 }
 
 func (h *Hub) writeTo(c *Connection, data []byte) {
-	if c.closed.Load() {
-		return
-	}
 	select {
 	case c.send <- data:
 		c.drops.Store(0)
+	case <-c.done:
+		return
 	default:
 		if c.drops.Add(1) >= h.cfg.maxDropsBeforeClose {
 			h.unregister <- c
@@ -523,6 +528,7 @@ func (h *Hub) serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {
 	conn := &Connection{
 		ws:       ws,
 		send:     make(chan []byte, h.cfg.sendBuffer),
+		done:     make(chan struct{}),
 		ClientID: uuid.New().String(),
 		UserID:   userID,
 		Metadata: meta,
@@ -608,12 +614,14 @@ func (h *Hub) writePump(c *Connection) {
 	}()
 	for {
 		select {
-		case msg, ok := <-c.send:
+		case <-c.done:
+			// Shutdown signalled (close()); send the close frame and exit.
+			// c.send is never closed, so this is the only termination path.
 			_ = c.ws.SetWriteDeadline(time.Now().Add(h.cfg.writeWait))
-			if !ok {
-				_ = c.ws.WriteMessage(websocket.CloseMessage, nil)
-				return
-			}
+			_ = c.ws.WriteMessage(websocket.CloseMessage, nil)
+			return
+		case msg := <-c.send:
+			_ = c.ws.SetWriteDeadline(time.Now().Add(h.cfg.writeWait))
 			w, err := c.ws.NextWriter(websocket.TextMessage)
 			if err != nil {
 				return

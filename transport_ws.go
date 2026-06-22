@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
@@ -58,14 +58,14 @@ func AsWS(path, msgType string, fn any, opts ...WSOption) Option {
 		o.applyToWS(cfg)
 	}
 	if msgType == "" {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsWS(%q): message type is required", path))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsWS(%q): message type is required", path))}
 	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportWebSocket, "WS "+path+" "+msgType); err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 	sh, err := inspectHandler(fn)
 	if err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 	return asWSInvoke(path, msgType, cfg, sh, fn)
 }
@@ -83,24 +83,24 @@ type wsConfig struct {
 // wsOption is the Option returned by AsWS. Implements moduleAnnotator so
 // nexus.Module(...) stamps the module name onto the registration.
 type wsOption struct {
-	o   fx.Option
+	o   di.Option
 	cfg *wsConfig
 }
 
-func (w *wsOption) nexusOption() fx.Option   { return w.o }
+func (w *wsOption) nexusOption() di.Option   { return w.o }
 func (w *wsOption) setModule(name string)    { w.cfg.module = name }
 func (w *wsOption) setDeployment(tag string) { w.cfg.deployment = tag }
 
-// asWSInvoke synthesizes the fx.Invoke for one AsWS registration. On start:
+// asWSInvoke synthesizes the di.Invoke for one AsWS registration. On start:
 //
 //  1. Look up (or create) the wsEndpoint for the path under App.wsMu.
 //  2. Add this handler to the endpoint's type-dispatch table.
 //  3. If the endpoint is fresh, build a hub, mount the HTTP upgrade route
 //     with middleware + trace + metrics bundles, and wire hub.Start /
-//     hub.Stop to fx.Lifecycle.
+//     hub.Stop to di.Lifecycle.
 func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any) Option {
 	appType := reflect.TypeOf((*App)(nil))
-	lcType := reflect.TypeOf((*fx.Lifecycle)(nil)).Elem()
+	lcType := reflect.TypeOf((*di.Lifecycle)(nil)).Elem()
 
 	in := make([]reflect.Type, 0, len(sh.depTypes)+2)
 	in = append(in, appType, lcType)
@@ -109,7 +109,7 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 
 	invokeFn := reflect.MakeFunc(invokeSig, func(args []reflect.Value) []reflect.Value {
 		app := args[0].Interface().(*App)
-		lc := args[1].Interface().(fx.Lifecycle)
+		lc := args[1].Interface().(di.Lifecycle)
 		deps := args[2:]
 
 		service := resolveEndpointService(cfg.service, cfg.module, deps, sh.depTypes, app)
@@ -157,7 +157,7 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 		recordEndpointSchema(app, service, endpointName, sh)
 		return nil
 	})
-	return &wsOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
+	return &wsOption{o: di.Invoke(invokeFn.Interface()), cfg: cfg}
 }
 
 // wsEndpointFor returns the endpoint state for path, creating it if needed.
@@ -185,8 +185,8 @@ func (a *App) wsEndpointFor(path, service string) (*wsEndpoint, bool) {
 
 // mountWSEndpoint wires the hub's OnMessage to the framework's dispatch, mounts
 // the GET upgrade route on Gin with trace + metrics + user middleware, and
-// binds the hub's Start/Stop to fx.Lifecycle so it shuts down cleanly.
-func mountWSEndpoint(app *App, lc fx.Lifecycle, ep *wsEndpoint, cfg *wsConfig, firstMsgType string) {
+// binds the hub's Start/Stop to di.Lifecycle so it shuts down cleanly.
+func mountWSEndpoint(app *App, lc di.Lifecycle, ep *wsEndpoint, cfg *wsConfig, firstMsgType string) {
 	hub := ep.hub
 	hub.OnMessage(func(conn *ws.Connection, _ int, data []byte) error {
 		dispatchWSMessage(app, ep, conn, data)
@@ -194,7 +194,7 @@ func mountWSEndpoint(app *App, lc fx.Lifecycle, ep *wsEndpoint, cfg *wsConfig, f
 	})
 	hub.OnIdentify(identifyFromGin)
 
-	lc.Append(fx.Hook{
+	lc.Append(di.Hook{
 		OnStart: func(ctx context.Context) error {
 			// Hub.Start needs a context tied to the app's lifecycle —
 			// cancelling it stops every read/write pump. We use the

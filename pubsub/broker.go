@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/resource"
@@ -52,7 +52,7 @@ func Broker[T any](name string, build func() (Transport, error), opts ...BrokerO
 		o(&bc)
 	}
 
-	ctor := func(lc fx.Lifecycle) (*T, error) {
+	ctor := func(lc di.Lifecycle) (*T, error) {
 		t, err := build()
 		if err != nil {
 			return nil, fmt.Errorf("pubsub.Broker[%q]: %w", name, err)
@@ -62,7 +62,7 @@ func Broker[T any](name string, build func() (Transport, error), opts ...BrokerO
 		}
 		h := new(T)
 		reflect.ValueOf(h).Elem().Field(fieldIdx).Set(reflect.ValueOf(t))
-		lc.Append(fx.Hook{
+		lc.Append(di.Hook{
 			OnStop: func(context.Context) error { return t.Close() },
 		})
 		return h, nil

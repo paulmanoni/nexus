@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 )
 
 // init seeds the MIME type registry with the modern-web baseline
@@ -115,7 +115,7 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 		}
 		fsys = os.DirFS(dvr)
 	}
-	return rawOption{o: fx.Invoke(func(app *App) error {
+	return rawOption{o: di.Invoke(func(app *App) error {
 		sub := fsys
 		if root != "" {
 			s, err := fs.Sub(fsys, root)

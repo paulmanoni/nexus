@@ -26,8 +26,8 @@
 package tour
 
 import (
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 	"gorm.io/gorm"
 
 	"github.com/paulmanoni/nexus"
@@ -101,11 +101,11 @@ func Module(opts ...Option) nexus.Option {
 	for _, o := range opts {
 		o.apply(&cfg)
 	}
-	// Surface any WithGORM AutoMigrate failure as an fx.Error so
+	// Surface any WithGORM AutoMigrate failure as an di.Error so
 	// boot stops cleanly rather than the plugin silently falling
 	// back to the in-memory store.
 	if cfg.storeErr != nil {
-		return nexus.Raw(fx.Error(cfg.storeErr))
+		return nexus.Raw(di.Error(cfg.storeErr))
 	}
 	// Default store is in-memory — fine for dev, demos, and any
 	// app that doesn't need cross-restart persistence.

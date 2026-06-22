@@ -7,10 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
 	"github.com/paulmanoni/nexus/httpx/stdrouter"
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxtest"
 )
 
 // TestParseIntrospectionNetworks_HappyPath confirms a mixed list of
@@ -185,19 +184,19 @@ func TestIntrospectionGate_IgnoresXForwardedFor(t *testing.T) {
 }
 
 // TestIntrospection_DashboardGated_End2End is the full-stack pin:
-// fx.New constructs an App with Dashboard.Enabled and
+// di.New constructs an App with Dashboard.Enabled and
 // Introspection:false (the v0.30 default). A public-IP request to
 // /__nexus/config 404s; a loopback request reaches the handler.
 func TestIntrospection_DashboardGated_End2End(t *testing.T) {
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{
 			Server:                ServerConfig{Addr: "127.0.0.1:0"},
 			Dashboard:             DashboardConfig{Enabled: true, Name: "test"},
 			Introspection:         false,
 			IntrospectionNetworks: []string{"127.0.0.0/8"},
 		}),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()

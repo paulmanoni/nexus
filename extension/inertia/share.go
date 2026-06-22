@@ -3,7 +3,7 @@ package inertia
 import (
 	"context"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus"
 )
@@ -33,10 +33,10 @@ type SharedProvider func(ctx context.Context) (key string, value any)
 //	    inertia.Share(SharedFlash),
 //	)
 func Share(fn SharedProvider) nexus.Option {
-	return nexus.Raw(fx.Provide(
-		fx.Annotate(
+	return nexus.Raw(di.Provide(
+		di.Annotate(
 			func() SharedProvider { return fn },
-			fx.ResultTags(`group:"inertia.shared"`),
+			di.ResultTags(`group:"inertia.shared"`),
 		),
 	))
 }

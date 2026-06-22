@@ -4,31 +4,31 @@ import (
 	"fmt"
 	"reflect"
 
-	"go.uber.org/fx"
-
-	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/extension/metrics"
+	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/transport/gql"
 )
 
-// autoMountIn is the fx.In for the shared-group consumer. We pull every
-// GqlField produced by nexus.AsQuery / AsMutation, the Config (for the
-// environment-level GraphQL knobs), and the app itself, then partition by
-// service type and build one schema per service.
+// autoMountIn bundles the inputs autoMountGraphQL works over: every GqlField
+// produced by nexus.AsQuery / AsMutation, the Config (for the environment-level
+// GraphQL knobs), and the app. The Fields slice arrives from the
+// "nexus.graph.fields" value group — collected by the container via the
+// ParamTags annotation on the autoMountGraphQL invoke (see fxLateOptions), not
+// an In-struct, so both the builtin and fx backends wire it identically.
 type autoMountIn struct {
-	fx.In
 	App    *App
 	Cfg    Config
-	Fields []GqlField `group:"nexus.graph.fields"`
+	Fields []GqlField
 }
 
-// autoMountGraphQL runs once at fx.Start, after every reflective controller
+// autoMountGraphQL runs once at startup, after every reflective controller
 // constructor has resolved. Collapsing everything into a single function
 // means users write no mount ceremony — service wrapper + AsQuery/AsMutation
-// is all they need.
-func autoMountGraphQL(in autoMountIn) error {
+// is all they need. fields is the collected "nexus.graph.fields" group.
+func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
+	in := autoMountIn{App: app, Cfg: cfg, Fields: fields}
 	if len(in.Fields) == 0 {
 		return nil
 	}
@@ -595,4 +595,3 @@ func middlewareNames(ms []graph.MiddlewareInfo) []string {
 	}
 	return out
 }
-

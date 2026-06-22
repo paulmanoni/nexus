@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // ratelimitGlobalKey is the store key for the app-wide bucket. Re-declared
@@ -22,14 +22,14 @@ const ratelimitGlobalKey = "_global"
 
 // registerLifecycle binds the configured HTTP listeners and cron
 // scheduler to fx's start/stop hooks. Bind happens synchronously so
-// port conflicts abort fx.Start() with a clean error.
+// port conflicts abort di.Start() with a clean error.
 //
 // When app.listeners is non-empty, every entry binds and registers
 // its bound address with the scope-filter table. Otherwise a single
 // listener binds to cfg.Addr (or :8080 default) with ScopePublic but
 // no scope filtering — the back-compat path with no behavioral
 // change for callers who haven't declared Listeners.
-func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
+func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 	listeners := resolveListeners(app.listeners, cfg.Server.Addr)
 	servers := make([]*http.Server, 0, len(listeners))
 	for range listeners {
@@ -49,7 +49,7 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 	// reachable on the one listener as before.
 	scopeFilterOn := len(app.listeners) > 0
 
-	lc.Append(fx.Hook{
+	lc.Append(di.Hook{
 		OnStart: func(ctx context.Context) error {
 			// Startup tasks run BEFORE listener bind. Migrations are
 			// the canonical case: a partially-bound app accepting
@@ -83,7 +83,7 @@ func registerLifecycle(lc fx.Lifecycle, app *App, cfg Config) {
 				return err
 			}
 			// SDK auto-dump: fires AFTER all AsRest/AsQuery/AsWS
-			// fx.Invokes have populated the registry, so the
+			// di.Invokes have populated the registry, so the
 			// generated .d.ts + manifest reflect every endpoint.
 			// Reads the dump knobs from the handler itself rather
 			// than cfg.Client — frontend.Plugin mounts the handler
@@ -195,7 +195,7 @@ func resolveListeners(ls map[string]Listener, fallbackAddr string) []resolvedLis
 	return out
 }
 
-// fxBootOptions returns the complete baseline fx.Option chain.
+// fxBootOptions returns the complete baseline di.Option chain.
 // Used by tests directly via integration_test.go (one entry,
 // everything mounts).
 //
@@ -206,8 +206,8 @@ func resolveListeners(ls map[string]Listener, fallbackAddr string) []resolvedLis
 // routes are registered. Gin captures middleware at route-
 // registration time; routes registered before a Use() call don't
 // pick up that middleware afterwards.
-func fxBootOptions(cfg Config) fx.Option {
-	return fx.Options(
+func fxBootOptions(cfg Config) di.Option {
+	return di.Options(
 		fxEarlyOptions(cfg),
 		fxLateOptions(),
 	)
@@ -215,23 +215,23 @@ func fxBootOptions(cfg Config) fx.Option {
 
 // fxEarlyOptions runs BEFORE user options in nexus.Run.
 // Supplies Config, provides *App, registers lifecycle.
-func fxEarlyOptions(cfg Config) fx.Option {
-	return fx.Options(
-		fx.Supply(cfg),
-		fx.Provide(New),
+func fxEarlyOptions(cfg Config) di.Option {
+	return di.Options(
+		di.Supply(cfg),
+		di.Provide(New),
 		// *Notifier is a framework primitive used by registry /
 		// cron / rate-limit (and any user code that wants
 		// cross-subsystem fan-out). Always provide it so users
 		// don't have to wire it explicitly; constructor is
 		// trivially cheap and the value is unused if no one
 		// depends on it.
-		fx.Provide(NewNotifier),
+		di.Provide(NewNotifier),
 		// Stash any extension-supplied default endpoint gate on the app
 		// BEFORE the per-endpoint invokes run, so deny-by-default applies
 		// uniformly regardless of where the supplying extension sits in
 		// the option list.
-		fx.Invoke(applyDefaultGate),
-		fx.Invoke(registerLifecycle),
+		di.Invoke(di.Annotate(applyDefaultGate, di.ParamTags("", `optional:"true"`))),
+		di.Invoke(registerLifecycle),
 	)
 }
 
@@ -240,12 +240,12 @@ func fxEarlyOptions(cfg Config) fx.Option {
 // user middleware already installed via engine.Use(...) — so
 // auto-mounted GraphQL routes pick up auth, request-id, CORS,
 // and any other middleware that user opts declared earlier.
-func fxLateOptions() fx.Option {
-	return fx.Options(
-		fx.Invoke(autoMountGraphQL),
+func fxLateOptions() di.Option {
+	return di.Options(
+		di.Invoke(di.Annotate(autoMountGraphQL, di.ParamTags("", "", `group:"nexus.graph.fields"`))),
 		// Dev-only: mount the client SDK manifest when the app didn't,
 		// so `nexus dev` can read it to auto-sync the vite proxy's
 		// module prefixes. Runs after user opts → explicit mounts win.
-		fx.Invoke(devAutoMountClientSDK),
+		di.Invoke(devAutoMountClientSDK),
 	)
 }

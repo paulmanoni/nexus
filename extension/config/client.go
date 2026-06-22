@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
@@ -54,7 +54,7 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 		o.applyClient(&cfg)
 	}
 	if err := cfg.validate(); err != nil {
-		return nexus.Raw(fx.Error(fmt.Errorf("config.Client: %w", err)))
+		return nexus.Raw(di.Error(fmt.Errorf("config.Client: %w", err)))
 	}
 	holder := &clientHolder{cfg: cfg}
 
@@ -66,7 +66,7 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 	// constructors before the snapshot installs and Get returns
 	// zero values silently.
 	if err := holder.bootInstall(); err != nil {
-		return nexus.Raw(fx.Error(fmt.Errorf("config.Client: %w", err)))
+		return nexus.Raw(di.Error(fmt.Errorf("config.Client: %w", err)))
 	}
 
 	return extension.Use(extension.Plugin{
@@ -105,7 +105,7 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 	})
 }
 
-// clientHolder captures the runtime state across fx.Invoke +
+// clientHolder captures the runtime state across di.Invoke +
 // OnBoot + OnShutdown. fx runs them sequentially so plain field
 // access is race-free.
 type clientHolder struct {
@@ -137,7 +137,7 @@ type clientHolder struct {
 func initClient(h *clientHolder) error { return h.bootInstall() }
 
 // bootInstall is the synchronous boot state machine. Runs from
-// Client(...) so the snapshot is installed BEFORE fx.New/Start
+// Client(...) so the snapshot is installed BEFORE di.New/Start
 // even begin — making nexus.Get callable from every constructor
 // and invoke in the rest of the app. Fails (returns non-nil
 // error) only when the OnUnreachable policy says to fail;

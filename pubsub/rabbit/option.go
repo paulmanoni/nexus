@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/url"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/pubsub"
@@ -20,22 +20,22 @@ import (
 //
 // Wiring sequence at boot:
 //
-//   1. fx Provide constructs *Transport via New(cfg). A failed dial
-//      surfaces as an fx graph error → app refuses to start. Better
-//      a fast crash at boot than a silently-broken publisher.
-//   2. The same provide returns the *Transport as pubsub.Transport
-//      so subscriptions resolve their dep.
-//   3. An Invoke calls pubsub.BindTopics(t), wiring every topic's
-//      publisher.
-//   4. A second Invoke calls app.Register on a resource.NewQueue
-//      whose health probe is t.Healthy. The dashboard's topology
-//      view shows the broker as a queue node turning red when the
-//      AMQP connection drops. Skipped when Config.SkipResource is
-//      true, e.g. when the caller wants to register a custom
-//      resource with richer health metadata.
-//   5. fx OnStop closes the transport — channels first, then
-//      connection. Calling Close on an already-closed transport is
-//      a no-op so re-running tests don't leak the assertion.
+//  1. fx Provide constructs *Transport via New(cfg). A failed dial
+//     surfaces as an fx graph error → app refuses to start. Better
+//     a fast crash at boot than a silently-broken publisher.
+//  2. The same provide returns the *Transport as pubsub.Transport
+//     so subscriptions resolve their dep.
+//  3. An Invoke calls pubsub.BindTopics(t), wiring every topic's
+//     publisher.
+//  4. A second Invoke calls app.Register on a resource.NewQueue
+//     whose health probe is t.Healthy. The dashboard's topology
+//     view shows the broker as a queue node turning red when the
+//     AMQP connection drops. Skipped when Config.SkipResource is
+//     true, e.g. when the caller wants to register a custom
+//     resource with richer health metadata.
+//  5. fx OnStop closes the transport — channels first, then
+//     connection. Calling Close on an already-closed transport is
+//     a no-op so re-running tests don't leak the assertion.
 //
 // Typical use:
 //
@@ -48,12 +48,12 @@ func Use(cfg Config) nexus.Option {
 		cfg.ResourceName = "rabbit"
 	}
 	return nexus.Options(
-		nexus.Provide(func(lc fx.Lifecycle) (pubsub.Transport, *Transport, error) {
+		nexus.Provide(func(lc di.Lifecycle) (pubsub.Transport, *Transport, error) {
 			t, err := New(cfg)
 			if err != nil {
 				return nil, nil, err
 			}
-			lc.Append(fx.Hook{
+			lc.Append(di.Hook{
 				OnStop: func(_ context.Context) error { return t.Close() },
 			})
 			return t, t, nil

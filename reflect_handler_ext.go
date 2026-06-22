@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // HandlerShape is the export-facing wrapper around the framework's
@@ -24,14 +24,14 @@ type HandlerShape struct {
 
 // InspectHandlerForExt is the public version of inspectHandler.
 // Extensions call this once at registration time, then use the
-// returned HandlerShape to build an fx.Invoke that resolves deps
+// returned HandlerShape to build an di.Invoke that resolves deps
 // and stamps a bound closure into the extension's dispatch table.
 //
 // Shape constraints match every other reflective registration in
 // nexus — see the package doc on AsRest for the full grammar.
 //
 // Errors here are returned to the caller as a Go error rather than
-// wrapped in an fx.Error option, because the caller usually wants
+// wrapped in an di.Error option, because the caller usually wants
 // to attach its own context ("peer.AsCall(%q): %w") before letting
 // fx see them.
 func InspectHandlerForExt(fn any) (HandlerShape, error) {
@@ -44,7 +44,7 @@ func InspectHandlerForExt(fn any) (HandlerShape, error) {
 
 // DepTypes returns the reflective types of every fx-injected dep
 // the handler expects, in registration order. Extension code uses
-// this to build an fx.FuncOf with the same signature so fx resolves
+// this to build an di.FuncOf with the same signature so fx resolves
 // the deps at boot.
 func (h HandlerShape) DepTypes() []reflect.Type { return h.inner.depTypes }
 
@@ -76,7 +76,7 @@ func (h HandlerShape) ReturnType() reflect.Type { return h.inner.returnType }
 type BoundHandler func(ctx context.Context, args any) (any, error)
 
 // BuildInvokeOption produces a nexus.Option whose underlying
-// fx.Invoke has the signature `(*App, dep1, dep2, ...) → ()`. When
+// di.Invoke has the signature `(*App, dep1, dep2, ...) → ()`. When
 // fx fires the invoke at app start, it resolves every dep type
 // returned by DepTypes, captures them in a BoundHandler closure,
 // and hands the closure to mount.
@@ -119,7 +119,7 @@ func (h HandlerShape) BuildInvokeOption(mount func(app *App, bound BoundHandler)
 		}
 		return []reflect.Value{out}
 	})
-	return rawOption{o: fx.Invoke(invokeFn.Interface())}
+	return rawOption{o: di.Invoke(invokeFn.Interface())}
 }
 
 // bind captures the resolved deps + the handler's reflective shape

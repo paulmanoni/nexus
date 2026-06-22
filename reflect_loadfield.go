@@ -6,7 +6,7 @@ import (
 	"reflect"
 
 	"github.com/graphql-go/graphql"
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/dataloader"
 	"github.com/paulmanoni/nexus/graph"
@@ -53,7 +53,7 @@ import (
 //	    },
 //	)
 //
-// Wrong shapes surface as an fx.Error at app start with a message
+// Wrong shapes surface as an di.Error at app start with a message
 // describing the expected signatures.
 //
 // Parent's SDL name is the Go type's reflect name (User → "User").
@@ -66,13 +66,13 @@ func LoadField[Parent any, Key comparable, Child any](
 	fetch any,
 ) Option {
 	if fieldName == "" {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: fieldName cannot be empty"))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus.LoadField: fieldName cannot be empty"))}
 	}
 	if keyFn == nil {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: keyFn cannot be nil"))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus.LoadField: keyFn cannot be nil"))}
 	}
 	if fetch == nil {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus.LoadField: fetch cannot be nil"))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus.LoadField: fetch cannot be nil"))}
 	}
 
 	parentName, outputType, errOpt := resolveLoadFieldTypes[Parent, Child](fieldName)
@@ -82,7 +82,7 @@ func LoadField[Parent any, Key comparable, Child any](
 
 	fetchType := reflect.TypeOf(fetch)
 	if fetchType.Kind() != reflect.Func {
-		return rawOption{o: fx.Error(fmt.Errorf(
+		return rawOption{o: di.Error(fmt.Errorf(
 			"nexus.LoadField: fetch must be a function, got %s", fetchType))}
 	}
 
@@ -93,7 +93,7 @@ func LoadField[Parent any, Key comparable, Child any](
 		field := buildLoadFieldResolver[Parent, Key, Child](
 			parentName, fieldName, outputType, keyFn, typed,
 		)
-		return rawOption{o: fx.Invoke(func() {
+		return rawOption{o: di.Invoke(func() {
 			graph.RegisterVirtualField(parentName, fieldName, field)
 		})}
 	}
@@ -114,7 +114,7 @@ func LoadField[Parent any, Key comparable, Child any](
 		)
 	}
 
-	return rawOption{o: fx.Error(fmt.Errorf(
+	return rawOption{o: di.Error(fmt.Errorf(
 		"nexus.LoadField: fetch must be one of: "+
 			"func(context.Context, []K) (map[K]V, error), "+
 			"func(deps...) dataloader.Fetch[K, V], or "+
@@ -135,14 +135,14 @@ func resolveLoadFieldTypes[Parent any, Child any](fieldName string) (
 	}
 	parentName = parentT.Name()
 	if parentName == "" {
-		return "", nil, rawOption{o: fx.Error(fmt.Errorf(
+		return "", nil, rawOption{o: di.Error(fmt.Errorf(
 			"nexus.LoadField: Parent type must be a named struct (anonymous structs have no SDL name)"))}
 	}
 
 	childT := reflect.TypeOf((*Child)(nil)).Elem()
 	outputType = graph.OutputType(childT)
 	if outputType == nil {
-		return "", nil, rawOption{o: fx.Error(fmt.Errorf(
+		return "", nil, rawOption{o: di.Error(fmt.Errorf(
 			"nexus.LoadField: cannot derive GraphQL type for Child=%s on field %q",
 			childT, fieldName))}
 	}
@@ -177,7 +177,7 @@ func buildLoadFieldResolver[Parent any, Key comparable, Child any](
 
 // buildInlineDepsOption handles form (c): the user wrote a single
 // function `func(ctx, []K, deps...) (map[K]V, error)`. We construct
-// an fx.Invoke whose parameter types are the trailing deps so fx
+// an di.Invoke whose parameter types are the trailing deps so fx
 // resolves them at boot; the wrapper builds a closure that captures
 // those resolved deps and calls the user's function on every batch.
 func buildInlineDepsOption[Key comparable, Child any](
@@ -216,7 +216,7 @@ func buildInlineDepsOption[Key comparable, Child any](
 		graph.RegisterVirtualField(parentName, fieldName, field)
 		return nil
 	})
-	return rawOption{o: fx.Invoke(wrapper.Interface())}
+	return rawOption{o: di.Invoke(wrapper.Interface())}
 }
 
 // buildFactoryOption handles form (b): the user's function returns
@@ -244,7 +244,7 @@ func buildFactoryOption[Parent any, Key comparable, Child any](
 		graph.RegisterVirtualField(parentName, fieldName, field)
 		return nil
 	})
-	return rawOption{o: fx.Invoke(wrapper.Interface())}
+	return rawOption{o: di.Invoke(wrapper.Interface())}
 }
 
 // buildVirtualFieldFromUntypedKeyFn is buildLoadFieldResolver for the

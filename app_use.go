@@ -3,7 +3,7 @@ package nexus
 import (
 	"fmt"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/middleware"
 )
@@ -16,7 +16,7 @@ import (
 // transports.
 //
 //	rl := ratelimit.NewMiddleware(store, key, ratelimit.Limit{RPM: 30})
-//	fx.Provide(
+//	di.Provide(
 //	    nexus.AsMutation(NewCreateAdvert, nexus.Use(rl)),
 //	    nexus.AsRest("POST", "/quick", NewQuick, nexus.Use(rl)),
 //	)
@@ -39,10 +39,10 @@ func Use(m middleware.Middleware) MiddlewareOption {
 // no-op nexusOption() exists purely for type-system passage.
 type MiddlewareOption struct{ mw middleware.Middleware }
 
-// nexusOption satisfies Option. Empty fx.Options because this slot is
+// nexusOption satisfies Option. Empty di.Options because this slot is
 // for transport-attaching options (RestOption/GqlOption/WSOption);
 // middleware doesn't register anything globally on its own.
-func (m MiddlewareOption) nexusOption() fx.Option { return fx.Options() }
+func (m MiddlewareOption) nexusOption() di.Option { return di.Options() }
 
 // applyToGql wires this middleware into a GraphQL registration. Called
 // by asGqlField for each MiddlewareOption passed to AsQuery/AsMutation.

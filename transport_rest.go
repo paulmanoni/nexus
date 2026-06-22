@@ -7,8 +7,8 @@ import (
 	"reflect"
 
 	"braces.dev/errtrace"
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
@@ -32,26 +32,26 @@ import (
 //     JSON-marshalled with status 200 (201 for POST) on success; errors
 //     become status 500 with {"error": "..."}.
 //
-// Returns an fx.Option; drop it into fx.Provide.
+// Returns an di.Option; drop it into di.Provide.
 //
-//	fx.Provide(
+//	di.Provide(
 //	    nexus.AsRest("GET", "/pets",     NewListPets),
 //	    nexus.AsRest("POST", "/pets",    NewCreatePet),
 //	    nexus.AsRest("GET", "/pets/:id", NewGetPet),
 //	)
 func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	// Pointer cfg so nexus.Module(...) can stamp cfg.module after this
-	// call returns — the invoke closure below reads it at fx.Start.
+	// call returns — the invoke closure below reads it at di.Start.
 	cfg := &restConfig{}
 	for _, o := range opts {
 		o.applyToRest(cfg)
 	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 	sh, err := inspectHandler(fn)
 	if err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 	return asRestInvoke(method, path, cfg, sh)
 }
@@ -89,20 +89,20 @@ func AsRestHandler(method, path string, factory any, opts ...RestOption) Option 
 		o.applyToRest(cfg)
 	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 	rt := reflect.TypeOf(factory)
 	ginHandlerType := reflect.TypeOf(httpx.HandlerFunc(nil))
 	if rt == nil || rt.Kind() != reflect.Func {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsRestHandler factory must be a function"))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsRestHandler factory must be a function"))}
 	}
 	if rt.NumOut() != 1 || rt.Out(0) != ginHandlerType {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: AsRestHandler factory must return exactly httpx.HandlerFunc (got %s)", rt))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsRestHandler factory must return exactly httpx.HandlerFunc (got %s)", rt))}
 	}
 	return asRestHandlerInvoke(method, path, cfg, factory)
 }
 
-// asRestHandlerInvoke synthesizes the fx.Invoke for AsRestHandler.
+// asRestHandlerInvoke synthesizes the di.Invoke for AsRestHandler.
 // Parallel to asRestInvoke but simpler: instead of building a
 // reflective per-request handler, we resolve the factory's deps once
 // at boot, call the factory to get the httpx.HandlerFunc, and mount
@@ -158,7 +158,7 @@ func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Opti
 		recordEndpointDeps(app, service, opName, deps, depTypes)
 		return nil
 	})
-	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
+	return &restOption{o: di.Invoke(invokeFn.Interface()), cfg: cfg}
 }
 
 type restConfig struct {
@@ -180,14 +180,14 @@ type restConfig struct {
 
 // restOption is the Option returned by AsRest. Parallels gqlFieldOption —
 // keeps a pointer to the restConfig so Module(...) can stamp the module
-// name on it after construction, and the fx.Invoke closure picks it up
+// name on it after construction, and the di.Invoke closure picks it up
 // at Start time.
 type restOption struct {
-	o   fx.Option
+	o   di.Option
 	cfg *restConfig
 }
 
-func (r *restOption) nexusOption() fx.Option   { return r.o }
+func (r *restOption) nexusOption() di.Option   { return r.o }
 func (r *restOption) setModule(name string)    { r.cfg.module = name }
 func (r *restOption) setRestPrefix(p string)   { r.cfg.pathPrefix = p + r.cfg.pathPrefix }
 func (r *restOption) setDeployment(tag string) { r.cfg.deployment = tag }
@@ -210,7 +210,7 @@ type restPrefixAnnotator interface {
 // Always safe to include; GraphQL / worker opts silently ignore it.
 type routePrefixOption struct{ prefix string }
 
-func (routePrefixOption) nexusOption() fx.Option { return fx.Options() }
+func (routePrefixOption) nexusOption() di.Option { return di.Options() }
 func (r routePrefixOption) applyToRest(c *restConfig) {
 	c.pathPrefix = r.prefix + c.pathPrefix
 }
@@ -252,7 +252,7 @@ func Description(s string) RestOption {
 	return restOptionFn(func(c *restConfig) { c.description = s })
 }
 
-// asRestInvoke builds a synthetic fx.Invoke: the constructor fx sees takes
+// asRestInvoke builds a synthetic di.Invoke: the constructor fx sees takes
 // (*App, deps...) and registers the handler on the Gin engine + the registry.
 // We build its signature via reflect.FuncOf so any dep type the handler named
 // flows through fx's dependency resolution unchanged.
@@ -302,7 +302,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		recordEndpointSchema(app, service, opName, sh)
 		return nil
 	})
-	return &restOption{o: fx.Invoke(invokeFn.Interface()), cfg: cfg}
+	return &restOption{o: di.Invoke(invokeFn.Interface()), cfg: cfg}
 }
 
 // serviceNameFromDeps returns the Service.Name() of the first dep that

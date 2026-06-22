@@ -38,8 +38,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/registry"
@@ -175,10 +175,10 @@ type Generate struct {
 }
 
 // Lifecycle hooks tied to the fx app lifecycle. OnBoot and OnReady
-// both fire during fx.Start (OnBoot before any route serves, OnReady
-// after) — OnShutdown fires during fx.Stop. All three are optional.
+// both fire during di.Start (OnBoot before any route serves, OnReady
+// after) — OnShutdown fires during di.Stop. All three are optional.
 type Lifecycle struct {
-	// OnBoot fires during fx.Start, before the HTTP listener binds.
+	// OnBoot fires during di.Start, before the HTTP listener binds.
 	// Returning a non-nil error aborts boot.
 	OnBoot func(ctx context.Context, app *nexus.App) error
 
@@ -187,7 +187,7 @@ type Lifecycle struct {
 	// depends on the app being ready to serve.
 	OnReady func(ctx context.Context, app *nexus.App) error
 
-	// OnShutdown fires during fx.Stop. The context carries the
+	// OnShutdown fires during di.Stop. The context carries the
 	// shutdown deadline.
 	OnShutdown func(ctx context.Context) error
 }
@@ -234,7 +234,7 @@ type Client struct {
 	// purely informational for now (surfaced via PluginRecord).
 	Namespace string
 
-	// Apply runs once during fx.Start with the constructed *nexus.App
+	// Apply runs once during di.Start with the constructed *nexus.App
 	// in scope. Use it to call app.SetClientAuthInfo, register
 	// methods on app.ClientHandler(), etc. Return an error to abort
 	// boot.
@@ -252,7 +252,7 @@ type Client struct {
 // before Dashboard routes mount.
 func Use(p Plugin) nexus.Option {
 	if err := validate(p); err != nil {
-		return nexus.Raw(fx.Error(err))
+		return nexus.Raw(di.Error(err))
 	}
 
 	opts := make([]nexus.Option, 0, len(p.Options)+4)
@@ -296,7 +296,7 @@ func Use(p Plugin) nexus.Option {
 }
 
 // contributorOption registers a Plugin.Contributor on the App via
-// fx.Invoke. The callback adapts between extension's File +
+// di.Invoke. The callback adapts between extension's File +
 // GenerateContext types and the nexus mirrors — same conversion the
 // generateDriverOption wrapper does in the other direction, kept here
 // rather than in nexus/ so the conversion is package-local and the
@@ -327,14 +327,14 @@ func contributorOption(name string, c ClientContributor) nexus.Option {
 }
 
 // generateDriverOption converts an extension.Generate slot into a
-// nexus.GenerateDriver registration. The fx.Invoke runs once during
-// fx.Start; (*App).RegisterGenerateDriver panics on duplicate, so
+// nexus.GenerateDriver registration. The di.Invoke runs once during
+// di.Start; (*App).RegisterGenerateDriver panics on duplicate, so
 // "two frontends in one app" surfaces at boot — well before
 // `nexus build` would have tried to merge their outputs.
 //
 // The Render closure captures *App so it can read the contributor
 // list lazily at render time. That matters because contributors and
-// the driver register from independent fx.Invokes — at registration
+// the driver register from independent di.Invokes — at registration
 // time we don't know which contributors have run yet. Pulling them
 // at Render time gives a deterministic post-boot snapshot regardless
 // of Invoke order.
@@ -462,8 +462,8 @@ func liveEvents(d *Dashboard) []string {
 }
 
 func lifecycleOption(lc *Lifecycle) nexus.Option {
-	return nexus.Raw(fx.Invoke(func(fxlc fx.Lifecycle, app *nexus.App) {
-		fxlc.Append(fx.Hook{
+	return nexus.Raw(di.Invoke(func(fxlc di.Lifecycle, app *nexus.App) {
+		fxlc.Append(di.Hook{
 			OnStart: func(ctx context.Context) error {
 				if lc.OnBoot != nil {
 					if err := lc.OnBoot(ctx, app); err != nil {

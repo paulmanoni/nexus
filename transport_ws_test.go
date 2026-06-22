@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxtest"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // chatPayload is the test message body, deliberately un-exported and colocated
@@ -30,18 +30,21 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 		sess.Emit("chat.echo", map[string]string{"text": p.Args.Text, "user": sess.UserID()})
 		return nil
 	}
-	typingCount := 0
+	// typingCount is written from the hub's readPump goroutine and read by the
+	// test goroutine, so it must be atomic (the reads are only loosely ordered
+	// by a sleep below).
+	var typingCount atomic.Int32
 	typingHandler := func(sess *WSSession, p Params[chatPayload]) error {
-		typingCount++
+		typingCount.Add(1)
 		return nil
 	}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/events", "chat.send", sendHandler).nexusOption(),
 		AsWS("/events", "chat.typing", typingHandler).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -115,16 +118,16 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 	// this one.
 	mustSend("chat.typing", "keystroke")
 	time.Sleep(100 * time.Millisecond)
-	if typingCount != 1 {
-		t.Fatalf("typing handler count = %d, want 1", typingCount)
+	if typingCount.Load() != 1 {
+		t.Fatalf("typing handler count = %d, want 1", typingCount.Load())
 	}
 
 	// Unknown types silently pass through — client can send anything,
 	// framework only dispatches registered types.
 	mustSend("chat.unregistered", "ignored")
 	time.Sleep(50 * time.Millisecond)
-	if typingCount != 1 {
-		t.Fatalf("unknown type leaked to typing handler (count=%d)", typingCount)
+	if typingCount.Load() != 1 {
+		t.Fatalf("unknown type leaked to typing handler (count=%d)", typingCount.Load())
 	}
 }
 
@@ -137,10 +140,10 @@ func TestAsWS_HandlerErrorSendsErrorEvent(t *testing.T) {
 	}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsWS("/bad", "thing", badHandler).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -199,10 +202,10 @@ func TestAsWS_FrameEmitsRequestStartEnd(t *testing.T) {
 	}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/events", "chat.send", okHandler).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -234,7 +237,7 @@ func TestAsWS_FrameEmitsRequestStartEnd(t *testing.T) {
 	deadline := time.After(2 * time.Second)
 	var startEv, endEv struct {
 		traceID, kind, transport, name string
-		status                          int
+		status                         int
 	}
 	got := 0
 	for got < 2 {
@@ -277,10 +280,10 @@ func TestAsWS_HandlerErrorEmitsRequestEnd500(t *testing.T) {
 	}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/bad", "thing", badHandler).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()

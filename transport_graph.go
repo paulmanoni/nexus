@@ -10,10 +10,10 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/mitchellh/mapstructure"
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
-	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/middleware"
 )
 
@@ -39,7 +39,7 @@ import (
 // and lowercasing the first rune ("NewGetAllAdverts" → "getAllAdverts").
 // Override with nexus.Op("explicit").
 //
-//	fx.Provide(
+//	di.Provide(
 //	    nexus.AsQuery(NewGetAllAdverts),
 //	    nexus.AsMutation(NewCreateAdvert,
 //	        nexus.Middleware("auth", "Bearer token", AuthMw)),
@@ -59,7 +59,7 @@ func AsMutation(fn any, opts ...GqlOption) Option {
 // directly for now; once the reflective SubscriptionResolverFromType exists
 // this helper will mirror AsQuery/AsMutation.
 func AsSubscription(fn any, opts ...GqlOption) Option {
-	return rawOption{o: fx.Error(fmt.Errorf("nexus: AsSubscription not yet implemented — use graph.NewSubscriptionResolver directly"))}
+	return rawOption{o: di.Error(fmt.Errorf("nexus: AsSubscription not yet implemented — use graph.NewSubscriptionResolver directly"))}
 }
 
 // GqlOption tunes a GraphQL registration. An interface (not a func type)
@@ -96,13 +96,13 @@ type gqlConfig struct {
 // gqlFieldOption is the Option returned by AsQuery/AsMutation. It keeps
 // a pointer to the shared gqlConfig so Module(...) can stamp the module
 // name on it after the option is created — the constructor closure
-// reads the same pointer at fx.Start time, so stamping takes effect.
+// reads the same pointer at di.Start time, so stamping takes effect.
 type gqlFieldOption struct {
-	o   fx.Option
+	o   di.Option
 	cfg *gqlConfig
 }
 
-func (g *gqlFieldOption) nexusOption() fx.Option   { return g.o }
+func (g *gqlFieldOption) nexusOption() di.Option   { return g.o }
 func (g *gqlFieldOption) setModule(name string)    { g.cfg.module = name }
 func (g *gqlFieldOption) setDeployment(tag string) { g.cfg.deployment = tag }
 
@@ -208,17 +208,17 @@ type argsProvider interface {
 	NexusValidators() map[string][]graph.Validator
 }
 
-// asGqlField is the shared body: reflect → synthesize constructor → fx.Provide.
+// asGqlField is the shared body: reflect → synthesize constructor → di.Provide.
 func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	sh, err := inspectHandler(fn)
 	if err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 	if sh.returnType == nil {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: %s handler %s needs a (T, error) return", kind, sh.funcType))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: %s handler %s needs a (T, error) return", kind, sh.funcType))}
 	}
 	// Pointer cfg so nexus.Module(...) can stamp cfg.module on us AFTER
-	// this call returns but BEFORE fx.Start runs the ctor closure below.
+	// this call returns but BEFORE di.Start runs the ctor closure below.
 	// The closure captures cfg by reference, so late writes are picked up.
 	cfg := &gqlConfig{}
 	for _, o := range opts {
@@ -228,11 +228,11 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		cfg.opName = opNameFromFunc(fn, string(kind))
 	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportGraphQL, cfg.opName); err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 
 	if !(kind == graph.FieldKindQuery || kind == graph.FieldKindMutation) {
-		return rawOption{o: fx.Error(fmt.Errorf("nexus: unsupported field kind %q", kind))}
+		return rawOption{o: di.Error(fmt.Errorf("nexus: unsupported field kind %q", kind))}
 	}
 
 	// Resolve which service this op belongs to.
@@ -400,8 +400,8 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	})
 
 	return &gqlFieldOption{
-		o: fx.Provide(
-			fx.Annotate(ctor.Interface(), fx.ResultTags(`group:"`+GqlFieldGroup+`"`)),
+		o: di.Provide(
+			di.Annotate(ctor.Interface(), di.ResultTags(`group:"`+GqlFieldGroup+`"`)),
 		),
 		cfg: cfg,
 	}

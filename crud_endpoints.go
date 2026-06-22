@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
 )
 
 // AsCRUD registers a default set of CRUD endpoints for type T.
@@ -64,16 +64,16 @@ import (
 // nexus.Use(...), nexus.OnCreate(...) all work as they do for AsRest.
 func AsCRUD[T any](resolver any, opts ...Option) Option {
 	if resolver == nil {
-		return rawOption{o: fx.Error(errBadResolver)}
+		return rawOption{o: di.Error(errBadResolver)}
 	}
 	bound, depTypes, err := bindCRUDResolver[T](resolver)
 	if err != nil {
-		return rawOption{o: fx.Error(err)}
+		return rawOption{o: di.Error(err)}
 	}
 	// Lazy reader closure: captures `bound` by reference so handlers
 	// see the populated fn even though bind* runs at AsCRUD's call
 	// time (when fn is nil — the setup invoke fills it later, before
-	// fx.Start hooks bind the listener).
+	// di.Start hooks bind the listener).
 	perReq := CRUDResolver[T](func(ctx context.Context) (Store[T], error) {
 		if bound.fn == nil {
 			return nil, errors.New("nexus: AsCRUD resolver not initialized — fx setup invoke didn't run")
@@ -90,7 +90,7 @@ func AsCRUD[T any](resolver any, opts ...Option) Option {
 		}
 	}
 	if !cc.enableREST && !cc.enableGraphQL {
-		return rawOption{o: fx.Error(errors.New("nexus: AsCRUD with both REST and GraphQL disabled has no effect"))}
+		return rawOption{o: di.Error(errors.New("nexus: AsCRUD with both REST and GraphQL disabled has no effect"))}
 	}
 	rt := reflect.TypeOf((*T)(nil)).Elem()
 	plural := defaultPlural(rt.Name())
@@ -128,7 +128,7 @@ func AsCRUD[T any](resolver any, opts ...Option) Option {
 		)
 	}
 
-	// Setup invoke: at fx.Start, fx provides the resolver's deps,
+	// Setup invoke: at di.Start, fx provides the resolver's deps,
 	// we bake them into the per-request closure stored on `bound`,
 	// and walk the same deps for NexusResourceProvider — registering
 	// each provided resource and attaching it to every endpoint
@@ -163,7 +163,7 @@ type crudOnlyOption struct {
 	apply func(*crudConfig)
 }
 
-func (c crudOnlyOption) nexusOption() fx.Option     { return fx.Options() }
+func (c crudOnlyOption) nexusOption() di.Option     { return di.Options() }
 func (c crudOnlyOption) applyToCRUD(cc *crudConfig) { c.apply(cc) }
 
 // WithGraphQL turns on GraphQL op generation for AsCRUD. By default
@@ -217,11 +217,11 @@ func gqlOpts(opts []Option) []GqlOption {
 // because Module() walks its direct children once and AsCRUD hides
 // the inner AsRest/AsQuery options behind a single Option value.
 type optionGroupT struct {
-	o        fx.Option
+	o        di.Option
 	children []Option
 }
 
-func (g *optionGroupT) nexusOption() fx.Option { return g.o }
+func (g *optionGroupT) nexusOption() di.Option { return g.o }
 
 func (g *optionGroupT) setModule(name string) {
 	for _, c := range g.children {
@@ -240,7 +240,7 @@ func (g *optionGroupT) setRestPrefix(prefix string) {
 }
 
 func optionGroup(opts ...Option) Option {
-	fxOpts := make([]fx.Option, 0, len(opts))
+	fxOpts := make([]di.Option, 0, len(opts))
 	kept := make([]Option, 0, len(opts))
 	for _, o := range opts {
 		if o == nil {
@@ -249,7 +249,7 @@ func optionGroup(opts ...Option) Option {
 		fxOpts = append(fxOpts, o.nexusOption())
 		kept = append(kept, o)
 	}
-	return &optionGroupT{o: fx.Options(fxOpts...), children: kept}
+	return &optionGroupT{o: di.Options(fxOpts...), children: kept}
 }
 
 // restOpts filters the AsCRUD options down to those that AsRest
@@ -565,7 +565,7 @@ func MapCRUDError(err error) (status int, ok bool) {
 // AsCRUD accepts the resolver as `any` so it can have fx-injected
 // deps after the leading context.Context. bindCRUDResolver inspects
 // the function shape, captures its dep types, and returns a holder
-// whose `fn` field is filled in at fx.Start by the setup invoke.
+// whose `fn` field is filled in at di.Start by the setup invoke.
 // Handlers close over the holder, so the resolver-with-deps appears
 // to them as a plain `func(ctx) (Store[T], error)`.
 
@@ -573,7 +573,7 @@ func MapCRUDError(err error) (status int, ok bool) {
 // happens once at boot) and request-time resolver invocation (which
 // happens many times after). The setup invoke writes `fn` once and
 // the handlers read it for every request — no contention since the
-// write is fully done before fx.Start hooks bind the listener.
+// write is fully done before di.Start hooks bind the listener.
 type resolverHolder[T any] struct {
 	once sync.Once
 	fn   CRUDResolver[T]
@@ -637,7 +637,7 @@ func bindCRUDResolver[T any](resolver any) (*resolverHolder[T], []reflect.Type, 
 	return holder, depTypes, nil
 }
 
-// buildCRUDSetup returns an Option whose body is an fx.Invoke that
+// buildCRUDSetup returns an Option whose body is an di.Invoke that
 // runs once at boot. It (a) bakes the resolver's deps into a
 // per-request closure and stores it on the holder, and (b) auto-
 // attaches NexusResourceProvider deps to every endpoint this AsCRUD
@@ -674,21 +674,21 @@ func buildCRUDSetup[T any](
 	if len(depTypes) == 0 {
 		// No deps means no resources to auto-attach, so skip the
 		// invoke entirely. Saves one fx node per AsCRUD instance.
-		return rawOption{o: fx.Options()}
+		return rawOption{o: di.Options()}
 	}
 
-	// Build the invoke signature: func(fx.Lifecycle, *App, deps...) error.
+	// Build the invoke signature: func(di.Lifecycle, *App, deps...) error.
 	//
-	// fx.Lifecycle is required because the resource-attach pass has
+	// di.Lifecycle is required because the resource-attach pass has
 	// to wait for autoMountGraphQL — which runs AFTER user Invokes —
 	// to finish populating the registry with GraphQL endpoints. We
 	// register an OnStart hook (runs in the OnStart phase, after all
 	// Invokes have completed) and do the attach there.
 	//
 	// The resolver-fn population, by contrast, happens synchronously
-	// in the Invoke body so it's set before fx.Start binds the
+	// in the Invoke body so it's set before di.Start binds the
 	// listener and the first request can land.
-	lifecycleType := reflect.TypeOf((*fx.Lifecycle)(nil)).Elem()
+	lifecycleType := reflect.TypeOf((*di.Lifecycle)(nil)).Elem()
 	appType := reflect.TypeOf((*App)(nil))
 	inTypes := append([]reflect.Type{lifecycleType, appType}, depTypes...)
 	errType := reflect.TypeOf((*error)(nil)).Elem()
@@ -701,7 +701,7 @@ func buildCRUDSetup[T any](
 	resolverValHolder := holder.resolverVal()
 
 	invokeFn := reflect.MakeFunc(invokeType, func(args []reflect.Value) []reflect.Value {
-		lc := args[0].Interface().(fx.Lifecycle)
+		lc := args[0].Interface().(di.Lifecycle)
 		app := args[1].Interface().(*App)
 		deps := append([]reflect.Value(nil), args[2:]...)
 
@@ -732,7 +732,7 @@ func buildCRUDSetup[T any](
 		// Invoke runs AFTER user Invokes (it lives in fxLateOptions),
 		// so any synchronous attach here would only see REST routes.
 		// By the time OnStart hooks fire, every Invoke has completed.
-		lc.Append(fx.Hook{
+		lc.Append(di.Hook{
 			OnStart: func(ctx context.Context) error {
 				attachCRUDResources(app, deps, base, gqlNames)
 				return nil
@@ -742,7 +742,7 @@ func buildCRUDSetup[T any](
 		return []reflect.Value{reflect.Zero(errType)}
 	})
 
-	return rawOption{o: fx.Invoke(invokeFn.Interface())}
+	return rawOption{o: di.Invoke(invokeFn.Interface())}
 }
 
 // resolverVal is a side-channel field on resolverHolder used to hand

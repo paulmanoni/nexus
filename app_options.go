@@ -6,28 +6,53 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxevent"
 )
 
 // Option composes a nexus app. Everything returned by Provide, Supply,
 // Invoke, Module, AsRest, AsQuery, AsMutation, AsWebSocket, AsSubscription
-// is an Option, ready to pass to Run. fx is an implementation detail —
-// user code imports only nexus.
-type Option interface{ nexusOption() fx.Option }
+// is an Option, ready to pass to Run. The DI container is an implementation
+// detail — user code imports only nexus.
+type Option interface{ nexusOption() di.Option }
 
-type rawOption struct{ o fx.Option }
+// Lifecycle and Hook are re-exported from the di seam so extensions can take a
+// lifecycle parameter and register start/stop hooks without importing di
+// directly. The builtin container provides Lifecycle natively; the opt-in fx
+// adapter bridges fx.Lifecycle onto it.
+type (
+	Lifecycle = di.Lifecycle
+	Hook      = di.Hook
+)
 
-func (r rawOption) nexusOption() fx.Option { return r.o }
+type rawOption struct{ o di.Option }
+
+func (r rawOption) nexusOption() di.Option { return r.o }
 
 // routerOption carries a chosen HTTP router backend. It is consumed BEFORE the
-// fx graph is built (Run scans for it and seeds Config.Router, since the router
-// is constructed inside New(cfg) which runs ahead of user options). Its fx
-// contribution is therefore a no-op.
+// graph is built (Run scans for it and seeds Config.Router, since the router
+// is constructed inside New(cfg) which runs ahead of user options). Its
+// container contribution is therefore a no-op.
 type routerOption struct{ r httpx.Router }
 
-func (routerOption) nexusOption() fx.Option { return fx.Options() }
+func (routerOption) nexusOption() di.Option { return di.Options() }
+
+// containerOption carries a chosen DI backend. Like routerOption it is consumed
+// before the graph is built (Run scans for it), so its own graph contribution
+// is a no-op.
+type containerOption struct{ backend di.Backend }
+
+func (containerOption) nexusOption() di.Option { return di.Options() }
+
+// WithContainer selects the dependency-injection backend (default: the
+// zero-dependency builtin container in nexus/di). Pass the opt-in fx adapter to
+// switch:
+//
+//	nexus.Boot(nexus.WithContainer(fxcontainer.New()))
+//
+// Selecting the fx adapter pulls go.uber.org/fx (and dig) into the build; the
+// builtin default links none of it. Mirrors WithRouter.
+func WithContainer(backend di.Backend) Option { return containerOption{backend: backend} }
 
 // WithRouter selects the HTTP router backend (default: the zero-dependency
 // stdlib net/http router). Pass an opt-in adapter to switch:
@@ -40,7 +65,7 @@ func (routerOption) nexusOption() fx.Option { return fx.Options() }
 // the default links no third-party router at all.
 func WithRouter(r httpx.Router) Option { return routerOption{r: r} }
 
-// Module groups options under a name. Mirrors fx.Module's logging — the
+// Module groups options under a name. Mirrors di.Module's logging — the
 // group name appears in startup/shutdown logs and in error messages, which
 // helps when several modules touch the same service or resource. The name
 // is also stamped onto every AsQuery/AsMutation/AsRest registration inside
@@ -82,7 +107,7 @@ func Module(name string, opts ...Option) Option {
 	// Register the module's GraphQL path BEFORE the children walk
 	// below. Module-aware children read the registry indirectly
 	// (via app.Service at construction time), so the registration
-	// only needs to land before fx.Start fires constructors —
+	// only needs to land before di.Start fires constructors —
 	// which happens after this whole Module() call returns.
 	if publicPath != "" {
 		registerModulePublicPath(name, publicPath)
@@ -91,7 +116,7 @@ func Module(name string, opts ...Option) Option {
 	// Stamp module name + route prefix onto every child option that
 	// cares. Options produced by nested Module(...) don't implement
 	// these annotator interfaces (they return a rawOption wrapping
-	// fx.Module), so inner-most wins automatically — the inner
+	// di.Module), so inner-most wins automatically — the inner
 	// Module() already annotated its own children before we see it.
 	for _, o := range opts {
 		if ma, ok := o.(moduleAnnotator); ok {
@@ -103,7 +128,7 @@ func Module(name string, opts ...Option) Option {
 			}
 		}
 	}
-	return rawOption{o: fx.Module(name, unwrap(opts)...)}
+	return rawOption{o: di.Module(name, unwrap(opts)...)}
 }
 
 // Options bundles multiple Option values into a single Option.
@@ -112,9 +137,9 @@ func Module(name string, opts ...Option) Option {
 // supply + an extra invoke, for example. Empty input is a no-op.
 func Options(opts ...Option) Option {
 	if len(opts) == 0 {
-		return rawOption{o: fx.Options()}
+		return rawOption{o: di.Options()}
 	}
-	return rawOption{o: fx.Options(unwrap(opts)...)}
+	return rawOption{o: di.Options(unwrap(opts)...)}
 }
 
 // moduleAnnotator is implemented by options that participate in the
@@ -143,7 +168,7 @@ type moduleAnnotator interface {
 //     layer with no extra annotation.
 //
 // Constructors that don't trigger either detector behave like plain
-// fx.Provide — return types enter the graph, params resolve from it.
+// di.Provide — return types enter the graph, params resolve from it.
 // Mixed sets (one service wrapper + one resource manager + one plain
 // helper) work in a single call.
 //
@@ -154,8 +179,8 @@ type moduleAnnotator interface {
 //	    NewClock,            // plain type — just enters the graph
 //	)
 func Provide(fns ...any) Option {
-	opts := make([]fx.Option, 0, len(fns)+1)
-	opts = append(opts, fx.Provide(fns...))
+	opts := make([]di.Option, 0, len(fns)+1)
+	opts = append(opts, di.Provide(fns...))
 	for _, fn := range fns {
 		if inv := resourceAutoRegisterInvoke(fn); inv != nil {
 			opts = append(opts, inv)
@@ -167,7 +192,7 @@ func Provide(fns ...any) Option {
 			opts = append(opts, inv)
 		}
 	}
-	return rawOption{o: fx.Options(opts...)}
+	return rawOption{o: di.Options(opts...)}
 }
 
 // Supply puts concrete values into the graph (no constructor). Useful for
@@ -176,8 +201,15 @@ func Provide(fns ...any) Option {
 //	nexus.Supply(nexus.Config{Server: ServerConfig{Addr: ":8080"}})   // rare — Run takes Config directly
 //	nexus.Supply(myAlreadyBuiltClient)          // typical
 func Supply(values ...any) Option {
-	return rawOption{o: fx.Supply(values...)}
+	return rawOption{o: di.Supply(values...)}
 }
+
+// Error injects an error discovered while building options; it surfaces at boot
+// instead of panicking at call time. Extensions use it to report bad config
+// without importing the DI backend.
+//
+//	if err := cfg.validate(); err != nil { return nexus.Error(err) }
+func Error(err error) Option { return rawOption{o: di.Error(err)} }
 
 // Invoke runs a function at startup, resolving its parameters from the
 // graph. Use for side-effects on boot — attaching resources, registering
@@ -187,17 +219,17 @@ func Supply(values ...any) Option {
 //	    app.OnResourceUse(dbs)
 //	})
 func Invoke(fns ...any) Option {
-	return rawOption{o: fx.Invoke(fns...)}
+	return rawOption{o: di.Invoke(fns...)}
 }
 
-// serviceDepsRegisterInvoke synthesizes an fx.Invoke that takes the
+// serviceDepsRegisterInvoke synthesizes an di.Invoke that takes the
 // constructed service + ALL of the constructor's original params,
 // walks them for NexusResourceProvider / service-wrapper values, and
 // calls registry.SetServiceDeps with the resulting name lists.
 // Returns nil when fn isn't a function or its return isn't a
 // service wrapper — letting ProvideService degrade to a plain
 // Provide without failing boot.
-func serviceDepsRegisterInvoke(fn any) fx.Option {
+func serviceDepsRegisterInvoke(fn any) di.Option {
 	rt := reflect.TypeOf(fn)
 	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
 		return nil
@@ -246,17 +278,17 @@ func serviceDepsRegisterInvoke(fn any) fx.Option {
 		svc.app.Registry().SetServiceDeps(owning, resourceDeps, serviceDeps)
 		return nil
 	})
-	return fx.Invoke(invokeFn.Interface())
+	return di.Invoke(invokeFn.Interface())
 }
 
-// resourceAutoRegisterInvoke synthesizes an fx.Invoke(func(app *App, instance T))
+// resourceAutoRegisterInvoke synthesizes an di.Invoke(func(app *App, instance T))
 // that, at boot, registers resources and wires OnResourceUse for the instance.
 // Returns nil when fn isn't a function, returns nothing, or its first
 // return type doesn't implement NexusResourceProvider or UseReporter —
 // skipping the invoke avoids forcing a *App dep on the graph for plain
 // types (a regression that surfaces when nexus.Provide is used for
 // unrelated values like func() string in tests).
-func resourceAutoRegisterInvoke(fn any) fx.Option {
+func resourceAutoRegisterInvoke(fn any) di.Option {
 	rt := reflect.TypeOf(fn)
 	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
 		return nil
@@ -286,22 +318,21 @@ func resourceAutoRegisterInvoke(fn any) fx.Option {
 		}
 		return nil
 	})
-	return fx.Invoke(invokeFn.Interface())
+	return di.Invoke(invokeFn.Interface())
 }
 
-// Raw is an escape hatch: accept any fx.Option and route it through nexus.
-// For features nexus hasn't mirrored yet (fx.Decorate, fx.Replace, named
-// values via fx.Annotate with ParamTags, etc.) or one-off integrations.
-// Normal apps never need it.
+// Raw is an escape hatch: accept any di.Option and route it through nexus.
+// For low-level container wiring or one-off integrations. Normal apps never
+// need it.
 //
-//	nexus.Raw(fx.Decorate(wrapLogger))
-func Raw(opt fx.Option) Option {
+//	nexus.Raw(di.Provide(myCtor))
+func Raw(opt di.Option) Option {
 	return rawOption{o: opt}
 }
 
 // Run builds and runs the app. Blocks until SIGINT/SIGTERM, then
 // gracefully shuts the HTTP server + cron scheduler. Returns nothing —
-// identical to fx.App.Run(). For tests where you need explicit Start/Stop
+// identical to di.App.Run(). For tests where you need explicit Start/Stop
 // control, build the app via a test helper that calls fxBootOptions.
 //
 //	func main() {
@@ -429,88 +460,30 @@ func Run(cfg Config, opts ...Option) {
 	// Resolve the router backend before the graph is built: New(cfg)
 	// (inside fxEarlyOptions) constructs the default router, so a
 	// WithRouter option must seed Config.Router up front.
+	backend := di.Backend(di.Builtin())
 	for _, o := range opts {
 		if ro, ok := o.(routerOption); ok {
 			cfg.Router = ro.r
 		}
+		if co, ok := o.(containerOption); ok && co.backend != nil {
+			backend = co.backend
+		}
 	}
-	all := append([]fx.Option{
+	all := append([]di.Option{
 		fxEarlyOptions(cfg),
 		autoManifestOptions(),
 	}, unwrap(opts)...)
 	all = append(all, fxLateOptions())
-	switch {
-	case os.Getenv("NEXUS_FX_QUIET") == "1":
-		// Explicit user opt-out: silence everything including errors.
-		// They asked for it.
-		all = append(all, fx.NopLogger)
-	case devQuiet:
-		// Implicit dev quiet (NEXUS_DEV=1, set by `nexus dev` without
-		// --verbose). Drop the boot chatter but keep error events —
-		// otherwise an fx constructor / Invoke / lifecycle failure
-		// exits the binary silently and `nexus dev` shows
-		// "app exited: exit status 1" with nothing above it.
-		all = append(all, fx.WithLogger(func() fxevent.Logger {
-			return &fxErrorOnlyLogger{inner: &fxevent.ConsoleLogger{W: os.Stderr}}
-		}))
-	}
-	fx.New(all...).Run()
+	// The builtin container prints build/start errors to stderr itself; the
+	// opt-in fx adapter owns its own logging (and honors NEXUS_FX_QUIET).
+	// devQuiet only governs the gin route-registration spam, set above.
+	_ = devQuiet
+	backend.Build(di.Collect(all...)).Run()
 }
 
-// fxErrorOnlyLogger wraps an fxevent.Logger and only forwards events
-// that carry a non-nil error. Used in dev-quiet mode so fx graph
-// failures (missing dependency, constructor returning error, lifecycle
-// hook returning error) still reach stderr while the routine
-// Provided/Invoked/Started chatter stays suppressed. Replaces
-// fx.NopLogger on the implicit-quiet path — NopLogger ate the cause
-// of "app exited: exit status 1" silent failures.
-type fxErrorOnlyLogger struct{ inner fxevent.Logger }
-
-func (l *fxErrorOnlyLogger) LogEvent(event fxevent.Event) {
-	if fxEventErr(event) != nil {
-		l.inner.LogEvent(event)
-	}
-}
-
-// fxEventErr extracts the Err field from any fxevent type that carries
-// one. Events without an error field always return nil so they're
-// filtered out. RollingBack reports StartErr (the cause that triggered
-// the rollback) since that's the actionable signal.
-func fxEventErr(event fxevent.Event) error {
-	switch e := event.(type) {
-	case *fxevent.OnStartExecuted:
-		return e.Err
-	case *fxevent.OnStopExecuted:
-		return e.Err
-	case *fxevent.Supplied:
-		return e.Err
-	case *fxevent.Provided:
-		return e.Err
-	case *fxevent.Replaced:
-		return e.Err
-	case *fxevent.Decorated:
-		return e.Err
-	case *fxevent.Run:
-		return e.Err
-	case *fxevent.Invoked:
-		return e.Err
-	case *fxevent.Started:
-		return e.Err
-	case *fxevent.Stopped:
-		return e.Err
-	case *fxevent.RollingBack:
-		return e.StartErr
-	case *fxevent.RolledBack:
-		return e.Err
-	case *fxevent.LoggerInitialized:
-		return e.Err
-	}
-	return nil
-}
-
-// unwrap flattens a []Option into the []fx.Option fx needs internally.
-func unwrap(opts []Option) []fx.Option {
-	out := make([]fx.Option, len(opts))
+// unwrap flattens a []Option into the []di.Option the container needs.
+func unwrap(opts []Option) []di.Option {
+	out := make([]di.Option, len(opts))
 	for i, o := range opts {
 		out[i] = o.nexusOption()
 	}

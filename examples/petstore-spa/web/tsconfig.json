@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "/__nexus/client/client.js": [
+        "sdk/client.js"
+      ],
+      "/__nexus/client/vue.js": [
+        "sdk/vue.js"
+      ]
+    }
+  }
+}

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/registry"
@@ -64,7 +64,7 @@ type manifestStore struct {
 }
 
 // DeclareEnv records one env var the app reads. Safe to call from any
-// fx.Invoke — typically from a module-level nexus.DeclareEnv option,
+// di.Invoke — typically from a module-level nexus.DeclareEnv option,
 // which expands to an invoke that calls this. Empty Name is silently
 // dropped to keep callers from having to guard zero values when they
 // build env lists from a slice.
@@ -269,7 +269,7 @@ func (a *App) DeclareOverride(env string, ov manifest.Override) {
 // YAML parse errors return immediately. Schema validation (duplicate
 // names, malformed validation rules) is NOT performed here — call
 // manifest.Lint() on the result manifest to surface those issues.
-// Boot validation against actual env values still runs at fx.Start
+// Boot validation against actual env values still runs at di.Start
 // via resolveEffectiveManifest.
 //
 // Missing file is treated as an error so a typo in the path doesn't
@@ -699,14 +699,14 @@ func serviceKindFromResource(r registry.ResourceSnapshot) string {
 
 // ── Option helpers (module-level declarations) ─────────────────────
 //
-// These wrap fx.Invoke(func(*App) { app.DeclareXxx(...) }) so a
+// These wrap di.Invoke(func(*App) { app.DeclareXxx(...) }) so a
 // module declares at graph-construction time, not at lifecycle
 // start — meaning print mode sees the declarations even though
 // constructors aren't fired and OnStart never runs.
 //
 // Pattern matches the existing nexus.Provide / nexus.Invoke option
 // shape: each returns an Option whose nexusOption() yields an
-// fx.Option fx can wire.
+// di.Option fx can wire.
 
 // DeclareEnv produces an Option that registers one EnvVar on the
 // app at graph construction. Multiple calls compose:
@@ -766,7 +766,7 @@ func AddStartupTask(t manifest.StartupTask) Option {
 // manifestAutoRegisterInvoke is the manifest-side counterpart to
 // resourceAutoRegisterInvoke. When nexus.Provide is given a
 // constructor whose return type implements one of the manifest
-// provider interfaces, we synthesize an fx.Invoke(func(*App, T))
+// provider interfaces, we synthesize an di.Invoke(func(*App, T))
 // that registers the constructed value with the right declarator.
 //
 // Result: developer writes nexus.Provide(NewRabbitMQ) — no
@@ -776,7 +776,7 @@ func AddStartupTask(t manifest.StartupTask) Option {
 //
 // Returns nil when the constructor's return type doesn't implement
 // any manifest provider interface, so plain types pay nothing.
-func manifestAutoRegisterInvoke(fn any) fx.Option {
+func manifestAutoRegisterInvoke(fn any) di.Option {
 	rt := reflect.TypeOf(fn)
 	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
 		return nil
@@ -807,7 +807,7 @@ func manifestAutoRegisterInvoke(fn any) fx.Option {
 		}
 		return nil
 	})
-	return fx.Invoke(invokeFn.Interface())
+	return di.Invoke(invokeFn.Interface())
 }
 
 // ── Type-assert that registry shapes match what we expect ──────────
@@ -821,5 +821,5 @@ var _ = registry.Worker{Name: "", Description: ""}
 // Compile-time guard: *App MUST satisfy manifest.Registrar. Carved
 // here so a future signature drift on the interface (or a method
 // rename on *App) blows up the build instead of producing a wrong-
-// type panic at fx.Run time.
+// type panic at di.Run time.
 var _ manifest.Registrar = (*App)(nil)

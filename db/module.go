@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/manifest"
@@ -16,7 +16,7 @@ import (
 //
 // Why a struct (and not free-form options): fx wants concrete typed
 // inputs in its graph. A single ProvideOptions value supplied via
-// fx.Supply is the cleanest way to thread per-app config into a
+// di.Supply is the cleanest way to thread per-app config into a
 // shared module without per-app fx wiring.
 type ProvideOptions struct {
 	Driver Driver
@@ -45,7 +45,7 @@ type ProvideOptions struct {
 //
 // reg comes from the fx graph — *nexus.App satisfies the interface
 // via its Declare* methods. Auto-supplied by fxEarlyOptions.
-func Provide(lc fx.Lifecycle, opts ProvideOptions, logger *zap.Logger, reg manifest.Registrar) *Manager {
+func Provide(lc di.Lifecycle, opts ProvideOptions, logger *zap.Logger, reg manifest.Registrar) *Manager {
 	cfg := LoadConfig(opts.Driver, opts.EnvNames, opts.Defaults)
 	managerOpts := []Option{WithEnvNames(opts.EnvNames), WithBindName(opts.BindName)}
 	if logger != nil {
@@ -54,11 +54,11 @@ func Provide(lc fx.Lifecycle, opts ProvideOptions, logger *zap.Logger, reg manif
 	m := NewManager(cfg, managerOpts...)
 	reg.DeclareEnvProvider(m)
 	reg.DeclareServiceProvider(m)
-	lc.Append(fx.Hook{
+	lc.Append(di.Hook{
 		OnStart: func(_ context.Context) error {
 			// Manager.Start spawns the reconnect goroutine; the
 			// actual gorm.Open + connect happens inside that loop
-			// so a slow / unreachable DB never blocks fx.Start.
+			// so a slow / unreachable DB never blocks di.Start.
 			// Failures surface as IsConnected()=false; callers
 			// gate their first query on it.
 			m.Start()
@@ -70,11 +70,11 @@ func Provide(lc fx.Lifecycle, opts ProvideOptions, logger *zap.Logger, reg manif
 }
 
 // Module is the fx wiring for an app that wants a single Manager
-// with auto-manifest declarations. Compose with fx.Supply to feed
+// with auto-manifest declarations. Compose with di.Supply to feed
 // the per-app ProvideOptions:
 //
 //	nexus.Run(cfg,
-//	    fx.Supply(db.ProvideOptions{
+//	    di.Supply(db.ProvideOptions{
 //	        Driver: db.Postgres,
 //	        EnvNames: db.EnvNames{
 //	            User: "DB_USERNAME", Password: "PASSWORD",
@@ -89,6 +89,6 @@ func Provide(lc fx.Lifecycle, opts ProvideOptions, logger *zap.Logger, reg manif
 // Apps that need multiple Managers don't use this Module — they
 // wire each Manager via nexus.Provide(NewMyDBA, NewMyDBB, ...) and
 // rely on the *App auto-walk in nexus.Provide to register both.
-var Module = fx.Module("nexus-db",
-	fx.Provide(Provide),
+var Module = di.Module("nexus-db",
+	di.Provide(Provide),
 )

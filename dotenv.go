@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"go.uber.org/fx"
+	"github.com/paulmanoni/nexus/di"
 )
 
 // DotenvDefaultPath is the file LoadDotenvIfPresent reads when no
@@ -68,7 +68,7 @@ func LoadDotenvIfPresent(path ...string) Option {
 	if err := loadDotenvFile(p); err != nil {
 		// Errors other than "file missing" should stop boot — a
 		// malformed .env is an operator bug worth surfacing loudly.
-		return Raw(fx.Error(fmt.Errorf("nexus.LoadDotenvIfPresent: %w", err)))
+		return Raw(di.Error(fmt.Errorf("nexus.LoadDotenvIfPresent: %w", err)))
 	}
 	return Options()
 }
@@ -84,10 +84,10 @@ func MustLoadDotenv(path ...string) Option {
 		p = path[0]
 	}
 	if _, err := os.Stat(p); err != nil {
-		return Raw(fx.Error(fmt.Errorf("nexus.MustLoadDotenv: %s: %w", p, err)))
+		return Raw(di.Error(fmt.Errorf("nexus.MustLoadDotenv: %s: %w", p, err)))
 	}
 	if err := loadDotenvFile(p); err != nil {
-		return Raw(fx.Error(fmt.Errorf("nexus.MustLoadDotenv: %w", err)))
+		return Raw(di.Error(fmt.Errorf("nexus.MustLoadDotenv: %w", err)))
 	}
 	return Options()
 }

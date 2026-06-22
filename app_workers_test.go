@@ -7,8 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxtest"
+	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/registry"
 )
@@ -27,10 +26,10 @@ func TestAsWorker_RunsUntilStopSignalsCtx(t *testing.T) {
 	}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsWorker("test-worker", worker).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 
@@ -88,10 +87,10 @@ func TestAsWorker_ErrorReturnMarksFailed(t *testing.T) {
 	}
 
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		AsWorker("bad-worker", worker).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
@@ -125,12 +124,12 @@ func TestAsWorker_CapturesDeps(t *testing.T) {
 		return nil
 	}
 	var app *App
-	fxApp := fxtest.New(t,
+	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
 		Provide(NewUsersService).nexusOption(),
 		AsWorker("cache-invalidation", worker).nexusOption(),
-		fx.Populate(&app),
+		di.Populate(&app),
 	)
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()

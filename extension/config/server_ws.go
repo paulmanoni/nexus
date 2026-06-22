@@ -52,8 +52,11 @@ func newSubscribers() *subscribers {
 // buffered so a slow consumer doesn't block the broadcast
 // goroutine; full channels drop events (the polling fallback
 // in clients catches missed pushes).
-func (s *subscribers) add() *subscription {
-	sub := &subscription{send: make(chan subscribeEvent, 4)}
+// add registers a fresh subscription for (app, profile). The app/profile are
+// set before the subscription becomes visible in conns, so fanout (which reads
+// them under RLock) never races a concurrent field write.
+func (s *subscribers) add(app, profile string) *subscription {
+	sub := &subscription{app: app, profile: profile, send: make(chan subscribeEvent, 4)}
 	s.mu.Lock()
 	s.conns[sub] = struct{}{}
 	s.mu.Unlock()
@@ -121,9 +124,7 @@ func (st *serverState) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	sub := st.subs.add()
-	sub.app = app
-	sub.profile = profile
+	sub := st.subs.add(app, profile)
 	defer st.subs.remove(sub)
 
 	// Push the current version immediately so a freshly-
