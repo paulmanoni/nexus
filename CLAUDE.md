@@ -374,6 +374,57 @@ Wire format: `{ "type": "...", "data": {...}, "timestamp": ... }`. `*WSSession`:
 `Send / Emit / EmitToUser / EmitToRoom / EmitToClient`, `JoinRoom / LeaveRoom`.
 Built-in `ping/authenticate/subscribe/unsubscribe` are handled by the hub.
 
+### Decorator-form registration (`//@` annotations) — optional
+
+Instead of listing every handler in a `nexus.Module(...)`, annotate the handler
+functions with `//@` doc comments and let codegen do the wiring. **Purely
+additive** — it produces the same options as `AsRest`/`AsQuery`/`Provide`, so
+annotated and hand-written registrations coexist. Needs the `decorate` package
+(`github.com/paulmanoni/nexus/decorate`); the codegen scanner lives in the
+`nexus` CLI only, so the app binary links no extra deps.
+
+```go
+//@provide
+func NewUserService(app *nexus.App) *UserService { ... }
+
+//@rest GET /users/:id
+func NewGetUser(s *UserService, p nexus.Params[GetArgs]) (*User, error) { ... }
+
+//@mutation
+//@auth Requires("ADMIN")
+func NewCreateUser(s *UserService, p nexus.Params[NewUser]) (*User, error) { ... }
+```
+
+Annotation catalog (one PRIMARY per func, plus optional modifiers):
+```
+//@provide                        //@rest <METHOD> <PATH>      //@query / //@mutation
+//@subscription                   //@ws <PATH> <TYPE>          //@worker <NAME>
+//@auth Required | Requires("X")  (modifier)                   //@use <expr>  (modifier, per-op middleware)
+//@<pkg>.<Func> args…             custom extension decorator — emits pkg.Func(args…, fn);
+                                  the registrar returns a nexus.Option (e.g. inertia.Page,
+                                  reusing its existing signature). pkg is imported from the
+                                  annotated file. Args are whitespace-separated; no spaces inside one.
+```
+
+**The app needs no wiring** — `main` is just `nexus.Boot()` / `nexus.Run(cfg, …)`:
+- `nexus generate handlers [./...]` scans the tree and writes one
+  `nexus_handlers_gen.go` per package — `decorate.Register(nexus.Module("pkg", …))`
+  with the real `nexus.As*`/`Provide` options — plus a blank-import aggregator in
+  the main package so Go pulls every annotated package into the build (Go compiles
+  only imported packages; you write no import). `--check` is a CI drift gate.
+- `decorate` auto-drains its registry into `Boot`/`Run` via a deferred-options
+  hook — no `decorate.Module(...)` call. Each package's endpoints group under a
+  `nexus.Module` named after the package (the `main` package → `"app"`), so the
+  dashboard groups them automatically.
+- **`nexus dev`** injects the generated files via `go run -overlay` (zero source
+  churn); **`nexus build`** regenerates them before `go build`. The committed
+  `*_gen.go` keep plain `go build`/`go install` correct (they run no overlay).
+
+Brand decorator-registered endpoints on the dashboard with `nexus.WithIcon(name)`
+(a cross-transport per-op option, like `HideFromDashboard()`); extension
+registrars bake their icon in (e.g. `inertia.Page` → `app-window`). See
+`decorate/DESIGN.md` and `examples/notes` / `examples/inertia`.
+
 ---
 
 ## 6. Resources (databases / caches / queues)
@@ -547,6 +598,9 @@ nexus build          viteless build → web/dist, then go build embeds it. No np
                      ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 nexus generate dockerfile   Multi-stage Dockerfile.
+nexus generate handlers [./...]  Wire //@-annotated handlers: write nexus_handlers_gen.go
+                     per package + a main-package import aggregator. --check = CI drift gate.
+                     (Run automatically by nexus dev/build; see §5.)
 nexus docs [topic]   Inline reference. --web opens the README.
 nexus pki ...        Generate mTLS certs for the peer mesh.
 ```
