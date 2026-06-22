@@ -15,6 +15,7 @@ func newGenerateCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newGenerateFrontendCmd(stdout, stderr),
+		newGenerateHandlersCmd(stdout, stderr),
 	)
 	return cmd
 }

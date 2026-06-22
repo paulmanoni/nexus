@@ -69,6 +69,7 @@ type Config struct {
 type PluginInfo struct {
 	Name         string   `json:"name"`
 	Version      string   `json:"version,omitempty"`
+	Icon         string   `json:"icon,omitempty"` // lucide-style icon; UI falls back to a default extension icon
 	Namespace    string   `json:"namespace,omitempty"`
 	HasDashboard bool     `json:"hasDashboard,omitempty"`
 	HasClient    bool     `json:"hasClient,omitempty"`

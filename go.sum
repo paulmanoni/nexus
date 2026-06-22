@@ -122,6 +122,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/patrickmn/go-cache v2.1.0+incompatible h1:HRMgzkcYKYpi3C8ajMPV8OFXaaRUnok+kx1WdO15EQc=
 github.com/patrickmn/go-cache v2.1.0+incompatible/go.mod h1:3Qf8kWWT7OJRJbdiICTKqZju1ZixQ/KpMGzzAfe6+WQ=
+github.com/paulmanoni/deco v0.12.0 h1:plUkCnGlL1ESZYfLKr1sUbGSN0nif/E0b6S3QeAeoFM=
+github.com/paulmanoni/deco v0.12.0/go.mod h1:ryDl9L/jzB97IMMUXr+dGl7Q9hsF6Z1O8TJ+CElouMM=
 github.com/paulmanoni/qjs v0.0.8 h1:v2jrcPRJ1MfTDGhDW7SoAEizmkaYS4kSq2UfKCCJsvk=
 github.com/paulmanoni/qjs v0.0.8/go.mod h1:rsssVjSqdmYhvl1pBmAVRKjcOsRyAHQ/oGmRS/t+KWM=
 github.com/paulmanoni/viteless v0.2.0 h1:dlBhz+wLtcGpjTIdEPt809YlxICbD+SExXNndw6qpW4=

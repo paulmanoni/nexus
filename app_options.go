@@ -473,6 +473,10 @@ func Run(cfg Config, opts ...Option) {
 		fxEarlyOptions(cfg),
 		autoManifestOptions(),
 	}, unwrap(opts)...)
+	// Deferred sources (e.g. nexus/decorate's //@-annotation drain) contribute
+	// AFTER the app's own options and BEFORE autoMountGraphQL, so their
+	// endpoints take part in schema assembly like any hand-written module.
+	all = append(all, unwrap(collectDeferredOptions())...)
 	all = append(all, fxLateOptions())
 	// The builtin container prints build/start errors to stderr itself; the
 	// opt-in fx adapter owns its own logging (and honors NEXUS_FX_QUIET).

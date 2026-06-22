@@ -195,6 +195,16 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 	}
 	defer removeEmbedFile(embedPath, opts.Stderr)
 
+	// Refresh the committed decorator-form registration files (nexus_handlers_gen.go)
+	// from //@ annotations so the binary we build reflects the current sources.
+	// Scans the whole project tree (handlers often live in sibling packages of
+	// the main package). A no-op when nothing is annotated.
+	if n, err := writeHandlerFiles(cwd); err != nil {
+		return fmt.Errorf("nexus build: handler codegen: %w", err)
+	} else if n > 0 {
+		fmt.Fprintf(opts.Stdout, "handler codegen: %d file(s) updated\n", n)
+	}
+
 	args := []string{"build"}
 	if opts.Output != "" {
 		args = append(args, "-o", opts.Output)

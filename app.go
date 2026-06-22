@@ -333,16 +333,19 @@ func New(cfg Config) *App {
 	a.RegisterPlugin(PluginRecord{
 		Name:         "ratelimit",
 		Version:      "1",
+		Icon:         "gauge",
 		HasDashboard: true,
 	})
 	a.RegisterPlugin(PluginRecord{
 		Name:         "metrics",
 		Version:      "1",
+		Icon:         "activity",
 		HasDashboard: true,
 	})
 	a.RegisterPlugin(PluginRecord{
 		Name:         "cron",
 		Version:      "1",
+		Icon:         "clock",
 		HasDashboard: true,
 	})
 	// Cache has no dashboard surface — it's plumbing consumed by
@@ -350,6 +353,7 @@ func New(cfg Config) *App {
 	a.RegisterPlugin(PluginRecord{
 		Name:    "cache",
 		Version: "1",
+		Icon:    "database",
 	})
 	// Dashboard registers itself only when Config.Dashboard.Enabled
 	// flips it on (the actual Mount call below). Conditional record
@@ -359,6 +363,7 @@ func New(cfg Config) *App {
 		a.RegisterPlugin(PluginRecord{
 			Name:         "dashboard",
 			Version:      "1",
+			Icon:         "layout-dashboard",
 			HasDashboard: true,
 		})
 	}
@@ -397,6 +402,7 @@ func New(cfg Config) *App {
 					info := dashboard.PluginInfo{
 						Name:         r.Name,
 						Version:      r.Version,
+						Icon:         r.Icon,
 						Namespace:    r.Namespace,
 						HasDashboard: r.HasDashboard,
 						HasClient:    r.HasClient,

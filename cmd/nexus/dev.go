@@ -218,8 +218,18 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		}
 	}
 
-	// Single binary — no manifest-aware overlay.
+	// overlayPath injects the decorator-form handler registrations
+	// (//@rest / //@provide / …) for `nexus dev` WITHOUT writing any
+	// nexus_handlers_gen.go into the source tree — zero churn while iterating.
+	// It's regenerated at the top of each restart so annotation edits flow in
+	// on the next reload; cleanupOverlay removes the previous temp dir.
 	overlayPath := ""
+	var cleanupOverlay func()
+	defer func() {
+		if cleanupOverlay != nil {
+			cleanupOverlay()
+		}
+	}()
 	// proxyAddr is the app's bind address used by the post-boot TS codegen
 	// to fetch the running manifest (manifest port from --addr).
 	proxyAddr := addr
@@ -305,6 +315,20 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// restarts skip the open-browser branch (user already has the tab).
 	first := true
 	for {
+		// Regenerate the handler-registration overlay from the current //@
+		// annotations before each (re)launch, replacing the previous temp dir.
+		// A scan error here usually means a source file won't compile either,
+		// so go run surfaces the real error — we just warn and drop the overlay.
+		if cleanupOverlay != nil {
+			cleanupOverlay()
+			cleanupOverlay = nil
+		}
+		if op, cl, err := buildHandlerOverlay(target); err != nil {
+			fmt.Fprintf(stderr, "%s●%s handler codegen skipped: %v\n", ansiYellow, ansiReset, err)
+			overlayPath = ""
+		} else {
+			overlayPath, cleanupOverlay = op, cl
+		}
 		// Pass the frontend URL channel only on the first boot.
 		// Subsequent Go restarts shouldn't re-open browsers, and the
 		// vite dev server is already running anyway.

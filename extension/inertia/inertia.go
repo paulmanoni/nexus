@@ -98,6 +98,7 @@ func Module(cfg Config) nexus.Option {
 	return extension.Use(extension.Plugin{
 		Name:    "inertia",
 		Version: "1",
+		Icon:    Icon,
 		Options: []nexus.Option{
 			nexus.Raw(di.Provide(func(in engineParams) *Engine {
 				return newEngine(cfg, in.Shared)
