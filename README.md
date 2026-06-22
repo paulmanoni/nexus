@@ -111,6 +111,54 @@ curl localhost:8080/hello -d '{"name":"world"}'
 Same function, three transports. Add `nexus.AsMutation(...)` for a GraphQL mutation or
 `nexus.AsWS(...)` for a WebSocket event — all read the same signature.
 
+## Skip the wiring: `//@` decorators
+
+Rather than maintain a `nexus.Module(...)` list, you can annotate handlers with `//@`
+doc comments and let nexus generate the wiring. Same functions — registered from the
+comment above them:
+
+```go
+package users
+
+import "github.com/paulmanoni/nexus"
+
+//@provide
+func NewService(app *nexus.App) *Service { return &Service{app.Service("users")} }
+
+type GetArgs struct {
+    ID string `uri:"id"` // REST path params bind via the `uri` tag
+}
+
+//@rest GET /users/:id
+func NewGetUser(s *Service, p nexus.Params[GetArgs]) (*User, error) { ... }
+
+//@query
+//@auth Requires("ADMIN")
+func NewSearchUsers(s *Service, p nexus.Params[SearchArgs]) ([]User, error) { ... }
+```
+
+Your `main` keeps **no handler list at all**:
+
+```go
+func main() { nexus.Boot() } // or nexus.Run(cfg, …) — no nexus.Module(...) needed
+```
+
+Then iterate or build:
+
+```bash
+nexus dev                       # injects the wiring on the fly — nothing written to disk
+nexus generate handlers ./...   # OR: commit nexus_handlers_gen.go for plain go build/install
+```
+
+`nexus generate handlers` scans your packages, writes the `nexus.AsRest/AsQuery/Provide`
+calls into a generated file per package, and wires every annotated package into the build
+— so `main` stays `nexus.Boot()`. Each package becomes a dashboard **module** automatically.
+
+Annotations: `//@provide`, `//@rest M P`, `//@query`, `//@mutation`, `//@subscription`,
+`//@ws P T`, `//@worker N`, plus `//@auth Required|Requires("X")` and `//@use <mw>`. It's
+purely additive — coexists with explicit `nexus.Module(...)`, opt out per handler any time.
+Extensions ship their own too, e.g. `//@inertia.Page "GET" "/dashboard" "Dashboard"`.
+
 ## The dashboard
 
 Visit `/__nexus/` (enabled above) and you get a live map of your app, built automatically
