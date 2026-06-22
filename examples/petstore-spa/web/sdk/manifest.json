@@ -1,0 +1,309 @@
+{
+  "version": "client.v1",
+  "basePath": "",
+  "services": [
+    {
+      "name": "app"
+    }
+  ],
+  "endpoints": [
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "POST",
+      "path": "/login",
+      "name": "POST /login",
+      "args": {
+        "kind": "ref",
+        "ref": "Credentials"
+      },
+      "return": {
+        "kind": "ref",
+        "ref": "LoginResp"
+      },
+      "authFlow": "login"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "POST",
+      "path": "/logout",
+      "name": "POST /logout",
+      "authRequired": true,
+      "authFlow": "logout"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/me",
+      "name": "GET /me",
+      "return": {
+        "kind": "ref",
+        "ref": "User"
+      },
+      "authRequired": true,
+      "authFlow": "me"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/pets",
+      "name": "GET /pets",
+      "args": {
+        "kind": "ref",
+        "ref": "ListOptions"
+      },
+      "return": {
+        "kind": "ref",
+        "ref": "PageOfPet"
+      },
+      "authRequired": true
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "POST",
+      "path": "/pets",
+      "name": "POST /pets",
+      "args": {
+        "kind": "ref",
+        "ref": "Pet"
+      },
+      "return": {
+        "kind": "ref",
+        "ref": "Pet",
+        "optional": true
+      },
+      "authRequired": true
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "DELETE",
+      "path": "/pets/:id",
+      "name": "DELETE /pets/:id",
+      "args": {
+        "kind": "ref",
+        "ref": "idArg"
+      },
+      "return": {
+        "kind": "object",
+        "object": {
+          "fields": []
+        }
+      },
+      "authRequired": true
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/pets/:id",
+      "name": "GET /pets/:id",
+      "args": {
+        "kind": "ref",
+        "ref": "idArg"
+      },
+      "return": {
+        "kind": "ref",
+        "ref": "Pet",
+        "optional": true
+      },
+      "authRequired": true
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "PATCH",
+      "path": "/pets/:id",
+      "name": "PATCH /pets/:id",
+      "args": {
+        "kind": "ref",
+        "ref": "Pet"
+      },
+      "return": {
+        "kind": "ref",
+        "ref": "Pet",
+        "optional": true
+      },
+      "authRequired": true
+    }
+  ],
+  "refs": {
+    "Credentials": {
+      "fields": [
+        {
+          "name": "Username",
+          "jsonName": "username",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Password",
+          "jsonName": "password",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        }
+      ]
+    },
+    "ListOptions": {
+      "fields": [
+        {
+          "name": "Limit",
+          "jsonName": "limit",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        },
+        {
+          "name": "Offset",
+          "jsonName": "offset",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        },
+        {
+          "name": "Sort",
+          "jsonName": "sort",
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "primitive",
+              "primitive": "string"
+            }
+          },
+          "optional": true
+        }
+      ]
+    },
+    "LoginResp": {
+      "fields": [
+        {
+          "name": "Token",
+          "jsonName": "token",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "User",
+          "jsonName": "user",
+          "type": {
+            "kind": "ref",
+            "ref": "User"
+          }
+        }
+      ]
+    },
+    "PageOfPet": {
+      "fields": [
+        {
+          "name": "Items",
+          "jsonName": "items",
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "ref",
+              "ref": "Pet"
+            }
+          }
+        },
+        {
+          "name": "Total",
+          "jsonName": "total",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        },
+        {
+          "name": "Limit",
+          "jsonName": "limit",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        },
+        {
+          "name": "Offset",
+          "jsonName": "offset",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        }
+      ]
+    },
+    "Pet": {
+      "fields": [
+        {
+          "name": "ID",
+          "jsonName": "id",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Name",
+          "jsonName": "name",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Age",
+          "jsonName": "age",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          },
+          "optional": true
+        }
+      ]
+    },
+    "User": {
+      "fields": [
+        {
+          "name": "ID",
+          "jsonName": "id",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Name",
+          "jsonName": "name",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        }
+      ]
+    },
+    "idArg": {
+      "fields": [
+        {
+          "name": "ID",
+          "jsonName": "id",
+          "graphqlName": "id",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        }
+      ]
+    }
+  }
+}
