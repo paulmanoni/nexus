@@ -1,7 +1,7 @@
 # nexus — framework guide for Claude Code
 
 nexus is a Go backend framework: typed reflective handlers over REST + GraphQL +
-WebSocket, fx-based dependency injection, an embedded **viteless** frontend (a
+WebSocket, dependency injection (a built-in zero-dep container; fx optional), an embedded **viteless** frontend (a
 zero-Node "Vite for Go"), and a live introspection dashboard at `/__nexus`. This file
 tells you how to use every feature. Verify APIs against the installed version; `nexus
 docs <topic>` prints an inline quick-reference for any feature (`nexus docs --list`).
@@ -228,6 +228,51 @@ backend, and the router only matches paths + returns params. App-level middlewar
 `*httpx.Ctx` parameter (replaces `*gin.Context`); `httpx.H` is the JSON map
 shorthand (replaces `gin.H`).
 
+### DI container backend (pluggable; built-in by default)
+
+nexus has its **own dependency-injection container** — `github.com/paulmanoni/nexus/di`,
+a small zero-third-party-dependency engine — wired behind the same kind of seam as
+the router. **It is the default, so the default binary links no `go.uber.org/fx`,
+`dig`, `multierr`, or `atomic`.** `go.uber.org/fx` is opt-in:
+
+```go
+import (
+    "github.com/paulmanoni/nexus"
+    "github.com/paulmanoni/nexus/di/fxcontainer"
+)
+
+nexus.Boot(nexus.WithContainer(fxcontainer.New()))     // one line
+```
+
+`nexus.WithContainer(...)` is the only switch (no nexus.toml key — an adapter must be
+imported to link). Selecting fx pulls fx/dig back into the build; the builtin default
+does not. Both backends are observably identical (verified by a parity suite); the
+builtin is ~60× faster to build a graph at startup, with far fewer allocations — a
+one-time boot cost either way.
+
+**User/extension code never names the container.** `nexus.Provide / Supply / Invoke /
+Module / Options / Error` are unchanged and now record a backend-neutral `di.Option`
+(via the hidden `nexusOption() di.Option` method). The container is an implementation
+detail behind those helpers — like fx was before.
+
+- **Lifecycle:** take a `nexus.Lifecycle` parameter (alias of `di.Lifecycle`) in a
+  constructor/invoke and `lc.Append(nexus.Hook{OnStart, OnStop})`. Resources
+  (`db.Bind`, `cache.Bind`), workers, crons, and the HTTP listeners all register their
+  start/stop this way. The fx adapter bridges `fx.Lifecycle` onto it transparently.
+- **`nexus.Error(err)`** surfaces an option-build error at boot (replaces the old
+  `nexus.Raw(fx.Error(err))` pattern). `nexus.Raw(di.Option)` remains the low-level
+  escape hatch.
+- **Value groups / optional deps:** internal wiring (e.g. the GraphQL field group,
+  the optional default auth gate) uses `di.Annotate(fn, di.ParamTags/di.ResultTags(...))`
+  with `group:"…"` / `optional:"true"` tags rather than `fx.In`/`fx.Out` marker structs,
+  so both backends translate them identically. Constructors are lazy (run only when a
+  result is demanded) and singletons; invokes run eagerly in registration order — same
+  semantics as fx.
+
+**`fxcontainer` is a SEPARATE module** so fx stays out of the main module's dependency
+graph — `go get github.com/paulmanoni/nexus/di/fxcontainer` to use it. The builtin
+container ships inside the main module.
+
 ---
 
 ## 3. Modules & dependency injection
@@ -235,7 +280,7 @@ shorthand (replaces `gin.H`).
 ```go
 var Module = nexus.Module("billing",     // stamps "billing" on every endpoint inside
     nexus.Path("/billing"),               // REST + GraphQL prefix in one
-    nexus.Provide(NewBillingService),     // constructor(s) into the fx graph
+    nexus.Provide(NewBillingService),     // constructor(s) into the DI graph
     nexus.AsRest("POST", "/charge", NewCharge),
     nexus.AsQuery(NewListInvoices),
 )
@@ -253,8 +298,8 @@ The dashboard's Architecture graph **groups by module**. Option helpers:
 
 ## 4. Services
 
-A service is a typed wrapper around `*nexus.Service` so fx routes by type and the
-dashboard groups handlers under it:
+A service is a typed wrapper around `*nexus.Service` so the DI container routes by
+type and the dashboard groups handlers under it:
 ```go
 type BillingService struct{ *nexus.Service }
 
@@ -313,7 +358,7 @@ nexus.LoadField[models.AcademicProgramme, int64, *models.AcademicLevel](
 `LoadField[Parent, Key, Child]("field", keyFn, fetch)` — the framework collects every
 parent's key across the query and calls `fetch` ONCE per batch. `fetch` is one of:
 (a) `func(ctx, []Key) (map[Key]Child, error)` — no deps; (b) a constructor returning
-`dataloader.Fetch[Key, Child]` (fx-injected); (c) inline with trailing fx-injected deps
+`dataloader.Fetch[Key, Child]` (DI-injected); (c) inline with trailing DI-injected deps
 (`func(ctx, []Key, db *DB, …)`). Parent's SDL name is its Go type name. (Watch the loop:
 key each result by its own id — don't overwrite as the example's inner loop did.)
 
@@ -381,7 +426,7 @@ app pays for those only when it calls a binder. This mirrors `pubsub.Broker`.
   `Config.Stores.Metrics = cache.NewMetricsStore(mgr)`; the default is an in-process
   memory store with no cache dependency.
 
-Handlers/services then take `*DB`, `*CacheManager` as constructor params (fx injects).
+Handlers/services then take `*DB`, `*CacheManager` as constructor params (the DI container injects).
 
 **Manual API** (for queues or full control): `resource.NewDatabase/NewCache/NewQueue(name,
 desc, details, healthy, opts...)` with `resource.AsDefault()/DependsOn(...)/WithDetails(fn)`;
@@ -414,7 +459,7 @@ those values then override the nexus.toml base layer. Databases can pull secrets
 nexus.AsWorker("cache-invalidation",
     func(ctx context.Context, db *DB, cache *CacheManager) error {
         for { select { case <-ctx.Done(): return nil; case n := <-listener.Notify: handle(n) } }
-    })   // first param MUST be context.Context; the rest are fx-injected
+    })   // first param MUST be context.Context; the rest are DI-injected
 
 app.Cron("refresh", "@every 30s").
     Describe("warm the cache").
