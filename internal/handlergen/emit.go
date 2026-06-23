@@ -87,7 +87,11 @@ func optsAllowed(kind string) bool {
 	case "rest", "query", "mutation", "subscription", "ws":
 		return true
 	}
-	return false
+	// Custom extension decorators (//@pkg.Func, e.g. //@inertia.Page) accept
+	// modifiers too: they're appended as trailing options to the registrar call
+	// (inertia.Page(..., auth.Required())). The registrar must accept the option
+	// type — a compile error if it doesn't, which is the right, loud failure.
+	return strings.Contains(kind, ".")
 }
 
 // Emit renders the generated source for one package. Returns (nil, nil) when
@@ -247,13 +251,15 @@ func renderPrimary(a Annotation, fn string, opts []string) (string, error) {
 	// Custom extension decorator: //@pkg.Func args… → pkg.Func(args…, fn). The
 	// registrar returns a nexus.Option (the universal nexus convention —
 	// inertia.Page, etc.), so any existing one works with no wrapper. Each
-	// whitespace-separated token is a distinct argument (comma-joined); modifiers
-	// aren't supported here (optsAllowed is false for dotted keywords).
+	// whitespace-separated token is a distinct argument (comma-joined). Modifiers
+	// (//@auth, //@use) are appended as trailing options (optTail), so e.g.
+	// //@inertia.Page + //@auth Required → inertia.Page(args…, fn, auth.Required()).
+	// The registrar must accept the option type (a compile error otherwise).
 	if strings.Contains(a.Keyword, ".") {
 		if len(a.Args) > 0 {
-			return fmt.Sprintf("%s(%s, %s)", a.Keyword, strings.Join(a.Args, ", "), fn), nil
+			return fmt.Sprintf("%s(%s, %s%s)", a.Keyword, strings.Join(a.Args, ", "), fn, optTail), nil
 		}
-		return fmt.Sprintf("%s(%s)", a.Keyword, fn), nil
+		return fmt.Sprintf("%s(%s%s)", a.Keyword, fn, optTail), nil
 	}
 	return "", fmt.Errorf("unhandled primary //@%s", a.Keyword)
 }
