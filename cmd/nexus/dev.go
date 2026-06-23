@@ -49,6 +49,10 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		frontendCmd string
 		verbose     bool
 		fast        bool
+		distWatch   bool
+		rawLogs     bool
+		logFormat   string
+		logPattern  string
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
@@ -81,7 +85,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -102,6 +106,14 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
 	cmd.Flags().BoolVar(&fast, "fast", false,
 		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking; disables delve and trims panic stack detail")
+	cmd.Flags().BoolVar(&distWatch, "dist", false,
+		"also keep web/dist rebuilt in the background (debounced viteless build) so go build / the production embed always matches the live frontend")
+	cmd.Flags().BoolVar(&rawLogs, "raw-logs", false,
+		"print the app's raw log lines instead of the columnar Dev Server Logs view (auto-disabled when stdout isn't a tty)")
+	cmd.Flags().StringVar(&logFormat, "log-format", "",
+		"dev log formatter: pretty (default) | logfmt | pattern | raw/json. Overrides [runtime.logging] format in nexus.toml")
+	cmd.Flags().StringVar(&logPattern, "log-pattern", "",
+		"custom layout when --log-format=pattern, e.g. \"%time %-5level %caller %msg %fields\" (Spring-style tokens). Overrides [runtime.logging] pattern")
 	return cmd
 }
 
@@ -170,6 +182,38 @@ func devInertiaEnabled(target string) bool {
 	return cfg.Runtime.Inertia.Enabled
 }
 
+// devLoggingFromConfig reads [runtime.logging] from nexus.toml in the dev
+// target's dir — the Django-/Spring-style declarative log config. Returns the
+// formatter name and (for format="pattern") the layout string; both empty when
+// the file/table/keys are absent. Lenient like devAddrFromConfig: a parse
+// error never fails the dev loop, it just falls back to the pretty default.
+//
+//	[runtime.logging]
+//	format  = "pretty"   # pretty | logfmt | pattern | raw
+//	pattern = "%time  %-5level  %caller  %msg  %fields"
+func devLoggingFromConfig(target string) (format, pattern string) {
+	dir := target
+	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(target)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "nexus.toml"))
+	if err != nil {
+		return "", ""
+	}
+	var cfg struct {
+		Runtime struct {
+			Logging struct {
+				Format  string `toml:"format"`
+				Pattern string `toml:"pattern"`
+			} `toml:"logging"`
+		} `toml:"runtime"`
+	}
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(cfg.Runtime.Logging.Format), cfg.Runtime.Logging.Pattern
+}
+
 type userError struct{ msg string }
 
 func (e *userError) Error() string { return e.msg }
@@ -181,11 +225,41 @@ func (e *userError) Error() string { return e.msg }
 // When watch is true, runs a fsnotify watcher on the target dir and
 // restarts `go run` on every coalesced source-file change. SIGINT
 // stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast bool, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Columnar "Dev Server Logs" view: reshape the child's zap-JSON log lines
+	// into the time · level · source · message layout. Off when --raw-logs is
+	// set or stdout isn't a tty (so piping/redirecting keeps the raw JSON for
+	// grep/jq). Color further honors NO_COLOR.
+	//
+	// Formatter selection (Django-/Spring-style): nexus.toml [runtime.logging]
+	// sets the default { format, pattern }; the --log-format / --log-pattern
+	// flags override per-run. format=raw|json|off bypasses the prettifier
+	// entirely (raw JSON passes through).
+	cfgFormat, cfgPattern := devLoggingFromConfig(target)
+	if logFormat == "" {
+		logFormat = cfgFormat
+	}
+	if logPattern == "" {
+		logPattern = cfgPattern
+	}
+	prettyLogs := !rawLogs && stdoutIsTerminal()
+	switch strings.ToLower(strings.TrimSpace(logFormat)) {
+	case "raw", "json", "off", "none":
+		prettyLogs = false
+	}
+	var logFmt logFormatter
+	if prettyLogs {
+		f, ok := resolveLogFormatter(logFormat, logPattern)
+		if !ok {
+			fmt.Fprintf(stderr, "%s●%s unknown --log-format %q · using pretty\n", ansiYellow, ansiReset, logFormat)
+		}
+		logFmt = f
+	}
 
 	// Inertia dev topology (opt-in via nexus.toml). When on, the Go app
 	// owns page navigation, so the browser opens the app port and the app
@@ -290,6 +364,18 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		frontendURLCh = nil
 	}
 
+	// --dist: mirror the live frontend into web/dist in the background so a
+	// `go build` taken mid-session (or the production embed) always matches
+	// the current source. Opt-in — it runs a full viteless build alongside
+	// the HMR server. Independent of the dev server starting, so it works
+	// even when viteless.Dev failed to come up.
+	if distWatch && frontendDir != "" {
+		env, _ := nexus.EnvVars(nexusTOMLPath(target))
+		if err := watchDistBuild(ctx, frontendDir, env, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "%s●%s dist watch disabled: %v\n", ansiYellow, ansiReset, err)
+		}
+	}
+
 	var restartCh chan struct{}
 	if watch {
 		restartCh = make(chan struct{}, 1)
@@ -342,7 +428,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		if inertiaDev {
 			inertiaViteURL = frontendBaseURL
 		}
-		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, viteURLForOpen, inertiaViteURL, stdout, stderr)
+		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -423,7 +509,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // listeners, topology) gets compiled into the binary.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose, fast bool, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	args := []string{"run"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
@@ -458,8 +544,17 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	// — without this scan, the banner would point at the flag's
 	// guess (default :8080) when the user wrote :8083.
 	detectedCh := make(chan string, 1)
-	cmd.Stdout = newAddrFinder(stdout, detectedCh)
-	cmd.Stderr = newAddrFinder(stderr, detectedCh)
+	// Pretty path: the addrFinder must still see RAW child bytes to detect the
+	// "nexus: listening on …" line, so it wraps the prettifier (raw in →
+	// detect → reshape → terminal), not the other way round.
+	outW, errW := stdout, stderr
+	if prettyLogs {
+		color := os.Getenv("NO_COLOR") == ""
+		outW = newLogPretty(stdout, color, logFmt)
+		errW = newLogPretty(stderr, color, logFmt)
+	}
+	cmd.Stdout = newAddrFinder(outW, detectedCh)
+	cmd.Stderr = newAddrFinder(errW, detectedCh)
 	cmd.Stdin = os.Stdin
 	// Hand the child a NEXUS_DEV signal so ServeFrontend swaps its
 	// embed.FS for os.DirFS — a watching frontend toolchain (vite
