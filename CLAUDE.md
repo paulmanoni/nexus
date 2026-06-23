@@ -94,6 +94,36 @@ app). No npm step — viteless fetches/caches deps itself (or uses node_modules 
 So in dev: **frontend → :5173, dashboard/API → :8080.** In production the embedded
 `web/dist` is served at the app port via `ServeFrontend`.
 
+**Keeping `web/dist` fresh in dev (`--dist`).** The HMR server serves the frontend
+from memory and never writes `web/dist`, so the embedded production bundle stays
+frozen at the last `nexus build` — a `go build` taken mid-session ships stale assets.
+`nexus dev --dist` runs a debounced background `viteless` build into `web/dist`
+alongside the HMR server, so the embed always matches the live frontend (no manual
+`nexus build`). Opt-in: it runs a full production bundle on each change (the dep store
+is cached, so incremental app-only rebuilds stay fast). No rebuild loop — the `dist/`
+output is excluded from the watch and the Go-source watcher ignores `web/dist` writes.
+
+### Dev server logs (columnar, configurable — Django/Spring-style)
+`nexus dev` reshapes the app's structured (zap-JSON) log lines into a columnar,
+colorized **Dev Server Logs** view — `time · LEVEL · source(file:line) · message
+key=value` (info=cyan, warn=amber, error=red). Non-JSON output (gin, the
+`nexus: listening on …` banner, panics) passes through untouched, and the
+prettifier auto-disables when stdout isn't a tty (so `nexus dev > log` keeps raw
+JSON for grep/jq); color honors `NO_COLOR`.
+
+The formatter is pluggable, configured declaratively like Django's `LOGGING`
+formatters or Spring's `logging.pattern.console`:
+```toml
+[runtime.logging]
+format  = "pretty"   # pretty (default) | logfmt | pattern | raw/json (passthrough)
+pattern = "%time  %-5level  %caller  %msg  %fields"   # used when format = "pattern"
+```
+Pattern tokens (Spring/logback-flavored): `%time`/`%d`, `%level`/`%p` (`%-5level`
+pads+uppercases), `%caller`/`%logger`, `%msg`/`%m`, `%fields`/`%X`, `%%`. Override
+per-run with `--log-format` / `--log-pattern`; `--raw-logs` forces passthrough. Add
+a new named format by writing one `logFormatter` and registering it in
+`resolveLogFormatter` (`cmd/nexus/dev_logpretty.go`).
+
 ### Scaffold a frontend
 ```
 nexus new myapp --frontend vue      # fresh app with a web/ viteless project (no install needed)
@@ -594,6 +624,8 @@ nexus new <dir>      Scaffold an app + nexus.toml. --frontend vue|react, --db, -
                      --auth, --module <path>, --yes (no prompts).
 nexus init [dir]     Add a frontend (web/) to an existing project. --frontend (req).
 nexus dev [dir]      Live dev: viteless SPA+HMR on :5173, app/dashboard on :8080.
+                     --dist keeps web/dist rebuilt in the background so go build
+                     always embeds the current frontend.
 nexus build          viteless build → web/dist, then go build embeds it. No npm.
                      ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
