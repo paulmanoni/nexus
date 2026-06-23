@@ -378,6 +378,28 @@ export default function nexusAutoSelect(options = {}) {
     name: 'nexus-hmr',
     enforce: 'pre',
     apply: 'serve',
+    // Pre-bundle every dependency at startup so navigation never triggers
+    // a full page reload. Inertia resolves pages via import.meta.glob(...) —
+    // dynamic imports that Vite's startup dep-scanner does NOT follow (it
+    // only crawls static imports from index.html → main.ts). So any dep used
+    // *only inside a page component* (most of Vuetify / Nuxt UI) is invisible
+    // at boot, gets discovered lazily on first navigation, re-runs esbuild
+    // pre-bundling, and Vite issues a full-reload — which HMR cannot avoid
+    // once a new dep is optimized mid-session. Pointing optimizeDeps.entries
+    // at the whole source tree makes the scanner see every page's imports up
+    // front, so all deps are optimized once and HMR stays intact thereafter.
+    // Override the globs with options.optimizeEntries when a project's layout
+    // differs from the scaffold default.
+    config() {
+      return {
+        optimizeDeps: {
+          entries: options.optimizeEntries || [
+            'index.html',
+            'src/**/*.{vue,ts,tsx,js,jsx}',
+          ],
+        },
+      }
+    },
     configureServer(server) {
       const dir = options.codegenDir
         ? (isAbsolute(options.codegenDir) ? options.codegenDir : join(projectRoot, options.codegenDir))
