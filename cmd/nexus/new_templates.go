@@ -972,11 +972,13 @@ introspection = true
 [runtime.server]
 addr = ":8080"
 {{if .IsInertia}}
-# Inertia dev topology. With this on, "nexus dev" serves pages from the
-# app port (the browser lives there) and points the app's HTML shell at
-# the viteless dev server for HMR — the inverse of the SPA dev model.
-[runtime.inertia]
-enabled = true
+# Inertia dev topology is AUTO-DETECTED (this app imports the inertia
+# extension): "nexus dev" serves pages from the app port (the browser lives
+# there) and points the app's HTML shell at the viteless dev server for HMR —
+# the inverse of the SPA dev model. Uncomment to force it on/off (e.g. a hybrid
+# SPA + Inertia app that wants the SPA dev model):
+# [runtime.inertia]
+# enabled = true
 {{end}}
 [runtime.dashboard]
 enabled = true
