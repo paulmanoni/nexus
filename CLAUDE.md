@@ -455,9 +455,21 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
   hook — no `decorate.Module(...)` call. Each package's endpoints group under a
   `nexus.Module` named after the package (the `main` package → `"app"`), so the
   dashboard groups them automatically.
-- **`nexus dev`** injects the generated files via `go run -overlay` (zero source
-  churn); **`nexus build`** regenerates them before `go build`. The committed
-  `*_gen.go` keep plain `go build`/`go install` correct (they run no overlay).
+- **`nexus dev`** AND **`nexus build`** inject the generated files via a build
+  overlay (`go run -overlay` / `go build -overlay`) — **nothing is written to the
+  source tree** (zero churn). `nexus generate handlers` is the **eject** path:
+  run it to commit `*_gen.go` so a bare `go build`/`go install`/`go test` (without
+  the nexus CLI) and static tooling (gopls, linters) see the registrations.
+  (`nexus build` fails fast if codegen can't resolve a decorator; `nexus dev`
+  warns and lets `go run` surface the underlying error.)
+- A qualified custom decorator (`//@pkg.Func`, e.g. `//@inertia.Page`) needs the
+  `pkg` import resolved for the generated file. The codegen resolves it
+  automatically: from the annotated file's imports → its sibling files in the
+  same package → a `nexus.toml` `[decorators.imports]` hint → the module import
+  graph (`go list`). So you usually need no import in the annotated file; if a
+  selector is ambiguous or not a dependency, add `[decorators.imports]` (selector
+  → import path) to `nexus.toml`, or import the package. A blank import
+  (`_ "…/pkg"`) in the annotated file also works as an explicit opt-in.
 
 Brand decorator-registered endpoints on the dashboard with `nexus.WithIcon(name)`
 (a cross-transport per-op option, like `HideFromDashboard()`); extension
