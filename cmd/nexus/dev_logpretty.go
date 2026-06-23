@@ -368,11 +368,11 @@ func renderPatternToken(tok string, r zapRecord, c palette) string {
 // palette carries the escape sequences for one render. When color is off every
 // field is the empty string, so format() emits plain aligned columns.
 type palette struct {
-	reset, bold              string
-	time, msg, meta          string
-	source, faint            string
-	info, warn, err, debug   string
-	trueColor                bool
+	reset, bold            string
+	time, msg, meta        string
+	source, faint          string
+	info, warn, err, debug string
+	trueColor              bool
 }
 
 func (l *logPretty) palette() palette {

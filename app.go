@@ -481,6 +481,20 @@ func New(cfg Config) *App {
 		a.registry.RegisterGlobalMiddleware(m.Name)
 	}
 
+	// Dev-only per-request console logger: under `nexus dev` (NEXUS_DEV=1),
+	// log one line per HTTP request to stdout so navigations surface in the
+	// terminal — otherwise request activity only reaches the dashboard trace
+	// stream. No-op outside dev; opt out with [runtime.logging] requests=false.
+	if devRequestLogEnabled() {
+		a.engine.Use(devRequestLogger(os.Stdout))
+		a.registry.RegisterMiddleware(middleware.Info{
+			Name:        "dev-request-log",
+			Kind:        middleware.KindBuiltin,
+			Description: "Per-request console log (dev only)",
+		})
+		a.registry.RegisterGlobalMiddleware("dev-request-log")
+	}
+
 	return a
 }
 

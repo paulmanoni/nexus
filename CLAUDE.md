@@ -115,14 +115,23 @@ The formatter is pluggable, configured declaratively like Django's `LOGGING`
 formatters or Spring's `logging.pattern.console`:
 ```toml
 [runtime.logging]
-format  = "pretty"   # pretty (default) | logfmt | pattern | raw/json (passthrough)
-pattern = "%time  %-5level  %caller  %msg  %fields"   # used when format = "pattern"
+format   = "pretty"   # pretty (default) | logfmt | pattern | raw/json (passthrough)
+pattern  = "%time  %-5level  %caller  %msg  %fields"   # used when format = "pattern"
+requests = true       # dev-only per-request console log (see below); false to silence
 ```
 Pattern tokens (Spring/logback-flavored): `%time`/`%d`, `%level`/`%p` (`%-5level`
 pads+uppercases), `%caller`/`%logger`, `%msg`/`%m`, `%fields`/`%X`, `%%`. Override
 per-run with `--log-format` / `--log-pattern`; `--raw-logs` forces passthrough. Add
 a new named format by writing one `logFormatter` and registering it in
 `resolveLogFormatter` (`cmd/nexus/dev_logpretty.go`).
+
+**Per-request console logs (dev only).** By default request activity goes to the
+dashboard trace stream (`/__nexus`), not the console — so navigating pages leaves the
+terminal quiet. Under `nexus dev` (`NEXUS_DEV=1`) nexus also logs one line per HTTP
+request to stdout (`GET /users  status=200  dur=12ms`), rendered through the view above;
+5xx→error, 4xx→warn. Dashboard traffic (`/__nexus*`) is skipped. Production binaries
+never log requests to the console (gated on `NEXUS_DEV`); silence it in dev with
+`[runtime.logging] requests = false`.
 
 ### Scaffold a frontend
 ```
