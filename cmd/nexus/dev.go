@@ -153,33 +153,80 @@ func devAddrFromConfig(target string) string {
 	return strings.TrimSpace(cfg.Runtime.Server.Addr)
 }
 
-// devInertiaEnabled reports whether the app opts into the Inertia dev
-// topology via `[runtime.inertia] enabled = true` in nexus.toml. Inertia
-// inverts the normal dev model: pages are server-rendered by the Go app, so
-// the browser must live at the app's port (not viteless's), and the app's
-// document shell references the viteless dev server for HMR/assets. When this
-// is off, `nexus dev` behaves exactly as before (browser at the viteless SPA
-// URL, viteless proxying to the app).
+// inertiaImportPath is the inertia extension package. An app that imports it is
+// (almost certainly) an Inertia app, which is the auto-detect signal below.
+const inertiaImportPath = "github.com/paulmanoni/nexus/extension/inertia"
+
+// devInertiaEnabled reports whether `nexus dev` should use the Inertia dev
+// topology. Inertia inverts the normal dev model: pages are server-rendered by
+// the Go app, so the browser must live at the app's port (not viteless's), and
+// the app's document shell references the viteless dev server for HMR/assets.
+//
+// Resolution: an explicit `[runtime.inertia] enabled` in nexus.toml wins
+// (true forces it on, false forces it off — the override for hybrid apps). When
+// the key is unset, it's auto-detected: an app whose build graph imports the
+// inertia extension gets the Inertia topology with no config. When off,
+// `nexus dev` behaves exactly as before (browser at the viteless SPA URL,
+// viteless proxying to the app).
 func devInertiaEnabled(target string) bool {
-	dir := target
-	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
-		dir = filepath.Dir(target)
+	if v, ok := inertiaConfigOverride(target); ok {
+		return v
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "nexus.toml"))
+	return appImportsPackage(target, inertiaImportPath)
+}
+
+// inertiaConfigOverride returns the explicit [runtime.inertia] enabled value and
+// whether it was set at all (a *bool distinguishes unset from false, so an
+// absent key falls through to auto-detection rather than forcing it off).
+func inertiaConfigOverride(target string) (value, set bool) {
+	b, err := os.ReadFile(filepath.Join(targetDir(target), "nexus.toml"))
 	if err != nil {
-		return false
+		return false, false
 	}
 	var cfg struct {
 		Runtime struct {
 			Inertia struct {
-				Enabled bool `toml:"enabled"`
+				Enabled *bool `toml:"enabled"`
 			} `toml:"inertia"`
 		} `toml:"runtime"`
 	}
 	if err := toml.Unmarshal(b, &cfg); err != nil {
+		return false, false
+	}
+	if cfg.Runtime.Inertia.Enabled == nil {
+		return false, false
+	}
+	return *cfg.Runtime.Inertia.Enabled, true
+}
+
+// appImportsPackage reports whether importPath is in the build-graph closure of
+// the main package at target (`go list -deps`). Used to auto-detect Inertia.
+// Any error (no Go files, build broken) is treated as "not imported".
+func appImportsPackage(target, importPath string) bool {
+	cmd := exec.Command("go", "list", "-deps", ".")
+	cmd.Dir = targetDir(target)
+	out, err := cmd.Output()
+	if err != nil {
 		return false
 	}
-	return cfg.Runtime.Inertia.Enabled
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == importPath {
+			return true
+		}
+	}
+	return false
+}
+
+// targetDir returns the directory for a dev target (a package dir, or the parent
+// of a target that points at a single file). Empty/unknown -> the cwd ".".
+func targetDir(target string) string {
+	if target == "" {
+		return "."
+	}
+	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		return filepath.Dir(target)
+	}
+	return target
 }
 
 // devLoggingFromConfig reads [runtime.logging] from nexus.toml in the dev
@@ -261,11 +308,17 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		logFmt = f
 	}
 
-	// Inertia dev topology (opt-in via nexus.toml). When on, the Go app
-	// owns page navigation, so the browser opens the app port and the app
-	// shell references viteless for HMR (NEXUS_VITE_DEV). frontendBaseURL
-	// captures the viteless dev URL once it starts.
+	// Inertia dev topology (auto-detected from the inertia import, or forced
+	// via [runtime.inertia] enabled in nexus.toml). When on, the Go app owns
+	// page navigation, so the browser opens the app port and the app shell
+	// references viteless for HMR (NEXUS_VITE_DEV). frontendBaseURL captures
+	// the viteless dev URL once it starts.
 	inertiaDev := devInertiaEnabled(target)
+	if inertiaDev {
+		if _, set := inertiaConfigOverride(target); !set {
+			fmt.Fprintf(stdout, "%s●%s Inertia app detected — serving pages at the app port (set [runtime.inertia] enabled = false to opt out)\n", ansiCyan, ansiReset)
+		}
+	}
 	var frontendBaseURL string
 
 	// Optional frontend watcher — runs alongside the Go process. Logs

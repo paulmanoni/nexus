@@ -121,9 +121,12 @@ func TestScaffold_Inertia_Builds(t *testing.T) {
 			t.Fatalf("main.go missing %q:\n%s", want, mainGo)
 		}
 	}
+	// Inertia dev mode is auto-detected from the inertia import (asserted on
+	// main.go above), so the scaffold documents the override as a commented
+	// opt-out rather than forcing [runtime.inertia] enabled on.
 	toml, _ := os.ReadFile(filepath.Join(dir, "nexus.toml"))
-	if !strings.Contains(string(toml), "[runtime.inertia]") || !strings.Contains(string(toml), "enabled = true") {
-		t.Fatalf("nexus.toml missing [runtime.inertia] enabled:\n%s", toml)
+	if !strings.Contains(string(toml), "AUTO-DETECTED") || !strings.Contains(string(toml), "# [runtime.inertia]") {
+		t.Fatalf("nexus.toml missing the auto-detect note / commented inertia override:\n%s", toml)
 	}
 
 	addReplace := exec.Command("go", "mod", "edit",

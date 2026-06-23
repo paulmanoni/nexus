@@ -434,9 +434,11 @@ for you:
 Asset version = hash of the build manifest; a stale X-Inertia-Version on an
 XHR GET gets a 409 + X-Inertia-Location (forced full reload), handled for you.
 
-Dev: set [runtime.inertia] enabled = true in nexus.toml. nexus dev then
-serves pages from the app port (the browser lives there) and points the app's
-shell at the viteless dev server for HMR — the inverse of the SPA dev model.
+Dev: nexus dev AUTO-DETECTS an Inertia app (it imports the inertia extension)
+and serves pages from the app port (the browser lives there), pointing the
+app's shell at the viteless dev server for HMR — the inverse of the SPA dev
+model. Override with [runtime.inertia] enabled = true|false in nexus.toml
+(force on, or opt a hybrid SPA+Inertia app back to the SPA dev model).
 
 Decorator form — annotate the handler instead of listing it in a Module:
 
