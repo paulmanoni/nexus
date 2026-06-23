@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -13,6 +14,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+
+	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/paulmanoni/deco/transpiler"
 	"github.com/paulmanoni/nexus/internal/handlergen"
@@ -135,6 +139,9 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
+	// One resolver per scan: its per-file/dir caches and the (lazy) module
+	// import graph are shared across every qualified //@pkg.Func annotation.
+	res := newSelectorResolver(root)
 	sites := make([]handlergen.Site, 0, len(hits))
 	for _, h := range hits {
 		kw := h.Keyword
@@ -160,9 +167,12 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 			}
 			site.Imports = imps
 		case qualified:
-			// Custom decorator //@pkg.Func … — import the package from the file.
+			// Custom decorator //@pkg.Func … — resolve the package import so the
+			// generated file can call pkg.Func(...). The resolver looks in the
+			// annotated file, then its sibling files, then nexus.toml hints, then
+			// the module import graph (see selectorResolver.resolve).
 			sel := kw[:strings.IndexByte(kw, '.')]
-			imp, err := resolveSelectorImport(h.File, sel)
+			imp, err := res.resolve(h.File, sel)
 			if err != nil {
 				return nil, fmt.Errorf("%s: //@%s on %s: %w", h.File, kw, h.Func, err)
 			}
@@ -184,18 +194,170 @@ var handlerKeywordSet = func() map[string]bool {
 
 func builtinHandlerKeyword(kw string) bool { return handlerKeywordSet[kw] }
 
-// resolveSelectorImport returns the import line for package selector sel from
-// file's import block, erroring if the package isn't imported there.
-func resolveSelectorImport(file, sel string) (string, error) {
-	imps, err := importsOfFile(file)
+// selectorResolver maps a package selector from a qualified //@pkg.Func
+// decorator (e.g. "inertia") to the import line the generated file should carry,
+// so the emitted pkg.Func(...) call compiles. It never edits the user's source:
+// the import lands only in the generated nexus_handlers_gen.go.
+//
+// Resolution is a cascade, cheapest/most-authoritative first (see resolve). All
+// layers are cached; the module import graph (the costly one) is built lazily
+// and at most once per scan, only when the cheap layers miss.
+type selectorResolver struct {
+	root string
+
+	fileCache map[string]map[string]string // file -> selector -> import line
+	dirCache  map[string]map[string]string // package dir -> merged selector -> import line
+	hints     map[string]string            // [decorators.imports] from nexus.toml
+
+	graphOnce sync.Once
+	graph     map[string][]string // package name -> import path(s) (go list)
+	graphErr  error
+}
+
+func newSelectorResolver(root string) *selectorResolver {
+	return &selectorResolver{
+		root:      root,
+		fileCache: map[string]map[string]string{},
+		dirCache:  map[string]map[string]string{},
+		hints:     loadDecoratorHints(root),
+	}
+}
+
+// resolve returns the import line for selector sel as referenced from file.
+func (r *selectorResolver) resolve(file, sel string) (string, error) {
+	// Layer 1 — the annotated file's own imports (honors aliases + blank opt-in).
+	if line, ok := r.fileImports(file)[sel]; ok {
+		return line, nil
+	}
+	// Layer 2 — any sibling file in the same package (e.g. module.go).
+	if line, ok := r.dirImports(filepath.Dir(file))[sel]; ok {
+		return line, nil
+	}
+	// Layer 4 — explicit nexus.toml [decorators.imports] override.
+	if path, ok := r.hints[sel]; ok {
+		return importLineFor(sel, path), nil
+	}
+	// Layer 3 — the module import graph, matched on real package name.
+	graph, err := r.buildGraph()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("package %q is not imported here and the module graph could not be read (%v) — import it or set [decorators.imports].%s in nexus.toml", sel, err, sel)
 	}
-	line, ok := imps[sel]
-	if !ok {
-		return "", fmt.Errorf("package %q is not imported in this file — add its import so the generated registration can call %s.…", sel, sel)
+	switch paths := graph[sel]; len(paths) {
+	case 1:
+		return importLineFor(sel, paths[0]), nil
+	case 0:
+		return "", fmt.Errorf("package %q is not a dependency — import it, run `go get`, or set [decorators.imports].%s in nexus.toml", sel, sel)
+	default:
+		sort.Strings(paths)
+		return "", fmt.Errorf("package %q is ambiguous across %s — import it explicitly or set [decorators.imports].%s in nexus.toml", sel, strings.Join(paths, ", "), sel)
 	}
-	return line, nil
+}
+
+// fileImports returns (cached) the selector->import map for a single file.
+func (r *selectorResolver) fileImports(file string) map[string]string {
+	if m, ok := r.fileCache[file]; ok {
+		return m
+	}
+	m, err := importsOfFile(file)
+	if err != nil || m == nil {
+		m = map[string]string{}
+	}
+	r.fileCache[file] = m
+	return m
+}
+
+// dirImports returns (cached) the merged selector->import map for every .go file
+// in a package directory, so an import in any sibling file resolves.
+func (r *selectorResolver) dirImports(dir string) map[string]string {
+	if m, ok := r.dirCache[dir]; ok {
+		return m
+	}
+	merged := map[string]string{}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		for sel, line := range r.fileImports(filepath.Join(dir, e.Name())) {
+			if _, ok := merged[sel]; !ok {
+				merged[sel] = line
+			}
+		}
+	}
+	r.dirCache[dir] = merged
+	return merged
+}
+
+// buildGraph indexes every package in the module build graph by its real package
+// name (go list -deps -json). Built lazily and once; main packages are skipped
+// (they can't be imported). A go list failure is sticky and surfaced to callers.
+func (r *selectorResolver) buildGraph() (map[string][]string, error) {
+	r.graphOnce.Do(func() {
+		cmd := exec.Command("go", "list", "-deps", "-json", "./...")
+		cmd.Dir = r.root
+		out, err := cmd.Output()
+		if err != nil {
+			r.graphErr = err
+			return
+		}
+		graph := map[string][]string{}
+		dec := json.NewDecoder(bytes.NewReader(out))
+		for dec.More() {
+			var p struct{ ImportPath, Name string }
+			if err := dec.Decode(&p); err != nil {
+				break
+			}
+			if p.Name == "" || p.Name == "main" {
+				continue
+			}
+			dup := false
+			for _, existing := range graph[p.Name] {
+				if existing == p.ImportPath {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				graph[p.Name] = append(graph[p.Name], p.ImportPath)
+			}
+		}
+		r.graph = graph
+	})
+	return r.graph, r.graphErr
+}
+
+// importLineFor builds the import line so the generated file's `sel.Func(...)`
+// call binds: a plain import when the path's last segment already is sel,
+// otherwise an explicit alias.
+func importLineFor(sel, path string) string {
+	if pathTail(path) == sel {
+		return strconv.Quote(path)
+	}
+	return sel + " " + strconv.Quote(path)
+}
+
+func pathTail(path string) string { return path[strings.LastIndexByte(path, '/')+1:] }
+
+// loadDecoratorHints reads the optional [decorators.imports] table from the
+// project's nexus.toml (selector -> import path). Absent/unparsable -> nil.
+func loadDecoratorHints(root string) map[string]string {
+	dir := root
+	if fi, err := os.Stat(root); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(root)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "nexus.toml"))
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		Decorators struct {
+			Imports map[string]string `toml:"imports"`
+		} `toml:"decorators"`
+	}
+	if err := toml.Unmarshal(b, &cfg); err != nil {
+		return nil
+	}
+	return cfg.Decorators.Imports
 }
 
 // resolveUseImports returns the import lines a //@use expression needs, by
@@ -230,7 +392,11 @@ func resolveUseImports(file string, exprArgs []string) ([]string, error) {
 }
 
 // importsOfFile parses file's import block into selector -> import line
-// (`"path"` or `alias "path"`). Blank and dot imports are skipped.
+// (`"path"` or `alias "path"`). Dot imports are skipped. A blank import
+// (`_ "path"`) is recorded under its path-tail selector as a PLAIN import: it's
+// a codegen opt-in for a file that doesn't otherwise use the package (a normal
+// import there would be "imported and not used"), and the generated file does
+// reference the package, so it needs a real, non-blank import.
 func importsOfFile(file string) (map[string]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, file, nil, parser.ImportsOnly)
@@ -243,15 +409,19 @@ func importsOfFile(file string) (map[string]string, error) {
 		if err != nil {
 			continue
 		}
-		sel := path[strings.LastIndexByte(path, '/')+1:]
+		sel := pathTail(path)
 		line := strconv.Quote(path)
 		if spec.Name != nil {
 			n := spec.Name.Name
-			if n == "_" || n == "." {
-				continue
+			switch n {
+			case ".":
+				continue // dot import: no usable selector
+			case "_":
+				// keep the path-tail selector + plain import line above
+			default:
+				sel = n
+				line = n + " " + strconv.Quote(path)
 			}
-			sel = n
-			line = n + " " + strconv.Quote(path)
 		}
 		out[sel] = line
 	}
@@ -305,26 +475,4 @@ func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err e
 		return "", noop, err
 	}
 	return overlayPath, cleanup, nil
-}
-
-// writeHandlerFiles scans root and writes the committed registration files,
-// skipping byte-equal no-ops. Returns the number written. Used by `nexus build`
-// to refresh the committed *_gen.go before compiling, so a plain go build /
-// go install (which never run this) sees current registrations.
-func writeHandlerFiles(root string) (int, error) {
-	results, err := allHandlerArtifacts(root, handlerGenFileName)
-	if err != nil {
-		return 0, err
-	}
-	written := 0
-	for _, r := range results {
-		if cur, err := os.ReadFile(r.Path); err == nil && string(cur) == string(r.Content) {
-			continue
-		}
-		if err := os.WriteFile(r.Path, r.Content, 0o644); err != nil {
-			return written, fmt.Errorf("write %s: %w", r.Path, err)
-		}
-		written++
-	}
-	return written, nil
 }

@@ -437,6 +437,17 @@ XHR GET gets a 409 + X-Inertia-Location (forced full reload), handled for you.
 Dev: set [runtime.inertia] enabled = true in nexus.toml. nexus dev then
 serves pages from the app port (the browser lives there) and points the app's
 shell at the viteless dev server for HMR — the inverse of the SPA dev model.
+
+Decorator form — annotate the handler instead of listing it in a Module:
+
+    //@inertia.Page "GET" "/users" "Users/Index"
+    func NewListUsers(svc *UserService, p nexus.Params[ListArgs]) (UsersProps, error)
+
+The codegen auto-resolves the inertia import for the generated file (from the
+file, a sibling file in the package, a nexus.toml [decorators.imports] hint,
+or the module graph) — your handler file need not import inertia. As a custom
+(dotted) decorator, //@inertia.Page takes NO //@auth modifier: keep auth-gated
+pages as explicit inertia.Page(..., auth.Required()) in a Module.
 `,
 
 	"auth": `
@@ -846,6 +857,15 @@ imported code, so the import is still required):
     identity = "myapp"
     profile  = "default"
     poll_interval = "30s"
+
+[decorators.imports] (optional) maps a custom decorator's package selector to
+its import path, for the //@ handler codegen. Usually unnecessary — the codegen
+resolves a //@pkg.Func import from the annotated file, its sibling files, and
+the module graph. Set a hint only to disambiguate (two deps share a package
+name) or to name a dep not imported anywhere yet:
+
+    [decorators.imports]
+    inertia = "github.com/paulmanoni/nexus/extension/inertia"
 
 Slice-of-middleware fields (Global, Dashboard) need Go funcs, so they stay
 in code; everything data-driven lives here.

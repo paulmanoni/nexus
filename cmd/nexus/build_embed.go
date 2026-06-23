@@ -163,8 +163,9 @@ type simpleBuildOptions struct {
 }
 
 // runSimpleBuild generates the embed file (templates/, islands/
-// if present) and shells to `go build`. No overlay, no shadows,
-// no manifest. Most live-template apps live here.
+// if present) and shells to `go build`, injecting decorator-form handler
+// registrations via a build overlay (no source files written). Most
+// live-template apps live here.
 //
 // Pipeline order matters:
 //
@@ -173,7 +174,8 @@ type simpleBuildOptions struct {
 //     web/package.json (pure-Go projects).
 //  2. generateEmbedFile inspects the now-fresh web/dist and writes
 //     embed_gen.go so go:embed picks it up.
-//  3. go build absorbs it via the generated embed file → single binary.
+//  3. buildHandlerOverlay scans //@ annotations into a temp overlay.
+//  4. go build absorbs the embed file + overlay → single binary.
 func runSimpleBuild(opts simpleBuildOptions) error {
 	pkg := opts.MainPackage
 	if pkg == "" {
@@ -195,17 +197,25 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 	}
 	defer removeEmbedFile(embedPath, opts.Stderr)
 
-	// Refresh the committed decorator-form registration files (nexus_handlers_gen.go)
-	// from //@ annotations so the binary we build reflects the current sources.
-	// Scans the whole project tree (handlers often live in sibling packages of
-	// the main package). A no-op when nothing is annotated.
-	if n, err := writeHandlerFiles(cwd); err != nil {
+	// Inject the decorator-form handler registrations (//@rest / //@provide / …)
+	// via a `go build -overlay`, so NOTHING is written into the source tree (zero
+	// churn) — mirroring `nexus dev`. Run `nexus generate handlers` to eject
+	// committed *_gen.go for a bare `go build` / `go install` / `go test`.
+	//
+	// A scan error here is FATAL (unlike `nexus dev`, which warns and lets
+	// `go run` surface it): shipping a binary that silently omits handler
+	// registrations would be worse than a failed build.
+	overlayPath, cleanupOverlay, err := buildHandlerOverlay(cwd)
+	if err != nil {
 		return fmt.Errorf("nexus build: handler codegen: %w", err)
-	} else if n > 0 {
-		fmt.Fprintf(opts.Stdout, "handler codegen: %d file(s) updated\n", n)
 	}
+	defer cleanupOverlay()
 
 	args := []string{"build"}
+	if overlayPath != "" {
+		args = append(args, "-overlay="+overlayPath)
+		fmt.Fprintln(opts.Stdout, "handler codegen: injected via overlay")
+	}
 	if opts.Output != "" {
 		args = append(args, "-o", opts.Output)
 	}

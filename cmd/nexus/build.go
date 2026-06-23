@@ -30,6 +30,11 @@ func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 Runs the frontend bundler on any islands.src/ sources, generates the
 embed file, and shells out to 'go build' on the main package.
 
+Decorator-form handlers (//@ annotations) are injected via a build
+overlay — nothing is written into your source tree. For a plain
+'go build' / 'go install' / 'go test' (without the nexus CLI), run
+'nexus generate handlers' to eject committed *_gen.go files.
+
 Examples:
     nexus build
     nexus build -o ./bin/myapp
@@ -125,4 +130,3 @@ func runBinaryPrintMode(binaryPath string) ([]byte, error) {
 	}
 	return stdout.Bytes(), nil
 }
-
