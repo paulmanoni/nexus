@@ -154,8 +154,12 @@ existing `Option`-returning registrar (the universal nexus pattern):
   e.g. `inertia.Redirect`/props — import it naturally). Each whitespace-
   separated annotation token is a distinct argument (comma-joined); an argument
   can't contain a space.
-- Custom decorators don't take `//@auth`/`//@use` modifiers (the registrar
-  defines its own surface).
+- Custom decorators DO take `//@auth`/`//@use` modifiers: they're appended as
+  trailing options to the registrar call (e.g. `//@inertia.Page` + `//@auth
+  Required` → `inertia.Page(args…, fn, auth.Required())`). The registrar must
+  accept the option type (a compile error if it doesn't — the right, loud
+  failure); `inertia.Page` takes `...nexus.RestOption`, which `auth.Required()`
+  satisfies.
 
 **Branding with the extension's icon.** `nexus.WithIcon(name)` is a cross-
 transport per-op option (mirrors `HideFromDashboard`) that stamps

@@ -115,13 +115,23 @@ func TestEmit_CustomQualifiedDecorator(t *testing.T) {
 	}
 }
 
-func TestEmit_CustomDecoratorRejectsModifiers(t *testing.T) {
-	_, err := Emit(Config{Package: "h"}, []Annotation{
-		{Func: "F", Keyword: "inertia.Page", Args: []string{`"/x"`}, Line: 1, Imports: []string{`"x/inertia"`}},
+func TestEmit_CustomDecoratorAppendsModifiers(t *testing.T) {
+	// A modifier on a custom //@pkg.Func decorator is appended as a trailing
+	// option: inertia.Page(args…, fn, auth.Required()). The registrar must accept
+	// the option type (inertia.Page takes ...nexus.RestOption).
+	got, err := Emit(Config{Package: "h"}, []Annotation{
+		{Func: "F", Keyword: "inertia.Page", Args: []string{`"GET"`, `"/x"`, `"X"`}, Line: 1, Imports: []string{`"x/inertia"`}},
 		{Func: "F", Keyword: "auth", Args: []string{"Required"}, Line: 2},
 	})
-	if err == nil {
-		t.Fatal("expected error: custom decorators don't accept modifiers")
+	if err != nil {
+		t.Fatalf("custom decorator + modifier should be allowed, got: %v", err)
+	}
+	s := string(got)
+	if !strings.Contains(s, `inertia.Page("GET", "/x", "X", F, auth.Required())`) {
+		t.Fatalf("modifier not appended to custom decorator call:\n%s", s)
+	}
+	if !strings.Contains(s, `"github.com/paulmanoni/nexus/extension/auth"`) {
+		t.Fatalf("auth import missing for custom decorator modifier:\n%s", s)
 	}
 }
 

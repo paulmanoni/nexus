@@ -447,9 +447,15 @@ Decorator form — annotate the handler instead of listing it in a Module:
 
 The codegen auto-resolves the inertia import for the generated file (from the
 file, a sibling file in the package, a nexus.toml [decorators.imports] hint,
-or the module graph) — your handler file need not import inertia. As a custom
-(dotted) decorator, //@inertia.Page takes NO //@auth modifier: keep auth-gated
-pages as explicit inertia.Page(..., auth.Required()) in a Module.
+or the module graph) — your handler file need not import inertia. //@auth /
+//@use modifiers ARE supported on custom decorators — they're appended as
+trailing options, so //@inertia.Page + //@auth Required emits
+inertia.Page(args…, fn, auth.Required()). The registrar must accept the option
+type (inertia.Page takes ...nexus.RestOption; a compile error if it doesn't):
+
+    //@auth Required
+    //@inertia.Page "GET" "/admin" "Admin/Index"
+    func NewAdmin(...) (AdminProps, error)
 `,
 
 	"auth": `
