@@ -540,6 +540,9 @@ var reactJS []byte
 //go:embed ui/nexus-vite-plugin.js
 var vitePluginJS []byte
 
+//go:embed ui/nexus-vite-plugin.d.ts
+var vitePluginDTS []byte
+
 // Static JS assets never change at runtime (the bytes are baked
 // into the binary by go:embed), so hash + gzip them once at package
 // init. The eager init is fine — all three files together gzip in
@@ -573,6 +576,11 @@ func ReactJS() []byte { return reactJS }
 // Dumped into OutDir alongside client.js / vue.js when OutDir is
 // configured; users wire it into vite.config.ts manually.
 func VitePluginJS() []byte { return vitePluginJS }
+
+// VitePluginDTS returns the embedded nexus-vite-plugin.d.ts bytes — the
+// TypeScript declarations dumped beside nexus-vite-plugin.js so a strict
+// vite.config.ts gets a typed default export instead of `any`.
+func VitePluginDTS() []byte { return vitePluginDTS }
 
 // Mount installs the SDK routes on engine. Idempotent: re-mounting
 // rebuilds the cached manifest by invalidating the Once. Called
