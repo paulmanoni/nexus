@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # One job per Go module. The two adapter modules (gin, fx) version
+  # independently and `replace` the parent locally, so each must build + test on
+  # its own — a green main module can't vouch for them. -race needs cgo, which
+  # setup-go's toolchain provides on ubuntu.
+  test:
+    name: test (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "di/fxcontainer", "httpx/ginrouter"]
+    env:
+      GIN_MODE: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: go test -race
+        working-directory: ${{ matrix.module }}
+        run: go test -race -count=1 ./...
+
+  # Coverage ratchet for the main module — fails if statement coverage drops
+  # below the floor in the Makefile (COVER_MIN). Raise the floor as coverage
+  # climbs; never lower it to make a red build pass.
+  coverage:
+    name: coverage floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: Enforce coverage floor
+        run: make cover-check
+
+  # Drift gate: committed //@ handler codegen (*_gen.go) must match a fresh
+  # regeneration. Catches a handler whose annotations changed without re-running
+  # `nexus generate handlers`.
+  codegen-drift:
+    name: codegen drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: Check generated handlers are up to date
+        run: make generate-check

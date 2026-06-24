@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/di"
 )
 
 // TestPath_RegistersForServiceLookup verifies the round-trip:
@@ -148,43 +147,28 @@ func TestPath_MultiServiceModuleAllMountUnderPath(t *testing.T) {
 	}
 }
 
-// newApp is a tiny test harness mirroring nexus.Run's fx wiring
-// (fxBootOptions registers the *App provider and autoMountGraphQL
-// Invoke that turns AsQuery/AsMutation declarations into actual
-// engine routes) but without binding a listener. Used to drive
-// the full mount path in-process and inspect the resulting gin
-// route table.
+// newApp is a thin wrapper over InProcess (the public in-process boot used by
+// the nexustest harness): it boots cfg+opts with nexus.Run's full early→user→
+// late option ordering — so AsRest/AsQuery/AsMutation/AsWS mount for real — on an
+// ephemeral port, and exposes Stop(). Used to drive the full mount path
+// in-process and inspect the resulting route table / registry.
 func newApp(cfg Config, opts ...Option) (*testApp, error) {
-	var captured *App
-	capture := di.Invoke(func(a *App) { captured = a })
-	// Mirror nexus.Run's ordering: early options, then user options, then
-	// late options (autoMountGraphQL). The builtin container runs invokes in
-	// registration order, so autoMount must come AFTER user opts — otherwise
-	// the schema is built before LoadField registers its virtual fields.
-	all := []di.Option{fxEarlyOptions(cfg)}
-	all = append(all, unwrap(opts)...)
-	all = append(all, capture, fxLateOptions())
-	fxApp := di.New(all...)
-	if err := fxApp.Err(); err != nil {
+	app, stop, err := InProcess(cfg, opts...)
+	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := fxApp.Start(ctx); err != nil {
-		return nil, err
-	}
-	return &testApp{fx: fxApp, App: captured}, nil
+	return &testApp{App: app, stop: stop}, nil
 }
 
 type testApp struct {
 	*App
-	fx *di.App
+	stop func(context.Context) error
 }
 
 func (a *testApp) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = a.fx.Stop(ctx)
+	_ = a.stop(ctx)
 }
 
 func contains(xs []string, s string) bool {

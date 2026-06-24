@@ -8,13 +8,23 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/di/ditest"
 )
 
 // The adapter's whole job is to be observably identical to the builtin
-// container for any Spec nexus produces. These tests build the SAME graph
-// shape through both backends and assert matching results — deep chains
-// (lazy + once-each), large value groups (complete + correct), and lifecycle
-// ordering (append order start, reverse stop).
+// container for any Spec nexus produces. Two layers of assurance:
+//
+//  1. The shared conformance suite (ditest.RunConformance) pins the behavioral
+//     contract — both this adapter and the builtin must pass the SAME spec with
+//     the SAME pinned expectations, which makes them equivalent by construction.
+//  2. The head-to-head TestParity_BuiltinVsFx below additionally drives one
+//     large graph through both backends at once and diffs the observations, as a
+//     belt-and-braces check at scale that the abstract spec might not stress.
+
+// TestFxConformance holds the fx adapter to the same contract as the builtin.
+func TestFxConformance(t *testing.T) {
+	ditest.RunConformance(t, New())
+}
 
 var byteType = reflect.TypeFor[byte]()
 
@@ -31,9 +41,8 @@ func chainCtor(n int, counter *int64) any {
 
 type member struct{ n int }
 
-// scenario builds one self-contained graph (fresh counters) so it can be run
-// independently against each backend. It returns the options plus the
-// observation sinks the test reads after Build/Start/Stop.
+// obs is the set of observation sinks the head-to-head test reads after running
+// the same graph through each backend.
 type obs struct {
 	chainCalls int64
 	groupCount int
@@ -130,57 +139,5 @@ func assertSeq(t *testing.T, name string, o *obs, hooks int) {
 		if o.stops[i] != hooks-1-i {
 			t.Fatalf("%s: stop not reversed at %d: %d", name, i, o.stops[i])
 		}
-	}
-}
-
-// TestParity_VariadicConstructor pins that both backends ignore an unannotated
-// variadic parameter (dig already does; the builtin matches it) — so a
-// stdlib-style ctor like zap.NewExample(...Option) builds on either backend
-// without a provider for the []Option slice.
-func TestParity_VariadicConstructor(t *testing.T) {
-	type opt func()
-	type svc struct{ ok bool }
-	build := func(backend di.Backend) (bool, error) {
-		var got *svc
-		inst := backend.Build(di.Collect(
-			di.Provide(func(opts ...opt) *svc { return &svc{ok: true} }),
-			di.Invoke(func(s *svc) { got = s }),
-		))
-		if err := inst.Err(); err != nil {
-			return false, err
-		}
-		return got != nil && got.ok, nil
-	}
-	for _, tc := range []struct {
-		name    string
-		backend di.Backend
-	}{{"builtin", di.Builtin()}, {"fx", New()}} {
-		ok, err := build(tc.backend)
-		if err != nil {
-			t.Fatalf("%s: variadic ctor failed: %v", tc.name, err)
-		}
-		if !ok {
-			t.Fatalf("%s: variadic ctor did not run", tc.name)
-		}
-	}
-}
-
-func TestParity_LazinessMatches(t *testing.T) {
-	// Neither backend should construct anything that nothing demands.
-	build := func(backend di.Backend) int64 {
-		var calls int64
-		opts := []di.Option{di.Supply(reflect.Zero(arrType(0)).Interface())}
-		for i := 1; i <= 300; i++ {
-			opts = append(opts, di.Provide(chainCtor(i, &calls)))
-		}
-		// No Populate/Invoke demands the chain.
-		inst := backend.Build(di.Collect(opts...))
-		if err := inst.Err(); err != nil {
-			t.Fatalf("build: %v", err)
-		}
-		return calls
-	}
-	if b, f := build(di.Builtin()), build(New()); b != 0 || f != 0 {
-		t.Fatalf("laziness mismatch: builtin=%d fx=%d, want 0/0", b, f)
 	}
 }
