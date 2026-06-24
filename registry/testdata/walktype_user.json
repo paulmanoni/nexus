@@ -1,0 +1,169 @@
+{
+  "root": {
+    "kind": "ref",
+    "ref": "goldenUser"
+  },
+  "refs": {
+    "goldenAddress": {
+      "fields": [
+        {
+          "name": "Street",
+          "jsonName": "street",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "City",
+          "jsonName": "city",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        }
+      ]
+    },
+    "goldenProfile": {
+      "fields": [
+        {
+          "name": "Bio",
+          "jsonName": "bio",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Age",
+          "jsonName": "age",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          },
+          "optional": true
+        },
+        {
+          "name": "Address",
+          "jsonName": "address",
+          "type": {
+            "kind": "ref",
+            "ref": "goldenAddress"
+          }
+        },
+        {
+          "name": "Scores",
+          "jsonName": "scores",
+          "type": {
+            "kind": "map",
+            "of": {
+              "kind": "primitive",
+              "primitive": "integer"
+            },
+            "keyOf": {
+              "kind": "primitive",
+              "primitive": "string"
+            }
+          }
+        }
+      ]
+    },
+    "goldenUser": {
+      "fields": [
+        {
+          "name": "ID",
+          "jsonName": "id",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Name",
+          "jsonName": "name",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Active",
+          "jsonName": "active",
+          "type": {
+            "kind": "primitive",
+            "primitive": "boolean"
+          }
+        },
+        {
+          "name": "Balance",
+          "jsonName": "balance",
+          "type": {
+            "kind": "primitive",
+            "primitive": "number"
+          }
+        },
+        {
+          "name": "Tags",
+          "jsonName": "tags",
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "primitive",
+              "primitive": "string"
+            }
+          }
+        },
+        {
+          "name": "Profile",
+          "jsonName": "profile",
+          "type": {
+            "kind": "ref",
+            "ref": "goldenProfile"
+          }
+        },
+        {
+          "name": "Friends",
+          "jsonName": "friends",
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "ref",
+              "ref": "goldenUser",
+              "optional": true
+            }
+          }
+        },
+        {
+          "name": "Avatar",
+          "jsonName": "avatar",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "CreatedAt",
+          "jsonName": "createdAt",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Meta",
+          "jsonName": "meta",
+          "type": {
+            "kind": "map",
+            "of": {
+              "kind": "any"
+            },
+            "keyOf": {
+              "kind": "primitive",
+              "primitive": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
