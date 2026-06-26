@@ -12,10 +12,8 @@
 //	var webFS embed.FS
 //
 //	nexus.Boot(
-//	    nexus.ServeFrontend(webFS, "web/dist"),          // hashed JS/CSS assets
-//	    inertia.Module(inertia.Config{                   // the page protocol
-//	        Frontend: webFS, Root: "web/dist",
-//	    }),
+//	    nexus.ServeFrontend(webFS, "web/dist"),  // serves assets; names the bundle
+//	    inertia.Module(inertia.Config{}),        // the page protocol — bundle auto-discovered
 //	    inertia.Share(SharedAuth),
 //	    inertia.Page("GET", "/users", "Users/Index", NewListUsers),
 //	)
@@ -25,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
@@ -48,12 +47,15 @@ type engineKeyT struct{}
 
 // Config configures the Inertia engine.
 type Config struct {
-	// Frontend is the embedded (or dev disk) filesystem holding the built
-	// bundle — the same FS passed to nexus.ServeFrontend. Used to read the
-	// Vite manifest for production asset tags and the auto version.
+	// Frontend is the embedded filesystem holding the built bundle, read for
+	// the Vite manifest (production asset tags + auto version). OPTIONAL: when
+	// nil, the engine auto-discovers the bundle registered by
+	// nexus.ServeFrontend, so the app names its frontend once. Set this only to
+	// read the manifest from a DIFFERENT source than ServeFrontend serves.
 	Frontend fs.FS
-	// Root is the path within Frontend to the build output (e.g.
-	// "web/dist"). The manifest is read from Root/.vite/manifest.json.
+	// Root is the path within Frontend to the build output (e.g. "web/dist").
+	// The manifest is read from Root/.vite/manifest.json. Ignored when Frontend
+	// is nil (the discovered ServeFrontend root is used instead).
 	Root string
 	// RootView is the id of the root element the Inertia client mounts on.
 	// Defaults to "app".
@@ -76,14 +78,59 @@ type Config struct {
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
-// and shared (read-only) across requests.
+// and shared across requests. The asset head/version are resolved lazily on the
+// first render (see resolve) so the bundle ServeFrontend registers is visible
+// regardless of option ordering.
 type Engine struct {
 	rootView       string
-	version        string
-	head           string // resolved <head> asset tags (prod manifest or dev server)
 	customHead     string // app-supplied <head> HTML (Config.Head)
 	shared         []SharedProvider
 	encryptHistory bool // app-wide default for page.encryptHistory
+
+	// Frontend-resolution inputs. cfgFrontend/cfgRoot come from Config; when
+	// they're empty the engine auto-discovers the bundle ServeFrontend mounted
+	// via app.FrontendFS(), so the app names its frontend in one place.
+	app         *nexus.App
+	cfgFrontend fs.FS
+	cfgRoot     string
+	versionPin  string // Config.Version; AutoVersion ("") = derive from manifest
+
+	resolveOnce sync.Once
+	head        string // resolved <head> asset tags (prod manifest or dev server)
+	version     string // resolved Inertia asset version
+}
+
+// resolve computes the asset head tags + version once, on first use. Deferring
+// past boot lets ServeFrontend's bundle registration land first no matter the
+// option order. Dev (NEXUS_VITE_DEV) wins; otherwise read the Vite manifest
+// from Config.Frontend or, failing that, the app's ServeFrontend bundle.
+func (e *Engine) resolve() {
+	e.resolveOnce.Do(func() {
+		if dev := strings.TrimRight(os.Getenv(devURLEnv), "/"); dev != "" {
+			e.head = devHeadTags(dev)
+			return
+		}
+		fsys, root := e.cfgFrontend, e.cfgRoot
+		if fsys == nil && e.app != nil {
+			if f, r, ok := e.app.FrontendFS(); ok {
+				fsys, root = f, r
+			}
+		}
+		var man manifest
+		if fsys != nil {
+			if m, err := loadManifest(fsys, root); err == nil {
+				man = m
+			}
+		}
+		if man.found {
+			e.head = man.headTags()
+		}
+		if e.versionPin != AutoVersion {
+			e.version = e.versionPin
+		} else {
+			e.version = man.version
+		}
+	})
 }
 
 // engineParams collects the registered SharedProviders from the fx value group
@@ -106,8 +153,8 @@ func Module(cfg Config) nexus.Option {
 		Version: "1",
 		Icon:    Icon,
 		Options: []nexus.Option{
-			nexus.Raw(di.Provide(func(in engineParams) *Engine {
-				return newEngine(cfg, in.Shared)
+			nexus.Raw(di.Provide(func(app *nexus.App, in engineParams) *Engine {
+				return newEngine(cfg, in.Shared, app)
 			})),
 			// Stash the engine on the app at boot. The page renderer pulls it
 			// back via AppFromGin(c) → App.Value at request time — independent
@@ -121,39 +168,21 @@ func Module(cfg Config) nexus.Option {
 	})
 }
 
-// newEngine resolves the asset tags and version from the build manifest, with
-// graceful fallbacks: a dev server URL (NEXUS_VITE_DEV) when no manifest is
-// present, and an empty version when neither is available.
-func newEngine(cfg Config, shared []SharedProvider) *Engine {
-	e := &Engine{rootView: cfg.RootView, customHead: cfg.Head.render(), shared: shared, encryptHistory: cfg.EncryptHistory}
-
-	// Dev takes precedence: when a Vite/viteless dev server is running
-	// (`nexus dev` sets NEXUS_VITE_DEV), reference it for HMR and IGNORE any
-	// build manifest. The embedded manifest is frozen at go-build time and goes
-	// stale the moment the frontend rebuilds — pointing the shell at hashed
-	// /assets/* that no longer exist. No asset version in dev; the dev server
-	// owns reloads, so the version guard stays off (e.version == "").
-	if dev := strings.TrimRight(os.Getenv(devURLEnv), "/"); dev != "" {
-		e.head = devHeadTags(dev)
-		return e
+// newEngine builds the engine from Config + Share providers + the app (used to
+// auto-discover ServeFrontend's bundle). Asset tags + version are resolved
+// lazily on first render (see resolve), not here, so option order doesn't
+// matter.
+func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
+	return &Engine{
+		rootView:       cfg.RootView,
+		customHead:     cfg.Head.render(),
+		shared:         shared,
+		encryptHistory: cfg.EncryptHistory,
+		app:            app,
+		cfgFrontend:    cfg.Frontend,
+		cfgRoot:        cfg.Root,
+		versionPin:     cfg.Version,
 	}
-
-	// Production: resolve hashed assets + version from the build manifest.
-	var man manifest
-	if cfg.Frontend != nil {
-		if m, err := loadManifest(cfg.Frontend, cfg.Root); err == nil {
-			man = m
-		}
-	}
-	if man.found {
-		e.head = man.headTags()
-	}
-	if cfg.Version != AutoVersion {
-		e.version = cfg.Version
-	} else {
-		e.version = man.version
-	}
-	return e
 }
 
 // engineFromGin retrieves the per-app engine a page renderer needs, pulling it

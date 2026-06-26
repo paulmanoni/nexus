@@ -52,6 +52,9 @@ type pageObject struct {
 // initial browser navigation (HTML document shell). Either way the props are
 // resolved once, honoring partial-reload and Optional/Always rules.
 func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
+	// Resolve asset head/version once (lazily) so ServeFrontend's bundle is
+	// visible regardless of option order.
+	e.resolve()
 	// Asset-version guard: a stale X-Inertia-Version on a GET XHR visit forces
 	// a fresh full load (the client follows X-Inertia-Location). Checked here
 	// (rather than in global middleware) so it works regardless of route

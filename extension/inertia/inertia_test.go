@@ -640,6 +640,45 @@ func TestVersionMismatch(t *testing.T) {
 	}
 }
 
+// TestFrontendAutoDiscovery asserts inertia.Config{} (no Frontend) resolves its
+// manifest from the bundle ServeFrontend registered — the app names the bundle
+// once, via ServeFrontend, and the engine discovers it through App.FrontendFS.
+func TestFrontendAutoDiscovery(t *testing.T) {
+	addr := "127.0.0.1:8832"
+	fsys := fstest.MapFS{
+		"dist/.vite/manifest.json": {Data: []byte(manifestJSON)},
+		"dist/index.html":          {Data: []byte("<!doctype html><div id=app></div>")},
+	}
+	ready := make(chan struct{})
+	go func() {
+		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10},
+			nexus.ServeFrontend(fsys, "dist"),  // names + serves the bundle once
+			inertia.Module(inertia.Config{}),   // no Frontend → auto-discovered
+			inertia.Page("GET", "/p", "P", NewWidgets),
+			nexus.Invoke(func() { close(ready) }),
+		)
+	}()
+	<-ready
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := http.Get("http://" + addr + "/__nexus/config"); err == nil {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	_, body := req(t, addr, "/p", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Version != wantVersion() {
+		t.Fatalf("version should resolve from the discovered bundle: got %q want %q", page.Version, wantVersion())
+	}
+}
+
 // TestDevTagsPreferViteServer asserts that when NEXUS_VITE_DEV is set, the
 // document shell references the Vite dev server for HMR and ignores the build
 // manifest (whose hashed assets go stale in dev).

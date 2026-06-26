@@ -9,6 +9,7 @@ package nexus
 
 import (
 	"context"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -76,6 +77,13 @@ type App struct {
 	// user's settings + the DevDisabled opt-out without threading cfg
 	// through the late invoke.
 	clientCfg client.Config
+	// frontendFS + frontendRoot record the built bundle registered by
+	// ServeFrontend (the original embed.FS + dist root, before any dev
+	// swap). Extensions that need to READ the bundle — e.g. inertia.Module
+	// resolving the Vite manifest for its asset version + shell tags — pull
+	// it via FrontendFS() instead of having the bundle passed to them again.
+	frontendFS   fs.FS
+	frontendRoot string
 	// cacheMgr is always non-nil — created by New() with a default
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
