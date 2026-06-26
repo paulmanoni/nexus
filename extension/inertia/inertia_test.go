@@ -14,6 +14,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension/inertia"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // pageProps exercises all three prop kinds: a plain field, an Optional (lazy)
@@ -44,6 +45,34 @@ func NewFeed(ctx context.Context) (feedProps, error) {
 		Items: inertia.Merge(func() ([]int, error) { return []int{1, 2}, nil }),
 		More:  inertia.Defer(func() (string, error) { return "later", nil }),
 	}, nil
+}
+
+// groupedProps exercises deferred prop GROUPS: two Defer props in distinct
+// named groups (the client fetches each in parallel) plus one default-group prop.
+type groupedProps struct {
+	Report  inertia.Prop `json:"report"`
+	Sidebar inertia.Prop `json:"sidebar"`
+	Extra   inertia.Prop `json:"extra"`
+}
+
+func NewGrouped(ctx context.Context) (groupedProps, error) {
+	return groupedProps{
+		Report:  inertia.Defer(func() (string, error) { return "r", nil }, "report"),
+		Sidebar: inertia.Defer(func() (string, error) { return "s", nil }, "sidebar"),
+		Extra:   inertia.Defer(func() (string, error) { return "e", nil }), // default group
+	}, nil
+}
+
+// historyProps + NewHistory exercise the per-response history controls; the
+// handler takes *httpx.Ctx so it can flag encryption / clearing.
+type historyProps struct {
+	OK bool `json:"ok"`
+}
+
+func NewHistory(c *httpx.Ctx, p nexus.Params[struct{}]) (historyProps, error) {
+	inertia.EncryptHistory(c)
+	inertia.ClearHistory(c)
+	return historyProps{OK: true}, nil
 }
 
 // authProps + NewAuthForm exercise a single handler mounted for GET+POST that
@@ -674,5 +703,99 @@ func TestDeferAndMerge(t *testing.T) {
 	}
 	if partial.Props["more"] != "later" {
 		t.Fatalf("deferred prop should resolve on partial request: %v", partial.Props)
+	}
+}
+
+// TestDeferredGroups asserts Defer's group argument partitions deferredProps so
+// the client can fetch each group in a parallel request.
+func TestDeferredGroups(t *testing.T) {
+	addr := "127.0.0.1:8828"
+	bootInertia(t, addr, inertia.Page("GET", "/grouped", "Grouped/Index", NewGrouped))
+
+	_, body := req(t, addr, "/grouped", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Props         map[string]any      `json:"props"`
+		DeferredProps map[string][]string `json:"deferredProps"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if got := page.DeferredProps["report"]; len(got) != 1 || got[0] != "report" {
+		t.Fatalf("deferredProps[report]=%v want [report]", got)
+	}
+	if got := page.DeferredProps["sidebar"]; len(got) != 1 || got[0] != "sidebar" {
+		t.Fatalf("deferredProps[sidebar]=%v want [sidebar]", got)
+	}
+	if got := page.DeferredProps["default"]; len(got) != 1 || got[0] != "extra" {
+		t.Fatalf("deferredProps[default]=%v want [extra]", got)
+	}
+	// All deferred props are excluded from the initial payload.
+	for _, k := range []string{"report", "sidebar", "extra"} {
+		if _, present := page.Props[k]; present {
+			t.Fatalf("deferred prop %q must be absent on the full visit: %v", k, page.Props)
+		}
+	}
+}
+
+// TestHistoryEncryption asserts the per-response controls: a handler that calls
+// EncryptHistory/ClearHistory produces a page object with both flags set.
+func TestHistoryEncryption(t *testing.T) {
+	addr := "127.0.0.1:8829"
+	bootInertia(t, addr, inertia.Page("GET", "/secure", "Secure", NewHistory))
+
+	_, body := req(t, addr, "/secure", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		EncryptHistory bool `json:"encryptHistory"`
+		ClearHistory   bool `json:"clearHistory"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if !page.EncryptHistory {
+		t.Fatalf("EncryptHistory(c) should set encryptHistory=true: %s", body)
+	}
+	if !page.ClearHistory {
+		t.Fatalf("ClearHistory(c) should set clearHistory=true: %s", body)
+	}
+
+	// A page that doesn't touch the controls (and an app with no default)
+	// emits neither flag.
+	_, body2 := req(t, addr, "/widgets", map[string]string{"X-Inertia": "true"})
+	if strings.Contains(body2, "encryptHistory") || strings.Contains(body2, "clearHistory") {
+		t.Fatalf("untouched page must omit history flags: %s", body2)
+	}
+}
+
+// TestHistoryEncryptDefault asserts Config.EncryptHistory turns encryption on
+// app-wide, with no per-handler call.
+func TestHistoryEncryptDefault(t *testing.T) {
+	addr := "127.0.0.1:8830"
+	fsys := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
+	ready := make(chan struct{})
+	go func() {
+		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10},
+			inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", EncryptHistory: true}),
+			inertia.Page("GET", "/home", "Home", NewWidgets),
+			nexus.Invoke(func() { close(ready) }),
+		)
+	}()
+	<-ready
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := http.Get("http://" + addr + "/__nexus/config"); err == nil {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	_, body := req(t, addr, "/home", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		EncryptHistory bool `json:"encryptHistory"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if !page.EncryptHistory {
+		t.Fatalf("Config.EncryptHistory should default encryptHistory=true: %s", body)
 	}
 }

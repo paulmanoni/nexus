@@ -68,16 +68,22 @@ type Config struct {
 	// Vite/manifest asset tags are added automatically. See the Head type for a
 	// Raw escape hatch.
 	Head Head
+	// EncryptHistory turns on Inertia history-state encryption for every page
+	// by default (Inertia v2). A handler can override per-response with
+	// inertia.EncryptHistory(c, false); inertia.ClearHistory(c) drops any
+	// previously-encrypted entry (e.g. on logout).
+	EncryptHistory bool
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
 // and shared (read-only) across requests.
 type Engine struct {
-	rootView   string
-	version    string
-	head       string // resolved <head> asset tags (prod manifest or dev server)
-	customHead string // app-supplied <head> HTML (Config.Head)
-	shared     []SharedProvider
+	rootView       string
+	version        string
+	head           string // resolved <head> asset tags (prod manifest or dev server)
+	customHead     string // app-supplied <head> HTML (Config.Head)
+	shared         []SharedProvider
+	encryptHistory bool // app-wide default for page.encryptHistory
 }
 
 // engineParams collects the registered SharedProviders from the fx value group
@@ -119,7 +125,7 @@ func Module(cfg Config) nexus.Option {
 // graceful fallbacks: a dev server URL (NEXUS_VITE_DEV) when no manifest is
 // present, and an empty version when neither is available.
 func newEngine(cfg Config, shared []SharedProvider) *Engine {
-	e := &Engine{rootView: cfg.RootView, customHead: cfg.Head.render(), shared: shared}
+	e := &Engine{rootView: cfg.RootView, customHead: cfg.Head.render(), shared: shared, encryptHistory: cfg.EncryptHistory}
 
 	// Dev takes precedence: when a Vite/viteless dev server is running
 	// (`nexus dev` sets NEXUS_VITE_DEV), reference it for HMR and IGNORE any

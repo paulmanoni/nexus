@@ -29,9 +29,10 @@ const (
 // response — so an expensive Optional prop costs nothing on the (common)
 // visits that don't request it.
 type Prop struct {
-	kind propKind
-	val  any
-	fn   func() (any, error)
+	kind  propKind
+	val   any
+	fn    func() (any, error)
+	group string // Defer group name; props in one group are fetched together
 }
 
 // resolve returns the prop's value, invoking the thunk if it has one. Called
@@ -74,8 +75,20 @@ func Always[T any](v T) Prop {
 // the page on screen fast, then stream in slower data.
 //
 //	Activity: inertia.Defer(func() (Feed, error) { return svc.RecentActivity() }),
-func Defer[T any](fn func() (T, error)) Prop {
-	return Prop{kind: kindDefer, fn: func() (any, error) { return fn() }}
+//
+// An optional group name batches deferred props: all props in the same group
+// are fetched in one request, and DIFFERENT groups are fetched in PARALLEL.
+// Omit it (or pass "") for the "default" group. Group a slow report separately
+// from a fast sidebar so neither waits on the other:
+//
+//	Report:  inertia.Defer(svc.HeavyReport, "report"),
+//	Sidebar: inertia.Defer(svc.Sidebar,     "sidebar"),
+func Defer[T any](fn func() (T, error), group ...string) Prop {
+	g := "default"
+	if len(group) > 0 && group[0] != "" {
+		g = group[0]
+	}
+	return Prop{kind: kindDefer, group: g, fn: func() (any, error) { return fn() }}
 }
 
 // Merge marks a prop that is sent normally but flagged in the page object's
