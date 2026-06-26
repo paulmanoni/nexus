@@ -21,15 +21,18 @@ import (
 // is decode-only — matching how gin behaved for nexus args (no `binding:"..."`
 // enforcement was relied on).
 
-// ShouldBindUri fills fields tagged `uri:"name"` from path params.
+// ShouldBindUri fills fields tagged `path:"name"` (or the legacy `uri:"name"`)
+// from path params. `path` is the preferred spelling — it reads naturally with
+// the stdlib router that is nexus's default — while `uri` stays supported for
+// existing code.
 func (c *Ctx) ShouldBindUri(ptr any) error {
-	return bindFromTag(ptr, "uri", func(name string) ([]string, bool) {
+	return bindFromTag(ptr, "path", func(name string) ([]string, bool) {
 		v := c.Param(name)
 		if v == "" {
 			return nil, false
 		}
 		return []string{v}, true
-	})
+	}, "uri")
 }
 
 // ShouldBindQuery fills fields tagged `query:"name"` (or `form:"name"`) from

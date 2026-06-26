@@ -286,7 +286,7 @@ type idArg struct {
 	// reflective binder otherwise falls back to lowerFirst("ID")
 	// which yields the awkward "iD". Required because every action
 	// that consumes idArg (Read, Delete) must have one.
-	ID string `uri:"id" json:"id" graphql:"id,required"`
+	ID string `path:"id" json:"id" graphql:"id,required"`
 }
 
 func makeListHandler[T any](resolver CRUDResolver[T]) any {
