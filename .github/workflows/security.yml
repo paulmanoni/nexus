@@ -17,8 +17,8 @@ jobs:
     name: govulncheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "stable"
       - name: Run govulncheck
@@ -37,8 +37,8 @@ jobs:
     name: gosec
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "stable"
       - name: Run gosec
@@ -57,6 +57,6 @@ jobs:
           #       vite config). Server-side framework code never does this.
           args: "-no-fail -fmt sarif -out results.sarif -exclude=G104,G204,G301,G302,G304,G306 ./..."
       - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
