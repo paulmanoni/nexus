@@ -59,60 +59,6 @@ Examples:
 	return cmd
 }
 
-// hasGoSuffix reports whether name ends in ".go".
-func hasGoSuffix(name string) bool {
-	return len(name) > 3 && name[len(name)-3:] == ".go"
-}
-
-// isGeneratedName reports whether a file is a "zz_*" generated source.
-func isGeneratedName(name string) bool {
-	return len(name) >= 3 && name[:3] == "zz_"
-}
-
-// relTo returns target relative to base, falling back to target on
-// any path resolution error.
-func relTo(base, target string) string {
-	rel, err := filepathRel(base, target)
-	if err != nil {
-		return target
-	}
-	return rel
-}
-
-// filepathRel wraps filepath.Rel so build.go can avoid importing
-// path/filepath in this trimmed-down form. Kept for parity with the
-// pre-split helpers other files in cmd/nexus still rely on.
-func filepathRel(base, target string) (string, error) {
-	if base == "" {
-		return target, nil
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		_ = wd
-	}
-	if len(target) > len(base) && target[:len(base)] == base {
-		out := target[len(base):]
-		if len(out) > 0 && (out[0] == '/' || out[0] == '\\') {
-			out = out[1:]
-		}
-		return out, nil
-	}
-	return target, nil
-}
-
-// joinArgs is used by error formatting elsewhere; preserved for
-// callers that imported it before the split removal.
-func joinArgs(args []string) string {
-	out := ""
-	for i, a := range args {
-		if i > 0 {
-			out += " "
-		}
-		out += a
-	}
-	return out
-}
-
 // runBinaryPrintMode invokes binaryPath with NEXUS_PRINT_MANIFEST=1 and
 // captures stdout. The framework's print-mode short-circuit dumps the
 // manifest JSON and exits before any listener binds, so the binary is

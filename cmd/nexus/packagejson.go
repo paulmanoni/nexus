@@ -48,10 +48,6 @@ type packageJSON struct {
 	Dependencies map[string]string
 }
 
-// packageJSONFilename is the standard name. Always at the project
-// root next to nexus.lock and go.mod.
-const packageJSONFilename = "package.json"
-
 // loadPackageJSON reads the package.json at path. Returns a
 // zero-deps struct when the file doesn't exist so callers can
 // always proceed to AddDep without a nil check; the user's first

@@ -370,11 +370,6 @@ func devReloadScript() httpx.HandlerFunc {
 	}
 }
 
-// devReloadScriptTag is the snippet injected into index.html by
-// emitIndexHTML in dev mode. Exported so frontend_index.go can
-// reuse without duplicating the literal.
-const devReloadScriptTag = `<script src="/__nexus/dev/script.js"></script>`
-
 // devReloadWatchDir returns the absolute path of the directory
 // the dev-reload fsnotify watcher should track. Honors the same
 // NEXUS_DEV_ROOT env var ServeFrontend reads in dev mode so the

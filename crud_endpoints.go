@@ -584,10 +584,6 @@ type resolverHolder[T any] struct {
 	rv reflect.Value
 }
 
-// nexusResourceProviderType caches the reflect.Type of the resource
-// provider interface so the boot path doesn't recompute it per call.
-var nexusResourceProviderType = reflect.TypeOf((*NexusResourceProvider)(nil)).Elem()
-
 // bindCRUDResolver validates `resolver` and returns a holder whose
 // `fn` will be populated by buildCRUDSetup once fx provides the deps.
 //
