@@ -15,7 +15,9 @@ const (
 	headerVersion          = "X-Inertia-Version"
 	headerLocation         = "X-Inertia-Location"
 	headerPartialData      = "X-Inertia-Partial-Data"
+	headerPartialExcept    = "X-Inertia-Partial-Except"
 	headerPartialComponent = "X-Inertia-Partial-Component"
+	headerReset            = "X-Inertia-Reset"
 )
 
 // pageObject is the Inertia page payload: the component to render, its props,
@@ -84,7 +86,10 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 		return err
 	}
 
-	// Initial load: full HTML document with the page embedded.
+	// Initial load: full HTML document with the page embedded. Vary on
+	// X-Inertia so a shared cache never serves this HTML to a later XHR visit
+	// of the same URL (which expects the JSON page object), or vice versa.
+	c.Header("Vary", headerInertia)
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
 	_, err = c.Writer.Write(e.shell(blob))
@@ -96,8 +101,12 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 //
 //   - full visit (no matching partial header): every plain + Always prop;
 //     Optional props are skipped.
-//   - partial reload (X-Inertia-Partial-Component == component): only the props
-//     named in X-Inertia-Partial-Data, plus every Always prop.
+//   - partial reload (X-Inertia-Partial-Component == component): the props named
+//     in X-Inertia-Partial-Data (or, when that's empty, all plain props),
+//     minus any named in X-Inertia-Partial-Except, plus every Always prop.
+//
+// X-Inertia-Partial-Except takes precedence: a key listed in both Data and
+// Except is excluded. Always props ignore the partial filters entirely.
 //
 // Optional/Always thunks are evaluated only for props that survive inclusion,
 // so excluded heavy props cost nothing. A thunk error aborts the render before
@@ -112,18 +121,28 @@ type propsMeta struct {
 func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[string]any, propsMeta, error) {
 	partial := c.GetHeader(headerPartialComponent) == component
 	only := parseList(c.GetHeader(headerPartialData))
+	except := parseList(c.GetHeader(headerPartialExcept))
+	// reset names Merge props the client wants replaced rather than merged this
+	// round ("load more" → refresh): they're still sent, just not flagged as
+	// merge below.
+	reset := parseList(c.GetHeader(headerReset))
 
 	// include reports whether a prop of the given kind is sent in this
-	// response. Defer follows the same exclusion rule as Optional; Merge
-	// follows the plain rule.
+	// response. On a partial reload Except removes a prop even when Data lists
+	// it; Always props bypass both filters.
 	include := func(key string, kind propKind) bool {
-		switch kind {
-		case kindAlways:
+		if kind == kindAlways {
 			return true
+		}
+		if partial && except[key] {
+			return false
+		}
+		switch kind {
 		case kindOptional, kindDefer:
+			// Never on a full visit; on a partial only when explicitly named.
 			return partial && only[key]
 		default: // kindPlain, kindMerge
-			if partial {
+			if partial && len(only) > 0 {
 				return only[key]
 			}
 			return true
@@ -179,7 +198,7 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 			return nil, propsMeta{}, err
 		}
 		out[key] = val
-		if kind == kindMerge {
+		if kind == kindMerge && !reset[key] {
 			meta.merge = append(meta.merge, key)
 		}
 	}

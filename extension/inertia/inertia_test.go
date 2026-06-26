@@ -240,6 +240,108 @@ func TestPartialReload(t *testing.T) {
 	}
 }
 
+// TestPartialExcept asserts X-Inertia-Partial-Except: on a partial reload every
+// plain prop is sent EXCEPT those listed, Always props survive, and Except wins
+// over Data when a key appears in both.
+func TestPartialExcept(t *testing.T) {
+	addr := "127.0.0.1:8821"
+	bootInertia(t, addr)
+
+	// Pure-except partial: no Partial-Data, so all plain props are sent minus
+	// the excepted "title". Shared "csrf" is plain → present; Always "menu" → present.
+	res, body := req(t, addr, "/widgets", map[string]string{
+		"X-Inertia":                   "true",
+		"X-Inertia-Partial-Component": "Widgets/Index",
+		"X-Inertia-Partial-Except":    "title",
+	})
+	if res.StatusCode != 200 {
+		t.Fatalf("status=%d body=%s", res.StatusCode, body)
+	}
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := page.Props["title"]; present {
+		t.Fatalf("excepted prop must be absent: %v", page.Props)
+	}
+	if page.Props["csrf"] == nil {
+		t.Fatalf("non-excepted plain (shared) prop must be present: %v", page.Props)
+	}
+	if page.Props["menu"] == nil {
+		t.Fatalf("Always prop must ignore Except: %v", page.Props)
+	}
+
+	// Except takes precedence over Data: title in both → excluded.
+	_, body2 := req(t, addr, "/widgets", map[string]string{
+		"X-Inertia":                   "true",
+		"X-Inertia-Partial-Component": "Widgets/Index",
+		"X-Inertia-Partial-Data":      "title",
+		"X-Inertia-Partial-Except":    "title",
+	})
+	var page2 struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(body2), &page2); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := page2.Props["title"]; present {
+		t.Fatalf("Except must win over Data: %v", page2.Props)
+	}
+}
+
+// TestResetMergeProp asserts X-Inertia-Reset: a Merge prop named in the header
+// is still sent but NOT flagged in mergeProps, so the client replaces it.
+func TestResetMergeProp(t *testing.T) {
+	addr := "127.0.0.1:8822"
+	bootInertia(t, addr, inertia.Page("GET", "/feed", "Feed/Index", NewFeed))
+
+	// Baseline: a full visit flags "items" as a merge prop.
+	_, body := req(t, addr, "/feed", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Props      map[string]any `json:"props"`
+		MergeProps []string       `json:"mergeProps"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.MergeProps) != 1 || page.MergeProps[0] != "items" {
+		t.Fatalf("baseline mergeProps should be [items], got %v", page.MergeProps)
+	}
+
+	// With X-Inertia-Reset: items, the value is still sent but no longer flagged.
+	_, body2 := req(t, addr, "/feed", map[string]string{
+		"X-Inertia":       "true",
+		"X-Inertia-Reset": "items",
+	})
+	var page2 struct {
+		Props      map[string]any `json:"props"`
+		MergeProps []string       `json:"mergeProps"`
+	}
+	if err := json.Unmarshal([]byte(body2), &page2); err != nil {
+		t.Fatal(err)
+	}
+	if len(page2.MergeProps) != 0 {
+		t.Fatalf("reset prop must not be flagged as merge, got %v", page2.MergeProps)
+	}
+	if page2.Props["items"] == nil {
+		t.Fatalf("reset prop value must still be sent, got %v", page2.Props)
+	}
+}
+
+// TestShellVary asserts the initial (non-XHR) HTML load sets Vary: X-Inertia so
+// shared caches differentiate it from the XHR JSON of the same URL.
+func TestShellVary(t *testing.T) {
+	addr := "127.0.0.1:8823"
+	bootInertia(t, addr)
+
+	res, _ := req(t, addr, "/widgets", nil) // full load, no X-Inertia
+	if v := res.Header.Get("Vary"); !strings.Contains(v, "X-Inertia") {
+		t.Fatalf("HTML shell must Vary on X-Inertia, got %q", v)
+	}
+}
+
 // TestVersionMismatch asserts the asset-version guard: a stale X-Inertia-Version
 // on a GET XHR visit gets a 409 + X-Inertia-Location for a forced full reload.
 func TestVersionMismatch(t *testing.T) {
