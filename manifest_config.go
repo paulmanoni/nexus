@@ -280,6 +280,20 @@ type ServerConfig struct {
 	// Leading slash is required; trailing slash is trimmed at apply
 	// time so paths concatenate cleanly.
 	RoutePrefix string
+
+	// NoListener boots the app without binding any network listener:
+	// startup tasks, manifest resolution, the SDK dump, cron, and
+	// liveness all run, but no net.Listen / Serve happens and the
+	// "listening on …" banner is suppressed. The app is still a fully
+	// wired http.Handler (App.ServeHTTP), so requests are driven
+	// in-process (httptest) or by embedding it in another server.
+	//
+	// This is what nexus.InProcess (and the nexustest harness) sets;
+	// it's also useful for serverless / embedded deployments where an
+	// outer runtime owns the socket. Ignored by nexus.Run only in the
+	// sense that Run will then serve no traffic on its own — drive the
+	// handler yourself.
+	NoListener bool
 }
 
 // MiddlewareConfig groups every middleware-related knob the

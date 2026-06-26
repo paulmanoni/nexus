@@ -118,6 +118,9 @@ func Op(name string) GqlOption {
 
 // Desc sets the resolver's description (shown on the dashboard and in SDL
 // documentation).
+//
+// Deprecated: use the cross-transport nexus.Describe, which works identically on
+// REST and WS as well as GraphQL.
 func Desc(s string) GqlOption {
 	return gqlOptionFn(func(c *gqlConfig) { c.description = s })
 }

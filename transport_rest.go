@@ -67,10 +67,10 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 // routes) but you still want module annotation, metrics, and the
 // dashboard packet-animation treatment AsRest provides:
 //
-//	nexus.Module("oats-rest",
+//	nexus.Module("devices",
 //	    nexus.AsRestHandler("POST", "/api/devices/register",
 //	        func(d *DeviceController) httpx.HandlerFunc { return d.RegisterDevice },
-//	        nexus.Description("Register a device"),
+//	        nexus.Describe("Register a device"),
 //	        auth.Required(),
 //	    ),
 //	)
@@ -248,6 +248,9 @@ type restOptionFn func(*restConfig)
 func (f restOptionFn) applyToRest(c *restConfig) { f(c) }
 
 // Description sets the human-readable description shown on the dashboard.
+//
+// Deprecated: use the cross-transport nexus.Describe, which works identically on
+// GraphQL and WS as well as REST.
 func Description(s string) RestOption {
 	return restOptionFn(func(c *restConfig) { c.description = s })
 }
