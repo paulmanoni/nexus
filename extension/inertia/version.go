@@ -13,18 +13,21 @@ import (
 // (web/dist/.vite/manifest.json). Only the fields the shell needs are decoded.
 type manifestEntry struct {
 	File    string   `json:"file"`    // hashed output, e.g. "assets/main-ab12cd.js"
-	CSS     []string `json:"css"`     // hashed stylesheets pulled in by the entry
+	CSS     []string `json:"css"`     // hashed stylesheets emitted by this chunk
+	Imports []string `json:"imports"` // manifest keys of statically-imported chunks
 	IsEntry bool     `json:"isEntry"` // true for the app entry module
 }
 
-// manifest is the resolved view of a Vite build manifest: the entry chunk plus
-// a content hash used as the Inertia asset version. found is false when no
-// manifest exists (a dev build, or a pure-Go app), in which case the engine
-// falls back to dev tags / an empty version.
+// manifest is the resolved view of a Vite build manifest: the full chunk graph
+// (keyed by manifest key), the entry chunk's key, and a content hash used as
+// the Inertia asset version. found is false when no manifest exists (a dev
+// build, or a pure-Go app), in which case the engine falls back to dev tags /
+// an empty version.
 type manifest struct {
-	entry   manifestEntry
-	found   bool
-	version string
+	records  map[string]manifestEntry
+	entryKey string
+	found    bool
+	version  string
 }
 
 // loadManifest reads and parses the Vite manifest under root in fsys. It tries
@@ -53,36 +56,99 @@ func loadManifest(fsys fs.FS, root string) (manifest, error) {
 	if err := json.Unmarshal(raw, &records); err != nil {
 		return manifest{}, err
 	}
-	var entry manifestEntry
-	for _, e := range records {
-		if e.IsEntry {
-			entry = e
-			break
+	// Pick the entry chunk; among multiple entries take the lexically smallest
+	// key so the choice is deterministic (map iteration order isn't).
+	entryKey := ""
+	for k, e := range records {
+		if e.IsEntry && (entryKey == "" || k < entryKey) {
+			entryKey = k
 		}
 	}
 	sum := sha256.Sum256(raw)
 	return manifest{
-		entry:   entry,
-		found:   true,
-		version: hex.EncodeToString(sum[:])[:16],
+		records:  records,
+		entryKey: entryKey,
+		found:    true,
+		version:  hex.EncodeToString(sum[:])[:16],
 	}, nil
 }
 
-// headTags renders the production <link>/<script> tags for the manifest entry.
-// Asset paths are rooted at "/" — matching nexus.ServeFrontend, which serves
-// the build's /assets/* under the app root. Returns "" when there is no entry.
+// headTags renders the production <link>/<script> tags for the entry chunk and
+// its statically-imported chunks, the way Vite's own backend integration does:
+//
+//   - <link rel="stylesheet"> for the entry's CSS AND every imported chunk's CSS
+//     (walked recursively, deduped) — so a code-split build doesn't drop the
+//     styles that live on shared/imported chunks;
+//   - <link rel="modulepreload"> for each statically-imported chunk (recursive,
+//     deduped, excluding the entry itself) so the browser fetches dependencies
+//     in parallel instead of discovering them only after parsing the entry;
+//   - the entry's <script type="module">.
+//
+// Dynamic imports are intentionally NOT preloaded (they load on demand). Asset
+// paths are rooted at "/" — matching nexus.ServeFrontend, which serves the
+// build's /assets/* under the app root. Returns "" when there is no entry.
 func (m manifest) headTags() string {
-	if !m.found || m.entry.File == "" {
+	entry, ok := m.records[m.entryKey]
+	if !m.found || !ok || entry.File == "" {
 		return ""
 	}
 	var b strings.Builder
-	for _, css := range m.entry.CSS {
-		b.WriteString(`<link rel="stylesheet" href="/`)
-		b.WriteString(css)
-		b.WriteString(`">`)
+
+	// 1. Stylesheets: entry first, then imported chunks (recursive, deduped).
+	cssDone := map[string]bool{}
+	var walkCSS func(key string, seen map[string]bool)
+	walkCSS = func(key string, seen map[string]bool) {
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		c, ok := m.records[key]
+		if !ok {
+			return
+		}
+		for _, css := range c.CSS {
+			if cssDone[css] {
+				continue
+			}
+			cssDone[css] = true
+			b.WriteString(`<link rel="stylesheet" href="/`)
+			b.WriteString(css)
+			b.WriteString(`">`)
+		}
+		for _, imp := range c.Imports {
+			walkCSS(imp, seen)
+		}
 	}
+	walkCSS(m.entryKey, map[string]bool{})
+
+	// 2. modulepreload: the entry's static-import graph (not the entry itself).
+	preDone := map[string]bool{}
+	var walkPreload func(key string)
+	walkPreload = func(key string) {
+		if preDone[key] {
+			return
+		}
+		preDone[key] = true
+		c, ok := m.records[key]
+		if !ok {
+			return
+		}
+		if c.File != "" {
+			b.WriteString(`<link rel="modulepreload" href="/`)
+			b.WriteString(c.File)
+			b.WriteString(`">`)
+		}
+		for _, imp := range c.Imports {
+			walkPreload(imp)
+		}
+	}
+	for _, imp := range entry.Imports {
+		walkPreload(imp)
+	}
+
+	// 3. The entry module script.
 	b.WriteString(`<script type="module" src="/`)
-	b.WriteString(m.entry.File)
+	b.WriteString(entry.File)
 	b.WriteString(`"></script>`)
 	return b.String()
 }
