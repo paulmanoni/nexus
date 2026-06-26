@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strings"
 
 	"github.com/paulmanoni/nexus/manifest"
 )
@@ -209,14 +208,4 @@ func (a *App) EffectiveManifest() *manifest.Manifest {
 	// JSON-serialize-then-discard usage at /__nexus/manifest.
 	cp := *a.manifest.effective
 	return &cp
-}
-
-// formatEnvList is a small helper for error messages that need to
-// list declared env vars without spamming the whole manifest.
-func formatEnvList(envs []manifest.EnvVar) string {
-	names := make([]string, 0, len(envs))
-	for _, e := range envs {
-		names = append(names, e.Name)
-	}
-	return strings.Join(names, ", ")
 }

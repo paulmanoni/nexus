@@ -23,18 +23,12 @@ const (
 	// scaffolder output + every doc example.
 	defaultIslandsSrc = "islands.src"
 
-	// defaultIslandsOut is the canonical bundle-output-folder name.
-	// Embed via //go:embed islands and pass "islands" to
-	// nexus.ServeFrontend to wire it up.
-	defaultIslandsOut = "islands"
-
-	// envIslandsSrc / envIslandsOut override the names above. Read
-	// at every call site that needs a path, not cached, so a
-	// long-running `nexus dev` session reflects env changes
-	// without restart (env-var mutation between calls is a known
-	// pattern for vscode tasks that flip configs mid-debug).
+	// envIslandsSrc overrides the name above. Read at every call site
+	// that needs a path, not cached, so a long-running `nexus dev`
+	// session reflects env changes without restart (env-var mutation
+	// between calls is a known pattern for vscode tasks that flip
+	// configs mid-debug).
 	envIslandsSrc = "NEXUS_ISLANDS_SRC"
-	envIslandsOut = "NEXUS_ISLANDS_OUT"
 )
 
 // islandsSrcName returns the configured source-folder name, with
@@ -45,16 +39,6 @@ func islandsSrcName() string {
 		return v
 	}
 	return defaultIslandsSrc
-}
-
-// islandsOutName returns the configured output-folder name, with
-// the canonical default when unset. Same basename-only shape as
-// islandsSrcName.
-func islandsOutName() string {
-	if v := os.Getenv(envIslandsOut); v != "" {
-		return v
-	}
-	return defaultIslandsOut
 }
 
 // frontendDirName returns the Vite frontend project directory (holding
