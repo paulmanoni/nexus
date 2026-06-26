@@ -39,6 +39,7 @@ import (
 //	    // POST: authenticate, set cookie…
 //	    return nil, inertia.Redirect("/dashboard")
 //	}
+//
 // Icon is the lucide-style icon inertia brands its pages and dashboard entry
 // with. Pages registered via Page (explicitly or through the //@inertia.Page
 // decorator) carry it so the dashboard shows them as inertia pages.
@@ -95,6 +96,12 @@ func (p pageRenderer) RenderError(c *httpx.Ctx, err error) (bool, error) {
 	var rd *redirect
 	if errors.As(err, &rd) {
 		return true, rd.write(c)
+	}
+	// inertia.Invalid → flash the field errors and redirect back so the form
+	// re-renders with page.props.errors populated (the useForm convention).
+	var ve *validationError
+	if errors.As(err, &ve) {
+		return true, writeValidationRedirect(c, ve)
 	}
 	return false, nil
 }

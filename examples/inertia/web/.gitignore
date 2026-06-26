@@ -1,0 +1,5 @@
+# Build output + deps. The committed dist/index.html stub stays so `go build`
+# (which embeds web/dist) compiles before any frontend build.
+dist/*
+!dist/index.html
+node_modules/

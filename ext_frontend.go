@@ -104,6 +104,10 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 	for _, o := range opts {
 		o.applyToFrontend(cfg)
 	}
+	// Capture the original (production embed) bundle before the dev swap, so
+	// extensions that READ the bundle — inertia.Module's manifest resolver —
+	// can discover it via App.FrontendFS() without it being passed twice.
+	srcFS, srcRoot := fsys, root
 	// Dev-mode swap: read from disk instead of embed.FS so a
 	// watching frontend toolchain (vite build --watch) refreshes
 	// the served bundle without recompiling Go. Same `root`
@@ -116,6 +120,7 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 		fsys = os.DirFS(dvr)
 	}
 	return rawOption{o: di.Invoke(func(app *App) error {
+		app.setFrontendSource(srcFS, srcRoot)
 		sub := fsys
 		if root != "" {
 			s, err := fs.Sub(fsys, root)

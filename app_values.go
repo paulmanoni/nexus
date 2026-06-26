@@ -1,6 +1,10 @@
 package nexus
 
-import "github.com/paulmanoni/nexus/httpx"
+import (
+	"io/fs"
+
+	"github.com/paulmanoni/nexus/httpx"
+)
 
 // SetValue stashes a key/value on the app. Extensions use it to record
 // boot-time state (typically in an fx.Invoke) that they must read back at
@@ -10,6 +14,24 @@ func (a *App) SetValue(key, value any) { a.extValues.Store(key, value) }
 
 // Value returns a previously SetValue'd value, or (nil, false) if absent.
 func (a *App) Value(key any) (any, bool) { return a.extValues.Load(key) }
+
+// setFrontendSource records the built bundle ServeFrontend mounted, so
+// extensions that read the bundle (not serve it) can discover it.
+func (a *App) setFrontendSource(fsys fs.FS, root string) {
+	a.frontendFS, a.frontendRoot = fsys, root
+}
+
+// FrontendFS returns the built frontend bundle registered by ServeFrontend —
+// the embed.FS and the dist root within it — and whether one was registered.
+// An extension that needs to READ the bundle (e.g. inertia.Module resolving the
+// Vite manifest) calls this instead of having the bundle passed to it again, so
+// the app declares its frontend in exactly one place.
+func (a *App) FrontendFS() (fsys fs.FS, root string, ok bool) {
+	if a.frontendFS == nil {
+		return nil, "", false
+	}
+	return a.frontendFS, a.frontendRoot, true
+}
 
 // ginAppKey is the gin.Context key under which buildGinHandler stashes the
 // *App for renderers (see WithRenderer). A package-private string keeps it off

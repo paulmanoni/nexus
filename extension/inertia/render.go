@@ -29,12 +29,22 @@ type pageObject struct {
 	URL       string         `json:"url"`
 	Version   string         `json:"version"`
 	// DeferredProps groups the keys of Defer props the client should
-	// auto-fetch after mount. Keyed by group name ("default" here);
-	// omitted when there are none.
+	// auto-fetch after mount, keyed by group name. The client fetches each
+	// group in a separate (parallel) request. Omitted when there are none.
 	DeferredProps map[string][]string `json:"deferredProps,omitempty"`
-	// MergeProps lists Merge prop keys the client should merge with the
+	// MergeProps lists Merge prop keys the client should shallow-merge with the
 	// existing value rather than replace. Omitted when there are none.
 	MergeProps []string `json:"mergeProps,omitempty"`
+	// DeepMergeProps lists DeepMerge prop keys for a recursive merge; MatchPropsOn
+	// lists "<prop>.<field>" de-dup keys for infinite-scroll merging. Omitted
+	// when empty.
+	DeepMergeProps []string `json:"deepMergeProps,omitempty"`
+	MatchPropsOn   []string `json:"matchPropsOn,omitempty"`
+	// EncryptHistory asks the client to encrypt this page's history state;
+	// ClearHistory asks it to drop any previously-encrypted history. Both are
+	// Inertia v2 privacy controls. Omitted when false.
+	EncryptHistory bool `json:"encryptHistory,omitempty"`
+	ClearHistory   bool `json:"clearHistory,omitempty"`
 }
 
 // render writes the Inertia response for a page handler's return value. The
@@ -42,6 +52,9 @@ type pageObject struct {
 // initial browser navigation (HTML document shell). Either way the props are
 // resolved once, honoring partial-reload and Optional/Always rules.
 func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
+	// Resolve asset head/version once (lazily) so ServeFrontend's bundle is
+	// visible regardless of option order.
+	e.resolve()
 	// Asset-version guard: a stale X-Inertia-Version on a GET XHR visit forces
 	// a fresh full load (the client follows X-Inertia-Location). Checked here
 	// (rather than in global middleware) so it works regardless of route
@@ -58,6 +71,13 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	if err != nil {
 		return err
 	}
+	// Inertia always exposes an `errors` object so the client's useForm can read
+	// page.props.errors unconditionally. It's populated from the one-shot flash
+	// cookie left by a failed submit's redirect-back (see writeValidationRedirect),
+	// and is {} otherwise. A handler that set its own "errors" prop keeps it.
+	if _, ok := props["errors"]; !ok {
+		props["errors"] = consumeFlashErrors(c)
+	}
 	page := pageObject{
 		Component: component,
 		Props:     props,
@@ -65,11 +85,18 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 		Version:   e.version,
 	}
 	if len(meta.deferred) > 0 {
-		page.DeferredProps = map[string][]string{"default": meta.deferred}
+		page.DeferredProps = meta.deferred
 	}
 	if len(meta.merge) > 0 {
 		page.MergeProps = meta.merge
 	}
+	if len(meta.deepMerge) > 0 {
+		page.DeepMergeProps = meta.deepMerge
+	}
+	if len(meta.matchOn) > 0 {
+		page.MatchPropsOn = meta.matchOn
+	}
+	page.EncryptHistory, page.ClearHistory = e.historyFlags(c)
 	blob, err := json.Marshal(page)
 	if err != nil {
 		return err
@@ -114,8 +141,10 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 // propsMeta carries the page-object metadata that Defer/Merge props produce
 // alongside the resolved props map.
 type propsMeta struct {
-	deferred []string // Defer keys advertised on a full visit
-	merge    []string // Merge keys included in this response
+	deferred  map[string][]string // Defer keys advertised on a full visit, by group
+	merge     []string            // shallow-Merge keys included in this response
+	deepMerge []string            // DeepMerge keys included in this response
+	matchOn   []string            // "<prop>.<field>" de-dup keys for merged props
 }
 
 func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[string]any, propsMeta, error) {
@@ -183,14 +212,21 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 		if key == "-" {
 			continue
 		}
-		kind, resolve := classifyProp(rv.Field(i))
+		p, resolve := classifyProp(rv.Field(i))
 
 		// A deferred prop that isn't being sent this round is advertised
-		// on full visits so the client knows to request it next.
-		if kind == kindDefer && !partial {
-			meta.deferred = append(meta.deferred, key)
+		// on full visits (grouped) so the client knows to fetch it next.
+		if p.kind == kindDefer && !partial {
+			if meta.deferred == nil {
+				meta.deferred = map[string][]string{}
+			}
+			group := p.group
+			if group == "" {
+				group = "default"
+			}
+			meta.deferred[group] = append(meta.deferred[group], key)
 		}
-		if !include(key, kind) {
+		if !include(key, p.kind) {
 			continue
 		}
 		val, err := resolve()
@@ -198,23 +234,34 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 			return nil, propsMeta{}, err
 		}
 		out[key] = val
-		if kind == kindMerge && !reset[key] {
-			meta.merge = append(meta.merge, key)
+		// Merge flagging — skipped when the client asked to reset this key.
+		if !reset[key] {
+			switch p.kind {
+			case kindMerge:
+				meta.merge = append(meta.merge, key)
+			case kindDeepMerge:
+				meta.deepMerge = append(meta.deepMerge, key)
+			}
+			if (p.kind == kindMerge || p.kind == kindDeepMerge) && p.matchOn != "" {
+				meta.matchOn = append(meta.matchOn, key+"."+p.matchOn)
+			}
 		}
 	}
 	return out, meta, nil
 }
 
-// classifyProp inspects a struct field value: a Prop carries its own kind and
-// thunk; anything else is a plain field whose value is returned as-is.
-func classifyProp(fv reflect.Value) (propKind, func() (any, error)) {
+// classifyProp inspects a struct field value: a Prop carries its own kind,
+// Defer group, match key, and thunk; anything else is a plain field whose
+// value is returned as-is. Returns the Prop descriptor plus the resolve thunk
+// (the plain-field closure for non-Prop values).
+func classifyProp(fv reflect.Value) (Prop, func() (any, error)) {
 	if fv.CanInterface() {
 		if p, ok := fv.Interface().(Prop); ok {
-			return p.kind, p.resolve
+			return p, p.resolve
 		}
 	}
 	v := fv.Interface()
-	return kindPlain, func() (any, error) { return v, nil }
+	return Prop{kind: kindPlain}, func() (any, error) { return v, nil }
 }
 
 // wireName returns the JSON key for a struct field, honoring the `json` tag
