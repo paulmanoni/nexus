@@ -75,6 +75,15 @@ type Config struct {
 	// inertia.EncryptHistory(c, false); inertia.ClearHistory(c) drops any
 	// previously-encrypted entry (e.g. on logout).
 	EncryptHistory bool
+	// Entry is the dev-server module the shell loads under `nexus dev` (the
+	// client app's entry, served by the Vite/viteless dev server). Defaults to
+	// "src/main.ts"; set "src/main.tsx" for a React app. Ignored in production,
+	// where the entry comes from the build manifest.
+	Entry string
+	// React emits the Vite React Fast Refresh preamble before the dev client so
+	// HMR works for React apps. Auto-enabled when Entry ends in .tsx/.jsx; set
+	// it explicitly to force the preamble for a .ts/.js React entry.
+	React bool
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
@@ -94,6 +103,8 @@ type Engine struct {
 	cfgFrontend fs.FS
 	cfgRoot     string
 	versionPin  string // Config.Version; AutoVersion ("") = derive from manifest
+	devEntry    string // dev-server entry module (Config.Entry)
+	react       bool   // emit the React Fast Refresh preamble in dev
 
 	resolveOnce sync.Once
 	head        string // resolved <head> asset tags (prod manifest or dev server)
@@ -107,7 +118,7 @@ type Engine struct {
 func (e *Engine) resolve() {
 	e.resolveOnce.Do(func() {
 		if dev := strings.TrimRight(os.Getenv(devURLEnv), "/"); dev != "" {
-			e.head = devHeadTags(dev)
+			e.head = devHeadTags(dev, e.devEntry, e.react)
 			return
 		}
 		fsys, root := e.cfgFrontend, e.cfgRoot
@@ -173,6 +184,10 @@ func Module(cfg Config) nexus.Option {
 // lazily on first render (see resolve), not here, so option order doesn't
 // matter.
 func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
+	entry := cfg.Entry
+	if entry == "" {
+		entry = "src/main.ts"
+	}
 	return &Engine{
 		rootView:       cfg.RootView,
 		customHead:     cfg.Head.render(),
@@ -182,6 +197,9 @@ func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 		cfgFrontend:    cfg.Frontend,
 		cfgRoot:        cfg.Root,
 		versionPin:     cfg.Version,
+		devEntry:       entry,
+		// Auto-detect React from a JSX entry; Config.React forces it on.
+		react: cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
 	}
 }
 
