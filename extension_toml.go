@@ -108,6 +108,9 @@ func RegisteredExtensionNames() []string {
 // and returns the collected Options ready to be spread into
 // nexus.Run.
 //
+// Boot calls this (with LoadConfig) for you — reach for it directly only for
+// the explicit form alongside a Go-built Config.
+//
 // Operators typically combine with LoadConfig:
 //
 //	cfg := nexus.MustLoadConfig()
@@ -151,7 +154,8 @@ func LoadExtensionOptions(path ...string) ([]Option, error) {
 }
 
 // MustLoadExtensions is the panic-on-error variant matching
-// MustLoadConfig's idiom. Use in main() when an extension
+// MustLoadConfig's idiom (Boot composes both for you; use this only for the
+// explicit Run form). Use in main() when an extension
 // block is required to boot.
 func MustLoadExtensions(path ...string) []Option {
 	opts, err := LoadExtensionOptions(path...)

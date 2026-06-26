@@ -1,10 +1,32 @@
-// Package nexus is a thin framework over Gin that registers every endpoint
-// (REST, GraphQL, WebSocket) into a central registry, traces every request
-// into an in-memory event bus, and exposes both under /__nexus for tooling
-// — notably the Vue dashboard.
+// Package nexus is a thin framework over a pluggable HTTP router (stdlib by
+// default; gin/chi opt-in) that registers every endpoint (REST, GraphQL,
+// WebSocket) into a central registry, traces every request into an in-memory
+// event bus, and exposes both under /__nexus for tooling — notably the Vue
+// dashboard.
 //
 // nexus does NOT replace the caller's GraphQL layer: hand it a *graphql.Schema
 // (typically built with github.com/paulmanoni/nexus/graph) and it mounts + introspects.
+//
+// # Entry points
+//
+// An app starts with exactly one of three verbs — pick by where Config comes
+// from:
+//
+//   - Boot(opts...) — the default. Loads nexus.toml (runtime Config, every
+//     [extensions.*] block, the [env] bridge, the nexus.Get store), then runs.
+//     Use BootFrom(path, opts...) for an explicit config path. This is what
+//     scaffolded apps use; settings live in the file, not in code.
+//   - Run(cfg, opts...) — when you build Config in Go (a shared Store value, a
+//     middleware func slice, a pluggable backend — things TOML can't express).
+//     Boot is sugar over Run.
+//   - InProcess(cfg, opts...) — for tests. Boots with every route mounted but
+//     no network listener; the returned *App is an http.Handler. The nexustest
+//     package wraps this.
+//
+// Everything else is a building block Boot composes for you and you rarely call
+// directly: New(cfg) (construct an *App without running), LoadConfig /
+// MustLoadConfig (read Config from TOML), and LoadExtensionOptions /
+// MustLoadExtensions (read [extensions.*] options from TOML).
 package nexus
 
 import (
