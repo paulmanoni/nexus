@@ -59,6 +59,19 @@ func NewAuthForm(p nexus.Params[struct{}]) (authProps, error) {
 	return authProps{Mode: "submitted"}, nil
 }
 
+// regProps + NewRegister exercise the validation flow: GET renders the form,
+// POST returns inertia.Invalid to trigger the redirect-back + errors flash.
+type regProps struct {
+	Title string `json:"title"`
+}
+
+func NewRegister(p nexus.Params[struct{}]) (any, error) {
+	if p.Method == http.MethodGet {
+		return regProps{Title: "Register"}, nil
+	}
+	return nil, inertia.Invalid(map[string]string{"email": "Email is required"})
+}
+
 func NewSave(ctx context.Context) (any, error) { return nil, inertia.Redirect("/users") }
 func NewExternal(ctx context.Context) (any, error) {
 	return nil, inertia.Location("https://ext.example/login")
@@ -339,6 +352,176 @@ func TestShellVary(t *testing.T) {
 	res, _ := req(t, addr, "/widgets", nil) // full load, no X-Inertia
 	if v := res.Header.Get("Vary"); !strings.Contains(v, "X-Inertia") {
 		t.Fatalf("HTML shell must Vary on X-Inertia, got %q", v)
+	}
+}
+
+// TestErrorsPropAlwaysPresent asserts every render carries an `errors` object
+// (empty by default) so the client's useForm can read page.props.errors
+// unconditionally.
+func TestErrorsPropAlwaysPresent(t *testing.T) {
+	addr := "127.0.0.1:8824"
+	bootInertia(t, addr)
+
+	_, body := req(t, addr, "/widgets", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	errs, ok := page.Props["errors"]
+	if !ok {
+		t.Fatalf("errors prop must always be present: %v", page.Props)
+	}
+	if m, isMap := errs.(map[string]any); !isMap || len(m) != 0 {
+		t.Fatalf("errors should default to {}, got %#v", errs)
+	}
+}
+
+// TestValidationFlow is the end-to-end useForm contract: a failed submit
+// returns 303 back to the form with a flash cookie, and following that redirect
+// surfaces the messages in page.props.errors (then clears the cookie).
+func TestValidationFlow(t *testing.T) {
+	addr := "127.0.0.1:8825"
+	bootInertia(t, addr, inertia.Page("GET,POST", "/register", "Register", NewRegister, nexus.Public()))
+
+	// Failed submit → 303 back + flash cookie.
+	res, _ := doReq(t, "POST", addr, "/register", map[string]string{"X-Inertia": "true"})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("validation failure should 303, got %d", res.StatusCode)
+	}
+	if loc := res.Header.Get("Location"); loc != "/register" {
+		t.Fatalf("should redirect back to /register, got %q", loc)
+	}
+	var flash string
+	for _, ck := range res.Cookies() {
+		if ck.Name == "nexus_inertia_errors" {
+			flash = ck.Value
+		}
+	}
+	if flash == "" {
+		t.Fatal("expected a flash cookie carrying the errors")
+	}
+
+	// Follow the redirect with the flash cookie → errors appear in props.
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	r, _ := http.NewRequest("GET", "http://"+addr+"/register", nil)
+	r.Header.Set("X-Inertia", "true")
+	r.AddCookie(&http.Cookie{Name: "nexus_inertia_errors", Value: flash})
+	res2, err := client.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	b, _ := io.ReadAll(res2.Body)
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal(b, &page); err != nil {
+		t.Fatal(err)
+	}
+	errs, _ := page.Props["errors"].(map[string]any)
+	if errs["email"] != "Email is required" {
+		t.Fatalf("flashed error must surface in props.errors, got %#v", page.Props["errors"])
+	}
+	// The re-render clears the one-shot cookie.
+	cleared := false
+	for _, ck := range res2.Cookies() {
+		if ck.Name == "nexus_inertia_errors" && ck.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("the one-shot errors cookie must be cleared after consumption")
+	}
+}
+
+// TestInvalidField asserts the single-field helper flashes one field error
+// through the same redirect-back flow.
+func TestInvalidField(t *testing.T) {
+	addr := "127.0.0.1:8827"
+	newOne := func(p nexus.Params[struct{}]) (any, error) {
+		if p.Method == http.MethodGet {
+			return regProps{Title: "One"}, nil
+		}
+		return nil, inertia.InvalidField("name", "Name is required")
+	}
+	bootInertia(t, addr, inertia.Page("GET,POST", "/one", "One", newOne, nexus.Public()))
+
+	res, _ := doReq(t, "POST", addr, "/one", map[string]string{"X-Inertia": "true"})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("InvalidField should 303, got %d", res.StatusCode)
+	}
+	var flash string
+	for _, ck := range res.Cookies() {
+		if ck.Name == "nexus_inertia_errors" {
+			flash = ck.Value
+		}
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	r, _ := http.NewRequest("GET", "http://"+addr+"/one", nil)
+	r.Header.Set("X-Inertia", "true")
+	r.AddCookie(&http.Cookie{Name: "nexus_inertia_errors", Value: flash})
+	res2, err := client.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	b, _ := io.ReadAll(res2.Body)
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal(b, &page); err != nil {
+		t.Fatal(err)
+	}
+	errs, _ := page.Props["errors"].(map[string]any)
+	if errs["name"] != "Name is required" {
+		t.Fatalf("InvalidField message must surface, got %#v", page.Props["errors"])
+	}
+}
+
+// TestValidationErrorBag asserts X-Inertia-Error-Bag nests the flashed messages
+// under the bag name, so a page with multiple forms can scope its errors.
+func TestValidationErrorBag(t *testing.T) {
+	addr := "127.0.0.1:8826"
+	bootInertia(t, addr, inertia.Page("GET,POST", "/register", "Register", NewRegister, nexus.Public()))
+
+	res, _ := doReq(t, "POST", addr, "/register", map[string]string{
+		"X-Inertia":           "true",
+		"X-Inertia-Error-Bag": "signup",
+	})
+	var flash string
+	for _, ck := range res.Cookies() {
+		if ck.Name == "nexus_inertia_errors" {
+			flash = ck.Value
+		}
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	r, _ := http.NewRequest("GET", "http://"+addr+"/register", nil)
+	r.Header.Set("X-Inertia", "true")
+	r.AddCookie(&http.Cookie{Name: "nexus_inertia_errors", Value: flash})
+	res2, err := client.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	b, _ := io.ReadAll(res2.Body)
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal(b, &page); err != nil {
+		t.Fatal(err)
+	}
+	errs, _ := page.Props["errors"].(map[string]any)
+	bag, _ := errs["signup"].(map[string]any)
+	if bag["email"] != "Email is required" {
+		t.Fatalf("errors should nest under the bag, got %#v", page.Props["errors"])
 	}
 }
 

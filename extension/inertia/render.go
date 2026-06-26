@@ -58,6 +58,13 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	if err != nil {
 		return err
 	}
+	// Inertia always exposes an `errors` object so the client's useForm can read
+	// page.props.errors unconditionally. It's populated from the one-shot flash
+	// cookie left by a failed submit's redirect-back (see writeValidationRedirect),
+	// and is {} otherwise. A handler that set its own "errors" prop keeps it.
+	if _, ok := props["errors"]; !ok {
+		props["errors"] = consumeFlashErrors(c)
+	}
 	page := pageObject{
 		Component: component,
 		Props:     props,
