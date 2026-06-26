@@ -99,6 +99,17 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 					}
 				}
 			}
+			// No-listener mode: the app is driven as an http.Handler
+			// (InProcess / nexustest / embedding). Skip bind + Serve +
+			// banner entirely, but keep cron and liveness so scheduled
+			// work and lifecycle teardown behave exactly as in a bound
+			// run. The http.Server values stay un-Served; OnStop's
+			// Shutdown on them is a safe no-op.
+			if cfg.Server.NoListener {
+				app.cronSched.Start()
+				app.health.setAlive(true)
+				return nil
+			}
 			for i, l := range listeners {
 				ln, err := net.Listen("tcp", l.Addr)
 				if err != nil {
