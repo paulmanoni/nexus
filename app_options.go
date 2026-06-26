@@ -413,6 +413,16 @@ func autoLoad(path string) (Config, []Option) {
 	return cfg, extOpts
 }
 
+// Run starts an app from a Config you build in Go, plus the given options
+// (modules, Provide, AsRest/AsQuery/AsWS, extension modules). It blocks until
+// the process is signalled to stop.
+//
+// Most apps should call Boot instead — it loads Config + [extensions.*] from
+// nexus.toml and is sugar over Run. Reach for Run when Config carries values
+// TOML can't express (a shared Store, a middleware func slice, a pluggable
+// router/container backend) or when you want explicit control over load order.
+// For tests, use InProcess (no listener). See the package doc for the full
+// entry-point rundown.
 func Run(cfg Config, opts ...Option) {
 	// Print-mode short-circuit. When NEXUS_PRINT_MANIFEST=1 is set,
 	// the orchestration platform is invoking us at build/upload time

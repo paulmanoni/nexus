@@ -41,6 +41,10 @@ const DefaultConfigPath = "nexus.toml"
 // So nexus.toml alone covers the common case; reach for
 // extension/config when you need hot-reload or a remote source.
 //
+// Boot calls this (with MustLoadExtensions) for you — reach for LoadConfig
+// directly only for the explicit form, e.g. to override a Go-only Config field
+// before calling Run.
+//
 // Path is optional — pass nothing to read DefaultConfigPath
 // ("nexus.toml") from the current working directory:
 //
@@ -112,7 +116,8 @@ func LoadConfig(path ...string) (Config, error) {
 	return block.Runtime.toConfig()
 }
 
-// MustLoadConfig is the panic-on-error variant for binaries that
+// MustLoadConfig is the panic-on-error variant of LoadConfig (Boot composes
+// both for you; use this only for the explicit Run form) for binaries that
 // REQUIRE a nexus.toml and treat its absence as a fatal startup
 // error. Equivalent to:
 //
