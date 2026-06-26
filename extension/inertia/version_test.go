@@ -6,6 +6,43 @@ import (
 	"testing/fstest"
 )
 
+// TestDevHeadTags verifies the dev preamble is framework-aware and the entry is
+// configurable: Vue gets client+entry with no React preamble; React gets the
+// Fast Refresh preamble before the client; the entry path is honored.
+func TestDevHeadTags(t *testing.T) {
+	const dev = "http://localhost:5173"
+
+	// Vue (default-style entry): no React preamble, configured entry present.
+	vue := devHeadTags(dev, "src/main.ts", false)
+	if strings.Contains(vue, "@react-refresh") {
+		t.Errorf("vue dev tags must not include the React preamble: %s", vue)
+	}
+	if !strings.Contains(vue, dev+"/@vite/client") {
+		t.Errorf("dev tags must load @vite/client: %s", vue)
+	}
+	if !strings.Contains(vue, `src="`+dev+`/src/main.ts"`) {
+		t.Errorf("dev tags must load the configured entry: %s", vue)
+	}
+
+	// React: preamble present, ordered before @vite/client and the entry.
+	react := devHeadTags(dev, "src/main.tsx", true)
+	pre := strings.Index(react, "@react-refresh")
+	client := strings.Index(react, "/@vite/client")
+	entry := strings.Index(react, "/src/main.tsx")
+	if pre < 0 {
+		t.Fatalf("react dev tags must include the Fast Refresh preamble: %s", react)
+	}
+	if !(pre < client && client < entry) {
+		t.Errorf("order must be preamble < @vite/client < entry (got %d,%d,%d)\n%s", pre, client, entry, react)
+	}
+
+	// Configurable entry path is honored (leading slash tolerated).
+	custom := devHeadTags(dev, "/app/entry.ts", false)
+	if !strings.Contains(custom, `src="`+dev+`/app/entry.ts"`) {
+		t.Errorf("custom entry not honored: %s", custom)
+	}
+}
+
 // TestHeadTags_ImportsGraph verifies the production tags walk the manifest's
 // static-import graph the way Vite's backend integration does: CSS from the
 // entry AND its imported chunks, modulepreload for every imported chunk (not

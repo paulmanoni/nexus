@@ -154,17 +154,36 @@ func (m manifest) headTags() string {
 }
 
 // devHeadTags renders the dev-server tags used when no build manifest is
-// present but a viteless/Vite dev server URL is known (NEXUS_VITE_DEV). The
-// client script enables HMR; the entry is the conventional src/main.ts. Full
-// dev-topology handling lands in a later release; this keeps `nexus dev`
-// usable for Inertia apps in the meantime.
-func devHeadTags(devURL string) string {
+// present but a viteless/Vite dev server URL is known (NEXUS_VITE_DEV). entry is
+// the client app's dev module (e.g. "src/main.ts" / "src/main.tsx"); react adds
+// the Vite React Fast Refresh preamble that must run before the dev client.
+func devHeadTags(devURL, entry string, react bool) string {
+	entry = strings.TrimPrefix(entry, "/")
+	var b strings.Builder
 	// /__nexus/dev/script.js is the framework's live-reload shim (mounted by
 	// ServeFrontend under NEXUS_DEV=1): it full-reloads the browser on any file
-	// change under the project root, so editing a Go page handler or a .vue
+	// change under the project root, so editing a Go page handler or a .vue/.tsx
 	// restarts the page without a manual refresh. The Vite client handles
 	// module loading + HMR.
-	return `<script src="/__nexus/dev/script.js"></script>` +
-		`<script type="module" src="` + devURL + `/@vite/client"></script>` +
-		`<script type="module" src="` + devURL + `/src/main.ts"></script>`
+	b.WriteString(`<script src="/__nexus/dev/script.js"></script>`)
+	// React Fast Refresh must be installed before @vite/client and the app entry.
+	if react {
+		b.WriteString(reactRefreshPreamble(devURL))
+	}
+	b.WriteString(`<script type="module" src="` + devURL + `/@vite/client"></script>`)
+	b.WriteString(`<script type="module" src="` + devURL + `/` + entry + `"></script>`)
+	return b.String()
+}
+
+// reactRefreshPreamble is the Vite React plugin's HMR bootstrap, pointed at the
+// dev server's /@react-refresh runtime. Without it a React app's edits do a full
+// reload instead of fast-refreshing component state.
+func reactRefreshPreamble(devURL string) string {
+	return `<script type="module">
+  import RefreshRuntime from '` + devURL + `/@react-refresh'
+  RefreshRuntime.injectIntoGlobalHook(window)
+  window.$RefreshReg$ = () => {}
+  window.$RefreshSig$ = () => (type) => type
+  window.__vite_plugin_react_preamble_installed__ = true
+</script>`
 }
