@@ -84,6 +84,13 @@ type Config struct {
 	// HMR works for React apps. Auto-enabled when Entry ends in .tsx/.jsx; set
 	// it explicitly to force the preamble for a .ts/.js React entry.
 	React bool
+	// Nonce returns the per-request CSP nonce for the document shell. When set
+	// and non-empty, the engine stamps nonce="…" on every <script>/<link> it
+	// injects (asset tags + dev preamble + Config.Head), so they satisfy a
+	// strict `script-src 'nonce-…'` / `style-src 'nonce-…'` policy. The app's
+	// CSP middleware owns generating the nonce + setting the Content-Security-
+	// Policy header; return that same value here. Leave nil for no CSP nonce.
+	Nonce func(*httpx.Ctx) string
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
@@ -102,9 +109,10 @@ type Engine struct {
 	app         *nexus.App
 	cfgFrontend fs.FS
 	cfgRoot     string
-	versionPin  string // Config.Version; AutoVersion ("") = derive from manifest
-	devEntry    string // dev-server entry module (Config.Entry)
-	react       bool   // emit the React Fast Refresh preamble in dev
+	versionPin  string                  // Config.Version; AutoVersion ("") = derive from manifest
+	devEntry    string                  // dev-server entry module (Config.Entry)
+	react       bool                    // emit the React Fast Refresh preamble in dev
+	nonceFn     func(*httpx.Ctx) string // per-request CSP nonce (Config.Nonce)
 
 	resolveOnce sync.Once
 	head        string // resolved <head> asset tags (prod manifest or dev server)
@@ -199,7 +207,8 @@ func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 		versionPin:     cfg.Version,
 		devEntry:       entry,
 		// Auto-detect React from a JSX entry; Config.React forces it on.
-		react: cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
+		react:   cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
+		nonceFn: cfg.Nonce,
 	}
 }
 

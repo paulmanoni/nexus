@@ -119,7 +119,11 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	c.Header("Vary", headerInertia)
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
-	_, err = c.Writer.Write(e.shell(blob))
+	nonce := ""
+	if e.nonceFn != nil {
+		nonce = e.nonceFn(c)
+	}
+	_, err = c.Writer.Write(e.shell(blob, nonce))
 	return err
 }
 
