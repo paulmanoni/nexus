@@ -113,13 +113,36 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 		return err
 	}
 
+	// Server-side rendering (initial load only): POST the page to the renderer
+	// and inject its head/body, which the client hydrates. A renderer error
+	// falls back to client-side rendering (empty root div) unless SSRStrict —
+	// SSR must never take down the page.
+	var ssr SSRResult
+	if e.ssr != nil {
+		r, serr := e.ssr.Render(c.Request.Context(), blob)
+		if serr != nil {
+			if e.ssrStrict {
+				return serr
+			}
+			if e.onSSRError != nil {
+				e.onSSRError(serr)
+			}
+		} else {
+			ssr = r
+		}
+	}
+
 	// Initial load: full HTML document with the page embedded. Vary on
 	// X-Inertia so a shared cache never serves this HTML to a later XHR visit
 	// of the same URL (which expects the JSON page object), or vice versa.
 	c.Header("Vary", headerInertia)
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
-	_, err = c.Writer.Write(e.shell(blob))
+	nonce := ""
+	if e.nonceFn != nil {
+		nonce = e.nonceFn(c)
+	}
+	_, err = c.Writer.Write(e.shell(blob, nonce, ssr))
 	return err
 }
 

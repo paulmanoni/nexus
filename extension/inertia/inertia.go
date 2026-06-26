@@ -84,6 +84,27 @@ type Config struct {
 	// HMR works for React apps. Auto-enabled when Entry ends in .tsx/.jsx; set
 	// it explicitly to force the preamble for a .ts/.js React entry.
 	React bool
+	// Nonce returns the per-request CSP nonce for the document shell. When set
+	// and non-empty, the engine stamps nonce="…" on every <script>/<link> it
+	// injects (asset tags + dev preamble + Config.Head), so they satisfy a
+	// strict `script-src 'nonce-…'` / `style-src 'nonce-…'` policy. The app's
+	// CSP middleware owns generating the nonce + setting the Content-Security-
+	// Policy header; return that same value here. Leave nil for no CSP nonce.
+	Nonce func(*httpx.Ctx) string
+	// SSR enables server-side rendering: on the initial (non-XHR) load the engine
+	// POSTs the page object to this renderer and injects the returned head/body
+	// into the shell, which the client then hydrates. Nil = client-only (the
+	// default). Use extension/inertia/ssrhttp for the standard @inertiajs/server
+	// setup. A renderer error falls back to client rendering (see SSRStrict).
+	SSR SSRRenderer
+	// OnSSRError is called when SSR rendering fails (transport error, bad
+	// response). The engine still falls back to client rendering — this is for
+	// logging/metrics, mirroring Inertia's SsrRenderFailed event. Optional.
+	OnSSRError func(error)
+	// SSRStrict makes an SSR failure return the error (→ 500) instead of falling
+	// back to client rendering. Off by default; useful in tests/CI to catch a
+	// broken SSR pipeline, like Inertia's throw_on_error.
+	SSRStrict bool
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
@@ -102,9 +123,13 @@ type Engine struct {
 	app         *nexus.App
 	cfgFrontend fs.FS
 	cfgRoot     string
-	versionPin  string // Config.Version; AutoVersion ("") = derive from manifest
-	devEntry    string // dev-server entry module (Config.Entry)
-	react       bool   // emit the React Fast Refresh preamble in dev
+	versionPin  string                  // Config.Version; AutoVersion ("") = derive from manifest
+	devEntry    string                  // dev-server entry module (Config.Entry)
+	react       bool                    // emit the React Fast Refresh preamble in dev
+	nonceFn     func(*httpx.Ctx) string // per-request CSP nonce (Config.Nonce)
+	ssr         SSRRenderer             // server-side renderer (Config.SSR); nil = client-only
+	onSSRError  func(error)             // Config.OnSSRError
+	ssrStrict   bool                    // Config.SSRStrict
 
 	resolveOnce sync.Once
 	head        string // resolved <head> asset tags (prod manifest or dev server)
@@ -199,7 +224,11 @@ func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 		versionPin:     cfg.Version,
 		devEntry:       entry,
 		// Auto-detect React from a JSX entry; Config.React forces it on.
-		react: cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
+		react:      cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
+		nonceFn:    cfg.Nonce,
+		ssr:        cfg.SSR,
+		onSSRError: cfg.OnSSRError,
+		ssrStrict:  cfg.SSRStrict,
 	}
 }
 

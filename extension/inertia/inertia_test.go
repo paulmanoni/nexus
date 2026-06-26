@@ -652,8 +652,8 @@ func TestFrontendAutoDiscovery(t *testing.T) {
 	ready := make(chan struct{})
 	go func() {
 		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10},
-			nexus.ServeFrontend(fsys, "dist"),  // names + serves the bundle once
-			inertia.Module(inertia.Config{}),   // no Frontend → auto-discovered
+			nexus.ServeFrontend(fsys, "dist"), // names + serves the bundle once
+			inertia.Module(inertia.Config{}),  // no Frontend → auto-discovered
 			inertia.Page("GET", "/p", "P", NewWidgets),
 			nexus.Invoke(func() { close(ready) }),
 		)
