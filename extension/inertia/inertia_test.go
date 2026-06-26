@@ -389,7 +389,7 @@ func TestResetMergeProp(t *testing.T) {
 // TestMergeVariants asserts the infinite-scroll merge flags: Merge → mergeProps,
 // DeepMerge → deepMergeProps, and each matchOn key → matchPropsOn as "<prop>.<field>".
 func TestMergeVariants(t *testing.T) {
-	addr := "127.0.0.1:8831"
+	addr := "127.0.0.1:8840" // 8831 is taken by the iauth test package (parallel `go test ./...`)
 	bootInertia(t, addr, inertia.Page("GET", "/scroll", "Scroll/Index", NewScroll))
 
 	_, body := req(t, addr, "/scroll", map[string]string{"X-Inertia": "true"})
