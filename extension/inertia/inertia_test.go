@@ -47,6 +47,20 @@ func NewFeed(ctx context.Context) (feedProps, error) {
 	}, nil
 }
 
+// scrollProps exercises the infinite-scroll merge variants: a shallow Merge
+// with a match key and a DeepMerge with a match key.
+type scrollProps struct {
+	Rows inertia.Prop `json:"rows"`
+	Tree inertia.Prop `json:"tree"`
+}
+
+func NewScroll(ctx context.Context) (scrollProps, error) {
+	return scrollProps{
+		Rows: inertia.Merge(func() ([]int, error) { return []int{1}, nil }, "id"),
+		Tree: inertia.DeepMerge(func() (map[string]any, error) { return map[string]any{"a": 1}, nil }, "key"),
+	}, nil
+}
+
 // groupedProps exercises deferred prop GROUPS: two Defer props in distinct
 // named groups (the client fetches each in parallel) plus one default-group prop.
 type groupedProps struct {
@@ -369,6 +383,51 @@ func TestResetMergeProp(t *testing.T) {
 	}
 	if page2.Props["items"] == nil {
 		t.Fatalf("reset prop value must still be sent, got %v", page2.Props)
+	}
+}
+
+// TestMergeVariants asserts the infinite-scroll merge flags: Merge → mergeProps,
+// DeepMerge → deepMergeProps, and each matchOn key → matchPropsOn as "<prop>.<field>".
+func TestMergeVariants(t *testing.T) {
+	addr := "127.0.0.1:8831"
+	bootInertia(t, addr, inertia.Page("GET", "/scroll", "Scroll/Index", NewScroll))
+
+	_, body := req(t, addr, "/scroll", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		MergeProps     []string `json:"mergeProps"`
+		DeepMergeProps []string `json:"deepMergeProps"`
+		MatchPropsOn   []string `json:"matchPropsOn"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.MergeProps) != 1 || page.MergeProps[0] != "rows" {
+		t.Fatalf("mergeProps=%v want [rows]", page.MergeProps)
+	}
+	if len(page.DeepMergeProps) != 1 || page.DeepMergeProps[0] != "tree" {
+		t.Fatalf("deepMergeProps=%v want [tree]", page.DeepMergeProps)
+	}
+	want := map[string]bool{"rows.id": true, "tree.key": true}
+	if len(page.MatchPropsOn) != 2 || !want[page.MatchPropsOn[0]] || !want[page.MatchPropsOn[1]] {
+		t.Fatalf("matchPropsOn=%v want rows.id + tree.key", page.MatchPropsOn)
+	}
+
+	// X-Inertia-Reset clears both merge flavors and their match keys.
+	_, body2 := req(t, addr, "/scroll", map[string]string{
+		"X-Inertia":       "true",
+		"X-Inertia-Reset": "rows,tree",
+	})
+	var page2 struct {
+		MergeProps     []string `json:"mergeProps"`
+		DeepMergeProps []string `json:"deepMergeProps"`
+		MatchPropsOn   []string `json:"matchPropsOn"`
+	}
+	if err := json.Unmarshal([]byte(body2), &page2); err != nil {
+		t.Fatal(err)
+	}
+	if len(page2.MergeProps) != 0 || len(page2.DeepMergeProps) != 0 || len(page2.MatchPropsOn) != 0 {
+		t.Fatalf("reset should clear all merge flags, got merge=%v deep=%v match=%v",
+			page2.MergeProps, page2.DeepMergeProps, page2.MatchPropsOn)
 	}
 }
 

@@ -32,9 +32,14 @@ type pageObject struct {
 	// auto-fetch after mount, keyed by group name. The client fetches each
 	// group in a separate (parallel) request. Omitted when there are none.
 	DeferredProps map[string][]string `json:"deferredProps,omitempty"`
-	// MergeProps lists Merge prop keys the client should merge with the
+	// MergeProps lists Merge prop keys the client should shallow-merge with the
 	// existing value rather than replace. Omitted when there are none.
 	MergeProps []string `json:"mergeProps,omitempty"`
+	// DeepMergeProps lists DeepMerge prop keys for a recursive merge; MatchPropsOn
+	// lists "<prop>.<field>" de-dup keys for infinite-scroll merging. Omitted
+	// when empty.
+	DeepMergeProps []string `json:"deepMergeProps,omitempty"`
+	MatchPropsOn   []string `json:"matchPropsOn,omitempty"`
 	// EncryptHistory asks the client to encrypt this page's history state;
 	// ClearHistory asks it to drop any previously-encrypted history. Both are
 	// Inertia v2 privacy controls. Omitted when false.
@@ -82,6 +87,12 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	if len(meta.merge) > 0 {
 		page.MergeProps = meta.merge
 	}
+	if len(meta.deepMerge) > 0 {
+		page.DeepMergeProps = meta.deepMerge
+	}
+	if len(meta.matchOn) > 0 {
+		page.MatchPropsOn = meta.matchOn
+	}
 	page.EncryptHistory, page.ClearHistory = e.historyFlags(c)
 	blob, err := json.Marshal(page)
 	if err != nil {
@@ -127,8 +138,10 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 // propsMeta carries the page-object metadata that Defer/Merge props produce
 // alongside the resolved props map.
 type propsMeta struct {
-	deferred map[string][]string // Defer keys advertised on a full visit, by group
-	merge    []string            // Merge keys included in this response
+	deferred  map[string][]string // Defer keys advertised on a full visit, by group
+	merge     []string            // shallow-Merge keys included in this response
+	deepMerge []string            // DeepMerge keys included in this response
+	matchOn   []string            // "<prop>.<field>" de-dup keys for merged props
 }
 
 func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[string]any, propsMeta, error) {
@@ -196,20 +209,21 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 		if key == "-" {
 			continue
 		}
-		kind, group, resolve := classifyProp(rv.Field(i))
+		p, resolve := classifyProp(rv.Field(i))
 
 		// A deferred prop that isn't being sent this round is advertised
 		// on full visits (grouped) so the client knows to fetch it next.
-		if kind == kindDefer && !partial {
+		if p.kind == kindDefer && !partial {
 			if meta.deferred == nil {
 				meta.deferred = map[string][]string{}
 			}
+			group := p.group
 			if group == "" {
 				group = "default"
 			}
 			meta.deferred[group] = append(meta.deferred[group], key)
 		}
-		if !include(key, kind) {
+		if !include(key, p.kind) {
 			continue
 		}
 		val, err := resolve()
@@ -217,24 +231,34 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 			return nil, propsMeta{}, err
 		}
 		out[key] = val
-		if kind == kindMerge && !reset[key] {
-			meta.merge = append(meta.merge, key)
+		// Merge flagging — skipped when the client asked to reset this key.
+		if !reset[key] {
+			switch p.kind {
+			case kindMerge:
+				meta.merge = append(meta.merge, key)
+			case kindDeepMerge:
+				meta.deepMerge = append(meta.deepMerge, key)
+			}
+			if (p.kind == kindMerge || p.kind == kindDeepMerge) && p.matchOn != "" {
+				meta.matchOn = append(meta.matchOn, key+"."+p.matchOn)
+			}
 		}
 	}
 	return out, meta, nil
 }
 
 // classifyProp inspects a struct field value: a Prop carries its own kind,
-// Defer group, and thunk; anything else is a plain field whose value is
-// returned as-is (no group).
-func classifyProp(fv reflect.Value) (propKind, string, func() (any, error)) {
+// Defer group, match key, and thunk; anything else is a plain field whose
+// value is returned as-is. Returns the Prop descriptor plus the resolve thunk
+// (the plain-field closure for non-Prop values).
+func classifyProp(fv reflect.Value) (Prop, func() (any, error)) {
 	if fv.CanInterface() {
 		if p, ok := fv.Interface().(Prop); ok {
-			return p.kind, p.group, p.resolve
+			return p, p.resolve
 		}
 	}
 	v := fv.Interface()
-	return kindPlain, "", func() (any, error) { return v, nil }
+	return Prop{kind: kindPlain}, func() (any, error) { return v, nil }
 }
 
 // wireName returns the JSON key for a struct field, honoring the `json` tag

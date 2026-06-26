@@ -7,11 +7,12 @@ package inertia
 type propKind int
 
 const (
-	kindPlain    propKind = iota // always on full visit; on partial only if requested
-	kindOptional                 // NEVER on full visit; only on partial when requested
-	kindAlways                   // always sent, even on partials that don't request it
-	kindDefer                    // like Optional, but advertised so the client auto-fetches it
-	kindMerge                    // like plain, but flagged so the client merges (pagination)
+	kindPlain     propKind = iota // always on full visit; on partial only if requested
+	kindOptional                  // NEVER on full visit; only on partial when requested
+	kindAlways                    // always sent, even on partials that don't request it
+	kindDefer                     // like Optional, but advertised so the client auto-fetches it
+	kindMerge                     // like plain, but flagged so the client shallow-merges (pagination)
+	kindDeepMerge                 // like Merge, but flagged for a recursive deep merge
 )
 
 // Prop is a typed wrapper that overrides a props-struct field's evaluation
@@ -29,10 +30,11 @@ const (
 // response — so an expensive Optional prop costs nothing on the (common)
 // visits that don't request it.
 type Prop struct {
-	kind  propKind
-	val   any
-	fn    func() (any, error)
-	group string // Defer group name; props in one group are fetched together
+	kind    propKind
+	val     any
+	fn      func() (any, error)
+	group   string // Defer group name; props in one group are fetched together
+	matchOn string // Merge/DeepMerge: child field to match items on (infinite scroll)
 }
 
 // resolve returns the prop's value, invoking the thunk if it has one. Called
@@ -92,11 +94,35 @@ func Defer[T any](fn func() (T, error), group ...string) Prop {
 }
 
 // Merge marks a prop that is sent normally but flagged in the page object's
-// mergeProps, telling the client to merge it with the existing prop value
-// instead of replacing it — the basis for "load more" pagination and infinite
-// scroll.
+// mergeProps, telling the client to (shallow) merge it with the existing prop
+// value instead of replacing it — the basis for "load more" pagination and
+// infinite scroll.
 //
 //	Items: inertia.Merge(func() ([]Item, error) { return svc.Page(cursor) }),
-func Merge[T any](fn func() (T, error)) Prop {
-	return Prop{kind: kindMerge, fn: func() (any, error) { return fn() }}
+//
+// An optional matchOn names a child field used to de-duplicate while merging
+// (added to the page object's matchPropsOn as "<prop>.<matchOn>") — so a re-sent
+// item updates in place instead of appending a duplicate:
+//
+//	Items: inertia.Merge(svc.Page, "id"),   // matchPropsOn: ["items.id"]
+func Merge[T any](fn func() (T, error), matchOn ...string) Prop {
+	return mergeProp(kindMerge, func() (any, error) { return fn() }, matchOn)
+}
+
+// DeepMerge is Merge with a recursive merge: nested objects/arrays in the prop
+// are deep-merged into the existing value rather than shallow-replaced. Flagged
+// in the page object's deepMergeProps. Like Merge, it accepts an optional
+// matchOn de-dup key.
+//
+//	Feed: inertia.DeepMerge(svc.Feed, "id"),
+func DeepMerge[T any](fn func() (T, error), matchOn ...string) Prop {
+	return mergeProp(kindDeepMerge, func() (any, error) { return fn() }, matchOn)
+}
+
+func mergeProp(kind propKind, fn func() (any, error), matchOn []string) Prop {
+	p := Prop{kind: kind, fn: fn}
+	if len(matchOn) > 0 {
+		p.matchOn = matchOn[0]
+	}
+	return p
 }
