@@ -507,11 +507,15 @@ func bindArgs(c *httpx.Ctx, ptr any) error {
 
 // tagSurvey walks one level of struct fields checking which binder families
 // apply. If none are present we still try JSON on methods with bodies — the
-// tag vocabulary is a hint, not a wall.
+// tag vocabulary is a hint, not a wall. Path params are recognized via the
+// preferred `path` tag or the legacy `uri` tag (the returned uri bool covers
+// both).
 func tagSurvey(t reflect.Type) (uri, query, header, form, json bool) {
 	for i := 0; i < t.NumField(); i++ {
 		tag := t.Field(i).Tag
-		if _, ok := tag.Lookup("uri"); ok {
+		if _, ok := tag.Lookup("path"); ok {
+			uri = true
+		} else if _, ok := tag.Lookup("uri"); ok {
 			uri = true
 		}
 		if _, ok := tag.Lookup("query"); ok || tag.Get("form") != "" {

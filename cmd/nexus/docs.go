@@ -641,10 +641,11 @@ The handler is reflective:
 
     func NewGet(svc *UserService, db *MainDB, p nexus.Params[GetArgs]) (*User, error)
 
-Path params bind to fields on the args struct via ` + "`" + `uri:"id"` + "`" + `:
+Path params bind to fields on the args struct via ` + "`" + `path:"id"` + "`" + `
+(the legacy ` + "`" + `uri:"id"` + "`" + ` spelling still works):
 
     type GetArgs struct {
-        ID string ` + "`" + `uri:"id"` + "`" + `
+        ID string ` + "`" + `path:"id"` + "`" + `
     }
     nexus.AsRest("GET", "/users/:id", NewGet)
 

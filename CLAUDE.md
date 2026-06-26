@@ -362,12 +362,12 @@ func NewOp(svc *XService, deps..., p nexus.Params[ArgsStruct]) (*Response, error
 - Last param `nexus.Params[T]` exposes `.Context` and `.Args`.
 - Return `(T, error)` — `T` is the GraphQL type / REST JSON body.
 - `NewListPets` → op name `ListPets` (the `New` prefix is stripped).
-- Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `uri:"id"` for REST path params (also `query:"x"`, `header:"X"`, `form:"x"`, `json:"x"`).
+- Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `path:"id"` for REST path params (legacy `uri:"id"` still works) (also `query:"x"`, `header:"X"`, `form:"x"`, `json:"x"`).
 - `nexus.Describe("…")` sets an op's description (dashboard + GraphQL SDL) — a cross-transport per-op option (REST / GraphQL / WS), like `HideFromDashboard()` / `WithIcon()`. It supersedes the transport-specific `Desc` (GraphQL) and `Description` (REST), which are deprecated but still work.
 
 ### REST
 ```go
-type GetArgs struct { ID string `uri:"id"` }   // path param `:id` binds via the `uri` tag
+type GetArgs struct { ID string `path:"id"` }   // path param `:id` binds via the `path` tag (legacy `uri` also works)
 nexus.AsRest("GET", "/users/:id", NewGet)
 ```
 
