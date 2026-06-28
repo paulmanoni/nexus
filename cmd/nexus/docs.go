@@ -440,6 +440,25 @@ app's shell at the viteless dev server for HMR — the inverse of the SPA dev
 model. Override with [runtime.inertia] enabled = true|false in nexus.toml
 (force on, or opt a hybrid SPA+Inertia app back to the SPA dev model).
 
+Server-side rendering (SSR) — initial loads rendered to HTML, then hydrated:
+
+    import "github.com/paulmanoni/nexus/extension/inertia/ssrhttp"
+
+    inertia.Module(inertia.Config{
+        Frontend: webFS, Root: "web/dist",
+        SSR: ssrhttp.New(""), // "" → http://127.0.0.1:13714 (the Node SSR server)
+    })
+
+The engine POSTs each initial page object to the SSR server and injects its
+{head, body}; the client entry hydrates with createSSRApp. Any renderer error
+(sidecar down, timeout) falls back to client rendering — SSR never takes the
+page down. Config.SSRStrict turns the error into a 500 instead;
+Config.OnSSRError hooks logging. Needs Node: scaffold with
+"nexus new <app> --ssr" (emits web/src/ssr.ts + a hydrating main.ts, build =
+"vite build && vite build --ssr"); build with npm run build, then run the
+sidecar "node web/dist/ssr/ssr.js" alongside the app. In nexus dev the sidecar
+isn't running, so pages render client-side with HMR (graceful fallback).
+
 Decorator form — annotate the handler instead of listing it in a Module:
 
     //@inertia.Page "GET" "/users" "Users/Index"

@@ -146,6 +146,108 @@ func TestScaffold_Inertia_Builds(t *testing.T) {
 	}
 }
 
+// TestScaffold_InertiaSSR_Builds scaffolds an Inertia SSR app and compiles it
+// against the in-repo nexus (which carries extension/inertia + ssrhttp). Proves
+// the generated Go wiring (inertia.Module with SSR: ssrhttp.New) is API-correct
+// and asserts the SSR-specific file layout (ssr.ts entry, hydrating main.ts, and
+// the two-bundle build script).
+func TestScaffold_InertiaSSR_Builds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping build test in -short mode")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not on PATH")
+	}
+	_, here, _, _ := runtime.Caller(0)
+	repoRoot, _ := filepath.Abs(filepath.Join(filepath.Dir(here), "..", ".."))
+
+	dir := filepath.Join(t.TempDir(), "ssrapp")
+	var stdout bytes.Buffer
+	if err := scaffoldWithOpts(scaffoldOpts{
+		Dir:      dir,
+		Frontend: "vue",
+		Tooling:  "vite",
+		Inertia:  true,
+		SSR:      true,
+		DB:       "none",
+		Cache:    "none",
+		Auth:     "none",
+	}, &stdout); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	// SSR-specific layout: the Node SSR bundle entry plus the shared page
+	// files. main.ts hydrates (createSSRApp).
+	for _, name := range []string{"web/src/ssr.ts", "web/src/main.ts", "web/src/Pages/Home.vue", "web/package.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+	mainTS, _ := os.ReadFile(filepath.Join(dir, "web/src/main.ts"))
+	if !strings.Contains(string(mainTS), "createSSRApp") {
+		t.Fatalf("SSR client entry must hydrate via createSSRApp:\n%s", mainTS)
+	}
+	ssrTS, _ := os.ReadFile(filepath.Join(dir, "web/src/ssr.ts"))
+	for _, want := range []string{"createServer", "renderToString"} {
+		if !strings.Contains(string(ssrTS), want) {
+			t.Fatalf("ssr.ts missing %q:\n%s", want, ssrTS)
+		}
+	}
+	pkg, _ := os.ReadFile(filepath.Join(dir, "web/package.json"))
+	for _, want := range []string{"vite build --ssr", "@inertiajs/server", "@vue/server-renderer"} {
+		if !strings.Contains(string(pkg), want) {
+			t.Fatalf("package.json missing %q:\n%s", want, pkg)
+		}
+	}
+
+	mainGo, _ := os.ReadFile(filepath.Join(dir, "main.go"))
+	for _, want := range []string{"extension/inertia/ssrhttp", "SSR:", "ssrhttp.New("} {
+		if !strings.Contains(string(mainGo), want) {
+			t.Fatalf("main.go missing %q:\n%s", want, mainGo)
+		}
+	}
+
+	addReplace := exec.Command("go", "mod", "edit",
+		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
+		"-require", "github.com/paulmanoni/nexus@v0.0.0",
+	)
+	addReplace.Dir = dir
+	if out, err := addReplace.CombinedOutput(); err != nil {
+		t.Fatalf("go mod edit: %v\n%s", err, out)
+	}
+	for _, step := range [][]string{{"go", "mod", "tidy"}, {"go", "build", "."}} {
+		cmd := exec.Command(step[0], step[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s failed: %v\n%s", strings.Join(step, " "), err, out)
+		}
+	}
+}
+
+// TestScaffold_SSR_Validation covers the --ssr flag's guardrails: it implies
+// Inertia, and it requires the vite toolchain (viteless has no SSR build).
+func TestScaffold_SSR_Validation(t *testing.T) {
+	var out bytes.Buffer
+	// --ssr with viteless tooling is rejected.
+	err := scaffoldWithOpts(scaffoldOpts{
+		Dir: filepath.Join(t.TempDir(), "a"), Frontend: "vue",
+		Inertia: true, SSR: true, Tooling: "viteless",
+		DB: "none", Cache: "none", Auth: "none",
+	}, &out)
+	if err == nil || !strings.Contains(err.Error(), "vite") {
+		t.Fatalf("--ssr with viteless should be rejected for vite; got %v", err)
+	}
+	// --ssr without inertia is rejected.
+	err = scaffoldWithOpts(scaffoldOpts{
+		Dir: filepath.Join(t.TempDir(), "b"), Frontend: "vue",
+		SSR: true, Tooling: "vite",
+		DB: "none", Cache: "none", Auth: "none",
+	}, &out)
+	if err == nil || !strings.Contains(err.Error(), "inertia") {
+		t.Fatalf("--ssr without --inertia should be rejected; got %v", err)
+	}
+}
+
 func TestScaffold_RejectsNonEmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("x"), 0o644); err != nil {

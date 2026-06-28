@@ -41,6 +41,7 @@ func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
 		cache      string
 		auth       string
 		inertia    bool
+		ssr        bool
 		yes        bool
 	)
 	cmd := &cobra.Command{
@@ -84,11 +85,23 @@ dashboard at /__nexus/.`,
 				Cache:      cache,
 				Auth:       auth,
 				Inertia:    inertia,
+				SSR:        ssr,
+			}
+			// --ssr is an Inertia feature: turn on --inertia so
+			// `nexus new app --ssr` (the short form) just works.
+			if opts.SSR {
+				opts.Inertia = true
 			}
 			// --inertia implies a frontend; default it to vue so the
 			// common `nexus new app --inertia` (no --frontend) just works.
 			if opts.Inertia && opts.Frontend == "" {
 				opts.Frontend = "vue"
+			}
+			// SSR needs a Node build/runtime (vite build --ssr + the Node
+			// SSR sidecar) — viteless has no SSR build, so pin the vite
+			// toolchain when the user didn't choose one.
+			if opts.SSR && opts.Tooling == "" {
+				opts.Tooling = "vite"
 			}
 			// Interactive prompts fill any axis the user didn't pin
 			// via flags. Skipped on a non-tty stdin or when --yes is
@@ -135,6 +148,8 @@ dashboard at /__nexus/.`,
 		"authentication: "+strings.Join(authChoices, " | ")+" (default: prompt)")
 	cmd.Flags().BoolVar(&inertia, "inertia", false,
 		"scaffold an Inertia.js app (server-driven pages; implies --frontend vue)")
+	cmd.Flags().BoolVar(&ssr, "ssr", false,
+		"add Inertia server-side rendering (implies --inertia; needs Node: vite build --ssr + the SSR sidecar)")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip prompts and accept defaults on any axis not passed via flags")
 	return cmd
@@ -190,6 +205,16 @@ func scaffoldWithOpts(opts scaffoldOpts, stdout io.Writer) error {
 	// half-wired React/none project.
 	if opts.Inertia && opts.Frontend != "vue" {
 		return fmt.Errorf("--inertia currently requires --frontend vue (got %q)", opts.Frontend)
+	}
+	// SSR rides on Inertia and needs the Node toolchain (vite build --ssr +
+	// the SSR sidecar); viteless has no SSR build path yet.
+	if opts.SSR {
+		if !opts.Inertia {
+			return fmt.Errorf("--ssr requires --inertia")
+		}
+		if opts.Tooling != "vite" {
+			return fmt.Errorf("--ssr requires --tooling vite (Node SSR build); got %q", opts.Tooling)
+		}
 	}
 	if err := validChoice(opts.DB, "--db", dbChoices); err != nil {
 		return err
