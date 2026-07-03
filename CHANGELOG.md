@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — auth: password hashing + credential login backends (Django-style, phase 1)
+
+- **Pluggable password hashing** (`auth.Hasher` / `auth.Hashers`), the
+  Django `PASSWORD_HASHERS` analogue — encoded strings are self-describing
+  (`<id>$<payload>`) so a set verifies any member algorithm and **rehashes
+  on login** when the stored hash is stale. Three shippers, **zero new
+  deps** (`golang.org/x/crypto` + stdlib `crypto/pbkdf2`):
+  - `auth.BCrypt()` — the default (predictable memory, cost 12).
+  - `auth.Argon2id()` — memory-hard alternative.
+  - `auth.PBKDF2()` — PBKDF2-HMAC-SHA256 at 600k iterations (Django interop).
+  - `auth.DefaultHashers()` = bcrypt default + argon2id/pbkdf2 for verify.
+- **Pluggable password policy** (`auth.PasswordValidator`), the Django
+  `AUTH_PASSWORD_VALIDATORS` analogue: `MinLength`, `NotNumericOnly`,
+  `NotCommon`, `NotSimilarToUser`, run via `auth.ValidatePassword(...)`;
+  `auth.DefaultValidators()` gives a sensible baseline.
+- **Credential login backends** (`auth.Backend` + `auth.Authenticate`),
+  the Django `AUTHENTICATION_BACKENDS` analogue — backends are tried in
+  order; the built-in `auth.ModelBackend` authenticates a `Password`
+  credential against a pluggable `auth.UserStore` with a `Hashers` set
+  (constant-timing on the unknown-user path to avoid enumeration). Ships
+  an in-memory `auth.MemoryUserStore` for dev/tests; swap in any store
+  (GORM, external API) by implementing three methods.
+- Non-breaking: this fills in the *login* half around the existing
+  token-`Resolver`/`Scheme` surface, which is unchanged. (Phase 2:
+  sessions + login/logout; phase 3: per-object policies.)
+
 ## [1.20.4] - 2026-06-19
 
 ### Fixed — wildcard route params now match gin's convention on every backend
