@@ -262,6 +262,21 @@ type GraphQLConfigBlock struct {
 type MiddlewareConfigBlock struct {
 	CORS      *CORSConfigBlock      `toml:"cors"`
 	RateLimit *RateLimitConfigBlock `toml:"ratelimit"`
+	Security  *SecurityConfigBlock  `toml:"security"`
+}
+
+// SecurityConfigBlock is the TOML shape of SecurityConfig. A present
+// [runtime.middleware.security] block maps to a populated struct;
+// absent leaves Config.Middleware.Security nil (framework defaults —
+// headers on, CSRF off — still apply).
+type SecurityConfigBlock struct {
+	Headers          *bool  `toml:"headers"`         // default true; false disables the headers
+	FrameOptions     string `toml:"frame_options"`   // "" default, "-" to omit
+	ReferrerPolicy   string `toml:"referrer_policy"` // "" default, "-" to omit
+	CSP              string `toml:"csp"`             // "" → not sent
+	HSTSMaxAge       int    `toml:"hsts_max_age"`    // >0 → send HSTS
+	CSRF             bool   `toml:"csrf"`            // default false; true enables CSRF
+	CSRFCookieSecure *bool  `toml:"csrf_cookie_secure"`
 }
 
 // CORSConfigBlock is the TOML shape of CORSConfig.
@@ -347,6 +362,17 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 		cfg.Middleware.RateLimit = ratelimit.Limit{
 			RPM:   b.Middleware.RateLimit.RPM,
 			Burst: b.Middleware.RateLimit.Burst,
+		}
+	}
+	if s := b.Middleware.Security; s != nil {
+		cfg.Middleware.Security = &SecurityConfig{
+			DisableHeaders:   s.Headers != nil && !*s.Headers,
+			FrameOptions:     s.FrameOptions,
+			ReferrerPolicy:   s.ReferrerPolicy,
+			CSP:              s.CSP,
+			HSTSMaxAge:       s.HSTSMaxAge,
+			EnableCSRF:       s.CSRF,
+			CSRFCookieSecure: s.CSRFCookieSecure,
 		}
 	}
 	return cfg, nil
