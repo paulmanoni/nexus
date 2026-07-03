@@ -490,6 +490,14 @@ func New(cfg Config) *App {
 		a.registry.RegisterGlobalMiddleware("cors")
 	}
 
+	// Built-in web security: response headers (on by default) and
+	// optional CSRF. Applied on the engine root so REST + GraphQL + WS
+	// upgrades all see it, and before rate limiting so a rejected CSRF
+	// POST doesn't spend the bucket. The extension/security plugin adds
+	// a dashboard tab + per-route bundles on top; global enforcement is
+	// exclusively here to avoid double-applying the middleware.
+	a.installSecurity(cfg.Middleware.Security)
+
 	// Global rate limit primed before any op runs.
 	if !cfg.Middleware.RateLimit.Zero() {
 		a.rlStore.Declare(ratelimitGlobalKey, cfg.Middleware.RateLimit)

@@ -199,6 +199,7 @@ var topicSummaries = map[string]string{
 	"module":     "nexus.Module, Provide, ProvideService, route prefix",
 	"auth":       "auth.Module setup, Required, Requires, User[T]",
 	"oauth2":     "oauth2.Module — go-oauth2 server + auth bridge",
+	"security":   "Built-in security headers (on) + opt-in CSRF via nexus.toml",
 	"rest":       "AsRest — REST endpoints with reflective handlers",
 	"graphql":    "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":         "AsWS — typed WebSocket envelopes, session fan-out",
@@ -567,6 +568,57 @@ For full OAuth2 (password / client_credentials / refresh): see
 "nexus docs oauth2".
 `,
 
+	"security": `
+Built-in web security — CSRF enforcement + security response headers
+
+The defenses Django/Rails/Laravel/Phoenix ship by default. In nexus they
+are built into the core and driven from nexus.toml — no code, no import.
+
+HEADERS — ON BY DEFAULT for every app (nothing to enable):
+    X-Frame-Options: DENY
+    X-Content-Type-Options: nosniff
+    Referrer-Policy: strict-origin-when-cross-origin
+
+Tune or extend them in nexus.toml:
+
+    [runtime.middleware.security]
+    headers        = true                  # false to turn headers off
+    frame_options  = "SAMEORIGIN"          # "-" to omit the header
+    referrer_policy = "no-referrer"
+    csp            = "default-src 'self'"  # opt-in Content-Security-Policy
+    hsts_max_age   = 31536000              # opt-in HSTS (seconds)
+
+CSRF — OFF BY DEFAULT, opt in:
+
+    [runtime.middleware.security]
+    csrf = true
+
+Why off by default: a nexus app is usually a token-authenticated API
+(bearer / the typed client SDK) where CSRF is moot — a browser never
+auto-attaches a bearer token cross-site. Turn it on when you serve
+cookie/session-authenticated, server-rendered HTML forms (a template
+engine, or Inertia backed by session cookies).
+
+How it works (double-submit cookie): safe methods (GET/HEAD) mint a
+random token in a non-HttpOnly "csrftoken" cookie; unsafe methods must
+echo it in the "X-CSRFToken" header (or a "csrf_token" form field).
+Those names match the generated client SDK, so an existing frontend
+needs no change. Requests with an Authorization header (token APIs) are
+skipped — not CSRF-vulnerable. The cookie's Secure flag auto-derives
+from the request scheme, so dev over http works.
+
+In Go instead of TOML (same effect):
+
+    nexus.Run(nexus.Config{Middleware: nexus.MiddlewareConfig{
+        Security: &nexus.SecurityConfig{EnableCSRF: true, HSTSMaxAge: 31536000},
+    }})
+
+extension/security — the pieces the core path can't offer:
+    security.Plugin()                       // a dashboard "Security" tab
+    nexus.Use(security.NewCSRFMiddleware(security.CSRFConfig{}))     // per-route
+    nexus.Use(security.NewHeadersMiddleware(security.HeadersConfig{}))
+`,
+
 	"oauth2": `
 OAUTH2
 
@@ -850,6 +902,12 @@ defaults apply. 'nexus new' scaffolds this block.
     [runtime.middleware.ratelimit]
     rpm = 600
     burst = 50
+
+    [runtime.middleware.security]   # headers ON by default; CSRF opt-in
+    headers = true                  # X-Frame-Options / nosniff / Referrer-Policy
+    csp     = "default-src 'self'"  # opt-in Content-Security-Policy
+    hsts_max_age = 31536000         # opt-in HSTS
+    csrf    = true                  # enable double-submit CSRF (see: nexus docs security)
 
 DATABASES live at the TOP level (not under [runtime]). Wire each in code
 with db.BindFromConfig[YourType]("name") (YourType embeds *db.Manager).

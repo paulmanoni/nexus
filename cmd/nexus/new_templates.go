@@ -1105,6 +1105,25 @@ addr = ":8080"
 enabled = true
 name = "{{.Name}}"
 
+# Web security. The three safe response headers (X-Frame-Options,
+# X-Content-Type-Options, Referrer-Policy) are ON by default even without
+# this block — it only tunes them or turns on the extras. See
+# "nexus docs security".
+[runtime.middleware.security]
+# headers = false                 # turn the default security headers off
+# csp     = "default-src 'self'"  # opt-in Content-Security-Policy
+# hsts_max_age = 31536000         # opt-in HSTS (seconds) — set once you serve https
+{{if .IsInertia}}
+# CSRF is ON for this app: Inertia posts from cookie/session-backed forms,
+# which is exactly what double-submit CSRF protects. The generated client
+# already sends the csrftoken cookie back as X-CSRFToken.
+csrf = true
+{{else}}
+# CSRF is OFF by default: a token-authenticated API (bearer / the typed
+# client SDK) isn't CSRF-vulnerable. Turn it on if you serve cookie/session-
+# authenticated, server-rendered HTML forms (a template engine).
+# csrf = true
+{{end}}
 # Databases live at the TOP level (not under [runtime]); wire each with
 # db.BindFromConfig[YourType]("name") in code.
 # [databases.main]

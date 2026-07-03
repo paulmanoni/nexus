@@ -340,6 +340,59 @@ type MiddlewareConfig struct {
 	// For finer control (per-route CORS, dynamic origin checks),
 	// install your own gin middleware via Global instead.
 	CORS *CORSConfig
+
+	// Security configures the built-in web-security middleware:
+	// response headers (on by default) and CSRF (off by default).
+	// Nil means framework defaults — the three safe headers
+	// (X-Frame-Options, X-Content-Type-Options, Referrer-Policy) are
+	// still applied. Set a struct to tune headers, enable HSTS/CSP, or
+	// turn on CSRF. Populated from [runtime.middleware.security] in
+	// nexus.toml. See SecurityConfig.
+	//
+	// For the dashboard "Security" tab or per-route bundles, load the
+	// extension/security plugin — the global enforcement here and that
+	// plugin's per-route surface share one implementation.
+	Security *SecurityConfig
+}
+
+// SecurityConfig declares the framework's built-in security middleware.
+// The zero value (and a nil *SecurityConfig) yields the secure default:
+// the three safe response headers on, CSRF off.
+//
+// CSRF is off by default on purpose. A nexus app is usually a
+// token-authenticated API (bearer / the typed client SDK), where CSRF
+// is not the relevant threat — a browser never auto-attaches a bearer
+// token cross-site. Enable it (EnableCSRF, or `csrf = true`) when you
+// serve cookie/session-authenticated, server-rendered HTML forms (a
+// template engine, or Inertia backed by session cookies).
+type SecurityConfig struct {
+	// DisableHeaders turns off the security response headers. They are
+	// on by default: X-Frame-Options: DENY, X-Content-Type-Options:
+	// nosniff, Referrer-Policy: strict-origin-when-cross-origin.
+	DisableHeaders bool
+
+	// FrameOptions / ReferrerPolicy override the header defaults. Empty
+	// keeps the default; "-" omits that header entirely.
+	FrameOptions   string
+	ReferrerPolicy string
+
+	// CSP sets Content-Security-Policy verbatim. Empty → not sent (CSP
+	// is too app-specific to default).
+	CSP string
+
+	// HSTSMaxAge, when > 0, sends Strict-Transport-Security with that
+	// max-age in seconds. Opt-in — browsers ignore it over plain http,
+	// so it's safe to set once you serve https.
+	HSTSMaxAge int
+
+	// EnableCSRF turns on double-submit-cookie CSRF enforcement. See
+	// the type doc for why it defaults off.
+	EnableCSRF bool
+
+	// CSRFCookieSecure forces the CSRF cookie's Secure flag. Nil → auto
+	// (Secure when the request arrived over https). Set false only if a
+	// dev setup needs the cookie over plain http.
+	CSRFCookieSecure *bool
 }
 
 // CORSConfig declares the framework's built-in CORS policy. All

@@ -6,6 +6,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — built-in web security: CSRF enforcement + security headers
+
+- **Security response headers are now on by default** — the framework
+  applies `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and
+  `Referrer-Policy: strict-origin-when-cross-origin` to every app with no
+  code and no config, matching Django/Rails/Laravel/Phoenix. Opt-in HSTS,
+  Content-Security-Policy, Permissions-Policy, and COOP. This is a
+  behavior change (new response headers on existing apps) but the three
+  defaults are safe; set `[runtime.middleware.security] headers = false`
+  to turn them off, or `frame_options = "-"` to omit one.
+- **CSRF enforcement** (double-submit cookie) available as an opt-in
+  built-in — `[runtime.middleware.security] csrf = true` (or
+  `Config.Middleware.Security.EnableCSRF`). Safe methods mint a random
+  token in a non-HttpOnly `csrftoken` cookie; unsafe methods must echo it
+  in the `X-CSRFToken` header (or a `csrf_token` form field). Those names
+  match the generated client SDK, so an existing frontend needs no change.
+  Bearer/token-auth requests (an `Authorization` header) are skipped —
+  they aren't CSRF-vulnerable. The cookie's `Secure` flag auto-derives
+  from the request scheme, so dev over http works without config. CSRF is
+  **off by default** because a nexus app is usually a token-authenticated
+  API where CSRF is moot; enable it when you serve cookie/session-
+  authenticated, server-rendered HTML forms (a template engine, or
+  Inertia backed by session cookies).
+- **Config, secure-by-default and zero-code:** the new
+  `Config.Middleware.Security` field, populated from
+  `[runtime.middleware.security]` in nexus.toml. No Go, no import.
+- **New `extension/security` package** for the pieces the core path can't
+  offer: a dashboard "Security" tab (`security.Plugin()`) and per-route
+  middleware bundles (`security.NewCSRFMiddleware` /
+  `NewHeadersMiddleware`) for apps that mix cookie- and token-auth routes.
+  Global enforcement stays in the core so the middleware is never applied
+  twice.
+- **New `middleware/secure` package** holds the transport-neutral header
+  and CSRF implementations shared by the core and the extension (deps:
+  `httpx` + stdlib only).
+- `nexus docs security` documents it.
+
 ## [1.20.4] - 2026-06-19
 
 ### Fixed — wildcard route params now match gin's convention on every backend
