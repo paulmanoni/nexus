@@ -67,6 +67,12 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.8
+          # Build golangci-lint from source with the runner's Go (1.26) instead
+          # of downloading the prebuilt binary, which is compiled with an older
+          # Go and refuses to analyze a newer-Go target ("the Go language
+          # version used to build golangci-lint is lower than the targeted Go
+          # version"). goinstall matches how `make lint` runs it locally.
+          install-mode: goinstall
           working-directory: ${{ matrix.module }}
           args: --config=${{ github.workspace }}/.golangci.yml
 
