@@ -21,6 +21,7 @@ type scaffoldOpts struct {
 	Cache      string // "none" | "redis"
 	Auth       string // "none" | "oauth2"
 	Inertia    bool   // Inertia.js server-driven pages (Vue) on top of the frontend
+	SSR        bool   // Inertia server-side rendering (needs Node; implies Inertia + vite)
 }
 
 // Predicate helpers for the templates so they stay free of empty-
@@ -39,6 +40,11 @@ func (o scaffoldOpts) IsReact() bool { return o.Frontend == "react" }
 // IsInertia reports whether to scaffold Inertia.js server-driven pages.
 // Gated on a Vue frontend — Inertia rides on top of the Vue project.
 func (o scaffoldOpts) IsInertia() bool { return o.Inertia && o.IsVue() }
+
+// IsInertiaSSR reports whether to scaffold Inertia server-side rendering — the
+// hydrating client entry, the SSR bundle entry, and the Go-side SSR wiring.
+// Gated on Inertia (which gates on Vue).
+func (o scaffoldOpts) IsInertiaSSR() bool { return o.SSR && o.IsInertia() }
 
 // HasVite reports whether the frontend should be scaffolded as a standard
 // npm-managed Vite project (vs the zero-install viteless default).
@@ -139,6 +145,9 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 			if opts.IsInertia() {
 				pkg = tmplViteInertiaPackageJSON
 			}
+			if opts.IsInertiaSSR() {
+				pkg = tmplViteInertiaSSRPackageJSON
+			}
 			if err := add("web/package.json", pkg); err != nil {
 				return nil, err
 			}
@@ -157,6 +166,19 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 			}
 		}
 		switch {
+		case opts.IsInertiaSSR():
+			// SSR: the client entry HYDRATES the server-rendered markup
+			// (createSSRApp), and ssr.ts is the Node SSR bundle entry
+			// (createServer + renderToString). The sample page is shared.
+			if err := add("web/src/main.ts", tmplInertiaSSRMainTS); err != nil {
+				return nil, err
+			}
+			if err := add("web/src/ssr.ts", tmplInertiaSSRTS); err != nil {
+				return nil, err
+			}
+			if err := add("web/src/Pages/Home.vue", tmplInertiaHomeVue); err != nil {
+				return nil, err
+			}
 		case opts.IsInertia():
 			// Inertia entry + a sample page component; the page's props
 			// come from the Go handler in pages.go (added below).
@@ -225,6 +247,15 @@ func nextStepsLines(opts scaffoldOpts) []string {
 	if opts.HasFrontend() {
 		lines = append(lines,
 			"                          # SPA on http://localhost:5173 (zero-install) ; nexus build embeds web/dist",
+		)
+	}
+	if opts.IsInertiaSSR() {
+		lines = append(lines,
+			"",
+			"  # Server-side rendering (production): build both bundles, then run the SSR sidecar",
+			"  cd web && npm run build   # vite build + vite build --ssr → web/dist/ssr/ssr.js",
+			"  node web/dist/ssr/ssr.js  # the Node SSR server on :13714 (run alongside the app)",
+			"  # In nexus dev the sidecar isn't running — pages render client-side with HMR.",
 		)
 	}
 	return lines
@@ -344,6 +375,9 @@ import (
 {{- if .IsInertia}}
 	"github.com/paulmanoni/nexus/extension/inertia"
 {{- end}}
+{{- if .IsInertiaSSR}}
+	"github.com/paulmanoni/nexus/extension/inertia/ssrhttp"
+{{- end}}
 {{- if .HasResources}}
 	"go.uber.org/zap"
 {{- end}}
@@ -381,7 +415,20 @@ func main() {
 {{- if .HasFrontend}}
 		nexus.ServeFrontend(webFS, "web/dist"),
 {{- end}}
-{{- if .IsInertia}}
+{{- if .IsInertiaSSR}}
+		// Inertia pages render through the engine; ServeFrontend above
+		// still serves the built JS/CSS assets the shell references. SSR
+		// POSTs each initial page to the Node SSR server (run
+		// "node web/dist/ssr/ssr.js", default :13714) and hydrates its
+		// markup; any renderer error falls back to client rendering, so a
+		// down SSR sidecar never takes the page down. In "nexus dev" the
+		// sidecar isn't running, so pages render client-side with HMR.
+		inertia.Module(inertia.Config{
+			Frontend: webFS,
+			Root:     "web/dist",
+			SSR:      ssrhttp.New(""), // "" → http://127.0.0.1:13714
+		}),
+{{- else if .IsInertia}}
 		// Inertia pages render through the engine; ServeFrontend above
 		// still serves the built JS/CSS assets the shell references.
 		inertia.Module(inertia.Config{Frontend: webFS, Root: "web/dist"}),
@@ -766,6 +813,80 @@ const tmplViteInertiaPackageJSON = `{
   },
   "dependencies": {
     "@inertiajs/vue3": "^1.2.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "vite": "^5.4.0"
+  }
+}
+`
+
+// ── inertia SSR entry files (web/src) ───────────────────────────────
+
+// tmplInertiaSSRMainTS is the SSR client entry. Unlike the plain Inertia
+// entry it builds the app with createSSRApp and mounts it, which HYDRATES
+// the server-rendered markup the Go shell placed in the root div (vs
+// re-rendering from scratch) — the only difference from tmplInertiaMainTS.
+const tmplInertiaSSRMainTS = `import { createInertiaApp } from '@inertiajs/vue3'
+import { createSSRApp, h } from 'vue'
+
+createInertiaApp({
+  resolve: (name) => {
+    const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
+    return pages['./Pages/' + name + '.vue']
+  },
+  // createSSRApp (not createApp) so mount() hydrates the server-rendered
+  // DOM instead of discarding and re-rendering it.
+  setup({ el, App, props, plugin }) {
+    createSSRApp({ render: () => h(App, props) }).use(plugin).mount(el)
+  },
+})
+`
+
+// tmplInertiaSSRTS is the Node SSR bundle entry. createServer (from
+// @inertiajs/server) starts an HTTP server (default :13714) that, per page
+// object POSTed to it, renders the Vue app to a string and returns the
+// {head, body} the Go engine injects. Built with "vite build --ssr" into
+// web/dist/ssr/ssr.js and run with "node web/dist/ssr/ssr.js".
+const tmplInertiaSSRTS = `import { createInertiaApp } from '@inertiajs/vue3'
+import createServer from '@inertiajs/server'
+import { renderToString } from '@vue/server-renderer'
+import { createSSRApp, h } from 'vue'
+
+createServer((page) =>
+  createInertiaApp({
+    page,
+    render: renderToString,
+    resolve: (name) => {
+      const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
+      return pages['./Pages/' + name + '.vue']
+    },
+    setup({ App, props, plugin }) {
+      return createSSRApp({ render: () => h(App, props) }).use(plugin)
+    },
+  }),
+)
+`
+
+// tmplViteInertiaSSRPackageJSON is the SSR project manifest: the build
+// produces BOTH the client bundle (vite build) and the SSR bundle
+// (vite build --ssr → dist/ssr/ssr.js). @inertiajs/server provides
+// createServer; @vue/server-renderer provides renderToString.
+const tmplViteInertiaSSRPackageJSON = `{
+  "name": "{{.Name}}-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && vite build --ssr src/ssr.ts --outDir dist/ssr",
+    "preview": "vite preview",
+    "ssr": "node dist/ssr/ssr.js"
+  },
+  "dependencies": {
+    "@inertiajs/server": "^1.2.0",
+    "@inertiajs/vue3": "^1.2.0",
+    "@vue/server-renderer": "^3.5.0",
     "vue": "^3.5.0"
   },
   "devDependencies": {
