@@ -258,9 +258,9 @@ func TestPkiBundle_NeverIncludesCAKey(t *testing.T) {
 	}
 	// Positive assertion: the three expected files are present.
 	want := map[string]bool{
-		caCertFilename:        false,
-		"peer-bundled.crt":    false,
-		"peer-bundled.key":    false,
+		caCertFilename:     false,
+		"peer-bundled.crt": false,
+		"peer-bundled.key": false,
 	}
 	for _, n := range names {
 		if _, ok := want[n]; ok {

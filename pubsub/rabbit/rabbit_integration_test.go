@@ -123,8 +123,8 @@ func TestRabbit_AttrsRoundTrip(t *testing.T) {
 	defer stop()
 
 	attrs := map[string]string{
-		"traceparent":    "00-0123456789abcdef0123456789abcdef-fedcba9876543210-01",
-		"x-tenant-id":    "acme",
+		"traceparent": "00-0123456789abcdef0123456789abcdef-fedcba9876543210-01",
+		"x-tenant-id": "acme",
 	}
 	if err := tr.Publish(context.Background(), topic, []byte(`{}`), attrs); err != nil {
 		t.Fatalf("Publish: %v", err)

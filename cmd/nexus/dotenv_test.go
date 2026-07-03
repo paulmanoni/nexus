@@ -89,12 +89,12 @@ VITE_TRAILING_SPACES   =   trimmed
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"VITE_PLAIN":            "plain-value",
-		"VITE_DOUBLE_QUOTED":    "has spaces",
-		"VITE_SINGLE_QUOTED":    "also spaces",
-		"VITE_EXPORTED":         "shell-style",
-		"VITE_URL":              "https://api.example.com/path?x=1",
-		"VITE_TRAILING_SPACES":  "trimmed",
+		"VITE_PLAIN":           "plain-value",
+		"VITE_DOUBLE_QUOTED":   "has spaces",
+		"VITE_SINGLE_QUOTED":   "also spaces",
+		"VITE_EXPORTED":        "shell-style",
+		"VITE_URL":             "https://api.example.com/path?x=1",
+		"VITE_TRAILING_SPACES": "trimmed",
 	}
 	for k, w := range want {
 		if got[k] != w {

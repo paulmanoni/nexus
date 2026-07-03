@@ -340,15 +340,15 @@ func (s *serverState) snapshotFor(app, profile string) (*SignedSnapshot, error) 
 
 // authorize runs the wire-auth check. Three modes:
 //
-//   AuthMTLS — r.TLS.VerifiedChains is non-empty (TLS handshake
-//              already enforced the allow-list via tls.Config's
-//              VerifyConnection). We re-check the CN matches the
-//              :app URL segment so a valid cert for app A can't
-//              fetch app B's snapshot.
-//   AuthHMAC — verify Authorization header signature against the
-//              per-app shared secret. Same construction as
-//              extension/peer's verifyHMAC.
-//   AuthNone — no-op.
+//	AuthMTLS — r.TLS.VerifiedChains is non-empty (TLS handshake
+//	           already enforced the allow-list via tls.Config's
+//	           VerifyConnection). We re-check the CN matches the
+//	           :app URL segment so a valid cert for app A can't
+//	           fetch app B's snapshot.
+//	AuthHMAC — verify Authorization header signature against the
+//	           per-app shared secret. Same construction as
+//	           extension/peer's verifyHMAC.
+//	AuthNone — no-op.
 func (s *serverState) authorize(r *http.Request, app string) error {
 	switch s.cfg.authMode {
 	case AuthMTLS:

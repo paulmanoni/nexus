@@ -54,11 +54,11 @@ type schemaAddress struct {
 
 type schemaUser struct {
 	ID      int64           `json:"id" validate:"required"`
-	Email   string          `json:"email"`              // not optional → required
-	Bio     string          `json:"bio,omitempty"`      // omitempty → optional
-	Address *schemaAddress  `json:"address"`            // pointer → optional regardless of tag
-	Tags    []string        `json:"tags,omitempty"`     // slice + optional
-	History []schemaAddress `json:"history,omitempty"`  // slice of structs → $ref'd items
+	Email   string          `json:"email"`             // not optional → required
+	Bio     string          `json:"bio,omitempty"`     // omitempty → optional
+	Address *schemaAddress  `json:"address"`           // pointer → optional regardless of tag
+	Tags    []string        `json:"tags,omitempty"`    // slice + optional
+	History []schemaAddress `json:"history,omitempty"` // slice of structs → $ref'd items
 }
 
 // TestReflectSchema_StructShape proves the headline shape: object

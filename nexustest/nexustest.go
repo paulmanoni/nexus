@@ -84,10 +84,10 @@ func (a *App) REST(method, path string, body any) *Response {
 	return a.Do(req)
 }
 
-func (a *App) GET(path string) *Response  { return a.REST(http.MethodGet, path, nil) }
-func (a *App) DELETE(path string) *Response { return a.REST(http.MethodDelete, path, nil) }
-func (a *App) POST(path string, body any) *Response { return a.REST(http.MethodPost, path, body) }
-func (a *App) PUT(path string, body any) *Response  { return a.REST(http.MethodPut, path, body) }
+func (a *App) GET(path string) *Response             { return a.REST(http.MethodGet, path, nil) }
+func (a *App) DELETE(path string) *Response          { return a.REST(http.MethodDelete, path, nil) }
+func (a *App) POST(path string, body any) *Response  { return a.REST(http.MethodPost, path, body) }
+func (a *App) PUT(path string, body any) *Response   { return a.REST(http.MethodPut, path, body) }
 func (a *App) PATCH(path string, body any) *Response { return a.REST(http.MethodPatch, path, body) }
 
 // GraphQL POSTs a query to the default GraphQL mount, asserts there are no

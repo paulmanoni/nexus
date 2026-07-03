@@ -102,10 +102,10 @@ func (c Config) Dialector() gorm.Dialector {
 // for postgres/mysql; sqlite :memory: gets MaxOpen=1 to keep one in-memory
 // database shared across goroutines.
 type PoolConfig struct {
-	MaxIdle        int
-	MaxOpen        int
-	ConnMaxLife    time.Duration
-	ConnMaxIdle    time.Duration
+	MaxIdle     int
+	MaxOpen     int
+	ConnMaxLife time.Duration
+	ConnMaxIdle time.Duration
 }
 
 func defaultPool(d Driver) PoolConfig {
@@ -200,7 +200,7 @@ func NewManager(cfg Config, opts ...Option) *Manager {
 // a circuit breaker that opens after 10 consecutive failures for 10 seconds.
 func defaultExecutor(logger *zap.Logger) failsafe.Executor[*gorm.DB] {
 	retry := retrypolicy.NewBuilder[*gorm.DB]().
-		WithDelay(500 * time.Millisecond).
+		WithDelay(500*time.Millisecond).
 		WithBackoff(2, time.Second).
 		WithJitter(25 * time.Millisecond).
 		OnRetry(func(e failsafe.ExecutionEvent[*gorm.DB]) {

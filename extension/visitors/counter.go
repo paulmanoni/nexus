@@ -108,10 +108,10 @@ func (c *Counter) Stats() Stats {
 	}
 
 	return Stats{
-		Total:      c.totalVisits,
-		Unique:     int64(len(c.uniqueIDs)),
-		Today:      c.todayVisits,
-		OnlineNow:  int64(len(c.lastSeen)),
+		Total:        c.totalVisits,
+		Unique:       int64(len(c.uniqueIDs)),
+		Today:        c.todayVisits,
+		OnlineNow:    int64(len(c.lastSeen)),
 		TopPathCount: int64(len(c.pathCounts)),
 	}
 }

@@ -6,6 +6,9 @@
 #
 #   make test           # go test -race across every module
 #   make vet            # go vet across every module
+#   make fmt            # gofmt -w the whole tree
+#   make fmt-check      # fail if any file needs gofmt (CI gate)
+#   make lint           # golangci-lint across every module
 #   make cover          # coverage profile + per-func report (main module)
 #   make cover-check    # fail if main-module coverage drops below COVER_MIN
 #   make generate-check # CI drift gate for committed //@ handler codegen
@@ -15,6 +18,10 @@
 # All Go modules in the repo (dir containing a go.mod).
 MODULES := . di/fxcontainer httpx/ginrouter
 
+# Pinned golangci-lint version — keep in sync with .github/workflows/ci.yml
+# so `make lint` and CI enforce the exact same linters (config: .golangci.yml).
+GOLANGCI_VERSION ?= v1.64.8
+
 # Minimum acceptable statement coverage for the main module (percent). A ratchet
 # against regression, not a target — raise it as coverage climbs.
 COVER_MIN ?= 45
@@ -22,7 +29,7 @@ COVER_MIN ?= 45
 # gin prints router debug noise unless told it's in release mode.
 export GIN_MODE := release
 
-.PHONY: test vet cover cover-check generate-check golden-update ci tidy
+.PHONY: test vet fmt fmt-check lint cover cover-check generate-check golden-update ci tidy
 
 test:
 	@for m in $(MODULES); do \
@@ -34,6 +41,31 @@ vet:
 	@for m in $(MODULES); do \
 		echo "==> go vet ($$m)"; \
 		( cd $$m && go vet ./... ) || exit 1; \
+	done
+
+# gofmt the whole tree (submodule dirs are under the root, so one pass covers
+# every module).
+fmt:
+	gofmt -w .
+
+# CI gate: fail if any tracked .go file isn't gofmt-clean. `gofmt -l .` lists
+# offenders; a non-empty list is the failure.
+fmt-check:
+	@offenders=$$(gofmt -l .); \
+	if [ -n "$$offenders" ]; then \
+		echo "FAIL: these files need gofmt (run: make fmt):"; \
+		echo "$$offenders"; \
+		exit 1; \
+	fi; \
+	echo "gofmt: clean"
+
+# golangci-lint across every module, pinned + config-driven (.golangci.yml).
+# The config auto-resolves from the repo root for submodules, but we pass it
+# explicitly so the version and rule set are unambiguous.
+lint:
+	@for m in $(MODULES); do \
+		echo "==> golangci-lint ($$m)"; \
+		( cd $$m && go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_VERSION) run --config $(CURDIR)/.golangci.yml ./... ) || exit 1; \
 	done
 
 cover:
@@ -62,4 +94,4 @@ tidy:
 		( cd $$m && go mod tidy ) || exit 1; \
 	done
 
-ci: vet test cover-check generate-check
+ci: fmt-check vet lint test cover-check generate-check

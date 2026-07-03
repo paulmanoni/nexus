@@ -97,12 +97,12 @@ func TestInspectHandler_Classification(t *testing.T) {
 			wantErrIdx: -1, wantResIdx: -1, wantHasError: false,
 		},
 		{
-			name:         "result only, no error",
-			fn:           func(*testSvc) *petResult { return nil },
-			wantSlots:    []paramKind{paramDep},
-			wantDeps:     []reflect.Type{reflect.TypeOf(&testSvc{})},
-			wantReturn:   tPet,
-			wantErrIdx:   -1, wantResIdx: 0, wantHasError: false,
+			name:       "result only, no error",
+			fn:         func(*testSvc) *petResult { return nil },
+			wantSlots:  []paramKind{paramDep},
+			wantDeps:   []reflect.Type{reflect.TypeOf(&testSvc{})},
+			wantReturn: tPet,
+			wantErrIdx: -1, wantResIdx: 0, wantHasError: false,
 		},
 		{
 			name:       "dep + (T, error)",

@@ -7,7 +7,7 @@ import "github.com/paulmanoni/nexus"
 // under it.
 type Service struct{ *nexus.Service }
 
-//@provide
+// @provide
 func NewService(app *nexus.App) *Service {
 	return &Service{app.Service("notes").Describe("Notes API")}
 }

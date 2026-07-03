@@ -35,6 +35,41 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test -race -count=1 ./...
 
+  # Formatting gate — fails if any file isn't gofmt-clean. One pass from the
+  # repo root covers every module (the adapter modules live under it).
+  format:
+    name: gofmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "stable"
+      - name: gofmt check
+        run: make fmt-check
+
+  # Lint gate — golangci-lint per module, pinned + config-driven (.golangci.yml).
+  # The enabled set is a ratchet: it passes clean today and only guards against
+  # regressions; tighten .golangci.yml as the tree is cleaned up.
+  lint:
+    name: golangci-lint (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "di/fxcontainer", "httpx/ginrouter"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "stable"
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          working-directory: ${{ matrix.module }}
+          args: --config=${{ github.workspace }}/.golangci.yml
+
   # Coverage ratchet for the main module — fails if statement coverage drops
   # below the floor in the Makefile (COVER_MIN). Raise the floor as coverage
   # climbs; never lower it to make a red build pass.

@@ -161,7 +161,6 @@ func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyUR
 	return nil
 }
 
-
 // devDetectFrontendPlugin reads /__nexus/plugins and returns true
 // when an entry named "frontend" is present. We can't import the
 // extension package's name constant directly without coupling the

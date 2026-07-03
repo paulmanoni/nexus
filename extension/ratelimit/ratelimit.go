@@ -148,11 +148,11 @@ func (s *MemoryStore) notifyChanged() {
 }
 
 type bucket struct {
-	mu        sync.Mutex
-	tokens    float64
-	lastTick  time.Time
-	rpm       int // captured so a Configure that changed rpm resets
-	burstCap  int
+	mu       sync.Mutex
+	tokens   float64
+	lastTick time.Time
+	rpm      int // captured so a Configure that changed rpm resets
+	burstCap int
 }
 
 func (s *MemoryStore) Declare(key string, limit Limit) {

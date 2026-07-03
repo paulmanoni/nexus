@@ -17,17 +17,17 @@ import (
 //
 // Output shape:
 //
-//   1. // header — schema version + "do not edit" banner
-//   2. `export interface <Name>` per entry in manifest.Refs (deduped
-//      pool of named struct types referenced by endpoints)
-//   3. `export interface RestEndpoints` discriminated map keyed by
-//      "<METHOD> <PATH>" → { args, return }
-//   4. `export interface GraphqlOps` keyed by op name
-//   5. `export interface WSMessages` keyed by WS path → msgType → args
-//   6. ExtractRestMethod / ExtractRestPath helpers
-//   7. The runtime surface as top-level exports: NexusError, NexusClient,
-//      AuthNamespace, CrudHandle, WSHandle, WSEnvelope, TokenStore,
-//      memoryTokenStore, localStorageTokenStore.
+//  1. // header — schema version + "do not edit" banner
+//  2. `export interface <Name>` per entry in manifest.Refs (deduped
+//     pool of named struct types referenced by endpoints)
+//  3. `export interface RestEndpoints` discriminated map keyed by
+//     "<METHOD> <PATH>" → { args, return }
+//  4. `export interface GraphqlOps` keyed by op name
+//  5. `export interface WSMessages` keyed by WS path → msgType → args
+//  6. ExtractRestMethod / ExtractRestPath helpers
+//  7. The runtime surface as top-level exports: NexusError, NexusClient,
+//     AuthNamespace, CrudHandle, WSHandle, WSEnvelope, TokenStore,
+//     memoryTokenStore, localStorageTokenStore.
 //
 // Pure function: same manifest in, same string out. Caller
 // (Handler.build) memoizes via sync.Once.
@@ -838,12 +838,13 @@ export default useNexus
 // -- type expression builders --------------------------------------
 
 // tsType renders a TypeRef as a TypeScript type expression.
-//   primitive:string|number|integer|boolean → string|number|boolean
-//   array                                   → T[]
-//   map                                     → Record<K, V>
-//   ref                                     → Name (reference to interface)
-//   object                                  → { fields }
-//   any | unknown                           → unknown
+//
+//	primitive:string|number|integer|boolean → string|number|boolean
+//	array                                   → T[]
+//	map                                     → Record<K, V>
+//	ref                                     → Name (reference to interface)
+//	object                                  → { fields }
+//	any | unknown                           → unknown
 //
 // Optionality on a TypeRef is rendered as `T | undefined` so the
 // type composes inside larger expressions; field-level optionality

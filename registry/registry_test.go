@@ -18,11 +18,11 @@ type slowResource struct {
 	healthy bool
 }
 
-func (r *slowResource) Name() string             { return r.name }
-func (r *slowResource) Kind() resource.Kind      { return resource.KindOther }
-func (r *slowResource) Describe() string         { return "" }
-func (r *slowResource) Details() map[string]any  { return nil }
-func (r *slowResource) IsDefault() bool          { return false }
+func (r *slowResource) Name() string            { return r.name }
+func (r *slowResource) Kind() resource.Kind     { return resource.KindOther }
+func (r *slowResource) Describe() string        { return "" }
+func (r *slowResource) Details() map[string]any { return nil }
+func (r *slowResource) IsDefault() bool         { return false }
 func (r *slowResource) Healthy() bool {
 	time.Sleep(r.delay)
 	return r.healthy
@@ -168,7 +168,7 @@ func TestResources_HealthCacheServesStaleOnTimeout(t *testing.T) {
 	r.RegisterResource(flaky)
 
 	// First probe completes within the budget — cache populated.
-	flaky.SetDelay(10 * time.Millisecond, true)
+	flaky.SetDelay(10*time.Millisecond, true)
 	first := r.Resources()
 	if !first[0].Healthy {
 		t.Fatal("first probe should report healthy=true")

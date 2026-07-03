@@ -197,10 +197,10 @@ type topicRecord interface {
 	bindTransport(t Transport)
 }
 
-func (t *Topic[T]) Description() string         { return t.cfg.Description }
-func (t *Topic[T]) Durable() bool               { return t.cfg.Durable }
-func (t *Topic[T]) PayloadType() reflect.Type   { return t.payloadType }
-func (t *Topic[T]) bindTransport(tr Transport)  { t.publisher.Store(&publisherBinding{t: tr}) }
+func (t *Topic[T]) Description() string        { return t.cfg.Description }
+func (t *Topic[T]) Durable() bool              { return t.cfg.Durable }
+func (t *Topic[T]) PayloadType() reflect.Type  { return t.payloadType }
+func (t *Topic[T]) bindTransport(tr Transport) { t.publisher.Store(&publisherBinding{t: tr}) }
 
 type subscriptionRecord struct {
 	Topic        string

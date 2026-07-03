@@ -18,7 +18,7 @@ type Store struct {
 // NewStore is registered as a DI provider purely by its annotation — no
 // hand-written nexus.Provide(NewStore) anywhere.
 //
-//@provide
+// @provide
 func NewStore() *Store {
 	return &Store{next: 1, notes: map[int]Note{}}
 }

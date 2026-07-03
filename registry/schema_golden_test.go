@@ -35,12 +35,12 @@ type goldenUser struct {
 	Name      string         `json:"name"`
 	Active    bool           `json:"active"`
 	Balance   float64        `json:"balance"`
-	Tags      []string       `json:"tags"`       // slice branch
-	Profile   goldenProfile  `json:"profile"`    // nested named ref
-	Friends   []*goldenUser  `json:"friends"`    // self-referential cycle + slice of ptr
-	Avatar    []byte         `json:"avatar"`     // []byte → string
-	CreatedAt time.Time      `json:"createdAt"`  // time.Time → string
-	Meta      map[string]any `json:"meta"`       // map of any
+	Tags      []string       `json:"tags"`      // slice branch
+	Profile   goldenProfile  `json:"profile"`   // nested named ref
+	Friends   []*goldenUser  `json:"friends"`   // self-referential cycle + slice of ptr
+	Avatar    []byte         `json:"avatar"`    // []byte → string
+	CreatedAt time.Time      `json:"createdAt"` // time.Time → string
+	Meta      map[string]any `json:"meta"`      // map of any
 }
 
 // TestWalkType_Golden snapshots the full schema produced by reflecting a rich Go

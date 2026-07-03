@@ -21,7 +21,7 @@ func withDotenv(t *testing.T, contents string) string {
 }
 
 func TestLoadDotenvFile_BasicKeyValue(t *testing.T) {
-	t.Setenv("DOTENV_TEST_BASIC", "")  // start clean
+	t.Setenv("DOTENV_TEST_BASIC", "") // start clean
 	os.Unsetenv("DOTENV_TEST_BASIC")
 	path := withDotenv(t, `DOTENV_TEST_BASIC=hello`)
 	t.Cleanup(func() { os.Unsetenv("DOTENV_TEST_BASIC") })

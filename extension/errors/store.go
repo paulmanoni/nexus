@@ -23,8 +23,8 @@ import (
 type store struct {
 	mu       sync.RWMutex
 	capacity int
-	recent   []Event              // ring buffer; len() <= capacity
-	issues   map[string]*Issue    // fingerprint → issue
+	recent   []Event           // ring buffer; len() <= capacity
+	issues   map[string]*Issue // fingerprint → issue
 }
 
 // Issue is the grouped view of a recurring error. One row per

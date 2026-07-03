@@ -46,19 +46,19 @@ const RecentErrorsCap = 1000
 // first) so the UI can pop a dialog with timestamps + IPs + messages
 // when an operator clicks the error badge.
 type EndpointStats struct {
-	Key           string       `json:"key"`
-	Count         int64        `json:"count"`
-	Errors        int64        `json:"errors"`
-	LastError     string       `json:"lastError,omitempty"`
+	Key       string `json:"key"`
+	Count     int64  `json:"count"`
+	Errors    int64  `json:"errors"`
+	LastError string `json:"lastError,omitempty"`
 	// LastErrStack is the stack trace captured at the most recent
 	// errored request (when the error was a panic wrapped via
 	// trace.StackError). Surfaces in the drawer's last-error panel as
 	// a collapsible disclosure so an operator can see the failing
 	// call chain without opening the per-op error ring.
-	LastErrStack  string       `json:"lastErrStack,omitempty"`
-	LastAt        time.Time    `json:"lastAt,omitempty"`      // time of last request
-	LastErrAt     time.Time    `json:"lastErrAt,omitempty"`   // time of last errored request
-	RecentErrors  []ErrorEvent `json:"recentErrors,omitempty"`
+	LastErrStack string       `json:"lastErrStack,omitempty"`
+	LastAt       time.Time    `json:"lastAt,omitempty"`    // time of last request
+	LastErrAt    time.Time    `json:"lastErrAt,omitempty"` // time of last errored request
+	RecentErrors []ErrorEvent `json:"recentErrors,omitempty"`
 }
 
 // Store is the backend contract. Record is called once per request with

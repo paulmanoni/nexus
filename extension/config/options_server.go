@@ -45,10 +45,10 @@ type ServerOption interface {
 // package; the public surface is the ServerOption-returning
 // functions below.
 type serverConfig struct {
-	listen     string
-	authMode   AuthMode
-	apps       map[string]AppPolicy
-	autoApps   bool // when true, apps are derived from filesystem
+	listen   string
+	authMode AuthMode
+	apps     map[string]AppPolicy
+	autoApps bool // when true, apps are derived from filesystem
 
 	// TLS material. cert+key required; ca required when
 	// authMode==AuthMTLS.

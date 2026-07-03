@@ -142,7 +142,6 @@ func apidocsHandler(dir, format string, errOut io.Writer) http.HandlerFunc {
 	}
 }
 
-
 // newAPIDocsBuildCmd emits the IR as JSON. Defaults to stdout so
 // `nexus apidocs build ./examples/graphapp | jq` works without
 // flags; -o writes to a file instead.

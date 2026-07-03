@@ -40,7 +40,7 @@ func TestWriteDevRequestLine(t *testing.T) {
 
 func TestDurString(t *testing.T) {
 	cases := map[time.Duration]string{
-		500 * time.Microsecond: "500µs",
+		500 * time.Microsecond:  "500µs",
 		3500 * time.Microsecond: "3.5ms",
 		12 * time.Millisecond:   "12ms",
 		1500 * time.Millisecond: "1500ms",

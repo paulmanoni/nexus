@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — CI now gates formatting and lint
+
+- **`gofmt` is enforced in CI.** The whole tree was reformatted with the
+  Go 1.26 toolchain (130 files — doc-comment reindentation + trailing
+  newlines, no logic changes), and a new `gofmt` CI job + `make fmt-check`
+  target fail the build if any file drifts. Run `make fmt` to fix.
+- **`golangci-lint` gate added** (`.golangci.yml`, pinned `v1.64.8`, run
+  per module). The enabled set — `gofmt`, `govet`, `ineffassign`,
+  `durationcheck`, `makezero` — is a **ratchet** like the coverage floor:
+  it passes clean today and only guards against regressions. Tighten
+  `.golangci.yml` as the tree is cleaned up (errcheck / unused / staticcheck
+  / bodyclose / errorlint are noted as next candidates); never loosen it to
+  make a red build green. `make lint` runs the same locally.
+
 ## [1.20.4] - 2026-06-19
 
 ### Fixed — wildcard route params now match gin's convention on every backend

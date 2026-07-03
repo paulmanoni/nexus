@@ -232,7 +232,9 @@ func (m *InMemoryTransport) DLQ(topic, subscription string) []Message {
 }
 
 // backoff is a deterministic exponential schedule:
-//   attempt 1 → min, attempt 2 → 2*min, attempt 3 → 4*min, …, capped at max.
+//
+//	attempt 1 → min, attempt 2 → 2*min, attempt 3 → 4*min, …, capped at max.
+//
 // No jitter — tests want predictability, and broker-side jitter (when
 // the production transport reaches retry) is the layer that needs to
 // avoid herd effects, not us.

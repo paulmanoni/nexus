@@ -21,7 +21,7 @@ const (
 )
 
 type Endpoint struct {
-	Service      string
+	Service string
 	// Module is the nexus.Module("name", ...) this endpoint was declared
 	// inside. Empty when registered outside any module (top-level opt to
 	// Run/New). Drives the architecture-view grouping: module containers
@@ -115,7 +115,7 @@ type RateLimitInfo struct {
 // validator chips.
 type GraphQLArg struct {
 	Name        string
-	Type        string // SDL-style, e.g. "String!", "[Int]", "UUID"
+	Type        string             // SDL-style, e.g. "String!", "[Int]", "UUID"
 	Description string             `json:",omitempty"`
 	Required    bool               `json:",omitempty"`
 	Default     any                `json:"Default,omitempty"`

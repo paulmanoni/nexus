@@ -15,12 +15,12 @@ import (
 // Carries the resolved value tree plus enough metadata for the client to
 // verify it and decide whether anything changed since the last fetch.
 type Snapshot struct {
-	App       string         `json:"app"`
-	Profile   string         `json:"profile"`
-	Label     string         `json:"label,omitempty"`     // git ref; empty for local sources
-	Version   string         `json:"version"`             // content-addressed: hash of values
-	ServedAt  time.Time      `json:"served_at"`
-	Values    map[string]any `json:"values"`              // the merged value tree
+	App      string         `json:"app"`
+	Profile  string         `json:"profile"`
+	Label    string         `json:"label,omitempty"` // git ref; empty for local sources
+	Version  string         `json:"version"`         // content-addressed: hash of values
+	ServedAt time.Time      `json:"served_at"`
+	Values   map[string]any `json:"values"` // the merged value tree
 }
 
 // SignedSnapshot is the actual wire envelope. The signature is over

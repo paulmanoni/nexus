@@ -69,12 +69,12 @@ root; rotating the root means re-bundling every peer.`,
 			}
 			now := time.Now()
 			tmpl := &x509.Certificate{
-				SerialNumber: serial,
-				Subject:      pkix.Name{CommonName: cn},
-				NotBefore:    now.Add(-5 * time.Minute), // tolerate small client clock skew
-				NotAfter:     now.AddDate(years, 0, 0),
-				KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-				IsCA:         true,
+				SerialNumber:          serial,
+				Subject:               pkix.Name{CommonName: cn},
+				NotBefore:             now.Add(-5 * time.Minute), // tolerate small client clock skew
+				NotAfter:              now.AddDate(years, 0, 0),
+				KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+				IsCA:                  true,
 				BasicConstraintsValid: true,
 				// Limit chain depth: peer certs are leaves, so the
 				// CA never needs to sign intermediate CAs. MaxPathLen=0

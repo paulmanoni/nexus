@@ -419,7 +419,9 @@ func applyConsumeDefaults(c pubsub.ConsumeConfig) pubsub.ConsumeConfig {
 }
 
 // backoff matches the in-memory transport's exponential schedule:
-//   attempt 1 → min, attempt 2 → 2*min, …, capped at max.
+//
+//	attempt 1 → min, attempt 2 → 2*min, …, capped at max.
+//
 // No jitter at this layer — the dispatcher is the right place to
 // add it once a real workload demands herd-effect avoidance.
 func backoff(attempt int, min, max time.Duration) time.Duration {

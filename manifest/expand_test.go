@@ -109,7 +109,7 @@ func TestExpandEnvVars_Escape(t *testing.T) {
 }
 
 // TestExpandEnvVars_LiteralStringsAreSkipped: TOML literal strings
-// ('...' / '''...''') are raw by spec, so ${X} inside them stays
+// ('...' / ”'...”') are raw by spec, so ${X} inside them stays
 // as-is. Gives operators a no-expansion escape hatch without needing
 // the $$ trick.
 func TestExpandEnvVars_LiteralStringsAreSkipped(t *testing.T) {

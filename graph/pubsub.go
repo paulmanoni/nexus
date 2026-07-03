@@ -236,8 +236,8 @@ func (p *InMemoryPubSub) Close() error {
 
 // Common errors
 var (
-	ErrPubSubClosed          = newError("pubsub is closed")
-	ErrSubscriptionNotFound  = newError("subscription not found")
+	ErrPubSubClosed         = newError("pubsub is closed")
+	ErrSubscriptionNotFound = newError("subscription not found")
 )
 
 type pubsubError struct {

@@ -216,8 +216,8 @@ func TestLint_DeterministicOrdering(t *testing.T) {
 	// slices — the lint output is the user-facing diagnostic; flaky
 	// ordering would churn CI gates.
 	m := baseManifest()
-	m.Env = append(m.Env, EnvVar{Name: "LOG_LEVEL", Default: "x"})  // duplicate
-	m.Env = append(m.Env, EnvVar{Name: "ANOTHER", Required: true})  // required without source
+	m.Env = append(m.Env, EnvVar{Name: "LOG_LEVEL", Default: "x"}) // duplicate
+	m.Env = append(m.Env, EnvVar{Name: "ANOTHER", Required: true}) // required without source
 	got1 := Lint(m)
 	got2 := Lint(m)
 	if len(got1) != len(got2) {
@@ -235,10 +235,10 @@ func TestLint_MultipleIssuesReportedTogether(t *testing.T) {
 	// first. CLI / IDE rely on this to show every error per save.
 	m := baseManifest()
 	m.Environments = append(m.Environments, Environment{Name: "production"}) // dup env
-	m.Env[0].Validation = &EnvValidation{Regex: "[bad"}                     // bad regex
+	m.Env[0].Validation = &EnvValidation{Regex: "[bad"}                      // bad regex
 	m.Overrides = map[string]Override{
-		"qa":         {},                                                     // unknown env
-		"production": {Env: map[string]string{"BOGUS": "x"}},                 // unknown key
+		"qa":         {},                                     // unknown env
+		"production": {Env: map[string]string{"BOGUS": "x"}}, // unknown key
 	}
 	got := Lint(m)
 	if len(got) < 4 {

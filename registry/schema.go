@@ -44,12 +44,13 @@ type NamedType struct {
 // Name        — Go field name; used as a last-resort wire identifier.
 // JSONName    — wire name on the JSON / REST side; from the `json:` tag.
 // GraphQLName — wire name on the GraphQL side; from the `graphql:` tag's
-//               first comma-separated token. The schema walker also uses
-//               this as a fallback for JSONName when the `json:` tag is
-//               absent — that's what makes graphql-only-tagged args
-//               structs (e.g. `Username string \`graphql:"username"\``)
-//               surface as `username` in TS + on the wire instead of
-//               leaking the Go field name.
+//
+//	first comma-separated token. The schema walker also uses
+//	this as a fallback for JSONName when the `json:` tag is
+//	absent — that's what makes graphql-only-tagged args
+//	structs (e.g. `Username string \`graphql:"username"\``)
+//	surface as `username` in TS + on the wire instead of
+//	leaking the Go field name.
 //
 // Codegen and manifest projection pick whichever side fits the
 // transport.
@@ -168,13 +169,13 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 //	Pet                                         → Pet  (unchanged)
 //
 // Rules in order:
-//   1. strip a leading "*" (pointer prefix)
-//   2. "[]X" prefix → recurse on X, append "List"
-//   3. balanced "[" before "]" → outer + "Of" + recurse(inner)
-//      (multi-arg generics: split inner on top-level "," and join with "And")
-//   4. strip package path: keep the segment after the last "/" then
-//      after the last "."
-//   5. drop any remaining non-identifier chars (defensive)
+//  1. strip a leading "*" (pointer prefix)
+//  2. "[]X" prefix → recurse on X, append "List"
+//  3. balanced "[" before "]" → outer + "Of" + recurse(inner)
+//     (multi-arg generics: split inner on top-level "," and join with "And")
+//  4. strip package path: keep the segment after the last "/" then
+//     after the last "."
+//  5. drop any remaining non-identifier chars (defensive)
 //
 // Empty result is impossible for a non-empty named type at runtime;
 // returning "" lets WalkType fall back to inline-object rendering

@@ -608,12 +608,12 @@ func AvailableEnvironments(m Manifest) []string {
 type ErrCode string
 
 const (
-	ErrUnknownEnvironment   ErrCode = "unknown_environment"
-	ErrUnknownOverrideKey   ErrCode = "unknown_override_key"
-	ErrConflictingOverride  ErrCode = "conflicting_override"
-	ErrInvalidValidation    ErrCode = "invalid_validation"
-	ErrTypeMismatch         ErrCode = "type_mismatch"
-	ErrMissingDeclaration   ErrCode = "missing_declaration"
+	ErrUnknownEnvironment  ErrCode = "unknown_environment"
+	ErrUnknownOverrideKey  ErrCode = "unknown_override_key"
+	ErrConflictingOverride ErrCode = "conflicting_override"
+	ErrInvalidValidation   ErrCode = "invalid_validation"
+	ErrTypeMismatch        ErrCode = "type_mismatch"
+	ErrMissingDeclaration  ErrCode = "missing_declaration"
 )
 
 // MergeError carries a code + human message. Implements error so

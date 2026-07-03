@@ -244,8 +244,8 @@ func TestDoctor_DeterministicOrdering(t *testing.T) {
 	m := Manifest{
 		Environments: []Environment{{Name: "production"}},
 		Env: []EnvVar{
-			{Name: "A", BoundTo: "ghost.x"},          // error: unknown service
-			{Name: "B", Required: true},              // warning: required no source
+			{Name: "A", BoundTo: "ghost.x"}, // error: unknown service
+			{Name: "B", Required: true},     // warning: required no source
 		},
 		Services: []ServiceNeed{
 			{Name: "main_db", Kind: "postgres"}, // warning: no expose_as + unbound

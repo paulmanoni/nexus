@@ -195,8 +195,8 @@ func NewManager(cfg *Config, logger *zap.Logger) *Manager {
 
 // Config, Logger, and Context expose the bits the Redis supervisor needs
 // without it reaching into Manager internals.
-func (m *Manager) Config() *Config         { return m.config }
-func (m *Manager) Logger() *zap.Logger     { return m.logger }
+func (m *Manager) Config() *Config          { return m.config }
+func (m *Manager) Logger() *zap.Logger      { return m.logger }
 func (m *Manager) Context() context.Context { return m.ctx }
 
 // ActivateRedis swaps the active backend to b and marks Redis connected.

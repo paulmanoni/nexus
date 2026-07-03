@@ -43,10 +43,10 @@ func NewBaseRule(name string) BaseRule {
 	}
 }
 
-func (r *BaseRule) Name() string    { return r.name }
-func (r *BaseRule) Enabled() bool   { return r.enabled }
-func (r *BaseRule) Enable()         { r.enabled = true }
-func (r *BaseRule) Disable()        { r.enabled = false }
+func (r *BaseRule) Name() string  { return r.name }
+func (r *BaseRule) Enabled() bool { return r.enabled }
+func (r *BaseRule) Enable()       { r.enabled = true }
+func (r *BaseRule) Disable()      { r.enabled = false }
 
 // SetEnabled sets the enabled state
 func (r *BaseRule) SetEnabled(enabled bool) {

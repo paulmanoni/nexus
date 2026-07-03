@@ -1,0 +1,34 @@
+# golangci-lint configuration for nexus.
+#
+# This enabled set is a RATCHET, mirroring the coverage floor in the
+# Makefile: every linter here passes clean on the current tree, so the
+# gate goes green today and only guards against regressions. Tighten over
+# time as the codebase is cleaned up — never remove a linter to turn a red
+# build green.
+#
+# Deliberately NOT enabled yet (each has real findings to clear first):
+#   errcheck, unused, staticcheck, gosimple — dozens of existing hits.
+#   bodyclose  — ~60 test-only cases (unclosed test response bodies).
+#   errorlint  — real errors.Is/As modernizations; behavior-touching.
+#   nilerr     — mostly the intentional filepath.Walk "return nil to skip".
+#   misspell   — flags the codebase's British spelling (behaviour, …) as
+#                US typos; a dialect choice, not a defect.
+#
+# Formatting (gofmt) is enforced here AND as a standalone CI step, so a
+# formatting regression fails fast with a clear message.
+
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - gofmt         # canonical formatting
+    - govet         # suspicious constructs (also `go vet` in CI)
+    - ineffassign   # assignments whose value is never used
+    - durationcheck # accidental time.Duration multiplication bugs
+    - makezero      # append to a make() slice with a non-zero length
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

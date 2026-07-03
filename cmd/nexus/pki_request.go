@@ -22,10 +22,10 @@ import (
 // peer is reached at.
 func newPkiRequestCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		out  string
-		cn   string
-		dns  []string
-		ips  []string
+		out string
+		cn  string
+		dns []string
+		ips []string
 	)
 	cmd := &cobra.Command{
 		Use:   "request",

@@ -113,7 +113,7 @@ func TestClient_FetchVerifyInstall(t *testing.T) {
 	dir := t.TempDir()
 
 	fs := newFakeServer(t, "app1", "prod", map[string]any{
-		"api": map[string]any{"timeout": "5s"},
+		"api":  map[string]any{"timeout": "5s"},
 		"flag": true,
 	})
 	srv := fs.start()

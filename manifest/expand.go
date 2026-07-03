@@ -10,7 +10,7 @@ import (
 // expandEnvVars walks the raw TOML bytes and replaces every ${VAR}
 // or ${VAR:default} token that appears inside a basic-string value
 // with its resolved value. Tokens outside basic strings — table
-// headers, key names, raw scalars, literal strings ('...' / '''...'''),
+// headers, key names, raw scalars, literal strings ('...' / ”'...”'),
 // and comments — are left untouched.
 //
 // Resolution rules (strict mode — undefined vars without a default
@@ -21,7 +21,7 @@ import (
 //	${A:${B:c}}       - one level of nesting; resolved inside-out
 //	$${X}             - escape; produces literal ${X} in the output
 //
-// Literal-string contexts ('...' / '''...''') deliberately bypass
+// Literal-string contexts ('...' / ”'...”') deliberately bypass
 // expansion — that mirrors TOML's own "literal means raw" promise and
 // gives operators an escape hatch when they want a literal `${X}` in
 // a path or message.
@@ -34,7 +34,7 @@ func expandEnvVars(raw []byte) ([]byte, error) {
 	out.Grow(len(raw))
 
 	const (
-		stateNormal = iota
+		stateNormal       = iota
 		stateBasic        // "..."
 		stateLiteral      // '...'
 		stateMultiBasic   // """..."""
@@ -224,7 +224,7 @@ func findLiteralStringEnd(raw []byte, start int) int {
 }
 
 // findMultilineEnd returns the byte offset of the opening `"""` or
-// `'''` of the terminator. Both flavours are 3 bytes long. start is
+// `”'` of the terminator. Both flavours are 3 bytes long. start is
 // the byte after the opener.
 func findMultilineEnd(raw []byte, start int, terminator string) int {
 	t := []byte(terminator)
