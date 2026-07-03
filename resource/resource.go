@@ -21,7 +21,8 @@ type Kind string
 const (
 	KindDatabase Kind = "database"
 	KindCache    Kind = "cache"
-	KindQueue    Kind = "queue" // RabbitMQ, Kafka, NATS, etc.
+	KindQueue    Kind = "queue"   // RabbitMQ, Kafka, NATS, etc.
+	KindStorage  Kind = "storage" // object/file storage — local disk, S3, etc.
 	KindOther    Kind = "other"
 )
 
@@ -137,6 +138,13 @@ func NewCache(name, desc string, details map[string]any, healthy func() bool, op
 
 func NewQueue(name, desc string, details map[string]any, healthy func() bool, opts ...Option) Resource {
 	return build(&simple{name: name, kind: KindQueue, desc: desc, details: details, healthy: healthy}, opts)
+}
+
+// NewStorage wraps an object/file store (local disk, S3, …) as a Resource so the
+// dashboard shows it alongside databases and caches. healthy is called on every
+// snapshot — keep it cheap (a stat, not a network round-trip).
+func NewStorage(name, desc string, details map[string]any, healthy func() bool, opts ...Option) Resource {
+	return build(&simple{name: name, kind: KindStorage, desc: desc, details: details, healthy: healthy}, opts)
 }
 
 func build(s *simple, opts []Option) Resource {

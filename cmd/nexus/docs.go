@@ -208,6 +208,7 @@ var topicSummaries = map[string]string{
 	"peer":       "extension/peer — typed RPC between nexus apps",
 	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
 	"config":     "extension/config — Spring-style config server + nexus.Get",
+	"storage":    "extension/storage — file/object storage: local + S3 disks",
 	"cli":        "Subcommand cheatsheet (new / init / dev / build / client)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
 	"client":     "Embedded JS/TS SDK — connect a browser to your app",
@@ -1672,5 +1673,49 @@ events are no-ops via version-equality short-circuit.
   accepts — the offline signing key is the integrity floor.
 
 Run 'nexus docs pki' for the cert-generation toolchain.
+`,
+
+	"storage": `
+STORAGE — file/object storage (local + S3), zero heavy deps
+
+extension/storage is the Go equivalent of Laravel Storage / Rails
+ActiveStorage: app code talks to one Disk interface; the backend is
+chosen by config, so local-in-dev / S3-in-prod is a config change only.
+
+Wire a disk like a cache or database — a typed Bind that embeds
+*storage.Manager, injected into handlers and shown on the dashboard:
+
+    import "github.com/paulmanoni/nexus/extension/storage"
+
+    type Uploads struct{ *storage.Manager }
+
+    nexus.Run(cfg, storage.Bind[Uploads]("uploads", func() storage.Config {
+        return storage.Config{Driver: "local", Root: "./var/uploads"}
+    }, storage.WithDefault()))
+
+Switch to S3 (or MinIO / R2 / Spaces) by changing only the Config:
+
+    storage.Config{Driver: "s3", Bucket: "my-app", Region: "us-east-1",
+        AccessKey: nexus.Get[string]("s3.key"),
+        SecretKey: nexus.Get[string]("s3.secret"),
+        // Endpoint: "https://minio.internal:9000",  // S3-compatible stores
+    }
+
+A handler injects *Uploads and calls the disk directly (Manager embeds it):
+
+    func NewAvatar(u *Uploads, p nexus.Params[UploadArgs]) (*Res, error) {
+        if err := u.Put(p.Context, "avatars/"+id+".png", r,
+            storage.WithContentType("image/png")); err != nil { return nil, err }
+        url, _ := u.SignedURL(p.Context, "avatars/"+id+".png", 15*time.Minute)
+        return &Res{URL: url}, nil
+    }
+
+Disk surface: Put / Get / Exists / Delete / Stat / List / URL / SignedURL.
+PutOption: WithContentType, WithSize (stream without buffering), Public.
+
+Backends (both dependency-free):
+  local — OS filesystem under Root; rejects path traversal.
+  s3    — any S3-compatible store over HTTPS with hand-rolled SigV4
+          signing. No AWS SDK is linked. SignedURL returns a presigned GET.
 `,
 }

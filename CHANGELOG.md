@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — `extension/storage`: file/object storage (local + S3 disks)
+
+- **A filesystem/object-storage abstraction, the Go equivalent of Laravel
+  Storage / Rails ActiveStorage / Django file storages.** Application code
+  talks to one `Disk` interface (`Put` / `Get` / `Exists` / `Delete` /
+  `Stat` / `List` / `URL` / `SignedURL`); the backend is chosen by config,
+  so local-in-dev and S3-in-prod differ only by a `Config`.
+- **Two backends, both dependency-free:**
+  - **Local** — the OS filesystem under a root dir. Atomic writes
+    (temp-file + rename) and path-traversal rejection.
+  - **S3** — any S3-compatible store (AWS S3, MinIO, Cloudflare R2,
+    DigitalOcean Spaces) spoken directly over HTTPS with **hand-rolled
+    SigV4 signing — no AWS SDK is linked** (go.mod is unchanged), keeping
+    nexus's zero-heavy-dep ethos. `SignedURL` returns a presigned GET;
+    virtual-hosted and path-style URLs both supported via `Endpoint`.
+- **Wired like a cache or database** — `storage.Bind[T]("name", build,
+  opts…)` where `T` embeds `*storage.Manager`; injected into handlers and
+  registered as a dashboard resource (new `resource.KindStorage`).
+- `PutOption`s: `WithContentType`, `WithSize` (stream without buffering),
+  `Public`. `nexus docs storage` documents it. The SigV4 signer is
+  verified against AWS's published example vector.
+
 ## [1.20.4] - 2026-06-19
 
 ### Fixed — wildcard route params now match gin's convention on every backend
