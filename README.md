@@ -256,6 +256,54 @@ auth.Module(auth.Config{
 For production, vendor the SDK at build time instead of serving it at runtime:
 `nexus client --out ./web/sdk`.
 
+## Built in: security, storage, passwords
+
+Three things every real app needs — each a config switch or one typed `Bind`, no
+third-party SDKs pulled into your build.
+
+**Security headers + CSRF.** The safe response headers (`X-Frame-Options`,
+`X-Content-Type-Options`, `Referrer-Policy`) are **on by default** for every app. CSRF is
+one line — off by default because a token-authenticated API isn't CSRF-vulnerable; turn it
+on when you serve cookie/session HTML forms (a template engine, or Inertia):
+
+```toml
+[runtime.middleware.security]
+csp  = "default-src 'self'"   # opt-in Content-Security-Policy
+hsts_max_age = 31536000       # opt-in HSTS (once you serve https)
+csrf = true                   # opt-in double-submit CSRF
+```
+
+**File storage — local ↔ S3, no code change.** Talk to one `Disk` interface; the backend
+is chosen by config. The S3 driver speaks to any S3-compatible store (AWS, MinIO, R2,
+Spaces) directly over HTTPS with built-in SigV4 signing — **no AWS SDK is linked**.
+
+```go
+type Uploads struct{ *storage.Manager }
+
+nexus.Run(cfg, storage.Bind[Uploads]("uploads", func() storage.Config {
+    return storage.Config{Driver: "local", Root: "./var/uploads"} // or Driver:"s3", Bucket, Region, …
+}))
+
+// in a handler (Uploads embeds the disk):
+u.Put(ctx, "avatars/1.png", r, storage.WithContentType("image/png"))
+url, _ := u.SignedURL(ctx, "avatars/1.png", 15*time.Minute)   // presigned GET
+```
+
+**Password auth — Django-style, fully swappable.** Pluggable password hashers (bcrypt
+default; argon2id / pbkdf2 also verify, with transparent rehash-on-login), password
+validators, and credential-login backends tried in order:
+
+```go
+store := auth.NewMemoryUserStore()               // or your own GORM / API-backed UserStore
+store.CreateUser("alice", "s3cret-pw", "ADMIN")
+
+id, err := auth.Authenticate(ctx,
+    auth.Password{Username: "alice", Password: "s3cret-pw"}, auth.NewModelBackend(store))
+// wrong password OR unknown user → auth.ErrInvalidCredentials (no user enumeration)
+
+auth.ValidatePassword(ctx, pw, id, auth.DefaultValidators()...) // MinLength, NotCommon, …
+```
+
 ## Going further
 
 When you're ready for more, each area has its own focused guide:
@@ -263,7 +311,9 @@ When you're ready for more, each area has its own focused guide:
 | Topic | Where |
 |---|---|
 | Every feature, inline | `nexus docs` (e.g. `nexus docs handlers`, `nexus docs dashboard`) |
-| Auth & OAuth2 server | `extension/auth`, `extension/oauth2` |
+| Auth: passwords, login backends, OAuth2 | `nexus docs auth`, `extension/auth`, `extension/oauth2` |
+| Security headers + CSRF | `nexus docs security` |
+| File & object storage (local + S3) | `nexus docs storage` |
 | Production: ports, scopes, TLS, mTLS | hide the dashboard from the internet with named listeners + the introspection gate |
 | Typed RPC between apps (peer mesh) | [extension/peer/README.md](extension/peer/README.md) |
 | Config server + `nexus.toml` | [extension/config/README.md](extension/config/README.md) |
