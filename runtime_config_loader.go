@@ -109,7 +109,7 @@ func LoadConfig(path ...string) (Config, error) {
 		installBaseConfig(full)
 	}
 	// Stash the declarative [databases.*] structure blocks so
-	// DatabaseFromConfig[T] can resolve them when options are built.
+	// db.BindFromConfig[T] can resolve them when options are built.
 	// Secrets aren't here — only structure + the config-server
 	// key_prefix.
 	registerDatabaseSpecs(block.Databases)
