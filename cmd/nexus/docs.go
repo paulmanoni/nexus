@@ -567,6 +567,42 @@ mutation/query under the hood.
 
 For full OAuth2 (password / client_credentials / refresh): see
 "nexus docs oauth2".
+
+──── Passwords & login backends (Django-style) ───────────────
+
+Everything below is a swappable backend with a shipped default —
+password hashing, password policy, and credential login.
+
+HASHING — auth.Hasher / auth.Hashers (like Django PASSWORD_HASHERS).
+Encoded hashes are self-describing ("<id>$<payload>"), so a set
+verifies any algorithm it knows and rehashes on login when stale:
+
+    h := auth.DefaultHashers()          // bcrypt default; argon2id+pbkdf2 verify
+    enc, _ := h.Hash("s3cret")          // "bcrypt$$2b$12$…"
+    ok, needsUpgrade, _ := h.Verify("s3cret", enc)
+
+    // pick a specific algorithm:
+    auth.BCrypt() | auth.Argon2id() | auth.PBKDF2()
+
+POLICY — auth.PasswordValidator (like AUTH_PASSWORD_VALIDATORS):
+
+    err := auth.ValidatePassword(ctx, pw, id, auth.DefaultValidators()...)
+    // MinLength(8), NotNumericOnly(), NotCommon(...), NotSimilarToUser()
+
+LOGIN — auth.Backend + auth.Authenticate (like AUTHENTICATION_BACKENDS).
+Backends are tried in order; ModelBackend checks a pluggable UserStore:
+
+    store := auth.NewMemoryUserStore()          // or your GORM/API store
+    store.CreateUser("alice", "s3cret-pw", "ADMIN")
+    backend := auth.NewModelBackend(store)
+
+    id, err := auth.Authenticate(ctx,
+        auth.Password{Username: "alice", Password: "s3cret-pw"}, backend)
+    // wrong password OR unknown user → auth.ErrInvalidCredentials (no enumeration)
+
+Implement auth.UserStore (ByUsername / ByID / SetPassword) to back login
+with your own user model. The token-Resolver/Scheme surface above is
+unchanged — these fill in the login half around it.
 `,
 
 	"security": `
