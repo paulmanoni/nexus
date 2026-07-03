@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-07-03
+
 ### Added — built-in web security: CSRF enforcement + security headers
 
 - **Security response headers are now on by default** — the framework
