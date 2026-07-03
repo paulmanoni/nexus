@@ -185,8 +185,20 @@ allow_origins = ["*"]
 rpm = 600
 burst = 50
 
+# Built-in web security (extension/security shares this engine). Security
+# response headers are ON by default even without this block; keys here only
+# tune them or enable the opt-ins. CSRF is OFF by default (a token-auth API
+# isn't CSRF-vulnerable) — enable it for cookie/session HTML forms.
+[runtime.middleware.security]
+# headers        = false                 # turn the default headers off
+# frame_options  = "SAMEORIGIN"          # "-" omits X-Frame-Options
+# referrer_policy = "no-referrer"
+csp            = "default-src 'self'"     # opt-in Content-Security-Policy
+hsts_max_age   = 31536000                 # opt-in HSTS (seconds; needs https)
+csrf           = true                     # opt-in double-submit CSRF
+
 # Databases — TOP LEVEL (not under [runtime]); wired in code via
-# nexus.DatabaseFromConfig[T]("name"). Inline values OR a config-server key_prefix.
+# db.BindFromConfig[T]("name") (T embeds *db.Manager). Inline values OR a config-server key_prefix.
 [databases.main]
 driver   = "postgres"
 host     = "localhost"
@@ -536,6 +548,27 @@ desc, details, healthy, opts...)` with `resource.AsDefault()/DependsOn(...)/With
 register via `app.Register(r)`, or implement `NexusResources() []resource.Resource` on a
 constructor param for auto-detection. Live usage edges: `app.OnResourceUse(target)`.
 
+### File / object storage (`extension/storage`)
+A Laravel-Storage-style `Disk` abstraction — one interface, backend chosen by config, so
+local-in-dev / S3-in-prod is a `Config` change, not a code change. Wire it exactly like a
+cache: a typed `Bind` whose `T` embeds `*storage.Manager`, injected into handlers and shown
+on the dashboard (`resource.KindStorage`).
+```go
+import "github.com/paulmanoni/nexus/extension/storage"
+
+type Uploads struct{ *storage.Manager }
+
+storage.Bind[Uploads]("uploads", func() storage.Config {
+    return storage.Config{Driver: "local", Root: "./var/uploads"}   // or Driver:"s3", Bucket, Region, AccessKey, SecretKey, Endpoint
+}, storage.WithDefault())
+```
+Handlers inject `*Uploads` and call the disk directly (Manager embeds `Disk`): `Put` / `Get`
+/ `Exists` / `Delete` / `Stat` / `List` / `URL` / `SignedURL`; `PutOption`s `WithContentType`,
+`WithSize` (stream without buffering), `Public`. Two backends, **both dependency-free**:
+`local` (OS filesystem, path-traversal-safe, atomic writes) and `s3` (any S3-compatible
+store — AWS/MinIO/R2/Spaces — over HTTPS with built-in SigV4; **no AWS SDK linked**).
+`SignedURL` returns a presigned GET. `nexus docs storage`.
+
 ### Config values (`nexus.Get`)
 `nexus.Get[T]("key", default...)` reads from, highest priority first: (1) an ENV
 override (`db.port` → `DB_PORT`), (2) the `[extensions.config]` snapshot when wired
@@ -593,6 +626,33 @@ Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `Invalidate(token)` / `InvalidateByIdentity(id)`. A full OAuth2 server is
 `oauth2.Module(oauth2.Config{...})` (`extension/oauth2`) — password grant →
 JWT access/refresh at `/oauth/token`.
+
+**Passwords & credential login (Django-style, swappable).** `auth.Module`/`Resolve` above
+verifies an *existing* token; these fill in the *login* half, each a pluggable interface
+with a shipped default (no new deps — `x/crypto` + stdlib `crypto/pbkdf2`):
+- **Hashing** — `auth.Hasher` / `auth.Hashers` (≈ Django `PASSWORD_HASHERS`). Encoded
+  hashes self-describe (`<id>$<payload>`) so a set verifies any member algorithm and
+  **rehashes on login** when stale. `auth.BCrypt()` (default), `auth.Argon2id()`,
+  `auth.PBKDF2()`; `auth.DefaultHashers()`.
+- **Policy** — `auth.PasswordValidator` (≈ `AUTH_PASSWORD_VALIDATORS`): `MinLength`,
+  `NotNumericOnly`, `NotCommon`, `NotSimilarToUser`; run via `auth.ValidatePassword(...)` /
+  `auth.DefaultValidators()`.
+- **Login** — `auth.Backend` + `auth.Authenticate(ctx, cred, backends...)` (≈
+  `AUTHENTICATION_BACKENDS`, tried in order). `auth.ModelBackend` checks a pluggable
+  `auth.UserStore` (implement `ByUsername`/`ByID`/`SetPassword` for your model; ships
+  `auth.NewMemoryUserStore()` for dev). Wrong password *or* unknown user →
+  `auth.ErrInvalidCredentials` (no enumeration; timing equalized).
+```go
+store := auth.NewMemoryUserStore()
+store.CreateUser("alice", "s3cret-pw", "ADMIN")
+id, err := auth.Authenticate(ctx, auth.Password{Username: "alice", Password: "s3cret-pw"},
+    auth.NewModelBackend(store))
+```
+`nexus docs auth`.
+
+**Built-in web security** (headers + CSRF) is separate from identity — it's the
+`[runtime.middleware.security]` block (§2) / `extension/security` plugin: safe response
+headers on by default, opt-in CSRF. `nexus docs security`.
 
 ---
 
