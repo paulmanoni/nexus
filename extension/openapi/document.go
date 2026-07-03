@@ -101,18 +101,18 @@ type MediaType struct {
 // to a Schema; named refs land in Components.Schemas and Schema.Ref
 // points at them.
 type Schema struct {
-	Ref         string             `json:"$ref,omitempty"`
-	Type        string             `json:"type,omitempty"`   // "string" | "integer" | "number" | "boolean" | "array" | "object"
-	Format      string             `json:"format,omitempty"` // "date-time" | "byte" | ...
-	Description string             `json:"description,omitempty"`
-	Items       *Schema            `json:"items,omitempty"`         // when Type == "array"
-	Properties  map[string]*Schema `json:"properties,omitempty"`    // when Type == "object"
-	Required    []string           `json:"required,omitempty"`      // when Type == "object"
-	Enum        []any              `json:"enum,omitempty"`
-	Nullable    bool               `json:"nullable,omitempty"`      // OpenAPI 3.1 prefers `type: ["string", "null"]` — kept for tooling compat
-	AdditionalProperties *Schema   `json:"additionalProperties,omitempty"` // when Type == "object" (map)
-	Example     any                `json:"example,omitempty"`
-	Deprecated  bool               `json:"deprecated,omitempty"`
+	Ref                  string             `json:"$ref,omitempty"`
+	Type                 string             `json:"type,omitempty"`   // "string" | "integer" | "number" | "boolean" | "array" | "object"
+	Format               string             `json:"format,omitempty"` // "date-time" | "byte" | ...
+	Description          string             `json:"description,omitempty"`
+	Items                *Schema            `json:"items,omitempty"`      // when Type == "array"
+	Properties           map[string]*Schema `json:"properties,omitempty"` // when Type == "object"
+	Required             []string           `json:"required,omitempty"`   // when Type == "object"
+	Enum                 []any              `json:"enum,omitempty"`
+	Nullable             bool               `json:"nullable,omitempty"`             // OpenAPI 3.1 prefers `type: ["string", "null"]` — kept for tooling compat
+	AdditionalProperties *Schema            `json:"additionalProperties,omitempty"` // when Type == "object" (map)
+	Example              any                `json:"example,omitempty"`
+	Deprecated           bool               `json:"deprecated,omitempty"`
 }
 
 // Components houses reusable schemas + security definitions. The
@@ -127,11 +127,11 @@ type Components struct {
 // "bearer" entry when auth.Bearer is in use, "apiKey" for API key
 // extractors, "cookie" for cookie-based auth.
 type SecurityScheme struct {
-	Type         string `json:"type"`                    // "http" | "apiKey" | "oauth2" | "openIdConnect"
-	Scheme       string `json:"scheme,omitempty"`        // "bearer" for type=http
-	BearerFormat string `json:"bearerFormat,omitempty"`  // "JWT" hint when applicable
-	In           string `json:"in,omitempty"`            // "header" | "query" | "cookie" — for type=apiKey
-	Name         string `json:"name,omitempty"`          // header/cookie/query param name — for type=apiKey
+	Type         string `json:"type"`                   // "http" | "apiKey" | "oauth2" | "openIdConnect"
+	Scheme       string `json:"scheme,omitempty"`       // "bearer" for type=http
+	BearerFormat string `json:"bearerFormat,omitempty"` // "JWT" hint when applicable
+	In           string `json:"in,omitempty"`           // "header" | "query" | "cookie" — for type=apiKey
+	Name         string `json:"name,omitempty"`         // header/cookie/query param name — for type=apiKey
 	Description  string `json:"description,omitempty"`
 }
 

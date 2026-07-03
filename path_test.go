@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
 )
 
 // TestPath_RegistersForServiceLookup verifies the round-trip:

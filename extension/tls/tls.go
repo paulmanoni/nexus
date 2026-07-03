@@ -249,4 +249,3 @@ func applyDefaults(cfg *Config) {
 		cfg.AcceptTOS = autocert.AcceptTOS
 	}
 }
-

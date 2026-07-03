@@ -15,12 +15,12 @@ import (
 // WebSocketManager manages WebSocket connections for GraphQL subscriptions.
 // It handles connection lifecycle, authentication, and message routing.
 type WebSocketManager struct {
-	upgrader      websocket.Upgrader
-	connections   sync.Map // map[string]*Connection
-	schema        *graphql.Schema
-	authFn        func(r *http.Request) (interface{}, error)
-	pubsub        PubSub
-	rootObjectFn  func(ctx context.Context, r *http.Request) map[string]interface{}
+	upgrader     websocket.Upgrader
+	connections  sync.Map // map[string]*Connection
+	schema       *graphql.Schema
+	authFn       func(r *http.Request) (interface{}, error)
+	pubsub       PubSub
+	rootObjectFn func(ctx context.Context, r *http.Request) map[string]interface{}
 }
 
 // Connection represents a single WebSocket connection.
@@ -67,9 +67,9 @@ const (
 	MessageTypePong          = "pong"
 
 	// Server -> Client (subscriptions-transport-ws - legacy)
-	MessageTypeData             = "data"              // Legacy equivalent of "next"
-	MessageTypeConnectionError  = "connection_error"  // Legacy connection error
-	MessageTypeConnectionKeepAlive = "ka"             // Legacy keep-alive
+	MessageTypeData                = "data"             // Legacy equivalent of "next"
+	MessageTypeConnectionError     = "connection_error" // Legacy connection error
+	MessageTypeConnectionKeepAlive = "ka"               // Legacy keep-alive
 )
 
 // WebSocketParams configures the WebSocket handler for subscriptions.

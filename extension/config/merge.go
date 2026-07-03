@@ -16,10 +16,10 @@ import (
 //
 // Merge order (later wins):
 //
-//   1. _common.profiles.default       (cross-app base)
-//   2. _common.profiles.<profile>     (cross-app per-env overlay)
-//   3. <app>.profiles.default         (app base)
-//   4. <app>.profiles.<profile>       (app per-env overlay)
+//  1. _common.profiles.default       (cross-app base)
+//  2. _common.profiles.<profile>     (cross-app per-env overlay)
+//  3. <app>.profiles.default         (app base)
+//  4. <app>.profiles.<profile>       (app per-env overlay)
 //
 // Each step is a deep merge — maps union (recursing into nested
 // maps), scalars and arrays replace. Spring Cloud Config's

@@ -48,7 +48,7 @@ func TestIsError(t *testing.T) {
 		want bool
 	}{
 		{trace.Event{Status: 200}, false},
-		{trace.Event{Status: 404}, false},                            // 4xx is client problem
+		{trace.Event{Status: 404}, false}, // 4xx is client problem
 		{trace.Event{Status: 500}, true},
 		{trace.Event{Status: 503}, true},
 		{trace.Event{Status: 200, Error: "weird but recorded"}, true}, // explicit error wins
@@ -363,16 +363,16 @@ func TestCapture_IgnoredPathSkipped(t *testing.T) {
 func TestSentry_DSNParsing(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		dsn         string
-		wantParsed  bool
-		wantEndsIn  string
+		dsn        string
+		wantParsed bool
+		wantEndsIn string
 	}{
 		{"https://abc123@o123.ingest.sentry.io/4505", true, "/api/4505/store/"},
 		{"https://abc123@sentry.example.com/100", true, "/api/100/store/"},
 		{"", false, ""},
 		{"not a url", false, ""},
-		{"https://nokey.example.com/100", false, ""},  // missing user
-		{"https://abc@host", false, ""},                // missing project
+		{"https://nokey.example.com/100", false, ""}, // missing user
+		{"https://abc@host", false, ""},              // missing project
 	}
 	for _, tc := range cases {
 		t.Run(tc.dsn, func(t *testing.T) {

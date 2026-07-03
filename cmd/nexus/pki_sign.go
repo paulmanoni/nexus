@@ -243,4 +243,3 @@ key never travels.`,
 	cmd.Flags().IntVar(&days, "days", 180, "leaf cert validity in days (recommended: 180)")
 	return cmd
 }
-

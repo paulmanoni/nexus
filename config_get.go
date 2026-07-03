@@ -17,10 +17,10 @@ import (
 //
 // Resolution priority, highest first:
 //
-//   1. Environment variable (CONFIG_SERVER_PORT for "config.server.port")
-//   2. Config-extension snapshot (config.Server / .Client / .Local)
-//   3. nexus.toml base layer (seeded by LoadConfig/Boot)
-//   4. The default arg (or T's zero value)
+//  1. Environment variable (CONFIG_SERVER_PORT for "config.server.port")
+//  2. Config-extension snapshot (config.Server / .Client / .Local)
+//  3. nexus.toml base layer (seeded by LoadConfig/Boot)
+//  4. The default arg (or T's zero value)
 //
 // Layers 2 and 3 resolve per-key: a key absent from the extension
 // snapshot falls through to the nexus.toml layer rather than

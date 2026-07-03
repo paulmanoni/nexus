@@ -35,11 +35,12 @@ func WithBypassRoles(roles ...string) RateLimitOption {
 // NewRateLimitRule creates a new rate limiting rule with optional configuration
 //
 // Example:
-//   NewRateLimitRule(
-//       WithBudgetFunc(getBudgetFromRedis),
-//       WithCostPerUnit(2),
-//       WithBypassRoles("admin", "service"),
-//   )
+//
+//	NewRateLimitRule(
+//	    WithBudgetFunc(getBudgetFromRedis),
+//	    WithCostPerUnit(2),
+//	    WithBypassRoles("admin", "service"),
+//	)
 func NewRateLimitRule(opts ...RateLimitOption) ValidationRule {
 	rule := &RateLimitRule{
 		BaseRule:    NewBaseRule("RateLimitRule"),

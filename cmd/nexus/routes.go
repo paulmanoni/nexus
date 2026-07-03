@@ -77,7 +77,7 @@ func newRoutesCmd(stdout, stderr io.Writer) *cobra.Command {
 
 The route table is sourced from the binary's NEXUS_PRINT_MANIFEST=1 output,
 or any file containing a manifest (JSON / YAML, auto-detected by extension).
-No live app needed — `+"`nexus routes`"+` is a static analysis of the manifest.
+No live app needed — ` + "`nexus routes`" + ` is a static analysis of the manifest.
 
 Input sources:
   nexus routes <manifest.json>      JSON manifest file

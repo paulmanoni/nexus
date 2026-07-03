@@ -365,4 +365,3 @@ func resolveHostname() string {
 var osHostname = func() (string, error) {
 	return getOSHostname()
 }
-

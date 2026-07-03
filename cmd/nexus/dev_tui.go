@@ -27,10 +27,11 @@ import (
 // below with the child's stdout/stderr.
 //
 // Hotkeys:
-//   q, ctrl-c   quit (kills the child group)
-//   r           restart the child (rebuild + spawn)
-//   o           open the dashboard URL in the default browser
-//   c           clear the log pane
+//
+//	q, ctrl-c   quit (kills the child group)
+//	r           restart the child (rebuild + spawn)
+//	o           open the dashboard URL in the default browser
+//	c           clear the log pane
 //
 // Picking a TUI mode is deliberately opt-in (--tui) — a TUI takes
 // over the whole terminal and is unfriendly when piping (`nexus dev
@@ -74,9 +75,9 @@ type tuiModel struct {
 	logsMu  sync.Mutex
 	maxLogs int
 
-	stats     []endpointStat
-	statsMu   sync.Mutex
-	statsErr  string // last poll error, displayed dim if set
+	stats    []endpointStat
+	statsMu  sync.Mutex
+	statsErr string // last poll error, displayed dim if set
 
 	childMu  sync.Mutex
 	child    *exec.Cmd
@@ -366,7 +367,7 @@ func (m *tuiModel) renderStats() string {
 	}
 	body := strings.Join(rows, "\n")
 	return stylePane.Width(m.width - 2).Render(
-		styleDim.Render("stats")+"\n"+body,
+		styleDim.Render("stats") + "\n" + body,
 	)
 }
 

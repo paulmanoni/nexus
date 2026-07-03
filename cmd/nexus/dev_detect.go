@@ -14,8 +14,8 @@ import (
 // frontend-mount call shapes and returns the conventional frontend
 // project root:
 //
-//   nexus.ServeFrontend(distFS, "web/dist")              → "web"
-//   frontend.Plugin(frontend.Config{Root: "web", ...})   → "web"
+//	nexus.ServeFrontend(distFS, "web/dist")              → "web"
+//	frontend.Plugin(frontend.Config{Root: "web", ...})   → "web"
 //
 // The legacy ServeFrontend form is checked first to preserve the
 // pre-extension behavior. The frontend.Plugin form is the new

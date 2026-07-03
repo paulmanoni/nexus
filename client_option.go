@@ -10,9 +10,9 @@ import (
 //
 //   - You want per-deployment gating: composes with IfDeployment.
 //
-//	    nexus.IfDeployment([]string{"public-api"},
-//	        nexus.ClientUse(client.Config{Enabled: true}),
-//	    )
+//     nexus.IfDeployment([]string{"public-api"},
+//     nexus.ClientUse(client.Config{Enabled: true}),
+//     )
 //
 //   - The SDK is conditional on runtime state the Config struct
 //     can't easily express (env-driven feature flags, multi-binary

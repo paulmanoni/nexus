@@ -160,22 +160,22 @@ func (s *tomlSource) skipByIgnore(name string) bool {
 
 // readOneAppFile parses one app's TOML. Two accepted shapes:
 //
-//   1. Profile-keyed — when the top-level has a [profiles] table,
-//      use that map as the per-profile structure:
+//  1. Profile-keyed — when the top-level has a [profiles] table,
+//     use that map as the per-profile structure:
 //
-//          [profiles.default]
-//          ...
-//          [profiles.prod]
-//          ...
+//     [profiles.default]
+//     ...
+//     [profiles.prod]
+//     ...
 //
-//   2. Flat — when [profiles] is absent, treat the WHOLE top-level
-//      as the default profile. Right for simple apps with no
-//      per-env split:
+//  2. Flat — when [profiles] is absent, treat the WHOLE top-level
+//     as the default profile. Right for simple apps with no
+//     per-env split:
 //
-//          [app]
-//          name = "My App"
-//          [api]
-//          timeout = "5s"
+//     [app]
+//     name = "My App"
+//     [api]
+//     timeout = "5s"
 //
 // Filename is always authoritative for identity
 // (oats.nexus.config.toml → "oats"). A top-level `app` STRING field,

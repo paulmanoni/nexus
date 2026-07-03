@@ -271,6 +271,7 @@ func sortBy[T any](items []T, less func(a, b T) bool) {
 		}
 	}
 }
+
 // envVarKnownKeys is the set of TOML keys a deploy EnvVar declaration uses.
 // A [env.<name>] table with any other key — or a non-bool secret/required/
 // env_scoped — is treated as a runtime env-bridge entry (arbitrary string

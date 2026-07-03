@@ -43,10 +43,10 @@ import (
 // live-refresh path.
 func FromGit(repoURL string, opts ...GitOption) Source {
 	cfg := gitSourceConfig{
-		repo:       repoURL,
-		branch:     "main",
-		clonePath:  defaultGitClonePath(repoURL),
-		pollIntvl:  0, // phase 2
+		repo:      repoURL,
+		branch:    "main",
+		clonePath: defaultGitClonePath(repoURL),
+		pollIntvl: 0, // phase 2
 	}
 	for _, o := range opts {
 		o.applyGit(&cfg)
@@ -60,15 +60,15 @@ type GitOption interface {
 }
 
 type gitSourceConfig struct {
-	repo        string
-	branch      string
-	ref         string // overrides branch when non-empty (tag / SHA)
-	subdir      string // source root inside the repo
-	clonePath   string // working clone on disk
-	token       string // for HTTPS auth
-	sshKey      string // for SSH auth
-	knownHosts  string // SSH host-key pinning
-	pollIntvl   time.Duration // phase 2
+	repo       string
+	branch     string
+	ref        string        // overrides branch when non-empty (tag / SHA)
+	subdir     string        // source root inside the repo
+	clonePath  string        // working clone on disk
+	token      string        // for HTTPS auth
+	sshKey     string        // for SSH auth
+	knownHosts string        // SSH host-key pinning
+	pollIntvl  time.Duration // phase 2
 }
 
 // GitBranch picks the branch to track. Default "main".

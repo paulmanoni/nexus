@@ -11,9 +11,9 @@
 // Wiring (planned, see "Integration" at the bottom of this file):
 //
 //  1. *nexus.App grows three registration methods:
-//       app.DeclareEnv(EnvProvider)
-//       app.DeclareService(ServiceDependency)
-//       app.UseVolume(Volume)
+//     app.DeclareEnv(EnvProvider)
+//     app.DeclareService(ServiceDependency)
+//     app.UseVolume(Volume)
 //     plus a startup-task registration that collects via an fx group
 //     "nexus.startup-tasks" so any module can declare one without holding
 //     an *App reference.
@@ -243,9 +243,9 @@ type Port struct {
 // URL; the orchestration platform appends them to the public Port for
 // liveness / readiness HTTP probes.
 type Health struct {
-	Liveness  string `json:"liveness"`            // always "/__nexus/health" today
-	Readiness string `json:"readiness"`           // always "/__nexus/ready"
-	App       string `json:"app,omitempty"`       // optional app-level probe
+	Liveness  string `json:"liveness"`      // always "/__nexus/health" today
+	Readiness string `json:"readiness"`     // always "/__nexus/ready"
+	App       string `json:"app,omitempty"` // optional app-level probe
 }
 
 // EnvVar is one configuration knob the app reads. Required signals
@@ -287,8 +287,8 @@ type EnvVar struct {
 // dependencies the platform may not natively support yet — operators
 // still see the requirement and can wire something manually.
 type ServiceNeed struct {
-	Name    string `json:"name" toml:"name"`                          // unique within the app, e.g. "primary-db"
-	Kind    string `json:"kind" toml:"kind"`                          // "postgres" | "redis" | "rabbitmq" | "s3" | ...
+	Name    string `json:"name" toml:"name"`                           // unique within the app, e.g. "primary-db"
+	Kind    string `json:"kind" toml:"kind"`                           // "postgres" | "redis" | "rabbitmq" | "s3" | ...
 	Version string `json:"version,omitempty" toml:"version,omitempty"` // major or constraint, e.g. "16", ">=14"
 	// ExposeAs maps logical fields (host, port, user, password, url, ...)
 	// to env-var names the app reads. The orchestration platform fills
@@ -336,12 +336,12 @@ type Volume struct {
 // the declared name + phase, so it can decide whether to gate the
 // rollout on success ("don't promote until startup tasks pass").
 type StartupTask struct {
-	Name        string             `json:"name"`
-	Description string             `json:"description,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 	// Phase is "pre-start" today; reserved for "post-start", "pre-stop"
 	// future expansion. Encoded as a string for forward compatibility.
-	Phase string                                       `json:"phase"`
-	Run   func() error                                 `json:"-"`
+	Phase string       `json:"phase"`
+	Run   func() error `json:"-"`
 }
 
 // WorkerSummary, CronSummary, EndpointSummary mirror what /__nexus/workers,
@@ -631,7 +631,7 @@ type Inputs struct {
 	// the new DeclareEnvironment / DeclareSecret / DeclareFile /
 	// DeclareHooks / DeclareOverride APIs; nil/empty is the supported
 	// default for pre-cloud apps.
-	Environments []Environment
+	Environments  []Environment
 	DirectSecrets []Secret
 	DirectFiles   []File
 	Hooks         *Hooks

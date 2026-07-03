@@ -13,9 +13,9 @@ import (
 // newPkiBundleCmd builds `nexus pki bundle` — package the three
 // files a peer needs to terminate mTLS:
 //
-//   ca.crt        — the trust root
-//   <cn>.crt      — the signed leaf cert
-//   <cn>.key      — the matching private key
+//	ca.crt        — the trust root
+//	<cn>.crt      — the signed leaf cert
+//	<cn>.key      — the matching private key
 //
 // HARD INVARIANT: this command is physically incapable of including
 // ca.key. The function never opens, reads, or references the CA

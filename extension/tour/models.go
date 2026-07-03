@@ -12,10 +12,10 @@ import "time"
 // pass the hydrated tree; the store flattens it back to rows on
 // save.
 type Tour struct {
-	ID          string    `json:"id" gorm:"primaryKey;size:36"`
-	Name        string    `json:"name" gorm:"size:200;not null"`
-	Route       string    `json:"route" gorm:"size:255;index"`
-	Description string    `json:"description" gorm:"type:text"`
+	ID          string `json:"id" gorm:"primaryKey;size:36"`
+	Name        string `json:"name" gorm:"size:200;not null"`
+	Route       string `json:"route" gorm:"size:255;index"`
+	Description string `json:"description" gorm:"type:text"`
 
 	// Order is the play-order within a route. Lower = earlier.
 	// When multiple tours share a route, the agent lists them
@@ -57,8 +57,8 @@ type Tour struct {
 	BaseWidth  int `json:"base_width,omitempty"`
 	BaseHeight int `json:"base_height,omitempty"`
 
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// Steps holds the hydrated tree on reads, and the new tree on
 	// writes. NEVER stored as-is — the store flattens to rows.

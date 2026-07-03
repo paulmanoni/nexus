@@ -26,8 +26,9 @@ type RequireAuthRule struct {
 // Targets can be operation types ("mutation", "subscription", "query") or field names
 //
 // Example:
-//   NewRequireAuthRule("mutation", "subscription")  // Require auth for all mutations and subscriptions
-//   NewRequireAuthRule("deleteUser", "updateUser")  // Require auth for specific fields
+//
+//	NewRequireAuthRule("mutation", "subscription")  // Require auth for all mutations and subscriptions
+//	NewRequireAuthRule("deleteUser", "updateUser")  // Require auth for specific fields
 func NewRequireAuthRule(targets ...string) ValidationRule {
 	rule := &RequireAuthRule{
 		BaseRule:   NewBaseRule("RequireAuthRule"),
@@ -90,8 +91,9 @@ type RoleRule struct {
 // NewRoleRule creates a new role validation rule for a single field
 //
 // Example:
-//   NewRoleRule("deleteUser", "admin")
-//   NewRoleRule("viewAuditLog", "admin", "auditor")
+//
+//	NewRoleRule("deleteUser", "admin")
+//	NewRoleRule("viewAuditLog", "admin", "auditor")
 func NewRoleRule(field string, roles ...string) ValidationRule {
 	return &RoleRule{
 		BaseRule: NewBaseRule("RoleRule:" + field),
@@ -138,11 +140,12 @@ type RoleRules struct {
 // config maps field names to required roles
 //
 // Example:
-//   NewRoleRules(map[string][]string{
-//       "deleteUser":    {"admin"},
-//       "viewAuditLog":  {"admin", "auditor"},
-//       "approveOrder":  {"admin", "manager"},
-//   })
+//
+//	NewRoleRules(map[string][]string{
+//	    "deleteUser":    {"admin"},
+//	    "viewAuditLog":  {"admin", "auditor"},
+//	    "approveOrder":  {"admin", "manager"},
+//	})
 func NewRoleRules(config map[string][]string) ValidationRule {
 	return &RoleRules{
 		BaseRule: NewBaseRule("RoleRules"),
@@ -195,8 +198,9 @@ type PermissionRule struct {
 // NewPermissionRule creates a new permission validation rule for a single field
 //
 // Example:
-//   NewPermissionRule("sensitiveData", "read:sensitive")
-//   NewPermissionRule("exportData", "export:data", "admin:all")
+//
+//	NewPermissionRule("sensitiveData", "read:sensitive")
+//	NewPermissionRule("exportData", "export:data", "admin:all")
 func NewPermissionRule(field string, permissions ...string) ValidationRule {
 	return &PermissionRule{
 		BaseRule:    NewBaseRule("PermissionRule:" + field),
@@ -243,11 +247,12 @@ type PermissionRules struct {
 // config maps field names to required permissions
 //
 // Example:
-//   NewPermissionRules(map[string][]string{
-//       "sensitiveData": {"read:sensitive"},
-//       "exportData":    {"export:data"},
-//       "adminPanel":    {"admin:access"},
-//   })
+//
+//	NewPermissionRules(map[string][]string{
+//	    "sensitiveData": {"read:sensitive"},
+//	    "exportData":    {"export:data"},
+//	    "adminPanel":    {"admin:access"},
+//	})
 func NewPermissionRules(config map[string][]string) ValidationRule {
 	return &PermissionRules{
 		BaseRule: NewBaseRule("PermissionRules"),
@@ -299,7 +304,8 @@ type BlockedFieldsRule struct {
 // NewBlockedFieldsRule creates a new blocked fields rule
 //
 // Example:
-//   NewBlockedFieldsRule("internalUsers", "deprecatedField")
+//
+//	NewBlockedFieldsRule("internalUsers", "deprecatedField")
 func NewBlockedFieldsRule(fields ...string) ValidationRule {
 	rule := &BlockedFieldsRule{
 		BaseRule:      NewBaseRule("BlockedFieldsRule"),

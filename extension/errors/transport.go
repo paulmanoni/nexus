@@ -194,19 +194,19 @@ func (t *sentryTransport) parse() {
 // Pulled from the Sentry SDK developer docs — only the fields we
 // actually populate.
 type sentryEvent struct {
-	EventID     string                `json:"event_id,omitempty"`
-	Timestamp   float64               `json:"timestamp"`
-	Platform    string                `json:"platform"`
-	Level       string                `json:"level,omitempty"`
-	Logger      string                `json:"logger,omitempty"`
-	ServerName  string                `json:"server_name,omitempty"`
-	Release     string                `json:"release,omitempty"`
-	Environment string                `json:"environment,omitempty"`
-	Tags        map[string]string     `json:"tags,omitempty"`
-	Message     map[string]string     `json:"message,omitempty"`
-	Exception   *sentryExceptionWrap  `json:"exception,omitempty"`
-	Request     *sentryRequest        `json:"request,omitempty"`
-	Fingerprint []string              `json:"fingerprint,omitempty"`
+	EventID     string               `json:"event_id,omitempty"`
+	Timestamp   float64              `json:"timestamp"`
+	Platform    string               `json:"platform"`
+	Level       string               `json:"level,omitempty"`
+	Logger      string               `json:"logger,omitempty"`
+	ServerName  string               `json:"server_name,omitempty"`
+	Release     string               `json:"release,omitempty"`
+	Environment string               `json:"environment,omitempty"`
+	Tags        map[string]string    `json:"tags,omitempty"`
+	Message     map[string]string    `json:"message,omitempty"`
+	Exception   *sentryExceptionWrap `json:"exception,omitempty"`
+	Request     *sentryRequest       `json:"request,omitempty"`
+	Fingerprint []string             `json:"fingerprint,omitempty"`
 }
 
 type sentryExceptionWrap struct {
@@ -214,9 +214,9 @@ type sentryExceptionWrap struct {
 }
 
 type sentryException struct {
-	Type       string             `json:"type"`
-	Value      string             `json:"value"`
-	Stacktrace *sentryStackTrace  `json:"stacktrace,omitempty"`
+	Type       string            `json:"type"`
+	Value      string            `json:"value"`
+	Stacktrace *sentryStackTrace `json:"stacktrace,omitempty"`
 }
 
 type sentryStackTrace struct {

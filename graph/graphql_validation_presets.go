@@ -41,10 +41,11 @@ var (
 // CombineRules combines multiple rule sets into one
 //
 // Example:
-//   rules := CombineRules(
-//       SecurityRules,
-//       []ValidationRule{NewRequireAuthRule("mutation")},
-//   )
+//
+//	rules := CombineRules(
+//	    SecurityRules,
+//	    []ValidationRule{NewRequireAuthRule("mutation")},
+//	)
 func CombineRules(ruleSets ...[]ValidationRule) []ValidationRule {
 	var combined []ValidationRule
 	for _, rules := range ruleSets {
@@ -82,16 +83,16 @@ var (
 
 	// ManagerFields - fields that require admin or manager role
 	ManagerFields = map[string][]string{
-		"approveOrder":  {"admin", "manager"},
-		"viewReports":   {"admin", "manager"},
-		"manageTeam":    {"admin", "manager"},
+		"approveOrder":   {"admin", "manager"},
+		"viewReports":    {"admin", "manager"},
+		"manageTeam":     {"admin", "manager"},
 		"bulkOperations": {"admin", "manager"},
 	}
 
 	// AuditorFields - fields that require admin or auditor role
 	AuditorFields = map[string][]string{
-		"viewAuditLog": {"admin", "auditor"},
-		"exportLogs":   {"admin", "auditor"},
+		"viewAuditLog":  {"admin", "auditor"},
+		"exportLogs":    {"admin", "auditor"},
 		"viewAnalytics": {"admin", "auditor"},
 	}
 )
@@ -99,7 +100,8 @@ var (
 // MergeRoleConfigs combines multiple role configurations
 //
 // Example:
-//   allRoles := MergeRoleConfigs(AdminOnlyFields, ManagerFields, AuditorFields)
+//
+//	allRoles := MergeRoleConfigs(AdminOnlyFields, ManagerFields, AuditorFields)
 func MergeRoleConfigs(configs ...map[string][]string) map[string][]string {
 	merged := make(map[string][]string)
 	for _, config := range configs {

@@ -11,17 +11,17 @@ import "strings"
 //   - wildcard:  any origin → reflect "*" (only when no credentials)
 //   - func:      Config.AllowOriginFunc owns the decision
 //   - list:      pre-parsed entries; each is either exact or has a
-//                single-segment wildcard left of the dot-separated
-//                hostname (e.g. "*.example.com")
+//     single-segment wildcard left of the dot-separated
+//     hostname (e.g. "*.example.com")
 //
 // The decision is hot — happens per request — so we keep allocations
 // out of the per-request path. allowedHosts is pre-split so the
 // runtime check is a couple of substring/equality calls.
 type matcher struct {
-	wildcard bool                                       // "*" present → allow all
+	wildcard bool // "*" present → allow all
 	fn       func(origin string) (allow bool, matched string)
-	exact    map[string]struct{}                        // origins matched literally
-	wild     []wildHost                                 // *.example.com style
+	exact    map[string]struct{} // origins matched literally
+	wild     []wildHost          // *.example.com style
 }
 
 // wildHost is a parsed subdomain-wildcard entry. Schema + suffix

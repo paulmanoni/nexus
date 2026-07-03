@@ -171,8 +171,8 @@ func TestGenerateDTS_TinyManifestSnapshot(t *testing.T) {
 		"export interface QueryHandle<T>",
 		"export interface CrudListHandle<T>",
 		"export interface UseAuthHandle",
-		"data: T | null",      // plain value, not Ref<T>
-		"loading: boolean",    // plain value, not Ref<boolean>
+		"data: T | null",   // plain value, not Ref<T>
+		"loading: boolean", // plain value, not Ref<boolean>
 		"from './client.js'",
 	}
 	for _, s := range wantReactSubstrings {

@@ -375,7 +375,7 @@ func paramNameSet(params []Parameter) map[string]struct{} {
 // Rules:
 //   - GraphQL: use ep.Name (the resolver name — e.g. "listAdverts")
 //   - REST:    {service}_{method}_{path-segments}, with path params
-//              and slashes squashed to underscores
+//     and slashes squashed to underscores
 //
 // Examples:
 //

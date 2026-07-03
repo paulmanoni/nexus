@@ -139,10 +139,10 @@ type Entity struct {
 // so service surfaces are documented alongside the typed fields.
 type EntityMethod struct {
 	Name      string `json:"name"`
-	Signature string `json:"signature"`           // pretty-printed func signature, e.g. "(ctx context.Context) (*User, error)"
-	Doc       string `json:"doc,omitempty"`       // doc comment on the method
-	Pos       Pos    `json:"pos"`                 // source location of the method declaration
-	Receiver  string `json:"receiver,omitempty"`  // pointer? value? — kept for transparency in the IR
+	Signature string `json:"signature"`          // pretty-printed func signature, e.g. "(ctx context.Context) (*User, error)"
+	Doc       string `json:"doc,omitempty"`      // doc comment on the method
+	Pos       Pos    `json:"pos"`                // source location of the method declaration
+	Receiver  string `json:"receiver,omitempty"` // pointer? value? — kept for transparency in the IR
 }
 
 // EntityField mirrors Field but for an Entity's own struct definition.
