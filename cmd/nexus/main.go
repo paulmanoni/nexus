@@ -37,9 +37,18 @@ import (
 //  3. "dev" — the literal placeholder for `go run ./cmd/nexus ...`
 //     where neither ldflags nor BuildInfo carries a version.
 //
-// resolveVersion runs once at init() so the value is stable
-// across subcommand invocations within one process (tests).
-var Version = resolveVersion()
+// Version is left UNINITIALIZED so a release-time
+// -ldflags "-X main.Version=vX.Y.Z" value survives to runtime. init()
+// fills the fallback (BuildInfo → vcs → "dev") only when no ldflags value
+// was injected. Initializing it with `= resolveVersion()` would run at
+// startup and clobber the linker value — silently breaking layer 1.
+var Version string
+
+func init() {
+	if Version == "" {
+		Version = resolveVersion()
+	}
+}
 
 // resolveVersion walks the priority chain. Most users will hit
 // case 2 — `go install ...@vX.Y.Z` puts the tag in BuildInfo's

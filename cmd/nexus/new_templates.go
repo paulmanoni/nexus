@@ -360,7 +360,7 @@ const tmplViteReactPackageJSON = `{
 
 const tmplGoMod2 = `module {{.ModulePath}}
 
-go 1.25.1
+go 1.26
 `
 
 // tmplMainGoTpl wires only the chosen pieces. Empty branches collapse
