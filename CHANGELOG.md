@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.29.1] - 2026-07-04
+
+### Fixed
+
+- **CI lint job now runs.** `golangci-lint-action` downloaded the prebuilt
+  golangci-lint binary (built with go1.24), which refuses to analyze the
+  go1.26 modules ("the Go language version used to build golangci-lint is
+  lower than the targeted Go version"). Switched to `install-mode:
+  goinstall` so CI compiles it with the runner's Go 1.26 — matching how
+  `make lint` runs locally.
+- **`nexus version` honors release `-ldflags`.** `var Version =
+  resolveVersion()` ran its initializer at startup and overwrote any
+  linker-injected value, so a binary built with
+  `-ldflags "-X main.Version=vX.Y.Z"` still printed `dev`. `Version` is now
+  left uninitialized (so the `-X` value survives) with the BuildInfo/vcs/
+  `dev` fallback filled in `init()`. Normal `go install …@vX.Y.Z` installs
+  were unaffected (they resolve the tag via BuildInfo).
+- **Scaffold Go directive.** `nexus new` generated a `go.mod` pinned to
+  `go 1.25.1`; bumped to `go 1.26` to match the framework's requirement.
+- Fixed stale internal `DatabaseFromConfig[T]` comments →
+  `db.BindFromConfig[T]`.
+
 ## [1.29.0] - 2026-07-03
 
 ### Added — built-in web security: CSRF enforcement + security headers
