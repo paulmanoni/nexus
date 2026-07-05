@@ -2,8 +2,10 @@ package nexus
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
 
 	"github.com/paulmanoni/nexus/di"
@@ -384,12 +386,35 @@ func BootFrom(path string, opts ...Option) {
 	Run(cfg, append(extOpts, opts...)...)
 }
 
-// resolveConfigPath picks the nexus.toml path: the NEXUS_CONFIG env
-// override when set, else the conventional DefaultConfigPath.
+// resolveConfigPath picks the nexus.toml path in priority order:
+//
+//  1. NEXUS_CONFIG env override — always wins when set.
+//  2. DefaultConfigPath ("nexus.toml") in the current working directory —
+//     the dev-time convention (cwd == project root).
+//  3. nexus.toml sitting next to the executable — the deploy convention.
+//     A binary shipped with its config beside it (./oats_app +
+//     ./nexus.toml) then binds the configured port no matter which
+//     directory it's launched from, instead of silently falling back to
+//     the framework default (:8080) when cwd has no toml.
+//
+// The cwd copy is tried first so a `nexus dev` / `go run` from the project
+// root keeps reading the source-tree toml even when a built binary also
+// sits nearby.
 func resolveConfigPath() string {
 	if p := os.Getenv("NEXUS_CONFIG"); p != "" {
 		return p
 	}
+	if _, err := os.Stat(DefaultConfigPath); err == nil {
+		return DefaultConfigPath
+	}
+	if exe, err := os.Executable(); err == nil {
+		beside := filepath.Join(filepath.Dir(exe), DefaultConfigPath)
+		if _, err := os.Stat(beside); err == nil {
+			return beside
+		}
+	}
+	// Nothing found anywhere — return the conventional path so autoLoad's
+	// ErrNotExist branch runs (and warns) with a familiar name.
 	return DefaultConfigPath
 }
 
@@ -401,6 +426,17 @@ func autoLoad(path string) (Config, []Option) {
 	cfg, err := LoadConfig(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			// A missing nexus.toml is tolerated so config-less apps still
+			// boot — but it silently drops every setting in the file
+			// (listen addr included, so the app falls back to :8080).
+			// That has bitten deployments where the binary was launched
+			// from a directory without its toml, so make it loud on
+			// stderr rather than a mystery default port.
+			fmt.Fprintf(os.Stderr,
+				"nexus: no %s found (looked in cwd and next to the executable); "+
+					"using framework defaults — listen addr falls back to :8080. "+
+					"Set NEXUS_CONFIG or run from the config's directory to load it.\n",
+				DefaultConfigPath)
 			cfg = Config{}
 		} else {
 			panic(err)

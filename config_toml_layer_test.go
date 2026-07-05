@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -107,6 +108,44 @@ func TestAutoLoad_MissingFileTolerated(t *testing.T) {
 	}
 	if extOpts != nil {
 		t.Errorf("missing file should yield no extension options, got %d", len(extOpts))
+	}
+}
+
+// TestResolveConfigPath_Precedence: NEXUS_CONFIG wins; else cwd's
+// nexus.toml; else one sitting next to the executable — so a deployed
+// binary launched from an unrelated directory still finds its config
+// instead of silently defaulting to :8080.
+func TestResolveConfigPath_Precedence(t *testing.T) {
+	// NEXUS_CONFIG override always wins.
+	t.Setenv("NEXUS_CONFIG", "/custom/path.toml")
+	if got := resolveConfigPath(); got != "/custom/path.toml" {
+		t.Fatalf("NEXUS_CONFIG should win, got %q", got)
+	}
+
+	// With the override cleared and no cwd toml, fall back to a toml
+	// beside the test executable.
+	t.Setenv("NEXUS_CONFIG", "")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	beside := filepath.Join(filepath.Dir(exe), DefaultConfigPath)
+	if _, err := os.Stat(beside); err == nil {
+		t.Skip("a nexus.toml already sits beside the test binary; skipping")
+	}
+	mustWriteTOML(t, beside, "[runtime.server]\naddr = \":9797\"\n")
+	t.Cleanup(func() { os.Remove(beside) })
+
+	// Run from a directory that has no nexus.toml so the cwd check misses.
+	dir := t.TempDir()
+	restore, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(restore) })
+
+	if got := resolveConfigPath(); got != beside {
+		t.Errorf("resolveConfigPath = %q, want executable-relative %q", got, beside)
 	}
 }
 

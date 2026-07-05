@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.29.2] - 2026-07-05
+
+### Fixed
+
+- **Deployed binaries now find `nexus.toml` beside the executable.** `Boot`
+  previously looked for `nexus.toml` only in the current working directory,
+  so a binary launched from a different directory (a common deploy layout —
+  `./app` run from `/home/user` with the config in a project subdir) silently
+  fell back to framework defaults, most visibly binding `:8080` instead of the
+  configured `addr`. `resolveConfigPath` now resolves in priority order:
+  `NEXUS_CONFIG` → `nexus.toml` in cwd → `nexus.toml` next to the executable.
+  Ship the binary alongside its `nexus.toml` and the configured listen address
+  is honored regardless of launch directory.
+- **A missing `nexus.toml` warns instead of silently defaulting.** `Boot` still
+  tolerates the file's absence (config-less apps boot), but now prints a clear
+  stderr notice that framework defaults are in effect and the listen addr is
+  falling back to `:8080`, rather than leaving the mystery port unexplained.
+
 ## [1.29.1] - 2026-07-04
 
 ### Fixed
