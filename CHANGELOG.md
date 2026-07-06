@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-07-06
+
+### Added
+
+- **`nexus build` embeds `nexus.toml` into the binary.** The built artifact
+  is now self-contained — no config file needs to ship alongside it. When a
+  `nexus.toml` sits in the main package's directory, `nexus build` bakes it in
+  via the linker (`-ldflags -X`, base64-encoded) and `Boot` uses it as a
+  fallback when no config is found on disk. Resolution order is unchanged and
+  disk still wins: `NEXUS_CONFIG` → `nexus.toml` in cwd → next to the
+  executable → the embedded copy. So a deployed binary Just Works with no
+  sidecar file, yet operators can still drop a `nexus.toml` next to it to
+  override without a rebuild. The raw file is embedded with `${VAR}`
+  placeholders intact, so secrets resolve from the runtime environment and are
+  never baked into the binary. A pure-Go app with no `nexus.toml` embeds
+  nothing.
+
 ## [1.29.2] - 2026-07-05
 
 ### Fixed

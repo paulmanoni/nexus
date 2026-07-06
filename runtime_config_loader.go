@@ -82,11 +82,24 @@ func LoadConfig(path ...string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	return configFromTOML(raw, p)
+}
+
+// configFromTOML is the bytes-based core of LoadConfig, shared by the
+// disk path and the build-time embedded copy (see config_embed.go). It
+// performs the same side effects LoadConfig always has — ${VAR}
+// expansion, publishing the [env] table, seeding the nexus.Get base
+// layer, and stashing [databases.*] specs — then returns the runtime
+// Config. `source` names the origin for error messages (a file path, or
+// "embedded nexus.toml").
+func configFromTOML(raw []byte, source string) (Config, error) {
 	// Reuse manifest's ${VAR} expansion so the schema is
-	// consistent with the rest of nexus.toml.
+	// consistent with the rest of nexus.toml. The embedded copy keeps
+	// ${VAR} placeholders intact at build time, so secrets resolve from
+	// the runtime environment here — never baked into the binary.
 	expanded, err := manifest.ExpandEnvVars(raw)
 	if err != nil {
-		return Config{}, fmt.Errorf("nexus: expand env vars in %s: %w", p, err)
+		return Config{}, fmt.Errorf("nexus: expand env vars in %s: %w", source, err)
 	}
 	// Publish the [env] table as process environment variables (dotted
 	// names) BEFORE building the config, so extensions, ${VAR} consumers,
@@ -96,7 +109,7 @@ func LoadConfig(path ...string) (Config, error) {
 	}
 	var block runtimeConfigDoc
 	if err := toml.Unmarshal(expanded, &block); err != nil {
-		return Config{}, fmt.Errorf("nexus: parse %s: %w", p, err)
+		return Config{}, fmt.Errorf("nexus: parse %s: %w", source, err)
 	}
 	// Seed the nexus.Get base layer with the FULL document tree so
 	// nexus.Get[T]("section.key") resolves anything declared in

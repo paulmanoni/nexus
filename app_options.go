@@ -1,9 +1,7 @@
 package nexus
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -418,31 +416,49 @@ func resolveConfigPath() string {
 	return DefaultConfigPath
 }
 
-// autoLoad reads runtime Config + extension options from path. A
-// missing file yields a zero Config and no extensions; any other
-// load/parse error panics so a malformed config fails loudly at
-// startup rather than silently dropping settings.
+// autoLoad reads runtime Config + extension options for Boot. It
+// resolves the TOML source in priority order:
+//
+//  1. the disk file at path (NEXUS_CONFIG → cwd → next to the executable,
+//     via resolveConfigPath) — an operator's on-disk config always wins,
+//     so a deployed binary can be re-tuned without a rebuild;
+//  2. the copy embedded at build time by `nexus build` (config_embed.go),
+//     so a single self-contained binary carries its own defaults;
+//  3. nothing — framework defaults, with a loud warning (a silently
+//     dropped config was the classic "why is it on :8080?" footgun).
+//
+// A malformed config (disk or embedded) panics so misconfiguration fails
+// loudly at startup rather than silently dropping settings.
 func autoLoad(path string) (Config, []Option) {
-	cfg, err := LoadConfig(path)
+	raw, err := readFileIfExists(path)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			// A missing nexus.toml is tolerated so config-less apps still
-			// boot — but it silently drops every setting in the file
-			// (listen addr included, so the app falls back to :8080).
-			// That has bitten deployments where the binary was launched
-			// from a directory without its toml, so make it loud on
-			// stderr rather than a mystery default port.
-			fmt.Fprintf(os.Stderr,
-				"nexus: no %s found (looked in cwd and next to the executable); "+
-					"using framework defaults — listen addr falls back to :8080. "+
-					"Set NEXUS_CONFIG or run from the config's directory to load it.\n",
-				DefaultConfigPath)
-			cfg = Config{}
-		} else {
-			panic(err)
+		panic(err) // a real I/O error (perms, etc.) — not a soft miss
+	}
+	source := path
+	if raw == nil {
+		if emb, ok := embeddedConfig(); ok {
+			raw, source = emb, "embedded nexus.toml"
 		}
 	}
-	extOpts, err := LoadExtensionOptions(path)
+	if raw == nil {
+		// No config anywhere. Tolerated so config-less apps still boot —
+		// but it silently drops every setting a file would carry (listen
+		// addr included, so the app falls back to :8080). That has bitten
+		// deployments launched from a directory without their toml, so
+		// make it loud on stderr rather than a mystery default port.
+		fmt.Fprintf(os.Stderr,
+			"nexus: no %s found (looked in cwd, next to the executable, and the "+
+				"build-time embed); using framework defaults — listen addr falls "+
+				"back to :8080. Set NEXUS_CONFIG, run from the config's directory, "+
+				"or `nexus build` to embed it.\n",
+			DefaultConfigPath)
+		return Config{}, nil
+	}
+	cfg, err := configFromTOML(raw, source)
+	if err != nil {
+		panic(err)
+	}
+	extOpts, err := decodeExtensions(raw)
 	if err != nil {
 		panic(err)
 	}

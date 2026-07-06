@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,33 @@ import (
 // execCommand is package-level so tests can stub it out; same
 // pattern the rest of cmd/nexus uses.
 var execCommand = exec.Command
+
+// embedConfigVar is the fully-qualified linker target for the framework's
+// build-time config embed. Must match the package var in
+// github.com/paulmanoni/nexus/config_embed.go.
+const embedConfigVar = "github.com/paulmanoni/nexus.embeddedConfigB64"
+
+// embedConfigLDFlag reads nexus.toml from the main package's directory and
+// returns a `-ldflags` value that bakes it (base64-encoded) into the
+// binary via the linker, plus the raw byte count for logging. When no
+// nexus.toml is present it returns ("", 0, nil) — a pure-Go app without
+// config embeds nothing. base64 keeps the value a single -X-safe token.
+//
+// The raw file bytes are embedded verbatim (${VAR} placeholders intact),
+// so the binary carries the config template, not resolved secrets — those
+// expand from the runtime environment when Boot loads it.
+func embedConfigLDFlag(mainDir string) (string, int, error) {
+	path := filepath.Join(mainDir, "nexus.toml")
+	raw, err := os.ReadFile(path) // #nosec G304 -- project-local config
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", 0, nil
+		}
+		return "", 0, err
+	}
+	enc := base64.StdEncoding.EncodeToString(raw)
+	return fmt.Sprintf("-X %s=%s", embedConfigVar, enc), len(raw), nil
+}
 
 // generateEmbedFile writes a temporary embed_gen.go next to
 // the main package source so `go build` picks up //go:embed
@@ -215,6 +243,18 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
 		fmt.Fprintln(opts.Stdout, "handler codegen: injected via overlay")
+	}
+	// Bake nexus.toml into the binary via the linker so the built artifact
+	// is self-contained — no config file needs to ship alongside it. The
+	// disk file still wins at runtime (operators can override without a
+	// rebuild); this is the fallback the embedded binary carries. The raw
+	// file is embedded with ${VAR} placeholders intact, so secrets resolve
+	// from the runtime environment, never baked in.
+	if ldflag, n, err := embedConfigLDFlag(mainDir); err != nil {
+		return fmt.Errorf("nexus build: embed nexus.toml: %w", err)
+	} else if ldflag != "" {
+		args = append(args, "-ldflags", ldflag)
+		fmt.Fprintf(opts.Stdout, "embedded nexus.toml (%d bytes)\n", n)
 	}
 	if opts.Output != "" {
 		args = append(args, "-o", opts.Output)
