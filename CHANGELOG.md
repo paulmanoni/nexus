@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`extension/mail` — outbound email.** A Laravel-Mail / ActionMailer-style
+  abstraction: app code composes a `mail.Message` and hands it to one `Mailer`
+  interface; the transport is chosen by config, so log-in-dev / SMTP-in-prod is
+  a `Config` change, not a code change. Wired like a cache or disk — a typed
+  `mail.Bind[T]` whose `T` embeds `*mail.Manager`, injected into handlers and
+  shown on the dashboard as a `resource.KindMail` resource. Two backends, both
+  dependency-free (no third-party mail library):
+  - `log` — the default (empty-driver) backend; prints each message and sends
+    nothing, the safe default for dev/tests. Exposes `.Sent()` for assertions.
+  - `smtp` — any SMTP server over stdlib `net/smtp`: STARTTLS (587), implicit
+    TLS / SMTPS (465), and PLAIN auth. Builds a proper MIME message —
+    `multipart/alternative` for text+HTML, `multipart/mixed` for attachments —
+    with quoted-printable bodies and RFC 2047-encoded headers.
+
+  `mail.Message` carries From (defaulting to `Config.FromAddress`), To/Cc/Bcc,
+  ReplyTo, Subject, Text, HTML, Headers, and Attachments; recipients are
+  validated before any transport round-trip. New `resource.KindMail` +
+  `resource.NewMail`. See `nexus docs mail`.
+
 ## [1.30.0] - 2026-07-06
 
 ### Added

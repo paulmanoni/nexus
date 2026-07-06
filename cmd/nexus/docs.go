@@ -210,6 +210,7 @@ var topicSummaries = map[string]string{
 	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
 	"config":     "extension/config — Spring-style config server + nexus.Get",
 	"storage":    "extension/storage — file/object storage: local + S3 disks",
+	"mail":       "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
 	"cli":        "Subcommand cheatsheet (new / init / dev / build / client)",
 	"dashboard":  "/__nexus tabs, gating, HTTP surface",
 	"client":     "Embedded JS/TS SDK — connect a browser to your app",
@@ -1830,5 +1831,65 @@ Backends (both dependency-free):
   local — OS filesystem under Root; rejects path traversal.
   s3    — any S3-compatible store over HTTPS with hand-rolled SigV4
           signing. No AWS SDK is linked. SignedURL returns a presigned GET.
+`,
+
+	"mail": `
+MAIL — outbound email (SMTP + log), zero heavy deps
+
+extension/mail is the Go equivalent of Laravel Mail / Rails ActionMailer:
+app code composes a Message and hands it to one Mailer interface; the
+transport is chosen by config, so "print in dev / SMTP in prod" is a config
+change only.
+
+Wire a mailer like a cache, database, or disk — a typed Bind that embeds
+*mail.Manager, injected into handlers and shown on the dashboard:
+
+    import "github.com/paulmanoni/nexus/extension/mail"
+
+    type Mailer struct{ *mail.Manager }
+
+    nexus.Run(cfg, mail.Bind[Mailer]("smtp", func() mail.Config {
+        return mail.Config{
+            Driver:      "smtp",
+            Host:        nexus.Get[string]("mail.host"),
+            Port:        nexus.Get[int]("mail.port", 587),
+            Username:    nexus.Get[string]("mail.username"),
+            Password:    nexus.Get[string]("mail.password"),  // from env/nexus.toml
+            Encryption:  "starttls",                          // none | starttls | tls
+            FromAddress: "no-reply@example.com",
+            FromName:    "Example",
+        }
+    }, mail.WithDefault()))
+
+Config secrets via nexus.toml (read through nexus.Get, never hard-coded):
+
+    [mail]
+    host     = "smtp.example.com"
+    port     = 587
+    username = "apikey"
+    password = "${MAIL_PASSWORD}"   # ${ENV} expanded at load
+
+A handler injects *Mailer and calls Send directly (Manager embeds it):
+
+    func NewSendWelcome(m *Mailer, p nexus.Params[Req]) (*Res, error) {
+        err := m.Send(p.Context, mail.Message{
+            To:      []string{p.Args.Email},
+            Subject: "Welcome",
+            Text:    "Thanks for signing up!",
+            HTML:    "<p>Thanks for signing up!</p>",   // text+HTML → multipart/alternative
+        })
+        return &Res{}, err
+    }
+
+Message: From (defaults to Config.FromAddress), To/Cc/Bcc, ReplyTo, Subject,
+Text, HTML, Headers, Attachments ([]mail.Attachment{Filename, ContentType,
+Content}). Recipients are validated and the MIME message is built for you.
+
+Backends (both dependency-free, no third-party mail library):
+  log  — DEFAULT (empty driver). Prints each message and sends nothing —
+         the safe dev/test default. Exposes .Sent() for test assertions.
+  smtp — any SMTP server over stdlib net/smtp: STARTTLS (587), implicit TLS
+         / SMTPS (465), and PLAIN auth. Builds multipart/alternative (text
+         +HTML) and multipart/mixed (attachments). Port defaults per mode.
 `,
 }

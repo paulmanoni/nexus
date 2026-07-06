@@ -569,6 +569,37 @@ Handlers inject `*Uploads` and call the disk directly (Manager embeds `Disk`): `
 store — AWS/MinIO/R2/Spaces — over HTTPS with built-in SigV4; **no AWS SDK linked**).
 `SignedURL` returns a presigned GET. `nexus docs storage`.
 
+### Outbound mail (`extension/mail`)
+A Laravel-Mail / Rails-ActionMailer-style abstraction — app code composes a `Message`
+and hands it to one `Mailer` interface; the transport is chosen by config, so
+log-in-dev / SMTP-in-prod is a `Config` change, not a code change. Wire it exactly like
+a cache or disk — a typed `Bind` whose `T` embeds `*mail.Manager`, injected into handlers
+and shown on the dashboard (`resource.KindMail`).
+```go
+import "github.com/paulmanoni/nexus/extension/mail"
+
+type Mailer struct{ *mail.Manager }
+
+mail.Bind[Mailer]("smtp", func() mail.Config {
+    return mail.Config{
+        Driver: "smtp", Host: nexus.Get[string]("mail.host"),
+        Port: nexus.Get[int]("mail.port", 587),
+        Username: nexus.Get[string]("mail.username"),
+        Password: nexus.Get[string]("mail.password"),   // from env/nexus.toml
+        Encryption: "starttls",                          // none | starttls | tls
+        FromAddress: "no-reply@example.com", FromName: "Example",
+    }
+}, mail.WithDefault())
+```
+Handlers inject `*Mailer` and call `Send(ctx, mail.Message{To, Cc, Bcc, ReplyTo,
+Subject, Text, HTML, Headers, Attachments})` — text+HTML becomes multipart/alternative,
+attachments make it multipart/mixed; recipients are validated and the MIME message is
+built for you. Two backends, **both dependency-free** (no third-party mail library):
+`log` (the **default** empty-driver backend — prints messages, sends nothing, safe for
+dev/tests; exposes `.Sent()` for assertions) and `smtp` (any SMTP server over stdlib
+`net/smtp` — STARTTLS/587, implicit TLS/465, PLAIN auth; port defaults per mode).
+`nexus docs mail`.
+
 ### Config values (`nexus.Get`)
 `nexus.Get[T]("key", default...)` reads from, highest priority first: (1) an ENV
 override (`db.port` → `DB_PORT`), (2) the `[extensions.config]` snapshot when wired

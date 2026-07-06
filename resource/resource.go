@@ -23,6 +23,7 @@ const (
 	KindCache    Kind = "cache"
 	KindQueue    Kind = "queue"   // RabbitMQ, Kafka, NATS, etc.
 	KindStorage  Kind = "storage" // object/file storage — local disk, S3, etc.
+	KindMail     Kind = "mail"    // outbound email — SMTP, log (dev), etc.
 	KindOther    Kind = "other"
 )
 
@@ -145,6 +146,14 @@ func NewQueue(name, desc string, details map[string]any, healthy func() bool, op
 // snapshot — keep it cheap (a stat, not a network round-trip).
 func NewStorage(name, desc string, details map[string]any, healthy func() bool, opts ...Option) Resource {
 	return build(&simple{name: name, kind: KindStorage, desc: desc, details: details, healthy: healthy}, opts)
+}
+
+// NewMail wraps an outbound mail transport (SMTP, a dev log sink, …) as a
+// Resource so the dashboard shows it alongside databases and caches.
+// healthy is called on every snapshot — keep it cheap (a dial probe, not a
+// full send).
+func NewMail(name, desc string, details map[string]any, healthy func() bool, opts ...Option) Resource {
+	return build(&simple{name: name, kind: KindMail, desc: desc, details: details, healthy: healthy}, opts)
 }
 
 func build(s *simple, opts []Option) Resource {
