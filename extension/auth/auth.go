@@ -167,7 +167,27 @@ type Config struct {
 	// an identity's roles/scopes — exact by default, or pluggable via
 	// Authority (e.g. Wildcard()) / a full Permissions override. The zero
 	// value is the exact-match roles+scopes check.
+	//
+	// When Backend implements Authorize(id, required) bool, the backend's
+	// check takes precedence over this field — authorization then lives
+	// with the backend. Authorization.Default (deny-by-default) is always
+	// honored regardless of the backend.
 	Authorization Authorization
+
+	// Backend is the app's cohesive auth backend — one DI-constructed type
+	// that supplies request resolution and, optionally, login and
+	// authorization (see BackendOption). Optional. When set:
+	//
+	//   - any Scheme with a nil Resolve inherits the backend's Resolve, so
+	//     the resolver can close over app services (a *DB, a token server)
+	//     without package globals or a backfill Invoke;
+	//   - Manager.Login delegates to the backend's Login when present;
+	//   - the backend's Authorize, when present, replaces the
+	//     Authorization check above.
+	//
+	// The zero value leaves every other Config field in sole charge, so
+	// existing configs behave identically.
+	Backend BackendOption
 
 	// OnResolve fires after every successful resolution — good for
 	// audit logging or per-user metrics.
@@ -248,6 +268,10 @@ type moduleState struct {
 	permissions  PermissionFn
 	errorHandler ErrorHandler   // renders 401/403 denials; never nil after Module
 	cache        *identityCache // nil when Cache.TTL == 0
+	// backend is the resolved Config.Backend (nil when unset). Powers
+	// Manager.Login and, when it implements the capability interfaces,
+	// scheme resolution + authorization. Populated by finalizeBackend.
+	backend any
 	// bus is the app-level trace bus captured at Module wire time.
 	// We grab it here because the per-route trace.Middleware in AsRest
 	// runs AFTER auth bundles in the handler chain — so by the time
@@ -348,6 +372,18 @@ func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) 
 	return nil, lastErr
 }
 
+// Login authenticates a credential through the configured Config.Backend —
+// the login counterpart to Resolve. It requires a backend that implements
+// Login(ctx, Credentials) (*Identity, error); without one it returns
+// ErrInvalidCredentials. Apps that log in via auth.Authenticate(ctx, cred,
+// backends...) directly don't need this.
+func (m *Manager) Login(ctx context.Context, cred Credentials) (*Identity, error) {
+	if lb, ok := m.state.backend.(loginCapable); ok {
+		return lb.Login(ctx, cred)
+	}
+	return nil, ErrInvalidCredentials
+}
+
 // Module wires auth into the nexus app. It builds an extension.Plugin
 // — the same shape custom plugins use — so auth participates in the
 // app's plugin registry alongside any other extensions.
@@ -366,7 +402,13 @@ func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) 
 // UserDetailsFn hook continue to work alongside; migration is a
 // per-resolver switch from graph.GetRootInfo to auth.User[T].
 func Module(cfg Config) nexus.Option {
-	schemes, err := bindSchemes(cfg.Authentication.Schemes)
+	// A backend can supply the resolver, so schemes may omit Resolve — and
+	// a backend with no schemes at all gets a default bearer scheme.
+	schemesIn := cfg.Authentication.Schemes
+	if cfg.Backend.set && len(schemesIn) == 0 {
+		schemesIn = []Scheme{{}} // Extract defaults to Bearer(); Resolve from the backend
+	}
+	schemes, err := bindSchemes(schemesIn, cfg.Backend.set)
 	if err != nil {
 		return nexus.Raw(di.Error(fmt.Errorf("auth: %w", err)))
 	}
@@ -413,6 +455,28 @@ func Module(cfg Config) nexus.Option {
 	if cfg.Authorization.Default.requireAuth {
 		pluginOpts = append(pluginOpts,
 			nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: requiredMiddleware()})))
+	}
+
+	// Config.Backend: attach the cohesive backend. A static value finalizes
+	// now; a UseBackend constructor is built in DI and finalized in an
+	// invoke (both before the first request). finalizeBackend fills any
+	// scheme missing a Resolve and, when the backend authorizes, overrides
+	// the permission check.
+	if cfg.Backend.set {
+		switch {
+		case cfg.Backend.value != nil:
+			if err := finalizeBackend(state, cfg.Backend.value); err != nil {
+				return raiseBackendError(err)
+			}
+		case cfg.Backend.ctor != nil:
+			opt, err := backendFinalizeOption(state, cfg.Backend.ctor)
+			if err != nil {
+				return raiseBackendError(err)
+			}
+			pluginOpts = append(pluginOpts, opt)
+		default:
+			return raiseBackendError(fmt.Errorf("Backend is set but has neither a value nor a constructor"))
+		}
 	}
 
 	return extension.Use(extension.Plugin{
@@ -486,14 +550,16 @@ type boundScheme struct {
 // bindSchemes validates and normalizes the configured schemes: every
 // scheme needs a Resolver, a nil Extract defaults to Bearer(), and an
 // empty Name derives from the extractor's strategy.
-func bindSchemes(in []Scheme) ([]boundScheme, error) {
+// allowNilResolve permits schemes without a Resolver — used when a
+// Config.Backend will supply it in finalizeBackend before the first request.
+func bindSchemes(in []Scheme, allowNilResolve bool) ([]boundScheme, error) {
 	if len(in) == 0 {
 		return nil, fmt.Errorf("Config.Authentication.Schemes must declare at least one scheme")
 	}
 	out := make([]boundScheme, 0, len(in))
 	for i, s := range in {
-		if s.Resolve == nil {
-			return nil, fmt.Errorf("Config.Authentication.Schemes[%d]: Resolve is required", i)
+		if s.Resolve == nil && !allowNilResolve {
+			return nil, fmt.Errorf("Config.Authentication.Schemes[%d]: Resolve is required (or set Config.Backend)", i)
 		}
 		ex := s.Extract
 		if ex == nil {

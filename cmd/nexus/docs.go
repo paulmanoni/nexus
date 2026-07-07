@@ -604,6 +604,26 @@ Backends are tried in order; ModelBackend checks a pluggable UserStore:
 Implement auth.UserStore (ByUsername / ByID / SetPassword) to back login
 with your own user model. The token-Resolver/Scheme surface above is
 unchanged — these fill in the login half around it.
+
+BACKEND — one cohesive plug for resolve + login + authorize (Config.Backend).
+Instead of a static Scheme.Resolve (which can't see DI deps, forcing package
+globals + a backfill Invoke) plus a separate Authorization block, declare ONE
+backend, DI-constructed so it closes over app services:
+
+    Backend: auth.UseBackend(func(db *DB, srv *TokenServer) *AuthBackend {
+        return NewAuthBackend(db, srv)         // returns YOUR concrete type
+    }),                                        //  StaticBackend(v) for no deps
+
+The framework discovers capabilities by type assertion (implement any subset):
+
+    Resolve(ctx, token) (*Identity, error)     // fills schemes with nil Resolve
+    Login(ctx, Credentials) (*Identity, error) // powers Manager.Login
+    Authorize(id, required) bool               // REPLACES Config.Authorization
+
+So a Scheme can omit Resolve (inherited from the backend), Manager.Login
+delegates to the backend, and authorization lives WITH the backend. All
+additive: Config.Backend zero value = today's behavior; note UseBackend
+returns your concrete type, not the auth.Backend login interface above.
 `,
 
 	"security": `

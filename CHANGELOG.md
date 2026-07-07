@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-07-07
+
+### Added
+
+- **`auth.Config.Backend` — one cohesive, DI-constructed auth backend.**
+  Previously the resolver (`Scheme.Resolve`) was a static func that couldn't see
+  DI dependencies, so apps needing a resolver bound to app services (a DB, a
+  token server) had to smuggle them in via package globals + a backfill
+  `Invoke`, and authorization lived in a separate `Config.Authorization` block.
+  `Config.Backend` collapses this: declare ONE backend, built from the container
+  via `auth.UseBackend(func(deps...) *YourBackend { … })` (or `auth.StaticBackend(v)`
+  for no deps). The framework discovers capabilities by type assertion — a
+  backend implements any subset of `Resolve(ctx, token)` (fills any `Scheme`
+  with a nil `Resolve`), `Login(ctx, Credentials)` (powers the new
+  `Manager.Login`), and `Authorize(id, required) bool` (replaces the
+  `Config.Authorization` permission check). A scheme-less `Config` with a backend
+  gets a default bearer scheme. New `auth.Manager.Login`.
+
+  Fully backward compatible: every new field/method is additive, the `Backend`
+  zero value reproduces prior behavior exactly, and `Scheme.Resolve` /
+  `Config.Authorization` / `auth.Authenticate` / `ModelBackend` are unchanged.
+  Note `UseBackend` returns your concrete type, distinct from the existing
+  `auth.Backend` login interface. See `nexus docs auth`.
+
+## [1.31.0] - 2026-07-06
+
 ### Added
 
 - **`extension/mail` — outbound email.** A Laravel-Mail / ActionMailer-style

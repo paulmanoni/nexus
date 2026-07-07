@@ -658,6 +658,18 @@ Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `oauth2.Module(oauth2.Config{...})` (`extension/oauth2`) — password grant →
 JWT access/refresh at `/oauth/token`.
 
+**Cohesive backend (`Config.Backend`).** Instead of a static `Scheme.Resolve`
+(which can't see DI deps — forcing package globals + a backfill `Invoke`) plus a
+separate `Authorization` block, declare ONE DI-constructed backend that owns
+resolve + login + authorize: `Backend: auth.UseBackend(func(db *DB, srv *Srv)
+*AuthBackend { return NewAuthBackend(db, srv) })` (or `auth.StaticBackend(v)` for
+no deps). The framework discovers capabilities by type assertion — implement any
+subset: `Resolve(ctx, token)` (fills schemes with a nil `Resolve`), `Login(ctx,
+Credentials)` (powers `Manager.Login`), `Authorize(id, required) bool` (replaces
+`Config.Authorization`). The ctor returns YOUR concrete type, not the
+`auth.Backend` login interface. Fully additive — the zero value keeps existing
+configs identical. `nexus docs auth`.
+
 **Passwords & credential login (Django-style, swappable).** `auth.Module`/`Resolve` above
 verifies an *existing* token; these fill in the *login* half, each a pluggable interface
 with a shipped default (no new deps — `x/crypto` + stdlib `crypto/pbkdf2`):

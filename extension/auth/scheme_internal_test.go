@@ -9,7 +9,7 @@ import (
 
 func mustBind(t *testing.T, in []Scheme) []boundScheme {
 	t.Helper()
-	out, err := bindSchemes(in)
+	out, err := bindSchemes(in, false)
 	if err != nil {
 		t.Fatalf("bindSchemes: %v", err)
 	}
@@ -17,11 +17,15 @@ func mustBind(t *testing.T, in []Scheme) []boundScheme {
 }
 
 func TestBindSchemes_Validation(t *testing.T) {
-	if _, err := bindSchemes(nil); err == nil {
+	if _, err := bindSchemes(nil, false); err == nil {
 		t.Fatal("empty schemes must error")
 	}
-	if _, err := bindSchemes([]Scheme{{}}); err == nil {
+	if _, err := bindSchemes([]Scheme{{}}, false); err == nil {
 		t.Fatal("a scheme with nil Resolve must error")
+	}
+	// With a backend present, a nil-Resolve scheme is allowed (filled later).
+	if _, err := bindSchemes([]Scheme{{}}, true); err != nil {
+		t.Fatalf("nil Resolve should be allowed when a backend is present: %v", err)
 	}
 	out := mustBind(t, []Scheme{{Resolve: func(context.Context, string) (*Identity, error) { return nil, nil }}})
 	if out[0].name != "bearer" {
