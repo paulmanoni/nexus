@@ -645,6 +645,18 @@ POST /auth/logout → drops the token from the identity cache
 (Manager.Invalidate) and, with a revoker, invalidates it in your store.
 Public + idempotent (always 200 {"ok":true}); token pulled via LogoutExtractor
 (default Bearer(), e.g. auth.Cookie("access_token") for cookie sessions).
+
+When the issuer/revoker needs DI deps (a token server), the static
+WithIssuer/WithRevoker can't see them — wire the exported handlers in your own
+AsRestHandler factory instead (deps ARE injected there):
+
+    nexus.AsRestHandler("POST", "/auth/login",
+        func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {
+            return auth.LoginHandler(m, func(ctx, id *auth.Identity) (any, error) {
+                return srv.IssueToken(ctx, id.ID)          // uses injected srv
+            })
+        }, nexus.Public())
+    // auth.LogoutHandler(m, auth.Bearer(), srv.Revoke) mirrors it for logout.
 `,
 
 	"security": `

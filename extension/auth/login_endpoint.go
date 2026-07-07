@@ -22,9 +22,8 @@ type LoginIssuer func(ctx context.Context, id *Identity) (any, error)
 
 // loginEndpointConfig holds the resolved LoginEndpoint options.
 type loginEndpointConfig struct {
-	path   string
-	issue  LoginIssuer
-	status int // success status; default 200
+	path  string
+	issue LoginIssuer
 }
 
 // LoginOption configures LoginEndpoint.
@@ -55,20 +54,34 @@ func WithIssuer(issue LoginIssuer) LoginOption {
 // body, or {"identity": ...} when no issuer is set. Requires a Config.Backend
 // that implements Login — without one every request gets 401.
 func LoginEndpoint(opts ...LoginOption) nexus.Option {
-	cfg := &loginEndpointConfig{path: "/auth/login", status: http.StatusOK}
+	cfg := &loginEndpointConfig{path: "/auth/login"}
 	for _, o := range opts {
 		o(cfg)
 	}
 	return nexus.AsRestHandler("POST", cfg.path,
-		func(m *Manager) httpx.HandlerFunc { return loginHandlerFunc(m, cfg) },
+		func(m *Manager) httpx.HandlerFunc { return LoginHandler(m, cfg.issue) },
 		nexus.Describe("Authenticate a username/password via the auth backend."),
 		nexus.Public(),
 	)
 }
 
-// loginHandlerFunc builds the raw handler so it owns status codes (401 vs
-// 200) and response shaping directly.
-func loginHandlerFunc(m *Manager, cfg *loginEndpointConfig) httpx.HandlerFunc {
+// LoginHandler is the raw login handler LoginEndpoint installs, exported so
+// an app whose issuer needs DI dependencies (e.g. a token server) can wire
+// it inside its own AsRestHandler factory — where those deps ARE injected —
+// instead of the static WithIssuer callback:
+//
+//	nexus.AsRestHandler("POST", "/auth/login",
+//	    func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {
+//	        return auth.LoginHandler(m, func(ctx, id *auth.Identity) (any, error) {
+//	            return srv.IssueToken(ctx, id.ID)   // uses the DI-injected srv
+//	        })
+//	    }, nexus.Public())
+//
+// It reads {username, password}, runs Manager.Login, and owns the status
+// codes: 400 on a bad body, 401 (uniform, no enumeration) on invalid
+// credentials, 200 with the issuer's body (or {"identity": …} when issue is
+// nil) on success.
+func LoginHandler(m *Manager, issue LoginIssuer) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		var req LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -81,15 +94,15 @@ func loginHandlerFunc(m *Manager, cfg *loginEndpointConfig) httpx.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, httpx.H{"error": "invalid credentials"})
 			return
 		}
-		if cfg.issue != nil {
-			body, ierr := cfg.issue(c.Request.Context(), id)
+		if issue != nil {
+			body, ierr := issue(c.Request.Context(), id)
 			if ierr != nil {
 				c.JSON(http.StatusInternalServerError, httpx.H{"error": ierr.Error()})
 				return
 			}
-			c.JSON(cfg.status, body)
+			c.JSON(http.StatusOK, body)
 			return
 		}
-		c.JSON(cfg.status, httpx.H{"identity": id})
+		c.JSON(http.StatusOK, httpx.H{"identity": id})
 	}
 }

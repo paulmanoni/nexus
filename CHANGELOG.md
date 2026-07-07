@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.32.3] - 2026-07-07
+
+### Added
+
+- **`auth.LoginHandler` / `auth.LogoutHandler` — exported handler builders.**
+  `LoginEndpoint`/`LogoutEndpoint`'s `WithIssuer`/`WithRevoker` are static
+  callbacks set at module-build time, so they can't reach DI-provided services
+  (e.g. an OAuth2 token server). These builders return the same
+  `httpx.HandlerFunc` the endpoints install, so an app can wire them inside its
+  own `AsRestHandler` factory — where deps ARE injected — without a package
+  global:
+
+      nexus.AsRestHandler("POST", "/auth/login",
+          func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {
+              return auth.LoginHandler(m, func(ctx, id *auth.Identity) (any, error) {
+                  return srv.IssueToken(ctx, id.ID)
+              })
+          }, nexus.Public())
+
+  `LoginEndpoint`/`LogoutEndpoint` now delegate to them, so behavior is
+  unchanged; this only adds the DI-friendly wiring path. See `nexus docs auth`.
+
 ## [1.32.2] - 2026-07-07
 
 ### Added

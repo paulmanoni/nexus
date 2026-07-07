@@ -10,6 +10,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // loginBackend implements the login + resolve capabilities for the endpoint
@@ -99,6 +100,43 @@ func TestLoginEndpoint_WithIssuer(t *testing.T) {
 	}
 	if body["token"] != "tok-for-user-1" {
 		t.Errorf("issuer body = %v, want token tok-for-user-1", body)
+	}
+}
+
+// tokenSvc is a stand-in for an app service (e.g. an OAuth2 server) that the
+// issuer needs via DI — the exact shape LoginHandler exists for.
+type tokenSvc struct{ prefix string }
+
+func (s *tokenSvc) issue(id string) string { return s.prefix + id }
+
+// TestLoginHandler_DIIssuer proves the exported LoginHandler can be wired in
+// an app-owned AsRestHandler factory whose issuer closes over a DI-injected
+// service — the pattern for token servers that a static WithIssuer can't see.
+func TestLoginHandler_DIIssuer(t *testing.T) {
+	app, stop, err := nexus.InProcess(nexus.Config{},
+		nexus.Provide(func() *tokenSvc { return &tokenSvc{prefix: "tok:"} }),
+		auth.Module(auth.Config{
+			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
+			Backend:        auth.StaticBackend(loginBackend{}),
+		}),
+		nexus.AsRestHandler("POST", "/auth/login",
+			func(m *auth.Manager, svc *tokenSvc) httpx.HandlerFunc {
+				return auth.LoginHandler(m, func(_ context.Context, id *auth.Identity) (any, error) {
+					return map[string]any{"access_token": svc.issue(id.ID)}, nil
+				})
+			}, nexus.Public()),
+	)
+	if err != nil {
+		t.Fatalf("InProcess: %v", err)
+	}
+	defer stop(context.Background())
+
+	rec, body := postJSON(t, app, "/auth/login", `{"username":"alice","password":"s3cret"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body)
+	}
+	if body["access_token"] != "tok:user-1" {
+		t.Errorf("DI issuer body = %v, want access_token tok:user-1", body)
 	}
 }
 

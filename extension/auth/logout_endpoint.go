@@ -19,7 +19,6 @@ type logoutEndpointConfig struct {
 	path    string
 	extract Extractor
 	revoke  LogoutRevoker
-	status  int
 }
 
 // LogoutOption configures LogoutEndpoint.
@@ -58,7 +57,7 @@ func WithRevoker(revoke LogoutRevoker) LogoutOption {
 // {"ok": true} (revealing nothing about whether the token existed); a
 // revoker error surfaces as 500.
 func LogoutEndpoint(opts ...LogoutOption) nexus.Option {
-	cfg := &logoutEndpointConfig{path: "/auth/logout", extract: Bearer(), status: http.StatusOK}
+	cfg := &logoutEndpointConfig{path: "/auth/logout", extract: Bearer()}
 	for _, o := range opts {
 		o(cfg)
 	}
@@ -66,19 +65,37 @@ func LogoutEndpoint(opts ...LogoutOption) nexus.Option {
 		cfg.extract = Bearer()
 	}
 	return nexus.AsRestHandler("POST", cfg.path,
-		func(m *Manager) httpx.HandlerFunc { return logoutHandlerFunc(m, cfg) },
+		func(m *Manager) httpx.HandlerFunc { return LogoutHandler(m, cfg.extract, cfg.revoke) },
 		nexus.Describe("Invalidate the presented auth token (logout)."),
 		nexus.Public(),
 	)
 }
 
-func logoutHandlerFunc(m *Manager, cfg *logoutEndpointConfig) httpx.HandlerFunc {
+// LogoutHandler is the raw logout handler LogoutEndpoint installs, exported
+// so an app whose revoker needs DI dependencies (e.g. a token server) can
+// wire it inside its own AsRestHandler factory — where those deps ARE
+// injected — instead of the static WithRevoker callback:
+//
+//	nexus.AsRestHandler("POST", "/auth/logout",
+//	    func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {
+//	        return auth.LogoutHandler(m, auth.Bearer(), func(ctx, tok string) error {
+//	            return srv.Revoke(ctx, tok)   // uses the DI-injected srv
+//	        })
+//	    }, nexus.Public())
+//
+// extract nil defaults to Bearer(); revoke may be nil (cache-only logout).
+// Always returns 200 {"ok": true} — idempotent, leaking nothing about
+// whether a session existed.
+func LogoutHandler(m *Manager, extract Extractor, revoke LogoutRevoker) httpx.HandlerFunc {
+	if extract == nil {
+		extract = Bearer()
+	}
 	return func(c *httpx.Ctx) {
-		token, ok := cfg.extract.Extract(c.Request)
+		token, ok := extract.Extract(c.Request)
 		if ok && token != "" {
 			m.Invalidate(token) // drop the cached identity immediately
-			if cfg.revoke != nil {
-				if err := cfg.revoke(c.Request.Context(), token); err != nil {
+			if revoke != nil {
+				if err := revoke(c.Request.Context(), token); err != nil {
 					c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
 					return
 				}
@@ -86,6 +103,6 @@ func logoutHandlerFunc(m *Manager, cfg *logoutEndpointConfig) httpx.HandlerFunc 
 		}
 		// Idempotent: succeed whether or not a token was present, so logout
 		// never leaks whether a session existed.
-		c.JSON(cfg.status, httpx.H{"ok": true})
+		c.JSON(http.StatusOK, httpx.H{"ok": true})
 	}
 }
