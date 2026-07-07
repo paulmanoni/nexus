@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.32.1] - 2026-07-07
+
+### Added
+
+- **`auth.LoginEndpoint` — HTTP front door for `Manager.Login`.** A one-line
+  helper that registers a `POST` login endpoint (default `/auth/login`) which
+  authenticates a `{username, password}` body through the login-capable
+  `Config.Backend` and returns the result — so apps no longer hand-write a
+  handler just to reach `Manager.Login`. Options: `auth.LoginAt(path)` and
+  `auth.WithIssuer(func(ctx, *Identity) (any, error))` to shape the success body
+  (e.g. mint a token); without an issuer it returns `{"identity": …}`. The
+  endpoint is `Public` (you can't require a token to obtain one), returns 401 on
+  invalid credentials with no user enumeration, and needs a `Config.Backend`
+  that implements `Login`. See `nexus docs auth`.
+
 ## [1.32.0] - 2026-07-07
 
 ### Added

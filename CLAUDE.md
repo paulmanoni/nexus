@@ -668,7 +668,10 @@ subset: `Resolve(ctx, token)` (fills schemes with a nil `Resolve`), `Login(ctx,
 Credentials)` (powers `Manager.Login`), `Authorize(id, required) bool` (replaces
 `Config.Authorization`). The ctor returns YOUR concrete type, not the
 `auth.Backend` login interface. Fully additive — the zero value keeps existing
-configs identical. `nexus docs auth`.
+configs identical. Expose it over HTTP with `auth.LoginEndpoint(auth.LoginAt(
+"/auth/login"), auth.WithIssuer(mintToken))` — a Public `POST` that runs the
+backend's `Login` (401 on bad creds, `{"identity":…}` or the issuer's body on
+success). `nexus docs auth`.
 
 **Passwords & credential login (Django-style, swappable).** `auth.Module`/`Resolve` above
 verifies an *existing* token; these fill in the *login* half, each a pluggable interface

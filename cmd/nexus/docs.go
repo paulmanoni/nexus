@@ -624,6 +624,18 @@ So a Scheme can omit Resolve (inherited from the backend), Manager.Login
 delegates to the backend, and authorization lives WITH the backend. All
 additive: Config.Backend zero value = today's behavior; note UseBackend
 returns your concrete type, not the auth.Backend login interface above.
+
+LOGIN ENDPOINT — expose Manager.Login over HTTP without a hand-written handler:
+
+    auth.LoginEndpoint(auth.LoginAt("/auth/login"),
+        auth.WithIssuer(func(ctx, id *auth.Identity) (any, error) {
+            return map[string]any{"token": mint(id)}, nil   // issue a token
+        }))
+
+POST {"username","password"} → runs the backend's Login. 401 on bad creds
+(no user enumeration); success returns the issuer's body, or {"identity": …}
+when no issuer is set. Public (you can't require a token to get one). Needs a
+Config.Backend that implements Login.
 `,
 
 	"security": `
