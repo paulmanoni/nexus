@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.32.2] - 2026-07-07
+
+### Added
+
+- **`auth.LogoutEndpoint` — companion to `LoginEndpoint`.** A one-line helper
+  that registers a `POST` logout endpoint (default `/auth/logout`): it extracts
+  the presented token, drops it from the identity cache (`Manager.Invalidate`),
+  and — with `auth.WithRevoker(func(ctx, token) error)` — invalidates it in the
+  app's own store (an OAuth2 server, a DB session). Options: `auth.LogoutAt(path)`
+  and `auth.LogoutExtractor(e)` (default `Bearer()`; use `auth.Cookie(...)` for
+  cookie sessions). Public and idempotent — it authenticates by the very token
+  it revokes, always returns `200 {"ok": true}`, and reveals nothing about
+  whether a session existed. See `nexus docs auth`.
+
 ## [1.32.1] - 2026-07-07
 
 ### Added

@@ -636,6 +636,15 @@ POST {"username","password"} → runs the backend's Login. 401 on bad creds
 (no user enumeration); success returns the issuer's body, or {"identity": …}
 when no issuer is set. Public (you can't require a token to get one). Needs a
 Config.Backend that implements Login.
+
+    auth.LogoutEndpoint(auth.WithRevoker(func(ctx, tok string) error {
+        return srv.Manager.RemoveAccessToken(ctx, tok)   // revoke in your store
+    }))
+
+POST /auth/logout → drops the token from the identity cache
+(Manager.Invalidate) and, with a revoker, invalidates it in your store.
+Public + idempotent (always 200 {"ok":true}); token pulled via LogoutExtractor
+(default Bearer(), e.g. auth.Cookie("access_token") for cookie sessions).
 `,
 
 	"security": `

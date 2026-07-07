@@ -671,7 +671,9 @@ Credentials)` (powers `Manager.Login`), `Authorize(id, required) bool` (replaces
 configs identical. Expose it over HTTP with `auth.LoginEndpoint(auth.LoginAt(
 "/auth/login"), auth.WithIssuer(mintToken))` — a Public `POST` that runs the
 backend's `Login` (401 on bad creds, `{"identity":…}` or the issuer's body on
-success). `nexus docs auth`.
+success), paired with `auth.LogoutEndpoint(auth.WithRevoker(revokeFn))` — a
+Public, idempotent `POST /auth/logout` that drops the token from the identity
+cache and revokes it in your store. `nexus docs auth`.
 
 **Passwords & credential login (Django-style, swappable).** `auth.Module`/`Resolve` above
 verifies an *existing* token; these fill in the *login* half, each a pluggable interface
