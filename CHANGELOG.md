@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.33.1] - 2026-07-08
+
+### Added
+
+- **Database SQL logging is quiet by default outside dev, with a config opt-out.**
+  GORM's default logger prints slow-query / error lines to stdout in every
+  environment. Now the `db` manager sets the logger explicitly: warn-level under
+  `nexus dev` / a development environment (`runtime.environment = "development"`
+  or `NEXUS_DEV`), and **silent otherwise**, so a production binary stays quiet.
+  Override per connection with `[databases.<name>] log = "..."` (or
+  `db.Config.LogLevel`): `"silent"`/`"false"`/`"off"`, `"error"`,
+  `"warn"`/`"true"`/`"on"` (GORM's slow-query+error default), or `"info"`/`"all"`
+  (every statement). Record-not-found is no longer logged as an error.
+
+### Fixed
+
+- **`nexus client` auto-dump: parse `tsconfig.json` / `jsconfig.json` as JSONC.**
+  Merging the SDK path mappings failed with `invalid character '}' looking for
+  beginning of object key string` when the config contained comments or trailing
+  commas — both of which `tsc` accepts (the files are JSONC). The parser now
+  strips `//` and `/* */` comments and trailing commas before the strict JSON
+  decode (string literals preserved); the rewritten file is normalized to strict
+  JSON as before.
+
 ## [1.33.0] - 2026-07-08
 
 ### Added

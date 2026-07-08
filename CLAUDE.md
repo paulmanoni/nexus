@@ -208,6 +208,9 @@ password = "${DB_PASSWORD}"              # ${ENV} expanded at load
 name     = "myapp"
 sslmode  = "disable"
 default  = true
+# log    = "warn"                        # SQL logging: omit = auto (on in dev,
+                                          # silent in prod). Force with silent/
+                                          # false/off | error | warn/true/on | info/all
 
 # Config server (optional) — decoded by MustLoadExtensions; values via nexus.Get.
 [extensions.config]

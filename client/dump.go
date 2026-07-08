@@ -160,7 +160,10 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 
 	var doc map[string]any
 	if existing, err := os.ReadFile(configPath); err == nil {
-		if err := json.Unmarshal(existing, &doc); err != nil {
+		// tsconfig/jsconfig are JSONC — tsc tolerates // and /* */ comments
+		// and trailing commas, so a hand-edited or editor-formatted file may
+		// contain them. Strip those before the strict encoding/json parse.
+		if err := json.Unmarshal(stripJSONC(existing), &doc); err != nil {
 			return fmt.Errorf("nexus client: parse existing %s: %w", configPath, err)
 		}
 	}
@@ -193,6 +196,93 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 		return fmt.Errorf("nexus client: mkdir %s: %w", filepath.Dir(configPath), err)
 	}
 	return WriteIfChanged(configPath, body, stdout)
+}
+
+// stripJSONC returns data with JSONC extensions removed so encoding/json can
+// parse it: // line comments, /* */ block comments, and trailing commas before
+// a } or ]. String literals are preserved verbatim (comment/comma markers
+// inside a string are left alone). tsconfig/jsconfig are JSONC, so this makes
+// nexus tolerant of files tsc itself accepts. Note the caller re-marshals the
+// parsed doc with json.MarshalIndent, so the rewritten file is strict JSON —
+// any comments are dropped on write, exactly as any JSON round-trip would.
+func stripJSONC(data []byte) []byte {
+	// Pass 1: strip comments.
+	noComments := make([]byte, 0, len(data))
+	inString, escaped := false, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			noComments = append(noComments, c)
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inString = true
+			noComments = append(noComments, c)
+		case c == '/' && i+1 < len(data) && data[i+1] == '/':
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			if i < len(data) {
+				noComments = append(noComments, '\n')
+			}
+		case c == '/' && i+1 < len(data) && data[i+1] == '*':
+			i += 2
+			for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+				i++
+			}
+			i++ // skip the closing '*'; loop's i++ skips the '/'
+		default:
+			noComments = append(noComments, c)
+		}
+	}
+
+	// Pass 2: drop trailing commas (a comma whose next non-space token is } or ]).
+	out := make([]byte, 0, len(noComments))
+	inString, escaped = false, false
+	for i := 0; i < len(noComments); i++ {
+		c := noComments[i]
+		if inString {
+			out = append(out, c)
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(noComments) {
+				if b := noComments[j]; b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+					j++
+					continue
+				}
+				break
+			}
+			if j < len(noComments) && (noComments[j] == '}' || noComments[j] == ']') {
+				continue // drop the trailing comma
+			}
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // pathMappings is the URL → file map written into the config.

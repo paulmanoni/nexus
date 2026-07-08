@@ -1035,6 +1035,9 @@ Inline values OR a config-server key_prefix:
     name     = "myapp"
     sslmode  = "disable"
     default  = true
+    # log    = "warn"               # SQL logging; omit = auto (on in dev,
+                                    # silent in prod). silent/false/off | error
+                                    # | warn/true/on | info/all
 
     [databases.uaa]                 # config-server mode (secrets external)
     driver     = "postgres"

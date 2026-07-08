@@ -105,5 +105,6 @@ func configFor(spec nexus.DatabaseSpec, get func(string) string) Config {
 		Database: field(spec.Name, keyName),
 		SSLMode:  spec.SSLMode,
 		TimeZone: spec.TimeZone,
+		LogLevel: spec.Log,
 	}
 }

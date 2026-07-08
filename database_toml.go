@@ -45,6 +45,14 @@ type DatabaseSpec struct {
 	Schema    string `toml:"schema"`
 	Default   bool   `toml:"default"`
 
+	// Log controls SQL/GORM logging for this connection. Empty means auto —
+	// on (warn) under `nexus dev` / a development environment, silent
+	// otherwise, so a production binary is quiet by default. Set it to opt
+	// out of the auto-decision: "silent"/"false"/"off", "error", "warn"/
+	// "true"/"on" (GORM's slow-query+error default), or "info"/"all" (every
+	// statement). Case-insensitive.
+	Log string `toml:"log"`
+
 	// Inline values (optional). Each, when set, takes precedence over
 	// the config-server lookup for that field. ${ENV} placeholders are
 	// expanded by LoadConfig.

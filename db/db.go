@@ -60,6 +60,13 @@ type Config struct {
 	Database string
 	SSLMode  string // "disable" / "require" / ... — postgres only
 	TimeZone string // IANA TZ — postgres only
+
+	// LogLevel controls SQL/GORM logging. Empty is auto — warn-level under
+	// `nexus dev` / a development environment, silent otherwise (a
+	// production binary stays quiet by default). Override with
+	// "silent"/"false"/"off", "error", "warn"/"true"/"on", or "info"/"all".
+	// Case-insensitive. See resolveGormLogger.
+	LogLevel string
 }
 
 // DSN returns the connection string for the configured Driver.
@@ -298,7 +305,9 @@ func (m *Manager) Driver() Driver { return m.cfg.Driver }
 // connect runs the Open + pool-tune sequence through the failsafe executor.
 func (m *Manager) connect() error {
 	db, err := m.executor.Get(func() (*gorm.DB, error) {
-		return gorm.Open(m.cfg.Dialector(), &gorm.Config{})
+		return gorm.Open(m.cfg.Dialector(), &gorm.Config{
+			Logger: resolveGormLogger(m.cfg.LogLevel),
+		})
 	})
 	if err != nil {
 		m.markDisconnected()
