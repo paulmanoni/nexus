@@ -53,6 +53,10 @@ func WithIssuer(issue LoginIssuer) LoginOption {
 // credentials return 401 with {"error": ...}; success returns the issuer's
 // body, or {"identity": ...} when no issuer is set. Requires a Config.Backend
 // that implements Login — without one every request gets 401.
+//
+// Deprecated: set Config.Endpoints.Login instead, which mounts the same
+// handler from inside auth.Module and takes the issuer from the Backend's
+// Issue capability. LoginEndpoint remains a thin wrapper and keeps working.
 func LoginEndpoint(opts ...LoginOption) nexus.Option {
 	cfg := &loginEndpointConfig{path: "/auth/login"}
 	for _, o := range opts {

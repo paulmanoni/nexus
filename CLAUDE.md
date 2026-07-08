@@ -666,14 +666,25 @@ resolve + login + authorize: `Backend: auth.UseBackend(func(db *DB, srv *Srv)
 no deps). The framework discovers capabilities by type assertion — implement any
 subset: `Resolve(ctx, token)` (fills schemes with a nil `Resolve`), `Login(ctx,
 Credentials)` (powers `Manager.Login`), `Authorize(id, required) bool` (replaces
-`Config.Authorization`). The ctor returns YOUR concrete type, not the
-`auth.Backend` login interface. Fully additive — the zero value keeps existing
-configs identical. Expose it over HTTP with `auth.LoginEndpoint(auth.LoginAt(
-"/auth/login"), auth.WithIssuer(mintToken))` — a Public `POST` that runs the
-backend's `Login` (401 on bad creds, `{"identity":…}` or the issuer's body on
-success), paired with `auth.LogoutEndpoint(auth.WithRevoker(revokeFn))` — a
-Public, idempotent `POST /auth/logout` that drops the token from the identity
-cache and revokes it in your store. `nexus docs auth`.
+`Config.Authorization`), plus the token-server trio `Issue(ctx, *Identity) (any,
+error)` (login response / token pair), `RevokeToken(ctx, token) error` (logout),
+`TokenHandler() httpx.HandlerFunc` (raw grant endpoint). The ctor returns YOUR
+concrete type, not the `auth.Backend` login interface. Fully additive — the zero
+value keeps existing configs identical.
+
+**Endpoints (`Config.Endpoints`).** Let `auth.Module` mount its own HTTP front
+doors from the backend's capabilities, so one `auth.Module(auth.Config{...})`
+owns the whole surface (no hand-wired `AsRest` lines): `Endpoints:
+auth.Endpoints{Login: "/api/auth/login", Logout: "/api/auth/logout", Token:
+"/oauth/token", Revoke: "/oauth/token/revoke"}`. Each is off unless its path is
+set; all are Public. `Login` runs `Backend.Login` then `Backend.Issue`; `Logout`
+/`Revoke` do `Manager.Invalidate` + `Backend.RevokeToken` (token via
+`Endpoints.LogoutExtract`, default `Bearer()`); `Token` serves
+`Backend.TokenHandler`. This supersedes the now-deprecated `auth.LoginEndpoint`
+/`auth.LogoutEndpoint` (still work as thin wrappers). For a full OAuth2 server,
+`oauth2.Backend(oauth2.Config{...})` returns a ready `auth.BackendOption`
+implementing every capability — drop it into `Config.Backend` (`oauth2.Module`
+is now a thin wrapper over exactly this, holder-free). `nexus docs auth`.
 
 **Passwords & credential login (Django-style, swappable).** `auth.Module`/`Resolve` above
 verifies an *existing* token; these fill in the *login* half, each a pluggable interface

@@ -6,6 +6,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-07-08
+
+### Added
+
+- **OAuth2 folds into a single `auth.Module` call — `auth.Config.Endpoints` +
+  `oauth2.Backend`.** Previously a token server meant a standalone `NewServer`
+  provide plus a separate `auth.Module` plus hand-wired `AsRest` lines for
+  `/oauth/token`, login, and logout. Now:
+  - `auth.Config.Endpoints{Login, Logout, Token, Revoke}` lets `auth.Module`
+    mount its own HTTP front doors, each backed by a `Config.Backend`
+    capability — so one `auth.Module(auth.Config{...})` owns the whole auth
+    surface. Each path is off unless set; all are `Public`.
+  - The cohesive backend gains three optional capabilities (discovered by type
+    assertion, like `Resolve`/`Login`/`Authorize`): `Issue(ctx, *Identity)
+    (any, error)` (login response / token pair), `RevokeToken(ctx, token)
+    error` (logout), and `TokenHandler() httpx.HandlerFunc` (the raw grant
+    endpoint).
+  - `oauth2.Backend(oauth2.Config{...})` returns a ready `auth.BackendOption`
+    implementing every capability, so an OAuth2 server drops straight into
+    `auth.Config.Backend`. New `oauth2.Config` fields `LoginPath` / `LogoutPath`
+    / `LoginClientID` / `LoginClientSecret` power the JSON login endpoint.
+
+      auth.Module(auth.Config{
+          Backend:   oauth2.Backend(oauth2.Config{Authenticator: authFn}),
+          Endpoints: auth.Endpoints{Token: "/oauth/token", Login: "/api/auth/login"},
+      })
+
+  All additive: the `Config.Endpoints` zero value mounts nothing, so existing
+  configs are unchanged. See `nexus docs auth`.
+
+### Changed
+
+- **`oauth2.Module` is now a thin wrapper over `auth.Module`** — it builds the
+  server via `oauth2.Backend` and declares `auth.Endpoints` for the token/revoke
+  paths, eliminating the internal `holder`/`atomic.Pointer` bridge that threaded
+  the live `*Server` into the resolver closure during DI startup. Behavior is
+  unchanged (the end-to-end password-grant test is untouched); `oauth2.Module`'s
+  `RevokePath` now responds `200 {"ok":true}` instead of `204`.
+
+### Deprecated
+
+- **`auth.LoginEndpoint` / `auth.LogoutEndpoint`** — superseded by
+  `auth.Config.Endpoints.Login` / `.Logout`, which mount the same handlers from
+  inside `auth.Module` and source the issuer/revoker from the backend's `Issue`
+  / `RevokeToken` capabilities. Both remain as thin wrappers and keep working.
+
 ## [1.32.3] - 2026-07-07
 
 ### Added

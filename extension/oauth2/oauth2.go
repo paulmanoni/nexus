@@ -5,7 +5,6 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/url"
-	"sync/atomic"
 	"time"
 
 	oauth2lib "github.com/go-oauth2/oauth2/v4"
@@ -99,6 +98,23 @@ type Config struct {
 	// removes the access token from the TokenStore. Empty by default.
 	RevokePath string
 
+	// LoginPath, when non-empty, mounts a Public JSON login endpoint
+	// (POST {username, password}) that authenticates via Authenticator
+	// and returns a freshly-issued token pair. Empty by default; requires
+	// LoginClientID. This is the JSON front door alongside the raw
+	// form-encoded TokenPath grant.
+	LoginPath string
+
+	// LogoutPath, when non-empty, mounts a Public JSON logout endpoint
+	// that revokes the presented bearer token. Empty by default.
+	LogoutPath string
+
+	// LoginClientID / LoginClientSecret identify the OAuth2 client the
+	// LoginPath endpoint mints tokens for (a password-grant on the app's
+	// behalf). Required when LoginPath is set.
+	LoginClientID     string
+	LoginClientSecret string
+
 	// IdentityCache bounds how long a resolved auth.Identity stays
 	// in the auth.Manager cache. Defaults to 5 minutes; set to
 	// negative to disable caching.
@@ -172,6 +188,59 @@ func (s *Server) HandleToken(c *httpx.Ctx) {
 	_ = s.Srv.HandleTokenRequest(c.Writer, c.Request)
 }
 
+// --- auth backend capabilities (see auth.BackendOption) ---
+// *Server implements the token-server half of the cohesive auth backend:
+// Resolve (above) + Login + Issue + RevokeToken + TokenHandler. It leaves
+// Authorize to the app, so auth.Config.Authorization stays in charge unless
+// the app wraps this backend with its own Authorize.
+
+// Login authenticates a username/password credential through the configured
+// Authenticator and returns the resulting identity — the login half of the
+// backend, powering auth.Manager.Login and auth.Config.Endpoints.Login. It
+// does NOT issue a token; Issue does that. Returns ErrInvalidCredentials for
+// any failure (no user enumeration).
+func (s *Server) Login(ctx context.Context, cred auth.Credentials) (*auth.Identity, error) {
+	pw, ok := cred.(auth.Password)
+	if !ok || s.cfg.Authenticator == nil {
+		return nil, auth.ErrInvalidCredentials
+	}
+	uid, err := s.cfg.Authenticator(ctx, s.cfg.LoginClientID, pw.Username, pw.Password)
+	if err != nil || uid == "" {
+		return nil, auth.ErrInvalidCredentials
+	}
+	return &auth.Identity{ID: uid}, nil
+}
+
+// Issue mints an OAuth2 access/refresh token pair for an already-
+// authenticated identity via the configured login client — the body the
+// JSON login endpoint returns. Powers auth.Config.Endpoints.Login.
+func (s *Server) Issue(ctx context.Context, id *auth.Identity) (any, error) {
+	ti, err := s.Manager.GenerateAccessToken(ctx, oauth2lib.PasswordCredentials,
+		&oauth2lib.TokenGenerateRequest{
+			ClientID:     s.cfg.LoginClientID,
+			ClientSecret: s.cfg.LoginClientSecret,
+			UserID:       id.ID,
+		})
+	if err != nil {
+		return nil, err
+	}
+	return httpx.H{
+		"access_token":  ti.GetAccess(),
+		"refresh_token": ti.GetRefresh(),
+		"token_type":    s.cfg.TokenType,
+		"expires_in":    int(ti.GetAccessExpiresIn().Seconds()),
+	}, nil
+}
+
+// RevokeToken removes an access token from the store — the revoke half,
+// powering auth.Config.Endpoints.Logout / Revoke and LogoutEndpoint.
+func (s *Server) RevokeToken(ctx context.Context, token string) error {
+	return s.Manager.RemoveAccessToken(ctx, token)
+}
+
+// TokenHandler returns the raw grant handler for auth.Config.Endpoints.Token.
+func (s *Server) TokenHandler() httpx.HandlerFunc { return s.HandleToken }
+
 // HandleRevoke removes the bearer token from the TokenStore. Mounted
 // under RevokePath when set. Returns 204 on success / unknown token
 // (idempotent) so clients can safely retry.
@@ -185,69 +254,60 @@ func (s *Server) HandleRevoke(c *httpx.Ctx) {
 	c.Status(http.StatusNoContent)
 }
 
-// holder threads the live *Server through fx startup so the
-// auth.Module Resolve closure binds before the *Server is built.
-type holder struct{ srv atomic.Pointer[Server] }
-
-func (h *holder) resolve(ctx context.Context, token string) (*auth.Identity, error) {
-	s := h.srv.Load()
-	if s == nil {
-		return nil, stderrors.New("oauth2: server not ready")
-	}
-	return s.Resolve(ctx, token)
+// Backend builds the OAuth2 server as a cohesive auth.BackendOption — the
+// token-server half of an auth backend (Resolve + Login + Issue +
+// RevokeToken + TokenHandler), DI-constructed so it needs no holder /
+// atomic-pointer bridge. Pass it straight to auth.Config.Backend to fold
+// OAuth2 into a single auth.Module call:
+//
+//	auth.Module(auth.Config{
+//	    Backend:   oauth2.Backend(oauth2.Config{Authenticator: authFn, ClientStore: cs}),
+//	    Endpoints: auth.Endpoints{Token: "/oauth/token", Login: "/api/auth/login"},
+//	})
+//
+// The scheme's Resolve is filled from the backend, so no scheme needs a
+// Resolver. Provides *Server into the DI graph for handlers that need the
+// underlying go-oauth2 server. Module (below) is a thin wrapper over this.
+func Backend(cfg Config) auth.BackendOption {
+	cfg.applyDefaults()
+	return auth.UseBackend(func(app *nexus.App) *Server { return buildServer(app, cfg) })
 }
 
-// Module wires the OAuth2 server into a nexus app as an
-// extension.Plugin — the same shape custom plugins use. Composes
-// auth.Module (so /oauth/token-issued bearer tokens flow through the
-// standard auth middleware + Required/Requires bundles), provides the
-// *Server type, and mounts the token (and optionally revoke) endpoint.
+// Module wires the OAuth2 server into a nexus app as an extension.Plugin —
+// the same shape custom plugins use. It is now a thin wrapper over
+// auth.Module: OAuth2 is expressed as a Config.Backend (built by Backend
+// above) plus Config.Endpoints for the token / revoke / login / logout
+// front doors. Bearer tokens flow through the standard auth middleware +
+// Required/Requires bundles, and the *Server type is provided into DI.
 //
-// The Plugin appears in app.Plugins() alongside auth — useful for
-// dashboards that list installed extensions.
+// Both the "oauth2" and "auth" plugins appear in app.Plugins().
 func Module(cfg Config) nexus.Option {
 	cfg.applyDefaults()
-	h := &holder{}
 
 	authCfg := cfg.AuthExtra
+	authCfg.Backend = Backend(cfg)
+	// One bearer scheme; its Resolve is inherited from the backend.
 	authCfg.Authentication = auth.Authentication{
-		Schemes: []auth.Scheme{{Name: "oauth2", Extract: auth.Bearer(), Resolve: h.resolve}},
+		Schemes: []auth.Scheme{{Name: "oauth2", Extract: auth.Bearer()}},
 		Cache:   auth.CacheFor(cfg.IdentityCache),
 	}
-
-	opts := []nexus.Option{
-		nexus.Provide(func(app *nexus.App) *Server { return buildServer(app, cfg, h) }),
-		// auth.Module is itself an extension.Plugin — composing it
-		// inside oauth2's Options means both auth and oauth2 register
-		// in app.Plugins(), no special handling needed.
-		auth.Module(authCfg),
-		nexus.AsRestHandler("POST", cfg.TokenPath,
-			func(srv *Server) httpx.HandlerFunc { return srv.HandleToken },
-			nexus.Describe("OAuth2 token endpoint (password / refresh / client_credentials grants)."),
-			// The token endpoint mints credentials, so it must stay
-			// reachable under deny-by-default — you can't require a token
-			// to obtain one.
-			nexus.Public(),
-		),
-	}
-	if cfg.RevokePath != "" {
-		opts = append(opts, nexus.AsRestHandler("POST", cfg.RevokePath,
-			func(srv *Server) httpx.HandlerFunc { return srv.HandleRevoke },
-			nexus.Describe("OAuth2 token revocation endpoint."),
-			// Revoke authenticates by the token in the body it revokes, so
-			// it manages its own auth and opts out of the default gate.
-			nexus.Public(),
-		))
+	authCfg.Endpoints = auth.Endpoints{
+		Token:  cfg.TokenPath,
+		Revoke: cfg.RevokePath,
+		Login:  cfg.LoginPath,
+		Logout: cfg.LogoutPath,
 	}
 
+	// auth.Module is itself an extension.Plugin; nesting it in this plugin's
+	// Options registers both "oauth2" and "auth" in app.Plugins().
 	return extension.Use(extension.Plugin{
 		Name:    "oauth2",
 		Version: "1",
-		Options: opts,
+		Options: []nexus.Option{auth.Module(authCfg)},
 	})
 }
 
-func buildServer(app *nexus.App, cfg Config, h *holder) *Server {
+func buildServer(app *nexus.App, cfg Config) *Server {
 	mgr := cfg.Manager
 	if mgr == nil {
 		mgr = manage.NewDefaultManager()
@@ -293,14 +353,12 @@ func buildServer(app *nexus.App, cfg Config, h *holder) *Server {
 		cfg.ServerCustomizer(srv)
 	}
 
-	s := &Server{
+	return &Server{
 		Service: app.Service("oauth2"),
 		Srv:     srv,
 		Manager: mgr,
 		cfg:     cfg,
 	}
-	h.srv.Store(s)
-	return s
 }
 
 func (c *Config) applyDefaults() {

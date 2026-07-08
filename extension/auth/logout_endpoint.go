@@ -56,6 +56,11 @@ func WithRevoker(revoke LogoutRevoker) LogoutOption {
 // revokes, so a stale token can still log out. Always returns 200
 // {"ok": true} (revealing nothing about whether the token existed); a
 // revoker error surfaces as 500.
+//
+// Deprecated: set Config.Endpoints.Logout instead, which mounts the same
+// handler from inside auth.Module and takes the revoker from the Backend's
+// RevokeToken capability. LogoutEndpoint remains a thin wrapper and keeps
+// working.
 func LogoutEndpoint(opts ...LogoutOption) nexus.Option {
 	cfg := &logoutEndpointConfig{path: "/auth/logout", extract: Bearer()}
 	for _, o := range opts {

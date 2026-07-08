@@ -189,6 +189,14 @@ type Config struct {
 	// existing configs behave identically.
 	Backend BackendOption
 
+	// Endpoints opts auth.Module into mounting its own HTTP front doors —
+	// login, logout, token, revoke — using the Backend's capabilities, so a
+	// single auth.Module call owns the whole auth surface instead of the app
+	// hand-wiring AsRest lines. Each is off unless its path is set; the zero
+	// value mounts nothing. Supersedes the standalone LoginEndpoint /
+	// LogoutEndpoint options. See Endpoints.
+	Endpoints Endpoints
+
 	// OnResolve fires after every successful resolution — good for
 	// audit logging or per-user metrics.
 	OnResolve func(ctx context.Context, id *Identity)
@@ -477,6 +485,12 @@ func Module(cfg Config) nexus.Option {
 		default:
 			return raiseBackendError(fmt.Errorf("Backend is set but has neither a value nor a constructor"))
 		}
+	}
+
+	// Config.Endpoints: auth mounts its own login/logout/token/revoke front
+	// doors, each backed by a Backend capability resolved at request time.
+	if cfg.Endpoints.any() {
+		pluginOpts = append(pluginOpts, endpointOptions(cfg.Endpoints)...)
 	}
 
 	return extension.Use(extension.Plugin{

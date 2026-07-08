@@ -617,46 +617,52 @@ backend, DI-constructed so it closes over app services:
 The framework discovers capabilities by type assertion (implement any subset):
 
     Resolve(ctx, token) (*Identity, error)     // fills schemes with nil Resolve
-    Login(ctx, Credentials) (*Identity, error) // powers Manager.Login
+    Login(ctx, Credentials) (*Identity, error) // powers Manager.Login + Endpoints.Login
     Authorize(id, required) bool               // REPLACES Config.Authorization
+    Issue(ctx, *Identity) (any, error)         // login response body (token pair)
+    RevokeToken(ctx, token) error              // powers Endpoints.Logout/Revoke
+    TokenHandler() httpx.HandlerFunc           // raw grant endpoint (Endpoints.Token)
 
 So a Scheme can omit Resolve (inherited from the backend), Manager.Login
 delegates to the backend, and authorization lives WITH the backend. All
 additive: Config.Backend zero value = today's behavior; note UseBackend
 returns your concrete type, not the auth.Backend login interface above.
 
-LOGIN ENDPOINT — expose Manager.Login over HTTP without a hand-written handler:
+ENDPOINTS — let auth.Module mount its own HTTP front doors from the backend's
+capabilities, so ONE auth.Module call owns the whole surface (no hand-wired
+AsRest lines next to it):
 
-    auth.LoginEndpoint(auth.LoginAt("/auth/login"),
-        auth.WithIssuer(func(ctx, id *auth.Identity) (any, error) {
-            return map[string]any{"token": mint(id)}, nil   // issue a token
-        }))
+    auth.Module(auth.Config{
+        Backend: auth.UseBackend(NewAuthBackend),   // implements Login/Issue/…
+        Endpoints: auth.Endpoints{
+            Token:  "/oauth/token",       // → Backend.TokenHandler
+            Login:  "/api/auth/login",    // → Backend.Login + Backend.Issue
+            Logout: "/api/auth/logout",   // → Manager.Invalidate + Backend.RevokeToken
+            Revoke: "/oauth/token/revoke",
+        },
+    })
 
-POST {"username","password"} → runs the backend's Login. 401 on bad creds
-(no user enumeration); success returns the issuer's body, or {"identity": …}
-when no issuer is set. Public (you can't require a token to get one). Needs a
-Config.Backend that implements Login.
+Each is off unless its path is set; all are Public (you can't require a token
+to get one). Login reads {"username","password"}, runs Backend.Login (401 on
+bad creds, no enumeration), and returns Backend.Issue's body (or {"identity":…}
+when the backend can't Issue). Logout/Revoke pull the token via
+Endpoints.LogoutExtract (default Bearer()) and are idempotent (200 {"ok":true}).
 
-    auth.LogoutEndpoint(auth.WithRevoker(func(ctx, tok string) error {
-        return srv.Manager.RemoveAccessToken(ctx, tok)   // revoke in your store
-    }))
+FULL OAUTH2 IN ONE CONFIG — the oauth2 extension ships a ready backend that
+implements every capability, so a token server folds into auth.Module:
 
-POST /auth/logout → drops the token from the identity cache
-(Manager.Invalidate) and, with a revoker, invalidates it in your store.
-Public + idempotent (always 200 {"ok":true}); token pulled via LogoutExtractor
-(default Bearer(), e.g. auth.Cookie("access_token") for cookie sessions).
+    import "github.com/paulmanoni/nexus/extension/oauth2"
 
-When the issuer/revoker needs DI deps (a token server), the static
-WithIssuer/WithRevoker can't see them — wire the exported handlers in your own
-AsRestHandler factory instead (deps ARE injected there):
+    auth.Module(auth.Config{
+        Backend:   oauth2.Backend(oauth2.Config{Authenticator: authFn, ClientStore: cs}),
+        Endpoints: auth.Endpoints{Token: "/oauth/token", Login: "/api/auth/login"},
+    })
+    // oauth2.Module(cfg) is now a thin wrapper over exactly this.
 
-    nexus.AsRestHandler("POST", "/auth/login",
-        func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {
-            return auth.LoginHandler(m, func(ctx, id *auth.Identity) (any, error) {
-                return srv.IssueToken(ctx, id.ID)          // uses injected srv
-            })
-        }, nexus.Public())
-    // auth.LogoutHandler(m, auth.Bearer(), srv.Revoke) mirrors it for logout.
+Deprecated: auth.LoginEndpoint / auth.LogoutEndpoint (standalone options) —
+use Config.Endpoints instead. They still work as thin wrappers. When you can't
+use a ready backend, the exported auth.LoginHandler / auth.LogoutHandler let you
+wire the same handlers in your own AsRestHandler factory (DI deps injected there).
 `,
 
 	"security": `
@@ -720,6 +726,17 @@ access-token store to nexus.auth so handlers gate themselves
 with auth.Required() / auth.Requires(). Mounts POST /oauth/token
 out of the box.
 
+oauth2.Module is now a thin wrapper over auth.Module: it builds the
+server as an auth backend (oauth2.Backend, implementing Resolve + Login
++ Issue + RevokeToken + TokenHandler) and declares auth.Endpoints for the
+token/revoke/login/logout paths — no more holder/atomic-pointer bridge.
+To fold OAuth2 into an existing auth.Module instead of a separate call:
+
+    auth.Module(auth.Config{
+        Backend:   oauth2.Backend(oauth2.Config{Authenticator: authFn}),
+        Endpoints: auth.Endpoints{Token: "/oauth/token", Login: "/api/auth/login"},
+    })
+
 Minimal app — password grant against your user store:
 
     import "github.com/paulmanoni/nexus/extension/oauth2"
@@ -750,6 +767,11 @@ typically set:
   TokenType         — "Bearer" (default) or "bearer" (Spring-compat)
   IncludeJTI        — adds a unique jti to every issued token
   RevokePath        — when set, mounts POST <path> for revocation
+  LoginPath         — when set, mounts a Public JSON login endpoint that
+                      authenticates + returns a token pair (needs LoginClientID)
+  LogoutPath        — when set, mounts a Public JSON logout endpoint
+  LoginClientID/    — the OAuth2 client LoginPath mints tokens for
+    LoginClientSecret
 
 Sentinel errors (return from Authenticator for free translation):
 
