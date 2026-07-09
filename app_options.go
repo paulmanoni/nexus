@@ -432,7 +432,8 @@ func resolveConfigPath() string {
 func autoLoad(path string) (Config, []Option) {
 	raw, err := readFileIfExists(path)
 	if err != nil {
-		panic(err) // a real I/O error (perms, etc.) — not a soft miss
+		// a real I/O error (perms, etc.) — not a soft miss
+		panic(fmt.Errorf("nexus: failed to read config %q: %w", path, err))
 	}
 	source := path
 	if raw == nil {
@@ -456,11 +457,20 @@ func autoLoad(path string) (Config, []Option) {
 	}
 	cfg, err := configFromTOML(raw, source)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("nexus: malformed config (%s): %w", source, err))
 	}
 	extOpts, err := decodeExtensions(raw)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("nexus: malformed [extensions.*] in config (%s): %w", source, err))
+	}
+	// Dev boot self-check: run the same config lint `nexus lint` runs, but at
+	// boot in dev, so a bad CIDR / CORS combo / rate limit / unimported
+	// extension surfaces now instead of only when someone remembers to lint.
+	// Advisory (reported by runBootChecks, never aborts); prod pays nothing.
+	if IsDev() {
+		if issues, lerr := lintRuntimeBytes(raw, source); lerr == nil {
+			addPendingBootIssues(issues)
+		}
 	}
 	return cfg, extOpts
 }
@@ -540,6 +550,13 @@ func Run(cfg Config, opts ...Option) {
 	// endpoints take part in schema assembly like any hand-written module.
 	all = append(all, unwrap(collectDeferredOptions())...)
 	all = append(all, fxLateOptions())
+	// Dev boot self-check runs LAST as an invoke — after pubsub's BindTopics
+	// and every other wiring invoke — so live-topology checks (e.g. "topic has
+	// no transport bound") see the finalized graph. Dev-only: no invoke, no
+	// cost in production.
+	if IsDev() {
+		all = append(all, Invoke(func() { runBootChecks() }).nexusOption())
+	}
 	// The builtin container prints build/start errors to stderr itself; the
 	// opt-in fx adapter owns its own logging (and honors NEXUS_FX_QUIET).
 	// devQuiet only governs the gin route-registration spam, set above.

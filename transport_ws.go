@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"runtime/debug"
 	"time"
 
 	"github.com/paulmanoni/nexus/di"
@@ -292,7 +293,7 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 	// from just-before-handler to just-after so it reflects user work,
 	// not JSON bind cost.
 	start := time.Now()
-	_, err := h.shape.callHandler(ci, h.deps, argsVal)
+	err := callWSHandler(h, ci, argsVal)
 	status := 200
 	if err != nil {
 		status = 500
@@ -325,6 +326,50 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 			"message": err.Error(),
 		})
 	}
+}
+
+// callWSHandler runs the user's WebSocket handler with panic recovery. Unlike
+// REST (whose handlers sit behind the global recoveryMiddleware) a WS message
+// handler runs in the connection's read-loop goroutine (ws.Hub.readPump) — and
+// an unrecovered panic in a goroutine crashes the WHOLE process in Go. So a
+// junior WS handler doing m["k"] on a nil map, or an out-of-range index, would
+// take down the server, while the identical bug in a REST handler is caught,
+// logged, and shown on the dashboard.
+//
+// This closes that gap by mirroring recoveryMiddleware: a recovered panic
+// becomes a *trace.StackError, which the caller then threads through the SAME
+// path a returned error already takes in dispatchWSMessage — finish(500), a
+// request.op event on the bus (so the dashboard's error badge lights up with
+// the captured stack), and an "error" envelope back to the client.
+//
+// The recovery invariant is exercised by TestWSHandlerPanicRecovered and, for
+// every execution context, TestUserHandlerPanicsAreRecovered — see the note
+// there: any new transport that calls a user function MUST recover the same way.
+func callWSHandler(h wsTypedHandler, ci callInput, argsVal reflect.Value) (err error) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		se, ok := r.(*trace.StackError)
+		if !ok {
+			msg := fmt.Sprintf("%v", r)
+			if msg == "" {
+				msg = "panic"
+			}
+			se = &trace.StackError{
+				Err:   fmt.Errorf("panic: %s", msg),
+				Stack: trace.CleanStack(string(debug.Stack())),
+			}
+		}
+		// Mirror to stderr so dev / `nexus dev` terminals see it even with
+		// no dashboard open, matching recoveryMiddleware's log line.
+		log.Printf("[nexus] panic recovered in WS handler %s — %s\n%s",
+			h.opName, se.Error(), trace.StackOf(se))
+		err = se
+	}()
+	_, err = h.shape.callHandler(ci, h.deps, argsVal)
+	return err
 }
 
 // identifyFromGin is the hub identify hook used by AsWS. Matches

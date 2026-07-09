@@ -6,6 +6,48 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.33.2] - 2026-07-09
+
+### Fixed
+
+- **WebSocket handler panics no longer crash the process.** A WS message handler
+  runs in the connection's read-loop goroutine (`ws.Hub.readPump`), and an
+  unrecovered panic in a goroutine takes down the whole Go process — so a handler
+  doing `m[k]=v` on a nil map or an out-of-range index could kill the server,
+  while the identical bug in a REST handler was caught. `callWSHandler` now
+  recovers, mints a `*trace.StackError`, and routes it through the same path a
+  returned error takes: `finish(500)`, a `request.op`/`request.end` event on the
+  bus (dashboard "failed traces" + captured stack), an `error` envelope to the
+  client, and a `[nexus] panic recovered in WS handler ...` line on stderr — the
+  read loop survives. This closes the last execution context that lacked panic
+  recovery (REST/GraphQL, workers, crons, and pubsub subscribers already had it).
+
+### Changed
+
+- **Config auto-load panics now carry `nexus:` context.** Bare `panic(err)` sites
+  in `autoLoad` are wrapped (`nexus: failed to read config %q`, `nexus: malformed
+  config (%s)`, `nexus: malformed [extensions.*] ...`) so a startup failure names
+  the config source and cause instead of dropping a raw toml/IO stack.
+
+### Added
+
+- **Boot-time self-check in dev — foot-guns surface at startup, not at 2am.** A new
+  `nexus.RegisterBootCheck(func() []manifest.Issue)` hook lets a package report
+  live-topology problems at boot; nexus runs every registered check plus the
+  existing `nexus.toml` config lint (addresses, CIDRs, CORS-credentials-wildcard,
+  rate limits, unimported extensions) automatically under `nexus dev` / any
+  `NEXUS_DEV` run, printing them to stderr. It's **advisory** (never aborts boot;
+  genuine fatal misconfig still fails where it already did) and **dev-only** (zero
+  cost in production). Covers both `nexus.Run` and `nexus.Boot`. The flagship
+  check: **pubsub** now reports *"N topic(s) declared but no transport bound — add
+  pubsub.UseInMemory()/UseRabbit(...)"* at boot instead of only at the first
+  `Publish`. Runs last among boot invokes, after `BindTopics`, so a bound
+  transport never false-positives.
+- **`ERRORS.md`** documents nexus's three-layer error model (registration panics →
+  `nexus:` prefix; handler-returned errors → transport; runtime panics → recover →
+  `StackError` → dashboard + stderr) and the recover-invariant every execution
+  context upholds — enforced by the new `TestUserHandlerPanicsAreRecovered`.
+
 ## [1.33.1] - 2026-07-08
 
 ### Added

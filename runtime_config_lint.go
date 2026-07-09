@@ -48,9 +48,18 @@ func LintRuntimeFile(path string) ([]manifest.Issue, error) {
 	if err != nil {
 		return nil, err
 	}
+	return lintRuntimeBytes(raw, path)
+}
+
+// lintRuntimeBytes is the bytes-based core of LintRuntimeFile: expand env vars,
+// parse the [runtime] + [extensions.*] blocks, and lint them. Shared by the
+// `nexus lint` CLI (via LintRuntimeFile) and the dev boot self-check (autoLoad),
+// so both surface the same config foot-guns. source labels the origin in
+// parse-error messages ("nexus.toml", "embedded nexus.toml").
+func lintRuntimeBytes(raw []byte, source string) ([]manifest.Issue, error) {
 	expanded, err := manifest.ExpandEnvVars(raw)
 	if err != nil {
-		return nil, fmt.Errorf("nexus: expand env vars in %s: %w", path, err)
+		return nil, fmt.Errorf("nexus: expand env vars in %s: %w", source, err)
 	}
 	var block runtimeConfigDoc
 	if err := toml.Unmarshal(expanded, &block); err != nil {
@@ -58,7 +67,7 @@ func LintRuntimeFile(path string) ([]manifest.Issue, error) {
 			Severity: manifest.SeverityError,
 			Code:     manifest.ErrCode("RUNTIME_PARSE"),
 			Path:     "runtime",
-			Message:  fmt.Sprintf("parse %s: %v", path, err),
+			Message:  fmt.Sprintf("parse %s: %v", source, err),
 		}}, nil
 	}
 	issues := lintRuntimeBlock(block.Runtime)
