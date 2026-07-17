@@ -33,7 +33,7 @@ require (
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0
-	github.com/paulmanoni/viteless v0.2.0
+	github.com/paulmanoni/viteless v0.2.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 )
 

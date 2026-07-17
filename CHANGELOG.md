@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.33.3] - 2026-07-17
+
+### Fixed
+
+- **`go build` on Windows works again.** The embedded viteless dep cross-process
+  cache lock (`viteless/internal/store`) used `golang.org/x/sys/unix` (`Flock`,
+  `LOCK_SH/EX/UN`) unconditionally, so any `go build` of a nexus app on Windows
+  failed with `undefined: unix.LOCK_SH`. Bumped to **viteless v0.2.1**, which
+  splits the lock syscall behind a `flockFile`/`funlockFile` seam — `flock(2)` on
+  unix, `LockFileEx`/`UnlockFileEx` on Windows — preserving the same advisory
+  whole-file locking semantics on both. Pure dependency bump; no nexus API change.
+
 ## [1.33.2] - 2026-07-09
 
 ### Fixed
