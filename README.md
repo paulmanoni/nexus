@@ -317,7 +317,6 @@ When you're ready for more, each area has its own focused guide:
 | Production: ports, scopes, TLS, mTLS | hide the dashboard from the internet with named listeners + the introspection gate |
 | Typed RPC between apps (peer mesh) | [extension/peer/README.md](extension/peer/README.md) |
 | Config server + `nexus.toml` | [extension/config/README.md](extension/config/README.md) |
-| Guided product tours (PDF/Word export) | [extension/tour/README.md](extension/tour/README.md) |
 | Runnable sample apps | the [`examples/`](examples) folder (`petstore`, `petstore-spa`, `pubsub`, `wsecho`, `graphapp`, `bigtopo`) |
 
 A couple of handy extras:

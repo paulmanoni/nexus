@@ -33,10 +33,10 @@ type Describable interface {
 	Describe() ExtractorInfo
 }
 
-// Describe returns the extractor's config as an ExtractorInfo.
+// InspectExtractor returns the extractor's config as an ExtractorInfo.
 // Resolves user-defined extractors that don't implement Describable
 // to Strategy="custom" so the SDK has a deterministic fallback.
-func Describe(e Extractor) ExtractorInfo {
+func InspectExtractor(e Extractor) ExtractorInfo {
 	if e == nil {
 		return ExtractorInfo{Strategy: "bearer", HeaderName: "Authorization"}
 	}
@@ -45,6 +45,12 @@ func Describe(e Extractor) ExtractorInfo {
 	}
 	return ExtractorInfo{Strategy: "custom"}
 }
+
+// Deprecated: use InspectExtractor. Renamed to stop colliding with
+// nexus.Describe (the cross-transport option that sets an endpoint's
+// description) — this function instead introspects an Extractor for the
+// client SDK manifest, an unrelated meaning that shared the same verb.
+func Describe(e Extractor) ExtractorInfo { return InspectExtractor(e) }
 
 // Info returns the auth module's runtime extractor configuration.
 // Used by the client SDK at manifest-build time so the generated
@@ -57,11 +63,11 @@ func (m *Manager) Info() ExtractorInfo {
 		return ExtractorInfo{Strategy: "bearer", HeaderName: "Authorization"}
 	}
 	if len(m.state.schemes) == 1 {
-		return Describe(m.state.schemes[0].extract)
+		return InspectExtractor(m.state.schemes[0].extract)
 	}
 	out := ExtractorInfo{Strategy: "chain"}
 	for i := range m.state.schemes {
-		out.Chain = append(out.Chain, Describe(m.state.schemes[i].extract))
+		out.Chain = append(out.Chain, InspectExtractor(m.state.schemes[i].extract))
 	}
 	return out
 }
@@ -103,7 +109,7 @@ type chainExtractor struct {
 func (c chainExtractor) Describe() ExtractorInfo {
 	out := ExtractorInfo{Strategy: "chain"}
 	for _, p := range c.parts {
-		out.Chain = append(out.Chain, Describe(p))
+		out.Chain = append(out.Chain, InspectExtractor(p))
 	}
 	return out
 }

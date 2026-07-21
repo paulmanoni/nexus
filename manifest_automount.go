@@ -408,7 +408,7 @@ func mountGroup(app *App, g *pathGroup) error {
 	// serves at /oats-interview/graphql. Source-declared per-service
 	// AtGraphQL paths are preserved beneath the prefix.
 	mountedPath := app.PrefixPath(g.path)
-	gql.Mount(app.Engine(), app.Registry(), app.Bus(), g.owner.Name(), mountedPath, &schema, opts...)
+	gql.Mount(app.Router(), app.Registry(), app.Bus(), g.owner.Name(), mountedPath, &schema, opts...)
 
 	for _, p := range g.partitions {
 		for _, q := range p.queries {

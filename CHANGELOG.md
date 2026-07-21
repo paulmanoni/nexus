@@ -6,6 +6,75 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-07-21
+
+### Added
+
+- **`extension/proxy` — a strangler-fig bridge.** Reverse-proxies routes to a
+  legacy upstream (e.g. a Django app being migrated) AND registers each proxied
+  route on the dashboard, tagged as a proxy (new `registry.ProxyTag`), clustered
+  in a dashboard module — so the architecture graph becomes a live migration
+  board showing which routes are still forwarded vs. already served natively.
+  The core move is **auto-yield**: at boot, any configured route that already
+  has a native nexus handler at the same method+path is skipped, so migrating a
+  route is purely additive (add the `AsRest`, rebuild, and it leaves the
+  "Proxied" cluster automatically). Includes a live migration burndown via a
+  `migration` dashboard snapshot-extra, an optional catch-all `Fallback` for the
+  long tail, and header/path passthrough (stdlib `httputil.ReverseProxy`, no new
+  deps). Optionally **launches and supervises the upstream process** via
+  `Config.Command` — distinct Dev/Prod argv (dev picked under `nexus dev` /
+  `NEXUS_DEV`), working dir, env, line-prefixed child logs, a readiness gate,
+  and graceful interrupt-then-kill shutdown — so one `nexus dev` boots both
+  nexus and the legacy app. The dashboard gains a **"Proxied"** header panel (a
+  live burndown of the `proxied` snapshot-extra: upstream, migrated-of-total, and
+  per-route proxied/migrated status), and proxied routes cluster in their own
+  module on the architecture graph — so the dashboard doubles as a migration
+  cockpit.
+
+- **`BindFromConfig` parity for cache / storage / mail.** `db.BindFromConfig`
+  read a `[databases.*]` block; the other resource binders had no equivalent, so
+  wiring a cache/disk/mailer from config meant hand-writing a `build func()`
+  closure full of `nexus.Get` calls. Now `cache.BindFromConfig[T]("name")`,
+  `storage.BindFromConfig[T]("name")`, and `mail.BindFromConfig[T]("name")` read
+  the `[cache.<name>]` / `[storage.<name>]` / `[mail.<name>]` blocks directly.
+  Every key is optional (cache overlays `NewConfig()` defaults; storage/mail
+  default fields to zero), the build runs at boot so it works under `nexus.Boot`,
+  and the driver's required-field validation still fires at boot. Lifecycle
+  options (`WithDefault`, `WithDescription`) stay explicit in code — the block
+  describes the connection, code describes its role.
+- **`nexus.EndpointOption` — a name for the cross-transport per-op option
+  contract.** `AsRest` / `AsQuery` / `AsWS` each take a transport-specific option
+  interface; an option that works on all three (Public, Describe, WithIcon,
+  HideFromDashboard, Use → auth.Required/Requires) had to satisfy all three by
+  convention with nothing to name it. `EndpointOption` is that intersection —
+  return it from your own cross-transport option, and a compile-time assertion
+  keeps every built-in one honest.
+- **`App.Router() httpx.Router`** — the correctly-named accessor for the app's
+  router seam.
+
+### Changed
+
+- **`ginAuthMiddleware` → `authMiddleware`, `cors.ginHandler` → `corsHandler`,
+  `auth.Describe` → `auth.InspectExtractor`.** Post-router-seam cleanup: internal
+  helpers and one exported function carried gin/`Describe` names that no longer
+  matched what they do (the middleware is router-agnostic; `Describe` collided
+  with the cross-transport `nexus.Describe` option). Internal renames are
+  invisible; `auth.Describe` stays as a `// Deprecated:` alias of
+  `InspectExtractor`.
+
+### Deprecated
+
+- **`App.Engine()`** — use `App.Router()`. Both return the same `httpx.Router`;
+  "Engine" was a leftover from the gin-only era. Alias kept.
+- **`auth.Describe(Extractor)`** — use `auth.InspectExtractor`. Alias kept.
+
+### Removed
+
+- **`extension/tour`** — the guided-product-tour plugin has been removed. It was
+  self-contained (nothing else in the framework imported it), so removal is a
+  clean drop; apps that used it should pin an earlier nexus version or vendor the
+  package.
+
 ## [1.33.3] - 2026-07-17
 
 ### Fixed

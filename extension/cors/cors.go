@@ -196,7 +196,7 @@ func NewMiddleware(cfg Config) middleware.Middleware {
 		Name:        "cors",
 		Description: "CORS preflight + header policy",
 		Kind:        middleware.KindBuiltin,
-		Gin:         ginHandler(&cfg, matcher),
+		Gin:         corsHandler(&cfg, matcher),
 	}
 }
 
@@ -229,7 +229,7 @@ func (s *pluginState) boot(ctx context.Context, app *nexus.App) error {
 		// Manifest opted this env out; don't attach anything.
 		return nil
 	}
-	app.Engine().Use(ginHandler(&cfg, s.matcher))
+	app.Router().Use(corsHandler(&cfg, s.matcher))
 	return nil
 }
 

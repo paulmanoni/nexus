@@ -108,7 +108,7 @@ func Plugin(cfg Config) nexus.Option {
 		Options: []nexus.Option{
 			nexus.Invoke(func(app *nexus.App) {
 				state.app = app
-				eng := app.Engine()
+				eng := app.Router()
 				api := cfg.APIPath
 				eng.POST(api+"/track", state.handleTrack)
 				eng.GET(api+"/stats", state.handlePublicStats)

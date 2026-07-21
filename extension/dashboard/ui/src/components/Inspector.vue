@@ -84,6 +84,13 @@ function epIcon(e) {
   const pascal = name.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('')
   return lucide[pascal] || null
 }
+// proxyOf returns the upstream URL when an endpoint is reverse-proxied
+// (extension/proxy sets registry.ProxyTag), or '' for a native handler — drives
+// the per-row PROXY pill so proxied routes are distinguishable at a glance.
+function proxyOf(e) {
+  const tags = e && e.endpoint && e.endpoint.Tags
+  return (tags && tags['dashboard.proxy']) || ''
+}
 function authLabel(a) {
   if (!a) return { txt: 'public', cls: 'public', perm: false }
   if (a === 'required') return { txt: 'auth required', cls: '', perm: false }
@@ -144,7 +151,7 @@ function workerState(s) {
                   <template v-else>{{ glyph(e.kind) }}</template>
                 </span>
                 <div class="ep-main">
-                  <div class="ep-name"><span v-if="e.method" class="verb">{{ e.method }} </span>{{ e.name }}</div>
+                  <div class="ep-name"><span v-if="e.method" class="verb">{{ e.method }} </span>{{ e.name }}<span v-if="proxyOf(e)" class="ep-proxy" :title="'reverse-proxied → ' + proxyOf(e)">proxy</span></div>
                   <span class="ep-auth" :class="authLabel(e.auth).cls">
                     <Lock v-if="authLabel(e.auth).perm" :size="10" :stroke-width="2" />
                     <ShieldCheck v-else-if="e.auth" :size="10" :stroke-width="2" />
@@ -417,6 +424,20 @@ function workerState(s) {
 .ep-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ep-name .verb { color: var(--ink-3); }
 .ep-name .manual { color: var(--ink-3); }
+.ep-name .ep-proxy {
+  margin-left: 6px;
+  font-family: var(--font-sans, inherit);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--warn, #f59e0b);
+  background: color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn, #f59e0b) 30%, transparent);
+}
 .ep-auth { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-family: var(--font-mono); font-size: 10px; font-weight: 500; color: var(--authc); }
 .ep-auth.public { color: var(--ink-3); }
 .ep-right { text-align: right; flex: none; display: flex; flex-direction: column; align-items: flex-end; }

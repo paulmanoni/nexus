@@ -511,7 +511,7 @@ func dashboardRoutesOption(name string, routes []Route) nexus.Option {
 		base := "/__nexus/" + name
 		for _, r := range routes {
 			path := base + r.Path
-			app.Engine().Handle(r.Method, path, r.Handler)
+			app.Router().Handle(r.Method, path, r.Handler)
 		}
 	})
 }

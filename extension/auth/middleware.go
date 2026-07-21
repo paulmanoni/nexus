@@ -11,8 +11,9 @@ import (
 	"github.com/paulmanoni/nexus/trace"
 )
 
-// ginAuthMiddleware is the global Gin middleware installed by Module.
-// Per request:
+// authMiddleware is the global auth middleware installed by Module on the
+// app's httpx.Router (router-agnostic; not gin-specific despite the old
+// name it replaced). Per request:
 //   - Stash moduleState on ctx so per-op bundles read the right config
 //   - Extract token (if any). Absent token → anonymous request; let
 //     Required/Requires at the per-op layer decide whether that's OK.
@@ -20,7 +21,7 @@ import (
 //   - On resolver failure we do NOT 401 here — that's per-op Required's
 //     job. A public endpoint on the same app should stay accessible
 //     even if a bogus Authorization header comes along.
-func ginAuthMiddleware(state *moduleState) httpx.HandlerFunc {
+func authMiddleware(state *moduleState) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		ctx := withState(c.Request.Context(), state)
 

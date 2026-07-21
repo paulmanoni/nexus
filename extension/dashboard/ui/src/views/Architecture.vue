@@ -30,6 +30,7 @@ import ClusterNode from '../components/ClusterNode.vue'
 import Inspector from '../components/Inspector.vue'
 import TweaksPanel from '../components/TweaksPanel.vue'
 import PluginChips from '../components/PluginChips.vue'
+import ProxiedChips from '../components/ProxiedChips.vue'
 import { subscribeEvents, subscribeLive, fetchConfig, triggerCron, setCronPaused } from '../lib/api.js'
 import { buildClusters, computeVisible } from '../lib/topology.js'
 
@@ -1956,6 +1957,24 @@ const authSummary = computed(() => {
 })
 provide('nexus.authSummary', authSummary)
 
+// proxiedSummary mirrors authSummary: extension/proxy contributes it via
+// RegisterSnapshotExtra("proxied") — the strangler-fig migration burndown
+// (upstream, total/migrated/proxied counts, per-route status). null when the
+// proxy extension isn't wired. Feeds the header's <ProxiedChips> panel.
+const proxiedSummary = computed(() => {
+  const snap = latestSnapshot.value
+  const p = snap && snap.extra && snap.extra.proxied
+  if (!p) return null
+  return {
+    upstream: p.upstream || '',
+    total: p.total || 0,
+    migrated: p.migrated || 0,
+    proxied: p.proxied || 0,
+    routes: p.routes || [],
+  }
+})
+provide('nexus.proxiedSummary', proxiedSummary)
+
 const inspectorTarget = computed(() => {
   const id = selectedNodeId.value
   const snap = latestSnapshot.value
@@ -2199,6 +2218,7 @@ onUnmounted(() => {
       <div class="hdr-spacer"></div>
       <div class="hdr-tools">
         <PluginChips />
+        <ProxiedChips />
         <button class="icon-btn" @click="cmdkOpen = true" title="Jump to anything">
           <Search :size="15" :stroke-width="2" /><span class="kbd">⌘K</span><span>jump</span>
         </button>

@@ -22,6 +22,10 @@ const props = defineProps({
 
 const e = computed(() => props.op)
 const transport = computed(() => e.value.Transport || 'rest')
+// proxyUpstream is set (to the upstream URL) when this endpoint is reverse-
+// proxied by extension/proxy rather than served natively — surfaces a banner so
+// the drawer is honest that this op's behavior lives in the legacy upstream.
+const proxyUpstream = computed(() => (e.value.Tags && e.value.Tags['dashboard.proxy']) || '')
 const stats = computed(() => e.value.Stats || null)
 
 const middlewareNames = computed(() => {
@@ -165,6 +169,13 @@ async function rlReset() {
 
 <template>
   <div class="op-detail">
+    <!-- Proxy banner — this op is reverse-proxied to a legacy upstream
+         (extension/proxy), not served by a native handler. -->
+    <div v-if="proxyUpstream" class="proxy-banner" :title="'reverse-proxied → ' + proxyUpstream">
+      <span class="pb-tag">PROXY</span>
+      <span class="pb-text">forwarded to {{ proxyUpstream }} — not yet migrated to a native handler</span>
+    </div>
+
     <!-- Stats summary — always present so the user has a heartbeat read
          without flipping tabs. Errors get a red value when non-zero. -->
     <section class="section">
@@ -329,6 +340,30 @@ async function rlReset() {
 </template>
 
 <style scoped>
+.proxy-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: var(--space-3, 12px);
+  padding: 7px 10px;
+  border-radius: var(--radius, 6px);
+  background: color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn, #f59e0b) 28%, transparent);
+}
+.proxy-banner .pb-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--warn, #f59e0b);
+  border: 1px solid color-mix(in srgb, var(--warn, #f59e0b) 40%, transparent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex: none;
+}
+.proxy-banner .pb-text {
+  font-size: 11.5px;
+  color: var(--ink-2, var(--text-muted));
+}
 .op-detail {
   padding: var(--space-4) var(--space-5) var(--space-5);
   display: flex;

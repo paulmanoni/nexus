@@ -536,7 +536,18 @@ func New(cfg Config) *App {
 	return a
 }
 
-func (a *App) Engine() httpx.Router         { return a.engine }
+// Router returns the app's live HTTP router as the transport-neutral
+// httpx.Router — the backend chosen by nexus.WithRouter (stdlib by
+// default; gin/chi opt-in). Low-level handlers and extensions mount routes
+// and middleware through this seam, never against a concrete engine type.
+func (a *App) Router() httpx.Router { return a.engine }
+
+// Deprecated: use Router. "Engine" is a leftover from when the router was
+// always gin; the framework is now router-agnostic (the httpx seam) and
+// this returns an httpx.Router, not a *gin.Engine. Kept as an alias so
+// existing callers keep compiling.
+func (a *App) Engine() httpx.Router { return a.engine }
+
 func (a *App) Registry() *registry.Registry { return a.registry }
 func (a *App) Bus() *trace.Bus              { return a.bus }
 

@@ -151,7 +151,7 @@ func Plugin(cfg Config) nexus.Option {
 			nexus.Invoke(func(app *nexus.App) {
 				state.app = app
 				if cfg.PublicRoot == nil || *cfg.PublicRoot {
-					eng := app.Engine()
+					eng := app.Router()
 					eng.GET("/openapi.json", state.handleSpecJSON)
 					eng.GET("/openapi.yaml", state.handleSpecYAML)
 					eng.GET("/api-docs", state.handleUI)

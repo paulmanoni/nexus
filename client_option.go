@@ -55,7 +55,7 @@ func ClientUseWithContributions(cfg client.Config, buildFactory func(*App) clien
 			build = buildFactory(app)
 		}
 		app.clientHandler = client.MountWithContributions(
-			app.Engine(), app.Registry(), nil,
+			app.Router(), app.Registry(), nil,
 			app.SchemaRefs, app.routePrefix, cfg, build,
 		)
 	})

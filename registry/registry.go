@@ -420,6 +420,14 @@ const HiddenTag = "dashboard.hidden"
 // dashboard falls back to the per-transport default icon.
 const IconTag = "dashboard.icon"
 
+// ProxyTag is the Endpoint.Tags key set by extension/proxy on a route that is
+// reverse-proxied to an upstream (e.g. a Django app being migrated) rather
+// than served by a native nexus handler. It carries the upstream base URL.
+// Endpoints carrying it route + serve (by forwarding) normally; the dashboard
+// can render them with a distinct "proxied" badge so a strangler-fig migration
+// shows, live, which routes are still on the legacy app vs. already migrated.
+const ProxyTag = "dashboard.proxy"
+
 // VisibleEndpoints returns a copy of all registered endpoints EXCEPT those
 // marked hidden via nexus.HideFromDashboard() (the HiddenTag tag). The
 // dashboard uses this instead of Endpoints() so internal/debug ops can be

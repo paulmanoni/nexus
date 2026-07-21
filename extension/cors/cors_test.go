@@ -22,7 +22,7 @@ func newTestEngine(t *testing.T, cfg Config) httpx.Router {
 		t.Fatalf("validate: %v", err)
 	}
 	r := stdrouter.New()
-	r.Use(ginHandler(&cfg, buildMatcher(&cfg)))
+	r.Use(corsHandler(&cfg, buildMatcher(&cfg)))
 	r.GET("/ping", func(c *httpx.Ctx) {
 		c.JSON(200, httpx.H{"ok": true})
 	})
@@ -172,7 +172,7 @@ func TestPreflightShortCircuits(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := stdrouter.New()
-	r.Use(ginHandler(&cfg, buildMatcher(&cfg)))
+	r.Use(corsHandler(&cfg, buildMatcher(&cfg)))
 	// Register an OPTIONS handler that 500s if the middleware
 	// didn't abort. If we see 500, the preflight short-circuit
 	// silently failed.

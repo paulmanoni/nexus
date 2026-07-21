@@ -535,6 +535,12 @@ app pays for those only when it calls a binder. This mirrors `pubsub.Broker`.
   block still fails fast at boot).
 - `db.Bind[T]("name", func() db.Config {…}, opts...)` — inline config (no TOML).
 - `cache.Bind[T]("name", func() *cache.Config {…}, opts...)` — `T` embeds `*cache.Manager`.
+- **`BindFromConfig` reads a nexus.toml block — available on all four binders:**
+  `db.BindFromConfig[T]("main")` (`[databases.main]`), `cache.BindFromConfig[T]("session")`
+  (`[cache.session]`), `storage.BindFromConfig[T]("uploads")` (`[storage.uploads]`),
+  `mail.BindFromConfig[T]("smtp")` (`[mail.smtp]`). Keys are the snake_case field names
+  (`redis_host`, `public_base_url`, `from_address`, …); every key is optional; the read
+  runs at boot so it works under `nexus.Boot`. Lifecycle options stay explicit in code.
 - Options: `db.WithDefault/WithDetails/WithDescription`, `cache.WithDefault/WithDescription`.
 - **The default cache is in-memory only and pulls NO heavy deps** (no go-redis, gocache,
   or Prometheus). Redis is opt-in database/sql-style: blank-import

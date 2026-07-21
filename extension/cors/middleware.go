@@ -8,7 +8,7 @@ import (
 	"github.com/paulmanoni/nexus/httpx"
 )
 
-// ginHandler builds the per-request CORS middleware. Two paths run
+// corsHandler builds the per-request CORS middleware. Two paths run
 // inside:
 //
 //   - Preflight (OPTIONS + Access-Control-Request-Method): write the
@@ -25,7 +25,7 @@ import (
 // reflect a specific origin. Without it, an HTTP cache that saw an
 // allowed origin's response could serve it back to a blocked
 // origin's request — silent leak. The fetch spec demands this.
-func ginHandler(cfg *Config, m matcher) httpx.HandlerFunc {
+func corsHandler(cfg *Config, m matcher) httpx.HandlerFunc {
 	// Pre-build the static header values that don't depend on the
 	// request. Saves an allocation per request for the common case.
 	allowMethods := strings.Join(cfg.AllowMethods, ", ")

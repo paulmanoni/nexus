@@ -454,7 +454,7 @@ func Module(cfg Config) nexus.Option {
 		// middleware.
 		nexus.Invoke(func(app *nexus.App) {
 			state.bus = app.Bus()
-			app.Engine().Use(ginAuthMiddleware(state))
+			app.Router().Use(authMiddleware(state))
 		}),
 	}
 	// Deny-by-default: supply the "require identity" gate as the
@@ -581,7 +581,7 @@ func bindSchemes(in []Scheme, allowNilResolve bool) ([]boundScheme, error) {
 		}
 		name := s.Name
 		if name == "" {
-			name = Describe(ex).Strategy
+			name = InspectExtractor(ex).Strategy
 		}
 		out = append(out, boundScheme{name: name, extract: ex, resolve: s.Resolve})
 	}
