@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-07-23
+
+### Added
+
+- **`extension/inertia/inertiatest` — an in-process test harness for Inertia
+  pages.** The Inertia-aware layer over `nexustest`: it boots a listener-less
+  `App` (real router, middleware, DI, and reflective dispatch — no socket),
+  issues visits with the correct `X-Inertia` headers, decodes the page object
+  (from an XHR's JSON body or an initial load's `data-page` attribute), and
+  returns a `*Page` with prop / merge / defer / redirect / validation
+  assertions. A cookie jar persists across visits, so flash-error and session
+  flows (e.g. a failed submit that 303s back with its errors) work like a real
+  browser via `Visit.Follow()`. `New(t, cfg, opts...)` boots and wraps in one
+  call; `Wrap(t, app)` layers Inertia visits over a `nexustest.App` you already
+  built, so one app serves both REST/GraphQL and Inertia assertions. Visit
+  helpers (`Get`/`Post`/`Visit`/`Partial`/`Load`), request options
+  (`Version`/`ErrorBag`/`Except`/`Reset`/`Header`), and fluent `Page`
+  assertions (`AssertComponent`/`AssertProp`/`Bind`/`AssertMerge`/
+  `AssertDeferred`/`AssertError`/…) collapse the old boot-a-real-port
+  boilerplate. Documented under `nexus docs inertiatest`.
+
 ## [1.34.0] - 2026-07-21
 
 ### Added

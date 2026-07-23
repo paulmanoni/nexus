@@ -194,27 +194,28 @@ func openInBrowser(url string, stdout io.Writer) error {
 // topic in the index. Kept separate from docsTopics so the long
 // strings below don't have to embed their own short form.
 var topicSummaries = map[string]string{
-	"quickstart": "Minimal app: Run, Module, AsQuery",
-	"handlers":   "Reflective handler signature, Params[T], return shape",
-	"module":     "nexus.Module, Provide, ProvideService, route prefix",
-	"auth":       "auth.Module setup, Required, Requires, User[T]",
-	"oauth2":     "oauth2.Module — go-oauth2 server + auth bridge",
-	"security":   "Built-in security headers (on) + opt-in CSRF via nexus.toml",
-	"rest":       "AsRest — REST endpoints with reflective handlers",
-	"graphql":    "AsQuery / AsMutation — auto-mounted GraphQL fields",
-	"ws":         "AsWS — typed WebSocket envelopes, session fan-out",
-	"frontend":   "ServeFrontend + FrontendAt — embed a Vite SPA (web/dist)",
-	"inertia":    "extension/inertia — Inertia.js pages: props handlers, no API",
-	"nexustoml":  "nexus.toml — server, dashboard, introspection, env, extensions",
-	"peer":       "extension/peer — typed RPC between nexus apps",
-	"pki":        "nexus pki — generate mTLS certs for the peer mesh",
-	"config":     "extension/config — Spring-style config server + nexus.Get",
-	"storage":    "extension/storage — file/object storage: local + S3 disks",
-	"mail":       "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
-	"cli":        "Subcommand cheatsheet (new / init / dev / build / client)",
-	"dashboard":  "/__nexus tabs, gating, HTTP surface",
-	"client":     "Embedded JS/TS SDK — connect a browser to your app",
-	"autoselect": "Vite plugin that auto-injects opts.select from accesses",
+	"quickstart":  "Minimal app: Run, Module, AsQuery",
+	"handlers":    "Reflective handler signature, Params[T], return shape",
+	"module":      "nexus.Module, Provide, ProvideService, route prefix",
+	"auth":        "auth.Module setup, Required, Requires, User[T]",
+	"oauth2":      "oauth2.Module — go-oauth2 server + auth bridge",
+	"security":    "Built-in security headers (on) + opt-in CSRF via nexus.toml",
+	"rest":        "AsRest — REST endpoints with reflective handlers",
+	"graphql":     "AsQuery / AsMutation — auto-mounted GraphQL fields",
+	"ws":          "AsWS — typed WebSocket envelopes, session fan-out",
+	"frontend":    "ServeFrontend + FrontendAt — embed a Vite SPA (web/dist)",
+	"inertia":     "extension/inertia — Inertia.js pages: props handlers, no API",
+	"inertiatest": "extension/inertia/inertiatest — in-process test harness for Inertia pages",
+	"nexustoml":   "nexus.toml — server, dashboard, introspection, env, extensions",
+	"peer":        "extension/peer — typed RPC between nexus apps",
+	"pki":         "nexus pki — generate mTLS certs for the peer mesh",
+	"config":      "extension/config — Spring-style config server + nexus.Get",
+	"storage":     "extension/storage — file/object storage: local + S3 disks",
+	"mail":        "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
+	"cli":         "Subcommand cheatsheet (new / init / dev / build / client)",
+	"dashboard":   "/__nexus tabs, gating, HTTP surface",
+	"client":      "Embedded JS/TS SDK — connect a browser to your app",
+	"autoselect":  "Vite plugin that auto-injects opts.select from accesses",
 }
 
 // docsTopics is the inline reference. Each entry is plain text
@@ -478,6 +479,70 @@ type (inertia.Page takes ...nexus.RestOption; a compile error if it doesn't):
     //@auth Required
     //@inertia.Page "GET" "/admin" "Admin/Index"
     func NewAdmin(...) (AdminProps, error)
+`,
+
+	"inertiatest": `
+INERTIATEST
+
+  import "github.com/paulmanoni/nexus/extension/inertia/inertiatest"
+
+The Inertia-aware test harness — the inertia layer over nexustest. It boots a
+listener-less App (real router, middleware, DI, reflective dispatch — no socket),
+issues Inertia visits with the right X-Inertia headers, decodes the page object,
+and returns a *Page with prop/merge/defer/redirect/validation assertions. A cookie
+jar persists across visits, so flash-error and session flows work like a browser.
+
+    func TestUsersPage(t *testing.T) {
+        c := inertiatest.New(t, nexus.Config{},
+            nexus.ServeFrontend(dist, "dist"),
+            inertia.Module(inertia.Config{}),
+            inertia.Page("GET", "/users", "Users/Index", NewListUsers),
+        )
+
+        c.Get("/users?tab=1").AssertOK().Page().
+            AssertComponent("Users/Index").
+            AssertURL("/users?tab=1").
+            AssertProp("title", "Users").      // int want matches JSON float64
+            AssertPropAbsent("stats")          // Optional prop, skipped on a full visit
+    }
+
+BOOT / ATTACH
+    inertiatest.New(t, cfg, opts...)   boot via nexustest + wrap in one call
+    inertiatest.Wrap(t, app)           layer over a nexustest.App you already built
+    c.App()                            the underlying *nexustest.App (REST/GraphQL)
+    c.WithVersion("hash")              set X-Inertia-Version to exercise the 409 guard
+
+VISITS (XHR unless noted)             all replay + capture the cookie jar
+    c.Get(path, opts...)              c.Post(path, body, opts...)
+    c.Visit(method, path, body, ...)  any verb
+    c.Partial(path, component, only…) partial reload (X-Inertia-Partial-*)
+    c.Load(path, opts...)             initial full HTML navigation (no X-Inertia)
+
+REQUEST OPTIONS
+    inertiatest.Version(v)            inertiatest.ErrorBag(name)
+    inertiatest.Except(component, …)  inertiatest.Reset(keys…)   inertiatest.Header(k,v)
+
+VISIT (embeds *nexustest.Response — status/body/header pass through)
+    .AssertOK() / .AssertStatus(n)    .AssertRedirect(loc)   // 303 + Location
+    .AssertLocation(url)              // 409 + X-Inertia-Location (external)
+    .Follow(opts...)                  // chase the redirect with the jar cookie
+    .Page()                           // decode the page object (XHR JSON or data-page)
+
+PAGE
+    .AssertComponent / AssertURL / AssertVersion
+    .Prop(key)  .AssertProp(key, want)  .AssertPropPresent / AssertPropAbsent
+    .Bind(key, &v)                    // re-decode a prop into a typed value
+    .AssertMerge(…) / AssertDeepMerge(…) / AssertDeferred(group, keys…)
+    .AssertEncryptHistory() / AssertClearHistory()
+    .Errors()  .AssertError("field", msg)   // "bag.field" for a bagged form
+
+The validation round-trip — a failed submit 303s back with a flash cookie; Follow
+carries it so the errors surface on the re-render:
+
+    c.Post("/register", nil).
+        AssertRedirect("/register").
+        Follow().Page().
+        AssertError("email", "Email is required")
 `,
 
 	"auth": `
