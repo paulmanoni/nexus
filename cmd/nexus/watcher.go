@@ -24,8 +24,14 @@ import (
 // per save.
 //
 // Skipped paths: .git, .nexus, bin, dist, node_modules, vendor,
-// hidden directories. .nexus/build is the codegen output; rebuilding
-// on its writes would loop forever.
+// testdata, hidden directories. .nexus/build is the codegen output;
+// rebuilding on its writes would loop forever. Nested modules (a subdir
+// with its own go.mod) are skipped too unless the root module replaces
+// into them — otherwise they're outside this build entirely.
+//
+// Scoped to the app's build inputs: _test.go files are watched by
+// nobody here, since `go build` never compiles them. Editing a test
+// while the app runs used to cost a full rebuild + restart.
 //
 // Embed-aware: scans .go files for //go:embed directives once at
 // startup and tracks those paths even when they fall under normally
@@ -42,15 +48,8 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 	if err != nil {
 		return err
 	}
-	embedRoots := scanEmbedTargets(root)
-	// ignoreSet absolutizes once so the per-event check stays cheap.
-	ignoreSet := make([]string, 0, len(ignore))
-	for _, p := range ignore {
-		if abs, err := filepath.Abs(p); err == nil && abs != "" {
-			ignoreSet = append(ignoreSet, abs)
-		}
-	}
-	if err := addWatchDirs(w, root, embedRoots, ignoreSet); err != nil {
+	scope := newWatchScope(root, ignore)
+	if err := scope.addDirs(w, root); err != nil {
 		w.Close()
 		return fmt.Errorf("watch %s: %w", root, err)
 	}
@@ -76,7 +75,7 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 				if !ok {
 					return
 				}
-				rebuild := relevantEvent(ev, embedRoots, ignoreSet)
+				rebuild := scope.relevant(ev)
 				// New directory created? Add it to the watch list so
 				// edits inside fire restarts. Common when a user adds
 				// a new module package mid-session, or when a frontend
@@ -90,8 +89,8 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 				// that already holds build inputs counts as a change.
 				if ev.Op&fsnotify.Create != 0 {
 					if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
-						_ = addWatchDirs(w, ev.Name, embedRoots, ignoreSet)
-						if !rebuild && treeHasBuildInput(ev.Name, embedRoots, ignoreSet) {
+						_ = scope.addDirs(w, ev.Name)
+						if !rebuild && scope.treeHasBuildInput(ev.Name) {
 							rebuild = true
 						}
 					}
@@ -114,7 +113,45 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 	return nil
 }
 
-// addWatchDirs walks root recursively and adds every directory the
+// watchScope holds the per-session rules that decide which directories
+// the watcher tracks and which events count as a change: the //go:embed
+// roots, the frontend-owned ignore tree, and the nested modules this
+// build doesn't include. Computed once at startup so the per-event
+// checks stay cheap.
+type watchScope struct {
+	embedRoots map[string]bool
+	ignore     []string // absolute dirs the frontend toolchain owns
+	replaces   []string // absolute local `replace =>` targets of the root module
+	userIgnore *ignoreMatcher
+}
+
+func newWatchScope(root string, ignore []string) *watchScope {
+	s := &watchScope{
+		embedRoots: scanEmbedTargets(root),
+		userIgnore: loadNexusIgnore(root),
+	}
+	for _, p := range ignore {
+		if abs, err := filepath.Abs(p); err == nil && abs != "" {
+			s.ignore = append(s.ignore, abs)
+		}
+	}
+	s.replaces = localReplaceTargets(root)
+	return s
+}
+
+// separateModule reports whether dir is its own Go module that this build
+// can't see. A nested go.mod is outside the root module's `./...`, so its
+// files never reach the binary — unless the root module replaces into it,
+// which is how monorepos wire a local library and very much is a build
+// input.
+func (s *watchScope) separateModule(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+		return false
+	}
+	return !pathUnder(dir, s.replaces)
+}
+
+// addDirs walks root recursively and adds every directory the
 // watcher should track. Hidden + skip-listed dirs short-circuit via
 // SkipDir so we don't descend into them. fsnotify watches files via
 // their parent dir, so adding the dir is sufficient to catch every
@@ -134,7 +171,7 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 // stays in force inside the ignore tree (no embed override) since
 // the frontend bytes don't need to reach the binary; ServeFrontend
 // reads them off disk in dev.
-func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool, ignore []string) error {
+func (s *watchScope) addDirs(w *fsnotify.Watcher, root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable subtrees rather than aborting the whole walk
@@ -142,16 +179,24 @@ func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool, 
 		if !d.IsDir() {
 			return nil
 		}
-		underIgnore := pathUnder(path, ignore)
+		underIgnore := pathUnder(path, s.ignore)
 		name := d.Name()
 		if path != root && shouldSkipDir(name) {
 			// Inside the ignore tree the embed-override is suppressed
 			// (vite owns those bytes); outside, we still walk into
 			// embed targets so a non-dev build still rebuilds when
 			// the embedded SPA changes.
-			if underIgnore || !embedDirOrAncestor(path, embedRoots) {
+			if underIgnore || !embedDirOrAncestor(path, s.embedRoots) {
 				return filepath.SkipDir
 			}
+		}
+		if path != root && s.separateModule(path) {
+			return filepath.SkipDir
+		}
+		// A .nexusignore'd directory is pruned outright: nothing inside it
+		// is watched, so its saves can't reach the rebuild signal.
+		if path != root && s.userIgnore.match(path, true) {
+			return filepath.SkipDir
 		}
 		if underIgnore && !dirHasGoSource(path) {
 			// Frontend dir without Go source: don't watch. We still
@@ -165,22 +210,22 @@ func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool, 
 
 // treeHasBuildInput reports whether a newly created directory already
 // contains something that would have triggered a rebuild had we been
-// watching when it was written. Same verdict as relevantEvent, applied
-// per file, so embed roots and the ignore tree behave identically.
-// Bounded by shouldSkipDir, and only ever called on a directory Create.
-func treeHasBuildInput(root string, embedRoots map[string]bool, ignore []string) bool {
+// watching when it was written. Same verdict as relevant(), applied per
+// file, so embed roots, the ignore tree and nested modules behave
+// identically. Only ever called on a directory Create.
+func (s *watchScope) treeHasBuildInput(root string) bool {
 	found := false
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if path != root && shouldSkipDir(d.Name()) {
+			if path != root && (shouldSkipDir(d.Name()) || s.separateModule(path) || s.userIgnore.match(path, true)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if relevantEvent(fsnotify.Event{Name: path, Op: fsnotify.Create}, embedRoots, ignore) {
+		if s.relevant(fsnotify.Event{Name: path, Op: fsnotify.Create}) {
 			found = true
 			return filepath.SkipAll
 		}
@@ -218,13 +263,16 @@ func shouldSkipDir(name string) bool {
 		return true
 	}
 	switch name {
-	case "node_modules", "vendor", "bin", "dist", "build":
+	case "node_modules", "vendor", "bin", "dist", "build", "testdata":
+		// testdata is invisible to the go tool by definition — fixtures
+		// change constantly while working on tests and never affect the
+		// binary.
 		return true
 	}
 	return false
 }
 
-// relevantEvent reports whether ev should trigger a rebuild. Write,
+// relevant reports whether ev should trigger a rebuild. Write,
 // Create, Rename, and Remove all matter — Create catches `mv` rename
 // targets, Remove + Rename catch the source side of an atomic-rename
 // save. Chmod-only events are ignored (don't rebuild on `chmod +x`).
@@ -241,7 +289,7 @@ func shouldSkipDir(name string) bool {
 //
 // Hidden files are skipped — editors write dotfile buffer state
 // during normal saves and we don't want to rebuild on those.
-func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool, ignore []string) bool {
+func (s *watchScope) relevant(ev fsnotify.Event) bool {
 	if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
 		return false
 	}
@@ -249,10 +297,15 @@ func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool, ignore []strin
 	if strings.HasPrefix(base, ".") {
 		return false
 	}
-	if pathUnder(ev.Name, ignore) {
+	// The project's own .nexusignore wins over every rule below: a path it
+	// lists is out of the dev loop, embed roots included.
+	if s.userIgnore.match(ev.Name, false) {
+		return false
+	}
+	if pathUnder(ev.Name, s.ignore) {
 		return isGoBuildFile(base)
 	}
-	if underEmbedRoot(ev.Name, embedRoots) {
+	if underEmbedRoot(ev.Name, s.embedRoots) {
 		return true
 	}
 	return isGoBuildFile(base)
@@ -261,15 +314,59 @@ func relevantEvent(ev fsnotify.Event, embedRoots map[string]bool, ignore []strin
 // isGoBuildFile reports whether base names a file whose change
 // invalidates the Go build: any .go source, go.mod / go.sum (deps),
 // or nexus.toml (codegen consumes it).
+//
+// _test.go is excluded: `go build` never compiles test files, so the
+// binary can't change and the app has no reason to restart. Editing a
+// test while the server runs is a normal thing to do.
 func isGoBuildFile(base string) bool {
 	if strings.HasSuffix(base, ".go") {
-		return true
+		return !strings.HasSuffix(base, "_test.go")
 	}
 	switch base {
 	case "go.mod", "go.sum", "nexus.toml":
 		return true
 	}
 	return false
+}
+
+// localReplaceTargets returns the absolute directories the module
+// governing dir replaces into (`replace x => ./libs/x`). Those trees ARE
+// build inputs despite carrying their own go.mod, so the watcher must
+// keep watching them.
+//
+// Parsed by hand rather than with modfile: the only thing we need is the
+// right-hand side of a `=>` when it names a filesystem path, and a
+// false positive here just means one extra directory stays watched.
+func localReplaceTargets(dir string) []string {
+	modDir := findModuleRoot(dir)
+	if modDir == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(modDir, "go.mod"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		i := strings.Index(line, "=>")
+		if i < 0 {
+			continue
+		}
+		target := strings.TrimSpace(line[i+2:])
+		if target == "" || !(strings.HasPrefix(target, ".") || filepath.IsAbs(target)) {
+			continue // a module path + version, not a local directory
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(modDir, target)
+		}
+		if abs, err := filepath.Abs(target); err == nil {
+			out = append(out, abs)
+		}
+	}
+	return out
 }
 
 // pathUnder reports whether path is the same as, or nested under,

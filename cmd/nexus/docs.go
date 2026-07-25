@@ -1165,7 +1165,25 @@ CLI CHEATSHEET
                              swap (~20ms) instead of the whole compile, a
                              failed build leaves the running app up, and a
                              save that doesn't change the binary (a
-                             _test.go edit, a comment) skips the restart.
+                             comment, an edit outside the build graph)
+                             skips the restart.
+
+                             Rebuild triggers: .go sources, go.mod/go.sum,
+                             nexus.toml, and files under an //go:embed
+                             root. NOT _test.go (never compiled into the
+                             binary), testdata/, or a nested module the
+                             root module doesn't replace into.
+
+                             .nexusignore (next to nexus.toml, read at
+                             startup) keeps project-specific paths out of
+                             the loop — gitignore-style patterns, honored
+                             by the Go watcher and --dist alike:
+
+                               tmp/                 directories only
+                               generated            matches at any depth
+                               internal/mock/*.go   anchored to the root
+                               assets/**/snapshots  ** spans directories
+                               !internal/mock/keep.go   re-include
 
                              --addr host:port   listen address override
                              --frontend-cmd <c> dev-server command (default

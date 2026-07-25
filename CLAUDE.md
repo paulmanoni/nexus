@@ -110,6 +110,25 @@ longer grows with build time. Three consequences worth knowing:
 `--go-run` restores the legacy loop (`go run`, app killed before every rebuild) if
 the new one ever misbehaves. `--fast` still strips DWARF for a quicker link.
 
+**What triggers a rebuild.** Go sources, `go.mod`/`go.sum`, `nexus.toml`, and any file
+under an `//go:embed` root. Not: `_test.go` files (never compiled into the binary),
+`testdata/`, hidden files, or nested modules with their own `go.mod` — unless the root
+module `replace`s into one, which makes it a real build input.
+
+**`.nexusignore`.** Drop one next to `nexus.toml` to keep project-specific paths out of
+the dev loop entirely (generated trees, fixtures, a sibling service's source). Read at
+startup, gitignore-style, and honored by both the Go watcher and `--dist`:
+```
+# comments and blank lines are ignored
+tmp/                    # trailing slash: directories only
+generated               # no slash: matches at any depth
+internal/mock/*.go      # a slash anchors the pattern to the project root
+assets/**/snapshots     # ** spans any number of directories
+!internal/mock/keep.go  # ! re-includes; later rules win
+```
+An ignored directory is pruned, so nothing inside it is watched (a `!` re-include under
+a pruned directory can't resurrect it — same rule git applies).
+
 **Keeping `web/dist` fresh in dev (`--dist`).** The HMR server serves the frontend
 from memory and never writes `web/dist`, so the embedded production bundle stays
 frozen at the last `nexus build` — a `go build` taken mid-session ships stale assets.

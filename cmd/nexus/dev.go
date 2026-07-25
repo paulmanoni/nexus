@@ -320,15 +320,13 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// Inertia dev topology (auto-detected from the inertia import, or forced
 	// via [runtime.inertia] enabled in nexus.toml). When on, the Go app owns
 	// page navigation, so the browser opens the app port and the app shell
-	// references viteless for HMR (NEXUS_VITE_DEV). frontendBaseURL captures
-	// the viteless dev URL once it starts.
-	inertiaDev := devInertiaEnabled(target)
-	if inertiaDev {
-		if _, set := inertiaConfigOverride(target); !set {
-			fmt.Fprintf(stdout, "%s●%s Inertia app detected — serving pages at the app port (set [runtime.inertia] enabled = false to opt out)\n", ansiCyan, ansiReset)
-		}
-	}
-	var frontendBaseURL string
+	// references viteless for HMR (NEXUS_VITE_DEV).
+	//
+	// Auto-detection shells out to `go list -deps` (~300ms, more on a large
+	// module), and nothing before the child's launch depends on the answer —
+	// so it runs off the critical path and the first compile starts without
+	// waiting for it.
+	inertiaFut := newFuture(func() bool { return devInertiaEnabled(target) })
 
 	// Optional frontend watcher — runs alongside the Go process. Logs
 	// stream into the same terminal under a [web] prefix so build
@@ -373,6 +371,11 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// dev server (non-bundle mode) prints it. Buffered=1 so the
 	// watcher's pump never blocks if no one's listening yet.
 	frontendURLCh := make(chan string, 1)
+	// frontendBase resolves to the dev server's base URL (empty when it
+	// failed or none was started). Only the Inertia path has to wait for it,
+	// so the dev server boots — deps, transforms and all — while the Go
+	// build already runs.
+	var frontendBase *future[string]
 	if frontendDir != "" {
 		// The frontend is served by the embedded viteless engine (Vite for
 		// Go): a zero-Node HMR dev server that proxies unmatched requests
@@ -395,35 +398,44 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		// Expose the nexus.toml [env] table to the frontend as
 		// import.meta.env.<dotted.name> (e.g. import.meta.env.client.id).
 		env, _ := nexus.EnvVars(nexusTOMLPath(target))
-		d, err := viteless.Dev(viteless.DevConfig{
-			Root:          frontendDir,
-			ProxyResolver: proxyResolver,
-			Mode:          "development",
-			Env:           env,
-			Logf: func(format string, args ...any) {
-				msg := fmt.Sprintf(format, args...)
-				// Inertia dev is browser-at-the-app-port: the Vite server is
-				// just an asset/HMR origin the user never visits, so keep its
-				// routine chatter quiet and surface only errors.
-				if inertiaDev && !strings.Contains(strings.ToLower(msg), "error") {
-					return
-				}
-				fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, msg)
-			},
-		})
-		if err != nil {
-			fmt.Fprintf(stderr, "frontend dev server disabled: %v\n", err)
-			frontendURLCh = nil
-		} else {
+		frontendBase = newFuture(func() string {
+			d, err := viteless.Dev(viteless.DevConfig{
+				Root:          frontendDir,
+				ProxyResolver: proxyResolver,
+				Mode:          "development",
+				Env:           env,
+				Logf: func(format string, args ...any) {
+					msg := fmt.Sprintf(format, args...)
+					// Inertia dev is browser-at-the-app-port: the Vite server is
+					// just an asset/HMR origin the user never visits, so keep its
+					// routine chatter quiet and surface only errors.
+					if inertiaFut.get() && !strings.Contains(strings.ToLower(msg), "error") {
+						return
+					}
+					fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, msg)
+				},
+			})
+			if err != nil {
+				fmt.Fprintf(stderr, "frontend dev server disabled: %v\n", err)
+				return ""
+			}
 			go func() { <-ctx.Done(); d.Close() }()
-			frontendBaseURL = d.URL()
 			select {
 			case frontendURLCh <- d.URL():
 			default:
 			}
-		}
+			return d.URL()
+		})
 	} else {
 		frontendURLCh = nil
+	}
+
+	// projectRoot is what the watchers walk and what .nexusignore patterns
+	// are relative to: the directory nexus dev was invoked from.
+	projectRoot, _ := os.Getwd()
+	userIgnore := loadNexusIgnore(projectRoot)
+	if userIgnore != nil {
+		fmt.Fprintf(stdout, "  %s● %s · %d pattern(s)%s\n", ansiDim, nexusIgnoreFile, userIgnore.patterns(), ansiReset)
 	}
 
 	// --dist: mirror the live frontend into web/dist in the background so a
@@ -433,7 +445,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// even when viteless.Dev failed to come up.
 	if distWatch && frontendDir != "" {
 		env, _ := nexus.EnvVars(nexusTOMLPath(target))
-		if err := watchDistBuild(ctx, frontendDir, env, stdout, stderr); err != nil {
+		if err := watchDistBuild(ctx, frontendDir, env, userIgnore, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "%s●%s dist watch disabled: %v\n", ansiYellow, ansiReset, err)
 		}
 	}
@@ -441,7 +453,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	var restartCh chan struct{}
 	if watch {
 		restartCh = make(chan struct{}, 1)
-		root, _ := os.Getwd()
+		root := projectRoot
 		// In dev mode the frontend dir is owned by the frontend
 		// watcher (vite, esbuild, etc.); Go has no business
 		// rebuilding when its files change. Override the embed-root
@@ -612,9 +624,18 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		}
 		// In Inertia mode, hand the child the viteless dev URL (every
 		// restart) so the app's document shell can reference it for HMR.
+		// This is the one place that has to wait for the detection and the
+		// dev server — by now the build has already run.
 		inertiaViteURL := ""
-		if inertiaDev {
-			inertiaViteURL = frontendBaseURL
+		if inertiaFut.get() {
+			if first {
+				if _, set := inertiaConfigOverride(target); !set {
+					fmt.Fprintf(stdout, "%s●%s Inertia app detected — serving pages at the app port (set [runtime.inertia] enabled = false to opt out)\n", ansiCyan, ansiReset)
+				}
+			}
+			if frontendBase != nil {
+				inertiaViteURL = frontendBase.get()
+			}
 		}
 		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, stdout, stderr)
 		if err != nil {
@@ -855,8 +876,12 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash,
 	// Wait briefly for the still-pending signals so the Vite URL can
 	// catch up when an API signal landed first. A bounded deadline
 	// keeps this from stalling the banner when there's no frontend.
+	//
+	// With no dev server in play (frontendURLCh nil) there is no second
+	// signal to wait for, and burning the grace window would just delay
+	// the ready line on every pure-Go app.
 	deadline := time.After(frontendGrace)
-	for viteURL == "" || ready == "" {
+	for (frontendURLCh != nil && viteURL == "") || ready == "" {
 		select {
 		case <-ctx.Done():
 			return

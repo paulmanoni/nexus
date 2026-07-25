@@ -327,3 +327,161 @@ func TestWatchSource_IgnoresNewDirWithoutBuildInputs(t *testing.T) {
 	case <-time.After(600 * time.Millisecond):
 	}
 }
+
+// startWatch boots a watcher on dir and returns its signal channel.
+func startWatch(t *testing.T, dir string, ignore []string) chan struct{} {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	out := make(chan struct{}, 1)
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, ignore); err != nil {
+		t.Fatalf("watchSource: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	return out
+}
+
+func expectNoSignal(t *testing.T, out <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-out:
+		t.Fatalf("rebuilt for %s", what)
+	case <-time.After(600 * time.Millisecond):
+	}
+}
+
+// `go build` never compiles test files, so editing one can't change the
+// binary — restarting the app would only cost the developer its state.
+func TestWatchSource_IgnoresTestFiles(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "store.go")
+	test := filepath.Join(dir, "store_test.go")
+	for _, f := range []string{src, test} {
+		if err := os.WriteFile(f, []byte("package app\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := startWatch(t, dir, nil)
+
+	if err := os.WriteFile(test, []byte("package app\n// edited test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectNoSignal(t, out, "a _test.go edit")
+
+	// Sanity: the same watcher still fires for real source next to it.
+	if err := os.WriteFile(src, []byte("package app\n// edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-out:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no signal for a non-test .go edit")
+	}
+}
+
+func TestWatchSource_IgnoresTestdata(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixtures := filepath.Join(dir, "testdata")
+	if err := os.Mkdir(fixtures, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtures, "golden.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := startWatch(t, dir, nil)
+
+	if err := os.WriteFile(filepath.Join(fixtures, "golden.go"), []byte("package x\n// changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectNoSignal(t, out, "a testdata fixture")
+}
+
+// A nested go.mod is outside the root module's ./..., so its files never
+// reach the binary — unless the root module replaces into it.
+func TestWatchSource_NestedModules(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"),
+		[]byte("module example.test/app\n\ngo 1.22\n\nreplace example.test/lib => ./libs/lib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mkmod := func(rel string) string {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "go.mod"), []byte("module example.test/"+filepath.Base(rel)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		src := filepath.Join(p, "x.go")
+		if err := os.WriteFile(src, []byte("package lib\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return src
+	}
+	separate := mkmod("tools/gen")
+	replaced := mkmod("libs/lib")
+
+	out := startWatch(t, dir, nil)
+
+	if err := os.WriteFile(separate, []byte("package lib\n// edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectNoSignal(t, out, "an edit in an unreferenced nested module")
+
+	if err := os.WriteFile(replaced, []byte("package lib\n// edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-out:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no signal for a nested module the root module replaces into")
+	}
+}
+
+// A project's own .nexusignore keeps listed paths out of the dev loop:
+// generated trees, scratch dirs, a vendored sibling service.
+func TestWatchSource_HonorsNexusIgnore(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".nexusignore"),
+		[]byte("# project rules\ngenerated/\nlegacy/*.go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, sub := range []string{"generated", "legacy"} {
+		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sub, "x.go"), []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := startWatch(t, dir, nil)
+
+	if err := os.WriteFile(filepath.Join(dir, "generated", "x.go"), []byte("package x\n// gen\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectNoSignal(t, out, "a write inside an ignored directory")
+
+	if err := os.WriteFile(filepath.Join(dir, "legacy", "x.go"), []byte("package x\n// legacy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectNoSignal(t, out, "a write matching an ignored glob")
+
+	// Everything else still rebuilds.
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-out:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no signal for a file outside .nexusignore")
+	}
+}

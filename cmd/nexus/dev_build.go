@@ -151,3 +151,28 @@ func fileHash(path string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// future is a value computed off the critical path: the work starts when
+// the future is created and get() blocks only when the answer is finally
+// needed. `nexus dev` uses it for the startup probes that used to run in
+// sequence ahead of the first compile — the Inertia detection's `go list`
+// and the viteless dev server's boot — neither of which the build depends
+// on.
+type future[T any] struct {
+	done chan struct{}
+	val  T
+}
+
+func newFuture[T any](fn func() T) *future[T] {
+	f := &future[T]{done: make(chan struct{})}
+	go func() {
+		defer close(f.done)
+		f.val = fn()
+	}()
+	return f
+}
+
+func (f *future[T]) get() T {
+	<-f.done
+	return f.val
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -226,20 +227,30 @@ func (i *pkgIndex) loadGraph(root string) (map[string][]string, error) {
 		if p.Name == "" || p.Name == "main" {
 			continue
 		}
-		if !slicesContains(graph[p.Name], p.ImportPath) {
+		if !slices.Contains(graph[p.Name], p.ImportPath) {
 			graph[p.Name] = append(graph[p.Name], p.ImportPath)
 		}
 	}
 	return graph, nil
 }
 
-func slicesContains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
+// findModuleRoot walks up from dir to the nearest directory holding a
+// go.mod, or "" when there is none.
+func findModuleRoot(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
 	}
-	return false
+	for {
+		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err == nil {
+			return abs
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return ""
+		}
+		abs = parent
+	}
 }
 
 // moduleStamp fingerprints the go.mod / go.sum governing dir, walking up to
@@ -247,16 +258,9 @@ func slicesContains(haystack []string, needle string) bool {
 // the cached import paths. Returns "" when no module is found — the index
 // then relies on lookup misses to notice staleness.
 func moduleStamp(dir string) string {
-	modDir := dir
-	for {
-		if _, err := os.Stat(filepath.Join(modDir, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(modDir)
-		if parent == modDir {
-			return ""
-		}
-		modDir = parent
+	modDir := findModuleRoot(dir)
+	if modDir == "" {
+		return ""
 	}
 	var b strings.Builder
 	for _, name := range []string{"go.mod", "go.sum"} {

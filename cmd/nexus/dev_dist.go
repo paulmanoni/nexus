@@ -34,12 +34,12 @@ import (
 // writes only there), and the Go-source watcher already suppresses restarts on
 // web/dist writes because the frontend dir is in its ignore tree — so a dist
 // rebuild neither retriggers itself nor bounces the Go process.
-func watchDistBuild(ctx context.Context, frontendDir string, env map[string]string, stdout, stderr io.Writer) error {
+func watchDistBuild(ctx context.Context, frontendDir string, env map[string]string, userIgnore *ignoreMatcher, stdout, stderr io.Writer) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
-	if err := addDistWatchDirs(w, frontendDir); err != nil {
+	if err := addDistWatchDirs(w, frontendDir, userIgnore); err != nil {
 		w.Close()
 		return err
 	}
@@ -89,7 +89,7 @@ func watchDistBuild(ctx context.Context, frontendDir string, env map[string]stri
 				if !ok {
 					return
 				}
-				if !distRelevant(ev) {
+				if !distRelevant(ev) || userIgnore.match(ev.Name, false) {
 					continue
 				}
 				// A new source subdir appeared mid-session (new feature
@@ -97,7 +97,7 @@ func watchDistBuild(ctx context.Context, frontendDir string, env map[string]stri
 				// rebuilds. Skip the output/dep dirs so we never watch dist.
 				if ev.Op&fsnotify.Create != 0 {
 					if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() && !distSkipDir(filepath.Base(ev.Name)) {
-						_ = addDistWatchDirs(w, ev.Name)
+						_ = addDistWatchDirs(w, ev.Name, userIgnore)
 					}
 				}
 				if debounce != nil {
@@ -116,9 +116,10 @@ func watchDistBuild(ctx context.Context, frontendDir string, env map[string]stri
 }
 
 // addDistWatchDirs registers frontendDir and its subdirs with the watcher,
-// skipping the build output (dist), installed deps (node_modules), and
-// hidden/cache dirs so the build's own writes never retrigger it.
-func addDistWatchDirs(w *fsnotify.Watcher, root string) error {
+// skipping the build output (dist), installed deps (node_modules),
+// hidden/cache dirs so the build's own writes never retrigger it, and
+// whatever the project's .nexusignore lists.
+func addDistWatchDirs(w *fsnotify.Watcher, root string, userIgnore *ignoreMatcher) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable subtrees rather than abort the walk
@@ -126,7 +127,7 @@ func addDistWatchDirs(w *fsnotify.Watcher, root string) error {
 		if !d.IsDir() {
 			return nil
 		}
-		if path != root && distSkipDir(d.Name()) {
+		if path != root && (distSkipDir(d.Name()) || userIgnore.match(path, true)) {
 			return filepath.SkipDir
 		}
 		return w.Add(path)
