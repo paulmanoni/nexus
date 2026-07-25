@@ -76,7 +76,7 @@ stub so the first `go build` (before any build) works.
 
 ### Build / serve commands
 ```
-nexus dev                # go run + viteless HMR dev server — see below
+nexus dev                # build-then-swap Go loop + viteless HMR dev server — see below
 nexus build              # viteless build → web/dist, then go build embeds it
 ```
 `nexus build` skips the frontend step when `web/` has no `index.html`/`src` (a pure-Go
@@ -93,6 +93,22 @@ app). No npm step — viteless fetches/caches deps itself (or uses node_modules 
 
 So in dev: **frontend → :5173, dashboard/API → :8080.** In production the embedded
 `web/dist` is served at the app port via `ServeFrontend`.
+
+**Go restarts are build-then-swap.** On a save the next binary compiles while the
+current one keeps serving; only a green build takes the old process down, so the app
+is unavailable for the swap (~20ms) rather than the whole compile — the outage no
+longer grows with build time. Three consequences worth knowing:
+- **A broken save doesn't take the app down.** The compile error prints and the last
+  good build keeps serving until the code compiles again.
+- **A save that doesn't change the binary skips the restart** (`● binary unchanged`).
+  Go's build output is content-addressed, so `_test.go` edits, comment-only changes,
+  and edits in packages the app doesn't import cost nothing and preserve app state.
+- The freshly built binary is **pre-executed once** (aborted inside the Go runtime,
+  before any package init or `main`) so the OS pays its first-exec cost — ~450ms of
+  code-signature validation on macOS — while the old process is still answering.
+
+`--go-run` restores the legacy loop (`go run`, app killed before every rebuild) if
+the new one ever misbehaves. `--fast` still strips DWARF for a quicker link.
 
 **Keeping `web/dist` fresh in dev (`--dist`).** The HMR server serves the frontend
 from memory and never writes `web/dist`, so the embedded production bundle stays
@@ -774,8 +790,10 @@ nexus new <dir>      Scaffold an app + nexus.toml. --frontend vue|react, --db, -
                      --auth, --module <path>, --yes (no prompts).
 nexus init [dir]     Add a frontend (web/) to an existing project. --frontend (req).
 nexus dev [dir]      Live dev: viteless SPA+HMR on :5173, app/dashboard on :8080.
+                     Go rebuilds are build-then-swap (old binary serves through the
+                     compile; broken builds keep it up; no-op builds skip the restart).
                      --dist keeps web/dist rebuilt in the background so go build
-                     always embeds the current frontend.
+                     always embeds the current frontend. --go-run = legacy loop.
 nexus build          viteless build → web/dist, then go build embeds it. No npm.
                      ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.

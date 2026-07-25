@@ -49,6 +49,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		frontendCmd string
 		verbose     bool
 		fast        bool
+		legacyGoRun bool
 		distWatch   bool
 		rawLogs     bool
 		logFormat   string
@@ -85,7 +86,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, legacyGoRun, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -106,6 +107,8 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
 	cmd.Flags().BoolVar(&fast, "fast", false,
 		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking; disables delve and trims panic stack detail")
+	cmd.Flags().BoolVar(&legacyGoRun, "go-run", false,
+		"legacy dev loop: launch via `go run`, killing the app before every rebuild (default: build-then-swap — the old binary keeps serving while the next one compiles)")
 	cmd.Flags().BoolVar(&distWatch, "dist", false,
 		"also keep web/dist rebuilt in the background (debounced viteless build) so go build / the production embed always matches the live frontend")
 	cmd.Flags().BoolVar(&rawLogs, "raw-logs", false,
@@ -270,9 +273,15 @@ func (e *userError) Error() string { return e.msg }
 // reads top-to-bottom without being interleaved with flag parsing.
 //
 // When watch is true, runs a fsnotify watcher on the target dir and
-// restarts `go run` on every coalesced source-file change. SIGINT
-// stops the loop and tears down the active child cleanly.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
+// rebuilds on every coalesced source-file change. SIGINT stops the loop
+// and tears down the active child cleanly.
+//
+// Rebuilds are build-then-swap: the next binary compiles while the
+// current one keeps serving, and the swap happens only once the build
+// is green (see devBuilder). legacyGoRun restores the old `go run`
+// loop, which kills the app first and leaves it down for the whole
+// compile.
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast, legacyGoRun, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -450,14 +459,81 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		}
 	}
 
+	// The compiler for the build-then-swap path. Nil in legacy --go-run
+	// mode, where `go run` still owns compilation.
+	var builder *devBuilder
+	if !legacyGoRun {
+		b, err := newDevBuilder(fast)
+		if err != nil {
+			return fmt.Errorf("dev build dir: %w", err)
+		}
+		builder = b
+		defer builder.close()
+	}
+
 	// First boot announces the dashboard URL via waitAndOpen. Subsequent
 	// restarts skip the open-browser branch (user already has the tab).
 	first := true
+
+	// Child + build state carried across loop iterations. lastHash is the
+	// running binary's content hash, so a rebuild that produces identical
+	// bytes can skip the swap entirely; prevBin is the superseded binary,
+	// removed once its process is gone.
+	var (
+		exited    <-chan error
+		killChild func()
+		running   bool
+		lastHash  string
+		prevBin   string
+		exitErr   error
+	)
+	defer func() {
+		if killChild != nil {
+			killChild()
+		}
+	}()
+
+	// waitForChange parks until the watcher reports a source change,
+	// returning false when the dev loop should end (SIGINT, or a child
+	// that exited with no watcher to revive it). A child that dies while
+	// we're parked is reported and we keep waiting — the next save
+	// rebuilds and respawns it, which is why a crash-on-boot no longer
+	// needs its own branch in the loop below.
+	waitForChange := func() bool {
+		for {
+			var childExit <-chan error
+			if running {
+				childExit = exited
+			}
+			select {
+			case <-ctx.Done():
+				return false
+			case err := <-childExit:
+				running, killChild = false, nil
+				if err != nil {
+					if restartCh == nil {
+						exitErr = fmt.Errorf("app exited: %w", err)
+						return false
+					}
+					fmt.Fprintf(stderr, "%s●%s app exited: %v · waiting for changes\n", ansiYellow, ansiReset, err)
+					continue
+				}
+				if restartCh == nil {
+					return false
+				}
+			case <-restartCh:
+				fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
+				return true
+			}
+		}
+	}
+
 	for {
 		// Regenerate the handler-registration overlay from the current //@
 		// annotations before each (re)launch, replacing the previous temp dir.
 		// A scan error here usually means a source file won't compile either,
-		// so go run surfaces the real error — we just warn and drop the overlay.
+		// so the build below surfaces the real error — we just warn and drop
+		// the overlay.
 		if cleanupOverlay != nil {
 			cleanupOverlay()
 			cleanupOverlay = nil
@@ -468,6 +544,65 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		} else {
 			overlayPath, cleanupOverlay = op, cl
 		}
+
+		// Build-then-swap. The child from the previous iteration is still
+		// serving here — nothing is torn down until the build is green.
+		binPath := ""
+		if builder != nil {
+			start := time.Now()
+			bin, buildErr := builder.build(ctx, target, overlayPath, stderr)
+			if ctx.Err() != nil {
+				return exitErr
+			}
+			if buildErr != nil {
+				// Compile error. With a watcher up, the running app (if
+				// any) stays up and the user fixes the code; without one,
+				// there's nothing to wait for.
+				if restartCh == nil {
+					return fmt.Errorf("build failed: %w", buildErr)
+				}
+				if running {
+					fmt.Fprintf(stderr, "%s●%s build failed · still serving the previous build\n", ansiYellow, ansiReset)
+				} else {
+					fmt.Fprintf(stderr, "%s●%s build failed · waiting for changes\n", ansiYellow, ansiReset)
+				}
+				if !waitForChange() {
+					return exitErr
+				}
+				continue
+			}
+			fmt.Fprintf(stdout, "  %s● built in %s%s\n", ansiDim, time.Since(start).Round(time.Millisecond), ansiReset)
+
+			// Identical bytes mean the running process already IS this
+			// build — the save didn't reach the app's build graph (a
+			// _test.go edit, an unchanged buffer, another package's
+			// files). Restarting would only cost the user their app state.
+			h, herr := fileHash(bin)
+			if running && herr == nil && h == lastHash {
+				_ = os.Remove(bin)
+				fmt.Fprintf(stdout, "  %s● binary unchanged · kept the running process%s\n", ansiDim, ansiReset)
+				if !waitForChange() {
+					return exitErr
+				}
+				continue
+			}
+			if prevBin != "" {
+				_ = os.Remove(prevBin)
+			}
+			binPath, prevBin, lastHash = bin, bin, h
+
+			// Pay the OS's first-exec cost (code-signature validation)
+			// now, while the outgoing child is still answering requests.
+			builder.prewarm(ctx, binPath)
+		}
+
+		// The port is single-occupancy, so the outgoing child dies only
+		// now — after its replacement has compiled successfully.
+		if killChild != nil {
+			killChild()
+			killChild, running = nil, false
+		}
+
 		// Pass the frontend URL channel only on the first boot.
 		// Subsequent Go restarts shouldn't re-open browsers, and the
 		// vite dev server is already running anyway.
@@ -481,10 +616,11 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		if inertiaDev {
 			inertiaViteURL = frontendBaseURL
 		}
-		exited, killChild, err := startDevChild(ctx, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, stdout, stderr)
+		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, stdout, stderr)
 		if err != nil {
 			return err
 		}
+		exited, killChild, running = ex, kill, true
 		// Auto-codegen for frontend.Plugin apps. Runs alongside the
 		// boot-banner goroutine; both probe the same listen port
 		// independently, and devCodegenWatch silently no-ops when no
@@ -512,85 +648,51 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		// would silently never fire.
 		go devCodegenWatch(ctx, proxyAddr, frontendDir, "vue", proxyURL, stdout, stderr)
 		first = false
-		select {
-		case err := <-exited:
-			if err != nil {
-				// Compile error or panic. With the watcher running we
-				// don't tear down the loop — the user fixes the bug,
-				// the next save triggers a restart. Without it, exit
-				// like the legacy single-shot path.
-				if restartCh == nil {
-					return fmt.Errorf("app exited: %w", err)
-				}
-				fmt.Fprintf(stderr, "%s●%s app exited: %v · waiting for changes\n", ansiYellow, ansiReset, err)
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-restartCh:
-					fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
-					continue
-				}
-			}
-			if restartCh == nil {
-				return nil
-			}
-			// Clean exit + watcher running: idle until the next change.
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-restartCh:
-				fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
-			}
-		case <-restartCh:
-			fmt.Fprintf(stdout, "%s●%s change detected · rebuilding\n", ansiCyan, ansiReset)
-			killChild()
-		case <-ctx.Done():
-			killChild()
-			return nil
+		if !waitForChange() {
+			return exitErr
 		}
 	}
 }
 
-// startDevChild starts one `go run target` invocation and returns
-// channels the caller selects on:
+// startDevChild launches one run of the app and returns channels the
+// caller selects on:
 //   - exited: receives the child's wait error (or nil on clean exit)
 //   - killChild: tear-down hook that SIGTERMs the process group and
 //     escalates to SIGKILL after 5s
 //
-// When overlayPath is non-empty, it's passed via `go run
-// -overlay=...` so the manifest-derived deploy-init (port,
-// listeners, topology) gets compiled into the binary.
+// binPath names a binary devBuilder already compiled — the default
+// build-then-swap path, which execs it directly (no resident `go run`
+// supervisor, and the compile happened while the previous child was
+// still serving). When binPath is empty (--go-run) we fall back to
+// `go run`, which compiles here and so keeps the app down for the
+// duration; overlayPath is then passed as `go run -overlay=...` so the
+// decorator-form registrations still reach the build.
+//
+// The child inherits the CLI's working directory in both modes, so
+// nexus.Boot resolves nexus.toml from the same place either way.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, target, addr, overlayPath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
-	args := []string{"run"}
-	if overlayPath != "" {
-		args = append(args, "-overlay="+overlayPath)
+func startDevChild(ctx context.Context, binPath, target, addr, overlayPath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
+	cmd := exec.Command(binPath)
+	if binPath == "" {
+		// Legacy --go-run path. The flags mirror devBuilder.build:
+		// -gcflags=all=-N -l skips the optimizer for the whole graph
+		// (markedly faster compiles, and dev binaries are never
+		// perf-sensitive), while --fast additionally strips DWARF so the
+		// linker — the step no cache makes incremental — emits less. The
+		// tradeoff there is that delve can't attach and panic traces lose
+		// detail, which is why it stays opt-in.
+		args := []string{"run"}
+		if overlayPath != "" {
+			args = append(args, "-overlay="+overlayPath)
+		}
+		args = append(args, "-gcflags=all=-N -l")
+		if fast {
+			args = append(args, "-ldflags=-w")
+		}
+		args = append(args, target)
+		cmd = exec.Command("go", args...)
 	}
-	// Fast-dev compile: disable optimization (-N) and inlining (-l)
-	// for every package. The compiler skips its optimization passes,
-	// so each rebuild's compile step is markedly faster — and since
-	// dev binaries are never perf-sensitive, the lost runtime speed
-	// doesn't matter. `all=` keeps the flags stable across the whole
-	// build graph so the cache stays warm between restarts (changing
-	// the flag set would invalidate it). We deliberately leave the
-	// linker alone (no -ldflags=-w): DWARF stays in, so delve and
-	// full panic stack traces keep working. The SDK/frontend codegen
-	// runs post-boot and is untouched — every restart still
-	// regenerates the full typed surface.
-	args = append(args, "-gcflags=all=-N -l")
-	// --fast additionally strips DWARF (-ldflags=-w) so the linker has
-	// less to emit on every restart — the linker runs in full each
-	// reboot (unlike compilation, which the cache makes incremental),
-	// so this is the one knob that shaves the unavoidable per-restart
-	// cost. The tradeoff is delve can no longer attach and panic
-	// traces lose some detail, which is why it's opt-in rather than
-	// always-on like -N -l above.
-	if fast {
-		args = append(args, "-ldflags=-w")
-	}
-	args = append(args, target)
-	cmd := exec.Command("go", args...)
 	// Tee stdout/stderr through addrFinder so we can detect the
 	// actual bind address from gin's "Listening and serving HTTP on
 	// :PORT" line. The user's own Config.Addr trumps our --addr flag
@@ -641,7 +743,7 @@ func startDevChild(ctx context.Context, target, addr, overlayPath string, openOn
 	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
-		return nil, func() {}, fmt.Errorf("failed to start `go run %s`: %w", target, err)
+		return nil, func() {}, fmt.Errorf("failed to start %s: %w", strings.Join(cmd.Args, " "), err)
 	}
 
 	// waitAndOpen runs even when --no-open is set so the user still

@@ -1153,9 +1153,20 @@ CLI CHEATSHEET
                              --frontend vue|react  (required)
                              --force               overwrite web/
 
-  nexus dev [dir]            go run + the Vite dev server (HMR on :5173);
-                             serves the dashboard. Injects a proxy so
-                             /__nexus, /graphql, /oauth, /ws reach the app.
+  nexus dev [dir]            Build + run the app alongside the Vite dev
+                             server (HMR on :5173); serves the dashboard.
+                             Injects a proxy so /__nexus, /graphql, /oauth,
+                             /ws reach the app.
+
+                             Rebuilds are build-then-swap: the next binary
+                             compiles while the current one keeps serving,
+                             and the swap happens only once the build is
+                             green — so the app is down for the process
+                             swap (~20ms) instead of the whole compile, a
+                             failed build leaves the running app up, and a
+                             save that doesn't change the binary (a
+                             _test.go edit, a comment) skips the restart.
+
                              --addr host:port   listen address override
                              --frontend-cmd <c> dev-server command (default
                                                 "npm run dev" in web/)
@@ -1165,6 +1176,9 @@ CLI CHEATSHEET
                                                 disables delve + trims panic
                                                 detail (compile is already sped
                                                 up unconditionally via -N -l)
+                             --go-run           legacy loop: launch via
+                                                "go run", killing the app
+                                                before every rebuild
 
   nexus build                Build a single binary. Runs npm install (if
                              node_modules is missing) + vite build, then
