@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -9,12 +8,10 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	toml "github.com/pelletier/go-toml/v2"
 
@@ -50,7 +47,7 @@ func allHandlerArtifacts(root, outName string) ([]handlergen.Result, error) {
 // no main package is found or every annotated package already IS the main
 // package (nothing to pull in).
 func aggregatorResult(root string, results []handlergen.Result) (handlergen.Result, bool, error) {
-	mainDir, err := findMainDir(root)
+	mainDir, err := pkgs.mainDir(root)
 	if err != nil || mainDir == "" {
 		return handlergen.Result{}, false, err
 	}
@@ -61,7 +58,7 @@ func aggregatorResult(root string, results []handlergen.Result) (handlergen.Resu
 		if dir == mainDir {
 			continue // annotations in main itself need no import
 		}
-		ip, err := importPathOf(dir)
+		ip, err := pkgs.importPath(root, dir)
 		if err != nil {
 			return handlergen.Result{}, false, fmt.Errorf("resolve import path of %s: %w", dir, err)
 		}
@@ -90,34 +87,6 @@ func aggregatorResult(root string, results []handlergen.Result) (handlergen.Resu
 		return handlergen.Result{}, false, fmt.Errorf("format aggregator: %w", err)
 	}
 	return handlergen.Result{Path: filepath.Join(mainDir, "nexus_imports_gen.go"), Content: content}, true, nil
-}
-
-// findMainDir returns the absolute dir of the `package main` under root (the
-// first, if several), or "" when there is none. Best-effort via `go list`.
-func findMainDir(root string) (string, error) {
-	cmd := exec.Command("go", "list", "-find", "-f", `{{if eq .Name "main"}}{{.Dir}}{{end}}`, "./...")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		return "", nil // no module / unbuildable tree → just skip the aggregator
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			return line, nil
-		}
-	}
-	return "", nil
-}
-
-// importPathOf returns the import path of the package in dir via `go list`.
-func importPathOf(dir string) (string, error) {
-	cmd := exec.Command("go", "list", "-find", "-f", "{{.ImportPath}}", ".")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 // handlerGenFileName is the file `nexus generate handlers` writes (committed)
@@ -208,10 +177,6 @@ type selectorResolver struct {
 	fileCache map[string]map[string]string // file -> selector -> import line
 	dirCache  map[string]map[string]string // package dir -> merged selector -> import line
 	hints     map[string]string            // [decorators.imports] from nexus.toml
-
-	graphOnce sync.Once
-	graph     map[string][]string // package name -> import path(s) (go list)
-	graphErr  error
 }
 
 func newSelectorResolver(root string) *selectorResolver {
@@ -237,8 +202,14 @@ func (r *selectorResolver) resolve(file, sel string) (string, error) {
 	if path, ok := r.hints[sel]; ok {
 		return importLineFor(sel, path), nil
 	}
-	// Layer 3 — the module import graph, matched on real package name.
-	graph, err := r.buildGraph()
+	// Layer 3 — the module import graph, matched on real package name. It's
+	// cached across scans (see pkgIndex); a selector that isn't in the cached
+	// copy earns one rebuild, since a dependency added mid-session is exactly
+	// what a miss looks like.
+	graph, err := pkgs.moduleGraph(r.root, false)
+	if err == nil && len(graph[sel]) == 0 {
+		graph, err = pkgs.moduleGraph(r.root, true)
+	}
 	if err != nil {
 		return "", fmt.Errorf("package %q is not imported here and the module graph could not be read (%v) — import it or set [decorators.imports].%s in nexus.toml", sel, err, sel)
 	}
@@ -286,44 +257,6 @@ func (r *selectorResolver) dirImports(dir string) map[string]string {
 	}
 	r.dirCache[dir] = merged
 	return merged
-}
-
-// buildGraph indexes every package in the module build graph by its real package
-// name (go list -deps -json). Built lazily and once; main packages are skipped
-// (they can't be imported). A go list failure is sticky and surfaced to callers.
-func (r *selectorResolver) buildGraph() (map[string][]string, error) {
-	r.graphOnce.Do(func() {
-		cmd := exec.Command("go", "list", "-deps", "-json", "./...")
-		cmd.Dir = r.root
-		out, err := cmd.Output()
-		if err != nil {
-			r.graphErr = err
-			return
-		}
-		graph := map[string][]string{}
-		dec := json.NewDecoder(bytes.NewReader(out))
-		for dec.More() {
-			var p struct{ ImportPath, Name string }
-			if err := dec.Decode(&p); err != nil {
-				break
-			}
-			if p.Name == "" || p.Name == "main" {
-				continue
-			}
-			dup := false
-			for _, existing := range graph[p.Name] {
-				if existing == p.ImportPath {
-					dup = true
-					break
-				}
-			}
-			if !dup {
-				graph[p.Name] = append(graph[p.Name], p.ImportPath)
-			}
-		}
-		r.graph = graph
-	})
-	return r.graph, r.graphErr
 }
 
 // importLineFor builds the import line so the generated file's `sel.Func(...)`

@@ -76,17 +76,28 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 				if !ok {
 					return
 				}
-				if !relevantEvent(ev, embedRoots, ignoreSet) {
-					continue
-				}
+				rebuild := relevantEvent(ev, embedRoots, ignoreSet)
 				// New directory created? Add it to the watch list so
 				// edits inside fire restarts. Common when a user adds
 				// a new module package mid-session, or when a frontend
 				// build creates fresh subdirs under an embed root.
+				//
+				// This runs BEFORE the relevance verdict is final: a
+				// directory name is never a build input, so filtering
+				// first would leave the new tree unwatched forever. The
+				// files inside can also land before the watch does
+				// (mkdir + write is one editor action), so a new tree
+				// that already holds build inputs counts as a change.
 				if ev.Op&fsnotify.Create != 0 {
 					if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
 						_ = addWatchDirs(w, ev.Name, embedRoots, ignoreSet)
+						if !rebuild && treeHasBuildInput(ev.Name, embedRoots, ignoreSet) {
+							rebuild = true
+						}
 					}
+				}
+				if !rebuild {
+					continue
 				}
 				if debounce != nil {
 					debounce.Stop()
@@ -150,6 +161,32 @@ func addWatchDirs(w *fsnotify.Watcher, root string, embedRoots map[string]bool, 
 		}
 		return w.Add(path)
 	})
+}
+
+// treeHasBuildInput reports whether a newly created directory already
+// contains something that would have triggered a rebuild had we been
+// watching when it was written. Same verdict as relevantEvent, applied
+// per file, so embed roots and the ignore tree behave identically.
+// Bounded by shouldSkipDir, and only ever called on a directory Create.
+func treeHasBuildInput(root string, embedRoots map[string]bool, ignore []string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != root && shouldSkipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if relevantEvent(fsnotify.Event{Name: path, Op: fsnotify.Create}, embedRoots, ignore) {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // dirHasGoSource reports whether dir directly contains a .go file

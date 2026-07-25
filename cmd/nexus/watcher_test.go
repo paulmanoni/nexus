@@ -249,3 +249,81 @@ func TestWatchSource_DebouncesBurst(t *testing.T) {
 		// expected
 	}
 }
+
+// TestWatchSource_FiresOnNewPackageDir covers adding a package
+// mid-session: `mkdir pkg && write pkg/x.go` is one editor action, so the
+// file can land before the new directory joins the watch set. The tree
+// scan on directory-create is what keeps that save from being swallowed —
+// and the dir must end up watched, or every later edit inside it would be
+// swallowed too.
+func TestWatchSource_FiresOnNewPackageDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan struct{}, 1)
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, nil); err != nil {
+		t.Fatalf("watchSource: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	pkg := filepath.Join(dir, "billing")
+	if err := os.Mkdir(pkg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(pkg, "billing.go")
+	if err := os.WriteFile(src, []byte("package billing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-out:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no rebuild signal for a newly created package dir")
+	}
+
+	// And the new dir is now watched: a later edit inside it must fire too.
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(src, []byte("package billing\n\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-out:
+	case <-time.After(2 * time.Second):
+		t.Fatal("new package dir was not added to the watch set")
+	}
+}
+
+// A created directory that holds nothing the build cares about must not
+// bounce the app — mkdir alone is not a code change.
+func TestWatchSource_IgnoresNewDirWithoutBuildInputs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan struct{}, 1)
+	if err := watchSource(ctx, dir, out, &bytes.Buffer{}, nil); err != nil {
+		t.Fatalf("watchSource: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	docs := filepath.Join(dir, "docs")
+	if err := os.Mkdir(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docs, "notes.md"), []byte("# hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-out:
+		t.Fatal("rebuilt for a directory with no build inputs")
+	case <-time.After(600 * time.Millisecond):
+	}
+}
