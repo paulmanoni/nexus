@@ -6,6 +6,58 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-07-25
+
+### Changed
+
+- **`nexus dev` rebuilds are build-then-swap.** The loop used to kill the app and
+  then compile, so every save took the server down for the whole build. The next
+  binary now compiles while the current one keeps serving, and the swap happens
+  only once the build is green. Measured restart outage on a small app: **1413ms
+  (`go run`) → 22ms**, and it no longer scales with build time. Three
+  consequences: a **failed build leaves the running app up** (the compile error
+  prints, the last good build keeps serving); a save that doesn't change the
+  binary **skips the restart entirely** (Go's output is content-addressed, so
+  comment-only edits and edits outside the build graph preserve app state); and
+  the app is exec'd directly instead of under `go run`, dropping that
+  supervisor's ~40MB RSS. The freshly built binary is pre-executed once —
+  aborted inside the Go runtime, before any package init or `main` — so the OS
+  pays its first-exec cost (~450ms of code-signature validation on macOS) while
+  the old process is still answering. `--go-run` restores the legacy loop.
+- **The dev watcher is scoped to real build inputs.** `_test.go` files (never
+  compiled into the binary), `testdata/`, and nested modules with their own
+  `go.mod` no longer trigger rebuilds — unless the root module `replace`s into
+  such a module, which makes it a genuine build input.
+- **`nexus dev` starts faster.** The handler codegen's `go list` calls (one for
+  the main package plus one per annotated package, every restart) collapse into
+  a single cached `go list -find ./...` per session, invalidated by a
+  go.mod/go.sum change or a lookup miss: 203ms → ~1ms per restart on a small
+  app, 317ms → 0 on a large tree. The Inertia auto-detection and the viteless
+  dev server boot now run off the critical path instead of ahead of the first
+  compile, and the ready line no longer burns its frontend grace window on apps
+  with no dev server: first build 0.85s → 0.66s, ready 1.31s → 1.16s with a
+  frontend, 2.82s → 1.32s without one.
+
+### Added
+
+- **`.nexusignore`** — a per-project ignore list next to `nexus.toml`, read at
+  startup and honored by both the Go watcher and the `--dist` frontend build.
+  Patterns are a documented subset of `.gitignore`: a trailing slash matches
+  directories only, a pattern without a slash matches at any depth, a slash
+  anchors it to the project root, `**` spans directories, and `!` re-includes
+  (later rules win). An ignored directory is pruned, so nothing inside it is
+  watched. For generated trees, fixtures, or a sibling service's source living
+  in the same repo.
+
+### Fixed
+
+- **A package created mid-session never rebuilt.** A newly created directory was
+  filtered out as irrelevant before it could join the watch set, so neither its
+  creation nor any later edit inside it reached the rebuild signal. Directory
+  creates now register the tree first, and count as a change when it already
+  holds build inputs (`mkdir pkg && write pkg/x.go` is one editor action, so the
+  file usually lands before the watch does).
+
 ## [1.35.0] - 2026-07-23
 
 ### Added
