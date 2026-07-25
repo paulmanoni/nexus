@@ -471,6 +471,17 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		}
 	}
 
+	// Session scratch for the state the app preserves across rebuilds
+	// (nexus.PreserveDev). It lives outside the repo and dies with the dev
+	// session, so in-memory data survives a rebuild but never a Ctrl-C.
+	devStatePath := ""
+	if dir, err := os.MkdirTemp("", "nexus-dev-state-"); err == nil {
+		devStatePath = filepath.Join(dir, "state.json")
+		defer os.RemoveAll(dir)
+	} else {
+		fmt.Fprintf(stderr, "%s●%s dev-state disabled: %v\n", ansiYellow, ansiReset, err)
+	}
+
 	// The compiler for the build-then-swap path. Nil in legacy --go-run
 	// mode, where `go run` still owns compilation.
 	var builder *devBuilder
@@ -637,7 +648,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				inertiaViteURL = frontendBase.get()
 			}
 		}
-		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, stdout, stderr)
+		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -693,7 +704,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // nexus.Boot resolves nexus.toml from the same place either way.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, binPath, target, addr, overlayPath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	cmd := exec.Command(binPath)
 	if binPath == "" {
 		// Legacy --go-run path. The flags mirror devBuilder.build:
@@ -754,6 +765,12 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath strin
 	)
 	if verbose {
 		env = append(env, "NEXUS_VERBOSE=1")
+	}
+	// Where the app saves the state it preserves across rebuilds
+	// (nexus.PreserveDev). Only ever set here, which is what keeps the
+	// feature dev-only: a production binary sees no path and does nothing.
+	if devStatePath != "" {
+		env = append(env, "NEXUS_DEV_STATE="+devStatePath)
 	}
 	// Inertia: tell the app where the viteless dev server lives so its
 	// document shell can load the HMR client + entry from there.

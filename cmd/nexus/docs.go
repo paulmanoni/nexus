@@ -213,6 +213,7 @@ var topicSummaries = map[string]string{
 	"storage":     "extension/storage — file/object storage: local + S3 disks",
 	"mail":        "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
 	"cli":         "Subcommand cheatsheet (new / init / dev / build / client)",
+	"devstate":    "PreserveDev — carry in-memory state across a nexus dev rebuild",
 	"dashboard":   "/__nexus tabs, gating, HTTP surface",
 	"client":      "Embedded JS/TS SDK — connect a browser to your app",
 	"autoselect":  "Vite plugin that auto-injects opts.select from accesses",
@@ -223,6 +224,62 @@ var topicSummaries = map[string]string{
 // and stays under ~70 lines so the user can read a topic in one
 // scrollback. Keep examples copy-paste-runnable.
 var docsTopics = map[string]string{
+	"devstate": `
+DEV STATE (carrying in-memory state across a rebuild)
+
+A rebuild replaces the process, and Go has no code hot-swap, so anything
+living in a map dies with the old binary: the users you seeded, the rows
+you POSTed, the fixtures you set up by hand. PreserveDev hands that state
+to the dev loop on the way out and takes it back on the way in.
+
+    func NewStore() *Store {
+        s := &Store{notes: map[int]Note{}}
+        nexus.PreserveDev("notes", s)     // no-op outside nexus dev
+        return s
+    }
+
+    func (s *Store) SnapshotDev() ([]byte, error) { return json.Marshal(s.notes) }
+    func (s *Store) RestoreDev(b []byte) error    { return json.Unmarshal(b, &s.notes) }
+
+Restore happens inside PreserveDev, so it does not matter when the DI
+container gets around to constructing the value. The snapshot is written on
+graceful shutdown — exactly what nexus dev triggers before swapping in the
+new binary.
+
+No methods to write? Use the JSON form:
+
+    nexus.PreserveDevJSON("counters",
+        func() map[string]int { return s.snapshot() },
+        func(m map[string]int) { s.load(m) })
+
+Both callbacks run on another goroutine — take the store's own lock inside
+them, like its regular methods do.
+
+Built in: auth.MemoryUserStore implements DevState, so dev users survive a
+rebuild once you register it:
+
+    store := auth.NewMemoryUserStore()
+    store.CreateUser("alice", "s3cret-pw", "ADMIN")
+    nexus.PreserveDev("auth.users", store)
+
+A user the new process seeds itself wins over the snapshot, so changing the
+seed in code does what you expect.
+
+Scope, on purpose:
+
+  - Dev only. Outside nexus dev nothing is registered and no file is
+    written; a production binary carries a no-op.
+  - Per session. The state file lives in the dev session's temp dir and
+    dies with it: state survives rebuilds, not a Ctrl-C.
+  - Graceful exits only. A SIGKILL or a panic skips the snapshot.
+  - Best-effort. A snapshot or restore that fails is reported on stderr and
+    skipped — stale state from a struct you just reshaped never stops the
+    app from booting.
+
+Caches are deliberately not preserved: they are rebuildable by definition,
+and restoring typed values through an any-shaped store is unsound.
+`,
+
 	"quickstart": `
 QUICKSTART
 

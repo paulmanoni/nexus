@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-07-25
+
+### Added
+
+- **`nexus.PreserveDev` — in-memory state that survives a `nexus dev` rebuild.**
+  A rebuild replaces the process, so anything living in a map used to die with
+  the old binary: seeded users, rows you POSTed, fixtures set up by hand. A
+  value that implements `nexus.DevState` (`SnapshotDev() ([]byte, error)` /
+  `RestoreDev([]byte) error`) and registers itself with
+  `nexus.PreserveDev(name, v)` now hands its state to the dev loop on the way
+  out and takes it back on the way in. Restore happens inside `PreserveDev`, so
+  lazily constructed DI values work without ordering rules; the snapshot is
+  written on the graceful shutdown `nexus dev` already triggers before swapping
+  in the new binary. `nexus.PreserveDevJSON(name, get, set)` covers state you
+  can marshal directly, with no methods to write.
+
+  Dev-only (gated on the state file the CLI passes, so a production binary
+  carries a no-op), per-session (state survives rebuilds, not a Ctrl-C),
+  graceful exits only, and best-effort — a failed snapshot or restore is
+  reported on stderr and skipped, never fatal, so stale state from a struct you
+  just reshaped can't stop the app from booting. Caches are deliberately not
+  preserved: they're rebuildable by definition, and restoring typed values
+  through an `any`-shaped store is unsound. `nexus docs devstate`.
+- **`auth.MemoryUserStore` implements `DevState`**, so dev users survive a
+  rebuild once registered (`nexus.PreserveDev("auth.users", store)`). Password
+  hashes travel as-is, so restored users authenticate exactly as before; a user
+  the new process seeds itself wins over the snapshot, so changing the seed in
+  code does what you expect.
+
 ## [1.36.0] - 2026-07-25
 
 ### Changed

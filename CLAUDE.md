@@ -129,6 +129,26 @@ assets/**/snapshots     # ** spans any number of directories
 An ignored directory is pruned, so nothing inside it is watched (a `!` re-include under
 a pruned directory can't resurrect it — same rule git applies).
 
+**Keeping in-memory state across a rebuild (`nexus.PreserveDev`).** The rebuild replaces
+the process, so maps die with the old binary. Hand the state to the dev loop instead:
+```go
+func NewStore() *Store {
+    s := &Store{notes: map[int]Note{}}
+    nexus.PreserveDev("notes", s)          // no-op outside nexus dev
+    return s
+}
+func (s *Store) SnapshotDev() ([]byte, error) { return json.Marshal(s.notes) }
+func (s *Store) RestoreDev(b []byte) error    { return json.Unmarshal(b, &s.notes) }
+```
+Restore happens inside `PreserveDev`, so lazy DI construction is fine; the snapshot is
+written on the graceful shutdown `nexus dev` triggers before the swap. Without methods to
+write, use `nexus.PreserveDevJSON(name, get, set)`. `auth.MemoryUserStore` implements
+`DevState` already (register it as `nexus.PreserveDev("auth.users", store)`); users the
+new process seeds itself win over the snapshot. Dev-only (gated on the state file
+`nexus dev` passes), per-session (state survives rebuilds, not Ctrl-C), graceful exits
+only, and best-effort — a failed snapshot/restore is reported and skipped, never fatal.
+Caches are deliberately not preserved. `nexus docs devstate`.
+
 **Keeping `web/dist` fresh in dev (`--dist`).** The HMR server serves the frontend
 from memory and never writes `web/dist`, so the embedded production bundle stays
 frozen at the last `nexus build` — a `go build` taken mid-session ships stale assets.

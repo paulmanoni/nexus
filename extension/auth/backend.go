@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 )
 
@@ -212,6 +214,64 @@ func (s *MemoryUserStore) SetPassword(_ context.Context, id, encoded string) err
 	}
 	u.encoded = encoded
 	return nil
+}
+
+// SnapshotDev and RestoreDev implement nexus.DevState, so a store seeded with
+// dev users survives a `nexus dev` rebuild instead of making you re-create
+// them after every save. Opt in where the store is built:
+//
+//	store := auth.NewMemoryUserStore()
+//	nexus.PreserveDev("auth.users", store)
+//	if _, err := store.ByUsername(ctx, "alice"); err == nil { … }   // already there
+//
+// Password hashes travel as-is (they're already encoded), so restored users
+// authenticate exactly as before. The hashers themselves are configuration,
+// not state, and stay whatever the new process constructed.
+func (s *MemoryUserStore) SnapshotDev() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snap := devUserSnapshot{Sequence: s.sequence, Users: make([]devUser, 0, len(s.byName))}
+	for _, u := range s.byName {
+		snap.Users = append(snap.Users, devUser{
+			Username: u.username,
+			Encoded:  u.encoded,
+			Identity: u.id,
+		})
+	}
+	sort.Slice(snap.Users, func(i, j int) bool { return snap.Users[i].Username < snap.Users[j].Username })
+	return json.Marshal(snap)
+}
+
+func (s *MemoryUserStore) RestoreDev(data []byte) error {
+	var snap devUserSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, u := range snap.Users {
+		if _, taken := s.byName[u.Username]; taken {
+			continue // the new process seeded this user itself; it wins
+		}
+		stored := &memUser{id: u.Identity, username: u.Username, encoded: u.Encoded}
+		s.byName[u.Username] = stored
+		s.byID[stored.id.ID] = stored
+	}
+	if snap.Sequence > s.sequence {
+		s.sequence = snap.Sequence
+	}
+	return nil
+}
+
+type devUserSnapshot struct {
+	Sequence int       `json:"sequence"`
+	Users    []devUser `json:"users"`
+}
+
+type devUser struct {
+	Username string   `json:"username"`
+	Encoded  string   `json:"encoded"`
+	Identity Identity `json:"identity"`
 }
 
 // cloneIdentity returns a defensive copy so callers can't mutate stored

@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -556,6 +557,14 @@ func Run(cfg Config, opts ...Option) {
 	// cost in production.
 	if IsDev() {
 		all = append(all, Invoke(func() { runBootChecks() }).nexusOption())
+		// Snapshot preserved in-memory state on the way out, so the binary
+		// `nexus dev` is about to swap in can pick it up (see devstate.go).
+		// Registered last => runs first on shutdown, before resources close.
+		all = append(all, Invoke(func(lc Lifecycle) {
+			lc.Append(Hook{OnStop: func(context.Context) error {
+				return devStates.writeDevState()
+			}})
+		}).nexusOption())
 	}
 	// The builtin container prints build/start errors to stderr itself; the
 	// opt-in fx adapter owns its own logging (and honors NEXUS_FX_QUIET).
