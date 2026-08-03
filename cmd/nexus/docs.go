@@ -1250,11 +1250,20 @@ CLI CHEATSHEET
                              --frontend-cmd <c> dev-server command (default
                                                 "npm run dev" in web/)
                              --no-open          skip opening the browser
-                             --fast             strip DWARF (-ldflags=-w) for
-                                                ~3x faster per-restart rebuilds;
-                                                disables delve + trims panic
-                                                detail (compile is already sped
-                                                up unconditionally via -N -l)
+                             --debug            keep DWARF in the dev binary so
+                                                delve can attach and panic
+                                                traces stay complete. DWARF is
+                                                stripped by default (--fast):
+                                                the link is essentially the
+                                                whole warm rebuild, so emitting
+                                                less is the main lever.
+                             --no-embed-stub    embed the real frontend bundle
+                                                in the dev binary. By default
+                                                it's stubbed out: dev serves
+                                                web/dist from disk, so the
+                                                embedded copy is dead weight
+                                                relinked on every save. Scoped
+                                                to the ServeFrontend tree only.
                              --go-run           legacy loop: launch via
                                                 "go run", killing the app
                                                 before every rebuild

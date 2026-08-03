@@ -108,7 +108,24 @@ longer grows with build time. Three consequences worth knowing:
   code-signature validation on macOS — while the old process is still answering.
 
 `--go-run` restores the legacy loop (`go run`, app killed before every rebuild) if
-the new one ever misbehaves. `--fast` still strips DWARF for a quicker link.
+the new one ever misbehaves.
+
+**The link is the rebuild.** Compilation is cached per package; the one step no
+cache makes incremental is the link, and it dominates (~all of a warm rebuild).
+Two defaults follow from that, both dev-only:
+- **DWARF is stripped** (`-ldflags=-w`, the old opt-in `--fast`). Pass `--debug`
+  to keep it when you need delve or a complete panic trace.
+- **The frontend bundle is stubbed out of the dev binary.** Under `NEXUS_DEV`
+  `ServeFrontend` reads `web/dist` from disk (and the SPA is on :5173 anyway),
+  so the embedded copy is dead weight that gets relinked on every save. `nexus
+  dev` maps it to empty files via the same `go build -overlay` it already uses
+  for handler codegen — no build tags, no source changes. Scoped strictly to the
+  tree a `ServeFrontend` call names, so assets your app genuinely reads at
+  runtime (fonts, templates, seed data) are untouched; the Vite `manifest.json`
+  is also left real for Inertia. `--no-embed-stub` opts out.
+
+Measured on a ~114MB app: 4.27s → 2.99s per rebuild. Note this is latency-until-
+live, not downtime — build-then-swap keeps the app serving throughout.
 
 **What triggers a rebuild.** Go sources, `go.mod`/`go.sum`, `nexus.toml`, and any file
 under an `//go:embed` root. Not: `_test.go` files (never compiled into the binary),
@@ -836,6 +853,8 @@ nexus init [dir]     Add a frontend (web/) to an existing project. --frontend (r
 nexus dev [dir]      Live dev: viteless SPA+HMR on :5173, app/dashboard on :8080.
                      Go rebuilds are build-then-swap (old binary serves through the
                      compile; broken builds keep it up; no-op builds skip the restart).
+                     DWARF is stripped and the frontend bundle is stubbed out of
+                     the dev binary (--debug / --no-embed-stub opt back in).
                      --dist keeps web/dist rebuilt in the background so go build
                      always embeds the current frontend. --go-run = legacy loop.
 nexus build          viteless build → web/dist, then go build embeds it. No npm.

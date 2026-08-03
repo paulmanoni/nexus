@@ -6,6 +6,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-08-03
+
+### Changed
+
+- **`nexus dev` rebuilds are ~30% faster.** Measured on a ~114MB app: 4.27s →
+  2.99s per rebuild. Profiling the build's action graph makes the reason plain —
+  of ~2000 actions in a warm rebuild, every one but the link is a cache hit, so
+  the only lever that moves is making the linker emit less. Two defaults follow,
+  both dev-only:
+  - **DWARF is stripped by default** (`-ldflags=-w` — what `--fast` used to opt
+    into). Worth ~20% of every rebuild, and a dev binary is discarded on the next
+    save. `--debug` keeps it for delve and complete panic traces; `--fast` still
+    exists and is now the default.
+  - **The frontend bundle is stubbed out of the dev binary.** Under `NEXUS_DEV`
+    `ServeFrontend` already reads `web/dist` from disk, and the SPA is served by
+    viteless on :5173 regardless — so the embedded copy is dead weight that gets
+    relinked on every save (9.5MB / 198 files on the app measured). `nexus dev`
+    now maps it to empty files through the same `go build -overlay` it already
+    uses for handler codegen, which Go applies to `//go:embed` reads: no build
+    tags, no scaffold change, existing apps included. `--no-embed-stub` opts out.
+
+    Scoped strictly to the tree a `ServeFrontend` call names, so assets an app
+    genuinely reads at runtime (fonts, templates, seed data) are never touched.
+    The bundle's `index.html` stays real HTML (boot fails fast without it) and
+    the Vite `manifest.json` stays real too, since `extension/inertia` resolves
+    entry chunks through the embed when `NEXUS_VITE_DEV` isn't set.
+
+  Worth keeping in perspective: with build-then-swap this is
+  latency-until-your-change-is-live, not downtime — the app keeps serving
+  through the whole compile, and the swap itself is ~22ms.
+
+### Added
+
+- `nexus dev --debug` — keep DWARF in the dev binary (the inverse of `--fast`).
+- `nexus dev --no-embed-stub` — embed the real frontend bundle in the dev binary.
+
 ## [1.37.1] - 2026-08-03
 
 ### Fixed

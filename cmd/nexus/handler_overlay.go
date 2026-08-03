@@ -371,12 +371,22 @@ func importsOfFile(file string) (map[string]string, error) {
 // temp dir; callers must invoke it once the build that consumes the overlay has
 // finished.
 func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err error) {
+	return buildDevOverlay(root, "")
+}
+
+// buildDevOverlay is buildHandlerOverlay plus, when distStubRoot is non-empty,
+// the frontend-bundle stubs described in distStubReplacements. Go takes a
+// single -overlay file, so the two contributions have to share one document.
+//
+// Only `nexus dev` passes a distStubRoot: `nexus build` produces the real
+// binary and must embed the real bundle.
+func buildDevOverlay(root, distStubRoot string) (overlayPath string, cleanup func(), err error) {
 	noop := func() {}
 	results, err := allHandlerArtifacts(root, handlerGenFileName)
 	if err != nil {
 		return "", noop, err
 	}
-	if len(results) == 0 {
+	if len(results) == 0 && distStubRoot == "" {
 		return "", noop, nil
 	}
 
@@ -394,6 +404,24 @@ func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err e
 			return "", noop, err
 		}
 		replace[r.Path] = shadow
+	}
+
+	stubs, err := distStubReplacements(distStubRoot, tmp)
+	if err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	for path, shadow := range stubs {
+		// Handler artifacts win: they're .go files, the stubs are assets, so
+		// a collision shouldn't happen — but a generated file silently
+		// replaced by an empty stub would be baffling to debug.
+		if _, taken := replace[path]; !taken {
+			replace[path] = shadow
+		}
+	}
+	if len(replace) == 0 {
+		cleanup()
+		return "", noop, nil
 	}
 
 	overlayPath = filepath.Join(tmp, "overlay.json")

@@ -27,6 +27,39 @@ import (
 // or the parser can't read the file. nexus dev falls through to the
 // no-frontend path when this returns empty, so an unparseable
 // source file never breaks the dev loop.
+// detectServeFrontendRoot returns the embed root a ServeFrontend call names
+// literally — "web/dist" for nexus.ServeFrontend(distFS, "web/dist") — or ""
+// when there's no such call or the argument isn't a string literal.
+//
+// detectFrontendDir strips the trailing component to get the project dir; this
+// keeps the embed root itself, which is what the dev loop stubs out of the
+// build (see distStubReplacements). Deliberately does NOT cover the
+// frontend.Plugin shape: that config names a project dir, not an embed root,
+// so there's nothing to match embedded files against.
+func detectServeFrontendRoot(pkgDir string) string {
+	entries, err := os.ReadDir(pkgDir)
+	if err != nil {
+		return ""
+	}
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), "_test.go") || strings.HasPrefix(e.Name(), "zz_") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(pkgDir, e.Name()), nil, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		if root := serveFrontendRoot(f); root != "" {
+			return root
+		}
+	}
+	return ""
+}
+
 func detectFrontendDir(pkgDir string) string {
 	entries, err := os.ReadDir(pkgDir)
 	if err != nil {

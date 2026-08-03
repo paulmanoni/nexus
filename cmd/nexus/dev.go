@@ -49,6 +49,8 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		frontendCmd string
 		verbose     bool
 		fast        bool
+		debugBuild  bool
+		noEmbedStub bool
 		legacyGoRun bool
 		distWatch   bool
 		rawLogs     bool
@@ -83,10 +85,16 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 					addr = a
 				}
 			}
+			// --debug is the inverse of --fast, and wins: it's the explicit
+			// "I'm about to attach a debugger" signal, whereas --fast is now
+			// just the default that happens to be spelled out.
+			if debugBuild {
+				fast = false
+			}
 			if tui {
 				return runDevTUI(target, addr, openDash, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, legacyGoRun, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, !noEmbedStub, legacyGoRun, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -105,8 +113,12 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"command run inside --frontend dir; default `npm run dev` (Vite dev server + HMR)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
-	cmd.Flags().BoolVar(&fast, "fast", false,
-		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking; disables delve and trims panic stack detail")
+	cmd.Flags().BoolVar(&fast, "fast", true,
+		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking. On by default; use --debug to keep DWARF")
+	cmd.Flags().BoolVar(&debugBuild, "debug", false,
+		"keep DWARF in the dev binary so delve can attach and panic traces stay complete (slower link; the inverse of --fast)")
+	cmd.Flags().BoolVar(&noEmbedStub, "no-embed-stub", false,
+		"embed the real frontend bundle in the dev binary instead of stubbing it out (dev serves the bundle from disk, so the embedded copy is normally dead weight)")
 	cmd.Flags().BoolVar(&legacyGoRun, "go-run", false,
 		"legacy dev loop: launch via `go run`, killing the app before every rebuild (default: build-then-swap — the old binary keeps serving while the next one compiles)")
 	cmd.Flags().BoolVar(&distWatch, "dist", false,
@@ -287,7 +299,7 @@ func (e *userError) Error() string { return e.msg }
 // is green (see devBuilder). legacyGoRun restores the old `go run`
 // loop, which kills the app first and leaves it down for the whole
 // compile.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast, legacyGoRun, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast, embedStub, legacyGoRun, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -347,14 +359,28 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 	// implicit in registering ServeFrontend, so requiring the flag is
 	// just friction. The detection is best-effort — non-literal
 	// embed roots fall through to the explicit-flag path.
+	pkgDir := filepath.Join(func() string { r, _ := os.Getwd(); return r }(), target)
 	if frontendDir == "" {
-		root, _ := os.Getwd()
-		pkgDir := filepath.Join(root, target)
 		if d := detectFrontendDir(pkgDir); d != "" {
 			frontendDir = d
 			if verbose {
 				fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
 			}
+		}
+	}
+
+	// distStubRoot names the //go:embed tree the dev build replaces with
+	// stubs — the bundle ServeFrontend mounts, which under NEXUS_DEV is read
+	// from disk anyway (and served by viteless on :5173 besides). Relinking
+	// it on every save is pure cost; see distStubReplacements.
+	//
+	// Resolved once: the embed root is a string literal in the user's source,
+	// so it can't change without a rebuild of the file that declares it.
+	distStubRoot := ""
+	if embedStub {
+		distStubRoot = detectServeFrontendRoot(pkgDir)
+		if distStubRoot != "" && verbose {
+			fmt.Fprintf(stdout, "%s●%s stubbing %s out of the dev build (served from disk; --no-embed-stub to embed it)\n", ansiCyan, ansiReset, distStubRoot)
 		}
 	}
 
@@ -567,7 +593,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			cleanupOverlay()
 			cleanupOverlay = nil
 		}
-		if op, cl, err := buildHandlerOverlay(target); err != nil {
+		if op, cl, err := buildDevOverlay(target, distStubRoot); err != nil {
 			fmt.Fprintf(stderr, "%s●%s handler codegen skipped: %v\n", ansiYellow, ansiReset, err)
 			overlayPath = ""
 		} else {

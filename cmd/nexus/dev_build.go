@@ -55,9 +55,13 @@ func (b *devBuilder) close() {
 //
 // Flags mirror what `go run` was invoked with before: -gcflags=all=-N -l
 // disables optimization + inlining for the whole graph (markedly faster
-// compiles; dev binaries are never perf-sensitive) and, under --fast,
-// -ldflags=-w drops DWARF so the linker — the one step no cache makes
-// incremental — has less to emit.
+// compiles; dev binaries are never perf-sensitive) and -ldflags=-w drops
+// DWARF so the linker — the one step no cache makes incremental, and which
+// measurement puts at essentially the entire rebuild — has less to emit.
+//
+// -w is on by default (--debug turns it back off, for delve and full panic
+// traces). On a large app it's worth ~20% of every rebuild, and dev binaries
+// are thrown away on the next save.
 func (b *devBuilder) build(ctx context.Context, target, overlayPath string, out io.Writer) (string, error) {
 	b.seq++
 	bin := filepath.Join(b.dir, fmt.Sprintf("app-%d%s", b.seq, exeSuffix()))
