@@ -23,7 +23,10 @@ func MountDashboard(g httpx.Group, bus *Bus) {
 	g.GET("/traces/:id", traceByID(bus))
 }
 
-var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+// Same-origin by default (plus the operator allowlist and dev loopback):
+// this stream carries every request trace, and WebSocket upgrades bypass
+// CORS entirely. See httpx.CheckWebSocketOrigin.
+var upgrader = websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin}
 
 // traceSpan is one node in the dashboard waterfall. Times are relative
 // to the trace's earliest event so the UI can render bars without

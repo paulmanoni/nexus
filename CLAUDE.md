@@ -238,6 +238,12 @@ sdk            = true                    # one switch: generate+serve the typed 
 [runtime.server]
 addr = ":8080"
 route_prefix = ""                        # prepended to every REST/GraphQL/WS route
+# idle_timeout   = "120s"                 # keep-alive cap (default 120s; "-1s" = Go's)
+# read_timeout   = "0s"                   # OFF by default (would cut large uploads)
+# write_timeout  = "0s"                   # OFF by default (would cut SSE/downloads)
+# max_body_bytes = 33554432               # OFF by default — set it; every JSON
+                                          # handler is otherwise an unbounded
+                                          # memory sink. Over-limit → 413.
 # shutdown_timeout = "10s"               # graceful-drain window on SIGINT/SIGTERM.
                                           # Default 10s in prod, 250ms under nexus dev.
                                           # In-flight request contexts are cancelled when
@@ -247,6 +253,13 @@ route_prefix = ""                        # prepended to every REST/GraphQL/WS ro
 [runtime.server.listeners.admin]         # optional multi-scope listeners
 addr  = "127.0.0.1:7000"
 scope = "admin"                          # public | internal | admin
+
+[runtime.websocket]
+# WebSocket upgrades bypass CORS and carry cookies, so nexus defaults to
+# SAME-ORIGIN for every upgrader: AsWS endpoints, GraphQL subscriptions, and the
+# /__nexus streams. List a cross-origin frontend here. Loopback is always
+# allowed under `nexus dev` (SPA on :5173, app on :8080). "*" disables the check.
+allowed_origins = ["https://app.example.com", "*.example.com"]
 
 [runtime.dashboard]
 enabled = true

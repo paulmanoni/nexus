@@ -490,17 +490,18 @@ func (h *Hub) fanoutEvent(e *Event) {
 // the nexus.AsWS path) that mount the hub on their own gin route and need
 // the upgrade behavior without going through ws.Builder.
 //
-// For the no-op upgrader default (AllowAll origins), see ServeGin — a
+// For the default origin policy, see ServeGin — a
 // zero-config sibling.
 func (h *Hub) Serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {
 	h.serve(gctx, upgrader)
 }
 
-// ServeGin is Serve with the hub's default upgrader (CheckOrigin: always
-// true). Convenient for callers that don't need to customize upgrade
-// behavior — matches the upgrader the Builder installs.
+// ServeGin is Serve with the hub's default upgrader (same-origin, plus the
+// operator allowlist and dev loopback). Convenient for callers that don't
+// need to customize upgrade behavior — matches the upgrader the Builder
+// installs. Pass Serve your own websocket.Upgrader to override the policy.
 func (h *Hub) ServeGin(gctx *httpx.Ctx) {
-	h.Serve(gctx, websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }})
+	h.Serve(gctx, websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin})
 }
 
 // serve is what the Builder wires into Gin when WithHub is used. It upgrades

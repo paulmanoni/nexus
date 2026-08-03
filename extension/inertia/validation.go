@@ -84,8 +84,12 @@ func writeValidationRedirect(c *httpx.Ctx, ve *validationError) error {
 	enc := base64.RawURLEncoding.EncodeToString(blob)
 	// Max-Age 30s is a safety net: the cookie is normally consumed (and
 	// cleared) by the very next render. HttpOnly because only the server reads
-	// it — it's injected into props, never touched by client JS.
-	c.SetCookie(errorsCookie, enc, 30, "/", "", false, true)
+	// it — it's injected into props, never touched by client JS. Secure
+	// follows the request scheme: hardcoding false let the cookie (which
+	// carries the user's submitted field values) travel in cleartext even on
+	// an HTTPS site.
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(errorsCookie, enc, 30, "/", "", requestIsTLS(c), true)
 
 	target := c.GetHeader("Referer")
 	if target == "" {
@@ -105,12 +109,28 @@ func consumeFlashErrors(c *httpx.Ctx) map[string]any {
 	if err != nil || raw == "" {
 		return out
 	}
-	// Clear the cookie regardless of decode success — it's one-shot.
-	c.SetCookie(errorsCookie, "", -1, "/", "", false, true)
+	// Clear the cookie regardless of decode success — it's one-shot. The
+	// clearing cookie must carry the same Secure attribute as the one it
+	// replaces, or the browser keeps the original.
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(errorsCookie, "", -1, "/", "", requestIsTLS(c), true)
 	blob, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return out
 	}
 	_ = json.Unmarshal(blob, &out)
 	return out
+}
+
+// requestIsTLS reports whether the request reached us over HTTPS, honoring the
+// X-Forwarded-Proto header a TLS-terminating proxy sets — the common
+// deployment shape, where r.TLS is nil even though the browser used HTTPS.
+func requestIsTLS(c *httpx.Ctx) bool {
+	if c.Request == nil {
+		return false
+	}
+	if c.Request.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https")
 }

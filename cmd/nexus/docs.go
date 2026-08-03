@@ -1122,6 +1122,19 @@ defaults apply. 'nexus new' scaffolds this block.
     # them and exiting. Omit for the default: 10s in production, 250ms
     # under nexus dev (nothing in flight is worth draining on a rebuild).
     # shutdown_timeout = "10s"
+    # idle_timeout     = "120s"   # keep-alive cap (default 120s; "-1s" = Go's)
+    # read_timeout     = "0s"     # OFF by default — would cut large uploads
+    # write_timeout    = "0s"     # OFF by default — would cut SSE / downloads
+    # max_header_bytes = 1048576
+    # max_body_bytes   = 33554432 # OFF by default; set it — every JSON handler
+                                  # is otherwise an unbounded memory sink
+
+    [runtime.websocket]
+    # WebSocket upgrades bypass CORS and carry cookies, so nexus defaults to
+    # same-origin for AsWS endpoints, GraphQL subscriptions, and /__nexus.
+    # List extra origins here; loopback is always allowed under nexus dev.
+    # "*" disables the check (pre-1.39 behavior).
+    allowed_origins = ["https://app.example.com", "*.example.com"]
 
     [runtime.server.listeners.admin]   # optional multi-scope listeners
     addr  = "127.0.0.1:7000"

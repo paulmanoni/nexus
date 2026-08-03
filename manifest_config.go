@@ -29,6 +29,11 @@ type Config struct {
 	//	}
 	Server ServerConfig
 
+	// WebSocket governs the upgrade origin policy for every transport that
+	// speaks WebSocket — AsWS endpoints, GraphQL subscriptions, and the
+	// dashboard streams. The default is same-origin; see WebSocketConfig.
+	WebSocket WebSocketConfig
+
 	// Router selects the HTTP router backend. Nil means the default
 	// stdlib net/http.ServeMux (zero third-party deps). Set it to an
 	// opt-in adapter — ginrouter.New() / chirouter.New() — or use the
@@ -307,6 +312,61 @@ type ServerConfig struct {
 	// their contexts once the window closes, so a handler that selects on
 	// its context returns immediately and shutdown finishes early.
 	ShutdownTimeout time.Duration
+
+	// IdleTimeout caps how long an idle keep-alive connection is held
+	// between requests. Zero picks DefaultIdleTimeout; negative disables
+	// it (Go's own default, which is to fall back to ReadTimeout — and
+	// with ReadTimeout unset that means "hold forever", so a few thousand
+	// cheap connections can exhaust the process's file descriptors).
+	IdleTimeout time.Duration
+
+	// ReadTimeout / WriteTimeout bound a whole request read and response
+	// write. Both default to OFF, and deliberately so: a WriteTimeout kills
+	// server-sent-event streams and long downloads mid-flight, and a
+	// ReadTimeout kills large uploads — nexus can't tell which of those an
+	// app serves. Set them when you know your traffic shape.
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+
+	// MaxHeaderBytes caps the request header size. Zero picks Go's 1MB
+	// default; set explicitly to tighten it.
+	MaxHeaderBytes int
+
+	// MaxBodyBytes caps request bodies; over-limit requests get 413.
+	//
+	// OFF by default. Every JSON-binding handler is otherwise a
+	// memory-exhaustion primitive — an anonymous client can stream until
+	// the process dies — so setting this is worth doing. It's opt-in
+	// because the framework can't know whether an app serves large
+	// uploads, and cutting those off at a value nexus picked would be a
+	// worse failure than the risk it guards against.
+	//
+	//	[runtime.server]
+	//	max_body_bytes = 33554432   # 32MB
+	MaxBodyBytes int64
+}
+
+// WebSocketConfig governs WebSocket upgrades across every transport: user
+// AsWS endpoints, GraphQL subscriptions, and the dashboard's own streams.
+type WebSocketConfig struct {
+	// AllowedOrigins extends the default same-origin upgrade policy.
+	//
+	// WebSocket handshakes are NOT covered by CORS or the same-origin
+	// policy, and they carry cookies — so an upgrader that accepts any
+	// Origin lets an attacker's page open a socket as the visiting user
+	// (cross-site WebSocket hijacking). nexus therefore defaults to
+	// same-origin, and this list is how you allow a legitimately
+	// cross-origin frontend:
+	//
+	//	[runtime.websocket]
+	//	allowed_origins = ["https://app.example.com", "*.example.com"]
+	//
+	// "*" disables the check entirely, restoring the pre-1.39 behavior.
+	// Only safe when the socket carries no ambient authority.
+	//
+	// Loopback origins are always allowed under `nexus dev`, where the
+	// frontend (:5173) and the app (:8080) are cross-origin by design.
+	AllowedOrigins []string
 }
 
 // MiddlewareConfig groups every middleware-related knob the

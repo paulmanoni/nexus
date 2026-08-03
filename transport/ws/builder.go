@@ -3,8 +3,6 @@
 package ws
 
 import (
-	"net/http"
-
 	"github.com/gorilla/websocket"
 	"github.com/paulmanoni/nexus/httpx"
 
@@ -40,7 +38,7 @@ func New(e httpx.Router, r *registry.Registry, bus *trace.Bus, service, path str
 		bus:      bus,
 		service:  service,
 		path:     path,
-		upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+		upgrader: websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin},
 		tags:     map[string]string{},
 	}
 }

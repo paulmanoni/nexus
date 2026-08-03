@@ -31,6 +31,36 @@ const (
 	DevShutdownTimeout     = 250 * time.Millisecond
 )
 
+// DefaultIdleTimeout caps idle keep-alive connections. Go's own default is
+// "fall back to ReadTimeout", and with ReadTimeout unset that means never —
+// so an unauthenticated client can park connections until the process runs
+// out of file descriptors.
+const DefaultIdleTimeout = 120 * time.Second
+
+// idleTimeout resolves the keep-alive window. A negative configured value is
+// the explicit "use Go's default" opt-out.
+func idleTimeout(cfg Config) time.Duration {
+	switch {
+	case cfg.Server.IdleTimeout > 0:
+		return cfg.Server.IdleTimeout
+	case cfg.Server.IdleTimeout < 0:
+		return 0
+	default:
+		return DefaultIdleTimeout
+	}
+}
+
+// maxBodyBytes resolves the request-body cap. Off unless the operator sets
+// one: nexus can't know whether an app streams large uploads, and silently
+// rejecting them at some framework-chosen ceiling would be a worse failure
+// than the exhaustion risk it guards against.
+func maxBodyBytes(cfg Config) int64 {
+	if cfg.Server.MaxBodyBytes > 0 {
+		return cfg.Server.MaxBodyBytes
+	}
+	return 0
+}
+
 // shutdownTimeout resolves the drain window: explicit config wins, then the
 // dev/production default.
 func shutdownTimeout(cfg Config) time.Duration {
@@ -71,7 +101,17 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 		servers = append(servers, &http.Server{
 			Handler:           app,
 			ReadHeaderTimeout: 10 * time.Second,
-			BaseContext:       func(net.Listener) context.Context { return reqCtx },
+			// Without IdleTimeout Go falls back to ReadTimeout, which is
+			// unset — so idle keep-alive connections are held forever and a
+			// few thousand cheap connections exhaust the process's file
+			// descriptors. Read/Write timeouts stay off by default: they'd
+			// cut SSE streams and large uploads, and the framework can't
+			// know which of those an app serves.
+			IdleTimeout:    idleTimeout(cfg),
+			ReadTimeout:    cfg.Server.ReadTimeout,
+			WriteTimeout:   cfg.Server.WriteTimeout,
+			MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
+			BaseContext:    func(net.Listener) context.Context { return reqCtx },
 		})
 	}
 	// Filtering is opt-in: a single-listener back-compat run skips

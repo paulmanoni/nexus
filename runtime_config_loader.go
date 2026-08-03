@@ -219,6 +219,7 @@ type runtimeConfigDoc struct {
 // zero-valued, so the framework's defaults apply.
 type RuntimeConfigBlock struct {
 	Server                ServerConfigBlock     `toml:"server"`
+	WebSocket             WebSocketConfigBlock  `toml:"websocket"`
 	Dashboard             DashboardConfigBlock  `toml:"dashboard"`
 	GraphQL               GraphQLConfigBlock    `toml:"graphql"`
 	Middleware            MiddlewareConfigBlock `toml:"middleware"`
@@ -244,6 +245,18 @@ type ServerConfigBlock struct {
 	// ShutdownTimeout is a Go duration string ("5s", "500ms"). An
 	// unparseable value is ignored, falling back to the default.
 	ShutdownTimeout string `toml:"shutdown_timeout"`
+	// Connection-level limits. Durations are Go duration strings; an
+	// unparseable value falls back to the framework default.
+	IdleTimeout    string `toml:"idle_timeout"`
+	ReadTimeout    string `toml:"read_timeout"`
+	WriteTimeout   string `toml:"write_timeout"`
+	MaxHeaderBytes int    `toml:"max_header_bytes"`
+	MaxBodyBytes   int64  `toml:"max_body_bytes"`
+}
+
+// WebSocketConfigBlock is the TOML shape of WebSocketConfig.
+type WebSocketConfigBlock struct {
+	AllowedOrigins []string `toml:"allowed_origins"`
 }
 
 // ListenerConfigBlock is the TOML shape of a Listener. TLS is
@@ -329,7 +342,13 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 			Addr:            b.Server.Addr,
 			RoutePrefix:     b.Server.RoutePrefix,
 			ShutdownTimeout: parseDurationOr(b.Server.ShutdownTimeout, 0),
+			IdleTimeout:     parseDurationOr(b.Server.IdleTimeout, 0),
+			ReadTimeout:     parseDurationOr(b.Server.ReadTimeout, 0),
+			WriteTimeout:    parseDurationOr(b.Server.WriteTimeout, 0),
+			MaxHeaderBytes:  b.Server.MaxHeaderBytes,
+			MaxBodyBytes:    b.Server.MaxBodyBytes,
 		},
+		WebSocket: WebSocketConfig{AllowedOrigins: b.WebSocket.AllowedOrigins},
 		Dashboard: DashboardConfig{
 			Enabled: b.Dashboard.Enabled,
 			Name:    b.Dashboard.Name,

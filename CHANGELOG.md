@@ -6,6 +6,69 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-08-04
+
+### Security
+
+- **WebSocket upgrades now default to same-origin.** Every upgrader in the
+  framework hardcoded `CheckOrigin: func(*http.Request) bool { return true }` —
+  the dashboard's trace stream (`/__nexus/events`) and live snapshot
+  (`/__nexus/live`), every `nexus.AsWS` endpoint, and GraphQL subscriptions.
+
+  Browsers apply neither CORS nor the same-origin policy to WebSocket
+  handshakes, and the handshake carries cookies. So any page a victim visited
+  could open a socket to a nexus app and read or send whatever it carries, as
+  the victim — cross-site WebSocket hijacking. Confirmed against a running app:
+  an upgrade with `Origin: https://evil.example` returned `101 Switching
+  Protocols`; it now returns `403 Forbidden`.
+
+  Worst case was the dashboard, whose streams carry every request trace and the
+  cached auth identities. That surface needs introspection open — always true
+  under `nexus dev`, off by default in production — so the realistic exposure
+  was developer machines and deployments that opened introspection. `AsWS`
+  endpoints and GraphQL subscriptions had no such gate and were exposed
+  wherever they were mounted.
+
+  Requests with no `Origin` header are still accepted: non-browser clients
+  don't send one, and they carry no ambient authority to abuse.
+
+  **This can break a legitimately cross-origin frontend.** Allowlist it:
+
+  ```toml
+  [runtime.websocket]
+  allowed_origins = ["https://app.example.com", "*.example.com"]
+  ```
+
+  `"*"` restores the old accept-everything behavior. Loopback origins are always
+  allowed under `nexus dev`, where the SPA (:5173) and app (:8080) are
+  cross-origin by design. A `*.example.com` entry deliberately does not match
+  the parent `example.com`.
+
+- **`extension/inertia`'s validation-error cookie no longer hardcodes
+  `Secure: false`.** It carries the user's submitted field values and was sent
+  in cleartext even on HTTPS sites. Now follows the request scheme, honoring
+  `X-Forwarded-Proto` for the usual TLS-terminating-proxy deployment, and sets
+  `SameSite=Lax`.
+
+### Added
+
+- **`[runtime.server] idle_timeout`** (default **120s**, new). Go falls back to
+  `ReadTimeout` when `IdleTimeout` is unset, and `ReadTimeout` was unset too —
+  so idle keep-alive connections were held indefinitely and a few thousand cheap
+  connections could exhaust the process's file descriptors. `"-1s"` restores
+  Go's behavior. (`extension/tls` already set this; the main listener didn't.)
+- **`[runtime.server] read_timeout` / `write_timeout` / `max_header_bytes`** —
+  all OFF by default and deliberately so: a `write_timeout` cuts server-sent-event
+  streams and long downloads mid-flight, and a `read_timeout` cuts large uploads.
+  The framework can't tell which an app serves, so these are yours to set.
+- **`[runtime.server] max_body_bytes`** — caps request bodies, 413 over the
+  limit. **OFF by default**, for the same reason: nexus can't know whether an app
+  accepts large uploads, and rejecting them at a framework-chosen ceiling would
+  be a worse failure than the risk. Worth setting — without it every
+  JSON-binding handler is an unbounded memory sink for anonymous clients.
+- `httpx.CheckWebSocketOrigin` / `httpx.SetAllowedWebSocketOrigins` — the shared
+  origin policy, for adapters outside the framework.
+
 ## [1.38.0] - 2026-08-03
 
 ### Changed

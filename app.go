@@ -259,6 +259,16 @@ func New(cfg Config) *App {
 		engine = stdrouter.New()
 	}
 	engine.Use(recoveryMiddleware())
+	// Cap request bodies before any binding runs, so an anonymous client
+	// can't stream unbounded bytes into memory. Sits right behind recovery
+	// so it covers every route including 404s and the dashboard.
+	if limit := maxBodyBytes(cfg); limit > 0 {
+		engine.Use(bodyLimitMiddleware(limit))
+	}
+	// Publish the WebSocket upgrade allowlist before any listener binds —
+	// every upgrader in the process (AsWS, GraphQL subscriptions, the
+	// dashboard streams) reads it through httpx.CheckWebSocketOrigin.
+	httpx.SetAllowedWebSocketOrigins(cfg.WebSocket.AllowedOrigins)
 	// TODO(router-seam): a per-request access log used to ride on
 	// gin.Logger() in debug mode. The stdlib router has no built-in
 	// logger; reintroduce one as an httpx middleware if desired.

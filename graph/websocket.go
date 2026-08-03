@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/graphql-go/graphql"
+
+	"github.com/paulmanoni/nexus/httpx"
 )
 
 // WebSocketManager manages WebSocket connections for GraphQL subscriptions.
@@ -128,8 +130,11 @@ func NewWebSocketHandler(params WebSocketParams) http.HandlerFunc {
 		params.ConnectionTimeout = 10 * time.Second
 	}
 	if params.CheckOrigin == nil {
-		// Allow all origins (development only!)
-		params.CheckOrigin = func(r *http.Request) bool { return true }
+		// Same-origin by default, plus the operator allowlist and dev
+		// loopback. WebSocket upgrades aren't covered by CORS, so an
+		// allow-all default would let any page open a subscription as the
+		// visiting user. Set CheckOrigin explicitly to override.
+		params.CheckOrigin = httpx.CheckWebSocketOrigin
 	}
 
 	mgr := &WebSocketManager{

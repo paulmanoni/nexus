@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -228,4 +227,6 @@ var _ = context.Background
 // package keeps it local now that the /events handler — the other
 // historical user — has moved to trace.MountDashboard with its own
 // upgrader.
-var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+// Same-origin by default — the live snapshot carries the app topology and
+// cached auth identities. See httpx.CheckWebSocketOrigin.
+var upgrader = websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin}
