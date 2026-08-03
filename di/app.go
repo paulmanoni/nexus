@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // Hook is a pair of lifecycle callbacks. OnStart runs when the app starts;
@@ -30,9 +31,14 @@ func (l *lifecycle) Append(h Hook) { l.hooks = append(l.hooks, h) }
 // eagerly; any error from building options, a constructor, or an invoke is
 // captured and returned by Err (and aborts Run).
 type App struct {
-	c   *container
-	err error
+	c           *container
+	err         error
+	stopTimeout time.Duration
 }
+
+// DefaultStopTimeout bounds Run's shutdown when no WithStopTimeout is set.
+// Matches fx.DefaultTimeout so the two backends behave alike.
+const DefaultStopTimeout = 15 * time.Second
 
 // New builds the container from opts. Provides/supplies register first
 // (order-independent), then invokes run in tree order. The first error
@@ -45,7 +51,10 @@ func New(opts ...Option) *App {
 // that hold a Spec use this directly; New is sugar over Collect+Build.
 func Build(spec *Spec) *App {
 	c := newContainer()
-	app := &App{c: c}
+	app := &App{c: c, stopTimeout: spec.StopTimeout}
+	if app.stopTimeout <= 0 {
+		app.stopTimeout = DefaultStopTimeout
+	}
 
 	// Option-time errors (di.Error) abort before any construction, matching fx.
 	if len(spec.Errs) > 0 {
@@ -137,8 +146,27 @@ func (a *App) Run() {
 		os.Exit(1)
 	}
 	<-ctx.Done()
-	if err := a.Stop(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "nexus/di: shutdown: %v\n", err)
+	// Bounded, not context.Background(). An OnStop hook that never returns
+	// (http.Server.Shutdown waiting on an in-flight request, a driver Close
+	// that blocks) would otherwise wedge the process here until an external
+	// SIGKILL — which under `nexus dev` is what made Ctrl-C take seconds.
+	stopCtx, cancel := context.WithTimeout(context.Background(), a.stopTimeout)
+	defer cancel()
+	// Stop runs on its own goroutine so the deadline binds even for a hook
+	// that ignores its context outright — passing stopCtx alone only helps
+	// hooks that honor it. Abandoning a wedged hook is the right trade at
+	// this point: every hook after it in the chain has already run or never
+	// will, and the alternative is hanging forever.
+	done := make(chan error, 1)
+	go func() { done <- a.Stop(stopCtx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "nexus/di: shutdown: %v\n", err)
+			os.Exit(1)
+		}
+	case <-stopCtx.Done():
+		fmt.Fprintf(os.Stderr, "nexus/di: shutdown timed out after %s · exiting\n", a.stopTimeout)
 		os.Exit(1)
 	}
 }

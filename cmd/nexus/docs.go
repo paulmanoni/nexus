@@ -1118,6 +1118,10 @@ defaults apply. 'nexus new' scaffolds this block.
     [runtime.server]
     addr         = ":8080"
     route_prefix = ""               # prepended to every REST/GraphQL/WS route
+    # How long SIGINT/SIGTERM waits for in-flight requests before cutting
+    # them and exiting. Omit for the default: 10s in production, 250ms
+    # under nexus dev (nothing in flight is worth draining on a rebuild).
+    # shutdown_timeout = "10s"
 
     [runtime.server.listeners.admin]   # optional multi-scope listeners
     addr  = "127.0.0.1:7000"

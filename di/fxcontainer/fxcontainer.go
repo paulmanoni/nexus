@@ -38,6 +38,12 @@ func (backend) Build(spec *di.Spec) di.Instance {
 	// returned via *fx.App.Err()/Start(), so nothing actionable is lost.
 	opts = append(opts, fx.NopLogger)
 
+	// Same shutdown bound the builtin backend applies, so a wedged OnStop hook
+	// costs the same on either container.
+	if spec.StopTimeout > 0 {
+		opts = append(opts, fx.StopTimeout(spec.StopTimeout))
+	}
+
 	// Bridge di.Lifecycle → fx.Lifecycle so any constructor/invoke that takes a
 	// di.Lifecycle (db/cache managers, workers, the HTTP listener registration)
 	// resolves and registers its hooks on fx's lifecycle.

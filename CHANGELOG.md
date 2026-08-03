@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.37.1] - 2026-08-03
+
+### Fixed
+
+- **Ctrl-C on `nexus dev` no longer takes 5 seconds.** Shutdown ran
+  `http.Server.Shutdown` with an unbounded context, and nothing cancelled the
+  contexts of the requests it was waiting on — so a single request still in
+  flight (an SSE stream, a long poll, a slow query, a browser mid-request) held
+  the app open until the dev loop gave up and sent SIGKILL. Measured on a
+  scaffolded app: 5.05s with one in-flight request, now 0.02s. This also cost a
+  full 5s on every build-then-swap **rebuild** that happened to catch a live
+  request, not just on Ctrl-C. Hijacked WebSockets were never affected.
+
+### Added
+
+- **`[runtime.server] shutdown_timeout`** (and `Config.Server.ShutdownTimeout`)
+  — the graceful-drain window on SIGINT/SIGTERM. Defaults to 10s in production
+  and 250ms under `nexus dev`, where nothing in flight survives the rebuild
+  anyway. A malformed duration falls through to the default rather than
+  refusing to boot.
+- **`di.WithStopTimeout`** bounds the whole lifecycle stop chain, so a resource
+  whose `Close` blocks can't hold the process open either. Recorded on
+  `di.Spec` and honored by both containers (the fx adapter maps it onto
+  `fx.StopTimeout`), and enforced by running `Stop` on its own goroutine — a
+  hook that ignores its context outright is abandoned rather than waited on.
+
+### Changed
+
+- In-flight request contexts are now derived from a cancellable root
+  (`http.Server.BaseContext`) and cancelled when the drain window closes, so a
+  handler that selects on its context returns immediately and shutdown
+  finishes early instead of running out the clock. Under `nexus dev` the cancel
+  is immediate. Connections that still won't budge are closed outright, which
+  `Shutdown` alone never did.
+- The dev loop's SIGTERM→SIGKILL grace period drops from 5s to 750ms, and
+  escalation now prints `● app didn't exit within 750ms · SIGKILL` instead of
+  pausing silently. A healthy app bounds its own shutdown well inside that.
+
 ## [1.37.0] - 2026-07-25
 
 ### Added

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
@@ -551,6 +552,12 @@ func Run(cfg Config, opts ...Option) {
 	// endpoints take part in schema assembly like any hand-written module.
 	all = append(all, unwrap(collectDeferredOptions())...)
 	all = append(all, fxLateOptions())
+	// Bound the whole stop chain, not just the HTTP drain. The listener
+	// hook already caps its own Shutdown; this covers everything after
+	// it (db/cache Close, worker cancel) so no single wedged resource can
+	// hold the process open. Sized above the HTTP window so a normal
+	// drain never trips it.
+	all = append(all, Raw(di.WithStopTimeout(shutdownTimeout(cfg)+5*time.Second)).nexusOption())
 	// Dev boot self-check runs LAST as an invoke — after pubsub's BindTopics
 	// and every other wiring invoke — so live-topology checks (e.g. "topic has
 	// no transport bound") see the finalized graph. Dev-only: no invoke, no

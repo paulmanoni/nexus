@@ -20,6 +20,29 @@ import (
 // self-contained — the middleware consults both via this name.
 const ratelimitGlobalKey = "_global"
 
+// Shutdown windows applied when Config.Server.ShutdownTimeout is zero.
+//
+// Production gets a real drain so in-flight requests finish before the process
+// exits. Dev gets almost none: `nexus dev` replaces the process on every save,
+// nothing in flight is worth preserving, and every millisecond spent here is a
+// millisecond of Ctrl-C the developer sits through.
+const (
+	DefaultShutdownTimeout = 10 * time.Second
+	DevShutdownTimeout     = 250 * time.Millisecond
+)
+
+// shutdownTimeout resolves the drain window: explicit config wins, then the
+// dev/production default.
+func shutdownTimeout(cfg Config) time.Duration {
+	if cfg.Server.ShutdownTimeout > 0 {
+		return cfg.Server.ShutdownTimeout
+	}
+	if IsDev() {
+		return DevShutdownTimeout
+	}
+	return DefaultShutdownTimeout
+}
+
 // registerLifecycle binds the configured HTTP listeners and cron
 // scheduler to fx's start/stop hooks. Bind happens synchronously so
 // port conflicts abort di.Start() with a clean error.
@@ -31,6 +54,12 @@ const ratelimitGlobalKey = "_global"
 // change for callers who haven't declared Listeners.
 func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 	listeners := resolveListeners(app.listeners, cfg.Server.Addr)
+	// Every in-flight request's context descends from reqCtx via BaseContext,
+	// so cancelReqs unblocks handlers that select on their context — an SSE
+	// stream, a long poll, a slow query with a cancellable driver. Without it
+	// Shutdown has no way to ask a handler to stop and can only wait it out,
+	// which is what pinned shutdown at the full grace window.
+	reqCtx, cancelReqs := context.WithCancel(context.Background())
 	servers := make([]*http.Server, 0, len(listeners))
 	for range listeners {
 		// ReadHeaderTimeout caps how long a client can take to send the
@@ -42,6 +71,7 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 		servers = append(servers, &http.Server{
 			Handler:           app,
 			ReadHeaderTimeout: 10 * time.Second,
+			BaseContext:       func(net.Listener) context.Context { return reqCtx },
 		})
 	}
 	// Filtering is opt-in: a single-listener back-compat run skips
@@ -157,10 +187,33 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 			// sending new traffic.
 			app.health.setAlive(false)
 			app.cronSched.Stop()
+			defer cancelReqs()
+
+			// Bound the drain independently of the caller's ctx: the
+			// lifecycle deadline covers every hook, and spending all of it
+			// here would starve the resource Close hooks that run next.
+			drain := shutdownTimeout(cfg)
+			// In dev there is nothing worth draining — an unfinished request
+			// belongs to a process that's about to be replaced — so cut the
+			// handlers loose immediately and let Shutdown collect them.
+			if IsDev() {
+				cancelReqs()
+			}
+			shutCtx, cancel := context.WithTimeout(ctx, drain)
+			defer cancel()
+
 			var firstErr error
 			for _, s := range servers {
-				if err := s.Shutdown(ctx); err != nil && firstErr == nil {
-					firstErr = err
+				if err := s.Shutdown(shutCtx); err != nil {
+					// The window closed with requests still running.
+					// Cancel their contexts, then Close to drop whatever
+					// still won't budge — Shutdown alone leaves those
+					// connections open and the listener goroutines alive.
+					cancelReqs()
+					_ = s.Close()
+					if firstErr == nil {
+						firstErr = err
+					}
 				}
 			}
 			return firstErr

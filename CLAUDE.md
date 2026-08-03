@@ -221,6 +221,11 @@ sdk            = true                    # one switch: generate+serve the typed 
 [runtime.server]
 addr = ":8080"
 route_prefix = ""                        # prepended to every REST/GraphQL/WS route
+# shutdown_timeout = "10s"               # graceful-drain window on SIGINT/SIGTERM.
+                                          # Default 10s in prod, 250ms under nexus dev.
+                                          # In-flight request contexts are cancelled when
+                                          # the window closes, so handlers that select on
+                                          # ctx let shutdown finish early.
 
 [runtime.server.listeners.admin]         # optional multi-scope listeners
 addr  = "127.0.0.1:7000"

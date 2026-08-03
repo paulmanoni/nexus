@@ -294,6 +294,19 @@ type ServerConfig struct {
 	// sense that Run will then serve no traffic on its own — drive the
 	// handler yourself.
 	NoListener bool
+
+	// ShutdownTimeout bounds the graceful drain on SIGINT/SIGTERM: how
+	// long http.Server.Shutdown waits for in-flight requests before the
+	// remaining connections are cut and the process exits. Zero picks
+	// DefaultShutdownTimeout (production) or DevShutdownTimeout (dev).
+	//
+	// It also bounds the whole lifecycle stop chain, so a resource whose
+	// Close blocks can't wedge shutdown either.
+	//
+	// The drain only matters for requests still in flight; nexus cancels
+	// their contexts once the window closes, so a handler that selects on
+	// its context returns immediately and shutdown finishes early.
+	ShutdownTimeout time.Duration
 }
 
 // MiddlewareConfig groups every middleware-related knob the

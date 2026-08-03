@@ -241,6 +241,9 @@ type ServerConfigBlock struct {
 	Addr        string                         `toml:"addr"`
 	RoutePrefix string                         `toml:"route_prefix"`
 	Listeners   map[string]ListenerConfigBlock `toml:"listeners"`
+	// ShutdownTimeout is a Go duration string ("5s", "500ms"). An
+	// unparseable value is ignored, falling back to the default.
+	ShutdownTimeout string `toml:"shutdown_timeout"`
 }
 
 // ListenerConfigBlock is the TOML shape of a Listener. TLS is
@@ -323,8 +326,9 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 		TraceCapacity:         b.TraceCapacity,
 		SDK:                   b.SDK,
 		Server: ServerConfig{
-			Addr:        b.Server.Addr,
-			RoutePrefix: b.Server.RoutePrefix,
+			Addr:            b.Server.Addr,
+			RoutePrefix:     b.Server.RoutePrefix,
+			ShutdownTimeout: parseDurationOr(b.Server.ShutdownTimeout, 0),
 		},
 		Dashboard: DashboardConfig{
 			Enabled: b.Dashboard.Enabled,
@@ -405,4 +409,18 @@ func parseListenerScope(s string) (ListenerScope, error) {
 		return ScopeInternal, nil
 	}
 	return 0, errors.New("scope must be \"public\", \"admin\", or \"internal\"")
+}
+
+// parseDurationOr reads a Go duration string, returning def for an empty or
+// malformed value. Shutdown timing is a tuning knob, not a correctness one, so
+// a typo degrades to the default instead of refusing to boot.
+func parseDurationOr(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return def
+	}
+	return d
 }

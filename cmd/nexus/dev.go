@@ -127,6 +127,12 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 // nexus apps don't need to set it.
 const defaultDevAddr = ":8080"
 
+// devKillGrace is how long the dev loop waits after SIGTERM before SIGKILLing
+// the app — on Ctrl-C and on every build-then-swap restart. It only has to
+// cover a healthy app's shutdown, which nexus bounds at DevShutdownTimeout;
+// anything slower is wedged and waiting longer just makes Ctrl-C feel broken.
+const devKillGrace = 750 * time.Millisecond
+
 // devAddrFromConfig reads [runtime.server].addr from nexus.toml in the
 // dev target's directory, so `nexus dev` probes + proxies the address
 // the app actually binds. Returns "" when the file, the table, or the
@@ -797,16 +803,27 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 	pid := cmd.Process.Pid
 	killChild := func() {
 		// SIGTERM first to give shutdown handlers (HTTP graceful close,
-		// fx hooks) a chance, then SIGKILL after a short grace period.
-		// Drain `exited` fully before returning so the caller never
+		// lifecycle hooks) a chance, then SIGKILL after a short grace
+		// period. Drain `exited` fully before returning so the caller never
 		// has to read from it again — double-reading a buffered chan
 		// of size 1 deadlocks (caused Ctrl-C to hang in v0.21.x).
+		//
+		// The window is deliberately short. A dev app bounds its own
+		// shutdown at DevShutdownTimeout (250ms) and cancels in-flight
+		// request contexts on the way out, so a healthy app is gone in
+		// milliseconds; this only covers one that's genuinely wedged.
+		// It used to be 5s, which every restart with an open SSE stream or
+		// slow request paid in full — the single largest source of "Ctrl-C
+		// takes forever".
 		_ = killProcessGroup(pid, syscall.SIGTERM)
 		select {
 		case <-exited:
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(devKillGrace):
 		}
+		// Say so — a silent pause reads as a hang, and a wedged shutdown
+		// hook is worth knowing about.
+		fmt.Fprintf(stderr, "%s●%s app didn't exit within %s · SIGKILL\n", ansiYellow, ansiReset, devKillGrace)
 		_ = killProcessGroup(pid, syscall.SIGKILL)
 		<-exited
 	}

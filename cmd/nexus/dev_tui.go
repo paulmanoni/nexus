@@ -465,7 +465,7 @@ func (m *tuiModel) killChild() {
 		return
 	}
 	_ = killProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(devKillGrace)
 	done := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()

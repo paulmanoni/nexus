@@ -29,6 +29,7 @@ package di
 import (
 	"reflect"
 	"strings"
+	"time"
 )
 
 // In is embedded in a struct used as a constructor/invoke parameter to mark it
@@ -87,6 +88,10 @@ type Spec struct {
 	Supplies []any
 	Invokes  []InvokeSpec
 	Errs     []error
+
+	// StopTimeout bounds Run's shutdown. Zero means DefaultStopTimeout.
+	// Last WithStopTimeout wins.
+	StopTimeout time.Duration
 }
 
 // ProvideSpec is one constructor plus optional per-position group annotations
@@ -134,6 +139,18 @@ func (o errorOption) applyOption(s *Spec) {
 		s.Errs = append(s.Errs, o.err)
 	}
 }
+
+type stopTimeoutOption struct{ d time.Duration }
+
+func (o stopTimeoutOption) applyOption(s *Spec) { s.StopTimeout = o.d }
+
+// WithStopTimeout bounds how long Run waits for OnStop hooks before giving up
+// and returning. Without it a hook that never returns — most commonly
+// http.Server.Shutdown blocking on an in-flight request whose context nobody
+// cancels — wedges the process until something outside SIGKILLs it. Zero or
+// negative restores DefaultStopTimeout. Honored by both backends (the fx
+// adapter maps it onto fx.StopTimeout).
+func WithStopTimeout(d time.Duration) Option { return stopTimeoutOption{d: d} }
 
 type optionsGroup struct{ opts []Option }
 
