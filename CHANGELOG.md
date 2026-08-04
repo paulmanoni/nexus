@@ -4,6 +4,17 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.1] - 2026-08-04
+
+### Fixed
+
+- **maskid: the type scope now resolves through generic response envelopes.**
+  A handler returning `Response[T]` or `Page[T]` has the reflect name
+  `Response[github.com/you/app/svc.Invoice]`, which no scope would name, so
+  every such response fell out of scope and went unmasked on the JSON-walking
+  transports (REST, Inertia, WebSocket). Type arguments are now unwrapped too.
+  GraphQL was unaffected, since it scopes on the object type itself.
+
 ## [1.41.0] - 2026-08-04
 
 ### Added
