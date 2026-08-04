@@ -1,6 +1,7 @@
 package maskid
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -273,6 +274,7 @@ func installScoped(t *testing.T, cfg Config) {
 	t.Helper()
 	p := &policy{
 		codec: codec(), match: DefaultMatch,
+		incl: keySet(cfg.Include), excl: keySet(cfg.Exclude),
 		types: typeSet(cfg.Types), matchType: cfg.MatchType,
 	}
 	h := maskhook.Hooks{IsID: p.isID, Mask: p.mask, Unmask: p.unmask}
@@ -427,5 +429,62 @@ func TestScopeSeesThroughWrappedSlices(t *testing.T) {
 	}
 	if _, ok := m.Data[0]["id"].(string); !ok {
 		t.Errorf("a wrapped slice of an in-scope type was not masked: %#v", m.Data[0]["id"])
+	}
+}
+
+type pageProps struct {
+	Rows      []inScope `json:"rows"`
+	RowIDs    []uint    `json:"rowIds"`
+	CountryID int       `json:"countryId"`
+}
+
+type outOfScopePage struct {
+	Rows   []inScope `json:"rows"`
+	RowIDs []uint    `json:"rowIds"`
+}
+
+// An Inertia page carries heterogeneous props: an entity list alongside a
+// bare []uint of the same entities' IDs. Judging each prop by its own root
+// type masks the first and not the second, and the two silently stop
+// comparing equal — the exact shape of a real bug this caught.
+func TestPageScopeMasksEveryProp(t *testing.T) {
+	installScoped(t, Config{Types: []string{"inScope", "pageProps"}, Exclude: []string{"countryId"}})
+
+	props := map[string]any{
+		"rows":      []inScope{{ID: 41}},
+		"rowIds":    []uint{41},
+		"countryId": 1,
+	}
+	maskhook.MaskProps(pageProps{}, props)
+
+	rows, _ := json.Marshal(props["rows"])
+	if !bytes.Contains(rows, []byte(`"id":"`)) {
+		t.Errorf("entity ids not masked: %s", rows)
+	}
+	ids, _ := json.Marshal(props["rowIds"])
+	if bytes.Contains(ids, []byte("41")) {
+		t.Errorf("the sidecar id list was left raw, so it no longer matches the entity ids: %s", ids)
+	}
+	// An excluded reference key stays numeric even on an in-scope page.
+	if props["countryId"] != json.Number("1") && props["countryId"] != float64(1) {
+		t.Errorf("an excluded key was masked: %#v", props["countryId"])
+	}
+}
+
+// A page out of scope keeps the per-prop behaviour, so an app returning a
+// bare map or a shared props type is unaffected.
+func TestOutOfScopePageFallsBackToPerProp(t *testing.T) {
+	installScoped(t, Config{Types: []string{"inScope"}})
+
+	props := map[string]any{"rows": []inScope{{ID: 41}}, "rowIds": []uint{41}}
+	maskhook.MaskProps(outOfScopePage{}, props)
+
+	rows, _ := json.Marshal(props["rows"])
+	if !bytes.Contains(rows, []byte(`"id":"`)) {
+		t.Errorf("an in-scope prop should still mask on an out-of-scope page: %s", rows)
+	}
+	ids, _ := json.Marshal(props["rowIds"])
+	if !bytes.Contains(ids, []byte("41")) {
+		t.Errorf("an untyped prop must not mask on an out-of-scope page: %s", ids)
 	}
 }

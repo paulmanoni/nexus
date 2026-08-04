@@ -214,17 +214,26 @@ func MaskValue(v any) any {
 	return walk(tree, "", maskLeaf)
 }
 
-// MaskProps masks a prop map in place. Each value is an arbitrary Go
-// value (a struct, a slice of rows, a scalar), so it goes through the
-// same marshal-and-walk as MaskValue, but rooted at its own prop name —
-// a prop literally called "id" masks, one called "users" masks the ids
-// inside it. Used by the Inertia renderer.
-func MaskProps(props map[string]any) {
+// MaskProps masks an Inertia page's props in place.
+//
+// The scope decision is made once, from the page's own props struct —
+// not per prop. A page carries heterogeneous props: an entity list whose
+// type is in scope sits next to a bare []uint of the same entity's IDs
+// ("appliedAdvertIds"), and judging each prop by its own root type masks
+// the first and not the second. The two are then no longer comparable,
+// which is a silent wrong answer rather than an error.
+//
+// So an in-scope page masks every prop it carries, letting the field
+// policy alone decide which keys are IDs. A page whose props struct is
+// out of scope falls back to per-prop typing, which is what an app
+// returning a bare map or a shared type wants.
+func MaskProps(page any, props map[string]any) {
 	if !Enabled() {
 		return
 	}
+	all := typeInScope(page)
 	for k, v := range props {
-		if !typeInScope(v) {
+		if !all && !typeInScope(v) {
 			continue
 		}
 		tree, err := toTree(v)

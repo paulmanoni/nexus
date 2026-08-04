@@ -81,8 +81,9 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	}
 	// Masked after resolveProps rather than on the handler's result, so
 	// Defer/Optional props — which only materialise here, on the partial
-	// reload that requests them — are covered too.
-	maskhook.MaskProps(props)
+	// reload that requests them — are covered too. The result is still
+	// passed: it names the page, which is what an ID-masking scope keys on.
+	maskhook.MaskProps(result, props)
 	page := pageObject{
 		Component: component,
 		Props:     props,

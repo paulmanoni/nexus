@@ -4,6 +4,20 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.2] - 2026-08-04
+
+### Fixed
+
+- **maskid: an Inertia page's scope is now decided once, from its props struct,
+  rather than per prop.** A page carries heterogeneous props — an entity list
+  whose type is in scope sitting next to a bare `[]uint` of the same entity's
+  IDs (`appliedAdvertIds`) — and judging each prop by its own root type masked
+  the first and not the second. The two then no longer compared equal, so a
+  membership test against the sidecar list silently returned false for every
+  row. An in-scope page now masks every prop it carries, leaving the field
+  policy to decide which keys are IDs. Pages out of scope keep the per-prop
+  behaviour.
+
 ## [1.41.1] - 2026-08-04
 
 ### Fixed

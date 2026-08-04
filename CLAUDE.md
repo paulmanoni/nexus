@@ -724,7 +724,9 @@ declared as the `MaskedID` scalar rather than `Int` — it can't be a response r
 because graphql-go coerces through the declared type; arguments stay `Int`, since a
 masked value in `variables` is already converted back when the body is bound, so the
 SDL and generated client don't change), **Inertia**
-(masked after `resolveProps`, so `Defer`/`Optional` props are covered), and
+(masked after `resolveProps`, so `Defer`/`Optional` props are covered; the scope is
+decided once from the page's props struct, so a bare `[]uint` sidecar of IDs masks
+alongside the entity list it pairs with), and
 **WebSocket** (inbound envelope `data`, every outbound `Emit`). A request carrying a
 raw integer still works — an unmasked value simply doesn't decode — so rollout is
 incremental.
