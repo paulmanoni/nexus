@@ -201,6 +201,23 @@ func readDevStateFile(path string) map[string][]byte {
 	return f.Entries
 }
 
+// DevStateDir returns the directory `nexus dev` set aside for state that
+// should outlive a rebuild, or "" when the process isn't running under
+// `nexus dev`.
+//
+// PreserveDev is the right tool for state you can hand over as bytes. This
+// is the escape hatch for state that already has its own on-disk format —
+// an embedded key/value store, a SQLite file — where the whole fix for
+// "my session dies on every save" is pointing it at a real path instead
+// of ":memory:". Same lifetime either way: the directory is per dev
+// session, so what you write survives rebuilds but not a Ctrl-C.
+func DevStateDir() string {
+	if os.Getenv(devStateEnv) == "" {
+		return ""
+	}
+	return devStateDir()
+}
+
 // devStateDir is where the CLI puts the file; exposed for tests and for the
 // error message when the directory is gone.
 func devStateDir() string { return filepath.Dir(os.Getenv(devStateEnv)) }

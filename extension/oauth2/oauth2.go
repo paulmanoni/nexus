@@ -3,8 +3,10 @@ package oauth2
 import (
 	"context"
 	stderrors "errors"
+	"log"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"time"
 
 	oauth2lib "github.com/go-oauth2/oauth2/v4"
@@ -378,9 +380,39 @@ func (c *Config) applyDefaults() {
 		c.ClientStore = NewStaticClientStore(StaticClient{ID: "anonymous", Public: true})
 	}
 	if c.TokenStore == nil {
-		ts, _ := store.NewMemoryTokenStore()
-		c.TokenStore = ts
+		c.TokenStore = defaultTokenStore()
 	}
+}
+
+// defaultTokenStore is go-oauth2's in-memory token store — except under
+// `nexus dev`, where it is backed by a file instead.
+//
+// The in-memory store is literally NewFileTokenStore(":memory:"), so the
+// only thing that changes is where buntdb writes. That is the whole
+// difference between staying logged in across a rebuild and
+// re-authenticating on every save: a rebuild replaces the process, and
+// every issued token dies with it. Access tokens are opaque values held
+// in this store (not self-contained JWTs), so persisting the store is
+// enough on its own to keep sessions alive.
+//
+// The file lives in the dev session's scratch directory, giving tokens
+// the same lifetime nexus.PreserveDev gives in-memory state: they survive
+// rebuilds, not a Ctrl-C. Production binaries never see NEXUS_DEV_STATE
+// and so always get the memory store; setting Config.TokenStore opts out
+// either way.
+func defaultTokenStore() oauth2lib.TokenStore {
+	if dir := nexus.DevStateDir(); dir != "" {
+		ts, err := store.NewFileTokenStore(filepath.Join(dir, "oauth2-tokens.db"))
+		if err == nil {
+			return ts
+		}
+		// A corrupt or unwritable state file must never stop the app
+		// from booting — fall back and make the user re-login.
+		log.Printf("oauth2: dev token persistence unavailable (%v); "+
+			"sessions will not survive a rebuild", err)
+	}
+	ts, _ := store.NewMemoryTokenStore()
+	return ts
 }
 
 func defaultIdentityResolver(_ context.Context, ti oauth2lib.TokenInfo) (*auth.Identity, error) {
