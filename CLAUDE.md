@@ -736,7 +736,8 @@ what keeps `valid`/`paid`/`android` out. Tune with `Include`/`Exclude`/`Match`.
 **Scoping** — `Config.Types` (or `MatchType`) narrows *masking* to named response
 types, for when masking isn't safe app-wide (some IDs travel to a system outside
 the app). The name is the Go type of the response, which is also its GraphQL
-object name; pointers and slices resolve to the same name. Unmasking is never
+object name; pointers, slices and generic wrappers (`Response[T]`) all resolve to
+the underlying name. Unmasking is never
 scoped and needs no scope — a value converts only if it decrypts, so an
 out-of-scope plain integer is unaffected either way.
 

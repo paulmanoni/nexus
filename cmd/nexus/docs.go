@@ -2164,7 +2164,8 @@ system outside this app and would arrive there as strings it can't use:
     }
 
 The name is the Go type of the response, which is also its GraphQL object
-name; pointers and slices resolve to the same name. Only MASKING is
+name; pointers, slices and generic envelopes (Response[T], Page[T]) all
+resolve to the underlying name. Only MASKING is
 scoped. Unmasking always runs and needs no scope: a value converts only
 when it decrypts, which only happens for a mask this app minted, so an
 out-of-scope type's plain integer passes through either way — a scope can

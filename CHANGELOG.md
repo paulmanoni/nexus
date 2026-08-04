@@ -13,8 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   part of the surface can safely hand out opaque IDs (the rest feed a system
   outside the app that expects integers). Naming the types that stay inside masks
   those and leaves the others alone. The name is the Go type of the response,
-  which is also its GraphQL object name; pointers and slices resolve to the same
-  name. Only masking is scoped — unmasking always runs and needs no scope, since
+  which is also its GraphQL object name; pointers, slices and the generic
+  envelopes handlers return (`Response[T]`, `Page[T]`) all resolve to the
+  underlying name. Only masking is scoped — unmasking always runs and needs no scope, since
   a value converts only if it decrypts.
 
 ### Changed

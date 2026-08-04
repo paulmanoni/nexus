@@ -368,3 +368,64 @@ func TestNoScopeMasksEverything(t *testing.T) {
 		}
 	}
 }
+
+type wrapper[T any] struct {
+	Data T `json:"data"`
+}
+
+// Handlers routinely return a generic envelope. Its reflect name is
+// "wrapper[github.com/…/maskid.inScope]", which nobody would put in a
+// scope, so the type arguments have to be unwrapped for the scope to work
+// at all on the JSON-walking transports.
+func TestScopeSeesThroughGenericWrappers(t *testing.T) {
+	installScoped(t, Config{Types: []string{"inScope"}})
+
+	unwrap := func(v any) any {
+		t.Helper()
+		blob, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(blob, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m.Data["id"]
+	}
+
+	if _, ok := unwrap(maskhook.MaskValue(&wrapper[*inScope]{Data: &inScope{ID: 41}})).(string); !ok {
+		t.Error("a wrapped in-scope type was not masked")
+	}
+	if got := unwrap(maskhook.MaskValue(&wrapper[*outOfScope]{Data: &outOfScope{ID: 41}})); got != float64(41) {
+		t.Errorf("a wrapped out-of-scope type was masked: %#v", got)
+	}
+	// The wrapper's own name must not admit everything it ever carries.
+	if got := unwrap(maskhook.MaskValue(&wrapper[*outOfScope]{Data: &outOfScope{ID: 41}})); got == "" {
+		t.Error("unexpected empty id")
+	}
+}
+
+// A slice inside the envelope is the list-endpoint shape.
+func TestScopeSeesThroughWrappedSlices(t *testing.T) {
+	installScoped(t, Config{Types: []string{"inScope"}})
+
+	out := maskhook.MaskValue(&wrapper[[]inScope]{Data: []inScope{{ID: 41}}})
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(blob, &m); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Data) != 1 {
+		t.Fatalf("got %d rows", len(m.Data))
+	}
+	if _, ok := m.Data[0]["id"].(string); !ok {
+		t.Errorf("a wrapped slice of an in-scope type was not masked: %#v", m.Data[0]["id"])
+	}
+}

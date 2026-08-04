@@ -77,12 +77,16 @@ func TypeAllowed(typeName string) bool {
 	return h.TypeAllowed == nil || h.TypeAllowed(typeName)
 }
 
-// rootTypeName names the Go type a response value carries, looking
-// through pointers, slices and the wrapper generics apps like to return
-// (Response[T], Page[T]) down to the first named struct. Anonymous and
-// map-shaped values yield "", which no scope matches — so a scoped app
-// masks only what it named.
-func rootTypeName(v any) string {
+// typeNames names the Go types a response value could be scoped by,
+// looking through pointers, slices and arrays.
+//
+// Generic wrappers are the reason this returns a list rather than a name.
+// Handlers routinely return Response[T] or Page[T], whose reflect name is
+// "Response[github.com/you/app/svc.Invoice]" — a name nobody would put in
+// a scope. So the type arguments are unwrapped too, and a scope matches if
+// it names any of them. An anonymous or map-shaped value yields nothing,
+// which no scope matches: a scoped app masks only what it named.
+func typeNames(v any) []string {
 	t := reflect.TypeOf(v)
 	for i := 0; t != nil && i < 8; i++ {
 		switch t.Kind() {
@@ -93,9 +97,44 @@ func rootTypeName(v any) string {
 		break
 	}
 	if t == nil {
-		return ""
+		return nil
 	}
-	return t.Name()
+	name := t.Name()
+	if name == "" {
+		return nil
+	}
+	open := strings.IndexByte(name, '[')
+	if open < 0 {
+		return []string{name}
+	}
+	out := []string{name[:open]}
+	for _, arg := range strings.Split(strings.TrimSuffix(name[open+1:], "]"), ",") {
+		arg = strings.TrimLeft(strings.TrimSpace(arg), "*[]")
+		if dot := strings.LastIndexByte(arg, '.'); dot >= 0 {
+			arg = arg[dot+1:]
+		}
+		if arg = strings.TrimRight(arg, "]"); arg != "" {
+			out = append(out, arg)
+		}
+	}
+	return out
+}
+
+// typeInScope reports whether any of a value's names is in scope.
+func typeInScope(v any) bool {
+	h := active.Load()
+	if h == nil {
+		return false
+	}
+	if h.TypeAllowed == nil {
+		return true
+	}
+	for _, n := range typeNames(v) {
+		if h.TypeAllowed(n) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsIDKey reports whether the installed policy treats key as an ID
@@ -165,7 +204,7 @@ func UnmaskID(key, s string) (int64, bool) {
 // original untouched — masking must never turn a working response into
 // an error.
 func MaskValue(v any) any {
-	if !Enabled() || v == nil || !TypeAllowed(rootTypeName(v)) {
+	if !Enabled() || v == nil || !typeInScope(v) {
 		return v
 	}
 	tree, err := toTree(v)
@@ -185,7 +224,7 @@ func MaskProps(props map[string]any) {
 		return
 	}
 	for k, v := range props {
-		if !TypeAllowed(rootTypeName(v)) {
+		if !typeInScope(v) {
 			continue
 		}
 		tree, err := toTree(v)
