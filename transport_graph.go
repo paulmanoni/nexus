@@ -627,6 +627,9 @@ func applyArgsFromStruct(r *graph.UnifiedResolver[any], argsType reflect.Type) (
 		if gqlType == nil {
 			gqlType = goTypeToGraphQL(f.Type)
 		}
+		if gqlType != nil {
+			gqlType = graph.MaskType(name, f.Type, gqlType)
+		}
 		if gqlType == nil {
 			continue
 		}
@@ -932,7 +935,7 @@ func buildInputObjectForType(t reflect.Type) graphql.Input {
 					if name == "" {
 						continue
 					}
-					sub := goTypeToGraphQL(ef.Type)
+					sub := graph.MaskType(name, ef.Type, goTypeToGraphQL(ef.Type))
 					if sub == nil {
 						continue
 					}
@@ -947,7 +950,7 @@ func buildInputObjectForType(t reflect.Type) graphql.Input {
 		if name == "" {
 			continue
 		}
-		sub := goTypeToGraphQL(f.Type)
+		sub := graph.MaskType(name, f.Type, goTypeToGraphQL(f.Type))
 		if sub == nil {
 			continue
 		}

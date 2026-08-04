@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"github.com/paulmanoni/nexus/internal/maskhook"
+
 	"context"
 	"encoding/json"
 	"log"
@@ -238,6 +240,10 @@ func (h *Hub) Stop() {
 // Emit queues an event for fan-out. Dropped silently if the event channel is
 // full — callers trade completeness for backpressure.
 func (h *Hub) Emit(e *Event) {
+	// Every EmitX helper funnels through here, so one hook covers the
+	// whole outbound surface — including events an app pushes from a
+	// worker rather than from a handler.
+	e.Data = maskhook.MaskValue(e.Data)
 	select {
 	case h.events <- e:
 	default:

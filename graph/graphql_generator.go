@@ -142,6 +142,7 @@ func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int) 
 		if graphqlType == nil {
 			continue
 		}
+		graphqlType = MaskType(fieldName, field.Type, graphqlType)
 
 		description := field.Tag.Get("description")
 		fields[fieldName] = &graphql.Field{

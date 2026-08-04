@@ -9,6 +9,7 @@ import (
 	"braces.dev/errtrace"
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/maskhook"
 
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
@@ -461,7 +462,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			}
 			return
 		}
-		c.JSON(defaultSuccessStatus(method), result)
+		c.JSON(defaultSuccessStatus(method), maskhook.MaskValue(result))
 	}
 }
 

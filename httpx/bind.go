@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/paulmanoni/nexus/internal/maskhook"
 )
 
 // Neutral request binding — replaces gin's ShouldBindUri / ShouldBindQuery /
@@ -163,6 +166,16 @@ func (c *Ctx) ShouldBindJSON(ptr any) error {
 	if c.Request.Body == nil {
 		return nil
 	}
+	if maskhook.Enabled() {
+		// Rewrite masked ID strings back to numbers before decoding, so
+		// the args struct's int fields bind as they always did. Buffering
+		// is the price of the rewrite; it only happens when masking is on.
+		raw, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			return err
+		}
+		return json.NewDecoder(bytes.NewReader(maskhook.UnmaskJSON(raw))).Decode(ptr)
+	}
 	return json.NewDecoder(c.Request.Body).Decode(ptr)
 }
 
@@ -215,6 +228,12 @@ func bindFromTag(ptr any, tag string, lookup func(string) ([]string, bool), altT
 		if !present || len(vals) == 0 {
 			continue
 		}
+		// Opaque IDs arrive as strings where the args struct wants an
+		// int. Converting here — rather than in each transport — means
+		// path params, query values, headers and form fields are all
+		// covered by one hook, and a handler that calls ShouldBindQuery
+		// itself gets the same treatment.
+		vals = maskhook.UnmaskParams(name, vals)
 		if err := setField(rv.Field(i), vals); err != nil {
 			return fmt.Errorf("bind %s %q: %w", tag, name, err)
 		}

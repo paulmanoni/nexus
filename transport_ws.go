@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/maskhook"
 
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
@@ -273,7 +274,7 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 	if h.shape.hasArgs {
 		ptr := reflect.New(h.shape.argsType)
 		if len(env.Data) > 0 {
-			if err := json.Unmarshal(env.Data, ptr.Interface()); err != nil {
+			if err := json.Unmarshal(maskhook.UnmaskJSON(env.Data), ptr.Interface()); err != nil {
 				// Decode failed before the handler ran — close the
 				// root trace with a 400-style status so the waterfall
 				// doesn't show an open-ended request.

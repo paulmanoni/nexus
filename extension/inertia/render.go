@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/maskhook"
 )
 
 // Header names defined by the Inertia protocol.
@@ -78,6 +79,10 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	if _, ok := props["errors"]; !ok {
 		props["errors"] = consumeFlashErrors(c)
 	}
+	// Masked after resolveProps rather than on the handler's result, so
+	// Defer/Optional props — which only materialise here, on the partial
+	// reload that requests them — are covered too.
+	maskhook.MaskProps(props)
 	page := pageObject{
 		Component: component,
 		Props:     props,

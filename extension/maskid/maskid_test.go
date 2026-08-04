@@ -1,0 +1,260 @@
+package maskid
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/paulmanoni/nexus/internal/maskhook"
+)
+
+func codec() *AESCodec { return NewAESCodec([]byte("test-key")) }
+
+func TestCodecRoundTrip(t *testing.T) {
+	c := codec()
+	for _, id := range []int64{0, 1, 2, 41, 4294967296, 1<<62 - 1, -1} {
+		s := c.Mask(id)
+		if len(s) != maskLen {
+			t.Fatalf("Mask(%d) = %q, want %d chars", id, s, maskLen)
+		}
+		got, ok := c.Unmask(s)
+		if !ok || got != id {
+			t.Fatalf("Unmask(Mask(%d)) = %d, %v", id, got, ok)
+		}
+	}
+}
+
+func TestCodecIsDeterministic(t *testing.T) {
+	c := codec()
+	if c.Mask(7) != c.Mask(7) {
+		t.Fatal("masks must be stable, or URLs and caches break")
+	}
+}
+
+// Adjacent ids must not produce adjacent masks — the whole point is that
+// a client can't step from one record to the next.
+func TestCodecHidesAdjacency(t *testing.T) {
+	c := codec()
+	a, b := c.Mask(1000), c.Mask(1001)
+	if a == b {
+		t.Fatal("distinct ids collided")
+	}
+	same := 0
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] == b[i] {
+			same++
+		}
+	}
+	if same > len(a)/2 {
+		t.Fatalf("masks for 1000/1001 share %d/%d characters — too much structure leaked", same, len(a))
+	}
+}
+
+func TestCodecRejectsForgeries(t *testing.T) {
+	c := codec()
+	other := NewAESCodec([]byte("a different key"))
+
+	for _, s := range []string{
+		"",
+		"41",
+		"not-a-mask",
+		c.Mask(41)[:maskLen-1],   // truncated
+		"A" + c.Mask(41)[1:],     // tampered
+		other.Mask(41),           // right shape, wrong key
+		"AAAAAAAAAAAAAAAAAAAAAA", // well-formed base64url of the right length
+	} {
+		if id, ok := c.Unmask(s); ok {
+			t.Errorf("Unmask(%q) accepted, decoded to %d", s, id)
+		}
+	}
+}
+
+func TestDefaultMatch(t *testing.T) {
+	for _, k := range []string{"id", "ID", "ids", "userId", "user_id", "OwnerID", "categoryIds", "country_id"} {
+		if !DefaultMatch(k) {
+			t.Errorf("DefaultMatch(%q) = false, want true", k)
+		}
+	}
+	// The suffix rule is case-sensitive precisely so these stay out.
+	for _, k := range []string{"", "name", "valid", "paid", "android", "hybrid", "uuid", "guid", "void", "candid"} {
+		if DefaultMatch(k) {
+			t.Errorf("DefaultMatch(%q) = true, want false", k)
+		}
+	}
+}
+
+// install wires a policy directly, bypassing Module (which also registers
+// an extension plugin the tests don't need).
+func install(t *testing.T, cfg Config) *policy {
+	t.Helper()
+	p := &policy{codec: codec(), match: DefaultMatch, incl: keySet(cfg.Include), excl: keySet(cfg.Exclude)}
+	if cfg.Match != nil {
+		p.match = cfg.Match
+	}
+	maskhook.Install(maskhook.Hooks{IsID: p.isID, Mask: p.mask, Unmask: p.unmask})
+	mu.Lock()
+	current = p
+	mu.Unlock()
+	t.Cleanup(func() {
+		maskhook.Uninstall()
+		mu.Lock()
+		current = nil
+		mu.Unlock()
+	})
+	return p
+}
+
+func TestIncludeExclude(t *testing.T) {
+	p := install(t, Config{Include: []string{"reference"}, Exclude: []string{"tenantId"}})
+
+	if !p.isID("reference") {
+		t.Error("Include should mask a field the default policy misses")
+	}
+	// Exclude is checked first so it beats both Include and Match.
+	if p.isID("tenantId") {
+		t.Error("Exclude must win over the default policy")
+	}
+}
+
+func TestMaskValueWalksNestedResults(t *testing.T) {
+	install(t, Config{})
+
+	type item struct {
+		ID    int64  `json:"id"`
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	type resp struct {
+		OwnerID int    `json:"ownerId"`
+		Items   []item `json:"items"`
+		UUID    string `json:"uuid"`
+	}
+
+	out := maskhook.MaskValue(resp{OwnerID: 7, Items: []item{{ID: 41, Name: "a", Count: 3}}, UUID: "abc"})
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(blob, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	owner, ok := got["ownerId"].(string)
+	if !ok {
+		t.Fatalf("ownerId = %#v, want a masked string", got["ownerId"])
+	}
+	if n, ok := Unmask(owner); ok && n != 7 {
+		t.Errorf("ownerId unmasked to %d, want 7", n)
+	}
+
+	first := got["items"].([]any)[0].(map[string]any)
+	if _, ok := first["id"].(string); !ok {
+		t.Errorf("nested items[0].id = %#v, want a masked string", first["id"])
+	}
+	// Non-ID fields, and a string id, are left exactly as they were.
+	if first["count"].(float64) != 3 {
+		t.Errorf("count was rewritten: %#v", first["count"])
+	}
+	if first["name"] != "a" || got["uuid"] != "abc" {
+		t.Error("non-ID fields must pass through untouched")
+	}
+}
+
+func TestUnmaskJSONReversesMaskValue(t *testing.T) {
+	install(t, Config{})
+
+	masked, err := json.Marshal(maskhook.MaskValue(map[string]any{
+		"id":         41,
+		"categoryId": 9,
+		"title":      "hello",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(maskhook.UnmaskJSON(masked), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["id"] != float64(41) || got["categoryId"] != float64(9) {
+		t.Errorf("round trip lost the ids: %#v", got)
+	}
+	if got["title"] != "hello" {
+		t.Errorf("non-ID field changed: %#v", got["title"])
+	}
+}
+
+// A 64-bit id must survive the marshal/decode round trip that a plain
+// float64 decode would silently truncate.
+func TestLargeIDsSurviveTheRoundTrip(t *testing.T) {
+	install(t, Config{})
+	const big = int64(9007199254740993) // 2^53 + 1
+
+	out := maskhook.MaskValue(map[string]any{"id": big})
+	s := out.(map[string]any)["id"].(string)
+	if n, ok := Unmask(s); !ok || n != big {
+		t.Fatalf("Unmask = %d, %v; want %d", n, ok, big)
+	}
+}
+
+func TestUnmaskParamHandlesLists(t *testing.T) {
+	install(t, Config{})
+	a, b := Mask(3), Mask(5)
+
+	if got := maskhook.UnmaskParam("ids", a+","+b); got != "3,5" {
+		t.Errorf("UnmaskParam list = %q, want \"3,5\"", got)
+	}
+	// A value that isn't a mask passes through, so an unmigrated client
+	// sending a raw id still works.
+	if got := maskhook.UnmaskParam("id", "12"); got != "12" {
+		t.Errorf("UnmaskParam(%q) = %q, want it unchanged", "12", got)
+	}
+	if got := maskhook.UnmaskParam("name", a); got != a {
+		t.Errorf("a non-ID field must not be unmasked, got %q", got)
+	}
+}
+
+func TestDisabledIsAPassThrough(t *testing.T) {
+	maskhook.Uninstall()
+	in := map[string]any{"id": 41}
+	if got := maskhook.MaskValue(in); got == nil {
+		t.Fatal("MaskValue returned nil while disabled")
+	}
+	blob, _ := json.Marshal(maskhook.MaskValue(in))
+	if string(blob) != `{"id":41}` {
+		t.Errorf("disabled masking rewrote the response: %s", blob)
+	}
+	if maskhook.Enabled() {
+		t.Error("Enabled() true with nothing installed")
+	}
+}
+
+// Module must install the hooks eagerly — the GraphQL schema is built
+// from maskhook.Enabled() while options are still being assembled, so a
+// lifecycle hook would land too late.
+func TestModuleInstallsEagerly(t *testing.T) {
+	maskhook.Uninstall()
+	t.Cleanup(func() {
+		maskhook.Uninstall()
+		mu.Lock()
+		current = nil
+		mu.Unlock()
+	})
+
+	if opt := Module(Config{Key: "boot-key"}); opt == nil {
+		t.Fatal("Module returned a nil Option")
+	}
+	if !maskhook.Enabled() {
+		t.Fatal("Module did not install the hook")
+	}
+	if !maskhook.IsIDKey("ownerId") || maskhook.IsIDKey("title") {
+		t.Error("the installed policy is not the default field policy")
+	}
+	s, ok := maskhook.MaskID("id", 41)
+	if !ok {
+		t.Fatal("MaskID refused an id field")
+	}
+	if n, ok := maskhook.UnmaskID("id", s); !ok || n != 41 {
+		t.Fatalf("round trip through the installed hook = %d, %v", n, ok)
+	}
+}
