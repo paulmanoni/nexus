@@ -212,6 +212,7 @@ var topicSummaries = map[string]string{
 	"config":      "extension/config — Spring-style config server + nexus.Get",
 	"storage":     "extension/storage — file/object storage: local + S3 disks",
 	"mail":        "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
+	"maskid":      "extension/maskid — opaque IDs on the wire, no handler changes",
 	"cli":         "Subcommand cheatsheet (new / init / dev / build / client)",
 	"devstate":    "PreserveDev — carry in-memory state across a nexus dev rebuild",
 	"dashboard":   "/__nexus tabs, gating, HTTP surface",
@@ -278,6 +279,24 @@ Scope, on purpose:
 
 Caches are deliberately not preserved: they are rebuildable by definition,
 and restoring typed values through an any-shaped store is unsound.
+
+STATE THAT ALREADY HAS AN ON-DISK FORMAT
+
+PreserveDev is for state you can hand over as bytes. When the value is an
+embedded key/value store or a SQLite handle, the simpler fix is to point it
+at a real path instead of ":memory:":
+
+    if dir := nexus.DevStateDir(); dir != "" {
+        db, err = open(filepath.Join(dir, "sessions.db"))
+    }
+
+DevStateDir returns "" outside nexus dev, so the production path is
+untouched. Same lifetime as PreserveDev: per dev session, surviving
+rebuilds but not a Ctrl-C.
+
+extension/oauth2 does exactly this for its default token store, so an
+OAuth2 login survives a rebuild instead of forcing a re-login on every
+save. Setting Config.TokenStore opts out.
 `,
 
 	"quickstart": `
@@ -2091,6 +2110,104 @@ Backends (both dependency-free):
           signing. No AWS SDK is linked. SignedURL returns a presigned GET.
 `,
 
+	"maskid": `
+MASKID — opaque IDs on the wire, without touching handler code
+
+extension/maskid replaces sequential integer IDs with 22-character opaque
+strings on every transport, and converts them back before your handler
+runs. Handlers, GORM models and SQL keep using int64 primary keys.
+
+  {"id": 41, "ownerId": 7}   ->   {"id": "9tKq3nB1wZ0aVdH7cRmXsA", "ownerId": "Lp2f..."}
+
+ENABLE
+
+    import "github.com/paulmanoni/nexus/extension/maskid"
+
+    nexus.Boot(maskid.Module(maskid.Config{Key: os.Getenv("MASKID_KEY")}))
+
+Key is the secret the codec derives from — any length, hashed to 32 bytes.
+Empty falls back to $NEXUS_MASKID_KEY, then to a random per-process key
+with a warning (dev only: masks change on every restart). Rotating the key
+invalidates every mask already handed out, so treat it like a session
+signing key.
+
+WHAT THIS IS, AND IS NOT
+
+Masking removes ENUMERATION and INFERENCE: a client can no longer count
+your users from an id, walk to a neighbouring record, or correlate two
+resources by arithmetic. It is NOT access control. A masked id is still a
+bearer reference — whoever holds one can use it. Every authorization check
+you needed before, you still need.
+
+WHICH FIELDS
+
+By default: any JSON key named "id"/"ids", or ending in Id/ID/_id with an
+optional plural s — id, userId, owner_id, categoryIDs — whose value is a
+whole number. The suffix test is case-sensitive, which is what keeps
+"valid", "paid" and "android" out; "uuid"/"guid" are excluded explicitly.
+
+    maskid.Config{
+        Include: []string{"reference"},  // mask a field the default misses
+        Exclude: []string{"tenantId"},   // never mask (wins over everything)
+        Match:   func(key string) bool { ... },  // replace the policy wholesale
+    }
+
+WHERE IT HOOKS (all four transports, no app code)
+
+  REST out       the reflective handler's JSON write
+  REST in        path params, query, headers, form, and the JSON body —
+                 one hook in httpx binding, so a handler that calls
+                 ShouldBindQuery itself is covered too
+  GraphQL        ID fields are declared as the MaskedID scalar instead of
+                 Int, in both output types and arguments. This one can't be
+                 a response rewrite: graphql-go coerces every field through
+                 its declared type, so a masked string on an Int field
+                 would serialize to null. The SDL is honest as a result —
+                 clients see "id: MaskedID".
+  Inertia        props are masked after resolveProps, so Defer/Optional
+                 props (which materialise on the partial reload that asks
+                 for them) are covered too
+  WebSocket      inbound envelope data, and every outbound Emit — including
+                 events pushed from a worker rather than a handler
+
+Requests carrying a RAW integer still work: an unmasked value simply
+doesn't decode as a mask and passes through. That makes rollout
+incremental — turn masking on, and old clients keep working while new
+responses start handing out opaque ids.
+
+THE CODEC
+
+Deterministic AES over a single block: an 8-byte domain tag concatenated
+with the big-endian id, encrypted, base64url-encoded to 22 characters.
+
+  - Deterministic: a given id always masks to the same string, so URLs stay
+    bookmarkable and caches keep working.
+  - Authenticated: the domain tag rejects forgeries and corruption (a
+    random string decodes with probability 2^-64) rather than silently
+    decoding into some other record's id.
+  - Real encryption, not the reversible arithmetic of hashids/sqids —
+    without the key an attacker cannot recover the integer or forge a mask.
+
+Supply your own with Config.Codec (Mask(int64) string / Unmask(string)
+(int64, bool)) to interoperate with an existing scheme.
+
+FROM APPLICATION CODE
+
+    maskid.Mask(id)          // build a link outside the automatic transports
+    maskid.Unmask(s)         // ok=false -> treat as 404, not 500
+
+BEFORE YOU TURN IT ON
+
+If any of your ids travel to a system that is NOT behind this app — a
+legacy backend the SPA also calls, a partner webhook, an export consumed
+elsewhere — those consumers receive opaque strings they cannot use, and
+handing the client a way to reverse the mask would defeat the point.
+Exclude those fields, or wait until the id no longer leaves the app.
+
+Frontends that coerce ids (Number(row.id), parseInt) produce NaN once the
+value is a string. Those call sites need removing regardless of anything
+this extension does.
+`,
 	"mail": `
 MAIL — outbound email (SMTP + log), zero heavy deps
 

@@ -166,6 +166,15 @@ new process seeds itself win over the snapshot. Dev-only (gated on the state fil
 only, and best-effort — a failed snapshot/restore is reported and skipped, never fatal.
 Caches are deliberately not preserved. `nexus docs devstate`.
 
+For state that already has its own on-disk format (an embedded key/value store,
+a SQLite handle), `nexus.DevStateDir()` returns that session directory — point
+the store at a real path instead of `:memory:` and it survives the rebuild;
+outside `nexus dev` it returns `""`, so the production path is untouched.
+`extension/oauth2` does this for its default token store, so an OAuth2 login
+survives a rebuild instead of forcing a re-login on every save (access tokens are
+opaque values held in the store, not self-contained JWTs, so persisting the store
+is sufficient). Setting `Config.TokenStore` opts out.
+
 **Keeping `web/dist` fresh in dev (`--dist`).** The HMR server serves the frontend
 from memory and never writes `web/dist`, so the embedded production bundle stays
 frozen at the last `nexus build` — a `go build` taken mid-session ships stale assets.
@@ -698,6 +707,41 @@ built for you. Two backends, **both dependency-free** (no third-party mail libra
 dev/tests; exposes `.Sent()` for assertions) and `smtp` (any SMTP server over stdlib
 `net/smtp` — STARTTLS/587, implicit TLS/465, PLAIN auth; port defaults per mode).
 `nexus docs mail`.
+
+### Opaque IDs (`extension/maskid`)
+Replaces sequential integer IDs with 22-char opaque strings on the wire and
+converts them back before the handler runs — handlers, GORM models and SQL keep
+using `int64` keys. One option, no app-code change:
+```go
+import "github.com/paulmanoni/nexus/extension/maskid"
+
+nexus.Boot(maskid.Module(maskid.Config{Key: os.Getenv("MASKID_KEY")}))
+```
+`{"id": 41, "ownerId": 7}` goes out as `{"id": "9tKq3nB1wZ0aVdH7cRmXsA", …}`. Covers
+all four transports: REST out (the reflective JSON write), REST in (path/query/
+header/form/JSON — one hook in `httpx` binding), **GraphQL** (ID fields are declared
+as the `MaskedID` scalar rather than `Int`, in outputs *and* arguments — it can't be
+a response rewrite because graphql-go coerces through the declared type), **Inertia**
+(masked after `resolveProps`, so `Defer`/`Optional` props are covered), and
+**WebSocket** (inbound envelope `data`, every outbound `Emit`). A request carrying a
+raw integer still works — an unmasked value simply doesn't decode — so rollout is
+incremental.
+
+Default policy: any JSON key `id`/`ids` or ending in `Id`/`ID`/`_id` (optional
+plural) whose value is a whole number. The suffix test is case-sensitive, which is
+what keeps `valid`/`paid`/`android` out. Tune with `Include`/`Exclude`/`Match`.
+
+Codec: deterministic AES over one block (8-byte domain tag ‖ big-endian id) →
+base64url. Deterministic keeps URLs bookmarkable and caches working; the tag
+authenticates, so a forged mask is rejected rather than decoding into another
+record's id. Real encryption, unlike hashids/sqids. Swap it via `Config.Codec`.
+`maskid.Mask/Unmask` are available to app code.
+
+**Masking is not authorization.** It removes enumeration and inference; a masked id
+is still a bearer reference. Every auth check you needed before, you still need. And
+do not enable it for ids that travel to a system outside this app (a legacy backend
+the SPA also calls, a partner webhook) — those consumers get strings they can't use,
+and handing the browser a way to reverse the mask defeats the point. `nexus docs maskid`.
 
 ### Config values (`nexus.Get`)
 `nexus.Get[T]("key", default...)` reads from, highest priority first: (1) an ENV

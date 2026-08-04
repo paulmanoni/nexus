@@ -4,7 +4,42 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.40.0] - 2026-08-04
+
+### Added
+
+- **`extension/maskid` — opaque IDs on the wire, with no handler changes.**
+  `maskid.Module(maskid.Config{Key: …})` replaces integer IDs with 22-character
+  opaque strings on the way out and converts them back on the way in, so handlers,
+  models and SQL keep using `int64` keys. Covers all four transports: REST out and
+  in (path, query, header, form, JSON body — hooked once in `httpx` binding),
+  GraphQL (ID fields declared as the new `MaskedID` scalar in both outputs and
+  arguments, since graphql-go coerces through the declared type and a rewrite
+  can't work there), Inertia (masked after prop resolution, so `Defer`/`Optional`
+  props are included), and WebSocket (inbound envelope data, every outbound
+  `Emit`). Requests carrying raw integers still work, so rollout is incremental.
+  Default codec is a deterministic, authenticated AES permutation over a single
+  block — real encryption rather than the reversible arithmetic of hashids/sqids
+  — swappable via `Config.Codec`. Field policy is tunable with
+  `Include`/`Exclude`/`Match`. Masking removes enumeration and inference; it is
+  not access control. `nexus docs maskid`.
+
+- **`nexus.DevStateDir()`** — the `nexus dev` session directory, for state that
+  already has its own on-disk format and so doesn't fit `PreserveDev`'s
+  snapshot-as-bytes model. Returns `""` outside `nexus dev`.
+
+### Changed
+
+- **An OAuth2 login now survives a `nexus dev` rebuild.** `extension/oauth2`'s
+  default token store is go-oauth2's in-memory store, which is literally
+  `NewFileTokenStore(":memory:")`; under `nexus dev` it is now pointed at a file
+  in the session state directory instead. Tokens are opaque values held in the
+  store rather than self-contained JWTs, so this alone keeps sessions alive
+  across a rebuild — no more re-authenticating on every save. Same lifetime as
+  `PreserveDev`: survives rebuilds, not a Ctrl-C. Production binaries are
+  unaffected (they never see `NEXUS_DEV_STATE`), and setting `Config.TokenStore`
+  opts out either way.
+
 
 ## [1.39.0] - 2026-08-04
 
