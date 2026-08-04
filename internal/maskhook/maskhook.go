@@ -14,6 +14,7 @@ package maskhook
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"sync/atomic"
 )
@@ -28,6 +29,18 @@ type Hooks struct {
 	IsID   func(key string) bool
 	Mask   func(key string, n int64) (string, bool)
 	Unmask func(key, s string) (int64, bool)
+
+	// TypeAllowed scopes *masking* to a set of response types, named by
+	// their Go type. Nil means every type. Unmasking is deliberately
+	// never scoped: a value only converts if it decrypts, which only
+	// happens for a mask this app minted, so an unscoped type's plain
+	// integer passes through untouched either way.
+	//
+	// The scope exists because masking is not always safe app-wide. An
+	// app whose IDs also travel to a system outside it — a legacy
+	// backend the same SPA calls — can mask the types that stay inside
+	// and leave the rest alone.
+	TypeAllowed func(typeName string) bool
 }
 
 var active atomic.Pointer[Hooks]
@@ -52,6 +65,37 @@ func MaskID(key string, n int64) (string, bool) {
 		return "", false
 	}
 	return h.Mask(key, n)
+}
+
+// TypeAllowed reports whether masking applies to the named response
+// type. True for everything when no scope is configured.
+func TypeAllowed(typeName string) bool {
+	h := active.Load()
+	if h == nil {
+		return false
+	}
+	return h.TypeAllowed == nil || h.TypeAllowed(typeName)
+}
+
+// rootTypeName names the Go type a response value carries, looking
+// through pointers, slices and the wrapper generics apps like to return
+// (Response[T], Page[T]) down to the first named struct. Anonymous and
+// map-shaped values yield "", which no scope matches — so a scoped app
+// masks only what it named.
+func rootTypeName(v any) string {
+	t := reflect.TypeOf(v)
+	for i := 0; t != nil && i < 8; i++ {
+		switch t.Kind() {
+		case reflect.Ptr, reflect.Slice, reflect.Array:
+			t = t.Elem()
+			continue
+		}
+		break
+	}
+	if t == nil {
+		return ""
+	}
+	return t.Name()
 }
 
 // IsIDKey reports whether the installed policy treats key as an ID
@@ -121,7 +165,7 @@ func UnmaskID(key, s string) (int64, bool) {
 // original untouched — masking must never turn a working response into
 // an error.
 func MaskValue(v any) any {
-	if !Enabled() || v == nil {
+	if !Enabled() || v == nil || !TypeAllowed(rootTypeName(v)) {
 		return v
 	}
 	tree, err := toTree(v)
@@ -141,6 +185,9 @@ func MaskProps(props map[string]any) {
 		return
 	}
 	for k, v := range props {
+		if !TypeAllowed(rootTypeName(v)) {
+			continue
+		}
 		tree, err := toTree(v)
 		if err != nil {
 			continue

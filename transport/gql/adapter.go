@@ -16,6 +16,7 @@ import (
 	"github.com/paulmanoni/nexus/dataloader"
 	graph "github.com/paulmanoni/nexus/graph"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/maskhook"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/registry"
@@ -212,7 +213,10 @@ func simpleHandler(schema *graphql.Schema) httpx.HandlerFunc {
 			req.Query = c.Query("query")
 			req.OperationName = c.Query("operationName")
 			if v := c.Query("variables"); v != "" {
-				_ = json.Unmarshal([]byte(v), &req.Variables)
+				// The POST path gets this from ShouldBindJSON; a GET
+				// query string bypasses binding, so convert any masked
+				// IDs here too.
+				_ = json.Unmarshal(maskhook.UnmaskJSON([]byte(v)), &req.Variables)
 			}
 		} else {
 			if err := c.ShouldBindJSON(&req); err != nil {

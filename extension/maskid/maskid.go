@@ -39,6 +39,24 @@
 // By default, any JSON key named "id"/"ids" or ending in Id/ID/_id
 // (singular or plural) whose value is a whole number: id, userId,
 // owner_id, categoryIDs. Tune it with Include, Exclude or Match.
+//
+// # Scoping to part of an app
+//
+// Masking is app-wide by default. Config.Types (or MatchType) narrows it
+// to named response types, which is what you want when some of your IDs
+// also travel to a system outside this app — a legacy backend the same
+// SPA calls, a partner webhook — and would arrive there as strings it
+// can't use:
+//
+//	maskid.Module(maskid.Config{
+//	    Key:   os.Getenv("MASKID_KEY"),
+//	    Types: []string{"Invoice", "InvoiceLine", "Customer"},
+//	})
+//
+// Only masking is scoped. Unmasking always runs, and needs no scope: a
+// value is converted only when it decrypts, which happens only for a mask
+// this app minted, so an out-of-scope type's plain integer passes through
+// either way.
 package maskid
 
 import (
@@ -88,6 +106,28 @@ type Config struct {
 	// Exclude still apply on top of it.
 	Match func(key string) bool
 
+	// Types scopes MASKING to these response types, named by their Go
+	// type (which is also their GraphQL object name). Empty means the
+	// whole app.
+	//
+	// Reach for this when masking isn't safe app-wide — most often when
+	// some of your IDs also travel to a system outside this app (a
+	// legacy backend the same SPA calls, a partner webhook) and would
+	// arrive there as strings it can't use. Name the types that stay
+	// inside; the rest keep their plain integers.
+	//
+	// Unmasking is never scoped, and doesn't need to be: a value is only
+	// converted when it decrypts, which only happens for a mask this app
+	// minted. An out-of-scope type's plain integer passes through
+	// untouched either way, so a scope can never break an inbound
+	// request.
+	Types []string
+
+	// MatchType is the predicate form of Types, for a scope too large or
+	// too dynamic to list. Types and MatchType are OR-ed when both are
+	// set.
+	MatchType func(typeName string) bool
+
 	// Codec replaces the built-in AES codec. Supply one to interoperate
 	// with an existing scheme; Key is then ignored.
 	Codec Codec
@@ -107,10 +147,12 @@ var (
 )
 
 type policy struct {
-	codec Codec
-	match func(string) bool
-	incl  map[string]bool
-	excl  map[string]bool
+	codec     Codec
+	match     func(string) bool
+	incl      map[string]bool
+	excl      map[string]bool
+	types     map[string]bool
+	matchType func(string) bool
 }
 
 // Module enables ID masking for the app. Install it once, anywhere in
@@ -127,10 +169,12 @@ func Module(cfg Config) nexus.Option {
 	}
 
 	p := &policy{
-		codec: codec,
-		match: cfg.Match,
-		incl:  keySet(cfg.Include),
-		excl:  keySet(cfg.Exclude),
+		codec:     codec,
+		match:     cfg.Match,
+		incl:      keySet(cfg.Include),
+		excl:      keySet(cfg.Exclude),
+		types:     typeSet(cfg.Types),
+		matchType: cfg.MatchType,
 	}
 	if p.match == nil {
 		p.match = DefaultMatch
@@ -143,11 +187,17 @@ func Module(cfg Config) nexus.Option {
 	// Installed eagerly rather than from a lifecycle hook: schema
 	// construction reads maskhook.Enabled() while options are still
 	// being assembled, and a hook would land after it.
-	maskhook.Install(maskhook.Hooks{
+	hooks := maskhook.Hooks{
 		IsID:   p.isID,
 		Mask:   p.mask,
 		Unmask: p.unmask,
-	})
+	}
+	// Left nil when unscoped, so the framework skips the check entirely
+	// rather than calling a predicate that always says yes.
+	if p.types != nil || p.matchType != nil {
+		hooks.TypeAllowed = p.typeAllowed
+	}
+	maskhook.Install(hooks)
 
 	return extension.Use(extension.Plugin{
 		Name:    "maskid",
@@ -167,6 +217,16 @@ func (p *policy) isID(key string) bool {
 		return true
 	}
 	return p.match(key)
+}
+
+func (p *policy) typeAllowed(name string) bool {
+	if name == "" {
+		return false
+	}
+	if p.types[name] {
+		return true
+	}
+	return p.matchType != nil && p.matchType(name)
 }
 
 func (p *policy) mask(_ string, id int64) (string, bool) {
@@ -221,6 +281,19 @@ func Unmask(s string) (int64, bool) {
 		return 0, false
 	}
 	return p.codec.Unmask(s)
+}
+
+// typeSet keeps type names case-sensitive — unlike field keys, they are
+// Go identifiers, and folding them would let "user" match "User".
+func typeSet(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
 }
 
 func keySet(keys []string) map[string]bool {

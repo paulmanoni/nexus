@@ -2152,18 +2152,40 @@ whole number. The suffix test is case-sensitive, which is what keeps
         Match:   func(key string) bool { ... },  // replace the policy wholesale
     }
 
+SCOPING TO PART OF AN APP
+
+Masking is app-wide by default. Types (or MatchType) narrows it to named
+response types — reach for it when some of your IDs also travel to a
+system outside this app and would arrive there as strings it can't use:
+
+    maskid.Config{
+        Key:   os.Getenv("MASKID_KEY"),
+        Types: []string{"Invoice", "InvoiceLine", "Customer"},
+    }
+
+The name is the Go type of the response, which is also its GraphQL object
+name; pointers and slices resolve to the same name. Only MASKING is
+scoped. Unmasking always runs and needs no scope: a value converts only
+when it decrypts, which only happens for a mask this app minted, so an
+out-of-scope type's plain integer passes through either way — a scope can
+never break an inbound request.
+
 WHERE IT HOOKS (all four transports, no app code)
 
   REST out       the reflective handler's JSON write
   REST in        path params, query, headers, form, and the JSON body —
                  one hook in httpx binding, so a handler that calls
                  ShouldBindQuery itself is covered too
-  GraphQL        ID fields are declared as the MaskedID scalar instead of
-                 Int, in both output types and arguments. This one can't be
-                 a response rewrite: graphql-go coerces every field through
-                 its declared type, so a masked string on an Int field
-                 would serialize to null. The SDL is honest as a result —
-                 clients see "id: MaskedID".
+  GraphQL        output ID fields are declared as the MaskedID scalar
+                 instead of Int. This one can't be a response rewrite:
+                 graphql-go coerces every field through its declared type,
+                 so a masked string on an Int field would serialize to
+                 null. Arguments deliberately keep their Int declaration —
+                 a masked value in "variables" is converted back to an
+                 integer when the request body is bound, before graphql-go
+                 sees it, so the SDL and the generated client are unchanged
+                 for every caller, in scope or not. (An inline literal in a
+                 hand-written query still needs a raw integer.)
   Inertia        props are masked after resolveProps, so Defer/Optional
                  props (which materialise on the partial reload that asks
                  for them) are covered too

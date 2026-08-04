@@ -4,6 +4,31 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`maskid.Config.Types` / `MatchType` — scope masking to named response types.**
+  Masking was previously all-or-nothing, which rules it out for an app where only
+  part of the surface can safely hand out opaque IDs (the rest feed a system
+  outside the app that expects integers). Naming the types that stay inside masks
+  those and leaves the others alone. The name is the Go type of the response,
+  which is also its GraphQL object name; pointers and slices resolve to the same
+  name. Only masking is scoped — unmasking always runs and needs no scope, since
+  a value converts only if it decrypts.
+
+### Changed
+
+- **GraphQL arguments keep their `Int` declaration under maskid.** v1.40.0
+  declared masked ID *arguments* as `MaskedID` too, which churned the SDL and the
+  generated client for every caller. It turns out to be unnecessary: a masked
+  value in `variables` is already converted back to an integer when the request
+  body is bound, before graphql-go coerces it. Output fields still become
+  `MaskedID` — there a rewrite genuinely can't work. An inline literal in a
+  hand-written query now needs a raw integer.
+- The GraphQL `GET` handler unmasks its `variables` query parameter, which
+  bypassed request binding and so missed the conversion the `POST` path got.
+
 ## [1.40.0] - 2026-08-04
 
 ### Added

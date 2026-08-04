@@ -258,3 +258,113 @@ func TestModuleInstallsEagerly(t *testing.T) {
 		t.Fatalf("round trip through the installed hook = %d, %v", n, ok)
 	}
 }
+
+type inScope struct {
+	ID      int `json:"id"`
+	OwnerID int `json:"ownerId"`
+}
+
+type outOfScope struct {
+	ID      int `json:"id"`
+	OwnerID int `json:"ownerId"`
+}
+
+func installScoped(t *testing.T, cfg Config) {
+	t.Helper()
+	p := &policy{
+		codec: codec(), match: DefaultMatch,
+		types: typeSet(cfg.Types), matchType: cfg.MatchType,
+	}
+	h := maskhook.Hooks{IsID: p.isID, Mask: p.mask, Unmask: p.unmask}
+	if p.types != nil || p.matchType != nil {
+		h.TypeAllowed = p.typeAllowed
+	}
+	maskhook.Install(h)
+	mu.Lock()
+	current = p
+	mu.Unlock()
+	t.Cleanup(func() {
+		maskhook.Uninstall()
+		mu.Lock()
+		current = nil
+		mu.Unlock()
+	})
+}
+
+func idOf(t *testing.T, v any) any {
+	t.Helper()
+	blob, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(blob, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m["id"]
+}
+
+// The scope is what lets an app mask the types that stay inside it while
+// leaving alone the ones whose IDs travel to another system.
+func TestTypesScopesMasking(t *testing.T) {
+	installScoped(t, Config{Types: []string{"inScope"}})
+
+	if _, ok := idOf(t, maskhook.MaskValue(inScope{ID: 41})).(string); !ok {
+		t.Error("an in-scope type was not masked")
+	}
+	if got := idOf(t, maskhook.MaskValue(outOfScope{ID: 41})); got != float64(41) {
+		t.Errorf("an out-of-scope type was masked: %#v", got)
+	}
+	// Pointers and slices resolve to the same underlying type name.
+	if _, ok := idOf(t, maskhook.MaskValue(&inScope{ID: 41})).(string); !ok {
+		t.Error("a pointer to an in-scope type was not masked")
+	}
+	rows, ok := maskhook.MaskValue([]inScope{{ID: 41}}).([]any)
+	if !ok || len(rows) != 1 {
+		t.Fatalf("slice masking returned %#v", rows)
+	}
+	if _, ok := rows[0].(map[string]any)["id"].(string); !ok {
+		t.Error("a slice of an in-scope type was not masked")
+	}
+}
+
+func TestMatchTypeScopesMasking(t *testing.T) {
+	installScoped(t, Config{MatchType: func(n string) bool { return n == "inScope" }})
+
+	if _, ok := idOf(t, maskhook.MaskValue(inScope{ID: 41})).(string); !ok {
+		t.Error("MatchType did not admit the type it matched")
+	}
+	if got := idOf(t, maskhook.MaskValue(outOfScope{ID: 41})); got != float64(41) {
+		t.Errorf("MatchType masked a type it did not match: %#v", got)
+	}
+}
+
+// Unmasking is deliberately unscoped: a value converts only if it decrypts,
+// so an out-of-scope type's plain integer is unaffected either way. Scoping
+// it too would mean an inbound mask silently failing to resolve.
+func TestUnmaskingIgnoresTheScope(t *testing.T) {
+	installScoped(t, Config{Types: []string{"inScope"}})
+	masked := Mask(41)
+
+	body := []byte(`{"id":"` + masked + `","ownerId":7}`)
+	var got map[string]any
+	if err := json.Unmarshal(maskhook.UnmaskJSON(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["id"] != float64(41) {
+		t.Errorf("a mask failed to unmask under a scope: %#v", got["id"])
+	}
+	if got["ownerId"] != float64(7) {
+		t.Errorf("a plain integer was altered: %#v", got["ownerId"])
+	}
+}
+
+// An unscoped config must keep masking everything.
+func TestNoScopeMasksEverything(t *testing.T) {
+	install(t, Config{})
+	for _, v := range []any{inScope{ID: 41}, outOfScope{ID: 41}} {
+		if _, ok := idOf(t, maskhook.MaskValue(v)).(string); !ok {
+			t.Errorf("%T was not masked without a scope", v)
+		}
+	}
+}

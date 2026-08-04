@@ -719,9 +719,11 @@ nexus.Boot(maskid.Module(maskid.Config{Key: os.Getenv("MASKID_KEY")}))
 ```
 `{"id": 41, "ownerId": 7}` goes out as `{"id": "9tKq3nB1wZ0aVdH7cRmXsA", …}`. Covers
 all four transports: REST out (the reflective JSON write), REST in (path/query/
-header/form/JSON — one hook in `httpx` binding), **GraphQL** (ID fields are declared
-as the `MaskedID` scalar rather than `Int`, in outputs *and* arguments — it can't be
-a response rewrite because graphql-go coerces through the declared type), **Inertia**
+header/form/JSON — one hook in `httpx` binding), **GraphQL** (*output* ID fields are
+declared as the `MaskedID` scalar rather than `Int` — it can't be a response rewrite
+because graphql-go coerces through the declared type; arguments stay `Int`, since a
+masked value in `variables` is already converted back when the body is bound, so the
+SDL and generated client don't change), **Inertia**
 (masked after `resolveProps`, so `Defer`/`Optional` props are covered), and
 **WebSocket** (inbound envelope `data`, every outbound `Emit`). A request carrying a
 raw integer still works — an unmasked value simply doesn't decode — so rollout is
@@ -730,6 +732,13 @@ incremental.
 Default policy: any JSON key `id`/`ids` or ending in `Id`/`ID`/`_id` (optional
 plural) whose value is a whole number. The suffix test is case-sensitive, which is
 what keeps `valid`/`paid`/`android` out. Tune with `Include`/`Exclude`/`Match`.
+
+**Scoping** — `Config.Types` (or `MatchType`) narrows *masking* to named response
+types, for when masking isn't safe app-wide (some IDs travel to a system outside
+the app). The name is the Go type of the response, which is also its GraphQL
+object name; pointers and slices resolve to the same name. Unmasking is never
+scoped and needs no scope — a value converts only if it decrypts, so an
+out-of-scope plain integer is unaffected either way.
 
 Codec: deterministic AES over one block (8-byte domain tag ‖ big-endian id) →
 base64url. Deterministic keeps URLs bookmarkable and caches working; the tag

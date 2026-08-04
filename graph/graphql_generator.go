@@ -77,7 +77,15 @@ func GenerateGraphQLObject[T any](name string) *graphql.Object {
 }
 
 func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
-	return g.generateFieldsAt(t, nil)
+	root := t
+	if root != nil && root.Kind() == reflect.Ptr {
+		root = root.Elem()
+	}
+	name := ""
+	if root != nil {
+		name = sanitizeTypeName(root.Name())
+	}
+	return g.generateFieldsAt(t, nil, name)
 }
 
 // generateFieldsAt is the recursive worker. indexPrefix carries the
@@ -93,7 +101,12 @@ func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
 // allocation per embedded hop. Threading the index path lets us
 // pre-compute the lookup once at registration and use the cheap
 // FieldByIndexErr at request time.
-func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int) graphql.Fields {
+//
+// rootName is the GraphQL object these fields land on. Embedded structs
+// recurse with the same value — their fields are promoted onto the root —
+// so an ID-masking scope keyed on the object name sees the name the
+// client actually queries.
+func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int, rootName string) graphql.Fields {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
@@ -121,7 +134,7 @@ func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int) 
 				embeddedType = embeddedType.Elem()
 			}
 
-			embeddedFields := g.generateFieldsAt(embeddedType, fieldIndex)
+			embeddedFields := g.generateFieldsAt(embeddedType, fieldIndex, rootName)
 			for name, embeddedField := range embeddedFields {
 				if _, exists := fields[name]; !exists {
 					fields[name] = embeddedField
@@ -142,7 +155,7 @@ func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int) 
 		if graphqlType == nil {
 			continue
 		}
-		graphqlType = MaskType(fieldName, field.Type, graphqlType)
+		graphqlType = MaskType(rootName, fieldName, field.Type, graphqlType)
 
 		description := field.Tag.Get("description")
 		fields[fieldName] = &graphql.Field{

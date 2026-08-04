@@ -90,15 +90,24 @@ func intOf(v reflect.Value) (int64, bool) {
 	}
 }
 
-// MaskType swaps Int for MaskedID in a type that the generator just built
-// for the named field, preserving NonNull and List wrappers. Any other
-// type — String, a nested object, a custom scalar — is returned as-is, so
-// a `id string` field or an already-opaque key is never touched.
+// MaskType swaps Int for MaskedID on an ID field of an in-scope object,
+// preserving NonNull and List wrappers. Any other type — String, a nested
+// object, a custom scalar — is returned unchanged, so an `id string` field
+// or an already-opaque key is never touched.
 //
-// Called from both the output-object generator and the input/argument
-// builders; a no-op unless the maskid extension is installed.
-func MaskType(name string, goType reflect.Type, t graphql.Type) graphql.Type {
-	if t == nil || !maskhook.Enabled() || !maskhook.IsIDKey(name) || !isIntKind(goType) {
+// objectName is the GraphQL object the field belongs to; it is what a
+// scoped policy matches on, which is how an app masks the types that stay
+// inside it while leaving alone the ones whose IDs travel elsewhere.
+//
+// A no-op unless the maskid extension is installed. Output types only:
+// arguments keep their Int declaration, because a masked value is already
+// converted back to an integer when the request body is bound, and
+// changing argument types would churn the SDL and the generated client
+// for every caller, in scope or not.
+func MaskType(objectName, field string, goType reflect.Type, t graphql.Type) graphql.Type {
+	if t == nil || !maskhook.Enabled() ||
+		!maskhook.TypeAllowed(objectName) ||
+		!maskhook.IsIDKey(field) || !isIntKind(goType) {
 		return t
 	}
 	return swapInt(t)

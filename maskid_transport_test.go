@@ -213,9 +213,11 @@ func NewGetItem(_ *Service, p Params[maskGQLArgs]) (*maskItem, error) {
 	return &maskItem{ID: p.Args.ID, OwnerID: 7, Count: 3, Title: "hello"}, nil
 }
 
-// The GraphQL path can't be a response rewrite — graphql-go coerces every
-// field through its declared type — so this asserts the schema actually
-// swapped Int for MaskedID in both directions.
+// Output fields become the MaskedID scalar (graphql-go coerces every field
+// through its declared type, so a response rewrite can't work). Arguments
+// deliberately stay Int: the masked value in `variables` is converted back
+// to an integer when the request body is bound, before graphql-go ever
+// sees it, which keeps the SDL and the generated client unchanged.
 func TestMaskID_GraphQLScalarRoundTrip(t *testing.T) {
 	installTestMask(t)
 	maskGQLSeen = 0
@@ -230,7 +232,8 @@ func TestMaskID_GraphQLScalarRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(app.Engine())
 	defer func() { srv.Close(); app.Stop() }()
 
-	body := bytes.NewBufferString(`{"query":"{ getItem(id: \"mask-41\") { id ownerId count title } }"}`)
+	body := bytes.NewBufferString(`{"query":"query G($id: Int!) { getItem(id: $id) { id ownerId count title } }",` +
+		`"variables":{"id":"mask-41"}}`)
 	resp, err := http.Post(srv.URL+"/graphql", "application/json", body)
 	if err != nil {
 		t.Fatal(err)
@@ -257,5 +260,82 @@ func TestMaskID_GraphQLScalarRoundTrip(t *testing.T) {
 	}
 	if item["count"] != float64(3) || item["title"] != "hello" {
 		t.Errorf("non-ID fields rewritten: %s", blob)
+	}
+}
+
+// Distinct type names per test: graph keeps a process-wide registry keyed
+// by GraphQL type name, so reusing maskItem here would hand this schema the
+// object the previous test already built.
+type maskScopedItem struct {
+	ID      int `json:"id"`
+	OwnerID int `json:"ownerId"`
+}
+
+type maskUnscopedItem struct {
+	ID      int `json:"id"`
+	OwnerID int `json:"ownerId"`
+}
+
+func NewGetScoped(_ *Service, p Params[maskGQLArgs]) (*maskScopedItem, error) {
+	return &maskScopedItem{ID: p.Args.ID, OwnerID: 7}, nil
+}
+
+func NewGetUnscoped(_ *Service, p Params[maskGQLArgs]) (*maskUnscopedItem, error) {
+	return &maskUnscopedItem{ID: p.Args.ID, OwnerID: 7}, nil
+}
+
+// The scalar swap happens at schema-build time, so this is where a broken
+// scope would be least visible: the SDL itself has to differ per type.
+func TestMaskID_GraphQLHonoursTheTypeScope(t *testing.T) {
+	maskhook.Install(maskhook.Hooks{
+		IsID:        func(key string) bool { return key == "id" || key == "ownerId" },
+		Mask:        func(_ string, n int64) (string, bool) { return "mask-" + strconv.FormatInt(n, 10), true },
+		Unmask:      func(_, s string) (int64, bool) { return 0, false },
+		TypeAllowed: func(name string) bool { return name == "maskScopedItem" },
+	})
+	t.Cleanup(maskhook.Uninstall)
+
+	mod := Module("maskid_gql_scope",
+		Provide(func(app *App) *Service { return app.Service("scopeitems") }),
+		AsQuery(NewGetScoped),
+		AsQuery(NewGetUnscoped),
+	)
+	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	if err != nil {
+		t.Fatalf("newApp: %v", err)
+	}
+	srv := httptest.NewServer(app.Engine())
+	defer func() { srv.Close(); app.Stop() }()
+
+	query := func(field string) map[string]any {
+		t.Helper()
+		body := bytes.NewBufferString(`{"query":"query G($id: Int!) { ` + field +
+			`(id: $id) { id ownerId } }","variables":{"id":41}}`)
+		resp, err := http.Post(srv.URL+"/graphql", "application/json", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		blob, _ := io.ReadAll(resp.Body)
+		var out struct {
+			Data   map[string]map[string]any  `json:"data"`
+			Errors []struct{ Message string } `json:"errors"`
+		}
+		if err := json.Unmarshal(blob, &out); err != nil {
+			t.Fatalf("decode %s: %v", blob, err)
+		}
+		if len(out.Errors) > 0 {
+			t.Fatalf("graphql errors on %s: %s", field, blob)
+		}
+		return out.Data[field]
+	}
+
+	in := query("getScoped")
+	if in["id"] != "mask-41" || in["ownerId"] != "mask-7" {
+		t.Errorf("in-scope type was not masked: %#v", in)
+	}
+	out := query("getUnscoped")
+	if out["id"] != float64(41) || out["ownerId"] != float64(7) {
+		t.Errorf("out-of-scope type was masked: %#v", out)
 	}
 }
