@@ -4,6 +4,19 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.42.0] - 2026-08-04
+
+### Changed
+
+- **maskid: excluding a key now prunes its whole subtree**, not just that one
+  scalar. This is what makes reference data expressible. A lookup row's primary
+  key is spelled `id` like every other, so excluding `id` is not an option — but
+  excluding the field that *holds* the lookups (`countries`, `categories`)
+  spares every ID inside it, in both directions. Without it a masked country id
+  broke `country === 1` comparisons and made a masked `id` unusable as a
+  `?category=` query value, since the inbound key was not ID-shaped and so was
+  never converted back. Mask the records; leave the code tables numeric.
+
 ## [1.41.2] - 2026-08-04
 
 ### Fixed

@@ -2149,6 +2149,12 @@ whole number. The suffix test is case-sensitive, which is what keeps
     maskid.Config{
         Include: []string{"reference"},  // mask a field the default misses
         Exclude: []string{"tenantId"},   // never mask (wins over everything)
+        //                                  ...and prunes the whole subtree
+        //                                  under that key, which is how
+        //                                  reference data stays numeric:
+        //                                  a lookup row's key is "id" too,
+        //                                  so only the field HOLDING the
+        //                                  lookups can spare it.
         Match:   func(key string) bool { ... },  // replace the policy wholesale
     }
 

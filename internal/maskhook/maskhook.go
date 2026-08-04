@@ -41,6 +41,14 @@ type Hooks struct {
 	// backend the same SPA calls — can mask the types that stay inside
 	// and leave the rest alone.
 	TypeAllowed func(typeName string) bool
+
+	// Skip names keys whose entire subtree is left alone — neither
+	// masked nor unmasked. IsID answers "is this scalar an ID"; Skip
+	// answers "does anything under this key concern us at all", which is
+	// what reference data needs: a lookup row's primary key is spelled
+	// "id" like any other, so it can only be spared by pruning the
+	// branch that holds it.
+	Skip func(key string) bool
 }
 
 var active atomic.Pointer[Hooks]
@@ -233,7 +241,7 @@ func MaskProps(page any, props map[string]any) {
 	}
 	all := typeInScope(page)
 	for k, v := range props {
-		if !all && !typeInScope(v) {
+		if skipKey(k) || (!all && !typeInScope(v)) {
 			continue
 		}
 		tree, err := toTree(v)
@@ -310,6 +318,9 @@ func walk(v any, key string, fn func(key string, v any) any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, child := range t {
+			if skipKey(k) {
+				continue
+			}
 			t[k] = walk(child, k, fn)
 		}
 		return t
@@ -321,6 +332,11 @@ func walk(v any, key string, fn func(key string, v any) any) any {
 	default:
 		return fn(key, v)
 	}
+}
+
+func skipKey(key string) bool {
+	h := active.Load()
+	return h != nil && h.Skip != nil && h.Skip(key)
 }
 
 func maskLeaf(key string, v any) any {

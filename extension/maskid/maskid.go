@@ -100,6 +100,13 @@ type Config struct {
 	// Exclude names fields to leave alone. Applied after Include and
 	// after Match, so it always wins — the escape hatch for an id that
 	// a third party already knows, or one that must stay sortable.
+	//
+	// Excluding a key prunes its whole subtree, not just that scalar.
+	// That is what makes reference data expressible: a lookup row's
+	// primary key is spelled "id" like every other, so excluding "id"
+	// is not an option — but excluding the field that HOLDS the lookups
+	// ("categories", "regions") spares every ID inside it. Mask the
+	// records, leave the code tables numeric.
 	Exclude []string
 
 	// Match replaces the built-in field policy entirely. Include and
@@ -192,6 +199,9 @@ func Module(cfg Config) nexus.Option {
 		Mask:   p.mask,
 		Unmask: p.unmask,
 	}
+	if p.excl != nil {
+		hooks.Skip = p.skip
+	}
 	// Left nil when unscoped, so the framework skips the check entirely
 	// rather than calling a predicate that always says yes.
 	if p.types != nil || p.matchType != nil {
@@ -218,6 +228,8 @@ func (p *policy) isID(key string) bool {
 	}
 	return p.match(key)
 }
+
+func (p *policy) skip(key string) bool { return p.excl[strings.ToLower(key)] }
 
 func (p *policy) typeAllowed(name string) bool {
 	if name == "" {

@@ -733,7 +733,9 @@ incremental.
 
 Default policy: any JSON key `id`/`ids` or ending in `Id`/`ID`/`_id` (optional
 plural) whose value is a whole number. The suffix test is case-sensitive, which is
-what keeps `valid`/`paid`/`android` out. Tune with `Include`/`Exclude`/`Match`.
+what keeps `valid`/`paid`/`android` out. Tune with `Include`/`Exclude`/`Match` — and note `Exclude` prunes the whole
+subtree under a key, which is how reference data (`countries`, `categories`) stays
+numeric even though a lookup row's key is also spelled `id`.
 
 **Scoping** — `Config.Types` (or `MatchType`) narrows *masking* to named response
 types, for when masking isn't safe app-wide (some IDs travel to a system outside
