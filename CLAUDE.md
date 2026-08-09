@@ -907,9 +907,11 @@ A typed JS/TS SDK + Vue composables served from the binary (no npm package). It 
 **Simplest enable — one switch (`sdk = true`):** set `Config.SDK` (or `[runtime] sdk =
 true` in nexus.toml) and nexus generates + serves the full typed SDK and, when a frontend
 dir is present, dumps the SDK files + wires tsconfig so `import 'nexus-client'` resolves
-with types — no `client.Config` ceremony. PocketBase-style. It activates only under `nexus
-dev` OR when `introspection = true`, so a locked-down production binary never exposes the
-API surface from this flag alone. For finer control (custom path, route middleware,
+with types — no `client.Config` ceremony. PocketBase-style. **Independent of
+`introspection`** — the SDK is the app's own browser bundle's import, so it keeps serving
+in a locked-down production binary; the routes are public and the manifest maps your API
+surface, so vendor with `nexus client --out` instead if you don't want that published.
+`introspection` governs `/__nexus`; `sdk` governs the client. For finer control (custom path, route middleware,
 explicit OutDir, per-deployment gating) set `Config.Client` / `nexus.ClientUse(...)`
 directly instead.
 

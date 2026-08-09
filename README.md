@@ -233,8 +233,11 @@ nx.ws('/events').on('chat.message', render) // WebSocket
 ```
 
 Vue composables (`useQuery`, `useMutation`, `useAuth`, …) and React hooks ship alongside.
-`sdk = true` activates only under `nexus dev` or when `introspection = true`, so a
-locked-down production binary never exposes the API surface from this flag alone.
+`sdk = true` is independent of `introspection` — the SDK is what your own browser bundle
+imports, so it keeps working in a production binary with the dashboard locked down. The
+routes are public (a browser has to be able to fetch `client.js`) and the manifest they
+serve maps your API surface; to ship a frontend without publishing that map, vendor the
+files at build time with `nexus client --out` and leave the flag off.
 
 **Secure by default.** Tokens live in memory (cleared on reload) so an XSS can't lift a
 long-lived credential — opt into `localStorage` explicitly when you want persistence.

@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/paulmanoni/nexus/client"
@@ -58,8 +60,9 @@ func TestDevAutoMountClientSDK(t *testing.T) {
 }
 
 // TestSDKSwitch covers the one-switch Config.SDK front door: it mounts the
-// full client SDK under `nexus dev` OR when Introspection is on, and stays
-// closed in a locked-down production binary (neither dev nor introspection).
+// full client SDK wherever it's set, independently of Introspection — the
+// app's own browser bundle imports the SDK, so a production binary that
+// locks the dashboard down must still be able to serve it.
 func TestSDKSwitch(t *testing.T) {
 	t.Run("mounts under dev", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "1")
@@ -77,11 +80,37 @@ func TestSDKSwitch(t *testing.T) {
 		}
 	})
 
-	t.Run("stays closed in locked-down production", func(t *testing.T) {
+	t.Run("mounts with introspection off, outside dev", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "")
 		a := New(Config{SDK: true}) // introspection off, not in dev
+		if a.ClientHandler() == nil {
+			t.Error("SDK=true should mount regardless of Introspection")
+		}
+	})
+
+	t.Run("stays closed when unset", func(t *testing.T) {
+		t.Setenv(NexusDevEnv, "")
+		a := New(Config{})
 		if a.ClientHandler() != nil {
-			t.Error("SDK=true must NOT expose the SDK with introspection off outside dev")
+			t.Error("no SDK switch, no client mount")
+		}
+	})
+
+	// Mounting isn't enough: with introspection off the routes used to
+	// mount behind a gate that 404s every non-allowlisted peer, which
+	// for a browser is indistinguishable from not mounting at all.
+	t.Run("routes answer an anonymous request with introspection off", func(t *testing.T) {
+		t.Setenv(NexusDevEnv, "")
+		a := New(Config{SDK: true})
+		for _, path := range []string{
+			"/__nexus/client/client.js",
+			"/__nexus/client/manifest.json",
+		} {
+			w := httptest.NewRecorder()
+			a.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+			if w.Code != http.StatusOK {
+				t.Errorf("GET %s = %d, want 200", path, w.Code)
+			}
 		}
 	})
 }

@@ -4,6 +4,23 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.0] - 2026-08-10
+
+### Changed
+
+- **`sdk = true` is now independent of `introspection`.** It previously took
+  effect only under `nexus dev` or with introspection on, and even then mounted
+  behind the introspection gate — so a production binary that (correctly) locked
+  `/__nexus` down also stopped serving the client its own frontend imports,
+  which is the one thing the switch exists to do. The two flags now govern
+  separate surfaces: `introspection` the dashboard, `sdk` the client, neither
+  implying the other. The SDK routes are public, as a browser fetching
+  `client.js` requires. What that publishes is a map of the API surface — paths,
+  methods, argument and response shapes; no data, and no route that was not
+  already listening. To ship a frontend without publishing the map, vendor the
+  files at build time with `nexus client --out` and leave the flag off. An
+  explicit `Config.Client` mount is unchanged and still gated.
+
 ## [1.42.0] - 2026-08-04
 
 ### Changed

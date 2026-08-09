@@ -472,15 +472,22 @@ func New(cfg Config) *App {
 	// Retain for the dev-only SDK fallback (devAutoMountClientSDK).
 	a.clientCfg = cfg.Client
 	switch {
-	case cfg.SDK && (IsDev() || cfg.Introspection):
+	case cfg.SDK:
 		// One-switch SDK (PocketBase-style): full manifest across REST +
 		// GraphQL + WS, plus frontend defaults so the SDK files dump and
-		// tsconfig wires when a frontend dir is present. Gated to dev or
-		// introspection so the API surface is never exposed by this flag
-		// alone in a locked-down production binary. The OnStart dump hook
-		// (obs_integration.go) writes files only when a frontend dir was
-		// detected — a no-op in a fileless production tree.
-		sdkCfg := a.guardClientSDK(client.ApplyFrontendDefaults(client.Config{Enabled: true, Public: true}))
+		// tsconfig wires when a frontend dir is present. The OnStart dump
+		// hook (obs_integration.go) writes files only when a frontend dir
+		// was detected — a no-op in a fileless production tree.
+		//
+		// Independent of Introspection, deliberately: the SDK is what the
+		// app's OWN browser bundle imports, so gating it on the dashboard
+		// switch would break the frontend of every production build that
+		// (correctly) locks the dashboard down. Introspection governs
+		// /__nexus; this flag governs the client. Both are explicit
+		// opt-ins, and neither implies the other. Unguarded for the same
+		// reason — an anonymous browser must be able to fetch client.js.
+		sdkCfg := client.ApplyFrontendDefaults(client.Config{Enabled: true, Public: true})
+		sdkCfg.Unguarded = true
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, sdkCfg)
 	case cfg.Client.Enabled:
 		clientCfg := a.guardClientSDK(client.ApplyVisibilityDefaults(cfg.Client, cfg.Introspection))

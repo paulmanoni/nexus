@@ -1328,7 +1328,7 @@ on the framework side. Browsers fetch the SDK at runtime; tooling
 
 Routes mounted under cfg.Client.Path (default /__nexus/client):
 
-    GET <path>/manifest.json    SDK-tailored manifest (behind the introspection gate)
+    GET <path>/manifest.json    SDK-tailored manifest (gating varies — see below)
     GET <path>/client.js        runtime ESM — REST/GraphQL/WS/CRUD/auth
     GET <path>/client.d.ts      TS types paired with client.js
     GET <path>/vue.js           Vue 3 composables built on client.js
@@ -1387,11 +1387,22 @@ that vendor sdk/client.d.ts at build time can stay on the safe
 default and lose nothing in TS completion (types are vendored,
 not fetched).
 
-Beyond the Public flag, the whole /__nexus/client surface sits
-behind the introspection gate (open under nexus dev / when
-introspection is on, 404 otherwise) — same as the dashboard. Serve
-the runtime SDK from a locked-down production binary only by setting
-Client.Unguarded; prefer vendoring sdk/ at build time instead.
+Beyond the Public flag, a Config.Client mount sits behind the
+introspection gate (open under nexus dev / when introspection is on,
+404 otherwise) — same as the dashboard. Serve that mount from a
+locked-down production binary by setting Client.Unguarded; prefer
+vendoring sdk/ at build time instead.
+
+The one-switch front door is different: "[runtime] sdk = true" (or
+Config.SDK) mounts a public, ungated SDK regardless of introspection,
+because the app's own browser bundle imports it and a production
+binary is expected to lock the dashboard down while still serving its
+frontend. Introspection governs /__nexus; sdk governs the client;
+neither implies the other. Setting it publishes a full map of your
+API surface (paths, methods, arg + response shapes) — no data and no
+route that wasn't already listening, but the map. To ship a frontend
+without publishing it, vendor with "nexus client --out" and leave the
+flag off.
 
 OutDir produces:
 

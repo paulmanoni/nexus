@@ -80,13 +80,25 @@ type Config struct {
 	// `import 'nexus-client'` resolves with types. No client.Config
 	// ceremony, no manifest wiring.
 	//
-	// Gating (security): SDK only takes effect under `nexus dev`
-	// (NEXUS_DEV=1) OR when Introspection is true. A locked-down
-	// production binary (introspection off, not under dev) ignores it,
-	// so the API surface is never exposed by this flag alone. The file
-	// dump additionally requires a detected frontend dir, so production
-	// binaries serve SDK routes (when introspection is on) without
-	// writing to a project tree that isn't there.
+	// Independent of Introspection. The SDK is what the app's own
+	// browser bundle imports, so tying it to the dashboard switch would
+	// break the frontend of every production build that (correctly)
+	// locks /__nexus down. Introspection governs the dashboard; this
+	// flag governs the client; both are explicit opt-ins and neither
+	// implies the other.
+	//
+	// Security: the routes are public — an anonymous browser has to be
+	// able to fetch client.js — and the manifest they serve is a full
+	// map of your API surface (paths, methods, argument and response
+	// shapes). It exposes no data and no route that wasn't already
+	// listening, but it does hand a reader the map. Set this only when
+	// you intend to serve the SDK from the binary; to ship a frontend
+	// without publishing the map, vendor the files at build time
+	// (`nexus client --out`) and leave the flag off.
+	//
+	// The file dump additionally requires a detected frontend dir, so
+	// production binaries serve the routes without writing to a project
+	// tree that isn't there.
 	//
 	// Equivalent to enabling Client with the full manifest + frontend
 	// defaults; for finer control (custom Path, middleware gating,
