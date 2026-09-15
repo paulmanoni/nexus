@@ -83,15 +83,3 @@ var Builtins = []Info{
 	{Name: "csrf", Kind: KindBuiltin, Description: "CSRF token validation"},
 	{Name: "compression", Kind: KindBuiltin, Description: "Response compression"},
 }
-
-// Builtin constructs a builtin Info entry (rarely needed — Builtins has
-// the common ones). Use for project-specific middleware you consider
-// standard.
-func Builtin(name, desc string) Info {
-	return Info{Name: name, Kind: KindBuiltin, Description: desc}
-}
-
-// Custom constructs a custom Info entry.
-func Custom(name, desc string) Info {
-	return Info{Name: name, Kind: KindCustom, Description: desc}
-}

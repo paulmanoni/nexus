@@ -47,11 +47,6 @@ func (g ginCarrier) path() string              { return g.c.FullPath() }
 func (g ginCarrier) setHeader(key, val string) { g.c.Header(key, val) }
 
 func (g ginCarrier) reject(status int, err error) error {
-	// A REST-aware extension can claim this reject (run its app hooks); if it
-	// fully handles the response we render nothing more. Otherwise default.
-	if h, ok := rejectHookFrom(g.c.Request.Context()); ok && h(g.c, status, err) {
-		return err
-	}
 	g.c.AbortWithStatusJSON(status, httpx.H{"error": err.Error()})
 	return err
 }

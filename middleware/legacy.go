@@ -1,10 +1,6 @@
 package middleware
 
-import (
-	"fmt"
-
-	"github.com/paulmanoni/nexus/graph"
-)
+import "fmt"
 
 // legacyBundle adapts the existing Middleware struct to the Handler interface.
 // It's a wrapper (not methods on the struct) because the struct's Name FIELD
@@ -31,29 +27,11 @@ func (b legacyBundle) Transports() TransportSet {
 	return s
 }
 
-// Handle bridges to the legacy realization for the active transport.
-//
-//   - GraphQL: b.mw.Graph is already func(next) next — bridged via bridgeGraph.
-//   - REST / WS: b.mw.Gin is a gin.HandlerFunc driven by gin's own c.Next();
-//     the REST/WS adapter (step 3) unwraps legacyBundle and runs b.mw.Gin
-//     natively in its gin chain rather than routing through Handle. So this
-//     path is intentionally a guard until step 3 wires the unwrap.
-func (b legacyBundle) Handle(rc *RequestCtx, next Next) error {
-	switch rc.Transport {
-	case TransportGraphQL:
-		if b.mw.Graph == nil {
-			return next(rc)
-		}
-		return bridgeGraph(rc, b.mw.Graph, next)
-	default:
-		return fmt.Errorf("nexus: legacyBundle %q has no functional realization for %s; "+
-			"the gin path is run natively by the REST/WS adapter (step 3)", b.mw.Name, rc.Transport)
-	}
-}
-
-// bridgeGraph runs a legacy graph.FieldMiddleware inside the functional chain.
-// Full body lands with the GraphQL carrier in step 3; stubbed so legacy.go
-// compiles and the GraphQL bridge has a home. See impl plan §2.1 / §6.
-func bridgeGraph(rc *RequestCtx, _ graph.FieldMiddleware, next Next) error {
-	return next(rc) // TODO(step 3): drive the FieldMiddleware via the GraphQL carrier
+// Handle is unreachable today: the only consumer of AsHandler
+// (app_use.go) reads Transports() and runs the legacy realizations
+// natively per transport. Fail loudly if a future chain builder
+// starts calling it — the previous stub silently DROPPED a legacy
+// graph.FieldMiddleware, which is worse than an error.
+func (b legacyBundle) Handle(rc *RequestCtx, _ Next) error {
+	return fmt.Errorf("nexus: legacyBundle %q: Handle is not wired; run the legacy realization natively for %s", b.mw.Name, rc.Transport)
 }

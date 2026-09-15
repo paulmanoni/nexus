@@ -170,22 +170,20 @@ func TestRequestCtx(t *testing.T) {
 }
 
 func TestLegacyBundleHandle(t *testing.T) {
-	// GraphQL transport with nil Graph: pass-through to next.
-	nextCalled := false
-	h := AsHandler(Middleware{Name: "g"})
-	rc := newRequestCtx(context.Background(), TransportGraphQL, &fakeCarrier{})
-	if err := h.Handle(rc, func(*RequestCtx) error { nextCalled = true; return nil }); err != nil {
-		t.Fatalf("graphql pass-through returned error: %v", err)
-	}
-	if !nextCalled {
-		t.Fatalf("graphql pass-through should call next")
-	}
-
-	// REST transport: guard error mentioning the transport (gin runs natively in step 3).
-	hr := newRequestCtx(context.Background(), TransportREST, &fakeCarrier{})
-	err := AsHandler(Middleware{Name: "r", Gin: func(*httpx.Ctx) {}}).
-		Handle(hr, func(*RequestCtx) error { return nil })
-	if err == nil {
-		t.Fatalf("REST Handle should return the step-3 guard error")
+	// Handle is a guard on every transport: legacy realizations run
+	// natively (app_use.go reads Transports()), and the old stub's
+	// graphql pass-through silently DROPPED a real FieldMiddleware.
+	// It must fail loudly instead — never call next.
+	for _, transport := range []Transport{TransportGraphQL, TransportREST} {
+		nextCalled := false
+		rc := newRequestCtx(context.Background(), transport, &fakeCarrier{})
+		err := AsHandler(Middleware{Name: "g", Gin: func(*httpx.Ctx) {}}).
+			Handle(rc, func(*RequestCtx) error { nextCalled = true; return nil })
+		if err == nil {
+			t.Fatalf("%s: Handle should return the not-wired guard error", transport)
+		}
+		if nextCalled {
+			t.Fatalf("%s: Handle must not silently pass through to next", transport)
+		}
 	}
 }
