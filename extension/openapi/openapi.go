@@ -143,7 +143,7 @@ func Plugin(cfg Config) nexus.Option {
 
 		// Options runs early enough to attach root-level routes
 		// (/openapi.json, /api-docs) outside the /__nexus/openapi/
-		// namespace via app.Engine(). Mounting through the
+		// namespace via app.Router(). Mounting through the
 		// Dashboard.Routes slot alone would force everything under
 		// /__nexus/openapi/, but `openapi.json` at the API root is
 		// the convention every SDK tool expects.

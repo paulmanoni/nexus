@@ -56,7 +56,7 @@ func TestLoadField_BatchesNListChildrenIntoOneCall(t *testing.T) {
 	}
 	defer app.Stop()
 
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	// Query: get every user with both a direct field (name) and the
@@ -142,7 +142,7 @@ func TestLoadField_FactoryInjectsFxDeps(t *testing.T) {
 		t.Fatalf("newApp: %v", err)
 	}
 	defer app.Stop()
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	body := strings.NewReader(`{"query":"{ listLfxUsers { id bankDetail { accountNo } } }"}`)
@@ -266,7 +266,7 @@ func TestLoadField_InlineDepsForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Stop()
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	body := strings.NewReader(`{"query":"{ listLfyUsers { id bankDetail { accountNo } } }"}`)
@@ -367,7 +367,7 @@ func TestLoadField1_TypedDep(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Stop()
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	body := strings.NewReader(`{"query":"{ listLfzUsers { id bankDetail { accountNo } } }"}`)

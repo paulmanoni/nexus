@@ -273,7 +273,7 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 }
 
 // opNameFromFunc turns a constructor-style function name into a GraphQL op
-// name. "NewGetAllAdverts" → "getAllAdverts", "listPets" → "listPets",
+// name. "NewListOrders" → "listOrders", "listPets" → "listPets",
 // "HandleFoo" → "handleFoo". Anonymous / closure names ("func1") fall back
 // to the provided default.
 func opNameFromFunc(fn any, fallback string) string {
@@ -309,11 +309,11 @@ func runtimeFuncName(v reflect.Value) string {
 	if f == "" {
 		return ""
 	}
-	// e.g. "github.com/paulmanoni/nexus/examples/graphapp.NewGetAllAdverts"
+	// e.g. "github.com/paulmanoni/nexus/examples/graphapp.NewListOrders"
 	if idx := strings.LastIndex(f, "."); idx >= 0 {
 		f = f[idx+1:]
 	}
-	// Closures have names like "NewGetAllAdverts.func1" — not useful.
+	// Closures have names like "NewListOrders.func1" — not useful.
 	if strings.HasPrefix(f, "func") {
 		return ""
 	}

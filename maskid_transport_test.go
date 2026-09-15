@@ -79,7 +79,7 @@ func maskTestApp(t *testing.T, seen *maskSeen) *httptest.Server {
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	t.Cleanup(func() {
 		srv.Close()
 		app.Stop()
@@ -229,7 +229,7 @@ func TestMaskID_GraphQLScalarRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer func() { srv.Close(); app.Stop() }()
 
 	body := bytes.NewBufferString(`{"query":"query G($id: Int!) { getItem(id: $id) { id ownerId count title } }",` +
@@ -304,7 +304,7 @@ func TestMaskID_GraphQLHonoursTheTypeScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer func() { srv.Close(); app.Stop() }()
 
 	query := func(field string) map[string]any {

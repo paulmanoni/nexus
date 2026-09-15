@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/paulmanoni/nexus/di"
 )
@@ -50,17 +49,4 @@ func TestReady_MonolithReadyImmediately(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("monolith ready: want 200, got %d", w.Code)
 	}
-}
-
-// waitFor polls cond every 50ms until it returns true or timeout
-// expires. Returns whether cond became true within the budget.
-func waitFor(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return cond()
 }

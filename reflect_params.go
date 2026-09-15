@@ -13,14 +13,14 @@ import (
 // schema info. Use it as the last parameter of an AsQuery / AsMutation
 // handler (or AsRest, where only Context is filled).
 //
-//	func NewCreateAdvert(
-//	    svc *AdvertsService,
+//	func NewCreateOrder(
+//	    svc *OrdersService,
 //	    dbs *DBManager,
 //	    cache *CacheManager,
-//	    p nexus.Params[CreateAdvertArgs],
-//	) (*AdvertResponse, error) {
-//	    advert := Advert{Title: p.Args.Title, EmployerName: p.Args.EmployerName}
-//	    return create(p.Context, advert)
+//	    p nexus.Params[CreateOrderArgs],
+//	) (*OrderResponse, error) {
+//	    order := Order{Title: p.Args.Title, Total: p.Args.Total}
+//	    return create(p.Context, order)
 //	}
 //
 // The type parameter T is the args struct — its fields carry the same

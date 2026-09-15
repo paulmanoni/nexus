@@ -116,7 +116,7 @@ func BenchmarkE2E_REST_Loopback(b *testing.B) {
 	app := newBenchApp(b, mod)
 	defer app.Stop()
 
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	url := srv.URL + "/echo?q=hi"
@@ -157,7 +157,7 @@ func BenchmarkE2E_REST_InProcess(b *testing.B) {
 	)
 	app := newBenchApp(b, mod)
 	defer app.Stop()
-	engine := app.Engine()
+	engine := app.Router()
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -187,7 +187,7 @@ func BenchmarkE2E_GraphQL_Query(b *testing.B) {
 	)
 	app := newBenchApp(b, mod)
 	defer app.Stop()
-	engine := app.Engine()
+	engine := app.Router()
 
 	body := []byte(`{"query":"{ benchGqlEcho(q:\"hi\") { message } }"}`)
 
@@ -225,7 +225,7 @@ func BenchmarkE2E_GraphQL_Query_NoCache(b *testing.B) {
 		b.Fatalf("newApp: %v", err)
 	}
 	defer app.Stop()
-	engine := app.Engine()
+	engine := app.Router()
 
 	body := []byte(`{"query":"{ benchGqlEcho(q:\"hi\") { message } }"}`)
 
@@ -255,7 +255,7 @@ func BenchmarkE2E_GraphQL_Mutation(b *testing.B) {
 	)
 	app := newBenchApp(b, mod)
 	defer app.Stop()
-	engine := app.Engine()
+	engine := app.Router()
 
 	body := []byte(`{"query":"mutation { benchGqlCreate(title:\"t\", body:\"b\") { id title } }"}`)
 
@@ -292,7 +292,7 @@ func BenchmarkE2E_CRUD_Read(b *testing.B) {
 	)
 	app := newBenchApp(b, mod)
 	defer app.Stop()
-	engine := app.Engine()
+	engine := app.Router()
 
 	// Seed one note so reads have a target.
 	seedReq, _ := http.NewRequest("POST", "/benchnotes",

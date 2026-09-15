@@ -20,8 +20,8 @@ import (
 // AsQuery registers a GraphQL query from a plain Go handler. The handler's
 // signature is inspected reflectively:
 //
-//   - First param should be the service wrapper (e.g. *AdvertsService).
-//     Its type is used as the fx value-group key so MountGraphQL[*AdvertsService]
+//   - First param should be the service wrapper (e.g. *OrdersService).
+//     Its type is used as the fx value-group key so MountGraphQL[*OrdersService]
 //     picks up this query.
 //   - Subsequent params are fx-injected deps.
 //   - Optional last param is an args struct. Field tags drive arg config:
@@ -36,13 +36,13 @@ import (
 //     and slice wrappers are honored.
 //
 // Op name defaults to the handler's func name, stripping a leading "New"
-// and lowercasing the first rune ("NewGetAllAdverts" → "getAllAdverts").
+// and lowercasing the first rune ("NewListOrders" → "listOrders").
 // Override with nexus.Op("explicit").
 //
 //	di.Provide(
-//	    nexus.AsQuery(NewGetAllAdverts),
-//	    nexus.AsMutation(NewCreateAdvert,
-//	        nexus.Middleware("auth", "Bearer token", AuthMw)),
+//	    nexus.AsQuery(NewListOrders),
+//	    nexus.AsMutation(NewCreateOrder,
+//	        nexus.GraphMiddleware("auth", "Bearer token", AuthMw)),
 //	)
 func AsQuery(fn any, opts ...GqlOption) Option {
 	return asGqlField(fn, graph.FieldKindQuery, opts)
@@ -68,7 +68,7 @@ func AsSubscription(fn any, opts ...GqlOption) Option {
 type GqlOption interface{ applyToGql(*gqlConfig) }
 
 // gqlOptionFn is the ergonomic adaptor for one-off func-shaped options
-// inside this package. Public helpers (Op, Desc, Middleware, etc.) return
+// inside this package. Public helpers (Op, GraphMiddleware, etc.) return
 // concrete structs so their type names survive in errors + godoc.
 type gqlOptionFn func(*gqlConfig)
 
@@ -115,15 +115,6 @@ func Op(name string) GqlOption {
 	return gqlOptionFn(func(c *gqlConfig) { c.opName = name })
 }
 
-// Desc sets the resolver's description (shown on the dashboard and in SDL
-// documentation).
-//
-// Deprecated: use the cross-transport nexus.Describe, which works identically on
-// REST and WS as well as GraphQL.
-func Desc(s string) GqlOption {
-	return gqlOptionFn(func(c *gqlConfig) { c.description = s })
-}
-
 // GraphMiddleware attaches a named graph-only middleware to the resolver.
 // Equivalent to go-graph's WithNamedMiddleware — the name appears in
 // FieldInfo.Middlewares for dashboard rendering (and "auth", "cors", etc.
@@ -135,16 +126,6 @@ func GraphMiddleware(name, description string, mw graph.FieldMiddleware) GqlOpti
 	return gqlOptionFn(func(c *gqlConfig) {
 		c.middlewares = append(c.middlewares, namedMw{name, description, mw})
 	})
-}
-
-// Middleware is a deprecated alias for GraphMiddleware. Exists so existing
-// call sites keep compiling while codebases migrate to nexus.Use for
-// cross-transport middleware.
-//
-// Deprecated: use GraphMiddleware for graph-only middleware, or nexus.Use
-// with a middleware.Middleware bundle for cross-transport.
-func Middleware(name, description string, mw graph.FieldMiddleware) GqlOption {
-	return GraphMiddleware(name, description, mw)
 }
 
 // Deprecated marks the field deprecated. The reason shows up in SDL and the
@@ -162,7 +143,7 @@ func Deprecated(reason string) GqlOption {
 // override the effective limit live from the dashboard — the declared
 // baseline stays in source-of-truth, the override survives in the store.
 //
-//	nexus.AsMutation(NewCreateAdvert,
+//	nexus.AsMutation(NewCreateOrder,
 //	    nexus.RateLimit(ratelimit.Limit{RPM: 30, PerIP: true}),
 //	)
 //
@@ -178,7 +159,7 @@ func RateLimit(l ratelimit.Limit) GqlOption {
 // is minimal (`func NewListQuestions(q *QuestionsDB) (...)`) but still
 // belongs to a particular service on the dashboard.
 //
-//	nexus.AsQuery(NewListQuestions, nexus.OnService[*AdvertsService]())
+//	nexus.AsQuery(NewListQuestions, nexus.OnService[*OrdersService]())
 //
 // The resolver still needs the owning service to have been provided into
 // the fx graph elsewhere so MountGraphQL can pick up the field.
@@ -657,7 +638,7 @@ func isInputObjectNullable(argsType reflect.Type) bool {
 // detectInputObject returns (argName, innerType, true) when argsType is the
 // single-struct-field shape — that is, exactly one exported field whose
 // type is a non-Params struct. Anonymous wrapper structs like
-// `struct{ Input CreateAdvertArgs }` are the canonical form.
+// `struct{ Input CreateOrderArgs }` are the canonical form.
 func detectInputObject(argsType reflect.Type) (name string, inner reflect.Type, ok bool) {
 	if argsType.Kind() != reflect.Struct {
 		return "", nil, false

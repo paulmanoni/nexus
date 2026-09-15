@@ -586,12 +586,6 @@ func New(cfg Config) *App {
 // and middleware through this seam, never against a concrete engine type.
 func (a *App) Router() httpx.Router { return a.engine }
 
-// Deprecated: use Router. "Engine" is a leftover from when the router was
-// always gin; the framework is now router-agnostic (the httpx seam) and
-// this returns an httpx.Router, not a *gin.Engine. Kept as an alias so
-// existing callers keep compiling.
-func (a *App) Engine() httpx.Router { return a.engine }
-
 func (a *App) Registry() *registry.Registry { return a.registry }
 func (a *App) Bus() *trace.Bus              { return a.bus }
 
@@ -734,7 +728,6 @@ func (a *App) SetClientAuthMeta(meta client.AuthMeta) {
 	}
 }
 func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
-func (a *App) RateLimiter() ratelimit.Store { return a.rlStore }
 
 // Environment returns the resolved environment name ("production",
 // "staging", "preview", ...) the binary is booting into. Set from

@@ -37,7 +37,7 @@ func TestDashboard_GraphQLCacheEndpoint(t *testing.T) {
 	}
 	defer app.Stop()
 
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	// Drive two identical queries to populate hit/miss counters.

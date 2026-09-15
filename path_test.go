@@ -129,7 +129,7 @@ func TestPath_MultiServiceModuleAllMountUnderPath(t *testing.T) {
 	}
 	defer app.Stop()
 
-	routes := app.Engine().Routes()
+	routes := app.Router().Routes()
 	var gqlPaths []string
 	for _, r := range routes {
 		if r.Path == "/oats-uaa/graphql" || r.Path == "/graphql" {

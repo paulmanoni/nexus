@@ -35,7 +35,7 @@ func TestRun_StartsAndStops(t *testing.T) {
 	if app == nil {
 		t.Fatal("*App not populated")
 	}
-	if app.Engine() == nil {
+	if app.Router() == nil {
 		t.Fatal("engine nil")
 	}
 	if app.Registry() == nil {
@@ -210,7 +210,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 		Supply(ctrl).nexusOption(),
 		AsRestHandler("GET", "/ping",
 			func(c *testRestHandlerCtrl) httpx.HandlerFunc { return c.Ping },
-			Description("ping"),
+			Describe("ping"),
 		).nexusOption(),
 		di.Populate(&app),
 	)

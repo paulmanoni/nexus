@@ -89,7 +89,7 @@ func TestListeners_ScopeFilter(t *testing.T) {
 	// admin scope serves both /__nexus/* and user routes (operator
 	// ergonomics; lets the dashboard's RestTester fire relative
 	// fetch() calls without 404ing on the listener it loaded from).
-	app.Engine().GET("/ping", func(c *httpx.Ctx) { c.String(http.StatusOK, "pong") })
+	app.Router().GET("/ping", func(c *httpx.Ctx) { c.String(http.StatusOK, "pong") })
 	if got := httpGetStatus(t, adminAddr, "/ping"); got != http.StatusOK {
 		t.Errorf("admin /ping: want 200, got %d (admin scope should serve user routes)", got)
 	}

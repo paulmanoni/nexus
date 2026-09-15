@@ -17,7 +17,7 @@ import (
 //
 //	rl := ratelimit.NewMiddleware(store, key, ratelimit.Limit{RPM: 30})
 //	di.Provide(
-//	    nexus.AsMutation(NewCreateAdvert, nexus.Use(rl)),
+//	    nexus.AsMutation(NewCreateOrder, nexus.Use(rl)),
 //	    nexus.AsRest("POST", "/quick", NewQuick, nexus.Use(rl)),
 //	)
 //
@@ -80,7 +80,7 @@ func (m MiddlewareOption) applyToWS(c *wsConfig) {
 // bundle that declares some transports but not t is misattached, and the
 // registration errors at boot rather than silently no-opping — which is the
 // auth-bypass footgun the redesign exists to kill. opID identifies the
-// endpoint for the diagnostic ("POST /quick", "createAdvert", …).
+// endpoint for the diagnostic ("POST /quick", "createOrder", …).
 //
 // A bundle that declares NO transports at all (a pure dashboard label with
 // no Gin/Graph realization, e.g. a metadata marker) is left alone: it claims

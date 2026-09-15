@@ -299,24 +299,6 @@ func resolveListeners(ls map[string]Listener, fallbackAddr string) []resolvedLis
 	return out
 }
 
-// fxBootOptions returns the complete baseline di.Option chain.
-// Used by tests directly via integration_test.go (one entry,
-// everything mounts).
-//
-// nexus.Run does NOT use this — see fxEarlyOptions / fxLateOptions
-// below. The Run path needs autoMountGraphQL to fire AFTER user
-// options so engine middleware they install (notably
-// auth.Module's ginAuthMiddleware) is in place before GraphQL
-// routes are registered. Gin captures middleware at route-
-// registration time; routes registered before a Use() call don't
-// pick up that middleware afterwards.
-func fxBootOptions(cfg Config) di.Option {
-	return di.Options(
-		fxEarlyOptions(cfg),
-		fxLateOptions(),
-	)
-}
-
 // fxEarlyOptions runs BEFORE user options in nexus.Run.
 // Supplies Config, provides *App, registers lifecycle.
 func fxEarlyOptions(cfg Config) di.Option {

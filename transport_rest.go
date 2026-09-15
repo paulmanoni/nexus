@@ -220,9 +220,9 @@ func (r routePrefixOption) applyToRest(c *restConfig) {
 // applies to. Two usage patterns:
 //
 //	// Module-wide: every AsRest / AsRestHandler in the module sees "/api/v1".
-//	nexus.Module("adverts", nexus.RoutePrefix("/api/v1"),
-//	    nexus.AsRest("GET", "/adverts", NewListAdverts),  // → /api/v1/adverts
-//	    nexus.AsRest("POST", "/adverts", NewCreateAdvert),
+//	nexus.Module("orders", nexus.RoutePrefix("/api/v1"),
+//	    nexus.AsRest("GET", "/orders", NewListOrders),  // → /api/v1/orders
+//	    nexus.AsRest("POST", "/orders", NewCreateOrder),
 //	)
 //
 //	// Per-endpoint:
@@ -247,14 +247,6 @@ type RestOption interface{ applyToRest(*restConfig) }
 type restOptionFn func(*restConfig)
 
 func (f restOptionFn) applyToRest(c *restConfig) { f(c) }
-
-// Description sets the human-readable description shown on the dashboard.
-//
-// Deprecated: use the cross-transport nexus.Describe, which works identically on
-// GraphQL and WS as well as REST.
-func Description(s string) RestOption {
-	return restOptionFn(func(c *restConfig) { c.description = s })
-}
 
 // asRestInvoke builds a synthetic di.Invoke: the constructor fx sees takes
 // (*App, deps...) and registers the handler on the Gin engine + the registry.

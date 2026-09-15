@@ -60,7 +60,7 @@ func TestGenericEnvelope_IntrospectionExposesInnerNamedType(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer app.Stop()
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	// 1. List every type name the schema knows.

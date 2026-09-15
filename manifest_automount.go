@@ -492,8 +492,8 @@ func attachDeclaredResources(app *App, f GqlField) {
 // collectServiceDeps returns the names of OTHER services this handler
 // calls into — any dep that unwraps to a *Service. Skips the owning
 // service (first dep convention) so self-loops never appear on the graph.
-// Example: a handler declared `func(svc *AdvertsService, users *UsersService, ...)`
-// yields ["users"], giving the dashboard an adverts→users edge.
+// Example: a handler declared `func(svc *OrdersService, users *UsersService, ...)`
+// yields ["users"], giving the dashboard an orders→users edge.
 func collectServiceDeps(deps []reflect.Value, depTypes []reflect.Type, owning string) []string {
 	var out []string
 	for i, dep := range deps {

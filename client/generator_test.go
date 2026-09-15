@@ -79,7 +79,7 @@ func TestGenerateDTS_TinyManifestSnapshot(t *testing.T) {
 		},
 	}
 
-	out := GenerateDTS(m)
+	out := GenerateClientDTS(m)
 
 	// Header
 	wantSubstrings := []string{

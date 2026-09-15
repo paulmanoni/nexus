@@ -74,10 +74,10 @@ func WithRouter(r httpx.Router) Option { return routerOption{r: r} }
 // the module so the dashboard's architecture view can group endpoints by
 // module container.
 //
-//	var advertsModule = nexus.Module("adverts",
-//	    nexus.Provide(NewAdvertsService),
-//	    nexus.AsQuery(NewGetAllAdverts),
-//	    nexus.AsMutation(NewCreateAdvert, …),
+//	var ordersModule = nexus.Module("orders",
+//	    nexus.Provide(NewOrdersService),
+//	    nexus.AsQuery(NewListOrders),
+//	    nexus.AsMutation(NewCreateOrder, …),
 //	)
 func Module(name string, opts ...Option) Option {
 	// Collect any RoutePrefix declarations among the direct children
@@ -177,7 +177,7 @@ type moduleAnnotator interface {
 //	nexus.Provide(
 //	    NewDBManager,        // resource provider — auto-registered
 //	    NewCacheManager,     // ditto
-//	    NewAdvertsService,   // service wrapper — deps recorded
+//	    NewOrdersService,   // service wrapper — deps recorded
 //	    NewClock,            // plain type — just enters the graph
 //	)
 func Provide(fns ...any) Option {
@@ -332,24 +332,6 @@ func Raw(opt di.Option) Option {
 	return rawOption{o: opt}
 }
 
-// Run builds and runs the app. Blocks until SIGINT/SIGTERM, then
-// gracefully shuts the HTTP server + cron scheduler. Returns nothing —
-// identical to di.App.Run(). For tests where you need explicit Start/Stop
-// control, build the app via a test helper that calls fxBootOptions.
-//
-//	func main() {
-//	    nexus.Run(
-//	        nexus.Config{Addr: ":8080", EnableDashboard: true},
-//	        nexus.Provide(NewDBManager),
-//	        advertsModule,
-//	    )
-//	}
-//
-// When NEXUS_FX_QUIET=1 is set in the environment, fx's startup log
-// (PROVIDE/INVOKE/HOOK lines) is suppressed. The splitter sets this
-// in subprocesses so the prefixed log streams don't drown in fx
-// scaffolding noise; users hitting framework-level issues can unset
-// it for full diagnostics.
 // Boot loads nexus.toml automatically — the [runtime] Config, every
 // [extensions.*] block, the [env] bridge, and the nexus.Get base
 // layer — then runs the app. It's the zero-boilerplate form of:
@@ -505,20 +487,6 @@ func Run(cfg Config, opts ...Option) {
 		printManifestAndExitIfRequested(cfg, opts)
 		return // unreachable; printManifestAndExitIfRequested calls os.Exit
 	}
-	// Quiet-by-default in dev: nexus dev sets NEXUS_DEV=1 on the
-	// child, which here implies "suppress [Fx] graph chatter and
-	// [GIN-debug] route-registration spam unless the user wants
-	// them back". The opt-out is NEXUS_VERBOSE=1 (set by the
-	// `nexus dev --verbose` flag). Users running `go run` directly
-	// keep today's behavior — neither env var is set.
-	devQuiet := os.Getenv("NEXUS_DEV") == "1" && os.Getenv("NEXUS_VERBOSE") != "1"
-	if devQuiet {
-		// Don't override an explicit GIN_MODE — operators sometimes
-		// pin it for reasons we can't see (CI, container images).
-		if os.Getenv("GIN_MODE") == "" {
-			_ = os.Setenv("GIN_MODE", "release")
-		}
-	}
 	// Two-phase split: fxEarlyOptions seeds Config + *App + lifecycle
 	// BEFORE user opts run, then user opts (which may install global
 	// middleware via auth.Module / engine.Use), then fxLateOptions
@@ -575,8 +543,6 @@ func Run(cfg Config, opts ...Option) {
 	}
 	// The builtin container prints build/start errors to stderr itself; the
 	// opt-in fx adapter owns its own logging (and honors NEXUS_FX_QUIET).
-	// devQuiet only governs the gin route-registration spam, set above.
-	_ = devQuiet
 	backend.Build(di.Collect(all...)).Run()
 }
 

@@ -57,7 +57,7 @@ func TestAsCRUD_RestEndpoints(t *testing.T) {
 	}
 	defer app.Stop()
 
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	// Create
@@ -130,7 +130,7 @@ func TestAsCRUD_FxInjectedResolverAttachesResources(t *testing.T) {
 	// (1) Endpoints must be live: do a quick CRUD round-trip so we
 	// know the holder.fn was populated by the setup invoke and the
 	// resolver-with-deps path actually carries the *notesDB through.
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 	created := postJSON(t, srv.URL+"/ascrudnotes", `{"title":"hello"}`)
 	if created["id"] == "" {
@@ -215,7 +215,7 @@ func TestAsCRUD_DefaultIsRestOnly(t *testing.T) {
 	}
 	defer app.Stop()
 
-	for _, r := range app.Engine().Routes() {
+	for _, r := range app.Router().Routes() {
 		if r.Path == "/graphql" || strings.HasSuffix(r.Path, "/graphql") {
 			t.Fatalf("default AsCRUD should not mount GraphQL — saw %s %s", r.Method, r.Path)
 		}
@@ -237,7 +237,7 @@ func TestAsCRUD_GraphQL(t *testing.T) {
 	}
 	defer app.Stop()
 
-	srv := httptest.NewServer(app.Engine())
+	srv := httptest.NewServer(app.Router())
 	defer srv.Close()
 
 	gqlURL := srv.URL + "/graphql"

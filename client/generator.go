@@ -73,12 +73,6 @@ func GenerateReactDTS(m Manifest) string {
 	return b.String()
 }
 
-// GenerateDTS retained for back-compat — returns the client-paired
-// declaration. Older callers that wrote a single client.d.ts to
-// disk continue to work; they should migrate to also writing
-// vue.d.ts via GenerateVueDTS so Vue imports type-check.
-func GenerateDTS(m Manifest) string { return GenerateClientDTS(m) }
-
 // -- writers -------------------------------------------------------
 
 func writeHeader(b *strings.Builder, m Manifest, sibling string) {
