@@ -8,5 +8,6 @@ use (
 	.
 	./cmd/nexus
 	./di/fxcontainer
+	./extension/cache/redis
 	./httpx/ginrouter
 )

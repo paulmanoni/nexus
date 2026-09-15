@@ -19,7 +19,7 @@
 #   make ci             # everything CI runs
 
 # All Go modules in the repo (dir containing a go.mod).
-MODULES := . cmd/nexus di/fxcontainer httpx/ginrouter
+MODULES := . cmd/nexus di/fxcontainer httpx/ginrouter extension/cache/redis
 
 # Pinned golangci-lint version — keep in sync with .github/workflows/ci.yml
 # so `make lint` and CI enforce the exact same linters (config: .golangci.yml).
