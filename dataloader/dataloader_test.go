@@ -268,3 +268,74 @@ func itoa(i int) string {
 	}
 	return string(buf[n:])
 }
+
+// TestNestedBatches is the regression test for the per-batch dispatch
+// semantics: keys loaded AFTER the first batch has fired (level-2
+// resolvers in a nested GraphQL query) must trigger a second fetch,
+// not silently resolve to the zero value.
+func TestNestedBatches(t *testing.T) {
+	var batches [][]int
+	l := New(func(_ context.Context, keys []int) (map[int]string, error) {
+		batches = append(batches, append([]int(nil), keys...))
+		out := make(map[int]string, len(keys))
+		for _, k := range keys {
+			out[k] = "v" + itoa(k)
+		}
+		return out, nil
+	})
+
+	// Level 1: two keys, one batch.
+	t1, t2 := l.Load(1), l.Load(2)
+	if v, err := t1(); err != nil || v != "v1" {
+		t.Fatalf("t1 = %v, %v", v, err)
+	}
+	if v, err := t2(); err != nil || v != "v2" {
+		t.Fatalf("t2 = %v, %v", v, err)
+	}
+
+	// Level 2: loaded after the first dispatch — must fetch again.
+	t3 := l.Load(3)
+	if v, err := t3(); err != nil || v != "v3" {
+		t.Fatalf("nested load = %v, %v (want v3 — zero value means the batch never fired)", v, err)
+	}
+
+	// Re-load of an already-fetched key: cached, no third batch.
+	t1b := l.Load(1)
+	if v, err := t1b(); err != nil || v != "v1" {
+		t.Fatalf("re-load = %v, %v", v, err)
+	}
+
+	if len(batches) != 2 {
+		t.Fatalf("got %d batches %v, want 2", len(batches), batches)
+	}
+	if len(batches[0]) != 2 || len(batches[1]) != 1 || batches[1][0] != 3 {
+		t.Fatalf("unexpected batch shapes: %v", batches)
+	}
+}
+
+// TestBatchErrorScope pins the error semantics: a failed fetch fails
+// the thunks of ITS batch; a later batch on the same loader is
+// unaffected.
+func TestBatchErrorScope(t *testing.T) {
+	fail := true
+	l := New(func(_ context.Context, keys []int) (map[int]string, error) {
+		if fail {
+			return nil, context.DeadlineExceeded
+		}
+		out := make(map[int]string, len(keys))
+		for _, k := range keys {
+			out[k] = "ok"
+		}
+		return out, nil
+	})
+
+	t1 := l.Load(1)
+	if _, err := t1(); err == nil {
+		t.Fatal("first batch should fail")
+	}
+	fail = false
+	t2 := l.Load(2)
+	if v, err := t2(); err != nil || v != "ok" {
+		t.Fatalf("second batch = %v, %v — must not inherit the first batch's error", v, err)
+	}
+}

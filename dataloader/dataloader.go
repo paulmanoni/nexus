@@ -42,27 +42,37 @@ import (
 // surfaced as the zero V (the resolver decides whether that means
 // "null" or "not found").
 //
-// Errors propagate to every thunk attached to this loader instance —
-// one fetch failure fails every caller in that request, which matches
-// the dataloader-spec semantics and prevents partial-render confusion.
+// Errors propagate to every thunk attached to the same batch — one
+// fetch failure fails every caller whose key rode in that batch,
+// which matches the dataloader-spec semantics and prevents
+// partial-render confusion.
 type Fetch[K comparable, V any] func(ctx context.Context, keys []K) (map[K]V, error)
+
+// batch is one dispatch unit: the keys enqueued between the previous
+// dispatch and this one, fetched together exactly once.
+type batch[K comparable, V any] struct {
+	once sync.Once
+	keys []K
+	err  error
+}
 
 // Loader is the per-(request, name) batcher. Construct via Get; do
 // not create directly — the registry handles lifecycle so siblings
 // share a single instance.
+//
+// Dispatch is per BATCH, not per Loader: keys enqueued after a
+// dispatch open a new batch that fetches when its first thunk runs.
+// That is what makes nested queries work — level-2 resolvers Load
+// into the same named loader after level-1's batch has fired, and
+// their keys get a real fetch instead of a silent zero value.
 type Loader[K comparable, V any] struct {
 	fetch Fetch[K, V]
 
 	mu       sync.Mutex
-	queue    []K
-	enqueued map[K]struct{}
+	cur      *batch[K, V]       // open batch collecting keys; nil until the next Load
+	keyBatch map[K]*batch[K, V] // every enqueued key → the batch that fetches it
 	batchCtx context.Context
-
-	// once gates the first thunk to run; subsequent thunks read the
-	// cached result map. The fetch fires exactly once per Loader.
-	once   sync.Once
-	result map[K]V
-	err    error
+	result   map[K]V // merged results across all dispatched batches
 }
 
 // New constructs a standalone Loader. Most callers should use
@@ -73,7 +83,8 @@ type Loader[K comparable, V any] struct {
 func New[K comparable, V any](fetch Fetch[K, V]) *Loader[K, V] {
 	return &Loader[K, V]{
 		fetch:    fetch,
-		enqueued: make(map[K]struct{}),
+		keyBatch: make(map[K]*batch[K, V]),
+		result:   make(map[K]V),
 	}
 }
 
@@ -88,21 +99,33 @@ func New[K comparable, V any](fetch Fetch[K, V]) *Loader[K, V] {
 // pre-uniqueify upstream.
 func (l *Loader[K, V]) Load(key K) func() (interface{}, error) {
 	l.mu.Lock()
-	if _, dup := l.enqueued[key]; !dup {
-		l.queue = append(l.queue, key)
-		l.enqueued[key] = struct{}{}
+	b, seen := l.keyBatch[key]
+	if !seen {
+		if _, primed := l.result[key]; !primed {
+			if l.cur == nil {
+				l.cur = &batch[K, V]{}
+			}
+			l.cur.keys = append(l.cur.keys, key)
+			l.keyBatch[key] = l.cur
+			b = l.cur
+		}
 	}
 	l.mu.Unlock()
 
 	return func() (interface{}, error) {
-		l.once.Do(l.dispatch)
-		if l.err != nil {
-			return nil, l.err
+		if b != nil {
+			b.once.Do(func() { l.dispatch(b) })
+			if b.err != nil {
+				return nil, b.err
+			}
 		}
 		// Missing key → zero V. Callers wanting "explicit null"
 		// behavior can wrap with a pointer type so a missing key
 		// surfaces as a typed-nil pointer.
-		return l.result[key], nil
+		l.mu.Lock()
+		v := l.result[key]
+		l.mu.Unlock()
+		return v, nil
 	}
 }
 
@@ -120,22 +143,34 @@ func (l *Loader[K, V]) LoadCtx(ctx context.Context, key K) func() (interface{}, 
 	return l.Load(key)
 }
 
-// dispatch is the once-per-Loader fetch call. The mutex covers the
-// queue read; graphql-go's executor is synchronous so contention is
-// theoretical, but correctness wants the lock.
-func (l *Loader[K, V]) dispatch() {
+// dispatch is the once-per-batch fetch call, gated by the batch's
+// own sync.Once so every thunk from that batch shares one fetch.
+// Closing the open batch (cur = nil) BEFORE fetching means keys
+// loaded during or after the fetch — nested resolvers — collect into
+// a fresh batch that dispatches on its own first dethunk.
+func (l *Loader[K, V]) dispatch(b *batch[K, V]) {
 	l.mu.Lock()
-	keys := l.queue
-	l.queue = nil
+	if l.cur == b {
+		l.cur = nil
+	}
 	ctx := l.batchCtx
 	l.mu.Unlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if len(keys) == 0 {
+	if len(b.keys) == 0 {
 		return
 	}
-	l.result, l.err = l.fetch(ctx, keys)
+	res, err := l.fetch(ctx, b.keys)
+	if err != nil {
+		b.err = err
+		return
+	}
+	l.mu.Lock()
+	for k, v := range res {
+		l.result[k] = v
+	}
+	l.mu.Unlock()
 }
 
 // Prime seeds the loader's cache with a key/value pair. Useful when
@@ -144,9 +179,5 @@ func (l *Loader[K, V]) dispatch() {
 func (l *Loader[K, V]) Prime(key K, value V) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.result == nil {
-		l.result = make(map[K]V)
-	}
 	l.result[key] = value
-	l.enqueued[key] = struct{}{}
 }
