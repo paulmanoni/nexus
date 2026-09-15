@@ -4,6 +4,25 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.0] - 2026-09-15
+
+### Performance
+
+- **The trace event bus is sharded by trace ID.** With the dashboard
+  enabled, every request published 2-3 events through one
+  process-wide mutex — the last hot-path serialization point in the
+  framework. The ring and fan-out now shard by TraceID (one trace,
+  one shard, so per-trace ordering is preserved; the global monotonic
+  event ID recovers cross-shard order in Subscribe backlogs), and
+  each subscriber's delivery is fanned in through per-shard feed
+  channels, so producers never contend with other shards' publishes
+  racing toward the same consumer. All existing semantics hold and
+  are race-tested: exactly-once reconnect via sinceID,
+  drop-don't-block for slow consumers, safe cancellation. 10-way
+  parallel publish: 222ns → 115ns with the dashboard enabled but no
+  client connected, 361ns → 268ns with a live stream attached. Small
+  buses stay single-shard (exact global ring order).
+
 ## [1.48.0] - 2026-09-15
 
 ### Performance
