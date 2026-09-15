@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"sync"
 
 	"braces.dev/errtrace"
 	"github.com/paulmanoni/nexus/di"
@@ -465,7 +466,8 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 // own fields.
 func bindArgs(c *httpx.Ctx, ptr any) error {
 	t := reflect.TypeOf(ptr).Elem()
-	hasURI, hasQuery, hasHeader, hasForm, hasJSON := tagSurvey(t)
+	sv := surveyFor(t)
+	hasURI, hasQuery, hasHeader, hasForm, hasJSON := sv.uri, sv.query, sv.header, sv.form, sv.json
 
 	if hasURI {
 		if err := c.ShouldBindUri(ptr); err != nil {
@@ -496,6 +498,26 @@ func bindArgs(c *httpx.Ctx, ptr any) error {
 		}
 	}
 	return nil
+}
+
+type tagSurveyResult struct {
+	uri, query, header, form, json bool
+}
+
+// surveyCache memoizes tagSurvey per args type. The survey is a pure
+// function of the struct's tags but runs inside bindArgs — i.e. on
+// every request — and struct-tag lookups are string scanning. Keyed
+// by the app's registered args types, a finite set.
+var surveyCache sync.Map // reflect.Type → tagSurveyResult
+
+func surveyFor(t reflect.Type) tagSurveyResult {
+	if v, ok := surveyCache.Load(t); ok {
+		return v.(tagSurveyResult)
+	}
+	var sv tagSurveyResult
+	sv.uri, sv.query, sv.header, sv.form, sv.json = tagSurvey(t)
+	surveyCache.Store(t, sv)
+	return sv
 }
 
 // tagSurvey walks one level of struct fields checking which binder families
