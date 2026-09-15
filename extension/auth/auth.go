@@ -276,6 +276,11 @@ type moduleState struct {
 	permissions  PermissionFn
 	errorHandler ErrorHandler   // renders 401/403 denials; never nil after Module
 	cache        *identityCache // nil when Cache.TTL == 0
+	// flights coalesces concurrent resolves of the SAME token: with a
+	// cold cache, N simultaneous requests bearing one token stampeded
+	// the backend with N identical lookups. Only used when the cache
+	// is on — without a cache every request must resolve anyway.
+	flights resolveFlights
 	// backend is the resolved Config.Backend (nil when unset). Powers
 	// Manager.Login and, when it implements the capability interfaces,
 	// scheme resolution + authorization. Populated by finalizeBackend.
@@ -593,19 +598,73 @@ func bindSchemes(in []Scheme, allowNilResolve bool) ([]boundScheme, error) {
 // the public Manager.Resolve has only a token in hand — keying by token
 // keeps that path and the request path consistent.
 func (st *moduleState) resolveVia(ctx context.Context, sc boundScheme, token string) (*Identity, error) {
-	if st.cache != nil {
-		if id, ok := st.cache.get(token); ok {
-			return id, nil
+	if st.cache == nil {
+		id, err := sc.resolve(ctx, token)
+		if err != nil {
+			return nil, err
+		}
+		return id, nil
+	}
+	if id, ok := st.cache.get(token); ok {
+		return id, nil
+	}
+	// Single-flight: the first miss for a token resolves; concurrent
+	// misses for the same token wait for that result instead of each
+	// hitting the backend. The leader runs under ITS request context —
+	// if that request is cancelled mid-resolve, followers see the
+	// leader's error and the next request starts a fresh flight (the
+	// standard single-flight trade-off).
+	return st.flights.do(ctx, token, func() (*Identity, error) {
+		id, err := sc.resolve(ctx, token)
+		if err != nil {
+			return nil, err
+		}
+		if id != nil {
+			st.cache.set(token, id)
+		}
+		return id, nil
+	})
+}
+
+// resolveFlights is a minimal single-flight keyed by token. Inline
+// (rather than x/sync/singleflight) to keep the extension
+// dependency-free; the waiting side also honors its own context.
+type resolveFlights struct {
+	mu sync.Mutex
+	m  map[string]*resolveFlight
+}
+
+type resolveFlight struct {
+	done chan struct{}
+	id   *Identity
+	err  error
+}
+
+func (g *resolveFlights) do(ctx context.Context, key string, fn func() (*Identity, error)) (*Identity, error) {
+	g.mu.Lock()
+	if g.m == nil {
+		g.m = make(map[string]*resolveFlight)
+	}
+	if f, ok := g.m[key]; ok {
+		g.mu.Unlock()
+		select {
+		case <-f.done:
+			return f.id, f.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-	id, err := sc.resolve(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	if id != nil && st.cache != nil {
-		st.cache.set(token, id)
-	}
-	return id, nil
+	f := &resolveFlight{done: make(chan struct{})}
+	g.m[key] = f
+	g.mu.Unlock()
+
+	f.id, f.err = fn()
+
+	g.mu.Lock()
+	delete(g.m, key)
+	g.mu.Unlock()
+	close(f.done)
+	return f.id, f.err
 }
 
 // authenticate walks the schemes in order and returns the Identity from
@@ -646,16 +705,25 @@ func toClientExtractor(a ExtractorInfo) client.ExtractorInfo {
 // --- in-memory identity cache -------------------------------------------
 
 // identityCache is a simple TTL + size-bounded map from token → identity.
-// Eviction on Set when over MaxEntries is O(n) scan of the oldest —
+// Eviction on Set when over MaxEntries is an O(n) scan for the oldest —
 // acceptable for the small caps we expect (thousands); if anyone needs
 // more, swap in an LRU. Not exposed; users who want a different cache
 // tier plug it into their Resolve.
+//
+// Reads take the read lock: every authenticated request hits get(), and
+// an exclusive mutex here serialized the whole authenticated surface.
 type identityCache struct {
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	entries    map[string]cacheEntry
 	ttl        time.Duration
 	maxEntries int
 }
+
+// defaultCacheMaxEntries bounds a cache whose CacheOption left
+// MaxEntries zero. Tokens are client-supplied — an unbounded map keyed
+// by them is a memory sink under rotating JWTs (every token distinct,
+// none ever looked up twice). Matches CacheFor's default.
+const defaultCacheMaxEntries = 4096
 
 type cacheEntry struct {
 	id        *Identity
@@ -663,22 +731,32 @@ type cacheEntry struct {
 }
 
 func newIdentityCache(opt CacheOption) *identityCache {
+	max := opt.MaxEntries
+	if max <= 0 {
+		max = defaultCacheMaxEntries
+	}
 	return &identityCache{
 		entries:    make(map[string]cacheEntry),
 		ttl:        opt.TTL,
-		maxEntries: opt.MaxEntries,
+		maxEntries: max,
 	}
 }
 
 func (c *identityCache) get(token string) (*Identity, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
 	e, ok := c.entries[token]
+	c.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
 	if time.Now().After(e.expiresAt) {
-		delete(c.entries, token)
+		// Lazy expiry under the write lock; re-check so a concurrent
+		// set() of a fresh entry isn't deleted underneath its caller.
+		c.mu.Lock()
+		if cur, still := c.entries[token]; still && time.Now().After(cur.expiresAt) {
+			delete(c.entries, token)
+		}
+		c.mu.Unlock()
 		return nil, false
 	}
 	return e.id, true
@@ -718,8 +796,8 @@ func (c *identityCache) deleteWhere(pred func(cacheEntry) bool) int {
 // the dashboard without leaking credentials. Expired entries are
 // filtered out at read time to avoid reporting stale rows.
 func (c *identityCache) snapshot() []CachedIdentity {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	out := make([]CachedIdentity, 0, len(c.entries))
 	now := time.Now()
 	for tok, e := range c.entries {
@@ -745,12 +823,14 @@ func (c *identityCache) set(token string, id *Identity) {
 	if c.maxEntries > 0 && len(c.entries) >= c.maxEntries {
 		// Evict one expired entry if we can; otherwise drop the
 		// oldest. Kept simple because auth caches are typically in
-		// the hundreds / low thousands.
+		// the hundreds / low thousands. now is hoisted — the old
+		// loop called time.Now() per entry while holding the lock.
+		now := time.Now()
 		var oldestKey string
 		var oldestAt time.Time
 		first := true
 		for k, e := range c.entries {
-			if time.Now().After(e.expiresAt) {
+			if now.After(e.expiresAt) {
 				delete(c.entries, k)
 				goto insert
 			}
