@@ -23,6 +23,27 @@ type WebSocketManager struct {
 	authFn       func(r *http.Request) (interface{}, error)
 	pubsub       PubSub
 	rootObjectFn func(ctx context.Context, r *http.Request) map[string]interface{}
+	pingInterval time.Duration
+}
+
+const (
+	// wsReadLimit caps a single inbound frame. Matches the ws hub's
+	// default; without it ReadJSON is an unbounded memory sink.
+	wsReadLimit = 512 * 1024
+	// wsWriteWait bounds each write so a stalled client can't pin
+	// the write pump forever.
+	wsWriteWait = 10 * time.Second
+	// wsMaxSubscriptions caps live subscriptions per connection —
+	// each one holds a goroutine and a context.
+	wsMaxSubscriptions = 100
+)
+
+// readWait is how long the read side tolerates silence before the
+// connection is declared dead. The write pump sends a control ping
+// every pingInterval and any pong (or any other read) extends the
+// deadline, so a healthy connection never trips it.
+func (m *WebSocketManager) readWait() time.Duration {
+	return 3 * m.pingInterval
 }
 
 // Connection represents a single WebSocket connection.
@@ -148,6 +169,7 @@ func NewWebSocketHandler(params WebSocketParams) http.HandlerFunc {
 		authFn:       params.AuthFn,
 		pubsub:       params.PubSub,
 		rootObjectFn: params.RootObjectFn,
+		pingInterval: params.PingInterval,
 	}
 
 	return mgr.HandleWebSocket
@@ -166,6 +188,11 @@ func (m *WebSocketManager) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return
 	}
+	ws.SetReadLimit(wsReadLimit)
+	_ = ws.SetReadDeadline(time.Now().Add(m.readWait()))
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(m.readWait()))
+	})
 
 	// Create connection context
 	ctx, cancel := context.WithCancel(r.Context())
@@ -215,20 +242,35 @@ func (c *Connection) readPump() {
 		if err := c.ws.ReadJSON(&msg); err != nil {
 			return
 		}
+		// Any successful read proves the connection is alive —
+		// app-level pings/pongs arrive here, not as control frames.
+		_ = c.ws.SetReadDeadline(time.Now().Add(c.manager.readWait()))
 
 		// Handle message
 		c.handleMessage(&msg)
 	}
 }
 
-// writePump sends messages to the WebSocket connection.
+// writePump sends messages to the WebSocket connection. It owns
+// every write (gorilla allows one concurrent writer), including the
+// control pings that keep the read deadline honest for legacy
+// clients that never send application-level traffic.
 func (c *Connection) writePump() {
 	defer c.cancel()
+
+	ticker := time.NewTicker(c.manager.pingInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case msg := <-c.messageChan:
+			_ = c.ws.SetWriteDeadline(time.Now().Add(wsWriteWait))
 			if err := c.ws.WriteJSON(msg); err != nil {
+				return
+			}
+		case <-ticker.C:
+			_ = c.ws.SetWriteDeadline(time.Now().Add(wsWriteWait))
+			if err := c.ws.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		case <-c.ctx.Done():
@@ -308,7 +350,7 @@ func (c *Connection) handleConnectionInit(msg *WSMessage) {
 	c.sendMessage(&WSMessage{Type: MessageTypeConnectionAck})
 
 	// Start keep-alive ticker (supports both protocols)
-	c.pingTicker = time.NewTicker(30 * time.Second)
+	c.pingTicker = time.NewTicker(c.manager.pingInterval)
 	go func() {
 		for {
 			select {
@@ -354,6 +396,18 @@ func (c *Connection) handleSubscribe(msg *WSMessage) {
 
 	// Store cancel function
 	c.mu.Lock()
+	if _, exists := c.subscriptions[msg.ID]; exists {
+		c.mu.Unlock()
+		cancel()
+		c.sendError(msg.ID, "Subscriber already exists")
+		return
+	}
+	if len(c.subscriptions) >= wsMaxSubscriptions {
+		c.mu.Unlock()
+		cancel()
+		c.sendError(msg.ID, "Too many active subscriptions")
+		return
+	}
 	c.subscriptions[msg.ID] = cancel
 	c.mu.Unlock()
 
@@ -507,8 +561,10 @@ func (c *Connection) cleanup() {
 		c.pingTicker.Stop()
 	}
 
-	// Close message channel
-	close(c.messageChan)
+	// messageChan is deliberately NOT closed: subscription goroutines
+	// send on it concurrently with this cleanup, and a send on a
+	// closed channel panics even inside a select. Senders bail out
+	// via c.ctx.Done() (cancelled before cleanup runs) instead.
 
 	// Close WebSocket connection
 	c.ws.Close()
