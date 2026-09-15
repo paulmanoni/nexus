@@ -72,6 +72,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/extension"
@@ -160,7 +161,19 @@ type policy struct {
 	excl      map[string]bool
 	types     map[string]bool
 	matchType func(string) bool
+
+	// idKeys memoizes isID per key — it runs for every JSON key of
+	// every masked response, and the lowercase+suffix checks allocate.
+	// Bounded with a flush: inbound (unmask) keys are client-supplied,
+	// so an unbounded cache would be a memory sink.
+	idKeys  sync.Map // string → bool
+	idKeyN  atomic.Int64
 }
+
+// idKeyCacheCap bounds idKeys. A real app's key vocabulary is a few
+// hundred names; past the cap the cache is flushed, degrading to the
+// uncached cost rather than growing.
+const idKeyCacheCap = 4096
 
 // Module enables ID masking for the app. Install it once, anywhere in
 // the option list — it takes effect before the GraphQL schema is built,
@@ -220,10 +233,24 @@ func (p *policy) isID(key string) bool {
 	if key == "" {
 		return false
 	}
-	if p.excl[strings.ToLower(key)] {
+	if v, ok := p.idKeys.Load(key); ok {
+		return v.(bool)
+	}
+	res := p.isIDSlow(key)
+	if p.idKeyN.Add(1) > idKeyCacheCap {
+		p.idKeys.Clear()
+		p.idKeyN.Store(0)
+	}
+	p.idKeys.Store(key, res)
+	return res
+}
+
+func (p *policy) isIDSlow(key string) bool {
+	lower := strings.ToLower(key)
+	if p.excl[lower] {
 		return false
 	}
-	if p.incl[strings.ToLower(key)] {
+	if p.incl[lower] {
 		return true
 	}
 	return p.match(key)

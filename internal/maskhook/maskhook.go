@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -95,7 +96,25 @@ func TypeAllowed(typeName string) bool {
 // it names any of them. An anonymous or map-shaped value yields nothing,
 // which no scope matches: a scoped app masks only what it named.
 func typeNames(v any) []string {
-	t := reflect.TypeOf(v)
+	t0 := reflect.TypeOf(v)
+	if t0 == nil {
+		return nil
+	}
+	if cached, ok := typeNameCache.Load(t0); ok {
+		return cached.([]string)
+	}
+	names := computeTypeNames(t0)
+	typeNameCache.Store(t0, names)
+	return names
+}
+
+// typeNameCache memoizes typeNames per reflect.Type — the name
+// unwrapping does string splitting on every call, and it runs once
+// per masked response. Keys are the app's own response types, a
+// finite set, so the cache needs no bound.
+var typeNameCache sync.Map // reflect.Type → []string
+
+func computeTypeNames(t reflect.Type) []string {
 	for i := 0; t != nil && i < 8; i++ {
 		switch t.Kind() {
 		case reflect.Ptr, reflect.Slice, reflect.Array:
