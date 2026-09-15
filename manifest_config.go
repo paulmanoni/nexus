@@ -344,6 +344,14 @@ type ServerConfig struct {
 	// default; set explicitly to tighten it.
 	MaxHeaderBytes int
 
+	// TrustedProxies lists the CIDRs (or single IPs) whose
+	// X-Forwarded-For / X-Real-IP headers ClientIP believes. Nil
+	// keeps the default (loopback + private ranges — the LB-in-VPC
+	// case); an explicit empty slice trusts no proxy. Everything
+	// keyed on client IP — per-IP rate limits included — depends on
+	// this being right when the app is directly internet-facing.
+	TrustedProxies []string
+
 	// MaxBodyBytes caps request bodies; over-limit requests get 413.
 	//
 	// OFF by default. Every JSON-binding handler is otherwise a

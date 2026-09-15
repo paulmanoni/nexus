@@ -285,23 +285,13 @@ func (c *Ctx) SetRequestContext(ctx context.Context) {
 	c.Request = c.Request.WithContext(ctx)
 }
 
-// ClientIP returns a best-effort client IP (X-Forwarded-For / X-Real-IP /
-// RemoteAddr). The framework's trusted-proxy policy lives in middleware.ClientIP;
-// this is the simple default used when a Ctx is asked directly.
+// ClientIP returns the client IP under the trusted-proxy policy
+// (clientip.go): X-Forwarded-For / X-Real-IP are honored only when the
+// connecting peer is a trusted proxy (default: loopback + private
+// ranges; tune with SetTrustedProxies / [runtime.server]
+// trusted_proxies), so a direct client can't spoof its own address.
 func (c *Ctx) ClientIP() string {
-	if xff := c.Request.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if xr := c.Request.Header.Get("X-Real-IP"); xr != "" {
-		return strings.TrimSpace(xr)
-	}
-	if host, _, err := net.SplitHostPort(c.Request.RemoteAddr); err == nil {
-		return host
-	}
-	return c.Request.RemoteAddr
+	return clientIP(c.Request)
 }
 
 // --- response writes ---------------------------------------------------------

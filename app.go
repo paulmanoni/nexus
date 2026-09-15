@@ -31,6 +31,7 @@ package nexus
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -269,6 +270,14 @@ func New(cfg Config) *App {
 	// every upgrader in the process (AsWS, GraphQL subscriptions, the
 	// dashboard streams) reads it through httpx.CheckWebSocketOrigin.
 	httpx.SetAllowedWebSocketOrigins(cfg.WebSocket.AllowedOrigins)
+	// Likewise the trusted-proxy policy behind Ctx.ClientIP — per-IP
+	// rate limiting keys off it. Nil keeps httpx's private-range
+	// default; an explicit empty list trusts no proxy.
+	if cfg.Server.TrustedProxies != nil {
+		if bad := httpx.SetTrustedProxies(cfg.Server.TrustedProxies); len(bad) > 0 {
+			panic(fmt.Sprintf("nexus: [runtime.server] trusted_proxies has invalid entries: %v", bad))
+		}
+	}
 	// TODO(router-seam): a per-request access log used to ride on
 	// gin.Logger() in debug mode. The stdlib router has no built-in
 	// logger; reintroduce one as an httpx middleware if desired.

@@ -252,6 +252,8 @@ type ServerConfigBlock struct {
 	WriteTimeout   string `toml:"write_timeout"`
 	MaxHeaderBytes int    `toml:"max_header_bytes"`
 	MaxBodyBytes   int64  `toml:"max_body_bytes"`
+	// TrustedProxies: CIDRs whose forwarded headers ClientIP honors.
+	TrustedProxies []string `toml:"trusted_proxies"`
 }
 
 // WebSocketConfigBlock is the TOML shape of WebSocketConfig.
@@ -347,6 +349,7 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 			WriteTimeout:    parseDurationOr(b.Server.WriteTimeout, 0),
 			MaxHeaderBytes:  b.Server.MaxHeaderBytes,
 			MaxBodyBytes:    b.Server.MaxBodyBytes,
+			TrustedProxies:  b.Server.TrustedProxies,
 		},
 		WebSocket: WebSocketConfig{AllowedOrigins: b.WebSocket.AllowedOrigins},
 		Dashboard: DashboardConfig{
