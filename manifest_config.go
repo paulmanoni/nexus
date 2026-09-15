@@ -65,11 +65,9 @@ type Config struct {
 	//	GET <path>/client.d.ts      generated TS types
 	//	GET <path>/vue.js           Vue 3 composables
 	//
-	// For per-deployment gating (ship the SDK only from the
-	// public-facing service), use nexus.IfDeployment([...],
-	// nexus.ClientUse(...)) instead of setting Client.Enabled at
-	// the Config level — IfDeployment composes with the option
-	// chain while Config is a static value across the binary.
+	// nexus.ClientUse(cfg) is the option-chain equivalent for when
+	// the value is built conditionally rather than on the static
+	// Config literal.
 	Client client.Config
 
 	// SDK is the one-switch front door to the typed client SDK —
@@ -193,8 +191,8 @@ type Config struct {
 	// VPN / office / loopback CIDRs so operators can still reach the
 	// dashboard from trusted networks.
 	//
-	// Set true on dev/internal listeners (compose with
-	// nexus.IfDeployment) to expose introspection unconditionally.
+	// Set true on dev/internal binaries to expose introspection
+	// unconditionally.
 	Introspection bool
 
 	// IntrospectionNetworks is the CIDR allowlist that bypasses the
@@ -289,7 +287,7 @@ type ServerConfig struct {
 	// Framework routes (/__nexus, /health, /ready) are not prefixed.
 	//
 	// Typical use: per-deployment routing in a shared-domain setup,
-	// e.g. /oats-uaa/* on the uaa-svc binary and /oats-interview/*
+	// e.g. /billing/* on the billing-svc binary and /orders/*
 	// on the interview-svc binary. Set in source via Config or
 	// declaratively via nexus.toml's `prefix:` per deployment;
 	// the manifest value lands here through DeploymentDefaults.

@@ -210,7 +210,7 @@ func gqlOpts(opts []Option) []GqlOption {
 // optionGroup folds N Options into one, so AsCRUD can return a
 // single Option that expands into multiple registrations.
 //
-// The wrapper forwards module / route-prefix / deployment annotations
+// The wrapper forwards module / route-prefix annotations
 // onto the children so a Module(...) wrapping AsCRUD still tags each
 // generated endpoint correctly. Without this, the dashboard would
 // show CRUD endpoints as bare service ops outside any module card,

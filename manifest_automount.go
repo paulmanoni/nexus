@@ -81,7 +81,7 @@ func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
 	// create so handlers declared inside nexus.Module("foo", ...) that
 	// don't take a service-wrapper dep get attributed to "foo" rather
 	// than adopted by some unrelated lone-service heuristic. Without
-	// this, a portal_admin-style app with a single named UserService
+	// this, an app with a single named UserService
 	// + a migrations module of plain-func GraphQL handlers ends up
 	// drawing migrations packets/edges as if they came from user —
 	// the dashboard shows the wrong source.
@@ -121,8 +121,8 @@ func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
 	//
 	//  1. Same Go service TYPE, different names. The lone-service
 	//     heuristic + the per-module fallback both produce *Service
-	//     instances; without keying on the name, a portal_admin-
-	//     style app with one named CRUD service in module A and a
+	//     instances; without keying on the name, an app
+	//     with one named CRUD service in module A and a
 	//     plain-func handler set in module B (resolved to a fresh
 	//     *Service named "B") would partition together and every
 	//     query in the merged partition would get tagged with
@@ -133,8 +133,8 @@ func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
 	//  2. Same SERVICE name, different mount paths. The original
 	//     case the comment used to describe: a "user" service
 	//     whose handlers were registered inside both the uaa
-	//     module (Path /oats-uaa) and a separate billing module
-	//     (no Path) needs to mount on /oats-uaa/graphql and the
+	//     module (Path /users) and a separate billing module
+	//     (no Path) needs to mount on /users/graphql and the
 	//     default /graphql respectively. Without mountPath in the
 	//     key, the second registration would silently overwrite
 	//     the first.
@@ -153,13 +153,13 @@ func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
 	}
 	var pendingEdges []pending
 
-	// pendingModules tracks (service, op, module, deployment) tuples
-	// gathered during the walk. Applied AFTER mountOne so endpoints
-	// exist in the registry. Collected here (not in a separate pass)
-	// because f.Service is filled by resolveUnresolved inside this
-	// loop — a second pass would see the pre-resolution nil for
-	// zero-service fallback fields.
-	type pendingModule struct{ service, op, module, deployment string }
+	// pendingModules tracks (service, op, module) tuples gathered
+	// during the walk. Applied AFTER mountOne so endpoints exist in
+	// the registry. Collected here (not in a separate pass) because
+	// f.Service is filled by resolveUnresolved inside this loop — a
+	// second pass would see the pre-resolution nil for zero-service
+	// fallback fields.
+	type pendingModule struct{ service, op, module string }
 	var pendingModules []pendingModule
 
 	// autoRouted tracks (service, op) pairs whose service was filled in by
@@ -239,12 +239,11 @@ func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
 			if wasUnresolved {
 				autoRouted[opKey{service: f.Service.Name(), op: info.Name}] = true
 			}
-			if f.Module != "" || f.Deployment != "" {
+			if f.Module != "" {
 				pendingModules = append(pendingModules, pendingModule{
-					service:    f.Service.Name(),
-					op:         info.Name,
-					module:     f.Module,
-					deployment: f.Deployment,
+					service: f.Service.Name(),
+					op:      info.Name,
+					module:  f.Module,
 				})
 			}
 		}
@@ -300,7 +299,6 @@ func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
 	// resolveUnresolved outcome rather than the pre-resolution f.Service.
 	for _, pm := range pendingModules {
 		in.App.Registry().SetEndpointModule(pm.service, pm.op, pm.module)
-		in.App.Registry().SetEndpointDeployment(pm.service, pm.op, pm.deployment)
 	}
 
 	// Publish declared rate limits to the registry so the dashboard can
@@ -404,8 +402,8 @@ func mountGroup(app *App, g *pathGroup) error {
 		opts = append(opts, gql.WithStatsRegistry(app.gqlStats))
 	}
 	// Prefix the GraphQL mount with the deployment-wide route prefix
-	// so e.g. uaa-svc serves at /oats-uaa/graphql while interview-svc
-	// serves at /oats-interview/graphql. Source-declared per-service
+	// so e.g. users-svc serves at /users/graphql while orders-svc
+	// serves at /orders/graphql. Source-declared per-service
 	// AtGraphQL paths are preserved beneath the prefix.
 	mountedPath := app.PrefixPath(g.path)
 	gql.Mount(app.Router(), app.Registry(), app.Bus(), g.owner.Name(), mountedPath, &schema, opts...)

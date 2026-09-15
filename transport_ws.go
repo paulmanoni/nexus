@@ -91,7 +91,6 @@ type wsOption struct {
 
 func (w *wsOption) nexusOption() di.Option   { return w.o }
 func (w *wsOption) setModule(name string)    { w.cfg.module = name }
-func (w *wsOption) setDeployment(tag string) { w.cfg.deployment = tag }
 
 // asWSInvoke synthesizes the di.Invoke for one AsWS registration. On start:
 //
@@ -374,7 +373,7 @@ func callWSHandler(h wsTypedHandler, ci callInput, argsVal reflect.Value) (err e
 }
 
 // identifyFromGin is the hub identify hook used by AsWS. Matches
-// oats_applicant's convention: prefer an auth-middleware-set `user` in
+// the common convention: prefer an auth-middleware-set `user` in
 // Gin context, fall back to `?userId=` query, and stash the full claim
 // on the connection metadata for handler access via sess.Metadata().
 func identifyFromGin(c *httpx.Ctx) (string, map[string]any) {

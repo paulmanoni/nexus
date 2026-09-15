@@ -29,20 +29,19 @@ func (p pathOption) normalizedPath() string { return normalizeRoutePrefix(p.path
 // service.AtGraphQL(path+"/graphql") on the module's service —
 // expressed once, kept in sync.
 //
-//	var Module = nexus.Module("uaa",
-//	    nexus.DeployAs("uaa-svc"),
-//	    nexus.Path("/oats-uaa"),
+//	var Module = nexus.Module("billing",
+//	    nexus.Path("/billing"),
 //	    nexus.Provide(NewService),
-//	    nexus.AsRest("POST", "/oauth/token", TokenHandler),
-//	    nexus.AsQuery(NewSearchUsers),
+//	    nexus.AsRest("POST", "/charge", NewCharge),
+//	    nexus.AsQuery(NewListInvoices),
 //	)
 //
-// Effect: REST endpoints mount under /oats-uaa/* and GraphQL
-// fields belonging to this module mount at /oats-uaa/graphql.
+// Effect: REST endpoints mount under /billing/* and GraphQL
+// fields belonging to this module mount at /billing/graphql.
 //
 // Why bother (vs a deployment-level prefix in the manifest):
 // Path travels with the module — same URL in monolith and split
-// deployments. The SPA's calls to /oats-uaa/graphql work in both
+// deployments. The SPA's calls to /billing/graphql work in both
 // shapes without conditional client logic.
 //
 // Convention: the module name (first arg of nexus.Module) and
@@ -69,7 +68,7 @@ type PathOpt interface {
 }
 
 // modulePublicPath maps module name → public path (e.g. "uaa" →
-// "/oats-uaa"). Populated when nexus.Module() encounters a
+// "/billing"). Populated when nexus.Module() encounters a
 // PublicPath option among its children. Read by app.Service when
 // constructing a Service whose name matches a registered module —
 // the service's GraphQL mount path is then derived as

@@ -192,7 +192,6 @@ type restOption struct {
 func (r *restOption) nexusOption() di.Option   { return r.o }
 func (r *restOption) setModule(name string)    { r.cfg.module = name }
 func (r *restOption) setRestPrefix(p string)   { r.cfg.pathPrefix = p + r.cfg.pathPrefix }
-func (r *restOption) setDeployment(tag string) { r.cfg.deployment = tag }
 
 // restPrefixAnnotator is implemented by options whose path can be
 // prefixed by an enclosing nexus.Module(..., nexus.RoutePrefix("/api"))

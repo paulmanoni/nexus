@@ -392,7 +392,7 @@ func BootFrom(path string, opts ...Option) {
 //  2. DefaultConfigPath ("nexus.toml") in the current working directory —
 //     the dev-time convention (cwd == project root).
 //  3. nexus.toml sitting next to the executable — the deploy convention.
-//     A binary shipped with its config beside it (./oats_app +
+//     A binary shipped with its config beside it (./myapp +
 //     ./nexus.toml) then binds the configured port no matter which
 //     directory it's launched from, instead of silently falling back to
 //     the framework default (:8080) when cwd has no toml.

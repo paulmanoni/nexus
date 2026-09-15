@@ -25,8 +25,8 @@ import (
 // The store is intentionally additive-only. There's no Unregister:
 // once a module has declared its env vars / service needs, those
 // declarations are part of the app's identity for the lifetime of
-// the process. If a module is conditionally skipped (split-mode
-// filter, IfDeployment), its option chain never executes the
+// the process. If a module is conditionally skipped (a split-mode
+// filter), its option chain never executes the
 // declaration invokes, so the store simply doesn't see them.
 type manifestStore struct {
 	mu sync.Mutex

@@ -985,7 +985,7 @@ Per-endpoint middleware via nexus.Use:
 Module-level prefix wraps every AsRest path:
 
     nexus.Module("uaa",
-        nexus.RoutePrefix("/oats-uaa"),
+        nexus.RoutePrefix("/billing"),
         nexus.AsRest("POST", "/oauth/token", NewToken),
         // mounts at /oats-uaa/oauth/token
     )

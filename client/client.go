@@ -87,7 +87,7 @@ type Config struct {
 	//
 	// Recommended pattern for production: leave Public false on
 	// public-facing deployments; flip to true only on internal
-	// admin/dev listeners (compose with nexus.IfDeployment).
+	// admin/dev builds.
 	//
 	// Auto-derived from nexus.Config.Introspection: when
 	// Introspection is true, Public is forced true at Mount time.
