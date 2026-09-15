@@ -324,9 +324,8 @@ func (h *clientHolder) fetchSnapshot(ctx context.Context) (*SignedSnapshot, erro
 		return nil, err
 	}
 	if h.cfg.hmacSecret != "" {
-		// Phase 1 stub — same construction as the server's
-		// verifyConfigHMAC. Phase 2 elaborates.
-		req.Header.Set("Authorization", "Nexus-Config-HMAC stub")
+		req.Header.Set("Authorization",
+			configHMACHeader(h.cfg.identity, req.URL.Path, h.cfg.hmacSecret, time.Now()))
 	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -370,6 +369,10 @@ func (h *clientHolder) fetchVersion(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.cfg.serverURL+path, nil)
 	if err != nil {
 		return "", err
+	}
+	if h.cfg.hmacSecret != "" {
+		req.Header.Set("Authorization",
+			configHMACHeader(h.cfg.identity, req.URL.Path, h.cfg.hmacSecret, time.Now()))
 	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {

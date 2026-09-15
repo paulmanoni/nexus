@@ -104,7 +104,12 @@ func (h *clientHolder) dialAndRead(ctx context.Context) error {
 	}
 	hdr := http.Header{}
 	if h.cfg.hmacSecret != "" {
-		hdr.Set("Authorization", "Nexus-Config-HMAC stub")
+		u, err := url.Parse(wsURL)
+		if err != nil {
+			return fmt.Errorf("parse subscribe URL: %w", err)
+		}
+		hdr.Set("Authorization",
+			configHMACHeader(h.cfg.identity, u.Path, h.cfg.hmacSecret, time.Now()))
 	}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, hdr)
 	if err != nil {

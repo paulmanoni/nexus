@@ -361,31 +361,11 @@ func (s *serverState) authorize(r *http.Request, app string) error {
 		}
 		return nil
 	case AuthHMAC:
-		return verifyConfigHMAC(r, s.cfg.apps[app].HMACSecret)
+		return verifyConfigHMAC(r, app, s.cfg.apps[app].HMACSecret)
 	case AuthNone:
 		return nil
 	}
 	return fmt.Errorf("unknown auth mode")
-}
-
-// verifyConfigHMAC is the per-request HMAC bearer check. Format:
-//
-//	Authorization: Nexus-Config-HMAC <unix-ts>:<base64-hmac-sha256>
-//
-// The signed bytes are <app>:<unix-ts>:<request-path>. 30s clock
-// skew tolerance. Same construction as extension/peer's HMAC but
-// over different fields (the body is empty for a GET; the path
-// uniquely identifies the requested snapshot).
-func verifyConfigHMAC(r *http.Request, secret string) error {
-	// Stubbed for phase 1; full implementation lives alongside
-	// the WS-subscription path in phase 2.
-	if secret == "" {
-		return fmt.Errorf("HMAC: no secret configured for this app")
-	}
-	if r.Header.Get("Authorization") == "" {
-		return fmt.Errorf("HMAC: missing Authorization header")
-	}
-	return nil
 }
 
 // buildServerTLSConfig assembles the *tls.Config the http.Server
