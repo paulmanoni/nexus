@@ -271,7 +271,11 @@ func cachedHandler(schema *graphql.Schema, cfg Options) httpx.HandlerFunc {
 			return
 		}
 		var req request
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if v, ok := c.Get(gateParsedKey); ok {
+			// The production gate already read + decoded this body
+			// (including the maskid unmask rewrite) — reuse its work.
+			req = *(v.(*request))
+		} else if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
 			return
 		}

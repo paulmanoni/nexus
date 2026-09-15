@@ -12,6 +12,7 @@ import (
 	"github.com/paulmanoni/nexus/httpx"
 
 	graph "github.com/paulmanoni/nexus/graph"
+	"github.com/paulmanoni/nexus/internal/maskhook"
 )
 
 // productionGate runs the full nexus/graph security suite (the
@@ -94,10 +95,21 @@ func (g *gateVerdicts) check(query string, schema *graphql.Schema) error {
 	return err
 }
 
+// gateParsedKey stashes the fully-bound request when the gate already
+// decoded the body, so cachedHandler skips its own read + decode of
+// the same bytes — the gate previously cost every locked-down request
+// a second full body read and JSON parse.
+const gateParsedKey = "gql.gate.request"
+
 // extractQuery pulls the GraphQL query string out of the request,
 // matching simpleHandler / goGraphHandler's parsing rules. Reads
-// + restores the body so downstream handlers see the original
-// bytes (graphql.Do calls c.ShouldBindJSON which re-reads).
+// + restores the body so downstream handlers that DO re-read (the
+// non-JSON fallbacks) see the original bytes.
+//
+// For JSON POSTs — the hot path — it binds the FULL request struct
+// exactly as httpx.ShouldBindJSON would (same maskid unmask rewrite,
+// same Decode semantics) and stashes it for cachedHandler, so the
+// body is read and parsed once per request instead of twice.
 //
 // Returns "" when the query can't be located — the gate falls
 // through to the regular handler in that case, which surfaces the
@@ -116,6 +128,18 @@ func extractQuery(c *httpx.Ctx) string {
 		return ""
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	if isJSONContentType(c.GetHeader("Content-Type")) {
+		dec := body
+		if maskhook.Enabled() {
+			dec = maskhook.UnmaskJSON(body)
+		}
+		var req request
+		if json.NewDecoder(bytes.NewReader(dec)).Decode(&req) == nil {
+			c.Set(gateParsedKey, &req)
+			return req.Query
+		}
+		return ""
+	}
 	var probe struct {
 		Query string `json:"query"`
 	}
