@@ -55,9 +55,12 @@ func (b *devBuilder) close() {
 //
 // Flags mirror what `go run` was invoked with before: -gcflags=all=-N -l
 // disables optimization + inlining for the whole graph (markedly faster
-// compiles; dev binaries are never perf-sensitive) and -ldflags=-w drops
-// DWARF so the linker — the one step no cache makes incremental, and which
-// measurement puts at essentially the entire rebuild — has less to emit.
+// compiles; dev binaries are never perf-sensitive) and -ldflags="-w -s"
+// drops DWARF and the symbol table so the linker — the one step no cache
+// makes incremental, and which measurement puts at essentially the entire
+// rebuild — has less to emit. -s is safe for panic tracebacks: the Go
+// runtime symbolizes from pclntab, not the Mach-O/ELF symtab; delve needs
+// DWARF anyway, which --debug restores along with the symtab.
 //
 // -w is on by default (--debug turns it back off, for delve and full panic
 // traces). On a large app it's worth ~20% of every rebuild, and dev binaries
@@ -72,7 +75,7 @@ func (b *devBuilder) build(ctx context.Context, target, overlayPath string, out 
 	}
 	args = append(args, "-gcflags=all=-N -l")
 	if b.fast {
-		args = append(args, "-ldflags=-w")
+		args = append(args, "-ldflags=-w -s")
 	}
 	// Compile from inside the target's own directory when it resolves to a
 	// real path, so a target outside the CLI's module (or in a nested one)

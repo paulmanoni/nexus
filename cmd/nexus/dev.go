@@ -752,7 +752,7 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 		}
 		args = append(args, "-gcflags=all=-N -l")
 		if fast {
-			args = append(args, "-ldflags=-w")
+			args = append(args, "-ldflags=-w -s")
 		}
 		args = append(args, target)
 		cmd = exec.Command("go", args...)
