@@ -473,7 +473,7 @@ func Run(cfg Config, opts ...Option) {
 	// Print-mode short-circuit. When NEXUS_PRINT_MANIFEST=1 is set,
 	// the orchestration platform is invoking us at build/upload time
 	// to extract the manifest. Build the fx graph, populate *App
-	// (which fires every DeclareEnv / DeclareService / UseVolume /
+	// (which fires every DeclareEnv / DeclareService / DeclareVolume /
 	// AddStartupTask invoke from module-level options), print the
 	// manifest as JSON, exit 0. Lifecycle hooks never run — no
 	// listener bind, no DB/Redis dial.

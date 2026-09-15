@@ -63,6 +63,24 @@ type manifestStore struct {
 	effective *manifest.Manifest
 }
 
+// declareAppend appends v to one of the manifest store's slices under
+// its lock — the shared body of the append-style Declare* methods.
+func declareAppend[T any](a *App, dst *[]T, v T) {
+	a.manifest.mu.Lock()
+	*dst = append(*dst, v)
+	a.manifest.mu.Unlock()
+}
+
+// declareReplace sets one of the manifest store's block pointers under
+// its lock (last call wins) — the shared body of the replace-style
+// Declare* methods.
+func declareReplace[T any](a *App, dst **T, v T) {
+	a.manifest.mu.Lock()
+	cp := v
+	*dst = &cp
+	a.manifest.mu.Unlock()
+}
+
 // DeclareEnv records one env var the app reads. Safe to call from any
 // di.Invoke — typically from a module-level nexus.DeclareEnv option,
 // which expands to an invoke that calls this. Empty Name is silently
@@ -72,9 +90,7 @@ func (a *App) DeclareEnv(e manifest.EnvVar) {
 	if e.Name == "" {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.envs = append(a.manifest.envs, e)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.envs, e)
 }
 
 // DeclareEnvProvider records a provider whose NexusEnv() is called at
@@ -85,9 +101,7 @@ func (a *App) DeclareEnvProvider(p manifest.EnvProvider) {
 	if p == nil {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.envProvs = append(a.manifest.envProvs, p)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.envProvs, p)
 }
 
 // DeclareService records a backing-service dependency (Postgres,
@@ -99,9 +113,7 @@ func (a *App) DeclareService(s manifest.ServiceNeed) {
 	if s.Name == "" {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.services = append(a.manifest.services, s)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.services, s)
 }
 
 // DeclareServiceProvider is the data-driven counterpart to
@@ -110,33 +122,33 @@ func (a *App) DeclareServiceProvider(p manifest.ServiceDependencyProvider) {
 	if p == nil {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.svcProvs = append(a.manifest.svcProvs, p)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.svcProvs, p)
 }
 
-// UseVolume records a writable path that must persist across
+// DeclareVolume records a writable path that must persist across
 // restarts. The orchestration platform mounts a persistent volume at
 // each declared path. Set Shared=true when the path must be visible
 // to every replica (e.g. uploads dir read by all instances) — single-
 // replica apps can leave it false.
-func (a *App) UseVolume(v manifest.Volume) {
+func (a *App) DeclareVolume(v manifest.Volume) {
 	if v.Path == "" {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.volumes = append(a.manifest.volumes, v)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.volumes, v)
 }
+
+// UseVolume is the original name of DeclareVolume.
+//
+// Deprecated: use DeclareVolume — it matches its 13 Declare* siblings
+// (its data-driven counterpart was already DeclareVolumeProvider).
+func (a *App) UseVolume(v manifest.Volume) { a.DeclareVolume(v) }
 
 // DeclareVolumeProvider is the data-driven counterpart to UseVolume.
 func (a *App) DeclareVolumeProvider(p manifest.VolumeProvider) {
 	if p == nil {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.volProvs = append(a.manifest.volProvs, p)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.volProvs, p)
 }
 
 // DeclareSecret records one sensitive input the app reads. Distinct
@@ -147,9 +159,7 @@ func (a *App) DeclareSecret(s manifest.Secret) {
 	if s.Name == "" {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.secrets = append(a.manifest.secrets, s)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.secrets, s)
 }
 
 // DeclareFile records a mounted-blob input — TLS bundle, JSON config
@@ -159,9 +169,7 @@ func (a *App) DeclareFile(f manifest.File) {
 	if f.Name == "" || f.Path == "" {
 		return
 	}
-	a.manifest.mu.Lock()
-	a.manifest.files = append(a.manifest.files, f)
-	a.manifest.mu.Unlock()
+	declareAppend(a, &a.manifest.files, f)
 }
 
 // DeclareEnvironment records a deploy target ("production",
@@ -193,38 +201,26 @@ func (a *App) DeclareEnvironment(e manifest.Environment) {
 // accumulating) — typical use is one call from the top-level main()
 // with the full set.
 func (a *App) DeclareHooks(h manifest.Hooks) {
-	a.manifest.mu.Lock()
-	hCopy := h
-	a.manifest.hooks = &hCopy
-	a.manifest.mu.Unlock()
+	declareReplace(a, &a.manifest.hooks, h)
 }
 
 // DeclareTLS sets the public-internet TLS configuration block read
 // by the extension/tls plugin at boot. Idempotent within a single
 // boot: subsequent calls fully replace the previous block.
 func (a *App) DeclareTLS(t manifest.TLSBlock) {
-	a.manifest.mu.Lock()
-	tCopy := t
-	a.manifest.tls = &tCopy
-	a.manifest.mu.Unlock()
+	declareReplace(a, &a.manifest.tls, t)
 }
 
 // DeclareCORS sets the cross-origin policy block read by the
 // extension/cors plugin at boot. Idempotent — last call wins.
 func (a *App) DeclareCORS(c manifest.CORSBlock) {
-	a.manifest.mu.Lock()
-	cCopy := c
-	a.manifest.cors = &cCopy
-	a.manifest.mu.Unlock()
+	declareReplace(a, &a.manifest.cors, c)
 }
 
 // DeclareErrors sets the error-capture configuration block read by
 // the extension/errors plugin at boot. Idempotent — last call wins.
 func (a *App) DeclareErrors(e manifest.ErrorsBlock) {
-	a.manifest.mu.Lock()
-	eCopy := e
-	a.manifest.errors = &eCopy
-	a.manifest.mu.Unlock()
+	declareReplace(a, &a.manifest.errors, e)
 }
 
 // DeclareOverride registers a per-environment Override against the
@@ -751,10 +747,15 @@ func DeclareService(s manifest.ServiceNeed) Option {
 	return Invoke(func(a *App) { a.DeclareService(s) })
 }
 
-// UseVolume produces an Option that registers one Volume.
-func UseVolume(v manifest.Volume) Option {
-	return Invoke(func(a *App) { a.UseVolume(v) })
+// DeclareVolume produces an Option that registers one Volume.
+func DeclareVolume(v manifest.Volume) Option {
+	return Invoke(func(a *App) { a.DeclareVolume(v) })
 }
+
+// UseVolume is the original name of DeclareVolume.
+//
+// Deprecated: use DeclareVolume.
+func UseVolume(v manifest.Volume) Option { return DeclareVolume(v) }
 
 // AddStartupTask produces an Option that registers a startup task.
 // The task's Run is preserved through to integration step 3 where

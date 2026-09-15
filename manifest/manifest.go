@@ -13,7 +13,7 @@
 //  1. *nexus.App grows three registration methods:
 //     app.DeclareEnv(EnvProvider)
 //     app.DeclareService(ServiceDependency)
-//     app.UseVolume(Volume)
+//     app.DeclareVolume(Volume)
 //     plus a startup-task registration that collects via an fx group
 //     "nexus.startup-tasks" so any module can declare one without holding
 //     an *App reference.
@@ -552,7 +552,7 @@ type ServiceDependencyProvider interface {
 
 // VolumeProvider is implemented by anything that needs a writable
 // path. Most apps won't implement this — they'll register volumes
-// directly via app.UseVolume(...) once that hook lands.
+// directly via app.DeclareVolume(...) once that hook lands.
 type VolumeProvider interface {
 	NexusVolumes() []Volume
 }

@@ -24,7 +24,7 @@ const printManifestEnv = manifest.EnvVarPrintAndExit
 //	docker run --rm -e NEXUS_PRINT_MANIFEST=1 <image>
 //
 // The container boots its fx graph far enough to resolve every
-// module-level declaration (DeclareEnv / DeclareService / UseVolume /
+// module-level declaration (DeclareEnv / DeclareService / DeclareVolume /
 // AddStartupTask), prints the assembled manifest as JSON to stdout,
 // and exits 0 — without binding listeners, without dialing Redis or
 // Postgres, without firing any startup task. The orchestration
