@@ -120,9 +120,9 @@ func AsCRUD[T any](resolver any, opts ...Option) Option {
 		// auto-mounts onto the module's single service via the
 		// framework's default-service resolution.
 		registrations = append(registrations,
-			AsQuery(makeGqlListHandler[T](perReq), append(gqlOpts(opts), Op("list"+capitalize(plural)))...),
-			AsQuery(makeGqlReadHandler[T](perReq), append(gqlOpts(opts), Op("get"+tName))...),
-			AsMutation(makeGqlCreateHandler[T](perReq), append(gqlOpts(opts), Op("create"+tName))...),
+			AsQuery(makeListHandler[T](perReq), append(gqlOpts(opts), Op("list"+capitalize(plural)))...),
+			AsQuery(makeReadHandler[T](perReq), append(gqlOpts(opts), Op("get"+tName))...),
+			AsMutation(makeCreateHandler[T](perReq), append(gqlOpts(opts), Op("create"+tName))...),
 			AsMutation(makeGqlUpdateHandler[T](perReq), append(gqlOpts(opts), Op("update"+tName))...),
 			AsMutation(makeGqlDeleteHandler[T](perReq), append(gqlOpts(opts), Op("delete"+tName))...),
 		)
@@ -424,61 +424,14 @@ func applyID[T any](item *T, id string) {
 	f.SetString(id)
 }
 
-// ─── GraphQL handler factories ────────────────────────────────────
+// ─── GraphQL-specific handler factories ───────────────────────────
 //
-// GraphQL has no path params, so the Update handler reads the id
-// straight off the inbound body (T's ID field). For List/Read/Delete
-// the args struct carries the id (or pagination); for Create the
-// args struct IS T, with each field auto-named by the framework's
-// graphql-tag → field-name fallback.
-
-func makeGqlListHandler[T any](resolver CRUDResolver[T]) any {
-	return func(p Params[ListOptions]) (Page[T], error) {
-		store, err := resolver(p.Context)
-		if err != nil {
-			return Page[T]{}, err
-		}
-		opts := p.Args
-		if opts.Limit <= 0 {
-			opts.Limit = 20
-		}
-		if opts.Limit > 100 {
-			opts.Limit = 100
-		}
-		if opts.Offset < 0 {
-			opts.Offset = 0
-		}
-		items, total, err := store.Search(p.Context, opts)
-		if err != nil {
-			return Page[T]{}, err
-		}
-		return Page[T]{Items: items, Total: total, Limit: opts.Limit, Offset: opts.Offset}, nil
-	}
-}
-
-func makeGqlReadHandler[T any](resolver CRUDResolver[T]) any {
-	return func(p Params[idArg]) (*T, error) {
-		store, err := resolver(p.Context)
-		if err != nil {
-			return nil, err
-		}
-		return store.Find(p.Context, p.Args.ID)
-	}
-}
-
-func makeGqlCreateHandler[T any](resolver CRUDResolver[T]) any {
-	return func(p Params[T]) (*T, error) {
-		store, err := resolver(p.Context)
-		if err != nil {
-			return nil, err
-		}
-		item := p.Args
-		if err := store.Save(p.Context, &item); err != nil {
-			return nil, err
-		}
-		return &item, nil
-	}
-}
+// List/Read/Create are transport-neutral — the reflective handler
+// shape is identical either way, so the REST factories above serve
+// both. Only Update and Delete differ: GraphQL has no path params,
+// so Update reads the id off the inbound body (T's ID field), and
+// Delete returns a bool because many GraphQL clients reject null
+// mutation responses.
 
 func makeGqlUpdateHandler[T any](resolver CRUDResolver[T]) any {
 	// GraphQL has no path params — the id comes in alongside the
