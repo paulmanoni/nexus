@@ -984,10 +984,10 @@ Per-endpoint middleware via nexus.Use:
 
 Module-level prefix wraps every AsRest path:
 
-    nexus.Module("uaa",
+    nexus.Module("billing",
         nexus.RoutePrefix("/billing"),
-        nexus.AsRest("POST", "/oauth/token", NewToken),
-        // mounts at /oats-uaa/oauth/token
+        nexus.AsRest("POST", "/charge", NewCharge),
+        // mounts at /billing/charge
     )
 `,
 
@@ -1011,8 +1011,8 @@ different /graphql URLs):
 
     func NewService(app *nexus.App) *Service {
         return &Service{Service: app.
-            Service("uaa").
-            AtGraphQL("/oats-uaa/graphql")}
+            Service("billing").
+            AtGraphQL("/billing/graphql")}
     }
 
 Service-less handlers mount on a synthesized default partition,
