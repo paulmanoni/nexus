@@ -102,16 +102,22 @@ type MemoryStore struct {
 }
 
 type entry struct {
-	count        atomic.Int64
-	errors       atomic.Int64
+	count  atomic.Int64
+	errors atomic.Int64
+	// lastAtNano is the last-request timestamp (unix nanos). Atomic so
+	// the success path — every request — never takes the mutex; e.mu
+	// guards only the error-path fields below.
+	lastAtNano   atomic.Int64
 	mu           sync.Mutex
 	lastErr      string
 	lastErrStack string
-	lastAt       time.Time
 	lastErrAt    time.Time
-	// recent is a newest-first ring of error events. Size capped at
-	// RecentErrorsCap; oldest entries drop as new ones arrive.
-	recent []ErrorEvent
+	// recent is a circular buffer of error events, recentHead the index
+	// of the newest. O(1) writes — the previous newest-first prepend
+	// reallocated and copied the whole ring on every error, which at
+	// capacity meant a 1000-element copy per error under the lock.
+	recent     []ErrorEvent
+	recentHead int
 }
 
 func (s *MemoryStore) pick(key string) *entry {
@@ -135,26 +141,29 @@ func (s *MemoryStore) Record(key, ip string, err error) {
 	e := s.pick(key)
 	e.count.Add(1)
 	now := time.Now()
+	e.lastAtNano.Store(now.UnixNano())
+	if err == nil {
+		return
+	}
+	e.errors.Add(1)
+	// trace.StackOf walks the error chain via errors.As so wrapped
+	// stack-carriers still surface their stack trace here.
+	ev := ErrorEvent{
+		Timestamp: now,
+		IP:        ip,
+		Message:   err.Error(),
+		Stack:     trace.StackOf(err),
+	}
 	e.mu.Lock()
-	e.lastAt = now
-	if err != nil {
-		e.errors.Add(1)
-		e.lastErr = err.Error()
-		e.lastErrStack = trace.StackOf(err)
-		e.lastErrAt = now
-		// newest-first insertion; cap ring length so old events drop.
-		// trace.StackOf walks the error chain via errors.As so wrapped
-		// stack-carriers still surface their stack trace here.
-		ev := ErrorEvent{
-			Timestamp: now,
-			IP:        ip,
-			Message:   err.Error(),
-			Stack:     trace.StackOf(err),
-		}
-		e.recent = append([]ErrorEvent{ev}, e.recent...)
-		if len(e.recent) > RecentErrorsCap {
-			e.recent = e.recent[:RecentErrorsCap]
-		}
+	e.lastErr = ev.Message
+	e.lastErrStack = ev.Stack
+	e.lastErrAt = now
+	if len(e.recent) < RecentErrorsCap {
+		e.recent = append(e.recent, ev)
+		e.recentHead = len(e.recent) - 1
+	} else {
+		e.recentHead = (e.recentHead + 1) % RecentErrorsCap
+		e.recent[e.recentHead] = ev
 	}
 	e.mu.Unlock()
 }
@@ -193,9 +202,12 @@ func snapshotOf(key string, e *entry) EndpointStats {
 	e.mu.Lock()
 	lastErr := e.lastErr
 	lastErrStack := e.lastErrStack
-	lastAt := e.lastAt
 	lastErrAt := e.lastErrAt
 	e.mu.Unlock()
+	var lastAt time.Time
+	if n := e.lastAtNano.Load(); n != 0 {
+		lastAt = time.Unix(0, n)
+	}
 	// RecentErrors intentionally omitted — /stats polling stays lean.
 	// The dashboard's error dialog fetches the full ring via Errors(key).
 	return EndpointStats{
@@ -221,11 +233,15 @@ func (s *MemoryStore) Errors(key string) []ErrorEvent {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if len(e.recent) == 0 {
+	n := len(e.recent)
+	if n == 0 {
 		return nil
 	}
-	out := make([]ErrorEvent, len(e.recent))
-	copy(out, e.recent)
+	// Unroll the circular buffer newest-first, starting at recentHead.
+	out := make([]ErrorEvent, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, e.recent[(e.recentHead-i+n)%n])
+	}
 	return out
 }
 
