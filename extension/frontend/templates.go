@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/internal/tsgen"
 	"github.com/paulmanoni/nexus/registry"
 )
 
@@ -721,135 +722,18 @@ func tsFnIdent(s string) string {
 	return b.String()
 }
 
-// ── TS type rendering (forked from client/generator.go, kept private
-// to extension/frontend so phase 1 doesn't refactor the runtime SDK's
-// generator). A follow-up PR can hoist these into a shared package
-// once both call sites converge.
-
-func tsType(t *registry.TypeRef) string {
-	if t == nil {
-		return "unknown"
-	}
-	core := tsTypeCore(t)
-	if t.Optional {
-		return core + " | undefined"
-	}
-	return core
-}
-
-func tsTypeCore(t *registry.TypeRef) string {
-	switch t.Kind {
-	case "primitive":
-		switch t.Primitive {
-		case "string":
-			return "string"
-		case "boolean":
-			return "boolean"
-		case "integer", "number":
-			return "number"
-		}
-		return "unknown"
-	case "array":
-		return tsType(t.Of) + "[]"
-	case "map":
-		key := "string"
-		if t.KeyOf != nil && t.KeyOf.Kind == "primitive" && t.KeyOf.Primitive == "integer" {
-			key = "number"
-		}
-		return fmt.Sprintf("Record<%s, %s>", key, tsType(t.Of))
-	case "ref":
-		return tsIdent(t.Ref)
-	case "object":
-		if t.Object == nil || len(t.Object.Fields) == 0 {
-			return "{}"
-		}
-		var b strings.Builder
-		b.WriteString("{ ")
-		for i, f := range t.Object.Fields {
-			if i > 0 {
-				b.WriteString("; ")
-			}
-			name := f.JSONName
-			if name == "" {
-				name = f.Name
-			}
-			opt := ""
-			if f.Optional {
-				opt = "?"
-			}
-			fmt.Fprintf(&b, "%s%s: %s", tsKey(name), opt, tsType(&f.Type))
-		}
-		b.WriteString(" }")
-		return b.String()
-	case "any", "":
-		return "unknown"
-	default:
-		return "unknown"
-	}
-}
-
-func tsIdent(name string) string {
-	if name == "" {
-		return "unknown"
-	}
-	return name
-}
-
-func tsKey(name string) string {
-	if isPlainIdent(name) {
-		return name
-	}
-	return tsLiteral(name)
-}
-
-func isPlainIdent(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, r := range s {
-		if i == 0 {
-			if !(r == '_' || r == '$' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
-				return false
-			}
-			continue
-		}
-		if !(r == '_' || r == '$' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
-			return false
-		}
-	}
-	return true
-}
-
-func tsLiteral(s string) string {
-	var b strings.Builder
-	b.WriteByte('\'')
-	for _, r := range s {
-		if r == '\\' || r == '\'' {
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	b.WriteByte('\'')
-	return b.String()
-}
-
-func escapeComment(s string) string {
-	return strings.ReplaceAll(s, "*/", "* /")
-}
+// The TS rendering primitives live in internal/tsgen — the single
+// implementation shared with client's runtime SDK generator (the
+// fork this file used to carry is gone).
+// These thin aliases keep call sites unchanged.
+func tsType(t *registry.TypeRef) string     { return tsgen.Type(t) }
+func tsTypeCore(t *registry.TypeRef) string { return tsgen.TypeCore(t) }
+func tsIdent(name string) string            { return tsgen.Ident(name) }
+func tsKey(name string) string              { return tsgen.Key(name) }
+func isPlainIdent(s string) bool            { return tsgen.IsPlainIdent(s) }
+func tsLiteral(s string) string             { return tsgen.Literal(s) }
+func escapeComment(s string) string         { return tsgen.EscapeComment(s) }
 
 func writeFields(b *strings.Builder, fields []registry.FieldSchema, indent string) {
-	for _, f := range fields {
-		name := f.JSONName
-		if name == "" {
-			name = f.Name
-		}
-		opt := ""
-		if f.Optional {
-			opt = "?"
-		}
-		if f.Description != "" {
-			fmt.Fprintf(b, "%s/** %s */\n", indent, escapeComment(f.Description))
-		}
-		fmt.Fprintf(b, "%s%s%s: %s\n", indent, tsKey(name), opt, tsType(&f.Type))
-	}
+	tsgen.WriteFields(b, fields, indent)
 }
