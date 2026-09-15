@@ -205,14 +205,6 @@ type responseWriterWrapper struct {
 	statusCode int
 }
 
-func newResponseWriterWrapper(w http.ResponseWriter) *responseWriterWrapper {
-	return &responseWriterWrapper{
-		ResponseWriter: w,
-		body:           &bytes.Buffer{},
-		statusCode:     http.StatusOK,
-	}
-}
-
 func (w *responseWriterWrapper) Write(b []byte) (int, error) {
 	return w.body.Write(b)
 }

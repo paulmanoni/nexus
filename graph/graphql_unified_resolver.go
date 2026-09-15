@@ -326,22 +326,6 @@ func isGenericWrapper(t reflect.Type) bool {
 	return hasStatus && hasData && hasCode
 }
 
-func detectGenericStruct(v interface{}) bool {
-	info := detectGenericType(v)
-
-	fmt.Printf("Type Analysis:\n")
-	fmt.Printf("  Name: %s\n", info.BaseTypeName)
-	fmt.Printf("  IsGeneric: %v\n", info.IsGeneric)
-	fmt.Printf("  IsWrapper: %v\n", info.IsWrapper)
-	if info.ElementType != nil {
-		fmt.Printf("  ElementType: %v\n", info.ElementType)
-	}
-	fmt.Printf("  WrapperFields: %v\n", len(info.WrapperFields))
-	fmt.Println("---")
-
-	return info.IsGeneric
-}
-
 func GetTypeName[T any]() string {
 	var zero T
 	t := reflect.TypeOf(zero)
@@ -751,25 +735,6 @@ func (r *UnifiedResolver[T]) WithResolver(resolver func(ResolveParams) (*T, erro
 		return result, err
 	}
 	return r
-}
-
-// extractResolverResults handles the return values from a resolver function
-func extractResolverResults(results []reflect.Value) (interface{}, error) {
-	if len(results) != 2 {
-		panic("resolver must return exactly 2 values: (*T, error)")
-	}
-
-	// First value is the result (could be nil)
-	var result interface{}
-	if !results[0].IsNil() {
-		result = results[0].Interface()
-	}
-
-	// Second value is the error
-	if results[1].IsNil() {
-		return result, nil
-	}
-	return result, results[1].Interface().(error)
 }
 
 // WithMiddleware adds middleware to the main resolver.
@@ -1188,12 +1153,6 @@ func GetOr[T any](a ArgsGetter, name string, defaultVal T) T {
 	return result
 }
 
-// convertArg handles type conversions for GraphQL arguments (returns zero value on error)
-func convertArg[T any](val interface{}) T {
-	result, _ := convertArgE[T](val, "")
-	return result
-}
-
 // convertArgE handles type conversions for GraphQL arguments with error handling
 func convertArgE[T any](val interface{}, argName string) (T, error) {
 	var zero T
@@ -1591,22 +1550,6 @@ func (r *UnifiedResolver[T]) WithComputedField(name string, fieldType graphql.Ou
 	return r
 }
 
-// Utility Methods for Field Configuration
-func (r *UnifiedResolver[T]) WithLazyField(fieldName string, loader func(interface{}) (interface{}, error)) *UnifiedResolver[T] {
-	r.fieldOverrides[fieldName] = LazyFieldResolver(fieldName, loader)
-	return r
-}
-
-func (r *UnifiedResolver[T]) WithCachedField(fieldName string, cacheKeyFunc func(graphql.ResolveParams) string, resolver graphql.FieldResolveFn) *UnifiedResolver[T] {
-	r.fieldOverrides[fieldName] = CachedFieldResolver(cacheKeyFunc, resolver)
-	return r
-}
-
-func (r *UnifiedResolver[T]) WithAsyncField(fieldName string, resolver graphql.FieldResolveFn) *UnifiedResolver[T] {
-	r.fieldOverrides[fieldName] = AsyncFieldResolver(resolver)
-	return r
-}
-
 // Build Methods
 func (r *UnifiedResolver[T]) BuildQuery() QueryField {
 	return r
@@ -1976,80 +1919,6 @@ func AuthMiddleware(requiredRole string) FieldMiddleware {
 			}
 			return next(p)
 		}
-	}
-}
-
-// CacheMiddleware caches field results based on a key function
-func CacheMiddleware(cacheKey func(ResolveParams) string) FieldMiddleware {
-	cache := make(map[string]interface{})
-	return func(next FieldResolveFn) FieldResolveFn {
-		return func(p ResolveParams) (interface{}, error) {
-			key := cacheKey(p)
-			if cached, exists := cache[key]; exists {
-				return cached, nil
-			}
-			result, err := next(p)
-			if err == nil {
-				cache[key] = result
-			}
-			return result, err
-		}
-	}
-}
-
-// Helper Functions for Common Resolvers
-
-// AsyncFieldResolver executes a resolver asynchronously
-func AsyncFieldResolver(resolver graphql.FieldResolveFn) graphql.FieldResolveFn {
-	return func(p graphql.ResolveParams) (interface{}, error) {
-		type result struct {
-			data interface{}
-			err  error
-		}
-
-		ch := make(chan result, 1)
-		go func() {
-			data, err := resolver(p)
-			ch <- result{data, err}
-		}()
-
-		r := <-ch
-		return r.data, r.err
-	}
-}
-
-// CachedFieldResolver caches field results with a key function
-func CachedFieldResolver(cacheKey func(graphql.ResolveParams) string, resolver graphql.FieldResolveFn) graphql.FieldResolveFn {
-	cache := make(map[string]interface{})
-
-	return func(p graphql.ResolveParams) (interface{}, error) {
-		key := cacheKey(p)
-		if cached, exists := cache[key]; exists {
-			return cached, nil
-		}
-
-		result, err := resolver(p)
-		if err == nil {
-			cache[key] = result
-		}
-		return result, err
-	}
-}
-
-// LazyFieldResolver loads a field only when requested
-func LazyFieldResolver(fieldName string, loader func(interface{}) (interface{}, error)) graphql.FieldResolveFn {
-	return func(p graphql.ResolveParams) (interface{}, error) {
-		source := reflect.ValueOf(p.Source)
-		if source.Kind() == reflect.Ptr {
-			source = source.Elem()
-		}
-
-		field := source.FieldByName(fieldName)
-		if field.IsValid() && !field.IsZero() {
-			return field.Interface(), nil
-		}
-
-		return loader(p.Source)
 	}
 }
 
