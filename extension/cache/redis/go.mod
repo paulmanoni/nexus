@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/failsafe-go/failsafe-go v0.9.6
-	github.com/paulmanoni/nexus v1.44.0
+	github.com/paulmanoni/nexus v1.45.0
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.uber.org/zap v1.28.0
