@@ -7,6 +7,7 @@ package stdrouter
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/paulmanoni/nexus/httpx"
 )
@@ -15,6 +16,11 @@ type Router struct {
 	mux    *http.ServeMux
 	global []httpx.HandlerFunc
 	routes []httpx.RouteInfo
+	// chain caches the assembled global-middleware chain (global +
+	// the mux tail). Built on first request, invalidated by Use —
+	// rebuilding this slice per request was one of the request path's
+	// few remaining allocations.
+	chain atomic.Pointer[[]httpx.HandlerFunc]
 }
 
 // New builds the default stdlib-backed router.
@@ -58,7 +64,10 @@ func (r *Router) Any(path string, chain ...httpx.HandlerFunc) {
 // every backend. Non-wildcard params pass straight through.
 func paramFn(req *http.Request, wild string) func(string) string {
 	if wild == "" {
-		return req.PathValue
+		// nil tells httpx.Ctx.Param to read req.PathValue directly —
+		// returning the bound method here allocated a closure per
+		// request for every non-wildcard route.
+		return nil
 	}
 	return func(k string) string {
 		if k == wild {
@@ -68,7 +77,10 @@ func paramFn(req *http.Request, wild string) func(string) string {
 	}
 }
 
-func (r *Router) Use(mw ...httpx.HandlerFunc) { r.global = append(r.global, mw...) }
+func (r *Router) Use(mw ...httpx.HandlerFunc) {
+	r.global = append(r.global, mw...)
+	r.chain.Store(nil) // invalidate the cached chain
+}
 
 func (r *Router) Group(prefix string, mw ...httpx.HandlerFunc) httpx.Group {
 	return httpx.NewGroup(r, prefix, mw...)
@@ -105,10 +117,15 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.mux.ServeHTTP(w, req)
 		return
 	}
-	chain := append(append([]httpx.HandlerFunc{}, r.global...), func(c *httpx.Ctx) {
-		r.mux.ServeHTTP(c.Writer, c.Request)
-	})
-	httpx.Serve(chain, w, req, req.URL.Path, nil)
+	cp := r.chain.Load()
+	if cp == nil {
+		full := append(append([]httpx.HandlerFunc{}, r.global...), func(c *httpx.Ctx) {
+			r.mux.ServeHTTP(c.Writer, c.Request)
+		})
+		r.chain.Store(&full)
+		cp = &full
+	}
+	httpx.Serve(*cp, w, req, req.URL.Path, nil)
 }
 
 // toStd rewrites canonical ":id" -> "{id}" and "*rest" -> "{rest...}", and

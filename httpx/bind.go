@@ -41,7 +41,7 @@ func (c *Ctx) ShouldBindUri(ptr any) error {
 // ShouldBindQuery fills fields tagged `query:"name"` (or `form:"name"`) from
 // the URL query.
 func (c *Ctx) ShouldBindQuery(ptr any) error {
-	q := c.Request.URL.Query()
+	q := c.queryValues()
 	return bindFromTag(ptr, "query", func(name string) ([]string, bool) {
 		vs, ok := q[name]
 		return vs, ok
@@ -223,7 +223,7 @@ func bindFromTag(ptr any, tag string, lookup func(string) ([]string, bool), altT
 		if !ok || name == "" || name == "-" {
 			continue
 		}
-		name = strings.Split(name, ",")[0]
+		name, _, _ = strings.Cut(name, ",")
 		vals, present := lookup(name)
 		if !present || len(vals) == 0 {
 			continue

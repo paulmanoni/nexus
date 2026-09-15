@@ -25,7 +25,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 )
 
 // H is the JSON map shorthand (drop-in for gin.H).
@@ -139,6 +141,11 @@ func (w *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // Ctx is the transport-neutral request handle — the union of the gin.Context
 // surface nexus actually used, with no router type in its API.
+//
+// Lifetime: a Ctx (and its Writer) is pooled and recycled after the
+// handler chain returns — the same contract gin has. Do not retain it
+// past the handler's return; a goroutine that outlives the request
+// must copy the values it needs (or c.Request.Context()) first.
 type Ctx struct {
 	Writer  *ResponseWriter
 	Request *http.Request
@@ -153,25 +160,87 @@ type Ctx struct {
 	keys     map[string]any
 	errs     []error
 	sameSite http.SameSite
+
+	// Per-request memos: url.Values re-parses the raw query on every
+	// call, and ClientIP re-parses RemoteAddr/XFF — both are pure
+	// functions of the request, so one request pays each once.
+	queryMemo    url.Values
+	clientIPMemo string
+
+	// pooled marks a Ctx as owned by ctxPool — released by Serve after
+	// the chain returns. Handlers must not retain the Ctx (or its
+	// Writer) past their return — the same contract gin has.
+	pooled bool
+	// ownWriter is the inline wrapper used when Serve receives a bare
+	// http.ResponseWriter. The nested Serve of a route chain inside
+	// the global chain instead BORROWS the outer Ctx's wrapper (so
+	// both levels see one written/status state) — borrowed wrappers
+	// are never reset or detached on release.
+	ownWriter      ResponseWriter
+	borrowedWriter bool
+}
+
+// ctxPool recycles the per-request Ctx + ResponseWriter pair — two
+// heap allocations on every request otherwise, and the keys map comes
+// back for free once a request has populated it.
+var ctxPool = sync.Pool{New: func() any { return new(Ctx) }}
+
+// acquireCtx returns a reset pooled Ctx wrapping w. When w is already
+// a *ResponseWriter (the nested Serve of a route chain inside the
+// global chain), it is used as-is and released by the outer Serve.
+func acquireCtx(w http.ResponseWriter, r *http.Request, chain []HandlerFunc, route string, param func(string) string) *Ctx {
+	c := ctxPool.Get().(*Ctx)
+	if rw, ok := w.(*ResponseWriter); ok {
+		c.Writer = rw
+		c.borrowedWriter = true
+	} else {
+		c.ownWriter = ResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		c.Writer = &c.ownWriter
+		c.borrowedWriter = false
+	}
+	c.Request = r
+	c.route = route
+	c.param = param
+	c.handlers = chain
+	c.index = -1
+	c.aborted = false
+	clear(c.keys)
+	c.errs = c.errs[:0]
+	c.sameSite = 0
+	c.queryMemo = nil
+	c.clientIPMemo = ""
+	c.pooled = true
+	return c
+}
+
+// releaseCtx returns c to the pool. Skipped when a panic unwinds
+// through Serve — a Ctx captured by a panicking frame must not be
+// recycled under it; the GC reclaims it instead.
+func releaseCtx(c *Ctx) {
+	if !c.pooled {
+		return
+	}
+	c.pooled = false
+	c.Request = nil
+	c.param = nil
+	c.handlers = nil
+	if !c.borrowedWriter {
+		c.ownWriter.ResponseWriter = nil
+	}
+	c.Writer = nil
+	ctxPool.Put(c)
 }
 
 // Serve is the single per-request entry every adapter calls: build a Ctx over
 // the backend's writer/request/param-getter and run the chain. By the time we
 // get here the router has done its only job — match + params.
 func Serve(chain []HandlerFunc, w http.ResponseWriter, r *http.Request, route string, param func(string) string) {
-	rw, ok := w.(*ResponseWriter)
-	if !ok {
-		rw = &ResponseWriter{ResponseWriter: w, status: http.StatusOK}
-	}
-	c := &Ctx{
-		Writer:   rw,
-		Request:  r,
-		route:    route,
-		param:    param,
-		handlers: chain,
-		index:    -1,
-	}
+	c := acquireCtx(w, r, chain, route, param)
 	c.Next()
+	// Deliberately not deferred: on a panic that escapes the chain the
+	// Ctx is abandoned to the GC rather than recycled under whatever
+	// frame captured it.
+	releaseCtx(c)
 }
 
 // NewCtx builds a standalone Ctx over a writer/request — for tests and for
@@ -218,6 +287,13 @@ func (c *Ctx) Path() string     { return c.Request.URL.Path }
 
 func (c *Ctx) Param(key string) string {
 	if c.param == nil {
+		// No adapter-supplied resolver: fall back to the stdlib mux's
+		// request-carried params. stdrouter passes nil for routes with
+		// no trailing wildcard precisely so no per-request closure is
+		// allocated; on other backends PathValue simply returns "".
+		if c.Request != nil {
+			return c.Request.PathValue(key)
+		}
 		return ""
 	}
 	return c.param(key)
@@ -238,10 +314,19 @@ func WildcardName(path string) string {
 	return ""
 }
 
-func (c *Ctx) Query(key string) string { return c.Request.URL.Query().Get(key) }
+// queryValues parses the raw query once per request and memoizes —
+// url.Values allocates on every URL.Query() call otherwise.
+func (c *Ctx) queryValues() url.Values {
+	if c.queryMemo == nil {
+		c.queryMemo = c.Request.URL.Query()
+	}
+	return c.queryMemo
+}
+
+func (c *Ctx) Query(key string) string { return c.queryValues().Get(key) }
 
 func (c *Ctx) DefaultQuery(key, def string) string {
-	if v := c.Request.URL.Query(); v.Has(key) {
+	if v := c.queryValues(); v.Has(key) {
 		return v.Get(key)
 	}
 	return def
@@ -291,7 +376,10 @@ func (c *Ctx) SetRequestContext(ctx context.Context) {
 // ranges; tune with SetTrustedProxies / [runtime.server]
 // trusted_proxies), so a direct client can't spoof its own address.
 func (c *Ctx) ClientIP() string {
-	return clientIP(c.Request)
+	if c.clientIPMemo == "" {
+		c.clientIPMemo = clientIP(c.Request)
+	}
+	return c.clientIPMemo
 }
 
 // --- response writes ---------------------------------------------------------
