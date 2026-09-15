@@ -4,6 +4,51 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0] - 2026-09-15
+
+### Performance
+
+- **maskid: single-pass byte masking for REST and WebSocket
+  responses.** The tree pipeline cost every masked response two full
+  JSON encodes plus a decode into a `map[string]any` tree; masking now
+  marshals once and rewrites the bytes in one linear pass, copying
+  everything verbatim except the integer spans the policy claims. On a
+  50-row list response: 90.7µs → 23.8µs, 1681 → 410 allocations,
+  76.5KB → 22.9KB. Walk semantics are replicated exactly (Exclude
+  subtree pruning, arrays inheriting the introducing key, only integer
+  literals convert) and pinned by a differential test against the old
+  pipeline. Responses also keep their struct field order instead of
+  the tree's alphabetical re-sort. Inertia keeps the in-place prop
+  masking it had.
+- **The per-request `httpx.Ctx` is pooled** (its writer wrapper
+  inlined), the routers' global middleware chain is built once instead
+  of per request, `Query`/`ClientIP` memoize per request, and the
+  binder stopped re-splitting struct tags per field per request.
+  Six-run medians: REST −11% latency with 32 → 24 allocations, CRUD
+  read −13% with 31 → 23. One contract note, documented on the type:
+  a handler must not retain the Ctx past its return — gin's
+  long-standing rule, now nexus's too.
+- **auth: concurrent resolves of the same token single-flight** into
+  one backend call instead of a stampede; the identity cache's hit
+  path takes a read lock instead of serializing every authenticated
+  request; a `CacheOption` that left MaxEntries zero is no longer an
+  unbounded map keyed by client-supplied tokens (defaults to 4096).
+- **GraphQL: one body read per locked-down request** — the production
+  gate binds the full request once (maskid unmask included) and hands
+  it to the cached handler, instead of gate and handler each reading
+  and parsing the same bytes. The document cache — previously a
+  single mutex every GraphQL request took — shards 16 ways at
+  full size; small caches keep exact global LRU order.
+
+### Changed
+
+- **`nexus dev` request-log fields are legible and semantic.**
+  `dur=610µs status=200` rendered in near-invisible dim gray on light
+  and dark terminals alike. Keys use a brighter muted tone, values the
+  terminal's default foreground, and the request vocabulary colors by
+  meaning: status 2xx green / 3xx cyan / 4xx amber / 5xx red, `dur`
+  amber past 500ms, `error=` echoing the level color.
+
 ## [1.45.0] - 2026-09-15
 
 ### Added
