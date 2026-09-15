@@ -28,11 +28,14 @@ func InProcess(cfg Config, opts ...Option) (app *App, stop func(context.Context)
 	capture := di.Invoke(func(a *App) { captured = a })
 
 	// Mirror Run's ordering: early options (Supply cfg, Provide *App,
-	// lifecycle), then user options, then the capture + late options
+	// lifecycle), then user options, then deferred sources (nexus/decorate's
+	// //@-annotation drain — without this, decorator-registered endpoints
+	// exist in production but not in tests), then the capture + late options
 	// (autoMountGraphQL) so the GraphQL schema is built after LoadField and
 	// every user-declared field/middleware is visible.
 	all := []di.Option{fxEarlyOptions(cfg)}
 	all = append(all, unwrap(opts)...)
+	all = append(all, unwrap(collectDeferredOptions())...)
 	all = append(all, capture, fxLateOptions())
 
 	c := di.New(all...)
