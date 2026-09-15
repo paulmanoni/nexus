@@ -4,6 +4,34 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.47.0] - 2026-09-15
+
+### Added
+
+- **`extension/session` — Django-style server-side sessions.** A
+  cookie carries an opaque 256-bit ID, the data lives in a pluggable
+  `Store`, and handlers use a lazy per-request handle — for anonymous
+  visitors and logged-in users alike, on REST, Inertia, and GraphQL
+  (`p.Context`):
+
+      nexus.Boot(session.Module(session.Config{}))
+
+      s := session.Get(p.Context)
+      s.Set("cart", skus)   // first write mints the ID + sets the cookie
+      s.Cycle()             // rotate the ID on login (fixation defense)
+      s.Destroy()           // logout: delete + expire the cookie
+
+  Semantics mirror Django's: lazy (no store hit until the handler
+  touches it), save-only-if-modified (`Touch()` forces a TTL
+  refresh), and the cookie is set on the first WRITE — anonymous
+  requests that never touch the session get no Set-Cookie. Stores:
+  the default `NewMemoryStore()` is bounded, swept, and survives
+  `nexus dev` rebuilds via the dev-state machinery; production wants
+  `session.CacheStore(nexus.Cache)` (Redis via extension/cache =
+  restart-safe and multi-replica) or your own DB-backed `Store`.
+  Cookies are always HttpOnly, SameSite defaults to Lax; set
+  `Secure: true` behind TLS. `nexus docs session`.
+
 ## [1.46.0] - 2026-09-15
 
 ### Performance
