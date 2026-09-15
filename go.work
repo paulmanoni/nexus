@@ -1,0 +1,12 @@
+// Workspace for in-repo development: every module builds against the
+// checked-out tree instead of published versions. `go install
+// <module>@version` ignores this file, so released installs are
+// unaffected.
+go 1.26.2
+
+use (
+	.
+	./cmd/nexus
+	./di/fxcontainer
+	./httpx/ginrouter
+)

@@ -15,7 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/paulmanoni/nexus/internal/apidocs"
+	"github.com/paulmanoni/nexus/cmd/nexus/internal/apidocs"
 )
 
 // newAPIDocsCmd builds `nexus apidocs <subcommand>` — the auto-

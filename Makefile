@@ -1,8 +1,11 @@
 # nexus — developer + CI tasks.
 #
-# The repo is three Go modules: the main module plus two opt-in router/DI
-# adapters that version independently (gin, fx) and `replace` the parent
-# locally. `test`/`vet` iterate all three so an adapter can't silently break.
+# The repo is several Go modules: the main library module, the nexus CLI
+# (cmd/nexus — keeps cobra/bubbletea/viteless/esbuild/x-tools out of the
+# library's dependency graph), and two opt-in router/DI adapters that
+# version independently (gin, fx). The root go.work makes in-repo builds
+# use the checked-out tree; `test`/`vet` iterate every module so none can
+# silently break.
 #
 #   make test           # go test -race across every module
 #   make vet            # go vet across every module
@@ -16,7 +19,7 @@
 #   make ci             # everything CI runs
 
 # All Go modules in the repo (dir containing a go.mod).
-MODULES := . di/fxcontainer httpx/ginrouter
+MODULES := . cmd/nexus di/fxcontainer httpx/ginrouter
 
 # Pinned golangci-lint version — keep in sync with .github/workflows/ci.yml
 # so `make lint` and CI enforce the exact same linters (config: .golangci.yml).
