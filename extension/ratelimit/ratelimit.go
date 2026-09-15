@@ -125,6 +125,11 @@ type MemoryStore struct {
 	declared  map[string]Limit
 	effective map[string]Limit
 	buckets   map[string]*bucket
+	// lastSweep stamps the last idle-bucket sweep (guarded by mu).
+	// Scoped buckets are keyed by client input (an IP under PerIP),
+	// so without eviction the map grows one entry per distinct
+	// client for the process lifetime.
+	lastSweep time.Time
 	// changeHook is fired after Configure / Reset so the dashboard
 	// snapshot stream wakes within ~50ms when an operator tunes a
 	// limit. Read without lock — set rarely, atomic pointer read.
@@ -151,9 +156,18 @@ type bucket struct {
 	mu       sync.Mutex
 	tokens   float64
 	lastTick time.Time
-	rpm      int // captured so a Configure that changed rpm resets
-	burstCap int
 }
+
+// bucketIdleTTL is how long a bucket may sit untouched before the
+// sweep drops it. An idle bucket has (mostly) refilled, so evicting
+// it is near-indistinguishable from keeping it — the sweep just keeps
+// the map bounded by *active* clients instead of every scope value
+// ever seen.
+const bucketIdleTTL = 10 * time.Minute
+
+// bucketSweepEvery rate-limits the sweep itself; it runs inline on
+// the bucket-create slow path, never on the per-request fast path.
+const bucketSweepEvery = time.Minute
 
 func (s *MemoryStore) Declare(key string, limit Limit) {
 	s.mu.Lock()
@@ -215,18 +229,25 @@ func (s *MemoryStore) Allow(_ context.Context, key, scope string) (bool, time.Du
 	}
 
 	bk := key + "|" + scope
-	s.mu.Lock()
+	s.mu.RLock()
 	b, exists := s.buckets[bk]
+	s.mu.RUnlock()
 	if !exists {
-		b = &bucket{
-			tokens:   float64(limit.EffectiveBurst()),
-			lastTick: time.Now(),
-			rpm:      limit.RPM,
-			burstCap: limit.EffectiveBurst(),
+		s.mu.Lock()
+		if now := time.Now(); now.Sub(s.lastSweep) >= bucketSweepEvery {
+			s.lastSweep = now
+			s.sweepLocked(now)
 		}
-		s.buckets[bk] = b
+		b, exists = s.buckets[bk]
+		if !exists {
+			b = &bucket{
+				tokens:   float64(limit.EffectiveBurst()),
+				lastTick: time.Now(),
+			}
+			s.buckets[bk] = b
+		}
+		s.mu.Unlock()
 	}
-	s.mu.Unlock()
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -249,6 +270,22 @@ func (s *MemoryStore) Allow(_ context.Context, key, scope string) (bool, time.Du
 	needed := 1.0 - b.tokens
 	wait := time.Duration(needed * 60.0 / float64(limit.RPM) * float64(time.Second))
 	return false, wait
+}
+
+// sweepLocked drops buckets idle for longer than bucketIdleTTL.
+// Caller holds s.mu (write). A request holding a just-evicted
+// *bucket finishes against it harmlessly; the next request for that
+// scope gets a fresh full bucket — the same state an idle bucket
+// would have refilled to anyway.
+func (s *MemoryStore) sweepLocked(now time.Time) {
+	for bk, b := range s.buckets {
+		b.mu.Lock()
+		idle := now.Sub(b.lastTick)
+		b.mu.Unlock()
+		if idle > bucketIdleTTL {
+			delete(s.buckets, bk)
+		}
+	}
 }
 
 func (s *MemoryStore) Snapshot(_ context.Context) []Record {
