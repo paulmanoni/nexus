@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -29,6 +30,29 @@ import (
 // Returns the expanded byte slice ready for toml.Unmarshal. Errors
 // carry the 1-based line number of the failing token so callers can
 // surface a useful diagnostic.
+// ExpandError reports a failed ${...} expansion, carrying the 1-based
+// line of the failing token so callers can render a pointed
+// diagnostic instead of a flat string. Unwrap exposes the cause; when
+// that cause is a MissingEnvError the caller also knows WHICH variable
+// was missing and can suggest the exact fix.
+type ExpandError struct {
+	Line int
+	Err  error
+}
+
+func (e *ExpandError) Error() string { return fmt.Sprintf("line %d: %v", e.Line, e.Err) }
+func (e *ExpandError) Unwrap() error { return e.Err }
+
+// MissingEnvError is the cause of the most common expansion failure: a
+// ${VAR} whose environment variable is not set and has no fallback.
+type MissingEnvError struct {
+	Var string
+}
+
+func (e *MissingEnvError) Error() string {
+	return fmt.Sprintf("env var %s is not set (use ${%s:default} to provide a fallback)", e.Var, e.Var)
+}
+
 func expandEnvVars(raw []byte) ([]byte, error) {
 	var out bytes.Buffer
 	out.Grow(len(raw))
@@ -67,12 +91,12 @@ func expandEnvVars(raw []byte) ([]byte, error) {
 			if j+1 < len(content) && content[j] == '$' && content[j+1] == '{' {
 				close := findCloseBrace(content, j+2)
 				if close < 0 {
-					return nil, fmt.Errorf("line %d: unterminated ${...} token", curLine)
+					return nil, &ExpandError{Line: curLine, Err: errors.New("unterminated ${...} token")}
 				}
 				expr := string(content[j+2 : close])
 				val, err := resolveExpr(expr)
 				if err != nil {
-					return nil, fmt.Errorf("line %d: %w", curLine, err)
+					return nil, &ExpandError{Line: curLine, Err: err}
 				}
 				// Re-escape the resolved value for the surrounding
 				// basic-string context: \ and " must be escaped or the
@@ -122,7 +146,7 @@ func expandEnvVars(raw []byte) ([]byte, error) {
 				if i+2 < len(raw) && raw[i+1] == '"' && raw[i+2] == '"' {
 					end := findMultilineEnd(raw, i+3, `"""`)
 					if end < 0 {
-						return nil, fmt.Errorf("line %d: unterminated \"\"\"...\"\"\" string", line)
+						return nil, &ExpandError{Line: line, Err: errors.New(`unterminated """...""" string`)}
 					}
 					content := raw[i+3 : end]
 					expanded, err := processString(content, line)
@@ -295,7 +319,7 @@ func resolveExpr(expr string) (string, error) {
 	if hasDefault {
 		return expandPlaceholdersIn(def)
 	}
-	return "", fmt.Errorf("env var %s is not set (use ${%s:default} to provide a fallback)", key, key)
+	return "", &MissingEnvError{Var: key}
 }
 
 // expandPlaceholdersIn recursively expands `${...}` tokens inside a

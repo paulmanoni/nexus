@@ -429,13 +429,14 @@ func resolveConfigPath() string {
 //  3. nothing — framework defaults, with a loud warning (a silently
 //     dropped config was the classic "why is it on :8080?" footgun).
 //
-// A malformed config (disk or embedded) panics so misconfiguration fails
-// loudly at startup rather than silently dropping settings.
+// A malformed config (disk or embedded) fails the boot with a structured
+// diagnostic (config_fatal.go) so misconfiguration surfaces loudly at
+// startup — as an operator-readable block, not a panic trace.
 func autoLoad(path string) (Config, []Option) {
 	raw, err := readFileIfExists(path)
 	if err != nil {
 		// a real I/O error (perms, etc.) — not a soft miss
-		panic(fmt.Errorf("nexus: failed to read config %q: %w", path, err))
+		bootFatal(fmt.Errorf("nexus: failed to read config %q: %w", path, err))
 	}
 	source := path
 	if raw == nil {
@@ -459,11 +460,11 @@ func autoLoad(path string) (Config, []Option) {
 	}
 	cfg, err := configFromTOML(raw, source)
 	if err != nil {
-		panic(fmt.Errorf("nexus: malformed config (%s): %w", source, err))
+		bootFatal(err)
 	}
 	extOpts, err := decodeExtensions(raw)
 	if err != nil {
-		panic(fmt.Errorf("nexus: malformed [extensions.*] in config (%s): %w", source, err))
+		bootFatal(newConfigError("decode [extensions.*]", source, err))
 	}
 	// Dev boot self-check: run the same config lint `nexus lint` runs, but at
 	// boot in dev, so a bad CIDR / CORS combo / rate limit / unimported

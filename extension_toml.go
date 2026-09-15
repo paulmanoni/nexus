@@ -160,7 +160,7 @@ func LoadExtensionOptions(path ...string) ([]Option, error) {
 func MustLoadExtensions(path ...string) []Option {
 	opts, err := LoadExtensionOptions(path...)
 	if err != nil {
-		panic(err)
+		bootFatal(err)
 	}
 	return opts
 }

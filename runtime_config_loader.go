@@ -99,7 +99,7 @@ func configFromTOML(raw []byte, source string) (Config, error) {
 	// the runtime environment here — never baked into the binary.
 	expanded, err := manifest.ExpandEnvVars(raw)
 	if err != nil {
-		return Config{}, fmt.Errorf("nexus: expand env vars in %s: %w", source, err)
+		return Config{}, newConfigError("expand env vars", source, err)
 	}
 	// Publish the [env] table as process environment variables (dotted
 	// names) BEFORE building the config, so extensions, ${VAR} consumers,
@@ -109,7 +109,7 @@ func configFromTOML(raw []byte, source string) (Config, error) {
 	}
 	var block runtimeConfigDoc
 	if err := toml.Unmarshal(expanded, &block); err != nil {
-		return Config{}, fmt.Errorf("nexus: parse %s: %w", source, err)
+		return Config{}, newConfigError("parse", source, err)
 	}
 	// Seed the nexus.Get base layer with the FULL document tree so
 	// nexus.Get[T]("section.key") resolves anything declared in
@@ -129,13 +129,14 @@ func configFromTOML(raw []byte, source string) (Config, error) {
 	return block.Runtime.toConfig()
 }
 
-// MustLoadConfig is the panic-on-error variant of LoadConfig (Boot composes
-// both for you; use this only for the explicit Run form) for binaries that
-// REQUIRE a nexus.toml and treat its absence as a fatal startup
-// error. Equivalent to:
-//
-//	cfg, err := nexus.LoadConfig(path...)
-//	if err != nil { panic(err) }
+// MustLoadConfig is the fail-fast variant of LoadConfig (Boot composes
+// both for you; use this only for the explicit Run form) for binaries
+// that REQUIRE a nexus.toml and treat its absence as a fatal startup
+// error. On failure it prints a structured diagnostic (file:line, the
+// cause, and a suggested fix — colored on a terminal and under `nexus
+// dev`) and exits with status 2 — a config mistake is an operator
+// error, and a panic's goroutine dump would bury the one line that
+// matters.
 //
 // Path is optional — pass nothing to read DefaultConfigPath
 // ("nexus.toml") from cwd:
@@ -148,7 +149,7 @@ func configFromTOML(raw []byte, source string) (Config, error) {
 func MustLoadConfig(path ...string) Config {
 	cfg, err := LoadConfig(path...)
 	if err != nil {
-		panic(err)
+		bootFatal(err)
 	}
 	return cfg
 }
