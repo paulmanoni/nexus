@@ -708,6 +708,29 @@ dev/tests; exposes `.Sent()` for assertions) and `smtp` (any SMTP server over st
 `net/smtp` — STARTTLS/587, implicit TLS/465, PLAIN auth; port defaults per mode).
 `nexus docs mail`.
 
+### Sessions (`extension/session`)
+Django-style server-side sessions — a cookie carries an opaque ID, data lives in
+a pluggable `Store`, handlers use a lazy handle. For anonymous visitors and
+logged-in users alike; available on REST, Inertia, and GraphQL (`p.Context`).
+```go
+import "github.com/paulmanoni/nexus/extension/session"
+
+nexus.Boot(session.Module(session.Config{}))   // memory store, 14-day TTL
+
+s := session.Get(p.Context)
+s.Set("cart", skus)          // first write mints the ID + sets the cookie
+s.Cycle()                    // rotate ID on login (fixation defense)
+s.Destroy()                  // logout: delete store entry + expire cookie
+```
+Lazy like Django: no store hit until touched, no save unless modified
+(`s.Touch()` forces one), cookie set on first WRITE only — so write the session
+before the response body. Values must round-trip JSON. Stores: the default
+`NewMemoryStore()` survives `nexus dev` rebuilds (dev-state) but not production
+restarts; `session.CacheStore(nexus.Cache)` rides extension/cache (Redis =
+restart-safe + multi-replica); or implement `Store` over your DB. Cookie is
+always HttpOnly, SameSite defaults Lax — set `Secure: true` behind TLS.
+`nexus docs session`.
+
 ### Opaque IDs (`extension/maskid`)
 Replaces sequential integer IDs with 22-char opaque strings on the wire and
 converts them back before the handler runs — handlers, GORM models and SQL keep

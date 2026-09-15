@@ -212,6 +212,7 @@ var topicSummaries = map[string]string{
 	"config":      "extension/config — Spring-style config server + nexus.Get",
 	"storage":     "extension/storage — file/object storage: local + S3 disks",
 	"mail":        "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
+	"session":     "extension/session — Django-style server-side sessions (cookie + store)",
 	"maskid":      "extension/maskid — opaque IDs on the wire, no handler changes",
 	"cli":         "Subcommand cheatsheet (new / init / dev / build / client)",
 	"devstate":    "PreserveDev — carry in-memory state across a nexus dev rebuild",
@@ -2248,6 +2249,62 @@ Frontends that coerce ids (Number(row.id), parseInt) produce NaN once the
 value is a string. Those call sites need removing regardless of anything
 this extension does.
 `,
+	"session": `
+SESSIONS  (extension/session)
+
+Django-style server-side sessions: a cookie carries an opaque ID,
+the data lives in a pluggable Store, handlers use a lazy handle.
+Works for anonymous visitors and logged-in users alike.
+
+    import "github.com/paulmanoni/nexus/extension/session"
+
+    nexus.Boot(
+        session.Module(session.Config{}),   // memory store, 14d TTL
+    )
+
+    func NewAddToCart(svc *ShopService, p nexus.Params[AddArgs]) (*Cart, error) {
+        s := session.Get(p.Context)
+        cart, _ := s.Get("cart").([]string)
+        s.Set("cart", append(cart, p.Args.SKU))
+        return buildCart(cart), nil
+    }
+
+Semantics (mirroring Django):
+  - LAZY: no store hit until the handler touches the session; no
+    save unless it was modified (s.Touch() forces one).
+  - The cookie is set on the FIRST WRITE, not on every anonymous
+    request — so call Set before writing the response body.
+  - s.Cycle() rotates the ID keeping the data — call on login
+    (session fixation). s.Destroy() deletes + expires the cookie.
+  - Available on REST, Inertia and GraphQL (p.Context); a WS
+    upgrade sees the upgrade request's session.
+
+Handle API:
+    s.Get(key) any        s.GetString(key)      s.Set(key, v)
+    s.Delete(key)         s.Clear()             s.Touch()
+    s.ID()                s.Cycle()             s.Destroy()
+Values must round-trip JSON (numbers come back as float64).
+
+Config:
+    session.Config{
+        Store:      nil,                  // default: NewMemoryStore()
+        TTL:        14 * 24 * time.Hour,  // from last save
+        CookieName: "nexus_session",
+        Path:       "/", Domain: "", Secure: false,
+        SameSite:   http.SameSiteLaxMode, // HttpOnly always on
+    }
+
+Stores:
+  - NewMemoryStore()  — dev + single replica. Survives nexus dev
+    rebuilds (dev-state); a PRODUCTION restart clears it.
+  - session.CacheStore(c nexus.Cache) — rides the cache manager;
+    with extension/cache/redis imported, sessions survive restarts
+    and are shared across replicas. Production shape.
+  - Or implement Store (Load/Save/Delete) over your own DB.
+
+Set Secure: true wherever the app terminates TLS.
+`,
+
 	"mail": `
 MAIL — outbound email (SMTP + log), zero heavy deps
 
