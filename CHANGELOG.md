@@ -4,7 +4,7 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.44.0] - 2026-09-15
 
 A hardening and housekeeping release: a full audit of the codebase
 (security, hot paths, dead code, duplication) applied as ~40 commits.
