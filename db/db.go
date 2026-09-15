@@ -24,6 +24,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,9 +33,6 @@ import (
 	"github.com/failsafe-go/failsafe-go/retrypolicy"
 	"go.uber.org/zap"
 
-	"github.com/glebarez/sqlite"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -92,22 +90,58 @@ func (c Config) DSN() string {
 	return ""
 }
 
-// Dialector returns the gorm dialector matching Driver.
-func (c Config) Dialector() gorm.Dialector {
-	switch c.Driver {
-	case Postgres:
-		return postgres.Open(c.DSN())
-	case MySQL:
-		return mysql.Open(c.DSN())
-	case SQLite:
-		return sqlite.Open(c.DSN())
-	}
-	panic("db: unknown driver " + string(c.Driver))
+// Driver registry — the database/sql pattern. Importing nexus/db links
+// NO engine; each driver is a blank-import subpackage:
+//
+//	_ "github.com/paulmanoni/nexus/db/postgres"
+//	_ "github.com/paulmanoni/nexus/db/mysql"
+//	_ "github.com/paulmanoni/nexus/db/sqlite"
+//
+// Before this, db.go imported all three unconditionally, so every app
+// with a database linked the transpiled-C SQLite engine (~5MB), the
+// MySQL driver, and pgx — regardless of which one it opened.
+var (
+	dialectorMu sync.RWMutex
+	dialectors  = map[Driver]func(dsn string) gorm.Dialector{}
+)
+
+// RegisterDriver installs the dialector constructor for a driver. The
+// db/sqlite, db/mysql and db/postgres subpackages call it from init();
+// custom gorm dialects may register their own Driver name the same way.
+func RegisterDriver(d Driver, open func(dsn string) gorm.Dialector) {
+	dialectorMu.Lock()
+	dialectors[d] = open
+	dialectorMu.Unlock()
 }
 
-// PoolConfig tunes the underlying *sql.DB pool. Defaults match oats's values
-// for postgres/mysql; sqlite :memory: gets MaxOpen=1 to keep one in-memory
-// database shared across goroutines.
+// driverLinked reports whether a dialector is registered for d.
+func driverLinked(d Driver) bool {
+	dialectorMu.RLock()
+	defer dialectorMu.RUnlock()
+	return dialectors[d] != nil
+}
+
+// Dialector returns the gorm dialector matching Driver.
+func (c Config) Dialector() gorm.Dialector {
+	dialectorMu.RLock()
+	open := dialectors[c.Driver]
+	dialectorMu.RUnlock()
+	if open == nil {
+		panic(missingDriverMsg(c.Driver))
+	}
+	return open(c.DSN())
+}
+
+func missingDriverMsg(d Driver) string {
+	return fmt.Sprintf("db: driver %q is not linked into this binary — add the blank import:\n\n\t_ \"github.com/paulmanoni/nexus/db/%s\"\n\n(drivers became opt-in so a Postgres app no longer ships the SQLite engine, and vice versa)", d, d)
+}
+
+// PoolConfig tunes the underlying *sql.DB pool. Postgres/MySQL get a
+// server-sized pool; sqlite :memory: gets MaxOpen=1 so every goroutine
+// shares the one in-memory database; FILE-backed sqlite gets a small
+// pool — with WAL (which the scaffold DSNs enable) concurrent readers
+// are the point, and forcing one connection made every query in the
+// process queue behind every other.
 type PoolConfig struct {
 	MaxIdle     int
 	MaxOpen     int
@@ -115,9 +149,16 @@ type PoolConfig struct {
 	ConnMaxIdle time.Duration
 }
 
-func defaultPool(d Driver) PoolConfig {
-	if d == SQLite {
-		return PoolConfig{MaxIdle: 1, MaxOpen: 1, ConnMaxLife: 0, ConnMaxIdle: 0}
+func defaultPool(cfg Config) PoolConfig {
+	if cfg.Driver == SQLite {
+		if strings.Contains(cfg.DSN(), ":memory:") {
+			return PoolConfig{MaxIdle: 1, MaxOpen: 1, ConnMaxLife: 0, ConnMaxIdle: 0}
+		}
+		// Modest by design: SQLite has one writer at a time, so a wide
+		// pool only helps reads. Set a busy_timeout pragma in the DSN
+		// (the scaffolds do) so a write finding the file locked waits
+		// instead of failing with SQLITE_BUSY.
+		return PoolConfig{MaxIdle: 2, MaxOpen: 4, ConnMaxLife: 0, ConnMaxIdle: 0}
 	}
 	return PoolConfig{
 		MaxIdle:     10,
@@ -185,7 +226,7 @@ func NewManager(cfg Config, opts ...Option) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		cfg:    cfg,
-		pool:   defaultPool(cfg.Driver),
+		pool:   defaultPool(cfg),
 		logger: zap.NewNop(),
 		ctx:    ctx,
 		cancel: cancel,

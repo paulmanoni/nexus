@@ -628,6 +628,16 @@ func CacheOption() nexus.Option {
 The binders live in `db` / `extension/cache` (not the nexus root) so that importing
 `nexus` does NOT pull GORM, the SQL drivers, Redis, or Prometheus into the build — an
 app pays for those only when it calls a binder. This mirrors `pubsub.Broker`.
+**SQL drivers are opt-in blank imports** (database/sql style) — `nexus/db` itself
+links NO engine; import the one(s) your app opens:
+```go
+_ "github.com/paulmanoni/nexus/db/postgres" // pgx
+_ "github.com/paulmanoni/nexus/db/mysql"
+_ "github.com/paulmanoni/nexus/db/sqlite"   // pure-Go engine (~5MB) — don't ship it unused
+```
+A Config naming an unlinked driver fails at wiring time with the import to add.
+File-backed SQLite now gets a small read pool by default (WAL-friendly);
+`:memory:` keeps MaxOpen=1. Put a `busy_timeout` pragma in file DSNs.
 - `db.BindFromConfig[T]("name", opts...)` — reads `[databases.name]`; `T` embeds
   `*db.Manager`. The `[databases.*]` lookup is deferred to boot, so it works under
   `nexus.Boot` even though Boot loads the TOML after building option args (a bad/missing

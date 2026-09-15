@@ -3,6 +3,7 @@ package metrics
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/paulmanoni/nexus/httpx"
 	"github.com/paulmanoni/nexus/httpx/stdrouter"
@@ -34,27 +35,26 @@ func TestGinRecorder_Publishes4xxStatus(t *testing.T) {
 		t.Fatalf("response code = %d; want 400", w.Code)
 	}
 
-	// Pull events until we see request.op.
-	var sawOp bool
-	for i := 0; i < 8 && !sawOp; i++ {
+	// Pull events until we see request.op. Bus delivery crosses the
+	// fan-in forwarders since the shard split, so arrival is async —
+	// wait bounded instead of spin-draining.
+	deadline := time.After(2 * time.Second)
+	for {
 		select {
 		case ev := <-ch:
 			if ev.Kind != "request.op" {
 				continue
 			}
-			sawOp = true
 			if ev.Status != 400 {
 				t.Errorf("request.op status = %d; want 400", ev.Status)
 			}
 			if ev.Error == "" {
 				t.Errorf("request.op error should be non-empty for 4xx")
 			}
-		default:
-			// drain quickly; nothing to wait for
+			return
+		case <-deadline:
+			t.Fatal("request.op event never fired")
 		}
-	}
-	if !sawOp {
-		t.Fatal("request.op event never fired")
 	}
 }
 

@@ -533,6 +533,13 @@ import (
 	"os"
 
 	"github.com/paulmanoni/nexus/db"
+{{- if eq .DB "postgres"}}
+	_ "github.com/paulmanoni/nexus/db/postgres" // links the pgx driver
+{{- else if eq .DB "mysql"}}
+	_ "github.com/paulmanoni/nexus/db/mysql" // links the MySQL driver
+{{- else}}
+	_ "github.com/paulmanoni/nexus/db/sqlite" // links the pure-Go SQLite engine
+{{- end}}
 	"github.com/paulmanoni/nexus/resource"
 	"go.uber.org/zap"
 )

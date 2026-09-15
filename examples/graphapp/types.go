@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/db"
+	_ "github.com/paulmanoni/nexus/db/sqlite"
 	"github.com/paulmanoni/nexus/resource"
 )
 
