@@ -160,20 +160,13 @@ func recordEndpointSchema(app *App, service, endpointName string, sh handlerShap
 // edge for the aggregate relationship. Used by both REST and WS via
 // recordEndpointDeps. The GraphQL path goes through automount.go's
 // attachDeclaredResources, which does the same thing post-mount.
-func attachEndpointResources(app *App, service string, deps []reflect.Value, depTypes []reflect.Type) {
+func attachEndpointResources(app *App, service string, deps []reflect.Value, _ []reflect.Type) {
 	if service == "" {
 		return
 	}
-	for i, dep := range deps {
-		if i >= len(depTypes) || !dep.IsValid() {
-			continue
-		}
-		provider, ok := dep.Interface().(NexusResourceProvider)
-		if !ok {
-			continue
-		}
-		for _, r := range provider.NexusResources() {
+	eachResourceProvider(deps, func(p NexusResourceProvider) {
+		for _, r := range p.NexusResources() {
 			app.registry.AttachResource(service, r.Name())
 		}
-	}
+	})
 }

@@ -475,16 +475,23 @@ func attachDeclaredResources(app *App, f GqlField) {
 	if f.Service == nil {
 		return
 	}
-	for _, dep := range f.Deps {
+	eachResourceProvider(f.Deps, func(p NexusResourceProvider) {
+		for _, r := range p.NexusResources() {
+			app.Registry().AttachResource(f.Service.Name(), r.Name())
+		}
+	})
+}
+
+// eachResourceProvider invokes fn for every dep implementing
+// NexusResourceProvider — the one walk behind attachDeclaredResources,
+// attachEndpointResources, and collectResourceNames.
+func eachResourceProvider(deps []reflect.Value, fn func(NexusResourceProvider)) {
+	for _, dep := range deps {
 		if !dep.IsValid() {
 			continue
 		}
-		provider, ok := dep.Interface().(NexusResourceProvider)
-		if !ok {
-			continue
-		}
-		for _, r := range provider.NexusResources() {
-			app.Registry().AttachResource(f.Service.Name(), r.Name())
+		if p, ok := dep.Interface().(NexusResourceProvider); ok {
+			fn(p)
 		}
 	}
 }
@@ -517,18 +524,11 @@ func collectServiceDeps(deps []reflect.Value, depTypes []reflect.Type, owning st
 // so a future caller can reuse it without double-attaching.
 func collectResourceNames(deps []reflect.Value) []string {
 	var names []string
-	for _, dep := range deps {
-		if !dep.IsValid() {
-			continue
-		}
-		provider, ok := dep.Interface().(NexusResourceProvider)
-		if !ok {
-			continue
-		}
-		for _, r := range provider.NexusResources() {
+	eachResourceProvider(deps, func(p NexusResourceProvider) {
+		for _, r := range p.NexusResources() {
 			names = append(names, r.Name())
 		}
-	}
+	})
 	return names
 }
 
