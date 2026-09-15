@@ -147,6 +147,43 @@ const (
 	colSource = 26
 )
 
+
+// fieldColor picks the escape for one key=value field. Semantic
+// coloring for the request-log vocabulary — status by class (2xx
+// green, 3xx cyan, 4xx amber, 5xx red), dur amber once it crosses
+// slowRequest — and the level color for error= on error-level lines.
+// Everything else renders in the terminal's default foreground.
+func fieldColor(key, val, level, levelColor string, c palette) string {
+	switch key {
+	case "status":
+		if n, err := strconv.Atoi(val); err == nil {
+			switch {
+			case n >= 500:
+				return c.err
+			case n >= 400:
+				return c.warn
+			case n >= 300:
+				return c.info
+			default:
+				return c.ok
+			}
+		}
+	case "dur", "duration", "latency", "took":
+		if d, err := time.ParseDuration(val); err == nil && d >= slowRequest {
+			return c.warn
+		}
+		return c.meta
+	case "error", "err":
+		if level == "error" || level == "fatal" || level == "panic" || level == "dpanic" {
+			return levelColor
+		}
+	}
+	return ""
+}
+
+// slowRequest is where a request duration starts rendering amber.
+const slowRequest = 500 * time.Millisecond
+
 // prettyFormatter is the default "Dev Server Logs" renderer: the columnar
 // time · level · source · message + key=value layout from the design.
 func prettyFormatter(r zapRecord, c palette) string {
@@ -173,21 +210,22 @@ func prettyFormatter(r zapRecord, c palette) string {
 	b.WriteString(c.msg)
 	b.WriteString(r.msg)
 	b.WriteString(c.reset)
-	// key=value fields
+	// key=value fields. Keys are muted (meta, not the near-invisible
+	// faint), values render in the terminal's DEFAULT foreground so
+	// they stay legible on light and dark themes alike — the old dim
+	// gray disappeared on both. Known request fields color by meaning.
 	for _, f := range r.fields {
 		b.WriteString("  ")
-		b.WriteString(c.faint)
+		b.WriteString(c.meta)
 		b.WriteString(f.k)
 		b.WriteString("=")
 		b.WriteString(c.reset)
-		// Error-level error= fields echo the level color, matching the design.
-		val := c.meta
-		if r.level == "error" || r.level == "fatal" || r.level == "panic" || r.level == "dpanic" {
-			val = lc
-		}
+		val := fieldColor(f.k, f.v, r.level, lc, c)
 		b.WriteString(val)
 		b.WriteString(f.v)
-		b.WriteString(c.reset)
+		if val != "" {
+			b.WriteString(c.reset)
+		}
 	}
 	// stacktrace, indented and dimmed beneath the line
 	if r.stacktrace != "" {
@@ -372,6 +410,7 @@ type palette struct {
 	time, msg, meta        string
 	source, faint          string
 	info, warn, err, debug string
+	ok                     string
 	trueColor              bool
 }
 
@@ -394,6 +433,7 @@ func (l *logPretty) palette() palette {
 	p.info = fg(p.trueColor, 125, 211, 252, ansiCyan)  // #7dd3fc
 	p.warn = fg(p.trueColor, 251, 191, 36, ansiYellow) // #fbbf24
 	p.err = fg(p.trueColor, 248, 113, 113, ansiRed)    // #f87171
+	p.ok = fg(p.trueColor, 74, 222, 128, ansiGreen)    // #4ade80
 	p.debug = p.faint
 	return p
 }
