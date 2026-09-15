@@ -22,13 +22,6 @@ func HideFromDashboard() DashboardHiddenOption { return DashboardHiddenOption{} 
 // VisibleEndpoints() accessor (used by every dashboard data path) filters on.
 type DashboardHiddenOption struct{}
 
-func (DashboardHiddenOption) applyToRest(c *restConfig) { tagHidden(&c.tags) }
-func (DashboardHiddenOption) applyToGql(c *gqlConfig)   { tagHidden(&c.tags) }
-func (DashboardHiddenOption) applyToWS(c *wsConfig)     { tagHidden(&c.tags) }
-
-func tagHidden(tags *map[string]string) {
-	if *tags == nil {
-		*tags = map[string]string{}
-	}
-	(*tags)[registry.HiddenTag] = "true"
-}
+func (DashboardHiddenOption) applyToRest(c *restConfig) { c.setTag(registry.HiddenTag, "true") }
+func (DashboardHiddenOption) applyToGql(c *gqlConfig)   { c.setTag(registry.HiddenTag, "true") }
+func (DashboardHiddenOption) applyToWS(c *wsConfig)     { c.setTag(registry.HiddenTag, "true") }

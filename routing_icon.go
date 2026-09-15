@@ -22,16 +22,12 @@ func WithIcon(name string) IconOption { return IconOption{name: name} }
 // the endpoint's tags, which the dashboard reads when rendering the node.
 type IconOption struct{ name string }
 
-func (o IconOption) applyToRest(c *restConfig) { tagIcon(&c.tags, o.name) }
-func (o IconOption) applyToGql(c *gqlConfig)   { tagIcon(&c.tags, o.name) }
-func (o IconOption) applyToWS(c *wsConfig)     { tagIcon(&c.tags, o.name) }
+func (o IconOption) applyToRest(c *restConfig) { o.apply(&c.baseEndpointConfig) }
+func (o IconOption) applyToGql(c *gqlConfig)   { o.apply(&c.baseEndpointConfig) }
+func (o IconOption) applyToWS(c *wsConfig)     { o.apply(&c.baseEndpointConfig) }
 
-func tagIcon(tags *map[string]string, name string) {
-	if name == "" {
-		return
+func (o IconOption) apply(b *baseEndpointConfig) {
+	if o.name != "" {
+		b.setTag(registry.IconTag, o.name)
 	}
-	if *tags == nil {
-		*tags = map[string]string{}
-	}
-	(*tags)[registry.IconTag] = name
 }

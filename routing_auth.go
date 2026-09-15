@@ -50,16 +50,6 @@ func AuthRoute(flow string) AuthRouteOption {
 // interfaces, with each transport reading what it needs.
 type AuthRouteOption struct{ flow string }
 
-func (a AuthRouteOption) applyToRest(c *restConfig) {
-	if c.tags == nil {
-		c.tags = map[string]string{}
-	}
-	c.tags[AuthFlowTag] = a.flow
-}
-
-func (a AuthRouteOption) applyToGql(c *gqlConfig) {
-	if c.tags == nil {
-		c.tags = map[string]string{}
-	}
-	c.tags[AuthFlowTag] = a.flow
-}
+func (a AuthRouteOption) applyToRest(c *restConfig) { c.setTag(AuthFlowTag, a.flow) }
+func (a AuthRouteOption) applyToGql(c *gqlConfig)   { c.setTag(AuthFlowTag, a.flow) }
+func (a AuthRouteOption) applyToWS(c *wsConfig)     { c.setTag(AuthFlowTag, a.flow) }

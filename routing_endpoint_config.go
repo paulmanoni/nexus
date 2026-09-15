@@ -42,6 +42,16 @@ type baseEndpointConfig struct {
 
 func (b *baseEndpointConfig) setModule(name string) { b.module = name }
 
+// setTag records one registry tag, lazily allocating the map so
+// endpoints with no tags pay nothing. The shared body behind Public /
+// HideFromDashboard / WithIcon / AuthRoute.
+func (b *baseEndpointConfig) setTag(key, value string) {
+	if b.tags == nil {
+		b.tags = map[string]string{}
+	}
+	b.tags[key] = value
+}
+
 // resolveEndpointService picks the service name a REST or WebSocket
 // endpoint registers under. Priority:
 //

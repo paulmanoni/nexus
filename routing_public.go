@@ -22,16 +22,9 @@ func Public() PublicOption { return PublicOption{} }
 // through any endpoint builder, mirroring AuthRouteOption / MiddlewareOption.
 type PublicOption struct{}
 
-func (PublicOption) applyToRest(c *restConfig) { tagPublic(&c.tags) }
-func (PublicOption) applyToGql(c *gqlConfig)   { tagPublic(&c.tags) }
-func (PublicOption) applyToWS(c *wsConfig)     { tagPublic(&c.tags) }
-
-func tagPublic(tags *map[string]string) {
-	if *tags == nil {
-		*tags = map[string]string{}
-	}
-	(*tags)[PublicTag] = "true"
-}
+func (PublicOption) applyToRest(c *restConfig) { c.setTag(PublicTag, "true") }
+func (PublicOption) applyToGql(c *gqlConfig)   { c.setTag(PublicTag, "true") }
+func (PublicOption) applyToWS(c *wsConfig)     { c.setTag(PublicTag, "true") }
 
 // isPublicEndpoint reports whether an endpoint is exempt from the default
 // gate: either explicitly via Public() or implicitly because it's a

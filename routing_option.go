@@ -36,4 +36,5 @@ var (
 	_ EndpointOption = IconOption{}
 	_ EndpointOption = DashboardHiddenOption{}
 	_ EndpointOption = MiddlewareOption{}
+	_ EndpointOption = AuthRouteOption{}
 )
