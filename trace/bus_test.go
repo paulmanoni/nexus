@@ -86,3 +86,50 @@ func TestBus_PublishDoesNotBlockOnFullSubscriber(t *testing.T) {
 		t.Fatal("publisher blocked on slow subscriber")
 	}
 }
+
+// BenchmarkBusPublishParallel models the dashboard-open production
+// shape: every request publishing while one live subscriber drains.
+func BenchmarkBusPublishParallel(b *testing.B) {
+	bus := NewBus(1000)
+	_, ch, cancel := bus.Subscribe(0, 1024)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		for range ch {
+		}
+		close(done)
+	}()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			i++
+			bus.Publish(Event{TraceID: traceIDs[i%len(traceIDs)], Kind: KindRequestEnd})
+		}
+	})
+	b.StopTimer()
+	cancel()
+	<-done
+}
+
+var traceIDs = func() []string {
+	out := make([]string, 64)
+	for i := range out {
+		out[i] = newTraceID()
+	}
+	return out
+}()
+
+// BenchmarkBusPublishNoSub isolates the ring/mutex cost — the shape when
+// the dashboard is enabled but no client is currently connected.
+func BenchmarkBusPublishNoSub(b *testing.B) {
+	bus := NewBus(1000)
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			i++
+			bus.Publish(Event{TraceID: traceIDs[i%len(traceIDs)], Kind: KindRequestEnd})
+		}
+	})
+}
