@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/graphql-go/graphql"
 	"github.com/go-viper/mapstructure/v2"
+	"github.com/graphql-go/graphql"
 )
 
 // Global type registry to prevent duplicate type creation

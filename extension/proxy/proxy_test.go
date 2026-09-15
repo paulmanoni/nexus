@@ -150,9 +150,9 @@ func TestSnapshotBurndown(t *testing.T) {
 	st := &pluginState{cfg: Config{
 		Upstream: "http://up",
 		Routes: []Route{
-			{Method: "GET", Path: "/api/a"}, // native exists → migrated
+			{Method: "GET", Path: "/api/a"},  // native exists → migrated
 			{Method: "POST", Path: "/api/b"}, // still proxied
-			{Method: "GET", Path: "/api/c"}, // still proxied
+			{Method: "GET", Path: "/api/c"},  // still proxied
 		},
 	}}
 

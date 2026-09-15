@@ -727,7 +727,7 @@ func (a *App) SetClientAuthMeta(meta client.AuthMeta) {
 		a.clientHandler.SetAuthMeta(meta)
 	}
 }
-func (a *App) Scheduler() *cron.Scheduler   { return a.cronSched }
+func (a *App) Scheduler() *cron.Scheduler { return a.cronSched }
 
 // Environment returns the resolved environment name ("production",
 // "staging", "preview", ...) the binary is booting into. Set from

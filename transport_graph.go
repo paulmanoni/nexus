@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/graphql-go/graphql"
 	"github.com/go-viper/mapstructure/v2"
+	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"
@@ -102,8 +102,8 @@ type gqlFieldOption struct {
 	cfg *gqlConfig
 }
 
-func (g *gqlFieldOption) nexusOption() di.Option   { return g.o }
-func (g *gqlFieldOption) setModule(name string)    { g.cfg.module = name }
+func (g *gqlFieldOption) nexusOption() di.Option { return g.o }
+func (g *gqlFieldOption) setModule(name string)  { g.cfg.module = name }
 
 type namedMw struct {
 	name, description string
@@ -395,11 +395,11 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 type GqlField struct {
 	Kind        graph.FieldKind
 	ServiceType reflect.Type
-	Service     *Service // nil if dep[0] didn't unwrap (misuse)
+	Service     *Service        // nil if dep[0] didn't unwrap (misuse)
 	Module      string          // nexus.Module name this field was declared under; "" if unscoped
 	Field       any             // graph.QueryField or graph.MutationField
-	DepTypes   []reflect.Type  // for resource auto-attach
-	Deps       []reflect.Value // for resource auto-attach (NexusResourceProvider)
+	DepTypes    []reflect.Type  // for resource auto-attach
+	Deps        []reflect.Value // for resource auto-attach (NexusResourceProvider)
 	// RateLimit is the baseline rate limit this op declared. Auto-mount
 	// publishes it to the registry so the dashboard can render it and
 	// — once operator overrides land — show the effective limit beside

@@ -89,8 +89,8 @@ type wsOption struct {
 	cfg *wsConfig
 }
 
-func (w *wsOption) nexusOption() di.Option   { return w.o }
-func (w *wsOption) setModule(name string)    { w.cfg.module = name }
+func (w *wsOption) nexusOption() di.Option { return w.o }
+func (w *wsOption) setModule(name string)  { w.cfg.module = name }
 
 // asWSInvoke synthesizes the di.Invoke for one AsWS registration. On start:
 //
