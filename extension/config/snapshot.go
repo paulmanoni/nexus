@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/extension/config/internal/canonical"
+	"github.com/paulmanoni/nexus/internal/dotpath"
 )
 
 // Snapshot is the on-the-wire shape served at GET /__config/snapshot/:app/:profile.
@@ -121,7 +122,7 @@ func (s Snapshot) Resolve(key string) (any, bool) {
 		return s.Values, true
 	}
 	var cur any = s.Values
-	parts := splitDotted(key)
+	parts := dotpath.Split(key)
 	for _, p := range parts {
 		m, ok := cur.(map[string]any)
 		if !ok {
@@ -134,26 +135,4 @@ func (s Snapshot) Resolve(key string) (any, bool) {
 		cur = v
 	}
 	return cur, true
-}
-
-// splitDotted is faster than strings.Split for the path-walking
-// hot path because we don't allocate the intermediate slice the
-// stdlib version always builds.
-func splitDotted(key string) []string {
-	n := 1
-	for i := 0; i < len(key); i++ {
-		if key[i] == '.' {
-			n++
-		}
-	}
-	out := make([]string, 0, n)
-	start := 0
-	for i := 0; i < len(key); i++ {
-		if key[i] == '.' {
-			out = append(out, key[start:i])
-			start = i + 1
-		}
-	}
-	out = append(out, key[start:])
-	return out
 }

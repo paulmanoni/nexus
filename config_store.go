@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/paulmanoni/nexus/internal/dotpath"
 )
 
 // configStore is the process-wide config singleton. nexus.Get
@@ -194,7 +196,7 @@ func configResolvePath(tree map[string]any, key string) (any, bool) {
 	if key == "" {
 		return tree, true
 	}
-	parts := configSplitDotted(key)
+	parts := dotpath.Split(key)
 	var cur any = tree
 	for _, p := range parts {
 		m, ok := cur.(map[string]any)
@@ -208,25 +210,6 @@ func configResolvePath(tree map[string]any, key string) (any, bool) {
 		cur = v
 	}
 	return cur, true
-}
-
-func configSplitDotted(key string) []string {
-	n := 1
-	for i := 0; i < len(key); i++ {
-		if key[i] == '.' {
-			n++
-		}
-	}
-	out := make([]string, 0, n)
-	start := 0
-	for i := 0; i < len(key); i++ {
-		if key[i] == '.' {
-			out = append(out, key[start:i])
-			start = i + 1
-		}
-	}
-	out = append(out, key[start:])
-	return out
 }
 
 func configEqual(a, b any) bool {
