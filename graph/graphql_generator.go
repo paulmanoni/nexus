@@ -334,36 +334,12 @@ func (g *FieldGenerator[T]) getBaseGraphQLType(t reflect.Type, objectTypeName *s
 	}
 }
 
+// getFieldName delegates to the package-level resolver so schema
+// generation and arg mapping (mutation.go, unified resolver) share ONE
+// json-tag → graphql-tag → camelCase precedence — if these ever
+// diverged, arg binding would silently disagree with the emitted SDL.
 func (g *FieldGenerator[T]) getFieldName(field reflect.StructField) string {
-	jsonTag := field.Tag.Get("json")
-	if jsonTag != "" {
-		parts := strings.Split(jsonTag, ",")
-		if parts[0] != "" {
-			return parts[0]
-		}
-	}
-
-	graphqlTag := field.Tag.Get("graphql")
-	if graphqlTag != "" {
-		parts := strings.Split(graphqlTag, ",")
-		for _, part := range parts {
-			if !strings.Contains(part, "=") && part != "required" {
-				return part
-			}
-		}
-	}
-
-	return g.toGraphQLFieldName(field.Name)
-}
-
-func (g *FieldGenerator[T]) toGraphQLFieldName(name string) string {
-	if name == "" {
-		return ""
-	}
-
-	runes := []rune(name)
-	runes[0] = []rune(strings.ToLower(string(runes[0])))[0]
-	return string(runes)
+	return getFieldName(field)
 }
 
 func GenerateInputObject[T any](name string) *graphql.InputObject {
