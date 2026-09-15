@@ -4,6 +4,18 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.0] - 2026-09-15
+
+### Performance
+
+- **`nexus dev` builds strip the symbol table too (`-ldflags="-w -s"`).**
+  Measured on a ~95MB app: steady rebuild 2.2s → 1.9s, and the smaller
+  binary also cuts the macOS code-signing cost the dev loop pre-pays
+  before each swap. Safe for panic tracebacks — the Go runtime
+  symbolizes from pclntab, not the symtab — and `--debug` restores
+  both symtab and DWARF for delve, as before. The change lives in the
+  CLI: reinstall `cmd/nexus` to pick it up.
+
 ## [1.47.0] - 2026-09-15
 
 ### Added
