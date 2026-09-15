@@ -4,6 +4,188 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+A hardening and housekeeping release: a full audit of the codebase
+(security, hot paths, dead code, duplication) applied as ~40 commits.
+Three items are security-relevant; two are breaking for how the repo is
+consumed, though not for code that imports the library.
+
+### ⚠ Release / consumption changes
+
+- **`cmd/nexus` is now its own Go module.** `go get
+  github.com/paulmanoni/nexus` previously downloaded ~175MB of module
+  cache the library never links — wazero (via viteless), `x/tools`,
+  esbuild, bubbletea, cobra — all of it CLI-only. The CLI now versions
+  independently, like `httpx/ginrouter` and `di/fxcontainer` before it.
+  `go install github.com/paulmanoni/nexus/cmd/nexus@latest` keeps
+  working throughout: until the first `cmd/nexus/vX.Y.Z` tag exists it
+  resolves to the old in-parent CLI. Release order matters — tag the
+  parent first, then bump the submodule requires, then push the nested
+  tags; the checklist lives in `cmd/nexus/go.mod`. In-repo development
+  builds every module against the checked-out tree via the new root
+  `go.work`.
+- **`extension/cache/redis` is now its own Go module**, taking go-redis
+  (~19MB) out of the main dependency graph — the "default cache pulls
+  no heavy deps" promise is now true of the download, not just the
+  link. The blank-import opt-in is unchanged; run
+  `go get github.com/paulmanoni/nexus/extension/cache/redis` once.
+
+### Security
+
+- **The config server's HMAC auth is now real.** `AuthHMAC` mode
+  shipped as a phase-1 stub that accepted *any* non-empty
+  `Authorization` header while the operator-facing validation insisted
+  a secret be configured — so it looked enforced and wasn't. Server and
+  clients now implement the documented scheme (HMAC-SHA256 over
+  `app:timestamp:path`, 30s skew window, constant-time compare); the
+  signed path means a token minted for one app/profile cannot fetch
+  another's snapshot. The version-poll endpoint, which sent no
+  credentials at all, signs too.
+- **`Ctx.ClientIP` no longer believes client-supplied forwarded
+  headers.** `X-Forwarded-For` / `X-Real-IP` were trusted
+  unconditionally, letting any direct client pick its own IP — which
+  bypassed per-IP rate limits and could mint unbounded limiter state.
+  Forwarded headers are now honored only when the socket peer is a
+  trusted proxy (default: loopback + private ranges, the LB-in-VPC
+  case), and `X-Forwarded-For` resolves right-to-left across trusted
+  hops so client-prepended entries can't spoof even behind a real
+  proxy. Tune with `[runtime.server] trusted_proxies` (or
+  `httpx.SetTrustedProxies`); an explicit empty list trusts no proxy.
+  **Behavior change:** apps fronted by a proxy on a *public* address
+  must list it in `trusted_proxies` to keep seeing real client IPs.
+- **The rate limiter evicts.** Its bucket map was keyed by client
+  input (an IP under `PerIP`) with no eviction — one entry per distinct
+  client for the process lifetime, i.e. an unbounded-memory primitive
+  once combined with the header spoofing above. Buckets idle past ten
+  minutes are now swept, and the hit path takes a read lock instead of
+  serializing every request behind the store-wide write lock.
+- **GraphQL-subscription WebSockets are bounded.** The connection had
+  no read limit, no deadlines, no pong requirement, and no cap on
+  subscriptions per socket — unbounded frames, leaked goroutines on
+  half-open connections, unbounded contexts per client. Now: 512KiB
+  read limit, ping/pong liveness with read and write deadlines, and at
+  most 100 live subscriptions per connection. Cleanup also no longer
+  closes a channel that subscription goroutines were still sending on
+  — a send-on-closed-channel panic in an unrecovered goroutine, i.e. a
+  remote process crash under ordinary disconnect timing.
+
+### Added
+
+- **`[runtime.websocket]` hub tuning.** `max_connections`,
+  `max_message_bytes` and `workers` now flow into every `AsWS` hub.
+  The options existed for years but nothing passed them, so the
+  5000-connection cap, 512KiB frame limit and 32-worker pool were
+  unreachable from configuration.
+- **`/__nexus/ready` finally gates on peers.** The readiness endpoint
+  documented peer gating but nothing ever wrote the peer table — a k8s
+  probe wired to it would route traffic to a pod whose upstreams were
+  all down. `extension/peer`'s prober now reports peer-level
+  reachability through the new `App.ReportPeerHealth` after every
+  probe round.
+- **`Module()` is the canonical entry point on every extension.**
+  cors, errors, frontend, openapi, security and tls previously exposed
+  only `Plugin(cfg)`; they now match auth/maskid/oauth2/peer/proxy/
+  config/inertia. `Plugin` remains as an alias.
+- **`nexus.DeclareVolume`** (method and Option) — `UseVolume` is
+  deprecated but still works; its data-driven counterpart was already
+  named `DeclareVolumeProvider`.
+
+### Fixed
+
+- **dataloader: nested queries fetch instead of returning zero
+  values.** Dispatch was gated by a loader-lifetime `sync.Once`, so
+  keys loaded after the first batch fired — level-2 resolvers in a
+  nested query, exactly the case dataloaders exist for — silently
+  resolved to the zero value and were deduped away on retry. Dispatch
+  is now per batch; results merge into a shared per-request cache, and
+  a fetch error fails only its own batch's thunks.
+- **Dashboard traces show real durations.** `AsRest` invoked the trace
+  middleware inline at the end of the chain, where its `c.Next()`
+  returned immediately — every REST request reported ~0ms and a
+  pre-handler status. The handler now brackets its own body via the
+  new `trace.StartRequest`/finish pair.
+- **`nexustest`/`InProcess` sees decorator endpoints.** The test
+  harness skipped the deferred-options drain, so `//@`-annotated
+  handlers existed in production but were invisible to tests.
+- **Manifest auto-load honors `NEXUS_CONFIG`.** It stat'ed cwd-relative
+  `nexus.toml`, so a `NEXUS_CONFIG` deployment loaded runtime config
+  from one file and its manifest blocks from another (or none).
+- **`nexus routes` takes `--toml`, matching `lint` and `doctor`.** The
+  old `--yaml` flag set a format nothing parsed and fell through to the
+  JSON parser — a leftover from the YAML-to-TOML manifest migration.
+- **`nexus dev --tui` runs the child in dev mode.** It spawned `go run`
+  with no `NEXUS_*` environment at all: stale embedded frontend instead
+  of `web/dist` from disk, no PreserveDev state, peer/config dev gates
+  locked.
+- **WS hub shutdown no longer strands reader goroutines.** The blocking
+  sends on the unregister channel had no drain after `Stop`, parking up
+  to thousands of `readPump` goroutines forever.
+- **`nexus.AuthRoute(...)` works on `AsWS`.** It was the one
+  cross-transport option missing its WebSocket half, and now sits in
+  the `EndpointOption` compile-time assertion so it can't regress.
+
+### Performance
+
+- **The GraphQL production gate stops re-parsing every request.** With
+  introspection locked down, every request paid an uncached
+  `parser.Parse` plus four AST walks *in front of* the document cache
+  built to avoid exactly that. Verdicts are now memoized per query
+  string (bounded; unique-query floods just degrade to the old cost).
+- **maskid sheds its per-key allocations.** `isID` ran up to three
+  `ToLower`s per JSON key of every masked response; verdicts now cache
+  per key (bounded — inbound unmask keys are client-supplied) and
+  `typeNames` caches per reflect.Type.
+- **REST arg binding caches its tag survey per args type**, as the
+  GraphQL side already did.
+- **Metrics error ring writes are O(1).** The newest-first prepend
+  copied the whole 1000-entry ring on every error while holding the
+  entry lock; it is now a circular buffer, and the success path's
+  timestamp is an atomic instead of a mutex acquisition per request.
+- **The dashboard's initial JS chunk drops from 2.3MB to 913KB.**
+  elkjs (~1.4MB minified) loads lazily on the Architecture tab's first
+  layout, and the fonts ship latin + latin-ext only — the
+  cyrillic/greek/vietnamese subsets browsers never requested are gone
+  (17 woff2 files → 6, ~150KB off every dashboard-enabled binary).
+
+### Removed
+
+- **Dead-on-arrival API with zero callers anywhere:** the
+  `graph.CacheMiddleware` / `CachedFieldResolver` pair (bare maps
+  written from concurrent resolvers — data races waiting to happen),
+  `AsyncFieldResolver`, `LazyFieldResolver` and the `With*Field`
+  decorators, the `WithTypedResolver` reflection engine,
+  `MustGetRoot`/`GetRootOr`, `LoggingMiddleware`,
+  `DataTransformResolver`, `ConditionalResolver`,
+  `GetMiddlewareCount`, `App.RateLimiter()`, `client.GenerateDTS`,
+  and `middleware`'s never-wired `Phase` constants, `WithRejectHook`,
+  and `Builtin()`/`Custom()` constructors.
+- **Deprecated aliases whose only callers were the framework's own
+  tests:** `App.Engine()` (use `Router()`), `nexus.Description()` (use
+  `Describe()`), and the GraphQL `Desc()`/`Middleware()` options (use
+  `Describe`/`GraphMiddleware`).
+- **The orphaned `DeployAs` option plumbing.** `nexus.DeployAs` never
+  existed; the option-side seam was inert end to end (its own godoc
+  example did not compile). The registry's deployment column and
+  setter remain — they are real API.
+- **`extension/visitors`** — 947 lines with no reference anywhere in
+  the repo, docs, or changelog.
+
+### Changed
+
+- **`github.com/go-viper/mapstructure/v2`** replaces the archived
+  `mitchellh/mapstructure` (same API, maintained upstream).
+- **Internal consolidation with one behavioral fix:** the four typed
+  resource binders (db/cache/mail/storage) now share their mechanics
+  in `internal/bindutil`, which also makes options lazily evaluated in
+  all four — previously only `db.BindFromConfig` worked under
+  `nexus.Boot`; the cache/mail/storage variants applied options before
+  nexus.toml was parsed. The two TypeScript SDK emitters share one
+  rendering core (`internal/tsgen`), CRUD's REST and GraphQL handler
+  factories are one set, and schema generation and arg mapping share a
+  single field-name resolver so the SDL can never disagree with
+  binding.
+
 ## [1.43.0] - 2026-08-10
 
 ### Changed
