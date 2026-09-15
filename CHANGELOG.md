@@ -4,6 +4,33 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0] - 2026-09-15
+
+### Added
+
+- **Structured, colored boot diagnostics for config errors.** A missing
+  env var in nexus.toml used to surface as a Go panic — the one line
+  the operator needed buried under a goroutine dump. Config mistakes
+  are operator errors, not bugs: `MustLoadConfig`, `MustLoadExtensions`
+  and `Boot` now render a short aligned block and exit with status 2
+  instead of panicking:
+
+      ✗ nexus: cannot load config (expand env vars)
+
+        file   nexus.toml:139
+        error  env var OATS_DB_PASSWORD is not set
+        fix    export OATS_DB_PASSWORD=…  — or write
+               ${OATS_DB_PASSWORD:default} in nexus.toml for a fallback
+
+  TOML syntax errors additionally show go-toml's annotated snippet with
+  a caret under the offending token. Output is colored when stderr is a
+  terminal and under `nexus dev` (whose log view passes ANSI through);
+  `NO_COLOR` disables it. Under the hood the error is the new typed
+  `nexus.ConfigError` (source, stage, line, cause, hint), built on
+  `manifest.ExpandError` / `manifest.MissingEnvError` — `LoadConfig`
+  still returns an error with equivalent flat text, so callers that
+  handle it themselves are unaffected.
+
 ## [1.44.0] - 2026-09-15
 
 A hardening and housekeeping release: a full audit of the codebase
