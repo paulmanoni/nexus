@@ -242,8 +242,11 @@ func (h *Hub) Stop() {
 func (h *Hub) Emit(e *Event) {
 	// Every EmitX helper funnels through here, so one hook covers the
 	// whole outbound surface — including events an app pushes from a
-	// worker rather than from a handler.
-	e.Data = maskhook.MaskValue(e.Data)
+	// worker rather than from a handler. Single-pass byte masking; the
+	// RawMessage serializes verbatim inside the envelope's marshal.
+	if b, ok := maskhook.MaskResponse(e.Data); ok {
+		e.Data = json.RawMessage(b)
+	}
 	select {
 	case h.events <- e:
 	default:

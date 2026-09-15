@@ -446,7 +446,16 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			}
 			return
 		}
-		c.JSON(defaultSuccessStatus(method), maskhook.MaskValue(result))
+		// Single-pass masking: rewrite the marshaled bytes instead of
+		// the old marshal → tree → walk → re-marshal pipeline (two
+		// encodes and a full map[string]any decode per response).
+		// ok=false covers every fallback: masking off, out of scope,
+		// unmarshalable — c.JSON then behaves exactly as before.
+		if b, ok := maskhook.MaskResponse(result); ok {
+			c.Data(defaultSuccessStatus(method), "application/json; charset=utf-8", b)
+			return
+		}
+		c.JSON(defaultSuccessStatus(method), result)
 	}
 }
 
