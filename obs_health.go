@@ -67,24 +67,19 @@ func (h *healthState) snapshot() (alive bool, peers map[string]peerHealth) {
 	return h.alive, out
 }
 
-// allPeersReady reports whether every tracked peer has its Ready flag
-// set. An empty peer table returns true — a deployment with no
-// declared peers is ready as soon as it's alive (the monolith case).
-func (h *healthState) allPeersReady() bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, p := range h.peers {
-		if !p.Ready {
-			return false
-		}
-	}
-	return true
-}
-
 func (h *healthState) recordPeer(tag string, ready bool, errStr string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.peers[tag] = peerHealth{Ready: ready, LastError: errStr, LastProbed: time.Now()}
+}
+
+// ReportPeerHealth records one peer's probe outcome for the
+// /__nexus/ready readiness gate. extension/peer's prober calls this
+// on every probe round; anything else that tracks a hard downstream
+// dependency may too. A peer reported not-ready flips /__nexus/ready
+// to 503 until a later report clears it.
+func (a *App) ReportPeerHealth(tag string, ready bool, lastErr string) {
+	a.health.recordPeer(tag, ready, lastErr)
 }
 
 // mountHealth registers /__nexus/health and /__nexus/ready on the

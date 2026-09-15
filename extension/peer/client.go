@@ -36,6 +36,10 @@ type Registry struct {
 	// every subsequent call pays a single fast in-memory lookup
 	// for drift detection.
 	schemas *schemaCache
+	// reportHealth, when set (wired to nexus.App.ReportPeerHealth
+	// at boot), receives the peer-level ready flag after every
+	// probe round so /__nexus/ready reflects peer reachability.
+	reportHealth func(name string, ready bool, lastErr string)
 }
 
 // peerConn is the logical handle for a single named peer. With a

@@ -144,6 +144,9 @@ func Module(cfg Config) nexus.Option {
 				if len(cfg.Peers) > 0 && holder.reg != nil {
 					clientCtx, cancel := context.WithCancel(context.Background())
 					holder.cancelClientLoops = cancel
+					// Feed peer-level readiness into /__nexus/ready
+					// before the first probe fires.
+					holder.reg.reportHealth = app.ReportPeerHealth
 					startProbers(clientCtx, holder.reg)
 					// One resolver goroutine per peer with an
 					// SRV spec. URL-only peers don't need a

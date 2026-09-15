@@ -88,6 +88,13 @@ func probeOnce(parent context.Context, r *Registry, pc *peerConn) {
 	if anyWasReady && !anyIsReady {
 		r.schemas.reset(pc.name)
 	}
+	if r.reportHealth != nil {
+		errStr := ""
+		if !anyIsReady {
+			errStr = "no reachable targets"
+		}
+		r.reportHealth(pc.name, anyIsReady, errStr)
+	}
 }
 
 // probeTarget sends a single GET to one target's /__peer/health.
