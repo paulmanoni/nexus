@@ -360,6 +360,7 @@ func unwrapService(v reflect.Value, t reflect.Type) (*Service, bool) {
 // the success write instead. The error path is unchanged — renderers only
 // shape successful returns in this release.
 func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer, app *App) httpx.HandlerFunc {
+	endpointName := method + " " + path
 	return func(c *httpx.Ctx) {
 		// Expose the app to a custom renderer (e.g. Inertia) so it can pull
 		// per-app state via AppFromGin — order-independent, unlike global
@@ -370,21 +371,12 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 		}
 		// Tracing mirrors what transport/rest does: a request.start/end pair
 		// bracketing the handler. We do it inline because AsRest bypasses the
-		// rest.Builder path.
-		var span *trace.Span
+		// rest.Builder path — and via StartRequest, not trace.Middleware:
+		// this func is the END of the chain, so Middleware's c.Next() would
+		// return immediately and publish request.end before the handler ran.
 		if bus != nil {
-			h := trace.Middleware(bus, service, method+" "+path, string(registry.REST))
-			// Delegate by calling Middleware's returned func inline —
-			// it manages c.Next(). We still run our logic inside.
-			h(c)
-			if s, ok := trace.SpanFrom(c); ok {
-				span = s
-			}
-			// Abort early if middleware short-circuited the response.
-			if c.IsAborted() {
-				return
-			}
-			_ = span
+			_, finish := trace.StartRequest(c, bus, service, endpointName, string(registry.REST))
+			defer finish()
 		}
 
 		var args reflect.Value

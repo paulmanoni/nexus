@@ -61,46 +61,60 @@ func NewTraceID() string { return newTraceID() }
 // the trace is stitched across services. Otherwise a fresh TraceID is minted.
 func Middleware(bus *Bus, service, endpoint, transport string) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
-		traceID, parentSpanID, remote := parseTraceparent(c.Request.Header.Get("traceparent"))
-		if !remote {
-			traceID = newTraceID()
-			parentSpanID = ""
-		}
-		span := &Span{
-			TraceID:  traceID,
-			SpanID:   newSpanID(),
-			ParentID: parentSpanID,
-			Name:     endpoint,
-			Service:  service,
-			Endpoint: endpoint,
-			Start:    time.Now(),
-			Remote:   remote,
-			bus:      bus,
-		}
-		c.Set(spanKey, span)
-		c.Set(busKey, bus)
-		// Also propagate onto context.Context so ctx-only code (GraphQL
-		// resolvers, GORM hooks, any downstream taking a context.Context)
-		// can read via SpanFromCtx / BusFromCtx.
-		ctx := c.Request.Context()
-		ctx = context.WithValue(ctx, spanCtxKey{}, span)
-		ctx = context.WithValue(ctx, busCtxKey{}, bus)
-		c.Request = c.Request.WithContext(ctx)
-		bus.Publish(Event{
-			TraceID:   span.TraceID,
-			SpanID:    span.SpanID,
-			ParentID:  span.ParentID,
-			Kind:      KindRequestStart,
-			Name:      endpoint,
-			Service:   service,
-			Endpoint:  endpoint,
-			Transport: transport,
-			Method:    c.Request.Method,
-			Path:      c.Request.URL.Path,
-			Remote:    span.Remote,
-			Timestamp: span.Start,
-		})
+		_, finish := StartRequest(c, bus, service, endpoint, transport)
 		c.Next()
+		finish()
+	}
+}
+
+// StartRequest opens the root request span for c and publishes
+// request.start. The returned finish func publishes the matching
+// request.end (status, duration, accumulated errors). Middleware wraps
+// the pair around c.Next(); a terminal handler that IS the end of the
+// chain (nexus's AsRest handler) brackets its own body with it instead —
+// calling c.Next() there would return immediately and stamp the end
+// event before the handler ran.
+func StartRequest(c *httpx.Ctx, bus *Bus, service, endpoint, transport string) (*Span, func()) {
+	traceID, parentSpanID, remote := parseTraceparent(c.Request.Header.Get("traceparent"))
+	if !remote {
+		traceID = newTraceID()
+		parentSpanID = ""
+	}
+	span := &Span{
+		TraceID:  traceID,
+		SpanID:   newSpanID(),
+		ParentID: parentSpanID,
+		Name:     endpoint,
+		Service:  service,
+		Endpoint: endpoint,
+		Start:    time.Now(),
+		Remote:   remote,
+		bus:      bus,
+	}
+	c.Set(spanKey, span)
+	c.Set(busKey, bus)
+	// Also propagate onto context.Context so ctx-only code (GraphQL
+	// resolvers, GORM hooks, any downstream taking a context.Context)
+	// can read via SpanFromCtx / BusFromCtx.
+	ctx := c.Request.Context()
+	ctx = context.WithValue(ctx, spanCtxKey{}, span)
+	ctx = context.WithValue(ctx, busCtxKey{}, bus)
+	c.Request = c.Request.WithContext(ctx)
+	bus.Publish(Event{
+		TraceID:   span.TraceID,
+		SpanID:    span.SpanID,
+		ParentID:  span.ParentID,
+		Kind:      KindRequestStart,
+		Name:      endpoint,
+		Service:   service,
+		Endpoint:  endpoint,
+		Transport: transport,
+		Method:    c.Request.Method,
+		Path:      c.Request.URL.Path,
+		Remote:    span.Remote,
+		Timestamp: span.Start,
+	})
+	return span, func() {
 		var errStr string
 		if len(c.Errors()) > 0 {
 			errStr = c.ErrorsString()
