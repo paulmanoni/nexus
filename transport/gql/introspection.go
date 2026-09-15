@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/httpx"
@@ -35,6 +36,7 @@ func productionGate(allow func(c *httpx.Ctx) bool, schema *graphql.Schema) httpx
 	if allow == nil || schema == nil {
 		return func(c *httpx.Ctx) { c.Next() }
 	}
+	verdicts := &gateVerdicts{m: make(map[string]error)}
 	return func(c *httpx.Ctx) {
 		// Allowed peer (introspection unlocked) — skip validation
 		// entirely. Matches go-graph's DEBUG: true semantics.
@@ -47,7 +49,7 @@ func productionGate(allow func(c *httpx.Ctx) bool, schema *graphql.Schema) httpx
 			c.Next()
 			return
 		}
-		if err := graph.ValidateGraphQLQuery(query, schema); err != nil {
+		if err := verdicts.check(query, schema); err != nil {
 			// One uniform 404 across all rule violations — depth,
 			// aliases, complexity, introspection. A more granular
 			// surface (400 + detail for legit user errors) would
@@ -58,6 +60,38 @@ func productionGate(allow func(c *httpx.Ctx) bool, schema *graphql.Schema) httpx
 		}
 		c.Next()
 	}
+}
+
+// gateVerdicts memoizes the gate's validate outcome per query
+// string. The rules are pure functions of the query text, so a
+// repeat query — the overwhelmingly common case for an app with a
+// fixed set of frontend queries — skips the parse and the four AST
+// walks that used to run on EVERY request in front of the document
+// cache. Bounded: at capacity the map is flushed rather than
+// LRU-tracked; an attacker sending unique queries just degrades to
+// the uncached (pre-existing) cost.
+type gateVerdicts struct {
+	mu sync.Mutex
+	m  map[string]error
+}
+
+const gateVerdictCap = 1024
+
+func (g *gateVerdicts) check(query string, schema *graphql.Schema) error {
+	g.mu.Lock()
+	if err, ok := g.m[query]; ok {
+		g.mu.Unlock()
+		return err
+	}
+	g.mu.Unlock()
+	err := graph.ValidateQueryString(query, schema)
+	g.mu.Lock()
+	if len(g.m) >= gateVerdictCap {
+		g.m = make(map[string]error)
+	}
+	g.m[query] = err
+	g.mu.Unlock()
+	return err
 }
 
 // extractQuery pulls the GraphQL query string out of the request,

@@ -258,6 +258,19 @@ func ValidateGraphQLQuery(queryString string, schema *graphql.Schema) error {
 		}
 	}
 
+	return ValidateQueryString(queryString, schema)
+}
+
+// ValidateQueryString applies the same rules as ValidateGraphQLQuery
+// to an already-extracted query string, skipping the whole-JSON-body
+// sniff above. Callers on a per-request path that have the query in
+// hand (the gql production gate) use this form — the sniff is a
+// guaranteed-wasted json.Unmarshal for every real query.
+func ValidateQueryString(queryString string, schema *graphql.Schema) error {
+	if queryString == "" {
+		return nil
+	}
+
 	// Parse the query string into an AST
 	src := source.NewSource(&source.Source{
 		Body: []byte(queryString),
