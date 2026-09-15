@@ -57,7 +57,12 @@ func autoManifestOptions() di.Option {
 		return di.Options()
 	}
 	return di.Invoke(func(app *App) {
-		path := DefaultManifestPath
+		// Same resolution as the runtime-config loader (NEXUS_CONFIG,
+		// then cwd, then next to the executable) — the manifest blocks
+		// live in the same nexus.toml, so loading runtime config from
+		// one file and manifest blocks from another would split-brain
+		// a NEXUS_CONFIG deployment.
+		path := resolveConfigPath()
 		if _, err := os.Stat(path); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				// Permission denied, I/O error — log it but keep
