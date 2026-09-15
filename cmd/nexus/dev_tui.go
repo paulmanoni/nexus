@@ -410,6 +410,15 @@ func (m *tuiModel) spawnChild() {
 
 	// #nosec G204 -- CLI dev helper, target is operator-supplied package path
 	cmd := exec.Command("go", "run", m.target)
+	// Same dev environment the main loop sets (dev.go): without these
+	// the child ran in production mode — no disk-served frontend, no
+	// PreserveDev state, peer/config dev gates locked.
+	cmd.Env = append(os.Environ(),
+		"NEXUS_DEV=1",
+		"NEXUS_DEV_ROOT="+m.target,
+		"NEXUS_PEER_DEV=1",
+		"NEXUS_CONFIG_DEV=1",
+	)
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()
 	cmd.Stdout = stdoutW
