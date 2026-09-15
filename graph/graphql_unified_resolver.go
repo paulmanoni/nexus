@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/graphql-go/graphql"
 	"github.com/mitchellh/mapstructure"
@@ -860,10 +859,6 @@ func (r *UnifiedResolver[T]) IsPaginated() bool { return r.isPaginated }
 // IsDeprecated reports whether WithDeprecated was applied.
 func (r *UnifiedResolver[T]) IsDeprecated() bool { return r.deprecated }
 
-// GetMiddlewareCount returns the number of middlewares on the main resolver.
-// For richer information use FieldInfo().Middlewares.
-func (r *UnifiedResolver[T]) GetMiddlewareCount() int { return len(r.resolverMiddlewares) }
-
 // GetMiddlewareInfos returns the MiddlewareInfo slice in application order.
 // Entries for middlewares added via plain WithMiddleware have Name == "anonymous".
 func (r *UnifiedResolver[T]) GetMiddlewareInfos() []MiddlewareInfo {
@@ -987,79 +982,6 @@ func NewRootInfo(p ResolveParams) RootInfo {
 func GetRoot[T any](r RootInfoGetter, name string) T {
 	val, _ := GetRootE[T](r, name)
 	return val
-}
-
-// GetRootE retrieves a value from root info by name with type safety and error handling.
-// Returns an error if the key is missing or type conversion fails.
-//
-// Usage:
-//
-//	user, err := graph.GetRootE[UserDetails](graph.NewRootInfo(p), "details")
-//	if err != nil {
-//	    return nil, fmt.Errorf("authentication required: %w", err)
-//	}
-func GetRootE[T any](r RootInfoGetter, name string) (T, error) {
-	var zero T
-	if r == nil {
-		return zero, fmt.Errorf("root value %q not found: root info is nil", name)
-	}
-	val, exists := r.GetRootValue(name)
-	if !exists {
-		return zero, fmt.Errorf("root value %q not found", name)
-	}
-	if val == nil {
-		return zero, fmt.Errorf("root value %q is nil", name)
-	}
-	if typed, ok := val.(T); ok {
-		return typed, nil
-	}
-	result, err := convertArgE[T](val, name)
-	if err != nil {
-		return zero, fmt.Errorf("root value %q: %w", name, err)
-	}
-	return result, nil
-}
-
-// MustGetRoot retrieves a value from root info by name with type safety.
-// Panics if the key is missing or conversion fails.
-// Use only when you're certain the value exists and is valid.
-//
-// Usage:
-//
-//	user := graph.MustGetRoot[UserDetails](graph.NewRootInfo(p), "details")
-func MustGetRoot[T any](r RootInfoGetter, name string) T {
-	val, err := GetRootE[T](r, name)
-	if err != nil {
-		panic(fmt.Sprintf("MustGetRoot failed: %v", err))
-	}
-	return val
-}
-
-// GetRootOr retrieves a value from root info by name with a default value if not found.
-//
-// Usage:
-//
-//	token := graph.GetRootOr[string](graph.NewRootInfo(p), "token", "anonymous")
-//	userID := graph.GetRootOr[int](graph.NewRootInfo(p), "userID", 0)
-func GetRootOr[T any](r RootInfoGetter, name string, defaultVal T) T {
-	if r == nil {
-		return defaultVal
-	}
-	val, exists := r.GetRootValue(name)
-	if !exists {
-		return defaultVal
-	}
-	if val == nil {
-		return defaultVal
-	}
-	if typed, ok := val.(T); ok {
-		return typed
-	}
-	result, err := convertArgE[T](val, name)
-	if err != nil {
-		return defaultVal
-	}
-	return result
 }
 
 // Get retrieves an argument by name with type safety.
@@ -1402,117 +1324,6 @@ func getPrimitiveGraphQLType(t reflect.Type) graphql.Input {
 	}
 }
 
-// Typed Resolver Support - allows direct struct parameters instead of graphql.ResolveParams
-//
-// Example usage:
-//
-//	func resolveUser(args GetUserArgs) (*User, error) {
-//	    return &User{ID: args.ID, Name: "User"}, nil
-//	}
-//
-//	NewResolver[User]("user", "User").
-//	    WithTypedResolver(resolveUser).
-//	    BuildQuery()
-func (r *UnifiedResolver[T]) WithTypedResolver(typedResolver interface{}) *UnifiedResolver[T] {
-	r.resolver = r.wrapTypedResolver(typedResolver)
-	return r
-}
-
-// wrapTypedResolver converts a typed resolver function to a standard GraphQL resolver
-func (r *UnifiedResolver[T]) wrapTypedResolver(typedResolver interface{}) graphql.FieldResolveFn {
-	resolverValue := reflect.ValueOf(typedResolver)
-	resolverType := resolverValue.Type()
-
-	if resolverType.Kind() != reflect.Func {
-		panic("typedResolver must be a function")
-	}
-
-	return func(p graphql.ResolveParams) (interface{}, error) {
-		numIn := resolverType.NumIn()
-		args := make([]reflect.Value, numIn)
-
-		for i := 0; i < numIn; i++ {
-			paramType := resolverType.In(i)
-
-			// Create new instance of the parameter type
-			paramValue := reflect.New(paramType)
-			paramInterface := paramValue.Interface()
-
-			// Try to map GraphQL args to this parameter
-			var err error
-			inputFieldName := "input"
-			if r.inputName != "" {
-				inputFieldName = r.inputName
-			}
-			if inputData, exists := p.Args[inputFieldName]; exists && i == 0 {
-				// First parameter from input argument (mutations)
-				err = mapstructure.Decode(inputData, paramInterface)
-			} else if i == 0 && numIn == 1 {
-				// Single parameter - try to map all args to it (queries)
-				err = mapArgsToStruct(p.Args, paramInterface)
-			} else {
-				// Try to find matching argument by parameter name or position
-				if fieldName := getParameterName(resolverType, i); fieldName != "" {
-					if argData, exists := p.Args[fieldName]; exists {
-						err = mapstructure.Decode(argData, paramInterface)
-					}
-				}
-			}
-
-			if err != nil {
-				return nil, fmt.Errorf("failed to map parameter %d: %w", i, err)
-			}
-
-			args[i] = paramValue.Elem()
-		}
-
-		// Call the typed resolver
-		results := resolverValue.Call(args)
-
-		// Handle return values
-		if len(results) == 0 {
-			return nil, nil
-		}
-
-		if len(results) == 1 {
-			result := results[0]
-			if result.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-				// Single error return
-				if result.IsNil() {
-					return nil, nil
-				}
-				return nil, result.Interface().(error)
-			}
-			// Single value return
-			return result.Interface(), nil
-		}
-
-		if len(results) == 2 {
-			// (value, error) pattern
-			value := results[0].Interface()
-			errResult := results[1]
-
-			if errResult.IsNil() {
-				return value, nil
-			}
-			return value, errResult.Interface().(error)
-		}
-
-		return nil, fmt.Errorf("unsupported return pattern: %d values", len(results))
-	}
-}
-
-// getParameterName attempts to get parameter name from function signature
-func getParameterName(funcType reflect.Type, index int) string {
-	// This is a basic implementation - in practice you might want to use
-	// build tags or other methods to extract parameter names
-	// For now, we'll use common patterns
-	if index == 0 {
-		return "input"
-	}
-	return fmt.Sprintf("arg%d", index)
-}
-
 // Field-Level Customization
 func (r *UnifiedResolver[T]) WithFieldResolver(fieldName string, resolver graphql.FieldResolveFn) *UnifiedResolver[T] {
 	r.fieldOverrides[fieldName] = resolver
@@ -1528,25 +1339,6 @@ func (r *UnifiedResolver[T]) WithFieldResolvers(overrides map[string]graphql.Fie
 
 func (r *UnifiedResolver[T]) WithFieldMiddleware(fieldName string, middleware FieldMiddleware) *UnifiedResolver[T] {
 	r.fieldMiddleware[fieldName] = append(r.fieldMiddleware[fieldName], middleware)
-	return r
-}
-
-// WithPermission adds permission middleware to the resolver (similar to Python @permission_classes decorator)
-// This is now just a convenience wrapper around WithMiddleware for backwards compatibility
-func (r *UnifiedResolver[T]) WithPermission(middleware FieldMiddleware) *UnifiedResolver[T] {
-	return r.WithMiddleware(middleware)
-}
-
-func (r *UnifiedResolver[T]) WithCustomField(name string, field *graphql.Field) *UnifiedResolver[T] {
-	r.customFields[name] = field
-	return r
-}
-
-func (r *UnifiedResolver[T]) WithComputedField(name string, fieldType graphql.Output, resolver graphql.FieldResolveFn) *UnifiedResolver[T] {
-	r.customFields[name] = &graphql.Field{
-		Type:    fieldType,
-		Resolve: resolver,
-	}
 	return r
 }
 
@@ -1896,18 +1688,6 @@ func applyMiddlewares(resolver FieldResolveFn, middlewares []FieldMiddleware) Fi
 	return resolver
 }
 
-// Common Middleware Functions
-
-// LoggingMiddleware logs field resolution time
-func LoggingMiddleware(next FieldResolveFn) FieldResolveFn {
-	return func(p ResolveParams) (interface{}, error) {
-		start := time.Now()
-		result, err := next(p)
-		fmt.Printf("Field %s resolved in %v\n", p.Info.FieldName, time.Since(start))
-		return result, err
-	}
-}
-
 // AuthMiddleware requires a specific user role
 func AuthMiddleware(requiredRole string) FieldMiddleware {
 	return func(next FieldResolveFn) FieldResolveFn {
@@ -1920,69 +1700,6 @@ func AuthMiddleware(requiredRole string) FieldMiddleware {
 			return next(p)
 		}
 	}
-}
-
-// Convenience Functions
-
-// DataTransformResolver applies a transformation to a field value
-func DataTransformResolver(transform func(interface{}) interface{}) graphql.FieldResolveFn {
-	return func(p graphql.ResolveParams) (interface{}, error) {
-		source := reflect.ValueOf(p.Source)
-		if source.Kind() == reflect.Ptr {
-			source = source.Elem()
-		}
-
-		field := source.FieldByName(strings.Title(p.Info.FieldName))
-		if field.IsValid() {
-			return transform(field.Interface()), nil
-		}
-		return nil, nil
-	}
-}
-
-// ConditionalResolver resolves based on a condition
-func ConditionalResolver(condition func(graphql.ResolveParams) bool, ifTrue, ifFalse graphql.FieldResolveFn) graphql.FieldResolveFn {
-	return func(p graphql.ResolveParams) (interface{}, error) {
-		if condition(p) {
-			return ifTrue(p)
-		}
-		return ifFalse(p)
-	}
-}
-
-// mapArgsToStruct maps GraphQL arguments directly to a struct
-func mapArgsToStruct(args map[string]interface{}, output interface{}) error {
-	// Use reflection to map arguments to struct fields
-	outputValue := reflect.ValueOf(output)
-	if outputValue.Kind() != reflect.Ptr || outputValue.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("output must be a pointer to a struct")
-	}
-
-	outputValue = outputValue.Elem()
-	outputType := outputValue.Type()
-
-	for i := 0; i < outputType.NumField(); i++ {
-		field := outputType.Field(i)
-		fieldValue := outputValue.Field(i)
-
-		if !fieldValue.CanSet() {
-			continue
-		}
-
-		// Get field name from json tag or use field name
-		fieldName := getFieldName(field)
-		if fieldName == "-" {
-			continue
-		}
-
-		if argValue, exists := args[fieldName]; exists && argValue != nil {
-			if err := setFieldValue(fieldValue, argValue); err != nil {
-				return fmt.Errorf("failed to set field %s: %w", fieldName, err)
-			}
-		}
-	}
-
-	return nil
 }
 
 // getFieldName extracts the field name from struct tags
@@ -2075,4 +1792,70 @@ func setFieldValue(fieldValue reflect.Value, argValue interface{}) error {
 	}
 
 	return fmt.Errorf("cannot convert %v (%s) to %s", argValue, argReflectValue.Type(), fieldValue.Type())
+}
+
+// GetRootE retrieves a value from root info by name with type safety and error handling.
+// Returns an error if the key is missing or type conversion fails.
+//
+// Usage:
+//
+//	user, err := graph.GetRootE[UserDetails](graph.NewRootInfo(p), "details")
+//	if err != nil {
+//	    return nil, fmt.Errorf("authentication required: %w", err)
+//	}
+func GetRootE[T any](r RootInfoGetter, name string) (T, error) {
+	var zero T
+	if r == nil {
+		return zero, fmt.Errorf("root value %q not found: root info is nil", name)
+	}
+	val, exists := r.GetRootValue(name)
+	if !exists {
+		return zero, fmt.Errorf("root value %q not found", name)
+	}
+	if val == nil {
+		return zero, fmt.Errorf("root value %q is nil", name)
+	}
+	if typed, ok := val.(T); ok {
+		return typed, nil
+	}
+	result, err := convertArgE[T](val, name)
+	if err != nil {
+		return zero, fmt.Errorf("root value %q: %w", name, err)
+	}
+	return result, nil
+}
+
+// mapArgsToStruct maps GraphQL arguments directly to a struct
+func mapArgsToStruct(args map[string]interface{}, output interface{}) error {
+	// Use reflection to map arguments to struct fields
+	outputValue := reflect.ValueOf(output)
+	if outputValue.Kind() != reflect.Ptr || outputValue.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("output must be a pointer to a struct")
+	}
+
+	outputValue = outputValue.Elem()
+	outputType := outputValue.Type()
+
+	for i := 0; i < outputType.NumField(); i++ {
+		field := outputType.Field(i)
+		fieldValue := outputValue.Field(i)
+
+		if !fieldValue.CanSet() {
+			continue
+		}
+
+		// Get field name from json tag or use field name
+		fieldName := getFieldName(field)
+		if fieldName == "-" {
+			continue
+		}
+
+		if argValue, exists := args[fieldName]; exists && argValue != nil {
+			if err := setFieldValue(fieldValue, argValue); err != nil {
+				return fmt.Errorf("failed to set field %s: %w", fieldName, err)
+			}
+		}
+	}
+
+	return nil
 }

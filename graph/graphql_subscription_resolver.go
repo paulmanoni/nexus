@@ -92,7 +92,7 @@ func (s *subscriptionField) Name() string {
 //
 //	// Middleware support
 //	sub := NewSubscription[Event]("events").
-//	    WithMiddleware(LoggingMiddleware).
+//	    WithMiddleware(loggingMiddleware).
 //	    WithMiddleware(AuthMiddleware("admin")).
 //	    // ... rest of configuration
 //
@@ -264,7 +264,7 @@ func (s *SubscriptionResolver[T]) WithFilter(fn SubscriptionFilterFn[T]) *Subscr
 //
 // Example:
 //
-//	WithMiddleware(LoggingMiddleware).
+//	WithMiddleware(loggingMiddleware).
 //	WithMiddleware(AuthMiddleware("user"))
 func (s *SubscriptionResolver[T]) WithMiddleware(middleware FieldMiddleware) *SubscriptionResolver[T] {
 	s.middleware = append(s.middleware, middleware)
