@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/graphql-go/graphql"
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"

@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/graphql-go/graphql"
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-viper/mapstructure/v2"
 )
 
 // Global type registry to prevent duplicate type creation
