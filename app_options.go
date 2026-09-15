@@ -291,33 +291,51 @@ func serviceDepsRegisterInvoke(fn any) di.Option {
 // types (a regression that surfaces when nexus.Provide is used for
 // unrelated values like func() string in tests).
 func resourceAutoRegisterInvoke(fn any) di.Option {
+	return autoRegisterInvoke(fn,
+		[]reflect.Type{
+			reflect.TypeFor[NexusResourceProvider](),
+			reflect.TypeFor[UseReporter](),
+		},
+		func(app *App, inst any) {
+			if p, ok := inst.(NexusResourceProvider); ok {
+				for _, r := range p.NexusResources() {
+					app.Register(r)
+				}
+			}
+			if reporter, ok := inst.(UseReporter); ok {
+				app.OnResourceUse(reporter)
+			}
+		})
+}
+
+// autoRegisterInvoke synthesizes a di.Invoke of shape func(*App, T)
+// for a constructor fn whose first return type implements at least one
+// of ifaces, calling apply with the constructed instance. Returns nil
+// when nothing matches so the caller skips the invoke. The shared core
+// behind resourceAutoRegisterInvoke and manifestAutoRegisterInvoke.
+func autoRegisterInvoke(fn any, ifaces []reflect.Type, apply func(app *App, inst any)) di.Option {
 	rt := reflect.TypeOf(fn)
 	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
 		return nil
 	}
 	// First return is the constructed instance. Ignore trailing error return.
 	outType := rt.Out(0)
-	providerIface := reflect.TypeOf((*NexusResourceProvider)(nil)).Elem()
-	reporterIface := reflect.TypeOf((*UseReporter)(nil)).Elem()
-	if !outType.Implements(providerIface) && !outType.Implements(reporterIface) {
+	matched := false
+	for _, it := range ifaces {
+		if outType.Implements(it) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return nil
 	}
-
 	invokeType := reflect.FuncOf(
 		[]reflect.Type{reflect.TypeOf((*App)(nil)), outType},
 		nil, false,
 	)
 	invokeFn := reflect.MakeFunc(invokeType, func(args []reflect.Value) []reflect.Value {
-		app := args[0].Interface().(*App)
-		inst := args[1].Interface()
-		if p, ok := inst.(NexusResourceProvider); ok {
-			for _, r := range p.NexusResources() {
-				app.Register(r)
-			}
-		}
-		if reporter, ok := inst.(UseReporter); ok {
-			app.OnResourceUse(reporter)
-		}
+		apply(args[0].Interface().(*App), args[1].Interface())
 		return nil
 	})
 	return di.Invoke(invokeFn.Interface())

@@ -16,7 +16,7 @@ import (
 )
 
 // manifestStore holds every declaration registered against an *App by
-// the option helpers below (DeclareEnv, DeclareService, UseVolume,
+// the option helpers below (DeclareEnv, DeclareService, DeclareVolume,
 // AddStartupTask) plus the corresponding *Provider variants. All
 // access goes through manifestMu so concurrent invokes don't corrupt
 // the slices — fx invokes are sequential today but it's cheap
@@ -143,7 +143,7 @@ func (a *App) DeclareVolume(v manifest.Volume) {
 // (its data-driven counterpart was already DeclareVolumeProvider).
 func (a *App) UseVolume(v manifest.Volume) { a.DeclareVolume(v) }
 
-// DeclareVolumeProvider is the data-driven counterpart to UseVolume.
+// DeclareVolumeProvider is the data-driven counterpart to DeclareVolume.
 func (a *App) DeclareVolumeProvider(p manifest.VolumeProvider) {
 	if p == nil {
 		return
@@ -778,37 +778,23 @@ func AddStartupTask(t manifest.StartupTask) Option {
 // Returns nil when the constructor's return type doesn't implement
 // any manifest provider interface, so plain types pay nothing.
 func manifestAutoRegisterInvoke(fn any) di.Option {
-	rt := reflect.TypeOf(fn)
-	if rt == nil || rt.Kind() != reflect.Func || rt.NumOut() == 0 {
-		return nil
-	}
-	outType := rt.Out(0)
-	envIface := reflect.TypeOf((*manifest.EnvProvider)(nil)).Elem()
-	svcIface := reflect.TypeOf((*manifest.ServiceDependencyProvider)(nil)).Elem()
-	volIface := reflect.TypeOf((*manifest.VolumeProvider)(nil)).Elem()
-	if !outType.Implements(envIface) && !outType.Implements(svcIface) && !outType.Implements(volIface) {
-		return nil
-	}
-
-	invokeType := reflect.FuncOf(
-		[]reflect.Type{reflect.TypeOf((*App)(nil)), outType},
-		nil, false,
-	)
-	invokeFn := reflect.MakeFunc(invokeType, func(args []reflect.Value) []reflect.Value {
-		app := args[0].Interface().(*App)
-		inst := args[1].Interface()
-		if p, ok := inst.(manifest.EnvProvider); ok {
-			app.DeclareEnvProvider(p)
-		}
-		if p, ok := inst.(manifest.ServiceDependencyProvider); ok {
-			app.DeclareServiceProvider(p)
-		}
-		if p, ok := inst.(manifest.VolumeProvider); ok {
-			app.DeclareVolumeProvider(p)
-		}
-		return nil
-	})
-	return di.Invoke(invokeFn.Interface())
+	return autoRegisterInvoke(fn,
+		[]reflect.Type{
+			reflect.TypeFor[manifest.EnvProvider](),
+			reflect.TypeFor[manifest.ServiceDependencyProvider](),
+			reflect.TypeFor[manifest.VolumeProvider](),
+		},
+		func(app *App, inst any) {
+			if p, ok := inst.(manifest.EnvProvider); ok {
+				app.DeclareEnvProvider(p)
+			}
+			if p, ok := inst.(manifest.ServiceDependencyProvider); ok {
+				app.DeclareServiceProvider(p)
+			}
+			if p, ok := inst.(manifest.VolumeProvider); ok {
+				app.DeclareVolumeProvider(p)
+			}
+		})
 }
 
 // ── Type-assert that registry shapes match what we expect ──────────
