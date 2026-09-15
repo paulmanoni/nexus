@@ -117,7 +117,7 @@ func (c *Connection) Send(message []byte) {
 	default:
 		if c.drops.Add(1) >= c.hub.cfg.maxDropsBeforeClose {
 			c.hub.cfg.logf("closing slow client clientID=%s drops=%d", c.ClientID, c.drops.Load())
-			c.hub.unregister <- c
+			c.hub.tryUnregister(c)
 		}
 	}
 }
@@ -375,7 +375,7 @@ func (h *Hub) writeTo(c *Connection, data []byte) {
 		return
 	default:
 		if c.drops.Add(1) >= h.cfg.maxDropsBeforeClose {
-			h.unregister <- c
+			h.tryUnregister(c)
 		}
 	}
 }
@@ -547,8 +547,24 @@ func (h *Hub) serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {
 	go h.readPump(conn)
 }
 
+// tryUnregister hands c to the hub loop, or closes it directly when
+// the hub is stopped — after Stop nothing drains unregister, and a
+// plain send would strand every in-flight readPump goroutine (and,
+// via Send/writeTo, could deadlock the hub loop itself) at shutdown.
+func (h *Hub) tryUnregister(c *Connection) {
+	var stopped <-chan struct{}
+	if h.ctx != nil {
+		stopped = h.ctx.Done()
+	}
+	select {
+	case h.unregister <- c:
+	case <-stopped:
+		c.close()
+	}
+}
+
 func (h *Hub) readPump(c *Connection) {
-	defer func() { h.unregister <- c }()
+	defer h.tryUnregister(c)
 	c.ws.SetReadLimit(h.cfg.maxMessageSize)
 	_ = c.ws.SetReadDeadline(time.Now().Add(h.cfg.pongWait))
 	c.ws.SetPongHandler(func(string) error {
@@ -570,20 +586,29 @@ func (h *Hub) readPump(c *Connection) {
 	}
 }
 
+// builtinProbe is the minimal decode of an inbound frame — just the
+// fields the builtin protocol needs. A typed probe instead of a
+// map[string]any: the map decode allocated per JSON key on EVERY
+// inbound frame, builtin or not.
+type builtinProbe struct {
+	Type   string `json:"type"`
+	UserID string `json:"userId"`
+	Room   string `json:"room"`
+}
+
 // handleBuiltin processes the default protocol: ping/pong, authenticate,
 // subscribe, unsubscribe. Returns true if the message was consumed.
 func (h *Hub) handleBuiltin(c *Connection, data []byte) bool {
-	var msg map[string]any
+	var msg builtinProbe
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return false
 	}
-	kind, _ := msg["type"].(string)
-	switch kind {
+	switch msg.Type {
 	case "ping":
 		_ = c.SendEvent(&Event{Type: EventTypePong, Data: map[string]any{"timestamp": time.Now().Unix()}})
 		return true
 	case "authenticate":
-		if uid, ok := msg["userId"].(string); ok && uid != "" {
+		if uid := msg.UserID; uid != "" {
 			h.mu.Lock()
 			if c.UserID != "" {
 				if set, ok := h.byUser[c.UserID]; ok {
@@ -600,13 +625,13 @@ func (h *Hub) handleBuiltin(c *Connection, data []byte) bool {
 		}
 		return true
 	case "subscribe":
-		if room, ok := msg["room"].(string); ok {
-			h.Join(c, room)
+		if msg.Room != "" {
+			h.Join(c, msg.Room)
 		}
 		return true
 	case "unsubscribe":
-		if room, ok := msg["room"].(string); ok {
-			h.Leave(c, room)
+		if msg.Room != "" {
+			h.Leave(c, msg.Room)
 		}
 		return true
 	}
