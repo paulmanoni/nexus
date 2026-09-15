@@ -32,7 +32,7 @@ type lintOptions struct {
 	// JSON). Explicit --yaml / --json beats auto-detection. Stdin
 	// without an explicit flag defaults to JSON to preserve the
 	// pre-v0.43 pipe-from-print-mode workflow.
-	inputFormat string // "" | "yaml" | "json"
+	inputFormat string // "" | "toml" | "json"
 
 	// JSON output for machine consumers (CI, IDE integrations). When
 	// false, the human-readable text formatter is used.

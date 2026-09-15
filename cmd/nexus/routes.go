@@ -113,16 +113,16 @@ Manifest.Routes slice verbatim for machine consumers.`,
 	cmd.Flags().StringVar(&opts.deploymentFilter, "deployment", "", "only routes in this deployment")
 	cmd.Flags().StringVar(&opts.authFilter, "auth", "", "only routes with this auth setting (none, optional, required)")
 
-	var yamlIn, jsonIn bool
-	cmd.Flags().BoolVar(&yamlIn, "yaml", false, "force YAML input parsing")
+	var tomlIn, jsonIn bool
+	cmd.Flags().BoolVar(&tomlIn, "toml", false, "force TOML input parsing")
 	cmd.Flags().BoolVar(&jsonIn, "json-in", false, "force JSON input parsing")
 	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
-		if yamlIn && jsonIn {
-			return errors.New("nexus routes: --yaml and --json-in are mutually exclusive")
+		if tomlIn && jsonIn {
+			return errors.New("nexus routes: --toml and --json-in are mutually exclusive")
 		}
 		switch {
-		case yamlIn:
-			opts.inputFormat = "yaml"
+		case tomlIn:
+			opts.inputFormat = "toml"
 		case jsonIn:
 			opts.inputFormat = "json"
 		}
