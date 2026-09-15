@@ -258,7 +258,10 @@ type ServerConfigBlock struct {
 
 // WebSocketConfigBlock is the TOML shape of WebSocketConfig.
 type WebSocketConfigBlock struct {
-	AllowedOrigins []string `toml:"allowed_origins"`
+	AllowedOrigins  []string `toml:"allowed_origins"`
+	MaxConnections  int      `toml:"max_connections"`
+	MaxMessageBytes int64    `toml:"max_message_bytes"`
+	Workers         int      `toml:"workers"`
 }
 
 // ListenerConfigBlock is the TOML shape of a Listener. TLS is
@@ -351,7 +354,12 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 			MaxBodyBytes:    b.Server.MaxBodyBytes,
 			TrustedProxies:  b.Server.TrustedProxies,
 		},
-		WebSocket: WebSocketConfig{AllowedOrigins: b.WebSocket.AllowedOrigins},
+		WebSocket: WebSocketConfig{
+			AllowedOrigins:  b.WebSocket.AllowedOrigins,
+			MaxConnections:  b.WebSocket.MaxConnections,
+			MaxMessageBytes: b.WebSocket.MaxMessageBytes,
+			Workers:         b.WebSocket.Workers,
+		},
 		Dashboard: DashboardConfig{
 			Enabled: b.Dashboard.Enabled,
 			Name:    b.Dashboard.Name,

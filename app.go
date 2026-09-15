@@ -54,6 +54,7 @@ import (
 	"github.com/paulmanoni/nexus/resource"
 	"github.com/paulmanoni/nexus/trace"
 	"github.com/paulmanoni/nexus/transport/gql"
+	"github.com/paulmanoni/nexus/transport/ws"
 )
 
 // EnvAdminToken is the env var the framework reads for the admin
@@ -159,6 +160,10 @@ type App struct {
 	// ones just add handlers to the type-dispatch table.
 	wsMu        sync.Mutex
 	wsEndpoints map[string]*wsEndpoint
+	// wsHubOpts carries [runtime.websocket] tuning (max_connections,
+	// max_message_bytes, workers) into every AsWS hub — without this
+	// the hub defaults were unreachable from configuration.
+	wsHubOpts []ws.HubOption
 
 	// listeners is the configured listener set (name → Listener). Empty
 	// means single-listener back-compat mode bound to Config.Addr;
@@ -278,6 +283,18 @@ func New(cfg Config) *App {
 			panic(fmt.Sprintf("nexus: [runtime.server] trusted_proxies has invalid entries: %v", bad))
 		}
 	}
+	// Hub tuning for every AsWS endpoint. Only non-zero fields
+	// override the hub defaults (5000 conns, 512KiB frames, 32 workers).
+	var wsHubOpts []ws.HubOption
+	if n := cfg.WebSocket.MaxConnections; n > 0 {
+		wsHubOpts = append(wsHubOpts, ws.WithMaxConnections(n))
+	}
+	if n := cfg.WebSocket.MaxMessageBytes; n > 0 {
+		wsHubOpts = append(wsHubOpts, ws.WithMaxMessageSize(n))
+	}
+	if n := cfg.WebSocket.Workers; n > 0 {
+		wsHubOpts = append(wsHubOpts, ws.WithWorkers(n))
+	}
 	// TODO(router-seam): a per-request access log used to ride on
 	// gin.Logger() in debug mode. The stdlib router has no built-in
 	// logger; reintroduce one as an httpx middleware if desired.
@@ -296,6 +313,7 @@ func New(cfg Config) *App {
 		routePrefix:      normalizeRoutePrefix(cfg.Server.RoutePrefix),
 		gqlStats:         gql.NewStatsRegistry(),
 		devReloadExclude: cfg.DevReload.Exclude,
+		wsHubOpts:        wsHubOpts,
 	}
 	if traceCapacity > 0 {
 		a.bus = trace.NewBus(traceCapacity)

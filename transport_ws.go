@@ -178,7 +178,7 @@ func (a *App) wsEndpointFor(path, service string) (*wsEndpoint, bool) {
 	ep := &wsEndpoint{
 		path:     path,
 		service:  service,
-		hub:      ws.NewHub(),
+		hub:      ws.NewHub(a.wsHubOpts...),
 		handlers: map[string]wsTypedHandler{},
 	}
 	a.wsEndpoints[path] = ep

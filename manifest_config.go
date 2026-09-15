@@ -387,6 +387,17 @@ type WebSocketConfig struct {
 	// Loopback origins are always allowed under `nexus dev`, where the
 	// frontend (:5173) and the app (:8080) are cross-origin by design.
 	AllowedOrigins []string
+
+	// MaxConnections caps concurrent connections per AsWS hub
+	// (default 5000). Upgrades past the cap are refused.
+	MaxConnections int
+
+	// MaxMessageBytes caps a single inbound frame per AsWS hub
+	// (default 512KiB). Oversized frames close the connection.
+	MaxMessageBytes int64
+
+	// Workers sizes each hub's fan-out worker pool (default 32).
+	Workers int
 }
 
 // MiddlewareConfig groups every middleware-related knob the
