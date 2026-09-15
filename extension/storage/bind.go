@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/internal/bindutil"
 	"github.com/paulmanoni/nexus/resource"
 )
 
@@ -86,65 +87,44 @@ func Bind[T any](name string, build func() Config, opts ...BindOption) nexus.Opt
 		panic("storage.Bind: build func must not be nil")
 	}
 
-	var bc bindConfig
-	for _, o := range opts {
-		o(&bc)
-	}
-
 	ctor := func() (*T, error) {
 		disk, err := buildDisk(build())
 		if err != nil {
 			return nil, err
 		}
-		h := new(T)
-		reflect.ValueOf(h).Elem().Field(fieldIdx).Set(reflect.ValueOf(NewManager(disk)))
-		return h, nil
+		return bindutil.NewHolder[T](fieldIdx, NewManager(disk)), nil
 	}
 
+	// Options apply at register time — not option construction — matching
+	// db.Bind, so config-derived options resolve lazily under nexus.Boot.
 	register := func(app *nexus.App, h *T) {
-		m := reflect.ValueOf(h).Elem().Field(fieldIdx).Interface().(*Manager)
+		bc := bindutil.Apply(opts)
+		m := bindutil.ManagerOf[*Manager](h, fieldIdx)
 		var ropts []resource.Option
-		if bc.asDefault {
+		if bc.AsDefault {
 			ropts = append(ropts, resource.AsDefault())
 		}
-		app.Register(m.AsResource(name, bc.description, ropts...))
+		app.Register(m.AsResource(name, bc.Description, ropts...))
 	}
 
 	return nexus.Options(nexus.Provide(ctor), nexus.Invoke(register))
 }
 
-// BindOption tunes how Bind registers the dashboard resource.
-type BindOption func(*bindConfig)
-
-type bindConfig struct {
-	description string
-	asDefault   bool
-}
+// BindOption tunes how Bind registers the dashboard resource. Alias of
+// the shared binder option type so db/cache/mail/storage stay uniform.
+type BindOption = bindutil.Option
 
 // WithDefault marks this disk as the default storage resource.
 func WithDefault() BindOption {
-	return func(c *bindConfig) { c.asDefault = true }
+	return func(c *bindutil.Options) { c.AsDefault = true }
 }
 
 // WithDescription overrides the dashboard resource description.
 func WithDescription(s string) BindOption {
-	return func(c *bindConfig) { c.description = s }
+	return func(c *bindutil.Options) { c.Description = s }
 }
 
-var managerPtrType = reflect.TypeFor[*Manager]()
-
-// embeddedManagerField returns the index of T's embedded *Manager field,
-// mirroring cache.Bind's helper so this binder stays self-contained.
 func embeddedManagerField[T any]() int {
-	t := reflect.TypeFor[T]()
-	if t == nil || t.Kind() != reflect.Struct {
-		panic("storage.Bind: T must be a struct embedding *storage.Manager")
-	}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.Anonymous && f.Type == managerPtrType {
-			return i
-		}
-	}
-	panic("storage.Bind: T (" + t.String() + ") must embed *storage.Manager, e.g. `type U struct{ *storage.Manager }`")
+	return bindutil.EmbeddedField[T]("storage.Bind", reflect.TypeFor[*Manager](),
+		"type D struct{ *storage.Manager }")
 }

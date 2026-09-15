@@ -2,13 +2,13 @@ package db
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 
 	"github.com/paulmanoni/nexus/di"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/internal/bindutil"
 	"github.com/paulmanoni/nexus/resource"
 )
 
@@ -24,23 +24,23 @@ import (
 // only job is to give the connection a distinct Go type so the framework
 // can inject the right one and draw service→DB edges in the dashboard:
 //
-//	type OatsDB struct{ *db.Manager }
+//	type MainDB struct{ *db.Manager }
 //
 //	nexus.Run(cfg,
-//	    db.Bind[OatsDB]("oats", func() db.Config {
+//	    db.Bind[MainDB]("main", func() db.Config {
 //	        return db.Config{
 //	            Driver:   db.Postgres,
-//	            Host:     nexus.Get[string]("db.oats.hostname"),
-//	            Port:     nexus.Get[string]("db.oats.port"),
-//	            User:     nexus.Get[string]("db.oats.username"),
-//	            Password: nexus.Get[string]("db.oats.password"),
-//	            Database: nexus.Get[string]("db.oats.name"),
+//	            Host:     nexus.Get[string]("db.main.hostname"),
+//	            Port:     nexus.Get[string]("db.main.port"),
+//	            User:     nexus.Get[string]("db.main.username"),
+//	            Password: nexus.Get[string]("db.main.password"),
+//	            Database: nexus.Get[string]("db.main.name"),
 //	        }
 //	    }, db.WithDefault()),
-//	    // … modules; handlers keep injecting *OatsDB unchanged
+//	    // … modules; handlers keep injecting *MainDB unchanged
 //	)
 //
-// build() is evaluated in the fx constructor (not at option-construction
+// build() is evaluated in the DI constructor (not at option-construction
 // time), so nexus.Get and other startup-time config sources resolve. The
 // framework owns the lifecycle (Start on boot, Stop on shutdown) and
 // registers the connection as a dashboard resource via resource.NewDatabase
@@ -52,7 +52,7 @@ func Bind[T any](name string, build func() Config, opts ...BindOption) nexus.Opt
 }
 
 // bindOption is the shared core behind Bind and BindFromConfig. optsFn is
-// evaluated at fx-invoke time (inside register), NOT at option-construction
+// evaluated at register time (inside the invoke), NOT at option-construction
 // time, so options derived from data only available after startup — like a
 // [databases.*] block parsed by LoadConfig — resolve lazily. This is what
 // lets BindFromConfig work under nexus.Boot, which evaluates its option
@@ -68,32 +68,27 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 
 	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
 		m := NewManager(build(), WithLogger(logger))
-		h := new(T)
-		reflect.ValueOf(h).Elem().Field(fieldIdx).Set(reflect.ValueOf(m))
 		lc.Append(di.Hook{
 			OnStart: func(context.Context) error { m.Start(); return nil },
 			OnStop:  func(context.Context) error { m.Stop(); return nil },
 		})
-		return h, nil
+		return bindutil.NewHolder[T](fieldIdx, m), nil
 	}
 
 	register := func(app *nexus.App, h *T) {
-		var bc bindConfig
-		for _, o := range optsFn() {
-			o(&bc)
-		}
-		m := reflect.ValueOf(h).Elem().Field(fieldIdx).Interface().(*Manager)
+		bc := bindutil.Apply(optsFn())
+		m := bindutil.ManagerOf[*Manager](h, fieldIdx)
 		driver := string(m.Driver())
-		desc := bc.description
+		desc := bc.Description
 		if desc == "" {
 			desc = "GORM — " + driver
 		}
-		details := bc.details
+		details := bc.Details
 		if details == nil {
 			details = map[string]any{"engine": driver}
 		}
 		var ropts []resource.Option
-		if bc.asDefault {
+		if bc.AsDefault {
 			ropts = append(ropts, resource.AsDefault())
 		}
 		app.Register(resource.NewDatabase(name, desc, details, m.IsConnected, ropts...))
@@ -102,49 +97,30 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 	return nexus.Options(nexus.Provide(ctor), nexus.Invoke(register))
 }
 
-// BindOption tunes how Bind registers the dashboard resource.
-type BindOption func(*bindConfig)
-
-type bindConfig struct {
-	description string
-	details     map[string]any
-	asDefault   bool
-}
+// BindOption tunes how Bind registers the dashboard resource. Alias of
+// the shared binder option type so db/cache/mail/storage stay uniform.
+type BindOption = bindutil.Option
 
 // WithDefault marks this database as the default for its kind — the one a
 // Service gets when it depends on a DB without naming one. Use on exactly
 // one Bind; flagging several is ambiguous.
 func WithDefault() BindOption {
-	return func(c *bindConfig) { c.asDefault = true }
+	return func(c *bindutil.Options) { c.AsDefault = true }
 }
 
 // WithDetails overrides the resource detail map shown in the dashboard
 // (default {"engine": <driver>}).
 func WithDetails(d map[string]any) BindOption {
-	return func(c *bindConfig) { c.details = d }
+	return func(c *bindutil.Options) { c.Details = d }
 }
 
 // WithDescription overrides the resource description shown in the dashboard
 // (default "GORM — <driver>").
 func WithDescription(s string) BindOption {
-	return func(c *bindConfig) { c.description = s }
+	return func(c *bindutil.Options) { c.Description = s }
 }
 
-var managerPtrType = reflect.TypeFor[*Manager]()
-
-// embeddedManagerField returns the index of T's embedded *Manager field,
-// mirroring the nexus root's embeddedFieldIndex locally so this binder
-// stays self-contained (the same pattern pubsub.Broker / cache.Bind use).
 func embeddedManagerField[T any]() int {
-	t := reflect.TypeFor[T]()
-	if t == nil || t.Kind() != reflect.Struct {
-		panic("db.Bind: T must be a struct embedding *db.Manager")
-	}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.Anonymous && f.Type == managerPtrType {
-			return i
-		}
-	}
-	panic(fmt.Sprintf("db.Bind: T (%s) must embed *db.Manager, e.g. `type C struct{ *db.Manager }`", t))
+	return bindutil.EmbeddedField[T]("db.Bind", reflect.TypeFor[*Manager](),
+		"type C struct{ *db.Manager }")
 }
