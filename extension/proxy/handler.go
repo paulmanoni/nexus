@@ -31,9 +31,9 @@ func buildReverseProxy(upstream string, setHeaders map[string]string, rewritePat
 
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(target)          // scheme/host + joins target.Path with inbound path
-			pr.Out.Host = pr.In.Host   // preserve original Host (upstream ALLOWED_HOSTS/CSRF)
-			pr.SetXForwarded()         // X-Forwarded-For/Host/Proto for the upstream
+			pr.SetURL(target)        // scheme/host + joins target.Path with inbound path
+			pr.Out.Host = pr.In.Host // preserve original Host (upstream ALLOWED_HOSTS/CSRF)
+			pr.SetXForwarded()       // X-Forwarded-For/Host/Proto for the upstream
 			if rewritePath != nil {
 				pr.Out.URL.Path = rewritePath(pr.Out.URL.Path)
 			}

@@ -102,6 +102,11 @@ type Config struct {
 // lifecycle. The plugin subscribes to the app's trace bus, filters
 // for error-shaped events, groups them into issues, and forwards new
 // occurrences to the configured transports.
+// Module is the canonical entry point, matching every configurable
+// nexus extension (auth.Module, maskid.Module, oauth2.Module, …).
+// Plugin remains as an alias.
+func Module(cfg Config) nexus.Option { return Plugin(cfg) }
+
 func Plugin(cfg Config) nexus.Option {
 	state := &pluginState{inCodeCfg: cfg}
 

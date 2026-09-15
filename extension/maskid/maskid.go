@@ -166,8 +166,8 @@ type policy struct {
 	// every masked response, and the lowercase+suffix checks allocate.
 	// Bounded with a flush: inbound (unmask) keys are client-supplied,
 	// so an unbounded cache would be a memory sink.
-	idKeys  sync.Map // string → bool
-	idKeyN  atomic.Int64
+	idKeys sync.Map // string → bool
+	idKeyN atomic.Int64
 }
 
 // idKeyCacheCap bounds idKeys. A real app's key vocabulary is a few

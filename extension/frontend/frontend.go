@@ -191,6 +191,11 @@ type Config struct {
 // Phase 1 emits Vue templates only when Framework == Vue; React /
 // Svelte resolve to the same transport-neutral output as None until
 // their templates ship.
+// Module is the canonical entry point, matching every configurable
+// nexus extension (auth.Module, maskid.Module, oauth2.Module, …).
+// Plugin remains as an alias.
+func Module(cfg Config) nexus.Option { return Plugin(cfg) }
+
 func Plugin(cfg Config) nexus.Option {
 	if err := cfg.Validate(); err != nil {
 		return nexus.Raw(di.Error(err))

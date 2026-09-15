@@ -133,6 +133,11 @@ type Server struct {
 // source). On a stable production app the overhead is one map walk
 // per request; for higher throughput we could cache and invalidate
 // on registry.OnChange, but that's premature for the v1 size.
+// Module is the canonical entry point, matching every configurable
+// nexus extension (auth.Module, maskid.Module, oauth2.Module, …).
+// Plugin remains as an alias.
+func Module(cfg Config) nexus.Option { return Plugin(cfg) }
+
 func Plugin(cfg Config) nexus.Option {
 	applyDefaults(&cfg)
 	state := &pluginState{cfg: cfg}

@@ -48,6 +48,11 @@ const securityStatusKey = "nexus.security.status"
 // middleware — configure that via [runtime.middleware.security] in
 // nexus.toml (or Config.Middleware.Security). Load this only for the
 // dashboard surface.
+// Module is the canonical entry point, matching every configurable
+// nexus extension (auth.Module, maskid.Module, oauth2.Module, …).
+// Plugin remains as an alias.
+func Module() nexus.Option { return Plugin() }
+
 func Plugin() nexus.Option {
 	return extension.Use(extension.Plugin{
 		Name:    "security",

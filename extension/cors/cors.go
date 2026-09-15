@@ -133,6 +133,12 @@ type Config struct {
 //	    AllowOrigins:     []string{"https://app.example.com"},
 //	    AllowCredentials: true,
 //	})
+//
+// Module is the canonical entry point, matching every configurable
+// nexus extension (auth.Module, maskid.Module, oauth2.Module, …).
+// Plugin remains as an alias.
+func Module(cfg Config) nexus.Option { return Plugin(cfg) }
+
 func Plugin(cfg Config) nexus.Option {
 	state := &pluginState{inCodeCfg: cfg}
 
