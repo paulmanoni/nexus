@@ -4,6 +4,35 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.0] - 2026-09-16
+
+### Changed — BREAKING
+
+- **SQL drivers are opt-in blank imports (database/sql style).**
+  `nexus/db` linked all three engines unconditionally, so a Postgres
+  app shipped the ~5MB pure-Go SQLite engine it never opened, and
+  vice versa. `nexus/db` now links NO engine; import the one(s) your
+  app actually opens:
+
+      _ "github.com/paulmanoni/nexus/db/postgres"
+      _ "github.com/paulmanoni/nexus/db/mysql"
+      _ "github.com/paulmanoni/nexus/db/sqlite"
+
+  A `Config` naming an unlinked driver fails at wiring time with the
+  exact import line to add, so the migration is one line per driver
+  and cannot fail silently. `nexus new --db` scaffolds emit the right
+  import; custom GORM dialects can `db.RegisterDriver` their own name.
+
+### Fixed
+
+- **File-backed SQLite gets a real connection pool.** The old
+  `MaxOpen=1` default applied to ALL SQLite, so WAL bought nothing
+  and every query in a file-backed process queued behind one
+  connection. Only `:memory:` keeps the single shared connection
+  (its schema dies with the connection); file DSNs now get a small
+  read pool — writes still serialize inside SQLite itself, so keep a
+  `busy_timeout` pragma in the DSN, as the scaffolds do.
+
 ## [1.49.0] - 2026-09-15
 
 ### Performance
