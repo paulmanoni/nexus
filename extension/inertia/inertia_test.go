@@ -897,3 +897,26 @@ func TestHistoryEncryptDefault(t *testing.T) {
 		t.Fatalf("Config.EncryptHistory should default encryptHistory=true: %s", body)
 	}
 }
+
+// ShareProvide: a DI-built provider (here needing *nexus.App) must join the
+// shared group and land on the page like any Share prop.
+func TestShareProvideRenders(t *testing.T) {
+	addr := "127.0.0.1:8819"
+	bootInertia(t, addr, inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
+		return func(ctx context.Context) (string, any) {
+			return "can", map[string]bool{"saveWidget": app != nil}
+		}
+	}))
+
+	_, body := req(t, addr, "/widgets", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatalf("bad page JSON: %v — %s", err, body)
+	}
+	can, ok := page.Props["can"].(map[string]any)
+	if !ok || can["saveWidget"] != true {
+		t.Fatalf("shared can prop = %#v", page.Props["can"])
+	}
+}

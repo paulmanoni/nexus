@@ -880,7 +880,23 @@ Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Can(ctx, "add_user")` and `auth.Gates(ctx, "add_user", "delete_user")
 map[string]bool` evaluate through the identical PermissionFn/Backend.Authorize
 the `Requires` gate consults, so a page's "can" props cannot drift from the
-endpoint gates. Extractors: `auth.Bearer()`, `auth.Cookie(name)`,
+endpoint gates.
+
+**Op gates — permissions declared once, frontend asks by op name.**
+`auth.Requires` stamps its permission list onto the endpoint's registry entry,
+and `auth.OpGates(ctx, app)` answers `map[opName]bool` for every registered op
+— so the frontend keys on op names it already calls (`can.saveUser`) and no
+permission string exists outside the registration. Wire it app-wide as one
+Inertia shared prop:
+```go
+inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
+    return func(ctx context.Context) (string, any) { return "can", auth.OpGates(ctx, app) }
+})
+```
+Ops without `Requires` are always true (it reports permission gates, not
+authentication); evaluation is server-side through Backend.Authorize, and the
+registry is compiled once per version into a table grouped by unique
+permission set (~4µs for 200 ops), so it is safe on every page render. Extractors: `auth.Bearer()`, `auth.Cookie(name)`,
 `auth.APIKey(header)`, `auth.Chain(...)`. Typed user in a handler:
 `u, ok := auth.User[MyUser](p.Context)`. Logout: take `*auth.Manager`, call
 `Invalidate(token)` / `InvalidateByIdentity(id)`. A full OAuth2 server is

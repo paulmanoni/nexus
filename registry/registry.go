@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/paulmanoni/nexus/middleware"
@@ -212,6 +213,12 @@ type Worker struct {
 }
 
 type Registry struct {
+	// rev counts mutations (bumped in notifyChanged). Readers that
+	// compile derived views of the registry (auth.OpGates' gate table)
+	// key their caches on it: cheap to read, and any mutation
+	// invalidates every derived cache at once.
+	rev atomic.Uint64
+
 	mu          sync.RWMutex
 	services    map[string]Service
 	endpoints   []Endpoint
@@ -279,10 +286,15 @@ func (r *Registry) OnChange(hook func()) {
 	r.changeHook = hook
 }
 
+// Version returns the mutation counter — it changes whenever any
+// registry content changes, so derived caches can key on it.
+func (r *Registry) Version() uint64 { return r.rev.Load() }
+
 // notifyChanged invokes changeHook if set. Called from mutating
 // methods inside the write lock; the hook contract requires non-
 // blocking behavior so the lock is released promptly.
 func (r *Registry) notifyChanged() {
+	r.rev.Add(1)
 	if r.changeHook != nil {
 		r.changeHook()
 	}
@@ -406,6 +418,14 @@ func (r *Registry) Endpoints() []Endpoint {
 	copy(out, r.endpoints)
 	return out
 }
+
+// AuthRequiresTag is the Endpoint.Tags key carrying the permission
+// codenames the endpoint's auth.Requires middleware enforces, as a
+// comma-joined list (multiple Requires bundles append — AND semantics,
+// matching the middleware chain). Stamped automatically when a bundle
+// with Middleware.Requires metadata is attached; read by auth.OpGates
+// so frontend permission gates derive from the registration itself.
+const AuthRequiresTag = "auth.requires"
 
 // HiddenTag is the Endpoint.Tags key set by nexus.HideFromDashboard().
 // Endpoints carrying it ("true") still route + serve normally; they are

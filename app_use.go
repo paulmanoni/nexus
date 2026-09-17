@@ -2,10 +2,12 @@ package nexus
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/paulmanoni/nexus/di"
 
 	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/registry"
 )
 
 // Use attaches a transport-agnostic middleware bundle to a registration.
@@ -59,6 +61,7 @@ func (m MiddlewareOption) applyToGql(c *gqlConfig) {
 		})
 	}
 	c.bundles = append(c.bundles, m.mw)
+	stampRequiresTag(&c.baseEndpointConfig, m.mw.Requires)
 }
 
 // applyToRest wires this middleware into a REST registration. Same
@@ -66,6 +69,7 @@ func (m MiddlewareOption) applyToGql(c *gqlConfig) {
 // always record the name for the dashboard.
 func (m MiddlewareOption) applyToRest(c *restConfig) {
 	c.bundles = append(c.bundles, m.mw)
+	stampRequiresTag(&c.baseEndpointConfig, m.mw.Requires)
 }
 
 // applyToWS wires this middleware into an AsWS registration. Only the
@@ -74,6 +78,22 @@ func (m MiddlewareOption) applyToRest(c *restConfig) {
 // warning log).
 func (m MiddlewareOption) applyToWS(c *wsConfig) {
 	c.bundles = append(c.bundles, m.mw)
+	stampRequiresTag(&c.baseEndpointConfig, m.mw.Requires)
+}
+
+// stampRequiresTag folds a bundle's Requires metadata into the endpoint's
+// registry tags. Multiple bundles append (comma-joined) — each middleware
+// gates independently, so the effective requirement is the union, which is
+// exactly what the joined list expresses under Requires' all-of semantics.
+func stampRequiresTag(b *baseEndpointConfig, perms []string) {
+	if len(perms) == 0 {
+		return
+	}
+	joined := strings.Join(perms, ",")
+	if existing := b.tags[registry.AuthRequiresTag]; existing != "" {
+		joined = existing + "," + joined
+	}
+	b.setTag(registry.AuthRequiresTag, joined)
 }
 
 // checkBundleTransports enforces fail-closed attachment (redesign §5): a

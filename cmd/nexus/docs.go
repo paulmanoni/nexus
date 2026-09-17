@@ -717,6 +717,28 @@ UI permission toggles (same rulebook as Requires):
         Both evaluate through the configured PermissionFn /
         Backend.Authorize — a page's "can" props cannot drift
         from the endpoint gates. Anonymous → false.
+
+Op gates — declare permissions ONCE, on the registration:
+
+    auth.OpGates(ctx, app)                          // map[opName]bool
+
+        auth.Requires stamps its permission list onto the endpoint's
+        registry entry; OpGates evaluates every registered op's own
+        declaration for the current identity. The frontend keys on op
+        names it already calls (can.saveUser) — no permission string
+        exists outside the registration. Ops without Requires are
+        always true (permission gates, not authentication). App-wide
+        Inertia prop:
+
+            inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
+                return func(ctx context.Context) (string, any) {
+                    return "can", auth.OpGates(ctx, app)
+                }
+            })
+
+        Performance: compiled once per registry version, ops grouped
+        by unique permission set (one Authorize call per set, not per
+        op) — ~4µs / 4 allocs for 200 ops. Safe on every render.
     )
 
 Token extractors:

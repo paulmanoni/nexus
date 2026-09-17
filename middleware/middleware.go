@@ -57,6 +57,14 @@ type Middleware struct {
 	Kind        Kind              // defaults to KindCustom when unset by factories
 	Gin         httpx.HandlerFunc // REST + WS upgrade path
 	Graph       graph.FieldMiddleware
+	// Requires is declarative metadata: the permission codenames this
+	// bundle enforces (set by auth.Requires). The framework stamps them
+	// onto the endpoint's registry entry (registry.AuthRequiresTag) so
+	// gate evaluation (auth.OpGates) reads the SAME declaration the
+	// enforcing middleware closed over — one source, no drift. Purely
+	// metadata; attaching a bundle with Requires set enforces nothing
+	// by itself.
+	Requires []string
 }
 
 // AsInfo returns the registry-side metadata for this bundle, defaulting

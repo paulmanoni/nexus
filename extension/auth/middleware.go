@@ -78,7 +78,7 @@ func Requires(perms ...string) nexus.MiddlewareOption {
 	if len(perms) > 0 {
 		name = "auth:requires:" + joinPerms(perms)
 	}
-	return nexus.Use(builtin(name,
+	mw := builtin(name,
 		"Requires one or more permissions on the identity",
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
 			id, ok := IdentityFrom(rc.Context)
@@ -89,7 +89,13 @@ func Requires(perms ...string) nexus.MiddlewareOption {
 				return rejectAuth(rc, ErrForbidden)
 			}
 			return next(rc)
-		}))
+		})
+	// Declarative copy of the enforced perms: the framework stamps these
+	// onto the endpoint's registry tags (registry.AuthRequiresTag), which
+	// is what OpGates evaluates — the gate and the UI toggle read one
+	// declaration.
+	mw.Requires = perms
+	return nexus.Use(mw)
 }
 
 // Optional is a no-op bundle that exists purely as dashboard signal —
