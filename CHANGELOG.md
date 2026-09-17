@@ -4,6 +4,36 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.52.0] - 2026-09-17
+
+### Added
+
+- **Op gates: permissions declared once, on the registration.**
+  `auth.Requires("add_user")` now stamps its permission list onto the
+  endpoint's registry entry, and `auth.OpGates(ctx, app)` evaluates
+  every registered op's own declaration for the current identity —
+  returning `map[opName]bool` keyed by the op names the frontend
+  already calls. No permission string exists outside the
+  registration, and no page hand-builds a parallel "can" table that
+  can drift from the gates. App-wide wiring is one Inertia option via
+  the new `inertia.ShareProvide` (a DI-built shared prop):
+
+      inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
+          return func(ctx context.Context) (string, any) {
+              return "can", auth.OpGates(ctx, app)
+          }
+      })
+      // SPA: v-if="can.saveUser"
+
+  Ops without `Requires` are always true (it reports permission
+  gates, not authentication); evaluation runs server-side through the
+  configured `PermissionFn` / `Backend.Authorize`, so superuser
+  bypasses and custom logic hold. Built for per-render use: the
+  registry compiles once per registry version (new
+  `registry.Version()` mutation counter) into a table grouped by
+  unique permission set — one authorize call per set, not per op;
+  ~4µs / 4 allocs for 200 ops.
+
 ## [1.51.0] - 2026-09-17
 
 ### Added
