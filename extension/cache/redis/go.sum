@@ -30,8 +30,8 @@ github.com/klauspost/cpuid/v2 v2.2.10 h1:tBs3QSyvjDyFTq3uoc/9xFpCuOsJQFNPiAhYdw2
 github.com/klauspost/cpuid/v2 v2.2.10/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
 github.com/patrickmn/go-cache v2.1.0+incompatible h1:HRMgzkcYKYpi3C8ajMPV8OFXaaRUnok+kx1WdO15EQc=
 github.com/patrickmn/go-cache v2.1.0+incompatible/go.mod h1:3Qf8kWWT7OJRJbdiICTKqZju1ZixQ/KpMGzzAfe6+WQ=
-github.com/paulmanoni/nexus v1.52.0 h1:z1hr0S+J1NduhZ+hkxNTv9skP9ZiqNEfQk3bCH40e0w=
-github.com/paulmanoni/nexus v1.52.0/go.mod h1:KQO2Hp0yOT8VZquRfq5W+RI4wV45W3V+N9foboxrPAE=
+github.com/paulmanoni/nexus v1.53.0 h1:l6yW4kbP5z9PIHvC3PKS/VJ+SDt39Y0qVmdKTP7R2qQ=
+github.com/paulmanoni/nexus v1.53.0/go.mod h1:KQO2Hp0yOT8VZquRfq5W+RI4wV45W3V+N9foboxrPAE=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
 github.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
