@@ -210,6 +210,14 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	if cfg.opName == "" {
 		cfg.opName = opNameFromFunc(fn, string(kind))
 	}
+	if cfg.envelopeErr != nil {
+		return rawOption{o: di.Error(cfg.envelopeErr)}
+	}
+	if cfg.envelope != nil {
+		if err := cfg.envelope.check(sh.returnType); err != nil {
+			return rawOption{o: di.Error(err)}
+		}
+	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportGraphQL, cfg.opName); err != nil {
 		return rawOption{o: di.Error(err)}
 	}
@@ -268,7 +276,14 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		// sh.depTypes; the extra trailing slot (when present) is the
 		// service instance fx resolved on our behalf.
 		deps := allDeps[:len(sh.depTypes)]
-		r := graph.NewResolverFromType(cfg.opName, sh.returnElementType())
+		// With an Envelope, the schema declares the wrap's output type —
+		// the envelope is the wire contract, so introspection and the
+		// generated SDK must describe it, not the handler's inner type.
+		retElem := sh.returnElementType()
+		if cfg.envelope != nil {
+			retElem = cfg.envelope.outElem()
+		}
+		r := graph.NewResolverFromType(cfg.opName, retElem)
 		if cfg.description != "" {
 			r.WithDescription(cfg.description)
 		}
@@ -340,11 +355,15 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 				}
 				argsVal = argsPtr.Elem()
 			}
-			return capturedSh.callHandler(callInput{
+			res, err := capturedSh.callHandler(callInput{
 				Ctx:    p.Context,
 				Source: p.Source,
 				Info:   p.Info,
 			}, deps, argsVal)
+			if env := cfg.envelope; env != nil {
+				return env.apply(res, err)
+			}
+			return res, err
 		})
 
 		var built any
@@ -375,7 +394,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 			Deps:        append([]reflect.Value(nil), deps...),
 			RateLimit:   cfg.rateLimit,
 			ArgsType:    sh.argsType,
-			ReturnType:  sh.returnType,
+			ReturnType:  entryReturnType(sh, cfg.envelope),
 			Tags:        cfg.tags,
 		}
 		return []reflect.Value{reflect.ValueOf(entry)}

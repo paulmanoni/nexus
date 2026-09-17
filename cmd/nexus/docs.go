@@ -408,6 +408,29 @@ means a ZERO-arg VALUE-receiver method expression (func(S)) would
 read the receiver itself as the args container — use pointer
 receivers for handler methods.
 
+RESPONSE ENVELOPES (nexus.Envelope)
+
+When the API wraps every result in a custom shape, attach the
+app's wrap function per op instead of converting in each handler:
+
+    func Wrap[T any](v T, err error) (*Response[T], error) {
+        if err != nil {
+            return &Response[T]{Status: false, Message: err.Error()}, nil
+        }
+        return &Response[T]{Status: true, Data: v}, nil
+    }
+
+    nexus.AsQuery((*UserService).ListUsers, nexus.Envelope(Wrap[[]UserRow]))
+    nexus.AsRest("GET", "/users", (*UserService).ListUsers, nexus.Envelope(Wrap[[]UserRow]))
+
+The wrap must be func(T, error) (W, error) with T assignable from
+the handler's result. GraphQL declares W in the schema (the
+envelope IS the contract); REST serializes W. An error the wrap
+converts into a value ships as a normal 200/data response; an
+error the wrap RETURNS follows the standard error path. Binding /
+validation failures happen before the handler and are never
+enveloped. A mismatched wrap fails at boot naming both types.
+
 Service-less handlers (e.g. a public HelloWorld) auto-mount on a
 synthesized default service partition — works across single- and
 multi-service apps.

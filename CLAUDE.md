@@ -495,6 +495,23 @@ Reach for `Params[T]` only when the handler needs more than ctx+args. Use pointe
 receivers: a zero-arg value-receiver method expression would read the receiver
 struct itself as the args container.
 
+**Response envelopes (`nexus.Envelope`).** When the API's wire contract wraps every
+result (`{status, message, data}`-style), don't convert errors by hand in each
+handler — attach the app's wrap function per op and keep handlers on plain
+`(T, error)`:
+```go
+func Wrap[T any](v T, err error) (*Response[T], error) {   // app-owned shape
+    if err != nil { return &Response[T]{Status: false, Message: err.Error()}, nil }
+    return &Response[T]{Status: true, Data: v}, nil
+}
+
+nexus.AsQuery((*UserService).ListUsers, nexus.Envelope(Wrap[[]UserRow]))
+```
+The GraphQL schema (and generated SDK) declare the wrap's output type — the
+envelope is the contract. An error the wrap converts becomes a normal 200/data
+response; an error the wrap *returns* follows the standard error path. Binding
+and validation failures are never enveloped. REST + GraphQL.
+
 ### REST
 ```go
 type GetArgs struct { ID string `path:"id"` }   // path param `:id` binds via the `path` tag (legacy `uri` also works)

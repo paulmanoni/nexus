@@ -38,6 +38,14 @@ type baseEndpointConfig struct {
 	// Surfaced on the dashboard + the client SDK manifest. Lazy-init
 	// inside the option setter so endpoints with no tags pay nothing.
 	tags map[string]string
+
+	// envelope, when set via nexus.Envelope, pipes the handler's
+	// (result, error) through an app-supplied wrap function before the
+	// wire write — GraphQL declares the wrap's output type in the
+	// schema. envelopeErr carries a malformed wrap function from option
+	// apply time to registration, where it fails boot with context.
+	envelope    *envelopeSpec
+	envelopeErr error
 }
 
 func (b *baseEndpointConfig) setModule(name string) { b.module = name }

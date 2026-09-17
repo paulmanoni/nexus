@@ -55,6 +55,14 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	if err != nil {
 		return rawOption{o: di.Error(err)}
 	}
+	if cfg.envelopeErr != nil {
+		return rawOption{o: di.Error(cfg.envelopeErr)}
+	}
+	if cfg.envelope != nil {
+		if err := cfg.envelope.check(sh.returnType); err != nil {
+			return rawOption{o: di.Error(err)}
+		}
+	}
 	return asRestInvoke(method, path, cfg, sh)
 }
 
@@ -274,7 +282,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		// even when the same handler is reused across routes. See the
 		// AsRestHandler comment above for context.
 		opName := method + " " + finalPath
-		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath, cfg.renderer, app)
+		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath, cfg.renderer, cfg.envelope, app)
 
 		// AsRest's reflective path threads tracing inside buildGinHandler
 		// (so the handler can read the span back); pass an empty
@@ -351,7 +359,7 @@ func unwrapService(v reflect.Value, t reflect.Type) (*Service, bool) {
 // when an option like nexus.WithRenderer / inertia.Page supplies one, it owns
 // the success write instead. The error path is unchanged — renderers only
 // shape successful returns in this release.
-func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer, app *App) httpx.HandlerFunc {
+func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *trace.Bus, service, path string, renderer ResponseRenderer, env *envelopeSpec, app *App) httpx.HandlerFunc {
 	endpointName := method + " " + path
 	return func(c *httpx.Ctx) {
 		// Expose the app to a custom renderer (e.g. Inertia) so it can pull
@@ -385,6 +393,13 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			Ctx:    c.Request.Context(),
 			GinCtx: c, // available to handlers that take *httpx.Ctx as a param
 		}, deps, args)
+		// The envelope sees the raw (result, err) pair BEFORE the error
+		// branch: converting an error into a wire value (Status:false
+		// payload with HTTP 200) is exactly what an envelope is for. An
+		// error the wrap returns keeps flowing down the standard path.
+		if env != nil {
+			result, err = env.apply(result, err)
+		}
 		if err != nil {
 			// Offer the error to a renderer first (e.g. Inertia turning
 			// a Redirect/Location sentinel into a 303/409). If it takes
