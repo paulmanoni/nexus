@@ -196,6 +196,7 @@ func openInBrowser(url string, stdout io.Writer) error {
 var topicSummaries = map[string]string{
 	"quickstart":  "Minimal app: Run, Module, AsQuery",
 	"handlers":    "Reflective handler signature, Params[T], return shape",
+	"forms":       "nexus.Form raw input + nexus.Errors field/global validation",
 	"module":      "nexus.Module, Provide, ProvideService, route prefix",
 	"auth":        "auth.Module setup, Required, Requires, User[T]",
 	"oauth2":      "oauth2.Module — go-oauth2 server + auth bridge",
@@ -434,6 +435,57 @@ enveloped. A mismatched wrap fails at boot naming both types.
 Service-less handlers (e.g. a public HelloWorld) auto-mount on a
 synthesized default service partition — works across single- and
 multi-service apps.
+`,
+
+	"forms": `
+FORMS & VALIDATION ERRORS
+
+*nexus.Form — the raw-input escape hatch (REST + Inertia pages). Declare
+it as a handler param (framework-filled, like *httpx.Ctx); reachable
+below the handler via nexus.FormFrom(ctx):
+
+    func NewUploadCv(svc *Svc, ctx context.Context, fm *nexus.Form) (any, error) {
+        title := fm.Get("title")
+        cv, err := fm.File("cv")     // *FormFile: Name/Size/ContentType/Open
+        ...
+    }
+
+Reads are SOURCE-UNIFIED: Get/Lookup/All/Int/Bool/File/Files see the
+same fields whether the client sent a JSON body (Inertia useForm's
+default), multipart/form-data (what useForm switches to when a file is
+attached), urlencoded, or — lowest precedence — the URL query. So a
+working form doesn't break the day a file input is added. Value(key)
+returns the raw decoded JSON value for nested shapes; Bind(&dto)
+bridges back into the typed world (tags bind as usual).
+
+Files stream: Open() hands you the multipart part (spilled to a temp
+file when large), never a full in-memory copy; max_body_bytes remains
+the total cap. Prefer typed dtos when fields are known — validation
+tags, GraphQL schema, the typed SDK and maskid unmasking all ride the
+dto, and raw Get bypasses maskid. On GraphQL/WS the param is a typed
+nil whose methods no-op.
+
+nexus.Errors — accumulated field + global validation errors:
+
+    errs := nexus.NewErrors()
+    if taken { errs.Field("email", "already taken") }
+    if down  { errs.Global("payment provider unreachable") }
+    if errs.Any() { return nil, errs }
+
+Rendering per transport:
+  Inertia page  flash + 303 back; next render's errors prop carries
+                first-message-per-field, global under errors._global
+                (the reserved nexus.GlobalErrorKey), X-Inertia-Error-Bag
+                honored — the useForm convention.
+  REST          422 {"message": "validation failed",
+                     "errors": {field: [messages]}}
+  GraphQL       normal GraphQL error; extensions = {code: VALIDATION,
+                errors: {field: [messages]}}
+
+Field keys should match the args struct's json tags so useForm binds
+messages onto the right inputs. inertia.Invalid / InvalidField remain
+as thin per-page alternatives; nexus.Errors is the transport-neutral
+form services can also build and return.
 `,
 
 	"module": `

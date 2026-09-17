@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -415,6 +416,19 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 					}
 					return
 				}
+			}
+			// Validation errors are a normal outcome, not a failure of the
+			// endpoint: render the accumulated field/global messages as a
+			// 422 and skip the error-trace/500 machinery. Inertia pages
+			// never reach here — their renderer's RenderError turned the
+			// same value into a flash + 303 above.
+			var verrs *Errors
+			if errors.As(err, &verrs) {
+				c.JSON(http.StatusUnprocessableEntity, httpx.H{
+					"message": "validation failed",
+					"errors":  verrs.FieldErrors(),
+				})
+				return
 			}
 			// errtrace.Wrap captures THIS frame as a bottom-of-stack
 			// marker (the framework's REST boundary). User code that

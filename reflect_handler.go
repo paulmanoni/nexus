@@ -37,6 +37,7 @@ var (
 	contextType      = reflect.TypeOf((*context.Context)(nil)).Elem()
 	ginContextType   = reflect.TypeOf((*httpx.Ctx)(nil))
 	wsSessionType    = reflect.TypeOf((*WSSession)(nil))
+	formType         = reflect.TypeOf((*Form)(nil))
 	paramsMarkerType = reflect.TypeOf((*nexusParamsMarker)(nil)).Elem()
 )
 
@@ -63,6 +64,7 @@ const (
 	paramParams
 	paramGinCtx // filled from callInput.GinCtx (REST transport only)
 	paramWS     // filled from callInput.WS (AsWS transport only)
+	paramForm   // *Form built from callInput.GinCtx (REST only; typed nil elsewhere)
 )
 
 type paramSlot struct {
@@ -160,6 +162,11 @@ func inspectHandler(fn any) (handlerShape, error) {
 			// nil so the handler can guard with `if s == nil`; all
 			// WSSession methods already nil-check the receiver.
 			sh.slots[i] = paramSlot{kind: paramWS}
+		case sh.funcType.In(i) == formType:
+			// *Form — REST only (Inertia pages included). GraphQL/WS
+			// pass a typed nil; every Form method nil-checks the
+			// receiver, so misuse degrades to empty reads, not panics.
+			sh.slots[i] = paramSlot{kind: paramForm}
 		default:
 			sh.slots[i] = paramSlot{kind: paramDep, depPos: len(sh.depTypes)}
 			sh.depTypes = append(sh.depTypes, sh.funcType.In(i))
@@ -217,6 +224,21 @@ func (sh handlerShape) returnElementType() reflect.Type {
 // the concrete Params value reflectively and plugs it into the right slot.
 func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args reflect.Value) (any, error) {
 	in := make([]reflect.Value, len(sh.slots))
+	// Build the Form first (when declared) and stash it on the resolve
+	// context, so the handler's ctx — and everything the handler passes it
+	// to — can reach the same Form via FormFrom.
+	var formVal *Form
+	for _, slot := range sh.slots {
+		if slot.kind == paramForm && ci.GinCtx != nil {
+			formVal = newForm(ci.GinCtx)
+			base := ci.Ctx
+			if base == nil {
+				base = context.Background()
+			}
+			ci.Ctx = context.WithValue(base, formCtxKey{}, formVal)
+			break
+		}
+	}
 	var paramsVal reflect.Value
 	if sh.hasParams {
 		method := ""
@@ -253,6 +275,12 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 				in[i] = reflect.Zero(wsSessionType)
 			} else {
 				in[i] = reflect.ValueOf(ci.WS)
+			}
+		case paramForm:
+			if formVal == nil {
+				in[i] = reflect.Zero(formType)
+			} else {
+				in[i] = reflect.ValueOf(formVal)
 			}
 		}
 	}

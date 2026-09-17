@@ -103,5 +103,12 @@ func (p pageRenderer) RenderError(c *httpx.Ctx, err error) (bool, error) {
 	if errors.As(err, &ve) {
 		return true, writeValidationRedirect(c, ve)
 	}
+	// nexus.Errors (the core accumulator, field + global) rides the same
+	// flash + 303 flow: first message per field, the global messages under
+	// errors._global — one object, the one useForm already watches.
+	var ne *nexus.Errors
+	if errors.As(err, &ne) {
+		return true, writeValidationRedirect(c, &validationError{fields: ne.First()})
+	}
 	return false, nil
 }

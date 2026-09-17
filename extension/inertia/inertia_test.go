@@ -920,3 +920,55 @@ func TestShareProvideRenders(t *testing.T) {
 		t.Fatalf("shared can prop = %#v", page.Props["can"])
 	}
 }
+
+// nexus.Errors returned from a page handler must ride the same flash + 303
+// flow as inertia.Invalid — field messages plus the global message under
+// errors._global, on the one object useForm watches.
+func TestNexusErrorsFlashWithGlobal(t *testing.T) {
+	addr := "127.0.0.1:8853"
+	newTwo := func(p nexus.Params[struct{}]) (any, error) {
+		if p.Method == http.MethodGet {
+			return regProps{Title: "Two"}, nil
+		}
+		return nil, nexus.NewErrors().
+			Field("email", "already taken").
+			Global("provider unreachable")
+	}
+	bootInertia(t, addr, inertia.Page("GET,POST", "/two", "Two", newTwo, nexus.Public()))
+
+	res, _ := doReq(t, "POST", addr, "/two", map[string]string{"X-Inertia": "true"})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("nexus.Errors should 303, got %d", res.StatusCode)
+	}
+	var flash string
+	for _, ck := range res.Cookies() {
+		if ck.Name == "nexus_inertia_errors" {
+			flash = ck.Value
+		}
+	}
+	if flash == "" {
+		t.Fatal("errors flash cookie missing")
+	}
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	r, _ := http.NewRequest("GET", "http://"+addr+"/two", nil)
+	r.Header.Set("X-Inertia", "true")
+	r.AddCookie(&http.Cookie{Name: "nexus_inertia_errors", Value: flash})
+	res2, err := client.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	b, _ := io.ReadAll(res2.Body)
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal(b, &page); err != nil {
+		t.Fatal(err)
+	}
+	errs, _ := page.Props["errors"].(map[string]any)
+	if errs["email"] != "already taken" || errs["_global"] != "provider unreachable" {
+		t.Fatalf("errors prop = %#v", page.Props["errors"])
+	}
+}

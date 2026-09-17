@@ -497,6 +497,29 @@ Reach for `Params[T]` only when the handler needs more than ctx+args. Use pointe
 receivers: a zero-arg value-receiver method expression would read the receiver
 struct itself as the args container.
 
+**Raw form input (`*nexus.Form`) + validation errors (`nexus.Errors`).** For
+genuinely dynamic input — file uploads, variable-key forms — declare a `*Form`
+param (framework-filled; also reachable below the handler via
+`nexus.FormFrom(ctx)`). Reads are source-unified: `Get/All/File` see the same
+fields whether the client sent JSON (Inertia's `useForm` default), multipart
+(what useForm switches to when a file is attached), urlencoded, or query
+fallback. `fm.Bind(&dto)` bridges back to the typed world; typed dtos remain
+the default — schema/SDK/validation/maskid ride them, not `fm.Get`.
+```go
+func NewUploadCv(svc *Svc, ctx context.Context, fm *nexus.Form) (any, error) {
+    cv, err := fm.File("cv")            // *FormFile: Name/Size/ContentType/Open (streams)
+    ...
+    errs := nexus.NewErrors()
+    if taken { errs.Field("email", "already taken") }
+    if down  { errs.Global("provider unreachable") }
+    if errs.Any() { return nil, errs }
+```
+`nexus.Errors` renders per transport: Inertia pages flash + 303 back (`errors`
+prop, `useForm` convention, global under `errors._global`, error bags honored);
+REST answers 422 `{"message", "errors": {field: [msgs]}}`; GraphQL carries the
+field map in the error's extensions. REST/Inertia only for `*Form` — on
+GraphQL/WS the param is a typed nil whose methods no-op.
+
 **Response envelopes (`nexus.Envelope`).** When the API's wire contract wraps every
 result (`{status, message, data}`-style), don't convert errors by hand in each
 handler — attach the app's wrap function per op and keep handlers on plain
