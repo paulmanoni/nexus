@@ -255,6 +255,9 @@ type ServerConfigBlock struct {
 	MaxBodyBytes   int64  `toml:"max_body_bytes"`
 	// TrustedProxies: CIDRs whose forwarded headers ClientIP honors.
 	TrustedProxies []string `toml:"trusted_proxies"`
+	// StripTrailingSlash routes "/users/" as "/users" (internal
+	// rewrite, no redirect).
+	StripTrailingSlash bool `toml:"strip_trailing_slash"`
 }
 
 // WebSocketConfigBlock is the TOML shape of WebSocketConfig.
@@ -345,15 +348,16 @@ func (b RuntimeConfigBlock) toConfig() (Config, error) {
 		TraceCapacity:         b.TraceCapacity,
 		SDK:                   b.SDK,
 		Server: ServerConfig{
-			Addr:            b.Server.Addr,
-			RoutePrefix:     b.Server.RoutePrefix,
-			ShutdownTimeout: parseDurationOr(b.Server.ShutdownTimeout, 0),
-			IdleTimeout:     parseDurationOr(b.Server.IdleTimeout, 0),
-			ReadTimeout:     parseDurationOr(b.Server.ReadTimeout, 0),
-			WriteTimeout:    parseDurationOr(b.Server.WriteTimeout, 0),
-			MaxHeaderBytes:  b.Server.MaxHeaderBytes,
-			MaxBodyBytes:    b.Server.MaxBodyBytes,
-			TrustedProxies:  b.Server.TrustedProxies,
+			Addr:               b.Server.Addr,
+			RoutePrefix:        b.Server.RoutePrefix,
+			ShutdownTimeout:    parseDurationOr(b.Server.ShutdownTimeout, 0),
+			IdleTimeout:        parseDurationOr(b.Server.IdleTimeout, 0),
+			ReadTimeout:        parseDurationOr(b.Server.ReadTimeout, 0),
+			WriteTimeout:       parseDurationOr(b.Server.WriteTimeout, 0),
+			MaxHeaderBytes:     b.Server.MaxHeaderBytes,
+			MaxBodyBytes:       b.Server.MaxBodyBytes,
+			TrustedProxies:     b.Server.TrustedProxies,
+			StripTrailingSlash: b.Server.StripTrailingSlash,
 		},
 		WebSocket: WebSocketConfig{
 			AllowedOrigins:  b.WebSocket.AllowedOrigins,

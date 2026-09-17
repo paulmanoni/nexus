@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"context"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -65,5 +67,44 @@ func TestCheckBundleTransportsMessage(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error message missing %q: %s", want, err.Error())
 		}
+	}
+}
+
+// [runtime.server] strip_trailing_slash: "/users/" serves the "/users"
+// route via an internal rewrite at the App boundary — no redirect, bodies
+// intact, identical on every router backend.
+func TestStripTrailingSlash(t *testing.T) {
+	app, stop, err := InProcess(Config{Server: ServerConfig{StripTrailingSlash: true}},
+		AsRestHandler("GET", "/users", func() httpx.HandlerFunc {
+			return func(c *httpx.Ctx) { c.String(200, "list") }
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+
+	for _, path := range []string{"/users", "/users/", "/users//"} {
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 || w.Body.String() != "list" {
+			t.Fatalf("GET %s = %d %q", path, w.Code, w.Body.String())
+		}
+	}
+
+	// Off by default: the trailing-slash spelling stays a 404.
+	app2, stop2, err := InProcess(Config{},
+		AsRestHandler("GET", "/users", func() httpx.HandlerFunc {
+			return func(c *httpx.Ctx) { c.String(200, "list") }
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop2(context.Background()) }()
+	w := httptest.NewRecorder()
+	app2.ServeHTTP(w, httptest.NewRequest("GET", "/users/", nil))
+	if w.Code == 200 {
+		t.Fatal("strip must be opt-in")
 	}
 }

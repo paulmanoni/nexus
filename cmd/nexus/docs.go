@@ -522,6 +522,9 @@ Handler returns props (this IS page.props), not a JSON body:
 Prop wrappers (the performance lever — thunks run only when included):
   inertia.Optional(fn) / inertia.Lazy(fn)  — excluded from full visits
   inertia.Always(v)                        — always sent, even on partial reloads
+  inertia.AlwaysFunc(fn)                   — Always, computed at render; fn is
+                                             func() (T, error) and its error
+                                             propagates through the render
   inertia.Defer(fn)                        — excluded but auto-fetched after mount
   inertia.Merge(fn)                        — sent + flagged for client-side merge
   plain field                              — full visit + when partially requested
@@ -706,6 +709,14 @@ Per-op gates (cross-transport):
     nexus.AsMutation(NewCreateAdvert,
         auth.Required(),                       // 401 if missing
         auth.Requires("ROLE_CREATE_ADVERT"),   // 403 if missing perm
+
+UI permission toggles (same rulebook as Requires):
+
+    auth.Can(ctx, "add_user")                       // bool
+    auth.Gates(ctx, "add_user", "delete_user")      // map[string]bool
+        Both evaluate through the configured PermissionFn /
+        Backend.Authorize — a page's "can" props cannot drift
+        from the endpoint gates. Anonymous → false.
     )
 
 Token extractors:
@@ -1187,6 +1198,8 @@ defaults apply. 'nexus new' scaffolds this block.
     [runtime.server]
     addr         = ":8080"
     route_prefix = ""               # prepended to every REST/GraphQL/WS route
+    strip_trailing_slash = true     # "/users/" routes as "/users" (internal
+                                    # rewrite, no redirect; off by default)
     # How long SIGINT/SIGTERM waits for in-flight requests before cutting
     # them and exiting. Omit for the default: 10s in production, 250ms
     # under nexus dev (nothing in flight is worth draining on a rebuild).

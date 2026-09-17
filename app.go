@@ -67,6 +67,10 @@ const defaultDashboardName = "Nexus"
 
 type App struct {
 	engine httpx.Router
+	// stripSlash, from [runtime.server] strip_trailing_slash, makes
+	// "/users/" route as "/users" (see ServeHTTP). Stored here because
+	// the rewrite happens at the App boundary, ahead of any backend.
+	stripSlash bool
 	// extValues is a per-app key/value store extensions use to stash
 	// boot-time state they must read at request time without relying on
 	// gin-middleware install ordering (which fx.Module route registration
@@ -301,6 +305,7 @@ func New(cfg Config) *App {
 
 	a := &App{
 		engine:           engine,
+		stripSlash:       cfg.Server.StripTrailingSlash,
 		dashboardName:    dashboardName,
 		version:          version,
 		environment:      cfg.Environment,
@@ -835,5 +840,30 @@ func (a *App) OnResourceUse(target UseReporter) {
 	})
 }
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Trailing-slash normalization (opt-in): "/users/" is served as
+	// "/users" — an internal rewrite, not a redirect, so POST bodies
+	// survive and clients never see a 3xx. Done here, at the single
+	// boundary every listener and test harness funnels through, so all
+	// router backends behave identically. The request is shallow-copied
+	// per the http.Handler contract (handlers must not mutate r).
+	if a.stripSlash {
+		if p := r.URL.Path; len(p) > 1 && p[len(p)-1] == '/' {
+			u := *r.URL
+			u.Path = strings.TrimRight(p, "/")
+			if u.Path == "" {
+				u.Path = "/"
+			}
+			if u.RawPath != "" {
+				u.RawPath = strings.TrimRight(u.RawPath, "/")
+				if u.RawPath == "" {
+					u.RawPath = "/"
+				}
+			}
+			r2 := new(http.Request)
+			*r2 = *r
+			r2.URL = &u
+			r = r2
+		}
+	}
 	a.engine.ServeHTTP(w, r)
 }

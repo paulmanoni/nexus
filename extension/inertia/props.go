@@ -71,6 +71,16 @@ func Always[T any](v T) Prop {
 	return Prop{kind: kindAlways, val: v}
 }
 
+// AlwaysFunc is Always for a value computed at render time that may fail —
+// same inclusion rule (sent on every visit, partials included), but the
+// thunk's error propagates through the render instead of being swallowed
+// by an immediately-invoked closure in the props literal:
+//
+//	User: inertia.AlwaysFunc(func() (*UserDetail, error) { return svc.GetUser(id) }),
+func AlwaysFunc[T any](fn func() (T, error)) Prop {
+	return Prop{kind: kindAlways, fn: func() (any, error) { return fn() }}
+}
+
 // Defer marks a prop that is excluded from the initial visit but advertised in
 // the page object's deferredProps, so the Inertia client automatically fetches
 // it in a follow-up partial request right after the page mounts. Use it to get

@@ -296,6 +296,13 @@ type ServerConfig struct {
 	// time so paths concatenate cleanly.
 	RoutePrefix string
 
+	// StripTrailingSlash makes "/users/" route as "/users" (any depth;
+	// "/" itself untouched) via an internal rewrite at the App boundary
+	// — no redirect, so non-GET requests keep their bodies. Off by
+	// default: paths then match exactly as registered. TOML:
+	// [runtime.server] strip_trailing_slash = true.
+	StripTrailingSlash bool
+
 	// NoListener boots the app without binding any network listener:
 	// startup tasks, manifest resolution, the SDK dump, cron, and
 	// liveness all run, but no net.Listen / Serve happens and the

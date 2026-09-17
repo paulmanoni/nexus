@@ -247,6 +247,8 @@ sdk            = true                    # one switch: generate+serve the typed 
 [runtime.server]
 addr = ":8080"
 route_prefix = ""                        # prepended to every REST/GraphQL/WS route
+# strip_trailing_slash = true            # "/users/" routes as "/users" (internal
+                                          # rewrite, no redirect; off by default)
 # idle_timeout   = "120s"                 # keep-alive cap (default 120s; "-1s" = Go's)
 # read_timeout   = "0s"                   # OFF by default (would cut large uploads)
 # write_timeout  = "0s"                   # OFF by default (would cut SSE/downloads)
@@ -874,7 +876,11 @@ auth.Module(auth.Config{
 })
 ```
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
-`auth.Requires("ROLE_X")` (403). Extractors: `auth.Bearer()`, `auth.Cookie(name)`,
+`auth.Requires("ROLE_X")` (403). UI toggles ride the same rulebook:
+`auth.Can(ctx, "add_user")` and `auth.Gates(ctx, "add_user", "delete_user")
+map[string]bool` evaluate through the identical PermissionFn/Backend.Authorize
+the `Requires` gate consults, so a page's "can" props cannot drift from the
+endpoint gates. Extractors: `auth.Bearer()`, `auth.Cookie(name)`,
 `auth.APIKey(header)`, `auth.Chain(...)`. Typed user in a handler:
 `u, ok := auth.User[MyUser](p.Context)`. Logout: take `*auth.Manager`, call
 `Invalidate(token)` / `InvalidateByIdentity(id)`. A full OAuth2 server is
