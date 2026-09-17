@@ -4,6 +4,42 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.53.0] - 2026-09-17
+
+### Added
+
+- **`*nexus.Form` — raw form input, source-unified.** Declare it as a
+  handler parameter (framework-filled, like `*httpx.Ctx`) or reach it
+  below the handler via `nexus.FormFrom(ctx)`:
+
+      func NewUploadCv(svc *Svc, ctx context.Context, fm *nexus.Form) (any, error) {
+          title := fm.Get("title")
+          cv, err := fm.File("cv")   // streams; never fully buffered
+      }
+
+  `Get / Lookup / All / Int / Bool / File / Files / Value / Bind` read
+  the same fields whether the client sent a JSON body (Inertia
+  `useForm`'s default), multipart/form-data (what useForm switches to
+  when a file is attached), urlencoded, or — lowest precedence — the
+  URL query, so a working form doesn't break the day a file input is
+  added. `Bind(&dto)` bridges back into the typed world. Typed dtos
+  remain the primary shape (schema, SDK, validation tags, and maskid
+  ride them — raw reads bypass maskid). REST/Inertia only; on
+  GraphQL/WS the param is a typed nil whose methods no-op.
+  `nexus docs forms`.
+
+- **`nexus.Errors` — field + global validation errors, one type, per-
+  transport rendering.** `Field("email", "taken")` accumulates;
+  `Global("provider unreachable")` writes under the reserved
+  `_global` key on the same object a form already watches. Returned
+  as the handler's error: Inertia pages flash + 303 back into the
+  `errors` prop (the useForm convention; `X-Inertia-Error-Bag`
+  honored; `inertia.Invalid` shares the path), REST answers
+  `422 {"message", "errors": {field: [msgs]}}` (a validation failure
+  is a normal outcome, not a 500), GraphQL carries the field map in
+  the error's extensions. Field keys should match the dto's json tags
+  so `useForm` binds messages onto the right inputs.
+
 ## [1.52.0] - 2026-09-17
 
 ### Added
