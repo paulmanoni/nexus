@@ -4,6 +4,60 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.51.0] - 2026-09-17
+
+### Added
+
+- **Service methods register as handlers directly — no wrapper.** A
+  method (or free function) shaped `func(ctx context.Context, args T)
+  (R, error)` is a valid handler as-is: the method expression's
+  receiver becomes a DI-injected dep, the trailing struct binds like
+  `Params[T].Args`, and the op name derives from the method name
+  (`CreateUser` → `createUser`):
+
+      nexus.AsMutation((*UserService).CreateUser, auth.Requires("add_user"))
+      nexus.AsRest("POST", "/users", (*UserService).CreateUser)
+
+  A bound method value (`svc.CreateUser`) works too and names the
+  same op — the runtime's `-fm` wrapper suffix is now stripped in
+  name extraction. This removes the one-line `NewXxx` delegation
+  wrapper per endpoint; the registration list becomes the single
+  declaration of op + route + permission. Use pointer receivers: a
+  zero-arg value-receiver method expression would read the receiver
+  struct itself as the args container.
+
+- **`nexus.Envelope(wrap)` — per-op response envelopes.** Apps whose
+  wire contract wraps every result (`{status, message, data}`-style)
+  no longer convert in each handler. The wrap is the app's own
+  `func(T, error) (W, error)`, instantiated per registration:
+
+      nexus.AsQuery((*UserService).ListUsers, nexus.Envelope(Wrap[[]UserRow]))
+
+  GraphQL declares W in the schema (introspection and the generated
+  SDK describe the real contract); REST serializes W. An error the
+  wrap converts into a value ships as a normal 200/data response; an
+  error the wrap returns follows the standard error path. Binding and
+  validation failures are never enveloped, and a wrap whose input
+  type doesn't match the handler fails at boot naming both types.
+
+- **`[runtime.server] strip_trailing_slash = true`** routes
+  `"/users/"` as `"/users"` — an internal rewrite at the App
+  boundary, not a redirect, so non-GET bodies survive and every
+  router backend behaves identically. Off by default.
+
+- **`auth.Can(ctx, perm)` / `auth.Gates(ctx, perms...)`** evaluate
+  UI permission toggles through the same `PermissionFn` /
+  `Backend.Authorize` the `Requires()` endpoint gate consults, so a
+  page's "can" props share one rulebook with the gates. `Gates`
+  returns `map[string]bool` with every requested permission present;
+  anonymous is always false.
+
+- **`inertia.AlwaysFunc(fn)`** — `Always` for a render-time
+  computation: same inclusion rule (sent on every visit, partials
+  included), but `func() (T, error)`, so the error propagates through
+  the render instead of being swallowed by an immediately-invoked
+  closure in the props literal.
+
 ## [1.50.0] - 2026-09-16
 
 ### Changed — BREAKING
