@@ -479,6 +479,22 @@ func NewOp(svc *XService, deps..., p nexus.Params[ArgsStruct]) (*Response, error
 - Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `path:"id"` for REST path params (legacy `uri:"id"` still works) (also `query:"x"`, `header:"X"`, `form:"x"`, `json:"x"`).
 - `nexus.Describe("…")` sets an op's description (dashboard + GraphQL SDL) — a cross-transport per-op option (REST / GraphQL / WS), like `HideFromDashboard()` / `WithIcon()`. It supersedes the transport-specific `Desc` (GraphQL) and `Description` (REST), which are deprecated but still work.
 
+**Service methods register directly — no wrapper.** A method (or free function)
+with the plain shape `func(ctx context.Context, args T) (R, error)` is a valid
+handler as-is: pass the method expression and the receiver becomes a DI-injected
+dep, the trailing struct binds like `Params[T].Args`, and the op name derives from
+the method name (`CreateUser` → `createUser`; a bound `svc.CreateUser` names the
+same). Kills the one-line `NewXxx` delegation wrappers:
+```go
+func (s *UserService) CreateUser(ctx context.Context, in CreateArgs) (*User, error) { ... }
+
+nexus.AsMutation((*UserService).CreateUser, auth.Requires("add_user"))
+nexus.AsRest("POST", "/users", (*UserService).CreateUser)
+```
+Reach for `Params[T]` only when the handler needs more than ctx+args. Use pointer
+receivers: a zero-arg value-receiver method expression would read the receiver
+struct itself as the args container.
+
 ### REST
 ```go
 type GetArgs struct { ID string `path:"id"` }   // path param `:id` binds via the `path` tag (legacy `uri` also works)

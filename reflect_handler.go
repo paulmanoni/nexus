@@ -309,10 +309,17 @@ func runtimeFuncName(v reflect.Value) string {
 	if f == "" {
 		return ""
 	}
-	// e.g. "github.com/paulmanoni/nexus/examples/graphapp.NewListOrders"
+	// e.g. "github.com/paulmanoni/nexus/examples/graphapp.NewListOrders",
+	// or for methods "pkg.(*UserService).CreateUser" — the last dot-segment
+	// is the bare name either way.
 	if idx := strings.LastIndex(f, "."); idx >= 0 {
 		f = f[idx+1:]
 	}
+	// A BOUND method value (svc.CreateUser, as opposed to the method
+	// expression (*Svc).CreateUser) is reported by the runtime as
+	// "CreateUser-fm" — strip the wrapper suffix so both spellings of the
+	// same method yield the same op name.
+	f = strings.TrimSuffix(f, "-fm")
 	// Closures have names like "NewListOrders.func1" — not useful.
 	if strings.HasPrefix(f, "func") {
 		return ""

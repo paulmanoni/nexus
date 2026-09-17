@@ -382,6 +382,32 @@ Constructor naming convention:
     is stripped for the dashboard / GraphQL field name).
   - Plain handler funcs without "New" keep their name as-is.
 
+SERVICE METHODS AS HANDLERS (no wrapper needed)
+
+A service method with the plain shape registers directly — no
+NewXxx wrapper, no Params[T]:
+
+    func (s *UserService) CreateUser(ctx context.Context, in CreateArgs) (*User, error)
+
+    nexus.AsMutation((*UserService).CreateUser, auth.Requires("add_user"))
+    nexus.AsRest("POST", "/users", (*UserService).CreateUser)
+
+The method expression's receiver becomes a DI-injected dep (the
+container supplies your *UserService), ctx fills from the request,
+the trailing struct binds args exactly like Params[T].Args, and the
+op name derives from the method name (createUser). A BOUND method
+value (svc.CreateUser) works too and yields the same op name.
+
+The same contract accepts a plain free function:
+
+    func CreateUser(ctx context.Context, in CreateArgs) (*User, error)
+
+Use Params[T] only when the handler needs more than ctx+args
+(Source/Info, the HTTP method). Note: the trailing-struct rule
+means a ZERO-arg VALUE-receiver method expression (func(S)) would
+read the receiver itself as the args container — use pointer
+receivers for handler methods.
+
 Service-less handlers (e.g. a public HelloWorld) auto-mount on a
 synthesized default service partition — works across single- and
 multi-service apps.
