@@ -67,6 +67,11 @@ const defaultDashboardName = "Nexus"
 
 type App struct {
 	engine httpx.Router
+	// scopedComputes/scopedMu back nexus.NewScoped: one erased compute per
+	// registered handle; the per-request store middleware installs itself
+	// on the first registration (see scoped.go).
+	scopedMu       sync.Mutex
+	scopedComputes []func(context.Context) (any, error)
 	// stripSlash, from [runtime.server] strip_trailing_slash, makes
 	// "/users/" route as "/users" (see ServeHTTP). Stored here because
 	// the rewrite happens at the App boundary, ahead of any backend.

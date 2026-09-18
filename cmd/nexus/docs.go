@@ -197,6 +197,7 @@ var topicSummaries = map[string]string{
 	"quickstart":  "Minimal app: Run, Module, AsQuery",
 	"handlers":    "Reflective handler signature, Params[T], return shape",
 	"forms":       "nexus.Form raw input + nexus.Errors field/global validation",
+	"scoped":      "nexus.NewScoped — request-scoped derived values (lazy, memoized)",
 	"module":      "nexus.Module, Provide, ProvideService, route prefix",
 	"auth":        "auth.Module setup, Required, Requires, User[T]",
 	"oauth2":      "oauth2.Module — go-oauth2 server + auth bridge",
@@ -511,6 +512,49 @@ Field keys should match the args struct's json tags so useForm binds
 messages onto the right inputs. inertia.Invalid / InvalidField remain
 as thin per-page alternatives; nexus.Errors is the transport-neutral
 form services can also build and return.
+`,
+
+	"scoped": `
+REQUEST-SCOPED DERIVED VALUES (nexus.NewScoped)
+
+A fact derived from the request — identity + DB, tenant state, a
+feature evaluation — computed at most once per request, on first
+ask, and shared by every handler, service and prop that asks after:
+
+    var delegatedScope = nexus.NewScoped[Scope](
+        func(svc *services.UserMgmtService) nexus.Compute[Scope] {
+            return func(ctx context.Context) (Scope, error) {
+                id, restricted := svc.DelegatedHrScope(ctx)
+                return Scope{EmployerID: id, Restricted: restricted}, nil
+            }
+        })
+
+    nexus.Boot(delegatedScope, ...)        // the handle is an Option
+    scope, err := delegatedScope.Get(ctx)  // anywhere, any transport
+
+The ctor's params are DI-injected at boot; T is spelled explicitly.
+The typed handle is the only door — a fact nobody registered cannot
+be asked for, and two facts of the same Go type coexist as two
+handles.
+
+Semantics (deliberately narrow):
+  - Lazy: never asked → never computed. Apps with no Scoped
+    registered pay nothing at all (the store middleware installs
+    only on first registration).
+  - Once per request: concurrent Gets (parallel GraphQL resolvers)
+    share ONE compute; the ERROR memoizes too — one consistent
+    answer per request, success or failure.
+  - Per-request only: no TTL, no cross-request cache, no
+    invalidation. Staleness-tolerant facts belong on the identity
+    (resolve-time enrichment rides the auth cache); facts that
+    outlive requests belong in extension/cache.
+
+Do not Get a handle from inside its own Compute (self-wait
+deadlocks its slot). Unit tests: pre-fill with
+nexus.WithScopedValue(ctx, handle, value) — no app boot, no real
+compute. Frontend: expose via inertia.ShareProvide calling
+handle.Get(ctx); the prop and every handler share the request's
+single compute.
 `,
 
 	"module": `

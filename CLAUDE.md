@@ -863,6 +863,24 @@ do not enable it for ids that travel to a system outside this app (a legacy back
 the SPA also calls, a partner webhook) — those consumers get strings they can't use,
 and handing the browser a way to reverse the mask defeats the point. `nexus docs maskid`.
 
+### Request-scoped derived values (`nexus.NewScoped`)
+A fact computed from the request (identity + DB, tenant state) at most once
+per request, on first ask, shared by every handler/service/prop that asks —
+Django's "compute it in middleware, hang it on request" without the eager cost:
+```go
+var delegatedScope = nexus.NewScoped[Scope](func(svc *services.UserMgmtService) nexus.Compute[Scope] {
+    return func(ctx context.Context) (Scope, error) { ... }
+})
+nexus.Boot(delegatedScope, ...)          // the handle is an Option
+scope, err := delegatedScope.Get(ctx)    // anywhere, any transport
+```
+Lazy (never asked → never computed; no Scoped registered → zero overhead),
+singleflight per request (concurrent GraphQL resolvers share one compute),
+error memoized. Per-request ONLY — a fact that tolerates staleness belongs on
+the identity (resolve-time enrichment rides the auth cache); one that outlives
+requests belongs in extension/cache. Unit tests inject with
+`nexus.WithScopedValue(ctx, handle, v)`. `nexus docs scoped`.
+
 ### Config values (`nexus.Get`)
 `nexus.Get[T]("key", default...)` reads from, highest priority first: (1) an ENV
 override (`db.port` → `DB_PORT`), (2) the `[extensions.config]` snapshot when wired
