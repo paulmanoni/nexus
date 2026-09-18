@@ -4,6 +4,29 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.54.0] - 2026-09-18
+
+### Added
+
+- **`nexus.Arg` — scalar parameters become named wire arguments, no
+  wrapper structs.** A registration option that kills the one-line
+  args-struct adapter a scalar-taking service method used to force:
+
+      nexus.AsQuery((*UserService).GetUser, nexus.Arg("id"), nexus.Op("userShow"))
+      nexus.AsRest("GET", "/users/:id", (*UserService).GetUser, nexus.Arg("id"))
+      nexus.AsMutation((*UserService).Move, nexus.Arg("id", "employerId"))
+
+  Names map positionally onto the handler's last len(names)
+  parameters (Go reflection cannot see parameter names). The args
+  struct is synthesized at registration — fields tagged
+  json/query/uri/graphql — so binding, the GraphQL schema and the
+  generated SDK see exactly what a hand-written wrapper declared;
+  non-pointer parameters are required arguments, pointer parameters
+  optional, and the op name still derives from the method. One or
+  two scalars ride Arg well; three or more deserve a dto. Misuse is
+  a boot error: struct parameters ("register it directly"),
+  Params[T] handlers, arity or name mismatches.
+
 ## [1.53.0] - 2026-09-17
 
 ### Added
