@@ -4,6 +4,37 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.0] - 2026-09-18
+
+### Performance
+
+- **`nexus.Arg` ops call the method directly.** The v1.54 adapter
+  invoked the original method through a `reflect.MakeFunc` trampoline
+  — double reflection plus argument re-packing, measured at +18% /
+  +5 allocs on a trivial REST op. The synthesized args struct now
+  exists only for binding and schema; the shape inspector feeds the
+  named scalar slots straight from the bound struct's fields into the
+  original function, in the one reflective call every handler already
+  pays. An Arg op now costs exactly what the hand-written wrapper
+  did (same allocations, time within noise).
+
+- **`nexus.Envelope` is generic — no reflect.Call per request.**
+  `Envelope[T, W](wrap func(T, error) (W, error))` captures the wrap
+  in a typed closure (one type assertion + a native call) instead of
+  invoking it reflectively; `reflect.TypeFor` still supplies the
+  schema types. Source-compatible — call sites passing a typed func
+  infer T and W — and the wrap's shape check moves from boot to the
+  compiler. Overhead over a bare handler: +295ns/+3 allocs before,
+  ~+110ns/+1 alloc after (the wrap call and the envelope value it
+  actually builds).
+
+- **`*Form` machinery is gated on a precomputed shape flag** — ops
+  that don't declare a `*Form` parameter no longer pay a per-request
+  slot scan.
+
+  Benchmarks live in perf_newfeatures_test.go so regressions on
+  these paths show up in `go test -bench`.
+
 ## [1.54.0] - 2026-09-18
 
 ### Added
