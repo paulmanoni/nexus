@@ -4,6 +4,27 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.58.0] - 2026-09-18
+
+### Added
+
+- **Client SDK: envelope-aware `nx.op`, same-tick query batching, op
+  composables.** Ops registered with `nexus.Envelope` are marked in
+  the manifest and the generated `GraphqlOps` map;
+  `await nx.op('usersList', vars)` picks query/mutation from the
+  manifest and unwraps `{status, message, data}` — resolving `data`
+  (typed `Promise<GqlData<K>>`) and throwing `NexusOpError` with the
+  envelope's message on `status:false` (`{unwrap:false}` for the raw
+  envelope). Independent queries issued in the same microtask
+  coalesce into ONE aliased GraphQL request per path, with per-alias
+  errors rejecting only their own caller. Vue gains
+  `useOpQuery(name, args)` (in-flight dedupe per op+args) and
+  `useOpMutation(name, {refresh, latest, onSuccess(data, message)})`
+  — `refresh` refetches every mounted `useOpQuery` of the named ops
+  after success; `latest` is the auto-save race guard. Verified end
+  to end from Node against a live app; emitted d.ts passes
+  `tsc --strict`. `nexus docs clientops`.
+
 ## [1.57.0] - 2026-09-18
 
 ### Added
