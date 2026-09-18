@@ -212,9 +212,6 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	if sh.returnType == nil {
 		return rawOption{o: di.Error(fmt.Errorf("nexus: %s handler %s needs a (T, error) return", kind, sh.funcType))}
 	}
-	if cfg.envelopeErr != nil {
-		return rawOption{o: di.Error(cfg.envelopeErr)}
-	}
 	if cfg.envelope != nil {
 		if err := cfg.envelope.check(sh.returnType); err != nil {
 			return rawOption{o: di.Error(err)}

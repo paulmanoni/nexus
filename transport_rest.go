@@ -56,9 +56,6 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	if err != nil {
 		return rawOption{o: di.Error(err)}
 	}
-	if cfg.envelopeErr != nil {
-		return rawOption{o: di.Error(cfg.envelopeErr)}
-	}
 	if cfg.envelope != nil {
 		if err := cfg.envelope.check(sh.returnType); err != nil {
 			return rawOption{o: di.Error(err)}

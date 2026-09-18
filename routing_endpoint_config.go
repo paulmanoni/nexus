@@ -48,10 +48,9 @@ type baseEndpointConfig struct {
 	// envelope, when set via nexus.Envelope, pipes the handler's
 	// (result, error) through an app-supplied wrap function before the
 	// wire write — GraphQL declares the wrap's output type in the
-	// schema. envelopeErr carries a malformed wrap function from option
-	// apply time to registration, where it fails boot with context.
-	envelope    *envelopeSpec
-	envelopeErr error
+	// schema. The wrap's shape is compiler-checked (Envelope is generic);
+	// only the T-vs-handler-return match is verified at registration.
+	envelope *envelopeSpec
 }
 
 func (b *baseEndpointConfig) setModule(name string) { b.module = name }
