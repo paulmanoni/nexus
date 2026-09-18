@@ -4,6 +4,20 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.57.0] - 2026-09-18
+
+### Added
+
+- **Scoped handles auto-provide into DI.** A handler can declare the
+  request-scoped fact it reads as an ordinary dependency —
+  `func NewUsersPage(ctx context.Context, scope *nexus.Scoped[Scope], ...)`
+  — instead of touching the package-level handle. Providers are lazy,
+  so nothing injects → nothing runs; the request path is unchanged.
+  `*Scoped[A]` and `*Scoped[B]` are distinct DI slots; two handles of
+  the SAME T in one app fail boot with the container's
+  duplicate-provider error — mark extras `.NoProvide()`, or give each
+  fact its own named type.
+
 ## [1.56.0] - 2026-09-18
 
 ### Added
