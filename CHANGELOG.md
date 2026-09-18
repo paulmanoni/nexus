@@ -4,6 +4,30 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.56.0] - 2026-09-18
+
+### Added
+
+- **`nexus.NewScoped` — request-scoped derived values.** A fact
+  derived from the request (identity + DB, tenant state, a feature
+  evaluation) computed at most once per request, on first ask, and
+  shared by every handler, service and prop that asks after:
+
+      var delegatedScope = nexus.NewScoped[Scope](
+          func(svc *services.UserMgmtService) nexus.Compute[Scope] { ... })
+      nexus.Boot(delegatedScope, ...)
+      scope, err := delegatedScope.Get(ctx)
+
+  Lazy (never asked → never computed; no Scoped registered → the
+  store middleware is never installed), singleflight per request
+  (parallel GraphQL resolvers share one compute), error memoized
+  alongside the value. Per-request lifetime ONLY — by design no TTL,
+  no cross-request cache, no invalidation: staleness-tolerant facts
+  belong on the identity, longer-lived facts in extension/cache.
+  Unit tests inject with `nexus.WithScopedValue(ctx, handle, v)`.
+  Full-request overhead with one handle and one Get: noise against
+  the bare-handler baseline. `nexus docs scoped`.
+
 ## [1.55.0] - 2026-09-18
 
 ### Performance
