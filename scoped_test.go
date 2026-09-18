@@ -144,7 +144,7 @@ func TestScopedTwoHandlesSameType(t *testing.T) {
 	})
 	b := NewScoped[scopeFact](func() Compute[scopeFact] {
 		return func(ctx context.Context) (scopeFact, error) { return scopeFact{N: 2}, nil }
-	})
+	}).NoProvide()
 	app, stop, err := InProcess(Config{},
 		a, b,
 		AsRest("GET", "/pair", func(ctx context.Context) (*scopeFact, error) {
@@ -239,5 +239,60 @@ func BenchmarkScopedGet(b *testing.B) {
 		if w.Code != 200 {
 			b.Fatal(w.Code)
 		}
+	}
+}
+
+type scopeFactB struct{ M int }
+
+// The handle auto-provides itself: a handler declares the fact it reads as
+// an ordinary DI dep. Distinct fact types are distinct DI slots.
+func TestScopedInjectable(t *testing.T) {
+	fa := NewScoped[scopeFact](func() Compute[scopeFact] {
+		return func(ctx context.Context) (scopeFact, error) { return scopeFact{N: 3}, nil }
+	})
+	fb := NewScoped[scopeFactB](func() Compute[scopeFactB] {
+		return func(ctx context.Context) (scopeFactB, error) { return scopeFactB{M: 4}, nil }
+	})
+	app, stop, err := InProcess(Config{},
+		fa, fb,
+		AsRest("GET", "/inj", func(a *Scoped[scopeFact], b *Scoped[scopeFactB], ctx context.Context) (*scopeFact, error) {
+			av, err := a.Get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			bv, err := b.Get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &scopeFact{N: av.N*10 + bv.M}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest("GET", "/inj", nil))
+	if !strings.Contains(w.Body.String(), `{"n":34}`) {
+		t.Fatalf("body = %s", w.Body.String())
+	}
+}
+
+// Two same-T handles without NoProvide: the container's duplicate-provider
+// check fails the boot, naming the type.
+func TestScopedDuplicateTypeBootError(t *testing.T) {
+	a := NewScoped[scopeFact](func() Compute[scopeFact] {
+		return func(ctx context.Context) (scopeFact, error) { return scopeFact{}, nil }
+	})
+	b := NewScoped[scopeFact](func() Compute[scopeFact] {
+		return func(ctx context.Context) (scopeFact, error) { return scopeFact{}, nil }
+	})
+	_, stop, err := InProcess(Config{}, a, b)
+	if stop != nil {
+		defer func() { _ = stop(context.Background()) }()
+	}
+	if err == nil || !strings.Contains(err.Error(), "provided more than once") {
+		t.Fatalf("want duplicate-provider boot error, got %v", err)
 	}
 }

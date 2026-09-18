@@ -874,6 +874,10 @@ var delegatedScope = nexus.NewScoped[Scope](func(svc *services.UserMgmtService) 
 nexus.Boot(delegatedScope, ...)          // the handle is an Option
 scope, err := delegatedScope.Get(ctx)    // anywhere, any transport
 ```
+The handle auto-provides itself into DI, so a handler can DECLARE the fact
+it reads: `func NewUsersPage(ctx context.Context, scope *nexus.Scoped[Scope], ...)`.
+Distinct fact types are distinct DI slots; two handles of the SAME T in one
+app trip the duplicate-provider boot error — mark extras `.NoProvide()`.
 Lazy (never asked → never computed; no Scoped registered → zero overhead),
 singleflight per request (concurrent GraphQL resolvers share one compute),
 error memoized. Per-request ONLY — a fact that tolerates staleness belongs on

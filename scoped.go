@@ -41,6 +41,14 @@ type Compute[T any] func(context.Context) (T, error)
 //     time enrichment rides the auth cache); a fact that outlives requests
 //     belongs in extension/cache. One lifetime keeps the model exact.
 //
+// The handle also AUTO-PROVIDES itself into the DI graph, so a handler can
+// declare the fact it reads as an ordinary dep instead of touching the
+// package var: `func NewUsersPage(ctx context.Context, scope *nexus.Scoped[Scope], ...)`.
+// Distinct fact types are distinct DI slots (*Scoped[A] and *Scoped[B]
+// coexist); TWO handles of the SAME T in one app trip the container's
+// duplicate-provider boot error — mark the extras .NoProvide(), or give
+// each fact its own named type.
+//
 // A handle binds to ONE app at a time (the package-level-var + single-app
 // pattern; a later boot rebinds it). Do not Get the same handle from
 // inside its own Compute — that self-wait deadlocks the slot. In unit
@@ -48,24 +56,51 @@ type Compute[T any] func(context.Context) (T, error)
 // (T is spelled explicitly — the ctor is `any` so Go cannot infer it.)
 func NewScoped[T any](ctor any) *Scoped[T] {
 	s := &Scoped[T]{idx: -1}
-	s.opt, s.ctorErr = s.buildOption(ctor)
+	s.invokeOpt, s.ctorErr = s.buildOption(ctor)
 	return s
 }
 
 // Scoped is the typed handle NewScoped returns — the only door to the
 // value, so a fact nobody registered cannot be asked for by accident.
 type Scoped[T any] struct {
-	idx     int // slot in the app's per-request store; -1 until bound
-	compute Compute[T]
-	opt     di.Option
-	ctorErr error
+	idx       int // slot in the app's per-request store; -1 until bound
+	compute   Compute[T]
+	invokeOpt di.Option
+	ctorErr   error
+	noProvide bool
+}
+
+// NoProvide disables the handle's DI auto-provide. Needed only when ONE app
+// registers TWO handles of the same T — the DI container is type-addressed,
+// so the second *Scoped[T] provider is a boot error ("provided more than
+// once"); mark all but one NoProvide, or better, give each fact its own
+// named type. Chainable at var init:
+//
+//	var apiScope = nexus.NewScoped[Scope](...).NoProvide()
+func (s *Scoped[T]) NoProvide() *Scoped[T] {
+	s.noProvide = true
+	return s
 }
 
 func (s *Scoped[T]) nexusOption() di.Option {
 	if s.ctorErr != nil {
 		return di.Error(s.ctorErr)
 	}
-	return s.opt
+	if s.noProvide {
+		return s.invokeOpt
+	}
+	// The handle auto-provides itself, so a handler can DECLARE the fact it
+	// reads as an ordinary dep instead of reaching for the package var:
+	//
+	//	func NewUsersPage(ctx context.Context, scope *nexus.Scoped[Scope], ...) 
+	//
+	// Providers are lazy singletons — an app where nothing injects the
+	// handle never runs this constructor, so the request path is untouched
+	// either way.
+	return di.Options(
+		di.Provide(func() *Scoped[T] { return s }),
+		s.invokeOpt,
+	)
 }
 
 // buildOption reflects the ctor (func(deps...) Compute[T]) into a di.Invoke

@@ -537,6 +537,18 @@ The typed handle is the only door — a fact nobody registered cannot
 be asked for, and two facts of the same Go type coexist as two
 handles.
 
+The handle also AUTO-PROVIDES itself, so a handler can declare the
+fact it reads as an ordinary dep instead of touching the package var:
+
+    func NewUsersPage(ctx context.Context, scope *nexus.Scoped[Scope], ...)
+
+Providers are lazy — nothing injecting the handle means the
+constructor never runs; the request path is identical either way.
+*Scoped[A] and *Scoped[B] are distinct DI slots; two handles of the
+SAME T in one app hit the duplicate-provider boot error ("provided
+more than once") — mark all but one .NoProvide(), or better, give
+each fact its own named type.
+
 Semantics (deliberately narrow):
   - Lazy: never asked → never computed. Apps with no Scoped
     registered pay nothing at all (the store middleware installs
