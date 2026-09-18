@@ -4,6 +4,30 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.59.0] - 2026-09-18
+
+### Added
+
+- **`inertia.ShareScoped(key, handle)` — one declaration serves
+  handlers and pages.** The bridge between a request-scoped fact
+  (`nexus.NewScoped`) and the frontend: handlers call
+  `handle.Get(ctx)`, pages read `props.<key>`, and the Scoped memo
+  guarantees one compute per request for both. The key is declared
+  at registration; a failed derivation omits the key from the render
+  (pages degrade) while handler-side Gets still surface the error.
+  Permissions are the first instance —
+
+      var CanGates = nexus.NewScoped[map[string]bool](
+          func(app *nexus.App) nexus.Compute[map[string]bool] {
+              return func(ctx context.Context) (map[string]bool, error) {
+                  return auth.OpGates(ctx, app), nil
+              }
+          })
+      nexus.Boot(CanGates, inertia.ShareScoped("can", CanGates), ...)
+
+  — but any named request fact (features, quota, tenant state)
+  rides identically.
+
 ## [1.58.0] - 2026-09-18
 
 ### Added
