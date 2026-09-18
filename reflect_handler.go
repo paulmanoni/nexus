@@ -65,6 +65,11 @@ const (
 	paramGinCtx // filled from callInput.GinCtx (REST transport only)
 	paramWS     // filled from callInput.WS (AsWS transport only)
 	paramForm   // *Form built from callInput.GinCtx (REST only; typed nil elsewhere)
+	// paramArgField is a bare scalar parameter fed from field depPos of the
+	// bound args struct — the nexus.Arg path. The synthesized struct exists
+	// only for binding and schema; the ORIGINAL method is called directly,
+	// so an Arg op pays no reflect.MakeFunc trampoline on the hot path.
+	paramArgField
 )
 
 type paramSlot struct {
@@ -82,6 +87,7 @@ type handlerShape struct {
 	// For legacy flat-args handlers it's the last
 	// param type directly.
 	hasArgs    bool         // true when argsType is set
+	hasForm    bool         // true when the handler declares a *Form param
 	hasCtx     bool         // true when the handler takes a context.Context
 	paramsType reflect.Type // the concrete Params[T] type; nil if unused
 	hasParams  bool         // true when argsType came from a Params[T] param
@@ -167,6 +173,7 @@ func inspectHandler(fn any) (handlerShape, error) {
 			// pass a typed nil; every Form method nil-checks the
 			// receiver, so misuse degrades to empty reads, not panics.
 			sh.slots[i] = paramSlot{kind: paramForm}
+			sh.hasForm = true
 		default:
 			sh.slots[i] = paramSlot{kind: paramDep, depPos: len(sh.depTypes)}
 			sh.depTypes = append(sh.depTypes, sh.funcType.In(i))
@@ -226,18 +233,16 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 	in := make([]reflect.Value, len(sh.slots))
 	// Build the Form first (when declared) and stash it on the resolve
 	// context, so the handler's ctx — and everything the handler passes it
-	// to — can reach the same Form via FormFrom.
+	// to — can reach the same Form via FormFrom. Gated on the precomputed
+	// flag so ops without a *Form param pay nothing.
 	var formVal *Form
-	for _, slot := range sh.slots {
-		if slot.kind == paramForm && ci.GinCtx != nil {
-			formVal = newForm(ci.GinCtx)
-			base := ci.Ctx
-			if base == nil {
-				base = context.Background()
-			}
-			ci.Ctx = context.WithValue(base, formCtxKey{}, formVal)
-			break
+	if sh.hasForm && ci.GinCtx != nil {
+		formVal = newForm(ci.GinCtx)
+		base := ci.Ctx
+		if base == nil {
+			base = context.Background()
 		}
+		ci.Ctx = context.WithValue(base, formCtxKey{}, formVal)
 	}
 	var paramsVal reflect.Value
 	if sh.hasParams {
@@ -282,6 +287,8 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 			} else {
 				in[i] = reflect.ValueOf(formVal)
 			}
+		case paramArgField:
+			in[i] = args.Field(slot.depPos)
 		}
 	}
 	out := sh.funcVal.Call(in)

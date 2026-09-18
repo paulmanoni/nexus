@@ -52,14 +52,7 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
 		return rawOption{o: di.Error(err)}
 	}
-	if len(cfg.argNames) > 0 {
-		adapted, err := adaptScalarArgs(fn, cfg.argNames)
-		if err != nil {
-			return rawOption{o: di.Error(err)}
-		}
-		fn = adapted
-	}
-	sh, err := inspectHandler(fn)
+	sh, err := inspectHandlerArgs(fn, cfg.argNames)
 	if err != nil {
 		return rawOption{o: di.Error(err)}
 	}

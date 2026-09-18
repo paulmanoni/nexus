@@ -205,14 +205,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	if cfg.opName == "" {
 		cfg.opName = opNameFromFunc(fn, string(kind))
 	}
-	if len(cfg.argNames) > 0 {
-		adapted, err := adaptScalarArgs(fn, cfg.argNames)
-		if err != nil {
-			return rawOption{o: di.Error(err)}
-		}
-		fn = adapted
-	}
-	sh, err := inspectHandler(fn)
+	sh, err := inspectHandlerArgs(fn, cfg.argNames)
 	if err != nil {
 		return rawOption{o: di.Error(err)}
 	}

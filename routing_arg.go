@@ -47,40 +47,74 @@ type ArgOption struct{ names []string }
 func (o ArgOption) applyToRest(c *restConfig) { c.argNames = append(c.argNames, o.names...) }
 func (o ArgOption) applyToGql(c *gqlConfig)   { c.argNames = append(c.argNames, o.names...) }
 
-// adaptScalarArgs rewrites a scalar-taking handler into the equivalent
-// struct-taking one, per the Arg contract above. Called by the registration
-// entry points before inspectHandler, so the rest of the pipeline sees a
-// perfectly ordinary handler.
-func adaptScalarArgs(fn any, names []string) (any, error) {
+// inspectHandlerArgs is inspectHandler for a registration carrying nexus.Arg:
+// it validates the names against the handler, synthesizes the args struct for
+// binding/schema, and repairs the shape so the scalar parameters are fed from
+// the bound struct's fields at call time — the ORIGINAL function is invoked
+// directly (no reflect.MakeFunc trampoline on the hot path).
+func inspectHandlerArgs(fn any, names []string) (handlerShape, error) {
 	if len(names) == 0 {
-		return nil, fmt.Errorf("nexus: Arg needs at least one argument name")
+		return inspectHandler(fn)
+	}
+	argStruct, start, err := buildArgStruct(fn, names)
+	if err != nil {
+		return handlerShape{}, err
+	}
+	sh, err := inspectHandler(fn)
+	if err != nil {
+		return sh, err
+	}
+	if sh.hasParams {
+		return sh, fmt.Errorf("nexus: Arg: the handler already declares Params[T] — drop the Arg option")
+	}
+	// The named trailing scalars were classified as DI deps by the plain
+	// inspection (they are the LAST dep entries, in order); reclassify them
+	// as args-struct fields and drop them from the dep list.
+	for i := start; i < len(sh.slots); i++ {
+		if sh.slots[i].kind != paramDep {
+			return sh, fmt.Errorf("nexus: Arg: parameter %d of %s is a framework type and cannot be a named argument",
+				i, sh.funcType)
+		}
+		sh.slots[i] = paramSlot{kind: paramArgField, depPos: i - start}
+	}
+	sh.depTypes = sh.depTypes[:len(sh.depTypes)-len(names)]
+	sh.hasArgs = true
+	sh.argsType = argStruct
+	return sh, nil
+}
+
+// buildArgStruct validates the Arg names against fn's signature and returns
+// the synthesized args struct plus the index of the first named parameter.
+func buildArgStruct(fn any, names []string) (reflect.Type, int, error) {
+	if len(names) == 0 {
+		return nil, 0, fmt.Errorf("nexus: Arg needs at least one argument name")
 	}
 	seen := map[string]bool{}
 	for _, n := range names {
 		if n == "" {
-			return nil, fmt.Errorf("nexus: Arg: empty argument name")
+			return nil, 0, fmt.Errorf("nexus: Arg: empty argument name")
 		}
 		if seen[n] {
-			return nil, fmt.Errorf("nexus: Arg: duplicate argument name %q", n)
+			return nil, 0, fmt.Errorf("nexus: Arg: duplicate argument name %q", n)
 		}
 		seen[n] = true
 		for i, r := range n {
 			ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9')
 			if !ok {
-				return nil, fmt.Errorf("nexus: Arg: %q is not a valid argument name (letters, digits, underscore; no leading digit)", n)
+				return nil, 0, fmt.Errorf("nexus: Arg: %q is not a valid argument name (letters, digits, underscore; no leading digit)", n)
 			}
 		}
 	}
 	fv := reflect.ValueOf(fn)
 	if !fv.IsValid() || fv.Kind() != reflect.Func {
-		return nil, fmt.Errorf("nexus: Arg: handler must be a func, got %T", fn)
+		return nil, 0, fmt.Errorf("nexus: Arg: handler must be a func, got %T", fn)
 	}
 	ft := fv.Type()
 	if ft.IsVariadic() {
-		return nil, fmt.Errorf("nexus: Arg: variadic handlers are not supported (%s)", ft)
+		return nil, 0, fmt.Errorf("nexus: Arg: variadic handlers are not supported (%s)", ft)
 	}
 	if ft.NumIn() < len(names) {
-		return nil, fmt.Errorf("nexus: Arg names %d argument(s) but %s takes only %d parameter(s)",
+		return nil, 0, fmt.Errorf("nexus: Arg names %d argument(s) but %s takes only %d parameter(s)",
 			len(names), ft, ft.NumIn())
 	}
 
@@ -90,12 +124,12 @@ func adaptScalarArgs(fn any, names []string) (any, error) {
 		pt := ft.In(start + i)
 		switch {
 		case pt.Kind() == reflect.Struct && pt != contextType:
-			return nil, fmt.Errorf(
+			return nil, 0, fmt.Errorf(
 				"nexus: Arg(%q): the parameter is already a struct (%s) — register it directly", name, pt)
 		case pt.Implements(paramsMarkerType):
-			return nil, fmt.Errorf("nexus: Arg: the handler already declares Params[T] — drop the Arg option")
+			return nil, 0, fmt.Errorf("nexus: Arg: the handler already declares Params[T] — drop the Arg option")
 		case pt == contextType:
-			return nil, fmt.Errorf(
+			return nil, 0, fmt.Errorf(
 				"nexus: Arg(%q): would name a context.Context parameter — Arg names map onto the LAST %d parameter(s), in order",
 				name, len(names))
 		}
@@ -110,25 +144,5 @@ func adaptScalarArgs(fn any, names []string) (any, error) {
 				name, name, name, gqlTag)),
 		}
 	}
-	argStruct := reflect.StructOf(fields)
-
-	in := make([]reflect.Type, 0, start+1)
-	for i := 0; i < start; i++ {
-		in = append(in, ft.In(i))
-	}
-	in = append(in, argStruct)
-	out := make([]reflect.Type, ft.NumOut())
-	for i := range out {
-		out[i] = ft.Out(i)
-	}
-	handler := reflect.MakeFunc(reflect.FuncOf(in, out, false), func(args []reflect.Value) []reflect.Value {
-		call := make([]reflect.Value, 0, ft.NumIn())
-		call = append(call, args[:len(args)-1]...)
-		bundle := args[len(args)-1]
-		for i := 0; i < bundle.NumField(); i++ {
-			call = append(call, bundle.Field(i))
-		}
-		return fv.Call(call)
-	})
-	return handler.Interface(), nil
+	return reflect.StructOf(fields), start, nil
 }
