@@ -595,9 +595,22 @@ Semantics (deliberately narrow):
 Do not Get a handle from inside its own Compute (self-wait
 deadlocks its slot). Unit tests: pre-fill with
 nexus.WithScopedValue(ctx, handle, value) — no app boot, no real
-compute. Frontend: expose via inertia.ShareProvide calling
-handle.Get(ctx); the prop and every handler share the request's
-single compute.
+compute.
+
+Frontend projection: inertia.ShareScoped(key, handle) ships the
+fact to every page as a shared prop under key — handlers call
+handle.Get(ctx), pages read props.<key>, and the memo guarantees
+one compute per request for both. A failed derivation omits the
+key from the render (pages degrade); handler-side Gets still
+surface the error. The general pattern for named request facts:
+
+    var CanGates = nexus.NewScoped[map[string]bool](
+        func(app *nexus.App) nexus.Compute[map[string]bool] {
+            return func(ctx context.Context) (map[string]bool, error) {
+                return auth.OpGates(ctx, app), nil
+            }
+        })
+    nexus.Boot(CanGates, inertia.ShareScoped("can", CanGates), ...)
 `,
 
 	"module": `

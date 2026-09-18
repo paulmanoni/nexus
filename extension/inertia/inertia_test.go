@@ -1,6 +1,7 @@
 package inertia_test
 
 import (
+	"fmt"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -970,5 +971,41 @@ func TestNexusErrorsFlashWithGlobal(t *testing.T) {
 	errs, _ := page.Props["errors"].(map[string]any)
 	if errs["email"] != "already taken" || errs["_global"] != "provider unreachable" {
 		t.Fatalf("errors prop = %#v", page.Props["errors"])
+	}
+}
+
+// ShareScoped: a request-scoped fact lands as a shared prop under its
+// declared key, sharing the request's single compute; a failed derivation
+// omits the key instead of shipping garbage.
+func TestShareScoped(t *testing.T) {
+	addr := "127.0.0.1:8854"
+	type quota struct {
+		Used int `json:"used"`
+	}
+	okFact := nexus.NewScoped[quota](func() nexus.Compute[quota] {
+		return func(ctx context.Context) (quota, error) { return quota{Used: 7}, nil }
+	})
+	badFact := nexus.NewScoped[quota](func() nexus.Compute[quota] {
+		return func(ctx context.Context) (quota, error) { return quota{}, fmt.Errorf("derivation down") }
+	}).NoProvide()
+	bootInertia(t, addr,
+		okFact, badFact,
+		inertia.ShareScoped("quota", okFact),
+		inertia.ShareScoped("broken", badFact),
+	)
+
+	_, body := req(t, addr, "/widgets", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatalf("bad page JSON: %v — %s", err, body)
+	}
+	q, ok := page.Props["quota"].(map[string]any)
+	if !ok || q["used"] != float64(7) {
+		t.Fatalf("quota prop = %#v", page.Props["quota"])
+	}
+	if _, present := page.Props["broken"]; present {
+		t.Fatalf("failed derivation must omit its key, got %#v", page.Props["broken"])
 	}
 }

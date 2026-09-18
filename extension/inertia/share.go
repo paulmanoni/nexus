@@ -56,3 +56,28 @@ func ShareProvide(ctor any) nexus.Option {
 		di.Annotate(ctor, di.ResultTags(`group:"inertia.shared"`)),
 	))
 }
+
+// ShareScoped projects a request-scoped fact (nexus.NewScoped) to every page
+// as a shared prop under key — the bridge between the two halves of a named
+// request fact: handlers read handle.Get(ctx), pages read props.<key>, and
+// the Scoped memo guarantees ONE compute per request no matter how many of
+// either ask. The key is declared at registration (not discovered by calling
+// a provider), and a failed derivation omits the key from the render — pages
+// degrade, while handler-side Gets still surface the error properly.
+//
+//	var CanGates = nexus.NewScoped[map[string]bool](func(app *nexus.App) nexus.Compute[map[string]bool] {
+//	    return func(ctx context.Context) (map[string]bool, error) {
+//	        return auth.OpGates(ctx, app), nil
+//	    }
+//	})
+//
+//	nexus.Boot(CanGates, inertia.ShareScoped("can", CanGates), ...)
+func ShareScoped[T any](key string, s *nexus.Scoped[T]) nexus.Option {
+	return Share(func(ctx context.Context) (string, any) {
+		v, err := s.Get(ctx)
+		if err != nil {
+			return "", nil
+		}
+		return key, v
+	})
+}

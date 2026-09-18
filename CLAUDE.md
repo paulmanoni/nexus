@@ -956,7 +956,12 @@ inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
 Ops without `Requires` are always true (it reports permission gates, not
 authentication); evaluation is server-side through Backend.Authorize, and the
 registry is compiled once per version into a table grouped by unique
-permission set (~4µs for 200 ops), so it is safe on every page render. Extractors: `auth.Bearer()`, `auth.Cookie(name)`,
+permission set (~4µs for 200 ops), so it is safe on every page render.
+When handlers also need the gates, declare the fact ONCE as a Scoped and
+project it with `inertia.ShareScoped("can", CanGates)` — handlers call
+`CanGates.Get(ctx)`, pages read `props.can`, one compute per request serves
+both; the same bridge works for any named request fact (features, quota). A
+failed derivation omits the key from the render; handler Gets still error. Extractors: `auth.Bearer()`, `auth.Cookie(name)`,
 `auth.APIKey(header)`, `auth.Chain(...)`. Typed user in a handler:
 `u, ok := auth.User[MyUser](p.Context)`. Logout: take `*auth.Manager`, call
 `Invalidate(token)` / `InvalidateByIdentity(id)`. A full OAuth2 server is
