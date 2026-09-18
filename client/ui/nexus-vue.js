@@ -26,7 +26,7 @@
 //   </script>
 
 import { ref, watch, unref, computed, onUnmounted } from 'vue'
-import { NexusClient, localStorageTokenStore, memoryTokenStore } from './client.js'
+import { NexusClient, NexusOpError, localStorageTokenStore, memoryTokenStore } from './client.js'
 
 // -- Shared client -------------------------------------------------
 
@@ -261,6 +261,131 @@ export function useGqlQuery(name, args, opts = {}) {
  * useGqlMutation wraps a GraphQL mutation. Manual-fire; same shape
  * as useMutation.
  */
+// ── Envelope-aware op composables ───────────────────────────────
+//
+// useOpQuery / useOpMutation ride nx.op(): enveloped ops resolve their
+// data field and surface the envelope's failure message as the error;
+// plain ops pass through. On top of that they carry the server-state
+// plumbing every admin page hand-rolls:
+//
+//   - a module-level registry keyed by op name, so a mutation can
+//     declare `refresh: ['usersList']` and every mounted useOpQuery
+//     for that op refetches after success;
+//   - in-flight dedupe: two components asking the same op+args in the
+//     same window share one request;
+//   - `latest: true` mutations: a slower earlier save can't clobber
+//     the state of a newer one (the auto-saving-dialog race).
+
+const opQueryRegistry = new Map() // op name -> Set<refresh fn>
+const opInflight = new Map()      // op+args key -> shared promise
+
+function opKey(name, vars) {
+  try { return name + ':' + JSON.stringify(vars ?? {}) } catch { return name + ':?' }
+}
+
+/**
+ * useOpQuery — reactive envelope-aware query.
+ *
+ *   const users = useOpQuery('usersList', () => ({ type: tab.value }))
+ *   // users.data: unwrapped rows; users.error; users.loading; users.refresh()
+ */
+export function useOpQuery(name, args, opts = {}) {
+  const nx = resolve(opts)
+  const data = ref(null)
+  const error = ref(null)
+  const loading = ref(false)
+
+  async function refresh() {
+    loading.value = true
+    error.value = null
+    const vars = readArgs(args)
+    const key = opKey(name, vars)
+    try {
+      let p = opInflight.get(key)
+      if (!p) {
+        p = nx.op(name, vars).finally(() => opInflight.delete(key))
+        opInflight.set(key, p)
+      }
+      data.value = await p
+    } catch (e) {
+      error.value = e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  let set = opQueryRegistry.get(name)
+  if (!set) opQueryRegistry.set(name, (set = new Set()))
+  set.add(refresh)
+  onUnmounted(() => set.delete(refresh))
+
+  if (opts.watch !== false) {
+    watch(() => readArgs(args), () => refresh(), { deep: true, immediate: true })
+  } else {
+    refresh()
+  }
+  return { data, error, loading, refresh }
+}
+
+/**
+ * useOpMutation — envelope-aware mutation with declarative refresh.
+ *
+ *   const save = useOpMutation('assignUserRoles', {
+ *     refresh: ['usersList'],
+ *     onSuccess: (data, message) => notify.success(message || 'Saved.'),
+ *     onError: (e) => notify.error(e.message),
+ *   })
+ *   await save.mutate({ userId, roleIds })
+ *
+ * `latest: true` makes a superseded in-flight call release its claim on
+ * loading/error/data — the auto-save race guard, built in.
+ */
+export function useOpMutation(name, opts = {}) {
+  const nx = resolve(opts)
+  const data = ref(null)
+  const error = ref(null)
+  const loading = ref(false)
+  let seq = 0
+
+  async function mutate(vars) {
+    const mySeq = ++seq
+    const live = () => !opts.latest || mySeq === seq
+    loading.value = true
+    error.value = null
+    try {
+      const full = await nx.op(name, vars, { unwrap: false })
+      if (!live()) return undefined
+      const m = await nx.ready()
+      const ep = (m.endpoints || []).find(e => e.transport === 'graphql' && e.name === name)
+      let out = full
+      if (ep && ep.envelope) {
+        if (full && full.status === false) {
+          const e = new NexusOpError(full.message, full)
+          error.value = e
+          opts.onError?.(e)
+          throw e
+        }
+        out = full ? full.data : full
+      }
+      data.value = out
+      opts.onSuccess?.(out, full && typeof full === 'object' ? full.message : undefined)
+      for (const op of opts.refresh || []) {
+        for (const fn of opQueryRegistry.get(op) || []) fn()
+      }
+      return out
+    } catch (e) {
+      if (live() && !(e instanceof NexusOpError)) {
+        error.value = e
+        opts.onError?.(e)
+      }
+      throw e
+    } finally {
+      if (live()) loading.value = false
+    }
+  }
+  return { mutate, data, error, loading }
+}
+
 export function useGqlMutation(name, opts = {}) {
   const nx = resolve(opts)
   const data = ref(null)

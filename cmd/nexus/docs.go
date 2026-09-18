@@ -198,6 +198,7 @@ var topicSummaries = map[string]string{
 	"handlers":    "Reflective handler signature, Params[T], return shape",
 	"forms":       "nexus.Form raw input + nexus.Errors field/global validation",
 	"scoped":      "nexus.NewScoped — request-scoped derived values (lazy, memoized)",
+	"clientops":   "SDK nx.op envelope unwrapping, query batching, op composables",
 	"module":      "nexus.Module, Provide, ProvideService, route prefix",
 	"auth":        "auth.Module setup, Required, Requires, User[T]",
 	"oauth2":      "oauth2.Module — go-oauth2 server + auth bridge",
@@ -461,6 +462,36 @@ enveloped. A mismatched wrap fails at boot naming both types.
 Service-less handlers (e.g. a public HelloWorld) auto-mount on a
 synthesized default service partition — works across single- and
 multi-service apps.
+`,
+
+	"clientops": `
+ENVELOPE-AWARE SDK CALLS, BATCHING, OP COMPOSABLES
+
+nx.op(name, vars, opts?) — runs a GraphQL op by name (query or
+mutation, picked from the manifest). For ops registered with
+nexus.Envelope (manifest: envelope true) it unwraps
+{status, message, data}: resolves data, throws NexusOpError carrying
+the envelope's message and code on status:false. Non-enveloped ops
+resolve their raw return. opts.unwrap:false returns the full
+envelope. Typed as Promise<GqlData<K>> in the generated d.ts.
+
+Same-tick query batching — independent queries issued in one
+microtask (Promise.all fanning out to open a dialog) coalesce into
+ONE aliased GraphQL document per path: one HTTP round trip, per-
+alias errors reject only their own caller. Queries only; calls with
+per-call headers/signal, or opts.batch:false, bypass.
+
+Vue composables (vue.js):
+    const users = useOpQuery('usersList', () => ({ type: tab.value }))
+    // users.data = unwrapped rows; dedupes in-flight per op+args
+
+    const save = useOpMutation('assignUserRoles', {
+        refresh: ['usersList'],   // refetch mounted useOpQuery instances
+        latest: true,             // superseded saves release loading/error
+        onSuccess: (data, message) => notify.success(message || 'Saved.'),
+        onError: (e) => notify.error(e.message),
+    })
+    await save.mutate({ userId, roleIds })
 `,
 
 	"forms": `

@@ -154,6 +154,20 @@ function extractLoginToken(r, field) {
  *   const ws = nx.ws('/events').on('chat.message', m => console.log(m))
  *   ws.connect()
  */
+/**
+ * NexusOpError is thrown by op() (and the op composables) when an
+ * ENVELOPED op answers status:false — message/code lifted from the
+ * envelope, the full envelope on .response. Transport and GraphQL
+ * failures still throw plain NexusError.
+ */
+export class NexusOpError extends NexusError {
+  constructor(message, response) {
+    super(message || 'operation failed', { payload: response, code: response?.code != null ? String(response.code) : undefined })
+    this.name = 'NexusOpError'
+    this.response = response
+  }
+}
+
 export class NexusClient {
   constructor(opts = {}) {
     this.origin = opts.origin ?? (typeof location !== 'undefined' ? location.origin : '')
@@ -168,6 +182,9 @@ export class NexusClient {
     // — or, better, use a cookie auth strategy with HttpOnly+SameSite
     // so the token never touches JS at all.
     this._tokenStore = opts.tokenStore ?? memoryTokenStore()
+    // Same-tick GraphQL query batching (see _gql): per-path queues of
+    // calls made in one microtask, flushed as a single aliased document.
+    this._gqlBatches = new Map()
     // CSRF double-submit names for cookie-based strategies. On
     // state-changing requests the SDK echoes the value of _csrfCookie
     // into _csrfHeader. Defaults follow the Django/Laravel convention
@@ -329,7 +346,133 @@ export class NexusClient {
     return this._gql('mutation', name, variables, opts)
   }
 
+  /**
+   * op runs a GraphQL op by name — query or mutation, picked from the
+   * manifest — and, for ENVELOPED ops (registered with nexus.Envelope
+   * server-side; manifest `envelope: true`), unwraps the
+   * {status, message, data} shape: resolves data, throws NexusOpError
+   * carrying the envelope's message on status:false. Non-enveloped ops
+   * resolve their raw return. Pass { unwrap: false } for the full
+   * envelope (the composables use it to surface success messages).
+   */
+  async op(name, variables = {}, opts = {}) {
+    let m = await this.ready()
+    let ep = this._findGqlEndpoint(m, 'query', name) || this._findGqlEndpoint(m, 'mutation', name)
+    if (!ep) {
+      m = await this.reload()
+      ep = this._findGqlEndpoint(m, 'query', name) || this._findGqlEndpoint(m, 'mutation', name)
+    }
+    if (!ep) this._throwNoOp(m, 'op', name)
+    const res = await this._gql(ep.method, name, variables, opts)
+    if (!ep.envelope || opts.unwrap === false) return res
+    if (res && res.status === false) {
+      throw new NexusOpError(res.message, res)
+    }
+    return res ? res.data : res
+  }
+
+  /**
+   * _gqlBatched enqueues one query into the current microtask's batch
+   * for its path and returns the caller's slice of the combined
+   * response. The flush builds ONE document with per-call aliases
+   * (a0, a1, …) and per-call variable prefixes (a0_k), so N dialog
+   * queries cost one HTTP round trip. Per-alias GraphQL errors reject
+   * only their own caller; document-level errors reject the batch.
+   */
+  _gqlBatched(m, ep, name, variables, opts) {
+    const path = ep.path
+    let batch = this._gqlBatches.get(path)
+    if (!batch) {
+      batch = { entries: [] }
+      this._gqlBatches.set(path, batch)
+      queueMicrotask(() => {
+        this._gqlBatches.delete(path)
+        this._flushGqlBatch(m, path, batch.entries)
+      })
+    }
+    return new Promise((resolve, reject) => {
+      batch.entries.push({ ep, name, variables, explicit: renderSelectOption(opts.select), resolve, reject })
+    })
+  }
+
+  async _flushGqlBatch(m, path, entries) {
+    if (entries.length === 1) {
+      // Solo call: keep the plain single-op document (cached, named).
+      const e = entries[0]
+      try {
+        e.resolve(await this._gqlSingle(m, e.ep, 'query', e.name, e.variables, { select: undefined, _explicit: e.explicit }))
+      } catch (err) {
+        e.reject(err)
+      }
+      return
+    }
+    try {
+      const argDefs = []
+      const fields = []
+      const vars = {}
+      const refs = m.refs || {}
+      entries.forEach((e, i) => {
+        const alias = 'a' + i
+        const argList = []
+        for (const k of Object.keys(e.variables || {})) {
+          const v = `${alias}_${k}`
+          const fromSchema = gqlTypeFromArgs(e.ep && e.ep.args, refs, k)
+          argDefs.push(`$${v}: ${fromSchema || inferGqlType(e.variables[k])}`)
+          argList.push(`${k}: $${v}`)
+          vars[v] = e.variables[k]
+        }
+        const selection = (e.explicit != null) ? e.explicit : buildSelectionSet(e.ep && e.ep.return, refs)
+        fields.push(`${alias}: ${e.name}${argList.length ? `(${argList.join(', ')})` : ''}${selection}`)
+      })
+      const doc = `query Batch${argDefs.length ? `(${argDefs.join(', ')})` : ''} { ${fields.join(' ')} }`
+      const init = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ query: doc, variables: vars, operationName: 'Batch' }),
+      }
+      this._authorize(init, m)
+      const r = await this._fetch(this._url(path), init)
+      const body = await r.json()
+      const aliasErrors = new Map()
+      let docError = null
+      for (const err of body.errors || []) {
+        const alias = Array.isArray(err.path) ? err.path[0] : null
+        if (typeof alias === 'string' && alias.startsWith('a')) {
+          if (!aliasErrors.has(alias)) aliasErrors.set(alias, err)
+        } else if (!docError) {
+          docError = err
+        }
+      }
+      entries.forEach((e, i) => {
+        const alias = 'a' + i
+        const perAlias = aliasErrors.get(alias)
+        if (docError) {
+          e.reject(new NexusError(docError.message, { payload: body, endpoint: e.name }))
+        } else if (perAlias) {
+          e.reject(new NexusError(perAlias.message, { payload: body, endpoint: e.name }))
+        } else {
+          e.resolve(body.data ? body.data[alias] : undefined)
+        }
+      })
+    } catch (err) {
+      for (const e of entries) e.reject(err)
+    }
+  }
+
   async _gql(kind, name, variables, opts) {
+    const { m, ep } = await this._resolveGqlEndpoint(kind, name)
+    // Same-tick batching: independent queries issued in one microtask
+    // (a Promise.all fan-out opening a dialog) coalesce into ONE HTTP
+    // request — an aliased multi-field document. Queries only
+    // (mutations keep their ordering semantics), and only calls with
+    // no per-call headers/signal, whose options can't be merged.
+    if (kind === 'query' && opts.batch !== false && !opts.signal && !opts.headers) {
+      return this._gqlBatched(m, ep, name, variables, opts)
+    }
+    return this._gqlSingle(m, ep, kind, name, variables, opts)
+  }
+
+  async _resolveGqlEndpoint(kind, name) {
     let m = await this.ready()
     let ep = this._findGqlEndpoint(m, kind, name)
     if (!ep) {
@@ -343,6 +486,13 @@ export class NexusClient {
       ep = this._findGqlEndpoint(m, kind, name)
     }
     if (!ep) {
+      this._throwNoOp(m, kind, name)
+    }
+    return { m, ep }
+  }
+
+  _throwNoOp(m, kind, name) {
+    {
       if (m.projected) {
         // The server is serving the stripped (non-Public) manifest,
         // which omits every non-auth op — so the lookup can never
@@ -355,8 +505,11 @@ export class NexusClient {
       }
       throw new NexusError(`nexus: no GraphQL ${kind} named ${name}`, { endpoint: name })
     }
+  }
+
+  async _gqlSingle(m, ep, kind, name, variables, opts) {
     const url = this._url(ep.path)
-    const explicit = renderSelectOption(opts.select)
+    const explicit = (opts._explicit !== undefined) ? opts._explicit : renderSelectOption(opts.select)
     const cacheKey = makeGqlDocCacheKey(kind, name, variables, explicit)
     let doc = this._gqlDocCache.get(cacheKey)
     if (doc === undefined) {

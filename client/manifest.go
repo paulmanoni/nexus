@@ -71,6 +71,12 @@ type EndpointInfo struct {
 	// marked via nexus.AuthRoute. Empty for normal endpoints.
 	AuthFlow string `json:"authFlow,omitempty"`
 
+	// Envelope is true when the op was registered with nexus.Envelope:
+	// the wire return wraps the handler's result in the app's
+	// {status, message, data}-style shape. Generated SDK callers
+	// (nx.op, useOpQuery/useOpMutation) unwrap it automatically.
+	Envelope bool `json:"envelope,omitempty"`
+
 	Deprecated        bool   `json:"deprecated,omitempty"`
 	DeprecationReason string `json:"deprecationReason,omitempty"`
 }
@@ -247,6 +253,7 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 		info.AuthRequired, info.RequiresPerm = deriveAuth(e.Middleware)
 		if e.Tags != nil {
 			info.AuthFlow = e.Tags[authFlowTagKey]
+			info.Envelope = e.Tags[registry.EnvelopeTag] == "true"
 		}
 		m.Endpoints = append(m.Endpoints, info)
 	}

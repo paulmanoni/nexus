@@ -29,8 +29,17 @@ export interface RestEndpoints {
 
 export interface GraphqlOps {
   listPets: { kind: 'query'; args: {}; return: Pet[] }
-  createPet: { kind: 'mutation'; args: Pet; return: Pet }
+  createPet: { kind: 'mutation'; envelope: true; args: Pet; return: Pet }
 }
+
+// GqlResult / GqlData — an op's raw wire return, and the value the
+// envelope-aware caller (nx.op, useOpQuery/useOpMutation) resolves to:
+// the envelope's data field for enveloped ops, the raw return otherwise.
+export type GqlResult<K extends keyof GraphqlOps> = NonNullable<GraphqlOps[K]['return']>
+export type GqlData<K extends keyof GraphqlOps> =
+  GraphqlOps[K] extends { envelope: true }
+    ? GqlResult<K> extends { data: infer D } ? D : GqlResult<K>
+    : GqlResult<K>
 
 // ── WebSocket message types (keyed by path → type) ──────────
 
@@ -53,6 +62,13 @@ export class NexusError extends Error {
   code?: string
   payload?: unknown
   endpoint?: string
+}
+
+/** Thrown by nx.op (and the op composables) when an ENVELOPED op answers
+ *  status:false — message/code lifted from the envelope, full envelope on
+ *  .response. Transport/GraphQL failures still throw plain NexusError. */
+export class NexusOpError extends NexusError {
+  response?: unknown
 }
 
 export interface TokenStore {
@@ -122,6 +138,15 @@ export class NexusClient {
     name: K, vars?: GraphqlOps[K]['args'],
     opts?: GqlCallOpts<GraphqlOps[K]['return'], S>,
   ): Promise<Selected<GraphqlOps[K]['return'], S>>
+
+  /** op runs a GraphQL op by name — query or mutation, picked from the
+   *  manifest — and, for ENVELOPED ops (nexus.Envelope server-side),
+   *  unwraps {status, message, data}: resolves data, throws NexusOpError
+   *  on status:false. Pass { unwrap: false } for the raw envelope. */
+  op<K extends keyof GraphqlOps>(
+    name: K, vars?: GraphqlOps[K]['args'],
+    opts?: { headers?: Record<string, string>; signal?: AbortSignal; batch?: boolean; unwrap?: boolean },
+  ): Promise<GqlData<K>>
 
   /** CRUD handle for AsCRUD-registered entities. */
   crud(name: string): CrudHandle

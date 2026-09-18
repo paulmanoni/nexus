@@ -136,11 +136,25 @@ func writeGraphqlOps(b *strings.Builder, m Manifest) {
 	b.WriteString("// ── GraphQL ops (keyed by op name) ───────────────────────────\n\n")
 	b.WriteString("export interface GraphqlOps {\n")
 	for _, e := range gql {
-		fmt.Fprintf(b, "  %s: { kind: %s; args: %s; return: %s }\n",
-			tsKey(e.Name), tsLiteral(e.Method),
+		env := ""
+		if e.Envelope {
+			env = "envelope: true; "
+		}
+		fmt.Fprintf(b, "  %s: { kind: %s; %sargs: %s; return: %s }\n",
+			tsKey(e.Name), tsLiteral(e.Method), env,
 			tsTypeOrEmpty(e.Args, "{}"), tsTypeOrEmpty(e.Return, "unknown"))
 	}
 	b.WriteString("}\n\n")
+	b.WriteString(`// GqlResult / GqlData — an op's raw wire return, and the value the
+// envelope-aware caller (nx.op, useOpQuery/useOpMutation) resolves to:
+// the envelope's data field for enveloped ops, the raw return otherwise.
+export type GqlResult<K extends keyof GraphqlOps> = NonNullable<GraphqlOps[K]['return']>
+export type GqlData<K extends keyof GraphqlOps> =
+  GraphqlOps[K] extends { envelope: true }
+    ? GqlResult<K> extends { data: infer D } ? D : GqlResult<K>
+    : GqlResult<K>
+
+`)
 }
 
 // writeWSMessages emits a per-path map of msgType → args. Reads
@@ -182,6 +196,13 @@ export class NexusError extends Error {
   code?: string
   payload?: unknown
   endpoint?: string
+}
+
+/** Thrown by nx.op (and the op composables) when an ENVELOPED op answers
+ *  status:false — message/code lifted from the envelope, full envelope on
+ *  .response. Transport/GraphQL failures still throw plain NexusError. */
+export class NexusOpError extends NexusError {
+  response?: unknown
 }
 
 export interface TokenStore {
@@ -251,6 +272,15 @@ export class NexusClient {
     name: K, vars?: GraphqlOps[K]['args'],
     opts?: GqlCallOpts<GraphqlOps[K]['return'], S>,
   ): Promise<Selected<GraphqlOps[K]['return'], S>>
+
+  /** op runs a GraphQL op by name — query or mutation, picked from the
+   *  manifest — and, for ENVELOPED ops (nexus.Envelope server-side),
+   *  unwraps {status, message, data}: resolves data, throws NexusOpError
+   *  on status:false. Pass { unwrap: false } for the raw envelope. */
+  op<K extends keyof GraphqlOps>(
+    name: K, vars?: GraphqlOps[K]['args'],
+    opts?: { headers?: Record<string, string>; signal?: AbortSignal; batch?: boolean; unwrap?: boolean },
+  ): Promise<GqlData<K>>
 
   /** CRUD handle for AsCRUD-registered entities. */
   crud(name: string): CrudHandle
@@ -427,6 +457,7 @@ import type {
   TokenStore,
   RestEndpoints,
   GraphqlOps,
+  GqlData,
   WSMessages,
   ExtractRestMethod,
   ExtractRestPath,
@@ -521,6 +552,32 @@ export function useGqlQuery<K extends keyof GraphqlOps>(
 export function useGqlMutation<K extends keyof GraphqlOps>(
   name: K, opts?: UseOptions,
 ): MutationHandle<GraphqlOps[K]['args'], GraphqlOps[K]['return']>
+
+// ──────── Envelope-aware ops: useOpQuery / useOpMutation ────────
+//
+// Ride nx.op(): enveloped ops resolve their data field and surface the
+// envelope's failure message as a NexusOpError; plain ops pass through.
+// useOpQuery instances register by op name so a mutation's refresh
+// list refetches them; same-op+args queries share one in-flight request.
+
+export function useOpQuery<K extends keyof GraphqlOps>(
+  name: K,
+  args?: ArgsSource<GraphqlOps[K]['args']>,
+  opts?: UseQueryOptions,
+): QueryHandle<GqlData<K>>
+
+export interface UseOpMutationOptions<K extends keyof GraphqlOps> extends UseOptions {
+  /** Op names whose mounted useOpQuery instances refetch after success. */
+  refresh?: ReadonlyArray<keyof GraphqlOps>
+  /** Superseded in-flight calls release loading/error/data (auto-save race guard). */
+  latest?: boolean
+  onSuccess?: (data: GqlData<K>, message?: string) => void
+  onError?: (err: NexusError) => void
+}
+
+export function useOpMutation<K extends keyof GraphqlOps>(
+  name: K, opts?: UseOpMutationOptions<K>,
+): MutationHandle<GraphqlOps[K]['args'], GqlData<K>>
 
 // ──────── CRUD ────────
 
@@ -632,6 +689,7 @@ import type {
   TokenStore,
   RestEndpoints,
   GraphqlOps,
+  GqlData,
   WSMessages,
   ExtractRestMethod,
   ExtractRestPath,

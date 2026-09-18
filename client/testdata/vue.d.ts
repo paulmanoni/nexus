@@ -20,6 +20,7 @@ import type {
   TokenStore,
   RestEndpoints,
   GraphqlOps,
+  GqlData,
   WSMessages,
   ExtractRestMethod,
   ExtractRestPath,
@@ -114,6 +115,32 @@ export function useGqlQuery<K extends keyof GraphqlOps>(
 export function useGqlMutation<K extends keyof GraphqlOps>(
   name: K, opts?: UseOptions,
 ): MutationHandle<GraphqlOps[K]['args'], GraphqlOps[K]['return']>
+
+// ──────── Envelope-aware ops: useOpQuery / useOpMutation ────────
+//
+// Ride nx.op(): enveloped ops resolve their data field and surface the
+// envelope's failure message as a NexusOpError; plain ops pass through.
+// useOpQuery instances register by op name so a mutation's refresh
+// list refetches them; same-op+args queries share one in-flight request.
+
+export function useOpQuery<K extends keyof GraphqlOps>(
+  name: K,
+  args?: ArgsSource<GraphqlOps[K]['args']>,
+  opts?: UseQueryOptions,
+): QueryHandle<GqlData<K>>
+
+export interface UseOpMutationOptions<K extends keyof GraphqlOps> extends UseOptions {
+  /** Op names whose mounted useOpQuery instances refetch after success. */
+  refresh?: ReadonlyArray<keyof GraphqlOps>
+  /** Superseded in-flight calls release loading/error/data (auto-save race guard). */
+  latest?: boolean
+  onSuccess?: (data: GqlData<K>, message?: string) => void
+  onError?: (err: NexusError) => void
+}
+
+export function useOpMutation<K extends keyof GraphqlOps>(
+  name: K, opts?: UseOpMutationOptions<K>,
+): MutationHandle<GraphqlOps[K]['args'], GqlData<K>>
 
 // ──────── CRUD ────────
 

@@ -427,6 +427,13 @@ func (r *Registry) Endpoints() []Endpoint {
 // so frontend permission gates derive from the registration itself.
 const AuthRequiresTag = "auth.requires"
 
+// EnvelopeTag is the Endpoint.Tags key ("true") marking an op registered
+// with nexus.Envelope: its wire return is the app's envelope shape
+// ({status, message, data}-style). The client SDK manifest surfaces it so
+// generated callers can unwrap the envelope (nx.op) instead of every call
+// site re-implementing the status/message ritual.
+const EnvelopeTag = "nexus.envelope"
+
 // HiddenTag is the Endpoint.Tags key set by nexus.HideFromDashboard().
 // Endpoints carrying it ("true") still route + serve normally; they are
 // only omitted from the introspection dashboard's endpoint list, the live

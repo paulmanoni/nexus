@@ -15,6 +15,7 @@ import type {
   TokenStore,
   RestEndpoints,
   GraphqlOps,
+  GqlData,
   WSMessages,
   ExtractRestMethod,
   ExtractRestPath,

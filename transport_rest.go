@@ -60,6 +60,7 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 		if err := cfg.envelope.check(sh.returnType); err != nil {
 			return rawOption{o: di.Error(err)}
 		}
+		cfg.setTag(registry.EnvelopeTag, "true")
 	}
 	return asRestInvoke(method, path, cfg, sh)
 }

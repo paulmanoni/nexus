@@ -1052,6 +1052,19 @@ A typed JS/TS SDK + Vue composables served from the binary (no npm package). It 
 `nx.crud` and `nx.auth.*`. Import in the frontend as `nexus-client` (resolved via tsconfig
 `paths`). See `nexus docs client`.
 
+**Envelope-aware calls (`nx.op`) + batching.** Ops registered with
+`nexus.Envelope` are marked in the manifest; `await nx.op('usersList', vars)`
+picks query/mutation from the manifest, unwraps `{status, message, data}`
+(resolves `data`, throws `NexusOpError` with the envelope's message on
+`status:false`; `{unwrap:false}` returns the raw envelope), and is typed
+`Promise<GqlData<'usersList'>>`. Independent queries issued in the same
+microtask (a `Promise.all` opening a dialog) coalesce into ONE aliased
+GraphQL request automatically (`{batch:false}` opts out). Vue:
+`useOpQuery(name, args)` (in-flight dedupe per op+args) and
+`useOpMutation(name, {refresh: ['usersList'], latest, onSuccess(data, message)})`
+— `refresh` refetches every mounted `useOpQuery` of those ops after success,
+`latest` is the auto-save race guard.
+
 **Simplest enable — one switch (`sdk = true`):** set `Config.SDK` (or `[runtime] sdk =
 true` in nexus.toml) and nexus generates + serves the full typed SDK and, when a frontend
 dir is present, dumps the SDK files + wires tsconfig so `import 'nexus-client'` resolves

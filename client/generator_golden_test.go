@@ -61,6 +61,7 @@ func goldenManifest() Manifest {
 			{
 				Service: "pets", Transport: "graphql", Method: "mutation", Name: "createPet",
 				Path: "/graphql", Args: ref("Pet"), Return: ref("Pet"),
+				Envelope: true,
 			},
 		},
 		WS: []WSPathInfo{
