@@ -41,12 +41,28 @@ func Gates(ctx context.Context, permissions ...string) map[string]bool {
 // name (the GraphQL field / REST endpoint name the frontend already uses),
 // derived from each endpoint's own auth.Requires declaration. The
 // permission codenames therefore live in exactly one place, the
-// registration; the frontend never sees them:
+// registration; the frontend never sees them.
 //
-//	inertia.Share("can", func(ctx context.Context) any {
-//	    return auth.OpGates(ctx, app)
-//	})
+// The canonical wiring is a Scoped fact projected with ShareScoped, so the
+// shared "can" prop and every handler that Gets it share ONE evaluation per
+// request (the ctor gets *nexus.App via DI — it does not exist at package
+// declaration time):
+//
+//	var CanGates = nexus.NewScoped[map[string]bool](
+//	    func(app *nexus.App) nexus.Compute[map[string]bool] {
+//	        return func(ctx context.Context) (map[string]bool, error) {
+//	            return auth.OpGates(ctx, app), nil
+//	        }
+//	    })
+//
+//	nexus.Boot(CanGates, inertia.ShareScoped("can", CanGates), ...)
 //	// SPA: v-if="can.saveUser"
+//
+// The map's keys are OP NAMES — it can only ever contain ops, and only
+// permissions some registration stamped. A permission that gates no op
+// (a UI-section codename) is invisible here by construction; check
+// holdings for those (auth.Can / auth.Gates, or a Scoped over the
+// identity's permission list).
 //
 // Semantics: an op whose registration carries auth.Requires is true only
 // when the identity passes the same PermissionFn / Backend.Authorize the
