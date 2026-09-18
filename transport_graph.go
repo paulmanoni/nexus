@@ -193,13 +193,6 @@ type argsProvider interface {
 
 // asGqlField is the shared body: reflect → synthesize constructor → di.Provide.
 func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
-	sh, err := inspectHandler(fn)
-	if err != nil {
-		return rawOption{o: di.Error(err)}
-	}
-	if sh.returnType == nil {
-		return rawOption{o: di.Error(fmt.Errorf("nexus: %s handler %s needs a (T, error) return", kind, sh.funcType))}
-	}
 	// Pointer cfg so nexus.Module(...) can stamp cfg.module on us AFTER
 	// this call returns but BEFORE di.Start runs the ctor closure below.
 	// The closure captures cfg by reference, so late writes are picked up.
@@ -207,8 +200,24 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	for _, o := range opts {
 		o.applyToGql(cfg)
 	}
+	// Op name derives from the ORIGINAL handler — the Arg rewrite below
+	// replaces it with an anonymous reflect.MakeFunc.
 	if cfg.opName == "" {
 		cfg.opName = opNameFromFunc(fn, string(kind))
+	}
+	if len(cfg.argNames) > 0 {
+		adapted, err := adaptScalarArgs(fn, cfg.argNames)
+		if err != nil {
+			return rawOption{o: di.Error(err)}
+		}
+		fn = adapted
+	}
+	sh, err := inspectHandler(fn)
+	if err != nil {
+		return rawOption{o: di.Error(err)}
+	}
+	if sh.returnType == nil {
+		return rawOption{o: di.Error(fmt.Errorf("nexus: %s handler %s needs a (T, error) return", kind, sh.funcType))}
 	}
 	if cfg.envelopeErr != nil {
 		return rawOption{o: di.Error(cfg.envelopeErr)}

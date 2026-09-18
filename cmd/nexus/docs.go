@@ -403,6 +403,31 @@ The same contract accepts a plain free function:
 
     func CreateUser(ctx context.Context, in CreateArgs) (*User, error)
 
+SCALAR-ARG METHODS (nexus.Arg) — a method taking bare scalars
+registers without an args-struct wrapper; the option names the wire
+argument(s):
+
+    // func (s *UserService) GetUser(id uint) (*UserDetail, error)
+    nexus.AsQuery((*UserService).GetUser, nexus.Arg("id"), nexus.Op("userShow"))
+    nexus.AsRest("GET", "/users/:id", (*UserService).GetUser, nexus.Arg("id"))
+
+    // func (s *UserService) Move(ctx, id uint, employerID int) (bool, error)
+    nexus.AsMutation((*UserService).Move, nexus.Arg("id", "employerId"))
+
+Names map POSITIONALLY onto the handler's LAST len(names)
+parameters, in order — Go reflection cannot see parameter names, so
+double-check the order when two args share a type. Everything before
+them keeps its normal classification (receiver/deps DI-injected, ctx
+from the request). The args struct is synthesized at registration —
+each field tagged json/query/uri/graphql — so binding, the schema and
+the generated SDK see exactly what a hand-written wrapper struct
+would have declared. Non-pointer parameters become REQUIRED
+arguments; pointer parameters optional. The op name derives from the
+method; nexus.Op overrides. Guidance: one or two scalars ride Arg
+well; three or more deserve a dto. Boot errors: a struct-taking
+parameter ("register it directly"), Params[T] handlers, name/arity
+mismatches, duplicate or invalid names.
+
 Use Params[T] only when the handler needs more than ctx+args
 (Source/Info, the HTTP method). Note: the trailing-struct rule
 means a ZERO-arg VALUE-receiver method expression (func(S)) would

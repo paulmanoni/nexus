@@ -497,6 +497,21 @@ Reach for `Params[T]` only when the handler needs more than ctx+args. Use pointe
 receivers: a zero-arg value-receiver method expression would read the receiver
 struct itself as the args container.
 
+**Scalar-arg methods (`nexus.Arg`).** A method taking bare scalars registers
+without an args-struct wrapper — the option names the wire argument(s):
+```go
+nexus.AsQuery((*Svc).GetUser, nexus.Arg("id"), nexus.Op("userShow"))
+nexus.AsRest("GET", "/users/:id", (*Svc).GetUser, nexus.Arg("id"))
+nexus.AsMutation((*Svc).Move, nexus.Arg("id", "employerId"))   // multi-arg
+```
+Names map POSITIONALLY onto the handler's LAST len(names) params, in order
+(Go reflection can't see param names — check the order when types coincide).
+The args struct is synthesized at registration (tagged json/query/uri/graphql),
+so schema, SDK, and every binder see what a wrapper would have declared;
+non-pointer params are required, pointer params optional; the op name still
+derives from the method. One or two scalars ride `Arg` well — three or more
+deserve a dto. A struct-taking param is rejected with "register it directly".
+
 **Raw form input (`*nexus.Form`) + validation errors (`nexus.Errors`).** For
 genuinely dynamic input — file uploads, variable-key forms — declare a `*Form`
 param (framework-filled; also reachable below the handler via

@@ -39,6 +39,12 @@ type baseEndpointConfig struct {
 	// inside the option setter so endpoints with no tags pay nothing.
 	tags map[string]string
 
+	// argNames, from nexus.Arg, name the wire arguments of a handler
+	// whose trailing parameters are bare scalars; the registration
+	// rewrites the handler around a synthesized args struct before
+	// inspection (see adaptScalarArgs).
+	argNames []string
+
 	// envelope, when set via nexus.Envelope, pipes the handler's
 	// (result, error) through an app-supplied wrap function before the
 	// wire write — GraphQL declares the wrap's output type in the
