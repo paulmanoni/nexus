@@ -4,6 +4,20 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.59.1] - 2026-09-18
+
+### Fixed
+
+- **`auth.OpGates` docstring** — the example predated
+  ShareProvide/ShareScoped and showed a `inertia.Share("can", fn)`
+  call that never existed (Share takes one provider) closing over an
+  `app` that isn't available at declaration time. The doc now shows
+  the canonical CanGates Scoped + `inertia.ShareScoped` wiring and
+  states the key-space boundary explicitly: op names only,
+  registration-stamped permissions only — a codename that gates no
+  op is invisible to OpGates by construction (check holdings via
+  auth.Can/Gates or an identity-derived Scoped instead).
+
 ## [1.59.0] - 2026-09-18
 
 ### Added
