@@ -147,7 +147,6 @@ const (
 	colSource = 26
 )
 
-
 // fieldColor picks the escape for one key=value field. Semantic
 // coloring for the request-log vocabulary — status by class (2xx
 // green, 3xx cyan, 4xx amber, 5xx red), dur amber once it crosses
