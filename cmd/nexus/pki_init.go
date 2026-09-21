@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -33,6 +32,7 @@ func newPkiInitCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
+		Args:  cobra.NoArgs,
 		Short: "Generate a new root CA (ca.crt + ca.key)",
 		Long: `Generate a self-signed root CA for the peer mesh.
 
@@ -43,8 +43,8 @@ to overwrite an existing ca.key unless --force is passed.
 Run this once. Every peer cert subsequently issued chains to this
 root; rotating the root means re-bundling every peer.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if cn == "" {
-				return errors.New("--cn cannot be empty")
+			if err := nonEmptyFlag("cn", cn); err != nil {
+				return err
 			}
 			if err := ensureOutDir(out); err != nil {
 				return err
@@ -97,7 +97,7 @@ root; rotating the root means re-bundling every peer.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&out, "out", ".", "directory to write ca.crt + ca.key into")
+	cmd.Flags().StringVarP(&out, "out", "o", ".", "directory to write ca.crt + ca.key into")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing ca.key")
 	cmd.Flags().StringVar(&cn, "cn", "nexus-peer-ca", "CommonName for the root CA's Subject")
 	cmd.Flags().IntVar(&years, "years", 10, "CA validity in years")

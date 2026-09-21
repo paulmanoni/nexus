@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // runPki drives a subcommand in-process. Returns stdout for tests
@@ -310,6 +312,189 @@ func TestPkiSign_SerialsAreUnique(t *testing.T) {
 	// a busy mesh.
 	if a.SerialNumber.BitLen() > 128 {
 		t.Errorf("serial bit length %d exceeds 128 — entropy ceiling broken", a.SerialNumber.BitLen())
+	}
+}
+
+// TestPkiFlags_OutShorthand proves -o is wired on every subcommand
+// that writes files. The CLI-wide convention is --out/-o; a
+// subcommand that silently lacks the shorthand is the kind of
+// inconsistency that makes the tool feel arbitrary.
+func TestPkiFlags_OutShorthand(t *testing.T) {
+	for _, sub := range []string{"init", "request", "sign", "issue", "bundle"} {
+		t.Run(sub, func(t *testing.T) {
+			root := newPkiCmd(io.Discard, io.Discard)
+			var cmd *cobra.Command
+			for _, c := range root.Commands() {
+				if c.Name() == sub {
+					cmd = c
+				}
+			}
+			if cmd == nil {
+				t.Fatalf("no %q subcommand", sub)
+			}
+			f := cmd.Flags().Lookup("out")
+			if f == nil {
+				t.Fatal("no --out flag")
+			}
+			if f.Shorthand != "o" {
+				t.Errorf("--out shorthand = %q, want \"o\"", f.Shorthand)
+			}
+		})
+	}
+}
+
+// TestPkiFlags_RejectsPositionalArgs proves Args: cobra.NoArgs is
+// set. Before it was, `nexus pki issue peer-alpha` ignored the
+// positional and then complained about a missing --cn, which reads
+// as though the CLI didn't see the name the operator just typed.
+func TestPkiFlags_RejectsPositionalArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"init", []string{"init", "stray"}},
+		{"request", []string{"request", "stray", "--cn", "x"}},
+		{"sign", []string{"sign", "stray", "--csr", "x.csr"}},
+		{"issue", []string{"issue", "stray", "--cn", "x"}},
+		{"bundle", []string{"bundle", "stray", "--cn", "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runPki(t, tc.args...)
+			if err == nil {
+				t.Fatal("a stray positional argument should be rejected")
+			}
+			if !strings.Contains(err.Error(), "unknown command") &&
+				!strings.Contains(err.Error(), "accepts") {
+				t.Errorf("error should name the bad positional: %v", err)
+			}
+		})
+	}
+}
+
+// TestPkiFlags_RequiredFlags proves cobra reports the missing flag
+// itself, rather than the command getting far enough to fail on
+// something downstream (a missing ca.crt, an empty filename).
+func TestPkiFlags_RequiredFlags(t *testing.T) {
+	cases := []struct {
+		name, flag string
+		args       []string
+	}{
+		{"request", "cn", []string{"request"}},
+		{"issue", "cn", []string{"issue"}},
+		{"bundle", "cn", []string{"bundle"}},
+		{"sign", "csr", []string{"sign"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runPki(t, tc.args...)
+			if err == nil {
+				t.Fatalf("--%s is required; command should refuse to run", tc.flag)
+			}
+			want := `required flag(s) "` + tc.flag + `" not set`
+			if err.Error() != want {
+				t.Errorf("error = %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestPkiFlags_EmptyRequiredValue covers the gap cobra leaves open:
+// MarkFlagRequired only asserts the flag was PASSED, so `--cn ""`
+// clears its check. Without the nonEmptyFlag guard an empty CN would
+// reach joinOut and write a private key to a file literally named
+// ".key".
+func TestPkiFlags_EmptyRequiredValue(t *testing.T) {
+	dir := t.TempDir()
+	_, err := runPki(t, "request", "--out", dir, "--cn", "")
+	if err == nil {
+		t.Fatal(`--cn "" should be rejected, not used as a filename`)
+	}
+	if !strings.Contains(err.Error(), "--cn cannot be empty") {
+		t.Errorf("error should say --cn cannot be empty: %v", err)
+	}
+	// Nothing should have been written — especially not a ".key".
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("empty --cn wrote files: %v", names)
+	}
+}
+
+// TestPkiFlags_SANAliasesMerge is the regression guard for the
+// --dns/--ip rename. The old and new spellings are separate pflag
+// values, so if both are bound to one variable the second one parsed
+// REPLACES the first's slice instead of appending. Passing both
+// spellings at once must yield the union.
+func TestPkiFlags_SANAliasesMerge(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := runPki(t, "init", "--out", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPki(t, "issue",
+		"--ca-dir", dir, "-o", dir, "--cn", "peer-sans",
+		"--dns-name", "canonical.internal",
+		"--dns", "legacy.internal",
+		"--ip-address", "10.0.0.1",
+		"--ip", "10.0.0.2",
+	); err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := readCert(filepath.Join(dir, "peer-sans.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotDNS := strings.Join(leaf.DNSNames, ",")
+	if !strings.Contains(gotDNS, "canonical.internal") ||
+		!strings.Contains(gotDNS, "legacy.internal") {
+		t.Errorf("DNS SANs = %v, want both --dns-name and --dns values "+
+			"(last-parsed-wins bug?)", leaf.DNSNames)
+	}
+	var ips []string
+	for _, ip := range leaf.IPAddresses {
+		ips = append(ips, ip.String())
+	}
+	gotIP := strings.Join(ips, ",")
+	if !strings.Contains(gotIP, "10.0.0.1") || !strings.Contains(gotIP, "10.0.0.2") {
+		t.Errorf("IP SANs = %v, want both --ip-address and --ip values "+
+			"(last-parsed-wins bug?)", ips)
+	}
+}
+
+// TestPkiFlags_DeprecatedSANsHidden proves the old spellings still
+// parse but no longer appear in help — juniors reading --help should
+// only ever see the canonical names.
+func TestPkiFlags_DeprecatedSANsHidden(t *testing.T) {
+	for _, sub := range []string{"request", "issue"} {
+		t.Run(sub, func(t *testing.T) {
+			root := newPkiCmd(io.Discard, io.Discard)
+			var cmd *cobra.Command
+			for _, c := range root.Commands() {
+				if c.Name() == sub {
+					cmd = c
+				}
+			}
+			for _, old := range []string{"dns", "ip"} {
+				f := cmd.Flags().Lookup(old)
+				if f == nil {
+					t.Fatalf("--%s must keep parsing for back-compat", old)
+				}
+				if !f.Hidden {
+					t.Errorf("--%s should be hidden from help", old)
+				}
+				if f.Deprecated == "" {
+					t.Errorf("--%s should carry a deprecation message", old)
+				}
+			}
+			for _, canonical := range []string{"dns-name", "ip-address"} {
+				if cmd.Flags().Lookup(canonical) == nil {
+					t.Errorf("--%s missing", canonical)
+				}
+			}
+		})
 	}
 }
 

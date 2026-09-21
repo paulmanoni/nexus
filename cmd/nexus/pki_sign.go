@@ -4,7 +4,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -38,6 +37,7 @@ func newPkiSignCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "sign",
+		Args:  cobra.NoArgs,
 		Short: "Sign a CSR with the CA, producing <cn>.crt",
 		Long: `Sign a peer CSR. Reads <ca-dir>/ca.crt + <ca-dir>/ca.key,
 verifies the CSR's signature, then issues a leaf cert valid for
@@ -47,8 +47,8 @@ Writes <out>/<cn>.crt (CN derived from the CSR's Subject). Ship
 that plus <ca-dir>/ca.crt back to the peer — the peer's existing
 <cn>.key + the two certs are everything its mTLS config needs.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if csrPath == "" {
-				return errors.New("--csr is required")
+			if err := nonEmptyFlag("csr", csrPath); err != nil {
+				return err
 			}
 			caCert, caKey, err := loadCA(caDir)
 			if err != nil {
@@ -83,8 +83,9 @@ that plus <ca-dir>/ca.crt back to the peer — the peer's existing
 	}
 	cmd.Flags().StringVar(&caDir, "ca-dir", ".", "directory holding ca.crt + ca.key")
 	cmd.Flags().StringVar(&csrPath, "csr", "", "path to the CSR file produced by `nexus pki request`")
-	cmd.Flags().StringVar(&out, "out", ".", "directory to write the signed leaf cert into")
-	cmd.Flags().IntVar(&days, "days", 180, "leaf cert validity in days (recommended: 180)")
+	cmd.Flags().StringVarP(&out, "out", "o", ".", "directory to write the signed leaf cert into")
+	cmd.Flags().IntVar(&days, "days", 180, "leaf cert validity in days")
+	_ = cmd.MarkFlagRequired("csr")
 	return cmd
 }
 
@@ -163,15 +164,18 @@ func signLeaf(
 // CA host) so private keys never traverse the network.
 func newPkiIssueCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		caDir string
-		out   string
-		cn    string
-		dns   []string
-		ips   []string
-		days  int
+		caDir     string
+		out       string
+		cn        string
+		dns       []string
+		ips       []string
+		dnsLegacy []string
+		ipsLegacy []string
+		days      int
 	)
 	cmd := &cobra.Command{
 		Use:   "issue",
+		Args:  cobra.NoArgs,
 		Short: "Convenience: generate keypair + sign locally (CA and peer colocated)",
 		Long: `Generate a keypair AND sign it locally — for bootstrapping
 when the CA and the peer live on the same host.
@@ -184,9 +188,11 @@ For production mTLS rollout, prefer 'nexus pki request' on the peer
 followed by 'nexus pki sign' on the CA host — that way the private
 key never travels.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if cn == "" {
-				return errors.New("--cn cannot be empty")
+			if err := nonEmptyFlag("cn", cn); err != nil {
+				return err
 			}
+			dns = append(dns, dnsLegacy...)
+			ips = append(ips, ipsLegacy...)
 			parsedIPs, err := parseIPList(ips)
 			if err != nil {
 				return err
@@ -236,10 +242,12 @@ key never travels.`,
 		},
 	}
 	cmd.Flags().StringVar(&caDir, "ca-dir", ".", "directory holding ca.crt + ca.key")
-	cmd.Flags().StringVar(&out, "out", ".", "directory to write the leaf key + cert into")
+	cmd.Flags().StringVarP(&out, "out", "o", ".", "directory to write the leaf key + cert into")
 	cmd.Flags().StringVar(&cn, "cn", "", "CommonName — the peer identity matched against AllowedClients")
-	cmd.Flags().StringSliceVar(&dns, "dns", nil, "DNS SAN(s) the cert should cover (repeatable)")
-	cmd.Flags().StringSliceVar(&ips, "ip", nil, "IP SAN(s) the cert should cover (repeatable)")
-	cmd.Flags().IntVar(&days, "days", 180, "leaf cert validity in days (recommended: 180)")
+	cmd.Flags().StringSliceVar(&dns, "dns-name", nil, "DNS SAN the cert should cover (repeatable)")
+	cmd.Flags().StringSliceVar(&ips, "ip-address", nil, "IP SAN the cert should cover (repeatable)")
+	cmd.Flags().IntVar(&days, "days", 180, "leaf cert validity in days")
+	_ = cmd.MarkFlagRequired("cn")
+	registerSANAliases(cmd, &dnsLegacy, &ipsLegacy)
 	return cmd
 }

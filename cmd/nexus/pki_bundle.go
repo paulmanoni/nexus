@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,21 +37,24 @@ func newPkiBundleCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "bundle",
+		Args:  cobra.NoArgs,
 		Short: "Package ca.crt + <cn>.crt + <cn>.key for shipping to a peer",
 		Long: `Package the three files a peer needs to terminate mTLS:
 the CA cert (ca.crt — the trust root), the signed leaf cert
 (<cn>.crt), and the matching private key (<cn>.key).
 
-This command CANNOT include ca.key. The bundle code never reads
-the CA private key — only the public ca.crt. Auditable: a grep for
-"ca.key" inside cmd/nexus/pki_bundle.go finds nothing.
+This command CANNOT include ca.key. Only ca.crt is ever read out of
+--ca-dir; the bundle code never opens the CA private key. To audit
+that yourself, grep cmd/nexus/pki_bundle.go for "caKeyFilename" --
+the constant any code would have to go through to name ca.key -- and
+you will find no hits outside comments.
 
 Default --from is the current directory (where 'nexus pki request'
 or 'nexus pki issue' wrote the leaf material). Default --ca-dir is
 the same — adjust when the CA cert lives elsewhere.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if cn == "" {
-				return errors.New("--cn cannot be empty")
+			if err := nonEmptyFlag("cn", cn); err != nil {
+				return err
 			}
 			if err := ensureOutDir(out); err != nil {
 				return err
@@ -101,10 +103,11 @@ the same — adjust when the CA cert lives elsewhere.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&out, "out", ".", "directory under which to create the bundle subdir")
-	cmd.Flags().StringVar(&caDir, "ca-dir", ".", "directory holding ca.crt (NOT ca.key — never read)")
+	cmd.Flags().StringVarP(&out, "out", "o", ".", "directory under which to create the bundle subdir")
+	cmd.Flags().StringVar(&caDir, "ca-dir", ".", "directory holding the CA cert (ca.crt)")
 	cmd.Flags().StringVar(&from, "from", ".", "directory holding <cn>.crt + <cn>.key")
 	cmd.Flags().StringVar(&cn, "cn", "", "peer identity — selects which leaf cert + key to bundle")
+	_ = cmd.MarkFlagRequired("cn")
 	return cmd
 }
 

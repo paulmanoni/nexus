@@ -48,12 +48,12 @@ A typical bootstrap:
   nexus pki init
 
   # Per peer — key never leaves the peer host:
-  peer:  nexus pki request --cn peer-alpha --dns peer-alpha.internal
+  peer:  nexus pki request --cn peer-alpha --dns-name peer-alpha.internal
   CA:    nexus pki sign --csr peer-alpha.csr
   → ship ca.crt + peer-alpha.crt back to the peer
 
   # Or for quick bootstrapping when the CA and peer are colocated:
-  nexus pki issue --cn peer-alpha --dns peer-alpha.internal
+  nexus pki issue --cn peer-alpha --dns-name peer-alpha.internal
 
   # Package a peer's cert + key + the CA cert for shipping
   # (NEVER includes ca.key — the bundle command can't read it):
@@ -214,6 +214,19 @@ func ensureOutDir(dir string) error {
 // joinOut is the helper every subcommand uses to compose a file
 // path under --out without sprinkling filepath.Join calls around.
 func joinOut(dir, name string) string { return filepath.Join(dir, name) }
+
+// nonEmptyFlag rejects a flag that was passed but carries an empty
+// value. This is NOT redundant with cobra's MarkFlagRequired: that
+// check only asserts the flag was *supplied* (it tests Changed), so
+// `--cn ""` satisfies it. Without this guard an empty CN would flow
+// straight into joinOut and write files literally named ".key" and
+// ".csr" instead of erroring.
+func nonEmptyFlag(name, value string) error {
+	if value == "" {
+		return fmt.Errorf("--%s cannot be empty", name)
+	}
+	return nil
+}
 
 // commonSubject is the bare Subject every leaf gets. Real PKI
 // flows often want more (O, OU, country) but the peer extension
