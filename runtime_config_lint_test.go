@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/manifest"
 )
 
 // TestLintRuntimeBlock_CleanConfigNoIssues: a properly-formed
@@ -186,5 +188,82 @@ description = "Prod"
 	}
 	if len(issues) != 0 {
 		t.Errorf("expected no issues for file without [runtime] block, got: %+v", issues)
+	}
+}
+
+// TestLintRuntimeFile_ReportsUnknownKeys: the reason this check exists —
+// `nexus lint` used to certify a file whose [runtime.server] typo and
+// top-level mis-nested key left the app on framework defaults ("manifest is
+// valid (0 errors, 0 warnings)"). Both must now surface as findings, each
+// naming its key path, its file:line, and the correction.
+func TestLintRuntimeFile_ReportsUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nexus.toml")
+	mustWriteTOML(t, path, `
+addr = ":9001"
+
+[runtime.server]
+adress = ":8099"
+`)
+	issues, err := LintRuntimeFile(path)
+	if err != nil {
+		t.Fatalf("LintRuntimeFile: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("want 2 unknown-key findings, got %d: %+v", len(issues), issues)
+	}
+	byPath := map[string]string{}
+	for _, is := range issues {
+		if is.Severity != manifest.SeverityWarning {
+			t.Errorf("%s: severity = %v, want warning (an unknown key must never gate CI as an error)", is.Path, is.Severity)
+		}
+		if is.Code != "RUNTIME_UNKNOWN_KEY" {
+			t.Errorf("%s: code = %q, want RUNTIME_UNKNOWN_KEY", is.Path, is.Code)
+		}
+		byPath[is.Path] = is.Message
+	}
+	msg, ok := byPath["addr"]
+	if !ok {
+		t.Fatalf("no finding for the mis-nested top-level addr: %+v", issues)
+	}
+	if !strings.Contains(msg, "[runtime.server] addr?") || !strings.Contains(msg, ":2:") {
+		t.Errorf("mis-nesting finding should carry file:line + the right table, got %q", msg)
+	}
+	if msg, ok := byPath["runtime.server.adress"]; !ok {
+		t.Fatalf("no finding for the [runtime.server] typo: %+v", issues)
+	} else if !strings.Contains(msg, "addr") {
+		t.Errorf("typo finding should suggest addr, got %q", msg)
+	}
+}
+
+// TestLintRuntimeFile_CorrectlyNestedKeysStaySilent: the companion contract —
+// a file whose runtime keys are all spelled and nested correctly, alongside
+// sections other loaders own ([databases.*], [extensions.*], [env.*]) and an
+// app's own nexus.Get section, lints clean.
+func TestLintRuntimeFile_CorrectlyNestedKeysStaySilent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nexus.toml")
+	mustWriteTOML(t, path, `
+[runtime]
+environment = "development"
+introspection = true
+
+[runtime.server]
+addr = ":8099"
+
+[databases.main]
+driver = "postgres"
+pool_size = 10
+
+[env.client]
+id = "myapp-web"
+
+[app]
+name = "demo"
+`)
+	issues, err := LintRuntimeFile(path)
+	if err != nil {
+		t.Fatalf("LintRuntimeFile: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Errorf("clean file must lint silently, got: %+v", issues)
 	}
 }

@@ -266,3 +266,236 @@ func mustWriteTOML(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// TestUnknownConfigKeys_TypoInOwnedTable: the headline bug. A one-character
+// typo under [runtime.server] used to be dropped without a word, leaving the
+// app on the default port. It must now be named, located, and corrected.
+func TestUnknownConfigKeys_TypoInOwnedTable(t *testing.T) {
+	keys := unknownConfigKeys([]byte(`
+[runtime.server]
+adress = ":8099"
+`))
+	if len(keys) != 1 {
+		t.Fatalf("want 1 unknown key, got %d: %+v", len(keys), keys)
+	}
+	k := keys[0]
+	if got := k.Key(); got != "runtime.server.adress" {
+		t.Errorf("Key() = %q, want runtime.server.adress", got)
+	}
+	if k.Line != 3 {
+		t.Errorf("Line = %d, want 3", k.Line)
+	}
+	// `adress` is four edits from `addr`, too far to claim as a spelling
+	// match — so the hint falls back to naming what the table does accept,
+	// which puts `addr` in front of the operator either way.
+	if !strings.Contains(k.Hint, "addr") {
+		t.Errorf("Hint = %q, should point at addr", k.Hint)
+	}
+}
+
+// TestUnknownConfigKeys_MisNestedTopLevelKey: the higher-value half — a real
+// setting written at the wrong nesting level. The value reads correctly, so
+// nothing but this check can tell the operator it does nothing.
+func TestUnknownConfigKeys_MisNestedTopLevelKey(t *testing.T) {
+	keys := unknownConfigKeys([]byte(`
+addr = ":9001"
+
+[runtime]
+environment = "development"
+`))
+	if len(keys) != 1 {
+		t.Fatalf("want 1 unknown key, got %d: %+v", len(keys), keys)
+	}
+	k := keys[0]
+	if got := k.Key(); got != "addr" {
+		t.Errorf("Key() = %q, want addr", got)
+	}
+	if want := "did you mean [runtime.server] addr?"; k.Hint != want {
+		t.Errorf("Hint = %q, want %q", k.Hint, want)
+	}
+	if !strings.Contains(k.describe(), "top level") {
+		t.Errorf("describe() should call out the nesting level, got %q", k.describe())
+	}
+}
+
+// TestUnknownConfigKeys_CleanConfigSilent: every correctly-nested key across
+// the runtime schema — including a named listener under the map-typed
+// [runtime.server.listeners.*] table — must produce nothing. A check that
+// cries wolf on a valid file is worse than no check.
+func TestUnknownConfigKeys_CleanConfigSilent(t *testing.T) {
+	keys := unknownConfigKeys([]byte(`
+[runtime]
+environment = "production"
+introspection = true
+trace_capacity = 500
+sdk = true
+
+[runtime.server]
+addr = ":8080"
+route_prefix = "/api"
+max_body_bytes = 33554432
+
+[runtime.server.listeners.admin]
+addr = "127.0.0.1:7000"
+scope = "admin"
+
+[runtime.websocket]
+allowed_origins = ["https://app.example.com"]
+
+[runtime.dashboard]
+enabled = true
+name = "Demo"
+
+[runtime.graphql]
+path = "/graphql"
+
+[runtime.middleware.cors]
+allow_origins = ["*"]
+
+[runtime.middleware.ratelimit]
+rpm = 600
+burst = 50
+
+[runtime.middleware.security]
+csrf = true
+`))
+	if len(keys) != 0 {
+		t.Errorf("clean config must be silent, got %+v", keys)
+	}
+}
+
+// TestUnknownConfigKeys_UnownedSectionsSilent: the noise floor. Tables owned
+// by another loader (the deploy-manifest surface, sibling BindFromConfig
+// blocks, extension blocks this binary may not even link) and an app's own
+// nexus.Get sections — at the top level or under [runtime] — are all
+// legitimate and must stay quiet.
+func TestUnknownConfigKeys_UnownedSectionsSilent(t *testing.T) {
+	keys := unknownConfigKeys([]byte(`
+[runtime.server]
+addr = ":8080"
+
+# Another loader's schema — unknown keys inside are not ours to judge.
+[databases.main]
+driver = "postgres"
+pool_size = 10
+
+[extensions.config]
+endpoint = "http://localhost:8078"
+
+[env.client]
+id = "myapp-web"
+
+[deployments.production]
+region = "af-south-1"
+
+[peers.mesh]
+addr = "10.0.0.1:7777"
+
+[environments.staging]
+domain = "staging.example.com"
+
+# App-owned sections, readable via nexus.Get — a table is never "unknown".
+[app]
+name = "demo"
+
+[runtime.logging]
+format = "pretty"
+requests = false
+`))
+	if len(keys) != 0 {
+		t.Errorf("unowned + app-owned sections must be silent, got %+v", keys)
+	}
+}
+
+// TestUnknownConfigKeys_BothHalvesOfTheReproduction: the empirical repro —
+// a typo AND a mis-nested key in one file — reported together, in source
+// order, each with its own diagnosis.
+func TestUnknownConfigKeys_BothHalvesOfTheReproduction(t *testing.T) {
+	keys := unknownConfigKeys([]byte(`
+addr = ":9001"
+
+[runtime.server]
+adress = ":8099"
+`))
+	if len(keys) != 2 {
+		t.Fatalf("want 2 unknown keys, got %d: %+v", len(keys), keys)
+	}
+	if keys[0].Key() != "addr" || keys[1].Key() != "runtime.server.adress" {
+		t.Errorf("want source order [addr, runtime.server.adress], got [%s, %s]",
+			keys[0].Key(), keys[1].Key())
+	}
+}
+
+// TestLoadConfig_UnknownKeyIsNotFatal: severity contract. An unrecognized key
+// must never break boot — existing apps carry blocks this binary has no
+// decoder for — and the keys the loader DOES understand still load.
+func TestLoadConfig_UnknownKeyIsNotFatal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nexus.toml")
+	mustWriteTOML(t, path, `
+addr = ":9001"
+
+[runtime.server]
+adress = ":8099"
+addr = ":8085"
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unknown keys must not fail the load: %v", err)
+	}
+	if cfg.Server.Addr != ":8085" {
+		t.Errorf("Config.Server.Addr = %q, want :8085", cfg.Server.Addr)
+	}
+}
+
+// TestWriteUnknownConfigKeyWarning_NamesKeyFileAndFix: the operator-facing
+// message. It must carry the file:line, the key, and the correction —
+// everything needed to fix the file without reading framework source.
+func TestWriteUnknownConfigKeyWarning_NamesKeyFileAndFix(t *testing.T) {
+	var buf strings.Builder
+	writeUnknownConfigKeyWarning(&buf, "nexus.toml", []unknownConfigKey{
+		{Path: []string{"addr"}, Line: 2, Hint: "did you mean [runtime.server] addr?"},
+	})
+	out := buf.String()
+	for _, want := range []string{"nexus.toml:2", `"addr"`, "[runtime.server] addr?", "nexus lint nexus.toml"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("warning missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRuntimeConfigLeaves_IndexesTheSchema: the hint index is derived by
+// reflection so it can't drift from the structs. Spot-check the shape:
+// addr belongs to [runtime.server] and, via the map-typed table, to
+// [runtime.server.listeners.*].
+func TestRuntimeConfigLeaves_IndexesTheSchema(t *testing.T) {
+	leaves := runtimeConfigLeaves()
+	if got := leaves["addr"]; len(got) != 2 {
+		t.Errorf("leaves[addr] = %v, want the two tables declaring addr", got)
+	}
+	if got := leaves["environment"]; len(got) != 1 || got[0] != "runtime" {
+		t.Errorf("leaves[environment] = %v, want [runtime]", got)
+	}
+	if table, ok := bestLeafTable(leaves["addr"], ""); !ok || table != "runtime.server" {
+		t.Errorf("bestLeafTable(addr) = %q/%v, want runtime.server", table, ok)
+	}
+}
+
+// TestNearestName_BudgetScalesWithLength: a suggestion nobody asked for is
+// worse than none, so short keys get a tighter edit budget than long ones.
+func TestNearestName_BudgetScalesWithLength(t *testing.T) {
+	cases := []struct {
+		name, want string
+		candidates []string
+	}{
+		{"addrr", "addr", []string{"addr", "route_prefix"}},            // 1 edit
+		{"enabeld", "enabled", []string{"enabled", "name"}},            // transposition, 2 edits
+		{"xyz", "", []string{"rpm", "burst"}},                          // 3 chars: nothing within 1
+		{"adress", "", []string{"addr", "route_prefix"}},               // 4 edits from addr — not a spelling match
+		{"completely_different", "", []string{"addr", "route_prefix"}}, // nothing close
+	}
+	for _, c := range cases {
+		if got := nearestName(c.name, c.candidates); got != c.want {
+			t.Errorf("nearestName(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

@@ -41,6 +41,12 @@ import (
 //     here would crash at boot, so catching them at lint time
 //     is the point.
 //   - GraphQL.DocumentCacheSize must be non-negative.
+//   - Keys the loader has no field for — a typo (`adress`) or a
+//     setting written at the wrong nesting level (`addr` at the
+//     top of the file) — are reported as warnings. Without this
+//     the lint certified such a file as valid while the app ran
+//     on framework defaults. See unknownConfigKeys for the
+//     (deliberately narrow) scope of the check.
 //   - Environment string is informational; we don't constrain
 //     to a known-good list — operators use any naming scheme.
 func LintRuntimeFile(path string) ([]manifest.Issue, error) {
@@ -72,7 +78,39 @@ func lintRuntimeBytes(raw []byte, source string) ([]manifest.Issue, error) {
 	}
 	issues := lintRuntimeBlock(block.Runtime)
 	issues = append(issues, lintExtensionsFile(expanded)...)
+	// Keys nothing reads. The lint used a non-strict Unmarshal for its whole
+	// life, which is why `nexus lint` happily certified a file whose
+	// `[runtime.server] adress` typo left the app on the default port. Skipped
+	// when the loader already printed the same list for this source (the dev
+	// boot self-check calls us right after configFromTOML).
+	if !unknownConfigKeysReported(source) {
+		issues = append(issues, lintUnknownConfigKeys(source, unknownConfigKeys(expanded))...)
+	}
 	return issues, nil
+}
+
+// lintUnknownConfigKeys turns unknown-key detections into lint findings.
+//
+// Severity is WARNING, not error, for the same reason the boot path warns
+// instead of panicking: a key this binary doesn't recognize is usually a
+// mistake but not always one — the whole document is readable through
+// nexus.Get, so an app may deliberately park its own values in a table the
+// loader owns. The finding's job is to stop the lint from certifying a
+// typo'd file as clean, which a warning does.
+//
+// Path is the dotted key (so editors can jump to it); the message carries the
+// file:line and, when the schema supports a guess, what was probably meant.
+func lintUnknownConfigKeys(source string, keys []unknownConfigKey) []manifest.Issue {
+	out := make([]manifest.Issue, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, manifest.Issue{
+			Severity: manifest.SeverityWarning,
+			Code:     manifest.ErrCode("RUNTIME_UNKNOWN_KEY"),
+			Path:     k.Key(),
+			Message:  fmt.Sprintf("%s:%d: %s%s", source, k.Line, k.describe(), k.hintClause()),
+		})
+	}
+	return out
 }
 
 // lintExtensionsFile parses the [extensions.*] block out of
