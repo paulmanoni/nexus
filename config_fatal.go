@@ -123,7 +123,20 @@ func renderBootError(w io.Writer, err error, color bool) {
 	var ce *ConfigError
 	if !errors.As(err, &ce) {
 		fmt.Fprintf(w, "\n%s%s✗ nexus: failed to start%s\n\n", red, bold, reset)
-		row("error", err.Error())
+		for i, line := range strings.Split(strings.TrimRight(err.Error(), "\n"), "\n") {
+			if i == 0 {
+				row("error", red+line+reset)
+				continue
+			}
+			// Continuation lines (a DI error's "needed by …") keep their
+			// own indentation rather than being squeezed into the label
+			// column.
+			fmt.Fprintf(w, "         %s\n", strings.TrimLeft(line, "\t "))
+		}
+		var h interface{ Hint() string }
+		if errors.As(err, &h) && h.Hint() != "" {
+			row("fix", yellow+h.Hint()+reset)
+		}
 		fmt.Fprintln(w)
 		return
 	}

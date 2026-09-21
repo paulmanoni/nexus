@@ -3,6 +3,7 @@ package nexus
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/paulmanoni/nexus/di"
@@ -188,7 +190,10 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 					for j := 0; j < i; j++ {
 						_ = servers[j].Close()
 					}
-					return fmt.Errorf("nexus: listen %s (%s): %w", l.name, l.Addr, err)
+					if errors.Is(err, syscall.EADDRINUSE) {
+						return fmt.Errorf("nexus: port %s is already in use — stop whatever is on it, or change [runtime.server] addr in nexus.toml", l.Addr)
+					}
+					return fmt.Errorf("nexus: cannot listen on %s (%s listener): %w", l.Addr, l.name, err)
 				}
 				// Per-listener TLS: wrap the raw TCP listener so the
 				// http.Server speaks HTTPS on this port without a

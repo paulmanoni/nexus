@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/paulmanoni/nexus/di"
@@ -560,9 +561,46 @@ func Run(cfg Config, opts ...Option) {
 			}})
 		}).nexusOption())
 	}
-	// The builtin container prints build/start errors to stderr itself; the
-	// opt-in fx adapter owns its own logging (and honors NEXUS_FX_QUIET).
-	backend.Build(di.Collect(all...)).Run()
+	inst := backend.Build(di.Collect(all...))
+	// Both backends need this. The fx adapter installs fx.NopLogger and Run()
+	// never consults Err(), so a wiring failure there used to exit 1 with an
+	// empty stderr; the builtin printed one flat line. Rendering here gives
+	// either backend the same structured block, plus a fix line for the
+	// framework types a developer never asked for by name.
+	if err := inst.Err(); err != nil {
+		renderBootError(os.Stderr, &wiringError{err: err, hint: wiringHint(err)}, bootColorsEnabled())
+		os.Exit(1)
+	}
+	inst.Run()
+}
+
+// wiringError carries a remediation hint alongside a wiring failure so
+// renderBootError can print a "fix" row for something that is not a
+// ConfigError.
+type wiringError struct {
+	err  error
+	hint string
+}
+
+func (e *wiringError) Error() string { return e.err.Error() }
+func (e *wiringError) Unwrap() error { return e.err }
+func (e *wiringError) Hint() string  { return e.hint }
+
+// wiringHints maps a type named by a "no provider for" error to the line that
+// fixes it. These are types the binders ask for on the app's behalf, so the
+// developer has never written them down and the bare error reads as a puzzle.
+var wiringHints = map[string]string{
+	"*zap.Logger": "add nexus.Provide(zap.NewExample) — or zap.NewProduction; the db / cache / mail / storage binders take a logger",
+}
+
+func wiringHint(err error) string {
+	msg := err.Error()
+	for typ, hint := range wiringHints {
+		if strings.Contains(msg, "no provider for "+typ) {
+			return hint
+		}
+	}
+	return ""
 }
 
 // unwrap flattens a []Option into the []di.Option the container needs.

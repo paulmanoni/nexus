@@ -99,7 +99,9 @@ func (a *App) Start(ctx context.Context) error {
 		}
 		if err := h.OnStart(ctx); err != nil {
 			a.rollback(ctx, i)
-			return fmt.Errorf("di: OnStart hook %d failed: %w", i, err)
+			// The hook index meant nothing to a reader; the wrapped
+			// error already says which resource failed to start.
+			return fmt.Errorf("startup failed: %w", err)
 		}
 	}
 	return nil
@@ -138,11 +140,11 @@ func (a *App) Run() {
 	defer stop()
 
 	if a.err != nil {
-		fmt.Fprintf(os.Stderr, "nexus/di: %v\n", a.err)
+		fmt.Fprintf(os.Stderr, "nexus: %v\n", a.err)
 		os.Exit(1)
 	}
 	if err := a.Start(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "nexus/di: %v\n", err)
+		fmt.Fprintf(os.Stderr, "nexus: %v\n", err)
 		os.Exit(1)
 	}
 	<-ctx.Done()
@@ -162,11 +164,11 @@ func (a *App) Run() {
 	select {
 	case err := <-done:
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "nexus/di: shutdown: %v\n", err)
+			fmt.Fprintf(os.Stderr, "nexus: shutdown: %v\n", err)
 			os.Exit(1)
 		}
 	case <-stopCtx.Done():
-		fmt.Fprintf(os.Stderr, "nexus/di: shutdown timed out after %s · exiting\n", a.stopTimeout)
+		fmt.Fprintf(os.Stderr, "nexus: shutdown timed out after %s · exiting\n", a.stopTimeout)
 		os.Exit(1)
 	}
 }

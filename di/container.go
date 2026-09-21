@@ -2,7 +2,10 @@ package di
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 )
 
 // container is the resolution engine. It holds the registered providers,
@@ -109,14 +112,37 @@ func (c *container) register(spec ProvideSpec) error {
 // the same type (fx errors here too — ambiguity is a wiring bug, not a
 // last-wins convenience).
 func (c *container) claimType(t reflect.Type, p *provider) error {
-	if _, dup := c.byType[t]; dup {
-		return fmt.Errorf("di: type %s provided more than once", t)
+	if prev, dup := c.byType[t]; dup {
+		return fmt.Errorf("di: type %s provided more than once — by %s and by %s; drop one of the two Provide calls",
+			t, funcLabel(prev.fn), funcLabel(p.fn))
 	}
 	if _, dup := c.values[t]; dup {
-		return fmt.Errorf("di: type %s already supplied", t)
+		return fmt.Errorf("di: type %s is already supplied as a value, so %s cannot also provide it", t, funcLabel(p.fn))
 	}
 	c.byType[t] = p
 	return nil
+}
+
+// funcLabel names a constructor the way a developer would look for it —
+// package-qualified plus the file:line its body starts on. Without this a
+// wiring error can only name the type, which is never the part in question.
+func funcLabel(fn reflect.Value) string {
+	if !fn.IsValid() || fn.Kind() != reflect.Func {
+		return "an unknown function"
+	}
+	if f := runtime.FuncForPC(fn.Pointer()); f != nil {
+		name := f.Name()
+		file, line := f.FileLine(fn.Pointer())
+		// Reflective handlers are called through a MakeFunc stub, so the
+		// symbol resolves to assembly in the runtime instead of to user
+		// code. The signature is what lets a reader recognise their own
+		// function in that case.
+		synthetic := file == "" || strings.HasSuffix(file, ".s") || strings.Contains(name, "reflect.makeFuncStub")
+		if !synthetic {
+			return fmt.Sprintf("%s (%s:%d)", name, filepath.Base(file), line)
+		}
+	}
+	return fn.Type().String()
 }
 
 // resolve returns the value for type t, running providers as needed.
@@ -129,7 +155,7 @@ func (c *container) resolve(t reflect.Type) (reflect.Value, error) {
 	}
 	p, ok := c.byType[t]
 	if !ok {
-		return reflect.Value{}, fmt.Errorf("di: no provider for %s", t)
+		return reflect.Value{}, c.noProviderError(t)
 	}
 	if err := c.execute(p); err != nil {
 		return reflect.Value{}, err
@@ -139,6 +165,33 @@ func (c *container) resolve(t reflect.Type) (reflect.Value, error) {
 		return reflect.Value{}, fmt.Errorf("di: provider for %s ran but produced no value", t)
 	}
 	return v, nil
+}
+
+// noProviderError explains a missing dependency. A pointer/value mismatch
+// between what a provider returns and what a consumer asks for is the most
+// common wiring mistake, so it gets named rather than left to be guessed.
+func (c *container) noProviderError(t reflect.Type) error {
+	if alt, ok := c.nearMiss(t); ok {
+		return fmt.Errorf("di: no provider for %s, but %s is provided — take %s instead, or have the provider return %s",
+			t, alt, alt, t)
+	}
+	return fmt.Errorf("di: no provider for %s — pass a constructor that returns it to nexus.Provide", t)
+}
+
+// nearMiss reports the same type across one pointer indirection: T when *T
+// was asked for, and *T when T was.
+func (c *container) nearMiss(t reflect.Type) (reflect.Type, bool) {
+	alt := reflect.PointerTo(t)
+	if t.Kind() == reflect.Pointer {
+		alt = t.Elem()
+	}
+	if _, ok := c.byType[alt]; ok {
+		return alt, true
+	}
+	if _, ok := c.values[alt]; ok {
+		return alt, true
+	}
+	return nil, false
 }
 
 // resolveIn builds a parameter object: each exported field is resolved
@@ -209,7 +262,7 @@ func (c *container) execute(p *provider) error {
 	p.executing = true
 	defer func() { p.executing = false }()
 
-	args, callSlice, err := c.resolveParams(p.ft, p.paramTags)
+	args, callSlice, err := c.resolveParams(p.ft, p.paramTags, funcLabel(p.fn))
 	if err != nil {
 		return err
 	}
@@ -269,7 +322,9 @@ func (c *container) spreadOut(t reflect.Type, v reflect.Value) {
 // so stdlib-style constructors such as zap.NewExample(...zap.Option) work
 // without a provider for []T. A variadic param explicitly group-tagged collects
 // the value group and is passed through as the variadic slice (callSlice=true).
-func (c *container) resolveParams(ft reflect.Type, paramTags []string) (args []reflect.Value, callSlice bool, err error) {
+// who names the function whose parameters these are, so a missing
+// dependency reports which constructor or invoke needed it.
+func (c *container) resolveParams(ft reflect.Type, paramTags []string, who string) (args []reflect.Value, callSlice bool, err error) {
 	n := ft.NumIn()
 	variadic := ft.IsVariadic()
 	args = make([]reflect.Value, 0, n)
@@ -301,7 +356,7 @@ func (c *container) resolveParams(ft reflect.Type, paramTags []string) (args []r
 				args = append(args, reflect.Zero(pt))
 				continue
 			}
-			return nil, false, rerr
+			return nil, false, fmt.Errorf("%w\n\tneeded by %s (parameter %d)", rerr, who, i+1)
 		}
 		args = append(args, v)
 	}
@@ -332,7 +387,7 @@ func (c *container) invoke(spec InvokeSpec) error {
 	if ft.Kind() != reflect.Func {
 		return fmt.Errorf("di: Invoke expects a function, got %T", spec.Fn)
 	}
-	args, callSlice, err := c.resolveParams(ft, spec.ParamTags)
+	args, callSlice, err := c.resolveParams(ft, spec.ParamTags, funcLabel(rv))
 	if err != nil {
 		return err
 	}
