@@ -28,10 +28,9 @@ type lintOptions struct {
 	binaryPath string
 
 	// inputFormat forces a specific parser. Empty = auto-detect from
-	// the filePath extension (.yaml/.yml → YAML, anything else →
-	// JSON). Explicit --yaml / --json beats auto-detection. Stdin
-	// without an explicit flag defaults to JSON to preserve the
-	// pre-v0.43 pipe-from-print-mode workflow.
+	// the filePath extension (.toml → TOML, anything else → JSON).
+	// An explicit --toml beats auto-detection. Stdin without a flag
+	// defaults to JSON to preserve the pipe-from-print-mode workflow.
 	inputFormat string // "" | "toml" | "json"
 
 	// JSON output for machine consumers (CI, IDE integrations). When
@@ -65,7 +64,8 @@ type lintOptions struct {
 //
 //	--json     emit machine-readable JSON instead of the text report
 //	--quiet    suppress warnings (only errors counted toward exit code)
-//	--binary   exec a binary in NEXUS_PRINT_MANIFEST=1 mode
+//	--binary   lint an already-built app binary at this path
+//	--toml     force TOML input parsing (JSON is the default)
 func newLintCmd(stdout, stderr io.Writer) *cobra.Command {
 	var opts lintOptions
 
@@ -94,10 +94,11 @@ Input sources:
   nexus lint <manifest.json>   JSON manifest file
   nexus lint <nexus.toml>      TOML inputs surface (auto-detected by extension)
   nexus lint -                 read from stdin (default JSON; use --toml for TOML)
-  nexus lint --binary=PATH     exec the binary with NEXUS_PRINT_MANIFEST=1
+  nexus lint --binary=PATH     an already-built app binary (asks it for its
+                               own manifest via NEXUS_PRINT_MANIFEST=1)
 
 Format detection (in priority order):
-  1. Explicit --toml or --json flag
+  1. Explicit --toml flag
   2. .toml file extension → TOML
   3. Default → JSON (preserves the pipe-from-print-mode CI workflow)`,
 		Args: cobra.MaximumNArgs(1),
@@ -109,30 +110,22 @@ Format detection (in priority order):
 		},
 	}
 
-	// --json is overloaded: as a flag it means "emit JSON output";
-	// as an *input* format selector it's set via --json-in (rare,
-	// since JSON is the default). The asymmetry mirrors what
-	// operators actually type — `--toml` is the new affordance.
+	// --json selects the OUTPUT format; JSON is already the default
+	// on the input side, so there's no input counterpart to it.
+	// --toml is the only input-format override.
 	cmd.Flags().BoolVar(&opts.jsonOut, "json", false, "emit issues as JSON instead of the text report")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress warning-severity issues from output")
-	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "exec the binary in NEXUS_PRINT_MANIFEST=1 mode and lint the result")
+	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "lint an already-built app binary at this path (instead of reading a manifest file)")
 
-	var tomlIn, jsonIn bool
+	var tomlIn bool
 	cmd.Flags().BoolVar(&tomlIn, "toml", false, "force TOML input parsing (overrides auto-detection)")
-	cmd.Flags().BoolVar(&jsonIn, "json-in", false, "force JSON input parsing (overrides auto-detection)")
 
-	// Translate the two booleans into the single inputFormat field.
-	// PreRunE runs after flag parsing but before RunE, so the field
-	// is set before runLint sees it.
+	// Translate the boolean into the inputFormat field. PreRunE runs
+	// after flag parsing but before RunE, so the field is set before
+	// runLint sees it.
 	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
-		if tomlIn && jsonIn {
-			return errors.New("nexus lint: --toml and --json-in are mutually exclusive")
-		}
-		switch {
-		case tomlIn:
+		if tomlIn {
 			opts.inputFormat = "toml"
-		case jsonIn:
-			opts.inputFormat = "json"
 		}
 		return nil
 	}
@@ -191,10 +184,10 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 }
 
 // resolveInputFormat picks the parser to use based on the explicit
-// --toml/--json-in flag (highest priority), then the filename
-// extension, then JSON as the default. Source for stdin / binary
-// inputs uses the synthetic names "stdin" / binary path; both fall
-// through to JSON unless --toml is set.
+// --toml flag (highest priority), then the filename extension, then
+// JSON as the default. Source for stdin / binary inputs uses the
+// synthetic names "stdin" / binary path; both fall through to JSON
+// unless --toml is set.
 func resolveInputFormat(opts lintOptions, source string) string {
 	if opts.inputFormat != "" {
 		return opts.inputFormat

@@ -235,16 +235,119 @@ func TestRoutes_PathAndBinary_MutuallyExclusive(t *testing.T) {
 	}
 }
 
-func TestRoutes_YamlBinaryCombo_Rejected(t *testing.T) {
+func TestRoutes_TomlBinaryCombo_Rejected(t *testing.T) {
 	err := runRoutes(new(bytes.Buffer), new(bytes.Buffer), routesOptions{
-		inputFormat: "yaml",
+		inputFormat: "toml",
 		binaryPath:  "./bin",
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "yaml") {
-		t.Errorf("error should mention yaml: %v", err)
+	if !strings.Contains(err.Error(), "--toml is incompatible with --binary") {
+		t.Errorf("error should reject the toml/binary combo: %v", err)
+	}
+}
+
+// TestRoutes_KindAliases covers the spellings normalizeTransport
+// documents as expected. Before the filter was normalized these
+// matched zero routes and exited 0.
+func TestRoutes_KindAliases(t *testing.T) {
+	path := writeRoutesJSON(t, sampleRoutes())
+	for _, tc := range []struct{ kind, want string }{
+		{"http", "3 routes"},
+		{"REST", "3 routes"},
+		{"websocket", "1 route"},
+		{"graphql", "1 route"},
+		{"graphql.mutation", "1 route"},
+	} {
+		stdout := new(bytes.Buffer)
+		if err := runRoutes(stdout, new(bytes.Buffer), routesOptions{filePath: path, kindFilter: tc.kind}); err != nil {
+			t.Fatalf("--kind %s: %v", tc.kind, err)
+		}
+		if !strings.Contains(stdout.String(), tc.want) {
+			t.Errorf("--kind %s: expected %q; got:\n%s", tc.kind, tc.want, stdout.String())
+		}
+	}
+}
+
+func TestRoutes_BadFilterValues_Rejected(t *testing.T) {
+	path := writeRoutesJSON(t, sampleRoutes())
+	for _, tc := range []struct {
+		name   string
+		opts   routesOptions
+		expect []string
+	}{
+		{
+			name:   "kind",
+			opts:   routesOptions{filePath: path, kindFilter: "bogus"},
+			expect: []string{`unknown --kind "bogus"`, "graphql.subscription"},
+		},
+		{
+			name:   "auth",
+			opts:   routesOptions{filePath: path, authFilter: "yes"},
+			expect: []string{`unknown --auth "yes"`, "none, optional, required"},
+		},
+		{
+			name:   "method",
+			opts:   routesOptions{filePath: path, methodFilter: "GTE"},
+			expect: []string{`"GTE" is not an HTTP method`, "GET"},
+		},
+	} {
+		err := runRoutes(new(bytes.Buffer), new(bytes.Buffer), tc.opts)
+		if err == nil {
+			t.Fatalf("%s: expected an error", tc.name)
+		}
+		for _, want := range tc.expect {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q missing %q", tc.name, err, want)
+			}
+		}
+	}
+}
+
+// TestRoutes_AuthNone_MatchesUnsetAuth — a Route with no Auth reads
+// as "none" in the table, so --auth none has to match it too.
+func TestRoutes_AuthNone_MatchesUnsetAuth(t *testing.T) {
+	path := writeRoutesJSON(t, sampleRoutes())
+	stdout := new(bytes.Buffer)
+	if err := runRoutes(stdout, new(bytes.Buffer), routesOptions{filePath: path, authFilter: "none"}); err != nil {
+		t.Fatalf("auth none: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "1 route") {
+		t.Errorf("expected the single auth-less route; got:\n%s", stdout.String())
+	}
+}
+
+// TestRoutes_ZeroMatch_NotesTotal — an empty table must not read as
+// "this app serves nothing". The note goes to stderr so --json and
+// `| wc -l` stay clean.
+func TestRoutes_ZeroMatch_NotesTotal(t *testing.T) {
+	path := writeRoutesJSON(t, sampleRoutes())
+	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+	if err := runRoutes(stdout, stderr, routesOptions{filePath: path, moduleFilter: "nope"}); err != nil {
+		t.Fatalf("zero match should exit 0: %v", err)
+	}
+	for _, want := range []string{"has 6 routes", "--module nope"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr note missing %q:\n%s", want, stderr.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "--module") {
+		t.Errorf("note leaked onto stdout:\n%s", stdout.String())
+	}
+}
+
+// TestRoutes_NoDeploymentColumn pins the column set — DEPLOYMENT was
+// dead (only a synthetic example ever set Route.Deployment) and
+// rendered "-" on every row.
+func TestRoutes_NoDeploymentColumn(t *testing.T) {
+	path := writeRoutesJSON(t, sampleRoutes())
+	stdout := new(bytes.Buffer)
+	if err := runRoutes(stdout, new(bytes.Buffer), routesOptions{filePath: path}); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if strings.Contains(stdout.String(), "DEPLOYMENT") {
+		t.Errorf("DEPLOYMENT column still rendered:\n%s", stdout.String())
 	}
 }
 

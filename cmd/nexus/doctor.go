@@ -19,7 +19,7 @@ import (
 type doctorOptions struct {
 	filePath    string
 	binaryPath  string
-	inputFormat string // "" | "yaml" | "json"
+	inputFormat string // "" | "toml" | "json"
 	jsonOut     bool
 	quiet       bool
 }
@@ -31,7 +31,7 @@ type doctorOptions struct {
 // required with no validation rule."
 //
 //	nexus doctor <manifest.json>     read JSON from disk
-//	nexus doctor <nexus.toml> read YAML (auto-detected by extension)
+//	nexus doctor <nexus.toml>        read TOML (auto-detected by extension)
 //	nexus doctor -                   read from stdin
 //	nexus doctor --binary=PATH       exec binary in NEXUS_PRINT_MANIFEST=1
 //
@@ -65,7 +65,8 @@ Input sources:
   nexus doctor <manifest.json>  JSON manifest file
   nexus doctor <nexus.toml>     TOML inputs surface (auto-detected by extension)
   nexus doctor -                read from stdin (default JSON; use --toml for TOML)
-  nexus doctor --binary=PATH    exec binary in NEXUS_PRINT_MANIFEST=1`,
+  nexus doctor --binary=PATH    an already-built app binary (asks it for its
+                                own manifest via NEXUS_PRINT_MANIFEST=1)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
@@ -77,20 +78,13 @@ Input sources:
 
 	cmd.Flags().BoolVar(&opts.jsonOut, "json", false, "emit findings as JSON instead of the text report")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress warning-severity findings from output")
-	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "exec the binary in NEXUS_PRINT_MANIFEST=1 mode and check the result")
+	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "check an already-built app binary at this path (instead of reading a manifest file)")
 
-	var tomlIn, jsonIn bool
+	var tomlIn bool
 	cmd.Flags().BoolVar(&tomlIn, "toml", false, "force TOML input parsing (overrides auto-detection)")
-	cmd.Flags().BoolVar(&jsonIn, "json-in", false, "force JSON input parsing (overrides auto-detection)")
 	cmd.PreRunE = func(_ *cobra.Command, _ []string) error {
-		if tomlIn && jsonIn {
-			return errors.New("nexus doctor: --toml and --json-in are mutually exclusive")
-		}
-		switch {
-		case tomlIn:
+		if tomlIn {
 			opts.inputFormat = "toml"
-		case jsonIn:
-			opts.inputFormat = "json"
 		}
 		return nil
 	}
