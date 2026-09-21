@@ -1360,7 +1360,7 @@ before any frontend build. Manage deps with npm; any Vite plugin,
 Tailwind, or component library works:
 
     cd web && npm install    # one-time: install frontend deps
-    nexus dev                # go run + Vite dev server (HMR) on :5173;
+    nexus dev                # rebuild-on-save + Vite dev server (HMR) on :5173;
                              # injects a proxy so /__nexus, /graphql,
                              # /oauth, /ws reach the Go app
     nexus build              # npm run build -> web/dist, then go build

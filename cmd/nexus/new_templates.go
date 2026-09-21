@@ -241,9 +241,9 @@ func nextStepsLines(opts scaffoldOpts) []string {
 			"  cp .env.example .env    # then fill in real credentials",
 		)
 	}
-	devNote := "  nexus dev               # go run + viteless dev server (HMR); dashboard at /__nexus/"
+	devNote := "  nexus dev               # rebuilds on save; viteless serves the SPA, dashboard at /__nexus/"
 	if opts.HasVite() {
-		devNote = "  nexus dev               # go run + Vite dev server (HMR); dashboard at /__nexus/"
+		devNote = "  nexus dev               # rebuilds on save; Vite serves the SPA, dashboard at /__nexus/"
 	}
 	lines = append(lines, devNote)
 	if opts.HasFrontend() {

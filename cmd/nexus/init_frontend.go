@@ -91,7 +91,7 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	//    first.
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintln(stdout, "  nexus dev               # go run + viteless dev server (HMR); SPA on :5173")
+	fmt.Fprintln(stdout, "  nexus dev               # rebuilds on save; viteless dev server (HMR) serves the SPA")
 	fmt.Fprintln(stdout, "                          # no install step — viteless fetches and caches deps on first run")
 	return nil
 }
