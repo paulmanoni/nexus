@@ -24,7 +24,7 @@ func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "build [main-package]",
-		Short: "Build a single binary",
+		Short: "Bundle the frontend and compile everything into one binary",
 		Long: `Build the app as a single binary.
 
 Runs the frontend bundler on any islands.src/ sources, generates the

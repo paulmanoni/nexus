@@ -219,8 +219,16 @@ func parseManifest(raw []byte, format, source string) (nexusmanifest.Manifest, e
 		}
 		return m, nil
 	default:
+		// Print mode brackets its JSON with BEGIN/END markers and may
+		// have app log lines on stdout ahead of them, so the bytes are
+		// not valid JSON on their own. Extract unwraps that; for a
+		// plain JSON file it hands the input straight back.
+		body, err := nexusmanifest.Extract(raw)
+		if err != nil {
+			return nexusmanifest.Manifest{}, fmt.Errorf("nexus lint: read manifest from %s: %w", source, err)
+		}
 		var m nexusmanifest.Manifest
-		if err := json.Unmarshal(raw, &m); err != nil {
+		if err := json.Unmarshal(body, &m); err != nil {
 			return nexusmanifest.Manifest{}, fmt.Errorf("nexus lint: parse JSON from %s: %w", source, err)
 		}
 		return m, nil

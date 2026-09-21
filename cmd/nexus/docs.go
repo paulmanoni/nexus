@@ -1502,11 +1502,12 @@ CLI CHEATSHEET
                              --module <path>       override go.mod path
                              --yes                 take defaults (no prompts)
 
-  nexus init [dir]           Add a Vite frontend to an EXISTING project
-                             (scaffolds web/ + patches main.go to embed
-                             web/dist + ServeFrontend).
+  nexus init [dir]           Add a frontend to an EXISTING project
+                             (scaffolds islands.src/ + islands/index.html
+                             and patches main.go to embed islands/ via
+                             ServeFrontend).
                              --frontend vue|react  (required)
-                             --force               overwrite web/
+                             --force               overwrite islands.src/
 
   nexus dev [dir]            Build + run the app alongside the Vite dev
                              server (HMR on :5173); serves the dashboard.
@@ -1543,7 +1544,8 @@ CLI CHEATSHEET
                              --addr host:port   listen address override
                              --frontend-cmd <c> dev-server command (default
                                                 "npm run dev" in web/)
-                             --no-open          skip opening the browser
+                             --open             open a browser once the port
+                                                responds (off by default)
                              --debug            keep DWARF in the dev binary so
                                                 delve can attach and panic
                                                 traces stay complete. DWARF is
@@ -1562,15 +1564,19 @@ CLI CHEATSHEET
                                                 "go run", killing the app
                                                 before every rebuild
 
-  nexus build                Build a single binary. Runs npm install (if
-                             node_modules is missing) + vite build, then
-                             go build embeds web/dist via //go:embed.
+  nexus build                Build one binary. Bundles the frontend first,
+                             then go build embeds web/dist via //go:embed.
+                             With the default viteless tooling there is no
+                             install step; --tooling vite uses the npm
+                             project in web/ instead.
     --output / -o <path>     output binary path (default: go's default).
     --package <pkg>          main package to compile (default ".").
 
   nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 
-  nexus generate dockerfile  Emit a multi-stage Dockerfile.
+  nexus generate frontend    Generate the typed TS source tree from a manifest.
+  nexus generate handlers    Wire //@-annotated handlers into registrations.
+                             --check on either one is a CI drift gate.
 
   nexus docs [topic]         This help. --web opens the README on GitHub.
 

@@ -59,7 +59,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "dev [dir]",
-		Short: "Run the app with go run + a live dashboard",
+		Short: "Rebuild and rerun the app on every save",
 		Long: `Boot the user's app via 'go run', print a friendly banner, and
 serve the dashboard once the listen port responds. Pass --open to also
 launch a browser.
@@ -821,10 +821,20 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 	// on openOnReady. When the vite dev server is running, prefer
 	// its URL (HMR-aware, the right tab to live in); fall back to
 	// the gin/probe URL when bundle mode owns the frontend.
-	go waitAndOpen(ctx, addr, openOnReady, openDash, inertiaViteURL != "", stdout, detectedCh, frontendURLCh)
+	// appDead gates the ready banner. Probing a port only proves something
+	// is listening on it — when the app failed to bind (port already taken,
+	// a wiring error, a panic) the probe can still succeed against whatever
+	// else owns that port, and the banner then advertised an API and a
+	// dashboard that were not there.
+	var appDead atomic.Bool
+	go waitAndOpen(ctx, addr, openOnReady, openDash, inertiaViteURL != "", stdout, detectedCh, frontendURLCh, appDead.Load)
 
 	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		appDead.Store(true)
+		exited <- err
+	}()
 
 	pid := cmd.Process.Pid
 	killChild := func() {
@@ -869,7 +879,7 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 // as --addr, we surface a correction line — a misleading banner is
 // the symptom that drove this code, so making the discrepancy
 // visible is part of the fix.
-func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash, inertia bool, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string) {
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash, inertia bool, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string, appDead func() bool) {
 	flagAddr := normalizeProbeAddr(addr)
 
 	probeOnce := func(target string) bool {
@@ -996,6 +1006,12 @@ done:
 		}
 	}
 	if primaryURL == "" {
+		return
+	}
+	// The run loop has already said the app exited and is waiting for
+	// changes; announcing "ready" after that just sends the reader to a
+	// port nothing is serving.
+	if appDead != nil && appDead() {
 		return
 	}
 	printReadyLine(stdout, primaryURL, openBrowserOnReady)

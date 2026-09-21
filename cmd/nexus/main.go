@@ -9,11 +9,18 @@
 //
 // Subcommands:
 //
-//	nexus new <dir>       Scaffold a minimal nexus app.
-//	nexus init [dir]      Add nexus.toml to an existing project.
-//	nexus dev [dir]       Run `go run` on the target package, open the dashboard.
-//	nexus build           Build a deployment binary using overlay-driven shadow code.
+//	nexus new <dir>       Scaffold a new nexus app.
+//	nexus dev [dir]       Rebuild and rerun the app on every save.
+//	nexus build           Build the app into one binary.
+//	nexus init [dir]      Add a frontend to an existing project.
+//	nexus generate        Code generation: frontend bindings, handler registration.
+//	nexus client          Write the typed JS/TS client SDK to disk.
+//	nexus apidocs         Generate and serve API reference docs.
 //	nexus docs [topic]    Show inline documentation; --web opens the README.
+//	nexus routes          List the endpoints an app mounts.
+//	nexus lint            Check a manifest's inputs and a nexus.toml's keys.
+//	nexus doctor          Audit a manifest for configuration problems.
+//	nexus pki             Issue mTLS certificates for the peer mesh.
 //	nexus version         Print the CLI version.
 package main
 
@@ -22,6 +29,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -87,57 +95,129 @@ func resolveVersion() string {
 }
 
 func main() {
-	if err := newRootCmd(os.Stdout, os.Stderr).Execute(); err != nil {
-		// SilenceErrors on lint / doctor / routes hides cobra's
-		// automatic "Error: <msg>" line so the lint-exit sentinel
-		// doesn't duplicate the report. Side effect: legitimate
-		// usage errors (missing manifest, malformed JSON, etc.)
-		// also get hidden. Print them here explicitly so the user
-		// sees what went wrong — but skip the lint-exit sentinel,
-		// whose message ("lint: errors found") would be noise
-		// after the report.
-		if !IsLintExitError(err) {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		os.Exit(1)
+	// SilenceErrors is set on the root, so this is the one place an
+	// error reaches the terminal. Before, cobra printed it too and
+	// anything that wasn't lint/doctor/routes came out twice.
+	cmd, err := newRootCmd(os.Stdout, os.Stderr).ExecuteC()
+	if err == nil {
+		return
 	}
+	// The lint-exit sentinel ("lint: errors found") would be noise
+	// after the report the command already printed.
+	if !IsLintExitError(err) {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		if cmd != nil && isUsageError(err) {
+			fmt.Fprintf(os.Stderr, "\nRun '%s --help' to see the accepted arguments and flags.\n", cmd.CommandPath())
+		}
+	}
+	os.Exit(1)
+}
+
+// usageErrorPrefixes are the messages cobra and pflag produce when the
+// command line itself is wrong, as opposed to the command running and
+// failing. Only those get pointed at --help; a build failure should not.
+var usageErrorPrefixes = []string{
+	"unknown flag",
+	"unknown shorthand flag",
+	"unknown command",
+	"flag needs an argument",
+	"invalid argument",
+	"required flag",
+	"accepts ",
+	"requires at least",
+	"unknown topic",
+}
+
+func isUsageError(err error) bool {
+	msg := err.Error()
+	for _, p := range usageErrorPrefixes {
+		if strings.HasPrefix(msg, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // newRootCmd builds the cobra command tree. Factored out so tests can
 // drive the CLI in-process with their own stdout/stderr; main() just
 // wires it to os.* and runs.
 func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
+	// Keep registration order inside each group so "Start here" reads
+	// new → dev → build instead of cobra's alphabetical build → dev → new.
+	cobra.EnableCommandSorting = false
+
 	root := &cobra.Command{
 		Use:   "nexus",
 		Short: "Developer CLI for the nexus framework",
-		Long: `nexus is a developer CLI for the nexus Go framework.
+		Long: `nexus is the developer CLI for the nexus Go framework.
 
-Run a single binary as a monolith or split it into independent services
-with the same commands. Each subcommand is documented under nexus help <cmd>.`,
-		SilenceUsage:  true, // cobra already prints errors; no double-printing usage on every error
-		SilenceErrors: false,
+New here? Three commands cover the whole loop:
+
+  nexus new myapp     scaffold an app (asks about frontend, database, cache, auth)
+  nexus dev           rebuild and rerun on every save; prints the URLs to open
+  nexus build         bundle the frontend and compile everything into one binary
+
+Then "nexus docs" lists short guides for each feature, and every command
+explains itself with --help.`,
+		Version: Version,
+		// Runtime failures print the error alone; main() adds a --help
+		// pointer for the errors that are actually about command usage.
+		SilenceUsage: true,
+		// main() is the single place an error is printed. Leaving this
+		// false made cobra print it too, so most errors appeared twice.
+		SilenceErrors: true,
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
+	// Match `nexus version`, which predates the --version flag.
+	root.SetVersionTemplate("nexus {{.Version}}\n")
 
-	root.AddCommand(
-		newVersionCmd(stdout),
+	// Grouping so the three commands a newcomer needs sit at the top of
+	// `nexus --help` instead of being sorted under apidocs.
+	root.AddGroup(
+		&cobra.Group{ID: groupStart, Title: "Start here:"},
+		&cobra.Group{ID: groupProject, Title: "Build on it:"},
+		&cobra.Group{ID: groupInspect, Title: "Inspect and diagnose:"},
+		&cobra.Group{ID: groupPeer, Title: "Peer mesh (mTLS):"},
+	)
+
+	add := func(group string, cmds ...*cobra.Command) {
+		for _, c := range cmds {
+			c.GroupID = group
+			root.AddCommand(c)
+		}
+	}
+	add(groupStart,
 		newNewCmd(stdout, stderr),
-		newInitCmd(stdout, stderr),
 		newDevCmd(stdout, stderr),
 		newBuildCmd(stdout, stderr),
+	)
+	add(groupProject,
+		newInitCmd(stdout, stderr),
 		newGenerateCmd(stdout, stderr),
+		newClientCmd(stdout, stderr),
+		newAPIDocsCmd(stdout, stderr),
+	)
+	add(groupInspect,
+		newDocsCmd(stdout, stderr),
+		newRoutesCmd(stdout, stderr),
 		newLintCmd(stdout, stderr),
 		newDoctorCmd(stdout, stderr),
-		newRoutesCmd(stdout, stderr),
-		newDocsCmd(stdout, stderr),
-		newAPIDocsCmd(stdout, stderr),
-		newClientCmd(stdout, stderr),
-		// PKI for the peer mesh (extension/peer mTLS).
-		newPkiCmd(stdout, stderr),
 	)
+	// PKI for the peer mesh (extension/peer mTLS).
+	add(groupPeer, newPkiCmd(stdout, stderr))
+	// Ungrouped, so cobra files it under "Additional Commands".
+	root.AddCommand(newVersionCmd(stdout))
 	return root
 }
+
+// Command group IDs for `nexus --help`.
+const (
+	groupStart   = "start"
+	groupProject = "project"
+	groupInspect = "inspect"
+	groupPeer    = "peer"
+)
 
 func newVersionCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
