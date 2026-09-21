@@ -57,7 +57,7 @@ Examples:
 			return runGenerateHandlers(opts, stdout, stderr)
 		},
 	}
-	cmd.Flags().StringVar(&opts.Out, "out", opts.Out, "name of the generated file written into each annotated package")
+	cmd.Flags().StringVar(&opts.Out, "out", opts.Out, "file NAME, not a path, for the generated file placed in each annotated package")
 	cmd.Flags().BoolVar(&opts.Check, "check", false, "exit non-zero if any generated file is out of date (no writes)")
 	return cmd
 }

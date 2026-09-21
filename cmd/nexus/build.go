@@ -27,18 +27,20 @@ func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Bundle the frontend and compile everything into one binary",
 		Long: `Build the app as a single binary.
 
-Runs the frontend bundler on any islands.src/ sources, generates the
-embed file, and shells out to 'go build' on the main package.
+Bundles the frontend if the project has one, writes the embed file so
+the bundle ships inside the binary, then runs 'go build' on the main
+package.
 
-Decorator-form handlers (//@ annotations) are injected via a build
-overlay — nothing is written into your source tree. For a plain
-'go build' / 'go install' / 'go test' (without the nexus CLI), run
-'nexus generate handlers' to eject committed *_gen.go files.
+Handlers written with //@ annotations are registered for this build
+without writing anything into your source tree. Run
+'nexus generate handlers' to commit those registrations instead, which
+is what a plain 'go build' / 'go install' / 'go test' needs.
 
 Examples:
     nexus build
     nexus build -o ./bin/myapp
     nexus build ./cmd/server`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			pkg := "."
 			if mainPkg != "" {
@@ -54,8 +56,11 @@ Examples:
 			})
 		},
 	}
-	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "output binary path; defaults to go build's default")
+	cmd.Flags().StringVarP(&outputPath, "out", "o", "", "path to write the binary to (default: go build's own naming)")
 	cmd.Flags().StringVar(&mainPkg, "package", "", "Go main package to build (defaults to '.')")
+	// The positional argument says the same thing and is the documented
+	// form, so --package stays only for the scripts that already use it.
+	_ = cmd.Flags().MarkDeprecated("package", "pass the main package as an argument: nexus build ./cmd/server")
 	return cmd
 }
 

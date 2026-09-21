@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Version is the CLI version printed by `nexus version`. Three
@@ -171,6 +172,10 @@ explains itself with --help.`,
 	root.SetErr(stderr)
 	// Match `nexus version`, which predates the --version flag.
 	root.SetVersionTemplate("nexus {{.Version}}\n")
+	// One spelling per concept, old spellings still accepted. Applies to
+	// this command and every descendant, so each command declares only the
+	// canonical flag and the alias needs no per-command wiring.
+	root.SetGlobalNormalizationFunc(normalizeFlagName)
 
 	// Grouping so the three commands a newcomer needs sit at the top of
 	// `nexus --help` instead of being sorted under apidocs.
@@ -218,6 +223,27 @@ const (
 	groupInspect = "inspect"
 	groupPeer    = "peer"
 )
+
+// flagAliases maps a flag spelling that used to exist onto the canonical one.
+// The CLI had --output on two commands and --out on eight, for the same idea;
+// rather than break the scripts that used either, both parse to --out.
+//
+// This is the right mechanism for an alias: the flag is declared once and
+// bound to one variable. Declaring two names against the same variable would
+// silently let the last one parsed win.
+var flagAliases = map[string]string{
+	"output": "out",
+	// --tsconfig was declared as a second flag bound to the same variable
+	// as --jsconfig, so passing both silently dropped one. It is an alias.
+	"tsconfig": "jsconfig",
+}
+
+func normalizeFlagName(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+	if canonical, ok := flagAliases[name]; ok {
+		return pflag.NormalizedName(canonical)
+	}
+	return pflag.NormalizedName(name)
+}
 
 func newVersionCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{

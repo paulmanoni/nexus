@@ -79,22 +79,24 @@ Examples:
     nexus client --out ./web/src/sdk --jsconfig ./web/jsconfig.json
     nexus client --out ./web/src/sdk --tsconfig ./web/tsconfig.json
 `,
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if opts.Out == "" {
-				return fmt.Errorf("nexus client: --out is required")
-			}
 			return runClientCmd(opts, stdout, stderr)
 		},
 	}
-	cmd.Flags().StringVar(&opts.Out, "out", "", "directory to write the SDK files into (created if missing)")
+	cmd.Flags().StringVarP(&opts.Out, "out", "o", "", "directory to write the SDK files into (created if missing)")
 	cmd.Flags().StringVar(&opts.URL, "url", "", "origin of a running nexus app; the CLI fetches /__nexus/client/manifest.json from here")
 	cmd.Flags().StringVar(&opts.Manifest, "manifest", "", "path to a manifest JSON file (- for stdin)")
 	cmd.Flags().StringVar(&opts.JSConfig, "jsconfig", "", "path to write (or merge into) a jsconfig.json with URL→file path mappings; enables IDE go-to-definition on '/__nexus/client/*' imports")
-	// --tsconfig is an alias bound to the same backing variable —
-	// the file shape is identical (compilerOptions.paths). TS
-	// projects pass --tsconfig, JS projects pass --jsconfig; both
-	// accepted so users don't have to mentally translate.
-	cmd.Flags().StringVar(&opts.JSConfig, "tsconfig", "", "alias for --jsconfig; pass when targeting a tsconfig.json (same content, different filename)")
+	// --tsconfig is accepted as an alias for --jsconfig (same file shape,
+	// compilerOptions.paths) via the root's flag-name normalization. It is
+	// deliberately not a second flag: two names bound to one variable meant
+	// passing both silently dropped one.
+	_ = cmd.MarkFlagRequired("out")
+	// The root installs this for the whole tree, but setting it here too
+	// keeps --tsconfig working when the command is constructed on its own
+	// (tests, or embedding it in another tool).
+	cmd.Flags().SetNormalizeFunc(normalizeFlagName)
 	return cmd
 }
 

@@ -148,6 +148,7 @@ func apidocsHandler(dir, format string, errOut io.Writer) http.HandlerFunc {
 func newAPIDocsBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 	var output string
 	var pretty bool
+	var compact bool
 	cmd := &cobra.Command{
 		Use:   "build [path]",
 		Short: "Collect API IR from the package at [path] (default: .)",
@@ -166,7 +167,8 @@ func newAPIDocsBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 				return err
 			}
 			var buf []byte
-			if pretty {
+			// --compact is the reachable form of --pretty=false.
+			if pretty && !compact {
 				buf, err = json.MarshalIndent(doc, "", "  ")
 			} else {
 				buf, err = json.Marshal(doc)
@@ -194,7 +196,10 @@ func newAPIDocsBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&output, "output", "o", "", "write IR to file instead of stdout")
-	cmd.Flags().BoolVar(&pretty, "pretty", true, "indent JSON for readability")
+	cmd.Flags().StringVarP(&output, "out", "o", "", "write the IR to this file instead of stdout")
+	cmd.Flags().BoolVar(&pretty, "pretty", true, "indent the JSON (on by default; use --compact to turn it off)")
+	// A default-true bool cannot be turned off by naming it, so --pretty
+	// alone does nothing and the useful direction needed --pretty=false.
+	cmd.Flags().BoolVar(&compact, "compact", false, "emit the JSON on one line instead of indenting it")
 	return cmd
 }

@@ -36,9 +36,6 @@ Refuses to overwrite an existing islands.src/ unless --force.`,
 			if target == "" {
 				target = "."
 			}
-			if frontend == "" {
-				return fmt.Errorf("nexus init: --frontend is required (vue or react)")
-			}
 			if frontend != "vue" && frontend != "react" {
 				return fmt.Errorf("nexus init: --frontend must be vue or react, got %q", frontend)
 			}
@@ -46,8 +43,11 @@ Refuses to overwrite an existing islands.src/ unless --force.`,
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "directory to initialize (default '.')")
+	// The positional [dir] says the same thing and is the documented form.
+	_ = cmd.Flags().MarkDeprecated("dir", "pass the directory as an argument: nexus init ./myproject")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing islands.src/")
 	cmd.Flags().StringVar(&frontend, "frontend", "",
-		"scaffold a frontend framework into an existing project: 'vue' or 'react'")
+		"frontend framework to scaffold: 'vue' or 'react'")
+	_ = cmd.MarkFlagRequired("frontend")
 	return cmd
 }

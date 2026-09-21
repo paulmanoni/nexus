@@ -47,6 +47,7 @@ func newGenerateFrontendCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 	cmd := &cobra.Command{
 		Use:   "frontend",
+		Args:  cobra.NoArgs,
 		Short: "Generate the typed TS source tree from a nexus manifest",
 		Long: `Generate the typed TS source tree consumed by a frontend app.
 
@@ -70,11 +71,11 @@ Examples:
 		},
 	}
 	cmd.Flags().StringVar(&opts.Manifest, "manifest", "", "path to a manifest JSON file (use '-' for stdin)")
-	cmd.Flags().StringVar(&opts.Contributions, "contributions", "", "path to a contributions JSON file (use '-' for stdin) — only useful with --manifest")
+	cmd.Flags().StringVar(&opts.Contributions, "contributions", "", "path to a contributions JSON file (use '-' for stdin); also read over --url")
 	cmd.Flags().StringVar(&opts.URL, "url", "", "origin of a running app — GET <url>/__nexus/client/{manifest,contributions}.json")
-	cmd.Flags().StringVar(&opts.Out, "out", opts.Out, "output directory for the generated TS source tree")
+	cmd.Flags().StringVarP(&opts.Out, "out", "o", opts.Out, "directory to write the generated TS source tree into")
 	cmd.Flags().StringVar(&opts.Framework, "framework", opts.Framework, "per-framework adapter: vue | react | svelte | none")
-	cmd.Flags().StringVar(&opts.Root, "root", opts.Root, "frontend project root (informational; recorded in generated config Extras)")
+	cmd.Flags().StringVar(&opts.Root, "root", opts.Root, "frontend project root, recorded in the generated config for tooling to read")
 	cmd.Flags().BoolVar(&opts.Check, "check", false, "exit non-zero if the on-disk tree differs from the rendered output (no writes)")
 	return cmd
 }

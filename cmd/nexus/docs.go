@@ -1569,8 +1569,8 @@ CLI CHEATSHEET
                              With the default viteless tooling there is no
                              install step; --tooling vite uses the npm
                              project in web/ instead.
-    --output / -o <path>     output binary path (default: go's default).
-    --package <pkg>          main package to compile (default ".").
+    --out / -o <path>        path to write the binary to (default: go's own naming).
+    nexus build ./cmd/server pick the main package positionally.
 
   nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 
@@ -2194,7 +2194,7 @@ AllowedClients by the TLS handshake's VerifyConnection callback.
 Stable CNs (per-service, not per-host) keep rotation simple.
 
 Flags:
-  --out DIR    output directory (default ".")
+  --out / -o DIR   output directory (default ".")
   --cn NAME    CommonName / peer identity
   --dns LIST   DNS SANs (repeatable)
   --ip LIST    IP SANs (repeatable)

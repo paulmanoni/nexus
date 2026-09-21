@@ -98,7 +98,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
-		"dashboard address to probe and open")
+		"address the app listens on — what dev probes, proxies the frontend to, and opens (read from nexus.toml when not set)")
 	cmd.Flags().BoolVar(&open, "open", false,
 		"launch a browser when the port responds (off by default)")
 	cmd.Flags().BoolVar(&openDash, "open-dash", false,
@@ -114,7 +114,10 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
 	cmd.Flags().BoolVar(&fast, "fast", true,
-		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking. On by default; use --debug to keep DWARF")
+		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking")
+	// On by default, so naming it does nothing; --debug is the reachable
+	// inverse and the one worth documenting.
+	_ = cmd.Flags().MarkDeprecated("fast", "it is the default; pass --debug to keep DWARF instead")
 	cmd.Flags().BoolVar(&debugBuild, "debug", false,
 		"keep DWARF in the dev binary so delve can attach and panic traces stay complete (slower link; the inverse of --fast)")
 	cmd.Flags().BoolVar(&noEmbedStub, "no-embed-stub", false,
