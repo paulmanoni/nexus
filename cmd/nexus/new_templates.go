@@ -241,13 +241,17 @@ func nextStepsLines(opts scaffoldOpts) []string {
 			"  cp .env.example .env    # then fill in real credentials",
 		)
 	}
-	lines = append(lines,
-		"  nexus dev               # go run + viteless dev server (HMR); dashboard at /__nexus/",
-	)
+	devNote := "  nexus dev               # go run + viteless dev server (HMR); dashboard at /__nexus/"
+	if opts.HasVite() {
+		devNote = "  nexus dev               # go run + Vite dev server (HMR); dashboard at /__nexus/"
+	}
+	lines = append(lines, devNote)
 	if opts.HasFrontend() {
-		lines = append(lines,
-			"                          # SPA on http://localhost:5173 (zero-install) ; nexus build embeds web/dist",
-		)
+		note := "                          # SPA on http://localhost:5173 (no install needed) ; nexus build embeds web/dist"
+		if opts.HasVite() {
+			note = "                          # SPA on http://localhost:5173 ; nexus build embeds web/dist"
+		}
+		lines = append(lines, note)
 	}
 	if opts.IsInertiaSSR() {
 		lines = append(lines,
@@ -396,10 +400,17 @@ import (
 {{- end}}
 )
 {{if .HasFrontend}}
-// webFS holds the Vite-built SPA (web/dist). nexus build runs npm run
-// build before go build, so web/dist is populated; this embed bakes it
-// into the binary. A committed web/dist/index.html stub lets go build
-// succeed before the first frontend build.
+// webFS holds the built SPA (web/dist).
+{{- if .HasVite}}
+// nexus build drives the project's installed Vite before go build, so
+// web/dist is populated; this embed bakes it into the binary.
+{{- else}}
+// nexus build bundles the frontend with viteless (no npm step) before
+// go build, so web/dist is populated; this embed bakes it into the
+// binary.
+{{- end}}
+// A committed web/dist/index.html stub lets go build succeed before
+// the first frontend build.
 //
 //go:embed all:web/dist
 var webFS embed.FS
@@ -457,9 +468,10 @@ const tmplModuleGo = `package main
 
 import "github.com/paulmanoni/nexus"
 
-// HelloService — typed wrapper around *nexus.Service so fx can route
-// by type. Every handler that declares *HelloService as a dep grounds
-// under the "hello" service on the dashboard's Architecture view.
+// HelloService — typed wrapper around *nexus.Service so the DI
+// container can route by type. Every handler that declares
+// *HelloService as a dep grounds under the "hello" service on the
+// dashboard's Architecture view.
 type HelloService struct{ *nexus.Service }
 
 func NewHelloService(app *nexus.App) *HelloService {
@@ -496,9 +508,9 @@ const tmplGitignoreTpl = `/bin/
 .DS_Store
 .env
 {{if .HasFrontend}}
-# Vite frontend (web/). npm deps + build output are not committed, EXCEPT
+# Frontend (web/). Build output and any npm deps are not committed, EXCEPT
 # the web/dist/index.html stub so a fresh clone's first go build (before
-# any npm run build) can satisfy //go:embed all:web/dist.
+# any frontend build) can satisfy //go:embed all:web/dist.
 /web/node_modules/
 /web/dist/*
 !/web/dist/index.html
@@ -667,17 +679,17 @@ const tmplViteTSConfig = `{
 `
 
 // tmplViteDistStub is a minimal valid SPA shell committed at web/dist/index.html
-// so the first ` + "`go build`" + ` (before any ` + "`vite build`" + `) compiles the
+// so the first `go build` (before any frontend build) compiles the
 // //go:embed all:web/dist directive and the binary boots. Overwritten by the
-// real build output on ` + "`nexus build`" + ` / ` + "`npm run build`" + `.
+// real build output on `nexus build`.
 const tmplViteDistStub = `<!DOCTYPE html>
 <html lang="en">
   <head><meta charset="UTF-8" /><title>{{.Name}}</title></head>
   <body>
     <div id="app"></div>
     <p style="font-family:system-ui;padding:2rem">Frontend not built yet — run
-    <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code>
-    (or <code>nexus build</code>).</p>
+    <code>nexus build</code>{{if .HasVite}} (after <code>cd web &amp;&amp; npm install</code>){{end}},
+    or <code>nexus dev</code> for the dev server.</p>
   </body>
 </html>
 `
@@ -911,7 +923,7 @@ Generated with ` + "`nexus new`" + `.
 
 ` + "```" + `
 go mod tidy
-{{if .HasFrontend}}cd web && npm install && cd ..   # one-time: install frontend deps
+{{if .HasVite}}cd web && npm install && cd ..   # one-time: install Vite + the framework plugin
 {{end -}}
 {{if .HasResources}}cp .env.example .env    # then fill in real credentials
 {{end -}}
@@ -926,18 +938,40 @@ curl 'http://localhost:8080/hello?name=Paul'
 {{if .HasFrontend}}
 ## Frontend
 
-A standard **Vite** project under ` + "`web/`" + ` ({{if .IsReact}}React{{else}}Vue{{end}} + TypeScript).
-Manage frontend deps with ` + "`npm`" + ` as usual — Tailwind, component
-libraries, any Vite plugin all work. The build output (` + "`web/dist`" + `) is
-embedded into the Go binary via ` + "`//go:embed`" + ` in main.go.
+A {{if .IsReact}}React{{else}}Vue{{end}} + TypeScript project under ` + "`web/`" + `. The build output
+(` + "`web/dist`" + `) is embedded into the Go binary via ` + "`//go:embed`" + ` in main.go.
+{{if .HasVite}}
+It's a standard **Vite** project — ` + "`web/package.json`" + ` + ` + "`web/vite.config.ts`" + `,
+managed with ` + "`npm`" + ` as usual, so Tailwind, component libraries and any
+Vite plugin all work.
 
   - Install deps: ` + "`cd web && npm install`" + ` (add libs with ` + "`npm install <pkg>`" + `).
+    Do this before the first ` + "`nexus dev`" + ` — the Vite plugin in
+    ` + "`vite.config.ts`" + ` has to be on disk.
   - Edit ` + "`web/src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` runs the Vite dev
     server with HMR on http://localhost:5173 and proxies ` + "`/__nexus`" + `,
     ` + "`/graphql`" + `, ` + "`/oauth`" + `, ` + "`/ws`" + ` to the Go app.
-  - Production build is part of ` + "`nexus build`" + ` (it runs ` + "`npm run build`" + ` then
-    embeds ` + "`web/dist`" + `):
+  - Production build is part of ` + "`nexus build`" + ` (it drives your installed
+    Vite, then embeds ` + "`web/dist`" + `):
+{{else}}
+It's a **viteless** project — the zero-install frontend engine embedded in
+the nexus binary. There is no ` + "`package.json`" + `, no ` + "`node_modules`" + ` and no
+install step: viteless fetches the deps it needs on first run and caches
+them, and compiles {{if .IsReact}}React{{else}}Vue{{end}} / TypeScript / Tailwind natively. Config
+lives in ` + "`web/viteless.config.ts`" + `.
 
+  - Nothing to install — ` + "`nexus dev`" + ` works straight after ` + "`go mod tidy`" + `.
+    (The first run downloads and caches the frontend deps.)
+  - Edit ` + "`web/src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` runs the viteless dev
+    server with HMR on http://localhost:5173 and proxies ` + "`/__nexus`" + `,
+    ` + "`/graphql`" + `, ` + "`/oauth`" + `, ` + "`/ws`" + ` to the Go app.
+  - Add a library by importing it — viteless resolves it from the CDN and
+    caches it. Run ` + "`npm install`" + ` only if you want deps pinned in
+    ` + "`node_modules`" + ` (viteless uses it when present) or a real Vite, which
+    viteless then delegates to.
+  - Production build is part of ` + "`nexus build`" + ` (it runs the viteless
+    bundler, then embeds ` + "`web/dist`" + `):
+{{end}}
 ` + "```" + `
 nexus build
 ./bin/{{.Name}}
@@ -948,7 +982,7 @@ nexus build
 
 The ` + "`resources/database.go`" + ` module declares a {{.DB}} connection.
 Wire it into a service by depending on ` + "`*resources.DB`" + ` in your
-constructor — fx will inject it.
+constructor — the DI container will inject it.
 {{end}}
 {{- if .HasCache}}
 ## Cache

@@ -91,9 +91,8 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	//    first.
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintln(stdout, "  cd web && npm install   # install frontend deps (vite + framework)")
-	fmt.Fprintln(stdout, "  cd ..")
-	fmt.Fprintln(stdout, "  nexus dev               # go run + Vite dev server (HMR); SPA on :5173")
+	fmt.Fprintln(stdout, "  nexus dev               # go run + viteless dev server (HMR); SPA on :5173")
+	fmt.Fprintln(stdout, "                          # no install step — viteless fetches and caches deps on first run")
 	return nil
 }
 

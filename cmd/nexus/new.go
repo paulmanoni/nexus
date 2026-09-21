@@ -46,7 +46,7 @@ func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "new <dir>",
-		Short: "Scaffold a nexus app (interactive — picks frontend / db / cache)",
+		Short: "Scaffold a new app, asking about frontend / database / cache / auth",
 		Long: `Scaffold a runnable nexus app in <dir>.
 
 By default the command prompts for a frontend (vue / react / none),
@@ -72,8 +72,9 @@ Generated layout:
     vite.config.ts package.json   # --tooling=vite
 
 ` + "`go mod tidy && nexus dev`" + ` then runs the app, opens the SPA via
-vite's dev server (HMR) when one's scaffolded, and mounts the
-dashboard at /__nexus/.`,
+the viteless dev server (HMR) when one's scaffolded — or the project's
+installed Vite with --tooling vite — and mounts the dashboard at
+/__nexus/.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			opts := scaffoldOpts{
