@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/registry"
 
 	"github.com/paulmanoni/nexus"
 )
@@ -40,15 +41,21 @@ import (
 //	    return nil, inertia.Redirect("/dashboard")
 //	}
 //
+// The route is tagged registry.PageTag = component, which the client SDK
+// projects into a typed NexusPageProps entry (the handler's return type) and
+// the Vite plugin checks against the pages directory. A page is rendered,
+// not called, so it is not emitted as a REST call in the SDK.
+//
 // Icon is the lucide-style icon inertia brands its pages and dashboard entry
 // with. Pages registered via Page (explicitly or through the //@inertia.Page
 // decorator) carry it so the dashboard shows them as inertia pages.
 const Icon = "app-window"
 
 func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexus.Option {
-	full := make([]nexus.RestOption, 0, len(opts)+2)
+	full := make([]nexus.RestOption, 0, len(opts)+3)
 	full = append(full, nexus.WithRenderer(pageRenderer{component: component}))
 	full = append(full, nexus.WithIcon(Icon))
+	full = append(full, nexus.Tag(registry.PageTag, component))
 	full = append(full, opts...)
 
 	methods := splitMethods(method)

@@ -992,6 +992,8 @@ func TestShareScoped(t *testing.T) {
 		okFact, badFact,
 		inertia.ShareScoped("quota", okFact),
 		inertia.ShareScoped("broken", badFact),
+		inertia.ShareTyped("plan", func(ctx context.Context) (string, error) { return "pro", nil }),
+		inertia.ShareTyped("typedBroken", func(ctx context.Context) (int, error) { return 0, fmt.Errorf("down") }),
 	)
 
 	_, body := req(t, addr, "/widgets", map[string]string{"X-Inertia": "true"})
@@ -1007,5 +1009,11 @@ func TestShareScoped(t *testing.T) {
 	}
 	if _, present := page.Props["broken"]; present {
 		t.Fatalf("failed derivation must omit its key, got %#v", page.Props["broken"])
+	}
+	if page.Props["plan"] != "pro" {
+		t.Fatalf("ShareTyped plan prop = %#v", page.Props["plan"])
+	}
+	if _, present := page.Props["typedBroken"]; present {
+		t.Fatalf("a failed ShareTyped must omit its key, got %#v", page.Props["typedBroken"])
 	}
 }

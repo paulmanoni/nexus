@@ -37,6 +37,13 @@ type Prop struct {
 	matchOn string // Merge/DeepMerge: child field to match items on (infinite scroll)
 }
 
+// NexusSchemaOpaque marks Prop as registry.SchemaOpaque: the client SDK
+// types a Prop field as optional `unknown` rather than walking its
+// unexported fields. One static type covers every kind (an Optional or
+// Defer prop is absent on visits that don't request it) and the value it
+// resolves to is only known at render time. Never called.
+func (Prop) NexusSchemaOpaque() {}
+
 // resolve returns the prop's value, invoking the thunk if it has one. Called
 // by the engine only for props that survive the inclusion rules, so the thunk
 // never runs for an excluded Optional prop.

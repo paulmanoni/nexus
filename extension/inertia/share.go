@@ -2,6 +2,7 @@ package inertia
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/paulmanoni/nexus/di"
 
@@ -23,7 +24,9 @@ import (
 // visits, and on a partial reload only when requested.
 type SharedProvider func(ctx context.Context) (key string, value any)
 
-// Share registers a SharedProvider. Add one or more to a module alongside
+// Share registers a SharedProvider. The value is untyped: the client SDK's
+// NexusSharedProps covers it only through its index signature — use
+// ShareTyped or ShareScoped when pages should see the prop's type. Add one or more to a module alongside
 // inertia.Module; the engine collects them via an fx value group and runs each
 // on every page render.
 //
@@ -72,12 +75,53 @@ func ShareProvide(ctor any) nexus.Option {
 //	})
 //
 //	nexus.Boot(CanGates, inertia.ShareScoped("can", CanGates), ...)
+//
+// T is recorded as the prop's type (App.RegisterSharedProp), so the client
+// SDK types it in NexusSharedProps — `can: Record<string, boolean>` above.
 func ShareScoped[T any](key string, s *nexus.Scoped[T]) nexus.Option {
-	return Share(func(ctx context.Context) (string, any) {
-		v, err := s.Get(ctx)
-		if err != nil {
-			return "", nil
-		}
-		return key, v
+	return nexus.Options(
+		Share(func(ctx context.Context) (string, any) {
+			v, err := s.Get(ctx)
+			if err != nil {
+				return "", nil
+			}
+			return key, v
+		}),
+		recordSharedType[T](key),
+	)
+}
+
+// ShareTyped is the typed sibling of Share: fn computes the prop's value per
+// request, and T is recorded as its type so the client SDK emits it in
+// NexusSharedProps (a named struct lands in the SDK's type definitions). An
+// error omits the key from that render — the page degrades rather than
+// failing, the rule ShareScoped follows.
+//
+//	inertia.ShareTyped("viewer", func(ctx context.Context) (*Viewer, error) {
+//	    u, _ := auth.User[Viewer](ctx)
+//	    return u, nil
+//	})
+//
+// For a value handlers also read — or one that needs DI-resolved deps —
+// declare it once as a nexus.Scoped and project it with ShareScoped.
+func ShareTyped[T any](key string, fn func(context.Context) (T, error)) nexus.Option {
+	return nexus.Options(
+		Share(func(ctx context.Context) (string, any) {
+			v, err := fn(ctx)
+			if err != nil {
+				return "", nil
+			}
+			return key, v
+		}),
+		recordSharedType[T](key),
+	)
+}
+
+// recordSharedType records T as shared prop key's type on the app's
+// registry. An Invoke rather than a direct call because the Option is built
+// before the *App exists; invokes run before the SDK manifest is first built.
+func recordSharedType[T any](key string) nexus.Option {
+	return nexus.Invoke(func(app *nexus.App) {
+		app.RegisterSharedProp(key, reflect.TypeFor[T]())
 	})
 }
