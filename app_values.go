@@ -2,8 +2,11 @@ package nexus
 
 import (
 	"io/fs"
+	"os"
+	"path/filepath"
 
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/vitehot"
 )
 
 // SetValue stashes a key/value on the app. Extensions use it to record
@@ -19,7 +22,23 @@ func (a *App) Value(key any) (any, bool) { return a.extValues.Load(key) }
 // extensions that read the bundle (not serve it) can discover it.
 func (a *App) setFrontendSource(fsys fs.FS, root string) {
 	a.frontendFS, a.frontendRoot = fsys, root
+	// The hot file is read from disk, relative to the same dev root
+	// ServeFrontend serves from under `nexus dev`; "." otherwise, which is
+	// the project directory for a plain `go run .`.
+	devRoot := os.Getenv(NexusDevRootEnv)
+	if devRoot == "" {
+		devRoot = "."
+	}
+	a.viteHot = vitehot.NewReader(filepath.Join(devRoot, root), func() bool {
+		return vitehot.Enabled(IsDev(), a.Environment())
+	})
 }
+
+// ViteHot returns the reader for the dev-server hot file nexus-vite-plugin
+// writes, or nil when no frontend was registered. First-party extensions use
+// it to find the Vite dev server instead of guessing — inertia's page shell is
+// the other consumer besides ServeFrontend.
+func (a *App) ViteHot() *vitehot.Reader { return a.viteHot }
 
 // FrontendFS returns the built frontend bundle registered by ServeFrontend —
 // the embed.FS and the dist root within it — and whether one was registered.

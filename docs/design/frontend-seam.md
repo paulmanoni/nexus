@@ -1,0 +1,203 @@
+# Seamless nexus ↔ Vite
+
+Status: **proposed** — decision taken 2026-09-24: Vite is the only frontend
+engine; viteless is retired from nexus (the repo lives on independently).
+Node/npm are dev- and build-time requirements; the runtime stays one Go binary
+with `web/dist` embedded.
+
+## Diagnosis
+
+A full audit (this doc's evidence) found **27 distinct facts** shared between
+the Go side and the frontend — the project dir, the dist root, the HMR origin,
+the app origin, the entry module, the manifest, the shell, page names, props
+types, the SDK location, reload signals, readiness — and almost every one
+travels by **scanning, probing, or parsing output** rather than by being told:
+
+- `nexus dev` AST-scans the app's source for the `ServeFrontend(...)` literal
+  (cmd/nexus/dev_detect.go:63) and decides Inertia mode by running
+  `go list -deps` and grepping for the import (dev.go:229).
+- The app's port is regex-scraped from its own stdout (dev.go:1107); the HMR
+  origin is scraped from Vite's `Local:` line with a hardcoded 5173 fallback
+  after 30s (viteless realvite.go:77-96); when 5173 is taken the native engine
+  silently binds a random port (viteless dev.go:267-279).
+- The dev entry is guessed as `src/main.ts` (extension/inertia/inertia.go:214);
+  the production entry is guessed by globbing top-level `*.ts` — which is the
+  blank-SPA bug (docs/design/blank-spa-build-bug.md).
+- Under real Vite the proxy resolver and `[env]` bridge are silently dropped
+  (realvite.go:48-58), which is why the gateway hardcodes `:8080` in
+  vite.config.ts.
+- **Inertia in production depends on a Vite manifest that neither default
+  toolchain writes.** The native build writes none; the vite scaffold omits
+  `build.manifest: true`; the engine renders an empty head with no warning
+  (inertia.go:160-162). Both scaffold paths ship blank pages.
+- The Inertia shell ignores `index.html` entirely (shell.go:16-35), so the
+  gateway lost its title and stylesheet links and patched them back with
+  response-rewriting middleware (ThemeHead). Three uncoordinated reload
+  systems fire on one `.vue` save.
+- Pages appear in the SDK as bogus REST calls; `*PageProps` interfaces are
+  generated but nothing links them to components, so all 114 of the gateway's
+  `defineProps` are hand-typed; component names are free strings with a silent
+  NotFound fallback.
+- The running binary writes `web/sdk` into the working directory **on every
+  boot, production included** (obs_integration.go:166-172).
+
+One sentence of diagnosis: **the integration is a set of cooperating guessers;
+nothing owns the contract.**
+
+## The design: the plugin tells, the app reads
+
+Adopt the model Laravel proved at scale: a first-party Vite plugin owns the
+handshake, and the backend never guesses.
+
+```
+        dev                                   prod
+┌──────────────┐  writes  ┌─────────┐   ┌────────────┐  emits   ┌──────────────────┐
+│ vite dev     │ ───────► │ hot file│   │ vite build │ ───────► │ .vite/manifest.json │
+│ (nexus plugin)│          └────┬────┘   │ (nexus plugin)│        └────────┬─────────┘
+└──────────────┘               │        └────────────┘                 │
+                        Go app reads it                        embedded, Go reads it
+                 → asset tags point at the real                → hashed asset tags,
+                   HMR origin, whatever port                     version = manifest hash
+```
+
+### 1. The hot file (dev)
+
+`nexus-vite-plugin` (already shipped in `web/sdk`) gains a `configureServer`
+hook: when `vite dev` starts it writes `<outDir>/.vite/nexus-hot.json`:
+
+```json
+{ "version": 1, "origin": "http://127.0.0.1:5173", "base": "/",
+  "entries": ["src/main.ts"], "pid": 47487 }
+```
+
+and removes it on shutdown. It sits beside the manifest `vite build` writes
+because the build output directory is the **one path both sides already
+share** — Vite's `build.outDir` and the root passed to `ServeFrontend` — so
+locating it needs no new convention and no guess about which directory is the
+Vite root. `vite build`'s `emptyOutDir` clears it. The Go side reads it only
+from disk, never from an embed, and only when `nexus dev` is running or the
+app declares `environment = "development"` (the default is `"production"`),
+so a stale file cannot redirect a production page. A file left by a killed
+dev server is detected by its pid and reported, not followed.
+
+Contract implementation: `internal/vitehot` (schema, reader, the enable rule),
+one instance per app via `App.ViteHot()`, created by `ServeFrontend`. `ServeFrontend` and the Inertia engine stat the
+file (cached, revalidated cheaply): present → emit
+`<script type="module" src="<origin>/@vite/client">` and
+`<origin>/<entry>`; absent → serve the embedded build via the manifest.
+
+What this kills outright: `NEXUS_VITE_DEV`, the `Local:` stdout scrape, the
+5173 folklore (the port in the hot file is whatever Vite actually bound), the
+`go list -deps` Inertia detection (mode no longer changes the dev topology),
+and — the real seamlessness win — **the orchestrator requirement**. `npm run
+dev` in one terminal and `go run .` in another is a fully working setup;
+`nexus dev` becomes a convenience that supervises both, not the glue that
+makes them find each other.
+
+### 2. One origin for the browser
+
+The browser always opens the Go app. The Vite dev server serves assets only
+(the plugin sets `server.cors` and `server.origin` so cross-origin module
+loading works). SPA mode stops living on the Vite port: in dev, `ServeFrontend`
+serves `index.html` transformed to reference the hot origin. Consequences:
+
+- The vite.config proxy block for `/__nexus`, `/graphql`, `/oauth`, `/ws` is
+  deleted — there is nothing to proxy, the browser is already on the Go origin.
+- viteless's reverse proxy, the app-port stdout regex, and the partial toml
+  parse that fed it all go with it.
+- "Which URL do I open?" has one answer in every mode: the app's.
+
+### 3. The manifest is non-optional (prod)
+
+The plugin's `config` hook forces `build.manifest: true` and registers the
+declared entry, exactly as laravel-vite-plugin does. The engine reads
+`.vite/manifest.json` (current code already does, version.go:38-73) — but an
+Inertia render finding **no manifest becomes a loud error page in dev and a
+logged error in prod**, never a silent empty head. The entry is declared once,
+in `vite.config.ts`:
+
+```ts
+nexus({ input: 'src/main.ts' })
+```
+
+and flows to the hot file, the manifest, and the build. The Go-side `Entry`
+guess and the top-level `*.ts` glob both die. Asset URLs honour Vite `base` /
+`FrontendAt` instead of hardcoded `/`.
+
+### 4. index.html is the one shell
+
+The Inertia engine stops synthesising its own document. `index.html` (disk in
+dev, embed in prod) is the template: the engine injects the asset tags and
+replaces the app mount with `<div id="app" data-page=…>`. The same file serves
+SPA NoRoute. `Config.Head` remains as an additive escape hatch. The gateway's
+ThemeHead response-rewriting middleware and its `devassets` module (serving
+`web/public` in dev — the plugin/dev origin handles that) both become
+deletable.
+
+### 5. Typed pages and shares
+
+`inertia.Page("GET", path, "Admin/Employers", handler)` already carries the
+component name and the props type into the registry. Generate, alongside the
+SDK:
+
+```ts
+// web/sdk/pages.d.ts
+interface NexusPageProps {
+  'Admin/Employers': { employers: EmployerRow[]; filters: Filters }
+  ...
+}
+// usage in a page component
+const props = definePage<'Admin/Employers'>()   // fully typed
+```
+
+plus typed shared props from `Share`/`ShareScoped`'s value types (the `can` /
+`perms` / `features` casts in the gateway become checked). The plugin, which
+already globs `Pages/**/*.vue`, validates registered component names against
+existing files at dev time — a typo becomes a build-time error instead of a
+silent NotFound render. Pages stop being emitted as fake REST calls in the SDK.
+
+### 6. One SDK generator, one location, dev-only writes
+
+`web/sdk` is the location; the plugin's default matches (today Go writes
+`web/sdk` while the plugin defaults to `src/sdk`). The boot-time dump runs
+**only under NEXUS_DEV** — a production binary writing into its working
+directory on every start is a bug, not a feature. `frontend.Plugin`'s parallel
+`src/__nexus` codegen and `nexus generate frontend`'s overlap fold into this
+one path.
+
+### 7. nexus dev / build / new after the change
+
+- `nexus dev`: supervises `vite` as a child when `web/package.json` exists;
+  reads the hot file like everyone else; the AST scan, import scan, embed-stub
+  special cases for the manifest, and `--dist` all shrink or disappear. Go
+  rebuilds stay build-then-swap, untouched.
+- `nexus build`: `npm ci`(when needed) + `vite build` + `go build`. The
+  vestigial second embed in `embed_gen.go` goes.
+- `nexus new`: scaffolds `package.json` + `vite.config.ts` with the plugin;
+  `--tooling` is deprecated (one answer). `npm install` returns to the README
+  as a real, correct step.
+- Retired: the viteless dependency from cmd/nexus, `--frontend-cmd` (already
+  ignored), the dead `islands.src` layer and `loadViteEnv`, the half-alive
+  `NEXUS_FRONTEND_DIR` (honoured everywhere or removed).
+
+## Staging — the gateway stays green at every step
+
+1. **Handshake**: plugin hot file + manifest enforcement + engine/ServeFrontend
+   reading them; `NEXUS_VITE_DEV` kept as fallback. Immediate wins: real port
+   truth, loud missing-manifest, gateway deletes its proxy block.
+2. **Shell**: index.html as the single template; base-aware asset URLs.
+   Gateway deletes ThemeHead's rewriting and devassets.
+3. **Types**: pages.d.ts + typed shares; SDK consolidation; dev-only dump.
+4. **Vite-only**: build via npm/vite, dev drops viteless, scaffold rewrite,
+   legacy removal, CLAUDE.md/docs rewrite.
+
+## Recorded but out of scope here
+
+- viteless bug root causes (entry glob, silent `:0` fallback, sidecar EOF) are
+  in docs/design/blank-spa-build-bug.md; fixes are HELD per decision — the
+  repo has uncommitted SSR work, and nexus is leaving the engine anyway.
+- Gateway hygiene found during the audit: the committed `web/dist/index.html`
+  references assets that do not exist; AGENTS.md points at `web/src/sdk/`
+  (actual: `web/sdk/`); `sessionGuard.ts` and `vite.config.ts` contradict each
+  other about `filter:'usage'`; the Dockerfile installs `nexus@latest` while
+  go.mod pins a version.
