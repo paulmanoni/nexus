@@ -1,4 +1,4 @@
-// nexus-vite-plugin.js — five plugins in one factory:
+// nexus-vite-plugin.js — six plugins in one factory:
 //
 //   1. nexus-auto-select   (default-on, all builds)
 //      Auto-injects opts.select into nx.query / nx.mutate calls
@@ -52,9 +52,21 @@
 //      that origin cross-origin: local names, this machine's addresses
 //      and options.appOrigin (see devCorsAllows).
 //
+//   6. nexus-pages   (default-on, dev + build)
+//      Checks that every Inertia page component the manifest names
+//      (endpoints carry `page`, from inertia.Page) has a file under
+//      options.pages (src/Pages by default): <pages>/<Name>.vue, or
+//      .tsx/.jsx/.svelte/.ts/.js. Dev warns once per missing component
+//      and re-checks when the Go app rewrites the manifest; build fails
+//      listing them all. No manifest, or no pages in it — nothing to do.
+//
+// The manifest is read from options.sdkDir, default sdk/ under the Vite
+// root (web/sdk, where the Go app dumps the SDK in dev); a project that
+// only has the old src/sdk/manifest.json keeps using that.
+//
 // Wire it up in vite.config.ts:
 //
-//     import nexusAutoSelect from './src/sdk/nexus-vite-plugin.js'
+//     import nexusAutoSelect from './sdk/nexus-vite-plugin.js'
 //
 //     export default defineConfig({
 //       plugins: [vue(), nexusAutoSelect()],
@@ -82,8 +94,17 @@ import {
 import { join, isAbsolute, resolve, dirname, relative, sep } from 'node:path'
 import { networkInterfaces } from 'node:os'
 
-const DEFAULT_SDK_DIR = 'src/sdk'
+// The SDK directory, relative to the Vite root: web/sdk, where the Go app
+// dumps it in dev. LEGACY_SDK_DIR is the old default — still picked, with
+// no option set, when only it holds a manifest (see manifestPathFor).
+const DEFAULT_SDK_DIR = 'sdk'
+const LEGACY_SDK_DIR = 'src/sdk'
 const MANIFEST = 'manifest.json'
+
+// Inertia page components, relative to the Vite root, and the extensions
+// a component name may resolve to (see nexus-pages).
+const DEFAULT_PAGES_DIR = 'src/Pages'
+const PAGE_EXTS = ['vue', 'tsx', 'jsx', 'svelte', 'ts', 'js']
 
 // LOOP_GUARD_TARGETS are basenames of files that auto-import plugins
 // (unplugin-auto-import, unplugin-vue-components — both shipped by
@@ -364,6 +385,92 @@ function sameEntries(a, b) {
   return x.length === y.length && x.every((v, i) => v === y[i])
 }
 
+// manifestPathFor resolves <sdkDir>/manifest.json against the Vite root. An
+// explicit sdkDir is taken as given; the default is sdk/ (web/sdk, where
+// the Go app writes), falling back to the old src/sdk/ when only that one
+// has a manifest, so a project laid out for the old default keeps working.
+function manifestPathFor(root, sdkDir) {
+  if (sdkDir) return join(isAbsolute(sdkDir) ? sdkDir : join(root, sdkDir), MANIFEST)
+  const current = join(root, DEFAULT_SDK_DIR, MANIFEST)
+  const legacy = join(root, LEGACY_SDK_DIR, MANIFEST)
+  return !existsSync(current) && existsSync(legacy) ? legacy : current
+}
+
+// manifestPages reads the Inertia page components the manifest declares:
+// component name → the routes rendering it ("GET /users"), in manifest
+// order. null when the manifest is missing or unreadable (a half-written
+// dump included) — the caller then leaves things as they were.
+function manifestPages(file) {
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+  const pages = new Map()
+  for (const e of (raw && raw.endpoints) || []) {
+    if (!e || typeof e.page !== 'string') continue
+    const routes = pages.get(e.page) || []
+    const route = [e.method, e.path].filter(Boolean).join(' ')
+    if (route && !routes.includes(route)) routes.push(route)
+    pages.set(e.page, routes)
+  }
+  return pages
+}
+
+// validPageName: a relative path of plain segments — not absolute, no
+// drive letter, no empty, '.' or '..' segment, no NUL.
+function validPageName(name) {
+  if (!name || name.includes('\0') || isAbsolute(name) || /^[A-Za-z]:/.test(name)) return false
+  return !name.split(/[\\/]/).some((s) => s === '' || s === '.' || s === '..')
+}
+
+// pageExists reports whether component name has a file under pagesDir:
+// <pagesDir>/<name>.<ext> for one of PAGE_EXTS. The match is exact-case at
+// every segment, as import.meta.glob keys (and so the app's resolve) are —
+// a case-insensitive filesystem would otherwise pass a name that 404s on
+// Linux. A name that is absolute or has an empty, '.' or '..' segment is
+// never looked up: it cannot name a file under pagesDir. Only directory
+// entries of pagesDir and its subdirectories are ever read; listings caches
+// them across the names of one check.
+function pageExists(pagesDir, name, listings = new Map()) {
+  if (!validPageName(name)) return false
+  const segs = name.split(/[\\/]/)
+  const listing = (dir) => {
+    if (!listings.has(dir)) {
+      let names = []
+      try { names = readdirSync(dir) } catch { /* missing: no entries */ }
+      listings.set(dir, names)
+    }
+    return listings.get(dir)
+  }
+  const isKind = (p, dir) => {
+    try {
+      const st = statSync(p)
+      return dir ? st.isDirectory() : st.isFile()
+    } catch {
+      return false
+    }
+  }
+  let dir = pagesDir
+  for (const seg of segs.slice(0, -1)) {
+    if (!listing(dir).includes(seg) || !isKind(join(dir, seg), true)) return false
+    dir = join(dir, seg)
+  }
+  const base = segs[segs.length - 1]
+  const entries = listing(dir)
+  return PAGE_EXTS.some((ext) => entries.includes(`${base}.${ext}`) && isKind(join(dir, `${base}.${ext}`), false))
+}
+
+// missingPages is the manifest's page components with no file under
+// pagesDir, as [name, routes] pairs; null without a readable manifest.
+function missingPages(manifestFile, pagesDir) {
+  const pages = manifestPages(manifestFile)
+  if (!pages) return null
+  const listings = new Map()
+  return [...pages].filter(([name]) => !pageExists(pagesDir, name, listings))
+}
+
 export default function nexusAutoSelect(options = {}) {
   let ts, MagicString, parseSFC
   let manifest = null
@@ -405,10 +512,7 @@ export default function nexusAutoSelect(options = {}) {
 
     async configResolved(cfg) {
       projectRoot = cfg.root || process.cwd()
-      const sdkDir = options.sdkDir
-        ? (isAbsolute(options.sdkDir) ? options.sdkDir : join(projectRoot, options.sdkDir))
-        : join(projectRoot, DEFAULT_SDK_DIR)
-      manifestPath = join(sdkDir, MANIFEST)
+      manifestPath = manifestPathFor(projectRoot, options.sdkDir)
       if (!existsSync(manifestPath)) {
         cfg.logger.warn(`[nexus-auto-select] manifest not found at ${manifestPath} — plugin disabled`)
         return
@@ -693,6 +797,119 @@ export default function nexusAutoSelect(options = {}) {
     },
   }
 
+  // ── nexus-pages (mode 6: page components exist) ─────────────────
+  //
+  // Checks every Inertia component the manifest names (endpoints carry
+  // `page`, from inertia.Page) against the files under options.pages
+  // (src/Pages by default; false turns the check off). A misspelt name
+  // otherwise surfaces only at runtime, as a page that fails to resolve.
+  //
+  //   dev    one warning per missing component once the server listens,
+  //          re-checked whenever the Go app rewrites the manifest or a file
+  //          under the pages directory comes or goes. A component is
+  //          warned about again only after it was found in between.
+  //   build  buildStart fails with every missing component listed.
+  //
+  // Without a readable manifest, or with no pages in it, it does nothing.
+  let pagesDir = ''
+  let pagesManifest = ''
+  let pagesBuild = false
+  let pagesRoot = ''
+  const pagesDirLabel = () => {
+    const rel = relative(pagesRoot, pagesDir)
+    return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : pagesDir
+  }
+  const pagesDirMissing = () => {
+    try {
+      return !statSync(pagesDir).isDirectory()
+    } catch {
+      return true
+    }
+  }
+  const describeMissingPage = (name, routes) => {
+    const via = routes.length ? ` (${routes.join(', ')})` : ''
+    return validPageName(name)
+      ? `'${name}'${via} → expected ${pagesDirLabel()}/${name}.{${PAGE_EXTS.join(',')}}`
+      : `'${name}'${via} → not a path under ${pagesDirLabel()}`
+  }
+  const pagesDirHint = () =>
+    `${pagesDirLabel()} does not exist — point nexus({ pages }) at the pages directory, or pass pages: false`
+  const pagesHint = 'create the file, or fix the component name passed to inertia.Page'
+  let warnedPages = new Set()
+  let warnedPagesDir = false
+
+  const pagesPlugin = {
+    name: 'nexus-pages',
+
+    configResolved(cfg) {
+      if (options.pages === false) return
+      pagesRoot = cfg.root || process.cwd()
+      // The dev server runs buildStart too; there a failure would stop it.
+      pagesBuild = cfg.command === 'build'
+      const dir = options.pages || DEFAULT_PAGES_DIR
+      pagesDir = resolve(pagesRoot, dir)
+      pagesManifest = manifestPathFor(pagesRoot, options.sdkDir)
+    },
+
+    buildStart() {
+      if (!pagesDir || !pagesBuild) return
+      const missing = missingPages(pagesManifest, pagesDir)
+      if (!missing || missing.length === 0) return
+      const lines = missing.map(([name, routes]) => `  - ${describeMissingPage(name, routes)}`)
+      if (pagesDirMissing()) lines.push(`  (${pagesDirHint()})`)
+      this.error(
+        `${missing.length} Inertia page component(s) have no file under ${pagesDirLabel()}:\n` +
+        `${lines.join('\n')}\n` +
+        `Fix: ${pagesHint}.`,
+      )
+    },
+
+    configureServer(server) {
+      if (!pagesDir) return
+      const logger = server.config.logger
+      const check = () => {
+        const missing = missingPages(pagesManifest, pagesDir)
+        if (!missing) return
+        const now = new Set()
+        let fresh = 0
+        for (const [name, routes] of missing) {
+          now.add(name)
+          if (warnedPages.has(name)) continue
+          fresh++
+          logger.warn(`[nexus] page component ${describeMissingPage(name, routes)} — ${pagesHint}`)
+        }
+        warnedPages = now
+        if (fresh && !warnedPagesDir && pagesDirMissing()) {
+          warnedPagesDir = true
+          logger.warn(`[nexus] ${pagesDirHint()}`)
+        }
+        if (!pagesDirMissing()) warnedPagesDir = false
+      }
+
+      server.watcher.add([pagesManifest, pagesDir])
+      const manifestTarget = resolve(pagesManifest)
+      // The manifest on any write; the pages tree only when an entry comes
+      // or goes — editing a page cannot change whether it exists.
+      const inPages = (f) => f === pagesDir || f.startsWith(pagesDir + sep)
+      const onManifest = (file) => {
+        if (resolve(file) === manifestTarget) check()
+      }
+      const onEntry = (file) => {
+        const f = resolve(file)
+        if (f === manifestTarget || inPages(f)) check()
+      }
+      server.watcher.on('change', onManifest)
+      for (const ev of ['add', 'unlink', 'addDir', 'unlinkDir']) server.watcher.on(ev, onEntry)
+
+      const httpServer = server.httpServer
+      if (!httpServer) {
+        check()
+        return
+      }
+      httpServer.once('listening', check)
+    },
+  }
+
   // ── nexus-hot (mode 5: the dev/prod handshake with the Go side) ──
   //
   // See the file header and internal/vitehot. One plugin for both
@@ -957,7 +1174,7 @@ export default function nexusAutoSelect(options = {}) {
     placeholderPending.clear()
   }
 
-  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin, hotPlugin]
+  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin, pagesPlugin, hotPlugin]
 
   // ---- script transform (TS / JS / TSX / JSX) -----------------------
 

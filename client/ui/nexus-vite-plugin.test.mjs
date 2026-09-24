@@ -1,7 +1,8 @@
-// Tests for the nexus-hot half of nexus-vite-plugin.js: the hot file the
-// Go side reads (internal/vitehot), the manifest enforcement, the input
-// option and the dev origin placeholder. No Vite needed — the hooks are
-// driven with the same shapes Vite passes.
+// Tests for nexus-vite-plugin.js: the nexus-hot handshake (the hot file the
+// Go side reads, internal/vitehot; the manifest enforcement, the input
+// option and the dev origin placeholder), where the SDK manifest is read
+// from, and the nexus-pages component check. No Vite needed — the hooks
+// are driven with the same shapes Vite passes.
 //
 //   node --test client/ui/
 
@@ -558,3 +559,300 @@ test('a build in the dev server\'s own process keeps that server\'s hot file', a
 function readdirNames(dir) {
   return readdirSync(dir).sort()
 }
+
+// ── SDK location ──────────────────────────────────────────────────
+
+function writeManifest(root, dir, manifest = { endpoints: [] }) {
+  mkdirSync(join(root, dir), { recursive: true })
+  writeFileSync(join(root, dir, 'manifest.json'), JSON.stringify(manifest))
+}
+
+// sdkManifestSeen resolves which manifest.json the auto-select plugin reads,
+// through the path it hands the dev watcher.
+async function sdkManifestSeen(root, options = {}) {
+  const p = nexus(options).find((x) => x.name === 'nexus-auto-select')
+  const l = logger()
+  await p.configResolved({ root, logger: l })
+  const added = []
+  const watcher = new EventEmitter()
+  watcher.add = (f) => added.push(f)
+  p.configureServer({ watcher, config: { logger: l }, moduleGraph: null, ws: { send() {} } })
+  return { path: added[0], warns: l.warns }
+}
+
+test('sdk: the manifest is read from sdk/ under the Vite root by default', async (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk')
+  const { path, warns } = await sdkManifestSeen(root)
+  assert.equal(path, join(root, 'sdk', 'manifest.json'))
+  assert.ok(!warns.some((w) => /manifest not found/.test(w)), warns.join('\n'))
+})
+
+test('sdk: falls back to src/sdk quietly when only it has a manifest', async (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'src/sdk')
+  const { path, warns } = await sdkManifestSeen(root)
+  assert.equal(path, join(root, 'src', 'sdk', 'manifest.json'))
+  assert.ok(!warns.some((w) => /manifest not found|src\/sdk/.test(w)), warns.join('\n'))
+})
+
+test('sdk: sdk/ wins when both exist; with neither, sdk/ is the one reported', async (t) => {
+  const both = tmpRoot(t)
+  writeManifest(both, 'sdk')
+  writeManifest(both, 'src/sdk')
+  assert.equal((await sdkManifestSeen(both)).path, join(both, 'sdk', 'manifest.json'))
+
+  const none = tmpRoot(t)
+  const { path, warns } = await sdkManifestSeen(none)
+  assert.equal(path, join(none, 'sdk', 'manifest.json'))
+  assert.ok(warns.some((w) => w.includes(join(none, 'sdk', 'manifest.json'))), warns.join('\n'))
+})
+
+test('sdk: an explicit sdkDir is used as given, with no fallback', async (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk')
+  writeManifest(root, 'src/sdk')
+  assert.equal((await sdkManifestSeen(root, { sdkDir: 'src/sdk' })).path, join(root, 'src', 'sdk', 'manifest.json'))
+  assert.equal((await sdkManifestSeen(root, { sdkDir: 'gen' })).path, join(root, 'gen', 'manifest.json'))
+  const abs = join(root, 'elsewhere')
+  assert.equal((await sdkManifestSeen(root, { sdkDir: abs })).path, join(abs, 'manifest.json'))
+})
+
+// ── nexus-pages ───────────────────────────────────────────────────
+
+function pagesPlugin(options) {
+  return nexus(options).find((p) => p.name === 'nexus-pages')
+}
+
+function page(name, method = 'GET', path = '/' + name.toLowerCase()) {
+  return { service: 'web', transport: 'rest', method, path, name: 'page', page: name }
+}
+
+function touch(root, rel) {
+  mkdirSync(dirname(join(root, rel)), { recursive: true })
+  writeFileSync(join(root, rel), '')
+}
+
+// pagesBuild runs the build-time check; the returned string is the error it
+// failed with, or '' when the build went on.
+function pagesBuild(root, options = {}) {
+  const p = pagesPlugin(options)
+  p.configResolved({ root, command: 'build', logger: logger() })
+  try {
+    p.buildStart.call({ error: (m) => { throw new Error(m) }, warn() {} })
+    return ''
+  } catch (e) {
+    return e.message
+  }
+}
+
+// pagesDev starts the dev-side check the way `vite` does: configResolved,
+// configureServer, buildStart, then the socket's 'listening'.
+function pagesDev(root, options = {}) {
+  const p = pagesPlugin(options)
+  const l = logger()
+  p.configResolved({ root, command: 'serve', logger: l })
+  const watcher = new EventEmitter()
+  watcher.added = []
+  watcher.add = (f) => watcher.added.push(...[].concat(f))
+  const httpServer = new EventEmitter()
+  p.configureServer({ watcher, httpServer, config: { logger: l } })
+  // Vite runs buildStart in dev too; it must never fail the server.
+  p.buildStart.call({ error: (m) => { throw new Error(`dev buildStart errored: ${m}`) }, warn() {} })
+  httpServer.emit('listening')
+  return { l, watcher }
+}
+
+test('pages build: fails listing every missing component, with routes and the expected path', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk', {
+    endpoints: [
+      page('Home', 'GET', '/'),
+      page('Admin/Users', 'GET', '/admin/users'),
+      page('Admin/Users', 'GET', '/admin/users/:id'),
+      page('Posts/Show', 'GET', '/posts/:id'),
+      page('Posts/Show', 'GET', '/posts/:id/preview'),
+      page('Orders', 'GET', '/orders'),
+      page('Pets/Index'),
+      { service: 'api', transport: 'graphql', method: 'QUERY', path: '/graphql', name: 'listUsers' },
+    ],
+  })
+  touch(root, 'src/Pages/Home.vue')
+  touch(root, 'src/Pages/Admin/Users.tsx')
+  touch(root, 'src/Pages/Pets/Index.svelte')
+  const err = pagesBuild(root)
+  assert.match(err, /^2 Inertia page component\(s\) have no file under src\/Pages:/)
+  assert.ok(err.includes("'Posts/Show' (GET /posts/:id, GET /posts/:id/preview) → expected src/Pages/Posts/Show.{vue,tsx,jsx,svelte,ts,js}"), err)
+  assert.ok(err.includes("'Orders' (GET /orders) → expected src/Pages/Orders.{vue,tsx,jsx,svelte,ts,js}"), err)
+  assert.ok(!/Home|Admin\/Users|Pets/.test(err), err)
+  assert.match(err, /create the file, or fix the component name passed to inertia\.Page/)
+})
+
+test('pages build: passes when every component has a file, any supported extension', (t) => {
+  const root = tmpRoot(t)
+  const names = ['A', 'B', 'C', 'D', 'E', 'F']
+  writeManifest(root, 'sdk', { endpoints: names.map((n) => page(n)) })
+  ;['vue', 'tsx', 'jsx', 'svelte', 'ts', 'js'].forEach((ext, i) => touch(root, `src/Pages/${names[i]}.${ext}`))
+  assert.equal(pagesBuild(root), '')
+})
+
+test('pages build: a directory or an unsupported extension is not a page', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk', { endpoints: [page('Users'), page('Posts')] })
+  mkdirSync(join(root, 'src', 'Pages', 'Users.vue'), { recursive: true })
+  touch(root, 'src/Pages/Posts.html')
+  const err = pagesBuild(root)
+  assert.match(err, /^2 Inertia page component/)
+})
+
+test('pages build: the name must match case-exactly, as import.meta.glob keys do', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk', { endpoints: [page('admin/users'), page('Admin/users'), page('Admin/Users')] })
+  touch(root, 'src/Pages/Admin/Users.vue')
+  const err = pagesBuild(root)
+  assert.match(err, /^2 Inertia page component/)
+  assert.match(err, /'admin\/users'/)
+  assert.match(err, /'Admin\/users'/)
+})
+
+test('pages build: a name that escapes the pages directory is missing, even if the file exists', (t) => {
+  const root = tmpRoot(t)
+  touch(root, 'src/Secret.vue')
+  touch(root, 'Top.vue')
+  touch(root, 'src/Pages/Users.vue')
+  const escapes = ['../Secret', '../../Top', 'Admin/../Users', './Users', 'Admin//Users', '..\\Secret', join(root, 'Top'), '']
+  writeManifest(root, 'sdk', { endpoints: escapes.map((n) => page(n, 'GET', '/x')) })
+  const err = pagesBuild(root)
+  assert.match(err, new RegExp(`^${escapes.length} Inertia page component`))
+  for (const n of escapes) assert.ok(err.includes(`'${n}' (GET /x) → not a path under src/Pages`), `${n}:\n${err}`)
+})
+
+test('pages build: a missing pages directory is called out', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk', { endpoints: [page('Home')] })
+  const err = pagesBuild(root)
+  assert.match(err, /'Home'/)
+  assert.match(err, /src\/Pages does not exist — point nexus\(\{ pages \}\) at the pages directory, or pass pages: false/)
+})
+
+test('pages: no manifest, no pages in it, or pages: false — nothing is checked', (t) => {
+  const bare = tmpRoot(t)
+  assert.equal(pagesBuild(bare), '')
+  assert.deepEqual(pagesDev(bare).l.warns, [])
+
+  const noPages = tmpRoot(t)
+  writeManifest(noPages, 'sdk', { endpoints: [{ transport: 'rest', method: 'GET', path: '/users', name: 'listUsers' }] })
+  assert.equal(pagesBuild(noPages), '')
+  assert.deepEqual(pagesDev(noPages).l.warns, [])
+
+  const off = tmpRoot(t)
+  writeManifest(off, 'sdk', { endpoints: [page('Missing')] })
+  assert.equal(pagesBuild(off, { pages: false }), '')
+  const dev = pagesDev(off, { pages: false })
+  assert.deepEqual(dev.l.warns, [])
+  assert.deepEqual(dev.watcher.added, [])
+
+  const broken = tmpRoot(t)
+  mkdirSync(join(broken, 'sdk'))
+  writeFileSync(join(broken, 'sdk', 'manifest.json'), '{"endpoints": [')
+  assert.equal(pagesBuild(broken), '')
+})
+
+test('pages: options.pages and the src/sdk fallback are honoured', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'src/sdk', { endpoints: [page('Home'), page('Gone')] })
+  touch(root, 'resources/js/Pages/Home.vue')
+  const err = pagesBuild(root, { pages: 'resources/js/Pages' })
+  assert.match(err, /^1 Inertia page component\(s\) have no file under resources\/js\/Pages:/)
+  assert.match(err, /'Gone'/)
+})
+
+test('pages dev: one warning per missing component, not repeated until fixed and broken again', (t) => {
+  const root = tmpRoot(t)
+  const pages = [page('Home'), page('Users/Index', 'GET', '/users'), page('Orders', 'GET', '/orders')]
+  writeManifest(root, 'sdk', { endpoints: pages })
+  touch(root, 'src/Pages/Home.vue')
+  const { l, watcher } = pagesDev(root)
+  const manifest = join(root, 'sdk', 'manifest.json')
+  const usersPage = join(root, 'src', 'Pages', 'Users', 'Index.vue')
+  assert.ok(watcher.added.includes(manifest))
+  assert.ok(watcher.added.includes(join(root, 'src', 'Pages')))
+
+  assert.equal(l.warns.length, 2, l.warns.join('\n'))
+  assert.ok(l.warns[0].startsWith("[nexus] page component 'Users/Index' (GET /users) → expected src/Pages/Users/Index.{vue,tsx,jsx,svelte,ts,js}"), l.warns[0])
+  assert.match(l.warns[0], /create the file, or fix the component name passed to inertia\.Page/)
+  assert.match(l.warns[1], /'Orders' \(GET \/orders\)/)
+
+  // The Go app rewrites the same manifest on restart: nothing new to say.
+  watcher.emit('change', manifest)
+  assert.equal(l.warns.length, 2)
+
+  // Fixed: quiet. Broken again: warned again, and only that one.
+  touch(root, 'src/Pages/Users/Index.vue')
+  watcher.emit('add', usersPage)
+  assert.equal(l.warns.length, 2)
+  rmSync(usersPage)
+  watcher.emit('unlink', usersPage)
+  assert.equal(l.warns.length, 3)
+  assert.match(l.warns[2], /'Users\/Index'/)
+
+  // A manifest that gains a page warns for the new one only.
+  const more = [...pages, page('Pets')]
+  writeManifest(root, 'sdk', { endpoints: more })
+  watcher.emit('change', manifest)
+  assert.equal(l.warns.length, 4)
+  assert.match(l.warns[3], /'Pets'/)
+
+  // A half-written manifest changes nothing; the next good one is compared
+  // against what was already reported.
+  writeFileSync(manifest, '{"endpoints": [')
+  watcher.emit('change', manifest)
+  writeManifest(root, 'sdk', { endpoints: more })
+  watcher.emit('change', manifest)
+  assert.equal(l.warns.length, 4)
+
+  // Edits to a page file, or files outside the pages tree, trigger no check
+  // (were one run here, the now-missing Pets would stay reported, not re-warned
+  // — so make it found, then check that nothing re-read the tree).
+  touch(root, 'src/Pages/Pets.vue')
+  watcher.emit('change', join(root, 'src', 'Pages', 'Home.vue'))
+  watcher.emit('add', join(root, 'src', 'main.ts'))
+  rmSync(join(root, 'src', 'Pages', 'Pets.vue'))
+  watcher.emit('unlink', join(root, 'src', 'Pages', 'Pets.vue'))
+  assert.equal(l.warns.length, 4, 'Pets was never seen as found, so it is not re-warned')
+})
+
+test('pages dev: silent until the server listens; middleware mode checks at once', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk', { endpoints: [page('Home')] })
+  touch(root, 'src/Pages/.keep')
+
+  const p = pagesPlugin()
+  const l = logger()
+  p.configResolved({ root, command: 'serve', logger: l })
+  const watcher = new EventEmitter()
+  watcher.add = () => {}
+  const httpServer = new EventEmitter()
+  p.configureServer({ watcher, httpServer, config: { logger: l } })
+  assert.equal(l.warns.length, 0)
+  httpServer.emit('listening')
+  assert.equal(l.warns.length, 1)
+
+  const mw = pagesPlugin()
+  const l2 = logger()
+  mw.configResolved({ root, command: 'serve', logger: l2 })
+  mw.configureServer({ watcher: Object.assign(new EventEmitter(), { add() {} }), httpServer: null, config: { logger: l2 } })
+  assert.equal(l2.warns.length, 1)
+})
+
+test('pages dev: a missing pages directory is pointed out once', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk', { endpoints: [page('Home'), page('About')] })
+  const { l, watcher } = pagesDev(root)
+  assert.equal(l.warns.length, 3, l.warns.join('\n'))
+  assert.match(l.warns[2], /src\/Pages does not exist/)
+  writeManifest(root, 'sdk', { endpoints: [page('Home'), page('About'), page('Contact')] })
+  watcher.emit('change', join(root, 'sdk', 'manifest.json'))
+  assert.equal(l.warns.length, 4)
+  assert.match(l.warns[3], /'Contact'/)
+})

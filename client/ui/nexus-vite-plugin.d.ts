@@ -7,17 +7,30 @@
 //
 // `Plugin` is imported as a type from 'vite', which any npm-managed Vite
 // project already has on disk — so the reference resolves with no extra
-// install. The factory returns Plugin[] (five sub-plugins in one).
+// install. The factory returns Plugin[] (six sub-plugins in one).
 
 import type { Plugin } from 'vite'
 
 export interface NexusVitePluginOptions {
   /**
    * SDK directory holding manifest.json, absolute or relative to the
-   * project root. The auto-select + manifest-filter plugins read it.
-   * Default: 'src/sdk'.
+   * Vite root. The auto-select, manifest-filter and page checks read it.
+   * Default: 'sdk' — web/sdk, where the Go app writes the SDK in dev.
+   * Left unset, a project that only has src/sdk/manifest.json (the old
+   * default) keeps reading that one.
    */
   sdkDir?: string
+  /**
+   * Inertia pages directory, absolute or relative to the Vite root.
+   * Every component the manifest names (inertia.Page's component, the
+   * endpoint's `page`) must have a file <pages>/<Name>.vue — or .tsx,
+   * .jsx, .svelte, .ts, .js — matched case-exactly, as import.meta.glob
+   * keys are. `vite dev` warns once per missing component (again when
+   * the Go app rewrites the manifest); `vite build` fails listing them.
+   * Without a manifest, or with no pages in it, nothing is checked.
+   * `false` turns the check off. Default: 'src/Pages'.
+   */
+  pages?: string | false
   /**
    * Manifest projection mode. 'usage' walks the source tree at build
    * time and ships only the endpoints the app references; 'off' (the
@@ -75,9 +88,10 @@ export interface NexusVitePluginOptions {
 
 /**
  * nexus's Vite plugin bundle — auto-select, manifest-filter, loop-guard,
- * the dev codegen→HMR bridge, and the nexus handshake: under `vite dev`
- * it writes <outDir>/.vite/nexus-hot.json with the dev server's real
- * origin (removed on shutdown; a wildcard `--host` bind is written as the
+ * the dev codegen→HMR bridge, the page-component check (see pages), and
+ * the nexus handshake: under `vite dev` it writes
+ * <outDir>/.vite/nexus-hot.json with the dev server's real origin
+ * (removed on shutdown; a wildcard `--host` bind is written as the
  * machine's network address so LAN clients reach it), sets server.origin
  * so assets resolve cross-origin, and — unless server.cors is set — a CORS
  * allowlist for the app's origin (see appOrigin). Under `vite build` it
