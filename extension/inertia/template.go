@@ -145,6 +145,11 @@ func (t pageTemplate) render(dataPage []byte, nonce string, ssr SSRResult, head 
 	b.Grow(len(t.doc) + len(dataPage) + len(head) + len(ssr.Body) + 64)
 	pos := 0
 	for _, e := range edits {
+		if e.at < pos {
+			// Inside a range an earlier edit replaced: the SSR body took the
+			// mount's content, and with it any template tag a nonce was due on.
+			continue
+		}
 		b.Write(t.doc[pos:e.at])
 		b.WriteString(e.s)
 		pos = e.to

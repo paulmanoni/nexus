@@ -74,7 +74,7 @@ func (e *Engine) assets() pageAssets {
 	}
 	hot, hotErr := reader.Current() // nil reader → (nil, nil)
 	if hot != nil {
-		return pageAssets{head: e.hotHeadTags(hot), document: true, hot: hot}
+		return pageAssets{head: e.hotHeadTags(hot), document: e.ownsDocument(), hot: hot}
 	}
 	if hotErr != nil {
 		// Current only reports errors when the reader is enabled, i.e. in dev.
@@ -92,7 +92,7 @@ func (e *Engine) assets() pageAssets {
 		a.version = e.versionPin
 	}
 	if a.head = man.headTags(e.mount()); a.head != "" {
-		a.document = true
+		a.document = e.ownsDocument()
 		return a
 	}
 	if e.headLoadsClient {
@@ -117,12 +117,22 @@ func hotProblem(reader *vitehot.Reader, err error) *assetProblem {
 	}
 }
 
-// mount is the URL path the bundle is served under (App.FrontendMount).
+// mount is the URL path the bundle is served under (App.FrontendMount). A
+// Config.Frontend bundle is not the one ServeFrontend mounts, so its assets
+// stay rooted at "/".
 func (e *Engine) mount() string {
-	if e.app == nil {
+	if !e.ownsDocument() {
 		return ""
 	}
 	return e.app.FrontendMount()
+}
+
+// ownsDocument reports whether the pages belong to the bundle ServeFrontend
+// serves, so its index.html is theirs. With Config.Frontend the pages come
+// from a separate bundle, and ServeFrontend's document (another app's shell)
+// must not wrap them.
+func (e *Engine) ownsDocument() bool {
+	return e.app != nil && e.cfgFrontend == nil
 }
 
 // pageDocument returns the app's index.html located for this render, or nil

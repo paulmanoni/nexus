@@ -311,3 +311,36 @@ func captureLog(t *testing.T) func() string {
 		return buf.String()
 	}
 }
+
+// SSR replaces the mount's content; a loader <style> inside it that was due a
+// nonce goes with it, and the render must not trip over the dropped tag.
+func TestTemplateSSRNonceLoaderInMount(t *testing.T) {
+	index := strings.Replace(builtIndex, `<div id="app"><div class="loader"></div></div>`,
+		`<div id="app"><style>.loader{margin:auto}</style><div class="loader"></div></div>`, 1)
+	if index == builtIndex {
+		t.Fatal("fixture: builtIndex no longer has the loader markup")
+	}
+	ssr := &fakeSSR{res: inertia.SSRResult{Body: "<main>rendered</main>"}}
+	app, _ := assetApp(t, "production", withBuild(index), inertia.Config{
+		SSR:   ssr,
+		Nonce: func(*httpx.Ctx) string { return "n0nce" },
+	})
+	body := fullLoad(app).AssertOK().String()
+	mustContain(t, body, `<div id="app" data-server-rendered="true"`)
+	mustContain(t, body, `<main>rendered</main></div>`)
+	mustNotContain(t, body, `.loader{margin:auto}`)
+}
+
+// A separate Inertia bundle (Config.Frontend) is not ServeFrontend's: its
+// pages get a synthesised document with its own tags rooted at "/", never the
+// other bundle's index.html or mount path.
+func TestConfigFrontendIgnoresServeFrontendDocument(t *testing.T) {
+	spa := fstest.MapFS{"dist/index.html": {Data: []byte(`<!doctype html><html><head><script type="module" src="/admin/assets/spa-11111111.js"></script></head><body><div id="app"></div></body></html>`)}}
+	pages := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
+	app, _ := bootAssets(t, nexus.Config{Environment: "production"}, spa,
+		inertia.Config{Frontend: pages, Root: "dist"}, nexus.FrontendAt("/admin"))
+	body := fullLoad(app).AssertOK().String()
+	mustContain(t, body, `src="/assets/main-abc123.js"`)
+	mustNotContain(t, body, `spa-11111111.js`)
+	mustNotContain(t, body, `/admin/assets/main-abc123.js`)
+}
