@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -81,6 +82,8 @@ func (f *viteDevFixture) get(t *testing.T, path string) *httptest.ResponseRecord
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
+	// A browser on the developer's machine, as in any dev session.
+	req.RemoteAddr = "127.0.0.1:50000"
 	f.app.engine.ServeHTTP(rec, req)
 	return rec
 }
@@ -133,7 +136,7 @@ func TestServeFrontend_ViteHotServesTransformedIndex(t *testing.T) {
 			var hits []string
 			srv := newFakeVite(t, base, &hits)
 			f := newViteDevFixture(t, "<html>built</html>")
-			f.writeHot(t, vitehot.Hot{Version: 1, Origin: srv.URL, Base: base, Entries: []string{"src/main.ts"}, PID: os.Getpid()})
+			f.writeHot(t, vitehot.Hot{Version: 1, Origin: srv.URL, Base: base, Entries: []string{"index.html"}, PID: os.Getpid()})
 
 			for _, p := range []string{"/", "/index.html", "/users/42"} {
 				rec := f.get(t, p)
@@ -182,9 +185,12 @@ func TestServeFrontend_ViteHotServesTransformedIndex(t *testing.T) {
 				t.Errorf("dev server fetches = %d, want one per page request (no caching)", len(hits))
 			}
 
-			// Assets keep coming from disk.
+			// A file the dev server doesn't have comes from disk.
 			if rec := f.get(t, "/assets/app.js"); rec.Code != 200 || rec.Body.String() != "built-js" {
 				t.Errorf("asset: %d %q", rec.Code, rec.Body)
+			}
+			if last := hits[len(hits)-1]; last != base+"assets/app.js" {
+				t.Errorf("the dev server was not asked first for a static file: %q", last)
 			}
 		})
 	}
@@ -259,7 +265,7 @@ func TestServeFrontend_ViteHotFetchFailsFallsBackToDisk(t *testing.T) {
 			if rec.Code != 200 {
 				t.Fatalf("status %d body=%s", rec.Code, rec.Body)
 			}
-			body := rec.Body.String()
+			body := noShim(rec.Body.String())
 			for _, w := range tc.want {
 				if !strings.Contains(body, w) {
 					t.Errorf("missing %q in\n%s", w, body)
@@ -278,12 +284,8 @@ func TestServeFrontend_ViteHotFetchFailsFallsBackToDisk(t *testing.T) {
 }
 
 // TestServeFrontend_ViteHotErrorPage: a hot file that exists but can't be
-// followed is reported on the page, never papered over with the stale build.
+// understood is reported on the page, never papered over with the build.
 func TestServeFrontend_ViteHotErrorPage(t *testing.T) {
-	dead := exec.Command("true")
-	if err := dead.Run(); err != nil {
-		t.Skipf("no `true` binary: %v", err)
-	}
 	cases := []struct {
 		name  string
 		write func(*viteDevFixture)
@@ -293,9 +295,9 @@ func TestServeFrontend_ViteHotErrorPage(t *testing.T) {
 		{"unknown version", func(f *viteDevFixture) {
 			f.writeHot(t, vitehot.Hot{Version: 99, Origin: "http://127.0.0.1:1"})
 		}, "schema version 99"},
-		{"stale pid", func(f *viteDevFixture) {
-			f.writeHot(t, vitehot.Hot{Version: 1, Origin: "http://127.0.0.1:1", PID: dead.ProcessState.Pid()})
-		}, "no longer running"},
+		{"invalid origin", func(f *viteDevFixture) {
+			f.writeHot(t, vitehot.Hot{Version: 1, Origin: `http://127.0.0.1:1"><script>alert(1)</script>`, PID: os.Getpid()})
+		}, "invalid origin"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -310,11 +312,39 @@ func TestServeFrontend_ViteHotErrorPage(t *testing.T) {
 				if !strings.Contains(body, tc.want) || !strings.Contains(body, "nexus-hot.json") {
 					t.Errorf("GET %s: error page lacks %q / the file path:\n%s", p, tc.want, body)
 				}
-				if strings.Contains(body, "built") {
-					t.Errorf("GET %s: stale build served", p)
+				if strings.Contains(body, "built") || strings.Contains(body, "<script>alert(1)") {
+					t.Errorf("GET %s: stale build served, or markup from the file injected:\n%s", p, body)
 				}
 			}
 		})
+	}
+}
+
+// TestServeFrontend_StaleHotFileServesTheBuild: nexus dev stops Vite with
+// SIGKILL, so a hot file naming a dead dev server is routine. It reads as
+// absent — the build is served, never an error page.
+func TestServeFrontend_StaleHotFileServesTheBuild(t *testing.T) {
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Skipf("no `true` binary: %v", err)
+	}
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+
+	f := newViteDevFixture(t, "<html>built</html>")
+	f.writeHot(t, vitehot.Hot{Version: 1, Origin: closedURL, Entries: []string{"index.html"}, PID: dead.ProcessState.Pid()})
+	for _, p := range []string{"/", "/index.html", "/x/y"} {
+		if rec := f.get(t, p); rec.Code != 200 || noShim(rec.Body.String()) != "<html>built</html>" {
+			t.Errorf("GET %s: %d %q, want the build", p, rec.Code, rec.Body)
+		}
+	}
+	if rec := f.get(t, "/assets/app.js"); rec.Code != 200 || rec.Body.String() != "built-js" {
+		t.Errorf("asset: %d %q", rec.Code, rec.Body)
+	}
+	doc, err := f.app.FrontendDocument(context.Background())
+	if err != nil || doc.FromDevServer || string(doc.HTML) != "<html>built</html>" {
+		t.Errorf("FrontendDocument = (%q, %v, %v), want the built page", doc.HTML, doc.FromDevServer, err)
 	}
 }
 
@@ -325,7 +355,7 @@ func TestServeFrontend_NoHotFileUnchanged(t *testing.T) {
 	t.Run("dev, no hot file", func(t *testing.T) {
 		f := newViteDevFixture(t, index)
 		for _, p := range []string{"/", "/index.html", "/a/b"} {
-			if rec := f.get(t, p); rec.Code != 200 || rec.Body.String() != index {
+			if rec := f.get(t, p); rec.Code != 200 || noShim(rec.Body.String()) != index {
 				t.Errorf("GET %s: %d %q", p, rec.Code, rec.Body)
 			}
 		}
@@ -335,19 +365,25 @@ func TestServeFrontend_NoHotFileUnchanged(t *testing.T) {
 		f.writeHot(t, vitehot.Hot{Version: 1, Origin: "http://127.0.0.1:1", PID: os.Getpid()})
 		t.Setenv(NexusDevEnv, "") // the reader consults Enabled per call
 		for _, p := range []string{"/", "/index.html", "/a/b"} {
-			if rec := f.get(t, p); rec.Code != 200 || rec.Body.String() != index {
+			if rec := f.get(t, p); rec.Code != 200 || noShim(rec.Body.String()) != index {
 				t.Errorf("GET %s: %d %q", p, rec.Code, rec.Body)
 			}
 		}
 	})
 }
 
-// TestServeFrontend_NeverServesHotFile: the hot file is 404 in every mode,
-// with or without a dev server, at the root or under FrontendAt — while the
-// rest of .vite (the build manifest) is still served.
+// TestServeFrontend_NeverServesHotFile: nothing under .vite/ — the hot file,
+// the plugin's temp file, the build manifest, the directory itself — is
+// served, in any mode, with or without a dev server, at the root or under
+// FrontendAt.
 func TestServeFrontend_NeverServesHotFile(t *testing.T) {
 	hotPaths := []string{
 		"/.vite/nexus-hot.json",
+		"/.vite/nexus-hot.json.4242.tmp",
+		"/.vite/manifest.json",
+		"/.vite/",
+		"/.vite",
+		"/.VITE/Manifest.JSON",
 		"/.vite/./nexus-hot.json",
 		"/assets/../.vite/nexus-hot.json",
 		"/.vite//nexus-hot.json",
@@ -381,13 +417,12 @@ func TestServeFrontend_NeverServesHotFile(t *testing.T) {
 		t.Run("dev, hot file present, mount="+mount, func(t *testing.T) {
 			f := newViteDevFixture(t, "<html>x</html>", opts...)
 			f.writeHot(t, hot)
-			if err := os.WriteFile(filepath.Join(f.dist, ".vite", "manifest.json"), []byte(`{}`), 0o644); err != nil {
-				t.Fatal(err)
+			for _, name := range []string{"manifest.json", "nexus-hot.json.4242.tmp"} {
+				if err := os.WriteFile(filepath.Join(f.dist, ".vite", name), []byte(`{}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			check(t, f, mount)
-			if rec := f.get(t, mount+"/.vite/manifest.json"); rec.Code != 200 {
-				t.Errorf("manifest: %d, want 200 (only the hot file is withheld)", rec.Code)
-			}
 		})
 	}
 
@@ -397,9 +432,10 @@ func TestServeFrontend_NeverServesHotFile(t *testing.T) {
 		t.Setenv(NexusDevEnv, "")
 		b, _ := json.Marshal(hot)
 		fsys := fstest.MapFS{
-			"index.html":           {Data: []byte("<html>x</html>")},
-			".vite/nexus-hot.json": {Data: b},
-			".vite/manifest.json":  {Data: []byte(`{}`)},
+			"index.html":                    {Data: []byte("<html>x</html>")},
+			".vite/nexus-hot.json":          {Data: b},
+			".vite/manifest.json":           {Data: []byte(`{}`)},
+			".vite/nexus-hot.json.4242.tmp": {Data: b},
 		}
 		for _, mount := range []string{"", "/admin"} {
 			app := New(Config{})
@@ -408,16 +444,13 @@ func TestServeFrontend_NeverServesHotFile(t *testing.T) {
 			}
 			f := &viteDevFixture{app: app}
 			check(t, f, mount)
-			if rec := f.get(t, mount+"/.vite/manifest.json"); rec.Code != 200 {
-				t.Errorf("manifest under %q: %d, want 200", mount, rec.Code)
-			}
 		}
 	})
 }
 
 func TestAbsolutizeDevHTML_LeavesAbsoluteURLs(t *testing.T) {
 	in := `<script type="module" src="http://127.0.0.1:5173/@vite/client"></script><link href="https://x/y.css"><script type="module">import a from "./rel.js"; import b from "https://x/b.js"</script>`
-	got := string(absolutizeDevHTML([]byte(in), func(p string) string { return "http://vite" + p }))
+	got := string(absolutizeDevHTML([]byte(in), "http://vite"))
 	if got != in {
 		t.Errorf("absolute/relative URLs changed:\n got %s\nwant %s", got, in)
 	}

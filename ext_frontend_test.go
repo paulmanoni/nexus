@@ -313,7 +313,7 @@ func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/", nil)
 	app.engine.ServeHTTP(rec, req)
-	if got := rec.Body.String(); got != "<html>v1</html>" {
+	if got := noShim(rec.Body.String()); got != "<html>v1</html>" {
 		t.Fatalf("first GET: got %q, want %q", got, "<html>v1</html>")
 	}
 
@@ -324,7 +324,7 @@ func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	app.engine.ServeHTTP(rec, req)
-	if got := rec.Body.String(); got != "<html>v2</html>" {
+	if got := noShim(rec.Body.String()); got != "<html>v2</html>" {
 		t.Errorf("second GET: got %q, want %q (dev-mode re-read regressed — frontend changes won't reach the browser)", got, "<html>v2</html>")
 	}
 }
@@ -363,7 +363,7 @@ func TestServeFrontend_ProductionCachesIndexHTML(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/", nil)
 	app.engine.ServeHTTP(rec, req)
-	if got := rec.Body.String(); got != "<html>boot</html>" {
+	if got := noShim(rec.Body.String()); got != "<html>boot</html>" {
 		t.Errorf("prod GET: got %q, want boot-time bytes %q", got, "<html>boot</html>")
 	}
 }
@@ -417,7 +417,7 @@ func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", tc.path, nil)
 		app.engine.ServeHTTP(rec, req)
-		if got := rec.Body.String(); got != tc.want {
+		if got := noShim(rec.Body.String()); got != tc.want {
 			t.Errorf("GET %s: got %q, want %q (dev-mode disk swap regressed)", tc.path, got, tc.want)
 		}
 	}

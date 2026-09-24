@@ -39,7 +39,9 @@ func (a *App) setFrontendSource(fsys fs.FS, root string) {
 // ViteHot returns the reader for the dev-server hot file nexus-vite-plugin
 // writes, or nil when no frontend was registered. First-party extensions use
 // it to find the Vite dev server instead of guessing — inertia's page shell is
-// the other consumer besides ServeFrontend.
+// the other consumer besides ServeFrontend. Its Current reports a dev server
+// only while that server is alive; a file left by one that has exited reads
+// as absent (see vitehot.Reader.Current).
 func (a *App) ViteHot() *vitehot.Reader { return a.viteHot }
 
 // FrontendFS returns the built frontend bundle registered by ServeFrontend —
@@ -79,9 +81,9 @@ func AppFromGin(c *httpx.Ctx) (*App, bool) {
 // meta, stylesheets, loaders — instead of synthesising a second document that
 // has to repeat them.
 type FrontendDocument struct {
-	// HTML is the document. With a Vite dev server announced by the hot file
-	// it is Vite's transformed index.html, every root-relative URL pointed at
-	// that server; otherwise it is the built bundle's index.html.
+	// HTML is the document. With a live Vite dev server announced by the hot
+	// file it is Vite's transformed index.html, every root-relative asset URL
+	// pointed at that server; otherwise it is the built bundle's index.html.
 	HTML []byte
 	// FromDevServer reports the first case: the scripts are live dev
 	// modules, and the page must not be cached.
@@ -89,16 +91,22 @@ type FrontendDocument struct {
 }
 
 // ErrNoFrontendDocument means there is no index.html to render into right
-// now: no frontend is registered, the build was module-only
-// (nexus({ input }) with no index.html), nothing is built yet, or the Vite
-// dev server was announced but did not serve its index.html. A page renderer
-// then builds its own document.
+// now: no frontend is registered, the build is module-only
+// (nexus({ input: 'src/main.ts' }) emits no index.html), nothing is built yet
+// (the placeholder page is not a document), or the live Vite dev server did
+// not serve its index.html. Module-only is decided the same way in
+// development as in production: a live dev server whose hot file declares no
+// HTML entry stands for a module-only build, so this is returned even if that
+// server's root holds an index.html. A page renderer then builds its own
+// document.
 var ErrNoFrontendDocument = errors.New("nexus: no frontend index.html to render into")
 
 // FrontendDocument returns the document pages render into, or
-// ErrNoFrontendDocument. Any other error means a dev server is announced but
-// unusable — a malformed hot file, or one left by a dev server that has
-// exited — and should be shown to the developer rather than papered over.
+// ErrNoFrontendDocument. Any other error means a hot file is present but
+// can't be understood — malformed, an unknown schema version, an invalid
+// origin — and should be shown to the developer rather than papered over. A
+// hot file left by a dev server that has exited is not an error: it reads as
+// absent, and the built index.html (or ErrNoFrontendDocument) is returned.
 func (a *App) FrontendDocument(ctx context.Context) (FrontendDocument, error) {
 	if a.frontendDoc == nil {
 		return FrontendDocument{}, ErrNoFrontendDocument

@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,9 +50,23 @@ func TestDevPrimaryURL(t *testing.T) {
 	}
 }
 
+// writeTestHot writes a hot file naming an origin nothing listens on: a
+// dead pid must not be rescued by the reader's liveness probe reaching some
+// real dev server (5173 may well be one on a developer's machine).
 func writeTestHot(t *testing.T, dist string, pid int) {
 	t.Helper()
-	b, _ := json.Marshal(vitehot.Hot{Version: vitehot.Version, Origin: "http://127.0.0.1:5173", Base: "/", PID: pid})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "http://" + l.Addr().String()
+	l.Close()
+	writeTestHotAt(t, dist, origin, pid)
+}
+
+func writeTestHotAt(t *testing.T, dist, origin string, pid int) {
+	t.Helper()
+	b, _ := json.Marshal(vitehot.Hot{Version: vitehot.Version, Origin: origin, Base: "/", PID: pid})
 	p := vitehot.Path(dist)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
@@ -102,6 +119,25 @@ func TestWaitForHotFile(t *testing.T) {
 		writeTestHot(t, dist, dead.ProcessState.Pid())
 		if waitForHotFile(ctx, dist, 100*time.Millisecond) {
 			t.Fatal("stale hot file treated as a live dev server")
+		}
+	})
+	t.Run("dead pid, but the dev server answers (a container)", func(t *testing.T) {
+		dead := exec.Command("true")
+		if err := dead.Run(); err != nil {
+			t.Skipf("no `true` binary: %v", err)
+		}
+		vite := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/@vite/client" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Write([]byte("export {}"))
+		}))
+		defer vite.Close()
+		dist := t.TempDir()
+		writeTestHotAt(t, dist, vite.URL, dead.ProcessState.Pid())
+		if !waitForHotFile(ctx, dist, 0) {
+			t.Fatal("a dev server that answers is live whatever its pid says")
 		}
 	})
 	t.Run("cancelled", func(t *testing.T) {

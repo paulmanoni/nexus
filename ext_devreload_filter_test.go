@@ -33,6 +33,23 @@ func TestDevReloadRelevant(t *testing.T) {
 		{"journal sidecar", fsnotify.Event{Name: "app.db-journal", Op: fsnotify.Write}, false},
 		{"log file", fsnotify.Event{Name: "server.log", Op: fsnotify.Write}, false},
 		{"uppercase DB", fsnotify.Event{Name: "DATA.DB", Op: fsnotify.Write}, false},
+
+		// Go build inputs reload through the boot ID once the rebuilt
+		// process serves, never on the save.
+		{"go source", fsnotify.Event{Name: "internal/users/handler.go", Op: fsnotify.Write}, false},
+		{"go test", fsnotify.Event{Name: "handler_test.go", Op: fsnotify.Write}, false},
+		{"go.mod", fsnotify.Event{Name: "go.mod", Op: fsnotify.Write}, false},
+		{"go.sum", fsnotify.Event{Name: "go.sum", Op: fsnotify.Create}, false},
+		{"go.work", fsnotify.Event{Name: "go.work", Op: fsnotify.Write}, false},
+		{"not go", fsnotify.Event{Name: "cargo.toml", Op: fsnotify.Write}, true},
+
+		// Vite metadata: the manifest, the hot file, a cacheDir.
+		{"vite manifest", fsnotify.Event{Name: "/p/web/dist/.vite/manifest.json", Op: fsnotify.Write}, false},
+		{"vite hot file", fsnotify.Event{Name: "/p/web/dist/.vite/nexus-hot.json", Op: fsnotify.Remove}, false},
+		{"vite cache", fsnotify.Event{Name: "/p/web/.vite/deps/vue.js", Op: fsnotify.Create}, false},
+		{"built asset", fsnotify.Event{Name: "/p/web/dist/assets/main-abc.js", Op: fsnotify.Create}, true},
+		{"vite-named file", fsnotify.Event{Name: "/p/web/vite.config.ts", Op: fsnotify.Write}, true},
+		{"go-ish name", fsnotify.Event{Name: "logo.gif", Op: fsnotify.Write}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

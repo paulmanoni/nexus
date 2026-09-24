@@ -1049,9 +1049,11 @@ done:
 // frontend without the plugin pays once, on the first boot.
 const hotFileGrace = time.Second
 
-// waitForHotFile reports whether a usable hot file (valid, written by a live
-// process) exists under distDir, polling until wait elapses. A stale file
-// left by a killed session doesn't count — the fresh server overwrites it.
+// waitForHotFile reports whether a usable hot file exists under distDir —
+// valid, and naming a dev server that is alive (vitehot.Reader.Current's
+// rule: a live pid, or an origin that answers) — polling until wait elapses.
+// A stale file left by a killed session reads as absent, so it doesn't count;
+// the fresh server overwrites it.
 func waitForHotFile(ctx context.Context, distDir string, wait time.Duration) bool {
 	if distDir == "" {
 		return false

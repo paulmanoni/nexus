@@ -1,11 +1,17 @@
 package nexus
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/paulmanoni/nexus/internal/vitehot"
 )
 
 func get(app *App, path string, hdr ...string) *httptest.ResponseRecorder {
@@ -149,16 +155,125 @@ func TestAssetCacheControlWithoutManifest(t *testing.T) {
 	}
 }
 
-// `npm run dev` + `go run .` with environment = "development" must boot
-// before anything is built: the frontend is the dev server the hot file
-// names, and the embedded bundle may be empty.
+// Boot leniency for an unbuilt bundle needs evidence of development
+// happening now — nexus dev, or a live Vite dev server — never the
+// environment value alone: `nexus new` writes environment = "development"
+// into nexus.toml, and deployments ship it.
 func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	app := New(Config{Environment: "development"})
-	if err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg); err != nil {
-		t.Fatalf("development must not fail fast on an unbuilt bundle: %v", err)
+
+	t.Run("environment alone fails fast", func(t *testing.T) {
+		t.Setenv(NexusDevEnv, "")
+		app := New(Config{Environment: "development"})
+		err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg)
+		if err == nil || !strings.Contains(err.Error(), "neither index.html nor a Vite manifest") {
+			t.Fatalf("a deployment shipping environment = development must still fail fast, got %v", err)
+		}
+	})
+
+	t.Run("nexus dev boots to the placeholder", func(t *testing.T) {
+		t.Setenv(NexusDevEnv, "1")
+		app := New(Config{})
+		if err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg); err != nil {
+			t.Fatalf("nexus dev must not fail fast on an unbuilt bundle: %v", err)
+		}
+		if rec := get(app, "/"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "No frontend yet") {
+			t.Fatalf("want the placeholder page, got %d", rec.Code)
+		}
+	})
+
+	// npm run dev + go run . — the frontend is the dev server.
+	for _, tc := range []struct {
+		name string
+		live bool
+	}{{"live dev server boots", true}, {"stale hot file fails fast", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(NexusDevEnv, "")
+			t.Setenv(NexusDevRootEnv, "")
+			dir := t.TempDir()
+			dist := filepath.Join(dir, "web", "dist")
+			var origin string
+			pid := os.Getpid()
+			if tc.live {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/index.html" {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Type", "text/html")
+					w.Write([]byte(`<html><head></head><body>from vite<script type="module" src="/src/main.ts"></script></body></html>`))
+				}))
+				t.Cleanup(srv.Close)
+				origin = srv.URL
+			} else {
+				closed := httptest.NewServer(http.NotFoundHandler())
+				origin = closed.URL
+				closed.Close()
+				dead := exec.Command("true")
+				if err := dead.Run(); err != nil {
+					t.Skipf("no `true` binary: %v", err)
+				}
+				pid = dead.ProcessState.Pid()
+			}
+			writeHotFile(t, dist, vitehot.Hot{Version: 1, Origin: origin, Base: "/", Entries: []string{"index.html"}, PID: pid})
+			t.Chdir(dir)
+			app := New(Config{Environment: "development"})
+			app.setFrontendSource(fstest.MapFS{}, "web/dist")
+			err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg)
+			if !tc.live {
+				if err == nil {
+					t.Fatal("a hot file whose dev server is gone is no evidence of development; want fail-fast")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a live dev server must let an unbuilt bundle boot: %v", err)
+			}
+			if rec := get(app, "/"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "from vite") {
+				t.Fatalf("want the dev server's page, got %d %q", rec.Code, rec.Body)
+			}
+		})
 	}
-	if rec := get(app, "/"); rec.Code != 200 {
-		t.Fatalf("want the placeholder page, got %d", rec.Code)
+}
+
+func writeHotFile(t *testing.T, dist string, h vitehot.Hot) {
+	t.Helper()
+	b, err := json.Marshal(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := vitehot.Path(dist)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The reviewer's case, end to end: hash-free kebab-case names are build
+// output but not content-addressed, so they must revalidate.
+func TestServeFrontend_UnhashedKebabNamesRevalidate(t *testing.T) {
+	t.Setenv("GIN_MODE", "test")
+	app := New(Config{})
+	fsys := fstest.MapFS{
+		"index.html":                  {Data: []byte("<html></html>")},
+		".vite/manifest.json":         {Data: []byte(`{"index.html":{"file":"assets/my-component-name.js","isEntry":true,"css":["assets/admin-dashboard.css"],"assets":["assets/font-awesome.woff2","assets/inter-variable.woff2"]},"src/x.ts":{"file":"assets/x-DXv-ZbW9.js"}}`)},
+		"assets/my-component-name.js": {Data: []byte("x")},
+		"assets/admin-dashboard.css":  {Data: []byte("x")},
+		"assets/font-awesome.woff2":   {Data: []byte("y")},
+		"assets/inter-variable.woff2": {Data: []byte("y")},
+		"assets/x-DXv-ZbW9.js":        {Data: []byte("y")},
+	}
+	if err := mountFrontend(app, fsys, noFrontendCfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/assets/my-component-name.js", "/assets/admin-dashboard.css", "/assets/font-awesome.woff2", "/assets/inter-variable.woff2"} {
+		if cc := get(app, p).Header().Get("Cache-Control"); strings.Contains(cc, "immutable") {
+			t.Errorf("%s: Cache-Control %q on a hash-free name", p, cc)
+		}
+	}
+	if cc := get(app, "/assets/x-DXv-ZbW9.js").Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("a real Vite hash containing '-' should still be immutable: %q", cc)
 	}
 }
