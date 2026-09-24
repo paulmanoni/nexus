@@ -53,6 +53,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `db.Config.Address()` — host:port safe to log, unlike `DSN()`.
 - `nexus --version`; command groups in `nexus --help`; a `--help` pointer on
   command-line errors.
+- **Typed Inertia pages and shared props.** `inertia.Page` tags its route with
+  the component (`registry.PageTag`), and the client SDK emits
+  `NexusPageProps` (component → the handler's props type; a union when one
+  component has several props types) and `NexusSharedProps` in `client.d.ts`.
+  A page reads its props with `defineProps<NexusPageProps['Users/Index']>()`.
+  `inertia.ShareScoped` now records its type, and `inertia.ShareTyped[T]` is
+  the typed sibling of `Share`; untyped `Share` keys ride an index signature.
+  A generated `inertia.d.ts` (referenced from `client.d.ts`, served at
+  `/__nexus/client/inertia.d.ts`, written by the dump and `nexus client`)
+  types `usePage().props` through `@inertiajs/core`'s `InertiaConfig`. The
+  manifest gains `endpoints[].page` and `sharedProps` (additive, `client.v1`).
+  `inertia.Prop` fields are typed as optional `unknown` instead of an empty
+  `Prop` interface (`registry.SchemaOpaque`).
+- **`nexus.Tag(key, value)`** — the exported cross-transport option for
+  stamping an endpoint's registry tags, for extensions that mark the
+  endpoints they register. `App.RegisterSharedProp(key, reflect.Type)` records
+  a typed page-wide shared prop.
 
 ### Changed
 
@@ -74,6 +91,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   page-props types and the manifest `nexus-vite-plugin` reads) but no longer
   edits `tsconfig.json`; `Client.OutDir = client.Off` keeps the routes
   without the files, `Client.DevDisabled` still closes both.
+- **Inertia pages are no longer emitted as REST calls** in the SDK's
+  `RestEndpoints` or `extension/frontend`'s `index.ts`: a page is rendered,
+  not called. Its props type lives in `NexusPageProps`.
 - **A missing frontend build is loud.** An Inertia page with no dev server
   and no manifest renders an error page naming both paths in development
   (500), and logs once in production — previously both shipped a blank page.
