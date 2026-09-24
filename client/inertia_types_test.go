@@ -109,10 +109,21 @@ func TestGenerateClientDTS_InertiaTypes(t *testing.T) {
 		t.Error("no generic page-props alias may be emitted — Vue's compiler cannot resolve it")
 	}
 
-	// A manifest with neither pages nor shared props emits neither interface.
+	// client.d.ts pulls inertia.d.ts into the TS program — first line, so
+	// the directive is honoured.
+	const ref = "/// <reference path=\"./inertia.d.ts\" />\n"
+	if !strings.HasPrefix(out, ref) {
+		t.Errorf("client.d.ts must start with the inertia.d.ts reference, got:\n%.200s", out)
+	}
+
+	// A manifest with neither pages nor shared props emits neither interface
+	// nor the reference (inertia.d.ts isn't generated then).
 	plain := GenerateClientDTS(buildManifest(registry.New(), nil, nil, ""))
 	if strings.Contains(plain, "NexusPageProps") || strings.Contains(plain, "NexusSharedProps") {
 		t.Error("Inertia interfaces emitted for a manifest without pages or shared props")
+	}
+	if strings.Contains(plain, "inertia.d.ts") {
+		t.Error("client.d.ts references inertia.d.ts although none is generated")
 	}
 }
 
