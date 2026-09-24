@@ -43,11 +43,14 @@
 //      {version, origin, base, entries, pid}, origin being the port
 //      Vite actually bound — and removes it when the server stops.
 //      Under `vite build` it forces build.manifest (the Go side renders
-//      asset tags from .vite/manifest.json) and clears a stale hot file.
-//      options.input declares the entry once for both. In dev it also
-//      points server.origin at the real dev-server origin, so asset
-//      URLs resolve against Vite when the page sits on the Go app's
-//      origin.
+//      asset tags from .vite/manifest.json) and clears a stale hot file;
+//      a running dev server's hot file survives emptyOutDir (it is put
+//      back after the wipe). options.input declares the entry once for
+//      both. In dev it also points server.origin at the real dev-server
+//      origin, so asset URLs resolve against Vite when the page sits on
+//      the Go app's origin, and — unless server.cors is set — allows
+//      that origin cross-origin: local names, this machine's addresses
+//      and options.appOrigin (see devCorsAllows).
 //
 // Wire it up in vite.config.ts:
 //
@@ -74,9 +77,10 @@
 
 import {
   readFileSync, existsSync, statSync, utimesSync, readdirSync,
-  writeFileSync, renameSync, unlinkSync, mkdirSync,
+  writeFileSync, renameSync, unlinkSync, mkdirSync, linkSync,
 } from 'node:fs'
 import { join, isAbsolute, resolve, dirname, relative, sep } from 'node:path'
+import { networkInterfaces } from 'node:os'
 
 const DEFAULT_SDK_DIR = 'src/sdk'
 const MANIFEST = 'manifest.json'
@@ -120,9 +124,71 @@ const NEXUS_MANIFEST = '.vite/manifest.json'
 // hook sets this marker and the transform hook swaps in the real origin.
 const ORIGIN_PLACEHOLDER = '__nexus_vite_placeholder__'
 
-// Mirrors Vite's own wildcardHosts: a server bound to one of these is
-// reachable on loopback, so that is what the hot file should say.
+// Mirrors Vite's own wildcardHosts: a server bound to one of these listens
+// on every interface, so the hot file names one of the machine's network
+// addresses (see lanHost).
 const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '0000:0000:0000:0000:0000:0000:0000:0000'])
+
+// Tests replace os.networkInterfaces through this slot; nothing else sets it.
+const IFACES_OVERRIDE = Symbol.for('nexus-vite-plugin.networkInterfaces')
+
+function interfaces() {
+  const fn = globalThis[IFACES_OVERRIDE] || networkInterfaces
+  try {
+    return Object.values(fn() || {}).flatMap((list) => list || [])
+  } catch {
+    return []
+  }
+}
+
+// lanHost is the address a wildcard-bound dev server is written under: the
+// first network (non-loopback) IPv4 address, preferring the one Vite prints
+// as "Network:". Unlike 127.0.0.1 it reaches this machine from a phone on
+// the LAN as well as from the machine itself — module and asset URLs in a
+// page the Go app serves to that phone point at it. Falls back to 127.0.0.1
+// when the machine has no network address.
+function lanHost(server) {
+  const urls = server.resolvedUrls
+  const net = urls && urls.network && urls.network[0]
+  if (net) {
+    try {
+      return new URL(net).hostname
+    } catch { /* fall through */ }
+  }
+  const v4 = interfaces().find(
+    (d) => d && !d.internal && (d.family === 'IPv4' || d.family === 4) && d.address && !d.address.startsWith('169.254.'),
+  )
+  return v4 ? v4.address : '127.0.0.1'
+}
+
+// devCorsAllows is the dev server's CORS origin check when the app has not
+// configured server.cors. The page lives on the Go app's origin and loads
+// its modules cross-origin from Vite, so Vite has to answer that origin —
+// but Vite's default (6.0.9+) only covers localhost, and wide-open CORS lets
+// any website read the dev server's source. Allowed, on any port (the Go
+// app runs on this machine by construction):
+//
+//   - loopback: localhost, *.localhost, 127.0.0.0/8, [::1]
+//   - *.test names (RFC 6761: only resolvable by local configuration)
+//   - every address of this machine's interfaces, looked up per request
+//     so a network change is picked up
+//   - each nexus({ appOrigin }) origin, exactly
+function devCorsAllows(origin, appOrigins) {
+  if (!origin) return false
+  let u
+  try {
+    u = new URL(origin)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+  if (appOrigins.has(u.origin)) return true
+  let host = u.hostname.toLowerCase()
+  if (host.startsWith('[')) host = host.slice(1, -1)
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.test')) return true
+  if (host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host)) return true
+  return interfaces().some((d) => d && d.address && d.address.split('%')[0].toLowerCase() === host)
+}
 
 // Process-wide record of the hot files this process wrote. Kept on
 // globalThis because Vite re-bundles vite.config (and with it this
@@ -165,6 +231,27 @@ function writeHotFile(file, data) {
   const tmp = `${file}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n')
   renameSync(tmp, file)
+}
+
+// restoreHotFile puts raw back at file only if nothing is there: written to a
+// temp file, then hard-linked into place, which fails rather than replace a
+// file the dev server wrote in the meantime (a restart on a new port).
+// Without hard links it falls back to a rename after a fresh existence check.
+function restoreHotFile(file, raw) {
+  mkdirSync(dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.restore.tmp`
+  writeFileSync(tmp, raw)
+  try {
+    linkSync(tmp, file)
+    return true
+  } catch (e) {
+    if (e && e.code === 'EEXIST') return false
+    if (existsSync(file)) return false
+    renameSync(tmp, file)
+    return true
+  } finally {
+    try { unlinkSync(tmp) } catch { /* renamed */ }
+  }
 }
 
 function pidAlive(pid) {
@@ -210,8 +297,9 @@ function installHotExitHooks() {
 }
 
 // devOrigin is scheme://host:port for the running dev server: an explicit
-// server.origin first, then the address the socket actually bound, and Vite's
-// resolvedUrls only as a last resort.
+// server.origin first, then the address the socket actually bound (a wildcard
+// bind — `vite --host` — becomes the machine's network address, lanHost), and
+// Vite's resolvedUrls only as a last resort.
 //
 // The socket comes before resolvedUrls on purpose. resolvedUrls say
 // "localhost", and that is ambiguous whenever another server holds the same
@@ -226,7 +314,7 @@ function devOrigin(server, explicitOrigin) {
   if (addr && typeof addr === 'object' && addr.port) {
     let host = addr.address || ''
     if (host.startsWith('::ffff:')) host = host.slice('::ffff:'.length) // IPv4-mapped
-    if (!host || WILDCARD_HOSTS.has(host)) host = '127.0.0.1'
+    if (!host || WILDCARD_HOSTS.has(host)) host = lanHost(server)
     if (host.includes(':')) host = `[${host}]`
     return `${scheme}://${host}:${addr.port}`
   }
@@ -623,6 +711,52 @@ export default function nexusAutoSelect(options = {}) {
   // ahead of the socket bind); invalidated once the origin is known so
   // none keeps the placeholder.
   const placeholderPending = new Set()
+  const appOrigins = new Set(toArray(options.appOrigin).filter(Boolean).map((o) => originOf(String(o))))
+  // A live dev server's hot file in this build's outDir, captured before
+  // emptyOutDir can remove it and put back after (see restoreLiveHot).
+  let hotStash = null
+  let hotStashWarned = false
+
+  // liveHotOwner is the pid of the running dev server that owns the hot
+  // file, or 0: a live pid in another process, or this process when its own
+  // dev server wrote it (a programmatic build next to createServer).
+  const liveHotOwner = (hot) => {
+    if (!hot || !pidAlive(hot.pid)) return 0
+    if (hot.pid === process.pid && !hotRegistry().files.has(hotPath)) return 0
+    return hot.pid
+  }
+  const stashLiveHot = () => {
+    if (!hotPath) return
+    let raw
+    try {
+      raw = readFileSync(hotPath, 'utf8')
+    } catch {
+      return
+    }
+    let hot = null
+    try { hot = JSON.parse(raw) } catch { /* not ours to keep */ }
+    const pid = liveHotOwner(hot)
+    if (pid) hotStash = { raw, pid }
+  }
+  // restoreLiveHot undoes emptyOutDir for a running dev server: it rewrites
+  // the stashed hot file when the build has removed it and that server is
+  // still running. Called from every hook that can follow the wipe — Vite
+  // empties the outDir just before writing (renderStart follows), and in
+  // watch mode before each rebuild's buildStart.
+  const restoreLiveHot = () => {
+    if (!hotStash || existsSync(hotPath)) return
+    if (!pidAlive(hotStash.pid)) {
+      hotStash = null
+      return
+    }
+    try {
+      if (restoreHotFile(hotPath, hotStash.raw) && hotConfig) {
+        hotConfig.logger.info(`[nexus] restored ${HOT_DIR}/${HOT_FILE} for the dev server (pid ${hotStash.pid})`)
+      }
+    } catch (e) {
+      if (hotConfig) hotConfig.logger.warn(`[nexus] could not restore ${hotPath}: ${e && e.message ? e.message : e}`)
+    }
+  }
 
   const hotPlugin = {
     name: 'nexus-hot',
@@ -665,8 +799,20 @@ export default function nexusAutoSelect(options = {}) {
 
       const server = userConfig.server || {}
       explicitOrigin = server.origin || ''
-      usePlaceholder = env.command === 'serve' && !env.isPreview && !server.origin && !server.middlewareMode
+      const dev = env.command === 'serve' && !env.isPreview
+      usePlaceholder = dev && !server.origin && !server.middlewareMode
       if (usePlaceholder) out.server = { origin: ORIGIN_PLACEHOLDER }
+      if (dev && server.cors === undefined) {
+        out.server = {
+          ...(out.server || {}),
+          cors: { origin: (origin, cb) => cb(null, devCorsAllows(origin, appOrigins)) },
+        }
+      } else if (dev && appOrigins.size) {
+        hotWarnings.push(
+          `[nexus] nexus({ appOrigin }) is ignored because server.cors is set — ` +
+          `allow the app's origin there.`,
+        )
+      }
 
       return out
     },
@@ -675,19 +821,56 @@ export default function nexusAutoSelect(options = {}) {
       hotConfig = cfg
       hotPath = join(resolve(cfg.root, cfg.build.outDir), HOT_DIR, HOT_FILE)
       for (const w of hotWarnings.splice(0)) cfg.logger.warn(w)
+      if (hotCommand === 'build') stashLiveHot()
     },
 
+    // A build into the outDir of a running dev server keeps that server's
+    // hot file: Vite's emptyOutDir deletes it, and restoreLiveHot writes it
+    // back, so the Go app keeps serving HMR through `nexus dev --dist` and
+    // a manual `vite build` alike. A hot file whose server is gone is
+    // removed — it would only be reported as stale.
     buildStart() {
-      if (hotCommand !== 'build' || !hotPath || !existsSync(hotPath)) return
-      const hot = readHotFile(hotPath)
-      if (hot && hot.pid !== process.pid && pidAlive(hot.pid)) {
-        this.warn(
-          `a vite dev server (pid ${hot.pid}) is still running against this outDir; ` +
-          `leaving its ${HOT_DIR}/${HOT_FILE} in place`,
-        )
+      if (hotCommand !== 'build' || !hotPath) return
+      if (existsSync(hotPath)) {
+        if (!liveHotOwner(readHotFile(hotPath))) {
+          try { unlinkSync(hotPath) } catch { /* already gone */ }
+          return
+        }
+        stashLiveHot()
+        if (!hotStashWarned && hotStash) {
+          hotStashWarned = true
+          this.warn(
+            `a vite dev server (pid ${hotStash.pid}) is running against this outDir; ` +
+            `its ${HOT_DIR}/${HOT_FILE} is restored after the build empties the outDir`,
+          )
+        }
         return
       }
-      try { unlinkSync(hotPath) } catch { /* already gone */ }
+      restoreLiveHot()
+    },
+
+    watchChange() {
+      if (hotCommand === 'build' && existsSync(hotPath)) stashLiveHot()
+    },
+
+    renderStart: {
+      order: 'post',
+      sequential: true,
+      handler() {
+        if (hotCommand === 'build') restoreLiveHot()
+      },
+    },
+
+    writeBundle: {
+      order: 'post',
+      sequential: true,
+      handler() {
+        if (hotCommand === 'build') restoreLiveHot()
+      },
+    },
+
+    closeBundle() {
+      if (hotCommand === 'build') restoreLiveHot()
     },
 
     configureServer(server) {

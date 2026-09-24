@@ -8,15 +8,33 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { join, dirname } from 'node:path'
+import { spawnSync, spawn } from 'node:child_process'
 
 import nexus from './nexus-vite-plugin.js'
 
 const PLUGIN_URL = new URL('./nexus-vite-plugin.js', import.meta.url).href
 const PLACEHOLDER = '__nexus_vite_placeholder__'
+const IFACES = Symbol.for('nexus-vite-plugin.networkInterfaces')
+
+// withInterfaces runs the rest of test t with os.networkInterfaces replaced.
+function withInterfaces(t, ifaces) {
+  globalThis[IFACES] = () => ifaces
+  t.after(() => { delete globalThis[IFACES] })
+}
+
+const LAN = {
+  lo0: [
+    { address: '127.0.0.1', family: 'IPv4', internal: true },
+    { address: '::1', family: 'IPv6', internal: true },
+  ],
+  en0: [
+    { address: 'fe80::1c2b:3aff:fe4d:5e6f', family: 'IPv6', internal: false, scopeid: 4 },
+    { address: '192.168.1.5', family: 'IPv4', internal: false },
+  ],
+}
 
 function hot(options) {
   return nexus(options).find((p) => p.name === 'nexus-hot')
@@ -118,6 +136,7 @@ test('default entry is index.html; object inputs become root-relative entries', 
 })
 
 test('origin falls back to the socket address, mapping wildcards and bracketing IPv6', async (t) => {
+  withInterfaces(t, { lo0: LAN.lo0 })
   const cases = [
     [{ address: '0.0.0.0', port: 5175 }, false, 'http://127.0.0.1:5175'],
     [{ address: '::', port: 5176 }, false, 'http://127.0.0.1:5176'],
@@ -135,7 +154,7 @@ test('an explicit server.origin is honoured and not replaced by the placeholder'
     userConfig: { server: { origin: 'http://dev.test:9000/' } },
     server: { resolvedUrls: { local: ['http://localhost:5173/'], network: [] } },
   })
-  assert.equal(out.server, undefined)
+  assert.equal(out.server.origin, undefined)
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).origin, 'http://dev.test:9000')
   server.httpServer.emit('close')
 })
@@ -153,7 +172,7 @@ test('placeholder: set for dev only, swapped for the real origin in transform', 
   assert.equal(p.config({}, { command: 'serve' }).server.origin, PLACEHOLDER)
   assert.equal(hot().config({}, { command: 'build' }).server, undefined)
   assert.equal(hot().config({}, { command: 'serve', isPreview: true }).server, undefined)
-  assert.equal(hot().config({ server: { middlewareMode: true } }, { command: 'serve' }).server, undefined)
+  assert.equal(hot().config({ server: { middlewareMode: true } }, { command: 'serve' }).server.origin, undefined)
 
   // A module transformed before listen (server.warmup) keeps the
   // placeholder for now and is invalidated once the port is known.
@@ -310,3 +329,232 @@ test('resolvedUrls are used only when the socket gives no address', async (t) =>
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).origin, 'http://localhost:5190')
   server.httpServer.emit('close')
 })
+
+// ── M5: wildcard binds and cross-origin module loading ─────────────────
+
+// `vite --host` binds every interface. 127.0.0.1 would send a phone on the
+// LAN to itself; the machine's network address works for the phone and the
+// machine alike.
+test('a wildcard bind is written as the network address', async (t) => {
+  withInterfaces(t, LAN)
+  for (const address of ['0.0.0.0', '::']) {
+    const { file, server } = await start(t, {
+      server: {
+        address: { address, port: 5181 },
+        resolvedUrls: { local: ['http://localhost:5181/'], network: ['http://10.0.0.7:5181/'] },
+      },
+    })
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).origin, 'http://10.0.0.7:5181', 'Vite\'s Network URL first')
+    server.httpServer.emit('close')
+  }
+  // No resolvedUrls (bound outside server.listen): the interfaces decide,
+  // skipping loopback, IPv6 and link-local.
+  const { file, server, plugin } = await start(t, {
+    server: { address: { address: '::', port: 5182 }, resolvedUrls: null },
+  })
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).origin, 'http://192.168.1.5:5182')
+  const css = `a{b:url('${PLACEHOLDER}/src/x.png')}`
+  assert.equal(plugin.transform(css, '/src/x.css').code, `a{b:url('http://192.168.1.5:5182/src/x.png')}`)
+  server.httpServer.emit('close')
+})
+
+test('a wildcard bind with no network address falls back to 127.0.0.1', async (t) => {
+  withInterfaces(t, {
+    lo0: LAN.lo0,
+    en1: [{ address: '169.254.10.2', family: 'IPv4', internal: false }],
+  })
+  const { file, server } = await start(t, { server: { address: { address: '0.0.0.0', port: 5183 } } })
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).origin, 'http://127.0.0.1:5183')
+  server.httpServer.emit('close')
+})
+
+test('a specific bind keeps its literal address, even when a network address exists', async (t) => {
+  withInterfaces(t, LAN)
+  const { file, server } = await start(t, {
+    server: {
+      address: { address: '::1', port: 5173 },
+      resolvedUrls: { local: ['http://localhost:5173/'], network: ['http://192.168.1.5:5173/'] },
+    },
+  })
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).origin, 'http://[::1]:5173')
+  server.httpServer.emit('close')
+})
+
+function corsCheck(plugin, userConfig = {}) {
+  const out = plugin.config(userConfig, { command: 'serve', mode: 'development' })
+  const origin = out.server && out.server.cors && out.server.cors.origin
+  return {
+    out,
+    allows: (o) => {
+      let got
+      origin(o, (err, v) => { assert.equal(err, null); got = v })
+      return got
+    },
+  }
+}
+
+test('dev CORS allows this machine and local names, on any port, and nothing else', (t) => {
+  withInterfaces(t, LAN)
+  const { allows } = corsCheck(hot({ appOrigin: ['https://staging.example.com/', 'http://10.1.2.3:9000'] }))
+  for (const o of [
+    'http://localhost:8080', 'https://localhost', 'http://app.localhost:3000',
+    'http://127.0.0.1:8080', 'http://127.1.2.3:8080', 'http://[::1]:8080',
+    'http://myapp.test:8080', 'https://admin.myapp.test',
+    'http://192.168.1.5:8080', 'http://[fe80::1c2b:3aff:fe4d:5e6f]:8080',
+    'https://staging.example.com', 'http://10.1.2.3:9000',
+  ]) assert.equal(allows(o), true, o)
+  for (const o of [
+    'https://evil.example', 'http://192.168.1.6:8080', 'http://localhost.evil.example',
+    'http://test', 'http://mytest:8080', 'http://10.1.2.3:9001', 'https://staging.example.com:8443',
+    'null', '', undefined, 'file:///etc/passwd', 'chrome-extension://abc',
+  ]) assert.equal(allows(o), false, String(o))
+})
+
+test('dev CORS is left alone when the app configures it, and never set for build or preview', () => {
+  const p = hot({ appOrigin: 'http://x.example' })
+  const out = p.config({ server: { cors: false } }, { command: 'serve' })
+  assert.equal(out.server.cors, undefined)
+  const l = logger()
+  p.configResolved({ ...resolvedConfig('/r'), logger: l })
+  assert.match(l.warns[0], /appOrigin.*ignored because server\.cors is set/)
+
+  assert.equal(hot().config({ server: { cors: { origin: '*' } } }, { command: 'serve' }).server.cors, undefined)
+  assert.equal(hot().config({}, { command: 'build' }).server, undefined)
+  assert.equal(hot().config({}, { command: 'serve', isPreview: true }).server, undefined)
+})
+
+// ── M1: a build into a running dev server's outDir ──────────────────────
+
+// buildInto drives one plugin instance through the build hooks. The caller
+// performs Vite's emptyOutDir between them.
+function buildInto(root) {
+  const p = hot()
+  p.config({}, { command: 'build', mode: 'production' })
+  const rc = resolvedConfig(root)
+  p.configResolved(rc)
+  const warns = []
+  const ctx = { warn: (m) => warns.push(m) }
+  return {
+    warns,
+    logger: rc.logger,
+    buildStart: () => p.buildStart.call(ctx),
+    watchChange: () => p.watchChange.call(ctx, 'src/a.ts', { event: 'update' }),
+    renderStart: () => p.renderStart.handler.call(ctx),
+    writeBundle: () => p.writeBundle.handler.call(ctx),
+    closeBundle: () => p.closeBundle.call(ctx),
+  }
+}
+
+function writeDevHot(root, pid, port = 5173) {
+  const dir = join(root, 'dist', '.vite')
+  mkdirSync(dir, { recursive: true })
+  const raw = JSON.stringify({ version: 1, origin: `http://127.0.0.1:${port}`, base: '/', entries: ['src/main.ts'], pid }, null, 2) + '\n'
+  writeFileSync(join(dir, 'nexus-hot.json'), raw)
+  return raw
+}
+
+// Vite's emptyOutDir: everything under outDir goes, .vite included.
+const emptyOutDir = (root) => rmSync(join(root, 'dist'), { recursive: true, force: true })
+
+test('a build puts back the hot file of a running dev server after emptyOutDir', (t) => {
+  const root = tmpRoot(t)
+  const file = join(root, 'dist', '.vite', 'nexus-hot.json')
+  const raw = writeDevHot(root, process.ppid)
+  const b = buildInto(root)
+  b.buildStart()
+  assert.equal(b.warns.length, 1)
+  assert.match(b.warns[0], /is restored after the build empties the outDir/)
+  emptyOutDir(root)                       // Vite: prepareOutDir, just before writing
+  b.renderStart()
+  assert.equal(readFileSync(file, 'utf8'), raw, 'restored byte for byte')
+  assert.deepEqual(readdirNames(join(root, 'dist', '.vite')), ['nexus-hot.json'], 'no temp file left')
+  b.writeBundle()
+  b.closeBundle()
+  assert.equal(readFileSync(file, 'utf8'), raw)
+})
+
+test('a later hook restores when the wipe came after renderStart', (t) => {
+  const root = tmpRoot(t)
+  const raw = writeDevHot(root, process.ppid)
+  const b = buildInto(root)
+  b.buildStart()
+  b.renderStart()
+  emptyOutDir(root)
+  b.closeBundle()
+  assert.equal(readFileSync(join(root, 'dist', '.vite', 'nexus-hot.json'), 'utf8'), raw)
+})
+
+test('watch mode: a rebuild wipes before buildStart, which restores; warns once', (t) => {
+  const root = tmpRoot(t)
+  const file = join(root, 'dist', '.vite', 'nexus-hot.json')
+  const raw = writeDevHot(root, process.ppid)
+  const b = buildInto(root)
+  b.buildStart(); emptyOutDir(root); b.renderStart(); b.closeBundle()
+  // The dev server restarted on a new port between builds.
+  const raw2 = writeDevHot(root, process.ppid, 5199)
+  b.watchChange()
+  emptyOutDir(root)                       // watch mode: BUNDLE_START wipes first
+  b.buildStart()
+  assert.equal(readFileSync(file, 'utf8'), raw2, 'the newer file, captured at watchChange')
+  assert.notEqual(raw, raw2)
+  assert.equal(b.warns.length, 1)
+})
+
+test('a hot file the dev server rewrote after the wipe is not overwritten', (t) => {
+  const root = tmpRoot(t)
+  const file = join(root, 'dist', '.vite', 'nexus-hot.json')
+  writeDevHot(root, process.ppid)
+  const b = buildInto(root)
+  b.buildStart()
+  emptyOutDir(root)
+  const fresh = writeDevHot(root, process.ppid, 5200)
+  b.renderStart(); b.closeBundle()
+  assert.equal(readFileSync(file, 'utf8'), fresh)
+})
+
+test('no restore once the dev server has exited', async (t) => {
+  const root = tmpRoot(t)
+  const file = join(root, 'dist', '.vite', 'nexus-hot.json')
+  const dev = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  await new Promise((r) => dev.once('spawn', r))
+  writeDevHot(root, dev.pid)
+  const b = buildInto(root)
+  b.buildStart()
+  assert.equal(b.warns.length, 1)
+  dev.kill('SIGKILL')
+  await new Promise((r) => dev.once('exit', r))
+  emptyOutDir(root)
+  b.renderStart(); b.writeBundle(); b.closeBundle()
+  assert.equal(existsSync(file), false)
+})
+
+test('a build removes a stale or malformed hot file and restores nothing', (t) => {
+  const root = tmpRoot(t)
+  const file = join(root, 'dist', '.vite', 'nexus-hot.json')
+  for (const content of [JSON.stringify({ version: 1, pid: 2 ** 30 }), '{not json']) {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, content)
+    const b = buildInto(root)
+    b.buildStart()
+    assert.equal(existsSync(file), false)
+    assert.deepEqual(b.warns, [])
+    b.renderStart(); b.closeBundle()
+    assert.equal(existsSync(file), false)
+  }
+})
+
+test('a build in the dev server\'s own process keeps that server\'s hot file', async (t) => {
+  const { root, file, server } = await start(t)
+  const raw = readFileSync(file, 'utf8')
+  const b = buildInto(root)
+  b.buildStart()
+  emptyOutDir(root)
+  b.renderStart()
+  assert.equal(readFileSync(file, 'utf8'), raw)
+  server.httpServer.emit('close')
+  assert.equal(existsSync(file), false)
+})
+
+function readdirNames(dir) {
+  return readdirSync(dir).sort()
+}

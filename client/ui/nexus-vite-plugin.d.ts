@@ -59,14 +59,30 @@ export interface NexusVitePluginOptions {
    * the dev hot file. Omit it for an index.html-driven SPA.
    */
   input?: string | string[]
+  /**
+   * Origin(s) the Go app is visited on that the dev server should answer
+   * cross-origin module requests from, e.g. 'https://myapp.example:8443'.
+   * The page lives on the app's origin and loads its modules from Vite, so
+   * Vite must allow that origin. Without server.cors in your config the
+   * plugin already allows, on any port: localhost, *.localhost, 127.0.0.0/8,
+   * [::1], *.test names and every address of this machine (so a phone on
+   * the LAN visiting http://<your-ip>:8080 works). List anything else here;
+   * each value is matched exactly as an origin. Ignored (with a warning)
+   * when server.cors is set — allow the origin there instead.
+   */
+  appOrigin?: string | string[]
 }
 
 /**
  * nexus's Vite plugin bundle — auto-select, manifest-filter, loop-guard,
  * the dev codegen→HMR bridge, and the nexus handshake: under `vite dev`
  * it writes <outDir>/.vite/nexus-hot.json with the dev server's real
- * origin (removed on shutdown) and sets server.origin so assets resolve
- * cross-origin; under `vite build` it forces build.manifest. Spread the
+ * origin (removed on shutdown; a wildcard `--host` bind is written as the
+ * machine's network address so LAN clients reach it), sets server.origin
+ * so assets resolve cross-origin, and — unless server.cors is set — a CORS
+ * allowlist for the app's origin (see appOrigin). Under `vite build` it
+ * forces build.manifest, and a build into the outDir of a running dev
+ * server puts that server's hot file back after emptyOutDir. Spread the
  * result into the `plugins` array of vite.config.ts.
  */
 export default function nexusAutoSelect(options?: NexusVitePluginOptions): Plugin[]
