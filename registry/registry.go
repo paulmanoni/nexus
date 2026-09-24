@@ -226,6 +226,9 @@ type Registry struct {
 	attached    map[string][]string // resource name -> service names
 	middlewares map[string]middleware.Info
 	workers     map[string]Worker
+	// sharedProps holds the typed Inertia shared props recorded via
+	// SetSharedProp (key → walked value type). Lazily allocated.
+	sharedProps map[string]TypeRef
 	// globalMiddlewares is the ordered list of middleware names
 	// installed on the engine root (app-wide). Every request goes
 	// through these before per-endpoint stacks. Dashboard renders them
@@ -454,6 +457,47 @@ const IconTag = "dashboard.icon"
 // can render them with a distinct "proxied" badge so a strangler-fig migration
 // shows, live, which routes are still on the legacy app vs. already migrated.
 const ProxyTag = "dashboard.proxy"
+
+// PageTag is the Endpoint.Tags key marking an endpoint as an Inertia page;
+// its value is the client-side component name ("Users/Index"). Stamped by
+// inertia.Page via nexus.Tag. The client SDK manifest projects it as
+// EndpointInfo.Page, which keys the generated NexusPageProps interface and
+// lets the Vite plugin check every registered component against the pages
+// directory. A page is rendered, not called, so the SDK leaves it out of
+// RestEndpoints.
+const PageTag = "inertia.page"
+
+// SetSharedProp records the value type of a typed page-wide shared prop
+// (inertia.ShareScoped / inertia.ShareTyped) under key. Registering the
+// same key again replaces the type — the last registration wins, matching
+// how the engine merges providers into one props map. The client SDK
+// manifest projects the set as sharedProps → NexusSharedProps.
+func (r *Registry) SetSharedProp(key string, t TypeRef) {
+	if key == "" {
+		return
+	}
+	r.mu.Lock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
+	if r.sharedProps == nil {
+		r.sharedProps = map[string]TypeRef{}
+	}
+	r.sharedProps[key] = t
+}
+
+// SharedProps returns a copy of the typed shared props recorded via
+// SetSharedProp, or nil when none were.
+func (r *Registry) SharedProps() map[string]TypeRef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.sharedProps) == 0 {
+		return nil
+	}
+	out := make(map[string]TypeRef, len(r.sharedProps))
+	for k, v := range r.sharedProps {
+		out[k] = v
+	}
+	return out
+}
 
 // VisibleEndpoints returns a copy of all registered endpoints EXCEPT those
 // marked hidden via nexus.HideFromDashboard() (the HiddenTag tag). The

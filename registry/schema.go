@@ -82,6 +82,7 @@ type FieldSchema struct {
 //	named struct                → ref:Name, registered into refs
 //	anonymous struct            → object inline
 //	interface{}                 → any
+//	SchemaOpaque implementer    → any, Optional (see SchemaOpaque)
 //	everything else             → any
 //
 // The walk is finite: cycles in the type graph (a *Node with a
@@ -90,6 +91,9 @@ type FieldSchema struct {
 func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 	if t == nil {
 		return TypeRef{Kind: "any"}
+	}
+	if isSchemaOpaque(t) {
+		return TypeRef{Kind: "any", Optional: true}
 	}
 	// time.Time is special — render as primitive string. Has to come
 	// before the struct branch.
@@ -155,6 +159,38 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 	default:
 		return TypeRef{Kind: "any"}
 	}
+}
+
+// SchemaOpaque is implemented by a type whose Go declaration does not
+// describe its JSON form — a wrapper that is resolved or dropped at write
+// time rather than serialized field by field. WalkType renders such a type
+// as an optional "any" (TS: `field?: unknown`) instead of walking its
+// fields; the marker method is never called.
+//
+// inertia.Prop is the case in point: its fields are unexported, so a walk
+// yields an empty `Prop` ref, and Vue's defineProps turns an interface type
+// into a runtime `type: Object` check that rejects the number or array the
+// prop actually carries. Optional/Defer props are also absent on the visits
+// that don't request them, and one static type covers every kind — so
+// "may be absent, shape unknown" is the only honest static answer.
+//
+// A marker method rather than a registration table: the type opts itself
+// out wherever it is walked (page props, REST/WS args, GraphQL), with no
+// package-global state and no dependency on which package initialized
+// first — the same way a type owns its encoding via json.Marshaler.
+type SchemaOpaque interface{ NexusSchemaOpaque() }
+
+var schemaOpaqueType = reflect.TypeOf((*SchemaOpaque)(nil)).Elem()
+
+// isSchemaOpaque reports whether t (or *t, for value types whose marker
+// sits on the pointer receiver) implements SchemaOpaque. Interface types
+// are excluded: an interface embedding the marker describes values, not a
+// wire shape, and `any` must keep its plain (non-optional) rendering.
+func isSchemaOpaque(t reflect.Type) bool {
+	if t.Kind() == reflect.Interface {
+		return false
+	}
+	return t.Implements(schemaOpaqueType) || reflect.PointerTo(t).Implements(schemaOpaqueType)
 }
 
 // sanitizeTypeName converts a Go reflect.Type.Name() into a valid
