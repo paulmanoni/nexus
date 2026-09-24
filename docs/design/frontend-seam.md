@@ -1,6 +1,6 @@
 # Seamless nexus ↔ Vite
 
-Status: **proposed** — decision taken 2026-09-24: Vite is the only frontend
+Status: **in progress** (Stages 1–3 built) — decision taken 2026-09-24: Vite is the only frontend
 engine; viteless is retired from nexus (the repo lives on independently).
 Node/npm are dev- and build-time requirements; the runtime stays one Go binary
 with `web/dist` embedded.
@@ -284,5 +284,55 @@ Carried into later stages: `nexus dev` stops real Vite with SIGKILL (inside
 viteless), so the plugin cannot clean up — harmless now, but Stage 4's
 Vite-driving `nexus dev` should send SIGTERM. ThemeHead-style per-request head
 content (a theme only for some routes) still needs a per-request `Config.Head`.
-One root-package test failed once under full-parallel load and not in ten
-further runs; the new timing-sensitive tests are the suspects.
+The root-package flake was an older worker test reading a status before it was
+recorded; it now polls (2,000 clean runs under `-cpu=4`).
+
+## Stage 3 — as built
+
+Verified end to end on a scratch app: a Go binary with three `inertia.Page`
+routes and two typed shares, run with `environment = "development"`, wrote
+`web/sdk` and merged `web/tsconfig.json`; against those generated files
+`vue-tsc --noEmit` passed, and failed (exit 2) on a page prop misused and on a
+shared prop read with the wrong type; `vite build` emitted the right runtime
+props (`users: { type: Array, required: true }`, an `inertia.Prop` field as
+`{ type: null, required: false }`); a page registered in Go with no `.vue` file
+failed the build naming it; the same binary with `environment = "production"`
+wrote nothing and left `tsconfig.json` untouched.
+
+- **Pages and shares are typed from Go.** `inertia.Page` stamps
+  `registry.PageTag` (via the new exported `nexus.Tag`); the manifest carries
+  `endpoints[].page` and `sharedProps`; `client.d.ts` declares
+  `NexusPageProps` and `NexusSharedProps`, and pages no longer appear as REST
+  calls in either generator. The documented form is
+  `defineProps<NexusPageProps['Users/Index']>()` — Vue's SFC compiler
+  resolves an indexed access through imports and re-exports, but not a
+  generic helper, so no `definePage<'X'>()` exists. An untyped page is
+  `{ [key: string]: unknown }` (Vue cannot resolve `Record<…>` there).
+  Typed shares are `ShareScoped[T]` and the new `ShareTyped[T]`; `Share`
+  stays untyped and rides an index signature.
+- **`usePage().props` is typed** through `inertia.d.ts`, a global
+  augmentation of `@inertiajs/core`'s `InertiaConfig.sharedPageProps`,
+  referenced from `client.d.ts` and added to an existing tsconfig `include`
+  (a component that only calls `usePage()` imports nothing that would load
+  it). Written only when there are pages or typed shares, and removed when
+  there no longer are.
+- **`nexus-client` resolves.** The tsconfig merge maps it to `client.d.ts`
+  (TypeScript will not swap declarations in for a mapped `.js`), the plugin
+  aliases it to `client.js` for Vite, and no `baseUrl` is added any more.
+- **One location, development only.** The dump runs under `nexus dev` or
+  `environment = "development"` (the hot-file rule) and never in a
+  production binary; `client.Off` is an explicit "no dump" the frontend
+  defaults no longer overwrite; the plugin reads `web/sdk` by default. The
+  frontend dir is found by any Vite config extension, not only `.ts`.
+- **Component names are checked.** `nexus({ pages })` (default
+  `src/Pages`) warns in `vite dev` and fails `vite build` for every
+  registered component with no file, matched case-exactly.
+
+Deferred to Stage 4: folding `frontend.Plugin`'s `src/__nexus` codegen and
+`nexus generate frontend` into `web/sdk` (its dead in-process driver is gone;
+the CLI paths remain), and pinning `typescript ~6.0` in scaffolds (vue-tsc 3.3
+crashes on TypeScript 7). A component rendered by routes with different props
+types gets a union, which Vue merges into all-required props — a dev-only
+"missing required prop" warning on the routes lacking a field. Not verified:
+the augmentation under pnpm's strict layout, where `@inertiajs/core` may not
+resolve from `web/sdk`.

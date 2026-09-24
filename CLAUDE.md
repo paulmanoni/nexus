@@ -1079,6 +1079,19 @@ A typed JS/TS SDK + Vue composables served from the binary (no npm package). It 
 `nx.crud` and `nx.auth.*`. Import in the frontend as `nexus-client` (resolved via tsconfig
 `paths`). See `nexus docs client`.
 
+**Typed Inertia pages and shared props.** `inertia.Page` records its component, so
+`client.d.ts` declares `NexusPageProps` (component → the handler's props type) and
+`NexusSharedProps` (from `inertia.ShareScoped[T]` / `inertia.ShareTyped[T]`; plain
+`Share` stays untyped). A page types its props with
+```ts
+import type { NexusPageProps } from 'nexus-client'
+const props = defineProps<NexusPageProps['Users/Index']>()
+```
+(indexed access only — Vue's compiler rejects a generic helper), and `usePage().props`
+is typed through the generated `inertia.d.ts`. Pages are not REST calls in the SDK.
+`nexus({ pages: 'src/Pages' })` in `vite.config` warns in dev and fails `vite build`
+when a registered component has no file.
+
 **Envelope-aware calls (`nx.op`) + batching.** Ops registered with
 `nexus.Envelope` are marked in the manifest; `await nx.op('usersList', vars)`
 picks query/mutation from the manifest, unwraps `{status, message, data}`
@@ -1094,8 +1107,10 @@ GraphQL request automatically (`{batch:false}` opts out). Vue:
 
 **Simplest enable — one switch (`sdk = true`):** set `Config.SDK` (or `[runtime] sdk =
 true` in nexus.toml) and nexus generates + serves the full typed SDK and, when a frontend
-dir is present, dumps the SDK files + wires tsconfig so `import 'nexus-client'` resolves
-with types — no `client.Config` ceremony. PocketBase-style. **Independent of
+dir is present (any `vite.config.*`), dumps the SDK files into `web/sdk` + wires tsconfig
+so `import 'nexus-client'` resolves with types — no `client.Config` ceremony. **The dump
+runs in development only** (`nexus dev` or `environment = "development"`); a production
+binary never writes files. `client.Off` on `OutDir` is an explicit "no dump". PocketBase-style. **Independent of
 `introspection`** — the SDK is the app's own browser bundle's import, so it keeps serving
 in a locked-down production binary; the routes are public and the manifest maps your API
 surface, so vendor with `nexus client --out` instead if you don't want that published.

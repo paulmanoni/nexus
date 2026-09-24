@@ -66,6 +66,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   manifest gains `endpoints[].page` and `sharedProps` (additive, `client.v1`).
   `inertia.Prop` fields are typed as optional `unknown` instead of an empty
   `Prop` interface (`registry.SchemaOpaque`).
+- **`import type { NexusPageProps } from 'nexus-client'` resolves.** The
+  tsconfig merge maps `nexus-client` to the SDK's `client.d.ts` (the docs
+  promised the name; nothing mapped it), and `nexus-vite-plugin` aliases it to
+  `client.js` for Vite. When the config lists `include`, the SDK's `*.d.ts`
+  join it, so the `inertia.d.ts` augmentation applies even in a component that
+  only calls `usePage()`.
+- **`nexus({ pages })` checks page components exist.** Every component the
+  manifest names (default dir `src/Pages`) must have a file, matched
+  case-exactly as `import.meta.glob` keys are: `vite dev` warns once per
+  missing one, `vite build` fails listing them — a typo in `inertia.Page` is
+  a build error instead of a blank NotFound render. `pages: false` turns it off.
 - **`nexus.Tag(key, value)`** — the exported cross-transport option for
   stamping an endpoint's registry tags, for extensions that mark the
   endpoints they register. `App.RegisterSharedProp(key, reflect.Type)` records
@@ -81,6 +92,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `environment = "development"` — the rule the Vite hot file follows — and
   a production binary writes nothing, silently. Vendor the files at build
   time with `nexus client --out`.
+- **One SDK location: `web/sdk`.** `nexus-vite-plugin`'s `sdkDir` defaults
+  to `sdk` (the Go app's dump target) instead of `src/sdk`; a project with only
+  `src/sdk/manifest.json` keeps reading it. The tsconfig merge no longer adds
+  `baseUrl` (TypeScript 6 rejects it as deprecated); an existing one is
+  honoured, and mapped paths are now computed relative to it.
 - **An explicit "no SDK dump" is honoured.** The frontend-dir detection
   filled any empty `client.Config.OutDir`, so "no dump" (`frontend.Plugin`
   with `RuntimeSDK: false`) became a dump into `web/sdk`. New
@@ -155,6 +171,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the manifest in markers the parser never stripped.
 - `routes --kind http|graphql|websocket` and `--auth none` matched nothing
   and exited 0; filter values are now normalized and validated.
+- The SDK dump found the frontend dir only by `vite.config.ts`; a
+  `vite.config.mjs`/`.js`/`.mts`/`.cjs` project got no SDK and no tsconfig
+  mapping.
+- The Inertia scaffold's `main.ts` failed strict `vue-tsc` (TS2769): its page
+  glob now names the module shape.
 - The frontend scaffold's README told you to `npm install` a project with no
   `package.json`; `nexus dev` announced "ready" after the app had died.
 
