@@ -4,6 +4,94 @@ All notable changes to nexus are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Vite handshake: the plugin tells, the app reads.** `nexus-vite-plugin`
+  writes `<outDir>/.vite/nexus-hot.json` — the dev server's real origin,
+  base, entries and pid — once `vite dev` is listening, and removes it on
+  shutdown. `ServeFrontend` and the Inertia engine read it per request, so
+  pages load modules from wherever Vite actually bound (including when 5173
+  is taken), a Vite restart on a new port applies with no Go restart, and
+  `npm run dev` + `go run .` with `environment = "development"` is a complete
+  dev setup without `nexus dev`. The file is honoured only under `nexus dev`
+  or `environment = "development"`, read from disk only, never served, and a
+  file left by a killed dev server is reported rather than followed. The
+  origin is the socket's bound address, not `localhost`: two dev servers can
+  hold the same port on 127.0.0.1 and ::1, and `localhost` reaches either.
+  `NEXUS_VITE_DEV` remains as a fallback.
+- **`nexus({ input })`** declares an Inertia app's entry module once; the
+  plugin also forces `build.manifest: true` and sets `server.origin` so CSS
+  `url()` and asset imports resolve against the dev server when the page is
+  served from the app's origin.
+- **Asset caching from the build, not from path conventions.** A file is
+  `immutable` only when the Vite manifest lists it as build output *and* its
+  name carries a content hash; everything else is revalidated with an ETag.
+  Embedded files had no modification time, so non-hashed files could never
+  be answered with a 304 before.
+- **`nexus.toml` keys nothing reads are reported** at boot and by
+  `nexus lint`, with a hint naming the right table (`did you mean
+  [runtime.server] addr?`) or listing what the table accepts.
+- `db.Config.Address()` — host:port safe to log, unlike `DSN()`.
+- `nexus --version`; command groups in `nexus --help`; a `--help` pointer on
+  command-line errors.
+
+### Changed
+
+- **A missing frontend build is loud.** An Inertia page with no dev server
+  and no manifest renders an error page naming both paths in development
+  (500), and logs once in production — previously both shipped a blank page.
+- **`ServeFrontend` boots a build with no `index.html`** when a Vite manifest
+  proves it built (a module-only Inertia build); unknown routes then 404. A
+  bundle with neither still fails fast in production, and serves a
+  placeholder in development.
+- The production `index.html` is `Cache-Control: no-cache` with an ETag
+  (304 when unchanged) instead of `no-store`.
+- **Dependency outages are reported once.** A database or Redis that is
+  down logs one line per resource — name, address, and a `fix` — instead of
+  a line per retry attempt every few seconds; retry attempts are Debug,
+  Redis falling back to memory is a Warn, and GORM's own logger goes through
+  the app's zap logger instead of stdout.
+- **Wiring errors name the consumer** (`needed by main.NewHandler
+  (handler.go:24)`), diagnose pointer/value mismatches, name both colliding
+  constructors on a duplicate provider, and render as a structured block
+  with a `fix` line; the fx backend no longer exits 1 with empty stderr.
+  A port already in use names the port and the two ways out.
+- Output flags are one spelling: `--out`/`-o` everywhere (`--output` still
+  parses). `--tsconfig` is a real alias of `--jsconfig`.
+- The SDK auto-dump no longer prints a line per unchanged file on every
+  restart.
+- `nexus dev` opens the app's own URL once a Vite hot file exists.
+
+### Deprecated
+
+- `nexus build --package` and `nexus init --dir` (pass the positional
+  argument), `nexus dev --fast` (it is the default; `--debug` is the
+  inverse), `nexus pki --dns`/`--ip` (now `--dns-name`/`--ip-address`).
+
+### Removed
+
+- `--json-in` on `lint`, `doctor` and `routes` (JSON is the default input).
+- `nexus routes --deployment` and the `DEPLOYMENT` column — they filtered a
+  field no real app populates since `DeployAs` was removed.
+
+### Fixed
+
+- `nexus routes|lint|doctor --binary` failed on every app: print mode wraps
+  the manifest in markers the parser never stripped.
+- `routes --kind http|graphql|websocket` and `--auth none` matched nothing
+  and exited 0; filter values are now normalized and validated.
+- The frontend scaffold's README told you to `npm install` a project with no
+  `package.json`; `nexus dev` announced "ready" after the app had died.
+
+### Release notes
+
+- `cmd/nexus` and `extension/cache/redis` now use internal packages added in
+  this release (`internal/vitehot`, `internal/logx`). Release the parent
+  module first, then bump the submodules' requirement — the usual
+  "submodules require parent" step — before they build outside go.work.
+
 ## [1.59.1] - 2026-09-18
 
 ### Fixed

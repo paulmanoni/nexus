@@ -69,10 +69,24 @@ a malformed one panics. Override the path with `NEXUS_CONFIG` or use
 build `Config` in Go. (Extension packages still need their blank import — Go links only
 imported code; `Boot` removes the load calls, not the imports.)
 `ServeFrontend(fs, root, opts...)` is SPA-aware: extensionless paths fall back to
-`index.html`, `/assets/*` gets immutable cache, and REST/GraphQL/WS routes win on
-conflict. Mount under a sub-path with `nexus.FrontendAt("/admin")`. Boot fails fast if
-`index.html` is missing — which is why the scaffold commits a `web/dist/index.html`
-stub so the first `go build` (before any build) works.
+`index.html`, and REST/GraphQL/WS routes win on conflict. Mount under a sub-path with
+`nexus.FrontendAt("/admin")`. **Caching comes from the build:** a file is `immutable`
+only when the Vite manifest lists it as output *and* its name carries a content hash;
+everything else (and the shell) is revalidated with an ETag, so repeat requests are
+304s. In production, boot fails fast when the bundle has neither `index.html` nor a
+Vite manifest — a manifest alone boots a module-only (Inertia) build, whose unknown
+routes then 404; in development an unbuilt bundle serves a placeholder instead.
+
+**The Vite handshake (`internal/vitehot`).** With `nexus-vite-plugin` in
+`vite.config`, `vite dev` writes `<outDir>/.vite/nexus-hot.json` (the dev server's
+bound origin, base, entries, pid) and removes it on exit. `ServeFrontend` and the
+Inertia engine read it per request — honoured only under `nexus dev` or
+`environment = "development"`, never served, stale files (dead pid) reported — so
+pages on the Go origin load modules from wherever Vite really bound. That makes
+`npm run dev` + `go run .` a complete dev setup. `nexus({ input: 'src/main.ts' })`
+declares an Inertia entry; the plugin forces `build.manifest: true`. Design:
+`docs/design/frontend-seam.md`. `NEXUS_VITE_DEV` is the fallback for the viteless
+engine, which does not run the plugin.
 
 ### Build / serve commands
 ```
@@ -91,8 +105,10 @@ app). No npm step — viteless fetches/caches deps itself (or uses node_modules 
   `/ws`, your API) straight to the Go app — no managed `vite.config` proxy block to
   maintain. The Go app's real port is discovered from its startup log.
 
-So in dev: **frontend → :5173, dashboard/API → :8080.** In production the embedded
-`web/dist` is served at the app port via `ServeFrontend`.
+So in dev with the viteless engine: **frontend → :5173, dashboard/API → :8080.**
+With real Vite running `nexus-vite-plugin`, the hot file makes the **app's own origin**
+the one to open — `nexus dev` prints and opens it — and Vite only serves modules. In
+production the embedded `web/dist` is served at the app port via `ServeFrontend`.
 
 **Go restarts are build-then-swap.** On a save the next binary compiles while the
 current one keeps serving; only a green build takes the old process down, so the app

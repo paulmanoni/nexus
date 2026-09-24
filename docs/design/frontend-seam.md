@@ -201,3 +201,36 @@ one path.
   (actual: `web/sdk/`); `sessionGuard.ts` and `vite.config.ts` contradict each
   other about `filter:'usage'`; the Dockerfile installs `nexus@latest` while
   go.mod pins a version.
+
+## Stage 1 — as built
+
+Verified end to end against real Vite 6.4.3: a scripted run (hot-file port,
+page tags, CSS asset origin, SPA fallback, hot-file 404, restart on a new port,
+clean and hard shutdown, production build and caching) and a real browser
+showing the page rendered on the Go origin with cross-origin HMR updating a
+component in place. Three decisions changed on contact with a real machine:
+
+- **The origin is the bound address, not `localhost`.** On the development
+  machine another project's Vite held `127.0.0.1:5173`; this one bound
+  `[::1]:5173` and Vite reported both as `localhost:5173` — a name that reaches
+  either server depending on how the client resolves it. The plugin now writes
+  the socket's literal address (`http://[::1]:5173`); `resolvedUrls` is only a
+  fallback.
+- **A manifest is proof of a build.** `nexus({ input })` makes `vite build`
+  emit no `index.html`, and `emptyOutDir` removes any stub, so "index.html
+  missing" can no longer mean "never built". Boot rule: manifest → boot
+  (unknown routes 404); nothing built in development → placeholder; nothing
+  built in production → fail fast. Development must not fail fast: it is
+  exactly the `npm run dev` + `go run .` setup this design promises.
+- **Caching is derived from the build.** `immutable` requires both a manifest
+  entry and a content-hashed name (a config such as `entryFileNames:
+  '[name].js'` produces unhashed output); everything else revalidates with an
+  ETag, and the production shell is `no-cache` + ETag rather than `no-store`.
+  The manifest parser moved to `internal/vitemanifest`, shared by inertia and
+  `ServeFrontend`.
+
+Carried into later stages: the three reload systems still coexist (Stage 2);
+`nexus dev --dist` running a real `vite build` into a live dev server's outDir
+would delete its hot file via `emptyOutDir` (Stage 4, when `--dist` moves to
+Vite); an app that passes its bundle only through `inertia.Config.Frontend`
+gets no hot-file support because the reader is created by `ServeFrontend`.
