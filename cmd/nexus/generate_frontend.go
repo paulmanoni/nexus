@@ -276,8 +276,8 @@ func loadFrontendManifest(opts frontendOptions) ([]byte, error) {
 //
 // Only the fields the renderer reads are populated: Transport, Name,
 // Method, Path, Description, ArgsSchema, ReturnSchema, Deprecated,
-// DeprecationReason. The manifest doesn't carry middleware /
-// auth-flow info, which the renderer doesn't currently consume.
+// DeprecationReason, plus the auth-flow and Inertia page tags. The
+// manifest doesn't carry middleware, which the renderer doesn't consume.
 func registryFromManifest(m client.Manifest) *registry.Registry {
 	reg := registry.New()
 	for _, e := range m.Endpoints {
@@ -294,12 +294,19 @@ func registryFromManifest(m client.Manifest) *registry.Registry {
 			Deprecated:        e.Deprecated,
 			DeprecationReason: e.DeprecationReason,
 		}
-		// The manifest projects e.Tags["auth.flow"] into a flat
-		// AuthFlow field; the registry consumer (renderer + auth
-		// contributor) reads Tags directly. Round-trip it so both
-		// the in-process and HTTP codegen paths see the same shape.
-		if e.AuthFlow != "" {
-			ep.Tags = map[string]string{"auth.flow": e.AuthFlow}
+		// The manifest projects e.Tags["auth.flow"] and the Inertia
+		// page tag into flat AuthFlow / Page fields; the registry
+		// consumers (renderer + auth contributor) read Tags directly.
+		// Round-trip both so the in-process and HTTP codegen paths see
+		// the same shape — a page must not come back as a REST call.
+		if e.AuthFlow != "" || e.Page != "" {
+			ep.Tags = map[string]string{}
+			if e.AuthFlow != "" {
+				ep.Tags["auth.flow"] = e.AuthFlow
+			}
+			if e.Page != "" {
+				ep.Tags[registry.PageTag] = e.Page
+			}
 		}
 		reg.RegisterEndpoint(ep)
 	}

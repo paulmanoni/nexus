@@ -55,6 +55,7 @@ app and generate the matching .d.ts:
 
     <out>/manifest.json # SDK-tailored manifest snapshot
     <out>/client.d.ts   # generated TypeScript types
+    <out>/inertia.d.ts  # Inertia shared-props typing (apps with Inertia pages)
 
 Pass --jsconfig <path> (or its alias --tsconfig <path>) to also
 write a jsconfig.json / tsconfig.json that maps the runtime URL
@@ -159,6 +160,10 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 	}
 	vueDTS := client.GenerateVueDTS(m)
 	if err := client.WriteIfChanged(filepath.Join(opts.Out, "vue.d.ts"), []byte(vueDTS), stdout); err != nil {
+		return err
+	}
+	inertiaDTS := client.GenerateInertiaDTS(m)
+	if err := client.WriteInertiaDTS(filepath.Join(opts.Out, "inertia.d.ts"), []byte(inertiaDTS), stdout); err != nil {
 		return err
 	}
 	// nexus.ts is the wiring scaffold — write-once so re-running

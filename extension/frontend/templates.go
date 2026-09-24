@@ -329,8 +329,13 @@ func renderIndexTS(cfg Config, ctx extension.GenerateContext) string {
 			fnName, signature, argsType, retType, tsLiteral(e.Name), argsType)
 	}
 
-	// REST endpoints.
+	// REST endpoints. Inertia pages (registry.PageTag) are REST routes
+	// that render a page rather than answer a call — the SDK types their
+	// props in NexusPageProps instead of exporting a caller.
 	for _, e := range sortedEndpoints(endpoints, registry.REST) {
+		if e.Tags[registry.PageTag] != "" {
+			continue
+		}
 		fnName := tsFnIdent(restOpName(e))
 		if fnName == "" {
 			continue
