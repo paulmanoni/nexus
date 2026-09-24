@@ -301,7 +301,8 @@ func TestClientCmd_IdempotentSecondRun(t *testing.T) {
 	}
 
 	// Re-run the same args. The file shouldn't be re-written —
-	// modtime stays the same and stdout reports "unchanged".
+	// modtime stays the same, and a run that wrote nothing says
+	// nothing about the files that were already current.
 	// Brief sleep so a real os.WriteFile call would change mtime
 	// at sub-second resolution.
 	time.Sleep(20 * time.Millisecond)
@@ -318,8 +319,8 @@ func TestClientCmd_IdempotentSecondRun(t *testing.T) {
 	if !first.ModTime().Equal(second.ModTime()) {
 		t.Errorf("mtime changed on no-op rerun: %v → %v", first.ModTime(), second.ModTime())
 	}
-	if !strings.Contains(s2.String(), "unchanged") {
-		t.Errorf("expected 'unchanged' in second-run stdout, got: %s", s2.String())
+	if strings.Contains(s2.String(), "wrote "+clientPath) {
+		t.Errorf("no-op rerun claimed to write %s: %s", clientPath, s2.String())
 	}
 
 	// Now mutate the file on disk so the next run DOES rewrite —
