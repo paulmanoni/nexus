@@ -60,17 +60,22 @@ type Config struct {
 	// is nil (the discovered ServeFrontend root is used instead).
 	Root string
 	// RootView is the id of the root element the Inertia client mounts on.
-	// Defaults to "app".
+	// Defaults to "app". When pages render into index.html, the engine puts
+	// the page on the element with this id (its data-page attribute); a
+	// document without one is an error page in development.
 	RootView string
 	// Version is the Inertia asset version. Empty (AutoVersion) derives it
 	// from the manifest hash; a fixed string pins it.
 	Version string
-	// Head is the document <head> for the shell — the app's title, meta, and
-	// stylesheet/font links that would otherwise live in index.html. The engine
-	// renders its own minimal shell, so anything index.html declared in <head>
-	// must be supplied here to reach a full-page load. charset/viewport and the
-	// Vite/manifest asset tags are added automatically. See the Head type for a
-	// Raw escape hatch.
+	// Head is added to the <head> of every full-page load. Pages render into
+	// the app's index.html (nexus.ServeFrontend's — built, or the Vite dev
+	// server's), which already carries its title, meta, stylesheets and
+	// asset tags, so Head is only for what index.html can't say. When there
+	// is no index.html (a module-only build, nexus({ input })), the engine
+	// synthesises the document: charset/viewport and the asset tags are
+	// added automatically, and Head is the rest of it. A <script
+	// type="module"> here counts as loading the client, so a page renders
+	// without a build manifest. See the Head type for a Raw escape hatch.
 	Head Head
 	// EncryptHistory turns on Inertia history-state encryption for every page
 	// by default (Inertia v2). A handler can override per-response with
@@ -146,8 +151,12 @@ type Engine struct {
 	manErr   error    // why the last manifest load failed
 	manTried bool
 
-	missingOnce sync.Once            // the production "no assets" log line
-	logf        func(string, ...any) // defaults to log.Printf
+	missingOnce sync.Once // the production "no assets" log line
+	noMountOnce sync.Once // the production "no mount element" log line
+	// headLoadsClient: Config.Head has a <script type="module">, so no
+	// manifest is not a missing-assets problem.
+	headLoadsClient bool
+	logf            func(string, ...any) // defaults to log.Printf
 }
 
 // engineParams collects the registered SharedProviders from the fx value group
@@ -193,16 +202,18 @@ func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 	if entry == "" {
 		entry = "src/main.ts"
 	}
+	head := cfg.Head.render()
 	return &Engine{
-		rootView:       cfg.RootView,
-		customHead:     cfg.Head.render(),
-		shared:         shared,
-		encryptHistory: cfg.EncryptHistory,
-		app:            app,
-		cfgFrontend:    cfg.Frontend,
-		cfgRoot:        cfg.Root,
-		versionPin:     cfg.Version,
-		devEntry:       entry,
+		rootView:        cfg.RootView,
+		customHead:      head,
+		headLoadsClient: loadsModule(head),
+		shared:          shared,
+		encryptHistory:  cfg.EncryptHistory,
+		app:             app,
+		cfgFrontend:     cfg.Frontend,
+		cfgRoot:         cfg.Root,
+		versionPin:      cfg.Version,
+		devEntry:        entry,
 		// Auto-detect React from a JSX entry; Config.React forces it on.
 		react:       cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
 		nonceFn:     cfg.Nonce,

@@ -5,8 +5,10 @@ import (
 	"strings"
 )
 
-// shell renders the full HTML document for a non-XHR (initial) page load, with
-// assetHead (the tags that load the client app — see assets) in <head>. The
+// shell synthesises the full HTML document for a non-XHR (initial) page load
+// when there is no index.html to render into (see pageDocument and
+// pageTemplate.render), with assetHead (the tags that load the client app —
+// see assets) in <head>. The
 // serialized page object is embedded in the root element's data-page attribute
 // — the Inertia client adapter reads it on boot to mount (or hydrate) the first
 // component without a follow-up request. dataPage is HTML-attribute-escaped so
@@ -51,14 +53,4 @@ func (e *Engine) shell(assetHead string, dataPage []byte, nonce string, ssr SSRR
 	}
 	b.WriteString("\n</body>\n</html>\n")
 	return []byte(b.String())
-}
-
-// stampNonce adds nonce="…" to every <script>/<link> tag in the head. The tags
-// are engine-generated with a known shape (always "<script "/"<link " followed
-// by attributes), so a targeted prefix replace is safe and avoids a parser.
-func stampNonce(head, nonce string) string {
-	attr := ` nonce="` + html.EscapeString(nonce) + `"`
-	head = strings.ReplaceAll(head, "<script ", "<script"+attr+" ")
-	head = strings.ReplaceAll(head, "<link ", "<link"+attr+" ")
-	return head
 }

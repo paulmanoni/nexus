@@ -1,6 +1,8 @@
 package inertia
 
 import (
+	"encoding/json"
+	"html"
 	"io/fs"
 	"strings"
 
@@ -58,12 +60,17 @@ func loadManifest(fsys fs.FS, root string) (manifest, error) {
 //   - the entry's <script type="module">.
 //
 // Dynamic imports are intentionally NOT preloaded (they load on demand). Asset
-// paths are rooted at "/" — matching nexus.ServeFrontend, which serves the
-// build's /assets/* under the app root. Returns "" when there is no entry.
-func (m manifest) headTags() string {
+// URLs are under mount — App.FrontendMount, the path ServeFrontend serves the
+// bundle at ("" for the site root) — so a route prefix or FrontendAt is
+// honoured. Returns "" when there is no entry.
+func (m manifest) headTags(mount string) string {
 	entry, ok := m.records[m.entryKey]
 	if !m.found || !ok || entry.File == "" {
 		return ""
+	}
+	mount = strings.TrimRight(mount, "/")
+	asset := func(file string) string {
+		return html.EscapeString(mount + "/" + strings.TrimPrefix(file, "/"))
 	}
 	var b strings.Builder
 
@@ -84,8 +91,8 @@ func (m manifest) headTags() string {
 				continue
 			}
 			cssDone[css] = true
-			b.WriteString(`<link rel="stylesheet" href="/`)
-			b.WriteString(css)
+			b.WriteString(`<link rel="stylesheet" href="`)
+			b.WriteString(asset(css))
 			b.WriteString(`">`)
 		}
 		for _, imp := range c.Imports {
@@ -107,8 +114,8 @@ func (m manifest) headTags() string {
 			return
 		}
 		if c.File != "" {
-			b.WriteString(`<link rel="modulepreload" href="/`)
-			b.WriteString(c.File)
+			b.WriteString(`<link rel="modulepreload" href="`)
+			b.WriteString(asset(c.File))
 			b.WriteString(`">`)
 		}
 		for _, imp := range c.Imports {
@@ -120,8 +127,8 @@ func (m manifest) headTags() string {
 	}
 
 	// 3. The entry module script.
-	b.WriteString(`<script type="module" src="/`)
-	b.WriteString(entry.File)
+	b.WriteString(`<script type="module" src="`)
+	b.WriteString(asset(entry.File))
 	b.WriteString(`"></script>`)
 	return b.String()
 }
@@ -135,7 +142,10 @@ func devHeadTags(devURL, entry string, react bool) string {
 }
 
 // devTags renders the dev-server <head> tags from resolved URLs: the Vite
-// client, the entry module, and (for React) the Fast Refresh runtime.
+// client, the entry module, and (for React) the Fast Refresh runtime. The URLs
+// are raw — they come from the hot file or NEXUS_VITE_DEV, not from the app's
+// code — and are escaped here for where each lands: an attribute, or a JS
+// string in the React preamble.
 func devTags(clientURL, entryURL, refreshURL string, react, reloadShim bool) string {
 	var b strings.Builder
 	// /__nexus/dev/script.js is the framework's live-reload shim (mounted by
@@ -144,23 +154,26 @@ func devTags(clientURL, entryURL, refreshURL string, react, reloadShim bool) str
 	// restarts the page without a manual refresh. The Vite client handles
 	// module loading + HMR.
 	if reloadShim {
-		b.WriteString(`<script src="/__nexus/dev/script.js"></script>`)
+		b.WriteString(`<script src="` + devReloadScript + `"></script>`)
 	}
 	// React Fast Refresh must be installed before @vite/client and the app entry.
 	if react {
 		b.WriteString(reactRefreshPreamble(refreshURL))
 	}
-	b.WriteString(`<script type="module" src="` + clientURL + `"></script>`)
-	b.WriteString(`<script type="module" src="` + entryURL + `"></script>`)
+	b.WriteString(`<script type="module" src="` + html.EscapeString(clientURL) + `"></script>`)
+	b.WriteString(`<script type="module" src="` + html.EscapeString(entryURL) + `"></script>`)
 	return b.String()
 }
 
 // reactRefreshPreamble is the Vite React plugin's HMR bootstrap, pointed at the
 // dev server's /@react-refresh runtime. Without it a React app's edits do a full
-// reload instead of fast-refreshing component state.
+// reload instead of fast-refreshing component state. The URL is written as a
+// JSON string, which is a valid JS string literal; encoding/json also escapes
+// <, > and &, so it cannot close the <script> element either.
 func reactRefreshPreamble(refreshURL string) string {
+	lit, _ := json.Marshal(refreshURL) // a string always marshals
 	return `<script type="module">
-  import RefreshRuntime from '` + refreshURL + `'
+  import RefreshRuntime from ` + string(lit) + `
   RefreshRuntime.injectIntoGlobalHook(window)
   window.$RefreshReg$ = () => {}
   window.$RefreshSig$ = () => (type) => type

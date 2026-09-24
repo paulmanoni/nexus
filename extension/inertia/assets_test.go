@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -22,27 +23,95 @@ import (
 
 // assetApp boots an in-process app that registers its bundle through
 // ServeFrontend (so App.ViteHot watches <tmp>/dist) and one page at /p. It
-// returns the app and the on-disk dist dir the hot file lives under.
+// returns the app and the on-disk dist dir the hot file lives under. The
+// bundle gets a stub index.html unless files carries one.
 func assetApp(t *testing.T, env string, files fstest.MapFS, cfg inertia.Config) (*nexustest.App, string) {
+	t.Helper()
+	if files == nil {
+		files = fstest.MapFS{}
+	}
+	if _, ok := files["dist/index.html"]; !ok {
+		files["dist/index.html"] = &fstest.MapFile{Data: []byte("<!doctype html><div id=app></div>")}
+	}
+	return bootAssets(t, nexus.Config{Environment: env}, files, cfg)
+}
+
+// bootAssets is assetApp without the index.html default: files is the whole
+// bundle, and ServeFrontend takes fopts.
+func bootAssets(t *testing.T, config nexus.Config, files fstest.MapFS, cfg inertia.Config, fopts ...nexus.FrontendOption) (*nexustest.App, string) {
 	t.Helper()
 	t.Setenv(nexus.NexusDevEnv, "")
 	t.Setenv("NEXUS_VITE_DEV", os.Getenv("NEXUS_VITE_DEV")) // restored after the test
 	root := t.TempDir()
 	t.Setenv(nexus.NexusDevRootEnv, root)
-	if files == nil {
-		files = fstest.MapFS{}
-	}
-	files["dist/index.html"] = &fstest.MapFile{Data: []byte("<!doctype html><div id=app></div>")}
-	app := nexustest.New(t, nexus.Config{Environment: env},
-		nexus.ServeFrontend(files, "dist"),
+	app := nexustest.New(t, config,
+		nexus.ServeFrontend(files, "dist", fopts...),
 		inertia.Module(cfg),
 		inertia.Page("GET", "/p", "P", NewWidgets),
 	)
 	return app, filepath.Join(root, "dist")
 }
 
+// builtIndex is the index.html `vite build` emits for manifestJSON: Vite's
+// hashed tags already in it, plus what an app puts there itself.
+const builtIndex = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Widgets Inc</title>
+<meta name="description" content="widgets">
+<link rel="stylesheet" href="/icons/font.css">
+<script type="module" crossorigin src="/assets/main-abc123.js"></script>
+<link rel="stylesheet" crossorigin href="/assets/main-xyz.css">
+</head>
+<body>
+<div id="app"><div class="loader"></div></div>
+</body>
+</html>
+`
+
 func withManifest() fstest.MapFS {
 	return fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
+}
+
+// withBuild is a full `vite build` output: the manifest and index.html.
+func withBuild(index string) fstest.MapFS {
+	files := withManifest()
+	files["dist/index.html"] = &fstest.MapFile{Data: []byte(index)}
+	return files
+}
+
+// fakeVite stands in for a Vite dev server. It answers for its client (the
+// liveness probe App.ViteHot makes). With index set it serves that as its
+// transformed index.html (under any base); otherwise /index.html is a 404, as
+// from a dev server that doesn't serve the page. It counts index requests.
+func fakeVite(t *testing.T, index string) (origin string, hits *atomic.Int32) {
+	t.Helper()
+	hits = new(atomic.Int32)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/@vite/client") {
+			w.Header().Set("Content-Type", "text/javascript")
+			_, _ = w.Write([]byte("export {}"))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/index.html") {
+			hits.Add(1)
+			if index != "" {
+				w.Header().Set("Content-Type", "text/html")
+				_, _ = w.Write([]byte(index))
+				return
+			}
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, hits
+}
+
+// hotFor is a hot file naming origin.
+func hotFor(origin, base string, entries ...string) string {
+	b, _ := json.Marshal(map[string]any{"version": 1, "origin": origin, "base": base, "entries": entries, "pid": 0})
+	return string(b)
 }
 
 func writeHot(t *testing.T, dist, body string) {
@@ -84,19 +153,21 @@ func mustNotContain(t *testing.T, body string, bad ...string) {
 	}
 }
 
-// TestHotFileTags: a hot file wins over the manifest; tags use its origin,
-// base and first non-.html entry, React is detected from that entry, and the
+// TestHotFileTags: a hot file wins over the manifest; with no index.html
+// from the dev server the synthesised document's tags use its origin, base
+// and first non-.html entry, React is detected from that entry, and the
 // version is empty while a dev server serves the assets.
 func TestHotFileTags(t *testing.T) {
 	app, dist := assetApp(t, "development", withManifest(), inertia.Config{})
-	writeHot(t, dist, `{"version":1,"origin":"http://127.0.0.1:5173","base":"/app/","entries":["index.html","src/main.tsx"],"pid":0}`)
+	vite, _ := fakeVite(t, "")
+	writeHot(t, dist, hotFor(vite, "/app/", "index.html", "src/main.tsx"))
 
 	res := fullLoad(app).AssertOK()
 	body := res.String()
 	mustContain(t, body,
-		`<script type="module" src="http://127.0.0.1:5173/app/@vite/client"></script>`,
-		`<script type="module" src="http://127.0.0.1:5173/app/src/main.tsx"></script>`,
-		`http://127.0.0.1:5173/app/@react-refresh`,
+		`<script type="module" src="`+vite+`/app/@vite/client"></script>`,
+		`<script type="module" src="`+vite+`/app/src/main.tsx"></script>`,
+		`import RefreshRuntime from "`+vite+`/app/@react-refresh"`,
 	)
 	mustNotContain(t, body, "/assets/main-abc123.js", "index.html\"></script>")
 
@@ -111,10 +182,11 @@ func TestHotFileTags(t *testing.T) {
 // Config.Entry, and a .ts entry gets no React preamble.
 func TestHotFileHTMLEntrySkipped(t *testing.T) {
 	app, dist := assetApp(t, "development", withManifest(), inertia.Config{Entry: "src/app.ts"})
-	writeHot(t, dist, `{"version":1,"origin":"http://127.0.0.1:5173","base":"/","entries":["index.html"],"pid":0}`)
+	vite, _ := fakeVite(t, "")
+	writeHot(t, dist, hotFor(vite, "/", "index.html"))
 
 	body := fullLoad(app).AssertOK().String()
-	mustContain(t, body, `src="http://127.0.0.1:5173/src/app.ts"`)
+	mustContain(t, body, `src="`+vite+`/src/app.ts"`)
 	mustNotContain(t, body, "index.html\"></script>", "@react-refresh")
 }
 
@@ -122,26 +194,28 @@ func TestHotFileHTMLEntrySkipped(t *testing.T) {
 // on the next page load, with the same engine.
 func TestHotFileRestartNewPort(t *testing.T) {
 	app, dist := assetApp(t, "development", withManifest(), inertia.Config{})
-	writeHot(t, dist, `{"version":1,"origin":"http://127.0.0.1:5173","base":"/","entries":["src/main.ts"],"pid":0}`)
-	mustContain(t, fullLoad(app).AssertOK().String(), "http://127.0.0.1:5173/@vite/client")
+	first, _ := fakeVite(t, "")
+	second, _ := fakeVite(t, "")
+	writeHot(t, dist, hotFor(first, "/", "src/main.ts"))
+	mustContain(t, fullLoad(app).AssertOK().String(), first+"/@vite/client")
 
-	writeHot(t, dist, `{"version":1,"origin":"http://127.0.0.1:15173","base":"/","entries":["src/main.ts"],"pid":0}`)
+	writeHot(t, dist, hotFor(second, "/", "src/main.ts"))
 	later := time.Now().Add(2 * time.Second)
 	if err := os.Chtimes(vitehot.Path(dist), later, later); err != nil {
 		t.Fatal(err)
 	}
 	body := fullLoad(app).AssertOK().String()
-	mustContain(t, body, "http://127.0.0.1:15173/@vite/client", "http://127.0.0.1:15173/src/main.ts")
-	mustNotContain(t, body, "127.0.0.1:5173/")
+	mustContain(t, body, second+"/@vite/client", second+"/src/main.ts")
+	mustNotContain(t, body, first+"/")
 }
 
-// TestHotFileBrokenShowsDevError: a malformed or stale hot file is reported on
-// the page, not silently replaced by the build manifest.
+// TestHotFileBrokenShowsDevError: a malformed hot file, or one of an unknown
+// schema version, is reported on the page, not silently replaced by the build
+// manifest. (Origins here are never dialled: the file is rejected first.)
 func TestHotFileBrokenShowsDevError(t *testing.T) {
 	cases := map[string]struct{ hot, want string }{
 		"malformed": {`{"version":1,`, "not valid JSON"},
-		"version":   {`{"version":99,"origin":"http://127.0.0.1:5173"}`, "schema version 99"},
-		"stale":     {`{"version":1,"origin":"http://127.0.0.1:5173","pid":2147480000}`, "no longer running"},
+		"version":   {`{"version":99,"origin":"http://127.0.0.1:9"}`, "schema version 99"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -155,28 +229,48 @@ func TestHotFileBrokenShowsDevError(t *testing.T) {
 	}
 }
 
+// TestHotFileDeadServerFallsThrough: a hot file whose dev server is gone
+// (no live pid, origin not answering) reads as absent: the build renders, no
+// error page.
+func TestHotFileDeadServerFallsThrough(t *testing.T) {
+	app, dist := assetApp(t, "development", withBuild(builtIndex), inertia.Config{})
+	srv := httptest.NewServer(http.NotFoundHandler())
+	dead := srv.URL
+	srv.Close()
+	writeHot(t, dist, hotFor(dead, "/", "src/main.ts"))
+	body := fullLoad(app).AssertOK().String()
+	mustContain(t, body, "/assets/main-abc123.js", "<title>Widgets Inc</title>", `data-page="`)
+	mustNotContain(t, body, dead)
+}
+
 // TestHotFileIgnoredInProduction: a hot file left on disk never redirects a
 // production page.
 func TestHotFileIgnoredInProduction(t *testing.T) {
-	app, dist := assetApp(t, "production", withManifest(), inertia.Config{})
-	writeHot(t, dist, `{"version":1,"origin":"http://127.0.0.1:5173","base":"/","entries":["src/main.ts"],"pid":0}`)
+	app, dist := assetApp(t, "production", withBuild(builtIndex), inertia.Config{})
+	vite, hits := fakeVite(t, `<!doctype html><div id="app"></div>`)
+	writeHot(t, dist, hotFor(vite, "/", "src/main.ts"))
 	body := fullLoad(app).AssertOK().String()
-	mustContain(t, body, "/assets/main-abc123.js")
-	mustNotContain(t, body, "5173")
+	mustContain(t, body, "/assets/main-abc123.js", "<title>Widgets Inc</title>")
+	mustNotContain(t, body, vite)
+	if n := hits.Load(); n != 0 {
+		t.Errorf("production asked the dev server for its page %d times", n)
+	}
 }
 
 // TestHotFileAbsentUsesEnvFallback: with no hot file, NEXUS_VITE_DEV keeps
-// working exactly as before.
+// working exactly as before — a synthesised document, even when the bundle
+// has a built index.html (the viteless engine is not templated).
 func TestHotFileAbsentUsesEnvFallback(t *testing.T) {
-	app, _ := assetApp(t, "development", withManifest(), inertia.Config{})
+	app, _ := assetApp(t, "development", withBuild(builtIndex), inertia.Config{})
 	t.Setenv("NEXUS_VITE_DEV", "http://localhost:5199/")
 	body := fullLoad(app).AssertOK().String()
 	mustContain(t, body,
+		"<!doctype html>\n<html>\n<head>\n",
 		`<script src="/__nexus/dev/script.js"></script>`,
 		`<script type="module" src="http://localhost:5199/@vite/client"></script>`,
 		`<script type="module" src="http://localhost:5199/src/main.ts"></script>`,
 	)
-	mustNotContain(t, body, "/assets/main-abc123.js")
+	mustNotContain(t, body, "/assets/main-abc123.js", "Widgets Inc")
 }
 
 // TestNoAssetsDevErrorPage: no dev server and no manifest in development is

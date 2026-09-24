@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/httpx"
 	"github.com/paulmanoni/nexus/internal/maskhook"
 )
@@ -129,13 +130,20 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	}
 	if p := assets.problem; p != nil {
 		if p.dev {
-			c.Header("Content-Type", "text/html; charset=utf-8")
-			c.Header("Cache-Control", "no-store")
-			c.Status(http.StatusInternalServerError)
-			_, err = c.Writer.Write(errorPage(p, nonce))
-			return err
+			return writeErrorPage(c, p, nonce)
 		}
 		e.logMissing(p)
+	}
+
+	// The document: the app's index.html when there is one (see assets for
+	// the precedence), decided before SSR so a broken template costs no
+	// renderer round trip.
+	tmpl, docProblem := e.pageDocument(c.Request.Context(), assets)
+	if docProblem != nil {
+		if docProblem.dev {
+			return writeErrorPage(c, docProblem, nonce)
+		}
+		e.logNoMount(docProblem)
 	}
 
 	// Server-side rendering (initial load only): POST the page to the renderer
@@ -157,13 +165,46 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 		}
 	}
 
+	var doc []byte
+	if tmpl != nil {
+		doc = tmpl.render(blob, nonce, ssr, stampNonce(e.templateHead(tmpl, ssr), nonce))
+		if tmpl.fromDev {
+			// Live dev modules: never reuse this document.
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		}
+	} else {
+		doc = e.shell(assets.head, blob, nonce, ssr)
+	}
+
 	// Initial load: full HTML document with the page embedded. Vary on
 	// X-Inertia so a shared cache never serves this HTML to a later XHR visit
 	// of the same URL (which expects the JSON page object), or vice versa.
 	c.Header("Vary", headerInertia)
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
-	_, err = c.Writer.Write(e.shell(assets.head, blob, nonce, ssr))
+	_, err = c.Writer.Write(doc)
+	return err
+}
+
+// templateHead is what a render adds to index.html's <head>: Config.Head,
+// the reload shim under nexus dev (unless the document loads it already), and
+// the SSR head tags. No asset tags: a built index.html carries Vite's own,
+// and the dev server's document already points at the dev server — adding
+// more would load the app twice.
+func (e *Engine) templateHead(t *pageTemplate, ssr SSRResult) string {
+	head := e.customHead
+	if nexus.IsDev() && !t.hasShim {
+		head += `<script src="` + devReloadScript + `"></script>`
+	}
+	return head + strings.Join(ssr.Head, "")
+}
+
+// writeErrorPage answers a full load with the development error page.
+func writeErrorPage(c *httpx.Ctx, p *assetProblem, nonce string) error {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.Status(http.StatusInternalServerError)
+	_, err := c.Writer.Write(errorPage(p, nonce))
 	return err
 }
 

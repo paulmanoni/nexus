@@ -5,10 +5,12 @@ import (
 	"strings"
 )
 
-// Head is the typed document <head> the Inertia shell renders on full-page
-// loads: the app title, meta tags, and stylesheet/font links that index.html
-// would normally carry. The engine adds charset/viewport and the Vite/manifest
-// asset tags itself, so list only the app-specific extras here.
+// Head is typed markup added to the document <head> of full-page loads. Pages
+// render into the app's index.html, so its title, meta and stylesheets belong
+// there; Head is for what index.html can't say. When there is no index.html
+// (a module-only build), the engine synthesises the document — charset,
+// viewport and the Vite/manifest asset tags included — and Head supplies the
+// title, meta and links index.html would have carried.
 //
 //	inertia.Head{
 //	    Title: "My App",

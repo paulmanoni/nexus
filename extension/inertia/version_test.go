@@ -62,7 +62,7 @@ func TestHeadTags_ImportsGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tags := m.headTags()
+	tags := m.headTags("")
 
 	mustContain := func(want string) {
 		t.Helper()

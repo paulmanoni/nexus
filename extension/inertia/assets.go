@@ -1,22 +1,32 @@
 package inertia
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html"
 	"io/fs"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/internal/vitehot"
 )
 
-// pageAssets is what a render needs from the frontend toolchain: the <head>
-// tags that load the client app, and the Inertia asset version.
+// pageAssets is what a render needs from the frontend toolchain: where a
+// full-page load's document comes from, the <head> tags that load the client
+// app when the engine builds that document itself, and the Inertia asset
+// version.
 type pageAssets struct {
 	head    string
 	version string
+	// document: render into App.FrontendDocument (the app's index.html) when
+	// it has one, instead of synthesising a document around head. Set for a
+	// live dev server and for a build with a manifest; head is then only the
+	// fallback for when there is no index.html (see pageDocument).
+	document bool
+	hot      *vitehot.Hot // the dev server, when one supplies the assets
 	// problem, when set, is why a full-page load would carry no usable asset
 	// tags. In development the full load answers with an error page naming it;
 	// in production it is logged once and the shell still renders.
@@ -35,21 +45,28 @@ func (p *assetProblem) Error() string {
 	return p.title + ": " + strings.Join(p.detail, "; ")
 }
 
-// assets decides, per request, where a page's scripts come from:
+// assets decides, per request, where a page's scripts come from. This is the
+// one place the precedence lives:
 //
 //  1. nexus-vite-plugin's hot file (App.ViteHot) — the dev server says where
 //     it is and which entry it serves. Re-read on change, so a Vite restart on
-//     a new port applies on the next page load.
-//  2. A hot file that is present but unusable (malformed, unknown version, left
-//     by a dead dev server) is reported, not skipped: falling through to the
+//     a new port applies on the next page load. A full load renders into the
+//     dev server's own index.html (App.FrontendDocument); when it serves none,
+//     into a synthesised document carrying the hot file's tags.
+//  2. A hot file that is present but unusable (malformed, unknown version,
+//     invalid origin) is reported, not skipped: falling through to the
 //     manifest would serve stale assets while the developer edits sources.
 //  3. NEXUS_VITE_DEV — the fallback for dev servers that don't write a hot
-//     file (the viteless engine).
-//  4. The build manifest. Finding none (or one with no entry chunk) is a
-//     problem: an error page in development, a logged error in production.
+//     file (the viteless engine). Always a synthesised document.
+//  4. The build manifest. A full load renders into the built index.html;
+//     a module-only build (nexus({ input }), no index.html) gets a
+//     synthesised document with the manifest's tags under App.FrontendMount.
+//  5. Nothing: a problem — an error page in development, a logged error in
+//     production — unless Config.Head loads a module script itself.
 //
 // The version is empty whenever a dev server supplies the assets, and the
-// manifest hash (or Config.Version) otherwise.
+// manifest hash (or Config.Version) otherwise. None of this touches an
+// X-Inertia visit beyond the version: it carries no document.
 func (e *Engine) assets() pageAssets {
 	var reader *vitehot.Reader
 	if e.app != nil {
@@ -57,19 +74,11 @@ func (e *Engine) assets() pageAssets {
 	}
 	hot, hotErr := reader.Current() // nil reader → (nil, nil)
 	if hot != nil {
-		return pageAssets{head: e.hotHeadTags(hot)}
+		return pageAssets{head: e.hotHeadTags(hot), document: true, hot: hot}
 	}
 	if hotErr != nil {
 		// Current only reports errors when the reader is enabled, i.e. in dev.
-		return pageAssets{problem: &assetProblem{
-			title:  "The Vite dev server's hot file can't be used",
-			detail: []string{hotErr.Error()},
-			fix: []string{
-				"Restart the Vite dev server (npm run dev, or nexus dev) so nexus-vite-plugin rewrites the file.",
-				"Or delete " + reader.Path() + " to use the build manifest instead.",
-			},
-			dev: true,
-		}}
+		return pageAssets{problem: hotProblem(reader, hotErr)}
 	}
 
 	e.envOnce.Do(func() { e.envDev = strings.TrimRight(os.Getenv(devURLEnv), "/") })
@@ -82,11 +91,98 @@ func (e *Engine) assets() pageAssets {
 	if e.versionPin != AutoVersion {
 		a.version = e.versionPin
 	}
-	if a.head = man.headTags(); a.head != "" {
+	if a.head = man.headTags(e.mount()); a.head != "" {
+		a.document = true
+		return a
+	}
+	if e.headLoadsClient {
+		// Config.Head loads the client itself (the documented escape hatch):
+		// no manifest is not "no assets".
 		return a
 	}
 	a.problem = e.missingAssets(reader, man, manErr, sourced)
 	return a
+}
+
+// hotProblem reports a hot file that is present but unusable.
+func hotProblem(reader *vitehot.Reader, err error) *assetProblem {
+	return &assetProblem{
+		title:  "The Vite dev server's hot file can't be used",
+		detail: []string{err.Error()},
+		fix: []string{
+			"Restart the Vite dev server (npm run dev, or nexus dev) so nexus-vite-plugin rewrites the file.",
+			"Or delete " + reader.Path() + " to use the build manifest instead.",
+		},
+		dev: true,
+	}
+}
+
+// mount is the URL path the bundle is served under (App.FrontendMount).
+func (e *Engine) mount() string {
+	if e.app == nil {
+		return ""
+	}
+	return e.app.FrontendMount()
+}
+
+// pageDocument returns the app's index.html located for this render, or nil
+// when the engine should synthesise the document around a.head: the render
+// has no document to use (a.document false), or App.FrontendDocument has
+// none (ErrNoFrontendDocument — no index.html, or a dev server that did not
+// serve one). A problem is returned when there is a document but it cannot
+// be used: a hot file that went bad since assets() read it, or a document
+// with no mount element — a developer error, shown in development and
+// logged once in production, where the synthesised document is the fallback.
+func (e *Engine) pageDocument(ctx context.Context, a pageAssets) (*pageTemplate, *assetProblem) {
+	if !a.document || e.app == nil {
+		return nil, nil
+	}
+	doc, err := e.app.FrontendDocument(ctx)
+	if errors.Is(err, nexus.ErrNoFrontendDocument) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, hotProblem(e.app.ViteHot(), err)
+	}
+	t, ok := parseTemplate(doc.HTML, e.rootView)
+	if ok {
+		t.fromDev = doc.FromDevServer
+		return &t, nil
+	}
+	return nil, e.noMount(doc.FromDevServer, a.hot)
+}
+
+// noMount describes a document with no element to put the page on.
+func (e *Engine) noMount(fromDev bool, hot *vitehot.Hot) *assetProblem {
+	source := "the built index.html"
+	if fromDev && hot != nil {
+		source = "the Vite dev server's index.html (" + hot.URL("index.html") + ")"
+	} else if _, root, ok := e.app.FrontendFS(); ok {
+		source = "the built index.html (" + path.Join(root, "index.html") + " in the bundle nexus.ServeFrontend serves)"
+	}
+	return &assetProblem{
+		title: "The page document has no mount element",
+		detail: []string{
+			`Expected an element with id="` + e.rootView + `" (inertia.Config.RootView) to put the page on.`,
+			"The document is " + source + ".",
+		},
+		fix: []string{
+			`Add <div id="` + e.rootView + `"></div> to the <body> of index.html; the engine puts the page on it.`,
+			"Or set inertia.Config.RootView to the id of the element your index.html mounts the app on.",
+		},
+		dev: e.devMode(),
+	}
+}
+
+// logNoMount reports, once per engine, a production document with no mount
+// element; pages then render into the synthesised document instead.
+func (e *Engine) logNoMount(p *assetProblem) {
+	e.noMountOnce.Do(func() {
+		if e.logf != nil {
+			e.logf("inertia: %s; rendering pages into a synthesised document instead, without index.html's head. %s",
+				p.Error(), strings.Join(p.fix, " "))
+		}
+	})
 }
 
 // hotHeadTags renders the dev tags for a hot file. The entry is the first
@@ -98,13 +194,7 @@ func (e *Engine) hotHeadTags(h *vitehot.Hot) string {
 		entry = e.devEntry
 	}
 	react := e.reactForced || isJSXEntry(entry)
-	return devTags(
-		html.EscapeString(h.ClientURL()),
-		html.EscapeString(h.URL(entry)),
-		h.URL("@react-refresh"),
-		react,
-		nexus.IsDev(),
-	)
+	return devTags(h.ClientURL(), h.URL(entry), h.URL("@react-refresh"), react, nexus.IsDev())
 }
 
 func isJSXEntry(entry string) bool {
@@ -167,7 +257,14 @@ func (e *Engine) missingAssets(reader *vitehot.Reader, man manifest, manErr erro
 	case !p.dev:
 		p.detail = append(p.detail, "No Vite dev server in use (hot files are followed only under nexus dev or environment = \"development\").")
 	case reader != nil:
-		p.detail = append(p.detail, "No Vite dev server: hot file "+reader.Path()+" not found.")
+		if _, err := os.Stat(reader.Path()); err == nil {
+			// Present but ignored: the dev server it names isn't running.
+			// "not found" would send the developer looking for a file
+			// that is right there.
+			p.detail = append(p.detail, "No Vite dev server: hot file "+reader.Path()+" names a dev server that is not running (it was left by a dev server that exited). Start it again, or delete the file.")
+		} else {
+			p.detail = append(p.detail, "No Vite dev server: hot file "+reader.Path()+" not found.")
+		}
 	default:
 		p.detail = append(p.detail, "No Vite dev server: no hot file is watched, because nexus.ServeFrontend is not registered.")
 	}
