@@ -94,9 +94,9 @@ type Config struct {
 	// without publishing the map, vendor the files at build time
 	// (`nexus client --out`) and leave the flag off.
 	//
-	// The file dump additionally requires a detected frontend dir, so
-	// production binaries serve the routes without writing to a project
-	// tree that isn't there.
+	// The file dump runs only in development (`nexus dev`, or
+	// environment = "development") and only into a detected frontend
+	// dir; a production binary serves the routes and writes nothing.
 	//
 	// Equivalent to enabling Client with the full manifest + frontend
 	// defaults; for finer control (custom Path, middleware gating,

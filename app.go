@@ -524,8 +524,9 @@ func New(cfg Config) *App {
 		// One-switch SDK (PocketBase-style): full manifest across REST +
 		// GraphQL + WS, plus frontend defaults so the SDK files dump and
 		// tsconfig wires when a frontend dir is present. The OnStart dump
-		// hook (obs_integration.go) writes files only when a frontend dir
-		// was detected — a no-op in a fileless production tree.
+		// hook (autoDumpClientSDK) writes files only in development and
+		// only when a frontend dir was detected; a production binary
+		// serves the routes and writes nothing.
 		//
 		// Independent of Introspection, deliberately: the SDK is what the
 		// app's OWN browser bundle imports, so gating it on the dashboard
@@ -687,10 +688,17 @@ func (a *App) ClientHandler() *client.Handler {
 // an explicit Config.Client.Enabled / nexus.ClientUse / frontend.Plugin
 // mount wins (idempotent — skips once a handler exists).
 //
-// Dev-only and side-effect-free: OutDir is forced empty so the start-
-// time SDK file dump + vite.config auto-edit never fire; only HTTP
-// routes are added. Production never sets NEXUS_DEV=1. Opt out with
-// Config.Client.DevDisabled — the "closed manually" escape hatch.
+// Dev-only. It dumps like any other mount: OutDir defaults to the
+// detected frontend dir's sdk/ (web/sdk), which under `nexus dev` is
+// exactly what the frontend wants — the page-props types in client.d.ts
+// and the manifest nexus-vite-plugin checks pages against — and nothing
+// is written without a detected frontend. It never edits tsconfig: an
+// unset TSConfig is Off here, because those path mappings serve
+// '/__nexus/client/*.js' runtime imports, which an app that didn't
+// enable the SDK doesn't make. Production never sets NEXUS_DEV=1.
+// Opt out with Config.Client.DevDisabled — the "closed manually"
+// escape hatch — or keep the routes but skip the files with
+// Config.Client.OutDir = client.Off.
 func devAutoMountClientSDK(a *App) {
 	if !IsDev() || a.clientCfg.DevDisabled {
 		return
@@ -700,7 +708,9 @@ func devAutoMountClientSDK(a *App) {
 	}
 	cc := a.clientCfg
 	cc.Enabled = true
-	cc.OutDir = "" // never dump files from the implicit dev mount
+	if cc.TSConfig == "" {
+		cc.TSConfig = client.Off
+	}
 	// Dev gets the FULL manifest (every module endpoint) so the proxy
 	// sync + nx.query/mutate/crud work — the same visibility
 	// introspection grants, which `nexus dev` already bypasses on.

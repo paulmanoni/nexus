@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/internal/vitehot"
 )
 
 // ratelimitGlobalKey is the store key for the app-wide bucket. Re-declared
@@ -157,20 +158,7 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 			// SDK auto-dump: fires AFTER all AsRest/AsQuery/AsWS
 			// di.Invokes have populated the registry, so the
 			// generated .d.ts + manifest reflect every endpoint.
-			// Reads the dump knobs from the handler itself rather
-			// than cfg.Client — frontend.Plugin mounts the handler
-			// without populating cfg.Client, so the legacy path
-			// would silently skip the dump after migration.
-			// Failures don't crash the app — a permission error on
-			// the project tree is dev-tool friction, not a reason
-			// to refuse to serve traffic.
-			if h := app.ClientHandler(); h != nil {
-				if outdir, tsconfig, viteconfig := h.AutoDumpConfig(); outdir != "" {
-					if err := h.Dump(outdir, tsconfig, viteconfig, log.Writer()); err != nil {
-						log.Printf("nexus client: auto-dump %s: %v", outdir, err)
-					}
-				}
-			}
+			app.autoDumpClientSDK()
 			// No-listener mode: the app is driven as an http.Handler
 			// (InProcess / nexustest / embedding). Skip bind + Serve +
 			// banner entirely, but keep cron and liveness so scheduled
@@ -264,6 +252,40 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 			return firstErr
 		},
 	})
+}
+
+// autoDumpClientSDK writes the client SDK (runtime + manifest + .d.ts) to
+// the mounted handler's OutDir so the frontend's tooling — tsc, the IDE,
+// nexus-vite-plugin reading sdk/manifest.json — sees the live API.
+//
+// Development only, by the rule that decides whether the Vite hot file is
+// honoured (vitehot.Enabled): under `nexus dev` (NEXUS_DEV=1) or when the
+// app's environment is "development". A production binary writes nothing,
+// silently, whatever OutDir holds — it used to write ./web/sdk into its
+// working directory on every boot wherever a web/vite.config.ts happened
+// to exist. Vendor the files at build time with `nexus client --out`.
+//
+// The knobs come from the handler, not cfg.Client: frontend.Plugin and
+// the dev auto-mount mount a handler without populating cfg.Client. An
+// empty OutDir (unset with no frontend detected, or client.Off) skips.
+// Failures are logged, never fatal — a permission error on the project
+// tree is dev-tool friction, not a reason to refuse traffic. Files that
+// didn't change print nothing.
+func (a *App) autoDumpClientSDK() {
+	if !vitehot.Enabled(IsDev(), a.Environment()) {
+		return
+	}
+	h := a.ClientHandler()
+	if h == nil {
+		return
+	}
+	outdir, tsconfig, viteconfig := h.AutoDumpConfig()
+	if outdir == "" {
+		return
+	}
+	if err := h.Dump(outdir, tsconfig, viteconfig, log.Writer()); err != nil {
+		log.Printf("nexus client: auto-dump %s: %v", outdir, err)
+	}
 }
 
 // resolvedListener is one bound listener with its name and scope ready
