@@ -67,7 +67,7 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 	}
 
 	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
-		m := NewManager(build(), WithLogger(logger))
+		m := NewManager(build(), WithLogger(logger), WithBindName(name))
 		lc.Append(di.Hook{
 			OnStart: func(context.Context) error { m.Start(); return nil },
 			OnStop:  func(context.Context) error { m.Stop(); return nil },

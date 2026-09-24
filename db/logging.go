@@ -1,12 +1,16 @@
 package db
 
 import (
-	"log"
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/paulmanoni/nexus"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
 
@@ -25,20 +29,15 @@ import (
 //	"error"                       errors only
 //	"warn" / "true" / "on"        slow queries + errors (GORM's default)
 //	"info" / "all"                every SQL statement
-func resolveGormLogger(level string) gormlogger.Interface {
+func resolveGormLogger(level string, logger *zap.Logger) gormlogger.Interface {
 	lvl := resolveLogLevel(level, devMode())
 	if lvl == gormlogger.Silent {
 		return gormlogger.Default.LogMode(gormlogger.Silent)
 	}
-	return gormlogger.New(
-		log.New(os.Stdout, "", log.LstdFlags),
-		gormlogger.Config{
-			SlowThreshold:             200 * time.Millisecond,
-			LogLevel:                  lvl,
-			IgnoreRecordNotFoundError: true, // record-not-found is a normal query result, not an error
-			Colorful:                  false,
-		},
-	)
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return zapGorm{log: logger, level: lvl, slow: 200 * time.Millisecond}
 }
 
 // resolveLogLevel maps a configured level string (+ whether we're in dev) to a
@@ -69,4 +68,74 @@ func devMode() bool {
 		return true
 	}
 	return strings.EqualFold(nexus.Get[string]("runtime.environment"), "development")
+}
+
+// gormInitFailure is the message gorm.Open emits when the dialector cannot
+// reach the server. The Manager reports that itself — with the address and a
+// hint — so letting GORM print it too doubles every connect failure, and the
+// duplicate is the less useful of the two.
+const gormInitFailure = "failed to initialize database"
+
+// zapGorm adapts GORM's logger onto the Manager's zap logger. Before this,
+// GORM wrote to stdout through the stdlib logger, so SQL and connect errors
+// arrived in a different format from every other line the app logs, at a level
+// nothing could filter, and outside the reach of `nexus dev`'s log view.
+type zapGorm struct {
+	log   *zap.Logger
+	level gormlogger.LogLevel
+	slow  time.Duration
+}
+
+func (l zapGorm) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
+	l.level = level
+	return l
+}
+
+func (l zapGorm) Info(_ context.Context, msg string, args ...any) {
+	if l.level >= gormlogger.Info {
+		l.log.Info("db: " + fmt.Sprintf(msg, args...))
+	}
+}
+
+func (l zapGorm) Warn(_ context.Context, msg string, args ...any) {
+	if l.level >= gormlogger.Warn {
+		l.log.Warn("db: " + fmt.Sprintf(msg, args...))
+	}
+}
+
+func (l zapGorm) Error(_ context.Context, msg string, args ...any) {
+	if l.level < gormlogger.Error {
+		return
+	}
+	text := fmt.Sprintf(msg, args...)
+	if strings.Contains(text, gormInitFailure) {
+		// Dropped, not downgraded: the Manager's connect path reports the
+		// same failure with the address and a fix, and a Debug copy still
+		// prints under any development logger config.
+		return
+	}
+	l.log.Error("db: " + text)
+}
+
+// Trace is GORM's per-query hook. Record-not-found is a normal query result
+// rather than a fault, so it never reaches Error.
+func (l zapGorm) Trace(_ context.Context, begin time.Time, fc func() (string, int64), err error) {
+	if l.level <= gormlogger.Silent {
+		return
+	}
+	elapsed := time.Since(begin)
+	sql, rows := fc()
+	fields := []zap.Field{
+		zap.String("sql", sql),
+		zap.Int64("rows", rows),
+		zap.Duration("took", elapsed),
+	}
+	switch {
+	case err != nil && l.level >= gormlogger.Error && !errors.Is(err, gorm.ErrRecordNotFound):
+		l.log.Error("db: query failed", append(fields, zap.Error(err))...)
+	case l.slow > 0 && elapsed > l.slow && l.level >= gormlogger.Warn:
+		l.log.Warn("db: slow query", append(fields, zap.Duration("threshold", l.slow))...)
+	case l.level >= gormlogger.Info:
+		l.log.Info("db: query", fields...)
+	}
 }

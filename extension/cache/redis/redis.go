@@ -23,6 +23,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/extension/cache"
+	"github.com/paulmanoni/nexus/internal/logx"
 )
 
 func init() {
@@ -69,6 +70,10 @@ func (b *backend) Clear(ctx context.Context) error {
 type supervisor struct {
 	m      *cache.Manager
 	client *redis.Client
+
+	// downFor collapses the unreachable-redis line that would otherwise
+	// reprint on every reconnect tick for as long as redis is down.
+	downFor logx.RepeatGuard
 }
 
 func (s *supervisor) executor() failsafe.Executor[*redis.Client] {
@@ -82,7 +87,7 @@ func (s *supervisor) executor() failsafe.Executor[*redis.Client] {
 		WithMaxRetries(2).
 		WithJitter(25).
 		OnRetry(func(e failsafe.ExecutionEvent[*redis.Client]) {
-			log.Warn("redis connect retrying",
+			log.Debug("cache: retrying redis connect",
 				zap.Int("attempt", e.Attempts()), zap.Error(e.LastError()))
 		}).Build()
 	cb := circuitbreaker.NewBuilder[*redis.Client]().
@@ -150,16 +155,36 @@ func (s *supervisor) connect() {
 			// Close the client so its background pool stops dialing —
 			// otherwise the orphaned goroutines keep logging until GC.
 			_ = c.Close()
-			log.Error("cache: redis ping failed", zap.Error(err))
+			// Debug, not Error: this is one attempt of a retry the policy
+			// owns, and the outcome is reported once below.
+			log.Debug("cache: redis ping failed", zap.Error(err))
 			return nil, err
 		}
 		return c, nil
 	})
 	if err != nil {
-		log.Error("cache: redis connect failed, staying on memory", zap.Error(err))
+		if logx.IsRetryState(err) {
+			return
+		}
+		// Warn, not Error: the cache is still fully functional on memory, so
+		// this degrades the deployment rather than breaking the app. At Error
+		// it also collected a stack trace under a development logger, for a
+		// condition no stack can explain.
+		addr := cfg.RedisAddress()
+		fields := []zap.Field{zap.String("address", addr), zap.String("error", logx.Cause(err))}
+		if hint := logx.Hint(err, "redis", addr); hint != "" {
+			fields = append(fields, zap.String("fix", hint))
+		}
+		if suppressed, ok := s.downFor.Allow(logx.Signature(err), time.Minute); ok {
+			if suppressed > 0 {
+				fields = append(fields, zap.Int("repeated", suppressed))
+			}
+			log.Warn("cache: redis unreachable, serving from memory", fields...)
+		}
 		return
 	}
 	s.client = client
+	s.downFor.Reset()
 	s.m.ActivateRedis(&backend{client: client})
 }
 

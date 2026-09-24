@@ -24,6 +24,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/failsafe-go/failsafe-go"
 	"github.com/failsafe-go/failsafe-go/circuitbreaker"
 	"github.com/failsafe-go/failsafe-go/retrypolicy"
+	"github.com/paulmanoni/nexus/internal/logx"
 	"go.uber.org/zap"
 
 	"gorm.io/gorm"
@@ -122,6 +124,22 @@ func driverLinked(d Driver) bool {
 }
 
 // Dialector returns the gorm dialector matching Driver.
+// Address is the host:port the driver dials, in a form that is safe to log —
+// unlike DSN, which carries the password.
+func (c Config) Address() string {
+	if c.Driver == SQLite {
+		return c.Database
+	}
+	host := c.Host
+	if host == "" {
+		host = "localhost"
+	}
+	if c.Port == "" {
+		return host
+	}
+	return net.JoinHostPort(host, c.Port)
+}
+
 func (c Config) Dialector() gorm.Dialector {
 	dialectorMu.RLock()
 	open := dialectors[c.Driver]
@@ -181,6 +199,10 @@ type Manager struct {
 	isConnected bool
 	ctx         context.Context
 	cancel      context.CancelFunc
+
+	// downFor collapses the connect failure that repeats on every
+	// maintain() tick while a server is unreachable.
+	downFor logx.RepeatGuard
 
 	// envNames + bindName drive NexusEnv / NexusServices when the
 	// auto-walk fires. Populated via WithEnvNames / WithBindName
@@ -252,7 +274,10 @@ func defaultExecutor(logger *zap.Logger) failsafe.Executor[*gorm.DB] {
 		WithBackoff(2, time.Second).
 		WithJitter(25 * time.Millisecond).
 		OnRetry(func(e failsafe.ExecutionEvent[*gorm.DB]) {
-			logger.Warn("db: reconnecting",
+			// Debug, not Warn: the policy is still retrying, so this is
+			// progress rather than a problem. The Manager logs once when
+			// the attempts are exhausted, which is the reportable event.
+			logger.Debug("db: retrying connect",
 				zap.Int("attempt", e.Attempts()),
 				zap.Error(e.LastError()))
 		}).
@@ -347,11 +372,12 @@ func (m *Manager) Driver() Driver { return m.cfg.Driver }
 func (m *Manager) connect() error {
 	db, err := m.executor.Get(func() (*gorm.DB, error) {
 		return gorm.Open(m.cfg.Dialector(), &gorm.Config{
-			Logger: resolveGormLogger(m.cfg.LogLevel),
+			Logger: resolveGormLogger(m.cfg.LogLevel, m.logger),
 		})
 	})
 	if err != nil {
 		m.markDisconnected()
+		m.reportUnreachable(err)
 		return err
 	}
 	sqlDB, err := db.DB()
@@ -368,8 +394,43 @@ func (m *Manager) connect() error {
 	m.db = db
 	m.isConnected = true
 	m.mu.Unlock()
-	m.logger.Info("db: connected", zap.String("driver", string(m.cfg.Driver)))
+	// The next outage is news again.
+	m.downFor.Reset()
+	m.logger.Info("db: connected",
+		zap.String("name", m.bindName),
+		zap.String("driver", string(m.cfg.Driver)),
+		zap.String("address", m.cfg.Address()))
 	return nil
+}
+
+// reportUnreachable logs a connect failure at most once a minute per distinct
+// error, naming the database, where it looked, and what to do about it. The
+// maintain() loop retries every 5 seconds, so the unguarded version reprinted
+// the same line twelve times a minute per database for as long as the server
+// was down — with six databases configured that buried everything else.
+func (m *Manager) reportUnreachable(err error) {
+	if logx.IsRetryState(err) {
+		return
+	}
+	addr := m.cfg.Address()
+	suppressed, ok := m.downFor.Allow(logx.Signature(err), time.Minute)
+	if !ok {
+		return
+	}
+	fields := []zap.Field{
+		zap.String("name", m.bindName),
+		zap.String("driver", string(m.cfg.Driver)),
+		zap.String("database", m.cfg.Database),
+		zap.String("address", addr),
+		zap.String("error", logx.Cause(err)),
+	}
+	if hint := logx.Hint(err, string(m.cfg.Driver), addr); hint != "" {
+		fields = append(fields, zap.String("fix", hint))
+	}
+	if suppressed > 0 {
+		fields = append(fields, zap.Int("repeated", suppressed))
+	}
+	m.logger.Warn("db: cannot reach the server, retrying in the background", fields...)
 }
 
 func (m *Manager) markDisconnected() {
