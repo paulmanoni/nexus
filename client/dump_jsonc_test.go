@@ -89,9 +89,44 @@ func TestMergePathsConfig_RelativeToBaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(cfg)
-	for _, want := range []string{`"baseUrl": "src"`, `"nexus-client": [`, `"../sdk/client.js"`, `"../sdk/vue.js"`} {
+	for _, want := range []string{`"baseUrl": "src"`, `"nexus-client": [`, `"../sdk/client.d.ts"`, `"../sdk/client.js"`, `"../sdk/vue.js"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("missing %s in\n%s", want, b)
 		}
+	}
+}
+
+// An existing include gains the SDK's declaration files (once), so the
+// inertia.d.ts augmentation is in the program; a config without include
+// (TypeScript's default: everything) is left without one.
+func TestMergePathsConfig_IncludesSDKDeclarations(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "web", "tsconfig.json")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte(`{"include":["src/**/*.ts","src/**/*.vue"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := MergePathsConfig(cfg, filepath.Join(dir, "web", "sdk"), io.Discard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var doc struct{ Include []string }
+	b, _ := os.ReadFile(cfg)
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"src/**/*.ts", "src/**/*.vue", "sdk/*.d.ts"}; strings.Join(doc.Include, ",") != strings.Join(want, ",") {
+		t.Errorf("include = %v, want %v", doc.Include, want)
+	}
+
+	bare := filepath.Join(dir, "bare", "tsconfig.json")
+	if err := MergePathsConfig(bare, filepath.Join(dir, "bare", "sdk"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(bare); strings.Contains(string(b), "include") {
+		t.Errorf("a config without include got one:\n%s", b)
 	}
 }

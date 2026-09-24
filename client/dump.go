@@ -180,11 +180,18 @@ func WriteIfMissing(path string, body []byte, stdout io.Writer) error {
 // baseUrl is honoured, with the mapped paths computed relative to it.
 //
 // Besides the runtime URL imports, the bare specifier "nexus-client"
-// maps to the SDK's client.js, whose client.d.ts carries every generated
-// type: `import type { NexusPageProps } from 'nexus-client'` resolves in
-// the editor, in vue-tsc, and in Vue's SFC compiler (which reads these
-// paths when TypeScript is installed). nexus-vite-plugin aliases the same
-// name for Vite, so a value import works at runtime too.
+// maps to the SDK's client.d.ts, which carries every generated type:
+// `import type { NexusPageProps } from 'nexus-client'` resolves in the
+// editor, in vue-tsc, and in Vue's SFC compiler (which resolves through
+// these paths when TypeScript is installed). It names the .d.ts, not
+// client.js: TypeScript does not swap declarations in for a mapped .js
+// target. nexus-vite-plugin aliases the same name to client.js for Vite,
+// so a value import works at runtime too.
+//
+// When the config lists "include", the SDK's *.d.ts join it: inertia.d.ts
+// types page.props through a global augmentation, which applies only if
+// the file is in the program — and a component that just calls usePage()
+// imports nothing that would pull it in.
 //
 // Exported for the same reason as WriteIfChanged: the CLI flag
 // (--tsconfig / --jsconfig) and the in-process Dump path share
@@ -223,6 +230,11 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 	}
 	for k, v := range mappings {
 		paths[k] = v
+	}
+	if include, ok := doc["include"].([]any); ok {
+		if pattern, err := includePattern(filepath.Dir(configPath), outDir); err == nil && !containsString(include, pattern) {
+			doc["include"] = append(include, pattern)
+		}
 	}
 
 	body, err := json.MarshalIndent(doc, "", "  ")
@@ -322,6 +334,30 @@ func stripJSONC(data []byte) []byte {
 	return out
 }
 
+// includePattern is the "include" entry covering the SDK's declaration
+// files, relative to the config file's directory (include is never
+// resolved against baseUrl).
+func includePattern(configDir, outDir string) (string, error) {
+	rel, err := filepath.Rel(configDir, outDir)
+	if err != nil {
+		return "", err
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." {
+		return "*.d.ts", nil
+	}
+	return rel + "/*.d.ts", nil
+}
+
+func containsString(list []any, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 // pathMappings is the specifier → file map written into the config,
 // relative to base (the config file's directory, or its baseUrl) so the
 // paths stay portable when the project moves on disk. Always "./"-led and
@@ -339,7 +375,7 @@ func pathMappings(outDir, base string) (map[string][]string, error) {
 		rel = "./" + rel
 	}
 	return map[string][]string{
-		"nexus-client":              {rel + "/client.js"},
+		"nexus-client":              {rel + "/client.d.ts"},
 		"/__nexus/client/client.js": {rel + "/client.js"},
 		"/__nexus/client/vue.js":    {rel + "/vue.js"},
 	}, nil
