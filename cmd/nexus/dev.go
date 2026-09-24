@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/internal/vitehot"
 	"github.com/paulmanoni/viteless"
 )
 
@@ -465,6 +466,22 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		frontendURLCh = nil
 	}
 
+	// hotDistDir is where nexus-vite-plugin writes its hot file when the dev
+	// frontend is real Vite: <dist>/.vite/nexus-hot.json, the dist being the
+	// root ServeFrontend names. The app reads the same file (NEXUS_DEV_ROOT
+	// is the target, so the paths agree) and then serves the SPA itself, so
+	// its origin becomes the URL to open.
+	hotDistDir := ""
+	if frontendDir != "" {
+		root := distStubRoot
+		if root == "" {
+			root = detectServeFrontendRoot(pkgDir)
+		}
+		if root != "" {
+			hotDistDir = filepath.Join(pkgDir, root)
+		}
+	}
+
 	// projectRoot is what the watchers walk and what .nexusignore patterns
 	// are relative to: the directory nexus dev was invoked from.
 	projectRoot, _ := os.Getwd()
@@ -683,7 +700,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 				inertiaViteURL = frontendBase.get()
 			}
 		}
-		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, stdout, stderr)
+		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, hotDistDir, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -739,7 +756,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // nexus.Boot resolves nexus.toml from the same place either way.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL string, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL, hotDistDir string, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	cmd := exec.Command(binPath)
 	if binPath == "" {
 		// Legacy --go-run path. The flags mirror devBuilder.build:
@@ -821,16 +838,17 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 
 	// waitAndOpen runs even when --no-open is set so the user still
 	// gets the green "ready" line — only the browser launch is gated
-	// on openOnReady. When the vite dev server is running, prefer
-	// its URL (HMR-aware, the right tab to live in); fall back to
-	// the gin/probe URL when bundle mode owns the frontend.
+	// on openOnReady. The app's URL is primary when it serves the pages
+	// (Inertia, or real Vite whose hot file ServeFrontend follows); a
+	// dev server without the hot-file plugin keeps its own URL; the
+	// gin/probe URL covers bundle mode. See devPrimaryURL.
 	// appDead gates the ready banner. Probing a port only proves something
 	// is listening on it — when the app failed to bind (port already taken,
 	// a wiring error, a panic) the probe can still succeed against whatever
 	// else owns that port, and the banner then advertised an API and a
 	// dashboard that were not there.
 	var appDead atomic.Bool
-	go waitAndOpen(ctx, addr, openOnReady, openDash, inertiaViteURL != "", stdout, detectedCh, frontendURLCh, appDead.Load)
+	go waitAndOpen(ctx, addr, openOnReady, openDash, inertiaViteURL != "", hotDistDir, stdout, detectedCh, frontendURLCh, appDead.Load)
 
 	exited := make(chan error, 1)
 	go func() {
@@ -882,7 +900,7 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 // as --addr, we surface a correction line — a misleading banner is
 // the symptom that drove this code, so making the discrepancy
 // visible is part of the fix.
-func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash, inertia bool, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string, appDead func() bool) {
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash, inertia bool, hotDistDir string, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string, appDead func() bool) {
 	flagAddr := normalizeProbeAddr(addr)
 
 	probeOnce := func(target string) bool {
@@ -991,23 +1009,15 @@ done:
 			ansiDim, ansiReset, ansiBold, ready, ansiReset, ansiDim, addr, ansiReset)
 	}
 
-	var primaryURL string
-	switch {
-	case inertia && ready != "":
-		// Inertia: the app serves pages, so the browser lives at the app
-		// port; viteless is only the HMR/asset origin the shell references.
-		primaryURL = clientURL(ready)
-		if openDash {
-			primaryURL = dashboardURL(ready)
-		}
-	case viteURL != "":
-		primaryURL = strings.TrimRight(viteURL, "/") + "/"
-	case ready != "":
-		primaryURL = clientURL(ready)
-		if openDash {
-			primaryURL = dashboardURL(ready)
-		}
+	// A dev server started, and it is real Vite running nexus-vite-plugin
+	// when its hot file shows up: ServeFrontend then serves the SPA from the
+	// app's own origin, loading modules from Vite. The viteless native engine
+	// writes no hot file, so it keeps its own URL.
+	appServesPages := inertia
+	if !appServesPages && viteURL != "" && ready != "" {
+		appServesPages = waitForHotFile(ctx, hotDistDir, hotFileGrace)
 	}
+	primaryURL, splitLines := devPrimaryURL(ready, viteURL, appServesPages, openDash)
 	if primaryURL == "" {
 		return
 	}
@@ -1018,10 +1028,7 @@ done:
 		return
 	}
 	printReadyLine(stdout, primaryURL, openBrowserOnReady)
-	if inertia {
-		// Inertia: the Vite server is an internal asset/HMR origin the user
-		// never opens — don't advertise its port.
-	} else if viteURL != "" && ready != "" {
+	if splitLines {
 		// In dev-server mode the user lives at vite's URL, but the
 		// framework dashboard is a separate Vue bundle baked into
 		// the Go binary. Going through vite's proxy adds edge
@@ -1033,6 +1040,67 @@ done:
 	if openBrowserOnReady {
 		_ = openBrowser(primaryURL)
 	}
+}
+
+// hotFileGrace bounds how long the first ready line waits for Vite's hot
+// file after the dev server reported its URL. The plugin writes it as soon
+// as the server is listening — before Vite prints that URL — so it is
+// normally already there; the wait only covers a slow disk, and is what a
+// frontend without the plugin pays once, on the first boot.
+const hotFileGrace = time.Second
+
+// waitForHotFile reports whether a usable hot file (valid, written by a live
+// process) exists under distDir, polling until wait elapses. A stale file
+// left by a killed session doesn't count — the fresh server overwrites it.
+func waitForHotFile(ctx context.Context, distDir string, wait time.Duration) bool {
+	if distDir == "" {
+		return false
+	}
+	r := vitehot.NewReader(distDir, func() bool { return true })
+	deadline := time.Now().Add(wait)
+	for {
+		if h, err := r.Current(); err == nil && h != nil {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// devPrimaryURL picks the URL the ready line advertises (and --open opens),
+// and whether the API/Dashboard lines follow it.
+//
+//   - appServesPages (Inertia, or real Vite whose hot file ServeFrontend
+//     follows): the browser lives at the app; the Vite server is an
+//     asset/HMR origin nobody opens, so its port isn't advertised.
+//   - otherwise a dev server URL wins, with the app's API and dashboard
+//     listed beside it.
+//   - otherwise the app itself.
+//
+// --open-dash swaps the app URL for its dashboard wherever the app is the
+// destination.
+func devPrimaryURL(ready, viteURL string, appServesPages, openDash bool) (primary string, splitLines bool) {
+	app := func() string {
+		if openDash {
+			return dashboardURL(ready)
+		}
+		return clientURL(ready)
+	}
+	switch {
+	case appServesPages && ready != "":
+		return app(), false
+	case viteURL != "":
+		return strings.TrimRight(viteURL, "/") + "/", !appServesPages && ready != ""
+	case ready != "":
+		return app(), false
+	}
+	return "", false
 }
 
 // addrFinder wraps an io.Writer to scan child output line-by-line

@@ -26,11 +26,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 )
 
 const (
@@ -66,6 +66,11 @@ type Hot struct {
 // URL resolves a path served by the dev server, honouring Vite's base.
 func (h *Hot) URL(p string) string {
 	base := h.Base
+	// A full-URL base (a CDN) only applies to built assets; Vite ignores its
+	// origin in development and serves under its path.
+	if u, err := url.Parse(base); err == nil && u.IsAbs() {
+		base = u.Path
+	}
 	if base == "" {
 		base = "/"
 	}
@@ -81,7 +86,9 @@ func (h *Hot) URL(p string) string {
 // ClientURL is the Vite client script that drives HMR.
 func (h *Hot) ClientURL() string { return h.URL("@vite/client") }
 
-// Entry is the first declared entry module, or "" when none was declared.
+// Entry is the first declared entry, or "" when none was declared. It may be
+// index.html — Vite's default input for an SPA. Use ModuleEntry when the
+// caller needs something a <script> tag can load.
 func (h *Hot) Entry() string {
 	if len(h.Entries) == 0 {
 		return ""
@@ -89,25 +96,40 @@ func (h *Hot) Entry() string {
 	return h.Entries[0]
 }
 
-// Reader returns the current hot file, re-reading it only when it changes on
-// disk. That makes a Vite restart on a different port take effect on the next
-// request, with no Go restart — the env-var mechanism it replaces was read
-// once per process.
+// ModuleEntry is the first declared entry that is a module rather than an
+// HTML page, or "" when there is none. An app that renders its own shell (an
+// Inertia page) needs this; one that serves index.html does not.
+func (h *Hot) ModuleEntry() string {
+	for _, e := range h.Entries {
+		if e != "" && !strings.HasSuffix(strings.ToLower(e), ".html") {
+			return e
+		}
+	}
+	return ""
+}
+
+// Reader returns the current hot file. It re-reads the file on every call:
+// the file is a few hundred bytes and is consulted only when rendering a page
+// in development, and caching on mtime and size would miss a same-length
+// rewrite (port 5173 → 5174) landing within one timestamp tick. Re-reading is
+// what makes a Vite restart on a different port apply on the next request,
+// with no Go restart — the env-var mechanism it replaces was read once per
+// process.
 type Reader struct {
 	path    string
 	enabled func() bool
-
-	mu    sync.Mutex
-	stamp time.Time
-	size  int64
-	hot   *Hot
-	err   error
 }
 
 // NewReader watches the hot file for a build output directory on disk.
 // enabled is consulted on every call; pass a closure over Enabled.
 func NewReader(distDir string, enabled func() bool) *Reader {
-	return &Reader{path: Path(distDir), enabled: enabled}
+	p := Path(distDir)
+	// Absolute, so an error message tells the developer exactly which file,
+	// whatever directory they are reading it from.
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	return &Reader{path: p, enabled: enabled}
 }
 
 // Path is the file this reader watches — for messages that tell a developer
@@ -127,29 +149,19 @@ func (r *Reader) Current() (*Hot, error) {
 	if r == nil || r.enabled == nil || !r.enabled() {
 		return nil, nil
 	}
-	fi, err := os.Stat(r.path)
-	if err != nil {
-		r.mu.Lock()
-		r.hot, r.err, r.stamp, r.size = nil, nil, time.Time{}, 0
-		r.mu.Unlock()
+	h, err := load(r.path)
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !fi.ModTime().Equal(r.stamp) || fi.Size() != r.size {
-		r.stamp, r.size = fi.ModTime(), fi.Size()
-		r.hot, r.err = load(r.path)
+	if err != nil {
+		return nil, err
 	}
-	if r.err != nil {
-		return nil, r.err
+	// The file does not change when its writer dies, so only the pid can say
+	// whether the dev server it describes is still there.
+	if h.PID > 0 && !alive(h.PID) {
+		return nil, fmt.Errorf("%s: %w (pid %d) — restart it, or delete the file", r.path, ErrStale, h.PID)
 	}
-	// Checked on every call rather than cached: the file does not change
-	// when its writer dies, so its stamp cannot tell us.
-	if r.hot.PID > 0 && !alive(r.hot.PID) {
-		return nil, fmt.Errorf("%s: %w (pid %d) — restart it, or delete the file", r.path, ErrStale, r.hot.PID)
-	}
-	return r.hot, nil
+	return h, nil
 }
 
 func load(path string) (*Hot, error) {

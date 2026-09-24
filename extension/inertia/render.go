@@ -53,15 +53,15 @@ type pageObject struct {
 // initial browser navigation (HTML document shell). Either way the props are
 // resolved once, honoring partial-reload and Optional/Always rules.
 func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
-	// Resolve asset head/version once (lazily) so ServeFrontend's bundle is
-	// visible regardless of option order.
-	e.resolve()
+	// Asset head/version are decided per request: the dev server can come,
+	// go, or move ports while the app runs (see assets).
+	assets := e.assets()
 	// Asset-version guard: a stale X-Inertia-Version on a GET XHR visit forces
 	// a fresh full load (the client follows X-Inertia-Location). Checked here
 	// (rather than in global middleware) so it works regardless of route
 	// registration order — see Module.
-	if e.version != "" && c.Request.Method == http.MethodGet && c.GetHeader(headerInertia) != "" {
-		if v := c.GetHeader(headerVersion); v != "" && v != e.version {
+	if assets.version != "" && c.Request.Method == http.MethodGet && c.GetHeader(headerInertia) != "" {
+		if v := c.GetHeader(headerVersion); v != "" && v != assets.version {
 			c.Header(headerLocation, c.Request.URL.RequestURI())
 			c.AbortWithStatus(http.StatusConflict)
 			return nil
@@ -88,7 +88,7 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 		Component: component,
 		Props:     props,
 		URL:       c.Request.URL.RequestURI(),
-		Version:   e.version,
+		Version:   assets.version,
 	}
 	if len(meta.deferred) > 0 {
 		page.DeferredProps = meta.deferred
@@ -119,6 +119,25 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 		return err
 	}
 
+	// A full load with no asset tags would be a blank page. Say so: an error
+	// page in development, one log line in production (the shell still
+	// renders so the server keeps answering). XHR visits above carry no asset
+	// tags, so they are unaffected.
+	nonce := ""
+	if e.nonceFn != nil {
+		nonce = e.nonceFn(c)
+	}
+	if p := assets.problem; p != nil {
+		if p.dev {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.Header("Cache-Control", "no-store")
+			c.Status(http.StatusInternalServerError)
+			_, err = c.Writer.Write(errorPage(p, nonce))
+			return err
+		}
+		e.logMissing(p)
+	}
+
 	// Server-side rendering (initial load only): POST the page to the renderer
 	// and inject its head/body, which the client hydrates. A renderer error
 	// falls back to client-side rendering (empty root div) unless SSRStrict —
@@ -144,11 +163,7 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	c.Header("Vary", headerInertia)
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
-	nonce := ""
-	if e.nonceFn != nil {
-		nonce = e.nonceFn(c)
-	}
-	_, err = c.Writer.Write(e.shell(blob, nonce, ssr))
+	_, err = c.Writer.Write(e.shell(assets.head, blob, nonce, ssr))
 	return err
 }
 

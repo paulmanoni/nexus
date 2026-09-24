@@ -134,3 +134,50 @@ func TestEnabledRule(t *testing.T) {
 		}
 	}
 }
+
+func TestSameLengthRewriteIsSeenImmediately(t *testing.T) {
+	dist := t.TempDir()
+	r := NewReader(dist, on)
+	write(t, dist, `{"version":1,"origin":"http://127.0.0.1:5173"}`)
+	if h, _ := r.Current(); h == nil || h.Origin != "http://127.0.0.1:5173" {
+		t.Fatalf("first read: %+v", h)
+	}
+	// Same byte length, written back to back: a cache keyed on mtime and
+	// size could return the old origin here on a coarse-timestamp filesystem.
+	write(t, dist, `{"version":1,"origin":"http://127.0.0.1:5174"}`)
+	if h, _ := r.Current(); h == nil || h.Origin != "http://127.0.0.1:5174" {
+		t.Fatalf("same-length rewrite missed: %+v", h)
+	}
+}
+
+func TestModuleEntrySkipsHTML(t *testing.T) {
+	cases := []struct {
+		entries []string
+		want    string
+	}{
+		{[]string{"index.html"}, ""},
+		{[]string{"index.html", "src/main.ts"}, "src/main.ts"},
+		{[]string{"INDEX.HTML", "src/app.tsx"}, "src/app.tsx"},
+		{[]string{"src/main.ts"}, "src/main.ts"},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		h := &Hot{Entries: c.entries}
+		if got := h.ModuleEntry(); got != c.want {
+			t.Errorf("ModuleEntry(%v) = %q, want %q", c.entries, got, c.want)
+		}
+	}
+}
+
+func TestPathIsAbsolute(t *testing.T) {
+	if p := NewReader("web/dist", on).Path(); !filepath.IsAbs(p) {
+		t.Fatalf("Path() = %q, want absolute so messages name one file", p)
+	}
+}
+
+func TestAbsoluteBaseUsesOnlyItsPathInDev(t *testing.T) {
+	h := &Hot{Origin: "http://localhost:5174", Base: "https://cdn.example.com/app/"}
+	if got := h.URL("src/main.ts"); got != "http://localhost:5174/app/src/main.ts" {
+		t.Fatalf("URL = %q", got)
+	}
+}

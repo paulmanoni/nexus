@@ -7,7 +7,7 @@
 //
 // `Plugin` is imported as a type from 'vite', which any npm-managed Vite
 // project already has on disk — so the reference resolves with no extra
-// install. The factory returns Plugin[] (four sub-plugins in one).
+// install. The factory returns Plugin[] (five sub-plugins in one).
 
 import type { Plugin } from 'vite'
 
@@ -51,11 +51,22 @@ export interface NexusVitePluginOptions {
    * reload and break HMR. Default: ['index.html', 'src/**\/*.{vue,ts,tsx,js,jsx}'].
    */
   optimizeEntries?: string[]
+  /**
+   * The app's entry module(s), root-relative — e.g. 'src/main.ts'.
+   * Declared once here, it becomes build.rollupOptions.input (unless
+   * that is already set; a conflicting value is warned about and wins),
+   * the key nexus looks up in .vite/manifest.json, and the `entries` of
+   * the dev hot file. Omit it for an index.html-driven SPA.
+   */
+  input?: string | string[]
 }
 
 /**
- * nexus's Vite plugin bundle — auto-select, manifest-filter, loop-guard
- * and the dev codegen→HMR bridge. Spread the result into the `plugins`
- * array of vite.config.ts.
+ * nexus's Vite plugin bundle — auto-select, manifest-filter, loop-guard,
+ * the dev codegen→HMR bridge, and the nexus handshake: under `vite dev`
+ * it writes <outDir>/.vite/nexus-hot.json with the dev server's real
+ * origin (removed on shutdown) and sets server.origin so assets resolve
+ * cross-origin; under `vite build` it forces build.manifest. Spread the
+ * result into the `plugins` array of vite.config.ts.
  */
 export default function nexusAutoSelect(options?: NexusVitePluginOptions): Plugin[]

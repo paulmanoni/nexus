@@ -21,7 +21,7 @@ package inertia
 
 import (
 	"io/fs"
-	"os"
+	"log"
 	"strings"
 	"sync"
 
@@ -38,7 +38,9 @@ import (
 const AutoVersion = ""
 
 // devURLEnv is set by `nexus dev` to the viteless/Vite dev server URL so the
-// shell can reference the HMR client when no build manifest is present.
+// shell can reference the HMR client. It is the fallback for toolchains that
+// don't write nexus-vite-plugin's hot file (the viteless engine); a hot file,
+// when present, wins.
 const devURLEnv = "NEXUS_VITE_DEV"
 
 // engineKeyT keys the per-app Inertia engine in App.SetValue/Value. A private
@@ -75,14 +77,17 @@ type Config struct {
 	// inertia.EncryptHistory(c, false); inertia.ClearHistory(c) drops any
 	// previously-encrypted entry (e.g. on logout).
 	EncryptHistory bool
-	// Entry is the dev-server module the shell loads under `nexus dev` (the
-	// client app's entry, served by the Vite/viteless dev server). Defaults to
-	// "src/main.ts"; set "src/main.tsx" for a React app. Ignored in production,
-	// where the entry comes from the build manifest.
+	// Entry is the dev-server module the shell loads in dev when the dev
+	// server doesn't declare one. nexus-vite-plugin's hot file names the entry
+	// itself, so this only matters for a hot file without one and for the
+	// NEXUS_VITE_DEV fallback. Defaults to "src/main.ts"; set "src/main.tsx"
+	// for a React app. Ignored in production, where the entry comes from the
+	// build manifest.
 	Entry string
 	// React emits the Vite React Fast Refresh preamble before the dev client so
-	// HMR works for React apps. Auto-enabled when Entry ends in .tsx/.jsx; set
-	// it explicitly to force the preamble for a .ts/.js React entry.
+	// HMR works for React apps. Auto-enabled when the dev entry ends in
+	// .tsx/.jsx; set it explicitly to force the preamble for a .ts/.js React
+	// entry.
 	React bool
 	// Nonce returns the per-request CSP nonce for the document shell. When set
 	// and non-empty, the engine stamps nonce="…" on every <script>/<link> it
@@ -108,9 +113,10 @@ type Config struct {
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
-// and shared across requests. The asset head/version are resolved lazily on the
-// first render (see resolve) so the bundle ServeFrontend registers is visible
-// regardless of option ordering.
+// and shared across requests. The asset head/version are resolved at render
+// time (see assets) so the bundle ServeFrontend registers is visible regardless
+// of option ordering, and a dev server that restarts on another port is
+// followed without a Go restart.
 type Engine struct {
 	rootView       string
 	customHead     string // app-supplied <head> HTML (Config.Head)
@@ -130,43 +136,18 @@ type Engine struct {
 	ssr         SSRRenderer             // server-side renderer (Config.SSR); nil = client-only
 	onSSRError  func(error)             // Config.OnSSRError
 	ssrStrict   bool                    // Config.SSRStrict
+	reactForced bool                    // Config.React, applied to a hot-file entry too
 
-	resolveOnce sync.Once
-	head        string // resolved <head> asset tags (prod manifest or dev server)
-	version     string // resolved Inertia asset version
-}
+	envOnce sync.Once
+	envDev  string // NEXUS_VITE_DEV, read on first render
 
-// resolve computes the asset head tags + version once, on first use. Deferring
-// past boot lets ServeFrontend's bundle registration land first no matter the
-// option order. Dev (NEXUS_VITE_DEV) wins; otherwise read the Vite manifest
-// from Config.Frontend or, failing that, the app's ServeFrontend bundle.
-func (e *Engine) resolve() {
-	e.resolveOnce.Do(func() {
-		if dev := strings.TrimRight(os.Getenv(devURLEnv), "/"); dev != "" {
-			e.head = devHeadTags(dev, e.devEntry, e.react)
-			return
-		}
-		fsys, root := e.cfgFrontend, e.cfgRoot
-		if fsys == nil && e.app != nil {
-			if f, r, ok := e.app.FrontendFS(); ok {
-				fsys, root = f, r
-			}
-		}
-		var man manifest
-		if fsys != nil {
-			if m, err := loadManifest(fsys, root); err == nil {
-				man = m
-			}
-		}
-		if man.found {
-			e.head = man.headTags()
-		}
-		if e.versionPin != AutoVersion {
-			e.version = e.versionPin
-		} else {
-			e.version = man.version
-		}
-	})
+	manMu    sync.Mutex
+	man      manifest // build manifest, cached once found
+	manErr   error    // why the last manifest load failed
+	manTried bool
+
+	missingOnce sync.Once            // the production "no assets" log line
+	logf        func(string, ...any) // defaults to log.Printf
 }
 
 // engineParams collects the registered SharedProviders from the fx value group
@@ -206,8 +187,7 @@ func Module(cfg Config) nexus.Option {
 
 // newEngine builds the engine from Config + Share providers + the app (used to
 // auto-discover ServeFrontend's bundle). Asset tags + version are resolved
-// lazily on first render (see resolve), not here, so option order doesn't
-// matter.
+// at render time (see assets), not here, so option order doesn't matter.
 func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 	entry := cfg.Entry
 	if entry == "" {
@@ -224,11 +204,13 @@ func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 		versionPin:     cfg.Version,
 		devEntry:       entry,
 		// Auto-detect React from a JSX entry; Config.React forces it on.
-		react:      cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
-		nonceFn:    cfg.Nonce,
-		ssr:        cfg.SSR,
-		onSSRError: cfg.OnSSRError,
-		ssrStrict:  cfg.SSRStrict,
+		react:       cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
+		nonceFn:     cfg.Nonce,
+		ssr:         cfg.SSR,
+		onSSRError:  cfg.OnSSRError,
+		ssrStrict:   cfg.SSRStrict,
+		reactForced: cfg.React,
+		logf:        log.Printf,
 	}
 }
 

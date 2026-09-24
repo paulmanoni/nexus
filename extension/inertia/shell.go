@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// shell renders the full HTML document for a non-XHR (initial) page load. The
+// shell renders the full HTML document for a non-XHR (initial) page load, with
+// assetHead (the tags that load the client app — see assets) in <head>. The
 // serialized page object is embedded in the root element's data-page attribute
 // — the Inertia client adapter reads it on boot to mount (or hydrate) the first
 // component without a follow-up request. dataPage is HTML-attribute-escaped so
@@ -14,12 +15,12 @@ import (
 // When ssr carries server-rendered output, its head tags are hoisted into
 // <head> and its body is placed inside the root div (flagged
 // data-server-rendered) so the client hydrates the markup instead of mounting.
-func (e *Engine) shell(dataPage []byte, nonce string, ssr SSRResult) []byte {
+func (e *Engine) shell(assetHead string, dataPage []byte, nonce string, ssr SSRResult) []byte {
 	// Head = app-supplied <head> (Config.Head) + the Vite/manifest asset tags +
 	// any SSR head tags (title/meta/ssr <style>). Under a strict CSP, stamp a
 	// per-request nonce on every <script>/<link> so they're allowed by
 	// `script-src 'nonce-…'` / `style-src 'nonce-…'`.
-	head := e.customHead + e.head + strings.Join(ssr.Head, "")
+	head := e.customHead + assetHead + strings.Join(ssr.Head, "")
 	if nonce != "" {
 		head = stampNonce(head, nonce)
 	}

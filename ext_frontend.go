@@ -1,16 +1,27 @@
 package nexus
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"html"
+	"io"
 	"io/fs"
 	"log"
 	"mime"
 	"net/http"
 	"os"
+	"path"
+	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/internal/vitemanifest"
 )
 
 // init seeds the MIME type registry with the modern-web baseline
@@ -177,22 +188,32 @@ func FrontendAt(path string) FrontendOption {
 // so a frontend rebuild becomes visible on the next refresh.
 func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	devMode := os.Getenv(NexusDevEnv) == "1"
+	// The Vite manifest drives cache policy, and proves a build happened
+	// even when that build produced no index.html: an app whose entry is a
+	// module — nexus({ input: 'src/main.ts' }) for an Inertia app — builds
+	// pages, not a shell.
+	man, manErr := vitemanifest.Load(fsys, ".")
 	bootIndex, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
-		if !devMode {
-			// Production / standalone go-run: missing index.html
-			// is a deploy bug. Fail loud so the broken artifact
-			// surfaces at boot, not at first request.
-			return fmt.Errorf("nexus: ServeFrontend: index.html not found — did the bundle build? (%w)", err)
+		switch {
+		case manErr == nil:
+			// Built, but shell-less: there is no page to fall back to,
+			// so client routes 404 rather than render an empty document.
+			log.Printf("nexus: ServeFrontend: bundle has no index.html (built from %s) — unknown routes return 404", man.Path)
+			bootIndex = nil
+		case vitehot.Enabled(devMode, app.Environment()):
+			// Development — nexus dev, or environment = "development" with a
+			// plain go run — before anything is built. The frontend may be a
+			// Vite dev server the hot file points at, so keep the API and
+			// dashboard reachable and explain on / what to do next.
+			log.Printf("nexus: ServeFrontend: no index.html — serving placeholder until you build a bundle (see http://<host>/ for instructions)")
+			bootIndex = placeholderIndexHTML
+		default:
+			// Production: a bundle with neither a shell nor a manifest was
+			// never built. Fail loud so the broken artifact surfaces at
+			// boot, not at first request.
+			return fmt.Errorf("nexus: ServeFrontend: the bundle has neither index.html nor a Vite manifest — did it build? (%w)", err)
 		}
-		// Dev mode: the operator is iterating on the app. Maybe
-		// they haven't run `nexus add nexus-client/...` yet, or
-		// haven't created islands.src/, or haven't built the
-		// embedded bundle. Booting with a friendly placeholder
-		// keeps the API + dashboard reachable so they can keep
-		// working; visiting / shows them what to do next.
-		log.Printf("nexus: ServeFrontend: no index.html — serving placeholder until you build a bundle (see http://<host>/ for instructions)")
-		bootIndex = placeholderIndexHTML
 	}
 	readIndex := func() []byte {
 		if !devMode {
@@ -207,6 +228,18 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 		return fresh
 	}
 	httpFS := http.FS(fsys)
+
+	// Production cache policy comes from the build, not from path
+	// conventions: see assetCacheControl.
+	var immutable map[string]bool
+	if manErr == nil {
+		immutable = man.Immutable()
+	}
+	etags := &etagCache{fsys: fsys}
+	indexETag := ""
+	if bootIndex != nil {
+		indexETag = contentETag(bootIndex)
+	}
 
 	// Dev mode: mount the live-reload SSE channel + script so
 	// the browser refreshes when a bundle file changes. Watches
@@ -224,6 +257,43 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	// handler skip the prefix-stripping branch entirely on simple
 	// deployments.
 	effectivePrefix := app.routePrefix + normalizeRoutePrefix(cfg.mountPath)
+
+	// serveIndex answers every index.html response — the SPA fallback and a
+	// direct /index.html. While a Vite dev server has announced itself in
+	// the hot file, the page loads its modules from that server; otherwise
+	// it is the bundle's index.html, exactly as before.
+	dev := &devIndex{}
+	serveIndex := func(c *httpx.Ctx) {
+		// A live dev server comes first in every mode, not only under
+		// nexus dev: `go run .` with environment = "development" honours
+		// the hot file too.
+		if body, status, ok := dev.render(c.Request.Context(), app.ViteHot(), readIndex); ok {
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Data(status, "text/html; charset=utf-8", body)
+			return
+		}
+		page := readIndex()
+		if len(page) == 0 {
+			// A shell-less build: nothing to fall back to.
+			c.Status(http.StatusNotFound)
+			return
+		}
+		if devMode {
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Data(http.StatusOK, "text/html; charset=utf-8", page)
+			return
+		}
+		// Stored but revalidated on every use. The shell is tiny and must
+		// never be stale after a deploy, but an unchanged one costs a 304
+		// instead of the whole document — no-store threw that away.
+		c.Header("Cache-Control", "no-cache")
+		c.Header("ETag", indexETag)
+		if etagMatches(c.Request.Header.Get("If-None-Match"), indexETag) {
+			c.Status(http.StatusNotModified)
+			return
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", bootIndex)
+	}
 
 	app.engine.NoRoute(func(c *httpx.Ctx) {
 		urlPath := c.Request.URL.Path
@@ -246,6 +316,15 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 			}
 		}
 
+		// The hot file describes a local dev server and its pid. It
+		// sits inside the served tree, and `//go:embed all:web/dist`
+		// would carry a stale one into a production binary, so it is
+		// never served — in any mode.
+		if isHotFilePath(relPath) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
 		// /index.html is a special case: http.FileServer redirects
 		// it to "/" (its idea of the canonical form), which is
 		// fine for browsers but surprising for callers that
@@ -253,8 +332,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 		// so the response is a plain 200 with the same body the
 		// SPA fallback would return.
 		if relPath == "/index.html" {
-			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-			c.Data(http.StatusOK, "text/html; charset=utf-8", readIndex())
+			serveIndex(c)
 			return
 		}
 
@@ -279,11 +357,16 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 				c.Header("Pragma", "no-cache")
 				c.Header("Expires", "0")
-			case strings.HasPrefix(relPath, "/assets/"):
-				// Vite/Webpack/esbuild content-hashed names — cache
-				// hard. The hash changes every release so a stale
-				// cached entry can't outlive its filename.
-				c.Header("Cache-Control", "public, max-age=31536000, immutable")
+			default:
+				rel := strings.TrimPrefix(path.Clean(relPath), "/")
+				c.Header("Cache-Control", assetCacheControl(rel, immutable))
+				// http.FileServer answers If-None-Match from this header,
+				// which is what makes the revalidating responses cheap:
+				// embedded files have no modification time, so without an
+				// ETag they could never be answered with a 304.
+				if tag := etags.get(rel); tag != "" {
+					c.Header("ETag", tag)
+				}
 			}
 			c.FileFromFS(relPath, httpFS)
 			return
@@ -292,10 +375,250 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 		// SPA fallback. No-cache so a redeployed shell HTML is
 		// picked up on the next reload — the browser asks every
 		// time, the answer is fresh from the binary.
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", readIndex())
+		serveIndex(c)
 	})
 	return nil
+}
+
+// hotFileURLPath is the hot file's location under the served root.
+var hotFileURLPath = "/" + vitehot.Dir + "/" + vitehot.File
+
+// isHotFilePath reports whether a request path (relative to the SPA mount)
+// names the hot file. The path is cleaned the way http.FileServer cleans it,
+// and compared case-insensitively because the dev disk may be (macOS is).
+func isHotFilePath(rel string) bool {
+	return strings.EqualFold(path.Clean("/"+rel), hotFileURLPath)
+}
+
+// devIndexTimeout bounds the per-request fetch of the transformed
+// index.html from the Vite dev server. Vite answers it from memory in
+// milliseconds; a server that takes longer is wedged, and the on-disk
+// fallback beats a hung page.
+const devIndexTimeout = 3 * time.Second
+
+// devIndexClient fetches the dev server's index.html. Proxies are bypassed:
+// the dev server is a local process, never something to route through a
+// corporate proxy picked up from the environment.
+var devIndexClient = &http.Client{
+	Timeout:   devIndexTimeout,
+	Transport: &http.Transport{Proxy: nil},
+}
+
+// devIndex renders index.html against the Vite dev server named by the hot
+// file. It holds no page cache — the dev server may restart on another port
+// between two requests — only the last fetch failure it logged, so a dev
+// server that keeps refusing is reported once, not on every page load.
+type devIndex struct {
+	mu         sync.Mutex
+	lastLogged string
+}
+
+// render returns the dev page and its status, or ok=false when there is no
+// dev server to use and the caller should serve the bundle's index.html.
+//
+//   - hot file present: Vite's own transformed index.html (so every
+//     transformIndexHtml tag and the /@vite/client injection are there),
+//     with root-relative asset URLs pointed at the dev server; when that
+//     fetch fails, the on-disk index.html with the client and entries
+//     injected.
+//   - hot file present but unusable (malformed, unknown schema, left by a
+//     dead process): an error page naming the problem. Serving the stale
+//     bundle instead would look like "my edits don't show up".
+//   - no hot file, or hot files disabled (production): ok=false.
+func (d *devIndex) render(ctx context.Context, r *vitehot.Reader, readIndex func() []byte) ([]byte, int, bool) {
+	if r == nil {
+		return nil, 0, false
+	}
+	h, err := r.Current()
+	if err != nil {
+		return hotErrorPage(err), http.StatusServiceUnavailable, true
+	}
+	if h == nil {
+		return nil, 0, false
+	}
+	body, ferr := fetchDevIndex(ctx, h)
+	if ferr == nil {
+		d.mu.Lock()
+		d.lastLogged = ""
+		d.mu.Unlock()
+		return body, http.StatusOK, true
+	}
+	if ctx.Err() == nil {
+		d.logFetchFailure(h, ferr)
+	}
+	return devIndexFromDisk(readIndex(), h), http.StatusOK, true
+}
+
+func (d *devIndex) logFetchFailure(h *vitehot.Hot, err error) {
+	msg := err.Error()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if msg == d.lastLogged {
+		return
+	}
+	d.lastLogged = msg
+	log.Printf("nexus: ServeFrontend: could not load index.html from the Vite dev server at %s (%v) — serving the on-disk index.html with the Vite client injected instead", h.Origin, err)
+}
+
+// fetchDevIndex asks the dev server for index.html. Vite runs its
+// transformIndexHtml pipeline on that request, so the body carries what the
+// plugins inject. Vite writes root-relative URLs (with its base already
+// applied) — it does not prefix server.origin in HTML — and the page is
+// served from the Go origin, so they are made absolute against the dev
+// server here.
+func fetchDevIndex(ctx context.Context, h *vitehot.Hot) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, devIndexTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.URL("index.html"), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/html")
+	resp, err := devIndexClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: %s", req.URL, resp.Status)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(strings.ToLower(ct), "text/html") {
+		return nil, fmt.Errorf("GET %s: content-type %q, want text/html", req.URL, ct)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	origin := strings.TrimRight(h.Origin, "/")
+	return absolutizeDevHTML(body, func(p string) string { return origin + p }), nil
+}
+
+var (
+	// devAssetTagRE matches the opening tags whose URL attributes load
+	// something the dev server serves. Anchors and forms are left alone:
+	// navigation belongs on the Go origin.
+	devAssetTagRE = regexp.MustCompile(`(?is)<(?:script|link|img)\b[^>]*>`)
+	// devURLAttrRE captures a quoted src/href value that is root-relative.
+	devURLAttrRE = regexp.MustCompile(`(?is)(\s(?:src|href)\s*=\s*)(?:"(/[^"]*)"|'(/[^']*)')`)
+	// devScriptRE matches a whole script element, for inline module bodies.
+	devScriptRE = regexp.MustCompile(`(?is)(<script\b[^>]*>)(.*?)(</script\s*>)`)
+	// devImportRE captures a root-relative specifier after `from`,
+	// `import` or `import(` — static imports, re-exports, dynamic imports.
+	devImportRE     = regexp.MustCompile(`(\b(?:from|import)\s*\(?\s*)(?:"(/[^"]*)"|'(/[^']*)')`)
+	devModuleTypeRE = regexp.MustCompile(`(?i)\stype\s*=\s*["']?module\b`)
+	devSrcAttrRE    = regexp.MustCompile(`(?i)\ssrc\s*=`)
+	devHeadOpenRE   = regexp.MustCompile(`(?is)<head\b[^>]*>`)
+	devBodyCloseRE  = regexp.MustCompile(`(?i)</body\s*>`)
+)
+
+// devKeepOnGoOrigin reports whether a root-relative URL stays on the Go
+// origin: protocol-relative URLs are not paths at all, and /__nexus is the
+// app's own surface (dashboard, live-reload shim), never the dev server's.
+func devKeepOnGoOrigin(p string) bool {
+	return strings.HasPrefix(p, "//") || p == "/__nexus" || strings.HasPrefix(p, "/__nexus/")
+}
+
+// rewriteQuoted replaces the root-relative URL a devURLAttrRE/devImportRE
+// match captured (group 2 when double-quoted, 3 when single-quoted).
+func rewriteQuoted(re *regexp.Regexp, s string, to func(string) string) string {
+	return re.ReplaceAllStringFunc(s, func(m string) string {
+		sub := re.FindStringSubmatch(m)
+		q, v := `"`, sub[2]
+		if v == "" {
+			q, v = `'`, sub[3]
+		}
+		if devKeepOnGoOrigin(v) {
+			return m
+		}
+		return sub[1] + q + to(v) + q
+	})
+}
+
+// absolutizeDevHTML points every root-relative asset URL in a page at the
+// dev server: src/href on script, link and img tags, and import specifiers
+// inside inline module scripts (a plugin-injected preamble such as
+// `import RefreshRuntime from "/@react-refresh"` resolves against the
+// document, which is the Go origin).
+func absolutizeDevHTML(page []byte, to func(string) string) []byte {
+	s := devScriptRE.ReplaceAllStringFunc(string(page), func(m string) string {
+		parts := devScriptRE.FindStringSubmatch(m)
+		open, body, closing := parts[1], parts[2], parts[3]
+		if !devModuleTypeRE.MatchString(open) || devSrcAttrRE.MatchString(open) {
+			return m
+		}
+		return open + rewriteQuoted(devImportRE, body, to) + closing
+	})
+	s = devAssetTagRE.ReplaceAllStringFunc(s, func(tag string) string {
+		return rewriteQuoted(devURLAttrRE, tag, to)
+	})
+	return []byte(s)
+}
+
+// devIndexFromDisk is the fallback when the dev server's index.html cannot
+// be fetched: the page ServeFrontend would have served, with the Vite
+// client injected into <head> and root-relative module scripts loaded from
+// the dev server. When the hot file declares a module entry and none of
+// those scripts is it — a placeholder page, or a built index.html that
+// references hashed bundles — the entry is added, so the page still boots
+// the live source. (An SPA whose declared entry is index.html itself has no
+// module entry; its page already carries its scripts.)
+func devIndexFromDisk(page []byte, h *vitehot.Hot) []byte {
+	entry := strings.TrimPrefix(h.ModuleEntry(), "/")
+	hasEntry := false
+	s := devAssetTagRE.ReplaceAllStringFunc(string(page), func(tag string) string {
+		if !strings.HasPrefix(strings.ToLower(tag), "<script") || !devModuleTypeRE.MatchString(tag) {
+			return tag
+		}
+		return rewriteQuoted(devURLAttrRE, tag, func(p string) string {
+			if entry != "" && strings.TrimPrefix(p, "/") == entry {
+				hasEntry = true
+			}
+			return h.URL(p)
+		})
+	})
+
+	if !strings.Contains(s, h.ClientURL()) {
+		client := `<script type="module" src="` + html.EscapeString(h.ClientURL()) + `"></script>`
+		if loc := devHeadOpenRE.FindStringIndex(s); loc != nil {
+			s = s[:loc[1]] + "\n" + client + s[loc[1]:]
+		} else {
+			s = client + "\n" + s
+		}
+	}
+	if entry != "" && !hasEntry {
+		tag := `<script type="module" src="` + html.EscapeString(h.URL(entry)) + `"></script>` + "\n"
+		if loc := devBodyCloseRE.FindStringIndex(s); loc != nil {
+			s = s[:loc[0]] + tag + s[loc[0]:]
+		} else {
+			s += "\n" + tag
+		}
+	}
+	return []byte(s)
+}
+
+// hotErrorPage explains a hot file that exists but cannot be followed.
+func hotErrorPage(err error) []byte {
+	return []byte(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>nexus — Vite dev server unavailable</title>
+<style>
+  body { margin:0; padding:40px 24px; background:#f8fafc; color:#0f172a;
+         font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:720px; margin:0 auto; background:#fff; border:1px solid #fecaca;
+         border-radius:12px; padding:28px 32px; }
+  h1 { margin:0 0 8px; font-size:20px; color:#b91c1c; }
+  pre { background:#0f172a; color:#f1f5f9; border-radius:8px; padding:14px 16px;
+        white-space:pre-wrap; word-break:break-word;
+        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style></head>
+<body><main>
+<h1>The Vite dev server's hot file can't be used</h1>
+<p>nexus-vite-plugin wrote a hot file announcing a dev server, but it is not usable, so this page was not served from the stale build instead:</p>
+<pre>` + html.EscapeString(err.Error()) + `</pre>
+<p>Start the dev server again (<code>npm run dev</code>, or <code>nexus dev</code>), or delete the file if no dev server should be running.</p>
+</main></body>
+</html>
+`)
 }
 
 // placeholderIndexHTML is the friendly fallback served when
@@ -366,3 +689,91 @@ var placeholderIndexHTML = []byte(`<!doctype html>
 </body>
 </html>
 `)
+
+// assetCacheControl is the production Cache-Control for a file in the bundle
+// (rel is relative to the bundle root). A file is cached forever only when the
+// Vite manifest lists it as build output AND its name carries a content hash:
+// the manifest proves Vite produced it, and the hash proves new content gets a
+// new name. Everything else — public/ copies such as favicon.ico, anything
+// under a hash-free name — is stored but revalidated on each use, which its
+// ETag turns into a 304.
+//
+// This replaced a rule keyed on the /assets/ prefix, which cached an unhashed
+// public/assets/logo.png for a year (so a changed logo never reached returning
+// visitors) and cached nothing when build.assetsDir was renamed.
+//
+// Without a manifest (a bundle not built by Vite) the prefix convention is
+// the only signal left, so it still applies — but only to names that carry a
+// hash.
+func assetCacheControl(rel string, immutable map[string]bool) string {
+	const forever = "public, max-age=31536000, immutable"
+	switch {
+	case immutable != nil:
+		if immutable[rel] {
+			return forever
+		}
+	case strings.HasPrefix(rel, "assets/") && vitemanifest.IsHashedName(rel):
+		return forever
+	}
+	return "public, no-cache"
+}
+
+// etagCache computes a bundle file's ETag on first request and reuses it while
+// the file is unchanged. An embedded bundle cannot change, so its entries are
+// computed once; a bundle served from disk is re-checked by size and
+// modification time, so a replaced file gets a new tag.
+type etagCache struct {
+	fsys fs.FS
+	m    sync.Map // rel → etagEntry
+}
+
+type etagEntry struct {
+	size int64
+	mod  time.Time
+	tag  string
+}
+
+func (e *etagCache) get(rel string) string {
+	fi, err := fs.Stat(e.fsys, rel)
+	if err != nil || fi.IsDir() {
+		return ""
+	}
+	if v, ok := e.m.Load(rel); ok {
+		if ent := v.(etagEntry); ent.size == fi.Size() && ent.mod.Equal(fi.ModTime()) {
+			return ent.tag
+		}
+	}
+	f, err := e.fsys.Open(rel)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	tag := `"` + hex.EncodeToString(h.Sum(nil)[:8]) + `"`
+	e.m.Store(rel, etagEntry{size: fi.Size(), mod: fi.ModTime(), tag: tag})
+	return tag
+}
+
+// contentETag is a strong ETag for a byte slice.
+func contentETag(b []byte) string {
+	sum := sha256.Sum256(b)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+// etagMatches implements If-None-Match: a list of tags, weak tags compared
+// weakly (as RFC 9110 requires for this header), or "*".
+func etagMatches(header, tag string) bool {
+	if header == "" || tag == "" {
+		return false
+	}
+	for _, t := range strings.Split(header, ",") {
+		t = strings.TrimSpace(t)
+		if t == "*" || strings.TrimPrefix(t, "W/") == tag {
+			return true
+		}
+	}
+	return false
+}

@@ -1,4 +1,4 @@
-// nexus-vite-plugin.js — four plugins in one factory:
+// nexus-vite-plugin.js — five plugins in one factory:
 //
 //   1. nexus-auto-select   (default-on, all builds)
 //      Auto-injects opts.select into nx.query / nx.mutate calls
@@ -36,6 +36,19 @@
 //      manual refresh — the user's frontend just has to be running
 //      under vite dev with the nexus plugin attached.
 //
+//   5. nexus-hot   (default-on, dev + build)
+//      The Vite half of the frontend contract (internal/vitehot on the
+//      Go side). Under `vite dev` it writes
+//      <outDir>/.vite/nexus-hot.json once the server is listening —
+//      {version, origin, base, entries, pid}, origin being the port
+//      Vite actually bound — and removes it when the server stops.
+//      Under `vite build` it forces build.manifest (the Go side renders
+//      asset tags from .vite/manifest.json) and clears a stale hot file.
+//      options.input declares the entry once for both. In dev it also
+//      points server.origin at the real dev-server origin, so asset
+//      URLs resolve against Vite when the page sits on the Go app's
+//      origin.
+//
 // Wire it up in vite.config.ts:
 //
 //     import nexusAutoSelect from './src/sdk/nexus-vite-plugin.js'
@@ -59,8 +72,11 @@
 //   ✗ destructuring (defer; document workaround = direct access)
 //   ✗ cross-function flow (defer)
 
-import { readFileSync, existsSync, statSync, utimesSync, readdirSync } from 'node:fs'
-import { join, isAbsolute, resolve } from 'node:path'
+import {
+  readFileSync, existsSync, statSync, utimesSync, readdirSync,
+  writeFileSync, renameSync, unlinkSync, mkdirSync,
+} from 'node:fs'
+import { join, isAbsolute, resolve, dirname, relative, sep } from 'node:path'
 
 const DEFAULT_SDK_DIR = 'src/sdk'
 const MANIFEST = 'manifest.json'
@@ -87,6 +103,178 @@ const LOOP_GUARD_TARGETS = ['auto-imports.d.ts', 'components.d.ts']
 const FILTER_SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '.vite', '.cache', '.next', '.nuxt', 'coverage',
 ])
+
+// ── hot-file contract (nexus-hot) ─────────────────────────────────
+//
+// Mirrors internal/vitehot: the file, its directory under build.outDir,
+// and the schema version. The schema is owned by the Go side — change
+// it there first.
+const HOT_DIR = '.vite'
+const HOT_FILE = 'nexus-hot.json'
+const HOT_VERSION = 1
+const NEXUS_MANIFEST = '.vite/manifest.json'
+
+// Stands in for server.origin until the dev server has bound a port.
+// Vite prefixes dev asset URLs (CSS url(), asset imports) with
+// server.origin; the port is only known after listen, so the config
+// hook sets this marker and the transform hook swaps in the real origin.
+const ORIGIN_PLACEHOLDER = '__nexus_vite_placeholder__'
+
+// Mirrors Vite's own wildcardHosts: a server bound to one of these is
+// reachable on loopback, so that is what the hot file should say.
+const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '0000:0000:0000:0000:0000:0000:0000:0000'])
+
+// Process-wide record of the hot files this process wrote. Kept on
+// globalThis because Vite re-bundles vite.config (and with it this
+// file) on every config-change restart, so module-level state would be
+// per-restart; the signal and exit hooks must be installed once.
+const HOT_REGISTRY = Symbol.for('nexus-vite-plugin.hot-files')
+
+function hotRegistry() {
+  let reg = globalThis[HOT_REGISTRY]
+  if (!reg) {
+    reg = { files: new Set(), hooked: false }
+    globalThis[HOT_REGISTRY] = reg
+  }
+  return reg
+}
+
+function readHotFile(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+// removeOwnHotFile deletes file only when this process wrote it, so two
+// dev servers sharing an outDir never delete each other's file.
+function removeOwnHotFile(file) {
+  const hot = readHotFile(file)
+  if (!hot || hot.pid !== process.pid) return false
+  try {
+    unlinkSync(file)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function writeHotFile(file, data) {
+  mkdirSync(dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n')
+  renameSync(tmp, file)
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return e && e.code === 'EPERM'
+  }
+}
+
+// installHotExitHooks removes every hot file this process owns on exit
+// and on SIGINT/SIGTERM/SIGHUP, without changing how the process ends:
+// when nobody else listens for the signal it is re-raised with the
+// default disposition (so Ctrl-C still kills `vite`, with the usual
+// status); when someone does — Vite owns SIGTERM and closes the server
+// before exiting — that listener stays in charge. Prepended so it runs
+// before any `once` listener has removed itself for this emission,
+// which is what lets it see whether one exists.
+function installHotExitHooks() {
+  const reg = hotRegistry()
+  if (reg.hooked) return
+  reg.hooked = true
+  const cleanup = () => {
+    for (const f of reg.files) removeOwnHotFile(f)
+    reg.files.clear()
+  }
+  process.on('exit', cleanup)
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    const onSignal = () => {
+      cleanup()
+      if (process.listeners(sig).some((l) => l !== onSignal)) return
+      process.removeListener(sig, onSignal)
+      process.kill(process.pid, sig)
+    }
+    try {
+      process.prependListener(sig, onSignal)
+    } catch {
+      /* signal not supported on this platform */
+    }
+  }
+}
+
+// devOrigin is scheme://host:port for the running dev server: an explicit
+// server.origin first, then the address the socket actually bound, and Vite's
+// resolvedUrls only as a last resort.
+//
+// The socket comes before resolvedUrls on purpose. resolvedUrls say
+// "localhost", and that is ambiguous whenever another server holds the same
+// port on the other loopback family: Vite will bind [::1]:5173 while a second
+// project's Vite owns 127.0.0.1:5173, and "localhost:5173" then reaches
+// either one depending on how the client resolves the name — a page can load
+// the other project's modules. The literal address can only mean this server.
+function devOrigin(server, explicitOrigin) {
+  if (explicitOrigin) return originOf(explicitOrigin)
+  const scheme = server.config && server.config.server && server.config.server.https ? 'https' : 'http'
+  const addr = server.httpServer && server.httpServer.address && server.httpServer.address()
+  if (addr && typeof addr === 'object' && addr.port) {
+    let host = addr.address || ''
+    if (host.startsWith('::ffff:')) host = host.slice('::ffff:'.length) // IPv4-mapped
+    if (!host || WILDCARD_HOSTS.has(host)) host = '127.0.0.1'
+    if (host.includes(':')) host = `[${host}]`
+    return `${scheme}://${host}:${addr.port}`
+  }
+  const urls = server.resolvedUrls
+  const first = (urls && ((urls.local && urls.local[0]) || (urls.network && urls.network[0]))) || ''
+  return first ? originOf(first) : ''
+}
+
+function originOf(u) {
+  try {
+    return new URL(u).origin
+  } catch {
+    return String(u).replace(/\/+$/, '')
+  }
+}
+
+function toArray(v) {
+  if (v == null) return []
+  if (Array.isArray(v)) return v
+  if (typeof v === 'object') return Object.values(v)
+  return [v]
+}
+
+// rootRelative renders an entry the way the manifest keys it: relative
+// to the Vite root, forward slashes.
+function rootRelative(root, p) {
+  const abs = isAbsolute(p) ? p : resolve(root, p)
+  return relative(root, abs).split(sep).join('/')
+}
+
+// resolvedEntries is what the build will use as its entry modules,
+// root-relative: rollupOptions.input, else a library entry, else
+// Vite's default index.html.
+function resolvedEntries(cfg) {
+  const build = cfg.build || {}
+  let input = build.rollupOptions ? build.rollupOptions.input : undefined
+  if ((input == null || input === false) && build.lib) input = build.lib.entry
+  const entries = toArray(input)
+    .filter((p) => typeof p === 'string' && p !== '')
+    .map((p) => rootRelative(cfg.root, p))
+  return entries.length ? entries : ['index.html']
+}
+
+function sameEntries(a, b) {
+  const x = toArray(a).map(String).sort()
+  const y = toArray(b).map(String).sort()
+  return x.length === y.length && x.every((v, i) => v === y[i])
+}
 
 export default function nexusAutoSelect(options = {}) {
   let ts, MagicString, parseSFC
@@ -417,7 +605,176 @@ export default function nexusAutoSelect(options = {}) {
     },
   }
 
-  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin]
+  // ── nexus-hot (mode 5: the dev/prod handshake with the Go side) ──
+  //
+  // See the file header and internal/vitehot. One plugin for both
+  // commands because the config hook has to act on each: in build it
+  // forces the manifest, in dev it installs the origin placeholder.
+  // enforce: 'post' so the transform sees the output of vite:css-post
+  // and vite:asset, which is where the placeholder origin lands.
+  let hotCommand = ''
+  let hotConfig = null
+  let hotPath = ''
+  let hotOrigin = ''
+  let explicitOrigin = ''
+  let usePlaceholder = false
+  const hotWarnings = []
+  // Modules transformed before the port was known (server.warmup runs
+  // ahead of the socket bind); invalidated once the origin is known so
+  // none keeps the placeholder.
+  const placeholderPending = new Set()
+
+  const hotPlugin = {
+    name: 'nexus-hot',
+    enforce: 'post',
+
+    config(userConfig, env) {
+      hotCommand = env.command
+      const build = userConfig.build || {}
+      const rollup = build.rollupOptions || {}
+      const out = {}
+
+      if (options.input != null) {
+        if (rollup.input == null) {
+          out.build = { rollupOptions: { input: options.input } }
+        } else if (!sameEntries(rollup.input, options.input)) {
+          hotWarnings.push(
+            `[nexus] build.rollupOptions.input (${JSON.stringify(rollup.input)}) differs from ` +
+            `nexus({ input: ${JSON.stringify(options.input)} }); using build.rollupOptions.input. ` +
+            `Declare the entry in one place.`,
+          )
+        }
+      }
+
+      if (env.command === 'build' && !build.ssr && !env.isSsrBuild) {
+        if (build.manifest === undefined || build.manifest === false) {
+          out.build = { ...(out.build || {}), manifest: true }
+          if (build.manifest === false) {
+            hotWarnings.push(
+              `[nexus] build.manifest: false overridden — nexus renders production asset tags ` +
+              `from ${NEXUS_MANIFEST}, so the build must write it.`,
+            )
+          }
+        } else if (typeof build.manifest === 'string' && build.manifest !== NEXUS_MANIFEST) {
+          hotWarnings.push(
+            `[nexus] build.manifest is '${build.manifest}', but nexus reads ${NEXUS_MANIFEST} — ` +
+            `production pages will render without asset tags.`,
+          )
+        }
+      }
+
+      const server = userConfig.server || {}
+      explicitOrigin = server.origin || ''
+      usePlaceholder = env.command === 'serve' && !env.isPreview && !server.origin && !server.middlewareMode
+      if (usePlaceholder) out.server = { origin: ORIGIN_PLACEHOLDER }
+
+      return out
+    },
+
+    configResolved(cfg) {
+      hotConfig = cfg
+      hotPath = join(resolve(cfg.root, cfg.build.outDir), HOT_DIR, HOT_FILE)
+      for (const w of hotWarnings.splice(0)) cfg.logger.warn(w)
+    },
+
+    buildStart() {
+      if (hotCommand !== 'build' || !hotPath || !existsSync(hotPath)) return
+      const hot = readHotFile(hotPath)
+      if (hot && hot.pid !== process.pid && pidAlive(hot.pid)) {
+        this.warn(
+          `a vite dev server (pid ${hot.pid}) is still running against this outDir; ` +
+          `leaving its ${HOT_DIR}/${HOT_FILE} in place`,
+        )
+        return
+      }
+      try { unlinkSync(hotPath) } catch { /* already gone */ }
+    },
+
+    configureServer(server) {
+      if (!hotPath) return
+      const httpServer = server.httpServer
+      const publish = () => {
+        const origin = devOrigin(server, explicitOrigin)
+        if (!origin) return
+        hotOrigin = origin
+        const cfg = hotConfig
+        const entries = resolvedEntries(cfg)
+        try {
+          writeHotFile(hotPath, {
+            version: HOT_VERSION,
+            origin,
+            base: cfg.base || '/',
+            entries,
+            pid: process.pid,
+          })
+        } catch (e) {
+          cfg.logger.warn(`[nexus] could not write ${hotPath}: ${e && e.message ? e.message : e}`)
+          return
+        }
+        const reg = hotRegistry()
+        reg.files.add(hotPath)
+        installHotExitHooks()
+        cfg.logger.info(`[nexus] dev server ${origin} → ${relative(cfg.root, hotPath) || hotPath}`)
+        invalidatePending(server)
+      }
+
+      if (!httpServer) {
+        // Middleware mode: there is no socket to wait for. Only an
+        // explicit server.origin says where the dev server is.
+        if (explicitOrigin) publish()
+        return
+      }
+
+      // server.resolvedUrls is filled in by server.listen() after the
+      // socket's 'listening' event, so publish from a wrapper around it.
+      // The 'listening' handler covers anything that binds httpServer
+      // without going through server.listen().
+      let inListen = false
+      const listen = server.listen
+      server.listen = async function (...args) {
+        inListen = true
+        try {
+          const result = await listen.apply(this, args)
+          publish()
+          return result
+        } finally {
+          inListen = false
+        }
+      }
+      httpServer.on('listening', () => {
+        if (!inListen) publish()
+      })
+      httpServer.on('close', () => {
+        removeOwnHotFile(hotPath)
+        hotRegistry().files.delete(hotPath)
+      })
+    },
+
+    transform(code, id) {
+      if (!usePlaceholder || !code.includes(ORIGIN_PLACEHOLDER)) return null
+      if (!hotOrigin) {
+        placeholderPending.add(id)
+        return null
+      }
+      return { code: code.replaceAll(ORIGIN_PLACEHOLDER, hotOrigin), map: null }
+    },
+  }
+
+  function invalidatePending(server) {
+    if (placeholderPending.size === 0) return
+    const graphs = server.environments
+      ? Object.values(server.environments).map((e) => e.moduleGraph).filter(Boolean)
+      : [server.moduleGraph]
+    for (const id of placeholderPending) {
+      for (const g of graphs) {
+        const mod = g.getModuleById(id)
+        if (mod) g.invalidateModule(mod)
+      }
+    }
+    placeholderPending.clear()
+  }
+
+  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin, hotPlugin]
 
   // ---- script transform (TS / JS / TSX / JSX) -----------------------
 

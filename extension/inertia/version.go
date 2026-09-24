@@ -1,22 +1,16 @@
 package inertia
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"io/fs"
-	"path"
 	"strings"
+
+	"github.com/paulmanoni/nexus/internal/vitemanifest"
 )
 
-// manifestEntry mirrors the shape of one record in a Vite build manifest
-// (web/dist/.vite/manifest.json). Only the fields the shell needs are decoded.
-type manifestEntry struct {
-	File    string   `json:"file"`    // hashed output, e.g. "assets/main-ab12cd.js"
-	CSS     []string `json:"css"`     // hashed stylesheets emitted by this chunk
-	Imports []string `json:"imports"` // manifest keys of statically-imported chunks
-	IsEntry bool     `json:"isEntry"` // true for the app entry module
-}
+// manifestEntry is one record of a Vite build manifest. The parser is shared
+// with nexus.ServeFrontend (internal/vitemanifest), which reads the same file
+// for cache policy.
+type manifestEntry = vitemanifest.Chunk
 
 // manifest is the resolved view of a Vite build manifest: the full chunk graph
 // (keyed by manifest key), the entry chunk's key, and a content hash used as
@@ -28,48 +22,27 @@ type manifest struct {
 	entryKey string
 	found    bool
 	version  string
+	path     string // the candidate that was read
 }
 
-// loadManifest reads and parses the Vite manifest under root in fsys. It tries
-// the modern location (.vite/manifest.json) then the legacy top-level
-// manifest.json. The asset version is a short hash of the raw manifest bytes —
-// any change to any emitted asset changes the hash, which is exactly the
-// cache-busting signal Inertia's version check wants.
+// manifestCandidates are the paths loadManifest tries, in order.
+func manifestCandidates(root string) []string { return vitemanifest.Candidates(root) }
+
+// loadManifest reads the Vite manifest under root. A missing manifest is an
+// error wrapping fs.ErrNotExist; the asset version is a short hash of the raw
+// bytes, so any change to any emitted asset changes it — exactly the signal
+// Inertia's version check wants.
 func loadManifest(fsys fs.FS, root string) (manifest, error) {
-	candidates := []string{
-		path.Join(root, ".vite", "manifest.json"),
-		path.Join(root, "manifest.json"),
-	}
-	var raw []byte
-	var err error
-	for _, p := range candidates {
-		raw, err = fs.ReadFile(fsys, p)
-		if err == nil {
-			break
-		}
-	}
+	m, err := vitemanifest.Load(fsys, root)
 	if err != nil {
 		return manifest{}, err
 	}
-
-	var records map[string]manifestEntry
-	if err := json.Unmarshal(raw, &records); err != nil {
-		return manifest{}, err
-	}
-	// Pick the entry chunk; among multiple entries take the lexically smallest
-	// key so the choice is deterministic (map iteration order isn't).
-	entryKey := ""
-	for k, e := range records {
-		if e.IsEntry && (entryKey == "" || k < entryKey) {
-			entryKey = k
-		}
-	}
-	sum := sha256.Sum256(raw)
 	return manifest{
-		records:  records,
-		entryKey: entryKey,
+		records:  m.Chunks,
+		entryKey: m.EntryKey(),
 		found:    true,
-		version:  hex.EncodeToString(sum[:])[:16],
+		version:  m.Version,
+		path:     m.Path,
 	}, nil
 }
 
@@ -153,34 +126,41 @@ func (m manifest) headTags() string {
 	return b.String()
 }
 
-// devHeadTags renders the dev-server tags used when no build manifest is
-// present but a viteless/Vite dev server URL is known (NEXUS_VITE_DEV). entry is
-// the client app's dev module (e.g. "src/main.ts" / "src/main.tsx"); react adds
-// the Vite React Fast Refresh preamble that must run before the dev client.
+// devHeadTags renders the dev-server tags for the NEXUS_VITE_DEV fallback: a
+// dev server URL with no hot file describing it. entry is the client app's dev
+// module (e.g. "src/main.ts" / "src/main.tsx"); react adds the Vite React Fast
+// Refresh preamble that must run before the dev client.
 func devHeadTags(devURL, entry string, react bool) string {
-	entry = strings.TrimPrefix(entry, "/")
+	return devTags(devURL+"/@vite/client", devURL+"/"+strings.TrimPrefix(entry, "/"), devURL+"/@react-refresh", react, true)
+}
+
+// devTags renders the dev-server <head> tags from resolved URLs: the Vite
+// client, the entry module, and (for React) the Fast Refresh runtime.
+func devTags(clientURL, entryURL, refreshURL string, react, reloadShim bool) string {
 	var b strings.Builder
 	// /__nexus/dev/script.js is the framework's live-reload shim (mounted by
 	// ServeFrontend under NEXUS_DEV=1): it full-reloads the browser on any file
 	// change under the project root, so editing a Go page handler or a .vue/.tsx
 	// restarts the page without a manual refresh. The Vite client handles
 	// module loading + HMR.
-	b.WriteString(`<script src="/__nexus/dev/script.js"></script>`)
+	if reloadShim {
+		b.WriteString(`<script src="/__nexus/dev/script.js"></script>`)
+	}
 	// React Fast Refresh must be installed before @vite/client and the app entry.
 	if react {
-		b.WriteString(reactRefreshPreamble(devURL))
+		b.WriteString(reactRefreshPreamble(refreshURL))
 	}
-	b.WriteString(`<script type="module" src="` + devURL + `/@vite/client"></script>`)
-	b.WriteString(`<script type="module" src="` + devURL + `/` + entry + `"></script>`)
+	b.WriteString(`<script type="module" src="` + clientURL + `"></script>`)
+	b.WriteString(`<script type="module" src="` + entryURL + `"></script>`)
 	return b.String()
 }
 
 // reactRefreshPreamble is the Vite React plugin's HMR bootstrap, pointed at the
 // dev server's /@react-refresh runtime. Without it a React app's edits do a full
 // reload instead of fast-refreshing component state.
-func reactRefreshPreamble(devURL string) string {
+func reactRefreshPreamble(refreshURL string) string {
 	return `<script type="module">
-  import RefreshRuntime from '` + devURL + `/@react-refresh'
+  import RefreshRuntime from '` + refreshURL + `'
   RefreshRuntime.injectIntoGlobalHook(window)
   window.$RefreshReg$ = () => {}
   window.$RefreshSig$ = () => (type) => type

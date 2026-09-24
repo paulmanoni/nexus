@@ -18,18 +18,20 @@ var noFrontendCfg = &frontendConfig{}
 // TestServeFrontend covers the dispatch shape of the SPA mount:
 //   - extensionless paths get index.html (SPA routing) with
 //     no-cache headers
-//   - files under /assets/ get the immutable far-future cache header
-//   - other dotted paths (favicon.ico, robots.txt) get served
-//     without the immutable header
+//   - with no Vite manifest, only content-hashed names under /assets/
+//     get the immutable far-future cache header; an unhashed file there
+//     revalidates (see TestServeFrontend_ManifestCachePolicy for the
+//     manifest-driven rule)
+//   - other dotted paths (favicon.ico, robots.txt) revalidate
 //   - REST routes registered alongside still win — NoRoute only
 //     fires when nothing else claimed the path
 func TestServeFrontend(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	fsys := fstest.MapFS{
-		"index.html":             {Data: []byte("<html>app</html>")},
-		"favicon.ico":            {Data: []byte("favicon-bytes")},
-		"assets/main-abc.js":     {Data: []byte("console.log(1)")},
-		"assets/nested/deep.css": {Data: []byte(".x{}")},
+		"index.html":              {Data: []byte("<html>app</html>")},
+		"favicon.ico":             {Data: []byte("favicon-bytes")},
+		"assets/main-DfUgamcr.js": {Data: []byte("console.log(1)")},
+		"assets/nested/deep.css":  {Data: []byte(".x{}")},
 	}
 
 	app := New(Config{})
@@ -54,9 +56,11 @@ func TestServeFrontend(t *testing.T) {
 	}{
 		{"root → index", "/", expect{200, "<html>app</html>", "text/html", "no-cache"}},
 		{"index alias", "/index.html", expect{200, "<html>app</html>", "text/html", "no-cache"}},
-		{"top-level favicon", "/favicon.ico", expect{200, "favicon-bytes", "", ""}},
-		{"hashed asset", "/assets/main-abc.js", expect{200, "console.log(1)", "javascript", "immutable"}},
-		{"nested asset", "/assets/nested/deep.css", expect{200, ".x{}", "css", "immutable"}},
+		{"top-level favicon", "/favicon.ico", expect{200, "favicon-bytes", "", "no-cache"}},
+		{"hashed asset", "/assets/main-DfUgamcr.js", expect{200, "console.log(1)", "javascript", "immutable"}},
+		// Unhashed, so a rebuild reuses its name: caching it forever — as the
+		// old /assets/ prefix rule did — would serve stale styles.
+		{"unhashed asset revalidates", "/assets/nested/deep.css", expect{200, ".x{}", "css", "no-cache"}},
 		{"asset that doesn't exist", "/assets/missing.js", expect{404, "", "", ""}},
 		{"SPA client route", "/users/123", expect{200, "<html>app</html>", "text/html", "no-cache"}},
 		{"REST route wins", "/api/ping", expect{200, "pong", "", ""}},
