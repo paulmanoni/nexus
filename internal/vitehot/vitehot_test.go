@@ -236,6 +236,36 @@ func TestProbeRequiresSuccess(t *testing.T) {
 	}
 }
 
+// A dev server busy compiling accepts the connection but answers after the
+// probe deadline: that is alive, not a stop. A refused origin is dead.
+func TestBusyDevServerIsAlive(t *testing.T) {
+	release := make(chan struct{})
+	busy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); busy.Close() })
+	for _, c := range []struct {
+		origin string
+		alive  bool
+	}{{busy.URL, true}, {closedOrigin(t), false}} {
+		dist := t.TempDir()
+		write(t, dist, hotJSON(c.origin, 0))
+		r := NewReader(dist, on)
+		r.logf = nil
+		start := time.Now()
+		h, err := r.Current()
+		if err != nil || (h != nil) != c.alive {
+			t.Errorf("%s: got (%v, %v), want alive=%v", c.origin, h, err, c.alive)
+		}
+		if d := time.Since(start); d > ProbeTimeout+time.Second {
+			t.Errorf("%s: probe took %v", c.origin, d)
+		}
+	}
+}
+
 func TestLivePIDIsNotProbed(t *testing.T) {
 	dist := t.TempDir()
 	write(t, dist, hotJSON(closedOrigin(t), me))

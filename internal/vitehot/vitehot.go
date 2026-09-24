@@ -34,12 +34,14 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -229,7 +231,8 @@ func (r *Reader) Path() string { return r.path }
 // proof of death — a dev server in a container sharing the volume writes a
 // pid from another namespace — so the origin is probed (a GET of the Vite
 // client, bounded by ProbeTimeout) and the file is followed if the server
-// answers. Probe results are cached for about a second.
+// answers, or accepts the connection and is still working on the answer.
+// Probe results are cached for about a second.
 func (r *Reader) Current() (*Hot, error) {
 	if r == nil || r.enabled == nil || !r.enabled() {
 		return nil, nil
@@ -308,14 +311,24 @@ var probeClient = &http.Client{
 
 // probeOrigin reports whether a dev server answers for its Vite client. Only
 // a success counts: another server on a reused port answers 404.
+//
+// A server that accepts the connection but has not answered by the deadline
+// counts as alive: that is a dev server busy compiling (a cold load of a big
+// app), and reporting it dead would make the reload shim see it stop and
+// start again, reloading every open page for nothing. Only a refused or
+// unreachable origin, or a wrong answer, is dead.
 func probeOrigin(ctx context.Context, clientURL string) bool {
+	var connected atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn: func(httptrace.GotConnInfo) { connected.Store(true) },
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, clientURL, nil)
 	if err != nil {
 		return false
 	}
 	resp, err := probeClient.Do(req)
 	if err != nil {
-		return false
+		return connected.Load() && errors.Is(err, context.DeadlineExceeded)
 	}
 	// The status is all that matters; don't pull the whole module.
 	_, _ = io.CopyN(io.Discard, resp.Body, 512)
