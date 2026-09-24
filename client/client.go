@@ -11,6 +11,8 @@
 //	GET  <path>/client.d.ts      application/typescript (paired with client.js)
 //	GET  <path>/vue.js           application/javascript (ESM, Vue 3)
 //	GET  <path>/vue.d.ts         application/typescript (paired with vue.js)
+//	GET  <path>/inertia.d.ts     application/typescript (Inertia shared-props
+//	                             augmentation; 404 without pages/shared props)
 //
 // The manifest is the foundation. It enumerates every endpoint
 // (REST, GraphQL, WebSocket), their typed args/return schemas, the
@@ -22,6 +24,7 @@ package client
 import (
 	"embed"
 	"encoding/json"
+	"net/http"
 	"sync"
 
 	"github.com/paulmanoni/nexus/httpx"
@@ -229,6 +232,9 @@ type Handler struct {
 	dtsClient cachedAsset
 	dtsVue    cachedAsset
 	dtsReact  cachedAsset
+	// dtsInertia is inertia.d.ts; empty (and the route 404s) when the
+	// manifest has no pages or typed shared props.
+	dtsInertia cachedAsset
 }
 
 // Default auth-section hints applied when auth.Config leaves them
@@ -323,6 +329,7 @@ func (h *Handler) Reload() {
 	h.dtsClient = cachedAsset{}
 	h.dtsVue = cachedAsset{}
 	h.dtsReact = cachedAsset{}
+	h.dtsInertia = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -342,6 +349,7 @@ func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
 	h.dtsClient = cachedAsset{}
 	h.dtsVue = cachedAsset{}
 	h.dtsReact = cachedAsset{}
+	h.dtsInertia = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -357,6 +365,7 @@ func (h *Handler) SetAuthMeta(meta AuthMeta) {
 	h.dtsClient = cachedAsset{}
 	h.dtsVue = cachedAsset{}
 	h.dtsReact = cachedAsset{}
+	h.dtsInertia = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -533,6 +542,7 @@ func (h *Handler) build() {
 		clientDTS := GenerateClientDTS(m)
 		vueDTS := GenerateVueDTS(m)
 		reactDTS := GenerateReactDTS(m)
+		inertiaDTS := GenerateInertiaDTS(m)
 		h.mu.Lock()
 		if err == nil {
 			h.manifest = newCachedAsset(body)
@@ -540,6 +550,7 @@ func (h *Handler) build() {
 		h.dtsClient = newCachedAsset([]byte(clientDTS))
 		h.dtsVue = newCachedAsset([]byte(vueDTS))
 		h.dtsReact = newCachedAsset([]byte(reactDTS))
+		h.dtsInertia = newCachedAsset([]byte(inertiaDTS))
 		h.mu.Unlock()
 	})
 }
@@ -697,6 +708,17 @@ func MountWithContributions(e httpx.Router, reg *registry.Registry, authInfo fun
 			h.mu.Lock()
 			asset := h.dtsReact
 			h.mu.Unlock()
+			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
+		})
+		g.GET("/inertia.d.ts", func(c *httpx.Ctx) {
+			h.build()
+			h.mu.Lock()
+			asset := h.dtsInertia
+			h.mu.Unlock()
+			if len(asset.body) == 0 {
+				c.Status(http.StatusNotFound)
+				return
+			}
 			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
 		})
 	}

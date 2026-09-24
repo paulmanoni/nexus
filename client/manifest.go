@@ -28,6 +28,13 @@ type Manifest struct {
 	Auth      *AuthInfo                     `json:"auth,omitempty"`
 	Refs      map[string]registry.NamedType `json:"refs,omitempty"`
 
+	// SharedProps maps each typed page-wide Inertia shared prop
+	// (inertia.ShareScoped / inertia.ShareTyped) to its value type. Named
+	// types resolve through Refs. Untyped providers (inertia.Share) are
+	// absent — the generated NexusSharedProps covers them with an index
+	// signature. The engine's own `errors` prop is Inertia's to type.
+	SharedProps map[string]*registry.TypeRef `json:"sharedProps,omitempty"`
+
 	// Projected marks the stripped (non-Public) manifest served to
 	// anonymous browsers — auth flows only, no schemas, no GraphQL/CRUD
 	// ops. The runtime SDK reads it to turn the otherwise-cryptic
@@ -76,6 +83,13 @@ type EndpointInfo struct {
 	// {status, message, data}-style shape. Generated SDK callers
 	// (nx.op, useOpQuery/useOpMutation) unwrap it automatically.
 	Envelope bool `json:"envelope,omitempty"`
+
+	// Page is the Inertia component name when the endpoint is a page
+	// (inertia.Page — registry.PageTag). Return is then the page's props
+	// type: the generator keys NexusPageProps on it and leaves the route
+	// out of RestEndpoints, and the Vite plugin checks each component
+	// against the pages directory. Empty for every other endpoint.
+	Page string `json:"page,omitempty"`
 
 	Deprecated        bool   `json:"deprecated,omitempty"`
 	DeprecationReason string `json:"deprecationReason,omitempty"`
@@ -193,6 +207,7 @@ func relPath(path, basePath string) string {
 //   - reg.Resources()   → ResourceInfo[] (drops health/details/depends)
 //   - authInfo          → AuthInfo.ExtractorInfo (when callback is non-nil)
 //   - schemaRefs        → Manifest.Refs (named-type pool)
+//   - reg.SharedProps() → Manifest.SharedProps (typed Inertia shares)
 //
 // basePath is the deployment-wide route prefix (app.routePrefix).
 // Stamped onto Manifest.BasePath so the SDK can prepend it to every
@@ -254,6 +269,7 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 		if e.Tags != nil {
 			info.AuthFlow = e.Tags[authFlowTagKey]
 			info.Envelope = e.Tags[registry.EnvelopeTag] == "true"
+			info.Page = e.Tags[registry.PageTag]
 		}
 		m.Endpoints = append(m.Endpoints, info)
 	}
@@ -314,6 +330,14 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 			}
 		}
 		m.Auth = ai
+	}
+
+	if shared := reg.SharedProps(); len(shared) > 0 {
+		m.SharedProps = make(map[string]*registry.TypeRef, len(shared))
+		for k, v := range shared {
+			t := v
+			m.SharedProps[k] = &t
+		}
 	}
 
 	if len(schemaRefs) > 0 {

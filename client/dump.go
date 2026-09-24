@@ -43,6 +43,7 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 	h.mu.Lock()
 	clientDTS := append([]byte(nil), h.dtsClient.body...)
 	vueDTS := append([]byte(nil), h.dtsVue.body...)
+	inertiaDTS := append([]byte(nil), h.dtsInertia.body...)
 	h.mu.Unlock()
 
 	// Dump always writes the FULL manifest to disk — the cached
@@ -74,6 +75,10 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 		if err := WriteIfChanged(filepath.Join(outDir, f.name), f.body, stdout); err != nil {
 			return err
 		}
+	}
+
+	if err := WriteInertiaDTS(filepath.Join(outDir, "inertia.d.ts"), inertiaDTS, stdout); err != nil {
+		return err
 	}
 
 	// nexus.ts is a one-time wiring scaffold (singleton client +
@@ -122,6 +127,27 @@ func WriteIfChanged(path string, body []byte, stdout io.Writer) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	fdumpLine(stdout, ansiGreen, "wrote", path, fmt.Sprintf("%d bytes", len(body)))
+	return nil
+}
+
+// WriteInertiaDTS writes inertia.d.ts when body is non-empty. When body is
+// empty (the manifest no longer has pages or typed shared props) a
+// previously generated copy is removed: it imports NexusSharedProps from
+// ./client, which the regenerated client.d.ts no longer exports, so leaving
+// it would break type-checking. A file without the generated banner is the
+// developer's and is left alone. Shared by Dump and `nexus client`.
+func WriteInertiaDTS(path string, body []byte, stdout io.Writer) error {
+	if len(body) > 0 {
+		return WriteIfChanged(path, body, stdout)
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil || !bytes.HasPrefix(existing, []byte(generatedBanner)) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+	fdumpLine(stdout, ansiYellow, "removed", path, "no Inertia pages or typed shared props")
 	return nil
 }
 
