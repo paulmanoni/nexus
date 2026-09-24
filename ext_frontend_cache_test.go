@@ -173,10 +173,12 @@ func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 
 	t.Run("nexus dev boots to the placeholder", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "1")
+		t.Setenv(NexusDevRootEnv, t.TempDir())
 		app := New(Config{})
 		if err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg); err != nil {
 			t.Fatalf("nexus dev must not fail fast on an unbuilt bundle: %v", err)
 		}
+		stopFrontendOnCleanup(t, app)
 		if rec := get(app, "/"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "No frontend yet") {
 			t.Fatalf("want the placeholder page, got %d", rec.Code)
 		}

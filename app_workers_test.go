@@ -70,10 +70,17 @@ func TestAsWorker_RunsUntilStopSignalsCtx(t *testing.T) {
 		t.Error("worker stopped flag not set")
 	}
 
+	// The worker closes done before it returns, and runWorker records
+	// "stopped" only after the return: poll rather than read once.
 	var stopSeen bool
-	for _, w := range app.Registry().Workers() {
-		if w.Name == "test-worker" && w.Status == "stopped" {
-			stopSeen = true
+	for deadline := time.Now().Add(time.Second); !stopSeen && time.Now().Before(deadline); {
+		for _, w := range app.Registry().Workers() {
+			if w.Name == "test-worker" && w.Status == "stopped" {
+				stopSeen = true
+			}
+		}
+		if !stopSeen {
+			time.Sleep(time.Millisecond)
 		}
 	}
 	if !stopSeen {

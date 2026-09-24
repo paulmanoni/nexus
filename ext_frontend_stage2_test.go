@@ -316,6 +316,7 @@ func TestServeFrontend_ShellLessDevMatchesProduction(t *testing.T) {
 	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
 		t.Fatal(err)
 	}
+	stopFrontendOnCleanup(t, app)
 	writeHotFile(t, dist, vitehot.Hot{Version: 1, Origin: vite.URL, Base: "/", Entries: []string{"src/main.ts"}, PID: os.Getpid()})
 	for _, p := range []string{"/api/typo", "/", "/index.html"} {
 		if rec := get(app, p); rec.Code != http.StatusNotFound {
@@ -460,10 +461,12 @@ func TestApp_FrontendDocument(t *testing.T) {
 	t.Run("placeholder", func(t *testing.T) {
 		t.Setenv("GIN_MODE", "test")
 		t.Setenv(NexusDevEnv, "1")
+		t.Setenv(NexusDevRootEnv, t.TempDir())
 		app := New(Config{})
 		if err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg); err != nil {
 			t.Fatal(err)
 		}
+		stopFrontendOnCleanup(t, app)
 		if _, err := app.FrontendDocument(ctx); !errors.Is(err, ErrNoFrontendDocument) {
 			t.Fatalf("the placeholder is not a document to render into; got %v", err)
 		}

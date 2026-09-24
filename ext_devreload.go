@@ -127,8 +127,14 @@ func (h *devReloadHub) broadcast() {
 // Errors from the watcher are logged and swallowed; the dev
 // loop should not crash the app if fsnotify hits a per-platform
 // limit (e.g. macOS open-file cap).
-func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devServer func() string) {
+//
+// The returned stop ends the poller and the watcher (the app's
+// OnStop), so an app that stops leaves no goroutine or watch behind.
+func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devServer func() string) (stop func()) {
 	hub := newDevReloadHub()
+	done := make(chan struct{})
+	var once sync.Once
+	stop = func() { once.Do(func() { close(done) }) }
 
 	engine.GET("/__nexus/dev/reload", devReloadSSE(hub))
 	engine.GET("/__nexus/dev/script.js", devReloadScript())
@@ -138,9 +144,14 @@ func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devS
 		go func() {
 			tick := time.NewTicker(devReloadPollInterval)
 			defer tick.Stop()
-			for range tick.C {
-				if gate.ownerChanged() {
-					hub.broadcast()
+			for {
+				select {
+				case <-done:
+					return
+				case <-tick.C:
+					if gate.ownerChanged() {
+						hub.broadcast()
+					}
 				}
 			}
 		}()
@@ -148,7 +159,7 @@ func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devS
 
 	if watchDir == "" {
 		log.Printf("nexus: dev-reload: empty watch dir, SSE-only mode (no auto-broadcast)")
-		return
+		return stop
 	}
 	// Validate operator-supplied ignore globs once, here, so a typo
 	// surfaces at boot and the hot loop below never re-checks for
@@ -157,7 +168,7 @@ func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devS
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("nexus: dev-reload: fsnotify init failed: %v (SSE mounted but no auto-broadcast)", err)
-		return
+		return stop
 	}
 	// Recursive add: walk the directory at boot, register every
 	// existing subdir. New subdirs created later are picked up
@@ -165,7 +176,7 @@ func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devS
 	if err := addRecursive(w, watchDir); err != nil {
 		log.Printf("nexus: dev-reload: watch %s: %v", watchDir, err)
 		w.Close()
-		return
+		return stop
 	}
 
 	go func() {
@@ -178,6 +189,11 @@ func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devS
 		}
 		for {
 			select {
+			case <-done:
+				if debounce != nil {
+					debounce.Stop()
+				}
+				return
 			case ev, ok := <-w.Events:
 				if !ok {
 					return
@@ -204,6 +220,7 @@ func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devS
 			}
 		}
 	}()
+	return stop
 }
 
 // devReloadPollInterval is how often devReloadGate checks who owns the

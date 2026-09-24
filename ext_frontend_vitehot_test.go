@@ -55,7 +55,17 @@ func newViteDevFixture(t *testing.T, index string, opts ...FrontendOption) *vite
 	if err := mountFrontend(app, sub, cfg); err != nil {
 		t.Fatalf("mountFrontend: %v", err)
 	}
+	stopFrontendOnCleanup(t, app)
 	return &viteDevFixture{dir: dir, dist: dist, app: app}
+}
+
+// stopFrontendOnCleanup ends the dev-reload poller and watcher a direct
+// mountFrontend under nexus dev starts; InProcess apps stop them in OnStop.
+func stopFrontendOnCleanup(t *testing.T, app *App) {
+	t.Helper()
+	if app.frontendStop != nil {
+		t.Cleanup(app.frontendStop)
+	}
 }
 
 func (f *viteDevFixture) writeHot(t *testing.T, h vitehot.Hot) {

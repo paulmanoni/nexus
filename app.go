@@ -125,6 +125,9 @@ type App struct {
 	// FrontendDocument and FrontendMount.
 	frontendDoc   func(context.Context) (FrontendDocument, error)
 	frontendMount string
+	// frontendStop ends ServeFrontend's dev-reload poller and watcher;
+	// set only under nexus dev, and run from OnStop.
+	frontendStop func()
 	// cacheMgr is always non-nil — created by New() with a default
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis

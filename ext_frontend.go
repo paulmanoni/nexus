@@ -154,7 +154,7 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 		}
 		fsys = os.DirFS(dvr)
 	}
-	return rawOption{o: di.Invoke(func(app *App) error {
+	return rawOption{o: di.Invoke(func(app *App, lc Lifecycle) error {
 		app.setFrontendSource(srcFS, srcRoot)
 		sub := fsys
 		if root != "" {
@@ -164,7 +164,13 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 			}
 			sub = s
 		}
-		return mountFrontend(app, sub, cfg)
+		if err := mountFrontend(app, sub, cfg); err != nil {
+			return err
+		}
+		if stop := app.frontendStop; stop != nil {
+			lc.Append(Hook{OnStop: func(context.Context) error { stop(); return nil }})
+		}
+		return nil
 	})}
 }
 
@@ -278,7 +284,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	// CLI's bundler is the producer of those file changes.
 	// Production binaries never run this branch.
 	if devMode {
-		mountDevReload(app.engine, devReloadWatchDir(), app.devReloadExclude, func() string {
+		app.frontendStop = mountDevReload(app.engine, devReloadWatchDir(), app.devReloadExclude, func() string {
 			if h, _ := app.ViteHot().Current(); h != nil {
 				return h.Origin
 			}
