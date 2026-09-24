@@ -163,15 +163,19 @@ func TestClientCmd_JSConfigCreatesNew(t *testing.T) {
 
 	body := readFile(t, jsconfig)
 	for _, want := range []string{
-		`"baseUrl": "."`,
+		`"nexus-client"`,
 		`"/__nexus/client/client.js"`,
 		`"/__nexus/client/vue.js"`,
-		`"sdk/client.js"`, // relative from <web>/jsconfig.json down into sdk/
-		`"sdk/vue.js"`,
+		`"./sdk/client.js"`, // relative from <web>/jsconfig.json down into sdk/
+		`"./sdk/vue.js"`,
 	} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("jsconfig missing %q\n--- body ---\n%s", want, body)
 		}
+	}
+	// TypeScript 6 deprecates baseUrl; paths resolve without it.
+	if strings.Contains(string(body), "baseUrl") {
+		t.Errorf("a new config must not get a baseUrl\n--- body ---\n%s", body)
 	}
 }
 

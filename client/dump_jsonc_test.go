@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -69,5 +70,28 @@ func TestStripJSONC_PreservesStrings(t *testing.T) {
 	}
 	if doc["note"] != "a, }" {
 		t.Errorf("note mangled: %v", doc["note"])
+	}
+}
+
+// Mapped paths are relative to an existing baseUrl, not to the config
+// file: with baseUrl "src", web/sdk is "../sdk" from where TypeScript
+// resolves them.
+func TestMergePathsConfig_RelativeToBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "web", "tsconfig.json")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte(`{"compilerOptions":{"baseUrl":"src"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MergePathsConfig(cfg, filepath.Join(dir, "web", "sdk"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(cfg)
+	for _, want := range []string{`"baseUrl": "src"`, `"nexus-client": [`, `"../sdk/client.js"`, `"../sdk/vue.js"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("missing %s in\n%s", want, b)
+		}
 	}
 }

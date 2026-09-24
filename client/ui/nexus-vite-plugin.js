@@ -1014,6 +1014,15 @@ export default function nexusAutoSelect(options = {}) {
         }
       }
 
+      // `import … from 'nexus-client'` resolves to the SDK the Go app
+      // writes, matching the tsconfig paths entry the Go side merges. A
+      // user alias for the same name comes first in the merged list and
+      // wins.
+      const root = resolve(userConfig.root || process.cwd())
+      out.resolve = {
+        alias: [{ find: /^nexus-client$/, replacement: join(dirname(manifestPathFor(root, options.sdkDir)), 'client.js') }],
+      }
+
       const server = userConfig.server || {}
       explicitOrigin = server.origin || ''
       const dev = env.command === 'serve' && !env.isPreview

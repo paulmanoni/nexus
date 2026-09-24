@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Dump writes the embedded SDK runtime + the live manifest +
@@ -174,18 +175,21 @@ func WriteIfMissing(path string, body []byte, stdout io.Writer) error {
 // exclude, custom paths entries) are preserved entry-for-entry.
 //
 // File shape is identical for jsconfig and tsconfig — caller picks
-// the filename. compilerOptions.baseUrl defaults to "." when
-// missing (required for paths to resolve).
+// the filename. No baseUrl is added (TypeScript resolves paths against
+// the config file without one, and 6.0 deprecates it); an existing
+// baseUrl is honoured, with the mapped paths computed relative to it.
+//
+// Besides the runtime URL imports, the bare specifier "nexus-client"
+// maps to the SDK's client.js, whose client.d.ts carries every generated
+// type: `import type { NexusPageProps } from 'nexus-client'` resolves in
+// the editor, in vue-tsc, and in Vue's SFC compiler (which reads these
+// paths when TypeScript is installed). nexus-vite-plugin aliases the same
+// name for Vite, so a value import works at runtime too.
 //
 // Exported for the same reason as WriteIfChanged: the CLI flag
 // (--tsconfig / --jsconfig) and the in-process Dump path share
 // the same merge logic.
 func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
-	mappings, err := pathMappings(outDir, configPath)
-	if err != nil {
-		return fmt.Errorf("nexus client: compute paths: %w", err)
-	}
-
 	var doc map[string]any
 	if existing, err := os.ReadFile(configPath); err == nil {
 		// tsconfig/jsconfig are JSONC — tsc tolerates // and /* */ comments
@@ -204,8 +208,13 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 		co = map[string]any{}
 		doc["compilerOptions"] = co
 	}
-	if _, ok := co["baseUrl"]; !ok {
-		co["baseUrl"] = "."
+	base := filepath.Dir(configPath)
+	if b, ok := co["baseUrl"].(string); ok && b != "" {
+		base = filepath.Join(base, b)
+	}
+	mappings, err := pathMappings(outDir, base)
+	if err != nil {
+		return fmt.Errorf("nexus client: compute paths: %w", err)
 	}
 	paths, _ := co["paths"].(map[string]any)
 	if paths == nil {
@@ -313,22 +322,24 @@ func stripJSONC(data []byte) []byte {
 	return out
 }
 
-// pathMappings is the URL → file map written into the config.
-// Computes the relative path from the config file's directory to
-// outDir so the resulting paths are portable when the project
-// moves around on disk. Forward slashes regardless of OS — the
-// jsconfig/tsconfig spec calls for them on every platform.
-func pathMappings(outDir, configPath string) (map[string][]string, error) {
-	configDir := filepath.Dir(configPath)
-	rel, err := filepath.Rel(configDir, outDir)
+// pathMappings is the specifier → file map written into the config,
+// relative to base (the config file's directory, or its baseUrl) so the
+// paths stay portable when the project moves on disk. Always "./"-led and
+// forward-slashed: TypeScript resolves a paths entry against base either
+// way, and the spec calls for forward slashes on every platform.
+func pathMappings(outDir, base string) (map[string][]string, error) {
+	rel, err := filepath.Rel(base, outDir)
 	if err != nil {
 		return nil, err
 	}
 	rel = filepath.ToSlash(rel)
 	if rel == "" || rel == "." {
 		rel = "."
+	} else if !strings.HasPrefix(rel, "../") {
+		rel = "./" + rel
 	}
 	return map[string][]string{
+		"nexus-client":              {rel + "/client.js"},
 		"/__nexus/client/client.js": {rel + "/client.js"},
 		"/__nexus/client/vue.js":    {rel + "/vue.js"},
 	}, nil

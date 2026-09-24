@@ -856,3 +856,21 @@ test('pages dev: a missing pages directory is pointed out once', (t) => {
   assert.equal(l.warns.length, 4)
   assert.match(l.warns[3], /'Contact'/)
 })
+
+test('sdk: the bare import nexus-client is aliased to the SDK client.js', () => {
+  const aliasFor = (root, options = {}) => {
+    const out = hot(options).config({ root }, { command: 'serve', mode: 'development' })
+    const a = out.resolve.alias.find((x) => String(x.find) === String(/^nexus-client$/))
+    return a && a.replacement
+  }
+  const root = mkdtempSync(join(tmpdir(), 'nexus-alias-'))
+  try {
+    assert.equal(aliasFor(root), join(root, 'sdk', 'client.js'))
+    writeManifest(root, 'src/sdk')
+    assert.equal(aliasFor(root), join(root, 'src', 'sdk', 'client.js'))
+    assert.equal(aliasFor(root, { sdkDir: 'gen' }), join(root, 'gen', 'client.js'))
+    assert.ok(!'nexus-client/vue'.match(/^nexus-client$/))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

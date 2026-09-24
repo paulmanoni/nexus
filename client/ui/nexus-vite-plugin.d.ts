@@ -14,7 +14,9 @@ import type { Plugin } from 'vite'
 export interface NexusVitePluginOptions {
   /**
    * SDK directory holding manifest.json, absolute or relative to the
-   * Vite root. The auto-select, manifest-filter and page checks read it.
+   * Vite root. The auto-select, manifest-filter and page checks read it,
+   * and the plugin aliases the bare import 'nexus-client' to its
+   * client.js (the Go side maps the same name in tsconfig paths).
    * Default: 'sdk' — web/sdk, where the Go app writes the SDK in dev.
    * Left unset, a project that only has src/sdk/manifest.json (the old
    * default) keeps reading that one.
