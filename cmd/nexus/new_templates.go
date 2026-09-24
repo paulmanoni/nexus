@@ -727,11 +727,11 @@ button { padding: .5rem 1rem; border-radius: .25rem; cursor: pointer; }
 // under src/Pages are resolved by the name the Go handler passes to
 // inertia.Page (e.g. "Home" → src/Pages/Home.vue).
 const tmplInertiaMainTS = `import { createInertiaApp } from '@inertiajs/vue3'
-import { createApp, h } from 'vue'
+import { createApp, h, type DefineComponent } from 'vue'
 
 createInertiaApp({
   resolve: (name) => {
-    const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
+    const pages = import.meta.glob<{ default: DefineComponent }>('./Pages/**/*.vue', { eager: true })
     return pages['./Pages/' + name + '.vue']
   },
   setup({ el, App, props, plugin }) {
@@ -848,11 +848,11 @@ const tmplViteInertiaPackageJSON = `{
 // the server-rendered markup the Go shell placed in the root div (vs
 // re-rendering from scratch) — the only difference from tmplInertiaMainTS.
 const tmplInertiaSSRMainTS = `import { createInertiaApp } from '@inertiajs/vue3'
-import { createSSRApp, h } from 'vue'
+import { createSSRApp, h, type DefineComponent } from 'vue'
 
 createInertiaApp({
   resolve: (name) => {
-    const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
+    const pages = import.meta.glob<{ default: DefineComponent }>('./Pages/**/*.vue', { eager: true })
     return pages['./Pages/' + name + '.vue']
   },
   // createSSRApp (not createApp) so mount() hydrates the server-rendered
@@ -871,14 +871,14 @@ createInertiaApp({
 const tmplInertiaSSRTS = `import { createInertiaApp } from '@inertiajs/vue3'
 import createServer from '@inertiajs/server'
 import { renderToString } from '@vue/server-renderer'
-import { createSSRApp, h } from 'vue'
+import { createSSRApp, h, type DefineComponent } from 'vue'
 
 createServer((page) =>
   createInertiaApp({
     page,
     render: renderToString,
     resolve: (name) => {
-      const pages = import.meta.glob('./Pages/**/*.vue', { eager: true })
+      const pages = import.meta.glob<{ default: DefineComponent }>('./Pages/**/*.vue', { eager: true })
       return pages['./Pages/' + name + '.vue']
     },
     setup({ App, props, plugin }) {

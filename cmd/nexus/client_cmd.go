@@ -73,12 +73,12 @@ the second-parsed wins.
 
 Examples:
 
-    nexus client --out ./web/src/sdk
-    nexus client --out ./web/src/sdk --url http://localhost:8080
-    nexus client --out ./web/src/sdk --manifest ./manifest.json
-    nexus client --out ./web/src/sdk --manifest -            # JSON on stdin
-    nexus client --out ./web/src/sdk --jsconfig ./web/jsconfig.json
-    nexus client --out ./web/src/sdk --tsconfig ./web/tsconfig.json
+    nexus client --out ./web/sdk
+    nexus client --out ./web/sdk --url http://localhost:8080
+    nexus client --out ./web/sdk --manifest ./manifest.json
+    nexus client --out ./web/sdk --manifest -            # JSON on stdin
+    nexus client --out ./web/sdk --jsconfig ./web/jsconfig.json
+    nexus client --out ./web/sdk --tsconfig ./web/tsconfig.json
 `,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {

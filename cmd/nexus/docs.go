@@ -1900,20 +1900,20 @@ Composable signatures are typed via the same maps:
 
 For frontends that prefer checking the SDK into their repo:
 
-    nexus client --out ./web/src/sdk
+    nexus client --out ./web/sdk
         # static dump: client.js + vue.js only
 
-    nexus client --out ./web/src/sdk --url http://localhost:8080
+    nexus client --out ./web/sdk --url http://localhost:8080
         # also fetch manifest.json + generate matching client.d.ts
 
-    nexus client --out ./web/src/sdk --manifest ./manifest.json
+    nexus client --out ./web/sdk --manifest ./manifest.json
         # offline — read a saved manifest
 
-    nexus client --out ./web/src/sdk --jsconfig ./web/jsconfig.json
+    nexus client --out ./web/sdk --jsconfig ./web/jsconfig.json
         # add IDE path mappings so '/__nexus/client/*' imports
         # resolve to the dumped files (go-to-definition + completion)
 
-    nexus client --out ./web/src/sdk --tsconfig ./web/tsconfig.json
+    nexus client --out ./web/sdk --tsconfig ./web/tsconfig.json
         # same as --jsconfig but writes/merges a TS config
 
 Both --jsconfig and --tsconfig MERGE into existing files — your
