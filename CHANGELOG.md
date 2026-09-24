@@ -15,12 +15,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pages load modules from wherever Vite actually bound (including when 5173
   is taken), a Vite restart on a new port applies with no Go restart, and
   `npm run dev` + `go run .` with `environment = "development"` is a complete
-  dev setup without `nexus dev`. The file is honoured only under `nexus dev`
-  or `environment = "development"`, read from disk only, never served, and a
-  file left by a killed dev server is reported rather than followed. The
+  dev setup without `nexus dev`. The file is read from disk only, never
+  served, and followed only while the dev server it names is live (running
+  pid, or an origin that answers); one left by a killed dev server reads as
+  absent and is logged once. The
   origin is the socket's bound address, not `localhost`: two dev servers can
   hold the same port on 127.0.0.1 and ::1, and `localhost` reaches either.
   `NEXUS_VITE_DEV` remains as a fallback.
+- **Inertia pages render into `index.html`.** The engine used to synthesise its
+  own document, so everything an app put in `index.html` — title, meta,
+  stylesheets, a loader — was missing on server-rendered pages. It now puts the
+  page object on the mount element of the real document (Vite's transformed
+  page in dev, the built page in production) and adds no asset tags of its own.
+  A module-only build still gets a synthesised document, with tags under the
+  path the bundle is actually served at (`App.FrontendMount`), not `/`.
+- **Dev reload that doesn't fight HMR.** Under `nexus dev` a `.vue` save was
+  applied in place by Vite and then thrown away by a full reload ~130ms later.
+  The reload shim now reloads only when a new server process is serving (a
+  boot ID), or when the dev server starts, stops or moves to another port —
+  never for files Vite handles. SPA pages carry the shim too.
+- **`public/` files in development** are proxied from the app's origin to the
+  Vite dev server (loopback clients only), so runtime paths like
+  `fetch('/config.json')` and template `<img src="/logo.png">` stay live.
 - **`nexus({ input })`** declares an Inertia app's entry module once; the
   plugin also forces `build.manifest: true` and sets `server.origin` so CSS
   `url()` and asset imports resolve against the dev server when the page is
@@ -46,6 +62,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   proves it built (a module-only Inertia build); unknown routes then 404. A
   bundle with neither still fails fast in production, and serves a
   placeholder in development.
+- A hot file whose dev server has exited reads as absent (after checking its
+  pid, then whether its origin answers) instead of turning every page into an
+  error; a build into the same outDir restores a live dev server's hot file.
+  Boot leniency for an unbuilt bundle now needs `nexus dev` or a live dev
+  server — `environment = "development"`, which scaffolds ship, no longer
+  skips the production fail-fast.
+- `/.vite/` (the manifest and the hot file) is never served, and the bundle is
+  never directory-listed.
+- The Vite plugin's CORS allowlist covers loopback, `*.localhost`, `*.test`,
+  this machine's addresses and `nexus({ appOrigin })`; a `--host` bind writes a
+  network-reachable origin, so LAN and mobile testing work.
 - The production `index.html` is `Cache-Control: no-cache` with an ETag
   (304 when unchanged) instead of `no-store`.
 - **Dependency outages are reported once.** A database or Redis that is

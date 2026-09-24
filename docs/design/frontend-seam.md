@@ -74,11 +74,16 @@ and removes it on shutdown. It sits beside the manifest `vite build` writes
 because the build output directory is the **one path both sides already
 share** — Vite's `build.outDir` and the root passed to `ServeFrontend` — so
 locating it needs no new convention and no guess about which directory is the
-Vite root. `vite build`'s `emptyOutDir` clears it. The Go side reads it only
-from disk, never from an embed, and only when `nexus dev` is running or the
-app declares `environment = "development"` (the default is `"production"`),
-so a stale file cannot redirect a production page. A file left by a killed
-dev server is detected by its pid and reported, not followed.
+Vite root. A build into the same outDir restores a live dev server's file after `emptyOutDir` wipes it; a stale one is removed. The Go side reads it only
+from disk, never from an embed, and follows it only while the dev server it
+names is **live** — its pid is running, or, when the pid is dead or unknown
+(Vite in a container sharing the volume), its origin answers
+`@vite/client`. A file left by a killed dev server, which is routine because
+`nexus dev` stops Vite with SIGKILL, therefore reads as absent and is logged
+once; it neither errors nor redirects pages. Liveness is what protects a
+deployment: `nexus new` writes `environment = "development"` into nexus.toml
+and deployments ship it, so the environment check that also gates the file
+cannot be the safety on its own.
 
 Contract implementation: `internal/vitehot` (schema, reader, the enable rule),
 one instance per app via `App.ViteHot()`, created by `ServeFrontend`. `ServeFrontend` and the Inertia engine stat the
@@ -229,8 +234,52 @@ component in place. Three decisions changed on contact with a real machine:
   The manifest parser moved to `internal/vitemanifest`, shared by inertia and
   `ServeFrontend`.
 
-Carried into later stages: the three reload systems still coexist (Stage 2);
-`nexus dev --dist` running a real `vite build` into a live dev server's outDir
-would delete its hot file via `emptyOutDir` (Stage 4, when `--dist` moves to
-Vite); an app that passes its bundle only through `inertia.Config.Frontend`
+Carried into later stages: the three reload systems still coexist (fixed in
+Stage 2); an app that passes its bundle only through `inertia.Config.Frontend`
 gets no hot-file support because the reader is created by `ServeFrontend`.
+
+## Stage 2 — as built
+
+Built on branch `stage2-shell` together with the fixes from an adversarial
+review of Stage 1 (one high, five medium, all reproduced), and verified with a
+27-check scripted run against real Vite 6.4.3 (local install) and a real
+browser under `nexus dev`: a `.vue` edit hot-updated in place with no reload
+and JS state kept; a `.go` edit reloaded the page once, ~4s later, after the
+rebuilt binary was serving; a `public/` file loaded through the Go origin; the
+page kept `index.html`'s title and stylesheet.
+
+- **Pages render into `index.html`.** `App.FrontendDocument` hands the engine
+  Vite's transformed page in dev and the built page in production; the engine
+  puts `data-page` on the mount (replacing a hard-coded one), keeps everything
+  else byte-for-byte, and adds no asset tags — the document already carries
+  them. A module-only build (`nexus({ input })`, no `index.html`) is the one
+  case that still gets a synthesised document, now with tags under
+  `App.FrontendMount()` rather than `/`. The mount is found by a small tag
+  scanner that is not fooled by ids in comments, scripts or attributes. With a
+  CSP nonce, the template's own script/link/style tags are stamped too, or a
+  strict-CSP app would lose its scripts.
+- **The reload shim reloads for a new process, not for file writes.** Every
+  process has a boot ID; a reconnect that sees a different one reloads — after
+  the new binary serves. While a dev server is live, file changes never reload
+  (Vite owns them); `.go` saves never reload on the file event. The shim also
+  reloads once when the dev server starts, stops, or comes back on a different
+  origin — pages would otherwise keep loading modules from a dead port. SPA
+  pages now carry the shim too.
+- **Review fixes.** `public/` files are proxied to Vite for loopback clients
+  (never the LAN: that would expose Vite's source and `/@fs`); a stale hot file
+  reads as absent after a liveness probe (pid, else the origin answering), and
+  liveness — not `environment = "development"`, which scaffolds ship — is what
+  protects a deployment; boot leniency needs `nexus dev` or a live dev server;
+  `immutable` needs an exact 8-character Vite hash with a digit or capital,
+  settled by the manifest's own names; a build restores a live dev server's hot
+  file after `emptyOutDir`; CORS allows loopback, `*.localhost`, `*.test`, this
+  machine's addresses and `nexus({ appOrigin })`, and a `--host` bind names the
+  network address; `/.vite/` is never served; hot-derived values are validated
+  and escaped.
+
+Carried into later stages: `nexus dev` stops real Vite with SIGKILL (inside
+viteless), so the plugin cannot clean up — harmless now, but Stage 4's
+Vite-driving `nexus dev` should send SIGTERM. ThemeHead-style per-request head
+content (a theme only for some routes) still needs a per-request `Config.Head`.
+One root-package test failed once under full-parallel load and not in ten
+further runs; the new timing-sensitive tests are the suspects.

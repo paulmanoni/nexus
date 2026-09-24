@@ -80,11 +80,17 @@ routes then 404; in development an unbuilt bundle serves a placeholder instead.
 **The Vite handshake (`internal/vitehot`).** With `nexus-vite-plugin` in
 `vite.config`, `vite dev` writes `<outDir>/.vite/nexus-hot.json` (the dev server's
 bound origin, base, entries, pid) and removes it on exit. `ServeFrontend` and the
-Inertia engine read it per request — honoured only under `nexus dev` or
-`environment = "development"`, never served, stale files (dead pid) reported — so
-pages on the Go origin load modules from wherever Vite really bound. That makes
+Inertia engine read it per request — never served, followed only while its dev
+server is live (running pid, or an origin that answers; a file left by a killed Vite
+reads as absent) — so pages on the Go origin load modules from wherever Vite really
+bound, and `public/` files are proxied to Vite for loopback clients. That makes
 `npm run dev` + `go run .` a complete dev setup. `nexus({ input: 'src/main.ts' })`
-declares an Inertia entry; the plugin forces `build.manifest: true`. Design:
+declares an Inertia entry; the plugin forces `build.manifest: true`. **Inertia pages render into
+`index.html`** (`App.FrontendDocument`): the engine sets `data-page` on the mount
+element and keeps the rest of the document, so title/meta/stylesheets live in
+`index.html`, not in `inertia.Config.Head`; only a module-only build (`input`, no
+`index.html`) gets a synthesised document. Under `nexus dev` the reload shim reloads
+when a new server process is serving, never for files Vite hot-updates. Design:
 `docs/design/frontend-seam.md`. `NEXUS_VITE_DEV` is the fallback for the viteless
 engine, which does not run the plugin.
 
