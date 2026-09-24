@@ -84,19 +84,24 @@ type Plugin struct {
 	// Optional.
 	Client *Client
 
-	// Generate marks the plugin as a codegen driver. Exactly one
-	// plugin per app may set this; the second registration panics at
-	// boot. The frontend extension sets it; most plugins don't. See
-	// the Generate struct doc for the contract.
+	// Generate marks the plugin as a codegen driver.
+	//
+	// Deprecated: nothing ever consumed an in-process Generate driver —
+	// `nexus generate frontend` and the nexus dev auto-codegen call
+	// frontend.Render directly and fetch plugin output over
+	// <client path>/contributions.json. Use no longer registers one; a
+	// set Generate is still validated and flags the plugin as
+	// HasGenerate on the dashboard, nothing more. Ship per-plugin
+	// codegen through Contributor.
 	Generate *Generate
 
-	// Contributor adds plugin-specific files to whatever the active
-	// Generate driver renders. Unlike Generate, Contributor is many-
-	// per-app: auth might publish auth/index.ts, oauth2 might publish
-	// oauth2/index.ts, and both ride alongside the frontend driver's
-	// own _client.ts / index.ts. The driver merges Contributor output
-	// into its file tree at Render time. Optional — only set this on
-	// plugins that have framework-flavored code to ship.
+	// Contributor adds plugin-specific files to the frontend codegen
+	// tree. Many per app: auth might publish auth/index.ts, oauth2
+	// might publish oauth2/index.ts, and both ride alongside the
+	// frontend renderer's own _client.ts / index.ts. The app serves
+	// every contributor's output on <client path>/contributions.json,
+	// which the CLI codegen merges into its tree. Optional — only set
+	// this on plugins that have framework-flavored code to ship.
 	Contributor ClientContributor
 }
 
@@ -122,13 +127,13 @@ type GenerateContext struct {
 }
 
 // ClientContributor is the optional interface a plugin can implement
-// (and surface via Plugin.Contributor) to add extra files to whatever
-// generator the active Generate driver runs. The frontend extension
-// is the canonical consumer: at Render time it asks the App for every
-// registered contributor and merges the returned files into its output
-// tree.
+// (and surface via Plugin.Contributor) to add extra files to the
+// frontend codegen tree. The app serves every registered contributor's
+// output on <client path>/contributions.json; the CLI codegen fetches
+// it and hands it to frontend.Render as StaticContributors, which merges
+// the files into its output tree.
 //
-// NexusContribute receives the same GenerateContext the driver sees,
+// NexusContribute receives the same GenerateContext the renderer sees,
 // including the framework choice in Extras["frontend.framework"] —
 // contributors that ship per-framework adapters (a Vue auth composable
 // vs. a React hook, say) branch on that key.
@@ -171,9 +176,10 @@ func (s staticContributor) NexusContribute(GenerateContext) ([]File, error) {
 
 // Generate declares a codegen driver. OutDir resolves the absolute
 // directory the driver wants files written to; Render produces the
-// file tree. Both are required. The shape mirrors nexus.GenerateDriver
-// — Use() converts between them — so plugin authors never import the
-// nexus internals to write a driver.
+// file tree. Both are required when the slot is set.
+//
+// Deprecated: see Plugin.Generate — Use no longer registers the driver,
+// because nothing ever read it back.
 type Generate struct {
 	OutDir func(app *nexus.App) (string, error)
 	Render func(ctx GenerateContext) ([]File, error)
@@ -290,10 +296,6 @@ func Use(p Plugin) nexus.Option {
 		opts = append(opts, nexus.Invoke(p.Client.Apply))
 	}
 
-	if p.Generate != nil {
-		opts = append(opts, generateDriverOption(p.Name, p.Generate))
-	}
-
 	if p.Contributor != nil {
 		opts = append(opts, contributorOption(p.Name, p.Contributor))
 	}
@@ -303,11 +305,9 @@ func Use(p Plugin) nexus.Option {
 
 // contributorOption registers a Plugin.Contributor on the App via
 // di.Invoke. The callback adapts between extension's File +
-// GenerateContext types and the nexus mirrors — same conversion the
-// generateDriverOption wrapper does in the other direction, kept here
-// rather than in nexus/ so the conversion is package-local and the
-// extension package stays the single source of truth for the
-// contributor surface.
+// GenerateContext types and the nexus mirrors, kept here rather than in
+// nexus/ so the conversion is package-local and the extension package
+// stays the single source of truth for the contributor surface.
 func contributorOption(name string, c ClientContributor) nexus.Option {
 	return nexus.Invoke(func(app *nexus.App) {
 		app.RegisterClientContributor(nexus.ClientContributorRecord{
@@ -330,90 +330,6 @@ func contributorOption(name string, c ClientContributor) nexus.Option {
 			},
 		})
 	})
-}
-
-// generateDriverOption converts an extension.Generate slot into a
-// nexus.GenerateDriver registration. The di.Invoke runs once during
-// di.Start; (*App).RegisterGenerateDriver panics on duplicate, so
-// "two frontends in one app" surfaces at boot — well before
-// `nexus build` would have tried to merge their outputs.
-//
-// The Render closure captures *App so it can read the contributor
-// list lazily at render time. That matters because contributors and
-// the driver register from independent di.Invokes — at registration
-// time we don't know which contributors have run yet. Pulling them
-// at Render time gives a deterministic post-boot snapshot regardless
-// of Invoke order.
-func generateDriverOption(name string, g *Generate) nexus.Option {
-	return nexus.Invoke(func(app *nexus.App) {
-		drv := nexus.GenerateDriver{
-			PluginName: name,
-			OutDir:     g.OutDir,
-			Render: func(ctx nexus.GenerateContext) ([]nexus.GeneratedFile, error) {
-				contribs := collectContributors(app)
-				files, err := g.Render(GenerateContext{
-					Registry:     ctx.Registry,
-					Refs:         ctx.Refs,
-					BasePath:     ctx.BasePath,
-					Extras:       ctx.Extras,
-					Contributors: contribs,
-				})
-				if err != nil {
-					return nil, err
-				}
-				out := make([]nexus.GeneratedFile, len(files))
-				for i, f := range files {
-					out[i] = nexus.GeneratedFile{Path: f.Path, Body: f.Body}
-				}
-				return out, nil
-			},
-		}
-		app.RegisterGenerateDriver(drv)
-	})
-}
-
-// collectContributors snapshots the App's registered contributors and
-// wraps each one in an adapter that re-fits the nexus-shaped callback
-// back into the extension.ClientContributor interface the renderer
-// expects. The double conversion (extension → nexus → extension) is
-// unavoidable as long as the registration crosses the package
-// boundary; keeping it in one helper makes the cost obvious instead of
-// scattering it through the driver code.
-func collectContributors(app *nexus.App) []ClientContributor {
-	recs := app.ClientContributors()
-	if len(recs) == 0 {
-		return nil
-	}
-	out := make([]ClientContributor, len(recs))
-	for i, rec := range recs {
-		out[i] = recordContributor{name: rec.PluginName, fn: rec.Contribute}
-	}
-	return out
-}
-
-// recordContributor adapts a nexus.ClientContributorRecord back to the
-// extension.ClientContributor interface. The renderer never sees the
-// nexus type — it only knows how to call NexusContribute(extension.GenerateContext).
-type recordContributor struct {
-	name string
-	fn   nexus.ClientContributorFunc
-}
-
-func (r recordContributor) NexusContribute(ctx GenerateContext) ([]File, error) {
-	out, err := r.fn(nexus.GenerateContext{
-		Registry: ctx.Registry,
-		Refs:     ctx.Refs,
-		BasePath: ctx.BasePath,
-		Extras:   ctx.Extras,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("contributor %s: %w", r.name, err)
-	}
-	files := make([]File, len(out))
-	for i, f := range out {
-		files[i] = File{Path: f.Path, Body: f.Body}
-	}
-	return files, nil
 }
 
 func validate(p Plugin) error {

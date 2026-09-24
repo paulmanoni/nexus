@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -66,101 +67,39 @@ func TestValidate_Generate(t *testing.T) {
 }
 
 // TestUse_Generate_RecordsHasGenerate asserts the PluginRecord that
-// extension.Use builds carries HasGenerate=true when the Generate
-// slot is set. The dashboard reads this to mark plugins that
-// contribute codegen, so a regression here would silently lose the
-// signal.
+// extension.Use builds carries HasGenerate=true when the (deprecated)
+// Generate slot is set, and that Use no longer registers a driver —
+// nothing ever read one back. Two Generate plugins in one app therefore
+// boot instead of panicking on the old one-driver rule.
 func TestUse_Generate_RecordsHasGenerate(t *testing.T) {
-	p := Plugin{
-		Name: "fe",
-		Generate: &Generate{
-			OutDir: func(*nexus.App) (string, error) { return "/tmp", nil },
-			Render: func(GenerateContext) ([]File, error) { return nil, nil },
-		},
-	}
-	if opt := Use(p); opt == nil {
-		t.Fatal("Use returned nil for valid Generate plugin")
-	}
-}
-
-// TestCollectContributors_WrapsRegisteredRecords boots an App via
-// nexus.New, registers two contributors directly on it (bypassing
-// fx — the helper is a pure post-registration read), and asserts
-// collectContributors hands them back wrapped in adapters that
-// faithfully proxy through to the underlying functions.
-//
-// This is the load-bearing seam phase 2 introduces: the driver's
-// Render reads contributors lazily from the App at call time, so
-// fxBootOptions ordering can't reorder this relative to fx.Invoke.
-func TestCollectContributors_WrapsRegisteredRecords(t *testing.T) {
-	app := nexus.New(nexus.Config{})
-	calls := 0
-	app.RegisterClientContributor(nexus.ClientContributorRecord{
-		PluginName: "a",
-		Contribute: func(ctx nexus.GenerateContext) ([]nexus.GeneratedFile, error) {
-			calls++
-			return []nexus.GeneratedFile{{Path: "a.ts", Body: []byte("// a")}}, nil
-		},
-	})
-	app.RegisterClientContributor(nexus.ClientContributorRecord{
-		PluginName: "b",
-		Contribute: func(ctx nexus.GenerateContext) ([]nexus.GeneratedFile, error) {
-			calls++
-			return []nexus.GeneratedFile{{Path: "b.ts", Body: []byte("// b")}}, nil
-		},
-	})
-
-	got := collectContributors(app)
-	if len(got) != 2 {
-		t.Fatalf("len(collectContributors) = %d, want 2", len(got))
-	}
-
-	for _, c := range got {
-		files, err := c.NexusContribute(GenerateContext{})
-		if err != nil {
-			t.Fatalf("NexusContribute: %v", err)
-		}
-		if len(files) != 1 {
-			t.Errorf("contributor returned %d files, want 1", len(files))
+	gen := func(name string) Plugin {
+		return Plugin{
+			Name: name,
+			Generate: &Generate{
+				OutDir: func(*nexus.App) (string, error) { return "/tmp", nil },
+				Render: func(GenerateContext) ([]File, error) { return nil, nil },
+			},
 		}
 	}
-	if calls != 2 {
-		t.Fatalf("underlying fns called %d times, want 2", calls)
+	app, stop, err := nexus.InProcess(nexus.Config{}, Use(gen("fe")), Use(gen("fe2")))
+	if err != nil {
+		t.Fatalf("InProcess: %v", err)
+	}
+	defer stop(context.Background())
+
+	flagged := map[string]bool{}
+	for _, r := range app.Plugins() {
+		if r.HasGenerate {
+			flagged[r.Name] = true
+		}
+	}
+	if len(flagged) != 2 || !flagged["fe"] || !flagged["fe2"] {
+		t.Fatalf("plugins flagged HasGenerate = %v, want exactly fe and fe2", flagged)
+	}
+	if drv := app.GenerateDrivers(); len(drv) != 0 {
+		t.Fatalf("GenerateDrivers() = %d drivers, want none registered by Use", len(drv))
 	}
 }
-
-// TestCollectContributors_PropagatesErrors checks that a contributor
-// failure surfaces as "contributor <name>: <err>" so the driver's
-// callsite can point at the bad plugin in a build log.
-func TestCollectContributors_PropagatesErrors(t *testing.T) {
-	app := nexus.New(nexus.Config{})
-	app.RegisterClientContributor(nexus.ClientContributorRecord{
-		PluginName: "broken",
-		Contribute: func(ctx nexus.GenerateContext) ([]nexus.GeneratedFile, error) {
-			return nil, errBoom
-		},
-	})
-	got := collectContributors(app)
-	_, err := got[0].NexusContribute(GenerateContext{})
-	if err == nil {
-		t.Fatal("expected error from broken contributor")
-	}
-	if !strings.Contains(err.Error(), "broken") {
-		t.Fatalf("error %q does not name plugin", err)
-	}
-	if !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("error %q does not wrap inner cause", err)
-	}
-}
-
-// errBoom is the sentinel returned by the broken contributor in the
-// error-propagation test. Lives at package scope so the test reads
-// cleanly without an inline errors.New.
-var errBoom = stubErr("boom")
-
-type stubErr string
-
-func (s stubErr) Error() string { return string(s) }
 
 // TestStaticContributor_WrapsFiles is the adapter the CLI uses to
 // inject HTTP-fetched contributions back into the renderer's

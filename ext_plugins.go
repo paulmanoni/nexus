@@ -48,16 +48,15 @@ type GenerateContext struct {
 	Extras   map[string]any
 }
 
-// GenerateDriver is the codegen contribution one plugin per app may
-// declare. extension.Use converts an extension.Generate slot into this
-// record and registers it on the App at boot. The nexus CLI (or any
-// in-process tool) calls App.GenerateDrivers() to find the active
-// driver, asks for its OutDir, runs Render, and writes the result.
+// GenerateDriver is a codegen driver record: an OutDir resolver and a
+// Render producing the file tree.
 //
-// Exactly one driver per app is the v1 contract — apps with multiple
-// frontends are a v2 problem. Duplicate registration panics at boot so
-// misconfiguration surfaces immediately rather than producing
-// last-write-wins output mismatched with the consumer's imports.
+// Deprecated: no caller ever read a registered driver back, and
+// extension.Use no longer registers one. Frontend codegen runs in the
+// CLI (`nexus generate frontend`, nexus dev's auto-codegen) through
+// frontend.Render, with plugin contributions fetched over
+// <client path>/contributions.json. Kept so code naming the type still
+// compiles.
 type GenerateDriver struct {
 	// PluginName is the owning plugin's Name. Used in error messages
 	// and the "which driver is registered?" introspection surface.
@@ -83,18 +82,17 @@ type TabRecord struct {
 }
 
 // ClientContributorFunc is the per-plugin callback that turns the
-// active GenerateContext into a list of files a Generate driver should
-// merge into its output tree. The contract mirrors GenerateDriver.Render
-// but scoped to one plugin's contribution rather than the whole tree.
+// active GenerateContext into a list of files the frontend codegen
+// merges into its output tree (served on <client path>/contributions.json).
 //
-// Errors propagate up to the driver's Render — partial writes never
-// reach disk, so a misbehaving contributor cleanly aborts the run.
+// Errors propagate to the contributions request — the CLI aborts the
+// codegen run rather than writing a partial tree.
 type ClientContributorFunc func(GenerateContext) ([]GeneratedFile, error)
 
 // ClientContributorRecord pairs a contributor's callback with the
 // plugin that registered it. The plugin name powers error reporting
-// (the driver wrapper attributes failures to a specific contributor)
-// and keeps registration order observable for tests.
+// (the contributions route attributes failures to a specific
+// contributor) and keeps registration order observable for tests.
 type ClientContributorRecord struct {
 	PluginName string
 	Contribute ClientContributorFunc
@@ -142,12 +140,11 @@ func (a *App) Plugins() []PluginRecord {
 	return out
 }
 
-// RegisterGenerateDriver records a codegen driver on the app. Called
-// by extension.Use when a Plugin declares a Generate slot. Exactly one
-// driver per app is allowed — a second registration panics to surface
-// misconfiguration at boot rather than at `nexus build` time. The
-// driver carries the owning plugin's name so error messages can point
-// at the source.
+// RegisterGenerateDriver records a codegen driver on the app. Exactly
+// one driver per app is allowed — a second registration panics.
+//
+// Deprecated: see GenerateDriver. Nothing in nexus calls this any more,
+// and nothing consumes what it records.
 func (a *App) RegisterGenerateDriver(drv GenerateDriver) {
 	if a.plugins == nil {
 		a.plugins = &pluginState{}
@@ -161,10 +158,12 @@ func (a *App) RegisterGenerateDriver(drv GenerateDriver) {
 	a.plugins.generates = append(a.plugins.generates, drv)
 }
 
-// GenerateDrivers returns a snapshot of every registered codegen
-// driver. The v1 contract caps the slice at length one; the accessor
-// returns a slice anyway so future relaxations don't break callers.
-// Order matches registration order; the returned slice is a copy.
+// GenerateDrivers returns a snapshot of the drivers recorded by
+// RegisterGenerateDriver, in registration order; the slice is a copy.
+//
+// Deprecated: see GenerateDriver. extension.Use no longer registers
+// drivers, so this is empty unless app code calls RegisterGenerateDriver
+// itself.
 func (a *App) GenerateDrivers() []GenerateDriver {
 	if a.plugins == nil {
 		return nil
@@ -178,12 +177,11 @@ func (a *App) GenerateDrivers() []GenerateDriver {
 
 // RegisterClientContributor records a per-plugin codegen contribution.
 // Called by extension.Use when a Plugin declares a Contributor slot.
-// Many contributors may be registered (one per plugin); the active
-// Generate driver invokes them in registration order and merges their
-// output into the rendered tree. Duplicate plugin names are allowed
-// (re-registration appends — useful in tests; the in-process driver
-// invokes both copies, which matches "last write wins" for files
-// sharing a Path).
+// Many contributors may be registered (one per plugin); the
+// contributions route invokes them in registration order. Duplicate
+// plugin names are allowed (re-registration appends — useful in tests;
+// both copies run, which matches "last write wins" for files sharing a
+// Path once the CLI merges them).
 func (a *App) RegisterClientContributor(rec ClientContributorRecord) {
 	if a.plugins == nil {
 		a.plugins = &pluginState{}

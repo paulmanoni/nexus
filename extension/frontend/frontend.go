@@ -6,19 +6,19 @@
 //     fallback the standalone helper has — this package is a thin
 //     wrapper, not a reimplementation.
 //
-//  2. Build-time codegen: declares an extension.Generate driver that
-//     the `nexus` CLI picks up to project the live registry into a
-//     framework-flavored TS source tree (Vue today; React/Svelte
-//     later). The output lands inside Root/Generate so user code can
+//  2. Codegen surface: mounts the client manifest and the plugin
+//     contributions route (<client path>/contributions.json) that the
+//     `nexus` CLI (`nexus generate frontend`, nexus dev's auto-codegen)
+//     reads to project the live registry into a framework-flavored TS
+//     source tree through Render (Vue today; React/Svelte later). The
+//     output lands inside Root/Generate so user code can
 //     `import { listUsers } from '@/__nexus'` without a runtime
-//     manifest fetch.
+//     manifest fetch. The codegen runs in the CLI, not in the app.
 //
 //  3. Manifest plumbing: passes the build-time settings (Root,
 //     Output, Generate, Framework) through extension.GenerateContext
 //     so other plugins' ClientContributors render against the same
-//     framework target. Phase 1 doesn't wire contributors yet — the
-//     seam exists so the next PR can light up auth.ts / oauth2.ts
-//     without changing this package's surface.
+//     framework target.
 //
 // Typical wiring in user main.go:
 //
@@ -48,7 +48,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/paulmanoni/nexus/di"
@@ -189,7 +188,8 @@ type Config struct {
 // failure later. The Option composes:
 //
 //   - the runtime ServeFrontend mount, and
-//   - an extension.Generate driver consumed by `nexus build`.
+//   - the client SDK routes: manifest + contributions (the CLI codegen
+//     surface), plus the runtime SDK assets when RuntimeSDK is set.
 //
 // Phase 1 emits Vue templates only when Framework == Vue; React /
 // Svelte resolve to the same transport-neutral output as None until
@@ -219,29 +219,6 @@ func Plugin(cfg Config) nexus.Option {
 		Options: []nexus.Option{
 			nexus.ServeFrontend(cfg.FS, cfg.FSRoot, mountOpts...),
 			mountClientSDK(cfg),
-		},
-		Generate: &extension.Generate{
-			OutDir: func(app *nexus.App) (string, error) {
-				abs, err := filepath.Abs(filepath.Join(cfg.Root, cfg.Generate))
-				if err != nil {
-					return "", fmt.Errorf("frontend: resolve OutDir: %w", err)
-				}
-				return abs, nil
-			},
-			Render: func(ctx extension.GenerateContext) ([]extension.File, error) {
-				// Stitch framework choice into Extras so a renderer that
-				// branches on it (Vue vs React) doesn't need a separate
-				// constructor parameter — the driver and the renderer
-				// share the same extension.GenerateContext shape.
-				if ctx.Extras == nil {
-					ctx.Extras = map[string]any{}
-				}
-				ctx.Extras["frontend.framework"] = string(cfg.Framework)
-				ctx.Extras["frontend.root"] = cfg.Root
-				ctx.Extras["frontend.output"] = cfg.Output
-				ctx.Extras["frontend.generate"] = cfg.Generate
-				return Render(cfg, ctx)
-			},
 		},
 	})
 }
