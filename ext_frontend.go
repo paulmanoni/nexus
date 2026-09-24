@@ -248,7 +248,12 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	// CLI's bundler is the producer of those file changes.
 	// Production binaries never run this branch.
 	if devMode {
-		mountDevReload(app.engine, devReloadWatchDir(), app.devReloadExclude)
+		mountDevReload(app.engine, devReloadWatchDir(), app.devReloadExclude, func() bool {
+			if h, _ := app.ViteHot().Current(); h != nil {
+				return true
+			}
+			return os.Getenv("NEXUS_VITE_DEV") != ""
+		})
 	}
 
 	// Effective prefix is the concatenation of the deployment

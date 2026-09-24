@@ -90,7 +90,11 @@ func (h *devReloadHub) broadcast() {
 // Errors from the watcher are logged and swallowed; the dev
 // loop should not crash the app if fsnotify hits a per-platform
 // limit (e.g. macOS open-file cap).
-func mountDevReload(engine httpx.Router, watchDir string, exclude []string) {
+// devServerLive reports whether a frontend dev server (Vite, via the hot file
+// or NEXUS_VITE_DEV) currently owns the frontend files; see Stage 2 of
+// docs/design/frontend-seam.md.
+func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devServerLive func() bool) {
+	_ = devServerLive
 	hub := newDevReloadHub()
 
 	engine.GET("/__nexus/dev/reload", devReloadSSE(hub))
