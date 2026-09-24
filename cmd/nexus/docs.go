@@ -1691,11 +1691,13 @@ NexusClient, re-exports composables from one place, and re-exports
 manifest-derived type names for "import type". After the first
 boot, subsequent dumps SKIP it — your edits survive.
 
-The dump fires on fx.Start AFTER all endpoints register, so the
+The dump fires at start AFTER all endpoints register, so the
 generated .d.ts reflects every route. Idempotent — files with
 matching content are skipped to preserve mtime (no file-watcher
-churn on no-op restarts). Recommend leaving OutDir empty in
-production builds; explicit dev-only conditional is cleanest.
+churn on no-op restarts). Development only: it runs under
+nexus dev or environment = "development"; a production binary
+never writes, whatever OutDir holds (vendor with nexus client
+--out). OutDir = client.Off keeps the routes but skips the files.
 
 
 ─── CONNECT FROM THE BROWSER ────────────────────────────────────────

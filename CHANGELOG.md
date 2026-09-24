@@ -56,6 +56,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking (behaviour): production binaries no longer write `web/sdk`.**
+  The boot-time client SDK dump ran in every mode, so a production binary
+  with the SDK enabled, started in a directory holding a
+  `web/vite.config.ts`, wrote `./web/sdk` (and edited `web/tsconfig.json`)
+  on every boot. It now runs only under `nexus dev` or with
+  `environment = "development"` — the rule the Vite hot file follows — and
+  a production binary writes nothing, silently. Vendor the files at build
+  time with `nexus client --out`.
+- **An explicit "no SDK dump" is honoured.** The frontend-dir detection
+  filled any empty `client.Config.OutDir`, so "no dump" (`frontend.Plugin`
+  with `RuntimeSDK: false`) became a dump into `web/sdk`. New
+  `client.Off` on `OutDir` / `TSConfig` / `ViteConfig` means "none, don't
+  detect one"; the detection fills only unset fields, and `frontend.Plugin`
+  maps an empty `SDKOutDir` to `client.Off`.
+- The `nexus dev` SDK auto-mount now dumps into `web/sdk` on purpose (the
+  page-props types and the manifest `nexus-vite-plugin` reads) but no longer
+  edits `tsconfig.json`; `Client.OutDir = client.Off` keeps the routes
+  without the files, `Client.DevDisabled` still closes both.
 - **A missing frontend build is loud.** An Inertia page with no dev server
   and no manifest renders an error page naming both paths in development
   (500), and logs once in production — previously both shipped a blank page.
@@ -94,6 +112,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Deprecated
 
+- The in-process codegen driver: `extension.Plugin.Generate`,
+  `extension.Generate`, `nexus.GenerateDriver`, `App.RegisterGenerateDriver`,
+  `App.GenerateDrivers`. Nothing ever read a registered driver back —
+  frontend codegen runs in the CLI — so `extension.Use` no longer registers
+  one and `frontend.Plugin` no longer declares it. A set `Generate` is still
+  validated and flags the plugin on the dashboard; a second one no longer
+  panics.
 - `nexus build --package` and `nexus init --dir` (pass the positional
   argument), `nexus dev --fast` (it is the default; `--debug` is the
   inverse), `nexus pki --dns`/`--ip` (now `--dns-name`/`--ip-address`).
