@@ -1,6 +1,8 @@
 package nexus
 
 import (
+	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -70,3 +72,42 @@ func AppFromGin(c *httpx.Ctx) (*App, bool) {
 	app, ok := v.(*App)
 	return app, ok
 }
+
+// FrontendDocument is the HTML document a server-rendered page is built from:
+// the app's index.html as the browser should receive it right now. It lets a
+// page renderer (inertia) keep everything the app put in index.html — title,
+// meta, stylesheets, loaders — instead of synthesising a second document that
+// has to repeat them.
+type FrontendDocument struct {
+	// HTML is the document. With a Vite dev server announced by the hot file
+	// it is Vite's transformed index.html, every root-relative URL pointed at
+	// that server; otherwise it is the built bundle's index.html.
+	HTML []byte
+	// FromDevServer reports the first case: the scripts are live dev
+	// modules, and the page must not be cached.
+	FromDevServer bool
+}
+
+// ErrNoFrontendDocument means there is no index.html to render into right
+// now: no frontend is registered, the build was module-only
+// (nexus({ input }) with no index.html), nothing is built yet, or the Vite
+// dev server was announced but did not serve its index.html. A page renderer
+// then builds its own document.
+var ErrNoFrontendDocument = errors.New("nexus: no frontend index.html to render into")
+
+// FrontendDocument returns the document pages render into, or
+// ErrNoFrontendDocument. Any other error means a dev server is announced but
+// unusable — a malformed hot file, or one left by a dev server that has
+// exited — and should be shown to the developer rather than papered over.
+func (a *App) FrontendDocument(ctx context.Context) (FrontendDocument, error) {
+	if a.frontendDoc == nil {
+		return FrontendDocument{}, ErrNoFrontendDocument
+	}
+	return a.frontendDoc(ctx)
+}
+
+// FrontendMount is the URL path ServeFrontend serves the bundle under — the
+// route prefix plus FrontendAt — or "" at the site root. A file at
+// "assets/x.js" in the bundle is served at FrontendMount()+"/assets/x.js",
+// which is what a renderer must link to rather than assuming "/".
+func (a *App) FrontendMount() string { return a.frontendMount }

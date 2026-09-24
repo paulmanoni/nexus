@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -257,12 +258,35 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	// handler skip the prefix-stripping branch entirely on simple
 	// deployments.
 	effectivePrefix := app.routePrefix + normalizeRoutePrefix(cfg.mountPath)
+	app.frontendMount = effectivePrefix
 
 	// serveIndex answers every index.html response — the SPA fallback and a
 	// direct /index.html. While a Vite dev server has announced itself in
 	// the hot file, the page loads its modules from that server; otherwise
 	// it is the bundle's index.html, exactly as before.
 	dev := &devIndex{}
+	app.frontendDoc = func(ctx context.Context) (FrontendDocument, error) {
+		if h, err := app.ViteHot().Current(); err != nil {
+			return FrontendDocument{}, err
+		} else if h != nil {
+			// Only Vite's own transformed page is a faithful document for
+			// a dev server; if it can't be fetched, the caller builds its
+			// own rather than rendering into a stale or placeholder copy.
+			body, ferr := fetchDevIndex(ctx, h)
+			if ferr != nil {
+				if ctx.Err() == nil {
+					dev.logFetchFailure(h, ferr)
+				}
+				return FrontendDocument{}, ErrNoFrontendDocument
+			}
+			return FrontendDocument{HTML: body, FromDevServer: true}, nil
+		}
+		page := readIndex()
+		if len(page) == 0 || bytes.Equal(page, placeholderIndexHTML) {
+			return FrontendDocument{}, ErrNoFrontendDocument
+		}
+		return FrontendDocument{HTML: page}, nil
+	}
 	serveIndex := func(c *httpx.Ctx) {
 		// A live dev server comes first in every mode, not only under
 		// nexus dev: `go run .` with environment = "development" honours

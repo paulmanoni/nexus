@@ -121,6 +121,10 @@ type App struct {
 	// viteHot reads the dev server location nexus-vite-plugin writes; one
 	// instance per frontend, shared by ServeFrontend and inertia.
 	viteHot *vitehot.Reader
+	// frontendDoc and frontendMount are set by ServeFrontend; see
+	// FrontendDocument and FrontendMount.
+	frontendDoc   func(context.Context) (FrontendDocument, error)
+	frontendMount string
 	// cacheMgr is always non-nil — created by New() with a default
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
