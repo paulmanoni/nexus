@@ -112,10 +112,10 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 	// client.WriteIfChanged skips the disk write when bytes match
 	// — avoids touching mtime and triggering file-watch /
 	// hot-reload churn on no-op runs.
-	if _, err := client.WriteIfChanged(filepath.Join(opts.Out, "client.js"), client.RuntimeJS(), stdout); err != nil {
+	if err := client.WriteIfChanged(filepath.Join(opts.Out, "client.js"), client.RuntimeJS(), stdout); err != nil {
 		return err
 	}
-	if _, err := client.WriteIfChanged(filepath.Join(opts.Out, "vue.js"), client.VueJS(), stdout); err != nil {
+	if err := client.WriteIfChanged(filepath.Join(opts.Out, "vue.js"), client.VueJS(), stdout); err != nil {
 		return err
 	}
 
@@ -124,7 +124,7 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 	// gets the path mappings. The IDE benefit doesn't depend on
 	// the .d.ts being present.
 	if opts.JSConfig != "" {
-		if _, err := client.MergePathsConfig(opts.JSConfig, opts.Out, stdout); err != nil {
+		if err := client.MergePathsConfig(opts.JSConfig, opts.Out, stdout); err != nil {
 			return err
 		}
 	}
@@ -150,21 +150,21 @@ func runClientCmd(opts clientCmdOptions, stdout, stderr io.Writer) error {
 		return fmt.Errorf("nexus client: parse manifest JSON: %w", err)
 	}
 
-	if _, err := client.WriteIfChanged(filepath.Join(opts.Out, "manifest.json"), manifestBytes, stdout); err != nil {
+	if err := client.WriteIfChanged(filepath.Join(opts.Out, "manifest.json"), manifestBytes, stdout); err != nil {
 		return err
 	}
 	clientDTS := client.GenerateClientDTS(m)
-	if _, err := client.WriteIfChanged(filepath.Join(opts.Out, "client.d.ts"), []byte(clientDTS), stdout); err != nil {
+	if err := client.WriteIfChanged(filepath.Join(opts.Out, "client.d.ts"), []byte(clientDTS), stdout); err != nil {
 		return err
 	}
 	vueDTS := client.GenerateVueDTS(m)
-	if _, err := client.WriteIfChanged(filepath.Join(opts.Out, "vue.d.ts"), []byte(vueDTS), stdout); err != nil {
+	if err := client.WriteIfChanged(filepath.Join(opts.Out, "vue.d.ts"), []byte(vueDTS), stdout); err != nil {
 		return err
 	}
 	// nexus.ts is the wiring scaffold — write-once so re-running
 	// the CLI never clobbers the developer's edits.
 	nexusTS := client.GenerateNexusTS(m)
-	if _, err := client.WriteIfMissing(filepath.Join(opts.Out, "nexus.ts"), []byte(nexusTS), stdout); err != nil {
+	if err := client.WriteIfMissing(filepath.Join(opts.Out, "nexus.ts"), []byte(nexusTS), stdout); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "  manifest endpoints: %d\n", len(m.Endpoints))

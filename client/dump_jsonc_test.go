@@ -32,7 +32,7 @@ func TestMergePathsConfig_JSONC(t *testing.T) {
 	}
 	outDir := filepath.Join(dir, "sdk")
 
-	if _, err := MergePathsConfig(cfg, outDir, io.Discard); err != nil {
+	if err := MergePathsConfig(cfg, outDir, io.Discard); err != nil {
 		t.Fatalf("MergePathsConfig on JSONC: %v", err)
 	}
 

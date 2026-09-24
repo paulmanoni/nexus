@@ -71,7 +71,7 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 		{"nexus-vite-plugin.d.ts", vitePluginDTS},
 	}
 	for _, f := range files {
-		if _, err := WriteIfChanged(filepath.Join(outDir, f.name), f.body, stdout); err != nil {
+		if err := WriteIfChanged(filepath.Join(outDir, f.name), f.body, stdout); err != nil {
 			return err
 		}
 	}
@@ -82,12 +82,12 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 	// the singleton's construction (custom origin logic, alternate
 	// token stores, extra exports). Delete the file to regenerate.
 	nexusTS := []byte(GenerateNexusTS(h.Manifest()))
-	if _, err := WriteIfMissing(filepath.Join(outDir, "nexus.ts"), nexusTS, stdout); err != nil {
+	if err := WriteIfMissing(filepath.Join(outDir, "nexus.ts"), nexusTS, stdout); err != nil {
 		return err
 	}
 
 	if tsconfig != "" {
-		if _, err := MergePathsConfig(tsconfig, outDir, stdout); err != nil {
+		if err := MergePathsConfig(tsconfig, outDir, stdout); err != nil {
 			return err
 		}
 	}
@@ -111,19 +111,18 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 // Exported because the CLI (cmd/nexus/client_cmd.go) and the
 // in-process Dump path share the same write contract — keeping
 // one helper means a fix for either site lands everywhere.
-func WriteIfChanged(path string, body []byte, stdout io.Writer) (wrote bool, err error) {
-	if existing, rerr := os.ReadFile(path); rerr == nil && bytes.Equal(existing, body) {
+func WriteIfChanged(path string, body []byte, stdout io.Writer) error {
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, body) {
 		// Deliberately silent. The in-process dump runs on every boot, so a
 		// line per already-current file meant ten lines of "nothing happened"
-		// on each restart of `nexus dev`. Callers that want a tally count the
-		// false return instead.
-		return false, nil
+		// on each restart of `nexus dev`.
+		return nil
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	fdumpLine(stdout, ansiGreen, "wrote", path, fmt.Sprintf("%d bytes", len(body)))
-	return true, nil
+	return nil
 }
 
 // WriteIfMissing writes body to path only when the file does not
@@ -131,15 +130,15 @@ func WriteIfChanged(path string, body []byte, stdout io.Writer) (wrote bool, err
 // observe the user's edits and skip. Distinct from WriteIfChanged
 // (which compares bytes and rewrites on drift) — used for the
 // nexus.ts wiring file that the developer is expected to edit.
-func WriteIfMissing(path string, body []byte, stdout io.Writer) (wrote bool, err error) {
-	if _, serr := os.Stat(path); serr == nil {
-		return false, nil
+func WriteIfMissing(path string, body []byte, stdout io.Writer) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
-		return false, fmt.Errorf("write %s: %w", path, err)
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	fdumpLine(stdout, ansiGreen, "wrote", path, fmt.Sprintf("%d bytes, scaffold — feel free to edit", len(body)))
-	return true, nil
+	return nil
 }
 
 // MergePathsConfig writes (or merges into) a jsconfig.json /
@@ -155,10 +154,10 @@ func WriteIfMissing(path string, body []byte, stdout io.Writer) (wrote bool, err
 // Exported for the same reason as WriteIfChanged: the CLI flag
 // (--tsconfig / --jsconfig) and the in-process Dump path share
 // the same merge logic.
-func MergePathsConfig(configPath, outDir string, stdout io.Writer) (wrote bool, err error) {
+func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 	mappings, err := pathMappings(outDir, configPath)
 	if err != nil {
-		return false, fmt.Errorf("nexus client: compute paths: %w", err)
+		return fmt.Errorf("nexus client: compute paths: %w", err)
 	}
 
 	var doc map[string]any
@@ -167,7 +166,7 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) (wrote bool, 
 		// and trailing commas, so a hand-edited or editor-formatted file may
 		// contain them. Strip those before the strict encoding/json parse.
 		if err := json.Unmarshal(stripJSONC(existing), &doc); err != nil {
-			return false, fmt.Errorf("nexus client: parse existing %s: %w", configPath, err)
+			return fmt.Errorf("nexus client: parse existing %s: %w", configPath, err)
 		}
 	}
 	if doc == nil {
@@ -193,10 +192,10 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) (wrote bool, 
 
 	body, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return false, fmt.Errorf("nexus client: mkdir %s: %w", filepath.Dir(configPath), err)
+		return fmt.Errorf("nexus client: mkdir %s: %w", filepath.Dir(configPath), err)
 	}
 	return WriteIfChanged(configPath, body, stdout)
 }
