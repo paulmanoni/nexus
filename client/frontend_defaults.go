@@ -2,13 +2,13 @@ package client
 
 import "os"
 
-// frontendMarker is the file we look for to decide a directory is
-// the project's frontend root. vite.config.ts is the strongest
-// signal: every nexus-scaffolded project has it, no arbitrary
-// "static assets" folder coincidentally has it, and it implies the
-// presence of the rest of the layout (tsconfig.json next to it,
-// sdk/ as the dump target). Used by applyFrontendDefaults below.
-const frontendMarker = "vite.config.ts"
+// frontendMarkers are the files that make a directory the project's
+// frontend root: a Vite config, in any of the extensions Vite loads. It
+// is the strongest signal — every nexus-scaffolded project has one, no
+// arbitrary "static assets" folder coincidentally does, and it implies the
+// rest of the layout (tsconfig.json next to it, sdk/ as the dump target).
+// Used by applyFrontendDefaults below.
+var frontendMarkers = []string{"vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs", "vite.config.cts", "vite.config.cjs"}
 
 // candidateFrontendDirs lists the paths to probe for the marker
 // file. Ordered "most likely first" so the first match wins:
@@ -37,7 +37,7 @@ func ApplyFrontendDefaults(cfg Config) Config { return applyFrontendDefaults(cfg
 // the project's frontend dir when the user left them empty. The
 // detection is opt-in by filesystem layout, not by config flag:
 // either the project has a recognisable frontend dir (one of
-// candidateFrontendDirs containing a vite.config.ts) and the
+// candidateFrontendDirs containing a Vite config) and the
 // defaults light up, or it doesn't and the empty fields stay empty
 // (so SDK files don't get dumped to a nonexistent location).
 //
@@ -58,7 +58,7 @@ func applyFrontendDefaults(cfg Config) Config {
 	if cfg.OutDir == Off {
 		return cfg
 	}
-	dir := detectFrontendDir()
+	dir, marker := detectFrontendDir()
 	if dir == "" {
 		return cfg
 	}
@@ -72,28 +72,30 @@ func applyFrontendDefaults(cfg Config) Config {
 		}
 	}
 	if cfg.ViteConfig == "" {
-		// vite.config.ts is the marker — its existence is implied by
+		// The Vite config is the marker — its existence is implied by
 		// detectFrontendDir returning non-empty. Still default through
 		// the same shape so cfg.ViteConfig is meaningful for the rest
 		// of Mount even when the marker file disappears between
 		// detection and use (race-free for our purposes; the file
 		// system is the source of truth on every dev rebuild).
-		cfg.ViteConfig = "./" + dir + "/" + frontendMarker
+		cfg.ViteConfig = "./" + dir + "/" + marker
 	}
 	return cfg
 }
 
-// detectFrontendDir walks candidateFrontendDirs looking for the
-// marker file. Returns the basename of the first match, or "" when
-// nothing matches. Cheap (a small fixed number of stat calls) and
-// runs once per Mount.
-func detectFrontendDir() string {
-	for _, dir := range candidateFrontendDirs {
-		if fileExists(dir + "/" + frontendMarker) {
-			return dir
+// detectFrontendDir walks candidateFrontendDirs looking for a marker
+// file. Returns the basename of the first matching dir and the marker
+// found there, or "" when nothing matches. Cheap (a small fixed number of
+// stat calls) and runs once per Mount.
+func detectFrontendDir() (dir, marker string) {
+	for _, d := range candidateFrontendDirs {
+		for _, m := range frontendMarkers {
+			if fileExists(d + "/" + m) {
+				return d, m
+			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func fileExists(path string) bool {

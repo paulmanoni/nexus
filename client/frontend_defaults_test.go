@@ -49,6 +49,23 @@ func TestApplyFrontendDefaults_WebLayout(t *testing.T) {
 	}
 }
 
+// Any Vite config extension marks the frontend dir, and ViteConfig names
+// the file that is actually there.
+func TestApplyFrontendDefaults_AnyViteConfigExtension(t *testing.T) {
+	for _, name := range []string{"vite.config.mjs", "vite.config.js", "vite.config.mts", "vite.config.cjs"} {
+		t.Run(name, func(t *testing.T) {
+			defer withTempCwd(t, func(d string) {
+				_ = os.Mkdir(filepath.Join(d, "web"), 0o755)
+				_ = os.WriteFile(filepath.Join(d, "web", name), []byte("//"), 0o644)
+			})()
+			got := applyFrontendDefaults(Config{Enabled: true})
+			if got.OutDir != "./web/sdk" || got.ViteConfig != "./web/"+name {
+				t.Errorf("OutDir = %q, ViteConfig = %q; want ./web/sdk, ./web/%s", got.OutDir, got.ViteConfig, name)
+			}
+		})
+	}
+}
+
 // TestApplyFrontendDefaults_AlternateDirs covers projects that
 // use frontend/ or client/ instead of web/. Same detection rule:
 // presence of vite.config.ts is the marker.
