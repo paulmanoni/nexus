@@ -149,10 +149,13 @@ type Config struct {
 	// ('/__nexus/client/vue.js') can find the paired .d.ts on the
 	// local filesystem. Equivalent to client.Config.OutDir.
 	//
-	// Defaults to "./<Root>/sdk" when RuntimeSDK is true; stays
-	// empty otherwise so the typed-codegen path doesn't drop
-	// surprise files into the project tree. Override only when the
+	// Defaults to "./<Root>/sdk" when RuntimeSDK is true. Left empty
+	// with RuntimeSDK false it means "no dump" (client.Off) — the
+	// typed-codegen path doesn't drop surprise files into the project
+	// tree, even when a <Root>/vite.config.ts would otherwise make the
+	// client package's detection pick one. Override only when the
 	// convention doesn't fit (custom layout, multi-tenant builds).
+	// Like every SDK dump it runs in development only.
 	SDKOutDir string
 
 	// SDKTSConfig, when non-empty, makes the SDK mount merge path
@@ -361,12 +364,20 @@ func mountClientSDK(cfg Config) nexus.Option {
 // *.d.ts) don't register. The codegen routes (manifest +
 // contributions) mount unconditionally so `nexus generate frontend`
 // works either way.
+//
+// An empty SDKOutDir becomes client.Off, not "": the client package
+// fills an unset OutDir from the detected frontend dir, which would
+// turn this plugin's "no dump" into a dump into <Root>/sdk.
 func clientConfigFromFrontend(cfg Config) client.Config {
+	outDir := cfg.SDKOutDir
+	if outDir == "" {
+		outDir = client.Off
+	}
 	ccfg := client.Config{
 		Enabled:    true,
 		Public:     cfg.ManifestPublic,
 		Middleware: cfg.ClientMiddleware,
-		OutDir:     cfg.SDKOutDir,
+		OutDir:     outDir,
 		TSConfig:   cfg.SDKTSConfig,
 		ViteConfig: cfg.SDKViteConfig,
 		SkipAssets: !cfg.RuntimeSDK,

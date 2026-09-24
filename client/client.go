@@ -48,7 +48,10 @@ type Config struct {
 	// enable them itself — so the SPA's vite proxy auto-syncs module
 	// RoutePrefixes (read from the live /__nexus/client/manifest.json)
 	// and the SDK is available without ceremony. The implicit dev
-	// mount never dumps files (OutDir is forced empty) — routes only.
+	// mount dumps the SDK into the detected frontend dir's sdk/ (so
+	// the page-props types and the manifest the Vite plugin reads are
+	// on disk) but never edits tsconfig (TSConfig is Off — its path
+	// mappings serve runtime-URL imports this app never opted into).
 	// Set DevDisabled to keep the SDK closed even in dev ("closed
 	// manually"). No effect in production (NEXUS_DEV is never set
 	// there) or when Enabled is already true.
@@ -111,9 +114,9 @@ type Config struct {
 	// see Handler.Reload to invalidate.
 	Manifest func() Manifest
 
-	// OutDir, when non-empty, makes Mount also dump the SDK files
+	// OutDir, when non-empty, makes the app also dump the SDK files
 	// (client.js + client.d.ts, vue.js + vue.d.ts, manifest.json) to
-	// disk on startup so a frontend's filesystem-based tooling
+	// disk on startup IN DEVELOPMENT so a frontend's filesystem-based tooling
 	// (TypeScript compiler, Vite, JetBrains, VS Code) can resolve
 	// types and runtime imports without a manual `nexus client --out`
 	// step. Each .js sits next to its .d.ts so TS auto-pairs them
@@ -124,17 +127,17 @@ type Config struct {
 	// matches, preserving mtime — file-watcher reloads + IDE
 	// re-indexing don't fire on no-op restarts.
 	//
-	// Recommend leaving empty in production builds. Apps that need
-	// it gated to dev only can branch on an env var when building
-	// the Config (this field intentionally has no built-in env
-	// magic — explicit beats implicit for "writes files to your
-	// project tree").
+	// Development only: the dump runs under `nexus dev` (NEXUS_DEV=1)
+	// or when the app's environment is "development" — the same rule
+	// that decides whether the Vite hot file is honoured. A production
+	// binary never writes, whatever this field holds; vendor the files
+	// at build time with `nexus client --out` instead.
 	//
 	// Auto-detection: when left empty AND a frontend dir is
 	// detected (web/, frontend/, client/, app/ — anything containing
-	// vite.config.ts), Mount fills this with `./<dir>/sdk`. Set
-	// explicitly to override or to disable the dump in non-standard
-	// layouts.
+	// vite.config.ts), Mount fills this with `./<dir>/sdk`. Set a path
+	// to override, or Off to never dump (the detection then leaves
+	// TSConfig and ViteConfig alone too).
 	OutDir string
 
 	// TSConfig, when non-empty, makes Mount merge path mappings
@@ -150,7 +153,8 @@ type Config struct {
 	// detected, Mount fills this with `./<dir>/tsconfig.json` IF
 	// that file exists. Missing tsconfig (jsconfig-only or no TS
 	// config at all) keeps the field empty so the dump path
-	// doesn't try to read a phantom file.
+	// doesn't try to read a phantom file. Off keeps the dump but
+	// never touches a tsconfig.
 	TSConfig string
 
 	// ViteConfig, when non-empty, makes Mount auto-attach the
@@ -168,9 +172,9 @@ type Config struct {
 	// landed; the framework keys idempotence off the literal
 	// "nexusAutoSelect" identifier in the file.
 	//
-	// Recommend gating this behind a dev-mode flag in production
-	// builds — there's no reason to mutate a checked-in config on
-	// every prod boot.
+	// Dump no longer edits the Vite config (the field is carried for
+	// compatibility and reported by AutoDumpConfig), and like every
+	// dump knob it only matters in development.
 	//
 	// Auto-detection: when left empty AND a frontend dir is
 	// detected (vite.config.ts present), Mount fills this with
@@ -290,9 +294,21 @@ func (m AuthMeta) Empty() bool {
 // belong to the wire layer, not the auto-dump path).
 //
 // Empty outdir signals "no dump configured" — the caller (the
-// fx.OnStart hook in integration.go) skips the dump entirely.
+// OnStart hook in nexus's obs_integration.go) skips the dump
+// entirely. Off is reported as "" for each knob, so callers never see
+// the sentinel. The hook adds the development gate on top; a non-empty
+// outdir here is "where", not "whether".
 func (h *Handler) AutoDumpConfig() (outdir, tsconfig, viteconfig string) {
-	return h.cfg.OutDir, h.cfg.TSConfig, h.cfg.ViteConfig
+	if h.cfg.OutDir == Off {
+		return "", "", ""
+	}
+	off := func(v string) string {
+		if v == Off {
+			return ""
+		}
+		return v
+	}
+	return h.cfg.OutDir, off(h.cfg.TSConfig), off(h.cfg.ViteConfig)
 }
 
 // Reload drops the cached manifest + .d.ts so the next request
@@ -597,11 +613,11 @@ func VitePluginDTS() []byte { return vitePluginDTS }
 // stamped onto Manifest.BasePath so the SDK prepends it to every
 // call.
 //
-// When cfg.OutDir is set, Mount also dumps the SDK files to disk
-// after registering routes so frontend tooling (TS compiler, IDE)
-// can resolve types/imports without a manual `nexus client --out`
-// step. Dump errors are logged but don't fail Mount — dev-tool
-// convenience shouldn't crash boot.
+// Mount fills an unset cfg.OutDir / TSConfig / ViteConfig from the
+// detected frontend dir (Off refuses one). It never writes files
+// itself: the app's OnStart hook dumps to AutoDumpConfig's OutDir once
+// the registry is complete, in development only. Dump errors are
+// logged but don't fail boot — dev-tool convenience shouldn't crash it.
 func Mount(e httpx.Router, reg *registry.Registry, authInfo func() ExtractorInfo, schemaRefs func() map[string]registry.NamedType, basePath string, cfg Config) *Handler {
 	return MountWithContributions(e, reg, authInfo, schemaRefs, basePath, cfg, nil)
 }
@@ -688,10 +704,10 @@ func MountWithContributions(e httpx.Router, reg *registry.Registry, authInfo fun
 		g.GET("/contributions.json", contributionsHandler(contributions))
 	}
 	// Auto-dump on cfg.OutDir is wired by the caller via a
-	// fx.Lifecycle.OnStart hook (see nexus.New). Mount can't dump
-	// here because it runs inside the *App constructor —
-	// AsRest/AsQuery invokes haven't yet populated the registry,
-	// so the .d.ts would be empty.
+	// Lifecycle.OnStart hook (see nexus.New), which also applies the
+	// development-only gate. Mount can't dump here because it runs
+	// inside the *App constructor — AsRest/AsQuery invokes haven't
+	// yet populated the registry, so the .d.ts would be empty.
 	return h
 }
 

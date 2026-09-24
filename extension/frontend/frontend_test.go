@@ -3,11 +3,14 @@ package frontend
 import (
 	"errors"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/paulmanoni/nexus/client"
 	"github.com/paulmanoni/nexus/extension"
 	"github.com/paulmanoni/nexus/registry"
 )
@@ -90,21 +93,38 @@ func TestClientConfigFromFrontend_PassesThroughSDKKnobs(t *testing.T) {
 	}
 }
 
-// TestClientConfigFromFrontend_ZeroValueStaysZero ensures unset SDK
-// knobs don't leak phantom paths into client.Config — that would
-// trigger the auto-dump against a directory the user never asked
-// to write to. The auto-detection inside client.Mount runs only on
-// genuinely empty fields, so we must not pre-fill them here.
-func TestClientConfigFromFrontend_ZeroValueStaysZero(t *testing.T) {
+// TestClientConfigFromFrontend_ZeroValueMeansNoDump pins the "no dump"
+// contract of an unset SDKOutDir: it must reach client.Config as
+// client.Off, not "". client.Mount fills an EMPTY OutDir from the
+// detected frontend dir, so passing "" through turned "no dump" into a
+// dump into web/sdk whenever web/vite.config.ts existed. The defaults
+// must leave Off alone — checked here against a real detectable layout.
+func TestClientConfigFromFrontend_ZeroValueMeansNoDump(t *testing.T) {
 	got := clientConfigFromFrontend(Config{Root: "web"})
-	if got.OutDir != "" {
-		t.Errorf("OutDir = %q, want empty (no SDKOutDir set)", got.OutDir)
+	if got.OutDir != client.Off {
+		t.Errorf("OutDir = %q, want client.Off (no SDKOutDir set)", got.OutDir)
 	}
 	if got.TSConfig != "" {
 		t.Errorf("TSConfig = %q, want empty", got.TSConfig)
 	}
 	if got.ViteConfig != "" {
 		t.Errorf("ViteConfig = %q, want empty", got.ViteConfig)
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.MkdirAll(filepath.Join(dir, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"web/vite.config.ts", "web/tsconfig.json"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := client.ApplyFrontendDefaults(got)
+	if d.OutDir != client.Off || d.TSConfig != "" || d.ViteConfig != "" {
+		t.Errorf("defaults over a detected web/: OutDir=%q TSConfig=%q ViteConfig=%q; want Off and nothing filled",
+			d.OutDir, d.TSConfig, d.ViteConfig)
 	}
 }
 

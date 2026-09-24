@@ -19,6 +19,15 @@ const frontendMarker = "vite.config.ts"
 // All paths are cwd-relative; absolute callers configure explicitly.
 var candidateFrontendDirs = []string{"web", "frontend", "client", "app"}
 
+// Off, assigned to Config.OutDir, TSConfig or ViteConfig, means "none —
+// and don't auto-detect one". An empty field is UNSET and is filled from
+// the detected frontend dir; Off is an explicit refusal the defaults leave
+// alone. OutDir = Off disables the boot-time dump entirely (TSConfig and
+// ViteConfig then have nothing to point at); TSConfig = Off keeps the dump
+// but never edits tsconfig/jsconfig. Handler.AutoDumpConfig reports Off as
+// "".
+const Off = "-"
+
 // ApplyFrontendDefaults is the exported entry to applyFrontendDefaults,
 // for the nexus.Config.SDK one-switch path which builds a Config outside
 // this package and needs the same OutDir/TSConfig/ViteConfig auto-detection.
@@ -32,14 +41,23 @@ func ApplyFrontendDefaults(cfg Config) Config { return applyFrontendDefaults(cfg
 // defaults light up, or it doesn't and the empty fields stay empty
 // (so SDK files don't get dumped to a nonexistent location).
 //
-// Explicit values always win — applyFrontendDefaults only fills
-// fields that were left at the zero value. Callers with a
-// non-standard layout override per field.
+// Only UNSET ("") fields are filled: an explicit path wins, and Off is
+// an explicit "none" that stays Off. OutDir = Off stops the fill for all
+// three — with no dump there is nothing for a tsconfig mapping or a vite
+// config to point at. Idempotent, so Mount re-applying it over a Config
+// the caller already defaulted (nexus.Config.SDK) changes nothing.
+//
+// Whether a dump actually happens is decided at boot, not here: the
+// OnStart hook in nexus writes only in development (`nexus dev` or
+// environment = "development"), whatever OutDir holds.
 //
 // Returns cfg by value so the caller's local copy gets the
 // defaults; the original Config that was passed into nexus.Config
 // is unaffected.
 func applyFrontendDefaults(cfg Config) Config {
+	if cfg.OutDir == Off {
+		return cfg
+	}
 	dir := detectFrontendDir()
 	if dir == "" {
 		return cfg
