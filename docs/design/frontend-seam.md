@@ -266,7 +266,10 @@ page kept `index.html`'s title and stylesheet.
   origin — pages would otherwise keep loading modules from a dead port. SPA
   pages now carry the shim too.
 - **Review fixes.** `public/` files are proxied to Vite for loopback clients
-  (never the LAN: that would expose Vite's source and `/@fs`); a stale hot file
+  (never the LAN: that would expose Vite's source and `/@fs`) that name a
+  loopback host and come through no proxy (a local tunnel makes every visitor
+  loopback; a rebinding page arrives under its own name), and never for Vite's
+  own routes (`/@…`, `/__…`, `node_modules`); a stale hot file
   reads as absent after a liveness probe (pid, else the origin answering), and
   liveness — not `environment = "development"`, which scaffolds ship — is what
   protects a deployment; boot leniency needs `nexus dev` or a live dev server;

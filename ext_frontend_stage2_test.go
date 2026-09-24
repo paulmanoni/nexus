@@ -67,7 +67,12 @@ func (f *viteDevFixture) do(t *testing.T, method, path, remote string, hdr ...st
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, path, nil)
 	req.RemoteAddr = remote
+	req.Host = "localhost:8080"
 	for i := 0; i+1 < len(hdr); i += 2 {
+		if hdr[i] == "Host" {
+			req.Host = hdr[i+1]
+			continue
+		}
 		req.Header.Set(hdr[i], hdr[i+1])
 	}
 	f.app.engine.ServeHTTP(rec, req)
@@ -179,6 +184,56 @@ func TestServeFrontend_NoLiveDevServerNoProxy(t *testing.T) {
 	}
 	if n := len(vite.requests()); n != 0 {
 		t.Errorf("dev server got %d requests", n)
+	}
+}
+
+// A loopback peer is not enough: a local reverse proxy or tunnel makes every
+// visitor loopback, and a DNS-rebinding page reaches the port under its own
+// name. Neither is forwarded, nor are the dev server's internal routes.
+func TestServeFrontend_DevServerProxyOnlyForThisMachine(t *testing.T) {
+	vite := newStaticVite(t, "/", map[string]string{
+		"logo.svg":                "vite-logo",
+		"@fs/etc/hosts.txt":       "fs",
+		"node_modules/x/index.js": "dep",
+		"__open-in-editor.x":      "editor",
+	})
+	f := newViteDevFixture(t, "<html>built</html>")
+	if err := os.WriteFile(filepath.Join(f.dist, "logo.svg"), []byte("stale-logo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.writeHot(t, vitehot.Hot{Version: 1, Origin: vite.URL, Base: "/", Entries: []string{"index.html"}, PID: os.Getpid()})
+	const local = "127.0.0.1:50000"
+
+	for _, host := range []string{"localhost:8080", "127.0.0.1:8080", "[::1]:8080", "app.localhost:8080", "myapp.test", "LOCALHOST."} {
+		if rec := f.do(t, http.MethodGet, "/logo.svg", local, "Host", host); rec.Body.String() != "vite-logo" {
+			t.Errorf("Host %s: got %q, want the dev server's copy", host, rec.Body)
+		}
+	}
+	before := len(vite.requests())
+	refused := []struct {
+		name string
+		path string
+		hdr  []string
+	}{
+		{"forwarded for", "/logo.svg", []string{"X-Forwarded-For", "203.0.113.9"}},
+		{"forwarded", "/logo.svg", []string{"Forwarded", "for=203.0.113.9"}},
+		{"forwarded host", "/logo.svg", []string{"X-Forwarded-Host", "app.example.com"}},
+		{"real ip", "/logo.svg", []string{"X-Real-IP", "203.0.113.9"}},
+		{"rebinding host", "/logo.svg", []string{"Host", "attacker.example:8080"}},
+		{"lan name", "/logo.svg", []string{"Host", "192.168.1.20:8080"}},
+		{"test lookalike", "/logo.svg", []string{"Host", "evil.test.com"}},
+		{"@fs", "/@fs/etc/hosts.txt", nil},
+		{"node_modules", "/node_modules/x/index.js", nil},
+		{"vite route", "/__open-in-editor.x", nil},
+	}
+	for _, c := range refused {
+		if rec := f.do(t, http.MethodGet, c.path, local, c.hdr...); strings.Contains(rec.Body.String(), "vite-logo") ||
+			rec.Body.String() == "fs" || rec.Body.String() == "dep" || rec.Body.String() == "editor" {
+			t.Errorf("%s: forwarded to the dev server (%d %q)", c.name, rec.Code, rec.Body)
+		}
+	}
+	if got := len(vite.requests()); got != before {
+		t.Errorf("dev server got %d refused requests", got-before)
 	}
 }
 

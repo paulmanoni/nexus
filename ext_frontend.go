@@ -428,7 +428,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 			// (<img src="/logo.png">, fetch("/config.json")) resolves
 			// against this origin, and only the dev server has the
 			// current public/ copy — the bundle has an old one, or none.
-			if h, _ := app.ViteHot().Current(); h != nil && devAssetProxyable(c.Request) {
+			if h, _ := app.ViteHot().Current(); h != nil && devAssetProxyable(c.Request, relPath) {
 				if proxyDevAsset(c, h, devAssetTarget(c.Request, effectivePrefix, relPath)) {
 					return
 				}
@@ -485,14 +485,30 @@ func isViteMetaPath(rel string) bool {
 }
 
 // devAssetProxyable reports whether a request may be answered by the dev
-// server. Only reads, and only from a loopback client: the dev server binds
-// loopback and checks Host, and a page served by it loads its modules from
-// that loopback origin anyway, so a client elsewhere could not run the dev
-// frontend — while forwarding its requests would hand the dev server's whole
-// surface (source files, /@fs) to anyone who can reach the app's port,
-// which is every interface by default.
-func devAssetProxyable(r *http.Request) bool {
+// server. Only reads of plain files, and only from this machine: the dev
+// server binds loopback and checks Host, and a page served by it loads its
+// modules from that loopback origin anyway, so a client elsewhere could not
+// run the dev frontend — while forwarding its requests would hand the dev
+// server's whole surface (source files, /@fs) to anyone who can reach the
+// app's port, which is every interface by default.
+//
+// "This machine" is a loopback peer that no proxy stands in front of (a
+// local reverse proxy or tunnel makes every visitor loopback, and marks the
+// request as forwarded) and that names a loopback host: a DNS-rebinding page
+// reaches a loopback port under its own name, which the dev server would
+// refuse but the proxy would otherwise replace with the dev server's own.
+// Vite's internal paths (/@fs, /@id, node_modules) are never forwarded; the
+// proxy is for the files an app refers to by URL, not for module loading.
+func devAssetProxyable(r *http.Request, relPath string) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	for _, h := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip"} {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
+	if !isLoopbackHostname(r.Host) || isViteInternalPath(relPath) {
 		return false
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -501,6 +517,33 @@ func devAssetProxyable(r *http.Request) bool {
 	}
 	ip, err := netip.ParseAddr(host)
 	return err == nil && ip.Unmap().IsLoopback()
+}
+
+// isLoopbackHostname reports whether a Host header names this machine:
+// localhost and its subdomains, a loopback address, or a .test name (a
+// reserved suffix no public resolver answers, which local dev setups map to
+// 127.0.0.1).
+func isLoopbackHostname(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".test") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Unmap().IsLoopback()
+}
+
+// isViteInternalPath reports whether a path (relative to the SPA mount) is
+// one of the dev server's own routes rather than a file the app serves.
+func isViteInternalPath(rel string) bool {
+	p := strings.ToLower(path.Clean("/" + rel))
+	if strings.HasPrefix(p, "/@") || strings.HasPrefix(p, "/__") {
+		return true
+	}
+	return p == "/node_modules" || strings.HasPrefix(p, "/node_modules/") || strings.Contains(p, "/node_modules/")
 }
 
 // devAssetTarget is the dev-server URL for a static request: the path under

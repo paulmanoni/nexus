@@ -35,7 +35,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   boot ID), or when the dev server starts, stops or moves to another port —
   never for files Vite handles. SPA pages carry the shim too.
 - **`public/` files in development** are proxied from the app's origin to the
-  Vite dev server (loopback clients only), so runtime paths like
+  Vite dev server (loopback clients naming a loopback host, not through a
+  proxy or tunnel; Vite's own routes are never forwarded), so runtime paths like
   `fetch('/config.json')` and template `<img src="/logo.png">` stay live.
 - **`nexus({ input })`** declares an Inertia app's entry module once; the
   plugin also forces `build.manifest: true` and sets `server.origin` so CSS

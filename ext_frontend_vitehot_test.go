@@ -84,6 +84,7 @@ func (f *viteDevFixture) get(t *testing.T, path string) *httptest.ResponseRecord
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	// A browser on the developer's machine, as in any dev session.
 	req.RemoteAddr = "127.0.0.1:50000"
+	req.Host = "localhost:8080"
 	f.app.engine.ServeHTTP(rec, req)
 	return rec
 }
