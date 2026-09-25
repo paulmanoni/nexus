@@ -1,0 +1,95 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func writeTestFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInspectFrontend(t *testing.T) {
+	vite := t.TempDir()
+	writeTestFile(t, filepath.Join(vite, "package.json"), "{}")
+	if p := inspectFrontend(vite); !p.PackageJSON || p.Legacy != "" {
+		t.Errorf("vite project: %+v", p)
+	}
+	legacy := t.TempDir()
+	writeTestFile(t, filepath.Join(legacy, "viteless.config.ts"), "")
+	p := inspectFrontend(legacy)
+	if p.PackageJSON || p.Legacy != "viteless.config.ts" || !strings.Contains(p.legacyHint(), "package.json") {
+		t.Errorf("viteless project: %+v %q", p, p.legacyHint())
+	}
+	if p := inspectFrontend(t.TempDir()); p.PackageJSON || p.Legacy != "" {
+		t.Errorf("empty dir: %+v", p)
+	}
+}
+
+func TestFrontendEnv(t *testing.T) {
+	dir := t.TempDir()
+	toml := filepath.Join(dir, "nexus.toml")
+	writeTestFile(t, toml, "[env.client]\nid = \"web\"\n[env]\nflag = \"on\"\n")
+	env, err := frontendEnv(toml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, frontendEnvVar+"=") {
+			payload = strings.TrimPrefix(kv, frontendEnvVar+"=")
+		}
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(payload), &got); err != nil {
+		t.Fatalf("payload %q: %v", payload, err)
+	}
+	if got["client.id"] != "web" || got["flag"] != "on" {
+		t.Errorf("payload = %v", got)
+	}
+	env, err = frontendEnv(filepath.Join(dir, "missing.toml"))
+	if err != nil || !containsString(env, frontendEnvVar+"={}") {
+		t.Errorf("no nexus.toml: err %v, want %s={}", err, frontendEnvVar)
+	}
+}
+
+func TestWriteSDKPlugin(t *testing.T) {
+	web := t.TempDir()
+	if err := writeSDKPlugin(web, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"nexus-vite-plugin.js", "nexus-vite-plugin.d.ts"} {
+		if fi, err := os.Stat(filepath.Join(web, "sdk", f)); err != nil || fi.Size() == 0 {
+			t.Errorf("%s not written: %v", f, err)
+		}
+	}
+}
+
+func TestEnsureNodeModules_InstalledIsLeftAlone(t *testing.T) {
+	web := t.TempDir()
+	name := "vite"
+	if runtime.GOOS == "windows" {
+		name = "vite.cmd"
+	}
+	writeTestFile(t, filepath.Join(web, "node_modules", ".bin", name), "")
+	t.Setenv("PATH", "") // npm would not be found: proves nothing ran
+	if err := ensureNodeModules(context.Background(), web, io.Discard, io.Discard); err != nil {
+		t.Fatalf("installed project: %v", err)
+	}
+	empty := t.TempDir()
+	if err := ensureNodeModules(context.Background(), empty, io.Discard, io.Discard); err != errNoNpm {
+		t.Errorf("missing deps without npm: got %v, want errNoNpm", err)
+	}
+}
