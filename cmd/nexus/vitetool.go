@@ -162,6 +162,11 @@ func viteCmd(ctx context.Context, webDir string, env []string, args ...string) (
 	cmd.Dir = webDir
 	cmd.Env = env
 	setProcessGroup(cmd)
+	// Vite's output is usually piped through a writer, so Wait also waits
+	// for the pipe to close — which a grandchild still holding it (the
+	// node process behind vite.cmd on Windows, an esbuild service) would
+	// hold off forever. Past this, Wait closes the pipe and returns.
+	cmd.WaitDelay = viteKillGrace
 	return cmd, nil
 }
 
