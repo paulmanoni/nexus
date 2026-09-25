@@ -20,7 +20,9 @@ const (
 )
 
 // A WebSocket connection belongs to the identity the global middleware
-// resolved for its upgrade request — what EmitToUser addresses.
+// resolved for its upgrade request — what EmitToUser addresses — and its
+// message handlers see that identity (and this module's state, which Can and
+// Requires-style checks read) on their context.
 func init() {
 	nexus.RegisterRequestIdentity(func(ctx context.Context) (string, bool) {
 		id, ok := IdentityFrom(ctx)
@@ -28,6 +30,15 @@ func init() {
 			return "", false
 		}
 		return id.ID, true
+	})
+	nexus.RegisterWSCarrier(func(upgrade, conn context.Context) context.Context {
+		if st, ok := stateFrom(upgrade); ok {
+			conn = withState(conn, st)
+		}
+		if id, ok := IdentityFrom(upgrade); ok {
+			conn = WithIdentity(conn, id)
+		}
+		return conn
 	})
 }
 

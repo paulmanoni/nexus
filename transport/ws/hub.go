@@ -103,6 +103,18 @@ type Connection struct {
 	hub      *Hub
 	closed   atomic.Bool
 	drops    atomic.Int32
+	base     context.Context
+}
+
+// Context is the connection's base context: the values the hub's context
+// hook carried over from the upgrade request (the authenticated identity,
+// say), with no deadline or cancellation of its own. Handlers of this
+// connection's messages derive from it. Background when there is no hook.
+func (c *Connection) Context() context.Context {
+	if c == nil || c.base == nil {
+		return context.Background()
+	}
+	return c.base
 }
 
 // Send queues a raw message. If the send buffer is repeatedly full the hub
@@ -168,6 +180,7 @@ type Hub struct {
 	onMessage OnMessageFunc
 	onClose   OnDisconnectFunc
 	roomGuard RoomGuardFunc
+	contextFn ContextFunc
 }
 
 type sendJob struct {
@@ -179,6 +192,7 @@ type sendJob struct {
 type (
 	IdentifyFunc     func(c *httpx.Ctx) (userID string, meta map[string]any)
 	RoomGuardFunc    func(c *Connection, room string) bool
+	ContextFunc      func(c *httpx.Ctx) context.Context
 	OnConnectFunc    func(conn *Connection)
 	OnMessageFunc    func(conn *Connection, msgType int, data []byte) error
 	OnDisconnectFunc func(conn *Connection)
@@ -210,6 +224,12 @@ func (h *Hub) OnIdentify(fn IdentifyFunc) *Hub       { h.identify = fn; return h
 func (h *Hub) OnConnect(fn OnConnectFunc) *Hub       { h.onConnect = fn; return h }
 func (h *Hub) OnMessage(fn OnMessageFunc) *Hub       { h.onMessage = fn; return h }
 func (h *Hub) OnDisconnect(fn OnDisconnectFunc) *Hub { h.onClose = fn; return h }
+
+// OnContext builds each connection's base context from its upgrade request
+// (Connection.Context). The upgrade request's own context ends when the
+// upgrade handler returns and holds per-request values, so the hook copies
+// only what may outlive it, onto a fresh context.
+func (h *Hub) OnContext(fn ContextFunc) *Hub { h.contextFn = fn; return h }
 
 // AllowClientRooms decides which rooms a client may join with the built-in
 // {"type":"subscribe","room":"…"} message. Without a guard every client
@@ -540,6 +560,10 @@ func (h *Hub) serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {
 	if h.identify != nil {
 		userID, meta = h.identify(gctx)
 	}
+	var base context.Context
+	if h.contextFn != nil {
+		base = h.contextFn(gctx)
+	}
 	if meta == nil {
 		meta = map[string]any{}
 	}
@@ -552,6 +576,7 @@ func (h *Hub) serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {
 		UserID:   userID,
 		Metadata: meta,
 		hub:      h,
+		base:     base,
 	}
 
 	h.register <- conn

@@ -1325,7 +1325,10 @@ what the server authenticated for the upgrade request
 (extension/auth registers it via nexus.RegisterRequestIdentity; a
 context "user" with GetID() also works) — never a query param or
 an authenticate message. Rooms are joined server-side with
-JoinRoom; a client subscribe is refused unless the path opts in:
+JoinRoom; a client subscribe is refused unless the path opts in.
+Handler contexts carry the upgrade request's auth (identity and
+auth state, captured once per connection), so auth.IdentityFrom /
+auth.User / auth.Can work in WS handlers. Opting in to rooms:
 
     nexus.AsWS("/ws", "jobs.watch", NewWatch, auth.Required(),
         nexus.ClientRooms(func(userID, room string) bool {

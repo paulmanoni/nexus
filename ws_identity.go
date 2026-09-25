@@ -42,3 +42,44 @@ func requestIdentity(ctx context.Context) (string, bool) {
 	}
 	return "", false
 }
+
+// WSCarrier copies values from a WebSocket upgrade request's context onto a
+// connection's base context and returns it. Each message handler's context
+// (Params.Context, WSSession.Context) derives from that base, so what a
+// carrier copies — extension/auth copies the identity and its own state —
+// is what auth.IdentityFrom, auth.Can and the like see in a WS handler.
+type WSCarrier func(upgrade, conn context.Context) context.Context
+
+var (
+	wsCarrierMu sync.RWMutex
+	wsCarriers  []WSCarrier
+)
+
+// RegisterWSCarrier adds a WSCarrier. Copy only values that may outlive the
+// request: the upgrade request's context also holds per-request state (a
+// Scoped memo, a session handle) that must not be shared by every message
+// of a long-lived connection. Values are captured once, at the upgrade — a
+// connection keeps the identity it was opened with. Safe to call from
+// package init.
+func RegisterWSCarrier(fn WSCarrier) {
+	if fn == nil {
+		return
+	}
+	wsCarrierMu.Lock()
+	wsCarriers = append(wsCarriers, fn)
+	wsCarrierMu.Unlock()
+}
+
+// wsBaseContext builds a connection's base context from its upgrade request
+// by running every registered carrier over a fresh background context.
+func wsBaseContext(upgrade context.Context) context.Context {
+	base := context.Background()
+	wsCarrierMu.RLock()
+	defer wsCarrierMu.RUnlock()
+	for _, fn := range wsCarriers {
+		if next := fn(upgrade, base); next != nil {
+			base = next
+		}
+	}
+	return base
+}

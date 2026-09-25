@@ -207,6 +207,7 @@ func mountWSEndpoint(app *App, lc di.Lifecycle, ep *wsEndpoint, cfg *wsConfig, f
 		return nil
 	})
 	hub.OnIdentify(identifyFromGin)
+	hub.OnContext(func(c *httpx.Ctx) context.Context { return wsBaseContext(c.Request.Context()) })
 
 	lc.Append(di.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -266,7 +267,7 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 	// own root trace; child spans started inside the handler attach
 	// via the stashed span in ctx, so a handler doing DB work or
 	// fanning out a pubsub publish shows the full chain.
-	rootCtx := trace.WithBus(context.Background(), app.bus)
+	rootCtx := trace.WithBus(conn.Context(), app.bus)
 	rootCtx, _, finish := trace.NewRootSpan(
 		rootCtx,
 		h.opName,

@@ -332,10 +332,20 @@ func TestAsWS_HandlerErrorEmitsRequestEnd500(t *testing.T) {
 // way an auth middleware would.
 type testUserKey struct{}
 
+// testRequestOnlyKey is a per-request value (like a Scoped memo) that no
+// carrier copies: it must not reach a WS handler.
+type testRequestOnlyKey struct{}
+
 func init() {
 	RegisterRequestIdentity(func(ctx context.Context) (string, bool) {
 		id, ok := ctx.Value(testUserKey{}).(string)
 		return id, ok
+	})
+	RegisterWSCarrier(func(upgrade, conn context.Context) context.Context {
+		if u, ok := upgrade.Value(testUserKey{}).(string); ok {
+			conn = context.WithValue(conn, testUserKey{}, u)
+		}
+		return conn
 	})
 }
 
@@ -346,7 +356,8 @@ func testUserMiddleware() middleware.Middleware {
 		Name: "test-user",
 		Gin: func(c *httpx.Ctx) {
 			if u := c.Request.Header.Get("X-Test-User"); u != "" {
-				c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), testUserKey{}, u))
+				ctx := context.WithValue(c.Request.Context(), testUserKey{}, u)
+				c.Request = c.Request.WithContext(context.WithValue(ctx, testRequestOnlyKey{}, "per-request"))
 			}
 			c.Next()
 		},
@@ -486,6 +497,46 @@ func TestAsWS_RejectsBuiltinTypes(t *testing.T) {
 			t.Errorf("AsWS(%q) booted; want an error", typ)
 		} else if !strings.Contains(err.Error(), "built-in") {
 			t.Errorf("AsWS(%q): %v", typ, err)
+		}
+	}
+}
+
+// A handler's context carries what registered carriers copied from the
+// upgrade request — on every message — and nothing else from it.
+func TestAsWS_HandlerContextFromCarriers(t *testing.T) {
+	type seen struct{ User, RequestOnly string }
+	got := make(chan seen, 2)
+	var app *App
+	fxApp := newTestApp(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		AsWS("/ctx", "look", func(p Params[chatPayload]) error {
+			u, _ := p.Context.Value(testUserKey{}).(string)
+			r, _ := p.Context.Value(testRequestOnlyKey{}).(string)
+			got <- seen{u, r}
+			return nil
+		}, Use(testUserMiddleware())).nexusOption(),
+		di.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+"/ctx", http.Header{"X-Test-User": {"u7"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	for i := 0; i < 2; i++ {
+		if err := c.WriteJSON(map[string]any{"type": "look"}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case s := <-got:
+			if s.User != "u7" || s.RequestOnly != "" {
+				t.Fatalf("message %d: handler context has %+v, want the carried user and no per-request value", i, s)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("handler never ran")
 		}
 	}
 }

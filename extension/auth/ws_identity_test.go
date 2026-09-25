@@ -99,3 +99,82 @@ func TestWebSocketIdentityComesFromAuth(t *testing.T) {
 		t.Fatalf("an unauthenticated upgrade must be refused by auth.Required (err %v)", err)
 	}
 }
+
+// wsAuthBackend resolves tokens and grants "watch" by name, not by role —
+// so auth.Can only answers true when the module's state reached the handler.
+type wsAuthBackend struct{}
+
+func (wsAuthBackend) Resolve(_ context.Context, tok string) (*auth.Identity, error) {
+	switch tok {
+	case "tok-alice":
+		return &auth.Identity{ID: "alice"}, nil
+	case "tok-bob":
+		return &auth.Identity{ID: "bob"}, nil
+	}
+	return nil, errors.New("unknown token")
+}
+
+func (wsAuthBackend) Authorize(id *auth.Identity, required []string) bool {
+	return id != nil && id.ID == "alice"
+}
+
+// A WS handler's context carries the upgrade request's identity and auth
+// state, so auth.IdentityFrom and auth.Can work there as in REST handlers.
+func TestWebSocketHandlerContextCarriesAuth(t *testing.T) {
+	app, stop, err := nexus.InProcess(nexus.Config{},
+		auth.Module(auth.Config{
+			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
+			Backend:        auth.StaticBackend(wsAuthBackend{}),
+		}),
+		nexus.AsWS("/live", "whoami", func(sess *nexus.WSSession, p nexus.Params[struct{}]) error {
+			id, _ := auth.IdentityFrom(p.Context)
+			who := ""
+			if id != nil {
+				who = id.ID
+			}
+			return sess.Send("me", map[string]any{"id": who, "canWatch": auth.Can(p.Context, "watch")})
+		}, auth.Required()),
+	)
+	if err != nil {
+		t.Fatalf("InProcess: %v", err)
+	}
+	defer stop(context.Background())
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+	base := "ws" + strings.TrimPrefix(ts.URL, "http") + "/live"
+
+	for _, c := range []struct {
+		token, id string
+		can       bool
+	}{{"tok-alice", "alice", true}, {"tok-bob", "bob", false}} {
+		conn, _, err := websocket.DefaultDialer.Dial(base, http.Header{"Authorization": {"Bearer " + c.token}})
+		if err != nil {
+			t.Fatalf("dial %s: %v", c.token, err)
+		}
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if _, _, err := conn.ReadMessage(); err != nil {
+			t.Fatalf("greeting: %v", err)
+		}
+		// Two messages: the context must hold across the connection, not just the first.
+		for i := 0; i < 2; i++ {
+			if err := conn.WriteJSON(map[string]any{"type": "whoami"}); err != nil {
+				t.Fatal(err)
+			}
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				t.Fatalf("%s: %v", c.token, err)
+			}
+			var ev struct {
+				Data struct {
+					ID       string `json:"id"`
+					CanWatch bool   `json:"canWatch"`
+				} `json:"data"`
+			}
+			_ = json.Unmarshal(raw, &ev)
+			if ev.Data.ID != c.id || ev.Data.CanWatch != c.can {
+				t.Fatalf("%s message %d: handler saw %s, want id %q canWatch %v", c.token, i, raw, c.id, c.can)
+			}
+		}
+		conn.Close()
+	}
+}

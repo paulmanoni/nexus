@@ -655,6 +655,11 @@ authenticated for the upgrade request** — `extension/auth` registers its ident
 param or `authenticate` message can claim an id. **Rooms are joined server-side**
 (`sess.JoinRoom` after checking the caller); a client's own `subscribe` is refused
 unless the path opts in with `nexus.ClientRooms(func(userID, room string) bool)`.
+**Handlers see the connection's auth**: `p.Context`/`sess.Context()` carry the
+identity and auth state from the upgrade request (captured once per connection), so
+`auth.IdentityFrom`, `auth.User[T]` and `auth.Can` work in WS handlers. Extensions add
+values with `nexus.RegisterWSCarrier` — only ones that may outlive the request (never a
+`Scoped` memo or a session handle).
 
 ### Decorator-form registration (`//@` annotations) — optional
 
