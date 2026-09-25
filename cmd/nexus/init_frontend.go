@@ -199,8 +199,9 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 //
 //   - import block: add "embed" if not present (use the existing
 //     grouped or single-import form)
-//   - file decls: append the embed declaration as a new GenDecl
-//     block after the imports, before the func main() decl
+//   - file scope: the //go:embed directive + var, spliced into the
+//     formatted source after the imports (insertEmbedDecl) — an AST
+//     comment without a position would be dropped by the printer
 //   - main func body: find the nexus.Run call expression, insert
 //     a ServeFrontend(...) ast.CallExpr in its arg list after the
 //     Config literal (the first positional arg)
@@ -219,9 +220,12 @@ func patchMainGoForFrontend(path string) (bool, error) {
 		added = true
 	}
 
-	// Step 2: ensure the webFS var + //go:embed decl exists.
-	if !hasVarDecl(file, "webFS") {
-		appendEmbedDecl(file)
+	// Step 2 (the webFS var + //go:embed directive) happens on the
+	// formatted source below: a comment synthesised into the AST has no
+	// position, and the printer drops it whenever the file has comments of
+	// its own — leaving a var with no directive, an empty FS.
+	needEmbed := !hasVarDecl(file, "webFS")
+	if needEmbed {
 		added = true
 	}
 
@@ -246,10 +250,45 @@ func patchMainGoForFrontend(path string) (bool, error) {
 	if err := format.Node(&buf, fset, file); err != nil {
 		return false, fmt.Errorf("format: %w", err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	out := buf.Bytes()
+	if needEmbed {
+		if out, err = insertEmbedDecl(out); err != nil {
+			return false, err
+		}
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return false, fmt.Errorf("write: %w", err)
 	}
 	return true, nil
+}
+
+// embedDecl is the file-scope declaration a frontend-enabled main needs.
+const embedDecl = "\n\n// webFS holds the built frontend (web/dist), embedded by go build.\n//\n//go:embed all:web/dist\nvar webFS embed.FS\n"
+
+// insertEmbedDecl splices embedDecl into src right after its last import
+// declaration (after the package clause when there is none) and gofmts
+// the result.
+func insertEmbedDecl(src []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", src, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("parse patched main.go: %w", err)
+	}
+	at := fset.Position(file.Name.End()).Offset
+	for _, decl := range file.Decls {
+		if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
+			at = fset.Position(gd.End()).Offset
+		}
+	}
+	spliced := make([]byte, 0, len(src)+len(embedDecl))
+	spliced = append(spliced, src[:at]...)
+	spliced = append(spliced, embedDecl...)
+	spliced = append(spliced, src[at:]...)
+	out, err := format.Source(spliced)
+	if err != nil {
+		return nil, fmt.Errorf("format: %w", err)
+	}
+	return out, nil
 }
 
 // hasImport reports whether file already imports the given package
@@ -312,41 +351,6 @@ func hasVarDecl(file *ast.File, name string) bool {
 		}
 	}
 	return false
-}
-
-// appendEmbedDecl adds the //go:embed all:web/dist + var webFS
-// embed.FS pair to the file. Inserted after the import block so
-// the embed directive lands at file scope (Go requires the
-// directive to be on a top-level var declaration).
-func appendEmbedDecl(file *ast.File) {
-	// Build:
-	//   //go:embed all:web/dist
-	//   var webFS embed.FS
-	spec := &ast.ValueSpec{
-		Names: []*ast.Ident{{Name: "webFS"}},
-		Type: &ast.SelectorExpr{
-			X:   &ast.Ident{Name: "embed"},
-			Sel: &ast.Ident{Name: "FS"},
-		},
-	}
-	gd := &ast.GenDecl{
-		Tok:   token.VAR,
-		Specs: []ast.Spec{spec},
-		Doc: &ast.CommentGroup{
-			List: []*ast.Comment{
-				{Text: "//go:embed all:web/dist"},
-			},
-		},
-	}
-	// Insert AFTER the last import declaration so the embed sits
-	// at file scope before the first func decl.
-	insertAt := 0
-	for i, decl := range file.Decls {
-		if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
-			insertAt = i + 1
-		}
-	}
-	file.Decls = append(file.Decls[:insertAt], append([]ast.Decl{gd}, file.Decls[insertAt:]...)...)
 }
 
 // ensureServeFrontendArg finds the app-entry call expression inside

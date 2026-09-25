@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -262,6 +265,48 @@ func TestInitFrontend_ForceMigratesLegacyWeb(t *testing.T) {
 	for _, want := range []string{"kept  web/index.html", "kept  web/src/App.vue", "web/viteless.config.ts is no longer read"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// TestInitFrontend_OnScaffoldedMain patches the main.go nexus new writes
+// for an app with no frontend. That file has comments, and a directive
+// added to the AST as a position-less comment was dropped by the printer,
+// leaving "var webFS embed.FS" with no //go:embed: an app that compiled
+// and served an empty frontend.
+func TestInitFrontend_OnScaffoldedMain(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "plain")
+	if err := scaffoldWithOpts(scaffoldOpts{
+		Dir: dir, Frontend: "none", DB: "none", Cache: "none", Auth: "none",
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	var out bytes.Buffer
+	if err := runInitFrontend(dir, "vue", false, &out); err != nil {
+		t.Fatalf("runInitFrontend: %v\n%s", err, out.String())
+	}
+	body, _ := os.ReadFile(filepath.Join(dir, "main.go"))
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "main.go", body, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("patched main.go does not parse: %v\n%s", err, body)
+	}
+	var directive bool
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR || gd.Doc == nil || !hasVarDecl(&ast.File{Decls: []ast.Decl{gd}}, "webFS") {
+			continue
+		}
+		for _, c := range gd.Doc.List {
+			directive = directive || c.Text == "//go:embed all:web/dist"
+		}
+	}
+	if !directive {
+		t.Fatalf("var webFS lost its //go:embed directive:\n%s", body)
+	}
+	for _, want := range []string{"nexus.ServeFrontend(webFS, \"web/dist\")", "// nexus.Boot loads nexus.toml"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("main.go missing %q:\n%s", want, body)
 		}
 	}
 }
