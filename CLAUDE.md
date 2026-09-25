@@ -1,53 +1,49 @@
 # nexus — framework guide for Claude Code
 
 nexus is a Go backend framework: typed reflective handlers over REST + GraphQL +
-WebSocket, dependency injection (a built-in zero-dep container; fx optional), an embedded **viteless** frontend (a
-zero-Node "Vite for Go"), and a live introspection dashboard at `/__nexus`. This file
-tells you how to use every feature. Verify APIs against the installed version; `nexus
+WebSocket, dependency injection (a built-in zero-dep container; fx optional), a **Vite**
+frontend embedded in the binary, and a live introspection dashboard at `/__nexus`. This
+file tells you how to use every feature. Verify APIs against the installed version; `nexus
 docs <topic>` prints an inline quick-reference for any feature (`nexus docs --list`).
 
 Import path: `github.com/paulmanoni/nexus`. Pure-Go build — no CGO, no build tags.
-**No Node/npm is required** for the frontend, at dev, build, or run time; the runtime
-is a single Go binary with the SPA embedded.
+A frontend is an ordinary npm-managed Vite project: **Node.js 20+ and npm are dev- and
+build-time requirements**; the runtime is still a single Go binary with `web/dist`
+embedded, and runs without Node (an Inertia SSR server is the one opt-in exception).
 
 ---
 
-## 1. Frontend (viteless, embedded SPA)
+## 1. Frontend (Vite, embedded SPA / Inertia)
 
-nexus serves a Vue/React/TS SPA via the embedded **viteless** engine
-(`github.com/paulmanoni/viteless`) — a zero-Node implementation of the Vite dev/build
-model in Go (esbuild + a WASM QuickJS engine). `nexus build` produces `web/dist` and
-`go build` embeds it via `//go:embed`. No npm, no `node_modules`, no Node by default.
-
-**Dependencies & fidelity (auto-detected, highest available wins):**
-1. **Real Vite installed** (`web/node_modules/.bin/vite`) → viteless delegates to it
-   (100% compat; set `VITELESS_ENGINE=1` to force the viteless engine).
-2. **Node on PATH** → viteless's own engine, evaluating `vite.config`/`viteless.config`
-   and running real JS plugins via a Node sidecar (full fidelity); Vue/React/Tailwind
-   are handled natively.
-3. **No Node** → fully zero-Node: deps from the esm.sh CDN (cached), config evaluated
-   in QuickJS, native Vue/React/Tailwind, JS-only plugins reported unsupported.
-
-Dependency sourcing is likewise auto: if `web/node_modules` exists it's used
-(offline, exact versions); otherwise deps come from esm.sh. `web/package.json` is
-optional — when present its versions pin CDN fetches; run `npm install` only to opt
-into node_modules / a real Vite.
+nexus drives the project's **own Vite** (`web/node_modules/.bin/vite`) and embeds its
+output: `nexus build` runs `vite build` into `web/dist`, and `go build` embeds it via
+`//go:embed`. Any framework, Vite plugin or npm library works. **viteless** (the former
+zero-Node engine) is retired: a `web/` with `viteless.config.*`/`viteless-env.d.ts` and no
+`package.json` gets a migration hint (a warning in `nexus dev`, an error in `nexus build`);
+`nexus init --frontend vue --force` adds the Vite files and keeps the sources.
 
 ### Layout
 ```
 web/
-  index.html            # entry HTML (references /src/main.ts)
-  viteless.config.ts    # optional; imports defineConfig from 'viteless' (vite.config.ts also read)
-  tsconfig.json         # paths "@/*"→src; includes viteless-env.d.ts
-  viteless-env.d.ts     # ambient types so the editor resolves imports with nothing installed
+  package.json          # vite ^6.4.3, @vitejs/plugin-vue ^5.2.4 (react: plugin-react ^5.2 + React 19),
+                        # typescript ~6.0.3, vue-tsc ^3.3.11 (vue-tsc 3.3 crashes on TypeScript 7)
+  package-lock.json     # commit it — nexus dev/build run `npm ci` when it exists
+  vite.config.ts        # plugins: [vue(), nexus()] — nexus from './sdk/nexus-vite-plugin.js'; NO proxy
+  tsconfig.json         # strict, include ["src"], "@/*"→src, types vite/client, no baseUrl
+  index.html            # entry HTML (/src/main.ts) — also the Inertia page shell
+  sdk/                  # COMMIT: nexus-vite-plugin.{js,d.ts} + the typed SDK nexus dev writes
   src/
-    main.ts             # entry
-    App.vue             # (or App.tsx for React)
+    main.ts             # entry (main.tsx for React)
+    App.vue             # (App.tsx; Inertia: Pages/*.vue; --ssr adds ssr.ts)
   dist/                 # build OUTPUT, embedded in the binary
     index.html          # a committed stub ships so the first `go build` compiles
 ```
-No `package.json`/`node_modules`/`package-lock.json` by default. The dir is `web/`;
-override with `NEXUS_FRONTEND_DIR`.
+`node_modules/` and `dist/*` (except the stub) are gitignored; `web/sdk` must not be — a
+fresh checkout's `vite.config.ts` imports the plugin from it. **Which dir:** `nexus dev`
+finds it from main.go's `ServeFrontend`/`frontend.Plugin` call (resolved against the
+package dir); `--frontend` overrides; `NEXUS_FRONTEND_DIR` (relative to the project)
+overrides for dev and build alike; default `web`. **No `package.json` → no Vite**: a
+hand-written or prebuilt `dist` is served as-is (e.g. `examples/petstore-spa`).
 
 ### main.go wiring
 ```go
@@ -77,44 +73,55 @@ everything else (and the shell) is revalidated with an ETag, so repeat requests 
 Vite manifest — a manifest alone boots a module-only (Inertia) build, whose unknown
 routes then 404; in development an unbuilt bundle serves a placeholder instead.
 
-**The Vite handshake (`internal/vitehot`).** With `nexus-vite-plugin` in
+**The Vite handshake (`nexus-vite-plugin` + `internal/vitehot`).** With `nexus()` in
 `vite.config`, `vite dev` writes `<outDir>/.vite/nexus-hot.json` (the dev server's
 bound origin, base, entries, pid) and removes it on exit. `ServeFrontend` and the
-Inertia engine read it per request — never served, followed only while its dev
-server is live (running pid, or an origin that answers; a file left by a killed Vite
-reads as absent) — so pages on the Go origin load modules from wherever Vite really
-bound, and `public/` files are proxied to Vite for loopback clients. That makes
-`npm run dev` + `go run .` a complete dev setup. `nexus({ input: 'src/main.ts' })`
-declares an Inertia entry; the plugin forces `build.manifest: true`. **Inertia pages render into
-`index.html`** (`App.FrontendDocument`): the engine sets `data-page` on the mount
-element and keeps the rest of the document, so title/meta/stylesheets live in
-`index.html`, not in `inertia.Config.Head`; only a module-only build (`input`, no
-`index.html`) gets a synthesised document. Under `nexus dev` the reload shim reloads
-when a new server process is serving, never for files Vite hot-updates. Design:
-`docs/design/frontend-seam.md`. `NEXUS_VITE_DEV` is the fallback for the viteless
-engine, which does not run the plugin.
+Inertia engine read it per request — never served, followed only under `nexus dev` or
+`environment = "development"` and only while its dev server is live (running pid, or an
+origin that answers; a file left by a killed Vite reads as absent) — so pages on the Go
+origin load modules from wherever Vite really bound, and `public/` files are proxied to
+Vite for loopback clients. **The browser always opens the app's origin**; Vite serves
+modules only, so there is no proxy block and no second URL, and `npm run dev` + `go run
+.` is a complete dev setup. `vite build` gets `build.manifest: true` forced (the app
+reads `dist/.vite/manifest.json`); `nexus({ input: 'src/main.ts' })` declares a
+module-only entry. **Inertia pages render into `index.html`** (`App.FrontendDocument`):
+the engine sets `data-page` on the mount element and keeps the rest of the document, so
+title/meta/stylesheets live in `index.html`, not in `inertia.Config.Head`; only a
+module-only build (`input`, no `index.html`) gets a synthesised document. `nexus({ pages
+})` (default `src/Pages`) warns in dev and fails `vite build` for a registered page with
+no component. Under `nexus dev` the reload shim reloads when a new server process is
+serving, never for files Vite hot-updates. `NEXUS_VITE_DEV` survives only as a fallback
+origin when no hot file is readable (`nexus dev` no longer sets it). Design:
+`docs/design/frontend-seam.md`.
+
+**`[env]` → the bundle.** `nexus dev`/`nexus build` pass nexus.toml's `[env]` table to
+Vite as `NEXUS_FRONTEND_ENV` (JSON of dotted keys); the plugin defines
+`import.meta.env.<dotted.key>` in dev and build. A Vite you start yourself gets none.
 
 ### Build / serve commands
 ```
-nexus dev                # build-then-swap Go loop + viteless HMR dev server — see below
-nexus build              # viteless build → web/dist, then go build embeds it
+nexus dev                # build-then-swap Go loop + the project's own Vite — see below
+nexus build              # npm ci (if needed) → vite build [→ SSR build] → web/dist, then go build
 ```
-`nexus build` skips the frontend step when `web/` has no `index.html`/`src` (a pure-Go
-app). No npm step — viteless fetches/caches deps itself (or uses node_modules if present).
+`nexus build` treats `<dir>/package.json` as "there is a frontend" (none → pure-Go
+build). Steps: install deps only when `node_modules/.bin/vite` is missing (`npm ci` with a
+lockfile, else `npm install`; a clear error without npm on PATH) → write
+`web/sdk/nexus-vite-plugin.{js,d.ts}` → `vite build` → if `src/ssr.ts` exists, `vite build
+--ssr src/ssr.ts --outDir dist/ssr` (without emptying `dist`) → require
+`dist/.vite/manifest.json` or `dist/index.html` → `go build`.
 
 ### `nexus dev` — the dev model (IMPORTANT)
-`nexus dev` runs the **viteless HMR dev server** alongside `go run`:
-- The **SPA is served on `http://localhost:5173/`** with HMR — open THAT for the
-  frontend.
-- The **Go app + dashboard stay on `:8080`** (or your `addr`).
-- viteless **proxies** every unmatched request (`/__nexus`, `/graphql`, `/oauth`,
-  `/ws`, your API) straight to the Go app — no managed `vite.config` proxy block to
-  maintain. The Go app's real port is discovered from its startup log.
-
-So in dev with the viteless engine: **frontend → :5173, dashboard/API → :8080.**
-With real Vite running `nexus-vite-plugin`, the hot file makes the **app's own origin**
-the one to open — `nexus dev` prints and opens it — and Vite only serves modules. In
-production the embedded `web/dist` is served at the app port via `ServeFrontend`.
+`nexus dev` supervises the project's **own Vite** beside the Go app:
+- First run installs dependencies (`npm ci`/`npm install`) when `node_modules/.bin/vite`
+  is missing, writes `web/sdk/nexus-vite-plugin.*`, then spawns `vite` in the frontend dir
+  (its own process group, no forced `--host`) with `NEXUS_FRONTEND_ENV`.
+- The dev origin comes from the **hot file**, never from Vite's stdout. **Open the URL
+  `nexus dev` prints — the Go app's origin** (`http://localhost:8080` or your `addr`); the
+  dashboard is on the same origin. Vite's own `Local:`/`Network:` banner is filtered out
+  (it would send you to the wrong port); its other output is prefixed `[web]`.
+- On exit Vite gets SIGTERM, then SIGKILL after a grace period, and `nexus dev` waits, so
+  the plugin removes its hot file. `--frontend-cmd` is deprecated and ignored.
+In production the embedded `web/dist` is served at the app port via `ServeFrontend`.
 
 **Go restarts are build-then-swap.** On a save the next binary compiles while the
 current one keeps serving; only a green build takes the old process down, so the app
@@ -138,13 +145,12 @@ Two defaults follow from that, both dev-only:
 - **DWARF is stripped** (`-ldflags=-w`, the old opt-in `--fast`). Pass `--debug`
   to keep it when you need delve or a complete panic trace.
 - **The frontend bundle is stubbed out of the dev binary.** Under `NEXUS_DEV`
-  `ServeFrontend` reads `web/dist` from disk (and the SPA is on :5173 anyway),
-  so the embedded copy is dead weight that gets relinked on every save. `nexus
+  `ServeFrontend` reads `web/dist` from disk (and pages load their modules from Vite
+  anyway), so the embedded copy is dead weight that gets relinked on every save. `nexus
   dev` maps it to empty files via the same `go build -overlay` it already uses
   for handler codegen — no build tags, no source changes. Scoped strictly to the
   tree a `ServeFrontend` call names, so assets your app genuinely reads at
-  runtime (fonts, templates, seed data) are untouched; the Vite `manifest.json`
-  is also left real for Inertia. `--no-embed-stub` opts out.
+  runtime (fonts, templates, seed data) are untouched. `--no-embed-stub` opts out.
 
 Measured on a ~114MB app: 4.27s → 2.99s per rebuild. Note this is latency-until-
 live, not downtime — build-then-swap keeps the app serving throughout.
@@ -197,14 +203,14 @@ survives a rebuild instead of forcing a re-login on every save (access tokens ar
 opaque values held in the store, not self-contained JWTs, so persisting the store
 is sufficient). Setting `Config.TokenStore` opts out.
 
-**Keeping `web/dist` fresh in dev (`--dist`).** The HMR server serves the frontend
+**Keeping `web/dist` fresh in dev (`--dist`).** The dev server serves the frontend
 from memory and never writes `web/dist`, so the embedded production bundle stays
 frozen at the last `nexus build` — a `go build` taken mid-session ships stale assets.
-`nexus dev --dist` runs a debounced background `viteless` build into `web/dist`
-alongside the HMR server, so the embed always matches the live frontend (no manual
-`nexus build`). Opt-in: it runs a full production bundle on each change (the dep store
-is cached, so incremental app-only rebuilds stay fast). No rebuild loop — the `dist/`
-output is excluded from the watch and the Go-source watcher ignores `web/dist` writes.
+`nexus dev --dist` re-runs `vite build` into `web/dist` (debounced) alongside the dev
+server, so the embed always matches the live frontend; the plugin puts the live dev
+server's hot file back after `emptyOutDir`. Opt-in: each change is a full production
+build. No rebuild loop — `dist/` is excluded from the watch and the Go-source watcher
+ignores `web/dist` writes.
 
 ### Dev server logs (columnar, configurable — Django/Spring-style)
 `nexus dev` reshapes the app's structured (zap-JSON) log lines into a columnar,
@@ -238,10 +244,18 @@ never log requests to the console (gated on `NEXUS_DEV`); silence it in dev with
 
 ### Scaffold a frontend
 ```
-nexus new myapp --frontend vue      # fresh app with a web/ viteless project (no install needed)
-nexus init --frontend vue           # add a frontend to an EXISTING project (writes web/, patches main.go)
+nexus new myapp --frontend vue      # or react — a Vite project under web/ (package.json, vite.config.ts, sdk/)
+nexus new myapp --inertia [--ssr]   # Inertia (Vue) pages + pages.go; --ssr adds src/ssr.ts + the SSR build
+nexus init --frontend vue           # add web/ to an EXISTING project (patches main.go); --force keeps sources
 ```
-After scaffolding: just `nexus dev` (zero install). Deps are fetched on first run.
+After scaffolding: `go mod tidy && nexus dev` — it installs the deps on first run and
+prints the app's URL. `--tooling` is deprecated (ignored). Scaffolds write
+`environment = "development"` to nexus.toml; **deployments set
+`NEXUS_ENVIRONMENT=production`**, which overrides it. SSR: `ssr.ts` uses
+`@inertiajs/vue3/server`; `nexus build` writes `web/dist/ssr/ssr.js` with its deps bundled
+(`ssr.noExternal`), so `node web/dist/ssr/ssr.js` (:13714) runs beside the binary without
+`node_modules`; main.go passes `inertia.Config{SSR: ssrhttp.New("")}`; under `nexus dev`
+pages render client-side.
 
 ---
 
@@ -260,7 +274,7 @@ the dotted key mirrors the TOML table path.
 
 ```toml
 [runtime]
-environment    = "development"          # development | staging | production
+environment    = "development"          # development | staging | production; NEXUS_ENVIRONMENT overrides
 introspection  = true                   # opens /__nexus (OFF by default → 404s)
 introspection_networks = ["10.0.0.0/8"] # allowed even when introspection is off
 trace_capacity = 1000                    # request-trace ring buffer (0 = off)
@@ -291,7 +305,7 @@ scope = "admin"                          # public | internal | admin
 # WebSocket upgrades bypass CORS and carry cookies, so nexus defaults to
 # SAME-ORIGIN for every upgrader: AsWS endpoints, GraphQL subscriptions, and the
 # /__nexus streams. List a cross-origin frontend here. Loopback is always
-# allowed under `nexus dev` (SPA on :5173, app on :8080). "*" disables the check.
+# allowed under `nexus dev`. "*" disables the check.
 allowed_origins = ["https://app.example.com", "*.example.com"]
 
 [runtime.dashboard]
@@ -350,9 +364,10 @@ secret = "${CLIENT_SECRET}"        # ${ENV} expanded; keep real secrets in env
 ```
 **`[env.*]` bridge:** every key under `[env]` is published (a) as a process env
 var read by the Go app/extensions via `os.Getenv("client.id")`, and (b) to the
-frontend build as `import.meta.env.client.id` (dot form — esbuild substitutes
-the dotted member expression; the bracket form `import.meta.env["client.id"]` is
-NOT substituted). Nested tables flatten with dots (`[env.a.b] c` → `a.b.c`).
+frontend as `import.meta.env.client.id` whenever `nexus dev`/`nexus build` start Vite
+(passed as `NEXUS_FRONTEND_ENV`; nexus-vite-plugin defines each dotted key in dev and
+build — use the member form; the bracket form `import.meta.env["client.id"]` is NOT
+substituted). Nested tables flatten with dots (`[env.a.b] c` → `a.b.c`).
 SECURITY: frontend-exposed values land in the browser bundle — only put
 client-public data there (an OAuth client id, a public URL), never a real
 server secret.
@@ -1123,42 +1138,54 @@ directly instead.
 ## 11. CLI cheatsheet
 
 ```
-nexus new <dir>      Scaffold an app + nexus.toml. --frontend vue|react, --db, --cache,
-                     --auth, --module <path>, --yes (no prompts).
-nexus init [dir]     Add a frontend (web/) to an existing project. --frontend (req).
-nexus dev [dir]      Live dev: viteless SPA+HMR on :5173, app/dashboard on :8080.
+nexus new <dir>      Scaffold an app + nexus.toml. --frontend vue|react (a Vite project
+                     under web/), --inertia [--ssr], --db, --cache, --auth,
+                     --module <path>, --yes (no prompts). --tooling: deprecated, ignored.
+nexus init [dir]     Add a Vite frontend (web/) to an existing project and patch main.go.
+                     --frontend (req). --force: add the project files to an existing
+                     web/, keeping index.html and src/ (the viteless → Vite migration).
+nexus dev [dir]      Live dev: the app + dashboard on its own origin, and — when the
+                     frontend dir has a package.json — its Vite beside it (deps
+                     installed on first run; open the app URL it prints, never Vite's).
                      Go rebuilds are build-then-swap (old binary serves through the
                      compile; broken builds keep it up; no-op builds skip the restart).
                      DWARF is stripped and the frontend bundle is stubbed out of
                      the dev binary (--debug / --no-embed-stub opt back in).
-                     --dist keeps web/dist rebuilt in the background so go build
-                     always embeds the current frontend. --go-run = legacy loop.
-nexus build          viteless build → web/dist, then go build embeds it. No npm.
-                     ONE binary (frontend + Go). -o <path>.
+                     --dist keeps web/dist rebuilt (vite build) in the background so
+                     go build always embeds the current frontend. --frontend <dir>
+                     overrides the detected dir. --go-run = legacy loop.
+                     --frontend-cmd: deprecated, ignored.
+nexus build          npm ci (if needed) → vite build [→ vite build --ssr] → web/dist,
+                     then go build embeds it. ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
-nexus generate dockerfile   Multi-stage Dockerfile.
+nexus generate frontend    Typed TS source tree from a manifest (--check = drift gate).
 nexus generate handlers [./...]  Wire //@-annotated handlers: write nexus_handlers_gen.go
                      per package + a main-package import aggregator. --check = CI drift gate.
                      (Run automatically by nexus dev/build; see §5.)
 nexus docs [topic]   Inline reference. --web opens the README.
 nexus pki ...        Generate mTLS certs for the peer mesh.
 ```
-`nexus build` produces ONE binary (frontend + Go). There is no deployment-split CLI.
+`nexus build` produces ONE binary (frontend + Go). There is no deployment-split CLI and
+no Dockerfile generator.
 
 ---
 
 ## 12. Conventions & gotchas
 
-- **Pure-Go build** — no `-tags`, no CGO. The frontend needs **no Node/npm** at dev,
-  build, or run time (viteless is embedded). Node/Vite are used only if present, for
-  higher fidelity.
+- **Pure-Go build** — no `-tags`, no CGO. A frontend needs **Node.js 20+ and npm at dev
+  and build time** (a real Vite project); the shipped binary runs without them.
 - **Dashboard 404s unless `introspection = true`** (or `nexus dev`). It's locked down
   by default for production.
-- **In dev the SPA is on `:5173`** (viteless), not the Go app port. `web/dist` is the
-  production artifact, built by `nexus build` and embedded.
-- **Frontend deps**: none to install by default — viteless fetches from esm.sh (cached)
-  or uses `web/node_modules` if you ran `npm install`. `web/dist/*` (except the committed
-  `index.html` stub) and any `web/node_modules` are gitignored.
+- **In dev, open the app's origin** (`:8080`), never Vite's port — pages load their
+  modules from Vite through the hot file; there is no proxy. `web/dist` is the production
+  artifact, built by `nexus build` and embedded.
+- **Frontend deps**: `nexus dev`/`nexus build` run `npm ci` (or `npm install` without a
+  lockfile) when `web/node_modules/.bin/vite` is missing. Commit `web/package-lock.json`
+  and `web/sdk`; `web/dist/*` (except the committed `index.html` stub) and
+  `web/node_modules` are gitignored. Keep `typescript` on `~6.0` (vue-tsc 3.3 crashes on 7).
+- **Deploy with `NEXUS_ENVIRONMENT=production`** — scaffolds ship `environment =
+  "development"` in nexus.toml, which turns on dev-only behaviour (the hot file; with
+  `sdk = true`, the SDK dump into `web/sdk`).
 - **Handler constructors are `NewXxx`**; the `New` prefix is stripped for op names.
 - Don't reference `nexus.DeployAs` / `nexus.IfDeployment` — not implemented.
 - `nexus docs <topic>` is the authoritative per-feature reference inside the installed
