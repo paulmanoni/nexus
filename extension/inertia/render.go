@@ -152,7 +152,13 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	// SSR must never take down the page.
 	var ssr SSRResult
 	if e.ssr != nil {
-		r, serr := e.ssr.Render(c.Request.Context(), blob)
+		ctx := c.Request.Context()
+		if assets.hot != nil {
+			// In development the dev server renders too; tell the
+			// renderer which one (see DevServer).
+			ctx = withDevServer(ctx, assets.hot.Origin)
+		}
+		r, serr := e.ssr.Render(ctx, blob)
 		if serr != nil {
 			if e.ssrStrict {
 				return serr
