@@ -6,6 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.60.3] - 2026-09-25
+
+### Fixed
+
+- **SMTP connection deadlines use the wall clock.** `extension/mail`'s SMTP
+  mailer set the socket deadline from its injectable clock, which exists to
+  stamp the message's `Date` header. A mailer built with a fixed clock (as
+  the package's tests do) got a deadline in the past once that date had
+  gone by, so every send timed out immediately.
+
+### Security
+
+- `github.com/rabbitmq/amqp091-go` → v1.13.0 (GO-2026-6372: a broker could
+  send an oversized payload to exhaust memory) and `golang.org/x/text` →
+  v0.39.0 (GO-2026-5970: infinite loop on invalid input). Both were
+  reachable from this module.
+
+### Changed
+
+- **Documentation site.** The guides and reference now live at
+  <https://paulmanoni.github.io/nexus/>, built from `docs/` with VitePress
+  and published by a GitHub Pages workflow. The README is a short landing
+  page that links into it, and `nexus docs --web` opens the site.
+- CI: golangci-lint moves to v2.14.0 (v1 cannot read Go 1.26 export data),
+  and the deprecated `reflect.Ptr` is replaced with `reflect.Pointer`
+  throughout.
+
 ## [1.60.2] - 2026-09-25
 
 ### Fixed
