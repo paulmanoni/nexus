@@ -118,7 +118,7 @@ func TestMergePathsConfig_IncludesSDKDeclarations(t *testing.T) {
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"src/**/*.ts", "src/**/*.vue", "sdk/*.d.ts"}; strings.Join(doc.Include, ",") != strings.Join(want, ",") {
+	if want := []string{"src/**/*.ts", "src/**/*.vue", "sdk/client.d.ts"}; strings.Join(doc.Include, ",") != strings.Join(want, ",") {
 		t.Errorf("include = %v, want %v", doc.Include, want)
 	}
 
@@ -128,5 +128,87 @@ func TestMergePathsConfig_IncludesSDKDeclarations(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(bare); strings.Contains(string(b), "include") {
 		t.Errorf("a config without include got one:\n%s", b)
+	}
+}
+
+// A solution-style root (create-vue / create-vite) compiles nothing: the
+// mapping goes into the referenced config that covers src/, not the root
+// and not the node config.
+func TestMergePathsConfig_SolutionStyleRoot(t *testing.T) {
+	dir := t.TempDir()
+	web := filepath.Join(dir, "web")
+	if err := os.MkdirAll(web, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := `{ "files": [], "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.app.json" }] }`
+	app := `{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } }, "include": ["env.d.ts", "src/**/*", "src/**/*.vue"] }`
+	node := `{ "include": ["vite.config.*"] }`
+	for name, body := range map[string]string{"tsconfig.json": root, "tsconfig.app.json": app, "tsconfig.node.json": node} {
+		if err := os.WriteFile(filepath.Join(web, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := MergePathsConfig(filepath.Join(web, "tsconfig.json"), filepath.Join(web, "sdk"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) string { b, _ := os.ReadFile(filepath.Join(web, name)); return string(b) }
+	if got := read("tsconfig.json"); got != root {
+		t.Errorf("the solution root was rewritten:\n%s", got)
+	}
+	if got := read("tsconfig.node.json"); got != node {
+		t.Errorf("the node config was rewritten:\n%s", got)
+	}
+	got := read("tsconfig.app.json")
+	for _, want := range []string{`"nexus-client"`, `"./sdk/client.d.ts"`, `"@/*"`, `"sdk/client.d.ts"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tsconfig.app.json missing %s:\n%s", want, got)
+		}
+	}
+}
+
+// A project's own 'nexus-client' mapping (a wrapper module) survives
+// every merge; one naming a generated SDK file is updated.
+func TestMergePathsConfig_KeepsUserNexusClient(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "tsconfig.json")
+	for _, c := range []struct{ before, want string }{
+		{`["./src/api/nexus.ts"]`, `"./src/api/nexus.ts"`},
+		{`["./old/sdk/client.js"]`, `"./sdk/client.d.ts"`},
+	} {
+		if err := os.WriteFile(cfg, []byte(`{"compilerOptions":{"paths":{"nexus-client":`+c.before+`}}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := MergePathsConfig(cfg, filepath.Join(dir, "sdk"), io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			CompilerOptions struct{ Paths map[string][]string } `json:"compilerOptions"`
+		}
+		b, _ := os.ReadFile(cfg)
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if got := doc.CompilerOptions.Paths["nexus-client"]; len(got) != 1 || `"`+got[0]+`"` != c.want {
+			t.Errorf("before %s: nexus-client = %v, want [%s]", c.before, got, c.want)
+		}
+	}
+}
+
+// An absolute baseUrl is used as is, not joined onto the config dir.
+func TestMergePathsConfig_AbsoluteBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "web", "tsconfig.json")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"compilerOptions": map[string]any{"baseUrl": filepath.Join(dir, "web")}})
+	if err := os.WriteFile(cfg, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MergePathsConfig(cfg, filepath.Join(dir, "web", "sdk"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(cfg); !strings.Contains(string(b), `"./sdk/client.d.ts"`) {
+		t.Errorf("absolute baseUrl: want ./sdk/client.d.ts in\n%s", b)
 	}
 }

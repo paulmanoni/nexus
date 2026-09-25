@@ -188,28 +188,48 @@ func WriteIfMissing(path string, body []byte, stdout io.Writer) error {
 // target. nexus-vite-plugin aliases the same name to client.js for Vite,
 // so a value import works at runtime too.
 //
-// When the config lists "include", the SDK's *.d.ts join it: inertia.d.ts
-// types page.props through a global augmentation, which applies only if
-// the file is in the program — and a component that just calls usePage()
-// imports nothing that would pull it in.
+// When the config lists "include", the SDK's client.d.ts joins it (it
+// references inertia.d.ts): inertia.d.ts types page.props through a
+// global augmentation, which applies only if the file is in the program —
+// and a component that just calls usePage() imports nothing that would
+// pull it in. A user's own 'nexus-client' mapping is left alone. A
+// solution-style root (files: [] + references) is not written; the
+// referenced configs covering src/ are.
 //
 // Exported for the same reason as WriteIfChanged: the CLI flag
 // (--tsconfig / --jsconfig) and the in-process Dump path share
 // the same merge logic.
 func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
-	var doc map[string]any
-	if existing, err := os.ReadFile(configPath); err == nil {
-		// tsconfig/jsconfig are JSONC — tsc tolerates // and /* */ comments
-		// and trailing commas, so a hand-edited or editor-formatted file may
-		// contain them. Strip those before the strict encoding/json parse.
-		if err := json.Unmarshal(stripJSONC(existing), &doc); err != nil {
-			return fmt.Errorf("nexus client: parse existing %s: %w", configPath, err)
+	doc, err := readConfigJSONC(configPath)
+	if err != nil {
+		return err
+	}
+	// A solution-style root ("files": [] plus "references", the create-vue
+	// and create-vite layout) compiles nothing itself: paths written there
+	// reach no source file. The mapping belongs in the referenced configs
+	// that cover the app's sources.
+	if refs := solutionReferences(doc, configPath); len(refs) > 0 {
+		merged := 0
+		for _, ref := range refs {
+			rdoc, err := readConfigJSONC(ref)
+			if err != nil || !coversSources(rdoc) {
+				continue
+			}
+			if err := mergePaths(ref, rdoc, outDir, stdout); err != nil {
+				return err
+			}
+			merged++
+		}
+		if merged > 0 {
+			return nil
 		}
 	}
-	if doc == nil {
-		doc = map[string]any{}
-	}
+	return mergePaths(configPath, doc, outDir, stdout)
+}
 
+// mergePaths adds the SDK mappings (and include entry) to one parsed
+// config and writes it back if that changed anything.
+func mergePaths(configPath string, doc map[string]any, outDir string, stdout io.Writer) error {
 	co, _ := doc["compilerOptions"].(map[string]any)
 	if co == nil {
 		co = map[string]any{}
@@ -217,7 +237,11 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 	}
 	base := filepath.Dir(configPath)
 	if b, ok := co["baseUrl"].(string); ok && b != "" {
-		base = filepath.Join(base, b)
+		if filepath.IsAbs(b) {
+			base = b
+		} else {
+			base = filepath.Join(base, b)
+		}
 	}
 	mappings, err := pathMappings(outDir, base)
 	if err != nil {
@@ -229,11 +253,17 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 		co["paths"] = paths
 	}
 	for k, v := range mappings {
+		// A project that points 'nexus-client' somewhere of its own (a
+		// wrapper module) keeps it; only a mapping that names a generated
+		// SDK file is ours to update.
+		if k == "nexus-client" && !generatedClientMapping(paths[k]) {
+			continue
+		}
 		paths[k] = v
 	}
 	if include, ok := doc["include"].([]any); ok {
-		if pattern, err := includePattern(filepath.Dir(configPath), outDir); err == nil && !containsString(include, pattern) {
-			doc["include"] = append(include, pattern)
+		if entry, err := includeEntry(filepath.Dir(configPath), outDir); err == nil && !containsString(include, entry) {
+			doc["include"] = append(include, entry)
 		}
 	}
 
@@ -245,6 +275,89 @@ func MergePathsConfig(configPath, outDir string, stdout io.Writer) error {
 		return fmt.Errorf("nexus client: mkdir %s: %w", filepath.Dir(configPath), err)
 	}
 	return WriteIfChanged(configPath, body, stdout)
+}
+
+// readConfigJSONC parses a tsconfig/jsconfig, or returns an empty
+// document when the file does not exist yet.
+func readConfigJSONC(configPath string) (map[string]any, error) {
+	var doc map[string]any
+	if existing, err := os.ReadFile(configPath); err == nil {
+		// tsconfig/jsconfig are JSONC — tsc tolerates // and /* */ comments
+		// and trailing commas, so a hand-edited or editor-formatted file may
+		// contain them. Strip those before the strict encoding/json parse.
+		if err := json.Unmarshal(stripJSONC(existing), &doc); err != nil {
+			return nil, fmt.Errorf("nexus client: parse existing %s: %w", configPath, err)
+		}
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	return doc, nil
+}
+
+// solutionReferences returns the config files a solution-style root
+// refers to — a root with an empty "files", no "include", and
+// "references" — resolved against the root's directory (a reference
+// naming a directory means its tsconfig.json). nil for any other config.
+func solutionReferences(doc map[string]any, configPath string) []string {
+	files, ok := doc["files"].([]any)
+	if !ok || len(files) != 0 {
+		return nil
+	}
+	if _, has := doc["include"]; has {
+		return nil
+	}
+	refs, _ := doc["references"].([]any)
+	var out []string
+	for _, r := range refs {
+		m, _ := r.(map[string]any)
+		p, _ := m["path"].(string)
+		if p == "" {
+			continue
+		}
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(filepath.Dir(configPath), p)
+		}
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			p = filepath.Join(p, "tsconfig.json")
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// coversSources reports whether a referenced config compiles the app's
+// sources (an include entry under src/), as tsconfig.app.json does and
+// tsconfig.node.json (vite.config.*) does not.
+func coversSources(doc map[string]any) bool {
+	include, _ := doc["include"].([]any)
+	for _, v := range include {
+		s, _ := v.(string)
+		s = strings.TrimPrefix(s, "./")
+		if s == "src" || strings.HasPrefix(s, "src/") {
+			return true
+		}
+	}
+	return false
+}
+
+// generatedClientMapping reports whether a paths value is absent or
+// names only a generated SDK client file (client.d.ts / client.js).
+func generatedClientMapping(v any) bool {
+	if v == nil {
+		return true
+	}
+	list, ok := v.([]any)
+	if !ok || len(list) == 0 {
+		return false
+	}
+	for _, e := range list {
+		s, _ := e.(string)
+		if !strings.HasSuffix(s, "/client.d.ts") && !strings.HasSuffix(s, "/client.js") {
+			return false
+		}
+	}
+	return true
 }
 
 // stripJSONC returns data with JSONC extensions removed so encoding/json can
@@ -334,19 +447,21 @@ func stripJSONC(data []byte) []byte {
 	return out
 }
 
-// includePattern is the "include" entry covering the SDK's declaration
-// files, relative to the config file's directory (include is never
-// resolved against baseUrl).
-func includePattern(configDir, outDir string) (string, error) {
+// includeEntry is the "include" entry that puts the SDK's types in the
+// program: client.d.ts, which references inertia.d.ts. Not a *.d.ts glob,
+// which would also pull in vue.d.ts (and its 'vue' import) for a project
+// that doesn't use Vue. Relative to the config file's directory (include
+// is never resolved against baseUrl).
+func includeEntry(configDir, outDir string) (string, error) {
 	rel, err := filepath.Rel(configDir, outDir)
 	if err != nil {
 		return "", err
 	}
 	rel = filepath.ToSlash(rel)
 	if rel == "." {
-		return "*.d.ts", nil
+		return "client.d.ts", nil
 	}
-	return rel + "/*.d.ts", nil
+	return rel + "/client.d.ts", nil
 }
 
 func containsString(list []any, s string) bool {
