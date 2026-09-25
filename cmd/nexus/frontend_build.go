@@ -16,8 +16,11 @@ import (
 const ssrEntry = "src/ssr.ts"
 
 // frontendBuild runs the frontend's own Vite so `go build` can embed its
-// output. The frontend is <mainDir>/<NEXUS_FRONTEND_DIR or web>; it is a
-// Vite project when it has a package.json. Then, in order:
+// output. The frontend is the directory nexus dev would run
+// (resolveFrontendDir: flag, NEXUS_FRONTEND_DIR, the ServeFrontend call in
+// mainDir's source, then web/), so a build never skips the Vite that dev
+// runs and embeds a stale dist. It is a Vite project when it has a
+// package.json. Then, in order:
 //
 //  1. dependencies are installed when its Vite is missing (npm ci, or
 //     npm install without a lockfile);
@@ -36,16 +39,16 @@ const ssrEntry = "src/ssr.ts"
 // none, and a static or hand-written dist is embedded as it is. A
 // viteless-era directory is an error with the migration hint, since
 // building the binary without its frontend would ship a stale bundle.
-func frontendBuild(ctx context.Context, mainDir string, stdout, stderr io.Writer) error {
-	dir := frontendDirName()
-	if !filepath.IsAbs(dir) {
-		dir = filepath.Join(mainDir, dir)
+func frontendBuild(ctx context.Context, mainDir, flag string, stdout, stderr io.Writer) error {
+	dir, _ := resolveFrontendDir(mainDir, flag)
+	if dir == "" {
+		return nil
 	}
 	p := inspectFrontend(dir)
+	if p.Legacy != "" {
+		return errors.New(p.legacyHint())
+	}
 	if !p.PackageJSON {
-		if p.Legacy != "" {
-			return errors.New(p.legacyHint())
-		}
 		return nil
 	}
 

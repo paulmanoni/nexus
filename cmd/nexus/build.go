@@ -19,21 +19,25 @@ import (
 // deployment split — the framework produces a single binary.
 func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
-		outputPath string
-		mainPkg    string
+		outputPath  string
+		mainPkg     string
+		frontendDir string
 	)
 	cmd := &cobra.Command{
 		Use:   "build [main-package]",
 		Short: "Bundle the frontend and compile everything into one binary",
 		Long: `Build the app as a single binary.
 
-If the main package's directory has a frontend — web/ (or
-$NEXUS_FRONTEND_DIR) with a package.json — it is built first with the
-project's own Vite: dependencies are installed if node_modules is
-missing, 'vite build' writes web/dist (and, when src/ssr.ts exists,
-'vite build --ssr' writes web/dist/ssr), with nexus.toml's [env] table
-available as import.meta.env.*. Then 'go build' compiles the main
-package; its //go:embed of web/dist ships the bundle inside the binary.
+If the app has a frontend with a package.json — the directory nexus dev
+would run: --frontend, else $NEXUS_FRONTEND_DIR, else the one the main
+package's ServeFrontend call names, else web/ — it is built first with
+the project's own Vite: dependencies are installed if its Vite is
+missing, 'vite build' writes <frontend>/dist (and, when src/ssr.ts
+exists, 'vite build --ssr' writes <frontend>/dist/ssr), with nexus.toml's
+[env] table available as import.meta.env.* (an [env] entry naming an
+unset variable is left out, with a warning). Then 'go build' compiles
+the main package; its //go:embed of <frontend>/dist ships the bundle
+inside the binary.
 A failing Vite build stops the build with Vite's output shown.
 
 Handlers written with //@ annotations are registered for this build
@@ -56,12 +60,15 @@ Examples:
 			return runSimpleBuild(simpleBuildOptions{
 				Output:      outputPath,
 				MainPackage: pkg,
+				Frontend:    frontendDir,
 				Stdout:      stdout,
 				Stderr:      stderr,
 			})
 		},
 	}
 	cmd.Flags().StringVarP(&outputPath, "out", "o", "", "path to write the binary to (default: go build's own naming)")
+	cmd.Flags().StringVar(&frontendDir, "frontend", "",
+		"frontend project dir, relative to the working directory (default: resolved as nexus dev does)")
 	cmd.Flags().StringVar(&mainPkg, "package", "", "Go main package to build (defaults to '.')")
 	// The positional argument says the same thing and is the documented
 	// form, so --package stays only for the scripts that already use it.

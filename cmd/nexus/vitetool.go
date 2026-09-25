@@ -26,6 +26,43 @@ import (
 // The plugin exposes each key as import.meta.env.<key> in dev and build.
 const frontendEnvVar = "NEXUS_FRONTEND_ENV"
 
+// resolveFrontendDir finds the frontend project directory for the Go main
+// package in pkgDir (absolute) — one resolution for nexus dev and nexus
+// build, so the Vite that dev runs is the one build builds. Precedence:
+//
+//  1. --frontend (flag, as typed: relative to the working directory);
+//  2. NEXUS_FRONTEND_DIR (relative to the package dir);
+//  3. the ServeFrontend / frontend.Plugin call in the package's source;
+//  4. <pkgDir>/web when it holds a package.json, or is a viteless-era
+//     directory (so it gets the migration hint) — for an app whose
+//     ServeFrontend root is not a string literal.
+//
+// Returns "" when there is no frontend, else an absolute path and where it
+// came from (for --verbose).
+func resolveFrontendDir(pkgDir, flag string) (dir, source string) {
+	abs := func(base, p string) string {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(base, p)
+		}
+		return filepath.Clean(p)
+	}
+	if flag != "" {
+		wd, _ := os.Getwd()
+		return abs(wd, flag), "--frontend"
+	}
+	if v := os.Getenv("NEXUS_FRONTEND_DIR"); v != "" {
+		return abs(pkgDir, v), "NEXUS_FRONTEND_DIR"
+	}
+	if d := detectFrontendDir(pkgDir); d != "" {
+		return abs(pkgDir, d), "detected in source"
+	}
+	web := filepath.Join(pkgDir, "web")
+	if p := inspectFrontend(web); p.PackageJSON || p.Legacy != "" {
+		return web, "web/"
+	}
+	return "", ""
+}
+
 // frontendProject is what a web directory holds, as far as the CLI cares.
 type frontendProject struct {
 	Dir         string // absolute

@@ -45,8 +45,11 @@ func embedConfigLDFlag(mainDir string) (string, int, error) {
 type simpleBuildOptions struct {
 	Output      string
 	MainPackage string
-	Stdout      io.Writer
-	Stderr      io.Writer
+	// Frontend is --frontend: the frontend project dir, relative to the
+	// working directory ("" = resolved as nexus dev does).
+	Frontend string
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 // runSimpleBuild builds the frontend (when the project has one), then the
@@ -76,7 +79,7 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 
 	ctx, stop := buildSignalContext()
 	defer stop()
-	if err := frontendBuild(ctx, mainDir, opts.Stdout, opts.Stderr); err != nil {
+	if err := frontendBuild(ctx, mainDir, opts.Frontend, opts.Stdout, opts.Stderr); err != nil {
 		return fmt.Errorf("nexus build: frontend: %w", err)
 	}
 

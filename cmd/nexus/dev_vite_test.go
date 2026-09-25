@@ -96,7 +96,7 @@ var webFS embed.FS
 func main() { nexus.Boot(nexus.ServeFrontend(webFS, "client/dist")) }
 `
 
-func TestDevFrontendDir(t *testing.T) {
+func TestResolveFrontendDir(t *testing.T) {
 	t.Setenv("NEXUS_FRONTEND_DIR", "")
 
 	t.Run("detected root is relative to the package, not the cwd", func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestDevFrontendDir(t *testing.T) {
 		pkg := filepath.Join(proj, "cmd", "app")
 		writeFile(t, filepath.Join(pkg, "main.go"), serveFrontendMain)
 		t.Chdir(proj) // `nexus dev ./cmd/app` from the project root
-		dir, source := devFrontendDir(pkg, "")
+		dir, source := resolveFrontendDir(pkg, "")
 		if want := filepath.Join(pkg, "client"); dir != want {
 			t.Fatalf("dir = %q, want %q", dir, want)
 		}
@@ -117,7 +117,7 @@ func TestDevFrontendDir(t *testing.T) {
 		pkg := filepath.Join(proj, "cmd", "app")
 		writeFile(t, filepath.Join(pkg, "main.go"), serveFrontendMain)
 		t.Chdir(proj)
-		dir, source := devFrontendDir(pkg, "./ui")
+		dir, source := resolveFrontendDir(pkg, "./ui")
 		if want := filepath.Join(proj, "ui"); dir != want || source != "--frontend" {
 			t.Fatalf("got (%q, %q), want (%q, --frontend)", dir, source, want)
 		}
@@ -126,27 +126,35 @@ func TestDevFrontendDir(t *testing.T) {
 		pkg := t.TempDir()
 		writeFile(t, filepath.Join(pkg, "main.go"), serveFrontendMain)
 		t.Setenv("NEXUS_FRONTEND_DIR", "frontend")
-		dir, source := devFrontendDir(pkg, "")
+		dir, source := resolveFrontendDir(pkg, "")
 		if want := filepath.Join(pkg, "frontend"); dir != want || source != "NEXUS_FRONTEND_DIR" {
 			t.Fatalf("got (%q, %q), want (%q, NEXUS_FRONTEND_DIR)", dir, source, want)
 		}
 		abs := t.TempDir()
 		t.Setenv("NEXUS_FRONTEND_DIR", abs)
-		if dir, _ := devFrontendDir(pkg, ""); dir != abs {
+		if dir, _ := resolveFrontendDir(pkg, ""); dir != abs {
 			t.Fatalf("absolute NEXUS_FRONTEND_DIR: dir = %q, want %q", dir, abs)
 		}
-		if dir, _ := devFrontendDir(pkg, "/elsewhere"); dir != "/elsewhere" {
+		if dir, _ := resolveFrontendDir(pkg, "/elsewhere"); dir != "/elsewhere" {
 			t.Fatalf("--frontend must beat NEXUS_FRONTEND_DIR, got %q", dir)
 		}
 	})
 	t.Run("web/package.json without a literal ServeFrontend root", func(t *testing.T) {
 		pkg := t.TempDir()
 		writeFile(t, filepath.Join(pkg, "main.go"), "package main\nfunc main() {}\n")
-		if dir, _ := devFrontendDir(pkg, ""); dir != "" {
+		if dir, _ := resolveFrontendDir(pkg, ""); dir != "" {
 			t.Fatalf("no frontend, got %q", dir)
 		}
 		writeFile(t, filepath.Join(pkg, "web", "package.json"), "{}")
-		if dir, _ := devFrontendDir(pkg, ""); dir != filepath.Join(pkg, "web") {
+		if dir, _ := resolveFrontendDir(pkg, ""); dir != filepath.Join(pkg, "web") {
+			t.Fatalf("dir = %q, want web", dir)
+		}
+	})
+	t.Run("a viteless-era web/ is found, so it gets the migration hint", func(t *testing.T) {
+		pkg := t.TempDir()
+		writeFile(t, filepath.Join(pkg, "main.go"), "package main\nfunc main() {}\n")
+		writeFile(t, filepath.Join(pkg, "web", "viteless.config.ts"), "")
+		if dir, _ := resolveFrontendDir(pkg, ""); dir != filepath.Join(pkg, "web") {
 			t.Fatalf("dir = %q, want web", dir)
 		}
 	})

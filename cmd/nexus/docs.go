@@ -1383,10 +1383,10 @@ Commands:
     nexus new <dir> --frontend vue|react [--inertia [--ssr]]
     nexus init --frontend vue|react      add web/ to an existing app
 
-Which dir (nexus dev): --frontend (relative to the working directory) >
-NEXUS_FRONTEND_DIR (relative to the project) > the dir main.go's
-ServeFrontend call names > web/ when it has a package.json. nexus build
-takes NEXUS_FRONTEND_DIR, else web/. A dir without package.json is
+Which dir (nexus dev and nexus build alike): --frontend (relative to the
+working directory) > NEXUS_FRONTEND_DIR (relative to the project) > the
+dir main.go's ServeFrontend call names > web/ when it has a
+package.json. A dir without package.json is
 served as-is and never built; a viteless-era one (viteless.config.ts, no
 package.json) gets a migration hint — "nexus init --frontend vue --force"
 adds the Vite files and keeps the sources.

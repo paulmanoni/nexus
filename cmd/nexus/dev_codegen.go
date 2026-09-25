@@ -40,7 +40,7 @@ import (
 //     contributor merge)
 func devCodegenWatch(ctx context.Context, addr, frontendDir, framework string, stdout, stderr io.Writer) {
 	if frontendDir == "" {
-		// No frontend dir resolved for this app (see devFrontendDir).
+		// No frontend dir resolved for this app (see resolveFrontendDir).
 		// Codegen would emit into an arbitrary path; skip.
 		return
 	}
@@ -79,7 +79,7 @@ func devProbeReady(ctx context.Context, addr string, timeout time.Duration) bool
 // contributions, render to disk, log a summary. Output structure
 // matches the standalone `nexus generate frontend` CLI so a manual
 // re-run produces the same bytes. frontendDir is absolute (resolved
-// against the package dir by devFrontendDir).
+// against the package dir by resolveFrontendDir).
 func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework string, stdout, stderr io.Writer) error {
 	// Fetch the manifest first. A failure here means the app isn't
 	// answering yet; bail and let the next boot retry.

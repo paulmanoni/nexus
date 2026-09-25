@@ -28,40 +28,6 @@ import (
 // Vite serves modules and HMR only, which is why its own "Local:" banner is
 // filtered out of the log.
 
-// devFrontendDir resolves the frontend project directory for the package in
-// pkgDir (absolute). Precedence:
-//
-//  1. --frontend (flag, as typed: relative to the working directory);
-//  2. NEXUS_FRONTEND_DIR (relative to the project, as for nexus build);
-//  3. the ServeFrontend / frontend.Plugin call in the package's source;
-//  4. <pkgDir>/web when it holds a package.json — nexus build's default,
-//     for an app whose ServeFrontend root is not a string literal.
-//
-// Returns "" when there is no frontend, else an absolute path and where it
-// came from (for --verbose).
-func devFrontendDir(pkgDir, flag string) (dir, source string) {
-	abs := func(base, p string) string {
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(base, p)
-		}
-		return filepath.Clean(p)
-	}
-	if flag != "" {
-		wd, _ := os.Getwd()
-		return abs(wd, flag), "--frontend"
-	}
-	if v := os.Getenv("NEXUS_FRONTEND_DIR"); v != "" {
-		return abs(pkgDir, v), "NEXUS_FRONTEND_DIR"
-	}
-	if d := detectFrontendDir(pkgDir); d != "" {
-		return abs(pkgDir, d), "detected in source"
-	}
-	if web := filepath.Join(pkgDir, "web"); fileExists(filepath.Join(web, "package.json")) {
-		return web, "web/package.json"
-	}
-	return "", ""
-}
-
 // devFrontend is the frontend side of one nexus dev session.
 type devFrontend struct {
 	Dir     string // absolute; "" when the app has no frontend
@@ -70,13 +36,13 @@ type devFrontend struct {
 }
 
 // startDevFrontend resolves the frontend for the package in pkgDir (see
-// devFrontendDir) and starts its Vite when it is a Vite project. A
+// resolveFrontendDir) and starts its Vite when it is a Vite project. A
 // viteless-era directory gets the migration hint, once, and no dev server —
 // nexus dev carries on with the Go app. cfg supplies everything but the
 // directories: WebDir comes from the resolution, ServedDist is the
 // ServeFrontend root under pkgDir ("" when unknown).
 func startDevFrontend(ctx context.Context, pkgDir, flag, servedDist string, cfg devViteConfig) devFrontend {
-	dir, source := devFrontendDir(pkgDir, flag)
+	dir, source := resolveFrontendDir(pkgDir, flag)
 	if dir == "" {
 		return devFrontend{}
 	}

@@ -73,7 +73,7 @@ func TestFrontendBuild_ViteProject(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "nexus.toml"), "[env.client]\nid = \"web\"\n")
 
 	var out, errOut bytes.Buffer
-	if err := frontendBuild(context.Background(), root, &out, &errOut); err != nil {
+	if err := frontendBuild(context.Background(), root, "", &out, &errOut); err != nil {
 		t.Fatalf("frontendBuild: %v\nstdout: %s\nstderr: %s", err, out.String(), errOut.String())
 	}
 	if got := viteCalls(t, web); len(got) != 1 || got[0] != "build" {
@@ -115,7 +115,7 @@ id = "web"
 secret = "${NEXUS_TEST_UNSET_CLIENT_SECRET}"
 `)
 	var out, errOut bytes.Buffer
-	if err := frontendBuild(context.Background(), root, &out, &errOut); err != nil {
+	if err := frontendBuild(context.Background(), root, "", &out, &errOut); err != nil {
 		t.Fatalf("frontendBuild: %v\nstderr: %s", err, errOut.String())
 	}
 	raw, err := os.ReadFile(filepath.Join(web, "env.json"))
@@ -138,7 +138,7 @@ func TestFrontendBuild_SSR(t *testing.T) {
 	writeTestFile(t, filepath.Join(web, "src", "ssr.ts"), "export {}")
 
 	var out bytes.Buffer
-	if err := frontendBuild(context.Background(), root, &out, &out); err != nil {
+	if err := frontendBuild(context.Background(), root, "", &out, &out); err != nil {
 		t.Fatalf("frontendBuild: %v\n%s", err, out.String())
 	}
 	want := []string{"build", "build --ssr src/ssr.ts --outDir dist/ssr --emptyOutDir=false"}
@@ -158,7 +158,7 @@ func TestFrontendBuild_ViteFailureStops(t *testing.T) {
 	writeTestFile(t, filepath.Join(web, "src", "ssr.ts"), "export {}")
 
 	var out, errOut bytes.Buffer
-	err := frontendBuild(context.Background(), root, &out, &errOut)
+	err := frontendBuild(context.Background(), root, "", &out, &errOut)
 	if err == nil || !strings.Contains(err.Error(), "vite build failed") {
 		t.Fatalf("err = %v, want a vite build failure", err)
 	}
@@ -173,7 +173,7 @@ func TestFrontendBuild_ViteFailureStops(t *testing.T) {
 func TestFrontendBuild_NoOutputIsAnError(t *testing.T) {
 	t.Setenv("NEXUS_FRONTEND_DIR", "")
 	root, _ := fakeViteProject(t, fakeViteNoOutput)
-	err := frontendBuild(context.Background(), root, &bytes.Buffer{}, &bytes.Buffer{})
+	err := frontendBuild(context.Background(), root, "", &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), ".vite/manifest.json nor index.html") {
 		t.Fatalf("err = %v, want the missing-output error", err)
 	}
@@ -186,7 +186,7 @@ func TestFrontendBuild_FrontendDirOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("NEXUS_FRONTEND_DIR", "client")
-	if err := frontendBuild(context.Background(), root, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := frontendBuild(context.Background(), root, "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("frontendBuild: %v", err)
 	}
 	if got := viteCalls(t, client); len(got) != 1 {
@@ -194,10 +194,55 @@ func TestFrontendBuild_FrontendDirOverride(t *testing.T) {
 	}
 }
 
+// nexus build must build the frontend nexus dev runs: the one main.go's
+// ServeFrontend call names, not web/. Building web/ (or nothing) there
+// would embed a stale dist.
+func TestFrontendBuild_UsesServeFrontendDir(t *testing.T) {
+	t.Setenv("NEXUS_FRONTEND_DIR", "")
+	root, web := fakeViteProject(t, fakeViteOK)
+	front := filepath.Join(root, "frontend")
+	if err := os.Rename(web, front); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(root, "main.go"), `package main
+
+import (
+	"embed"
+
+	"github.com/paulmanoni/nexus"
+)
+
+//go:embed all:frontend/dist
+var webFS embed.FS
+
+func main() { nexus.Boot(nexus.ServeFrontend(webFS, "frontend/dist")) }
+`)
+	var out bytes.Buffer
+	if err := frontendBuild(context.Background(), root, "", &out, &out); err != nil {
+		t.Fatalf("frontendBuild: %v\n%s", err, out.String())
+	}
+	if got := viteCalls(t, front); len(got) != 1 || got[0] != "build" {
+		t.Errorf("vite calls in frontend/ = %q, want one build", got)
+	}
+	if dir, _ := resolveFrontendDir(root, ""); dir != front {
+		t.Errorf("nexus dev resolves %q, build built %q", dir, front)
+	}
+
+	// --frontend (cwd-relative) beats the scan, as in nexus dev.
+	other, _ := fakeViteProject(t, fakeViteOK)
+	t.Chdir(other)
+	if err := frontendBuild(context.Background(), root, "web", &out, &out); err != nil {
+		t.Fatalf("frontendBuild --frontend web: %v\n%s", err, out.String())
+	}
+	if got := viteCalls(t, filepath.Join(other, "web")); len(got) != 1 {
+		t.Errorf("--frontend: vite calls = %q, want one build", got)
+	}
+}
+
 func TestFrontendBuild_Skips(t *testing.T) {
 	t.Setenv("NEXUS_FRONTEND_DIR", "")
 	// A pure-Go app: no web/ at all.
-	if err := frontendBuild(context.Background(), t.TempDir(), &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := frontendBuild(context.Background(), t.TempDir(), "", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Errorf("no frontend dir: %v", err)
 	}
 	// A static, hand-written dist with no package.json is embedded as is.
@@ -206,7 +251,7 @@ func TestFrontendBuild_Skips(t *testing.T) {
 	writeTestFile(t, index, "<p>static</p>")
 	writeTestFile(t, filepath.Join(root, "web", "src", "__nexus", "api.ts"), "")
 	var out bytes.Buffer
-	if err := frontendBuild(context.Background(), root, &out, &out); err != nil {
+	if err := frontendBuild(context.Background(), root, "", &out, &out); err != nil {
 		t.Errorf("static dist: %v", err)
 	}
 	if b, _ := os.ReadFile(index); string(b) != "<p>static</p>" || out.Len() != 0 {
@@ -219,7 +264,7 @@ func TestFrontendBuild_LegacyVitelessDirIsAnError(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "web", "viteless.config.ts"), "export default {}")
 	writeTestFile(t, filepath.Join(root, "web", "src", "main.ts"), "")
-	err := frontendBuild(context.Background(), root, &bytes.Buffer{}, &bytes.Buffer{})
+	err := frontendBuild(context.Background(), root, "", &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "viteless.config.ts but no package.json") {
 		t.Fatalf("err = %v, want the legacy hint", err)
 	}
@@ -230,7 +275,7 @@ func TestFrontendBuild_NoNpm(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "web", "package.json"), "{}")
 	t.Setenv("PATH", t.TempDir())
-	err := frontendBuild(context.Background(), root, &bytes.Buffer{}, &bytes.Buffer{})
+	err := frontendBuild(context.Background(), root, "", &bytes.Buffer{}, &bytes.Buffer{})
 	if !errors.Is(err, errNoNpm) {
 		t.Fatalf("err = %v, want errNoNpm", err)
 	}

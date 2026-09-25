@@ -21,7 +21,7 @@ func TestFrontendBuild_CancelStopsViteGroup(t *testing.T) {
 	root, web := fakeViteProject(t, "#!/bin/sh\nsleep 30 &\necho $! > child.pid\nwait\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- frontendBuild(ctx, root, &bytes.Buffer{}, &bytes.Buffer{}) }()
+	go func() { done <- frontendBuild(ctx, root, "", &bytes.Buffer{}, &bytes.Buffer{}) }()
 	pidFile := filepath.Join(web, "child.pid")
 	deadline := time.Now().Add(5 * time.Second)
 	for !fileExists(pidFile) && time.Now().Before(deadline) {
