@@ -126,15 +126,27 @@ func IsPlainIdent(s string) bool {
 }
 
 // Literal renders a single-quoted TS string literal, escaping
-// backslashes and single quotes.
+// backslashes, single quotes and line terminators (a raw newline would
+// end the literal and let the rest of the value into the generated file).
 func Literal(s string) string {
 	var b strings.Builder
 	b.WriteByte('\'')
 	for _, r := range s {
-		if r == '\\' || r == '\'' {
+		switch r {
+		case '\\', '\'':
 			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\u2028':
+			b.WriteString(`\u2028`)
+		case '\u2029':
+			b.WriteString(`\u2029`)
+		default:
+			b.WriteRune(r)
 		}
-		b.WriteRune(r)
 	}
 	b.WriteByte('\'')
 	return b.String()

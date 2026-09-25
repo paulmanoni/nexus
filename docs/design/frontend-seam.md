@@ -308,8 +308,9 @@ wrote nothing and left `tsconfig.json` untouched.
   resolves an indexed access through imports and re-exports, but not a
   generic helper, so no `definePage<'X'>()` exists. An untyped page is
   `{ [key: string]: unknown }` (Vue cannot resolve `Record<…>` there).
-  Typed shares are `ShareScoped[T]` and the new `ShareTyped[T]`; `Share`
-  stays untyped and rides an index signature.
+  Typed shares are `ShareScoped[T]` and the new `ShareTyped[T]`, declared
+  optional because a failed compute omits the key; `Share` stays untyped
+  and rides an index signature.
 - **`usePage().props` is typed** through `inertia.d.ts`, a global
   augmentation of `@inertiajs/core`'s `InertiaConfig.sharedPageProps`,
   referenced from `client.d.ts` and added to an existing tsconfig `include`

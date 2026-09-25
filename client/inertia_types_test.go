@@ -97,7 +97,7 @@ func TestGenerateClientDTS_InertiaTypes(t *testing.T) {
 	for _, want := range []string{
 		"  'Pets/Index': PetSearchProps | PetsPageProps\n",
 		"  'About': { [key: string]: unknown }\n",
-		"  can: Record<string, boolean>\n",
+		"  can?: Record<string, boolean>\n", // optional: a failed compute omits the key
 		"  viewer?: Viewer\n",
 		"  [key: string]: unknown\n",
 	} {

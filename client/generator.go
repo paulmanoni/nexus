@@ -309,13 +309,13 @@ func writeInertiaTypes(b *strings.Builder, m Manifest) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	// Every typed share is optional: the engine leaves a key out of the
+	// page when its compute fails (ShareScoped / ShareTyped), so a
+	// required key would type-check page.props.can.x and throw at runtime.
 	b.WriteString("export interface NexusSharedProps {\n")
 	for _, k := range keys {
 		t := m.SharedProps[k]
-		opt := ""
-		if t != nil && t.Optional {
-			opt = "?"
-		}
+		opt := "?"
 		core := "unknown"
 		if t != nil {
 			core = tsTypeCore(t)

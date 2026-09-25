@@ -60,6 +60,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A page reads its props with `defineProps<NexusPageProps['Users/Index']>()`.
   `inertia.ShareScoped` now records its type, and `inertia.ShareTyped[T]` is
   the typed sibling of `Share`; untyped `Share` keys ride an index signature.
+  Typed shares are optional (`can?:`): the engine omits a key whose compute
+  fails, so the type does not promise what the page may lack.
   A generated `inertia.d.ts` (referenced from `client.d.ts`, served at
   `/__nexus/client/inertia.d.ts`, written by the dump and `nexus client`)
   types `usePage().props` through `@inertiajs/core`'s `InertiaConfig`. The

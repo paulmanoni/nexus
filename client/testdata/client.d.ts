@@ -68,7 +68,7 @@ export interface NexusPageProps {
 }
 
 export interface NexusSharedProps {
-  can: Record<string, boolean>
+  can?: Record<string, boolean>
   owner?: Owner
   [key: string]: unknown
 }
