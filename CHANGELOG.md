@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.60.2] - 2026-09-25
+
+### Fixed
+
+- **WebSocket handlers see the connection's authentication.** A handler's
+  context (`Params.Context`, `WSSession.Context`) started from
+  `context.Background()`, so `auth.IdentityFrom`, `auth.User[T]` and
+  `auth.Can` found no identity inside a WS handler — only
+  `sess.UserID()` was set. Each connection now has a base context built
+  from its upgrade request, and every message's handler derives from it;
+  `extension/auth` carries its identity and state (which `Can` and
+  permission backends read). The identity is the one the connection was
+  opened with.
+
+### Added
+
+- `nexus.RegisterWSCarrier(func(upgrade, conn context.Context) context.Context)`
+  — copies chosen values from a WebSocket upgrade request onto the
+  connection's base context. Carry only values that may outlive the
+  request; per-request state (a `Scoped` memo, a session handle) stays
+  behind. `ws.Hub.OnContext` and `ws.Connection.Context` are the
+  transport-level hooks underneath.
+
 ## [1.60.1] - 2026-09-25
 
 ### Security
