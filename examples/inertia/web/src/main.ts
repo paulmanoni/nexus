@@ -6,8 +6,8 @@ import { createApp, h, type DefineComponent } from 'vue'
 // "Auth/Login" → src/Pages/Auth/Login.vue (see ../pages/pages.go).
 createInertiaApp({
   resolve: (name) => {
-    const pages = import.meta.glob<{ default: DefineComponent }>('./Pages/**/*.vue', { eager: true })
-    return pages['./Pages/' + name + '.vue']
+    const pages = import.meta.glob<DefineComponent>('./Pages/**/*.vue', { eager: true, import: 'default' })
+    return pages[`./Pages/${name}.vue`]
   },
   setup({ el, App, props, plugin }) {
     createApp({ render: () => h(App, props) }).use(plugin).mount(el)

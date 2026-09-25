@@ -4,12 +4,14 @@
 // that reuses its existing Option-returning registrar (inertia.Page), with its
 // pages branded by the inertia icon on the dashboard.
 //
-//	nexus dev ./examples/inertia    # zero-install: viteless serves web/ with HMR,
-//	                                # proxying to the Go app — open the printed URL
-//	nexus build ./examples/inertia  # bundle web/dist, then a single Go binary
+//	nexus dev ./examples/inertia    # installs web/ deps (npm) on first run, runs Vite
+//	                                # beside the app — open the app URL it prints
+//	nexus build ./examples/inertia  # vite build → web/dist, then a single Go binary
 //
-// `go run ./examples/inertia` serves the API + dashboard, but the page shell
-// needs a built bundle (or `nexus dev`) for the Vue client to mount.
+// web/ is an ordinary Vite project; nexus-vite-plugin (web/sdk) tells the app
+// where the dev server is, so pages served on the app's origin load their
+// modules from Vite with HMR. `go run ./examples/inertia` serves the API and
+// dashboard, but the pages need a built bundle (or a running Vite) to mount.
 //
 // XHR (Inertia) visit returns the JSON page object:
 //
@@ -32,7 +34,8 @@ func main() {
 	// auto-drains its //@inertia.Page registrations.
 	//
 	// ServeFrontend names + serves the bundle once; inertia.Module auto-discovers
-	// it (via App.FrontendFS) to read the manifest for the shell + asset version.
+	// it and renders pages into its index.html (Vite's in dev, the built one
+	// in production), reading the manifest for the asset version.
 	nexus.Run(
 		nexus.Config{
 			Introspection: true,
