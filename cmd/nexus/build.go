@@ -14,8 +14,8 @@ import (
 
 // newBuildCmd builds `nexus build [main-package]`.
 //
-// Bundles the frontend (when present), generates the embed file for
-// any islands.src/ contents, and shells out to `go build`. No
+// Builds the frontend with its own Vite (when the project has one) and
+// shells out to `go build`, whose //go:embed bakes the bundle in. No
 // deployment split — the framework produces a single binary.
 func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
@@ -27,9 +27,14 @@ func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Bundle the frontend and compile everything into one binary",
 		Long: `Build the app as a single binary.
 
-Bundles the frontend if the project has one, writes the embed file so
-the bundle ships inside the binary, then runs 'go build' on the main
-package.
+If the main package's directory has a frontend — web/ (or
+$NEXUS_FRONTEND_DIR) with a package.json — it is built first with the
+project's own Vite: dependencies are installed if node_modules is
+missing, 'vite build' writes web/dist (and, when src/ssr.ts exists,
+'vite build --ssr' writes web/dist/ssr), with nexus.toml's [env] table
+available as import.meta.env.*. Then 'go build' compiles the main
+package; its //go:embed of web/dist ships the bundle inside the binary.
+A failing Vite build stops the build with Vite's output shown.
 
 Handlers written with //@ annotations are registered for this build
 without writing anything into your source tree. Run

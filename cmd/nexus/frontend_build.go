@@ -1,62 +1,119 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
-
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/viteless"
+	"strings"
+	"syscall"
 )
 
-// frontendBuild builds the frontend with the embedded viteless engine so
-// `go build` can embed the output. It resolves <projectRoot>/web (or
-// NEXUS_FRONTEND_DIR) and produces web/dist — no npm, no Node required (the
-// runtime and the build are a single Go binary). If a real Vite is installed
-// in the project, viteless delegates to it; otherwise it uses its own engine.
+// ssrEntry is the server entry `nexus build` looks for in the frontend
+// dir; when it exists, a second `vite build --ssr` writes dist/ssr.
+const ssrEntry = "src/ssr.ts"
+
+// frontendBuild runs the frontend's own Vite so `go build` can embed its
+// output. The frontend is <mainDir>/<NEXUS_FRONTEND_DIR or web>; it is a
+// Vite project when it has a package.json. Then, in order:
 //
-// This is the function `nexus build` calls before `go build`; the embed-gen
-// step that runs next bakes web/dist into the binary.
+//  1. dependencies are installed when its Vite is missing (npm ci, or
+//     npm install without a lockfile);
+//  2. nexus-vite-plugin is written into <dir>/sdk, so a vite.config that
+//     imports it loads on a fresh checkout;
+//  3. `vite build` runs with nexus.toml's [env] table in
+//     NEXUS_FRONTEND_ENV (the plugin exposes it as import.meta.env.*);
+//  4. when src/ssr.ts exists, `vite build --ssr src/ssr.ts` writes the
+//     server bundle to dist/ssr, after the client build so the client's
+//     emptyOutDir can't remove it, and without emptying dist itself;
+//  5. dist must then hold .vite/manifest.json or index.html — what
+//     ServeFrontend and the Inertia engine read.
 //
-// Skips silently when the frontend dir has no source tree (a pure-Go app).
-// Returns an error when the build fails.
-func frontendBuild(projectRoot string, stdout, stderr io.Writer) error {
-	dir := filepath.Join(projectRoot, frontendDirName())
-	// A frontend project is identified by an index.html or a src/ tree —
-	// package.json is no longer required (viteless reads viteless.config.ts /
-	// vite.config.ts, or works with none).
-	hasFrontend := false
-	for _, marker := range []string{"index.html", "src"} {
-		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
-			hasFrontend = true
-			break
+// Vite's output streams to stdout/stderr, so a failing build shows why.
+// A directory without a package.json is not built: a pure-Go app has
+// none, and a static or hand-written dist is embedded as it is. A
+// viteless-era directory is an error with the migration hint, since
+// building the binary without its frontend would ship a stale bundle.
+func frontendBuild(ctx context.Context, mainDir string, stdout, stderr io.Writer) error {
+	dir := frontendDirName()
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(mainDir, dir)
+	}
+	p := inspectFrontend(dir)
+	if !p.PackageJSON {
+		if p.Legacy != "" {
+			return errors.New(p.legacyHint())
 		}
-	}
-	if !hasFrontend {
-		return nil // pure-Go app, skip
+		return nil
 	}
 
-	// Expose the nexus.toml [env] table to the frontend build as
-	// import.meta.env.<dotted.name> (e.g. import.meta.env.client.id).
-	env, _ := nexus.EnvVars(filepath.Join(projectRoot, "nexus.toml"))
-
-	fmt.Fprintf(stdout, "%s●%s frontend: viteless build → %s\n", ansiCyan, ansiReset, filepath.Join(dir, "dist"))
-	res, err := viteless.Build(viteless.BuildConfig{
-		Root: dir,
-		Env:  env,
-		Logf: func(format string, args ...any) {
-			fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, fmt.Sprintf(format, args...))
-		},
-	})
+	if err := ensureNodeModules(ctx, p.Dir, stdout, stderr); err != nil {
+		return err
+	}
+	if err := writeSDKPlugin(p.Dir, stdout); err != nil {
+		return fmt.Errorf("write nexus-vite-plugin into %s: %w", filepath.Join(p.Dir, "sdk"), err)
+	}
+	env, err := frontendEnv(filepath.Join(mainDir, "nexus.toml"))
 	if err != nil {
-		return fmt.Errorf("frontend build: %w", err)
+		return fmt.Errorf("read [env] from nexus.toml: %w", err)
 	}
-	if len(res.Errors) > 0 {
-		for _, e := range res.Errors {
-			fmt.Fprintf(stderr, "%s●%s frontend build error: %s\n", ansiYellow, ansiReset, e)
+
+	dist := filepath.Join(p.Dir, "dist")
+	fmt.Fprintf(stdout, "%s●%s frontend: vite build → %s\n", ansiCyan, ansiReset, dist)
+	if err := runViteBuild(ctx, p.Dir, env, stdout, stderr, "build"); err != nil {
+		return err
+	}
+	if fileExists(filepath.Join(p.Dir, filepath.FromSlash(ssrEntry))) {
+		fmt.Fprintf(stdout, "%s●%s frontend: vite build --ssr %s → %s\n", ansiCyan, ansiReset, ssrEntry, filepath.Join(dist, "ssr"))
+		if err := runViteBuild(ctx, p.Dir, env, stdout, stderr,
+			"build", "--ssr", ssrEntry, "--outDir", "dist/ssr", "--emptyOutDir=false"); err != nil {
+			return err
 		}
-		return fmt.Errorf("frontend build: %d error(s)", len(res.Errors))
+	}
+
+	if !fileExists(filepath.Join(dist, ".vite", "manifest.json")) && !fileExists(filepath.Join(dist, "index.html")) {
+		return fmt.Errorf("vite build finished but %s has neither .vite/manifest.json nor index.html — "+
+			"nexus embeds and serves <frontend>/dist, so build.outDir in vite.config must stay 'dist', "+
+			"and nexus-vite-plugin must be in its plugins (it turns on build.manifest)", dist)
 	}
 	return nil
+}
+
+// runViteBuild runs the project's Vite with args to completion, streaming
+// its output. Vite runs in its own process group (viteCmd), which a
+// terminal's Ctrl-C does not reach, so cancelling ctx signals the whole
+// group: SIGTERM first, then a kill if it hasn't exited after the grace.
+func runViteBuild(ctx context.Context, webDir string, env []string, stdout, stderr io.Writer, args ...string) error {
+	cmd, err := viteCmd(ctx, webDir, env, args...)
+	if err != nil {
+		return err
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if err := killProcessGroup(cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = devKillGrace
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("vite %s interrupted", args[0])
+		}
+		return fmt.Errorf("vite %s failed in %s (its output is above): %w", strings.Join(args, " "), webDir, err)
+	}
+	return nil
+}
+
+// buildSignalContext is cancelled by Ctrl-C or SIGTERM, so a Vite child
+// in its own process group is stopped with the build.
+func buildSignalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
