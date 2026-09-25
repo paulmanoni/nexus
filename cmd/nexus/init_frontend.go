@@ -95,7 +95,13 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 		}
 	}
 
-	// 2. Patch main.go to wire the embed + ServeFrontend call.
+	// 2. Keep web/node_modules and web/dist out of version control, as
+	//    nexus new does.
+	if err := ensureFrontendGitignore(abs, stdout); err != nil {
+		return fmt.Errorf("nexus init --frontend: %w", err)
+	}
+
+	// 3. Patch main.go to wire the embed + ServeFrontend call.
 	patched, err := patchMainGoForFrontend(mainGoPath)
 	if err != nil {
 		return fmt.Errorf("nexus init --frontend: patch main.go: %w", err)
@@ -106,7 +112,7 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 		fmt.Fprintln(stdout, "main.go already wires webFS — skipped")
 	}
 
-	// 3. Next steps. Don't auto-run network ops here; nexus dev installs
+	// 4. Next steps. Don't auto-run network ops here; nexus dev installs
 	//    the dependencies on its first run.
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
@@ -121,6 +127,64 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 // code rather than project wiring: an existing copy is never overwritten.
 func isAppSource(path string) bool {
 	return path == "web/index.html" || path == "web/dist/index.html" || strings.HasPrefix(path, "web/src/")
+}
+
+// ensureFrontendGitignore gives the project's .gitignore the web/ entries
+// nexus new writes (gitignoreFrontend), creating the file when there is
+// none. Idempotent: patterns already present (as whole lines) are not
+// added again, and a complete file is left untouched. Order matters for
+// the stub's re-include — "!/web/dist/index.html" only works after
+// "/web/dist/*" — so when the dist rule is missing both are appended.
+func ensureFrontendGitignore(root string, stdout io.Writer) error {
+	path := filepath.Join(root, ".gitignore")
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read .gitignore: %w", err)
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(existing), "\n") {
+		have[strings.TrimSpace(line)] = true
+	}
+	const (
+		modules = "/web/node_modules/"
+		dist    = "/web/dist/*"
+		stub    = "!/web/dist/index.html"
+	)
+	var add []string
+	if !have[modules] {
+		add = append(add, modules)
+	}
+	if !have[dist] {
+		add = append(add, dist, stub)
+	} else if !have[stub] {
+		add = append(add, stub)
+	}
+	if len(add) == 0 {
+		return nil
+	}
+	var block string
+	if len(add) == 3 {
+		block = gitignoreFrontend
+	} else {
+		block = "\n# Frontend (web/): dependencies and build output (the dist stub is committed).\n" + strings.Join(add, "\n") + "\n"
+	}
+	out := append([]byte(nil), existing...)
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	if len(out) == 0 {
+		block = strings.TrimPrefix(block, "\n")
+	}
+	out = append(out, block...)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return fmt.Errorf("write .gitignore: %w", err)
+	}
+	if len(existing) == 0 {
+		fmt.Fprintln(stdout, "wrote .gitignore")
+	} else {
+		fmt.Fprintf(stdout, "updated .gitignore (+ %s)\n", strings.Join(add, " "))
+	}
+	return nil
 }
 
 // renderFrontendOnly returns the web/ file set for opts — the Vite

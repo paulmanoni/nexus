@@ -608,7 +608,12 @@ const tmplGitignoreTpl = `/bin/
 *.out
 .DS_Store
 .env
-{{if .HasFrontend}}
+{{if .HasFrontend}}` + gitignoreFrontend + `{{end}}`
+
+// gitignoreFrontend is the .gitignore block for web/: nexus new writes it
+// with the rest of the file, nexus init --frontend appends what an
+// existing .gitignore lacks (see ensureFrontendGitignore).
+const gitignoreFrontend = `
 # Frontend (web/). Dependencies and build output are not committed, except
 # the web/dist/index.html stub: it lets a fresh clone's first go build
 # satisfy //go:embed all:web/dist. web/sdk IS committed — vite.config.ts
@@ -616,7 +621,7 @@ const tmplGitignoreTpl = `/bin/
 /web/node_modules/
 /web/dist/*
 !/web/dist/index.html
-{{end}}`
+`
 
 const tmplEnvExampleTpl = `# Copy this file to .env and fill in real credentials.
 {{if .HasDB}}

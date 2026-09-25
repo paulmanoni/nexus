@@ -163,6 +163,94 @@ func main() {
 	}
 }
 
+// nexus init --frontend must ignore web/node_modules and web/dist/* (but
+// not the stub) as nexus new does, or they get committed — creating the
+// .gitignore when missing, appending to one that lacks the entries, and
+// adding nothing on a re-run.
+func TestInitFrontend_Gitignore(t *testing.T) {
+	mainGo := "package main\n\nimport \"github.com/paulmanoni/nexus\"\n\nfunc main() {\n\tnexus.Boot()\n}\n"
+	scaffolded, err := renderTemplate(".gitignore", tmplGitignoreTpl, scaffoldOpts{Frontend: "vue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, before string }{
+		{"missing", ""},
+		{"no trailing newline", "/bin/\n*.log"},
+		{"has only the dist rules", "/bin/\n/web/dist/*\n!/web/dist/index.html\n"},
+		{"re-include before the dist rule", "!/web/dist/index.html\n/web/node_modules/\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, filepath.Join(dir, "main.go"), mainGo)
+			if c.before != "" {
+				writeTestFile(t, filepath.Join(dir, ".gitignore"), c.before)
+			}
+			var out bytes.Buffer
+			if err := runInitFrontend(dir, "vue", false, &out); err != nil {
+				t.Fatalf("runInitFrontend: %v\n%s", err, out.String())
+			}
+			first, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+			gi := string(first)
+			if !strings.HasPrefix(gi, c.before) {
+				t.Errorf("existing entries not kept:\n%s", gi)
+			}
+			// What git would do: last matching rule wins.
+			for path, ignored := range map[string]bool{
+				"web/node_modules/":    true,
+				"web/dist/assets/a.js": true,
+				"web/dist/index.html":  false,
+			} {
+				if got := gitignoreIgnores(gi, path); got != ignored {
+					t.Errorf("%s ignored = %v, want %v\n%s", path, got, ignored, gi)
+				}
+			}
+			if strings.Contains(gi, "/web/sdk") {
+				t.Errorf("web/sdk must not be ignored\n%s", gi)
+			}
+			if c.before == "" && gi != strings.TrimPrefix(gitignoreFrontend, "\n") {
+				t.Errorf("new .gitignore = %q, want the frontend block", gi)
+			}
+			if !strings.Contains(scaffolded, gitignoreFrontend) {
+				t.Errorf("nexus new's .gitignore no longer carries the same block")
+			}
+
+			if err := runInitFrontend(dir, "vue", true, &out); err != nil {
+				t.Fatal(err)
+			}
+			if again, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(again) != gi {
+				t.Errorf("re-run changed .gitignore:\n%s", again)
+			}
+		})
+	}
+}
+
+// gitignoreIgnores applies the anchored patterns this test deals in, in
+// order, the last match winning.
+func gitignoreIgnores(gitignore, path string) bool {
+	ignored := false
+	for _, line := range strings.Split(gitignore, "\n") {
+		line = strings.TrimSpace(line)
+		neg := strings.HasPrefix(line, "!")
+		pat := strings.TrimPrefix(strings.TrimPrefix(line, "!"), "/")
+		if pat == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		var match bool
+		switch {
+		case strings.HasSuffix(pat, "/*"):
+			match = strings.HasPrefix(path, strings.TrimSuffix(pat, "*"))
+		case strings.HasSuffix(pat, "/"):
+			match = strings.HasPrefix(path, pat)
+		default:
+			match = path == pat
+		}
+		if match {
+			ignored = !neg
+		}
+	}
+	return ignored
+}
+
 // TestInitFrontend_NoMainGo surfaces a clear error when the
 // target directory doesn't have a main.go — typical mistake of
 // running from the wrong cwd.
