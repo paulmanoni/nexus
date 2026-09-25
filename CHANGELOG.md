@@ -16,11 +16,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `vite.config` loads, and run the project's own Vite. `nexus dev` learns
   the dev server's origin from the hot file, never Vite's stdout, and
   always prints (and with `--open` opens) the **app's** origin; Vite's
-  `Local:`/`Network:` banner is filtered and its other output prefixed
-  `[web]`. `nexus build` runs `vite build`, then `vite build --ssr
+  `Local:`/`Network:` banner is hidden and its other output prefixed
+  `[web]` (`--verbose` shows it all). `--tui` starts Vite too. `nexus build` runs `vite build`, then `vite build --ssr
   src/ssr.ts --outDir dist/ssr` when `src/ssr.ts` exists, requires
   `dist/.vite/manifest.json` or `dist/index.html`, then `go build`.
-  `nexus dev --dist` rebuilds with `vite build` on its debounce.
+  `nexus dev --dist` rebuilds with `vite build` (and the SSR build) on its
+  debounce.
 - **The `[env]` bridge reaches real Vite.** `nexus dev`/`nexus build` pass
   nexus.toml's `[env]` table to Vite as `NEXUS_FRONTEND_ENV` (JSON of
   dotted keys), and `nexus-vite-plugin` defines `import.meta.env.<key>`
@@ -139,6 +140,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`nexus dev` no longer sets `NEXUS_VITE_DEV`**: the hot file carries
   the dev server's origin, and Inertia's SSR-over-HTTP renderer reads it
   from `App.ViteHot()` too (the variable stays a fallback).
+- **No Inertia mode in `nexus dev`.** It no longer scans `go list -deps`
+  for the inertia extension or mutes Vite's output for Inertia apps: every
+  app opens on its own origin, so `[runtime.inertia] enabled` in
+  nexus.toml has nothing left to switch and is ignored.
 - The SSR scaffold's `ssr.ts` imports `createServer` from
   `@inertiajs/vue3/server` (it depended on `@inertiajs/server`, whose
   published versions stop at 0.1.0) and bundles its dependencies
@@ -239,13 +244,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `nexus build` never ran the Inertia SSR build: `dist/ssr/ssr.js` existed
   only if you ran `npm run build` yourself.
 - `nexus dev` stopped Vite with SIGKILL, so the plugin could not remove its
-  hot file; it now sends SIGTERM to Vite's process group, waits a grace
-  period before SIGKILL, and waits for the exit.
+  hot file; it now sends SIGTERM to Vite's process group, SIGKILL after 2s,
+  and waits for the exit.
+- A top-level value in nexus.toml's `[env]` table panicked at boot.
+- `ServeFrontend` never serves `dist/ssr`: an embedded Inertia SSR bundle
+  (`//go:embed all:web/dist`) is not a public file.
 - `nexus dev <dir>` resolved the detected frontend dir against the working
   directory instead of the package (`nexus dev ./examples/inertia` from the
   repo root looked for `./web`), and ignored `NEXUS_FRONTEND_DIR`, which
-  `nexus build` honoured; both now resolve it against the project, and the
-  variable overrides detection in both.
+  `nexus build` honoured. Precedence is now `--frontend` (cwd-relative) >
+  `NEXUS_FRONTEND_DIR` (project-relative) > the `ServeFrontend` scan >
+  `web/` with a `package.json`.
 - The Vite scaffold's `vite.config.ts` proxied the nexus routes to a
   hard-coded `:8080` and did not load `nexus-vite-plugin`, so its pages had
   no hot file and its builds no forced manifest.

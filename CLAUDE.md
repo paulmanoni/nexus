@@ -39,11 +39,12 @@ web/
     index.html          # a committed stub ships so the first `go build` compiles
 ```
 `node_modules/` and `dist/*` (except the stub) are gitignored; `web/sdk` must not be — a
-fresh checkout's `vite.config.ts` imports the plugin from it. **Which dir:** `nexus dev`
-finds it from main.go's `ServeFrontend`/`frontend.Plugin` call (resolved against the
-package dir); `--frontend` overrides; `NEXUS_FRONTEND_DIR` (relative to the project)
-overrides for dev and build alike; default `web`. **No `package.json` → no Vite**: a
-hand-written or prebuilt `dist` is served as-is (e.g. `examples/petstore-spa`).
+fresh checkout's `vite.config.ts` imports the plugin from it. **Which dir** (`nexus dev`):
+`--frontend` (cwd-relative) > `NEXUS_FRONTEND_DIR` (project-relative) > the dir main.go's
+`ServeFrontend`/`frontend.Plugin` call names (AST scan, resolved against the package dir)
+> `web/` when it has a `package.json`; `nexus build` takes `NEXUS_FRONTEND_DIR`, else
+`web`. **No `package.json` → no Vite**: a hand-written or prebuilt `dist` is served as-is
+(e.g. `examples/petstore-spa`).
 
 ### main.go wiring
 ```go
@@ -117,10 +118,13 @@ lockfile, else `npm install`; a clear error without npm on PATH) → write
   (its own process group, no forced `--host`) with `NEXUS_FRONTEND_ENV`.
 - The dev origin comes from the **hot file**, never from Vite's stdout. **Open the URL
   `nexus dev` prints — the Go app's origin** (`http://localhost:8080` or your `addr`); the
-  dashboard is on the same origin. Vite's own `Local:`/`Network:` banner is filtered out
-  (it would send you to the wrong port); its other output is prefixed `[web]`.
-- On exit Vite gets SIGTERM, then SIGKILL after a grace period, and `nexus dev` waits, so
-  the plugin removes its hot file. `--frontend-cmd` is deprecated and ignored.
+  dashboard is on the same origin. Vite's own `Local:`/`Network:` banner is hidden (it
+  would send you to the wrong port); its other output is prefixed `[web]` (`--verbose`
+  shows everything). `--tui` runs Vite too.
+- On exit Vite gets SIGTERM, then SIGKILL after 2s, and `nexus dev` waits, so the plugin
+  removes its hot file. There is no Inertia "mode" any more (no `go list -deps` scan, no
+  `[runtime.inertia] enabled`): SPA and Inertia apps share one dev topology.
+  `--frontend-cmd` is deprecated and ignored.
 In production the embedded `web/dist` is served at the app port via `ServeFrontend`.
 
 **Go restarts are build-then-swap.** On a save the next binary compiles while the
@@ -206,8 +210,9 @@ is sufficient). Setting `Config.TokenStore` opts out.
 **Keeping `web/dist` fresh in dev (`--dist`).** The dev server serves the frontend
 from memory and never writes `web/dist`, so the embedded production bundle stays
 frozen at the last `nexus build` — a `go build` taken mid-session ships stale assets.
-`nexus dev --dist` re-runs `vite build` into `web/dist` (debounced) alongside the dev
-server, so the embed always matches the live frontend; the plugin puts the live dev
+`nexus dev --dist` re-runs `vite build` (plus the SSR build when `src/ssr.ts` exists)
+into `web/dist` (debounced) alongside the dev server, so the embed always matches the
+live frontend; the plugin puts the live dev
 server's hot file back after `emptyOutDir`. Opt-in: each change is a full production
 build. No rebuild loop — `dist/` is excluded from the watch and the Go-source watcher
 ignores `web/dist` writes.
@@ -254,7 +259,8 @@ prints the app's URL. `--tooling` is deprecated (ignored). Scaffolds write
 `NEXUS_ENVIRONMENT=production`**, which overrides it. SSR: `ssr.ts` uses
 `@inertiajs/vue3/server`; `nexus build` writes `web/dist/ssr/ssr.js` with its deps bundled
 (`ssr.noExternal`), so `node web/dist/ssr/ssr.js` (:13714) runs beside the binary without
-`node_modules`; main.go passes `inertia.Config{SSR: ssrhttp.New("")}`; under `nexus dev`
+`node_modules` (it is embedded with `all:web/dist`, but `ServeFrontend` never serves
+`dist/ssr`); main.go passes `inertia.Config{SSR: ssrhttp.New("")}`; under `nexus dev`
 pages render client-side.
 
 ---

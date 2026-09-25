@@ -1383,9 +1383,10 @@ Commands:
     nexus new <dir> --frontend vue|react [--inertia [--ssr]]
     nexus init --frontend vue|react      add web/ to an existing app
 
-nexus dev finds the frontend dir from main.go's ServeFrontend call
-(--frontend overrides it); NEXUS_FRONTEND_DIR, relative to the project,
-overrides it for dev and build alike. A dir without package.json is
+Which dir (nexus dev): --frontend (relative to the working directory) >
+NEXUS_FRONTEND_DIR (relative to the project) > the dir main.go's
+ServeFrontend call names > web/ when it has a package.json. nexus build
+takes NEXUS_FRONTEND_DIR, else web/. A dir without package.json is
 served as-is and never built; a viteless-era one (viteless.config.ts, no
 package.json) gets a migration hint — "nexus init --frontend vue --force"
 adds the Vite files and keeps the sources.
@@ -1543,8 +1544,11 @@ CLI CHEATSHEET
                              URL it prints — the APP's origin: pages load
                              their modules from Vite via the hot file, so
                              there is no proxy and no second URL. Vite's
-                             output is prefixed [web]; on exit it gets
-                             SIGTERM, so it removes its hot file.
+                             Local:/Network: banner is hidden and its other
+                             output prefixed [web] (--verbose shows all);
+                             on exit it gets SIGTERM (SIGKILL after 2s),
+                             so it removes its hot file. --tui runs Vite
+                             too.
 
                              Rebuilds are build-then-swap: the next binary
                              compiles while the current one keeps serving,
@@ -1574,10 +1578,12 @@ CLI CHEATSHEET
                                !internal/mock/keep.go   re-include
 
                              --addr host:port   listen address override
-                             --frontend <dir>   frontend dir override
-                                                (also NEXUS_FRONTEND_DIR)
+                             --frontend <dir>   frontend dir (cwd-relative);
+                                                beats NEXUS_FRONTEND_DIR and
+                                                the ServeFrontend scan
                              --dist             keep web/dist rebuilt with
-                                                vite build in the background
+                                                vite build (+ the SSR build)
+                                                in the background
                              --frontend-cmd     deprecated, ignored
                              --open             open a browser once the port
                                                 responds (off by default)
