@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,71 +13,109 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-
-	"github.com/paulmanoni/viteless"
 )
 
-// watchDistBuild keeps <frontendDir>/dist continuously in sync with the
-// frontend source while `nexus dev` runs. The HMR dev server (viteless.Dev)
-// serves the live frontend from memory and never writes dist, so without this
-// the embedded production bundle (//go:embed web/dist) stays frozen at whatever
-// the last `nexus build` produced — a `go build` taken mid-session ships stale
-// assets. With --dist on, every debounced source change fires a background
-// viteless.Build into web/dist so the embed always matches the current
-// frontend, no manual `nexus build` needed.
+// distDebounce coalesces a burst of saves into one rebuild.
+const distDebounce = 600 * time.Millisecond
+
+// watchDistBuild keeps the frontend's build output continuously in sync
+// with its source while `nexus dev` runs. The Vite dev server serves the
+// live frontend from memory and never writes dist, so without this the
+// embedded production bundle (//go:embed all:web/dist) stays frozen at
+// whatever the last `nexus build` produced — a `go build` taken mid-session
+// ships stale assets. With --dist on, every debounced source change runs
+// the project's own `vite build` (and its SSR build, when src/ssr.ts
+// exists — the client build's emptyOutDir would otherwise delete it).
 //
-// Cost: this runs a full production bundle alongside the HMR server, which is
-// why it's opt-in. esbuild plus the cached dep store keep an incremental,
-// app-only rebuild fast — deps are fetched once and then read from CacheRoot,
-// so the recurring work is just the app's own modules. Builds are debounced
-// and coalesced so a burst of saves yields one rebuild.
+// The dev server keeps working throughout: nexus-vite-plugin stashes the
+// live hot file before the build empties the outDir and writes it back
+// after, so the app never loses its dev server. The first build waits for
+// vite (when one runs) to have written that file — a hot file that
+// appears mid-build, after the stash, would be emptied away.
 //
-// No rebuild loop: the dist/ output dir is excluded from the watch (the build
-// writes only there), and the Go-source watcher already suppresses restarts on
-// web/dist writes because the frontend dir is in its ignore tree — so a dist
-// rebuild neither retriggers itself nor bounces the Go process.
-func watchDistBuild(ctx context.Context, frontendDir string, env map[string]string, userIgnore *ignoreMatcher, stdout, stderr io.Writer) error {
+// Builds never overlap: one worker runs them, and a change during a build
+// queues exactly one more. No rebuild loop: dist/ and node_modules are not
+// watched, and the Go-source watcher ignores the whole frontend dir.
+//
+// The returned stop ends the watcher and returns once nothing is left
+// running — a build in flight is stopped like the dev server (SIGTERM,
+// then SIGKILL); defer it. Cancelling ctx stops everything too.
+func watchDistBuild(ctx context.Context, webDir, tomlPath string, vite *devVite, userIgnore *ignoreMatcher, stdout, stderr io.Writer) (stop func(), err error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := addDistWatchDirs(w, frontendDir, userIgnore); err != nil {
+	if err := addDistWatchDirs(w, webDir, userIgnore); err != nil {
 		w.Close()
-		return err
+		return nil, err
 	}
+	env, err := frontendEnv(tomlPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s●%s [dist] [env] not passed to Vite: %v\n", ansiYellow, ansiReset, err)
+		env = os.Environ()
+	}
+	ctx, cancel := context.WithCancel(ctx)
 
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(stdout, "%s[dist]%s %s\n", ansiCyan, ansiReset, fmt.Sprintf(format, args...))
 	}
-
 	build := func() {
 		start := time.Now()
-		res, err := viteless.Build(viteless.BuildConfig{
-			Root: frontendDir,
-			Env:  env,
-			// Swallow the per-file viteless chatter — it's noise on every
-			// rebuild; we print a single summary line below instead.
-			Logf: func(string, ...any) {},
-		})
-		if err != nil {
-			fmt.Fprintf(stderr, "%s●%s [dist] build failed: %v\n", ansiYellow, ansiReset, err)
-			return
+		steps := [][]string{{"build"}}
+		if fileExists(filepath.Join(webDir, "src", "ssr.ts")) {
+			steps = append(steps, []string{"build", "--ssr", "src/ssr.ts", "--outDir", "dist/ssr"})
 		}
-		if len(res.Errors) > 0 {
-			for _, e := range res.Errors {
-				fmt.Fprintf(stderr, "%s●%s [dist] %s\n", ansiYellow, ansiReset, e)
+		for _, args := range steps {
+			out, err := runViteOnce(ctx, webDir, env, args...)
+			if ctx.Err() != nil {
+				return
 			}
-			return
+			if err != nil {
+				fmt.Fprintf(stderr, "%s●%s [dist] vite %s failed: %v\n", ansiYellow, ansiReset, strings.Join(args, " "), err)
+				sc := bufio.NewScanner(bytes.NewReader(out))
+				for sc.Scan() {
+					fmt.Fprintf(stderr, "%s[dist]%s %s\n", ansiCyan, ansiReset, sc.Text())
+				}
+				return
+			}
 		}
-		logf("rebuilt → %s (%d files · %s)", res.OutDir, len(res.OutputFiles), time.Since(start).Round(time.Millisecond))
+		logf("rebuilt in %s", time.Since(start).Round(time.Millisecond))
 	}
 
-	// Build once up front so dist matches the current source the moment
-	// dev starts, not only after the first edit.
-	logf("watching %s · web/dist mirrors the frontend on every change", frontendDir)
-	build()
-
+	trigger := make(chan struct{}, 1)
+	kick := func() {
+		select {
+		case trigger <- struct{}{}:
+		default: // one already queued; it will see this change too
+		}
+	}
+	workerDone := make(chan struct{})
 	go func() {
+		defer close(workerDone)
+		if vite != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-vite.settledCh():
+			}
+		}
+		// Build once up front so dist matches the current source the
+		// moment dev starts, not only after the first edit.
+		logf("watching %s · dist mirrors the frontend on every change", webDir)
+		build()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-trigger:
+				build()
+			}
+		}
+	}()
+
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
 		defer w.Close()
 		var debounce *time.Timer
 		for {
@@ -103,7 +143,7 @@ func watchDistBuild(ctx context.Context, frontendDir string, env map[string]stri
 				if debounce != nil {
 					debounce.Stop()
 				}
-				debounce = time.AfterFunc(600*time.Millisecond, build)
+				debounce = time.AfterFunc(distDebounce, kick)
 			case err, ok := <-w.Errors:
 				if !ok {
 					return
@@ -112,10 +152,43 @@ func watchDistBuild(ctx context.Context, frontendDir string, env map[string]stri
 			}
 		}
 	}()
-	return nil
+
+	return func() {
+		cancel()
+		<-watcherDone
+		<-workerDone
+	}, nil
 }
 
-// addDistWatchDirs registers frontendDir and its subdirs with the watcher,
+// runViteOnce runs the project's Vite to completion with args and returns
+// its combined output. When ctx ends first, Vite is stopped the way the dev
+// server is (SIGTERM to its group, then SIGKILL) and waited for.
+func runViteOnce(ctx context.Context, webDir string, env []string, args ...string) ([]byte, error) {
+	cmd, err := viteCmd(context.Background(), webDir, env, args...)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan struct{})
+	var werr error
+	go func() {
+		werr = cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		stopProcessGroup(cmd.Process.Pid, done, viteKillGrace, nil)
+	}
+	return out.Bytes(), werr
+}
+
+// addDistWatchDirs registers root and its subdirs with the watcher,
 // skipping the build output (dist), installed deps (node_modules),
 // hidden/cache dirs so the build's own writes never retrigger it, and
 // whatever the project's .nexusignore lists.

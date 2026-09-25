@@ -20,10 +20,6 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
-
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/internal/vitehot"
-	"github.com/paulmanoni/viteless"
 )
 
 // nexusTOMLPath returns the nexus.toml path for a dev target (a package dir
@@ -47,7 +43,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		tui         bool
 		noWatch     bool
 		frontendDir string
-		frontendCmd string
+		frontendCmd string // deprecated, ignored
 		verbose     bool
 		fast        bool
 		debugBuild  bool
@@ -75,12 +71,9 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 				target = args[0]
 			}
 			// When the user didn't pass --addr, take the app's real bind
-			// address from nexus.toml ([runtime.server].addr). nexus dev
-			// PROBES and PROXIES this address: the SPA's vite proxy must
-			// target the port the binary actually listens on, not the
-			// flag's :8080 default. Without this an app pinned to, say,
-			// :9590 in nexus.toml gets a proxy pointed at :8080 and every
-			// /graphql + module call from the SPA 404s.
+			// address from nexus.toml ([runtime.server].addr): it is what
+			// nexus dev probes for the ready line when the app prints no
+			// "listening on" line of its own.
 			if !cmd.Flags().Changed("addr") {
 				if a := devAddrFromConfig(target); a != "" {
 					addr = a
@@ -93,13 +86,13 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 				fast = false
 			}
 			if tui {
-				return runDevTUI(target, addr, openDash, stdout, stderr)
+				return runDevTUI(target, addr, openDash, frontendDir, verbose, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, frontendCmd, verbose, fast, !noEmbedStub, legacyGoRun, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, legacyGoRun, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
-		"address the app listens on — what dev probes, proxies the frontend to, and opens (read from nexus.toml when not set)")
+		"address the app listens on — what dev probes and opens (read from nexus.toml when not set)")
 	cmd.Flags().BoolVar(&open, "open", false,
 		"launch a browser when the port responds (off by default)")
 	cmd.Flags().BoolVar(&openDash, "open-dash", false,
@@ -109,11 +102,11 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 	cmd.Flags().BoolVar(&noWatch, "no-watch", false,
 		"disable file-watch auto-rebuild (single-process mode only)")
 	cmd.Flags().StringVar(&frontendDir, "frontend", "",
-		"path to a frontend project (e.g. ./web); spawns its watcher alongside go run and prefixes its logs with [web]")
-	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "",
-		"command run inside --frontend dir; default `npm run dev` (Vite dev server + HMR)")
+		"frontend project dir (default: found from the app's ServeFrontend call, or NEXUS_FRONTEND_DIR); with a package.json, its Vite runs alongside the app, logging under [web]")
+	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "", "ignored")
+	_ = cmd.Flags().MarkDeprecated("frontend-cmd", "it is ignored: nexus dev runs the frontend's own Vite (node_modules/.bin/vite)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
-		"keep [Fx] graph chatter, [GIN-debug] route-registration, and [web] frontend build output (all suppressed by default in dev)")
+		"keep [Fx] graph chatter, [GIN-debug] route-registration, and Vite's full startup banner (all suppressed by default in dev)")
 	cmd.Flags().BoolVar(&fast, "fast", true,
 		"strip DWARF from the dev binary (-ldflags=-w) for faster per-restart linking")
 	// On by default, so naming it does nothing; --debug is the reachable
@@ -126,7 +119,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 	cmd.Flags().BoolVar(&legacyGoRun, "go-run", false,
 		"legacy dev loop: launch via `go run`, killing the app before every rebuild (default: build-then-swap — the old binary keeps serving while the next one compiles)")
 	cmd.Flags().BoolVar(&distWatch, "dist", false,
-		"also keep web/dist rebuilt in the background (debounced viteless build) so go build / the production embed always matches the live frontend")
+		"also keep web/dist rebuilt in the background (debounced `vite build`) so go build / the production embed always matches the live frontend")
 	cmd.Flags().BoolVar(&rawLogs, "raw-logs", false,
 		"print the app's raw log lines instead of the columnar Dev Server Logs view (auto-disabled when stdout isn't a tty)")
 	cmd.Flags().StringVar(&logFormat, "log-format", "",
@@ -176,70 +169,6 @@ func devAddrFromConfig(target string) string {
 		return ""
 	}
 	return strings.TrimSpace(cfg.Runtime.Server.Addr)
-}
-
-// inertiaImportPath is the inertia extension package. An app that imports it is
-// (almost certainly) an Inertia app, which is the auto-detect signal below.
-const inertiaImportPath = "github.com/paulmanoni/nexus/extension/inertia"
-
-// devInertiaEnabled reports whether `nexus dev` should use the Inertia dev
-// topology. Inertia inverts the normal dev model: pages are server-rendered by
-// the Go app, so the browser must live at the app's port (not viteless's), and
-// the app's document shell references the viteless dev server for HMR/assets.
-//
-// Resolution: an explicit `[runtime.inertia] enabled` in nexus.toml wins
-// (true forces it on, false forces it off — the override for hybrid apps). When
-// the key is unset, it's auto-detected: an app whose build graph imports the
-// inertia extension gets the Inertia topology with no config. When off,
-// `nexus dev` behaves exactly as before (browser at the viteless SPA URL,
-// viteless proxying to the app).
-func devInertiaEnabled(target string) bool {
-	if v, ok := inertiaConfigOverride(target); ok {
-		return v
-	}
-	return appImportsPackage(target, inertiaImportPath)
-}
-
-// inertiaConfigOverride returns the explicit [runtime.inertia] enabled value and
-// whether it was set at all (a *bool distinguishes unset from false, so an
-// absent key falls through to auto-detection rather than forcing it off).
-func inertiaConfigOverride(target string) (value, set bool) {
-	b, err := os.ReadFile(filepath.Join(targetDir(target), "nexus.toml"))
-	if err != nil {
-		return false, false
-	}
-	var cfg struct {
-		Runtime struct {
-			Inertia struct {
-				Enabled *bool `toml:"enabled"`
-			} `toml:"inertia"`
-		} `toml:"runtime"`
-	}
-	if err := toml.Unmarshal(b, &cfg); err != nil {
-		return false, false
-	}
-	if cfg.Runtime.Inertia.Enabled == nil {
-		return false, false
-	}
-	return *cfg.Runtime.Inertia.Enabled, true
-}
-
-// appImportsPackage reports whether importPath is in the build-graph closure of
-// the main package at target (`go list -deps`). Used to auto-detect Inertia.
-// Any error (no Go files, build broken) is treated as "not imported".
-func appImportsPackage(target, importPath string) bool {
-	cmd := exec.Command("go", "list", "-deps", ".")
-	cmd.Dir = targetDir(target)
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(line) == importPath {
-			return true
-		}
-	}
-	return false
 }
 
 // targetDir returns the directory for a dev target (a package dir, or the parent
@@ -303,7 +232,7 @@ func (e *userError) Error() string { return e.msg }
 // is green (see devBuilder). legacyGoRun restores the old `go run`
 // loop, which kills the app first and leaves it down for the whole
 // compile.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir, frontendCmd string, verbose, fast, embedStub, legacyGoRun, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, legacyGoRun, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -339,52 +268,33 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		logFmt = f
 	}
 
-	// Inertia dev topology (auto-detected from the inertia import, or forced
-	// via [runtime.inertia] enabled in nexus.toml). When on, the Go app owns
-	// page navigation, so the browser opens the app port and the app shell
-	// references viteless for HMR (NEXUS_VITE_DEV).
-	//
-	// Auto-detection shells out to `go list -deps` (~300ms, more on a large
-	// module), and nothing before the child's launch depends on the answer —
-	// so it runs off the critical path and the first compile starts without
-	// waiting for it.
-	inertiaFut := newFuture(func() bool { return devInertiaEnabled(target) })
-
-	// Optional frontend watcher — runs alongside the Go process. Logs
-	// stream into the same terminal under a [web] prefix so build
-	// progress is visible in one place. Lifecycle is tied to ctx, so
-	// SIGINT to nexus dev tears the watcher down too. Surviving
-	// across Go restarts is the point: the frontend toolchain has
-	// its own file watcher and shouldn't bounce on every Go save.
-	//
-	// Auto-detect: when --frontend isn't passed but the target package
-	// declares nexus.ServeFrontend(distFS, "web/dist"), derive "web"
-	// as the watcher dir. The user's "I want auto-rebuild" intent is
-	// implicit in registering ServeFrontend, so requiring the flag is
-	// just friction. The detection is best-effort — non-literal
-	// embed roots fall through to the explicit-flag path.
-	pkgDir := filepath.Join(func() string { r, _ := os.Getwd(); return r }(), target)
-	if frontendDir == "" {
-		if d := detectFrontendDir(pkgDir); d != "" {
-			frontendDir = d
-			if verbose {
-				fmt.Fprintf(stdout, "%s●%s detected ServeFrontend → watching %s\n", ansiCyan, ansiReset, frontendDir)
-			}
-		}
+	// The package directory, absolute: every path the source names (the
+	// ServeFrontend root, a frontend.Plugin Root) is relative to it, not to
+	// wherever nexus dev was started — `nexus dev ./examples/app` from the
+	// repo root must find ./examples/app/web, not ./web.
+	pkgDir, err := filepath.Abs(targetDir(target))
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", target, err)
 	}
 
 	// distStubRoot names the //go:embed tree the dev build replaces with
 	// stubs — the bundle ServeFrontend mounts, which under NEXUS_DEV is read
-	// from disk anyway (and served by viteless on :5173 besides). Relinking
-	// it on every save is pure cost; see distStubReplacements.
+	// from disk anyway (and whose pages load their modules from Vite while
+	// it runs). Relinking it on every save is pure cost; see
+	// distStubReplacements. Relative to the package, like the source says.
 	//
 	// Resolved once: the embed root is a string literal in the user's source,
 	// so it can't change without a rebuild of the file that declares it.
+	serveRoot := detectServeFrontendRoot(pkgDir)
+	servedDist := ""
+	if serveRoot != "" {
+		servedDist = filepath.Join(pkgDir, serveRoot)
+	}
 	distStubRoot := ""
-	if embedStub {
-		distStubRoot = detectServeFrontendRoot(pkgDir)
-		if distStubRoot != "" && verbose {
-			fmt.Fprintf(stdout, "%s●%s stubbing %s out of the dev build (served from disk; --no-embed-stub to embed it)\n", ansiCyan, ansiReset, distStubRoot)
+	if embedStub && serveRoot != "" {
+		distStubRoot = servedDist
+		if verbose {
+			fmt.Fprintf(stdout, "%s●%s stubbing %s out of the dev build (served from disk; --no-embed-stub to embed it)\n", ansiCyan, ansiReset, serveRoot)
 		}
 	}
 
@@ -400,86 +310,27 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			cleanupOverlay()
 		}
 	}()
-	// proxyAddr is the app's bind address used by the post-boot TS codegen
-	// to fetch the running manifest (manifest port from --addr).
-	proxyAddr := addr
-	// frontendURLCh receives the dev server's "Local: http://..." URL when the
-	// dev server (non-bundle mode) prints it. Buffered=1 so the
-	// watcher's pump never blocks if no one's listening yet.
-	frontendURLCh := make(chan string, 1)
-	// frontendBase resolves to the dev server's base URL (empty when it
-	// failed or none was started). Only the Inertia path has to wait for it,
-	// so the dev server boots — deps, transforms and all — while the Go
-	// build already runs.
-	var frontendBase *future[string]
-	if frontendDir != "" {
-		// The frontend is served by the embedded viteless engine (Vite for
-		// Go): a zero-Node HMR dev server that proxies unmatched requests
-		// (/__nexus, /graphql, /oauth, /ws, API calls) back to the Go app.
-		// If the project has a real Vite installed, viteless delegates to it;
-		// otherwise it uses its own engine — no npm, no managed vite.config
-		// proxy block. The Go app's real port is discovered from its startup
-		// log, so the proxy target is resolved lazily.
-		_ = frontendCmd // retained for flag compatibility; viteless owns the dev server
-		proxyResolver := func() string {
-			if v, ok := detectedAppAddr.Load().(string); ok && v != "" {
-				return "http://" + normalizeProbeAddr(v)
-			}
-			a := addr
-			if strings.HasPrefix(a, ":") {
-				a = "127.0.0.1" + a
-			}
-			return "http://" + a
-		}
-		// Expose the nexus.toml [env] table to the frontend as
-		// import.meta.env.<dotted.name> (e.g. import.meta.env.client.id).
-		env, _ := nexus.EnvVars(nexusTOMLPath(target))
-		frontendBase = newFuture(func() string {
-			d, err := viteless.Dev(viteless.DevConfig{
-				Root:          frontendDir,
-				ProxyResolver: proxyResolver,
-				Mode:          "development",
-				Env:           env,
-				Logf: func(format string, args ...any) {
-					msg := fmt.Sprintf(format, args...)
-					// Inertia dev is browser-at-the-app-port: the Vite server is
-					// just an asset/HMR origin the user never visits, so keep its
-					// routine chatter quiet and surface only errors.
-					if inertiaFut.get() && !strings.Contains(strings.ToLower(msg), "error") {
-						return
-					}
-					fmt.Fprintf(stdout, "%s[web]%s %s\n", ansiCyan, ansiReset, msg)
-				},
-			})
-			if err != nil {
-				fmt.Fprintf(stderr, "frontend dev server disabled: %v\n", err)
-				return ""
-			}
-			go func() { <-ctx.Done(); d.Close() }()
-			select {
-			case frontendURLCh <- d.URL():
-			default:
-			}
-			return d.URL()
-		})
-	} else {
-		frontendURLCh = nil
-	}
 
-	// hotDistDir is where nexus-vite-plugin writes its hot file when the dev
-	// frontend is real Vite: <dist>/.vite/nexus-hot.json, the dist being the
-	// root ServeFrontend names. The app reads the same file (NEXUS_DEV_ROOT
-	// is the target, so the paths agree) and then serves the SPA itself, so
-	// its origin becomes the URL to open.
-	hotDistDir := ""
-	if frontendDir != "" {
-		root := distStubRoot
-		if root == "" {
-			root = detectServeFrontendRoot(pkgDir)
-		}
-		if root != "" {
-			hotDistDir = filepath.Join(pkgDir, root)
-		}
+	// The frontend project (--frontend, NEXUS_FRONTEND_DIR, or the
+	// ServeFrontend / frontend.Plugin call in the source) and, when it has
+	// a package.json, its own Vite. Vite lives for the whole session — Go
+	// rebuilds don't bounce it; it has its own watcher — and the app finds
+	// it through the hot file, so nothing about it is passed to the child.
+	// The deferred stop waits for Vite to exit, which is what lets its
+	// plugin remove the hot file before nexus dev returns. A directory
+	// without a package.json (a hand-written bundle) gets no dev server,
+	// only the codegen and watcher treatment below.
+	front := startDevFrontend(ctx, pkgDir, frontendDir, servedDist, devViteConfig{
+		TOMLPath: nexusTOMLPath(target),
+		Verbose:  verbose,
+		Out:      stdout,
+		Notes:    stderr,
+		Color:    stdoutIsTerminal(),
+	})
+	frontendDir = front.Dir
+	fp, vite := front.Project, front.Vite
+	if vite != nil {
+		defer vite.stop()
 	}
 
 	// projectRoot is what the watchers walk and what .nexusignore patterns
@@ -490,32 +341,34 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 		fmt.Fprintf(stdout, "  %s● %s · %d pattern(s)%s\n", ansiDim, nexusIgnoreFile, userIgnore.patterns(), ansiReset)
 	}
 
-	// --dist: mirror the live frontend into web/dist in the background so a
+	// --dist: mirror the live frontend into its dist in the background so a
 	// `go build` taken mid-session (or the production embed) always matches
-	// the current source. Opt-in — it runs a full viteless build alongside
-	// the HMR server. Independent of the dev server starting, so it works
-	// even when viteless.Dev failed to come up.
-	if distWatch && frontendDir != "" {
-		env, _ := nexus.EnvVars(nexusTOMLPath(target))
-		if err := watchDistBuild(ctx, frontendDir, env, userIgnore, stdout, stderr); err != nil {
+	// the current source. Opt-in — it runs a full `vite build` on each
+	// debounced change. The plugin keeps the dev server's hot file across
+	// the build's emptyOutDir, so the app keeps serving HMR throughout.
+	if distWatch && fp.PackageJSON {
+		stopDist, err := watchDistBuild(ctx, fp.Dir, nexusTOMLPath(target), vite, userIgnore, stdout, stderr)
+		if err != nil {
 			fmt.Fprintf(stderr, "%s●%s dist watch disabled: %v\n", ansiYellow, ansiReset, err)
+		} else {
+			defer stopDist()
 		}
+	} else if distWatch {
+		fmt.Fprintf(stderr, "%s●%s --dist needs a frontend with a package.json · ignored\n", ansiYellow, ansiReset)
 	}
 
 	var restartCh chan struct{}
 	if watch {
 		restartCh = make(chan struct{}, 1)
 		root := projectRoot
-		// In dev mode the frontend dir is owned by the frontend
-		// watcher (vite, esbuild, etc.); Go has no business
-		// rebuilding when its files change. Override the embed-root
-		// rule so saves under web/ don't bounce the Go process.
+		// In dev mode the frontend dir is owned by Vite's own watcher
+		// (or, for a static bundle, read from disk per request); Go has
+		// no business rebuilding when its files change. Override the
+		// embed-root rule so saves under web/ — and the hot file Vite
+		// writes into web/dist — don't bounce the Go process.
 		ignore := []string{}
 		if frontendDir != "" {
-			abs, _ := filepath.Abs(frontendDir)
-			if abs != "" {
-				ignore = append(ignore, abs)
-			}
+			ignore = append(ignore, frontendDir)
 		}
 		if err := watchSource(ctx, root, restartCh, stderr, ignore); err != nil {
 			fmt.Fprintf(stderr, "watcher disabled: %v\n", err)
@@ -678,59 +531,26 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 			killChild, running = nil, false
 		}
 
-		// Pass the frontend URL channel only on the first boot.
-		// Subsequent Go restarts shouldn't re-open browsers, and the
-		// vite dev server is already running anyway.
-		viteURLForOpen := frontendURLCh
-		if !first {
-			viteURLForOpen = nil
+		// The first boot's ready line waits for Vite's hot file too, so a
+		// browser opened on "ready" loads live modules; later restarts
+		// print it as soon as the app answers.
+		var viteSettled <-chan struct{}
+		if first && vite != nil {
+			viteSettled = vite.settledCh()
 		}
-		// In Inertia mode, hand the child the viteless dev URL (every
-		// restart) so the app's document shell can reference it for HMR.
-		// This is the one place that has to wait for the detection and the
-		// dev server — by now the build has already run.
-		inertiaViteURL := ""
-		if inertiaFut.get() {
-			if first {
-				if _, set := inertiaConfigOverride(target); !set {
-					fmt.Fprintf(stdout, "%s●%s Inertia app detected — serving pages at the app port (set [runtime.inertia] enabled = false to opt out)\n", ansiCyan, ansiReset)
-				}
-			}
-			if frontendBase != nil {
-				inertiaViteURL = frontendBase.get()
-			}
-		}
-		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteURLForOpen, inertiaViteURL, hotDistDir, stdout, stderr)
+		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteSettled, stdout, stderr)
 		if err != nil {
 			return err
 		}
 		exited, killChild, running = ex, kill, true
 		// Auto-codegen for frontend.Plugin apps. Runs alongside the
 		// boot-banner goroutine; both probe the same listen port
-		// independently, and devCodegenWatch silently no-ops when no
-		// --frontend dir was passed or no frontend.Plugin is
-		// registered on the running app. Each iteration of the loop
-		// (Go restart) re-fires the codegen so schema changes flow
-		// into the TS tree without a manual `nexus generate frontend`.
-		// proxyURL is what we ask the SPA's vite proxy to forward
-		// to — manifest port wins (proxyAddr) over the --addr flag,
-		// computed once above. Empty when no frontend so the codegen
-		// path skips the sync.
-		proxyURL := ""
-		if frontendDir != "" && proxyAddr != "" {
-			if strings.HasPrefix(proxyAddr, ":") {
-				proxyURL = "http://localhost" + proxyAddr
-			} else {
-				proxyURL = "http://" + proxyAddr
-			}
-		}
-		// Probe the manifest-derived bind addr (proxyAddr), not the
-		// --addr flag's default. The user's manifest pins a port
-		// the binary actually listens on; probing the flag's default
-		// would time out and the post-boot sync (which would add
-		// module RoutePrefix-derived entries to the vite proxy)
-		// would silently never fire.
-		go devCodegenWatch(ctx, proxyAddr, frontendDir, "vue", proxyURL, stdout, stderr)
+		// independently, and devCodegenWatch silently no-ops when there
+		// is no frontend dir or no frontend.Plugin is registered on the
+		// running app. Each iteration of the loop (Go restart) re-fires
+		// the codegen so schema changes flow into the TS tree without a
+		// manual `nexus generate frontend`.
+		go devCodegenWatch(ctx, addr, frontendDir, "vue", stdout, stderr)
 		first = false
 		if !waitForChange() {
 			return exitErr
@@ -756,7 +576,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir,
 // nexus.Boot resolves nexus.toml from the same place either way.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, frontendURLCh <-chan string, inertiaViteURL, hotDistDir string, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, viteSettled <-chan struct{}, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	cmd := exec.Command(binPath)
 	if binPath == "" {
 		// Legacy --go-run path. The flags mirror devBuilder.build:
@@ -811,7 +631,7 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 	// real deployments.
 	env := append(os.Environ(),
 		"NEXUS_DEV=1",
-		"NEXUS_DEV_ROOT="+target,
+		"NEXUS_DEV_ROOT="+targetDir(target),
 		"NEXUS_PEER_DEV=1",
 		"NEXUS_CONFIG_DEV=1",
 	)
@@ -824,11 +644,8 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 	if devStatePath != "" {
 		env = append(env, "NEXUS_DEV_STATE="+devStatePath)
 	}
-	// Inertia: tell the app where the viteless dev server lives so its
-	// document shell can load the HMR client + entry from there.
-	if inertiaViteURL != "" {
-		env = append(env, "NEXUS_VITE_DEV="+inertiaViteURL)
-	}
+	// Nothing says where Vite is: the app reads the hot file the plugin
+	// writes (App.ViteHot), the same file this loop waited on.
 	cmd.Env = env
 	setProcessGroup(cmd)
 
@@ -838,17 +655,15 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 
 	// waitAndOpen runs even when --no-open is set so the user still
 	// gets the green "ready" line — only the browser launch is gated
-	// on openOnReady. The app's URL is primary when it serves the pages
-	// (Inertia, or real Vite whose hot file ServeFrontend follows); a
-	// dev server without the hot-file plugin keeps its own URL; the
-	// gin/probe URL covers bundle mode. See devPrimaryURL.
+	// on openOnReady. The URL is always the app's: with Vite running
+	// the app still serves every page, loading modules from Vite.
 	// appDead gates the ready banner. Probing a port only proves something
 	// is listening on it — when the app failed to bind (port already taken,
 	// a wiring error, a panic) the probe can still succeed against whatever
 	// else owns that port, and the banner then advertised an API and a
 	// dashboard that were not there.
 	var appDead atomic.Bool
-	go waitAndOpen(ctx, addr, openOnReady, openDash, inertiaViteURL != "", hotDistDir, stdout, detectedCh, frontendURLCh, appDead.Load)
+	go waitAndOpen(ctx, addr, openOnReady, openDash, stdout, detectedCh, viteSettled, appDead.Load)
 
 	exited := make(chan error, 1)
 	go func() {
@@ -888,10 +703,10 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 }
 
 // waitAndOpen produces the "ready" line and (optionally) opens the
-// dashboard once the app is up. Two signals race:
+// browser once the app is up. Two signals race:
 //
-//  1. The user's Config.Addr — captured by addrFinder from gin's
-//     "Listening and serving HTTP on :PORT" log line. Authoritative.
+//  1. The user's Config.Addr — captured by addrFinder from the
+//     "nexus: listening on …" log line. Authoritative.
 //  2. A periodic probe of the --addr flag value. Fallback for apps
 //     that don't print a recognizable listen line (custom routers,
 //     fasthttp, etc.).
@@ -900,7 +715,11 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 // as --addr, we surface a correction line — a misleading banner is
 // the symptom that drove this code, so making the discrepancy
 // visible is part of the fix.
-func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash, inertia bool, hotDistDir string, stdout io.Writer, detectedCh <-chan string, frontendURLCh <-chan string, appDead func() bool) {
+//
+// viteSettled, when non-nil, holds the line back until the frontend dev
+// server has written its hot file (or given up): until then the app would
+// serve its built bundle, and a browser opened early would show that.
+func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash bool, stdout io.Writer, detectedCh <-chan string, viteSettled <-chan struct{}, appDead func() bool) {
 	flagAddr := normalizeProbeAddr(addr)
 
 	probeOnce := func(target string) bool {
@@ -931,178 +750,58 @@ func waitAndOpen(ctx context.Context, addr string, openBrowserOnReady, openDash,
 	flagDone := make(chan bool, 1)
 	go func() { flagDone <- probeFlagAddr() }()
 
-	// Vite URL wins when present — if the frontend is being served
-	// by the dev server, that's where the user wants to land. Falls
-	// through to the gin URL when frontendURLCh is nil (bundle mode
-	// or no frontend).
-	//
-	// Race detail: the API and the Vite dev server come up within
-	// milliseconds of each other. Whichever channel fires first wins
-	// Go's select, so an unlucky scheduler gave the user the API URL
-	// (port 8080) even though the SPA was about to be ready on its
-	// own port. The fix is to always wait for BOTH signals (with a
-	// short grace window after the first one lands) so the SPA URL
-	// gets a fair chance to be the primary destination.
-	const frontendGrace = 1500 * time.Millisecond
-	var ready, viteURL string
-	gotReady := func(detected string, ok bool) {
-		if detected != "" {
-			ready = detected
-		} else if ok {
-			ready = addr
-		}
-	}
-
-	// First arrival.
+	var ready string
 	select {
 	case <-ctx.Done():
 		return
-	case viteURL = <-frontendURLCh:
 	case detected := <-detectedCh:
-		gotReady(detected, true)
+		ready = detected
 	case ok := <-flagDone:
-		gotReady("", ok)
+		if !ok {
+			return
+		}
+		ready = addr
 	}
 
-	// Wait briefly for the still-pending signals so the Vite URL can
-	// catch up when an API signal landed first. A bounded deadline
-	// keeps this from stalling the banner when there's no frontend.
-	//
-	// With no dev server in play (frontendURLCh nil) there is no second
-	// signal to wait for, and burning the grace window would just delay
-	// the ready line on every pure-Go app.
-	deadline := time.After(frontendGrace)
-	for (frontendURLCh != nil && viteURL == "") || ready == "" {
+	if viteSettled != nil {
 		select {
 		case <-ctx.Done():
 			return
-		case <-deadline:
-			// Out of grace; print whatever we've got. If neither side
-			// reported, fall through to the original "no signal"
-			// behavior of returning silently.
-			if viteURL == "" && ready == "" {
-				return
-			}
-			goto done
-		case u := <-frontendURLCh:
-			if viteURL == "" {
-				viteURL = u
-			}
-		case detected := <-detectedCh:
-			if ready == "" {
-				gotReady(detected, true)
-			}
-		case ok := <-flagDone:
-			if ready == "" {
-				gotReady("", ok)
-			}
+		case <-viteSettled:
 		}
 	}
-done:
 
 	// If the user passed an explicit --addr that doesn't match the
 	// actual bind, surface the gap. Default --addr (":8080") is
 	// suppressed — we never claimed it on the banner anyway, so
 	// there's nothing to "correct" for the user.
-	if ready != "" && addr != defaultDevAddr && normalizeProbeAddr(ready) != flagAddr {
+	if addr != defaultDevAddr && normalizeProbeAddr(ready) != flagAddr {
 		fmt.Fprintf(stdout, "\n  %s→ %sbound on %s%s%s %s(--addr was %s)%s\n",
 			ansiDim, ansiReset, ansiBold, ready, ansiReset, ansiDim, addr, ansiReset)
 	}
 
-	// A dev server started, and it is real Vite running nexus-vite-plugin
-	// when its hot file shows up: ServeFrontend then serves the SPA from the
-	// app's own origin, loading modules from Vite. The viteless native engine
-	// writes no hot file, so it keeps its own URL.
-	appServesPages := inertia
-	if !appServesPages && viteURL != "" && ready != "" {
-		appServesPages = waitForHotFile(ctx, hotDistDir, hotFileGrace)
-	}
-	primaryURL, splitLines := devPrimaryURL(ready, viteURL, appServesPages, openDash)
-	if primaryURL == "" {
-		return
-	}
 	// The run loop has already said the app exited and is waiting for
 	// changes; announcing "ready" after that just sends the reader to a
 	// port nothing is serving.
 	if appDead != nil && appDead() {
 		return
 	}
+	primaryURL := devPrimaryURL(ready, openDash)
 	printReadyLine(stdout, primaryURL, openBrowserOnReady)
-	if splitLines {
-		// In dev-server mode the user lives at vite's URL, but the
-		// framework dashboard is a separate Vue bundle baked into
-		// the Go binary. Going through vite's proxy adds edge
-		// cases (SSE streaming, asset-path resolution); pointing
-		// at Go's port directly skips the proxy entirely.
-		fmt.Fprintf(stdout, "  %sAPI:        %s%s\n", ansiDim, clientURL(ready), ansiReset)
-		fmt.Fprintf(stdout, "  %sDashboard:  %s%s\n", ansiDim, dashboardURL(ready), ansiReset)
-	}
 	if openBrowserOnReady {
 		_ = openBrowser(primaryURL)
 	}
 }
 
-// hotFileGrace bounds how long the first ready line waits for Vite's hot
-// file after the dev server reported its URL. The plugin writes it as soon
-// as the server is listening — before Vite prints that URL — so it is
-// normally already there; the wait only covers a slow disk, and is what a
-// frontend without the plugin pays once, on the first boot.
-const hotFileGrace = time.Second
-
-// waitForHotFile reports whether a usable hot file exists under distDir —
-// valid, and naming a dev server that is alive (vitehot.Reader.Current's
-// rule: a live pid, or an origin that answers) — polling until wait elapses.
-// A stale file left by a killed session reads as absent, so it doesn't count;
-// the fresh server overwrites it.
-func waitForHotFile(ctx context.Context, distDir string, wait time.Duration) bool {
-	if distDir == "" {
-		return false
+// devPrimaryURL is the URL the ready line advertises (and --open opens):
+// always the app, whose origin serves every page — with a Vite dev server
+// running, those pages load their modules from it, but nobody browses
+// Vite's own port. --open-dash swaps in the app's dashboard.
+func devPrimaryURL(ready string, openDash bool) string {
+	if openDash {
+		return dashboardURL(ready)
 	}
-	r := vitehot.NewReader(distDir, func() bool { return true })
-	deadline := time.Now().Add(wait)
-	for {
-		if h, err := r.Current(); err == nil && h != nil {
-			return true
-		}
-		if !time.Now().Before(deadline) {
-			return false
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-}
-
-// devPrimaryURL picks the URL the ready line advertises (and --open opens),
-// and whether the API/Dashboard lines follow it.
-//
-//   - appServesPages (Inertia, or real Vite whose hot file ServeFrontend
-//     follows): the browser lives at the app; the Vite server is an
-//     asset/HMR origin nobody opens, so its port isn't advertised.
-//   - otherwise a dev server URL wins, with the app's API and dashboard
-//     listed beside it.
-//   - otherwise the app itself.
-//
-// --open-dash swaps the app URL for its dashboard wherever the app is the
-// destination.
-func devPrimaryURL(ready, viteURL string, appServesPages, openDash bool) (primary string, splitLines bool) {
-	app := func() string {
-		if openDash {
-			return dashboardURL(ready)
-		}
-		return clientURL(ready)
-	}
-	switch {
-	case appServesPages && ready != "":
-		return app(), false
-	case viteURL != "":
-		return strings.TrimRight(viteURL, "/") + "/", !appServesPages && ready != ""
-	case ready != "":
-		return app(), false
-	}
-	return "", false
+	return clientURL(ready)
 }
 
 // addrFinder wraps an io.Writer to scan child output line-by-line
@@ -1138,11 +837,6 @@ func (a *addrFinder) Write(p []byte) (int, error) {
 		a.buf = a.buf[i+1:]
 		if m := ginListenRE.FindSubmatch(line); m != nil {
 			if !a.done.Swap(true) {
-				// Publish the real bind addr for the ESM dev server's
-				// proxy resolver — it's constructed before the app boots
-				// and only learns the true port (e.g. :9590, not the
-				// --addr flag default) from this line.
-				detectedAppAddr.Store(string(m[1]))
 				select {
 				case a.ch <- string(m[1]):
 				default:
@@ -1154,12 +848,6 @@ func (a *addrFinder) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
-
-// detectedAppAddr holds the application's real bind address once the
-// addrFinder has parsed it from the child's "nexus: listening on …" line.
-// The ESM dev server (started before the app boots) reads it lazily via
-// its proxy resolver. Empty until discovered.
-var detectedAppAddr atomic.Value // string
 
 // ginListenRE matches the framework's own startup announcement plus
 // gin's debug- and release-mode listening lines:

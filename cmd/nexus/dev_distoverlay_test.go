@@ -38,7 +38,7 @@ func TestDistStubReplacements(t *testing.T) {
 	}
 
 	// The Vite manifest stays real — extension/inertia reads it through the
-	// embed when NEXUS_VITE_DEV isn't set.
+	// embed whenever no Vite dev server is live.
 	if _, stubbed := rep[filepath.Join(dist, ".vite", "manifest.json")]; stubbed {
 		t.Error("manifest.json was stubbed; Inertia resolves entry chunks from it")
 	}

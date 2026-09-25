@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -36,10 +38,35 @@ import (
 // Picking a TUI mode is deliberately opt-in (--tui) — a TUI takes
 // over the whole terminal and is unfriendly when piping (`nexus dev
 // | grep`); the static-banner mode stays the default.
-func runDevTUI(target, addr string, openDash bool, stdout, stderr io.Writer) error {
+//
+// The frontend's Vite runs here too, exactly as in runDev (same dir
+// resolution, same hot-file handshake), its lines in the log pane. It
+// survives `r`: only the Go child restarts.
+func runDevTUI(target, addr string, openDash bool, frontendFlag string, verbose bool, stdout, stderr io.Writer) error {
 	model := newTUIModel(target, addr, openDash)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	model.prog = prog
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logW := newTUILineWriter(func(line string) { model.send(logLineMsg(line)) })
+	if pkgDir, err := filepath.Abs(targetDir(target)); err == nil {
+		servedDist := ""
+		if root := detectServeFrontendRoot(pkgDir); root != "" {
+			servedDist = filepath.Join(pkgDir, root)
+		}
+		front := startDevFrontend(ctx, pkgDir, frontendFlag, servedDist, devViteConfig{
+			TOMLPath: nexusTOMLPath(target),
+			Verbose:  verbose,
+			Out:      logW,
+			Notes:    logW,
+		})
+		if front.Vite != nil {
+			// Runs after the Go child is killed below (killChild is not
+			// deferred), before nexus dev exits.
+			defer front.Vite.stop()
+		}
+	}
 
 	// Kick off the first child process. Errors here surface in the
 	// TUI's log pane via logLineMsg; we don't return early.
@@ -51,6 +78,7 @@ func runDevTUI(target, addr string, openDash bool, stdout, stderr io.Writer) err
 	go model.watchReady()
 
 	if _, err := prog.Run(); err != nil {
+		model.killChild()
 		return err
 	}
 	model.killChild()
@@ -415,7 +443,7 @@ func (m *tuiModel) spawnChild() {
 	// PreserveDev state, peer/config dev gates locked.
 	cmd.Env = append(os.Environ(),
 		"NEXUS_DEV=1",
-		"NEXUS_DEV_ROOT="+m.target,
+		"NEXUS_DEV_ROOT="+targetDir(m.target),
 		"NEXUS_PEER_DEV=1",
 		"NEXUS_CONFIG_DEV=1",
 	)
@@ -590,6 +618,40 @@ func (m *tuiModel) send(msg tea.Msg) {
 		return
 	}
 	m.prog.Send(msg)
+}
+
+// tuiLineWriter turns writes into whole log lines for the TUI's pane, in
+// order. Program.Send blocks until the program runs, so lines queue and one
+// goroutine delivers them: a line logged before Run doesn't hold up Run.
+type tuiLineWriter struct {
+	mu    sync.Mutex
+	buf   []byte
+	lines chan string
+}
+
+func newTUILineWriter(send func(string)) *tuiLineWriter {
+	w := &tuiLineWriter{lines: make(chan string, 256)}
+	go func() {
+		for line := range w.lines {
+			send(line)
+		}
+	}()
+	return w
+}
+
+func (w *tuiLineWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		w.lines <- string(w.buf[:i])
+		w.buf = w.buf[i+1:]
+	}
+	return len(p), nil
 }
 
 // silence the os import unused-warning on platforms where it's not

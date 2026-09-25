@@ -38,11 +38,10 @@ import (
 //   - contributor 5xx (a broken plugin's contribution shouldn't
 //     bring down the dev runner; we log it and skip just the
 //     contributor merge)
-func devCodegenWatch(ctx context.Context, addr, frontendDir, framework, proxyURL string, stdout, stderr io.Writer) {
+func devCodegenWatch(ctx context.Context, addr, frontendDir, framework string, stdout, stderr io.Writer) {
 	if frontendDir == "" {
-		// No --frontend flag → the user isn't running a frontend
-		// alongside this dev session. Codegen would emit into an
-		// arbitrary path; skip.
+		// No frontend dir resolved for this app (see devFrontendDir).
+		// Codegen would emit into an arbitrary path; skip.
 		return
 	}
 	probe := normalizeProbeAddr(addr)
@@ -50,7 +49,7 @@ func devCodegenWatch(ctx context.Context, addr, frontendDir, framework, proxyURL
 		return
 	}
 	baseURL := "http://" + probe
-	if err := devRunCodegen(ctx, baseURL, frontendDir, framework, proxyURL, stdout, stderr); err != nil {
+	if err := devRunCodegen(ctx, baseURL, frontendDir, framework, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "%sfrontend codegen:%s %v\n", ansiYellow, ansiReset, err)
 	}
 }
@@ -79,32 +78,20 @@ func devProbeReady(ctx context.Context, addr string, timeout time.Duration) bool
 // devRunCodegen is the once-per-boot work: fetch manifest +
 // contributions, render to disk, log a summary. Output structure
 // matches the standalone `nexus generate frontend` CLI so a manual
-// re-run produces the same bytes.
-//
-// proxyURL is the http://host:port the vite proxy should forward to —
-// when non-empty, this function also re-syncs the vite proxy block
-// against the manifest's advertised prefixes so add/remove of
-// modules with a RoutePrefix shows up in the SPA without a manual
-// vite.config.ts edit.
-func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework, proxyURL string, stdout, stderr io.Writer) error {
-	// Fetch the manifest first — both the proxy sync and codegen need
-	// it. A failure here means the app isn't answering yet; bail and
-	// let the next boot retry.
+// re-run produces the same bytes. frontendDir is absolute (resolved
+// against the package dir by devFrontendDir).
+func devRunCodegen(ctx context.Context, baseURL, frontendDir, framework string, stdout, stderr io.Writer) error {
+	// Fetch the manifest first. A failure here means the app isn't
+	// answering yet; bail and let the next boot retry.
 	m, err := devFetchManifest(ctx, baseURL)
 	if err != nil {
 		return fmt.Errorf("manifest fetch: %w", err)
 	}
 
-	// The dev server (viteless) proxies every unmatched request straight to
-	// the Go app, so the SPA's /graphql, the SDK manifest fetch (/__nexus),
-	// and module RoutePrefix calls reach the backend with no vite.config
-	// proxy block to maintain.
-
 	// Codegen is frontend.Plugin-only: ask the plugins endpoint whether
 	// the app has it wired. A response missing the entry means codegen
 	// isn't expected — skip silently rather than printing a misleading
-	// "codegen: 0 files" line every restart. (The proxy sync above has
-	// already run regardless, which is what SPA-only apps rely on.)
+	// "codegen: 0 files" line every restart.
 	hasFrontend, err := devDetectFrontendPlugin(ctx, baseURL)
 	if err != nil {
 		// Network failure on the plugins endpoint is a real problem
@@ -177,6 +164,12 @@ func devDetectFrontendPlugin(ctx context.Context, baseURL string) (bool, error) 
 		return false, err
 	}
 	defer r.Body.Close()
+	if r.StatusCode == http.StatusNotFound {
+		// No plugins endpoint (the app mounts no dashboard): nothing
+		// registered frontend.Plugin through it either. Every app with a
+		// frontend dir gets here on every boot, so this must stay quiet.
+		return false, nil
+	}
 	if r.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("HTTP %d", r.StatusCode)
 	}

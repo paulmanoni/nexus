@@ -1,11 +1,8 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,37 +13,20 @@ import (
 )
 
 func TestDevPrimaryURL(t *testing.T) {
-	const (
-		ready = ":8080"
-		vite  = "http://localhost:5173"
-		app   = "http://localhost:8080/"
-		dash  = "http://localhost:8080/__nexus/"
-	)
 	cases := []struct {
-		name           string
-		ready, viteURL string
-		appServesPages bool
-		openDash       bool
-		want           string
-		wantSplit      bool
+		ready    string
+		openDash bool
+		want     string
 	}{
-		{"hot file: the app serves the SPA", ready, vite, true, false, app, false},
-		{"hot file + --open-dash", ready, vite, true, true, dash, false},
-		{"dev server without the plugin keeps its URL", ready, vite, false, false, vite + "/", true},
-		{"--open-dash doesn't override a plugin-less dev server", ready, vite, false, true, vite + "/", true},
-		{"no dev server", ready, "", false, false, app, false},
-		{"no dev server + --open-dash", ready, "", false, true, dash, false},
-		{"app serves pages but never reported ready", "", vite, true, false, vite + "/", false},
-		{"only the dev server reported", "", vite, false, false, vite + "/", false},
-		{"nothing reported", "", "", false, false, "", false},
+		{":8080", false, "http://localhost:8080/"},
+		{":8080", true, "http://localhost:8080/__nexus/"},
+		{"127.0.0.1:8190", false, "http://127.0.0.1:8190/"},
+		{"[::]:8190", false, "http://localhost:8190/"},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, split := devPrimaryURL(tc.ready, tc.viteURL, tc.appServesPages, tc.openDash)
-			if got != tc.want || split != tc.wantSplit {
-				t.Errorf("devPrimaryURL = (%q, %v), want (%q, %v)", got, split, tc.want, tc.wantSplit)
-			}
-		})
+		if got := devPrimaryURL(tc.ready, tc.openDash); got != tc.want {
+			t.Errorf("devPrimaryURL(%q, %v) = %q, want %q", tc.ready, tc.openDash, got, tc.want)
+		}
 	}
 }
 
@@ -76,75 +56,70 @@ func writeTestHotAt(t *testing.T, dist, origin string, pid int) {
 	}
 }
 
-func TestWaitForHotFile(t *testing.T) {
-	ctx := context.Background()
+// deadPID is the pid of a process that has exited.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Skipf("no `true` binary: %v", err)
+	}
+	return dead.ProcessState.Pid()
+}
 
-	t.Run("no dist dir", func(t *testing.T) {
-		if waitForHotFile(ctx, "", time.Second) {
-			t.Fatal("empty dist dir reported a hot file")
+func TestFindDevHot(t *testing.T) {
+	self := os.Getpid()
+	longAgo := time.Now().Add(-time.Hour)
+
+	t.Run("nothing written", func(t *testing.T) {
+		if h, _ := findDevHot([]string{t.TempDir()}, self, time.Now()); h != nil {
+			t.Fatalf("found %+v in an empty dir", h)
 		}
 	})
-	t.Run("absent: gives up after the grace", func(t *testing.T) {
+	t.Run("this vite's file, by pid", func(t *testing.T) {
+		dist := t.TempDir()
+		writeTestHot(t, dist, self)
+		// since is in the future: only the pid can match.
+		h, dir := findDevHot([]string{dist}, self, time.Now().Add(time.Hour))
+		if h == nil || dir != dist {
+			t.Fatalf("got (%v, %q), want the file in %s", h, dir, dist)
+		}
+	})
+	t.Run("first dir that has one wins", func(t *testing.T) {
+		served, fallback := t.TempDir(), t.TempDir()
+		writeTestHot(t, fallback, self)
+		if _, dir := findDevHot([]string{served, fallback}, self, longAgo); dir != fallback {
+			t.Fatalf("dir = %q, want the fallback %q", dir, fallback)
+		}
+		writeTestHot(t, served, self)
+		if _, dir := findDevHot([]string{served, fallback}, self, longAgo); dir != served {
+			t.Fatalf("dir = %q, want the served dir %q", dir, served)
+		}
+	})
+	t.Run("another live dev server's older file is not ours", func(t *testing.T) {
+		dist := t.TempDir()
+		writeTestHot(t, dist, self) // alive (this test process), but not our pid
+		old := time.Now().Add(-time.Minute)
+		if err := os.Chtimes(vitehot.Path(dist), old, old); err != nil {
+			t.Fatal(err)
+		}
+		if h, _ := findDevHot([]string{dist}, self+1, time.Now()); h != nil {
+			t.Fatal("a file written before this vite started was taken as its own")
+		}
+	})
+	t.Run("a launcher's pid differs; a fresh file still counts", func(t *testing.T) {
+		dist := t.TempDir()
 		start := time.Now()
-		if waitForHotFile(ctx, t.TempDir(), 150*time.Millisecond) {
-			t.Fatal("reported a hot file that doesn't exist")
-		}
-		if d := time.Since(start); d < 150*time.Millisecond || d > 2*time.Second {
-			t.Errorf("waited %s, want about the grace", d)
-		}
-	})
-	t.Run("present", func(t *testing.T) {
-		dist := t.TempDir()
-		writeTestHot(t, dist, os.Getpid())
-		if !waitForHotFile(ctx, dist, 0) {
-			t.Fatal("live hot file not seen")
-		}
-	})
-	t.Run("appears during the grace", func(t *testing.T) {
-		dist := t.TempDir()
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			writeTestHot(t, dist, os.Getpid())
-		}()
-		if !waitForHotFile(ctx, dist, 3*time.Second) {
-			t.Fatal("hot file written mid-wait not seen")
+		writeTestHot(t, dist, self)
+		if h, _ := findDevHot([]string{dist}, self+1, start); h == nil {
+			t.Fatal("a file written after this vite started was not taken")
 		}
 	})
 	t.Run("stale file from a dead dev server doesn't count", func(t *testing.T) {
-		dead := exec.Command("true")
-		if err := dead.Run(); err != nil {
-			t.Skipf("no `true` binary: %v", err)
-		}
 		dist := t.TempDir()
-		writeTestHot(t, dist, dead.ProcessState.Pid())
-		if waitForHotFile(ctx, dist, 100*time.Millisecond) {
+		pid := deadPID(t)
+		writeTestHot(t, dist, pid)
+		if h, _ := findDevHot([]string{dist}, pid, longAgo); h != nil {
 			t.Fatal("stale hot file treated as a live dev server")
-		}
-	})
-	t.Run("dead pid, but the dev server answers (a container)", func(t *testing.T) {
-		dead := exec.Command("true")
-		if err := dead.Run(); err != nil {
-			t.Skipf("no `true` binary: %v", err)
-		}
-		vite := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/@vite/client" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Write([]byte("export {}"))
-		}))
-		defer vite.Close()
-		dist := t.TempDir()
-		writeTestHotAt(t, dist, vite.URL, dead.ProcessState.Pid())
-		if !waitForHotFile(ctx, dist, 0) {
-			t.Fatal("a dev server that answers is live whatever its pid says")
-		}
-	})
-	t.Run("cancelled", func(t *testing.T) {
-		c, cancel := context.WithCancel(ctx)
-		cancel()
-		if waitForHotFile(c, t.TempDir(), 5*time.Second) {
-			t.Fatal("cancelled wait reported a hot file")
 		}
 	})
 }

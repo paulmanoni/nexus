@@ -19,8 +19,8 @@ const devStubIndexHTML = "<!doctype html><title>nexus dev</title>\n"
 // change, existing apps included.
 //
 // Why it's safe: under NEXUS_DEV=1 ServeFrontend swaps the embed.FS for
-// os.DirFS and serves the real files from the working tree, and the SPA is
-// served by viteless on :5173 regardless. The embedded copy is dead weight
+// os.DirFS and serves the real files from the working tree (whose pages
+// load their modules from Vite while it runs). The embedded copy is dead weight
 // during dev — it just gets relinked on every save. On a 9.5MB/198-file
 // bundle that was ~0.5s of every rebuild.
 //
@@ -72,8 +72,10 @@ func distStubReplacements(distRoot, tmp string) (map[string]string, error) {
 		// Leave the Vite manifest alone. It's a couple of KB, and it's the
 		// one file in the bundle something reads through the EMBED rather
 		// than off disk in dev: extension/inertia falls back to
-		// App.FrontendFS() to resolve entry chunks when NEXUS_VITE_DEV
-		// isn't set. Stubbing it would strip an Inertia app's asset tags.
+		// App.FrontendFS() to resolve entry chunks whenever no Vite dev
+		// server is live (none started, it failed, or the frontend has no
+		// package.json). Stubbing it would strip an Inertia app's asset
+		// tags exactly then.
 		if d.Name() == "manifest.json" {
 			return nil
 		}
