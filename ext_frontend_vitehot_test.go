@@ -466,3 +466,41 @@ func TestAbsolutizeDevHTML_LeavesAbsoluteURLs(t *testing.T) {
 		t.Errorf("absolute/relative URLs changed:\n got %s\nwant %s", got, in)
 	}
 }
+
+// The Inertia SSR bundle `nexus build` writes into dist/ssr rides the embed
+// but is server code: never served. A public/ssr/ folder in a bundle with
+// no SSR build is an ordinary directory.
+func TestServeFrontend_SSRBundleNeverServed(t *testing.T) {
+	t.Setenv("GIN_MODE", "test")
+	t.Setenv(NexusDevEnv, "")
+	get := func(fsys fstest.MapFS, p string) int {
+		app := New(Config{})
+		if err := mountFrontend(app, fsys, &frontendConfig{}); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		app.engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
+		return rec.Code
+	}
+	withSSR := fstest.MapFS{
+		"index.html":      {Data: []byte("<html>x</html>")},
+		"ssr/ssr.js":      {Data: []byte("export default 1")},
+		"ssr/favicon.ico": {Data: []byte("ico")},
+		"assets/app-1.js": {Data: []byte("app")},
+	}
+	for _, p := range []string{"/ssr/ssr.js", "/ssr/favicon.ico", "/SSR/ssr.js", "/assets/../ssr/ssr.js"} {
+		if code := get(withSSR, p); code != http.StatusNotFound && code/100 != 3 {
+			t.Errorf("GET %s with an SSR build: %d, want 404", p, code)
+		}
+	}
+	if code := get(withSSR, "/assets/app-1.js"); code != http.StatusOK {
+		t.Errorf("client asset: %d", code)
+	}
+	plain := fstest.MapFS{
+		"index.html":     {Data: []byte("<html>x</html>")},
+		"ssr/notes.json": {Data: []byte("{}")},
+	}
+	if code := get(plain, "/ssr/notes.json"); code != http.StatusOK {
+		t.Errorf("an ssr/ folder without an SSR build: %d, want 200", code)
+	}
+}

@@ -410,6 +410,13 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		// ssr/ holds the Inertia server bundle (`nexus build` writes it
+		// with `vite build --ssr … --outDir dist/ssr`, so the embed
+		// carries it). It runs on the server; a browser has no use for it.
+		if isSSRBundlePath(fsys, relPath) {
+			c.Status(http.StatusNotFound)
+			return
+		}
 
 		// /index.html is a special case: http.FileServer redirects
 		// it to "/" (its idea of the canonical form), which is
@@ -488,6 +495,22 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 func isViteMetaPath(rel string) bool {
 	p := strings.ToLower(path.Clean("/" + rel))
 	return p == "/"+vitehot.Dir || strings.HasPrefix(p, "/"+vitehot.Dir+"/")
+}
+
+// ssrBundleDir is where the Inertia SSR build lands inside the bundle.
+const ssrBundleDir = "ssr"
+
+// isSSRBundlePath reports whether a request path (relative to the SPA mount)
+// is inside the bundle's ssr/ directory while that directory holds an SSR
+// build (ssr/ssr.js). A bundle without one — an app whose public/ happens to
+// have an ssr/ folder — serves it as usual.
+func isSSRBundlePath(fsys fs.FS, rel string) bool {
+	p := strings.ToLower(path.Clean("/" + rel))
+	if p != "/"+ssrBundleDir && !strings.HasPrefix(p, "/"+ssrBundleDir+"/") {
+		return false
+	}
+	_, err := fs.Stat(fsys, ssrBundleDir+"/ssr.js")
+	return err == nil
 }
 
 // devAssetProxyable reports whether a request may be answered by the dev
