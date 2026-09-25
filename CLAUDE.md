@@ -648,7 +648,13 @@ nexus.AsWS("/events", "chat.send", NewChatSend, auth.Required())
 Multiple `AsWS` on one path share a connection, dispatched by the envelope `type`.
 Wire format: `{ "type": "...", "data": {...}, "timestamp": ... }`. `*WSSession`:
 `Send / Emit / EmitToUser / EmitToRoom / EmitToClient`, `JoinRoom / LeaveRoom`.
-Built-in `ping/authenticate/subscribe/unsubscribe` are handled by the hub.
+Built-in `ping/authenticate/subscribe/unsubscribe` are handled by the hub (and can't
+be registered as handler types). **A connection's user is what the server
+authenticated for the upgrade request** — `extension/auth` registers its identity via
+`nexus.RegisterRequestIdentity` — so `EmitToUser` reaches the real owner; no query
+param or `authenticate` message can claim an id. **Rooms are joined server-side**
+(`sess.JoinRoom` after checking the caller); a client's own `subscribe` is refused
+unless the path opts in with `nexus.ClientRooms(func(userID, room string) bool)`.
 
 ### Decorator-form registration (`//@` annotations) — optional
 

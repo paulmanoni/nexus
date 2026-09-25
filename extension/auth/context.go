@@ -4,6 +4,8 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+
+	"github.com/paulmanoni/nexus"
 )
 
 // ctxKey is private so only this package can stash/read values. Two
@@ -16,6 +18,18 @@ const (
 	ctxIdentity ctxKey = iota
 	ctxState
 )
+
+// A WebSocket connection belongs to the identity the global middleware
+// resolved for its upgrade request — what EmitToUser addresses.
+func init() {
+	nexus.RegisterRequestIdentity(func(ctx context.Context) (string, bool) {
+		id, ok := IdentityFrom(ctx)
+		if !ok || id.ID == "" {
+			return "", false
+		}
+		return id.ID, true
+	})
+}
 
 // WithIdentity returns a new context with the Identity attached. The
 // global middleware calls this after a successful resolve; tests and

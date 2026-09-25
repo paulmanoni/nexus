@@ -86,6 +86,7 @@ func TestHub_ConnectAndBroadcast(t *testing.T) {
 
 func TestHub_RoomTargeting(t *testing.T) {
 	hub := NewHub(WithWorkers(2))
+	hub.AllowClientRooms(func(_ *Connection, room string) bool { return room == "alpha" })
 	hub.Start(context.Background())
 	defer hub.Stop()
 
@@ -106,6 +107,13 @@ func TestHub_RoomTargeting(t *testing.T) {
 	if ev := readEvent(t, c1); ev["type"] != EventTypeSubscribed {
 		t.Fatalf("ack = %v", ev["type"])
 	}
+	// The guard refuses any other room.
+	if err := c2.WriteJSON(map[string]any{"type": "subscribe", "room": "beta"}); err != nil {
+		t.Fatal(err)
+	}
+	if ev := readEvent(t, c2); ev["type"] != EventTypeError {
+		t.Fatalf("refused subscribe = %v, want error", ev["type"])
+	}
 
 	deadline := time.Now().Add(time.Second)
 	for hub.RoomConnectionCount("alpha") < 1 && time.Now().Before(deadline) {
@@ -113,6 +121,7 @@ func TestHub_RoomTargeting(t *testing.T) {
 	}
 
 	hub.EmitToRoom("hello", map[string]any{"k": "v"}, "alpha")
+	hub.EmitToRoom("hello", map[string]any{"k": "v"}, "beta")
 	if ev := readEvent(t, c1); ev["type"] != "hello" {
 		t.Fatalf("c1 = %v want hello", ev["type"])
 	}
@@ -122,37 +131,94 @@ func TestHub_RoomTargeting(t *testing.T) {
 	}
 }
 
-func TestHub_AuthenticateRoutesToUser(t *testing.T) {
+// Without a guard, a client cannot join any room: rooms are audiences the
+// server addresses, and a client choosing its own would receive messages
+// meant for others.
+func TestHub_ClientSubscribeRefusedByDefault(t *testing.T) {
 	hub := NewHub(WithWorkers(2))
 	hub.Start(context.Background())
 	defer hub.Stop()
+	srv := newHubServer(hub)
+	defer srv.Close()
 
+	c, _, err := websocket.DefaultDialer.Dial(wsURL(srv), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	readEvent(t, c)
+	if err := c.WriteJSON(map[string]any{"type": "subscribe", "room": "chat:5"}); err != nil {
+		t.Fatal(err)
+	}
+	if ev := readEvent(t, c); ev["type"] != EventTypeError {
+		t.Fatalf("subscribe without a guard = %v, want error", ev["type"])
+	}
+	if n := hub.RoomConnectionCount("chat:5"); n != 0 {
+		t.Fatalf("joined a room the server never granted: %d", n)
+	}
+}
+
+// A socket's user comes from the identify hook (the upgrade request). The
+// built-in authenticate message reports it and cannot change it: a client
+// naming someone else's id must not receive their EmitToUser events.
+func TestHub_AuthenticateCannotClaimAnotherUser(t *testing.T) {
+	hub := NewHub(WithWorkers(2))
+	hub.OnIdentify(func(c *httpx.Ctx) (string, map[string]any) { return c.Request.Header.Get("X-Test-User"), nil })
+	hub.Start(context.Background())
+	defer hub.Stop()
 	srv := newHubServer(hub)
 	defer srv.Close()
 	u := wsURL(srv)
 
-	c1, _, _ := websocket.DefaultDialer.Dial(u, nil)
-	defer c1.Close()
-	readEvent(t, c1)
-
-	if err := c1.WriteJSON(map[string]any{"type": "authenticate", "userId": "paul"}); err != nil {
+	alice, _, err := websocket.DefaultDialer.Dial(u, http.Header{"X-Test-User": {"alice"}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if ev := readEvent(t, c1); ev["type"] != EventTypeAuthed {
-		t.Fatalf("auth ack = %v", ev["type"])
+	defer alice.Close()
+	mallory, _, err := websocket.DefaultDialer.Dial(u, http.Header{"X-Test-User": {"mallory"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mallory.Close()
+	anon, _, err := websocket.DefaultDialer.Dial(u, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer anon.Close()
+	readEvent(t, alice)
+	readEvent(t, mallory)
+	readEvent(t, anon)
+
+	if err := mallory.WriteJSON(map[string]any{"type": "authenticate", "userId": "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if ev := readEvent(t, mallory); ev["type"] != EventTypeAuthed || ev["data"].(map[string]any)["userId"] != "mallory" {
+		t.Fatalf("authenticate reply = %v, want mallory's own identity", ev)
+	}
+	if err := anon.WriteJSON(map[string]any{"type": "authenticate", "userId": "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if ev := readEvent(t, anon); ev["type"] != EventTypeError {
+		t.Fatalf("anonymous authenticate = %v, want error", ev["type"])
 	}
 
 	deadline := time.Now().Add(time.Second)
-	for hub.UserConnectionCount("paul") < 1 && time.Now().Before(deadline) {
+	for hub.UserConnectionCount("alice") < 1 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := hub.UserConnectionCount("paul"); got != 1 {
-		t.Fatalf("UserConnectionCount = %d", got)
+	if got := hub.UserConnectionCount("alice"); got != 1 {
+		t.Fatalf("alice connections = %d, want 1 (only her own socket)", got)
 	}
 
-	hub.EmitToUsers("private", map[string]any{"secret": true}, "paul")
-	if ev := readEvent(t, c1); ev["type"] != "private" {
-		t.Fatalf("user-targeted = %v", ev["type"])
+	hub.EmitToUsers("private", map[string]any{"secret": true}, "alice")
+	if ev := readEvent(t, alice); ev["type"] != "private" {
+		t.Fatalf("alice = %v", ev["type"])
+	}
+	for name, c := range map[string]*websocket.Conn{"mallory": mallory, "anon": anon} {
+		_ = c.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+		if _, _, err := c.ReadMessage(); err == nil {
+			t.Errorf("%s received alice's event", name)
+		}
 	}
 }
 

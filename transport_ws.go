@@ -41,7 +41,11 @@ import (
 //	{ "type": "chat.send", "data": {...}, "timestamp": <unix> }
 //
 // The built-in types `ping`, `authenticate`, `subscribe`, `unsubscribe` are
-// handled by the hub directly and never reach user handlers.
+// handled by the hub directly and never reach user handlers. A connection's
+// user comes from the authenticated upgrade request (see
+// RegisterRequestIdentity); `authenticate` only reports it. A client
+// `subscribe` is refused unless the path allows it with ClientRooms — join
+// rooms server-side with WSSession.JoinRoom after checking the caller.
 //
 // Handler signature: same reflective convention as AsRest / AsQuery —
 //   - fx-injected deps anywhere (service wrappers, resources, other services);
@@ -62,6 +66,10 @@ func AsWS(path, msgType string, fn any, opts ...WSOption) Option {
 	if msgType == "" {
 		return rawOption{o: di.Error(fmt.Errorf("nexus: AsWS(%q): message type is required", path))}
 	}
+	switch msgType {
+	case "ping", "authenticate", "subscribe", "unsubscribe":
+		return rawOption{o: di.Error(fmt.Errorf("nexus: AsWS(%q, %q): %q is a built-in message the hub answers itself, so this handler would never run — choose another type", path, msgType, msgType))}
+	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportWebSocket, "WS "+path+" "+msgType); err != nil {
 		return rawOption{o: di.Error(err)}
 	}
@@ -79,7 +87,8 @@ type WSOption interface{ applyToWS(*wsConfig) }
 
 type wsConfig struct {
 	baseEndpointConfig
-	service string
+	service     string
+	clientRooms func(userID, room string) bool
 }
 
 // wsOption is the Option returned by AsWS. Implements moduleAnnotator so
@@ -137,6 +146,10 @@ func asWSInvoke(path, msgType string, cfg *wsConfig, sh handlerShape, rawFn any)
 		ep.handlers[msgType] = handler
 		ep.mu.Unlock()
 
+		if cfg.clientRooms != nil {
+			allow := cfg.clientRooms
+			ep.hub.AllowClientRooms(func(c *ws.Connection, room string) bool { return allow(c.UserID, room) })
+		}
 		if fresh {
 			mountWSEndpoint(app, lc, ep, cfg, msgType)
 		} else if len(cfg.bundles) > 0 {
@@ -372,20 +385,44 @@ func callWSHandler(h wsTypedHandler, ci callInput, argsVal reflect.Value) (err e
 	return err
 }
 
-// identifyFromGin is the hub identify hook used by AsWS. Matches
-// the common convention: prefer an auth-middleware-set `user` in
-// Gin context, fall back to `?userId=` query, and stash the full claim
-// on the connection metadata for handler access via sess.Metadata().
+// identifyFromGin is the hub identify hook used by AsWS. A connection's user
+// is what the server authenticated for the upgrade request: a value server
+// middleware stored as "user" (with a GetID method), else a registered
+// request-identity source (extension/auth registers one). Nothing the
+// client sends — no query parameter, no message — can set it, because
+// EmitToUser delivers to whoever holds the id. The "user" value, when
+// present, rides on the connection metadata for handlers.
 func identifyFromGin(c *httpx.Ctx) (string, map[string]any) {
 	meta := map[string]any{}
 	if raw, ok := c.Get("user"); ok {
 		meta["user"] = raw
-		if id, ok := raw.(interface{ GetID() string }); ok {
+		if id, ok := raw.(interface{ GetID() string }); ok && id.GetID() != "" {
 			return id.GetID(), meta
 		}
 	}
-	if q := c.Query("userId"); q != "" {
-		return q, meta
+	if id, ok := requestIdentity(c.Request.Context()); ok {
+		return id, meta
 	}
 	return "", meta
 }
+
+// ClientRooms lets clients on this WebSocket path join rooms themselves with
+// the built-in {"type":"subscribe","room":"…"} message, for the rooms allow
+// accepts. userID is the connection's authenticated user ("" when
+// anonymous). Without it every client subscribe is refused: a room is an
+// audience the server addresses with EmitToRoom, so by default only a
+// handler joins one (WSSession.JoinRoom), after checking the caller. The
+// hub is shared by every AsWS on the path; the last ClientRooms given for
+// the path applies.
+//
+//	nexus.AsWS("/ws", "jobs.watch", NewWatch, auth.Required(),
+//	    nexus.ClientRooms(func(userID, room string) bool { return room == "jobs" && userID != "" }))
+func ClientRooms(allow func(userID, room string) bool) WSOption {
+	return clientRoomsOption{allow: allow}
+}
+
+type clientRoomsOption struct {
+	allow func(userID, room string) bool
+}
+
+func (o clientRoomsOption) applyToWS(c *wsConfig) { c.clientRooms = o.allow }

@@ -1,7 +1,10 @@
 package nexus
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -10,6 +13,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/middleware"
 )
 
 // chatPayload is the test message body, deliberately un-exported and colocated
@@ -42,7 +47,7 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
 		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
-		AsWS("/events", "chat.send", sendHandler).nexusOption(),
+		AsWS("/events", "chat.send", sendHandler, Use(testUserMiddleware())).nexusOption(),
 		AsWS("/events", "chat.typing", typingHandler).nexusOption(),
 		di.Populate(&app),
 	)
@@ -54,8 +59,8 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 	ts := httptest.NewServer(app)
 	defer ts.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/events?userId=u42"
-	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/events"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"X-Test-User": {"u42"}})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -88,9 +93,9 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 		t.Fatal("chat.send handler never fired")
 	}
 
-	// Now the echoed broadcast. With userId=u42 on the upgrade URL, the
-	// hub's identify hook attached it to the connection — the handler
-	// read sess.UserID() and forwarded it in the echo payload.
+	// Now the echoed broadcast. The upgrade route's middleware
+	// authenticated u42 (server side), the hub's identify hook attached it
+	// to the connection, and the handler forwarded sess.UserID().
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, raw, err := c.ReadMessage()
 	if err != nil {
@@ -319,6 +324,168 @@ func TestAsWS_HandlerErrorEmitsRequestEnd500(t *testing.T) {
 				}
 				return
 			}
+		}
+	}
+}
+
+// testUserKey carries a test-authenticated user on the request context, the
+// way an auth middleware would.
+type testUserKey struct{}
+
+func init() {
+	RegisterRequestIdentity(func(ctx context.Context) (string, bool) {
+		id, ok := ctx.Value(testUserKey{}).(string)
+		return id, ok
+	})
+}
+
+// testUserMiddleware authenticates the X-Test-User header: it stands in for
+// a real auth middleware, putting the user on the request context.
+func testUserMiddleware() middleware.Middleware {
+	return middleware.Middleware{
+		Name: "test-user",
+		Gin: func(c *httpx.Ctx) {
+			if u := c.Request.Header.Get("X-Test-User"); u != "" {
+				c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), testUserKey{}, u))
+			}
+			c.Next()
+		},
+	}
+}
+
+// A connection's user is only what the server authenticated: a ?userId=
+// query and the built-in authenticate message are ignored, so EmitToUser
+// reaches the real owner and nobody who merely claims the id. A client
+// subscribe is refused unless ClientRooms allows the room.
+func TestAsWS_IdentityAndRoomsAreServerSide(t *testing.T) {
+	notify := func(sess *WSSession, p Params[chatPayload]) error {
+		sess.EmitToUser("private", map[string]string{"text": p.Args.Text}, p.Args.Text)
+		sess.EmitToRoom("room.msg", map[string]string{"text": "hello"}, "lobby")
+		sess.EmitToRoom("room.msg", map[string]string{"text": "secret"}, "staff")
+		return nil
+	}
+	var app *App
+	fxApp := newTestApp(t,
+		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		AsWS("/live", "notify", notify, Use(testUserMiddleware()),
+			ClientRooms(func(userID, room string) bool { return room == "lobby" && userID != "" })).nexusOption(),
+		di.Populate(&app),
+	)
+	fxApp.RequireStart()
+	defer fxApp.RequireStop()
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+	base := "ws" + strings.TrimPrefix(ts.URL, "http") + "/live"
+
+	dial := func(query string, user string) *websocket.Conn {
+		t.Helper()
+		h := http.Header{}
+		if user != "" {
+			h.Set("X-Test-User", user)
+		}
+		c, _, err := websocket.DefaultDialer.Dial(base+query, h)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if _, _, err := c.ReadMessage(); err != nil {
+			t.Fatalf("greeting: %v", err)
+		}
+		return c
+	}
+	// The hub's write pump may batch queued events into one frame,
+	// newline-separated; pending holds the rest of a frame per connection.
+	pending := map[*websocket.Conn][][]byte{}
+	next := func(c *websocket.Conn, wait time.Duration) (map[string]any, bool) {
+		if len(pending[c]) == 0 {
+			c.SetReadDeadline(time.Now().Add(wait))
+			_, raw, err := c.ReadMessage()
+			if err != nil {
+				return nil, false
+			}
+			for _, line := range bytes.Split(raw, []byte("\n")) {
+				if len(bytes.TrimSpace(line)) > 0 {
+					pending[c] = append(pending[c], line)
+				}
+			}
+			if len(pending[c]) == 0 {
+				return nil, false
+			}
+		}
+		line := pending[c][0]
+		pending[c] = pending[c][1:]
+		var m map[string]any
+		_ = json.Unmarshal(line, &m)
+		return m, true
+	}
+	send := func(c *websocket.Conn, v any) {
+		t.Helper()
+		if err := c.WriteJSON(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	alice := dial("", "alice")
+	defer alice.Close()
+	spoof := dial("?userId=alice", "")
+	defer spoof.Close()
+	claim := dial("", "mallory")
+	defer claim.Close()
+
+	send(claim, map[string]any{"type": "authenticate", "userId": "alice"})
+	if m, _ := next(claim, 2*time.Second); m["type"] != "authenticated" || m["data"].(map[string]any)["userId"] != "mallory" {
+		t.Fatalf("authenticate reply = %v, want mallory's own identity", m)
+	}
+	send(alice, map[string]any{"type": "subscribe", "room": "lobby"})
+	if m, _ := next(alice, 2*time.Second); m["type"] != "subscribed" {
+		t.Fatalf("allowed subscribe = %v", m)
+	}
+	send(claim, map[string]any{"type": "subscribe", "room": "staff"})
+	if m, _ := next(claim, 2*time.Second); m["type"] != "error" {
+		t.Fatalf("refused subscribe = %v, want error", m)
+	}
+	send(spoof, map[string]any{"type": "subscribe", "room": "lobby"})
+	if m, _ := next(spoof, 2*time.Second); m["type"] != "error" {
+		t.Fatalf("anonymous subscribe = %v, want error (guard needs a user)", m)
+	}
+
+	send(alice, map[string]any{"type": "notify", "data": map[string]string{"text": "alice"}})
+	got := map[string]bool{}
+	for {
+		m, ok := next(alice, 500*time.Millisecond)
+		if !ok {
+			break
+		}
+		typ, _ := m["type"].(string)
+		data, _ := m["data"].(map[string]any)
+		text, _ := data["text"].(string)
+		got[typ+":"+text] = true
+	}
+	if !got["private:alice"] || !got["room.msg:hello"] || got["room.msg:secret"] {
+		t.Fatalf("alice received %v, want her private event and the lobby only", got)
+	}
+	for name, c := range map[string]*websocket.Conn{"?userId=alice": spoof, "authenticate as alice": claim} {
+		for {
+			m, ok := next(c, 300*time.Millisecond)
+			if !ok {
+				break
+			}
+			if m["type"] == "private" || m["type"] == "room.msg" {
+				t.Errorf("%s received %v", name, m)
+			}
+		}
+	}
+}
+
+// A handler on a built-in message type would never run: refused at boot.
+func TestAsWS_RejectsBuiltinTypes(t *testing.T) {
+	for _, typ := range []string{"ping", "authenticate", "subscribe", "unsubscribe"} {
+		_, stop, err := InProcess(Config{}, AsWS("/x", typ, func() error { return nil }))
+		if err == nil {
+			stop(context.Background())
+			t.Errorf("AsWS(%q) booted; want an error", typ)
+		} else if !strings.Contains(err.Error(), "built-in") {
+			t.Errorf("AsWS(%q): %v", typ, err)
 		}
 	}
 }

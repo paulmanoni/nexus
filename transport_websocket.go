@@ -112,8 +112,10 @@ func (s *WSSession) EmitToClient(eventType string, data any, clientIDs ...string
 	s.hub.EmitToClients(eventType, data, clientIDs...)
 }
 
-// JoinRoom subscribes this connection to a room. Matching server-side helper
-// for the client's `{"type":"subscribe","room":"..."}` message.
+// JoinRoom subscribes this connection to a room. The server's way to put a
+// connection in an audience, after the handler has checked the caller may
+// hear it; a client's own `{"type":"subscribe"}` is refused unless the path
+// allows it with ClientRooms.
 func (s *WSSession) JoinRoom(room string) {
 	if s == nil || s.hub == nil || s.conn == nil || room == "" {
 		return

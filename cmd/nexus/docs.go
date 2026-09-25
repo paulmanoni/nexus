@@ -1315,14 +1315,22 @@ Wire format every message uses:
     { "type": "chat.send", "data": { ... }, "timestamp": 1700000000 }
 
 Built-in types ping / authenticate / subscribe / unsubscribe are
-handled by the framework hub. Unknown types are dropped silently.
-Handler errors return as { "type": "error", ... } envelopes —
-the connection stays open.
+handled by the framework hub (AsWS refuses them as handler types).
+Unknown types are dropped silently. Handler errors return as
+{ "type": "error", ... } envelopes — the connection stays open.
 
 *WSSession exposes Send / Emit / EmitToUser / EmitToRoom /
-EmitToClient plus JoinRoom / LeaveRoom. Identity at upgrade
-flows from ?userId= or any gin.Context "user" satisfying
-interface{ GetID() string }.
+EmitToClient plus JoinRoom / LeaveRoom. A connection's user is
+what the server authenticated for the upgrade request
+(extension/auth registers it via nexus.RegisterRequestIdentity; a
+context "user" with GetID() also works) — never a query param or
+an authenticate message. Rooms are joined server-side with
+JoinRoom; a client subscribe is refused unless the path opts in:
+
+    nexus.AsWS("/ws", "jobs.watch", NewWatch, auth.Required(),
+        nexus.ClientRooms(func(userID, room string) bool {
+            return room == "jobs" && userID != ""
+        }))
 
 Middleware on the FIRST AsWS for a path applies to the upgrade
 route; later AsWS calls share the same upgrade so their

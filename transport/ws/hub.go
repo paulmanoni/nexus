@@ -167,6 +167,7 @@ type Hub struct {
 	onConnect OnConnectFunc
 	onMessage OnMessageFunc
 	onClose   OnDisconnectFunc
+	roomGuard RoomGuardFunc
 }
 
 type sendJob struct {
@@ -177,6 +178,7 @@ type sendJob struct {
 // Hooks the caller can install.
 type (
 	IdentifyFunc     func(c *httpx.Ctx) (userID string, meta map[string]any)
+	RoomGuardFunc    func(c *Connection, room string) bool
 	OnConnectFunc    func(conn *Connection)
 	OnMessageFunc    func(conn *Connection, msgType int, data []byte) error
 	OnDisconnectFunc func(conn *Connection)
@@ -208,6 +210,13 @@ func (h *Hub) OnIdentify(fn IdentifyFunc) *Hub       { h.identify = fn; return h
 func (h *Hub) OnConnect(fn OnConnectFunc) *Hub       { h.onConnect = fn; return h }
 func (h *Hub) OnMessage(fn OnMessageFunc) *Hub       { h.onMessage = fn; return h }
 func (h *Hub) OnDisconnect(fn OnDisconnectFunc) *Hub { h.onClose = fn; return h }
+
+// AllowClientRooms decides which rooms a client may join with the built-in
+// {"type":"subscribe","room":"…"} message. Without a guard every client
+// subscribe is refused: a room is an audience the server addresses
+// (EmitToRoom), so joining one is the server's decision — JoinRoom from a
+// handler that has checked the caller — unless the app states otherwise.
+func (h *Hub) AllowClientRooms(fn RoomGuardFunc) *Hub { h.roomGuard = fn; return h }
 
 // Start spins up the hub's main loop and the broadcast worker pool. Safe to
 // call repeatedly — only the first call starts goroutines.
@@ -594,9 +603,8 @@ func (h *Hub) readPump(c *Connection) {
 // map[string]any: the map decode allocated per JSON key on EVERY
 // inbound frame, builtin or not.
 type builtinProbe struct {
-	Type   string `json:"type"`
-	UserID string `json:"userId"`
-	Room   string `json:"room"`
+	Type string `json:"type"`
+	Room string `json:"room"`
 }
 
 // handleBuiltin processes the default protocol: ping/pong, authenticate,
@@ -611,26 +619,24 @@ func (h *Hub) handleBuiltin(c *Connection, data []byte) bool {
 		_ = c.SendEvent(&Event{Type: EventTypePong, Data: map[string]any{"timestamp": time.Now().Unix()}})
 		return true
 	case "authenticate":
-		if uid := msg.UserID; uid != "" {
-			h.mu.Lock()
-			if c.UserID != "" {
-				if set, ok := h.byUser[c.UserID]; ok {
-					delete(set, c)
-				}
-			}
-			c.UserID = uid
-			if h.byUser[uid] == nil {
-				h.byUser[uid] = map[*Connection]bool{}
-			}
-			h.byUser[uid][c] = true
-			h.mu.Unlock()
-			_ = c.SendEvent(&Event{Type: EventTypeAuthed, Data: map[string]any{"userId": uid, "status": "success"}})
+		// Reports the identity the upgrade request established; it never
+		// sets one. A client naming its own user id would receive every
+		// EmitToUser addressed to that user.
+		if c.UserID == "" {
+			_ = c.SendEvent(&Event{Type: EventTypeError, Data: map[string]any{"message": "not authenticated: a socket's identity comes from the upgrade request"}})
+			return true
 		}
+		_ = c.SendEvent(&Event{Type: EventTypeAuthed, Data: map[string]any{"userId": c.UserID, "status": "success"}})
 		return true
 	case "subscribe":
-		if msg.Room != "" {
-			h.Join(c, msg.Room)
+		if msg.Room == "" {
+			return true
 		}
+		if h.roomGuard == nil || !h.roomGuard(c, msg.Room) {
+			_ = c.SendEvent(&Event{Type: EventTypeError, Data: map[string]any{"message": "subscribe refused", "room": msg.Room}})
+			return true
+		}
+		h.Join(c, msg.Room)
 		return true
 	case "unsubscribe":
 		if msg.Room != "" {
