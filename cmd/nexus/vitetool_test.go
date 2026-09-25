@@ -42,7 +42,7 @@ func TestFrontendEnv(t *testing.T) {
 	dir := t.TempDir()
 	toml := filepath.Join(dir, "nexus.toml")
 	writeTestFile(t, toml, "[env.client]\nid = \"web\"\n[env]\nflag = \"on\"\n")
-	env, err := frontendEnv(toml)
+	env, err := frontendEnv(toml, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestFrontendEnv(t *testing.T) {
 	if got["client.id"] != "web" || got["flag"] != "on" {
 		t.Errorf("payload = %v", got)
 	}
-	env, err = frontendEnv(filepath.Join(dir, "missing.toml"))
+	env, err = frontendEnv(filepath.Join(dir, "missing.toml"), io.Discard)
 	if err != nil || !containsString(env, frontendEnvVar+"={}") {
 		t.Errorf("no nexus.toml: err %v, want %s={}", err, frontendEnvVar)
 	}

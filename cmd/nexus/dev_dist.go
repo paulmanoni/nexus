@@ -49,7 +49,12 @@ func watchDistBuild(ctx context.Context, webDir, tomlPath string, vite *devVite,
 		w.Close()
 		return nil, err
 	}
-	env, err := frontendEnv(tomlPath)
+	// The dev server already warned about [env] entries it left out.
+	var envWarn io.Writer = stderr
+	if vite != nil {
+		envWarn = nil
+	}
+	env, err := frontendEnv(tomlPath, envWarn)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s●%s [dist] [env] not passed to Vite: %v\n", ansiYellow, ansiReset, err)
 		env = os.Environ()

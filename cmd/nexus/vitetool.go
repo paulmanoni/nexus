@@ -104,10 +104,22 @@ func ensureNodeModules(ctx context.Context, webDir string, stdout, stderr io.Wri
 // frontendEnv is the environment for a Vite child: this process's, plus
 // frontendEnvVar holding nexus.toml's [env] table (none when the file or
 // the table is absent).
-func frontendEnv(tomlPath string) ([]string, error) {
-	vars, err := nexus.EnvVars(tomlPath)
+//
+// Only [env] is expanded — a ${DB_PASSWORD} elsewhere in nexus.toml is
+// the app's concern at boot, not the bundle's. An [env] entry naming an
+// unset variable is left out with a warning on warn (nil: silent) rather
+// than failing: a build machine without that secret still builds, and
+// the frontend sees the key as undefined.
+func frontendEnv(tomlPath string, warn io.Writer) ([]string, error) {
+	vars, skipped, err := nexus.EnvVarsSkippingUnset(tomlPath)
 	if err != nil {
 		return nil, err
+	}
+	if warn != nil {
+		for _, s := range skipped {
+			fmt.Fprintf(warn, "%s●%s [env] %s (%s:%d) left out of the frontend: ${%s} is not set\n",
+				ansiYellow, ansiReset, s.Key, filepath.Base(tomlPath), s.Line, s.Var)
+		}
 	}
 	if vars == nil {
 		vars = map[string]string{}

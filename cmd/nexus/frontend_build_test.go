@@ -97,6 +97,41 @@ func TestFrontendBuild_ViteProject(t *testing.T) {
 	}
 }
 
+// A secret the app reads at boot is not the frontend build's business: an
+// unset ${DB_PASSWORD} outside [env] must not fail the build, and an unset
+// variable inside [env] drops that one key with a warning.
+func TestFrontendBuild_UnsetSecretsDoNotFailTheBuild(t *testing.T) {
+	t.Setenv("NEXUS_FRONTEND_DIR", "")
+	t.Setenv("NEXUS_TEST_UNSET_DB_PASSWORD", "")
+	os.Unsetenv("NEXUS_TEST_UNSET_DB_PASSWORD")
+	t.Setenv("NEXUS_TEST_UNSET_CLIENT_SECRET", "")
+	os.Unsetenv("NEXUS_TEST_UNSET_CLIENT_SECRET")
+	root, web := fakeViteProject(t, fakeViteOK)
+	writeTestFile(t, filepath.Join(root, "nexus.toml"), `[databases.main]
+password = "${NEXUS_TEST_UNSET_DB_PASSWORD}"
+
+[env.client]
+id = "web"
+secret = "${NEXUS_TEST_UNSET_CLIENT_SECRET}"
+`)
+	var out, errOut bytes.Buffer
+	if err := frontendBuild(context.Background(), root, &out, &errOut); err != nil {
+		t.Fatalf("frontendBuild: %v\nstderr: %s", err, errOut.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(web, "env.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env map[string]string
+	if err := json.Unmarshal(raw, &env); err != nil || env["client.id"] != "web" || len(env) != 1 {
+		t.Errorf("NEXUS_FRONTEND_ENV = %s (%v), want only client.id=web", raw, err)
+	}
+	if w := errOut.String(); strings.Count(w, "left out of the frontend") != 1 ||
+		!strings.Contains(w, "client.secret (nexus.toml:6)") || !strings.Contains(w, "${NEXUS_TEST_UNSET_CLIENT_SECRET}") {
+		t.Errorf("want one warning naming client.secret, got %q", w)
+	}
+}
+
 func TestFrontendBuild_SSR(t *testing.T) {
 	t.Setenv("NEXUS_FRONTEND_DIR", "")
 	root, web := fakeViteProject(t, fakeViteOK)

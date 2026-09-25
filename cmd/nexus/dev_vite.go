@@ -200,7 +200,7 @@ func (v *devVite) start() {
 		// that does not import it runs fine.
 		v.notef("could not write %s: %v", filepath.Join(webDir, "sdk"), err)
 	}
-	env, err := frontendEnv(v.cfg.TOMLPath)
+	env, err := frontendEnv(v.cfg.TOMLPath, v.cfg.Notes)
 	if err != nil {
 		v.notef("[env] not passed to Vite: %v", err)
 		env = os.Environ()

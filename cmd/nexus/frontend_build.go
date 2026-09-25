@@ -56,7 +56,7 @@ func frontendBuild(ctx context.Context, mainDir string, stdout, stderr io.Writer
 	if err := writeSDKPlugin(p.Dir, stdout); err != nil {
 		return fmt.Errorf("write nexus-vite-plugin into %s: %w", filepath.Join(p.Dir, "sdk"), err)
 	}
-	env, err := frontendEnv(filepath.Join(mainDir, "nexus.toml"))
+	env, err := frontendEnv(filepath.Join(mainDir, "nexus.toml"), stderr)
 	if err != nil {
 		return fmt.Errorf("read [env] from nexus.toml: %w", err)
 	}
