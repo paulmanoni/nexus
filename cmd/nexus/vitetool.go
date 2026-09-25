@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -105,39 +104,6 @@ func viteBinary(webDir string) (string, bool) {
 	return bin, fileExists(bin)
 }
 
-// errNoNpm is returned when dependencies must be installed and npm is not
-// on PATH.
-var errNoNpm = errors.New("npm is not on PATH — install Node.js 20 or later (https://nodejs.org), then run nexus again")
-
-// ensureNodeModules installs the frontend's dependencies when its Vite is
-// missing: `npm ci` with a package-lock.json (exact, reproducible), else
-// `npm install`. A project whose Vite is already installed is left alone.
-func ensureNodeModules(ctx context.Context, webDir string, stdout, stderr io.Writer) error {
-	if _, ok := viteBinary(webDir); ok {
-		return nil
-	}
-	npm, err := exec.LookPath("npm")
-	if err != nil {
-		return errNoNpm
-	}
-	args := []string{"install"}
-	if fileExists(filepath.Join(webDir, "package-lock.json")) {
-		args = []string{"ci"}
-	}
-	fmt.Fprintf(stdout, "  installing frontend dependencies (npm %s in %s)…\n", args[0], webDir)
-	cmd := exec.CommandContext(ctx, npm, args...)
-	cmd.Dir = webDir
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("npm %s in %s: %w", args[0], webDir, err)
-	}
-	if _, ok := viteBinary(webDir); !ok {
-		return fmt.Errorf("npm %s finished but %s has no node_modules/.bin/vite — add vite to devDependencies in package.json", args[0], webDir)
-	}
-	return nil
-}
-
 // frontendEnv is the environment for a Vite child: this process's, plus
 // frontendEnvVar holding nexus.toml's [env] table (none when the file or
 // the table is absent).
@@ -190,7 +156,7 @@ func writeSDKPlugin(webDir string, stdout io.Writer) error {
 func viteCmd(ctx context.Context, webDir string, env []string, args ...string) (*exec.Cmd, error) {
 	bin, ok := viteBinary(webDir)
 	if !ok {
-		return nil, fmt.Errorf("%s has no node_modules/.bin/vite — run npm install there", webDir)
+		return nil, fmt.Errorf("%s has no node_modules/.bin/vite — install its dependencies there", webDir)
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = webDir

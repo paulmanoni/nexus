@@ -1376,8 +1376,11 @@ starts (commit web/sdk):
 
 Commands:
 
-    nexus dev      npm ci/install on first run, starts the project's Vite
-                   beside the app, prints the app's URL (--open opens it)
+    nexus dev      installs deps on first run (npm, pnpm, yarn or bun — the
+                   lockfile decides; frozen when there is one), starts the
+                   project's Vite beside the app, prints the app's URL
+                   (--open opens it). Yarn Plug'n'Play is refused: set
+                   nodeLinker: node-modules in .yarnrc.yml
     nexus build    vite build (+ vite build --ssr when src/ssr.ts exists)
                    → web/dist, then go build embeds it
     nexus new <dir> --frontend vue|react [--inertia [--ssr]]
@@ -1540,7 +1543,8 @@ CLI CHEATSHEET
 
   nexus dev [dir]            Build + run the app; when the frontend dir has
                              a package.json, install its deps on first run
-                             (npm) and run its Vite beside the app. Open the
+                             (with the package manager its lockfile names)
+                             and run its Vite beside the app. Open the
                              URL it prints — the APP's origin: pages load
                              their modules from Vite via the hot file, so
                              there is no proxy and no second URL. Vite's
@@ -1606,7 +1610,8 @@ CLI CHEATSHEET
                                                 before every rebuild
 
   nexus build                Build one binary. With a frontend package.json:
-                             npm ci/install when needed, vite build (and
+                             deps installed when needed (npm ci, pnpm/yarn/
+                             bun with a frozen lockfile), vite build (and
                              vite build --ssr src/ssr.ts → dist/ssr when
                              src/ssr.ts exists), then go build embeds
                              web/dist via //go:embed. A viteless-era web/

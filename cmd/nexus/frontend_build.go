@@ -22,8 +22,8 @@ const ssrEntry = "src/ssr.ts"
 // runs and embeds a stale dist. It is a Vite project when it has a
 // package.json. Then, in order:
 //
-//  1. dependencies are installed when its Vite is missing (npm ci, or
-//     npm install without a lockfile);
+//  1. dependencies are installed when its Vite is missing, with the
+//     package manager its lockfile names (ensureNodeModules);
 //  2. nexus-vite-plugin is written into <dir>/sdk, so a vite.config that
 //     imports it loads on a fresh checkout;
 //  3. `vite build` runs with nexus.toml's [env] table in

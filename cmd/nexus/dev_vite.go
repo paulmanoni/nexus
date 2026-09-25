@@ -121,7 +121,7 @@ type devVite struct {
 
 // startDevVite installs dependencies when needed, writes the SDK plugin,
 // and spawns Vite — all in the background, so the Go build is not held up
-// by `npm install`. It returns at once.
+// by the dependency install. It returns at once.
 func startDevVite(ctx context.Context, cfg devViteConfig) *devVite {
 	if cfg.HotTimeout == 0 {
 		cfg.HotTimeout = devHotTimeout
@@ -331,7 +331,7 @@ func (v *devVite) stop() {
 	v.mu.Lock()
 	v.stopping = true
 	v.mu.Unlock()
-	v.cancel() // aborts an npm install in progress
+	v.cancel() // aborts a dependency install in progress
 	<-v.started
 	v.mu.Lock()
 	cmd, exited := v.cmd, v.exited
