@@ -7,9 +7,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newInitCmd builds the `nexus init` subcommand. Scaffolds the
-// frontend pipeline (islands.src + main.go embed) into an existing
-// Go project. `--frontend=vue|react` selects the framework.
+// newInitCmd builds the `nexus init` subcommand: it adds a Vite
+// frontend (web/) to an existing Go project and wires main.go to embed
+// and serve it. `--frontend=vue|react` selects the framework.
 func newInitCmd(stdout, _ io.Writer) *cobra.Command {
 	var (
 		dir      string
@@ -18,15 +18,20 @@ func newInitCmd(stdout, _ io.Writer) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "init [dir]",
-		Short: "Scaffold frontend pipeline into an existing project",
-		Long: `Initialize the project at <dir> (default ".") with frontend
-scaffolding.
+		Short: "Add a Vite frontend (web/) to an existing project",
+		Long: `Add a frontend to the project at <dir> (default ".").
 
---frontend=vue|react adds islands.src/main.{ts,tsx} + App.{vue,tsx},
-islands/index.html, and patches main.go to embed islands/ via
-nexus.ServeFrontend.
+--frontend=vue|react writes the same web/ project nexus new scaffolds —
+package.json, vite.config.ts (with nexus-vite-plugin), tsconfig.json,
+index.html, src/main.{ts,tsx} + App.{vue,tsx}, sdk/nexus-vite-plugin.{js,d.ts}
+and a committed dist/index.html stub — and patches main.go to embed
+web/dist and serve it with nexus.ServeFrontend. nexus dev installs the
+dependencies on its first run (npm; Node.js 20+).
 
-Refuses to overwrite an existing islands.src/ unless --force.`,
+Refuses an existing web/ unless --force. With --force the project files
+(package.json, vite.config.ts, tsconfig.json, sdk/) are rewritten and the
+app's own files (index.html, src/, the dist stub) are kept where they
+exist — the way to move a viteless-era web/ onto Vite.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			target := dir
@@ -45,7 +50,7 @@ Refuses to overwrite an existing islands.src/ unless --force.`,
 	cmd.Flags().StringVar(&dir, "dir", "", "directory to initialize (default '.')")
 	// The positional [dir] says the same thing and is the documented form.
 	_ = cmd.Flags().MarkDeprecated("dir", "pass the directory as an argument: nexus init ./myproject")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing islands.src/")
+	cmd.Flags().BoolVar(&force, "force", false, "add the Vite project files to an existing web/ (sources are kept)")
 	cmd.Flags().StringVar(&frontend, "frontend", "",
 		"frontend framework to scaffold: 'vue' or 'react'")
 	_ = cmd.MarkFlagRequired("frontend")

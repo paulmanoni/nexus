@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"text/template"
@@ -16,12 +17,11 @@ type scaffoldOpts struct {
 	ModulePath string
 	Name       string // basename of Dir, used for human-readable strings
 	Frontend   string // "none" | "vue" | "react"
-	Tooling    string // "viteless" (default) | "vite" — frontend build engine
 	DB         string // "none" | "postgres" | "mysql" | "sqlite"
 	Cache      string // "none" | "redis"
 	Auth       string // "none" | "oauth2"
 	Inertia    bool   // Inertia.js server-driven pages (Vue) on top of the frontend
-	SSR        bool   // Inertia server-side rendering (needs Node; implies Inertia + vite)
+	SSR        bool   // Inertia server-side rendering (implies Inertia)
 }
 
 // Predicate helpers for the templates so they stay free of empty-
@@ -46,9 +46,25 @@ func (o scaffoldOpts) IsInertia() bool { return o.Inertia && o.IsVue() }
 // Gated on Inertia (which gates on Vue).
 func (o scaffoldOpts) IsInertiaSSR() bool { return o.SSR && o.IsInertia() }
 
-// HasVite reports whether the frontend should be scaffolded as a standard
-// npm-managed Vite project (vs the zero-install viteless default).
-func (o scaffoldOpts) HasVite() bool { return o.HasFrontend() && o.Tooling == "vite" }
+// NpmName is Name as a valid npm package name: lowercase, with anything
+// outside [a-z0-9._-] replaced by "-" (npm refuses a package.json whose
+// name has capitals or spaces).
+func (o scaffoldOpts) NpmName() string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(o.Name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	name := strings.TrimLeft(b.String(), "._-")
+	if name == "" {
+		return "app"
+	}
+	return name
+}
 
 // renderTemplate executes a text/template string against opts and
 // returns the rendered bytes. Panic-free helper used by every
@@ -112,97 +128,11 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 		}
 	}
 	if opts.HasFrontend() {
-		// Frontend project under web/, served by the embedded viteless
-		// engine — zero-Node by default (deps from esm.sh, cached). No
-		// package.json, no node_modules, no npm. `nexus dev` runs the
-		// viteless HMR dev server; `nexus build` produces web/dist, embedded
-		// via //go:embed all:web/dist in main.go. A committed
-		// web/dist/index.html stub makes the first `go build` compile.
-		// viteless.config.ts is read for config (alias/proxy/plugins); the
-		// committed tsconfig.json + viteless-env.d.ts keep the editor's
-		// TypeScript happy with nothing installed. Run `npm install` to opt
-		// into node_modules (or an installed Vite) instead.
-		if err := add("web/index.html", tmplViteIndexHTML); err != nil {
+		web, err := renderFrontendOnly(opts)
+		if err != nil {
 			return nil, err
 		}
-		if err := add("web/tsconfig.json", tmplViteTSConfig); err != nil {
-			return nil, err
-		}
-		if err := add("web/dist/index.html", tmplViteDistStub); err != nil {
-			return nil, err
-		}
-		if opts.HasVite() {
-			// Standard npm-managed Vite project: package.json + vite.config.ts
-			// (with a dev proxy to the Go app) + the framework's Vite plugin.
-			// viteless delegates to the installed Vite. `npm install` first.
-			if err := add("web/vite.config.ts", tmplViteConfig); err != nil {
-				return nil, err
-			}
-			pkg := tmplViteVuePackageJSON
-			if opts.IsReact() {
-				pkg = tmplViteReactPackageJSON
-			}
-			if opts.IsInertia() {
-				pkg = tmplViteInertiaPackageJSON
-			}
-			if opts.IsInertiaSSR() {
-				pkg = tmplViteInertiaSSRPackageJSON
-			}
-			if err := add("web/package.json", pkg); err != nil {
-				return nil, err
-			}
-		} else {
-			// Zero-install viteless project: viteless.config.ts + ambient
-			// types; no package.json / node_modules.
-			if err := add("web/viteless.config.ts", tmplVitelessConfig); err != nil {
-				return nil, err
-			}
-			envDTS := tmplVitelessEnvDTS
-			if opts.IsInertia() {
-				envDTS = tmplVitelessInertiaEnvDTS
-			}
-			if err := add("web/viteless-env.d.ts", envDTS); err != nil {
-				return nil, err
-			}
-		}
-		switch {
-		case opts.IsInertiaSSR():
-			// SSR: the client entry HYDRATES the server-rendered markup
-			// (createSSRApp), and ssr.ts is the Node SSR bundle entry
-			// (createServer + renderToString). The sample page is shared.
-			if err := add("web/src/main.ts", tmplInertiaSSRMainTS); err != nil {
-				return nil, err
-			}
-			if err := add("web/src/ssr.ts", tmplInertiaSSRTS); err != nil {
-				return nil, err
-			}
-			if err := add("web/src/Pages/Home.vue", tmplInertiaHomeVue); err != nil {
-				return nil, err
-			}
-		case opts.IsInertia():
-			// Inertia entry + a sample page component; the page's props
-			// come from the Go handler in pages.go (added below).
-			if err := add("web/src/main.ts", tmplInertiaMainTS); err != nil {
-				return nil, err
-			}
-			if err := add("web/src/Pages/Home.vue", tmplInertiaHomeVue); err != nil {
-				return nil, err
-			}
-		case opts.IsVue():
-			if err := add("web/src/main.ts", tmplMainTS); err != nil {
-				return nil, err
-			}
-			if err := add("web/src/App.vue", tmplAppVueTpl); err != nil {
-				return nil, err
-			}
-		case opts.IsReact():
-			if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
-				return nil, err
-			}
-			if err := add("web/src/App.tsx", tmplAppTSXTpl); err != nil {
-				return nil, err
-			}
-		}
+		maps.Copy(out, web)
 	}
 	// Inertia adds a Go page module (a server-rendered "/" page) alongside
 	// the REST hello example.
@@ -220,143 +150,324 @@ func buildFiles(opts scaffoldOpts) (map[string]string, error) {
 }
 
 // nextStepsLines returns the per-option follow-up commands the
-// scaffolder prints. Order matches the flow a fresh user takes:
-// install Go deps → install npm deps → run.
+// scaffolder prints, in the order a fresh user runs them.
 func nextStepsLines(opts scaffoldOpts) []string {
 	lines := []string{
 		"  cd " + opts.Dir,
 		"  go mod tidy",
 	}
-	if opts.HasVite() {
-		// Standard Vite project — install npm deps (one-time).
-		lines = append(lines,
-			"  cd web && npm install   # install Vite + framework plugin",
-			"  cd ..",
-		)
-	}
-	// Otherwise (viteless) the frontend needs no install — viteless fetches
-	// deps on first run (zero-Node).
 	if opts.HasResources() {
 		lines = append(lines,
 			"  cp .env.example .env    # then fill in real credentials",
 		)
 	}
-	devNote := "  nexus dev               # rebuilds on save; viteless serves the SPA, dashboard at /__nexus/"
-	if opts.HasVite() {
-		devNote = "  nexus dev               # rebuilds on save; Vite serves the SPA, dashboard at /__nexus/"
+	if !opts.HasFrontend() {
+		return append(lines, "  nexus dev               # rebuilds on save; dashboard at /__nexus/")
 	}
-	lines = append(lines, devNote)
-	if opts.HasFrontend() {
-		note := "                          # SPA on http://localhost:5173 (no install needed) ; nexus build embeds web/dist"
-		if opts.HasVite() {
-			note = "                          # SPA on http://localhost:5173 ; nexus build embeds web/dist"
-		}
-		lines = append(lines, note)
-	}
+	lines = append(lines,
+		"  nexus dev               # first run installs web/ deps (npm, Node 20+); rebuilds on save",
+		"                          # open the URL it prints — the app's own origin, not Vite's port",
+		"  nexus build             # vite build → web/dist, embedded in one Go binary",
+	)
 	if opts.IsInertiaSSR() {
 		lines = append(lines,
 			"",
-			"  # Server-side rendering (production): build both bundles, then run the SSR sidecar",
-			"  cd web && npm run build   # vite build + vite build --ssr → web/dist/ssr/ssr.js",
-			"  node web/dist/ssr/ssr.js  # the Node SSR server on :13714 (run alongside the app)",
-			"  # In nexus dev the sidecar isn't running — pages render client-side with HMR.",
+			"  # Server-side rendering: nexus build also writes web/dist/ssr/ssr.js;",
+			"  # run it next to the app in production (Inertia's SSR server, :13714).",
+			"  node web/dist/ssr/ssr.js",
+			"  # Without it — and under nexus dev — pages render client-side.",
 		)
 	}
 	return lines
 }
 
-// tmplVitelessConfig is the scaffolded web/viteless.config.ts. It imports
-// defineConfig from 'viteless' (no vite package needed) and sets the "@/"
-// alias. viteless reads it for config and compiles the framework natively.
-const tmplVitelessConfig = `import { defineConfig } from 'viteless'
+// ── Vite frontend (web/) ────────────────────────────────────────────
+//
+// The frontend is an ordinary npm-managed Vite project. nexus-vite-plugin
+// (web/sdk/nexus-vite-plugin.js, written at scaffold time and refreshed by
+// nexus dev / nexus build before Vite starts) is the handshake with the Go
+// app: under `vite dev` it writes dist/.vite/nexus-hot.json so the app's
+// pages load modules from the dev server, and under `vite build` it forces
+// the manifest the app reads. The browser always opens the Go app, so the
+// config has no proxy block.
 
-// viteless reads this config's static surface (base, plugins, resolve.alias,
-// server.proxy, build.outDir). Vue/React are detected and compiled natively
-// — no plugin needed. A relative alias is resolved against the project root.
-export default defineConfig({
-  resolve: {
-    alias: { '@': './src' },
+// tmplPackageJSON is web/package.json. The ranges are ones verified to
+// install and build together (typescript stays on 6.0: vue-tsc 3.3 does
+// not run on TypeScript 7).
+const tmplPackageJSON = `{
+  "name": "{{.NpmName}}-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+{{- if .IsInertiaSSR}}
+    "build": "vite build && vite build --ssr src/ssr.ts --outDir dist/ssr",
+    "ssr": "node dist/ssr/ssr.js",
+{{- else}}
+    "build": "vite build",
+{{- end}}
+    "typecheck": "{{if .IsReact}}tsc{{else}}vue-tsc{{end}} --noEmit"
   },
-})
+  "dependencies": {
+{{- if .IsReact}}
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+{{- else}}
+{{- if .IsInertia}}
+    "@inertiajs/vue3": "^2.3.0",
+{{- end}}
+    "vue": "^3.5.0"
+{{- end}}
+  },
+  "devDependencies": {
+{{- if .IsReact}}
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "~6.0.3",
+    "vite": "^6.4.3"
+{{- else}}
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "~6.0.3",
+    "vite": "^6.4.3",
+    "vue-tsc": "^3.3.11"
+{{- end}}
+  }
+}
 `
 
-// tmplVitelessEnvDTS is the scaffolded web/viteless-env.d.ts — ambient types
-// so the editor resolves project imports with nothing installed.
-const tmplVitelessEnvDTS = `// Ambient declarations so TypeScript resolves a viteless project's imports
-// with nothing installed. viteless reads viteless.config.ts itself.
-
-declare module "viteless" {
-  export function defineConfig<T>(config: T): T
-}
-
-declare module "*.vue" {
-  import type { DefineComponent } from "vue"
-  const component: DefineComponent<{}, {}, any>
-  export default component
-}
-`
-
-// tmplViteConfig is the standard npm-Vite project's vite.config.ts. Unlike
-// the viteless engine (which proxies to the Go app automatically), a real
-// Vite dev server needs its own server.proxy to reach the backend — so the
-// nexus prefixes are proxied to :8080 here (adjust if your app binds
-// elsewhere).
+// tmplViteConfig is web/vite.config.ts.
 const tmplViteConfig = `import { defineConfig } from 'vite'
 {{if .IsReact}}import react from '@vitejs/plugin-react'{{else}}import vue from '@vitejs/plugin-vue'{{end}}
+import nexus from './sdk/nexus-vite-plugin.js'
 
+// nexus() connects Vite to the Go app: under "vite dev" it tells the app
+// where the dev server is (dist/.vite/nexus-hot.json), under "vite build"
+// it writes the manifest the app reads. Open the app's own URL, never
+// Vite's — the app serves the pages, Vite only serves modules — so there
+// is no proxy block. nexus dev / nexus build keep ./sdk up to date.
 export default defineConfig({
-  plugins: [{{if .IsReact}}react(){{else}}vue(){{end}}],
-  server: {
-    proxy: {
-      '/__nexus': 'http://localhost:8080',
-      '/graphql': 'http://localhost:8080',
-      '/oauth': 'http://localhost:8080',
-      '/ws': { target: 'http://localhost:8080', ws: true },
-    },
+  plugins: [{{if .IsReact}}react(){{else}}vue(){{end}}, nexus()],
+  resolve: {
+    alias: { '@': '/src' },
   },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
+{{- if .IsInertiaSSR}}
+  // Bundle every dependency into dist/ssr/ssr.js, so the SSR server runs
+  // with plain "node" wherever the binary is deployed — no node_modules.
+  ssr: {
+    noExternal: true,
+  },
+{{- end}}
+})
+`
+
+// tmplViteTSConfig is web/tsconfig.json. No baseUrl (TypeScript 6
+// deprecates it; paths resolve against this file). nexus dev adds the
+// 'nexus-client' mapping and the SDK's client.d.ts when it first writes
+// web/sdk — not seeded here, because those files don't exist until the
+// app has run once and the scaffold imports nothing from them.
+const tmplViteTSConfig = `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "{{if .IsReact}}react-jsx{{else}}preserve{{end}}",
+    "strict": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src"]
+}
+`
+
+const tmplViteIndexHTML = `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{.Name}}</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.{{if .IsReact}}tsx{{else}}ts{{end}}"></script>
+  </body>
+</html>
+`
+
+// tmplViteDistStub is a minimal valid page committed at web/dist/index.html
+// so the first `go build` (before any frontend build) compiles the
+// //go:embed all:web/dist directive and the binary boots. `vite build`
+// replaces it.
+const tmplViteDistStub = `<!DOCTYPE html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>{{.Name}}</title></head>
+  <body>
+    <div id="app"></div>
+    <p style="font-family:system-ui;padding:2rem">Frontend not built yet — run
+    <code>nexus build</code>, or <code>nexus dev</code> for the dev server.</p>
+  </body>
+</html>
+`
+
+// ── vue entry files (web/src) ───────────────────────────────────────
+
+const tmplMainTS = `import { createApp } from 'vue'
+import App from './App.vue'
+
+createApp(App).mount('#app')
+`
+
+const tmplAppVueTpl = `<script setup lang="ts">
+import { ref } from 'vue'
+const count = ref(0)
+</script>
+
+<template>
+  <main>
+    <h1>{{.Name}}</h1>
+    <p>Edit <code>web/src/App.vue</code> — <code>nexus dev</code> hot-reloads on save.</p>
+    <button @click="count++">count is {{ "{{ count }}" }}</button>
+  </main>
+</template>
+
+<style scoped>
+main { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; }
+button { padding: .5rem 1rem; border-radius: .25rem; cursor: pointer; }
+</style>
+`
+
+// ── inertia entry files (web/src) ───────────────────────────────────
+
+// tmplInertiaMainTS bootstraps the Inertia Vue adapter. Page components
+// under src/Pages are resolved by the name the Go handler passes to
+// inertia.Page (e.g. "Home" → src/Pages/Home.vue). With SSR the client
+// hydrates the server-rendered markup (createSSRApp) and mounts fresh
+// when there is none — under nexus dev, or with the SSR server down.
+const tmplInertiaMainTS = `import { createInertiaApp } from '@inertiajs/vue3'
+import { createApp, {{if .IsInertiaSSR}}createSSRApp, {{end}}h, type DefineComponent } from 'vue'
+
+createInertiaApp({
+  resolve: (name) => {
+    const pages = import.meta.glob<DefineComponent>('./Pages/**/*.vue', { eager: true, import: 'default' })
+    return pages[` + "`./Pages/${name}.vue`" + `]
+  },
+  setup({ el, App, props, plugin }) {
+{{- if .IsInertiaSSR}}
+    const create = el.hasChildNodes() ? createSSRApp : createApp
+    create({ render: () => h(App, props) }).use(plugin).mount(el)
+{{- else}}
+    createApp({ render: () => h(App, props) }).use(plugin).mount(el)
+{{- end}}
   },
 })
 `
 
-const tmplViteVuePackageJSON = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "vue": "^3.5.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.0",
-    "vite": "^5.4.0"
-  }
-}
+// tmplInertiaSSRTS is the SSR bundle entry. createServer starts Inertia's
+// SSR server (default :13714); for each page object the Go engine POSTs to
+// it, it renders the app to a string and returns the {head, body} the
+// engine puts into index.html. nexus build compiles it to
+// web/dist/ssr/ssr.js (vite build --ssr).
+const tmplInertiaSSRTS = `import { createInertiaApp } from '@inertiajs/vue3'
+import createServer from '@inertiajs/vue3/server'
+import { renderToString } from 'vue/server-renderer'
+import { createSSRApp, h, type DefineComponent } from 'vue'
+
+createServer((page) =>
+  createInertiaApp({
+    page,
+    render: renderToString,
+    resolve: (name) => {
+      const pages = import.meta.glob<DefineComponent>('./Pages/**/*.vue', { eager: true, import: 'default' })
+      return pages[` + "`./Pages/${name}.vue`" + `]
+    },
+    setup({ App, props, plugin }) {
+      return createSSRApp({ render: () => h(App, props) }).use(plugin)
+    },
+  }),
+)
 `
 
-const tmplViteReactPackageJSON = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.0",
-    "vite": "^5.4.0"
-  }
+// tmplInertiaHomeVue is the sample page component. Its props (message)
+// are supplied by NewHome in pages.go — no client API call.
+const tmplInertiaHomeVue = `<script setup lang="ts">
+defineProps<{ message: string }>()
+</script>
+
+<template>
+  <main>
+    <h1>{{.Name}}</h1>
+    <p>{{ "{{ message }}" }}</p>
+    <p>Inertia page — edit <code>web/src/Pages/Home.vue</code>. Props come from
+    <code>NewHome</code> in <code>pages.go</code>; <code>nexus dev</code> hot-reloads on save.</p>
+  </main>
+</template>
+
+<style scoped>
+main { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; }
+</style>
+`
+
+// tmplPagesGo defines the Go side of the sample Inertia page: a reflective
+// handler returning a typed props struct, mounted with inertia.Page.
+const tmplPagesGo = `package main
+
+import (
+	"context"
+
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/extension/inertia"
+)
+
+// HomeProps is the prop bag the "Home" page component receives. Each
+// exported field (honoring its json tag) becomes a prop on the client.
+type HomeProps struct {
+	Message string ` + "`json:\"message\"`" + `
+}
+
+// NewHome renders the "/" page. It's an ordinary nexus handler — returning
+// props instead of a JSON body. inertia.Page wraps the return into the
+// Inertia page protocol: a JSON page object for XHR visits, a full HTML
+// document for the initial load.
+func NewHome(ctx context.Context) (HomeProps, error) {
+	return HomeProps{Message: "Welcome to {{.Name}} — this page is server-rendered via Inertia."}, nil
+}
+
+var pagesModule = nexus.Module("pages",
+	inertia.Page("GET", "/", "Home", NewHome),
+)
+`
+
+// ── react entry files (web/src) ─────────────────────────────────────
+
+const tmplMainTSXTpl = `import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import App from './App'
+
+createRoot(document.getElementById('app')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+`
+
+const tmplAppTSXTpl = `import { useState } from 'react'
+
+export default function App() {
+  const [count, setCount] = useState(0)
+  return (
+    <main style={ { fontFamily: 'system-ui, sans-serif', padding: '2rem', maxWidth: '40rem' } }>
+      <h1>{{.Name}}</h1>
+      <p>Edit <code>web/src/App.tsx</code> — <code>nexus dev</code> hot-reloads on save.</p>
+      <button onClick={() => setCount((n) => n + 1)} style={ { padding: '.5rem 1rem' } }>
+        count is {count}
+      </button>
+    </main>
+  )
 }
 `
 
@@ -400,17 +511,10 @@ import (
 {{- end}}
 )
 {{if .HasFrontend}}
-// webFS holds the built SPA (web/dist).
-{{- if .HasVite}}
-// nexus build drives the project's installed Vite before go build, so
-// web/dist is populated; this embed bakes it into the binary.
-{{- else}}
-// nexus build bundles the frontend with viteless (no npm step) before
-// go build, so web/dist is populated; this embed bakes it into the
-// binary.
-{{- end}}
-// A committed web/dist/index.html stub lets go build succeed before
-// the first frontend build.
+// webFS holds the built frontend (web/dist). nexus build runs vite build
+// before go build, so this embed bakes the current bundle into the
+// binary; a committed web/dist/index.html stub lets go build succeed
+// before the first frontend build.
 //
 //go:embed all:web/dist
 var webFS embed.FS
@@ -427,22 +531,19 @@ func main() {
 		nexus.ServeFrontend(webFS, "web/dist"),
 {{- end}}
 {{- if .IsInertiaSSR}}
-		// Inertia pages render through the engine; ServeFrontend above
-		// still serves the built JS/CSS assets the shell references. SSR
-		// POSTs each initial page to the Node SSR server (run
-		// "node web/dist/ssr/ssr.js", default :13714) and hydrates its
-		// markup; any renderer error falls back to client rendering, so a
-		// down SSR sidecar never takes the page down. In "nexus dev" the
-		// sidecar isn't running, so pages render client-side with HMR.
+		// Inertia pages render into web/index.html — the bundle
+		// ServeFrontend names (built in production, Vite's in dev). SSR
+		// POSTs each first page load to the Node SSR server (nexus build
+		// writes web/dist/ssr/ssr.js; run it with node, default :13714);
+		// any renderer error falls back to client rendering, so a down SSR
+		// server never takes a page down. Under nexus dev it isn't running.
 		inertia.Module(inertia.Config{
-			Frontend: webFS,
-			Root:     "web/dist",
-			SSR:      ssrhttp.New(""), // "" → http://127.0.0.1:13714
+			SSR: ssrhttp.New(""), // "" → http://127.0.0.1:13714
 		}),
 {{- else if .IsInertia}}
-		// Inertia pages render through the engine; ServeFrontend above
-		// still serves the built JS/CSS assets the shell references.
-		inertia.Module(inertia.Config{Frontend: webFS, Root: "web/dist"}),
+		// Inertia pages render into web/index.html — the bundle
+		// ServeFrontend names (built in production, Vite's in dev).
+		inertia.Module(inertia.Config{}),
 {{- end}}
 {{- if .HasResources}}
 		nexus.Provide(zap.NewExample),
@@ -508,9 +609,10 @@ const tmplGitignoreTpl = `/bin/
 .DS_Store
 .env
 {{if .HasFrontend}}
-# Frontend (web/). Build output and any npm deps are not committed, EXCEPT
-# the web/dist/index.html stub so a fresh clone's first go build (before
-# any frontend build) can satisfy //go:embed all:web/dist.
+# Frontend (web/). Dependencies and build output are not committed, except
+# the web/dist/index.html stub: it lets a fresh clone's first go build
+# satisfy //go:embed all:web/dist. web/sdk IS committed — vite.config.ts
+# imports its nexus-vite-plugin.js, and pages import its generated types.
 /web/node_modules/
 /web/dist/*
 !/web/dist/index.html
@@ -643,294 +745,25 @@ func (c *CacheManager) NexusResources() []resource.Resource {
 }
 `
 
-// ── Vite frontend (web/) ────────────────────────────────────────────
-
-const tmplViteIndexHTML = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{{.Name}}</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.{{if .IsReact}}tsx{{else}}ts{{end}}"></script>
-  </body>
-</html>
-`
-
-const tmplViteTSConfig = `{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "jsx": "preserve",
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "noEmit": true,
-    "baseUrl": ".",
-    "paths": { "@/*": ["./src/*"] },
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
-  },
-  "include": ["src", "*.ts", "viteless-env.d.ts"]
-}
-`
-
-// tmplViteDistStub is a minimal valid SPA shell committed at web/dist/index.html
-// so the first `go build` (before any frontend build) compiles the
-// //go:embed all:web/dist directive and the binary boots. Overwritten by the
-// real build output on `nexus build`.
-const tmplViteDistStub = `<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8" /><title>{{.Name}}</title></head>
-  <body>
-    <div id="app"></div>
-    <p style="font-family:system-ui;padding:2rem">Frontend not built yet — run
-    <code>nexus build</code>{{if .HasVite}} (after <code>cd web &amp;&amp; npm install</code>){{end}},
-    or <code>nexus dev</code> for the dev server.</p>
-  </body>
-</html>
-`
-
-// ── vue entry files (web/src) ───────────────────────────────────────
-
-const tmplMainTS = `import { createApp } from 'vue'
-import App from './App.vue'
-
-createApp(App).mount('#app')
-`
-
-const tmplAppVueTpl = `<script setup lang="ts">
-import { ref } from 'vue'
-const count = ref(0)
-</script>
-
-<template>
-  <main>
-    <h1>{{.Name}}</h1>
-    <p>Edit <code>web/src/App.vue</code> — <code>nexus dev</code> hot-reloads on save.</p>
-    <button @click="count++">count is {{ "{{ count }}" }}</button>
-  </main>
-</template>
-
-<style scoped>
-main { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; }
-button { padding: .5rem 1rem; border-radius: .25rem; cursor: pointer; }
-</style>
-`
-
-// ── inertia entry files (web/src) ───────────────────────────────────
-
-// tmplInertiaMainTS bootstraps the Inertia Vue adapter. Page components
-// under src/Pages are resolved by the name the Go handler passes to
-// inertia.Page (e.g. "Home" → src/Pages/Home.vue).
-const tmplInertiaMainTS = `import { createInertiaApp } from '@inertiajs/vue3'
-import { createApp, h, type DefineComponent } from 'vue'
-
-createInertiaApp({
-  resolve: (name) => {
-    const pages = import.meta.glob<{ default: DefineComponent }>('./Pages/**/*.vue', { eager: true })
-    return pages['./Pages/' + name + '.vue']
-  },
-  setup({ el, App, props, plugin }) {
-    createApp({ render: () => h(App, props) }).use(plugin).mount(el)
-  },
-})
-`
-
-// tmplInertiaHomeVue is the sample page component. Its props (message)
-// are supplied by NewHome in pages.go — no client API call.
-const tmplInertiaHomeVue = `<script setup lang="ts">
-defineProps<{ message: string }>()
-</script>
-
-<template>
-  <main>
-    <h1>{{.Name}}</h1>
-    <p>{{ "{{ message }}" }}</p>
-    <p>Inertia page — edit <code>web/src/Pages/Home.vue</code>. Props come from
-    <code>NewHome</code> in <code>pages.go</code>; ` + "`nexus dev`" + ` hot-reloads on save.</p>
-  </main>
-</template>
-
-<style scoped>
-main { font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem; }
-</style>
-`
-
-// tmplPagesGo defines the Go side of the sample Inertia page: a reflective
-// handler returning a typed props struct, mounted with inertia.Page.
-const tmplPagesGo = `package main
-
-import (
-	"context"
-
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/inertia"
-)
-
-// HomeProps is the prop bag the "Home" page component receives. Each
-// exported field (honoring its json tag) becomes a prop on the client.
-type HomeProps struct {
-	Message string ` + "`json:\"message\"`" + `
-}
-
-// NewHome renders the "/" page. It's an ordinary nexus handler — returning
-// props instead of a JSON body. inertia.Page wraps the return into the
-// Inertia page protocol: a JSON page object for XHR visits, a full HTML
-// document for the initial load.
-func NewHome(ctx context.Context) (HomeProps, error) {
-	return HomeProps{Message: "Welcome to {{.Name}} — this page is server-rendered via Inertia."}, nil
-}
-
-var pagesModule = nexus.Module("pages",
-	inertia.Page("GET", "/", "Home", NewHome),
-)
-`
-
-// tmplVitelessInertiaEnvDTS extends the base ambient types with the
-// Inertia adapter + import.meta.glob so the editor resolves a zero-install
-// Inertia project.
-const tmplVitelessInertiaEnvDTS = `// Ambient declarations so TypeScript resolves a viteless Inertia project's
-// imports with nothing installed. viteless reads viteless.config.ts itself.
-
-declare module "viteless" {
-  export function defineConfig<T>(config: T): T
-}
-
-declare module "*.vue" {
-  import type { DefineComponent } from "vue"
-  const component: DefineComponent<{}, {}, any>
-  export default component
-}
-
-declare module "@inertiajs/vue3" {
-  export const createInertiaApp: any
-  export const Link: any
-  export const router: any
-  export function usePage<T = any>(): { props: T }
-  export function useForm<T = any>(data?: T): any
-}
-
-interface ImportMeta {
-  glob: (pattern: string, opts?: { eager?: boolean }) => Record<string, any>
-}
-`
-
-// tmplViteInertiaPackageJSON is the npm-managed Inertia project manifest —
-// Vue + the Inertia adapter.
-const tmplViteInertiaPackageJSON = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@inertiajs/vue3": "^1.2.0",
-    "vue": "^3.5.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.0",
-    "vite": "^5.4.0"
-  }
-}
-`
-
-// ── inertia SSR entry files (web/src) ───────────────────────────────
-
-// tmplInertiaSSRMainTS is the SSR client entry. Unlike the plain Inertia
-// entry it builds the app with createSSRApp and mounts it, which HYDRATES
-// the server-rendered markup the Go shell placed in the root div (vs
-// re-rendering from scratch) — the only difference from tmplInertiaMainTS.
-const tmplInertiaSSRMainTS = `import { createInertiaApp } from '@inertiajs/vue3'
-import { createSSRApp, h, type DefineComponent } from 'vue'
-
-createInertiaApp({
-  resolve: (name) => {
-    const pages = import.meta.glob<{ default: DefineComponent }>('./Pages/**/*.vue', { eager: true })
-    return pages['./Pages/' + name + '.vue']
-  },
-  // createSSRApp (not createApp) so mount() hydrates the server-rendered
-  // DOM instead of discarding and re-rendering it.
-  setup({ el, App, props, plugin }) {
-    createSSRApp({ render: () => h(App, props) }).use(plugin).mount(el)
-  },
-})
-`
-
-// tmplInertiaSSRTS is the Node SSR bundle entry. createServer (from
-// @inertiajs/server) starts an HTTP server (default :13714) that, per page
-// object POSTed to it, renders the Vue app to a string and returns the
-// {head, body} the Go engine injects. Built with "vite build --ssr" into
-// web/dist/ssr/ssr.js and run with "node web/dist/ssr/ssr.js".
-const tmplInertiaSSRTS = `import { createInertiaApp } from '@inertiajs/vue3'
-import createServer from '@inertiajs/server'
-import { renderToString } from '@vue/server-renderer'
-import { createSSRApp, h, type DefineComponent } from 'vue'
-
-createServer((page) =>
-  createInertiaApp({
-    page,
-    render: renderToString,
-    resolve: (name) => {
-      const pages = import.meta.glob<{ default: DefineComponent }>('./Pages/**/*.vue', { eager: true })
-      return pages['./Pages/' + name + '.vue']
-    },
-    setup({ App, props, plugin }) {
-      return createSSRApp({ render: () => h(App, props) }).use(plugin)
-    },
-  }),
-)
-`
-
-// tmplViteInertiaSSRPackageJSON is the SSR project manifest: the build
-// produces BOTH the client bundle (vite build) and the SSR bundle
-// (vite build --ssr → dist/ssr/ssr.js). @inertiajs/server provides
-// createServer; @vue/server-renderer provides renderToString.
-const tmplViteInertiaSSRPackageJSON = `{
-  "name": "{{.Name}}-web",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build && vite build --ssr src/ssr.ts --outDir dist/ssr",
-    "preview": "vite preview",
-    "ssr": "node dist/ssr/ssr.js"
-  },
-  "dependencies": {
-    "@inertiajs/server": "^1.2.0",
-    "@inertiajs/vue3": "^1.2.0",
-    "@vue/server-renderer": "^3.5.0",
-    "vue": "^3.5.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.0",
-    "vite": "^5.4.0"
-  }
-}
-`
-
 const tmplReadmeTpl = `# {{.Name}}
 
 Generated with ` + "`nexus new`" + `.
 
-## Run (single process)
+## Run
 
 ` + "```" + `
 go mod tidy
-{{if .HasVite}}cd web && npm install && cd ..   # one-time: install Vite + the framework plugin
-{{end -}}
 {{if .HasResources}}cp .env.example .env    # then fill in real credentials
 {{end -}}
 nexus dev
 ` + "```" + `
-
-Then open http://localhost:8080/__nexus/ for the dashboard, and:
+{{if .HasFrontend}}
+` + "`nexus dev`" + ` installs the frontend's dependencies on its first run (` + "`npm`" + ` —
+Node.js 20 or later must be on PATH), starts Vite next to the Go app, and
+prints the URL to open: the app's own origin, http://localhost:8080. Vite only
+serves modules to that page; don't open its port.
+{{end}}
+The dashboard is at http://localhost:8080/__nexus/, and:
 
 ` + "```" + `
 curl 'http://localhost:8080/hello?name=Paul'
@@ -938,45 +771,44 @@ curl 'http://localhost:8080/hello?name=Paul'
 {{if .HasFrontend}}
 ## Frontend
 
-A {{if .IsReact}}React{{else}}Vue{{end}} + TypeScript project under ` + "`web/`" + `. The build output
-(` + "`web/dist`" + `) is embedded into the Go binary via ` + "`//go:embed`" + ` in main.go.
-{{if .HasVite}}
-It's a standard **Vite** project — ` + "`web/package.json`" + ` + ` + "`web/vite.config.ts`" + `,
-managed with ` + "`npm`" + ` as usual, so Tailwind, component libraries and any
-Vite plugin all work.
+A {{if .IsReact}}React{{else}}Vue{{end}}{{if .IsInertia}} + Inertia{{end}} + TypeScript project under ` + "`web/`" + ` — an ordinary Vite
+project (` + "`package.json`" + `, ` + "`vite.config.ts`" + `), so any Vite plugin or npm
+library works: ` + "`cd web && npm install <pkg>`" + `.
 
-  - Install deps: ` + "`cd web && npm install`" + ` (add libs with ` + "`npm install <pkg>`" + `).
-    Do this before the first ` + "`nexus dev`" + ` — the Vite plugin in
-    ` + "`vite.config.ts`" + ` has to be on disk.
-  - Edit ` + "`web/src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` runs the Vite dev
-    server with HMR on http://localhost:5173 and proxies ` + "`/__nexus`" + `,
-    ` + "`/graphql`" + `, ` + "`/oauth`" + `, ` + "`/ws`" + ` to the Go app.
-  - Production build is part of ` + "`nexus build`" + ` (it drives your installed
-    Vite, then embeds ` + "`web/dist`" + `):
-{{else}}
-It's a **viteless** project — the zero-install frontend engine embedded in
-the nexus binary. There is no ` + "`package.json`" + `, no ` + "`node_modules`" + ` and no
-install step: viteless fetches the deps it needs on first run and caches
-them, and compiles {{if .IsReact}}React{{else}}Vue{{end}} / TypeScript / Tailwind natively. Config
-lives in ` + "`web/viteless.config.ts`" + `.
+  - ` + "`nexus()`" + ` in ` + "`vite.config.ts`" + ` connects Vite and the Go app. Under
+    ` + "`vite dev`" + ` it tells the app where the dev server is, so pages on the app's
+    origin load modules from it with HMR; under ` + "`vite build`" + ` it writes the
+    manifest the app reads. ` + "`npm run dev`" + ` in ` + "`web/`" + ` plus ` + "`go run .`" + ` works as
+    well as ` + "`nexus dev`" + `.
+{{- if .IsInertia}}
+  - Pages live in ` + "`web/src/Pages`" + `; ` + "`inertia.Page(\"GET\", \"/\", \"Home\", NewHome)`" + `
+    in ` + "`pages.go`" + ` renders ` + "`Pages/Home.vue`" + ` with ` + "`NewHome`" + `'s return value as props,
+    into ` + "`web/index.html`" + `. Once ` + "`nexus dev`" + ` has written ` + "`web/sdk`" + `, a page can take
+    its props type from Go:
+    ` + "`defineProps<NexusPageProps['Home']>()`" + ` with
+    ` + "`import type { NexusPageProps } from 'nexus-client'`" + `.
+{{- end}}
+  - ` + "`web/sdk`" + ` holds ` + "`nexus-vite-plugin.js`" + ` (imported by ` + "`vite.config.ts`" + `) and
+    the typed client SDK ` + "`nexus dev`" + ` generates. Commit it, and
+    ` + "`web/package-lock.json`" + `, so a fresh checkout builds.
+  - ` + "`npm run typecheck`" + ` in ` + "`web/`" + ` type-checks the frontend.
+  - ` + "`nexus build`" + ` runs ` + "`vite build`" + `{{if .IsInertiaSSR}} (and the SSR build){{end}} into ` + "`web/dist`" + `, then ` + "`go build`" + `
+    embeds it (` + "`//go:embed all:web/dist`" + ` in main.go). The binary needs no
+    Node at run time{{if .IsInertiaSSR}} — except the SSR server below{{end}}.
+{{if .IsInertiaSSR}}
+### Server-side rendering
 
-  - Nothing to install — ` + "`nexus dev`" + ` works straight after ` + "`go mod tidy`" + `.
-    (The first run downloads and caches the frontend deps.)
-  - Edit ` + "`web/src/App.{{if .IsReact}}tsx{{else}}vue{{end}}`" + ` — ` + "`nexus dev`" + ` runs the viteless dev
-    server with HMR on http://localhost:5173 and proxies ` + "`/__nexus`" + `,
-    ` + "`/graphql`" + `, ` + "`/oauth`" + `, ` + "`/ws`" + ` to the Go app.
-  - Add a library by importing it — viteless resolves it from the CDN and
-    caches it. Run ` + "`npm install`" + ` only if you want deps pinned in
-    ` + "`node_modules`" + ` (viteless uses it when present) or a real Vite, which
-    viteless then delegates to.
-  - Production build is part of ` + "`nexus build`" + ` (it runs the viteless
-    bundler, then embeds ` + "`web/dist`" + `):
-{{end}}
+` + "`nexus build`" + ` also writes ` + "`web/dist/ssr/ssr.js`" + `, a self-contained Node server
+(Inertia's, port 13714). Run it next to the app in production:
+
 ` + "```" + `
-nexus build
-./bin/{{.Name}}
+node web/dist/ssr/ssr.js
 ` + "```" + `
+
+The app POSTs each first page load to it and falls back to client rendering
+when it isn't running — which is what happens under ` + "`nexus dev`" + `.
 {{end}}
+{{- end}}
 {{- if .HasDB}}
 ## Database
 
@@ -991,15 +823,17 @@ constructor — the DI container will inject it.
 in-memory fallback. The fallback engages automatically when Redis
 is unreachable, so dev environments without Redis still boot.
 {{end}}
-## Build
+## Build and deploy
 
 ` + "```" + `
 nexus build -o ./bin/{{.Name}}
-./bin/{{.Name}}
+NEXUS_ENVIRONMENT=production ./bin/{{.Name}}
 ` + "```" + `
 
 Runtime settings (server address, dashboard, introspection) live in
-` + "`nexus.toml`" + ` — edit that file, not the code.
+` + "`nexus.toml`" + ` — edit that file, not the code. It says
+` + "`environment = \"development\"`" + `; set ` + "`NEXUS_ENVIRONMENT=production`" + ` wherever
+the app is deployed, which overrides it.
 `
 
 // validChoice checks a value against the allowed set; returned err
@@ -1010,35 +844,6 @@ func validChoice(value, label string, choices []string) error {
 	}
 	return fmt.Errorf("%s %q is not one of: %s", label, value, strings.Join(choices, ", "))
 }
-
-// ── react entry files ───────────────────────────────────────────────
-
-const tmplMainTSXTpl = `import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-
-ReactDOM.createRoot(document.getElementById('app') as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
-`
-
-const tmplAppTSXTpl = `import { useState } from 'react'
-
-export default function App() {
-  const [count, setCount] = useState(0)
-  return (
-    <main style={ { fontFamily: 'system-ui, sans-serif', padding: '2rem', maxWidth: '40rem' } }>
-      <h1>{{.Name}}</h1>
-      <p>Edit <code>src/App.tsx</code> — HMR replaces the module in &lt;100ms.</p>
-      <button onClick={() => setCount((n) => n + 1)} style={ { padding: '.5rem 1rem' } }>
-        count is {count}
-      </button>
-    </main>
-  )
-}
-`
 
 // ── auth scaffold ───────────────────────────────────────────────────
 
@@ -1115,6 +920,10 @@ const tmplDeployTOML = `# nexus.toml — runtime config for this app.
 # table). Read any value in code with nexus.Get[T]("section.key").
 
 [runtime]
+# "development" turns on dev-only behaviour for a plain "go run ." (nexus
+# dev implies it): pages follow a running Vite dev server, and with sdk =
+# true the typed client SDK is written into web/sdk. Deployments set
+# NEXUS_ENVIRONMENT=production, which overrides this value — no edit here.
 environment = "development"
 
 # Introspection opens the /__nexus dashboard + JSON APIs. It's OFF by
@@ -1124,24 +933,15 @@ environment = "development"
 # admin CIDR instead — introspection_networks = ["10.0.0.0/8"].
 introspection = true
 
-# sdk = true generates + serves the typed client SDK (REST + GraphQL +
-# WebSocket) and, when a frontend dir is present, dumps the SDK files +
-# wires tsconfig so the nexus-client import resolves with types — no other
-# wiring needed. Active only under "nexus dev" OR when introspection is on,
-# so a locked-down production binary never exposes the API surface from it.
+# The typed client SDK (REST + GraphQL + WebSocket, import 'nexus-client')
+# is generated into web/sdk under "nexus dev" with no setting. sdk = true
+# also serves it from the binary at /__nexus/client/ — in production too,
+# independent of introspection. See "nexus docs client".
 # sdk = true
 
 [runtime.server]
 addr = ":8080"
-{{if .IsInertia}}
-# Inertia dev topology is AUTO-DETECTED (this app imports the inertia
-# extension): "nexus dev" serves pages from the app port (the browser lives
-# there) and points the app's HTML shell at the viteless dev server for HMR —
-# the inverse of the SPA dev model. Uncomment to force it on/off (e.g. a hybrid
-# SPA + Inertia app that wants the SPA dev model):
-# [runtime.inertia]
-# enabled = true
-{{end}}
+
 [runtime.dashboard]
 enabled = true
 name = "{{.Name}}"

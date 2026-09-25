@@ -8,17 +8,27 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/paulmanoni/nexus/client"
 )
 
-// runInitFrontend adds the frontend pipeline scaffolding to an
-// existing Go project at target: islands.src/main + App, islands/
-// index.html, and a patched main.go that wires the embed + the
-// ServeFrontend call. Used by `nexus init --frontend=vue|react`.
+// runInitFrontend adds a Vite frontend to an existing Go project at
+// target: the web/ project (package.json, vite.config.ts with
+// nexus-vite-plugin, tsconfig.json, index.html, src entry, the committed
+// web/dist/index.html stub, web/sdk/nexus-vite-plugin.{js,d.ts}) and a
+// patched main.go that embeds web/dist and passes it to ServeFrontend.
+// Used by `nexus init --frontend=vue|react`.
 //
-// Refuses to clobber islands.src/ or to re-patch a main.go that
-// already references webFS, unless --force is supplied.
+// An existing web/ is refused unless force is set. With force the project
+// files (package.json, vite.config.ts, tsconfig.json, web/sdk) are
+// rewritten, while the app's own files (index.html, src/, the dist stub)
+// are written only where missing — which is how a viteless-era web/ (no
+// package.json) becomes a Vite project without losing its sources.
 //
 // The main.go patch is AST-based — we parse the file with
 // go/parser, insert the missing import + embed decl + ServeFrontend
@@ -48,13 +58,12 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	webDir := filepath.Join(abs, "web")
 	if !force {
 		if _, err := os.Stat(webDir); err == nil {
-			return fmt.Errorf("nexus init --frontend: %s already exists — pass --force to overwrite", webDir)
+			return fmt.Errorf("nexus init --frontend: %s already exists — pass --force to add the Vite project files (existing sources under web/src and web/index.html are kept)", webDir)
 		}
 	}
 
-	// 1. Generate the source files. Reuse the same templates the
-	//    scaffolder uses for `nexus new --frontend=...` so the two
-	//    code paths can never drift.
+	// 1. Generate the files from the same templates `nexus new
+	//    --frontend=...` uses, so the two paths can never drift.
 	opts := scaffoldOpts{
 		Dir:      abs,
 		Name:     filepath.Base(abs),
@@ -64,15 +73,26 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	if err != nil {
 		return fmt.Errorf("nexus init --frontend: render templates: %w", err)
 	}
-	for path, body := range files {
+	for _, path := range slices.Sorted(maps.Keys(files)) {
 		full := filepath.Join(abs, path)
+		if isAppSource(path) {
+			if _, err := os.Stat(full); err == nil {
+				fmt.Fprintf(stdout, "kept  %s (exists)\n", path)
+				continue
+			}
+		}
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", filepath.Dir(full), err)
 		}
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(full, []byte(files[path]), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", full, err)
 		}
 		fmt.Fprintf(stdout, "wrote %s\n", path)
+	}
+	for _, name := range []string{"viteless.config.ts", "viteless.config.js", "viteless.config.mjs", "viteless-env.d.ts"} {
+		if _, err := os.Stat(filepath.Join(webDir, name)); err == nil {
+			fmt.Fprintf(stdout, "note  web/%s is no longer read — move any settings into web/vite.config.ts and delete it\n", name)
+		}
 	}
 
 	// 2. Patch main.go to wire the embed + ServeFrontend call.
@@ -86,22 +106,34 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 		fmt.Fprintln(stdout, "main.go already wires webFS — skipped")
 	}
 
-	// 3. Next steps. Don't auto-run network ops here; the user
-	//    decides whether to pull deps now or commit the scaffold
-	//    first.
+	// 3. Next steps. Don't auto-run network ops here; nexus dev installs
+	//    the dependencies on its first run.
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintln(stdout, "  nexus dev               # rebuilds on save; viteless dev server (HMR) serves the SPA")
-	fmt.Fprintln(stdout, "                          # no install step — viteless fetches and caches deps on first run")
+	fmt.Fprintln(stdout, "  nexus dev               # first run installs web/ deps (npm, Node 20+); rebuilds on save")
+	fmt.Fprintln(stdout, "                          # open the URL it prints — the app's own origin, not Vite's port")
+	fmt.Fprintln(stdout, "  nexus build             # vite build → web/dist, embedded in one Go binary")
+	fmt.Fprintln(stdout, "  # commit web/package-lock.json and web/sdk with the rest of web/")
 	return nil
 }
 
-// renderFrontendOnly returns just the islands-side files from the
-// scaffold template set, with no go.mod / main.go / module.go.
-// Mirrors the HasFrontend block inside renderTemplates so the two
-// stay in sync.
+// isAppSource reports whether a scaffolded web/ path is the app's own
+// code rather than project wiring: an existing copy is never overwritten.
+func isAppSource(path string) bool {
+	return path == "web/index.html" || path == "web/dist/index.html" || strings.HasPrefix(path, "web/src/")
+}
+
+// renderFrontendOnly returns the web/ file set for opts — the Vite
+// project `nexus new --frontend` scaffolds and `nexus init --frontend`
+// adds to an existing app. Paths are relative to the project root.
 func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
-	out := map[string]string{}
+	out := map[string]string{
+		// Written verbatim, not templated: vite.config.ts imports the
+		// plugin, so it must exist before the Go app first writes web/sdk
+		// (nexus dev and nexus build refresh it before starting Vite).
+		"web/sdk/nexus-vite-plugin.js":   string(client.VitePluginJS()),
+		"web/sdk/nexus-vite-plugin.d.ts": string(client.VitePluginDTS()),
+	}
 	add := func(path, tpl string) error {
 		body, err := renderTemplate(path, tpl, opts)
 		if err != nil {
@@ -110,38 +142,40 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 		out[path] = body
 		return nil
 	}
-	if err := add("web/index.html", tmplViteIndexHTML); err != nil {
-		return nil, err
-	}
-	if err := add("web/viteless.config.ts", tmplVitelessConfig); err != nil {
-		return nil, err
-	}
-	if err := add("web/tsconfig.json", tmplViteTSConfig); err != nil {
-		return nil, err
-	}
-	if err := add("web/viteless-env.d.ts", tmplVitelessEnvDTS); err != nil {
-		return nil, err
-	}
-	if err := add("web/dist/index.html", tmplViteDistStub); err != nil {
-		return nil, err
-	}
-	switch opts.Frontend {
-	case "vue":
-		if err := add("web/src/main.ts", tmplMainTS); err != nil {
-			return nil, err
+	var entries [][2]string
+	switch {
+	case opts.IsInertia():
+		entries = [][2]string{
+			{"web/src/main.ts", tmplInertiaMainTS},
+			{"web/src/Pages/Home.vue", tmplInertiaHomeVue},
 		}
-		if err := add("web/src/App.vue", tmplAppVueTpl); err != nil {
-			return nil, err
+		if opts.IsInertiaSSR() {
+			entries = append(entries, [2]string{"web/src/ssr.ts", tmplInertiaSSRTS})
 		}
-	case "react":
-		if err := add("web/src/main.tsx", tmplMainTSXTpl); err != nil {
-			return nil, err
+	case opts.IsVue():
+		entries = [][2]string{
+			{"web/src/main.ts", tmplMainTS},
+			{"web/src/App.vue", tmplAppVueTpl},
 		}
-		if err := add("web/src/App.tsx", tmplAppTSXTpl); err != nil {
-			return nil, err
+	case opts.IsReact():
+		entries = [][2]string{
+			{"web/src/main.tsx", tmplMainTSXTpl},
+			{"web/src/App.tsx", tmplAppTSXTpl},
 		}
 	default:
 		return nil, fmt.Errorf("unknown frontend %q", opts.Frontend)
+	}
+	entries = append(entries,
+		[2]string{"web/package.json", tmplPackageJSON},
+		[2]string{"web/vite.config.ts", tmplViteConfig},
+		[2]string{"web/tsconfig.json", tmplViteTSConfig},
+		[2]string{"web/index.html", tmplViteIndexHTML},
+		[2]string{"web/dist/index.html", tmplViteDistStub},
+	)
+	for _, e := range entries {
+		if err := add(e[0], e[1]); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/client"
 )
 
 // TestScaffoldAndBuild exercises the scaffolder end-to-end: we generate
@@ -121,12 +125,20 @@ func TestScaffold_Inertia_Builds(t *testing.T) {
 			t.Fatalf("main.go missing %q:\n%s", want, mainGo)
 		}
 	}
-	// Inertia dev mode is auto-detected from the inertia import (asserted on
-	// main.go above), so the scaffold documents the override as a commented
-	// opt-out rather than forcing [runtime.inertia] enabled on.
+	// The engine finds the bundle through ServeFrontend; naming it again in
+	// inertia.Config would only be needed for a different source.
+	if !strings.Contains(string(mainGo), "inertia.Module(inertia.Config{})") {
+		t.Fatalf("main.go should pass an empty inertia.Config:\n%s", mainGo)
+	}
+	// The dev topology no longer depends on Inertia, so there is no
+	// [runtime.inertia] override to advertise.
 	toml, _ := os.ReadFile(filepath.Join(dir, "nexus.toml"))
-	if !strings.Contains(string(toml), "AUTO-DETECTED") || !strings.Contains(string(toml), "# [runtime.inertia]") {
-		t.Fatalf("nexus.toml missing the auto-detect note / commented inertia override:\n%s", toml)
+	if strings.Contains(string(toml), "runtime.inertia") || strings.Contains(string(toml), "viteless") {
+		t.Fatalf("nexus.toml still documents the old Inertia dev override:\n%s", toml)
+	}
+	mainTS, _ := os.ReadFile(filepath.Join(dir, "web/src/main.ts"))
+	if !strings.Contains(string(mainTS), "import.meta.glob<DefineComponent>('./Pages/**/*.vue'") {
+		t.Fatalf("main.ts should resolve pages through a typed glob:\n%s", mainTS)
 	}
 
 	addReplace := exec.Command("go", "mod", "edit",
@@ -166,7 +178,6 @@ func TestScaffold_InertiaSSR_Builds(t *testing.T) {
 	if err := scaffoldWithOpts(scaffoldOpts{
 		Dir:      dir,
 		Frontend: "vue",
-		Tooling:  "vite",
 		Inertia:  true,
 		SSR:      true,
 		DB:       "none",
@@ -177,7 +188,8 @@ func TestScaffold_InertiaSSR_Builds(t *testing.T) {
 	}
 
 	// SSR-specific layout: the Node SSR bundle entry plus the shared page
-	// files. main.ts hydrates (createSSRApp).
+	// files. main.ts hydrates server-rendered markup (createSSRApp) and
+	// mounts fresh when there is none.
 	for _, name := range []string{"web/src/ssr.ts", "web/src/main.ts", "web/src/Pages/Home.vue", "web/package.json"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
@@ -188,16 +200,25 @@ func TestScaffold_InertiaSSR_Builds(t *testing.T) {
 		t.Fatalf("SSR client entry must hydrate via createSSRApp:\n%s", mainTS)
 	}
 	ssrTS, _ := os.ReadFile(filepath.Join(dir, "web/src/ssr.ts"))
-	for _, want := range []string{"createServer", "renderToString"} {
+	for _, want := range []string{"'@inertiajs/vue3/server'", "createServer", "renderToString"} {
 		if !strings.Contains(string(ssrTS), want) {
 			t.Fatalf("ssr.ts missing %q:\n%s", want, ssrTS)
 		}
 	}
 	pkg, _ := os.ReadFile(filepath.Join(dir, "web/package.json"))
-	for _, want := range []string{"vite build --ssr", "@inertiajs/server", "@vue/server-renderer"} {
-		if !strings.Contains(string(pkg), want) {
-			t.Fatalf("package.json missing %q:\n%s", want, pkg)
+	if !strings.Contains(string(pkg), "vite build --ssr src/ssr.ts --outDir dist/ssr") {
+		t.Fatalf("package.json build script should run the SSR build:\n%s", pkg)
+	}
+	// @inertiajs/server is a dead package (its createServer now ships in
+	// @inertiajs/vue3/server); vue/server-renderer comes with vue.
+	for _, bad := range []string{"@inertiajs/server", "@vue/server-renderer"} {
+		if strings.Contains(string(pkg), bad) {
+			t.Fatalf("package.json should not depend on %s:\n%s", bad, pkg)
 		}
+	}
+	cfg, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
+	if !strings.Contains(string(cfg), "noExternal: true") {
+		t.Fatalf("vite.config.ts should bundle deps into the SSR build:\n%s", cfg)
 	}
 
 	mainGo, _ := os.ReadFile(filepath.Join(dir, "main.go"))
@@ -224,24 +245,14 @@ func TestScaffold_InertiaSSR_Builds(t *testing.T) {
 	}
 }
 
-// TestScaffold_SSR_Validation covers the --ssr flag's guardrails: it implies
-// Inertia, and it requires the vite toolchain (viteless has no SSR build).
+// TestScaffold_SSR_Validation covers the --ssr guardrail: SSR is an
+// Inertia feature. (The cobra command turns --inertia on for --ssr; the
+// scaffolder itself refuses the inconsistent options.)
 func TestScaffold_SSR_Validation(t *testing.T) {
 	var out bytes.Buffer
-	// --ssr with viteless tooling is rejected.
 	err := scaffoldWithOpts(scaffoldOpts{
-		Dir: filepath.Join(t.TempDir(), "a"), Frontend: "vue",
-		Inertia: true, SSR: true, Tooling: "viteless",
-		DB: "none", Cache: "none", Auth: "none",
-	}, &out)
-	if err == nil || !strings.Contains(err.Error(), "vite") {
-		t.Fatalf("--ssr with viteless should be rejected for vite; got %v", err)
-	}
-	// --ssr without inertia is rejected.
-	err = scaffoldWithOpts(scaffoldOpts{
 		Dir: filepath.Join(t.TempDir(), "b"), Frontend: "vue",
-		SSR: true, Tooling: "vite",
-		DB: "none", Cache: "none", Auth: "none",
+		SSR: true, DB: "none", Cache: "none", Auth: "none",
 	}, &out)
 	if err == nil || !strings.Contains(err.Error(), "inertia") {
 		t.Fatalf("--ssr without --inertia should be rejected; got %v", err)
@@ -298,8 +309,10 @@ func TestScaffoldWithOpts_FullStack(t *testing.T) {
 		"resources/database.go",
 		"resources/cache.go",
 		"auth/auth.go",
-		"web/viteless.config.ts",
-		"web/viteless-env.d.ts",
+		"web/package.json",
+		"web/vite.config.ts",
+		"web/sdk/nexus-vite-plugin.js",
+		"web/sdk/nexus-vite-plugin.d.ts",
 		"web/tsconfig.json",
 		"web/index.html",
 		"web/src/main.ts",
@@ -311,14 +324,16 @@ func TestScaffoldWithOpts_FullStack(t *testing.T) {
 			t.Errorf("expected %s, missing: %v", name, err)
 		}
 	}
-	// And these should NOT exist anymore (pre-Vite islands artifacts):
+	// And these should NOT exist anymore (islands- and viteless-era files):
 	for _, name := range []string{
 		"islands.src/main.ts",
 		"islands/index.html",
 		"nexus-shims.d.ts",
+		"web/viteless.config.ts",
+		"web/viteless-env.d.ts",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			t.Errorf("legacy islands artifact %s still scaffolded — should be gone", name)
+			t.Errorf("legacy artifact %s still scaffolded — should be gone", name)
 		}
 	}
 	mainGo, _ := os.ReadFile(filepath.Join(dir, "main.go"))
@@ -390,11 +405,11 @@ func TestScaffoldFullStack_Builds(t *testing.T) {
 	}
 }
 
-// TestScaffoldWithOpts_VueLayout asserts the new-pipeline scaffold
-// shape for --frontend=vue: source under islands.src/, SPA shell
-// at islands/index.html, NO vite/npm artifacts. Replaced the old
-// DropsSDKAssetsAndWiresPlugin test (which validated the
-// now-removed web/sdk/*.js client-SDK files that vite consumed).
+// TestScaffoldWithOpts_VueLayout asserts the Vite project shape for
+// --frontend=vue: package.json with the verified version ranges, a
+// vite.config.ts that loads nexus-vite-plugin from ./sdk (written at
+// scaffold time, byte-identical to the embedded plugin) with no proxy
+// block, and a tsconfig with neither baseUrl nor viteless types.
 func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "wired")
 	if err := scaffoldWithOpts(scaffoldOpts{
@@ -403,11 +418,14 @@ func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 		t.Fatalf("scaffold: %v", err)
 	}
 	for _, p := range []string{
+		"web/package.json",
+		"web/vite.config.ts",
+		"web/tsconfig.json",
+		"web/index.html",
 		"web/src/main.ts",
 		"web/src/App.vue",
-		"web/index.html",
-		"web/viteless.config.ts",
-		"web/viteless-env.d.ts",
+		"web/sdk/nexus-vite-plugin.js",
+		"web/sdk/nexus-vite-plugin.d.ts",
 		"web/dist/index.html",
 	} {
 		info, err := os.Stat(filepath.Join(dir, p))
@@ -419,27 +437,70 @@ func TestScaffoldWithOpts_VueLayout(t *testing.T) {
 			t.Errorf("%s exists but is empty", p)
 		}
 	}
-	// index.html references the source entry; the build hashes it.
-	html, _ := os.ReadFile(filepath.Join(dir, "web/index.html"))
-	if !strings.Contains(string(html), `src="/src/main.ts"`) {
+	html := readScaffoldFile(t, dir, "web/index.html")
+	if !strings.Contains(html, `src="/src/main.ts"`) {
 		t.Errorf("web/index.html should reference /src/main.ts\n--- body ---\n%s", html)
 	}
-	// viteless.config.ts imports defineConfig from 'viteless' (no vite pkg).
-	cfg, _ := os.ReadFile(filepath.Join(dir, "web/viteless.config.ts"))
-	if !strings.Contains(string(cfg), `from 'viteless'`) {
-		t.Errorf("web/viteless.config.ts should import from 'viteless'\n%s", cfg)
+	cfg := readScaffoldFile(t, dir, "web/vite.config.ts")
+	for _, want := range []string{
+		"import vue from '@vitejs/plugin-vue'",
+		"import nexus from './sdk/nexus-vite-plugin.js'",
+		"plugins: [vue(), nexus()]",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("vite.config.ts missing %q\n%s", want, cfg)
+		}
 	}
-	// main.ts kicks off Vue with createApp.
-	mainTS, _ := os.ReadFile(filepath.Join(dir, "web/src/main.ts"))
+	if strings.Contains(cfg, "proxy:") || strings.Contains(cfg, "localhost:8080") {
+		t.Errorf("vite.config.ts must not proxy to the app — the browser is on the app's origin\n%s", cfg)
+	}
+	if got := readScaffoldFile(t, dir, "web/sdk/nexus-vite-plugin.js"); got != string(client.VitePluginJS()) {
+		t.Error("web/sdk/nexus-vite-plugin.js differs from the embedded plugin")
+	}
+	if got := readScaffoldFile(t, dir, "web/sdk/nexus-vite-plugin.d.ts"); got != string(client.VitePluginDTS()) {
+		t.Error("web/sdk/nexus-vite-plugin.d.ts differs from the embedded plugin types")
+	}
+	pkg := readPackageJSON(t, dir)
+	for name, want := range map[string]string{
+		"vite": "^6.4.3", "@vitejs/plugin-vue": "^5.2.4",
+		"typescript": "~6.0.3", "vue-tsc": "^3.3.11",
+	} {
+		if got := pkg.DevDependencies[name]; got != want {
+			t.Errorf("devDependencies[%s] = %q, want %q", name, got, want)
+		}
+	}
+	if got := pkg.Dependencies["vue"]; got != "^3.5.0" {
+		t.Errorf("dependencies[vue] = %q, want ^3.5.0", got)
+	}
+	if pkg.Scripts["build"] != "vite build" || pkg.Scripts["typecheck"] != "vue-tsc --noEmit" {
+		t.Errorf("scripts = %v", pkg.Scripts)
+	}
+	ts := readScaffoldFile(t, dir, "web/tsconfig.json")
+	for _, bad := range []string{"baseUrl", "viteless", "nexus-client"} {
+		if strings.Contains(ts, bad) {
+			t.Errorf("tsconfig.json should not mention %q\n%s", bad, ts)
+		}
+	}
+	var tsDoc struct {
+		CompilerOptions map[string]any `json:"compilerOptions"`
+		Include         []string       `json:"include"`
+	}
+	if err := json.Unmarshal([]byte(ts), &tsDoc); err != nil {
+		t.Fatalf("tsconfig.json is not JSON: %v", err)
+	}
+	if tsDoc.CompilerOptions["strict"] != true || !slices.Equal(tsDoc.Include, []string{"src"}) {
+		t.Errorf("tsconfig should be strict and include src only: %s", ts)
+	}
+	mainTS := readScaffoldFile(t, dir, "web/src/main.ts")
 	for _, want := range []string{"createApp", "App", "mount"} {
-		if !strings.Contains(string(mainTS), want) {
+		if !strings.Contains(mainTS, want) {
 			t.Errorf("web/src/main.ts missing %q", want)
 		}
 	}
 }
 
-// TestScaffoldWithOpts_ReactFrontend covers the react variant.
-// Same shape as Vue but with .tsx sources.
+// TestScaffoldWithOpts_ReactFrontend covers the react variant: .tsx
+// sources, @vitejs/plugin-react, the React 19 types, tsc as the checker.
 func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "ra")
 	if err := scaffoldWithOpts(scaffoldOpts{
@@ -451,21 +512,115 @@ func TestScaffoldWithOpts_ReactFrontend(t *testing.T) {
 		"web/src/main.tsx",
 		"web/src/App.tsx",
 		"web/index.html",
-		"web/viteless.config.ts",
-		"web/viteless-env.d.ts",
+		"web/package.json",
+		"web/vite.config.ts",
+		"web/sdk/nexus-vite-plugin.js",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
 		}
 	}
-	main, _ := os.ReadFile(filepath.Join(dir, "web/src/main.tsx"))
-	if !strings.Contains(string(main), "react") {
-		t.Errorf("main.tsx should import from react\n%s", main)
+	if main := readScaffoldFile(t, dir, "web/src/main.tsx"); !strings.Contains(main, "from 'react-dom/client'") {
+		t.Errorf("main.tsx should mount with react-dom/client\n%s", main)
 	}
-	// React is auto-detected from .tsx; the config just imports from 'viteless'.
-	cfg, _ := os.ReadFile(filepath.Join(dir, "web/viteless.config.ts"))
-	if !strings.Contains(string(cfg), `from 'viteless'`) {
-		t.Errorf("web/viteless.config.ts should import from 'viteless'\n%s", cfg)
+	if html := readScaffoldFile(t, dir, "web/index.html"); !strings.Contains(html, `src="/src/main.tsx"`) {
+		t.Errorf("index.html should load /src/main.tsx\n%s", html)
+	}
+	cfg := readScaffoldFile(t, dir, "web/vite.config.ts")
+	if !strings.Contains(cfg, "import react from '@vitejs/plugin-react'") || !strings.Contains(cfg, "plugins: [react(), nexus()]") {
+		t.Errorf("vite.config.ts should use plugin-react and nexus()\n%s", cfg)
+	}
+	if ts := readScaffoldFile(t, dir, "web/tsconfig.json"); !strings.Contains(ts, `"jsx": "react-jsx"`) {
+		t.Errorf("tsconfig should use the automatic JSX runtime\n%s", ts)
+	}
+	pkg := readPackageJSON(t, dir)
+	for name, want := range map[string]string{
+		"vite": "^6.4.3", "@vitejs/plugin-react": "^5.2.0", "typescript": "~6.0.3",
+		"@types/react": "^19.3.0", "@types/react-dom": "^19.3.0",
+	} {
+		if got := pkg.DevDependencies[name]; got != want {
+			t.Errorf("devDependencies[%s] = %q, want %q", name, got, want)
+		}
+	}
+	if pkg.Dependencies["react"] != "^19.3.0" || pkg.Dependencies["react-dom"] != "^19.3.0" {
+		t.Errorf("dependencies = %v", pkg.Dependencies)
+	}
+	if _, ok := pkg.DevDependencies["vue-tsc"]; ok {
+		t.Error("react project should not depend on vue-tsc")
+	}
+	if pkg.Scripts["typecheck"] != "tsc --noEmit" {
+		t.Errorf("scripts = %v", pkg.Scripts)
+	}
+}
+
+// TestScaffold_FrontendVariants_ValidProject checks what every variant
+// shares: package.json parses, the .gitignore keeps web/sdk (its plugin
+// is what vite.config.ts imports on a fresh checkout), nexus.toml tells
+// deployments about NEXUS_ENVIRONMENT, and no viteless text survives.
+func TestScaffold_FrontendVariants_ValidProject(t *testing.T) {
+	variants := map[string]scaffoldOpts{
+		"vue":     {Frontend: "vue"},
+		"react":   {Frontend: "react"},
+		"inertia": {Frontend: "vue", Inertia: true},
+		"ssr":     {Frontend: "vue", Inertia: true, SSR: true},
+	}
+	for name, opts := range variants {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "My App")
+			opts.Dir, opts.ModulePath = dir, "example.com/myapp"
+			opts.DB, opts.Cache, opts.Auth = "none", "none", "none"
+			var out bytes.Buffer
+			if err := scaffoldWithOpts(opts, &out); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+			pkg := readPackageJSON(t, dir)
+			if pkg.Name != "my-app-web" || !pkg.Private || pkg.Type != "module" {
+				t.Errorf("package.json name/private/type = %q/%v/%q", pkg.Name, pkg.Private, pkg.Type)
+			}
+			if pkg.Scripts["dev"] != "vite" {
+				t.Errorf("scripts.dev = %q", pkg.Scripts["dev"])
+			}
+			gi := readScaffoldFile(t, dir, ".gitignore")
+			for _, want := range []string{"/web/node_modules/", "/web/dist/*", "!/web/dist/index.html"} {
+				if !strings.Contains(gi, want) {
+					t.Errorf(".gitignore missing %q\n%s", want, gi)
+				}
+			}
+			if strings.Contains(gi, "/web/sdk") {
+				t.Errorf(".gitignore must not ignore web/sdk\n%s", gi)
+			}
+			toml := readScaffoldFile(t, dir, "nexus.toml")
+			if !strings.Contains(toml, `environment = "development"`) || !strings.Contains(toml, "NEXUS_ENVIRONMENT=production") {
+				t.Errorf("nexus.toml should keep development and point deployments at NEXUS_ENVIRONMENT\n%s", toml)
+			}
+			next := out.String()
+			if !strings.Contains(next, "nexus dev") || strings.Contains(next, "5173") || strings.Contains(next, "npm install") {
+				t.Errorf("next steps should say nexus dev installs deps and not send users to Vite's port:\n%s", next)
+			}
+			files, err := buildFiles(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for path, body := range files {
+				if strings.HasPrefix(path, "web/sdk/") {
+					continue // the plugin's own text is not the scaffold's
+				}
+				if strings.Contains(strings.ToLower(body), "viteless") {
+					t.Errorf("%s still mentions viteless", path)
+				}
+			}
+		})
+	}
+}
+
+// TestNpmName covers the package.json name derived from the directory.
+func TestNpmName(t *testing.T) {
+	for in, want := range map[string]string{
+		"myapp": "myapp", "My App": "my-app", "Shop_2": "shop_2", "_x": "x", "...": "app", "café": "caf-",
+	} {
+		if got := (scaffoldOpts{Name: in}).NpmName(); got != want {
+			t.Errorf("NpmName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -509,14 +664,13 @@ func TestPromptMissing_TakesNumericChoices(t *testing.T) {
 // TestPromptMissing_TakesNamedChoices verifies users can type
 // "vue" / "sqlite" / "redis" / "oauth2" instead of the index.
 func TestPromptMissing_TakesNamedChoices(t *testing.T) {
-	// Choosing a frontend inserts a "Frontend tooling?" prompt before db.
-	stdin := bytes.NewBufferString("vue\nvite\nsqlite\nredis\noauth2\n")
+	stdin := bytes.NewBufferString("vue\nsqlite\nredis\noauth2\n")
 	var stdout bytes.Buffer
 	opts := scaffoldOpts{}
 	if err := promptMissing(&opts, stdin, &stdout); err != nil {
 		t.Fatalf("prompt: %v", err)
 	}
-	if opts.Frontend != "vue" || opts.Tooling != "vite" || opts.DB != "sqlite" || opts.Cache != "redis" || opts.Auth != "oauth2" {
+	if opts.Frontend != "vue" || opts.DB != "sqlite" || opts.Cache != "redis" || opts.Auth != "oauth2" {
 		t.Errorf("got %+v", opts)
 	}
 }
@@ -547,34 +701,55 @@ func TestCobra_UnknownCommand(t *testing.T) {
 	}
 }
 
-// TestScaffoldWithOpts_ViteTooling covers the opt-in standard Vite project:
-// vite.config.ts + package.json (with the framework plugin) and NO
-// viteless.config.ts.
-func TestScaffoldWithOpts_ViteTooling(t *testing.T) {
+// TestNewCmd_ToolingDeprecated keeps old scripts working: --tooling is
+// accepted, reported as deprecated, and ignored — the scaffold is the
+// Vite project whatever value it carries.
+func TestNewCmd_ToolingDeprecated(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "vt")
-	if err := scaffoldWithOpts(scaffoldOpts{
-		Dir: dir, Frontend: "vue", Tooling: "vite", DB: "none", Cache: "none", Auth: "none",
-	}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("scaffold: %v", err)
+	var stdout, stderr bytes.Buffer
+	root := newRootCmd(&stdout, &stderr)
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"new", dir, "--frontend", "vue", "--tooling", "viteless", "--yes"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
 	}
-	for _, p := range []string{"web/vite.config.ts", "web/package.json", "web/src/App.vue"} {
+	if !strings.Contains(stdout.String()+stderr.String(), "deprecated") {
+		t.Errorf("--tooling should be reported as deprecated; out=%q err=%q", stdout.String(), stderr.String())
+	}
+	for _, p := range []string{"web/vite.config.ts", "web/package.json"} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
 		}
 	}
-	// Vite mode does NOT scaffold the viteless config.
 	if _, err := os.Stat(filepath.Join(dir, "web/viteless.config.ts")); err == nil {
-		t.Error("vite tooling should not write viteless.config.ts")
+		t.Error("--tooling viteless must not bring back viteless.config.ts")
 	}
-	cfg, _ := os.ReadFile(filepath.Join(dir, "web/vite.config.ts"))
-	if !strings.Contains(string(cfg), "@vitejs/plugin-vue") {
-		t.Errorf("vite.config.ts should register @vitejs/plugin-vue\n%s", cfg)
+}
+
+type scaffoldPackage struct {
+	Name            string            `json:"name"`
+	Private         bool              `json:"private"`
+	Type            string            `json:"type"`
+	Scripts         map[string]string `json:"scripts"`
+	Dependencies    map[string]string `json:"dependencies"`
+	DevDependencies map[string]string `json:"devDependencies"`
+}
+
+func readPackageJSON(t *testing.T, dir string) scaffoldPackage {
+	t.Helper()
+	var pkg scaffoldPackage
+	if err := json.Unmarshal([]byte(readScaffoldFile(t, dir, "web/package.json")), &pkg); err != nil {
+		t.Fatalf("web/package.json is not valid JSON: %v", err)
 	}
-	if !strings.Contains(string(cfg), "proxy") {
-		t.Errorf("vite.config.ts should include a dev proxy to the Go app\n%s", cfg)
+	return pkg
+}
+
+func readScaffoldFile(t *testing.T, dir, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
 	}
-	pkg, _ := os.ReadFile(filepath.Join(dir, "web/package.json"))
-	if !strings.Contains(string(pkg), `"vite"`) {
-		t.Errorf("package.json should depend on vite\n%s", pkg)
-	}
+	return string(b)
 }

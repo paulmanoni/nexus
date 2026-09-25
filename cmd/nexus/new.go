@@ -20,12 +20,6 @@ var (
 	dbChoices       = []string{"none", "postgres", "mysql", "sqlite"}
 	cacheChoices    = []string{"none", "redis"}
 	authChoices     = []string{"none", "oauth2"}
-	// toolingChoices is the frontend build engine. "viteless" (default) is
-	// zero-install — no package.json/node_modules; viteless fetches deps and
-	// compiles Vue/React natively. "vite" scaffolds a standard npm-managed
-	// Vite project (package.json + vite.config.ts + plugin); viteless then
-	// delegates to the installed Vite.
-	toolingChoices = []string{"viteless", "vite"}
 )
 
 // newNewCmd builds the `nexus new` subcommand. Flags carry the
@@ -49,39 +43,39 @@ func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Scaffold a new app, asking about frontend / database / cache / auth",
 		Long: `Scaffold a runnable nexus app in <dir>.
 
-By default the command prompts for a frontend (vue / react / none),
-its build tooling (viteless or vite), a database, and a cache when
-stdin is a tty. Pass --frontend / --tooling / --db / --cache to skip
-the prompt for any axis, or --yes to take defaults (none everywhere).
+By default the command prompts for a frontend (vue / react / none), a
+database, a cache and auth when stdin is a tty. Pass --frontend / --db /
+--cache / --auth to skip the prompt for any axis, or --yes to take
+defaults (none everywhere).
 
-Frontend tooling:
-  viteless (default) — zero-install; no package.json/node_modules.
-                       viteless fetches deps and compiles Vue/React.
-  vite               — standard npm-managed Vite project (package.json
-                       + vite.config.ts); run npm install, then nexus
-                       delegates to the installed Vite.
+A frontend is an ordinary npm-managed Vite project under web/, wired to
+the app by nexus-vite-plugin. Node.js 20+ and npm are needed to develop
+and build it; the built binary embeds web/dist and runs without Node.
 
 Generated layout:
 
-  ./go.mod ./main.go ./module.go ./nexus.toml ./README.md
+  ./go.mod ./main.go ./module.go ./nexus.toml ./README.md ./.gitignore
   resources/database.go     # only when --db is set
   resources/cache.go        # only when --cache is set
+  auth/auth.go              # only when --auth is set
+  pages.go                  # only with --inertia
   web/                      # only when --frontend is vue/react
-    index.html tsconfig.json src/{main.ts,App.vue} dist/index.html
-    viteless.config.ts      # --tooling=viteless (default)
-    vite.config.ts package.json   # --tooling=vite
+    package.json vite.config.ts tsconfig.json index.html
+    sdk/nexus-vite-plugin.{js,d.ts}
+    src/{main.ts,App.vue}   # main.tsx + App.tsx for react;
+                            # main.ts + Pages/Home.vue with --inertia,
+                            # plus ssr.ts with --ssr
+    dist/index.html         # committed stub so the first go build compiles
 
-` + "`go mod tidy && nexus dev`" + ` then runs the app, opens the SPA via
-the viteless dev server (HMR) when one's scaffolded — or the project's
-installed Vite with --tooling vite — and mounts the dashboard at
-/__nexus/.`,
+` + "`go mod tidy && nexus dev`" + ` then installs the frontend's dependencies (first
+run), starts Vite beside the app, and prints the URL to open — the app's
+own origin; the dashboard is at /__nexus/.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			opts := scaffoldOpts{
 				Dir:        args[0],
 				ModulePath: modulePath,
 				Frontend:   frontend,
-				Tooling:    tooling,
 				DB:         db,
 				Cache:      cache,
 				Auth:       auth,
@@ -98,12 +92,6 @@ installed Vite with --tooling vite — and mounts the dashboard at
 			if opts.Inertia && opts.Frontend == "" {
 				opts.Frontend = "vue"
 			}
-			// SSR needs a Node build/runtime (vite build --ssr + the Node
-			// SSR sidecar) — viteless has no SSR build, so pin the vite
-			// toolchain when the user didn't choose one.
-			if opts.SSR && opts.Tooling == "" {
-				opts.Tooling = "vite"
-			}
 			// Interactive prompts fill any axis the user didn't pin
 			// via flags. Skipped on a non-tty stdin or when --yes is
 			// passed — both signal the caller wants determinism.
@@ -117,11 +105,6 @@ installed Vite with --tooling vite — and mounts the dashboard at
 			// scaffold instead of erroring on empty axes.
 			if opts.Frontend == "" {
 				opts.Frontend = "none"
-			}
-			// Frontend tooling only applies when a frontend is scaffolded;
-			// default to the zero-install viteless engine.
-			if opts.HasFrontend() && opts.Tooling == "" {
-				opts.Tooling = "viteless"
 			}
 			if opts.DB == "" {
 				opts.DB = "none"
@@ -139,8 +122,10 @@ installed Vite with --tooling vite — and mounts the dashboard at
 		"go.mod module path (default: derived from <dir>'s basename)")
 	cmd.Flags().StringVar(&frontend, "frontend", "",
 		"frontend stack: "+strings.Join(frontendChoices, " | ")+" (default: prompt)")
-	cmd.Flags().StringVar(&tooling, "tooling", "",
-		"frontend build engine: "+strings.Join(toolingChoices, " | ")+" (viteless = zero-install; default: prompt)")
+	// --tooling chose between viteless and Vite; Vite is the only engine
+	// now. Kept so existing scripts still run, ignored with a warning.
+	cmd.Flags().StringVar(&tooling, "tooling", "", "ignored: Vite is the only frontend engine")
+	_ = cmd.Flags().MarkDeprecated("tooling", "Vite is the only frontend engine now; the flag is ignored")
 	cmd.Flags().StringVar(&db, "db", "",
 		"database driver: "+strings.Join(dbChoices, " | ")+" (default: prompt)")
 	cmd.Flags().StringVar(&cache, "cache", "",
@@ -150,7 +135,7 @@ installed Vite with --tooling vite — and mounts the dashboard at
 	cmd.Flags().BoolVar(&inertia, "inertia", false,
 		"scaffold an Inertia.js app (server-driven pages; implies --frontend vue)")
 	cmd.Flags().BoolVar(&ssr, "ssr", false,
-		"add Inertia server-side rendering (implies --inertia; needs Node: vite build --ssr + the SSR sidecar)")
+		"add Inertia server-side rendering (implies --inertia; a Node SSR server runs beside the binary)")
 	cmd.Flags().BoolVar(&yes, "yes", false,
 		"skip prompts and accept defaults on any axis not passed via flags")
 	return cmd
@@ -190,32 +175,16 @@ func scaffoldWithOpts(opts scaffoldOpts, stdout io.Writer) error {
 	}
 	opts.Name = filepath.Base(abs)
 
-	// Default + validate frontend tooling (only meaningful with a frontend).
-	if opts.HasFrontend() && opts.Tooling == "" {
-		opts.Tooling = "viteless"
-	}
 	if err := validChoice(opts.Frontend, "--frontend", frontendChoices); err != nil {
 		return err
-	}
-	if opts.HasFrontend() {
-		if err := validChoice(opts.Tooling, "--tooling", toolingChoices); err != nil {
-			return err
-		}
 	}
 	// Inertia currently targets Vue only; fail clearly rather than emit a
 	// half-wired React/none project.
 	if opts.Inertia && opts.Frontend != "vue" {
 		return fmt.Errorf("--inertia currently requires --frontend vue (got %q)", opts.Frontend)
 	}
-	// SSR rides on Inertia and needs the Node toolchain (vite build --ssr +
-	// the SSR sidecar); viteless has no SSR build path yet.
-	if opts.SSR {
-		if !opts.Inertia {
-			return fmt.Errorf("--ssr requires --inertia")
-		}
-		if opts.Tooling != "vite" {
-			return fmt.Errorf("--ssr requires --tooling vite (Node SSR build); got %q", opts.Tooling)
-		}
+	if opts.SSR && !opts.Inertia {
+		return fmt.Errorf("--ssr requires --inertia")
 	}
 	if err := validChoice(opts.DB, "--db", dbChoices); err != nil {
 		return err
@@ -277,14 +246,6 @@ func promptMissing(opts *scaffoldOpts, stdin io.Reader, stdout io.Writer) error 
 			return err
 		}
 		opts.Frontend = v
-	}
-	// Only ask about build tooling when a frontend was chosen.
-	if opts.HasFrontend() && opts.Tooling == "" {
-		v, err := pickOne(r, stdout, "Frontend tooling? (viteless = zero-install, no npm)", toolingChoices, 0)
-		if err != nil {
-			return err
-		}
-		opts.Tooling = v
 	}
 	if opts.DB == "" {
 		v, err := pickOne(r, stdout, "Database?", dbChoices, 0)
