@@ -6,6 +6,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.60.1] - 2026-09-25
+
+### Security
+
+- **A WebSocket connection's user is what the server authenticated.** The
+  identify hook fell back to a `?userId=` query parameter, and nothing in
+  nexus supplied the authenticated identity, so every connection's user id
+  was the client's claim: `EmitToUser` delivered to whoever named the id.
+  It now comes from the upgrade request's identity — `extension/auth`
+  registers it through the new `nexus.RegisterRequestIdentity` — and the
+  query fallback is gone. Apps without extension/auth register their own
+  source, or set a `"user"` value with a `GetID()` method on the context.
+- **The built-in `authenticate` message no longer sets a connection's
+  user.** It reports the identity the upgrade established (or an error
+  when there is none); a client sending `{"type":"authenticate",
+  "userId":"…"}` used to receive that user's events.
+- **A client can no longer join any room.** The built-in `subscribe`
+  message joined whatever room the client named, so a client could listen
+  to any audience the server addresses with `EmitToRoom` (another user's
+  conversation, say). It is refused unless the path opts in with
+  `nexus.ClientRooms(func(userID, room string) bool)`; server code joins
+  rooms with `WSSession.JoinRoom` after checking the caller, as before.
+  **Upgrading:** a frontend that sends `subscribe` itself needs
+  `ClientRooms` on its `AsWS` (or a handler that joins the room).
+
+### Fixed
+
+- `nexus.AsWS` on a built-in message type (`ping`, `authenticate`,
+  `subscribe`, `unsubscribe`) registered a handler that never ran; it is
+  refused at boot.
+
 ## [1.60.0] - 2026-09-25
 
 ### Added
