@@ -24,7 +24,7 @@ func NewResolverFromType(name string, returnType reflect.Type) *UnifiedResolver[
 	// Deref a *T or **T so the internal type registry keys on the concrete
 	// element. Slices stay slices — UnifiedResolver's isList path handles them.
 	t := returnType
-	for t != nil && t.Kind() == reflect.Ptr {
+	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -66,7 +66,7 @@ func objectNameFromType(t reflect.Type) string {
 		return "interface"
 	}
 	// Pointers were already stripped by the caller, but be defensive.
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	isSlice := t.Kind() == reflect.Slice

@@ -127,11 +127,13 @@ func (s *SMTPMailer) dial(ctx context.Context) (*smtp.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mail: dial %s: %w", addr, err)
 	}
-	// Bound the whole SMTP conversation by the same deadline.
+	// Bound the whole SMTP conversation by the same deadline. Socket
+	// deadlines are wall-clock, so this never reads the injectable clock
+	// (which only stamps the message's Date header).
 	if dl, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)
 	} else {
-		_ = conn.SetDeadline(s.clock().Add(timeout))
+		_ = conn.SetDeadline(time.Now().Add(timeout))
 	}
 
 	c, err := smtp.NewClient(conn, s.Host)
@@ -158,13 +160,6 @@ func (s *SMTPMailer) tlsConfig() *tls.Config {
 		return s.TLSConfig
 	}
 	return &tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}
-}
-
-func (s *SMTPMailer) clock() time.Time {
-	if s.now != nil {
-		return s.now()
-	}
-	return time.Now()
 }
 
 // builder assembles a mimeBuilder with this mailer's sender/clock/boundary.

@@ -92,7 +92,7 @@ func (s *Scoped[T]) nexusOption() di.Option {
 	// The handle auto-provides itself, so a handler can DECLARE the fact it
 	// reads as an ordinary dep instead of reaching for the package var:
 	//
-	//	func NewUsersPage(ctx context.Context, scope *nexus.Scoped[Scope], ...) 
+	//	func NewUsersPage(ctx context.Context, scope *nexus.Scoped[Scope], ...)
 	//
 	// Providers are lazy singletons — an app where nothing injects the
 	// handle never runs this constructor, so the request path is untouched

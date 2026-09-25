@@ -541,7 +541,7 @@ func isServiceWrapperType(t reflect.Type) bool {
 	if t == svcPtr {
 		return true
 	}
-	if t.Kind() != reflect.Ptr {
+	if t.Kind() != reflect.Pointer {
 		return false
 	}
 	inner := t.Elem()
@@ -650,7 +650,7 @@ func isInputObjectNullable(argsType reflect.Type) bool {
 		if f.PkgPath != "" {
 			continue
 		}
-		return f.Type.Kind() == reflect.Ptr
+		return f.Type.Kind() == reflect.Pointer
 	}
 	return false
 }
@@ -682,7 +682,7 @@ func detectInputObject(argsType reflect.Type) (name string, inner reflect.Type, 
 		return "", nil, false
 	}
 	ft := exported.Type
-	if ft.Kind() == reflect.Ptr {
+	if ft.Kind() == reflect.Pointer {
 		ft = ft.Elem()
 	}
 	if ft.Kind() != reflect.Struct {
@@ -844,7 +844,7 @@ func parseBounds(s string) (int, int) {
 // wrappers are unwrapped (nullability comes from the required flag, not from
 // `*T`). Unsupported types return nil, causing the field to be skipped.
 func goTypeToGraphQL(t reflect.Type) graphql.Input {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	switch t.Kind() {
@@ -880,7 +880,7 @@ func goTypeToGraphQL(t reflect.Type) graphql.Input {
 var inputObjectRegistry sync.Map // map[reflect.Type]*graphql.InputObject
 
 func buildInputObjectForType(t reflect.Type) graphql.Input {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -914,7 +914,7 @@ func buildInputObjectForType(t reflect.Type) graphql.Input {
 		if f.Anonymous {
 			// Flatten embedded structs.
 			embT := f.Type
-			for embT.Kind() == reflect.Ptr {
+			for embT.Kind() == reflect.Pointer {
 				embT = embT.Elem()
 			}
 			if embT.Kind() == reflect.Struct {
@@ -1078,7 +1078,7 @@ func assignArg(dst reflect.Value, raw any) error {
 	// way bindInputObject handles single-input-object mode.
 	if v.Kind() == reflect.Map {
 		structDst := dst
-		if dst.Kind() == reflect.Ptr {
+		if dst.Kind() == reflect.Pointer {
 			if dst.IsNil() {
 				dst.Set(reflect.New(dst.Type().Elem()))
 			}
@@ -1112,7 +1112,7 @@ func assignArg(dst reflect.Value, raw any) error {
 		return nil
 	}
 	// Pointer destination: wrap the raw value.
-	if dst.Kind() == reflect.Ptr {
+	if dst.Kind() == reflect.Pointer {
 		elemType := dst.Type().Elem()
 		if v.Type().ConvertibleTo(elemType) {
 			ptr := reflect.New(elemType)

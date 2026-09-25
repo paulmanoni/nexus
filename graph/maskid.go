@@ -71,7 +71,7 @@ func parseMaskedIDLiteral(valueAST ast.Value) any {
 }
 
 func intOf(v reflect.Value) (int64, bool) {
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return 0, false
 		}
@@ -138,7 +138,7 @@ func isIntKind(t reflect.Type) bool {
 	if t == nil {
 		return false
 	}
-	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
 		t = t.Elem()
 	}
 	switch t.Kind() {

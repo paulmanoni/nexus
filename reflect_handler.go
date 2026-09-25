@@ -218,7 +218,7 @@ func inspectHandler(fn any) (handlerShape, error) {
 // concrete element. []*Pet → Pet, *PetsResponse → PetsResponse.
 func (sh handlerShape) returnElementType() reflect.Type {
 	t := sh.returnType
-	for t != nil && t.Kind() == reflect.Ptr {
+	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	return t
@@ -301,7 +301,7 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 		return nil, err
 	}
 	res := out[sh.resultIdx]
-	if (res.Kind() == reflect.Ptr || res.Kind() == reflect.Interface) && res.IsNil() {
+	if (res.Kind() == reflect.Pointer || res.Kind() == reflect.Interface) && res.IsNil() {
 		return nil, err
 	}
 	return res.Interface(), err

@@ -60,7 +60,7 @@ func ReflectSchema(t reflect.Type) *Schema {
 	}
 	// Peel pointers at the root the same way build does — *User
 	// and User share a schema.
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	var root *Schema
@@ -121,7 +121,7 @@ func (b *schemaBuilder) build(t reflect.Type) *Schema {
 	// Peel pointers. A *T and a T serialize identically as JSON
 	// (the *T just decodes to nil on absence); from a schema
 	// perspective they describe the same value shape.
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	switch t.Kind() {
@@ -234,7 +234,7 @@ func (b *schemaBuilder) buildStructBody(t reflect.Type) *Schema {
 		// latter heuristic matches what most Go code means
 		// by "this field is mandatory" without needing the
 		// validate tag everywhere.
-		isRequired := fieldIsRequired(f) || (!omit && f.Type.Kind() != reflect.Ptr)
+		isRequired := fieldIsRequired(f) || (!omit && f.Type.Kind() != reflect.Pointer)
 		s.Properties[name] = b.build(f.Type)
 		if isRequired {
 			required = append(required, name)

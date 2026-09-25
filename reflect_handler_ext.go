@@ -141,7 +141,7 @@ func (h HandlerShape) bind(deps []reflect.Value) BoundHandler {
 				// Allow either a value of argsType or a *argsType
 				// (extension dispatchers naturally produce the
 				// pointer form via reflect.New).
-				if v.Kind() == reflect.Ptr && v.Type().Elem() == sh.argsType {
+				if v.Kind() == reflect.Pointer && v.Type().Elem() == sh.argsType {
 					v = v.Elem()
 				}
 				if v.Type() != sh.argsType {

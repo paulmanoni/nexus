@@ -130,7 +130,7 @@ func resolveLoadFieldTypes[Parent any, Child any](fieldName string) (
 	parentName string, outputType graphql.Output, errOpt Option,
 ) {
 	parentT := reflect.TypeOf((*Parent)(nil)).Elem()
-	for parentT.Kind() == reflect.Ptr {
+	for parentT.Kind() == reflect.Pointer {
 		parentT = parentT.Elem()
 	}
 	parentName = parentT.Name()
@@ -268,7 +268,7 @@ func buildVirtualFieldFromUntypedKeyFn[Key comparable, Child any](
 			// p.Source as the parent struct value, but downstream
 			// reflective walks may hand us a *T.
 			src := reflect.ValueOf(p.Source)
-			for src.IsValid() && src.Type() != parentT && src.Kind() == reflect.Ptr {
+			for src.IsValid() && src.Type() != parentT && src.Kind() == reflect.Pointer {
 				src = src.Elem()
 			}
 			if !src.IsValid() || !src.Type().AssignableTo(parentT) {
@@ -354,7 +354,7 @@ func coerceParent[Parent any](source any) (Parent, bool) {
 		return v, true
 	}
 	rv := reflect.ValueOf(source)
-	for rv.IsValid() && rv.Kind() == reflect.Ptr {
+	for rv.IsValid() && rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
 	if !rv.IsValid() {

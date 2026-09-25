@@ -343,7 +343,7 @@ func (s *SubscriptionResolver[T]) generateType() *graphql.Object {
 	t := reflect.TypeOf(zero)
 
 	// Handle pointer types
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 

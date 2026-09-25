@@ -101,7 +101,7 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 		return TypeRef{Kind: "primitive", Primitive: "string"}
 	}
 	switch t.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		ref := WalkType(t.Elem(), refs)
 		ref.Optional = true
 		return ref
@@ -354,7 +354,7 @@ func collectStructFields(t reflect.Type, refs map[string]NamedType, depth int, o
 		// unexported fields and embedded unexported NON-struct fields.
 		if f.Anonymous {
 			et := f.Type
-			if et.Kind() == reflect.Ptr {
+			if et.Kind() == reflect.Pointer {
 				et = et.Elem()
 			}
 			if !f.IsExported() && et.Kind() != reflect.Struct {
@@ -408,7 +408,7 @@ func collectStructFields(t reflect.Type, refs map[string]NamedType, depth int, o
 		// own SDK ref (exported case) so its standalone interface emits.
 		if f.Anonymous && jsonTag == "" {
 			et := f.Type
-			if et.Kind() == reflect.Ptr {
+			if et.Kind() == reflect.Pointer {
 				et = et.Elem()
 			}
 			if et.Kind() == reflect.Struct {

@@ -170,7 +170,7 @@ func inputObjectInfo(inputType any, nullable bool, use bool) *InputObjectInfo {
 		return nil
 	}
 	t := reflect.TypeOf(inputType)
-	for t != nil && t.Kind() == reflect.Ptr {
+	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t == nil {

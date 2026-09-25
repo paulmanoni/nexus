@@ -11,9 +11,9 @@ import (
 func init() {
 	decorate.Register(nexus.Module("notes",
 		nexus.Provide(NewService),
-		nexus.Provide(NewStore),
 		nexus.AsRest("GET", "/notes", NewListNotes),
 		nexus.AsRest("GET", "/notes/:id", NewGetNote),
+		nexus.Provide(NewStore),
 		nexus.AsRest("POST", "/notes", NewCreateNote),
 		nexus.AsQuery(NewSearchNotes),
 		widgets.Panel("/stats", NewStatsPanel),

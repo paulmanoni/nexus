@@ -17,17 +17,22 @@
 # Formatting (gofmt) is enforced here AND as a standalone CI step, so a
 # formatting regression fails fast with a clear message.
 
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
-  disable-all: true
+  default: none
   enable:
-    - gofmt         # canonical formatting
     - govet         # suspicious constructs (also `go vet` in CI)
     - ineffassign   # assignments whose value is never used
     - durationcheck # accidental time.Duration multiplication bugs
     - makezero      # append to a make() slice with a non-zero length
+
+formatters:
+  enable:
+    - gofmt         # canonical formatting
 
 issues:
   max-issues-per-linter: 0

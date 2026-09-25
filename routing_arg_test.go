@@ -37,7 +37,7 @@ func (s *argSvc) MoveUser(ctx context.Context, id uint, target string, note *str
 func TestArgGraphQL(t *testing.T) {
 	app, stop, err := InProcess(Config{},
 		Supply(&argSvc{}),
-		AsQuery((*argSvc).FetchUser, Arg("id")),                    // derived name: fetchUser
+		AsQuery((*argSvc).FetchUser, Arg("id")),                     // derived name: fetchUser
 		AsMutation((*argSvc).DropUser, Arg("id"), Op("removeUser")), // Op override + ctx shape
 		AsMutation((*argSvc).MoveUser, Arg("id", "target", "note")), // multi-arg; pointer → optional
 	)

@@ -284,7 +284,7 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 
 	// Handler props struct.
 	rv := reflect.ValueOf(result)
-	for rv.Kind() == reflect.Ptr {
+	for rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			return out, meta, nil
 		}

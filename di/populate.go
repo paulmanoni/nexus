@@ -20,7 +20,7 @@ func Populate(targets ...any) Option {
 	in := make([]reflect.Type, len(targets))
 	for i, t := range targets {
 		pv := reflect.ValueOf(t)
-		if pv.Kind() != reflect.Ptr || pv.IsNil() {
+		if pv.Kind() != reflect.Pointer || pv.IsNil() {
 			return Error(fmt.Errorf("di: Populate target %d must be a non-nil pointer, got %T", i, t))
 		}
 		ptrs[i] = pv

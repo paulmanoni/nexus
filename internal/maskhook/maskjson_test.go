@@ -34,7 +34,7 @@ func TestMaskJSONBytes_MatchesTreePipeline(t *testing.T) {
 		map[string]any{"id": 41, "ownerId": 7, "name": "a"},
 		map[string]any{"ids": []int{1, 2, 3}, "total": 3},
 		map[string]any{"nested": map[string]any{"id": 9, "deep": map[string]any{"parentId": 12}}},
-		map[string]any{"rowIds": [][]int64{{1, 2}, {3}}}, // arrays inherit the key through depth
+		map[string]any{"rowIds": [][]int64{{1, 2}, {3}}},                                // arrays inherit the key through depth
 		map[string]any{"categories": []map[string]any{{"id": 5, "name": "x"}}, "id": 6}, // Skip prunes subtree
 		map[string]any{"id": -12, "big": map[string]any{"id": int64(1) << 60}},
 		map[string]any{"price": 1.5, "ratio": 2.0, "id": 3, "flag": true, "none": nil}, // floats never mask

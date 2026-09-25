@@ -270,7 +270,7 @@ func detectGenericType(v interface{}) GenericTypeInfo {
 	}
 
 	// Handle pointer types
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -401,7 +401,7 @@ func getInputTypeName(t reflect.Type, fieldName string) string {
 	}
 
 	// Handle pointer types
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -521,7 +521,7 @@ func (r *UnifiedResolver[T]) WithInputObject(inputType interface{}) *UnifiedReso
 
 	// Generate input type name from the input struct
 	t := reflect.TypeOf(inputType)
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	inputName := t.Name() + "Input"
@@ -574,7 +574,7 @@ func generateArgsFromType(t reflect.Type) graphql.FieldConfigArgument {
 
 // generateArgsFromTypeWithContext creates GraphQL arguments from a struct type with parent context
 func generateArgsFromTypeWithContext(t reflect.Type, parentTypeName string) graphql.FieldConfigArgument {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -1237,7 +1237,7 @@ func resolveInputType(argType interface{}, argName string) graphql.Input {
 	}
 
 	// Handle pointer types
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -1288,7 +1288,7 @@ func resolveInputType(argType interface{}, argName string) graphql.Input {
 	// Handle slice types
 	if t.Kind() == reflect.Slice {
 		elemType := t.Elem()
-		if elemType.Kind() == reflect.Ptr {
+		if elemType.Kind() == reflect.Pointer {
 			elemType = elemType.Elem()
 		}
 		// Create a zero value instance of element type
@@ -1632,7 +1632,7 @@ func (r *UnifiedResolver[T]) generateInputObject(inputType interface{}, name str
 	inputTypeRegistryMu.RUnlock()
 
 	t := reflect.TypeOf(inputType)
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -1741,7 +1741,7 @@ func setFieldValue(fieldValue reflect.Value, argValue interface{}) error {
 	argReflectValue := reflect.ValueOf(argValue)
 
 	// Handle pointer fields
-	if fieldValue.Kind() == reflect.Ptr {
+	if fieldValue.Kind() == reflect.Pointer {
 		if argValue == nil {
 			return nil // Leave as nil
 		}
@@ -1829,7 +1829,7 @@ func GetRootE[T any](r RootInfoGetter, name string) (T, error) {
 func mapArgsToStruct(args map[string]interface{}, output interface{}) error {
 	// Use reflection to map arguments to struct fields
 	outputValue := reflect.ValueOf(output)
-	if outputValue.Kind() != reflect.Ptr || outputValue.Elem().Kind() != reflect.Struct {
+	if outputValue.Kind() != reflect.Pointer || outputValue.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("output must be a pointer to a struct")
 	}
 

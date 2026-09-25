@@ -64,9 +64,9 @@ jobs:
         with:
           go-version: "stable"
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.64.8
+          version: v2.14.0
           # Build golangci-lint from source with the runner's Go (1.26) instead
           # of downloading the prebuilt binary, which is compiled with an older
           # Go and refuses to analyze a newer-Go target ("the Go language

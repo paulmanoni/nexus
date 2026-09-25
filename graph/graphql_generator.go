@@ -78,7 +78,7 @@ func GenerateGraphQLObject[T any](name string) *graphql.Object {
 
 func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
 	root := t
-	if root != nil && root.Kind() == reflect.Ptr {
+	if root != nil && root.Kind() == reflect.Pointer {
 		root = root.Elem()
 	}
 	name := ""
@@ -107,7 +107,7 @@ func (g *FieldGenerator[T]) generateFields(t reflect.Type) graphql.Fields {
 // so an ID-masking scope keyed on the object name sees the name the
 // client actually queries.
 func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int, rootName string) graphql.Fields {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -130,7 +130,7 @@ func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int, 
 		// Handle embedded (anonymous) fields by flattening them
 		if field.Anonymous {
 			embeddedType := field.Type
-			if embeddedType.Kind() == reflect.Ptr {
+			if embeddedType.Kind() == reflect.Pointer {
 				embeddedType = embeddedType.Elem()
 			}
 
@@ -163,7 +163,7 @@ func (g *FieldGenerator[T]) generateFieldsAt(t reflect.Type, indexPrefix []int, 
 			Description: description,
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				source := reflect.ValueOf(p.Source)
-				if source.Kind() == reflect.Ptr {
+				if source.Kind() == reflect.Pointer {
 					source = source.Elem()
 				}
 
@@ -219,7 +219,7 @@ func (g *FieldGenerator[T]) getGraphQLType(t reflect.Type, field reflect.StructF
 func (g *FieldGenerator[T]) getBaseGraphQLType(t reflect.Type, objectTypeName *string) graphql.Output {
 	g.objectTypeName = objectTypeName
 	switch t.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return g.getBaseGraphQLType(t.Elem(), objectTypeName)
 
 	case reflect.String:
@@ -354,7 +354,7 @@ func GenerateInputObject[T any](name string) *graphql.InputObject {
 }
 
 func (g *FieldGenerator[T]) generateInputFields(t reflect.Type) graphql.InputObjectConfigFieldMap {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -370,7 +370,7 @@ func (g *FieldGenerator[T]) generateInputFields(t reflect.Type) graphql.InputObj
 		// Handle embedded (anonymous) fields by flattening them
 		if field.Anonymous {
 			embeddedType := field.Type
-			if embeddedType.Kind() == reflect.Ptr {
+			if embeddedType.Kind() == reflect.Pointer {
 				embeddedType = embeddedType.Elem()
 			}
 
@@ -455,7 +455,7 @@ func (g *FieldGenerator[T]) getBaseInputType(t reflect.Type, fieldName string) g
 
 func (g *FieldGenerator[T]) getBaseInputTypeWithContext(t reflect.Type, fieldName string, parentTypeName string) graphql.Input {
 	switch t.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return g.getBaseInputTypeWithContext(t.Elem(), fieldName, parentTypeName)
 
 	case reflect.String:
@@ -541,7 +541,7 @@ func GenerateArgsFromStruct[T any]() graphql.FieldConfigArgument {
 	var instance T
 	t := reflect.TypeOf(instance)
 
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -557,7 +557,7 @@ func GenerateArgsFromStruct[T any]() graphql.FieldConfigArgument {
 		// Handle embedded (anonymous) fields by flattening them
 		if field.Anonymous {
 			embeddedType := field.Type
-			if embeddedType.Kind() == reflect.Ptr {
+			if embeddedType.Kind() == reflect.Pointer {
 				embeddedType = embeddedType.Elem()
 			}
 
@@ -607,7 +607,7 @@ func GenerateArgsFromStruct[T any]() graphql.FieldConfigArgument {
 
 // Helper function to process struct fields for args
 func processStructArgs[T any](gen *FieldGenerator[T], t reflect.Type) graphql.FieldConfigArgument {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -623,7 +623,7 @@ func processStructArgs[T any](gen *FieldGenerator[T], t reflect.Type) graphql.Fi
 		// Handle embedded fields recursively
 		if field.Anonymous {
 			embeddedType := field.Type
-			if embeddedType.Kind() == reflect.Ptr {
+			if embeddedType.Kind() == reflect.Pointer {
 				embeddedType = embeddedType.Elem()
 			}
 
@@ -729,7 +729,7 @@ func (g *FieldGenerator[T]) createWrapperObject(t reflect.Type, typeName string)
 					Description: description,
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 						source := reflect.ValueOf(p.Source)
-						if source.Kind() == reflect.Ptr {
+						if source.Kind() == reflect.Pointer {
 							source = source.Elem()
 						}
 

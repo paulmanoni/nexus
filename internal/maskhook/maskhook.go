@@ -117,7 +117,7 @@ var typeNameCache sync.Map // reflect.Type → []string
 func computeTypeNames(t reflect.Type) []string {
 	for i := 0; t != nil && i < 8; i++ {
 		switch t.Kind() {
-		case reflect.Ptr, reflect.Slice, reflect.Array:
+		case reflect.Pointer, reflect.Slice, reflect.Array:
 			t = t.Elem()
 			continue
 		}

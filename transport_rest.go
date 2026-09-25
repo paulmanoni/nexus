@@ -331,7 +331,7 @@ func unwrapService(v reflect.Value, t reflect.Type) (*Service, bool) {
 		return v.Interface().(*Service), true
 	}
 	// Pointer to a struct with an embedded *Service field
-	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
+	if t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Struct {
 		if v.IsNil() {
 			return nil, false
 		}

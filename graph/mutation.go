@@ -681,7 +681,7 @@ func buildInputObjectFor[In any]() *graphql.InputObject {
 	if t == nil {
 		panic("NewMutation: In type parameter cannot be nil interface")
 	}
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -723,7 +723,7 @@ func buildOutputType[T any]() graphql.Output {
 	if t == nil {
 		return graphql.String
 	}
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if scalar := scalarForKind(t.Kind()); scalar != nil {
@@ -731,7 +731,7 @@ func buildOutputType[T any]() graphql.Output {
 	}
 	if t.Kind() == reflect.Slice {
 		elem := t.Elem()
-		for elem.Kind() == reflect.Ptr {
+		for elem.Kind() == reflect.Pointer {
 			elem = elem.Elem()
 		}
 		if scalar := scalarForKind(elem.Kind()); scalar != nil {

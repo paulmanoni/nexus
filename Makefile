@@ -23,7 +23,7 @@ MODULES := . cmd/nexus di/fxcontainer httpx/ginrouter extension/cache/redis
 
 # Pinned golangci-lint version — keep in sync with .github/workflows/ci.yml
 # so `make lint` and CI enforce the exact same linters (config: .golangci.yml).
-GOLANGCI_VERSION ?= v1.64.8
+GOLANGCI_VERSION ?= v2.14.0
 
 # Minimum acceptable statement coverage for the main module (percent). A ratchet
 # against regression, not a target — raise it as coverage climbs.
@@ -68,7 +68,7 @@ fmt-check:
 lint:
 	@for m in $(MODULES); do \
 		echo "==> golangci-lint ($$m)"; \
-		( cd $$m && go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_VERSION) run --config $(CURDIR)/.golangci.yml ./... ) || exit 1; \
+		( cd $$m && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION) run --config $(CURDIR)/.golangci.yml ./... ) || exit 1; \
 	done
 
 cover:
