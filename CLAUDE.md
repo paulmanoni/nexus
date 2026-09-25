@@ -1185,7 +1185,7 @@ nexus generate frontend    Typed TS source tree from a manifest (--check = drift
 nexus generate handlers [./...]  Wire //@-annotated handlers: write nexus_handlers_gen.go
                      per package + a main-package import aggregator. --check = CI drift gate.
                      (Run automatically by nexus dev/build; see §5.)
-nexus docs [topic]   Inline reference. --web opens the README.
+nexus docs [topic]   Inline reference. --web opens the docs site (paulmanoni.github.io/nexus).
 nexus pki ...        Generate mTLS certs for the peer mesh.
 ```
 `nexus build` produces ONE binary (frontend + Go). There is no deployment-split CLI and

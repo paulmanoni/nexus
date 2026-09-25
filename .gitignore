@@ -17,3 +17,8 @@
 # Anchored so only these exact paths are ignored, not source dirs.
 /arch-canvas
 /examples/wsecho/wsecho
+
+# Docs site (VitePress): deps and build output
+/docs/node_modules/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/

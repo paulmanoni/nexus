@@ -16,7 +16,7 @@
 //	nexus generate        Code generation: frontend bindings, handler registration.
 //	nexus client          Write the typed JS/TS client SDK to disk.
 //	nexus apidocs         Generate and serve API reference docs.
-//	nexus docs [topic]    Show inline documentation; --web opens the README.
+//	nexus docs [topic]    Show inline documentation; --web opens the docs site.
 //	nexus routes          List the endpoints an app mounts.
 //	nexus lint            Check a manifest's inputs and a nexus.toml's keys.
 //	nexus doctor          Audit a manifest for configuration problems.

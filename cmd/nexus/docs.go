@@ -11,25 +11,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// readmeURL points at the canonical hosted README. `--web` opens it.
-// Pinned to main so the URL doesn't go stale across releases; the
-// version-specific docs ship inside this binary as topic strings
-// below.
-const readmeURL = "https://github.com/paulmanoni/nexus#readme"
+// docsURL points at the hosted documentation site (built from docs/ on
+// main). `--web` opens it; the version-specific docs ship inside this
+// binary as topic strings below.
+const docsURL = "https://paulmanoni.github.io/nexus/"
 
 // newDocsCmd builds `nexus docs [topic]`.
 //
 // Two-mode UX:
 //   - `nexus docs`              → prints the topic index + tips
 //   - `nexus docs <topic>`      → prints one topic's quick-reference
-//   - `nexus docs --web`        → opens the GitHub README in a browser
+//   - `nexus docs --web`        → opens the documentation site in a browser
 //   - `nexus docs --list`       → just the list of topic names (one per line)
 //
 // Each topic is a short man-page-style reference embedded as a Go
 // string below — fast to read, no internet needed, version-locked
 // to whichever CLI binary the user has installed. For deeper /
-// up-to-date material the `--web` flag jumps to the canonical
-// README on GitHub.
+// up-to-date material the `--web` flag jumps to the documentation
+// site.
 func newDocsCmd(stdout, stderr io.Writer) *cobra.Command {
 	var openWeb bool
 	var listOnly bool
@@ -39,18 +38,18 @@ func newDocsCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `Show inline documentation for nexus features.
 
 Without a topic, prints the topic index. With a topic, prints that
-topic's quick-reference page. Use --web to open the canonical
-README on GitHub instead.
+topic's quick-reference page. Use --web to open the documentation
+site instead.
 
 Examples:
     nexus docs                # list all topics
     nexus docs handlers       # reflective handler signature reference
     nexus docs nexustoml      # nexus.toml runtime config reference
-    nexus docs --web          # open the README on GitHub`,
+    nexus docs --web          # open the documentation site`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if openWeb {
-				return openInBrowser(readmeURL, stdout)
+				return openInBrowser(docsURL, stdout)
 			}
 			if listOnly {
 				for _, name := range topicNames() {
@@ -77,7 +76,7 @@ Examples:
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&openWeb, "web", false, "open the README on GitHub in a browser")
+	cmd.Flags().BoolVar(&openWeb, "web", false, "open the documentation site in a browser")
 	cmd.Flags().BoolVar(&listOnly, "list", false, "print the topic names only (one per line)")
 	return cmd
 }
@@ -96,7 +95,7 @@ func printIndex(w io.Writer) {
 	}
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "More:")
-	fmt.Fprintln(w, "  nexus docs --web      Open the full README on GitHub")
+	fmt.Fprintln(w, "  nexus docs --web      Open the documentation site")
 	fmt.Fprintln(w, "  nexus help            Show CLI command reference")
 }
 
@@ -1642,7 +1641,7 @@ CLI CHEATSHEET
   nexus generate handlers    Wire //@-annotated handlers into registrations.
                              --check on either one is a CI drift gate.
 
-  nexus docs [topic]         This help. --web opens the README on GitHub.
+  nexus docs [topic]         This help. --web opens the documentation site.
 
   nexus version              Print the CLI version.
 
