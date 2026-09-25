@@ -78,3 +78,20 @@ func TestRegisterSharedProp(t *testing.T) {
 		t.Errorf("Viewer missing from the schema refs pool: %v", app.SchemaRefs())
 	}
 }
+
+// Keys an option in this package owns are refused: auth.public / auth.flow
+// would exempt a route from the default auth gate behind the back of the
+// options that document it.
+func TestTag_RefusesFrameworkKeys(t *testing.T) {
+	for _, key := range []string{PublicTag, AuthFlowTag, registry.AuthRequiresTag, registry.HiddenTag, registry.IconTag, registry.EnvelopeTag, registry.ProxyTag} {
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("Tag(%q) did not panic", key)
+				}
+			}()
+			Tag(key, "x")
+		}()
+	}
+	Tag(registry.PageTag, "Users/Index") // an extension's own key is fine
+}

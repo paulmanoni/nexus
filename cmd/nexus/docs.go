@@ -1978,7 +1978,7 @@ Wire it into vite.config.ts:
 
     import { defineConfig } from 'vite'
     import vue from '@vitejs/plugin-vue'
-    import nexusAutoSelect from './src/sdk/nexus-vite-plugin.js'
+    import nexusAutoSelect from './sdk/nexus-vite-plugin.js'
 
     export default defineConfig({
       plugins: [
@@ -1990,9 +1990,10 @@ Wire it into vite.config.ts:
 Peer deps the plugin uses (already in any Vue+TS project):
   typescript, magic-string, @vue/compiler-sfc
 
-Defaults to reading the manifest from ./src/sdk/manifest.json
-(matches Config.Client.OutDir = "./web/sdk" with a vite root of
-"./web"). Pass {sdkDir: "..."} to override.
+Defaults to reading the manifest from ./sdk/manifest.json under the
+Vite root (web/sdk, where the Go app writes it in development); a
+project with only ./src/sdk/manifest.json keeps reading that one.
+Pass {sdkDir: "..."} to override.
 
 What auto-select handles today:
 

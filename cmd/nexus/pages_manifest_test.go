@@ -64,7 +64,7 @@ func TestClientCmd_WritesInertiaDTS(t *testing.T) {
 		t.Errorf("inertia.d.ts content:\n%s", b)
 	}
 	dts := string(readFile(t, filepath.Join(out, "client.d.ts")))
-	for _, want := range []string{"'Users/Index': { [key: string]: unknown }", "can: Record<string, boolean>"} {
+	for _, want := range []string{"'Users/Index': { [key: string]: unknown }", "can?: Record<string, boolean>"} {
 		if !strings.Contains(dts, want) {
 			t.Errorf("client.d.ts missing %q", want)
 		}

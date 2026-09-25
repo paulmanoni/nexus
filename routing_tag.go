@@ -17,9 +17,32 @@ import (
 //
 // Cross-transport (REST / GraphQL / WS). Keys are namespaced by convention
 // ("<owner>.<name>", e.g. "inertia.page"); a later Tag with the same key
-// replaces the earlier value. An empty key is ignored. Tags are metadata
-// only — they never change how the endpoint routes or serves.
-func Tag(key, value string) TagOption { return TagOption{key: key, value: value} }
+// replaces the earlier value. An empty key is ignored.
+//
+// The keys this package's own options own are refused (Tag panics at
+// registration, naming the option): some of them are not just metadata —
+// auth.public and auth.flow exempt a route from the deny-by-default gate,
+// and an auth.requires that disagrees with the middleware would make
+// auth.OpGates report an op the endpoint refuses. Use Public, AuthRoute,
+// auth.Requires, HideFromDashboard, WithIcon or Envelope for those.
+func Tag(key, value string) TagOption {
+	if opt, reserved := reservedTags[key]; reserved {
+		panic("nexus.Tag: " + key + " is set by " + opt + ", not by Tag")
+	}
+	return TagOption{key: key, value: value}
+}
+
+// reservedTags maps each tag key an option in this package owns to that
+// option, for Tag's refusal message.
+var reservedTags = map[string]string{
+	PublicTag:                "nexus.Public()",
+	AuthFlowTag:              "nexus.AuthRoute",
+	registry.AuthRequiresTag: "auth.Requires",
+	registry.HiddenTag:       "nexus.HideFromDashboard()",
+	registry.IconTag:         "nexus.WithIcon",
+	registry.EnvelopeTag:     "nexus.Envelope",
+	registry.ProxyTag:        "extension/proxy",
+}
 
 // TagOption is the cross-transport carrier returned by Tag — implements
 // RestOption, GqlOption, and WSOption so one expression flows through any
