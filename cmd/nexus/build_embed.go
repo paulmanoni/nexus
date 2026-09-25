@@ -118,7 +118,7 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 	cmd := execCommand("go", args...)
 	cmd.Stdout = opts.Stdout
 	cmd.Stderr = opts.Stderr
-	fmt.Fprintf(opts.Stdout, "go %s\n", strings.Join(args, " "))
+	fmt.Fprintf(opts.Stdout, "go %s\n", strings.Join(printableBuildArgs(args), " "))
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("go build failed: %w", err)
 	}
@@ -151,4 +151,18 @@ func resolveMainDir(projectRoot, mainPkg string) string {
 	// module-rooted main packages; otherwise pass the package as
 	// ./cmd/foo.
 	return projectRoot
+}
+
+// printableBuildArgs is args for the log line: the embedded nexus.toml is
+// shown by name, not as its base64 — kilobytes of noise, and plaintext to
+// anyone who decodes a CI log, whatever literal values the file holds.
+func printableBuildArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if strings.HasPrefix(a, "-X "+embedConfigVar+"=") {
+			a = "-X " + embedConfigVar + "=<nexus.toml>"
+		}
+		out[i] = a
+	}
+	return out
 }

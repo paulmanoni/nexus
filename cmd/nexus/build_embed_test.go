@@ -49,3 +49,16 @@ func TestEmbedConfigLDFlag_NoConfig(t *testing.T) {
 		t.Errorf("no config should embed nothing, got flag=%q n=%d", flag, n)
 	}
 }
+
+// The build log names the embedded nexus.toml instead of printing its
+// base64 (plaintext to anyone who decodes the log).
+func TestPrintableBuildArgs(t *testing.T) {
+	args := []string{"build", "-ldflags", "-X " + embedConfigVar + "=c2VjcmV0", "-o", "app", "."}
+	got := strings.Join(printableBuildArgs(args), " ")
+	if strings.Contains(got, "c2VjcmV0") || !strings.Contains(got, embedConfigVar+"=<nexus.toml>") {
+		t.Errorf("printed %q", got)
+	}
+	if args[2] != "-X "+embedConfigVar+"=c2VjcmV0" {
+		t.Error("the real args were modified")
+	}
+}
