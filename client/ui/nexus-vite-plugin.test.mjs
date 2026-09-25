@@ -577,23 +577,23 @@ async function sdkManifestSeen(root, options = {}) {
   const watcher = new EventEmitter()
   watcher.add = (f) => added.push(f)
   p.configureServer({ watcher, config: { logger: l }, moduleGraph: null, ws: { send() {} } })
-  return { path: added[0], warns: l.warns }
+  return { path: added[0], warns: l.warns, infos: l.infos }
 }
 
 test('sdk: the manifest is read from sdk/ under the Vite root by default', async (t) => {
   const root = tmpRoot(t)
   writeManifest(root, 'sdk')
-  const { path, warns } = await sdkManifestSeen(root)
+  const { path, warns, infos } = await sdkManifestSeen(root)
   assert.equal(path, join(root, 'sdk', 'manifest.json'))
-  assert.ok(!warns.some((w) => /manifest not found/.test(w)), warns.join('\n'))
+  assert.ok(![...warns, ...infos].some((w) => /no manifest/.test(w)), [...warns, ...infos].join('\n'))
 })
 
 test('sdk: falls back to src/sdk quietly when only it has a manifest', async (t) => {
   const root = tmpRoot(t)
   writeManifest(root, 'src/sdk')
-  const { path, warns } = await sdkManifestSeen(root)
+  const { path, warns, infos } = await sdkManifestSeen(root)
   assert.equal(path, join(root, 'src', 'sdk', 'manifest.json'))
-  assert.ok(!warns.some((w) => /manifest not found|src\/sdk/.test(w)), warns.join('\n'))
+  assert.ok(![...warns, ...infos].some((w) => /no manifest|src\/sdk/.test(w)), [...warns, ...infos].join('\n'))
 })
 
 test('sdk: sdk/ wins when both exist; with neither, sdk/ is the one reported', async (t) => {
@@ -603,9 +603,12 @@ test('sdk: sdk/ wins when both exist; with neither, sdk/ is the one reported', a
   assert.equal((await sdkManifestSeen(both)).path, join(both, 'sdk', 'manifest.json'))
 
   const none = tmpRoot(t)
-  const { path, warns } = await sdkManifestSeen(none)
+  const { path, warns, infos } = await sdkManifestSeen(none)
   assert.equal(path, join(none, 'sdk', 'manifest.json'))
-  assert.ok(warns.some((w) => w.includes(join(none, 'sdk', 'manifest.json'))), warns.join('\n'))
+  // A fresh project has no manifest until the Go app writes one: an info
+  // line, not a warning.
+  assert.ok(infos.some((w) => w.includes(join(none, 'sdk', 'manifest.json'))), infos.join('\n'))
+  assert.deepEqual(warns, [])
 })
 
 test('sdk: an explicit sdkDir is used as given, with no fallback', async (t) => {
@@ -894,112 +897,142 @@ test('sdk: a user alias for nexus-client wins over the plugin', () => {
   assert.ok(cfg({ alias: { '@': '/src' } }).resolve, 'an unrelated alias does not suppress it')
 })
 
-// ---- [env] bridge: NEXUS_FRONTEND_ENV → import.meta.env defines ----
+// ---- nexus-env: NEXUS_FRONTEND_ENV → exact import.meta.env references ----
 
-// envConfig runs the config hook with NEXUS_FRONTEND_ENV set to raw
-// (unset when undefined) and returns the defines and flushed warnings.
-function envConfig(raw, { command = 'build', userConfig = {} } = {}) {
+// envPlugin runs nexus-env's config and configResolved hooks with
+// NEXUS_FRONTEND_ENV set to raw (unset when undefined) and returns the
+// plugin, ready to transform, with the flushed warnings.
+async function envPlugin(raw, { command = 'build', userConfig = {} } = {}) {
   const prev = process.env.NEXUS_FRONTEND_ENV
   if (raw === undefined) delete process.env.NEXUS_FRONTEND_ENV
   else process.env.NEXUS_FRONTEND_ENV = raw
   try {
-    const p = hot()
+    const p = nexus().find((x) => x.name === 'nexus-env')
     const out = p.config(userConfig, { command, mode: command === 'build' ? 'production' : 'development' })
     const l = logger()
-    p.configResolved({ ...resolvedConfig('/r'), logger: l })
-    return { define: out.define, warns: l.warns }
+    await p.configResolved({ ...resolvedConfig('/r'), logger: l })
+    return { p, out, warns: l.warns }
   } finally {
     if (prev === undefined) delete process.env.NEXUS_FRONTEND_ENV
     else process.env.NEXUS_FRONTEND_ENV = prev
   }
 }
 
-// devEnv evaluates what Vite's dev import analysis prepends to a module —
-// `import.meta.env = {…}` built from the define keys under import.meta.env.,
-// one property per key (vite:import-analysis getEnv) — and returns it.
-function devEnv(define) {
-  const props = Object.keys(define).filter((k) => k.startsWith('import.meta.env.')).sort()
-    .map((k) => `${JSON.stringify(k.slice(16))}: ${define[k]}`)
-  return new Function(`return {${props.join(', ')}}`)()
+// run transforms code as /app/src/<file> and returns the resulting code
+// (the input when the plugin leaves it alone).
+function run(p, code, id = '/app/src/main.ts') {
+  const r = p.transform(code, id)
+  return r ? r.code : code
 }
 
-// buildRead resolves a member path the way an esbuild define does: the
-// longest defined prefix is replaced, the rest are property reads.
-function buildRead(define, path) {
-  const segs = path.split('.')
-  for (let i = segs.length; i > 3; i--) {
-    const key = segs.slice(0, i).join('.')
-    if (key in define) {
-      let v = JSON.parse(define[key])
-      for (const s of segs.slice(i)) v = v == null ? undefined : v[s]
-      return v
-    }
-  }
-  return undefined
-}
+const SECRET_ENV = JSON.stringify({
+  'client.id': 'web-id',
+  'client.secret': 'TOPSECRET-1',
+  'server.db_password': 'TOPSECRET-2',
+})
+
+test('env: an exact member expression is replaced with its string value', async () => {
+  const { p, warns } = await envPlugin(JSON.stringify({ 'client.id': 'web', 'client.url': 'https://x.test', flag: 'on', 'a.b.c': 'deep', n: 7 }))
+  assert.deepEqual(warns, [])
+  assert.equal(run(p, 'const id = import.meta.env.client.id'), 'const id = "web"')
+  assert.equal(run(p, 'f(import.meta.env.a.b.c, import.meta.env.flag, import.meta.env.n)'), 'f("deep", "on", "7")')
+  assert.equal(run(p, 'u = import.meta.env.client.url'), 'u = "https://x.test"')
+  assert.equal(run(p, 'x = [...import.meta.env.client.id]'), 'x = [..."web"]')
+  const quoted = await envPlugin(JSON.stringify({ q: 'say "hi"\n</script>' }))
+  assert.equal(run(quoted.p, 'v = import.meta.env.q'), `v = ${JSON.stringify('say "hi"\n</script>')}`)
+})
 
 for (const command of ['serve', 'build']) {
-  test(`env (${command}): dotted keys read as member expressions, values stay strings`, () => {
-    const { define, warns } = envConfig(JSON.stringify({ 'client.id': 'web', 'client.url': 'https://x.test', flag: 'on', 'a.b.c': 'deep', n: 7 }), { command })
-    assert.deepEqual(warns, [])
-    assert.deepEqual(define, {
-      'import.meta.env.a': JSON.stringify({ b: { c: 'deep' } }),
-      'import.meta.env.a.b': JSON.stringify({ c: 'deep' }),
-      'import.meta.env.a.b.c': '"deep"',
-      'import.meta.env.client': JSON.stringify({ id: 'web', url: 'https://x.test' }),
-      'import.meta.env.client.id': '"web"',
-      'import.meta.env.client.url': '"https://x.test"',
-      'import.meta.env.flag': '"on"',
-      'import.meta.env.n': '"7"',
-    })
-    const env = devEnv(define)
-    assert.equal(env.client.id, 'web')
-    assert.equal(env.flag, 'on')
-    assert.equal(env.a.b.c, 'deep')
-    assert.equal(env.n, '7')
-    assert.equal(buildRead(define, 'import.meta.env.client.id'), 'web')
-    assert.equal(buildRead(define, 'import.meta.env.a.b.c'), 'deep')
+  test(`env (${command}): nothing reaches import.meta.env — no define, no whole-object leak`, async () => {
+    const { p, out } = await envPlugin(SECRET_ENV, { command })
+    assert.equal(out, undefined, 'config adds nothing (no define)')
+    const whole = [
+      'console.log(import.meta.env)',
+      'console.log(Object.keys(import.meta.env), { ...import.meta.env })',
+      'console.log(import.meta.env.client, import.meta.env.server)',
+      "console.log(import.meta.env['client.id'], import.meta.env['client.secret'])",
+      'if (import.meta.env.DEV) console.log(import.meta.env.MODE)',
+    ].join('\n')
+    const got = run(p, whole)
+    assert.equal(got, whole, 'whole-object access is left untouched')
+    assert.doesNotMatch(got, /TOPSECRET|web-id/)
+
+    const one = run(p, 'export const id = import.meta.env.client.id; console.log(import.meta.env)')
+    assert.match(one, /"web-id"/)
+    assert.doesNotMatch(one, /TOPSECRET/, 'a module gets only the keys it names')
   })
 }
 
-test('env: an absent, empty or empty-object variable defines nothing and says nothing', () => {
-  assert.deepEqual(envConfig(undefined), { define: undefined, warns: [] })
-  assert.deepEqual(envConfig(''), { define: undefined, warns: [] })
-  assert.deepEqual(envConfig('{}'), { define: undefined, warns: [] })
+test('env: boundaries — client.id never matches client.idx; trailing members still work', async () => {
+  const { p } = await envPlugin(JSON.stringify({ 'client.id': 'web', client: 'c', a: 'x', 'a.b': 'y' }))
+  assert.equal(run(p, 'n = import.meta.env.client.id.length'), 'n = "web".length')
+  assert.equal(run(p, 'v = import.meta.env.client.idx'), 'v = "c".idx', 'the longest key that ends on a boundary wins')
+  assert.equal(run(p, 'v = import.meta.env.client.id_2'), 'v = "c".id_2')
+  assert.equal(run(p, 'v = import.meta.env.client$'), 'v = import.meta.env.client$')
+  assert.equal(run(p, 'v = import.meta.env.a.b; w = import.meta.env.a'), 'v = "y"; w = "x"')
+  assert.equal(run(p, 'v = ximport.meta.env.a; o.import.meta.env.a'), 'v = ximport.meta.env.a; o.import.meta.env.a')
+  assert.equal(run(p, 'v = import.meta.env?.a'), 'v = import.meta.env?.a')
 })
 
-test('env: invalid JSON or a non-object warns once and defines nothing', () => {
-  for (const raw of ['{nope', '["a"]', '"x"', 'null']) {
-    const { define, warns } = envConfig(raw)
-    assert.equal(define, undefined, raw)
-    assert.equal(warns.length, 1, raw)
-    assert.match(warns[0], /NEXUS_FRONTEND_ENV/)
+test('env: only project source is rewritten', async () => {
+  const { p } = await envPlugin(JSON.stringify({ 'client.id': 'web' }))
+  const code = 'x = import.meta.env.client.id'
+  for (const id of ['/app/src/a.ts', '/app/src/a.tsx', '/app/src/a.js', '/app/src/a.mjs', '/app/src/App.vue', '/app/src/A.svelte', '/app/index.html?html-proxy&index=0.js']) {
+    assert.equal(run(p, code, id), 'x = "web"', id)
+  }
+  for (const id of ['/app/node_modules/lib/index.js', '\0virtual:thing.js', '/app/src/a.css', '/app/src/a.json', '/app/src/a.ts?raw', '/app/src/a.js?url', '/app/index.html']) {
+    assert.equal(p.transform(code, id), null, id)
+  }
+  assert.equal(p.transform('const x = 1', '/app/src/a.ts'), null, 'no reference, no work')
+})
+
+test('env: keys must be identifier segments; Vite\'s own keys and non-strings are skipped', async () => {
+  const { p, warns } = await envPlugin(JSON.stringify({ 'client.my-id': 'v', 'bad-top': 'x', 'x..y': 'x', '1a': 'x', MODE: 'x', 'DEV.x': 'x', obj: {}, nil: null, ok: 'fine' }))
+  assert.equal(warns.length, 8, warns.join('\n'))
+  assert.equal(run(p, "a = import.meta.env['client.my-id']; b = import.meta.env.MODE; c = import.meta.env.ok"), "a = import.meta.env['client.my-id']; b = import.meta.env.MODE; c = \"fine\"")
+})
+
+test('env: __proto__ / constructor keys pollute nothing', async () => {
+  const raw = '{"__proto__.polluted":"yes","constructor.prototype.polluted":"yes","__proto__":{"polluted":"yes"},"a.__proto__.polluted":"yes"}'
+  const { p } = await envPlugin(raw)
+  assert.equal(({}).polluted, undefined)
+  assert.equal(Object.prototype.polluted, undefined)
+  assert.equal(run(p, 'v = import.meta.env.__proto__.polluted'), 'v = "yes"')
+  assert.equal(({}).polluted, undefined)
+})
+
+test('env: an absent, empty or empty-object variable changes nothing and says nothing', async () => {
+  for (const raw of [undefined, '', '{}']) {
+    const { p, out, warns } = await envPlugin(raw)
+    assert.equal(out, undefined)
+    assert.deepEqual(warns, [])
+    assert.equal(p.transform('x = import.meta.env.client.id', '/app/src/a.ts'), null)
   }
 })
 
-test('env: a key that is also a prefix keeps the shorter one, the same in dev and build', () => {
-  const { define, warns } = envConfig(JSON.stringify({ 'a.b': 'y', a: 'x', 'a.b.c': 'z', b: 'ok' }))
-  assert.deepEqual(define, { 'import.meta.env.a': '"x"', 'import.meta.env.b': '"ok"' })
-  assert.equal(warns.length, 2)
-  assert.match(warns[0], /"a\.b" is under "a"/)
-  assert.match(warns[1], /"a\.b\.c" is under "a"/)
-  assert.equal(devEnv(define).a, 'x')
-  assert.equal(buildRead(define, 'import.meta.env.a'), 'x')
+test('env: invalid JSON or a non-object warns once and replaces nothing', async () => {
+  for (const raw of ['{nope', '["a"]', '"x"', 'null']) {
+    const { p, warns } = await envPlugin(raw)
+    assert.equal(warns.length, 1, raw)
+    assert.match(warns[0], /NEXUS_FRONTEND_ENV/)
+    assert.equal(p.transform('x = import.meta.env.client.id', '/app/src/a.ts'), null, raw)
+  }
 })
 
-test('env: a non-identifier segment rides its parent object; unusable keys are skipped', () => {
-  const { define, warns } = envConfig(JSON.stringify({ 'client.my-id': 'v', 'bad-top': 'x', 'x..y': 'x', MODE: 'x', 'DEV.x': 'x', obj: {} }))
-  assert.deepEqual(define, { 'import.meta.env.client': JSON.stringify({ 'my-id': 'v' }) })
-  assert.equal(devEnv(define).client['my-id'], 'v')
-  assert.equal(warns.length, 5)
+test("env: the user's own define for the same path (or a parent) wins", async () => {
+  const { p } = await envPlugin(JSON.stringify({ 'client.id': 'web', 'other.id': 'o', flag: 'on', 'deep.x': 'd' }), {
+    userConfig: { define: { 'import.meta.env.client.id': '"mine"', 'import.meta.env.flag': '"mine"', 'import.meta.env.deep': '{"x":"u"}' } },
+  })
+  const code = 'f(import.meta.env.client.id, import.meta.env.flag, import.meta.env.deep.x, import.meta.env.other.id)'
+  assert.equal(run(p, code), 'f(import.meta.env.client.id, import.meta.env.flag, import.meta.env.deep.x, "o")')
 })
 
-test("env: the user's own define wins over the [env] value", () => {
-  const { define } = envConfig(JSON.stringify({ 'client.id': 'web', 'other.id': 'o', flag: 'on' }), {
-    userConfig: { define: { 'import.meta.env.client': '{"id":"mine"}', 'import.meta.env.flag': '"mine"' } },
-  })
-  assert.deepEqual(define, {
-    'import.meta.env.other': '{"id":"o"}',
-    'import.meta.env.other.id': '"o"',
-  })
+test('env: a sourcemap comes back when magic-string is available', async (t) => {
+  const { p } = await envPlugin(JSON.stringify({ 'client.id': 'web' }))
+  const r = p.transform('const a = 1\nconst id = import.meta.env.client.id\n', '/app/src/a.ts')
+  assert.equal(r.code, 'const a = 1\nconst id = "web"\n')
+  let hasMagicString = true
+  try { await import('magic-string') } catch { hasMagicString = false }
+  if (hasMagicString) assert.ok(r.map && r.map.mappings, 'map generated')
+  else assert.equal(r.map, null)
 })

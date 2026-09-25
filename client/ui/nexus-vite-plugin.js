@@ -1,4 +1,4 @@
-// nexus-vite-plugin.js — six plugins in one factory:
+// nexus-vite-plugin.js — seven plugins in one factory:
 //
 //   1. nexus-auto-select   (default-on, all builds)
 //      Auto-injects opts.select into nx.query / nx.mutate calls
@@ -50,10 +50,7 @@
 //      origin, so asset URLs resolve against Vite when the page sits on
 //      the Go app's origin, and — unless server.cors is set — allows
 //      that origin cross-origin: local names, this machine's addresses
-//      and options.appOrigin (see devCorsAllows). In both it exposes
-//      nexus.toml's [env] table, which `nexus dev` / `nexus build` pass
-//      in NEXUS_FRONTEND_ENV, as import.meta.env.<dotted key> (e.g.
-//      import.meta.env.client.id; see frontendEnvDefines).
+//      and options.appOrigin (see devCorsAllows).
 //
 //   6. nexus-pages   (default-on, dev + build)
 //      Checks that every Inertia page component the manifest names
@@ -62,6 +59,16 @@
 //      .tsx/.jsx/.svelte/.ts/.js. Dev warns once per missing component
 //      and re-checks when the Go app rewrites the manifest; build fails
 //      listing them all. No manifest, or no pages in it — nothing to do.
+//
+//   7. nexus-env   (default-on, dev + build + SSR)
+//      nexus.toml's [env] table, which `nexus dev` / `nexus build` pass
+//      in NEXUS_FRONTEND_ENV, read as import.meta.env.<dotted key>
+//      (import.meta.env.client.id). A pre transform replaces each exact
+//      reference in project source with its string value; nothing is
+//      added to the import.meta.env object, so import.meta.env itself,
+//      Object.keys(import.meta.env), import.meta.env.client or the
+//      bracket form never yield an [env] value, and a module gets only
+//      the keys it names (see frontendEnvTable).
 //
 // The manifest is read from options.sdkDir, default sdk/ under the Vite
 // root (web/sdk, where the Go app dumps the SDK in dev); a project that
@@ -148,60 +155,57 @@ const FRONTEND_ENV_VAR = 'NEXUS_FRONTEND_ENV'
 // Keys Vite itself owns on import.meta.env; an [env] entry never replaces one.
 const VITE_ENV_KEYS = new Set(['MODE', 'DEV', 'PROD', 'SSR', 'BASE_URL'])
 const IDENT_RE = /^[A-Za-z_$][\w$]*$/
+const ENV_PREFIX = 'import.meta.env.'
+// Files whose source can hold an import.meta.env reference. An inline
+// <script type="module"> in index.html arrives as index.html?html-proxy…js.
+const ENV_CODE_RE = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/
+const ENV_HTML_PROXY_RE = /\?html-proxy\b.*\.[cm]?[jt]sx?$/
+// Imports that turn a file into data (a string, a URL): its text is not code.
+const ENV_DATA_QUERY_RE = /[?&](?:raw|url|inline)\b/
 
-// frontendEnvDefines turns the [env] payload into `define` entries so each
-// dotted key reads as a member expression — import.meta.env.client.id —
-// under `vite` and `vite build` alike. The two commands consume defines
-// differently: a build (and dev SSR) substitutes each define key with
-// esbuild, while dev serves client modules untransformed and prepends
-// `import.meta.env = {…}` built from the define keys under import.meta.env.
-// — one property per key, so a flat 'client.id' there is unreachable as
-// .client.id. So every key is defined as nested objects from its first
-// segment down (import.meta.env.client = {"id":"web"}), which dev's
-// injected object and build's substitution both read the same way, plus
-// the full member path (import.meta.env.client.id = "web") so a build
-// inlines the string. Only identifier segments form define keys; a key
-// with another segment is still reachable through its parent object with
-// brackets. Values stay strings.
+// frontendEnvTable validates the [env] payload into the replacements the
+// nexus-env transform makes: import.meta.env.<dotted key> → the value as a
+// JSON string literal. Nothing is ever defined on import.meta.env: Vite's
+// dev server prepends every import.meta.env.* define to each module that
+// touches import.meta.env at all, and a build inlines the whole object for
+// Object.keys(import.meta.env) or a spread, so a define hands every value —
+// secrets in unrelated tables included — to the browser. Here only a module
+// that spells out a key gets that key's value, as esbuild's define did.
 //
-// Deterministic conflicts: a key that is also a prefix of others
-// ("a" and "a.b") keeps the shorter one and drops the rest (a string
-// can't hold properties); a key the user's own `define` already covers,
-// or that shadows one of Vite's (MODE, DEV, …), is left out. Each drop
-// is reported. No payload → no defines; unparsable → one warning.
-function frontendEnvDefines(raw, userDefine) {
-  const define = {}
+// Every dotted segment must be an identifier (a member expression has to be
+// able to spell the key); a key that shadows one of Vite's (MODE, DEV, …) or
+// has a non-string value is skipped with a warning; a key the user's own
+// `define` covers (the key or any prefix of it) is left to that define.
+// No payload → no replacements; unparsable → one warning.
+function frontendEnvTable(raw, userDefine) {
+  const values = new Map()
   const warnings = []
-  if (raw == null || raw === '') return { define, warnings }
+  if (raw == null || raw === '') return { values, warnings }
   let vars
   try {
     vars = JSON.parse(raw)
   } catch (e) {
     warnings.push(`[nexus] ${FRONTEND_ENV_VAR} is not valid JSON (${e && e.message ? e.message : e}); import.meta.env gets no [env] values.`)
-    return { define, warnings }
+    return { values, warnings }
   }
   if (vars === null || typeof vars !== 'object' || Array.isArray(vars)) {
     warnings.push(`[nexus] ${FRONTEND_ENV_VAR} must be a JSON object of dotted keys to strings; import.meta.env gets no [env] values.`)
-    return { define, warnings }
+    return { values, warnings }
   }
 
   const user = userDefine && typeof userDefine === 'object' ? userDefine : {}
-  const userCovers = (key) => {
-    const segs = key.split('.')
+  const userCovers = (segs) => {
     for (let i = 1; i <= segs.length; i++) {
-      if (Object.prototype.hasOwnProperty.call(user, 'import.meta.env.' + segs.slice(0, i).join('.'))) return true
+      if (Object.prototype.hasOwnProperty.call(user, ENV_PREFIX + segs.slice(0, i).join('.'))) return true
     }
     return false
   }
 
-  // Sorted, so a key's prefixes are always seen before it.
-  const leaves = new Set()
-  const tree = {}
   for (const key of Object.keys(vars).sort()) {
     const value = vars[key]
     const segs = key.split('.')
-    if (segs.some((s) => s === '') || !IDENT_RE.test(segs[0])) {
-      warnings.push(`[nexus] [env] key "${key}" can't be read from import.meta.env (it must start with an identifier and have no empty segments); skipped.`)
+    if (!segs.every((s) => IDENT_RE.test(s))) {
+      warnings.push(`[nexus] [env] key "${key}" can't be read as import.meta.env.${key} (every dotted segment must be an identifier); skipped.`)
       continue
     }
     if (VITE_ENV_KEYS.has(segs[0])) {
@@ -212,33 +216,59 @@ function frontendEnvDefines(raw, userDefine) {
       warnings.push(`[nexus] [env] key "${key}" is not a string; skipped.`)
       continue
     }
-    let shadow = ''
-    for (let i = 1; i < segs.length && !shadow; i++) {
-      const prefix = segs.slice(0, i).join('.')
-      if (leaves.has(prefix)) shadow = prefix
-    }
-    if (shadow) {
-      warnings.push(`[nexus] [env] key "${key}" is under "${shadow}", which is itself a value; "${key}" is skipped.`)
-      continue
-    }
-    if (userCovers(key)) continue
-    leaves.add(key)
-    let node = tree
-    for (let i = 0; i < segs.length - 1; i++) {
-      node = node[segs[i]] || (node[segs[i]] = {})
-    }
-    node[segs[segs.length - 1]] = String(value)
+    if (userCovers(segs)) continue
+    values.set(key, JSON.stringify(String(value)))
   }
+  return { values, warnings }
+}
 
-  const emit = (path, node) => {
-    define['import.meta.env.' + path] = JSON.stringify(node)
-    if (typeof node !== 'object') return
-    for (const k of Object.keys(node)) {
-      if (IDENT_RE.test(k)) emit(path + '.' + k, node[k])
+// envMatcher compiles the keys into one global regex. Longest keys come
+// first, so import.meta.env.a.b is read as key "a.b" even when "a" is also
+// a key; the lookahead keeps client.id from matching client.idx while
+// import.meta.env.client.id.length still matches; the lookbehinds keep a
+// longer name (ximport.meta…, obj.import.meta…) from matching, not a spread.
+function envMatcher(keys) {
+  if (!keys.length) return null
+  const esc = (s) => s.replace(/[.$]/g, '\\$&')
+  const alts = [...keys].sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).map(esc)
+  return new RegExp(`(?<![\\w$])(?<![^.]\\.)import\\.meta\\.env\\.(${alts.join('|')})(?![\\w$])`, 'g')
+}
+
+// envCodeId reports whether a module id is source the nexus-env transform
+// rewrites: project code, not a dependency, a virtual module or a data import.
+function envCodeId(id) {
+  if (!id || id.startsWith('\0') || id.includes('/node_modules/') || id.includes('\\node_modules\\')) return false
+  const q = id.indexOf('?')
+  if (q < 0) return ENV_CODE_RE.test(id)
+  if (ENV_HTML_PROXY_RE.test(id)) return true
+  if (ENV_DATA_QUERY_RE.test(id.slice(q))) return false
+  return ENV_CODE_RE.test(id.slice(0, q))
+}
+
+// replaceFrontendEnv rewrites every exact import.meta.env.<key> reference
+// in code, returning null when there is none. With MagicString it returns a
+// sourcemap too; without, the code alone. As with any textual constant
+// replacement, a reference spelled out inside a string or comment is
+// replaced as well.
+function replaceFrontendEnv(code, id, matcher, values, MagicString) {
+  if (!matcher || !code.includes(ENV_PREFIX)) return null
+  matcher.lastIndex = 0
+  let ms = null
+  let out = ''
+  let last = 0
+  for (let m; (m = matcher.exec(code));) {
+    const value = values.get(m[1])
+    if (MagicString) {
+      ms = ms || new MagicString(code)
+      ms.overwrite(m.index, m.index + m[0].length, value)
+    } else {
+      out += code.slice(last, m.index) + value
     }
+    last = m.index + m[0].length
   }
-  for (const k of Object.keys(tree)) emit(k, tree[k])
-  return { define, warnings }
+  if (last === 0) return null
+  if (ms) return { code: ms.toString(), map: ms.generateMap({ hires: 'boundary', source: id, includeContent: true }) }
+  return { code: out + code.slice(last), map: null }
 }
 
 // Stands in for server.origin until the dev server has bound a port.
@@ -653,7 +683,7 @@ export default function nexusAutoSelect(options = {}) {
       projectRoot = cfg.root || process.cwd()
       manifestPath = manifestPathFor(projectRoot, options.sdkDir)
       if (!existsSync(manifestPath)) {
-        cfg.logger.warn(`[nexus-auto-select] manifest not found at ${manifestPath} — plugin disabled`)
+        cfg.logger.info(`[nexus-auto-select] no manifest at ${manifestPath} yet — auto-select is off for this run`)
         return
       }
       try {
@@ -1180,10 +1210,6 @@ export default function nexusAutoSelect(options = {}) {
         }
       }
 
-      const tomlEnv = frontendEnvDefines(process.env[FRONTEND_ENV_VAR], userConfig.define)
-      hotWarnings.push(...tomlEnv.warnings)
-      if (Object.keys(tomlEnv.define).length) out.define = tomlEnv.define
-
       const server = userConfig.server || {}
       explicitOrigin = server.origin || ''
       const dev = env.command === 'serve' && !env.isPreview
@@ -1344,7 +1370,42 @@ export default function nexusAutoSelect(options = {}) {
     placeholderPending.clear()
   }
 
-  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin, pagesPlugin, hotPlugin]
+  // nexus.toml's [env] values, replaced at each exact reference. 'pre' so
+  // it sees the raw source (TS, SFC) before esbuild and Vite's own define,
+  // in dev, build and SSR alike.
+  let envValues = new Map()
+  let envMatch = null
+  let envMagicString = null
+  const envWarnings = []
+  const envPlugin = {
+    name: 'nexus-env',
+    enforce: 'pre',
+
+    config(userConfig) {
+      const table = frontendEnvTable(process.env[FRONTEND_ENV_VAR], userConfig.define)
+      envValues = table.values
+      envMatch = envMatcher([...envValues.keys()])
+      envWarnings.push(...table.warnings)
+    },
+
+    async configResolved(cfg) {
+      for (const w of envWarnings.splice(0)) cfg.logger.warn(w)
+      if (!envMatch) return
+      try {
+        const mod = await import('magic-string')
+        envMagicString = mod.default || mod
+      } catch {
+        envMagicString = null
+      }
+    },
+
+    transform(code, id) {
+      if (!envMatch || !code.includes(ENV_PREFIX) || !envCodeId(id)) return null
+      return replaceFrontendEnv(code, id, envMatch, envValues, envMagicString)
+    },
+  }
+
+  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin, pagesPlugin, hotPlugin, envPlugin]
 
   // ---- script transform (TS / JS / TSX / JSX) -----------------------
 
