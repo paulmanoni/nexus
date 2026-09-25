@@ -165,10 +165,10 @@ type App struct {
 	introspect        bool
 	introspectionNets []*net.IPNet
 
-	// environment is the named target this binary is booting into,
-	// resolved from Config.Environment / NEXUS_ENVIRONMENT / default
-	// ("production"). Drives the per-environment Override merge at
-	// fx.Start; surfaced on /__nexus/config.
+	// environment is the named target this binary is booting into:
+	// NEXUS_ENVIRONMENT, else Config.Environment (see resolveEnvironment).
+	// Drives the per-environment Override merge at fx.Start; surfaced on
+	// /__nexus/config.
 	environment string
 	// version is the binary's release tag. Defaults to "dev" via newApp
 	// when the user doesn't pass one.
@@ -324,7 +324,7 @@ func New(cfg Config) *App {
 		stripSlash:       cfg.Server.StripTrailingSlash,
 		dashboardName:    dashboardName,
 		version:          version,
-		environment:      cfg.Environment,
+		environment:      resolveEnvironment(cfg.Environment),
 		graphqlPath:      cfg.GraphQL.Path,
 		dashboardOn:      cfg.Dashboard.Enabled,
 		cacheMgr:         cfg.Stores.Cache,
@@ -768,9 +768,22 @@ func (a *App) SetClientAuthMeta(meta client.AuthMeta) {
 func (a *App) Scheduler() *cron.Scheduler { return a.cronSched }
 
 // Environment returns the resolved environment name ("production",
-// "staging", "preview", ...) the binary is booting into. Set from
-// Config.Environment or NEXUS_ENVIRONMENT; never empty.
+// "staging", "preview", ...) the binary is booting into: NEXUS_ENVIRONMENT
+// when set, else Config.Environment (nexus.toml's [runtime] environment).
+// Empty when neither is set.
 func (a *App) Environment() string { return a.environment }
+
+// resolveEnvironment applies NEXUS_ENVIRONMENT over the configured value.
+// The variable wins because it is what a deployment controls: a scaffold's
+// nexus.toml says environment = "development" (it enables the Vite hot file
+// and the SDK dump for `go run .`), and a container that copies that file
+// must still be able to say it is production without editing it.
+func resolveEnvironment(configured string) string {
+	if env := strings.TrimSpace(os.Getenv("NEXUS_ENVIRONMENT")); env != "" {
+		return env
+	}
+	return configured
+}
 
 // Version is the binary's release tag, defaulting to "dev". Surfaced on
 // /__nexus/config.

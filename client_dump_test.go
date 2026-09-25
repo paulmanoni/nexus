@@ -165,3 +165,25 @@ func TestAutoDumpClientSDK_QuietWhenUnchanged(t *testing.T) {
 		t.Errorf("unchanged SDK re-dump printed output: %q", second)
 	}
 }
+
+// NEXUS_ENVIRONMENT overrides nexus.toml's environment, so a deployment
+// that ships the scaffold's environment = "development" can still say it
+// is production — and then nothing is written.
+func TestAutoDumpClientSDK_NexusEnvironmentOverrides(t *testing.T) {
+	dir, orig := dumpProject(t, "")
+	t.Setenv("NEXUS_ENVIRONMENT", "production")
+	bootOnce(t, Config{SDK: true, Environment: "development"})
+	if sdkWritten(dir) {
+		t.Error("NEXUS_ENVIRONMENT=production, yet web/sdk was written")
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "web", "tsconfig.json")); !bytes.Equal(got, orig) {
+		t.Errorf("NEXUS_ENVIRONMENT=production, yet web/tsconfig.json was edited:\n%s", got)
+	}
+
+	dir, _ = dumpProject(t, "")
+	t.Setenv("NEXUS_ENVIRONMENT", "development")
+	bootOnce(t, Config{SDK: true})
+	if !sdkWritten(dir) {
+		t.Error("NEXUS_ENVIRONMENT=development with no configured environment should dump")
+	}
+}

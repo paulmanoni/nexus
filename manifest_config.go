@@ -157,13 +157,14 @@ type Config struct {
 	// one Deployment can run in many Environments. Drives the
 	// per-environment Override merge at boot.
 	//
-	// Resolution priority:
-	//   1. Explicit Config.Environment field
-	//   2. NEXUS_ENVIRONMENT env var (set by the orchestration platform)
-	//   3. Default "production"
+	// Resolution priority (App.Environment):
+	//   1. NEXUS_ENVIRONMENT env var (set by the orchestration platform —
+	//      it overrides the file, so a deployment can force "production"
+	//      over a scaffold's development nexus.toml)
+	//   2. This field ([runtime] environment in nexus.toml)
 	//
-	// Empty string is normalized to "production" at resolveConfig time
-	// so downstream code doesn't branch on the empty value.
+	// Empty when neither is set; code that means "development only"
+	// compares against "development", so empty behaves as production.
 	Environment string
 
 	// Version stamps the binary's version on /__nexus/config. Used by
