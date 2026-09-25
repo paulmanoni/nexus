@@ -52,7 +52,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the next steps say `nexus dev` installs the dependencies and prints the
   app's URL. `nexus init --force` adds the project files to an existing
   `web/` while keeping `index.html` and `src/`, which is how a viteless-era
-  directory moves to Vite.
+  directory moves to Vite; a replaced `package.json`, `vite.config.ts` or
+  `tsconfig.json` that differs is kept as `<file>.orig`. `nexus init`
+  also adds the frontend's `.gitignore` entries.
+- **Dependencies install with the project's own package manager**:
+  `packageManager` in package.json, else the lockfile (npm, pnpm, yarn,
+  bun), frozen when a lockfile exists; an interrupted install is retried.
+  Yarn Plug'n'Play is refused with the setting to change.
 - **Vite handshake: the plugin tells, the app reads.** `nexus-vite-plugin`
   writes `<outDir>/.vite/nexus-hot.json` — the dev server's real origin,
   base, entries and pid — once `vite dev` is listening, and removes it on
@@ -252,6 +258,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Closing the terminal (SIGHUP) left `nexus dev`'s Vite and app running;
+  `nexus dev`, `nexus build` and the TUI now stop them on SIGHUP too, and a
+  cancelled dependency install takes its children with it. On Windows the
+  whole process tree is stopped.
+- `nexus build` looked only at `web/` (or `NEXUS_FRONTEND_DIR`) while
+  `nexus dev` also followed `ServeFrontend`'s directory, so a `frontend/`
+  project built with a stale bundle; both resolve it the same way, and
+  `nexus build --frontend` exists.
 - `nexus build` never ran the Inertia SSR build: `dist/ssr/ssr.js` existed
   only if you ran `npm run build` yourself.
 - `nexus dev` stopped Vite with SIGKILL, so the plugin could not remove its

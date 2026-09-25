@@ -20,13 +20,13 @@ import (
 // after `env.` IS the variable name:
 //
 //	[env.client]
-//	id     = "ajira_portal-web"
-//	secret = "change-me-in-prod"
+//	id  = "myapp-web"
+//	url = "${PUBLIC_URL}"
 //
-// sets env vars "client.id" and "client.secret". A top-level [env] key like
+// sets env vars "client.id" and "client.url". A top-level [env] key like
 // `[env]` + `region = "eu"` sets "region". ${VAR} placeholders in the values
-// are expanded the same way as the rest of nexus.toml, so prod can keep real
-// secrets out of the file: `secret = "${CLIENT_SECRET}"`.
+// are expanded the same way as the rest of nexus.toml, so prod can keep
+// values out of the file.
 //
 // SECURITY: values exposed to the frontend end up in the browser bundle.
 // Only put client-public values (an OAuth client id, a public base URL)
@@ -93,7 +93,7 @@ func applyConfigEnv(vars map[string]string) {
 }
 
 // EnvVars reads the [env] table from a nexus.toml and returns the flattened
-// dotted name→value map (e.g. {"client.id": "ajira_portal-web"}), with
+// dotted name→value map (e.g. {"client.id": "myapp-web"}), with
 // ${VAR} placeholders expanded. Path defaults to DefaultConfigPath. The CLI
 // uses it to expose the same values to the frontend build/dev server; the
 // runtime publishes them as env vars via LoadConfig. Returns (nil, nil) when

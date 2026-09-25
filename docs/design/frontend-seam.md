@@ -371,8 +371,9 @@ hashed assets `immutable` with the Go edit in place.
 - **nexus dev drives Vite.** A frontend is a directory with a
   `package.json` — found by `--frontend`, then `NEXUS_FRONTEND_DIR`, then the
   `ServeFrontend` scan (now resolved against the package, not the cwd), then
-  `web/`. Dependencies install only when Vite is missing (`npm ci` with a
-  lockfile). `web/sdk/nexus-vite-plugin.js` is written before Vite starts,
+  `web/` — the same order for `nexus build`. Dependencies install only when
+  Vite is missing (or an install was interrupted), with the project's own
+  package manager (`packageManager`, else the lockfile; frozen with one). `web/sdk/nexus-vite-plugin.js` is written before Vite starts,
   so a fresh checkout's `vite.config` loads. Readiness and origin come from
   the hot file; Vite's `Local:`/`Network:` banner is hidden (it sent people
   to the wrong port) and the rest is prefixed `[web]`. Stop is SIGTERM to
@@ -384,7 +385,7 @@ hashed assets `immutable` with the Go edit in place.
   through the hot file (it posts to Vite's `/__inertia_ssr`, which only an
   `@inertiajs/vite` setup serves — the scaffold's stack doesn't, so dev
   renders client-side, as before).
-- **nexus build.** `npm ci` when needed, `vite build`, and — new —
+- **nexus build.** Install when needed, `vite build`, and — new —
   `vite build --ssr src/ssr.ts --outDir dist/ssr --emptyOutDir=false` when
   the entry exists; a build without `dist/.vite/manifest.json` or
   `dist/index.html` fails. The vestigial `embed_gen.go` is gone, and the log
@@ -408,6 +409,16 @@ hashed assets `immutable` with the Go edit in place.
 - **Removed:** viteless (and esbuild, QuickJS, wazero) from the CLI, the
   `islands.src` layer, `loadViteEnv`, the dead `package.json` helper.
 - **`NEXUS_ENVIRONMENT`** is read and overrides `nexus.toml`.
+
+An adversarial review proved two high findings — the first `[env]` bridge
+put every value (secrets in other tables included) into any module touching
+`import.meta.env`, and `nexus build` failed on any unset `${VAR}` in
+nexus.toml — and five medium ones (SIGHUP orphaning Vite, `nexus build`
+ignoring the frontend dir `nexus dev` found, npm installs in pnpm/yarn/bun
+projects, `NEXUS_ENVIRONMENT` not reaching SQL logging, `nexus init`
+leaving `node_modules` unignored). All are fixed with tests, the bridge
+re-proved against real Vite (no planted secret in any served module or
+built chunk).
 
 Not done: folding `frontend.Plugin`'s `src/__nexus` codegen into `web/sdk`
 (it would break imports of `src/__nexus`; it needs a migration decision),

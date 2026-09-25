@@ -1370,9 +1370,11 @@ starts (commit web/sdk):
               "npm run dev" + "go run ." is a complete dev setup.
   vite build  forces build.manifest (dist/.vite/manifest.json), which the
               app reads for caching and Inertia's asset version.
-  [env.*]     when nexus dev / nexus build start Vite, nexus.toml's [env]
-              table reaches the bundle as import.meta.env.<dotted.key>
-              (member form; public values only — they ship to browsers).
+  [env.*]     when nexus dev / nexus build start Vite, each exact reference
+              import.meta.env.<dotted.key> in frontend source is replaced
+              with nexus.toml's [env] value. Only referenced keys ship to
+              browsers; import.meta.env itself never carries them. Reference
+              public values only.
 
 Commands:
 

@@ -27,7 +27,7 @@ zero-Node engine) is retired: a `web/` with `viteless.config.*`/`viteless-env.d.
 web/
   package.json          # vite ^6.4.3, @vitejs/plugin-vue ^5.2.4 (react: plugin-react ^5.2 + React 19),
                         # typescript ~6.0.3, vue-tsc ^3.3.11 (vue-tsc 3.3 crashes on TypeScript 7)
-  package-lock.json     # commit it — nexus dev/build run `npm ci` when it exists
+  package-lock.json     # commit it (or pnpm/yarn/bun's lockfile) — installs are frozen to it
   vite.config.ts        # plugins: [vue(), nexus()] — nexus from './sdk/nexus-vite-plugin.js'; NO proxy
   tsconfig.json         # strict, include ["src"], "@/*"→src, types vite/client, no baseUrl
   index.html            # entry HTML (/src/main.ts) — also the Inertia page shell
@@ -42,8 +42,8 @@ web/
 fresh checkout's `vite.config.ts` imports the plugin from it. **Which dir** (`nexus dev`):
 `--frontend` (cwd-relative) > `NEXUS_FRONTEND_DIR` (project-relative) > the dir main.go's
 `ServeFrontend`/`frontend.Plugin` call names (AST scan, resolved against the package dir)
-> `web/` when it has a `package.json`; `nexus build` takes `NEXUS_FRONTEND_DIR`, else
-`web`. **No `package.json` → no Vite**: a hand-written or prebuilt `dist` is served as-is
+> `web/` when it has a `package.json` — `nexus build` resolves it the same way (it takes
+`--frontend` too). **No `package.json` → no Vite**: a hand-written or prebuilt `dist` is served as-is
 (e.g. `examples/petstore-spa`).
 
 ### main.go wiring
@@ -102,19 +102,22 @@ Vite as `NEXUS_FRONTEND_ENV` (JSON of dotted keys); the plugin defines
 ### Build / serve commands
 ```
 nexus dev                # build-then-swap Go loop + the project's own Vite — see below
-nexus build              # npm ci (if needed) → vite build [→ SSR build] → web/dist, then go build
+nexus build              # install (if needed) → vite build [→ SSR build] → web/dist, then go build
 ```
 `nexus build` treats `<dir>/package.json` as "there is a frontend" (none → pure-Go
-build). Steps: install deps only when `node_modules/.bin/vite` is missing (`npm ci` with a
-lockfile, else `npm install`; a clear error without npm on PATH) → write
+build). Steps: install deps only when `node_modules/.bin/vite` is missing or an earlier
+install was interrupted — with the project's own package manager (`packageManager` in
+package.json, else the lockfile: npm/pnpm/yarn/bun, frozen when a lockfile exists; a
+clear error when the tool isn't on PATH; Yarn Plug'n'Play is refused — set
+`nodeLinker: node-modules`) → write
 `web/sdk/nexus-vite-plugin.{js,d.ts}` → `vite build` → if `src/ssr.ts` exists, `vite build
 --ssr src/ssr.ts --outDir dist/ssr` (without emptying `dist`) → require
 `dist/.vite/manifest.json` or `dist/index.html` → `go build`.
 
 ### `nexus dev` — the dev model (IMPORTANT)
 `nexus dev` supervises the project's **own Vite** beside the Go app:
-- First run installs dependencies (`npm ci`/`npm install`) when `node_modules/.bin/vite`
-  is missing, writes `web/sdk/nexus-vite-plugin.*`, then spawns `vite` in the frontend dir
+- First run installs dependencies (the project's package manager, as for `nexus build`)
+  when `node_modules/.bin/vite` is missing, writes `web/sdk/nexus-vite-plugin.*`, then spawns `vite` in the frontend dir
   (its own process group, no forced `--host`) with `NEXUS_FRONTEND_ENV`.
 - The dev origin comes from the **hot file**, never from Vite's stdout. **Open the URL
   `nexus dev` prints — the Go app's origin** (`http://localhost:8080` or your `addr`); the
@@ -1164,7 +1167,7 @@ nexus dev [dir]      Live dev: the app + dashboard on its own origin, and — wh
                      go build always embeds the current frontend. --frontend <dir>
                      overrides the detected dir. --go-run = legacy loop.
                      --frontend-cmd: deprecated, ignored.
-nexus build          npm ci (if needed) → vite build [→ vite build --ssr] → web/dist,
+nexus build          install (if needed) → vite build [→ vite build --ssr] → web/dist,
                      then go build embeds it. ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 nexus generate frontend    Typed TS source tree from a manifest (--check = drift gate).
@@ -1188,8 +1191,9 @@ no Dockerfile generator.
 - **In dev, open the app's origin** (`:8080`), never Vite's port — pages load their
   modules from Vite through the hot file; there is no proxy. `web/dist` is the production
   artifact, built by `nexus build` and embedded.
-- **Frontend deps**: `nexus dev`/`nexus build` run `npm ci` (or `npm install` without a
-  lockfile) when `web/node_modules/.bin/vite` is missing. Commit `web/package-lock.json`
+- **Frontend deps**: `nexus dev`/`nexus build` install them with the project's package
+  manager (lockfile-driven, frozen) when `web/node_modules/.bin/vite` is missing. Commit
+  the lockfile
   and `web/sdk`; `web/dist/*` (except the committed `index.html` stub) and
   `web/node_modules` are gitignored. Keep `typescript` on `~6.0` (vue-tsc 3.3 crashes on 7).
 - **Deploy with `NEXUS_ENVIRONMENT=production`** — scaffolds ship `environment =
