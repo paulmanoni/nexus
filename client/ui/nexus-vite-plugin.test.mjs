@@ -874,3 +874,22 @@ test('sdk: the bare import nexus-client is aliased to the SDK client.js', () => 
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('pages build: a pages directory whose case differs fails, naming the directory on disk', (t) => {
+  const root = tmpRoot(t)
+  writeManifest(root, 'sdk', { endpoints: [page('Home')] })
+  touch(root, 'src/pages/Home.vue')
+  const err = pagesBuild(root)
+  assert.match(err, /^1 Inertia page component/)
+  assert.match(err, /the directory on disk is src\/pages/)
+  assert.equal(pagesBuild(root, { pages: 'src/pages' }), '')
+})
+
+test('sdk: a user alias for nexus-client wins over the plugin', () => {
+  const cfg = (resolve) => hot({}).config({ root: tmpdir(), resolve }, { command: 'serve', mode: 'development' })
+  assert.ok(cfg(undefined).resolve, 'no user alias: the plugin adds one')
+  assert.equal(cfg({ alias: { 'nexus-client': '/src/api/nexus.ts' } }).resolve, undefined)
+  assert.equal(cfg({ alias: [{ find: 'nexus-client', replacement: '/src/api/nexus.ts' }] }).resolve, undefined)
+  assert.equal(cfg({ alias: [{ find: /^nexus-(client)$/, replacement: '/x' }] }).resolve, undefined)
+  assert.ok(cfg({ alias: { '@': '/src' } }).resolve, 'an unrelated alias does not suppress it')
+})

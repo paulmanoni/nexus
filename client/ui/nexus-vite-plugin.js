@@ -379,6 +379,43 @@ function resolvedEntries(cfg) {
   return entries.length ? entries : ['index.html']
 }
 
+// userAliases reports whether the user's resolve.alias (object or array
+// form) already resolves the bare specifier name.
+function userAliases(userConfig, name) {
+  const alias = userConfig.resolve && userConfig.resolve.alias
+  if (!alias) return false
+  if (Array.isArray(alias)) {
+    return alias.some((a) => a && (a.find === name || (a.find instanceof RegExp && a.find.test(name))))
+  }
+  return Object.prototype.hasOwnProperty.call(alias, name)
+}
+
+// caseMismatch returns dir's path below root as the filesystem spells it,
+// when that differs from dir only by letter case, and '' otherwise (an
+// exact match, a missing directory, or dir outside root). On macOS and
+// Windows 'src/pages' opens as 'src/Pages'; Linux, and import.meta.glob's
+// keys everywhere, see two different directories.
+function caseMismatch(root, dir) {
+  const rel = relative(root, dir)
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return ''
+  const want = rel.split(sep)
+  const actual = []
+  let cur = root
+  for (const seg of want) {
+    let entries
+    try {
+      entries = readdirSync(cur)
+    } catch {
+      return ''
+    }
+    const hit = entries.includes(seg) ? seg : entries.find((e) => e.toLowerCase() === seg.toLowerCase())
+    if (!hit) return ''
+    actual.push(hit)
+    cur = join(cur, hit)
+  }
+  return actual.join('/') === want.join('/') ? '' : actual.join('/')
+}
+
 function sameEntries(a, b) {
   const x = toArray(a).map(String).sort()
   const y = toArray(b).map(String).sort()
@@ -820,6 +857,7 @@ export default function nexusAutoSelect(options = {}) {
     return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : pagesDir
   }
   const pagesDirMissing = () => {
+    if (caseMismatch(pagesRoot, pagesDir)) return true
     try {
       return !statSync(pagesDir).isDirectory()
     } catch {
@@ -832,8 +870,22 @@ export default function nexusAutoSelect(options = {}) {
       ? `'${name}'${via} → expected ${pagesDirLabel()}/${name}.{${PAGE_EXTS.join(',')}}`
       : `'${name}'${via} → not a path under ${pagesDirLabel()}`
   }
-  const pagesDirHint = () =>
-    `${pagesDirLabel()} does not exist — point nexus({ pages }) at the pages directory, or pass pages: false`
+  const pagesDirHint = () => {
+    const onDisk = caseMismatch(pagesRoot, pagesDir)
+    return onDisk
+      ? `${pagesDirLabel()} does not exist with that case — the directory on disk is ${onDisk}, ` +
+        `which a case-sensitive filesystem (Linux) and import.meta.glob keys treat as different; ` +
+        `point nexus({ pages }) at ${onDisk}, or rename the directory`
+      : `${pagesDirLabel()} does not exist — point nexus({ pages }) at the pages directory, or pass pages: false`
+  }
+  // Pages under a directory whose case differs are all missing: a
+  // case-insensitive filesystem would otherwise find them and pass a
+  // build that fails on Linux.
+  const findMissingPages = () => {
+    if (!caseMismatch(pagesRoot, pagesDir)) return missingPages(pagesManifest, pagesDir)
+    const pages = manifestPages(pagesManifest)
+    return pages ? [...pages] : null
+  }
   const pagesHint = 'create the file, or fix the component name passed to inertia.Page'
   let warnedPages = new Set()
   let warnedPagesDir = false
@@ -853,7 +905,7 @@ export default function nexusAutoSelect(options = {}) {
 
     buildStart() {
       if (!pagesDir || !pagesBuild) return
-      const missing = missingPages(pagesManifest, pagesDir)
+      const missing = findMissingPages()
       if (!missing || missing.length === 0) return
       const lines = missing.map(([name, routes]) => `  - ${describeMissingPage(name, routes)}`)
       if (pagesDirMissing()) lines.push(`  (${pagesDirHint()})`)
@@ -868,7 +920,7 @@ export default function nexusAutoSelect(options = {}) {
       if (!pagesDir) return
       const logger = server.config.logger
       const check = () => {
-        const missing = missingPages(pagesManifest, pagesDir)
+        const missing = findMissingPages()
         if (!missing) return
         const now = new Set()
         let fresh = 0
@@ -1015,12 +1067,15 @@ export default function nexusAutoSelect(options = {}) {
       }
 
       // `import … from 'nexus-client'` resolves to the SDK the Go app
-      // writes, matching the tsconfig paths entry the Go side merges. A
-      // user alias for the same name comes first in the merged list and
-      // wins.
-      const root = resolve(userConfig.root || process.cwd())
-      out.resolve = {
-        alias: [{ find: /^nexus-client$/, replacement: join(dirname(manifestPathFor(root, options.sdkDir)), 'client.js') }],
+      // writes, matching the tsconfig paths entry the Go side merges.
+      // Vite puts plugin aliases ahead of the user's and the first match
+      // wins, so the alias is added only when the user has none for the
+      // name — their own mapping (a wrapper module) must win.
+      if (!userAliases(userConfig, 'nexus-client')) {
+        const root = resolve(userConfig.root || process.cwd())
+        out.resolve = {
+          alias: [{ find: /^nexus-client$/, replacement: join(dirname(manifestPathFor(root, options.sdkDir)), 'client.js') }],
+        }
       }
 
       const server = userConfig.server || {}
