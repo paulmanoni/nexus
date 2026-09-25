@@ -773,6 +773,15 @@ func (a *App) Scheduler() *cron.Scheduler { return a.cronSched }
 // Empty when neither is set.
 func (a *App) Environment() string { return a.environment }
 
+// ActiveEnvironment is the environment the process is booting into, for
+// code with no *App at hand (a resource's logger, an extension's init):
+// NEXUS_ENVIRONMENT when set, else [runtime] environment from the loaded
+// nexus.toml — the same rule App.Environment applies, so the two agree for
+// an app configured from the file.
+func ActiveEnvironment() string {
+	return resolveEnvironment(Get[string]("runtime.environment"))
+}
+
 // resolveEnvironment applies NEXUS_ENVIRONMENT over the configured value.
 // The variable wins because it is what a deployment controls: a scaffold's
 // nexus.toml says environment = "development" (it enables the Vite hot file

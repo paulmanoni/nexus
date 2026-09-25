@@ -62,12 +62,14 @@ func resolveLogLevel(raw string, dev bool) gormlogger.LogLevel {
 
 // devMode reports whether the app is running under `nexus dev` or an explicit
 // development environment — the signal for on-by-default SQL logging. Reads the
-// NEXUS_DEV env flag (set by `nexus dev`) and runtime.environment (nexus.toml).
+// NEXUS_DEV env flag (set by `nexus dev`) and nexus.ActiveEnvironment
+// (NEXUS_ENVIRONMENT, else nexus.toml's), so a deployment that overrides a
+// development nexus.toml gets production logging.
 func devMode() bool {
 	if os.Getenv("NEXUS_DEV") != "" {
 		return true
 	}
-	return strings.EqualFold(nexus.Get[string]("runtime.environment"), "development")
+	return strings.EqualFold(nexus.ActiveEnvironment(), "development")
 }
 
 // gormInitFailure is the message gorm.Open emits when the dialector cannot
