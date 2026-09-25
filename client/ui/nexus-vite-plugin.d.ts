@@ -98,7 +98,10 @@ export interface NexusVitePluginOptions {
  * so assets resolve cross-origin, and — unless server.cors is set — a CORS
  * allowlist for the app's origin (see appOrigin). Under `vite build` it
  * forces build.manifest, and a build into the outDir of a running dev
- * server puts that server's hot file back after emptyOutDir. Spread the
- * result into the `plugins` array of vite.config.ts.
+ * server puts that server's hot file back after emptyOutDir. In both
+ * commands it exposes nexus.toml's [env] table — passed by `nexus dev` /
+ * `nexus build` in NEXUS_FRONTEND_ENV — as string values on
+ * import.meta.env, read as member expressions (import.meta.env.client.id).
+ * Spread the result into the `plugins` array of vite.config.ts.
  */
 export default function nexusAutoSelect(options?: NexusVitePluginOptions): Plugin[]

@@ -893,3 +893,113 @@ test('sdk: a user alias for nexus-client wins over the plugin', () => {
   assert.equal(cfg({ alias: [{ find: /^nexus-(client)$/, replacement: '/x' }] }).resolve, undefined)
   assert.ok(cfg({ alias: { '@': '/src' } }).resolve, 'an unrelated alias does not suppress it')
 })
+
+// ---- [env] bridge: NEXUS_FRONTEND_ENV → import.meta.env defines ----
+
+// envConfig runs the config hook with NEXUS_FRONTEND_ENV set to raw
+// (unset when undefined) and returns the defines and flushed warnings.
+function envConfig(raw, { command = 'build', userConfig = {} } = {}) {
+  const prev = process.env.NEXUS_FRONTEND_ENV
+  if (raw === undefined) delete process.env.NEXUS_FRONTEND_ENV
+  else process.env.NEXUS_FRONTEND_ENV = raw
+  try {
+    const p = hot()
+    const out = p.config(userConfig, { command, mode: command === 'build' ? 'production' : 'development' })
+    const l = logger()
+    p.configResolved({ ...resolvedConfig('/r'), logger: l })
+    return { define: out.define, warns: l.warns }
+  } finally {
+    if (prev === undefined) delete process.env.NEXUS_FRONTEND_ENV
+    else process.env.NEXUS_FRONTEND_ENV = prev
+  }
+}
+
+// devEnv evaluates what Vite's dev import analysis prepends to a module —
+// `import.meta.env = {…}` built from the define keys under import.meta.env.,
+// one property per key (vite:import-analysis getEnv) — and returns it.
+function devEnv(define) {
+  const props = Object.keys(define).filter((k) => k.startsWith('import.meta.env.')).sort()
+    .map((k) => `${JSON.stringify(k.slice(16))}: ${define[k]}`)
+  return new Function(`return {${props.join(', ')}}`)()
+}
+
+// buildRead resolves a member path the way an esbuild define does: the
+// longest defined prefix is replaced, the rest are property reads.
+function buildRead(define, path) {
+  const segs = path.split('.')
+  for (let i = segs.length; i > 3; i--) {
+    const key = segs.slice(0, i).join('.')
+    if (key in define) {
+      let v = JSON.parse(define[key])
+      for (const s of segs.slice(i)) v = v == null ? undefined : v[s]
+      return v
+    }
+  }
+  return undefined
+}
+
+for (const command of ['serve', 'build']) {
+  test(`env (${command}): dotted keys read as member expressions, values stay strings`, () => {
+    const { define, warns } = envConfig(JSON.stringify({ 'client.id': 'web', 'client.url': 'https://x.test', flag: 'on', 'a.b.c': 'deep', n: 7 }), { command })
+    assert.deepEqual(warns, [])
+    assert.deepEqual(define, {
+      'import.meta.env.a': JSON.stringify({ b: { c: 'deep' } }),
+      'import.meta.env.a.b': JSON.stringify({ c: 'deep' }),
+      'import.meta.env.a.b.c': '"deep"',
+      'import.meta.env.client': JSON.stringify({ id: 'web', url: 'https://x.test' }),
+      'import.meta.env.client.id': '"web"',
+      'import.meta.env.client.url': '"https://x.test"',
+      'import.meta.env.flag': '"on"',
+      'import.meta.env.n': '"7"',
+    })
+    const env = devEnv(define)
+    assert.equal(env.client.id, 'web')
+    assert.equal(env.flag, 'on')
+    assert.equal(env.a.b.c, 'deep')
+    assert.equal(env.n, '7')
+    assert.equal(buildRead(define, 'import.meta.env.client.id'), 'web')
+    assert.equal(buildRead(define, 'import.meta.env.a.b.c'), 'deep')
+  })
+}
+
+test('env: an absent, empty or empty-object variable defines nothing and says nothing', () => {
+  assert.deepEqual(envConfig(undefined), { define: undefined, warns: [] })
+  assert.deepEqual(envConfig(''), { define: undefined, warns: [] })
+  assert.deepEqual(envConfig('{}'), { define: undefined, warns: [] })
+})
+
+test('env: invalid JSON or a non-object warns once and defines nothing', () => {
+  for (const raw of ['{nope', '["a"]', '"x"', 'null']) {
+    const { define, warns } = envConfig(raw)
+    assert.equal(define, undefined, raw)
+    assert.equal(warns.length, 1, raw)
+    assert.match(warns[0], /NEXUS_FRONTEND_ENV/)
+  }
+})
+
+test('env: a key that is also a prefix keeps the shorter one, the same in dev and build', () => {
+  const { define, warns } = envConfig(JSON.stringify({ 'a.b': 'y', a: 'x', 'a.b.c': 'z', b: 'ok' }))
+  assert.deepEqual(define, { 'import.meta.env.a': '"x"', 'import.meta.env.b': '"ok"' })
+  assert.equal(warns.length, 2)
+  assert.match(warns[0], /"a\.b" is under "a"/)
+  assert.match(warns[1], /"a\.b\.c" is under "a"/)
+  assert.equal(devEnv(define).a, 'x')
+  assert.equal(buildRead(define, 'import.meta.env.a'), 'x')
+})
+
+test('env: a non-identifier segment rides its parent object; unusable keys are skipped', () => {
+  const { define, warns } = envConfig(JSON.stringify({ 'client.my-id': 'v', 'bad-top': 'x', 'x..y': 'x', MODE: 'x', 'DEV.x': 'x', obj: {} }))
+  assert.deepEqual(define, { 'import.meta.env.client': JSON.stringify({ 'my-id': 'v' }) })
+  assert.equal(devEnv(define).client['my-id'], 'v')
+  assert.equal(warns.length, 5)
+})
+
+test("env: the user's own define wins over the [env] value", () => {
+  const { define } = envConfig(JSON.stringify({ 'client.id': 'web', 'other.id': 'o', flag: 'on' }), {
+    userConfig: { define: { 'import.meta.env.client': '{"id":"mine"}', 'import.meta.env.flag': '"mine"' } },
+  })
+  assert.deepEqual(define, {
+    'import.meta.env.other': '{"id":"o"}',
+    'import.meta.env.other.id': '"o"',
+  })
+})

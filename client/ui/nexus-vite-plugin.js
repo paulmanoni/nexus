@@ -50,7 +50,10 @@
 //      origin, so asset URLs resolve against Vite when the page sits on
 //      the Go app's origin, and — unless server.cors is set — allows
 //      that origin cross-origin: local names, this machine's addresses
-//      and options.appOrigin (see devCorsAllows).
+//      and options.appOrigin (see devCorsAllows). In both it exposes
+//      nexus.toml's [env] table, which `nexus dev` / `nexus build` pass
+//      in NEXUS_FRONTEND_ENV, as import.meta.env.<dotted key> (e.g.
+//      import.meta.env.client.id; see frontendEnvDefines).
 //
 //   6. nexus-pages   (default-on, dev + build)
 //      Checks that every Inertia page component the manifest names
@@ -138,6 +141,105 @@ const HOT_DIR = '.vite'
 const HOT_FILE = 'nexus-hot.json'
 const HOT_VERSION = 1
 const NEXUS_MANIFEST = '.vite/manifest.json'
+
+// nexus.toml's [env] table, as `nexus dev` / `nexus build` hand it to Vite:
+// a JSON object of dotted keys to string values ({"client.id": "web"}).
+const FRONTEND_ENV_VAR = 'NEXUS_FRONTEND_ENV'
+// Keys Vite itself owns on import.meta.env; an [env] entry never replaces one.
+const VITE_ENV_KEYS = new Set(['MODE', 'DEV', 'PROD', 'SSR', 'BASE_URL'])
+const IDENT_RE = /^[A-Za-z_$][\w$]*$/
+
+// frontendEnvDefines turns the [env] payload into `define` entries so each
+// dotted key reads as a member expression — import.meta.env.client.id —
+// under `vite` and `vite build` alike. The two commands consume defines
+// differently: a build (and dev SSR) substitutes each define key with
+// esbuild, while dev serves client modules untransformed and prepends
+// `import.meta.env = {…}` built from the define keys under import.meta.env.
+// — one property per key, so a flat 'client.id' there is unreachable as
+// .client.id. So every key is defined as nested objects from its first
+// segment down (import.meta.env.client = {"id":"web"}), which dev's
+// injected object and build's substitution both read the same way, plus
+// the full member path (import.meta.env.client.id = "web") so a build
+// inlines the string. Only identifier segments form define keys; a key
+// with another segment is still reachable through its parent object with
+// brackets. Values stay strings.
+//
+// Deterministic conflicts: a key that is also a prefix of others
+// ("a" and "a.b") keeps the shorter one and drops the rest (a string
+// can't hold properties); a key the user's own `define` already covers,
+// or that shadows one of Vite's (MODE, DEV, …), is left out. Each drop
+// is reported. No payload → no defines; unparsable → one warning.
+function frontendEnvDefines(raw, userDefine) {
+  const define = {}
+  const warnings = []
+  if (raw == null || raw === '') return { define, warnings }
+  let vars
+  try {
+    vars = JSON.parse(raw)
+  } catch (e) {
+    warnings.push(`[nexus] ${FRONTEND_ENV_VAR} is not valid JSON (${e && e.message ? e.message : e}); import.meta.env gets no [env] values.`)
+    return { define, warnings }
+  }
+  if (vars === null || typeof vars !== 'object' || Array.isArray(vars)) {
+    warnings.push(`[nexus] ${FRONTEND_ENV_VAR} must be a JSON object of dotted keys to strings; import.meta.env gets no [env] values.`)
+    return { define, warnings }
+  }
+
+  const user = userDefine && typeof userDefine === 'object' ? userDefine : {}
+  const userCovers = (key) => {
+    const segs = key.split('.')
+    for (let i = 1; i <= segs.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(user, 'import.meta.env.' + segs.slice(0, i).join('.'))) return true
+    }
+    return false
+  }
+
+  // Sorted, so a key's prefixes are always seen before it.
+  const leaves = new Set()
+  const tree = {}
+  for (const key of Object.keys(vars).sort()) {
+    const value = vars[key]
+    const segs = key.split('.')
+    if (segs.some((s) => s === '') || !IDENT_RE.test(segs[0])) {
+      warnings.push(`[nexus] [env] key "${key}" can't be read from import.meta.env (it must start with an identifier and have no empty segments); skipped.`)
+      continue
+    }
+    if (VITE_ENV_KEYS.has(segs[0])) {
+      warnings.push(`[nexus] [env] key "${key}" would replace Vite's own import.meta.env.${segs[0]}; skipped.`)
+      continue
+    }
+    if (value === null || typeof value === 'object') {
+      warnings.push(`[nexus] [env] key "${key}" is not a string; skipped.`)
+      continue
+    }
+    let shadow = ''
+    for (let i = 1; i < segs.length && !shadow; i++) {
+      const prefix = segs.slice(0, i).join('.')
+      if (leaves.has(prefix)) shadow = prefix
+    }
+    if (shadow) {
+      warnings.push(`[nexus] [env] key "${key}" is under "${shadow}", which is itself a value; "${key}" is skipped.`)
+      continue
+    }
+    if (userCovers(key)) continue
+    leaves.add(key)
+    let node = tree
+    for (let i = 0; i < segs.length - 1; i++) {
+      node = node[segs[i]] || (node[segs[i]] = {})
+    }
+    node[segs[segs.length - 1]] = String(value)
+  }
+
+  const emit = (path, node) => {
+    define['import.meta.env.' + path] = JSON.stringify(node)
+    if (typeof node !== 'object') return
+    for (const k of Object.keys(node)) {
+      if (IDENT_RE.test(k)) emit(path + '.' + k, node[k])
+    }
+  }
+  for (const k of Object.keys(tree)) emit(k, tree[k])
+  return { define, warnings }
+}
 
 // Stands in for server.origin until the dev server has bound a port.
 // Vite prefixes dev asset URLs (CSS url(), asset imports) with
@@ -1077,6 +1179,10 @@ export default function nexusAutoSelect(options = {}) {
           alias: [{ find: /^nexus-client$/, replacement: join(dirname(manifestPathFor(root, options.sdkDir)), 'client.js') }],
         }
       }
+
+      const tomlEnv = frontendEnvDefines(process.env[FRONTEND_ENV_VAR], userConfig.define)
+      hotWarnings.push(...tomlEnv.warnings)
+      if (Object.keys(tomlEnv.define).length) out.define = tomlEnv.define
 
       const server = userConfig.server || {}
       explicitOrigin = server.origin || ''
