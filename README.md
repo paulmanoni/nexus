@@ -31,8 +31,8 @@
 **nexus** is a Go framework. You write one plain function; nexus exposes it over
 **REST, GraphQL, and WebSocket** from the same signature, wires up dependencies for
 you, and ships a live **dashboard** at `/__nexus/` that draws your whole app and shows
-traffic in real time. No code generation, no schema files, and **no Node.js** for the
-frontend. The HTTP router is pluggable behind a small seam — the default backend is the
+traffic in real time. No code generation, no schema files, and one Go binary to deploy —
+the frontend included. The HTTP router is pluggable behind a small seam — the default backend is the
 standard library (`net/http`, zero third-party router deps); [chi](https://github.com/go-chi/chi)
 and [Gin](https://github.com/gin-gonic/gin) are opt-in via `nexus.WithRouter(...)` (the Gin
 adapter is a separate module, so gin never enters a default build's dependency graph).
@@ -43,7 +43,8 @@ adapter is a separate module, so gin never enters a default build's dependency g
 go install github.com/paulmanoni/nexus/cmd/nexus@latest
 ```
 
-Needs Go 1.26+. That's it — pure Go, no C toolchain, no npm.
+Needs Go 1.26+ — pure Go, no C toolchain. A frontend adds Node.js 20+ and npm, at dev
+and build time only; the binary you ship runs without them.
 
 ## 60-second start
 
@@ -202,12 +203,21 @@ nexus.Module("todos", nexus.ProvideCRUD[Todo]("todos"))
 // → GET/POST /todos, GET/PUT/DELETE /todos/:id, plus GraphQL queries + mutations
 ```
 
-Add a frontend with **no Node.js required** — nexus ships an embedded "Vite for Go":
+Add a frontend — an ordinary [Vite](https://vite.dev) project under `web/`, embedded into
+the binary at build time:
 
 ```bash
-nexus new my-app --frontend vue   # or react
-nexus dev                         # SPA with hot-reload on :5173, API on :8080
+nexus new my-app --frontend vue   # or react; --inertia for server-driven pages
+cd my-app && go mod tidy
+nexus dev                         # installs web/ deps on first run, runs Vite beside the app
+nexus build                       # vite build → web/dist, then one Go binary
 ```
+
+Open the URL `nexus dev` prints — the app's own origin (`http://localhost:8080`). The
+scaffold's `vite.config.ts` loads `nexus()` from `web/sdk/nexus-vite-plugin.js`, which tells
+the app where the dev server is, so pages served by Go load their modules from Vite with
+HMR: no proxy block, no second URL, and `npm run dev` + `go run .` works too. Deploy with
+`NEXUS_ENVIRONMENT=production`. Details: `nexus docs frontend`.
 
 ## Client SDK
 
