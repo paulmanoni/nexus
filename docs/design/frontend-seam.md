@@ -1,6 +1,6 @@
 # Seamless nexus ↔ Vite
 
-Status: **in progress** (Stages 1–3 built) — decision taken 2026-09-24: Vite is the only frontend
+Status: **built** (Stages 1–4) — decision taken 2026-09-24: Vite is the only frontend
 engine; viteless is retired from nexus (the repo lives on independently).
 Node/npm are dev- and build-time requirements; the runtime stays one Go binary
 with `web/dist` embedded.
@@ -348,7 +348,63 @@ crashes on TypeScript 7). A component rendered by routes with different props
 types gets a union, which Vue merges into all-required props — a dev-only
 "missing required prop" warning on the routes lacking a field. Not verified:
 the augmentation under pnpm's strict layout, where `@inertiajs/core` may not
-resolve from `web/sdk`. Open: the dev-only dump keys on `nexus dev` or
-`environment = "development"`, and scaffolds ship the latter, so a
-deployment that keeps the scaffold's `nexus.toml` beside `web/` would still
-dump; `NEXUS_ENVIRONMENT` is documented but never read.
+resolve from `web/sdk`. The dev-only dump keys on `nexus dev` or
+`environment = "development"`; a deployment keeping the scaffold's
+`nexus.toml` sets `NEXUS_ENVIRONMENT=production`, which Stage 4 made
+override the file.
+
+## Stage 4 — as built
+
+Verified end to end with the CLI built from the branch: `nexus new app
+--frontend vue --inertia --yes`, then `nexus dev` installed the frontend's
+dependencies (npm) on first run, started the project's own Vite, took
+readiness from the hot file, wrote `web/sdk` and the tsconfig mapping, and
+printed the app's origin; that origin served `index.html` with Vite's module
+tags and the page's `data-page`; switching the page to
+`defineProps<NexusPageProps['Home']>()` hot-updated with no reload and
+compiled to `message: { type: String, required: true }`, and `vue-tsc`
+passed; a `.go` edit was live 4s later; Ctrl-C left no process, port or hot
+file. `nexus build` then ran `vite build` + `go build`, and the binary,
+run from an empty directory with `NEXUS_ENVIRONMENT=production`, served the
+hashed assets `immutable` with the Go edit in place.
+
+- **nexus dev drives Vite.** A frontend is a directory with a
+  `package.json` — found by `--frontend`, then `NEXUS_FRONTEND_DIR`, then the
+  `ServeFrontend` scan (now resolved against the package, not the cwd), then
+  `web/`. Dependencies install only when Vite is missing (`npm ci` with a
+  lockfile). `web/sdk/nexus-vite-plugin.js` is written before Vite starts,
+  so a fresh checkout's `vite.config` loads. Readiness and origin come from
+  the hot file; Vite's `Local:`/`Network:` banner is hidden (it sent people
+  to the wrong port) and the rest is prefixed `[web]`. Stop is SIGTERM to
+  the process group, SIGKILL after 2s, then a wait — the plugin removes its
+  hot file on the signal. `--dist` runs `vite build` (+ SSR), `--tui` starts
+  Vite, `--frontend-cmd` is deprecated, and Inertia mode detection (the
+  `go list -deps` scan and its log muting) is gone. `NEXUS_VITE_DEV` is no
+  longer set; Inertia SSR finds the dev server through the hot file.
+- **nexus build.** `npm ci` when needed, `vite build`, and — new —
+  `vite build --ssr src/ssr.ts --outDir dist/ssr --emptyOutDir=false` when
+  the entry exists; a build without `dist/.vite/manifest.json` or
+  `dist/index.html` fails. The vestigial `embed_gen.go` is gone, and the log
+  names the embedded `nexus.toml` instead of printing it as base64.
+  `ServeFrontend` never serves `dist/ssr`.
+- **The `[env]` bridge reaches real Vite** for the first time (viteless
+  dropped it whenever it delegated): the CLI passes the table as
+  `NEXUS_FRONTEND_ENV`, and the plugin defines both the nested objects
+  (`import.meta.env.client = {id}` — what dev's injected env object needs)
+  and the full member paths (what build inlines). A top-level `[env]` value
+  no longer panics boot.
+- **Scaffolds are Vite projects**: `package.json` (vite ^6.4.3,
+  typescript ~6.0.3, vue-tsc ^3.3.11; React 19 with plugin-react 5),
+  `vite.config.ts` with `nexus()` and no proxy, the plugin in `web/sdk`
+  (committed, not ignored), a typed page glob, SSR on
+  `@inertiajs/vue3/server`. `--tooling` is deprecated. `nexus init` no
+  longer drops the `//go:embed` line from a commented `main.go`.
+- **Removed:** viteless (and esbuild, QuickJS, wazero) from the CLI, the
+  `islands.src` layer, `loadViteEnv`, the dead `package.json` helper.
+- **`NEXUS_ENVIRONMENT`** is read and overrides `nexus.toml`.
+
+Not done: folding `frontend.Plugin`'s `src/__nexus` codegen into `web/sdk`
+(it would break imports of `src/__nexus`; it needs a migration decision),
+`nexus init --inertia`, and `[env]` values under a bare `npm run dev` (only
+`nexus dev`/`nexus build` pass them). The Inertia SSR-over-Vite endpoint
+was exercised only against a fake server.
