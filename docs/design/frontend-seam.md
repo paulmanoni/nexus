@@ -313,13 +313,17 @@ wrote nothing and left `tsconfig.json` untouched.
   and rides an index signature.
 - **`usePage().props` is typed** through `inertia.d.ts`, a global
   augmentation of `@inertiajs/core`'s `InertiaConfig.sharedPageProps`,
-  referenced from `client.d.ts` and added to an existing tsconfig `include`
-  (a component that only calls `usePage()` imports nothing that would load
-  it). Written only when there are pages or typed shares, and removed when
+  referenced from `client.d.ts`, which is added to an existing tsconfig
+  `include` (a component that only calls `usePage()` imports nothing that
+  would load it). Written only when there are pages or typed shares, and removed when
   there no longer are.
 - **`nexus-client` resolves.** The tsconfig merge maps it to `client.d.ts`
-  (TypeScript will not swap declarations in for a mapped `.js`), the plugin
-  aliases it to `client.js` for Vite, and no `baseUrl` is added any more.
+  (TypeScript will not swap declarations in for a mapped `.js`) — in the
+  referenced config covering `src/` when the root is solution-style, as
+  create-vue's is, since Vue's SFC compiler resolves only through tsconfig
+  paths — and every dev mount wires it, the implicit `nexus dev` one
+  included. The plugin aliases it to `client.js` for Vite. A project's own
+  mapping or alias for the name wins; no `baseUrl` is added any more.
 - **One location, development only.** The dump runs under `nexus dev` or
   `environment = "development"` (the hot-file rule) and never in a
   production binary; `client.Off` is an explicit "no dump" the frontend
@@ -329,6 +333,14 @@ wrote nothing and left `tsconfig.json` untouched.
   `src/Pages`) warns in `vite dev` and fails `vite build` for every
   registered component with no file, matched case-exactly.
 
+An adversarial review of the branch proved one high finding (the import
+above failed `vite build` under the implicit dev mount and in the create-vue
+layout — both fixed and re-verified with the real compiler) and four medium
+ones (an ignored `client.Off` under `sdk = true`, the plugin's alias
+shadowing the user's, a user's mapping overwritten, shared keys typed as
+always present though a failed compute omits them), all fixed with tests.
+`nexus.Tag` now refuses the framework's own tag keys.
+
 Deferred to Stage 4: folding `frontend.Plugin`'s `src/__nexus` codegen and
 `nexus generate frontend` into `web/sdk` (its dead in-process driver is gone;
 the CLI paths remain), and pinning `typescript ~6.0` in scaffolds (vue-tsc 3.3
@@ -336,4 +348,7 @@ crashes on TypeScript 7). A component rendered by routes with different props
 types gets a union, which Vue merges into all-required props — a dev-only
 "missing required prop" warning on the routes lacking a field. Not verified:
 the augmentation under pnpm's strict layout, where `@inertiajs/core` may not
-resolve from `web/sdk`.
+resolve from `web/sdk`. Open: the dev-only dump keys on `nexus dev` or
+`environment = "development"`, and scaffolds ship the latter, so a
+deployment that keeps the scaffold's `nexus.toml` beside `web/` would still
+dump; `NEXUS_ENVIRONMENT` is documented but never read.

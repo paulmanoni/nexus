@@ -71,9 +71,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`import type { NexusPageProps } from 'nexus-client'` resolves.** The
   tsconfig merge maps `nexus-client` to the SDK's `client.d.ts` (the docs
   promised the name; nothing mapped it), and `nexus-vite-plugin` aliases it to
-  `client.js` for Vite. When the config lists `include`, the SDK's `*.d.ts`
-  join it, so the `inertia.d.ts` augmentation applies even in a component that
-  only calls `usePage()`.
+  `client.js` for Vite (a project's own mapping or alias for the name wins).
+  When the config lists `include`, the SDK's `client.d.ts` joins it, so the
+  `inertia.d.ts` augmentation applies even in a component that only calls
+  `usePage()`. A solution-style root (`files: []` + `references`, the
+  create-vue / create-vite layout) is left alone and the referenced config
+  covering `src/` gets the mapping. Every dev mount wires it, including the
+  implicit `nexus dev` one; `Client.TSConfig = client.Off` opts out.
 - **`nexus({ pages })` checks page components exist.** Every component the
   manifest names (default dir `src/Pages`) must have a file, matched
   case-exactly as `import.meta.glob` keys are: `vite dev` warns once per
@@ -81,7 +85,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a build error instead of a blank NotFound render. `pages: false` turns it off.
 - **`nexus.Tag(key, value)`** — the exported cross-transport option for
   stamping an endpoint's registry tags, for extensions that mark the
-  endpoints they register. `App.RegisterSharedProp(key, reflect.Type)` records
+  endpoints they register. Keys this package's options own (`auth.public`,
+  `auth.flow`, `auth.requires`, `dashboard.*`, `nexus.envelope`) panic at
+  registration, naming the option to use. `App.RegisterSharedProp(key, reflect.Type)` records
   a typed page-wide shared prop.
 
 ### Changed
