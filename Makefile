@@ -1,8 +1,8 @@
 # nexus — developer + CI tasks.
 #
 # The repo is several Go modules: the main library module, the nexus CLI
-# (cmd/nexus — keeps cobra/bubbletea/viteless/esbuild/x-tools out of the
-# library's dependency graph), and two opt-in router/DI adapters that
+# (cmd/nexus — keeps cobra/bubbletea/x-tools out of the library's
+# dependency graph), and two opt-in router/DI adapters that
 # version independently (gin, fx). The root go.work makes in-repo builds
 # use the checked-out tree; `test`/`vet` iterate every module so none can
 # silently break.

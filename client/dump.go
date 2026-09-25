@@ -97,8 +97,9 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 			return err
 		}
 	}
-	// vite.config is no longer touched — viteless serves the frontend and
-	// owns the dev proxy, so there's no managed proxy block to inject.
+	// vite.config is never touched: the browser opens the app's own origin
+	// and nexus-vite-plugin's hot file points pages at the dev server, so
+	// there is no proxy block to manage.
 	_ = viteConfig
 	return nil
 }

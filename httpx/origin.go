@@ -63,9 +63,10 @@ func CheckWebSocketOrigin(r *http.Request) bool {
 			}
 		}
 	}
-	// Dev: the SPA is served by viteless on :5173 while the app listens on
-	// :8080, so every upgrade from the browser is cross-origin by
-	// construction. Both ends are the developer's own machine.
+	// Dev: a page can still be opened on the Vite dev server's port while
+	// the app listens on its own, making every upgrade from it
+	// cross-origin by construction. Both ends are the developer's own
+	// machine.
 	return devMode() && isLoopback(origin)
 }
 

@@ -944,11 +944,11 @@ var placeholderIndexHTML = []byte(`<!doctype html>
 
   <h2>Pick one</h2>
   <ol>
-    <li>Use the typed SDK directly:
-<pre>nexus add nexus-client/vue     # or /react</pre>
+    <li>Add a Vite frontend to this app, then restart <code>nexus dev</code> — it installs the dependencies and runs Vite for you:
+<pre>nexus init --frontend vue      # or react</pre>
     </li>
-    <li>Build your own SPA into the embedded bundle path your <code>main.go</code> passes to <code>nexus.ServeFrontend(...)</code>.</li>
-    <li>Set up the islands pipeline: create <code>islands.src/</code> with one entry per page and rerun <code>nexus dev</code>.</li>
+    <li>Already have a Vite project? Put <code>nexus()</code> from <code>sdk/nexus-vite-plugin.js</code> in its <code>vite.config</code> and start it (<code>npm run dev</code>) — this page then loads from it — or build it into the path your <code>main.go</code> passes to <code>nexus.ServeFrontend(...)</code>.</li>
+    <li>Call the API from any page with the typed SDK: <code>import { … } from 'nexus-client'</code>, generated into <code>web/sdk</code> under <code>nexus dev</code>.</li>
   </ol>
 
   <div class="links">
