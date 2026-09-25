@@ -24,13 +24,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   debounce.
 - **The `[env]` bridge reaches real Vite.** `nexus dev`/`nexus build` pass
   nexus.toml's `[env]` table to Vite as `NEXUS_FRONTEND_ENV` (JSON of
-  dotted keys), and `nexus-vite-plugin` defines `import.meta.env.<key>`
-  (`import.meta.env.client.id`) in both `vite dev` and `vite build`. Under
-  viteless the values reached only its own engine, never an installed Vite.
+  dotted keys), and `nexus-vite-plugin` replaces each exact member reference
+  (`import.meta.env.client.id`) in frontend source with its value, in both
+  `vite dev` and `vite build`. Only referenced keys reach the browser: the
+  values are never added to the `import.meta.env` object, so whole-object
+  access (`{...import.meta.env}`) and the bracket form see none of them. An
+  `[env]` value whose `${VAR}` is unset where `nexus build` runs is dropped
+  with a warning; the rest of nexus.toml's `${VAR}`s don't concern the
+  frontend build. Under viteless the values reached only its own engine,
+  never an installed Vite.
 - **`NEXUS_ENVIRONMENT` is read** and overrides nexus.toml's `environment`,
   so a deployment that keeps the scaffold's `environment = "development"`
   says `NEXUS_ENVIRONMENT=production` without editing the file. It was
-  documented as an environment source, but nothing read it.
+  documented as an environment source, but nothing read it. It also wins
+  over a `Config.Environment` set in Go, and an app with environment
+  overrides must declare the name it sets. SQL logging follows it too
+  (`nexus.ActiveEnvironment`).
 - **Vite scaffolds.** `nexus new --frontend vue|react` (with `--inertia`,
   `--ssr`) and `nexus init --frontend vue|react` write an npm-managed Vite
   project: `package.json` with ranges verified to install, type-check and

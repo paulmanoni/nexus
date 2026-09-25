@@ -363,20 +363,23 @@ profile  = "default"
 
 # Env bridge — TOP LEVEL. [env.*] tables become process environment
 # variables AND are exposed to the frontend. The table path after `env.` is
-# the variable name, so this sets env vars "client.id" and "client.secret":
+# the variable name, so this sets env vars "client.id" and "client.url":
 [env.client]
-id     = "myapp-web"
-secret = "${CLIENT_SECRET}"        # ${ENV} expanded; keep real secrets in env
+id  = "myapp-web"
+url = "${PUBLIC_URL}"              # ${ENV} expanded at load
 ```
 **`[env.*]` bridge:** every key under `[env]` is published (a) as a process env
 var read by the Go app/extensions via `os.Getenv("client.id")`, and (b) to the
-frontend as `import.meta.env.client.id` whenever `nexus dev`/`nexus build` start Vite
-(passed as `NEXUS_FRONTEND_ENV`; nexus-vite-plugin defines each dotted key in dev and
-build — use the member form; the bracket form `import.meta.env["client.id"]` is NOT
-substituted). Nested tables flatten with dots (`[env.a.b] c` → `a.b.c`).
-SECURITY: frontend-exposed values land in the browser bundle — only put
-client-public data there (an OAuth client id, a public URL), never a real
-server secret.
+frontend whenever `nexus dev`/`nexus build` start Vite (passed as
+`NEXUS_FRONTEND_ENV`): nexus-vite-plugin replaces each exact member reference
+`import.meta.env.client.id` in frontend source with its value, in dev and build. Only
+referenced keys reach the browser — the values are never added to the
+`import.meta.env` object, so whole-object access and the bracket form
+`import.meta.env["client.id"]` see none of them. Nested tables flatten with dots
+(`[env.a.b] c` → `a.b.c`). A `${VAR}` that is unset where `nexus build` runs drops
+that key with a warning. SECURITY: `[env]` is still the Go app's process
+environment too — a value the frontend references ships in the bundle, so reference
+only client-public data (an OAuth client id, a public URL), never a server secret.
 
 `nexus docs nexustoml` documents every key. You can also pass `nexus.Config{...}`
 inline to `nexus.Run` instead of the file.

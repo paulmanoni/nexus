@@ -380,7 +380,10 @@ hashed assets `immutable` with the Go edit in place.
   hot file on the signal. `--dist` runs `vite build` (+ SSR), `--tui` starts
   Vite, `--frontend-cmd` is deprecated, and Inertia mode detection (the
   `go list -deps` scan and its log muting) is gone. `NEXUS_VITE_DEV` is no
-  longer set; Inertia SSR finds the dev server through the hot file.
+  longer set; Inertia's SSR-over-HTTP client looks for the dev server
+  through the hot file (it posts to Vite's `/__inertia_ssr`, which only an
+  `@inertiajs/vite` setup serves — the scaffold's stack doesn't, so dev
+  renders client-side, as before).
 - **nexus build.** `npm ci` when needed, `vite build`, and — new —
   `vite build --ssr src/ssr.ts --outDir dist/ssr --emptyOutDir=false` when
   the entry exists; a build without `dist/.vite/manifest.json` or
@@ -389,10 +392,13 @@ hashed assets `immutable` with the Go edit in place.
   `ServeFrontend` never serves `dist/ssr`.
 - **The `[env]` bridge reaches real Vite** for the first time (viteless
   dropped it whenever it delegated): the CLI passes the table as
-  `NEXUS_FRONTEND_ENV`, and the plugin defines both the nested objects
-  (`import.meta.env.client = {id}` — what dev's injected env object needs)
-  and the full member paths (what build inlines). A top-level `[env]` value
-  no longer panics boot.
+  `NEXUS_FRONTEND_ENV`, and the plugin replaces exact member references
+  (`import.meta.env.client.id`) in source, in dev and build — viteless's
+  esbuild-define semantics. A first cut used Vite `define` entries under
+  `import.meta.env.*`; the review proved Vite then injects every value into
+  any module touching `import.meta.env`, secrets in other tables included,
+  so values are never put on the object. A top-level `[env]` value no longer
+  panics boot, and an unset `${VAR}` outside `[env]` no longer fails a build.
 - **Scaffolds are Vite projects**: `package.json` (vite ^6.4.3,
   typescript ~6.0.3, vue-tsc ^3.3.11; React 19 with plugin-react 5),
   `vite.config.ts` with `nexus()` and no proxy, the plugin in `web/sdk`
