@@ -39,7 +39,8 @@ func TestDocsCmd_Topic(t *testing.T) {
 		t.Fatalf("execute: %v stderr=%q", err, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"FRONTEND", "ServeFrontend", "FrontendAt", "//go:embed"} {
+	for _, want := range []string{"FRONTEND", "ServeFrontend", "FrontendAt", "//go:embed",
+		"nexus-vite-plugin", "nexus-hot.json", "NEXUS_ENVIRONMENT=production", "NEXUS_FRONTEND_DIR"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("topic body missing %q\n%s", want, out)
 		}
@@ -110,6 +111,30 @@ func TestDocsCmd_List(t *testing.T) {
 	for _, line := range lines {
 		if _, ok := docsTopics[line]; !ok {
 			t.Errorf("list contains non-topic line %q", line)
+		}
+	}
+}
+
+// TestDocsTopics_ViteOnly guards against the retired frontend models
+// creeping back: islands, nexus add, the viteless engine as a current
+// tool, and the :5173 "open Vite's port" advice. (The CLI topic may still
+// name a "viteless-era" directory or its viteless.config.ts — what the
+// migration hint says.)
+func TestDocsTopics_ViteOnly(t *testing.T) {
+	for name, body := range docsTopics {
+		for _, bad := range []string{"islands", "nexus add", ":5173", "zero-install", "esm.sh", "--frontend-cmd <"} {
+			if strings.Contains(body, bad) {
+				t.Errorf("topic %q still mentions %q", name, bad)
+			}
+		}
+		legacy := strings.NewReplacer("viteless-era", "", "viteless.config", "").Replace(body)
+		if strings.Contains(legacy, "viteless") {
+			t.Errorf("topic %q still describes viteless", name)
+		}
+	}
+	for name, sum := range topicSummaries {
+		if strings.Contains(sum, "viteless") {
+			t.Errorf("summary %q mentions viteless", name)
 		}
 	}
 }
