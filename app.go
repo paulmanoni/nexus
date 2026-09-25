@@ -535,7 +535,15 @@ func New(cfg Config) *App {
 		// /__nexus; this flag governs the client. Both are explicit
 		// opt-ins, and neither implies the other. Unguarded for the same
 		// reason — an anonymous browser must be able to fetch client.js.
-		sdkCfg := client.ApplyFrontendDefaults(client.Config{Enabled: true, Public: true})
+		// The dump targets come from Config.Client when set there, so
+		// OutDir / TSConfig = client.Off still mean "none" under the switch.
+		sdkCfg := client.ApplyFrontendDefaults(client.Config{
+			Enabled:    true,
+			Public:     true,
+			OutDir:     cfg.Client.OutDir,
+			TSConfig:   cfg.Client.TSConfig,
+			ViteConfig: cfg.Client.ViteConfig,
+		})
 		sdkCfg.Unguarded = true
 		a.clientHandler = client.Mount(a.engine, a.registry, nil, a.SchemaRefs, a.routePrefix, sdkCfg)
 	case cfg.Client.Enabled:
@@ -692,10 +700,12 @@ func (a *App) ClientHandler() *client.Handler {
 // detected frontend dir's sdk/ (web/sdk), which under `nexus dev` is
 // exactly what the frontend wants — the page-props types in client.d.ts
 // and the manifest nexus-vite-plugin checks pages against — and nothing
-// is written without a detected frontend. It never edits tsconfig: an
-// unset TSConfig is Off here, because those path mappings serve
-// '/__nexus/client/*.js' runtime imports, which an app that didn't
-// enable the SDK doesn't make. Production never sets NEXUS_DEV=1.
+// is written without a detected frontend. It wires tsconfig too: the
+// 'nexus-client' mapping is how Vue's SFC compiler finds NexusPageProps
+// (it resolves through tsconfig paths, never Vite's alias), so a page
+// typed from the SDK would not build without it. Keep tsconfig untouched
+// with Config.Client.TSConfig = client.Off. Production never sets
+// NEXUS_DEV=1.
 // Opt out with Config.Client.DevDisabled — the "closed manually"
 // escape hatch — or keep the routes but skip the files with
 // Config.Client.OutDir = client.Off.
@@ -708,9 +718,6 @@ func devAutoMountClientSDK(a *App) {
 	}
 	cc := a.clientCfg
 	cc.Enabled = true
-	if cc.TSConfig == "" {
-		cc.TSConfig = client.Off
-	}
 	// Dev gets the FULL manifest (every module endpoint) so the proxy
 	// sync + nx.query/mutate/crud work — the same visibility
 	// introspection grants, which `nexus dev` already bypasses on.

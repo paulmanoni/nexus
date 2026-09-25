@@ -106,29 +106,51 @@ func TestAutoDumpClientSDK(t *testing.T) {
 	}
 }
 
-// TestAutoDumpClientSDK_TSConfig: the explicit SDK switch wires the
-// tsconfig path mappings; the implicit dev mount dumps but never edits a
-// tsconfig the app didn't hand it.
+// TestAutoDumpClientSDK_TSConfig: every dev mount wires the tsconfig
+// paths — Vue's SFC compiler finds 'nexus-client' only through them — and
+// TSConfig / OutDir = client.Off keep the file (or the whole dump) out,
+// under the SDK switch as under the implicit mount.
 func TestAutoDumpClientSDK_TSConfig(t *testing.T) {
-	t.Run("SDK switch merges tsconfig", func(t *testing.T) {
-		dir, orig := dumpProject(t, "1")
-		bootOnce(t, Config{SDK: true})
-		got, _ := os.ReadFile(filepath.Join(dir, "web", "tsconfig.json"))
-		if bytes.Equal(got, orig) {
-			t.Error("SDK=true under nexus dev should merge path mappings into web/tsconfig.json")
-		}
-	})
-	t.Run("implicit dev mount leaves tsconfig alone", func(t *testing.T) {
-		dir, orig := dumpProject(t, "1")
-		bootOnce(t, Config{})
-		if !sdkWritten(dir) {
-			t.Fatal("precondition: implicit dev mount should dump web/sdk")
-		}
-		got, _ := os.ReadFile(filepath.Join(dir, "web", "tsconfig.json"))
-		if !bytes.Equal(got, orig) {
-			t.Errorf("implicit dev mount edited web/tsconfig.json:\n%s", got)
-		}
-	})
+	for _, c := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"SDK switch", Config{SDK: true}},
+		{"implicit dev mount", Config{}},
+	} {
+		t.Run(c.name+" merges tsconfig", func(t *testing.T) {
+			dir, orig := dumpProject(t, "1")
+			bootOnce(t, c.cfg)
+			got, _ := os.ReadFile(filepath.Join(dir, "web", "tsconfig.json"))
+			if bytes.Equal(got, orig) || !bytes.Contains(got, []byte(`"nexus-client"`)) {
+				t.Errorf("want the nexus-client mapping merged into web/tsconfig.json, got:\n%s", got)
+			}
+		})
+		t.Run(c.name+" honours TSConfig = Off", func(t *testing.T) {
+			dir, orig := dumpProject(t, "1")
+			cfg := c.cfg
+			cfg.Client.TSConfig = client.Off
+			bootOnce(t, cfg)
+			if !sdkWritten(dir) {
+				t.Fatal("precondition: the SDK should still be dumped")
+			}
+			if got, _ := os.ReadFile(filepath.Join(dir, "web", "tsconfig.json")); !bytes.Equal(got, orig) {
+				t.Errorf("TSConfig = Off, yet web/tsconfig.json was edited:\n%s", got)
+			}
+		})
+		t.Run(c.name+" honours OutDir = Off", func(t *testing.T) {
+			dir, orig := dumpProject(t, "1")
+			cfg := c.cfg
+			cfg.Client.OutDir = client.Off
+			bootOnce(t, cfg)
+			if sdkWritten(dir) {
+				t.Error("OutDir = Off, yet web/sdk was written")
+			}
+			if got, _ := os.ReadFile(filepath.Join(dir, "web", "tsconfig.json")); !bytes.Equal(got, orig) {
+				t.Errorf("OutDir = Off, yet web/tsconfig.json was edited:\n%s", got)
+			}
+		})
+	}
 }
 
 // TestAutoDumpClientSDK_QuietWhenUnchanged: every dev boot dumps, so a
