@@ -29,9 +29,10 @@ web/dist and serve it with nexus.ServeFrontend. nexus dev installs the
 dependencies on its first run (npm; Node.js 20+).
 
 Refuses an existing web/ unless --force. With --force the project files
-(package.json, vite.config.ts, tsconfig.json, sdk/) are rewritten and the
-app's own files (index.html, src/, the dist stub) are kept where they
-exist — the way to move a viteless-era web/ onto Vite.`,
+(package.json, vite.config.ts, tsconfig.json, sdk/) are rewritten — an
+existing one that differs is saved first as <file>.orig — and the app's
+own files (index.html, src/, the dist stub) are kept where they exist:
+the way to move a viteless-era web/ onto Vite.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			target := dir
@@ -50,7 +51,7 @@ exist — the way to move a viteless-era web/ onto Vite.`,
 	cmd.Flags().StringVar(&dir, "dir", "", "directory to initialize (default '.')")
 	// The positional [dir] says the same thing and is the documented form.
 	_ = cmd.Flags().MarkDeprecated("dir", "pass the directory as an argument: nexus init ./myproject")
-	cmd.Flags().BoolVar(&force, "force", false, "add the Vite project files to an existing web/ (sources are kept)")
+	cmd.Flags().BoolVar(&force, "force", false, "add the Vite project files to an existing web/ (sources are kept; replaced config files are saved as <file>.orig)")
 	cmd.Flags().StringVar(&frontend, "frontend", "",
 		"frontend framework to scaffold: 'vue' or 'react'")
 	_ = cmd.MarkFlagRequired("frontend")

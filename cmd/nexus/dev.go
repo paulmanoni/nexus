@@ -346,7 +346,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	// the current source. Opt-in — it runs a full `vite build` on each
 	// debounced change. The plugin keeps the dev server's hot file across
 	// the build's emptyOutDir, so the app keeps serving HMR throughout.
-	if distWatch && fp.PackageJSON {
+	if distWatch && fp.PackageJSON && fp.Legacy == "" {
 		stopDist, err := watchDistBuild(ctx, fp.Dir, nexusTOMLPath(target), vite, userIgnore, stdout, stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s●%s dist watch disabled: %v\n", ansiYellow, ansiReset, err)

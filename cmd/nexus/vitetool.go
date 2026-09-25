@@ -76,22 +76,46 @@ func inspectFrontend(dir string) frontendProject {
 		abs = dir
 	}
 	p := frontendProject{Dir: abs, PackageJSON: fileExists(filepath.Join(abs, "package.json"))}
-	if !p.PackageJSON {
-		for _, name := range []string{"viteless.config.ts", "viteless.config.js", "viteless.config.mjs", "viteless-env.d.ts"} {
-			if fileExists(filepath.Join(abs, name)) {
-				p.Legacy = name
-				break
-			}
+	markers := []string{"viteless.config.ts", "viteless.config.js", "viteless.config.mjs", "viteless-env.d.ts"}
+	if p.PackageJSON {
+		// Some viteless projects had a package.json (to pin CDN versions
+		// or opt into node_modules). With a viteless config and no Vite
+		// config it is still one: installing and running its Vite would
+		// fail on the missing config, not explain the migration.
+		if hasViteConfig(abs) {
+			return p
+		}
+		markers = markers[:3] // viteless-env.d.ts alone is only stale types
+	}
+	for _, name := range markers {
+		if fileExists(filepath.Join(abs, name)) {
+			p.Legacy = name
+			break
 		}
 	}
 	return p
 }
 
+// hasViteConfig reports whether dir holds a Vite config file.
+func hasViteConfig(dir string) bool {
+	for _, ext := range []string{"ts", "js", "mjs", "mts", "cjs", "cts"} {
+		if fileExists(filepath.Join(dir, "vite.config."+ext)) {
+			return true
+		}
+	}
+	return false
+}
+
 // legacyHint explains what a viteless-era web directory needs now.
 func (p frontendProject) legacyHint() string {
+	if p.PackageJSON {
+		return fmt.Sprintf("%s has %s and no vite.config: it is a viteless project, and nexus runs the frontend with Vite now. "+
+			"Add a vite.config.ts that uses nexus-vite-plugin, and vite to package.json (`nexus init --frontend vue --force` "+
+			"writes both, saving your package.json and tsconfig.json as *.orig first; see `nexus docs frontend`).", p.Dir, p.Legacy)
+	}
 	return fmt.Sprintf("%s has %s but no package.json: nexus runs the frontend with Vite now, not viteless. "+
 		"Add a package.json and a vite.config.ts that uses nexus-vite-plugin (`nexus init --frontend vue --force` "+
-		"writes both; see `nexus docs frontend`).", p.Dir, p.Legacy)
+		"writes both, keeping your sources; see `nexus docs frontend`).", p.Dir, p.Legacy)
 }
 
 // viteBinary returns the project's own Vite executable and whether it exists.

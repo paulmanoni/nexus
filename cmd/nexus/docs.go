@@ -1390,9 +1390,11 @@ Which dir (nexus dev and nexus build alike): --frontend (relative to the
 working directory) > NEXUS_FRONTEND_DIR (relative to the project) > the
 dir main.go's ServeFrontend call names > web/ when it has a
 package.json. A dir without package.json is
-served as-is and never built; a viteless-era one (viteless.config.ts, no
-package.json) gets a migration hint — "nexus init --frontend vue --force"
-adds the Vite files and keeps the sources.
+served as-is and never built; a viteless-era one (viteless.config.ts and
+no package.json, or a package.json but no vite.config) gets a migration
+hint — "nexus init --frontend vue --force" adds the Vite files, keeps the
+sources, and saves a package.json/vite.config.ts/tsconfig.json it
+replaces as <file>.orig.
 
 Deploy with NEXUS_ENVIRONMENT=production: it overrides the
 environment = "development" that scaffolds ship in nexus.toml.
@@ -1539,7 +1541,9 @@ CLI CHEATSHEET
                              --force               add the project files to
                                                    an existing web/, keeping
                                                    index.html and src/ (moves
-                                                   a viteless-era web/ over)
+                                                   a viteless-era web/ over);
+                                                   replaced config files are
+                                                   saved as <file>.orig
 
   nexus dev [dir]            Build + run the app; when the frontend dir has
                              a package.json, install its deps on first run
@@ -1615,7 +1619,7 @@ CLI CHEATSHEET
                              vite build --ssr src/ssr.ts → dist/ssr when
                              src/ssr.ts exists), then go build embeds
                              web/dist via //go:embed. A viteless-era web/
-                             (no package.json) fails with a migration hint.
+                             fails with a migration hint.
     --out / -o <path>        path to write the binary to (default: go's own naming).
     nexus build ./cmd/server pick the main package positionally.
 

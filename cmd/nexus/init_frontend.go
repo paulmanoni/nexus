@@ -26,9 +26,10 @@ import (
 //
 // An existing web/ is refused unless force is set. With force the project
 // files (package.json, vite.config.ts, tsconfig.json, web/sdk) are
-// rewritten, while the app's own files (index.html, src/, the dist stub)
-// are written only where missing — which is how a viteless-era web/ (no
-// package.json) becomes a Vite project without losing its sources.
+// rewritten — an existing one that differs is first saved as <file>.orig
+// — while the app's own files (index.html, src/, the dist stub) are
+// written only where missing. That is how a viteless-era web/ becomes a
+// Vite project without losing its sources or its settings.
 //
 // The main.go patch is AST-based — we parse the file with
 // go/parser, insert the missing import + embed decl + ServeFrontend
@@ -58,7 +59,7 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	webDir := filepath.Join(abs, "web")
 	if !force {
 		if _, err := os.Stat(webDir); err == nil {
-			return fmt.Errorf("nexus init --frontend: %s already exists — pass --force to add the Vite project files (existing sources under web/src and web/index.html are kept)", webDir)
+			return fmt.Errorf("nexus init --frontend: %s already exists — pass --force to add the Vite project files (web/src and web/index.html are kept; a package.json, vite.config.ts or tsconfig.json it replaces is saved as <file>.orig)", webDir)
 		}
 	}
 
@@ -80,6 +81,12 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 				fmt.Fprintf(stdout, "kept  %s (exists)\n", path)
 				continue
 			}
+		}
+		if backup, err := backupBeforeOverwrite(full, files[path], path); err != nil {
+			return fmt.Errorf("nexus init --frontend: %w", err)
+		} else if backup != "" {
+			rel, _ := filepath.Rel(abs, backup)
+			fmt.Fprintf(stdout, "saved %s → %s (yours; merge anything you need back in)\n", path, filepath.ToSlash(rel))
 		}
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", filepath.Dir(full), err)
@@ -121,6 +128,44 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 	fmt.Fprintln(stdout, "  nexus build             # vite build → web/dist, embedded in one Go binary")
 	fmt.Fprintln(stdout, "  # commit web/package-lock.json and web/sdk with the rest of web/")
 	return nil
+}
+
+// backupBeforeOverwrite copies an existing file at full to full+".orig"
+// (".orig.1", ".orig.2", … when that is taken) before --force replaces
+// it with body, and returns the copy's path. A file already equal to body
+// — a re-run — or one nexus generates (web/sdk) is not copied.
+//
+// Why a copy and not a refusal: --force exists to move a web/ onto Vite,
+// and the files it replaces (package.json, vite.config.ts, tsconfig.json)
+// are the ones that must change for that; refusing them would make the
+// flag a no-op for exactly the case it is for. The copy keeps the user's
+// dependencies, scripts and settings one diff away, and a later --force
+// never overwrites an earlier copy.
+func backupBeforeOverwrite(full, body, rel string) (string, error) {
+	if strings.HasPrefix(rel, "web/sdk/") {
+		return "", nil
+	}
+	old, err := os.ReadFile(full)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if string(old) == body {
+		return "", nil
+	}
+	backup := full + ".orig"
+	for i := 1; ; i++ {
+		if _, err := os.Lstat(backup); os.IsNotExist(err) {
+			break
+		}
+		backup = fmt.Sprintf("%s.orig.%d", full, i)
+	}
+	if err := os.WriteFile(backup, old, 0o644); err != nil {
+		return "", fmt.Errorf("back up %s: %w", full, err)
+	}
+	return backup, nil
 }
 
 // isAppSource reports whether a scaffolded web/ path is the app's own

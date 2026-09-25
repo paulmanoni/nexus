@@ -36,6 +36,26 @@ func TestInspectFrontend(t *testing.T) {
 	if p := inspectFrontend(t.TempDir()); p.PackageJSON || p.Legacy != "" {
 		t.Errorf("empty dir: %+v", p)
 	}
+
+	// A viteless project that had a package.json is still one while it
+	// has a viteless config and no Vite config.
+	withPkg := t.TempDir()
+	writeTestFile(t, filepath.Join(withPkg, "package.json"), `{"dependencies":{"vue":"^3.5.0"}}`)
+	writeTestFile(t, filepath.Join(withPkg, "viteless.config.ts"), "")
+	p = inspectFrontend(withPkg)
+	if !p.PackageJSON || p.Legacy != "viteless.config.ts" || !strings.Contains(p.legacyHint(), "no vite.config") || !strings.Contains(p.legacyHint(), ".orig") {
+		t.Errorf("viteless project with package.json: %+v %q", p, p.legacyHint())
+	}
+	writeTestFile(t, filepath.Join(withPkg, "vite.config.mts"), "")
+	if p := inspectFrontend(withPkg); p.Legacy != "" {
+		t.Errorf("a Vite config makes it a Vite project, leftover viteless config or not: %+v", p)
+	}
+	stale := t.TempDir()
+	writeTestFile(t, filepath.Join(stale, "package.json"), "{}")
+	writeTestFile(t, filepath.Join(stale, "viteless-env.d.ts"), "")
+	if p := inspectFrontend(stale); p.Legacy != "" {
+		t.Errorf("stale viteless-env.d.ts beside a package.json is not a viteless project: %+v", p)
+	}
 }
 
 func TestFrontendEnv(t *testing.T) {

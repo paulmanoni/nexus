@@ -357,6 +357,61 @@ func TestInitFrontend_ForceMigratesLegacyWeb(t *testing.T) {
 	}
 }
 
+// --force replaces package.json, vite.config.ts and tsconfig.json; a
+// user's own copy is saved as <file>.orig first (never overwriting an
+// earlier copy), and a re-run that changes nothing saves nothing.
+func TestInitFrontend_ForceBacksUpReplacedFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "main.go"), "package main\n\nimport \"github.com/paulmanoni/nexus\"\n\nfunc main() {\n\tnexus.Boot()\n}\n")
+	web := filepath.Join(dir, "web")
+	mine := map[string]string{
+		"package.json":   `{"name":"mine","dependencies":{"vue":"^3.5.0","pinia":"^3.0.0"}}`,
+		"vite.config.ts": "export default { server: { port: 4000 } }\n",
+	}
+	for name, body := range mine {
+		writeTestFile(t, filepath.Join(web, name), body)
+	}
+	var out bytes.Buffer
+	if err := runInitFrontend(dir, "vue", true, &out); err != nil {
+		t.Fatalf("runInitFrontend --force: %v\n%s", err, out.String())
+	}
+	for name, body := range mine {
+		if b, err := os.ReadFile(filepath.Join(web, name+".orig")); err != nil || string(b) != body {
+			t.Errorf("web/%s.orig = %q (%v), want the user's file", name, b, err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(web, name)); string(b) == body {
+			t.Errorf("web/%s was not replaced", name)
+		}
+		if !strings.Contains(out.String(), "saved web/"+name+" → web/"+name+".orig") {
+			t.Errorf("backup of %s not reported:\n%s", name, out.String())
+		}
+	}
+	if fileExists(filepath.Join(web, "tsconfig.json.orig")) || fileExists(filepath.Join(web, "sdk", "nexus-vite-plugin.js.orig")) {
+		t.Error("only files that existed and differed are backed up")
+	}
+
+	// A re-run over nexus's own files saves nothing.
+	out.Reset()
+	if err := runInitFrontend(dir, "vue", true, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "saved ") || fileExists(filepath.Join(web, "package.json.orig.1")) {
+		t.Errorf("re-run made backups:\n%s", out.String())
+	}
+
+	// A second user edit never overwrites the first copy.
+	writeTestFile(t, filepath.Join(web, "package.json"), `{"name":"edited"}`)
+	if err := runInitFrontend(dir, "vue", true, &out); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(web, "package.json.orig.1")); string(b) != `{"name":"edited"}` {
+		t.Errorf("package.json.orig.1 = %q, want the second edit", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(web, "package.json.orig")); string(b) != mine["package.json"] {
+		t.Errorf("the first backup was overwritten: %q", b)
+	}
+}
+
 // TestInitFrontend_OnScaffoldedMain patches the main.go nexus new writes
 // for an app with no frontend. That file has comments, and a directive
 // added to the AST as a position-less comment was dropped by the printer,
