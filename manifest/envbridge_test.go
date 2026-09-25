@@ -24,3 +24,22 @@ default = "info"
 		t.Fatalf("expected only the LOG_LEVEL deploy EnvVar, got %+v", m.Env)
 	}
 }
+
+// A top-level [env] value (the bridge's `flag = "on"` form, not a table)
+// used to fail the decode and panic every app's boot.
+func TestLoadInputsTOML_EnvBridgeTopLevelValue(t *testing.T) {
+	doc := `
+[env]
+flag = "on"
+
+[env.LOG_LEVEL]
+default = "info"
+`
+	m, err := LoadInputsTOML([]byte(doc))
+	if err != nil {
+		t.Fatalf("a top-level [env] value must not fail the parse: %v", err)
+	}
+	if len(m.Env) != 1 || m.Env[0].Name != "LOG_LEVEL" {
+		t.Fatalf("expected only the LOG_LEVEL deploy EnvVar, got %+v", m.Env)
+	}
+}

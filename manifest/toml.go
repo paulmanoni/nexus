@@ -68,9 +68,11 @@ type DeployTOMLInputs struct {
 	// import.meta.env). Only entries shaped like deploy EnvVar declarations
 	// are materialized into m.Env; bridge entries are owned by the runtime
 	// config loader and ignored here (see envVarFromTOML). Decoding straight
-	// into map[string]EnvVar would crash on a string-valued `secret`.
-	Env      map[string]map[string]any `toml:"env,omitempty"`
-	Services map[string]ServiceNeed    `toml:"services,omitempty"`
+	// into map[string]EnvVar would crash on a string-valued `secret`, and a
+	// map of tables would crash on a top-level bridge value ([env] flag =
+	// "on"), so each entry stays `any` and only tables are considered.
+	Env      map[string]any         `toml:"env,omitempty"`
+	Services map[string]ServiceNeed `toml:"services,omitempty"`
 }
 
 // EnvironmentTOML mirrors Environment but doesn't carry a Name field
@@ -226,7 +228,11 @@ func materializeInputs(raw DeployTOMLInputs) Manifest {
 	}
 
 	if len(raw.Env) > 0 {
-		for name, e := range raw.Env {
+		for name, v := range raw.Env {
+			e, isTable := v.(map[string]any)
+			if !isTable {
+				continue // a top-level bridge value, not a declaration
+			}
 			ev, ok := envVarFromTOML(name, e)
 			if !ok {
 				continue // runtime env-bridge entry, not a deploy EnvVar
