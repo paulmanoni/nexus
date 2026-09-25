@@ -8,6 +8,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`nexus dev` and `nexus build` drive a real Vite project.** A frontend is
+  a directory with a `package.json`. Both commands install its dependencies
+  when `node_modules/.bin/vite` is missing (`npm ci` with a lockfile, else
+  `npm install`; a clear error without npm), write
+  `<web>/sdk/nexus-vite-plugin.{js,d.ts}` so a fresh checkout's
+  `vite.config` loads, and run the project's own Vite. `nexus dev` learns
+  the dev server's origin from the hot file, never Vite's stdout, and
+  always prints (and with `--open` opens) the **app's** origin; Vite's
+  `Local:`/`Network:` banner is filtered and its other output prefixed
+  `[web]`. `nexus build` runs `vite build`, then `vite build --ssr
+  src/ssr.ts --outDir dist/ssr` when `src/ssr.ts` exists, requires
+  `dist/.vite/manifest.json` or `dist/index.html`, then `go build`.
+  `nexus dev --dist` rebuilds with `vite build` on its debounce.
+- **The `[env]` bridge reaches real Vite.** `nexus dev`/`nexus build` pass
+  nexus.toml's `[env]` table to Vite as `NEXUS_FRONTEND_ENV` (JSON of
+  dotted keys), and `nexus-vite-plugin` defines `import.meta.env.<key>`
+  (`import.meta.env.client.id`) in both `vite dev` and `vite build`. Under
+  viteless the values reached only its own engine, never an installed Vite.
+- **`NEXUS_ENVIRONMENT` is read** and overrides nexus.toml's `environment`,
+  so a deployment that keeps the scaffold's `environment = "development"`
+  says `NEXUS_ENVIRONMENT=production` without editing the file. It was
+  documented as an environment source, but nothing read it.
+- **Vite scaffolds.** `nexus new --frontend vue|react` (with `--inertia`,
+  `--ssr`) and `nexus init --frontend vue|react` write an npm-managed Vite
+  project: `package.json` with ranges verified to install, type-check and
+  build together (vite ^6.4.3, @vitejs/plugin-vue ^5.2.4 or
+  @vitejs/plugin-react ^5.2.0 with React 19, typescript ~6.0.3, vue-tsc
+  ^3.3.11 — vue-tsc 3.3 does not run on TypeScript 7), a `vite.config.ts`
+  with `nexus()` and no proxy block, `web/sdk/nexus-vite-plugin.*`, a
+  strict `tsconfig.json` without `baseUrl`, a typed Inertia page glob, and
+  a `typecheck` script. The `.gitignore` keeps `web/sdk` (commit it) and
+  the next steps say `nexus dev` installs the dependencies and prints the
+  app's URL. `nexus init --force` adds the project files to an existing
+  `web/` while keeping `index.html` and `src/`, which is how a viteless-era
+  directory moves to Vite.
 - **Vite handshake: the plugin tells, the app reads.** `nexus-vite-plugin`
   writes `<outDir>/.vite/nexus-hot.json` — the dev server's real origin,
   base, entries and pid — once `vite dev` is listening, and removes it on
@@ -92,6 +127,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking: Vite is the only frontend engine; viteless is removed.**
+  `nexus dev` and `nexus build` no longer embed a zero-Node engine, fetch
+  dependencies from a CDN, or serve the SPA on :5173 behind a proxy.
+  **Node.js 20+ and npm are required to develop and build a frontend**;
+  the built binary still embeds `web/dist` and runs without Node. A
+  viteless-era `web/` (`viteless.config.*` or `viteless-env.d.ts`, no
+  `package.json`) gets a migration hint — a warning in `nexus dev`, an
+  error in `nexus build`; `nexus init --frontend vue --force` writes the
+  Vite files and keeps the sources.
+- **`nexus dev` no longer sets `NEXUS_VITE_DEV`**: the hot file carries
+  the dev server's origin, and Inertia's SSR-over-HTTP renderer reads it
+  from `App.ViteHot()` too (the variable stays a fallback).
+- The SSR scaffold's `ssr.ts` imports `createServer` from
+  `@inertiajs/vue3/server` (it depended on `@inertiajs/server`, whose
+  published versions stop at 0.1.0) and bundles its dependencies
+  (`ssr.noExternal`), so `node web/dist/ssr/ssr.js` runs without
+  `node_modules`. Inertia scaffolds pass an empty `inertia.Config`: the
+  engine finds the bundle through `ServeFrontend`.
 - **Breaking (behaviour): production binaries no longer write `web/sdk`.**
   The boot-time client SDK dump ran in every mode, so a production binary
   with the SDK enabled, started in a directory holding a
@@ -156,6 +209,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Deprecated
 
+- `nexus new --tooling` (Vite is the only engine) and `nexus dev
+  --frontend-cmd` (already ignored): both still parse, warn, and are
+  ignored.
 - The in-process codegen driver: `extension.Plugin.Generate`,
   `extension.Generate`, `nexus.GenerateDriver`, `App.RegisterGenerateDriver`,
   `App.GenerateDrivers`. Nothing ever read a registered driver back —
@@ -169,12 +225,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Removed
 
+- The viteless dependency of `cmd/nexus`, the viteless scaffold files
+  (`viteless.config.ts`, `viteless-env.d.ts`), the vestigial second embed
+  `nexus build` generated (`embed_gen.go`), and the dead `islands.src`
+  layer, `.env` loader and `package.json` editor in the CLI.
+- `nexus generate dockerfile` from the docs — the command never existed.
 - `--json-in` on `lint`, `doctor` and `routes` (JSON is the default input).
 - `nexus routes --deployment` and the `DEPLOYMENT` column — they filtered a
   field no real app populates since `DeployAs` was removed.
 
 ### Fixed
 
+- `nexus build` never ran the Inertia SSR build: `dist/ssr/ssr.js` existed
+  only if you ran `npm run build` yourself.
+- `nexus dev` stopped Vite with SIGKILL, so the plugin could not remove its
+  hot file; it now sends SIGTERM to Vite's process group, waits a grace
+  period before SIGKILL, and waits for the exit.
+- `nexus dev <dir>` resolved the detected frontend dir against the working
+  directory instead of the package (`nexus dev ./examples/inertia` from the
+  repo root looked for `./web`), and ignored `NEXUS_FRONTEND_DIR`, which
+  `nexus build` honoured; both now resolve it against the project, and the
+  variable overrides detection in both.
+- The Vite scaffold's `vite.config.ts` proxied the nexus routes to a
+  hard-coded `:8080` and did not load `nexus-vite-plugin`, so its pages had
+  no hot file and its builds no forced manifest.
+- The development placeholder page recommended `nexus add` and an islands
+  pipeline, neither of which exists.
 - `nexus routes|lint|doctor --binary` failed on every app: print mode wraps
   the manifest in markers the parser never stripped.
 - `routes --kind http|graphql|websocket` and `--auth none` matched nothing
