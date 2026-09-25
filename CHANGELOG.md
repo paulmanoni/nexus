@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.60.0] - 2026-09-25
+
 ### Added
 
 - **`nexus dev` and `nexus build` drive a real Vite project.** A frontend is
@@ -299,6 +301,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Release notes
 
+- **Upgrading a frontend project.** Frontends are Vite projects now: Node 20+
+  and a `package.json` in the frontend dir. A viteless-era `web/` gets a
+  migration hint from `nexus dev`/`nexus build`; `nexus init --frontend vue
+  --force` (or `react`) writes `package.json`, `vite.config.ts` and
+  `tsconfig.json` beside your `index.html` and `src/`, keeping any file it
+  replaces as `<file>.orig`.
+- **Upgrade both halves.** `go install github.com/paulmanoni/nexus/cmd/nexus@v1.60.0`
+  for the CLI and `go get github.com/paulmanoni/nexus@v1.60.0` in each app —
+  the hot file, the index.html shell and typed pages are app-side.
+- **Deployments** that ship the scaffold's `nexus.toml`
+  (`environment = "development"`) set `NEXUS_ENVIRONMENT=production`.
 - `cmd/nexus` and `extension/cache/redis` now use internal packages added in
   this release (`internal/vitehot`, `internal/logx`). Release the parent
   module first, then bump the submodules' requirement — the usual
