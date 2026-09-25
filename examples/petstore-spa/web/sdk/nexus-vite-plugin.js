@@ -1,4 +1,4 @@
-// nexus-vite-plugin.js — four plugins in one factory:
+// nexus-vite-plugin.js — six plugins in one factory:
 //
 //   1. nexus-auto-select   (default-on, all builds)
 //      Auto-injects opts.select into nx.query / nx.mutate calls
@@ -36,9 +36,40 @@
 //      manual refresh — the user's frontend just has to be running
 //      under vite dev with the nexus plugin attached.
 //
+//   5. nexus-hot   (default-on, dev + build)
+//      The Vite half of the frontend contract (internal/vitehot on the
+//      Go side). Under `vite dev` it writes
+//      <outDir>/.vite/nexus-hot.json once the server is listening —
+//      {version, origin, base, entries, pid}, origin being the port
+//      Vite actually bound — and removes it when the server stops.
+//      Under `vite build` it forces build.manifest (the Go side renders
+//      asset tags from .vite/manifest.json) and clears a stale hot file;
+//      a running dev server's hot file survives emptyOutDir (it is put
+//      back after the wipe). options.input declares the entry once for
+//      both. In dev it also points server.origin at the real dev-server
+//      origin, so asset URLs resolve against Vite when the page sits on
+//      the Go app's origin, and — unless server.cors is set — allows
+//      that origin cross-origin: local names, this machine's addresses
+//      and options.appOrigin (see devCorsAllows). In both it exposes
+//      nexus.toml's [env] table, which `nexus dev` / `nexus build` pass
+//      in NEXUS_FRONTEND_ENV, as import.meta.env.<dotted key> (e.g.
+//      import.meta.env.client.id; see frontendEnvDefines).
+//
+//   6. nexus-pages   (default-on, dev + build)
+//      Checks that every Inertia page component the manifest names
+//      (endpoints carry `page`, from inertia.Page) has a file under
+//      options.pages (src/Pages by default): <pages>/<Name>.vue, or
+//      .tsx/.jsx/.svelte/.ts/.js. Dev warns once per missing component
+//      and re-checks when the Go app rewrites the manifest; build fails
+//      listing them all. No manifest, or no pages in it — nothing to do.
+//
+// The manifest is read from options.sdkDir, default sdk/ under the Vite
+// root (web/sdk, where the Go app dumps the SDK in dev); a project that
+// only has the old src/sdk/manifest.json keeps using that.
+//
 // Wire it up in vite.config.ts:
 //
-//     import nexusAutoSelect from './src/sdk/nexus-vite-plugin.js'
+//     import nexusAutoSelect from './sdk/nexus-vite-plugin.js'
 //
 //     export default defineConfig({
 //       plugins: [vue(), nexusAutoSelect()],
@@ -59,11 +90,24 @@
 //   ✗ destructuring (defer; document workaround = direct access)
 //   ✗ cross-function flow (defer)
 
-import { readFileSync, existsSync, statSync, utimesSync, readdirSync } from 'node:fs'
-import { join, isAbsolute, resolve } from 'node:path'
+import {
+  readFileSync, existsSync, statSync, utimesSync, readdirSync,
+  writeFileSync, renameSync, unlinkSync, mkdirSync, linkSync,
+} from 'node:fs'
+import { join, isAbsolute, resolve, dirname, relative, sep } from 'node:path'
+import { networkInterfaces } from 'node:os'
 
-const DEFAULT_SDK_DIR = 'src/sdk'
+// The SDK directory, relative to the Vite root: web/sdk, where the Go app
+// dumps it in dev. LEGACY_SDK_DIR is the old default — still picked, with
+// no option set, when only it holds a manifest (see manifestPathFor).
+const DEFAULT_SDK_DIR = 'sdk'
+const LEGACY_SDK_DIR = 'src/sdk'
 const MANIFEST = 'manifest.json'
+
+// Inertia page components, relative to the Vite root, and the extensions
+// a component name may resolve to (see nexus-pages).
+const DEFAULT_PAGES_DIR = 'src/Pages'
+const PAGE_EXTS = ['vue', 'tsx', 'jsx', 'svelte', 'ts', 'js']
 
 // LOOP_GUARD_TARGETS are basenames of files that auto-import plugins
 // (unplugin-auto-import, unplugin-vue-components — both shipped by
@@ -87,6 +131,484 @@ const LOOP_GUARD_TARGETS = ['auto-imports.d.ts', 'components.d.ts']
 const FILTER_SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '.vite', '.cache', '.next', '.nuxt', 'coverage',
 ])
+
+// ── hot-file contract (nexus-hot) ─────────────────────────────────
+//
+// Mirrors internal/vitehot: the file, its directory under build.outDir,
+// and the schema version. The schema is owned by the Go side — change
+// it there first.
+const HOT_DIR = '.vite'
+const HOT_FILE = 'nexus-hot.json'
+const HOT_VERSION = 1
+const NEXUS_MANIFEST = '.vite/manifest.json'
+
+// nexus.toml's [env] table, as `nexus dev` / `nexus build` hand it to Vite:
+// a JSON object of dotted keys to string values ({"client.id": "web"}).
+const FRONTEND_ENV_VAR = 'NEXUS_FRONTEND_ENV'
+// Keys Vite itself owns on import.meta.env; an [env] entry never replaces one.
+const VITE_ENV_KEYS = new Set(['MODE', 'DEV', 'PROD', 'SSR', 'BASE_URL'])
+const IDENT_RE = /^[A-Za-z_$][\w$]*$/
+
+// frontendEnvDefines turns the [env] payload into `define` entries so each
+// dotted key reads as a member expression — import.meta.env.client.id —
+// under `vite` and `vite build` alike. The two commands consume defines
+// differently: a build (and dev SSR) substitutes each define key with
+// esbuild, while dev serves client modules untransformed and prepends
+// `import.meta.env = {…}` built from the define keys under import.meta.env.
+// — one property per key, so a flat 'client.id' there is unreachable as
+// .client.id. So every key is defined as nested objects from its first
+// segment down (import.meta.env.client = {"id":"web"}), which dev's
+// injected object and build's substitution both read the same way, plus
+// the full member path (import.meta.env.client.id = "web") so a build
+// inlines the string. Only identifier segments form define keys; a key
+// with another segment is still reachable through its parent object with
+// brackets. Values stay strings.
+//
+// Deterministic conflicts: a key that is also a prefix of others
+// ("a" and "a.b") keeps the shorter one and drops the rest (a string
+// can't hold properties); a key the user's own `define` already covers,
+// or that shadows one of Vite's (MODE, DEV, …), is left out. Each drop
+// is reported. No payload → no defines; unparsable → one warning.
+function frontendEnvDefines(raw, userDefine) {
+  const define = {}
+  const warnings = []
+  if (raw == null || raw === '') return { define, warnings }
+  let vars
+  try {
+    vars = JSON.parse(raw)
+  } catch (e) {
+    warnings.push(`[nexus] ${FRONTEND_ENV_VAR} is not valid JSON (${e && e.message ? e.message : e}); import.meta.env gets no [env] values.`)
+    return { define, warnings }
+  }
+  if (vars === null || typeof vars !== 'object' || Array.isArray(vars)) {
+    warnings.push(`[nexus] ${FRONTEND_ENV_VAR} must be a JSON object of dotted keys to strings; import.meta.env gets no [env] values.`)
+    return { define, warnings }
+  }
+
+  const user = userDefine && typeof userDefine === 'object' ? userDefine : {}
+  const userCovers = (key) => {
+    const segs = key.split('.')
+    for (let i = 1; i <= segs.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(user, 'import.meta.env.' + segs.slice(0, i).join('.'))) return true
+    }
+    return false
+  }
+
+  // Sorted, so a key's prefixes are always seen before it.
+  const leaves = new Set()
+  const tree = {}
+  for (const key of Object.keys(vars).sort()) {
+    const value = vars[key]
+    const segs = key.split('.')
+    if (segs.some((s) => s === '') || !IDENT_RE.test(segs[0])) {
+      warnings.push(`[nexus] [env] key "${key}" can't be read from import.meta.env (it must start with an identifier and have no empty segments); skipped.`)
+      continue
+    }
+    if (VITE_ENV_KEYS.has(segs[0])) {
+      warnings.push(`[nexus] [env] key "${key}" would replace Vite's own import.meta.env.${segs[0]}; skipped.`)
+      continue
+    }
+    if (value === null || typeof value === 'object') {
+      warnings.push(`[nexus] [env] key "${key}" is not a string; skipped.`)
+      continue
+    }
+    let shadow = ''
+    for (let i = 1; i < segs.length && !shadow; i++) {
+      const prefix = segs.slice(0, i).join('.')
+      if (leaves.has(prefix)) shadow = prefix
+    }
+    if (shadow) {
+      warnings.push(`[nexus] [env] key "${key}" is under "${shadow}", which is itself a value; "${key}" is skipped.`)
+      continue
+    }
+    if (userCovers(key)) continue
+    leaves.add(key)
+    let node = tree
+    for (let i = 0; i < segs.length - 1; i++) {
+      node = node[segs[i]] || (node[segs[i]] = {})
+    }
+    node[segs[segs.length - 1]] = String(value)
+  }
+
+  const emit = (path, node) => {
+    define['import.meta.env.' + path] = JSON.stringify(node)
+    if (typeof node !== 'object') return
+    for (const k of Object.keys(node)) {
+      if (IDENT_RE.test(k)) emit(path + '.' + k, node[k])
+    }
+  }
+  for (const k of Object.keys(tree)) emit(k, tree[k])
+  return { define, warnings }
+}
+
+// Stands in for server.origin until the dev server has bound a port.
+// Vite prefixes dev asset URLs (CSS url(), asset imports) with
+// server.origin; the port is only known after listen, so the config
+// hook sets this marker and the transform hook swaps in the real origin.
+const ORIGIN_PLACEHOLDER = '__nexus_vite_placeholder__'
+
+// Mirrors Vite's own wildcardHosts: a server bound to one of these listens
+// on every interface, so the hot file names one of the machine's network
+// addresses (see lanHost).
+const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '0000:0000:0000:0000:0000:0000:0000:0000'])
+
+// Tests replace os.networkInterfaces through this slot; nothing else sets it.
+const IFACES_OVERRIDE = Symbol.for('nexus-vite-plugin.networkInterfaces')
+
+function interfaces() {
+  const fn = globalThis[IFACES_OVERRIDE] || networkInterfaces
+  try {
+    return Object.values(fn() || {}).flatMap((list) => list || [])
+  } catch {
+    return []
+  }
+}
+
+// lanHost is the address a wildcard-bound dev server is written under: the
+// first network (non-loopback) IPv4 address, preferring the one Vite prints
+// as "Network:". Unlike 127.0.0.1 it reaches this machine from a phone on
+// the LAN as well as from the machine itself — module and asset URLs in a
+// page the Go app serves to that phone point at it. Falls back to 127.0.0.1
+// when the machine has no network address.
+function lanHost(server) {
+  const urls = server.resolvedUrls
+  const net = urls && urls.network && urls.network[0]
+  if (net) {
+    try {
+      return new URL(net).hostname
+    } catch { /* fall through */ }
+  }
+  const v4 = interfaces().find(
+    (d) => d && !d.internal && (d.family === 'IPv4' || d.family === 4) && d.address && !d.address.startsWith('169.254.'),
+  )
+  return v4 ? v4.address : '127.0.0.1'
+}
+
+// devCorsAllows is the dev server's CORS origin check when the app has not
+// configured server.cors. The page lives on the Go app's origin and loads
+// its modules cross-origin from Vite, so Vite has to answer that origin —
+// but Vite's default (6.0.9+) only covers localhost, and wide-open CORS lets
+// any website read the dev server's source. Allowed, on any port (the Go
+// app runs on this machine by construction):
+//
+//   - loopback: localhost, *.localhost, 127.0.0.0/8, [::1]
+//   - *.test names (RFC 6761: only resolvable by local configuration)
+//   - every address of this machine's interfaces, looked up per request
+//     so a network change is picked up
+//   - each nexus({ appOrigin }) origin, exactly
+function devCorsAllows(origin, appOrigins) {
+  if (!origin) return false
+  let u
+  try {
+    u = new URL(origin)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+  if (appOrigins.has(u.origin)) return true
+  let host = u.hostname.toLowerCase()
+  if (host.startsWith('[')) host = host.slice(1, -1)
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.test')) return true
+  if (host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host)) return true
+  return interfaces().some((d) => d && d.address && d.address.split('%')[0].toLowerCase() === host)
+}
+
+// Process-wide record of the hot files this process wrote. Kept on
+// globalThis because Vite re-bundles vite.config (and with it this
+// file) on every config-change restart, so module-level state would be
+// per-restart; the signal and exit hooks must be installed once.
+const HOT_REGISTRY = Symbol.for('nexus-vite-plugin.hot-files')
+
+function hotRegistry() {
+  let reg = globalThis[HOT_REGISTRY]
+  if (!reg) {
+    reg = { files: new Set(), hooked: false }
+    globalThis[HOT_REGISTRY] = reg
+  }
+  return reg
+}
+
+function readHotFile(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+// removeOwnHotFile deletes file only when this process wrote it, so two
+// dev servers sharing an outDir never delete each other's file.
+function removeOwnHotFile(file) {
+  const hot = readHotFile(file)
+  if (!hot || hot.pid !== process.pid) return false
+  try {
+    unlinkSync(file)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function writeHotFile(file, data) {
+  mkdirSync(dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n')
+  renameSync(tmp, file)
+}
+
+// restoreHotFile puts raw back at file only if nothing is there: written to a
+// temp file, then hard-linked into place, which fails rather than replace a
+// file the dev server wrote in the meantime (a restart on a new port).
+// Without hard links it falls back to a rename after a fresh existence check.
+function restoreHotFile(file, raw) {
+  mkdirSync(dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.restore.tmp`
+  writeFileSync(tmp, raw)
+  try {
+    linkSync(tmp, file)
+    return true
+  } catch (e) {
+    if (e && e.code === 'EEXIST') return false
+    if (existsSync(file)) return false
+    renameSync(tmp, file)
+    return true
+  } finally {
+    try { unlinkSync(tmp) } catch { /* renamed */ }
+  }
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return e && e.code === 'EPERM'
+  }
+}
+
+// installHotExitHooks removes every hot file this process owns on exit
+// and on SIGINT/SIGTERM/SIGHUP, without changing how the process ends:
+// when nobody else listens for the signal it is re-raised with the
+// default disposition (so Ctrl-C still kills `vite`, with the usual
+// status); when someone does — Vite owns SIGTERM and closes the server
+// before exiting — that listener stays in charge. Prepended so it runs
+// before any `once` listener has removed itself for this emission,
+// which is what lets it see whether one exists.
+function installHotExitHooks() {
+  const reg = hotRegistry()
+  if (reg.hooked) return
+  reg.hooked = true
+  const cleanup = () => {
+    for (const f of reg.files) removeOwnHotFile(f)
+    reg.files.clear()
+  }
+  process.on('exit', cleanup)
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    const onSignal = () => {
+      cleanup()
+      if (process.listeners(sig).some((l) => l !== onSignal)) return
+      process.removeListener(sig, onSignal)
+      process.kill(process.pid, sig)
+    }
+    try {
+      process.prependListener(sig, onSignal)
+    } catch {
+      /* signal not supported on this platform */
+    }
+  }
+}
+
+// devOrigin is scheme://host:port for the running dev server: an explicit
+// server.origin first, then the address the socket actually bound (a wildcard
+// bind — `vite --host` — becomes the machine's network address, lanHost), and
+// Vite's resolvedUrls only as a last resort.
+//
+// The socket comes before resolvedUrls on purpose. resolvedUrls say
+// "localhost", and that is ambiguous whenever another server holds the same
+// port on the other loopback family: Vite will bind [::1]:5173 while a second
+// project's Vite owns 127.0.0.1:5173, and "localhost:5173" then reaches
+// either one depending on how the client resolves the name — a page can load
+// the other project's modules. The literal address can only mean this server.
+function devOrigin(server, explicitOrigin) {
+  if (explicitOrigin) return originOf(explicitOrigin)
+  const scheme = server.config && server.config.server && server.config.server.https ? 'https' : 'http'
+  const addr = server.httpServer && server.httpServer.address && server.httpServer.address()
+  if (addr && typeof addr === 'object' && addr.port) {
+    let host = addr.address || ''
+    if (host.startsWith('::ffff:')) host = host.slice('::ffff:'.length) // IPv4-mapped
+    if (!host || WILDCARD_HOSTS.has(host)) host = lanHost(server)
+    if (host.includes(':')) host = `[${host}]`
+    return `${scheme}://${host}:${addr.port}`
+  }
+  const urls = server.resolvedUrls
+  const first = (urls && ((urls.local && urls.local[0]) || (urls.network && urls.network[0]))) || ''
+  return first ? originOf(first) : ''
+}
+
+function originOf(u) {
+  try {
+    return new URL(u).origin
+  } catch {
+    return String(u).replace(/\/+$/, '')
+  }
+}
+
+function toArray(v) {
+  if (v == null) return []
+  if (Array.isArray(v)) return v
+  if (typeof v === 'object') return Object.values(v)
+  return [v]
+}
+
+// rootRelative renders an entry the way the manifest keys it: relative
+// to the Vite root, forward slashes.
+function rootRelative(root, p) {
+  const abs = isAbsolute(p) ? p : resolve(root, p)
+  return relative(root, abs).split(sep).join('/')
+}
+
+// resolvedEntries is what the build will use as its entry modules,
+// root-relative: rollupOptions.input, else a library entry, else
+// Vite's default index.html.
+function resolvedEntries(cfg) {
+  const build = cfg.build || {}
+  let input = build.rollupOptions ? build.rollupOptions.input : undefined
+  if ((input == null || input === false) && build.lib) input = build.lib.entry
+  const entries = toArray(input)
+    .filter((p) => typeof p === 'string' && p !== '')
+    .map((p) => rootRelative(cfg.root, p))
+  return entries.length ? entries : ['index.html']
+}
+
+// userAliases reports whether the user's resolve.alias (object or array
+// form) already resolves the bare specifier name.
+function userAliases(userConfig, name) {
+  const alias = userConfig.resolve && userConfig.resolve.alias
+  if (!alias) return false
+  if (Array.isArray(alias)) {
+    return alias.some((a) => a && (a.find === name || (a.find instanceof RegExp && a.find.test(name))))
+  }
+  return Object.prototype.hasOwnProperty.call(alias, name)
+}
+
+// caseMismatch returns dir's path below root as the filesystem spells it,
+// when that differs from dir only by letter case, and '' otherwise (an
+// exact match, a missing directory, or dir outside root). On macOS and
+// Windows 'src/pages' opens as 'src/Pages'; Linux, and import.meta.glob's
+// keys everywhere, see two different directories.
+function caseMismatch(root, dir) {
+  const rel = relative(root, dir)
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return ''
+  const want = rel.split(sep)
+  const actual = []
+  let cur = root
+  for (const seg of want) {
+    let entries
+    try {
+      entries = readdirSync(cur)
+    } catch {
+      return ''
+    }
+    const hit = entries.includes(seg) ? seg : entries.find((e) => e.toLowerCase() === seg.toLowerCase())
+    if (!hit) return ''
+    actual.push(hit)
+    cur = join(cur, hit)
+  }
+  return actual.join('/') === want.join('/') ? '' : actual.join('/')
+}
+
+function sameEntries(a, b) {
+  const x = toArray(a).map(String).sort()
+  const y = toArray(b).map(String).sort()
+  return x.length === y.length && x.every((v, i) => v === y[i])
+}
+
+// manifestPathFor resolves <sdkDir>/manifest.json against the Vite root. An
+// explicit sdkDir is taken as given; the default is sdk/ (web/sdk, where
+// the Go app writes), falling back to the old src/sdk/ when only that one
+// has a manifest, so a project laid out for the old default keeps working.
+function manifestPathFor(root, sdkDir) {
+  if (sdkDir) return join(isAbsolute(sdkDir) ? sdkDir : join(root, sdkDir), MANIFEST)
+  const current = join(root, DEFAULT_SDK_DIR, MANIFEST)
+  const legacy = join(root, LEGACY_SDK_DIR, MANIFEST)
+  return !existsSync(current) && existsSync(legacy) ? legacy : current
+}
+
+// manifestPages reads the Inertia page components the manifest declares:
+// component name → the routes rendering it ("GET /users"), in manifest
+// order. null when the manifest is missing or unreadable (a half-written
+// dump included) — the caller then leaves things as they were.
+function manifestPages(file) {
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+  const pages = new Map()
+  for (const e of (raw && raw.endpoints) || []) {
+    if (!e || typeof e.page !== 'string') continue
+    const routes = pages.get(e.page) || []
+    const route = [e.method, e.path].filter(Boolean).join(' ')
+    if (route && !routes.includes(route)) routes.push(route)
+    pages.set(e.page, routes)
+  }
+  return pages
+}
+
+// validPageName: a relative path of plain segments — not absolute, no
+// drive letter, no empty, '.' or '..' segment, no NUL.
+function validPageName(name) {
+  if (!name || name.includes('\0') || isAbsolute(name) || /^[A-Za-z]:/.test(name)) return false
+  return !name.split(/[\\/]/).some((s) => s === '' || s === '.' || s === '..')
+}
+
+// pageExists reports whether component name has a file under pagesDir:
+// <pagesDir>/<name>.<ext> for one of PAGE_EXTS. The match is exact-case at
+// every segment, as import.meta.glob keys (and so the app's resolve) are —
+// a case-insensitive filesystem would otherwise pass a name that 404s on
+// Linux. A name that is absolute or has an empty, '.' or '..' segment is
+// never looked up: it cannot name a file under pagesDir. Only directory
+// entries of pagesDir and its subdirectories are ever read; listings caches
+// them across the names of one check.
+function pageExists(pagesDir, name, listings = new Map()) {
+  if (!validPageName(name)) return false
+  const segs = name.split(/[\\/]/)
+  const listing = (dir) => {
+    if (!listings.has(dir)) {
+      let names = []
+      try { names = readdirSync(dir) } catch { /* missing: no entries */ }
+      listings.set(dir, names)
+    }
+    return listings.get(dir)
+  }
+  const isKind = (p, dir) => {
+    try {
+      const st = statSync(p)
+      return dir ? st.isDirectory() : st.isFile()
+    } catch {
+      return false
+    }
+  }
+  let dir = pagesDir
+  for (const seg of segs.slice(0, -1)) {
+    if (!listing(dir).includes(seg) || !isKind(join(dir, seg), true)) return false
+    dir = join(dir, seg)
+  }
+  const base = segs[segs.length - 1]
+  const entries = listing(dir)
+  return PAGE_EXTS.some((ext) => entries.includes(`${base}.${ext}`) && isKind(join(dir, `${base}.${ext}`), false))
+}
+
+// missingPages is the manifest's page components with no file under
+// pagesDir, as [name, routes] pairs; null without a readable manifest.
+function missingPages(manifestFile, pagesDir) {
+  const pages = manifestPages(manifestFile)
+  if (!pages) return null
+  const listings = new Map()
+  return [...pages].filter(([name]) => !pageExists(pagesDir, name, listings))
+}
 
 export default function nexusAutoSelect(options = {}) {
   let ts, MagicString, parseSFC
@@ -129,10 +651,7 @@ export default function nexusAutoSelect(options = {}) {
 
     async configResolved(cfg) {
       projectRoot = cfg.root || process.cwd()
-      const sdkDir = options.sdkDir
-        ? (isAbsolute(options.sdkDir) ? options.sdkDir : join(projectRoot, options.sdkDir))
-        : join(projectRoot, DEFAULT_SDK_DIR)
-      manifestPath = join(sdkDir, MANIFEST)
+      manifestPath = manifestPathFor(projectRoot, options.sdkDir)
       if (!existsSync(manifestPath)) {
         cfg.logger.warn(`[nexus-auto-select] manifest not found at ${manifestPath} — plugin disabled`)
         return
@@ -417,7 +936,415 @@ export default function nexusAutoSelect(options = {}) {
     },
   }
 
-  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin]
+  // ── nexus-pages (mode 6: page components exist) ─────────────────
+  //
+  // Checks every Inertia component the manifest names (endpoints carry
+  // `page`, from inertia.Page) against the files under options.pages
+  // (src/Pages by default; false turns the check off). A misspelt name
+  // otherwise surfaces only at runtime, as a page that fails to resolve.
+  //
+  //   dev    one warning per missing component once the server listens,
+  //          re-checked whenever the Go app rewrites the manifest or a file
+  //          under the pages directory comes or goes. A component is
+  //          warned about again only after it was found in between.
+  //   build  buildStart fails with every missing component listed.
+  //
+  // Without a readable manifest, or with no pages in it, it does nothing.
+  let pagesDir = ''
+  let pagesManifest = ''
+  let pagesBuild = false
+  let pagesRoot = ''
+  const pagesDirLabel = () => {
+    const rel = relative(pagesRoot, pagesDir)
+    return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : pagesDir
+  }
+  const pagesDirMissing = () => {
+    if (caseMismatch(pagesRoot, pagesDir)) return true
+    try {
+      return !statSync(pagesDir).isDirectory()
+    } catch {
+      return true
+    }
+  }
+  const describeMissingPage = (name, routes) => {
+    const via = routes.length ? ` (${routes.join(', ')})` : ''
+    return validPageName(name)
+      ? `'${name}'${via} → expected ${pagesDirLabel()}/${name}.{${PAGE_EXTS.join(',')}}`
+      : `'${name}'${via} → not a path under ${pagesDirLabel()}`
+  }
+  const pagesDirHint = () => {
+    const onDisk = caseMismatch(pagesRoot, pagesDir)
+    return onDisk
+      ? `${pagesDirLabel()} does not exist with that case — the directory on disk is ${onDisk}, ` +
+        `which a case-sensitive filesystem (Linux) and import.meta.glob keys treat as different; ` +
+        `point nexus({ pages }) at ${onDisk}, or rename the directory`
+      : `${pagesDirLabel()} does not exist — point nexus({ pages }) at the pages directory, or pass pages: false`
+  }
+  // Pages under a directory whose case differs are all missing: a
+  // case-insensitive filesystem would otherwise find them and pass a
+  // build that fails on Linux.
+  const findMissingPages = () => {
+    if (!caseMismatch(pagesRoot, pagesDir)) return missingPages(pagesManifest, pagesDir)
+    const pages = manifestPages(pagesManifest)
+    return pages ? [...pages] : null
+  }
+  const pagesHint = 'create the file, or fix the component name passed to inertia.Page'
+  let warnedPages = new Set()
+  let warnedPagesDir = false
+
+  const pagesPlugin = {
+    name: 'nexus-pages',
+
+    configResolved(cfg) {
+      if (options.pages === false) return
+      pagesRoot = cfg.root || process.cwd()
+      // The dev server runs buildStart too; there a failure would stop it.
+      pagesBuild = cfg.command === 'build'
+      const dir = options.pages || DEFAULT_PAGES_DIR
+      pagesDir = resolve(pagesRoot, dir)
+      pagesManifest = manifestPathFor(pagesRoot, options.sdkDir)
+    },
+
+    buildStart() {
+      if (!pagesDir || !pagesBuild) return
+      const missing = findMissingPages()
+      if (!missing || missing.length === 0) return
+      const lines = missing.map(([name, routes]) => `  - ${describeMissingPage(name, routes)}`)
+      if (pagesDirMissing()) lines.push(`  (${pagesDirHint()})`)
+      this.error(
+        `${missing.length} Inertia page component(s) have no file under ${pagesDirLabel()}:\n` +
+        `${lines.join('\n')}\n` +
+        `Fix: ${pagesHint}.`,
+      )
+    },
+
+    configureServer(server) {
+      if (!pagesDir) return
+      const logger = server.config.logger
+      const check = () => {
+        const missing = findMissingPages()
+        if (!missing) return
+        const now = new Set()
+        let fresh = 0
+        for (const [name, routes] of missing) {
+          now.add(name)
+          if (warnedPages.has(name)) continue
+          fresh++
+          logger.warn(`[nexus] page component ${describeMissingPage(name, routes)} — ${pagesHint}`)
+        }
+        warnedPages = now
+        if (fresh && !warnedPagesDir && pagesDirMissing()) {
+          warnedPagesDir = true
+          logger.warn(`[nexus] ${pagesDirHint()}`)
+        }
+        if (!pagesDirMissing()) warnedPagesDir = false
+      }
+
+      server.watcher.add([pagesManifest, pagesDir])
+      const manifestTarget = resolve(pagesManifest)
+      // The manifest on any write; the pages tree only when an entry comes
+      // or goes — editing a page cannot change whether it exists.
+      const inPages = (f) => f === pagesDir || f.startsWith(pagesDir + sep)
+      const onManifest = (file) => {
+        if (resolve(file) === manifestTarget) check()
+      }
+      const onEntry = (file) => {
+        const f = resolve(file)
+        if (f === manifestTarget || inPages(f)) check()
+      }
+      server.watcher.on('change', onManifest)
+      for (const ev of ['add', 'unlink', 'addDir', 'unlinkDir']) server.watcher.on(ev, onEntry)
+
+      const httpServer = server.httpServer
+      if (!httpServer) {
+        check()
+        return
+      }
+      httpServer.once('listening', check)
+    },
+  }
+
+  // ── nexus-hot (mode 5: the dev/prod handshake with the Go side) ──
+  //
+  // See the file header and internal/vitehot. One plugin for both
+  // commands because the config hook has to act on each: in build it
+  // forces the manifest, in dev it installs the origin placeholder.
+  // enforce: 'post' so the transform sees the output of vite:css-post
+  // and vite:asset, which is where the placeholder origin lands.
+  let hotCommand = ''
+  let hotConfig = null
+  let hotPath = ''
+  let hotOrigin = ''
+  let explicitOrigin = ''
+  let usePlaceholder = false
+  const hotWarnings = []
+  // Modules transformed before the port was known (server.warmup runs
+  // ahead of the socket bind); invalidated once the origin is known so
+  // none keeps the placeholder.
+  const placeholderPending = new Set()
+  const appOrigins = new Set(toArray(options.appOrigin).filter(Boolean).map((o) => originOf(String(o))))
+  // A live dev server's hot file in this build's outDir, captured before
+  // emptyOutDir can remove it and put back after (see restoreLiveHot).
+  let hotStash = null
+  let hotStashWarned = false
+
+  // liveHotOwner is the pid of the running dev server that owns the hot
+  // file, or 0: a live pid in another process, or this process when its own
+  // dev server wrote it (a programmatic build next to createServer).
+  const liveHotOwner = (hot) => {
+    if (!hot || !pidAlive(hot.pid)) return 0
+    if (hot.pid === process.pid && !hotRegistry().files.has(hotPath)) return 0
+    return hot.pid
+  }
+  const stashLiveHot = () => {
+    if (!hotPath) return
+    let raw
+    try {
+      raw = readFileSync(hotPath, 'utf8')
+    } catch {
+      return
+    }
+    let hot = null
+    try { hot = JSON.parse(raw) } catch { /* not ours to keep */ }
+    const pid = liveHotOwner(hot)
+    if (pid) hotStash = { raw, pid }
+  }
+  // restoreLiveHot undoes emptyOutDir for a running dev server: it rewrites
+  // the stashed hot file when the build has removed it and that server is
+  // still running. Called from every hook that can follow the wipe — Vite
+  // empties the outDir just before writing (renderStart follows), and in
+  // watch mode before each rebuild's buildStart.
+  const restoreLiveHot = () => {
+    if (!hotStash || existsSync(hotPath)) return
+    if (!pidAlive(hotStash.pid)) {
+      hotStash = null
+      return
+    }
+    try {
+      if (restoreHotFile(hotPath, hotStash.raw) && hotConfig) {
+        hotConfig.logger.info(`[nexus] restored ${HOT_DIR}/${HOT_FILE} for the dev server (pid ${hotStash.pid})`)
+      }
+    } catch (e) {
+      if (hotConfig) hotConfig.logger.warn(`[nexus] could not restore ${hotPath}: ${e && e.message ? e.message : e}`)
+    }
+  }
+
+  const hotPlugin = {
+    name: 'nexus-hot',
+    enforce: 'post',
+
+    config(userConfig, env) {
+      hotCommand = env.command
+      const build = userConfig.build || {}
+      const rollup = build.rollupOptions || {}
+      const out = {}
+
+      if (options.input != null) {
+        if (rollup.input == null) {
+          out.build = { rollupOptions: { input: options.input } }
+        } else if (!sameEntries(rollup.input, options.input)) {
+          hotWarnings.push(
+            `[nexus] build.rollupOptions.input (${JSON.stringify(rollup.input)}) differs from ` +
+            `nexus({ input: ${JSON.stringify(options.input)} }); using build.rollupOptions.input. ` +
+            `Declare the entry in one place.`,
+          )
+        }
+      }
+
+      if (env.command === 'build' && !build.ssr && !env.isSsrBuild) {
+        if (build.manifest === undefined || build.manifest === false) {
+          out.build = { ...(out.build || {}), manifest: true }
+          if (build.manifest === false) {
+            hotWarnings.push(
+              `[nexus] build.manifest: false overridden — nexus renders production asset tags ` +
+              `from ${NEXUS_MANIFEST}, so the build must write it.`,
+            )
+          }
+        } else if (typeof build.manifest === 'string' && build.manifest !== NEXUS_MANIFEST) {
+          hotWarnings.push(
+            `[nexus] build.manifest is '${build.manifest}', but nexus reads ${NEXUS_MANIFEST} — ` +
+            `production pages will render without asset tags.`,
+          )
+        }
+      }
+
+      // `import … from 'nexus-client'` resolves to the SDK the Go app
+      // writes, matching the tsconfig paths entry the Go side merges.
+      // Vite puts plugin aliases ahead of the user's and the first match
+      // wins, so the alias is added only when the user has none for the
+      // name — their own mapping (a wrapper module) must win.
+      if (!userAliases(userConfig, 'nexus-client')) {
+        const root = resolve(userConfig.root || process.cwd())
+        out.resolve = {
+          alias: [{ find: /^nexus-client$/, replacement: join(dirname(manifestPathFor(root, options.sdkDir)), 'client.js') }],
+        }
+      }
+
+      const tomlEnv = frontendEnvDefines(process.env[FRONTEND_ENV_VAR], userConfig.define)
+      hotWarnings.push(...tomlEnv.warnings)
+      if (Object.keys(tomlEnv.define).length) out.define = tomlEnv.define
+
+      const server = userConfig.server || {}
+      explicitOrigin = server.origin || ''
+      const dev = env.command === 'serve' && !env.isPreview
+      usePlaceholder = dev && !server.origin && !server.middlewareMode
+      if (usePlaceholder) out.server = { origin: ORIGIN_PLACEHOLDER }
+      if (dev && server.cors === undefined) {
+        out.server = {
+          ...(out.server || {}),
+          cors: { origin: (origin, cb) => cb(null, devCorsAllows(origin, appOrigins)) },
+        }
+      } else if (dev && appOrigins.size) {
+        hotWarnings.push(
+          `[nexus] nexus({ appOrigin }) is ignored because server.cors is set — ` +
+          `allow the app's origin there.`,
+        )
+      }
+
+      return out
+    },
+
+    configResolved(cfg) {
+      hotConfig = cfg
+      hotPath = join(resolve(cfg.root, cfg.build.outDir), HOT_DIR, HOT_FILE)
+      for (const w of hotWarnings.splice(0)) cfg.logger.warn(w)
+      if (hotCommand === 'build') stashLiveHot()
+    },
+
+    // A build into the outDir of a running dev server keeps that server's
+    // hot file: Vite's emptyOutDir deletes it, and restoreLiveHot writes it
+    // back, so the Go app keeps serving HMR through `nexus dev --dist` and
+    // a manual `vite build` alike. A hot file whose server is gone is
+    // removed — it would only be reported as stale.
+    buildStart() {
+      if (hotCommand !== 'build' || !hotPath) return
+      if (existsSync(hotPath)) {
+        if (!liveHotOwner(readHotFile(hotPath))) {
+          try { unlinkSync(hotPath) } catch { /* already gone */ }
+          return
+        }
+        stashLiveHot()
+        if (!hotStashWarned && hotStash) {
+          hotStashWarned = true
+          this.warn(
+            `a vite dev server (pid ${hotStash.pid}) is running against this outDir; ` +
+            `its ${HOT_DIR}/${HOT_FILE} is restored after the build empties the outDir`,
+          )
+        }
+        return
+      }
+      restoreLiveHot()
+    },
+
+    watchChange() {
+      if (hotCommand === 'build' && existsSync(hotPath)) stashLiveHot()
+    },
+
+    renderStart: {
+      order: 'post',
+      sequential: true,
+      handler() {
+        if (hotCommand === 'build') restoreLiveHot()
+      },
+    },
+
+    writeBundle: {
+      order: 'post',
+      sequential: true,
+      handler() {
+        if (hotCommand === 'build') restoreLiveHot()
+      },
+    },
+
+    closeBundle() {
+      if (hotCommand === 'build') restoreLiveHot()
+    },
+
+    configureServer(server) {
+      if (!hotPath) return
+      const httpServer = server.httpServer
+      const publish = () => {
+        const origin = devOrigin(server, explicitOrigin)
+        if (!origin) return
+        hotOrigin = origin
+        const cfg = hotConfig
+        const entries = resolvedEntries(cfg)
+        try {
+          writeHotFile(hotPath, {
+            version: HOT_VERSION,
+            origin,
+            base: cfg.base || '/',
+            entries,
+            pid: process.pid,
+          })
+        } catch (e) {
+          cfg.logger.warn(`[nexus] could not write ${hotPath}: ${e && e.message ? e.message : e}`)
+          return
+        }
+        const reg = hotRegistry()
+        reg.files.add(hotPath)
+        installHotExitHooks()
+        cfg.logger.info(`[nexus] dev server ${origin} → ${relative(cfg.root, hotPath) || hotPath}`)
+        invalidatePending(server)
+      }
+
+      if (!httpServer) {
+        // Middleware mode: there is no socket to wait for. Only an
+        // explicit server.origin says where the dev server is.
+        if (explicitOrigin) publish()
+        return
+      }
+
+      // server.resolvedUrls is filled in by server.listen() after the
+      // socket's 'listening' event, so publish from a wrapper around it.
+      // The 'listening' handler covers anything that binds httpServer
+      // without going through server.listen().
+      let inListen = false
+      const listen = server.listen
+      server.listen = async function (...args) {
+        inListen = true
+        try {
+          const result = await listen.apply(this, args)
+          publish()
+          return result
+        } finally {
+          inListen = false
+        }
+      }
+      httpServer.on('listening', () => {
+        if (!inListen) publish()
+      })
+      httpServer.on('close', () => {
+        removeOwnHotFile(hotPath)
+        hotRegistry().files.delete(hotPath)
+      })
+    },
+
+    transform(code, id) {
+      if (!usePlaceholder || !code.includes(ORIGIN_PLACEHOLDER)) return null
+      if (!hotOrigin) {
+        placeholderPending.add(id)
+        return null
+      }
+      return { code: code.replaceAll(ORIGIN_PLACEHOLDER, hotOrigin), map: null }
+    },
+  }
+
+  function invalidatePending(server) {
+    if (placeholderPending.size === 0) return
+    const graphs = server.environments
+      ? Object.values(server.environments).map((e) => e.moduleGraph).filter(Boolean)
+      : [server.moduleGraph]
+    for (const id of placeholderPending) {
+      for (const g of graphs) {
+        const mod = g.getModuleById(id)
+        if (mod) g.invalidateModule(mod)
+      }
+    }
+    placeholderPending.clear()
+  }
+
+  return [authoringPlugin, manifestFilterPlugin, loopGuardPlugin, hmrPlugin, pagesPlugin, hotPlugin]
 
   // ---- script transform (TS / JS / TSX / JSX) -----------------------
 

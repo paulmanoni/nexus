@@ -170,9 +170,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   detect one"; the detection fills only unset fields, and `frontend.Plugin`
   maps an empty `SDKOutDir` to `client.Off`.
 - The `nexus dev` SDK auto-mount now dumps into `web/sdk` on purpose (the
-  page-props types and the manifest `nexus-vite-plugin` reads) but no longer
-  edits `tsconfig.json`; `Client.OutDir = client.Off` keeps the routes
-  without the files, `Client.DevDisabled` still closes both.
+  page-props types and the manifest `nexus-vite-plugin` reads) and merges the
+  `nexus-client` mapping into tsconfig (Vue's compiler resolves page types only
+  through it); `Client.TSConfig = client.Off` keeps tsconfig untouched,
+  `Client.OutDir = client.Off` keeps the routes without the files, and
+  `Client.DevDisabled` still closes both.
 - **Inertia pages are no longer emitted as REST calls** in the SDK's
   `RestEndpoints` or `extension/frontend`'s `index.ts`: a page is rendered,
   not called. Its props type lives in `NexusPageProps`.
