@@ -235,7 +235,7 @@ func (e *userError) Error() string { return e.msg }
 func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, legacyGoRun, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
 	defer stop()
 
 	// Columnar "Dev Server Logs" view: reshape the child's zap-JSON log lines

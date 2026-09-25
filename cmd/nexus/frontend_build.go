@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -112,8 +111,8 @@ func runViteBuild(ctx context.Context, webDir string, env []string, stdout, stde
 	return nil
 }
 
-// buildSignalContext is cancelled by Ctrl-C or SIGTERM, so a Vite child
+// buildSignalContext is cancelled by Ctrl-C, SIGTERM or a hangup, so a Vite child
 // in its own process group is stopped with the build.
 func buildSignalContext() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	return signal.NotifyContext(context.Background(), stopSignals...)
 }

@@ -3,9 +3,16 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
+
+// stopSignals end nexus dev and nexus build through their normal stop
+// path. SIGHUP is the terminal closing: Vite and the app run in process
+// groups of their own, which the hangup never reaches, so without it they
+// would outlive the session. SIGTERM is `kill`; os.Interrupt is Ctrl-C.
+var stopSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
 
 // setProcessGroup runs the child in its own process group so the parent can
 // deliver signals to the group (forwarding Ctrl-C to the user's server,

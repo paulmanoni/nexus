@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -49,7 +50,8 @@ func runDevTUI(target, addr string, openDash bool, frontendFlag string, verbose 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	logW := newTUILineWriter(func(line string) { model.send(logLineMsg(line)) })
+	quitOnStopSignal(ctx, prog)
+	logW :=newTUILineWriter(func(line string) { model.send(logLineMsg(line)) })
 	if pkgDir, err := filepath.Abs(targetDir(target)); err == nil {
 		servedDist := ""
 		if root := detectServeFrontendRoot(pkgDir); root != "" {
@@ -85,6 +87,28 @@ func runDevTUI(target, addr string, openDash bool, frontendFlag string, verbose 
 	_ = stdout
 	_ = stderr // taken over by the TUI; the args are kept for parity with runDev
 	return nil
+}
+
+// quitOnStopSignal ends the TUI through its normal quit path — which kills
+// the app's process group and stops Vite — on any of stopSignals, until ctx
+// ends. Bubble Tea catches SIGINT and SIGTERM only while its event loop
+// runs, and never SIGHUP, whose default action (the terminal closing)
+// would exit nexus dev on the spot and orphan both children: they run in
+// process groups of their own, which the hangup does not reach. The
+// registration stays until ctx ends, so a second signal during the
+// teardown cannot cut it short.
+func quitOnStopSignal(ctx context.Context, prog interface{ Quit() }) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, stopSignals...)
+	go func() {
+		defer signal.Stop(sigs)
+		select {
+		case <-sigs:
+			prog.Quit()
+			<-ctx.Done()
+		case <-ctx.Done():
+		}
+	}()
 }
 
 // --- Model ---

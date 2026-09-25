@@ -8,6 +8,10 @@ import (
 	"syscall"
 )
 
+// stopSignals end nexus dev and nexus build through their normal stop
+// path. Windows has no SIGHUP; closing the console arrives as SIGTERM.
+var stopSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
 // setProcessGroup is a no-op on Windows — Setpgid isn't available. Console
 // control events propagate differently there, and the default behavior
 // (Ctrl-C reaches the child) is usually fine for `go run`.
