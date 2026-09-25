@@ -51,7 +51,7 @@ func runDevTUI(target, addr string, openDash bool, frontendFlag string, verbose 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	quitOnStopSignal(ctx, prog)
-	logW :=newTUILineWriter(func(line string) { model.send(logLineMsg(line)) })
+	logW := newTUILineWriter(func(line string) { model.send(logLineMsg(line)) })
 	if pkgDir, err := filepath.Abs(targetDir(target)); err == nil {
 		servedDist := ""
 		if root := detectServeFrontendRoot(pkgDir); root != "" {
