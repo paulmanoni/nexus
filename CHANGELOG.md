@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.66.2] - 2026-09-29
+
 ### Changed
 
 - **`nexus dev` rebuilds are ~30% faster.** The default dev build now
