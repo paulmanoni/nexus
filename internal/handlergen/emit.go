@@ -54,6 +54,18 @@ type Config struct {
 	NexusImport    string // default github.com/paulmanoni/nexus
 	DecorateImport string // default github.com/paulmanoni/nexus/decorate
 	AuthImport     string // default github.com/paulmanoni/nexus/extension/auth
+
+	// RouterDecls are this package's //@router declarations, emitted as
+	// nexus.RouterDecl calls; KnownRouters is every declared name across the
+	// scan, for validating //@on references.
+	RouterDecls  []RouterDecl
+	KnownRouters map[string]bool
+}
+
+// RouterDecl is one //@router declaration ready to emit.
+type RouterDecl struct {
+	Name, Prefix, Parent string
+	AuthExpr             string // "", or e.g. `auth.Requires("ADMIN")`
 }
 
 // packageDirectiveKeywords are the //@ directives that live on the PACKAGE
@@ -91,7 +103,7 @@ var primaryKeywords = map[string]bool{
 	"subscription": true, "ws": true, "worker": true,
 }
 
-var modifierKeywords = map[string]bool{"auth": true, "session": true, "use": true}
+var modifierKeywords = map[string]bool{"auth": true, "on": true, "session": true, "use": true}
 
 // sessionImportPath is the sessions extension, for the //@session modifier.
 const sessionImportPath = "github.com/paulmanoni/nexus/extension/session"
@@ -189,7 +201,11 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 			return nil, m.errf("//@%s on %s does not accept modifier annotations (//@%s applies to rest/query/mutation/subscription/ws and custom decorators)",
 				g.primary.Keyword, fn, m.Keyword)
 		}
-		opts, optImports, err := renderOpts(g.modifiers, cfg.AuthImport)
+		mods, onRouter, err := extractOnRouter(g.modifiers, cfg.KnownRouters)
+		if err != nil {
+			return nil, err
+		}
+		opts, optImports, err := renderOpts(mods, cfg.AuthImport)
 		if err != nil {
 			return nil, err
 		}
@@ -200,9 +216,19 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if onRouter != "" {
+			// The op registers on the named router (assembled by the runtime)
+			// instead of the package module.
+			text = fmt.Sprintf("nexus.OnRouter(%s, %s)", strconv.Quote(onRouter), text)
+		}
 		stmts = append(stmts, stmt{line: g.line, text: text})
 	}
-	if len(stmts) == 0 {
+	for _, rd := range cfg.RouterDecls {
+		if rd.AuthExpr != "" {
+			imports[strconv.Quote(cfg.AuthImport)] = true
+		}
+	}
+	if len(stmts) == 0 && len(cfg.RouterDecls) == 0 {
 		return nil, nil
 	}
 	sort.SliceStable(stmts, func(i, j int) bool { return stmts[i].line < stmts[j].line })
@@ -234,6 +260,17 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	}
 	if cfg.RoutePrefix != "" {
 		fmt.Fprintf(&b, "\t\tnexus.RoutePrefix(%s),\n", strconv.Quote(cfg.RoutePrefix))
+	}
+	// //@router declarations record into the runtime's router registry; the
+	// tree assembles once every package init has run.
+	for _, rd := range cfg.RouterDecls {
+		if rd.AuthExpr != "" {
+			fmt.Fprintf(&b, "\t\tnexus.RouterDecl(%s, %s, %s, %s),\n",
+				strconv.Quote(rd.Name), strconv.Quote(rd.Prefix), strconv.Quote(rd.Parent), rd.AuthExpr)
+		} else {
+			fmt.Fprintf(&b, "\t\tnexus.RouterDecl(%s, %s, %s),\n",
+				strconv.Quote(rd.Name), strconv.Quote(rd.Prefix), strconv.Quote(rd.Parent))
+		}
 	}
 	for _, s := range stmts {
 		fmt.Fprintf(&b, "\t\t%s,\n", s.text)
@@ -527,6 +564,46 @@ func renderAuthOption(m Annotation) (expr string, needsAuthImport bool, err erro
 		return "", false, m.errf("unknown //@auth capability %q — use Required, Requires <PERM…>, or Public%s",
 			head, authSuggestion(head))
 	}
+}
+
+// extractOnRouter pulls the //@on modifier out of a function's modifier list,
+// validating its shape and that the named router is declared somewhere in the
+// scan (with a did-you-mean for near misses).
+func extractOnRouter(mods []Annotation, known map[string]bool) (rest []Annotation, router string, err error) {
+	for _, m := range mods {
+		if m.Keyword != "on" {
+			rest = append(rest, m)
+			continue
+		}
+		if router != "" {
+			return nil, "", m.errf("//@on given twice — an op registers on one router")
+		}
+		if len(m.Args) != 1 || m.Args[0] == "" {
+			return nil, "", m.errf("//@on needs exactly a router name, e.g. //@on billing (got %v)", m.Args)
+		}
+		name := m.Args[0]
+		if !known[name] {
+			names := make([]string, 0, len(known))
+			for n := range known {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			hint := ""
+			for _, n := range names {
+				if editDistance(strings.ToLower(name), strings.ToLower(n)) <= 2 {
+					hint = fmt.Sprintf(" (did you mean %q?)", n)
+					break
+				}
+			}
+			declared := "none declared — add //@router <name> <prefix> to a package doc comment"
+			if len(names) > 0 {
+				declared = "declared: " + strings.Join(names, ", ")
+			}
+			return nil, "", m.errf("//@on names unknown router %q (%s)%s", name, declared, hint)
+		}
+		router = name
+	}
+	return rest, router, nil
 }
 
 // renderSessionOption turns a //@session modifier into its option

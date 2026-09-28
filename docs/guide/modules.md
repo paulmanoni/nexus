@@ -95,3 +95,29 @@ Services can declare the resources they use, which draws edges on the dashboard:
 ```go
 app.Service("billing").Using("main", "cache")
 ```
+
+## Routers
+
+`nexus.Router` is a FastAPI-style registration group: a first-class value with
+a URL prefix and shared per-op options, nestable through `Include`:
+
+```go
+billing := nexus.NewRouter("billing", "/billing", auth.Required())
+billing.Rest("GET", "/invoices", NewListInvoices)
+billing.Query(NewInvoiceStats)
+
+v1 := nexus.NewRouter("v1", "/api/v1")
+v1.Include(billing) // billing mounts at /api/v1/billing
+
+nexus.Boot(v1) // a *Router is an Option; pass only the root
+```
+
+Prefixes stack under `Include`, and shared options — any `MiddlewareOption`:
+`auth.Required()`, `auth.Requires(...)`, `session.Required()`, `nexus.Use(...)`
+— inherit downward, running in declaration order ahead of each op's own
+options. Each router appears as its own dashboard module. Passing an included
+router (rather than the root) to `Boot` is a boot error, as is mounting the
+same router twice.
+
+The decorator form (`//@router` + `//@on`) builds on the same machinery — see
+[`//@` decorators](./decorators#routers-fastapi-style).

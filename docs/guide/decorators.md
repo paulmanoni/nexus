@@ -113,6 +113,40 @@ Scope is enforced both ways: a package directive on a function — or a function
 directive on the package doc — is a positioned error, and two files declaring
 conflicting values error naming both locations.
 
+## Routers (FastAPI-style)
+
+For grouping beyond one-module-per-package, declare **routers**: named groups
+with stacking prefixes, shared gates, and cross-package membership.
+
+```go
+// Package api.
+//
+//@router v1 /api/v1
+//@router billing /billing parent=v1 auth=Requires(ADMIN)
+package api
+```
+
+Any handler in any package joins with `//@on`:
+
+```go
+//@rest GET /invoices
+//@on billing
+func NewListInvoices(...) (...)   // serves /api/v1/billing/invoices, ADMIN-gated
+```
+
+- Prefixes **stack** through `parent=`; shared `auth=` gates apply to every
+  member op (parents' gates first), ahead of the op's own options.
+- Each router is its own dashboard module; ops without `//@on` stay on the
+  package module as before.
+- Strictness as usual: an unknown router name in `//@on` errors with a
+  did-you-mean over the declared names, conflicting re-declarations name both
+  locations, unknown parents and parent cycles are positioned errors.
+
+The same model is available as plain Go — `nexus.NewRouter(name, prefix,
+shared...)`, `.Rest/.Query/.Mutation/.WS/.Worker/.Provide`, and
+`.Include(child)`; pass only the root router to `Boot`. See
+[Modules & services](./modules#routers).
+
 ## How the wiring is generated
 
 - **`nexus dev` and `nexus build`** generate the registrations on the fly and pass them

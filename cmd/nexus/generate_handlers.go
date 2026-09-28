@@ -12,7 +12,7 @@ import (
 // Anything outside this set is left for other tools (or ignored).
 var handlerKeywords = []string{
 	"provide", "rest", "query", "mutation", "subscription", "ws", "worker", "auth", "session", "use",
-	"module", "path", "routeprefix",
+	"module", "path", "routeprefix", "router", "on",
 }
 
 type handlersOptions struct {
@@ -53,6 +53,13 @@ Package doc directives (on the comment above the package clause):
     //@module <name>                  -> names the nexus.Module group (default: package name)
     //@path <prefix>                  -> nexus.Path(prefix): REST+GraphQL module prefix
     //@routeprefix <prefix>           -> nexus.RoutePrefix(prefix): REST-only prefix
+    //@router <name> <prefix> [parent=<name>] [auth=Required|Requires(P1,P2)]
+                                      -> declare a FastAPI-style router: prefixes stack
+                                         under parent, auth applies to every member op
+
+Router membership (on a handler, with any primary):
+    //@on <name>                      -> register this op on the named router instead
+                                         of the package module (works cross-package)
 
 Examples:
     nexus generate handlers ./...        # scan from cwd

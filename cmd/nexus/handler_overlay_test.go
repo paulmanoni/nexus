@@ -308,3 +308,37 @@ func NewX() {}
 		t.Fatalf("custom decorator on package doc should be a positioned error, got: %v", err)
 	}
 }
+
+// TestScanHandlerSites_Routers: //@router on a package doc plus //@on on a
+// handler flow end to end into RouterDecl + OnRouter emission.
+func TestScanHandlerSites_Routers(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "h.go"), `// Package api.
+//
+//@router v1 /api/v1
+//@router billing /billing parent=v1
+package api
+
+//@rest GET /invoices
+//@on billing
+func NewList() {}
+
+//@query
+func NewStats() {}
+`)
+	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got := string(results[0].Content)
+	for _, want := range []string{
+		`nexus.RouterDecl("v1", "/api/v1", "")`,
+		`nexus.RouterDecl("billing", "/billing", "v1")`,
+		`nexus.OnRouter("billing", nexus.AsRest("GET", "/invoices", NewList))`,
+		`nexus.AsQuery(NewStats)`, // un-routed op stays on the package module
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("generated file missing %q:\n%s", want, got)
+		}
+	}
+}

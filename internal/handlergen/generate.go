@@ -40,18 +40,33 @@ type Result struct {
 // skipped (no empty file written). It errors if a directory mixes package
 // names (a scan invariant violation).
 func Generate(sites []Site, outName string) ([]Result, error) {
+	declsByDir, known, sites, err := collectRouterDecls(sites)
+	if err != nil {
+		return nil, err
+	}
+
 	byDir := map[string][]Site{}
 	pkgOf := map[string]string{}
 	var dirs []string
-	for _, s := range sites {
+	note := func(s Site) {
 		if _, seen := byDir[s.Dir]; !seen {
 			dirs = append(dirs, s.Dir)
 		}
+	}
+	for _, s := range sites {
+		note(s)
 		byDir[s.Dir] = append(byDir[s.Dir], s)
 		if p, ok := pkgOf[s.Dir]; ok && p != s.Pkg {
 			return nil, fmt.Errorf("handlergen: directory %s has conflicting packages %q and %q", s.Dir, p, s.Pkg)
 		}
 		pkgOf[s.Dir] = s.Pkg
+	}
+	// A package holding only //@router declarations still emits a file.
+	for dir, decls := range declsByDir {
+		if _, seen := byDir[dir]; !seen {
+			dirs = append(dirs, dir)
+			pkgOf[dir] = decls[0].pkg
+		}
 	}
 	sort.Strings(dirs)
 
@@ -62,6 +77,10 @@ func Generate(sites []Site, outName string) ([]Result, error) {
 		if err != nil {
 			return nil, err
 		}
+		for _, d := range declsByDir[dir] {
+			cfg.RouterDecls = append(cfg.RouterDecls, d.RouterDecl)
+		}
+		cfg.KnownRouters = known
 		content, err := Emit(cfg, anns)
 		if err != nil {
 			return nil, err // already positioned at the annotation (file:line)
@@ -72,6 +91,129 @@ func Generate(sites []Site, outName string) ([]Result, error) {
 		results = append(results, Result{Path: filepath.Join(dir, outName), Content: content})
 	}
 	return results, nil
+}
+
+// declWithPos is a router declaration plus where it came from.
+type declWithPos struct {
+	RouterDecl
+	pkg  string
+	site Site
+}
+
+// collectRouterDecls peels //@router declarations out of the site list —
+// they are scan-wide, not per-package: a router declared in one package can
+// be joined (//@on) from any other. Validates placement, argument shape,
+// duplicate and conflicting names, unknown parents and parent cycles, all
+// with positioned errors.
+func collectRouterDecls(sites []Site) (byDir map[string][]declWithPos, known map[string]bool, rest []Site, err error) {
+	byDir = map[string][]declWithPos{}
+	known = map[string]bool{}
+	decls := map[string]declWithPos{}
+	rest = make([]Site, 0, len(sites))
+	for _, s := range sites {
+		if s.Keyword != "router" {
+			rest = append(rest, s)
+			continue
+		}
+		a := Annotation{Func: s.Func, Keyword: s.Keyword, Args: s.Args, File: s.File, Line: s.Line}
+		if !s.PackageLevel {
+			return nil, nil, nil, a.errf("//@router is package-level — put it on the package doc comment, above `package %s`", s.Pkg)
+		}
+		d, err := parseRouterDecl(a)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if prev, dup := decls[d.Name]; dup {
+			if prev.RouterDecl == d.RouterDecl {
+				continue // the same declaration repeated is harmless
+			}
+			return nil, nil, nil, a.errf("//@router %s conflicts with its declaration at %s:%d — declare a router once",
+				d.Name, prev.site.File, prev.site.Line)
+		}
+		dw := declWithPos{RouterDecl: d.RouterDecl, pkg: s.Pkg, site: s}
+		decls[d.Name] = dw
+		byDir[s.Dir] = append(byDir[s.Dir], dw)
+		known[d.Name] = true
+	}
+	// Parents must exist, and the parent chain must terminate.
+	for name, d := range decls {
+		if d.Parent == "" {
+			continue
+		}
+		if _, ok := decls[d.Parent]; !ok {
+			return nil, nil, nil, d.site.errf("//@router %s names unknown parent %q", name, d.Parent)
+		}
+		seen := map[string]bool{name: true}
+		for p := d.Parent; p != ""; p = decls[p].Parent {
+			if seen[p] {
+				return nil, nil, nil, d.site.errf("//@router %s: parent chain forms a cycle through %q", name, p)
+			}
+			seen[p] = true
+		}
+	}
+	return byDir, known, rest, nil
+}
+
+// errf positions an error at a site, like Annotation.errf.
+func (s Site) errf(format string, args ...any) error {
+	return Annotation{Func: s.Func, File: s.File, Line: s.Line}.errf(format, args...)
+}
+
+// parseRouterDecl parses `//@router <name> <prefix> [parent=<name>]
+// [auth=<Required|Requires(P1,P2)>]`.
+func parseRouterDecl(a Annotation) (declWithPos, error) {
+	if len(a.Args) < 2 {
+		return declWithPos{}, a.errf("//@router needs <name> <prefix>, e.g. //@router billing /billing (got %v)", a.Args)
+	}
+	d := RouterDecl{Name: a.Args[0], Prefix: a.Args[1]}
+	if d.Name == "" || strings.ContainsRune(d.Name, '=') {
+		return declWithPos{}, a.errf("//@router needs a name first, e.g. //@router billing /billing (got %v)", a.Args)
+	}
+	if !strings.HasPrefix(d.Prefix, "/") {
+		return declWithPos{}, a.errf("//@router %s prefix %q must start with \"/\"", d.Name, d.Prefix)
+	}
+	for _, kv := range a.Args[2:] {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || v == "" {
+			return declWithPos{}, a.errf("//@router %s: %q is not a key=value option (parent=<name>, auth=<Required|Requires(P1,P2)>)", d.Name, kv)
+		}
+		switch k {
+		case "parent":
+			d.Parent = v
+		case "auth":
+			expr, err := routerAuthExpr(a, v)
+			if err != nil {
+				return declWithPos{}, err
+			}
+			d.AuthExpr = expr
+		default:
+			return declWithPos{}, a.errf("//@router %s: unknown option %q (parent, auth)", d.Name, k)
+		}
+	}
+	return declWithPos{RouterDecl: d}, nil
+}
+
+// routerAuthExpr renders a //@router auth= value: Required, or
+// Requires(P1,P2) with bare or quoted permissions.
+func routerAuthExpr(a Annotation, val string) (string, error) {
+	if val == "Required" || val == "Required()" {
+		return "auth.Required()", nil
+	}
+	if inner, ok := strings.CutPrefix(val, "Requires("); ok && strings.HasSuffix(inner, ")") {
+		var quoted []string
+		for _, p := range strings.Split(strings.TrimSuffix(inner, ")"), ",") {
+			p = strings.Trim(strings.TrimSpace(p), `"`)
+			if p == "" {
+				return "", a.errf("//@router auth=%s has an empty permission", val)
+			}
+			quoted = append(quoted, fmt.Sprintf("%q", p))
+		}
+		if len(quoted) == 0 {
+			return "", a.errf("//@router auth=Requires(...) needs at least one permission")
+		}
+		return "auth.Requires(" + strings.Join(quoted, ", ") + ")", nil
+	}
+	return "", a.errf("//@router auth=%s is not Required or Requires(P1,P2)", val)
 }
 
 // splitPackageDirectives peels a package's //@module//@path//@routeprefix

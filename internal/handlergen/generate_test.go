@@ -136,3 +136,67 @@ func TestGenerate_PackageDirectives(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerate_Routers: //@router declarations emit RouterDecl calls (in the
+// declaring package's file, even with no other registrations there), //@on
+// wraps the op in nexus.OnRouter, cross-package references work, and the
+// error shapes are positioned.
+func TestGenerate_Routers(t *testing.T) {
+	decl := func(dir, file string, line int, args ...string) Site {
+		return Site{Dir: dir, Pkg: "api", File: file, Keyword: "router", Args: args, Line: line, PackageLevel: true}
+	}
+	res, err := Generate([]Site{
+		decl("api", "api/doc.go", 3, "v1", "/api/v1"),
+		decl("api", "api/doc.go", 4, "billing", "/billing", "parent=v1", "auth=Requires(ADMIN,HR)"),
+		{Dir: "b", Pkg: "billing", File: "b/h.go", Func: "NewList",
+			Keyword: "rest", Args: []string{"GET", "/invoices"}, Line: 10},
+		{Dir: "b", Pkg: "billing", File: "b/h.go", Func: "NewList",
+			Keyword: "on", Args: []string{"billing"}, Line: 11},
+	}, "gen.go")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(res) != 2 {
+		t.Fatalf("want 2 files (decl-only package + ops package), got %d", len(res))
+	}
+	declFile, opsFile := string(res[0].Content), string(res[1].Content)
+	for _, want := range []string{
+		`nexus.RouterDecl("v1", "/api/v1", "")`,
+		`nexus.RouterDecl("billing", "/billing", "v1", auth.Requires("ADMIN", "HR"))`,
+		`"github.com/paulmanoni/nexus/extension/auth"`,
+	} {
+		if !strings.Contains(declFile, want) {
+			t.Errorf("decl file missing %q:\n%s", want, declFile)
+		}
+	}
+	if !strings.Contains(opsFile, `nexus.OnRouter("billing", nexus.AsRest("GET", "/invoices", NewList))`) {
+		t.Errorf("ops file missing OnRouter wrap:\n%s", opsFile)
+	}
+
+	base := []Site{decl("api", "api/doc.go", 3, "v1", "/api/v1")}
+	fn := func(kw string, args ...string) Site {
+		return Site{Dir: "b", Pkg: "b", File: "b/h.go", Func: "F", Keyword: kw, Args: args, Line: 9}
+	}
+	cases := []struct {
+		name  string
+		sites []Site
+		want  string
+	}{
+		{"conflicting decl", append(base, decl("x", "x/doc.go", 2, "v1", "/other")), "conflicts with its declaration at api/doc.go:3"},
+		{"unknown parent", []Site{decl("api", "api/doc.go", 3, "a", "/a", "parent=ghost")}, `unknown parent "ghost"`},
+		{"cycle", []Site{decl("api", "api/doc.go", 3, "a", "/a", "parent=b"), decl("api", "api/doc.go", 4, "b", "/b", "parent=a")}, "forms a cycle"},
+		{"bad prefix", []Site{decl("api", "api/doc.go", 3, "a", "a")}, `must start with "/"`},
+		{"router on a function", []Site{{Dir: "b", Pkg: "b", File: "b/h.go", Func: "F", Keyword: "router", Args: []string{"a", "/a"}, Line: 9}}, "package-level"},
+		{"unknown on", append(append([]Site{}, base...), fn("rest", "GET", "/x"), fn("on", "biling")), `unknown router "biling"`},
+		{"on did-you-mean", append(append([]Site{}, base...), fn("rest", "GET", "/x"), fn("on", "v2")), `did you mean "v1"?`},
+		{"bad auth", []Site{decl("api", "api/doc.go", 3, "a", "/a", "auth=Admin")}, "not Required or Requires"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Generate(c.sites, "gen.go")
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
