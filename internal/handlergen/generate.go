@@ -14,6 +14,7 @@ import (
 type Site struct {
 	Dir     string // directory of the source file (one generated file per dir/package)
 	Pkg     string // package name in that dir
+	File    string // source file, as it should appear in error positions
 	Func    string
 	Keyword string
 	Args    []string
@@ -53,11 +54,11 @@ func Generate(sites []Site, outName string) ([]Result, error) {
 		group := byDir[dir]
 		anns := make([]Annotation, 0, len(group))
 		for _, s := range group {
-			anns = append(anns, Annotation{Func: s.Func, Keyword: s.Keyword, Args: s.Args, Line: s.Line, Imports: s.Imports})
+			anns = append(anns, Annotation{Func: s.Func, Keyword: s.Keyword, Args: s.Args, File: s.File, Line: s.Line, Imports: s.Imports})
 		}
 		content, err := Emit(Config{Package: pkgOf[dir]}, anns)
 		if err != nil {
-			return nil, fmt.Errorf("handlergen: %s: %w", dir, err)
+			return nil, err // already positioned at the annotation (file:line)
 		}
 		if content == nil {
 			continue // no primary registrations in this package

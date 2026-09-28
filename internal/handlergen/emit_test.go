@@ -198,7 +198,7 @@ func TestEmit_Errors(t *testing.T) {
 		}, "two primary"},
 		{"modifier without primary", []Annotation{
 			{Func: "F", Keyword: "auth", Args: []string{"Required"}, Line: 1},
-		}, "no //@rest"},
+		}, "no primary"},
 		{"auth on provide", []Annotation{
 			{Func: "F", Keyword: "provide", Line: 1},
 			{Func: "F", Keyword: "auth", Args: []string{"Required"}, Line: 2},
@@ -208,6 +208,25 @@ func TestEmit_Errors(t *testing.T) {
 		}, "needs <METHOD> <PATH>"},
 		{"unknown keyword", []Annotation{{Func: "F", Keyword: "bogus", Line: 1}}, "unknown annotation"},
 		{"worker missing name", []Annotation{{Func: "F", Keyword: "worker", Line: 1}}, "needs exactly a <name>"},
+		{"rest bad method", []Annotation{
+			{Func: "F", Keyword: "rest", Args: []string{"FETCH", "/a"}, Line: 1},
+		}, "not an HTTP method"},
+		{"rest bad path", []Annotation{
+			{Func: "F", Keyword: "rest", Args: []string{"GET", "users"}, Line: 1},
+		}, `must start with "/"`},
+		{"query with args", []Annotation{
+			{Func: "F", Keyword: "query", Args: []string{"userList"}, Line: 1},
+		}, "takes no arguments"},
+		{"provide with args", []Annotation{
+			{Func: "F", Keyword: "provide", Args: []string{"x"}, Line: 1},
+		}, "takes no arguments"},
+		{"auth bad expression", []Annotation{
+			{Func: "F", Keyword: "rest", Args: []string{"GET", "/a"}, Line: 1},
+			{Func: "F", Keyword: "auth", Args: []string{`Requires("A"`}, Line: 2},
+		}, "not valid Go"},
+		{"positioned error", []Annotation{
+			{Func: "F", Keyword: "rest", Args: []string{"GET"}, File: "h/x.go", Line: 7},
+		}, "h/x.go:7:"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

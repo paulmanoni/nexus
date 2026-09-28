@@ -148,3 +148,87 @@ func TestResolveNotFound(t *testing.T) {
 		t.Fatalf("expected not-a-dependency error, got %v", err)
 	}
 }
+
+func TestNearHandlerKeyword(t *testing.T) {
+	cases := map[string]struct {
+		want  string
+		close bool
+	}{
+		"Rest":       {"rest", true},  // case typo
+		"quer":       {"query", true}, // dropped letter
+		"queyr":      {"query", true}, // transposition
+		"mutations":  {"mutation", true},
+		"providr":    {"provide", true},
+		"test":       {"", false}, // different first letter — another tool's
+		"user":       {"use", true},
+		"deprecated": {"", false},
+		"wrap":       {"", false},
+		"decorate":   {"", false},
+	}
+	for kw, c := range cases {
+		got, close := nearHandlerKeyword(kw)
+		if close != c.close || (close && got != c.want) {
+			t.Errorf("nearHandlerKeyword(%q) = (%q, %v), want (%q, %v)", kw, got, close, c.want, c.close)
+		}
+	}
+}
+
+// TestScanHandlerSites_Strictness covers the scan-level guarantees end to end:
+// a lowercase //@rest method is normalised to the HTTP verb, a typo'd keyword
+// is a positioned error with a suggestion, a malformed directive reports the
+// annotation's own file:line, and genuinely foreign keywords stay ignored.
+func TestScanHandlerSites_Strictness(t *testing.T) {
+	// Lowercase method normalises; the route registers as GET.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "h.go"), `package h
+
+//@rest get /users
+func NewList() {}
+`)
+	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(results) != 1 || !strings.Contains(string(results[0].Content), `nexus.AsRest("GET", "/users"`) {
+		t.Fatalf("lowercase method not normalised to GET:\n%v", results)
+	}
+
+	// A near-miss keyword is an error with a suggestion, not a silent no-op.
+	dir2 := t.TempDir()
+	writeFile(t, filepath.Join(dir2, "h.go"), `package h
+
+//@quer
+func NewList() {}
+`)
+	_, err = scanHandlerSites(dir2, "nexus_handlers_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "did you mean //@query") {
+		t.Fatalf("typo should suggest //@query, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "h.go:3:") {
+		t.Fatalf("typo error should carry file:line, got: %v", err)
+	}
+
+	// A malformed known directive reports the annotation's file:line.
+	dir3 := t.TempDir()
+	writeFile(t, filepath.Join(dir3, "h.go"), `package h
+
+//@rest GET users
+func NewList() {}
+`)
+	_, err = scanHandlerSites(dir3, "nexus_handlers_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "h.go:3:") || !strings.Contains(err.Error(), `must start with "/"`) {
+		t.Fatalf("malformed //@rest should carry file:line and the rule, got: %v", err)
+	}
+
+	// A genuinely foreign keyword stays ignored (coexistence with other tools).
+	dir4 := t.TempDir()
+	writeFile(t, filepath.Join(dir4, "h.go"), `package h
+
+//@deprecated
+//@query
+func NewList() {}
+`)
+	if _, err := scanHandlerSites(dir4, "nexus_handlers_gen.go"); err != nil {
+		t.Fatalf("foreign keyword must not error: %v", err)
+	}
+}

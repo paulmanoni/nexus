@@ -116,11 +116,19 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 		kw := h.Keyword
 		qualified := strings.Contains(kw, ".")
 		if !builtinHandlerKeyword(kw) && !qualified {
+			// Unknown unqualified keyword: a typo of a nexus keyword is an
+			// error (a silently dropped route is baffling to debug); anything
+			// else is left for other tools.
+			if want, close := nearHandlerKeyword(kw); close {
+				return nil, fmt.Errorf("%s:%d: unknown annotation //@%s on %s — did you mean //@%s?",
+					displayRel(h.File), h.Pos.Line, kw, h.Func, want)
+			}
 			continue
 		}
 		site := handlergen.Site{
 			Dir:     filepath.Dir(h.File),
 			Pkg:     h.Pkg,
+			File:    displayRel(h.File),
 			Func:    h.Func,
 			Keyword: kw,
 			Args:    h.Args,
@@ -132,7 +140,7 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 			// //@use ratelimit.Per(...)); resolve those from the annotated file.
 			imps, err := resolveUseImports(h.File, h.Args)
 			if err != nil {
-				return nil, fmt.Errorf("%s: //@use on %s: %w", h.File, h.Func, err)
+				return nil, fmt.Errorf("%s:%d: //@use on %s: %w", displayRel(h.File), h.Pos.Line, h.Func, err)
 			}
 			site.Imports = imps
 		case qualified:
@@ -143,13 +151,72 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 			sel := kw[:strings.IndexByte(kw, '.')]
 			imp, err := res.resolve(h.File, sel)
 			if err != nil {
-				return nil, fmt.Errorf("%s: //@%s on %s: %w", h.File, kw, h.Func, err)
+				return nil, fmt.Errorf("%s:%d: //@%s on %s: %w", displayRel(h.File), h.Pos.Line, kw, h.Func, err)
 			}
 			site.Imports = []string{imp}
 		}
 		sites = append(sites, site)
 	}
 	return handlergen.Generate(sites, outName)
+}
+
+// displayRel shows a path relative to the cwd when it sits beneath it (how go
+// prints positions), else unchanged.
+func displayRel(path string) string {
+	if cwd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(cwd, path); err == nil && !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+	}
+	return path
+}
+
+// nearHandlerKeyword reports whether an unknown keyword is close enough to a
+// nexus handler keyword to be a probable typo: same word ignoring case, or —
+// with the same first letter, since typos rarely change it — within one edit
+// (two for longer words). Distant keywords (or same-distance words starting
+// differently, like //@test vs rest) belong to other tools and are ignored,
+// so the strictness never breaks coexistence.
+func nearHandlerKeyword(kw string) (want string, close bool) {
+	lower := strings.ToLower(kw)
+	best, bestDist := "", 3
+	for _, k := range handlerKeywords {
+		if lower == k {
+			return k, true // case typo, e.g. //@Rest
+		}
+		if lower == "" || lower[0] != k[0] {
+			continue
+		}
+		limit := 1
+		if len(k) >= 5 {
+			limit = 2
+		}
+		if d := editDistance(lower, k); d <= limit && d < bestDist {
+			best, bestDist = k, d
+		}
+	}
+	return best, best != ""
+}
+
+// editDistance is the Levenshtein distance between two short ASCII words.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
 
 // handlerKeywordSet is handlerKeywords as a set for O(1) membership.

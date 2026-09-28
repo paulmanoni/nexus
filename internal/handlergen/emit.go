@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/parser"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,8 +29,20 @@ type Annotation struct {
 	Func    string   // the annotated function's name (same package as the generated file)
 	Keyword string   // "rest","query","mutation","subscription","ws","worker","provide","auth","use"
 	Args    []string // raw tokens after the keyword
-	Line    int      // source line — gives the emitted statements a stable order
+	File    string   // source file of the directive (as the caller wants it shown in errors)
+	Line    int      // source line — errors point here; also gives statements a stable order
 	Imports []string // import lines this directive's expression needs (//@use); e.g. `"github.com/x/rl"`
+}
+
+// errf builds an error anchored at the annotation's source position, in the
+// standard file:line: form editors and CI understand. Callers that construct
+// Annotations without File (library use) still get the function context.
+func (a Annotation) errf(format string, args ...any) error {
+	msg := fmt.Sprintf(format, args...)
+	if a.File != "" {
+		return fmt.Errorf("%s:%d: %s", a.File, a.Line, msg)
+	}
+	return fmt.Errorf("%s: %s", a.Func, msg)
 }
 
 // Config controls the generated file.
@@ -131,8 +144,8 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		switch {
 		case isPrimaryKeyword(a.Keyword):
 			if g.primary != nil {
-				return nil, fmt.Errorf("handlergen: %s has two primary annotations (//@%s and //@%s)",
-					a.Func, g.primary.Keyword, a.Keyword)
+				return nil, a.errf("%s has two primary annotations (//@%s at line %d and //@%s) — a function registers exactly once",
+					a.Func, g.primary.Keyword, g.primary.Line, a.Keyword)
 			}
 			p := a
 			g.primary = &p
@@ -144,7 +157,7 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		case modifierKeywords[a.Keyword]:
 			g.modifiers = append(g.modifiers, a)
 		default:
-			return nil, fmt.Errorf("handlergen: %s has unknown annotation //@%s", a.Func, a.Keyword)
+			return nil, a.errf("%s has unknown annotation //@%s", a.Func, a.Keyword)
 		}
 	}
 
@@ -156,21 +169,23 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	for _, fn := range order {
 		g := groups[fn]
 		if g.primary == nil {
-			return nil, fmt.Errorf("handlergen: %s has modifier annotations but no //@rest/@query/… primary", fn)
+			return nil, g.modifiers[0].errf("%s has modifier annotations but no primary — add //@rest, //@query, //@mutation, //@subscription, //@ws, //@worker or //@provide", fn)
 		}
 		if len(g.modifiers) > 0 && !optsAllowed(g.primary.Keyword) {
-			return nil, fmt.Errorf("handlergen: //@%s on %s does not accept modifier annotations", g.primary.Keyword, fn)
+			m := g.modifiers[0]
+			return nil, m.errf("//@%s on %s does not accept modifier annotations (//@%s applies to rest/query/mutation/subscription/ws and custom decorators)",
+				g.primary.Keyword, fn, m.Keyword)
 		}
 		opts, optImports, err := renderOpts(g.modifiers, cfg.AuthImport)
 		if err != nil {
-			return nil, fmt.Errorf("handlergen: %s: %w", fn, err)
+			return nil, err
 		}
 		for _, imp := range optImports {
 			imports[imp] = true
 		}
 		text, err := renderPrimary(*g.primary, fn, opts)
 		if err != nil {
-			return nil, fmt.Errorf("handlergen: %s: %w", fn, err)
+			return nil, err
 		}
 		stmts = append(stmts, stmt{line: g.line, text: text})
 	}
@@ -223,30 +238,44 @@ func renderPrimary(a Annotation, fn string, opts []string) (string, error) {
 	}
 	switch a.Keyword {
 	case "provide":
+		if len(a.Args) != 0 {
+			return "", a.errf("//@provide takes no arguments (got %v)", a.Args)
+		}
 		return fmt.Sprintf("nexus.Provide(%s)", fn), nil
 	case "worker":
-		if len(a.Args) != 1 {
-			return "", fmt.Errorf("//@worker needs exactly a <name> (got %v)", a.Args)
+		if len(a.Args) != 1 || a.Args[0] == "" {
+			return "", a.errf("//@worker needs exactly a <name> (got %v)", a.Args)
 		}
 		return fmt.Sprintf("nexus.AsWorker(%s, %s)", strconv.Quote(a.Args[0]), fn), nil
 	case "rest":
 		if len(a.Args) != 2 {
-			return "", fmt.Errorf("//@rest needs <METHOD> <PATH> (got %v)", a.Args)
+			return "", a.errf("//@rest needs <METHOD> <PATH>, e.g. //@rest GET /users/:id (got %v)", a.Args)
+		}
+		method, err := restMethod(a)
+		if err != nil {
+			return "", err
+		}
+		if err := checkRoutePath(a, "rest", a.Args[1]); err != nil {
+			return "", err
 		}
 		return fmt.Sprintf("nexus.AsRest(%s, %s, %s%s)",
-			strconv.Quote(a.Args[0]), strconv.Quote(a.Args[1]), fn, optTail), nil
+			strconv.Quote(method), strconv.Quote(a.Args[1]), fn, optTail), nil
 	case "ws":
 		if len(a.Args) != 2 {
-			return "", fmt.Errorf("//@ws needs <PATH> <TYPE> (got %v)", a.Args)
+			return "", a.errf("//@ws needs <PATH> <TYPE>, e.g. //@ws /events chat.send (got %v)", a.Args)
+		}
+		if err := checkRoutePath(a, "ws", a.Args[0]); err != nil {
+			return "", err
 		}
 		return fmt.Sprintf("nexus.AsWS(%s, %s, %s%s)",
 			strconv.Quote(a.Args[0]), strconv.Quote(a.Args[1]), fn, optTail), nil
-	case "query":
-		return fmt.Sprintf("nexus.AsQuery(%s%s)", fn, optTail), nil
-	case "mutation":
-		return fmt.Sprintf("nexus.AsMutation(%s%s)", fn, optTail), nil
-	case "subscription":
-		return fmt.Sprintf("nexus.AsSubscription(%s%s)", fn, optTail), nil
+	case "query", "mutation", "subscription":
+		if len(a.Args) != 0 {
+			return "", a.errf("//@%s takes no arguments (got %v) — the op name derives from the function name; "+
+				"to override it, add `//@use nexus.Op(%q)`", a.Keyword, a.Args, a.Args[0])
+		}
+		builder := map[string]string{"query": "AsQuery", "mutation": "AsMutation", "subscription": "AsSubscription"}[a.Keyword]
+		return fmt.Sprintf("nexus.%s(%s%s)", builder, fn, optTail), nil
 	}
 	// Custom extension decorator: //@pkg.Func args… → pkg.Func(args…, fn). The
 	// registrar returns a nexus.Option (the universal nexus convention —
@@ -261,7 +290,28 @@ func renderPrimary(a Annotation, fn string, opts []string) (string, error) {
 		}
 		return fmt.Sprintf("%s(%s%s)", a.Keyword, fn, optTail), nil
 	}
-	return "", fmt.Errorf("unhandled primary //@%s", a.Keyword)
+	return "", a.errf("unhandled primary //@%s", a.Keyword)
+}
+
+// restMethod validates //@rest's METHOD token against the HTTP verbs and
+// normalises casing, so `//@rest get /users` registers as GET instead of an
+// unroutable literal "get".
+func restMethod(a Annotation) (string, error) {
+	method := strings.ToUpper(a.Args[0])
+	switch method {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		return method, nil
+	}
+	return "", a.errf("//@rest method %q is not an HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)", a.Args[0])
+}
+
+// checkRoutePath insists a route path starts with "/", the mistake that
+// otherwise surfaces only as a route that never matches.
+func checkRoutePath(a Annotation, kw, path string) error {
+	if !strings.HasPrefix(path, "/") {
+		return a.errf("//@%s path %q must start with \"/\"", kw, path)
+	}
+	return nil
 }
 
 // renderOpts turns modifier annotations into Go option expressions and the
@@ -271,13 +321,17 @@ func renderOpts(mods []Annotation, authImport string) (exprs []string, imports [
 		switch m.Keyword {
 		case "auth":
 			if len(m.Args) == 0 {
-				return nil, nil, fmt.Errorf("//@auth needs Required or Requires(\"ROLE\")")
+				return nil, nil, m.errf("//@auth needs Required or Requires(\"ROLE\")")
 			}
 			expr := strings.Join(m.Args, " ")
 			if !strings.Contains(expr, "(") {
 				expr += "()" // //@auth Required → auth.Required()
 			}
-			exprs = append(exprs, "auth."+expr)
+			expr = "auth." + expr
+			if err := checkExpr(m, expr); err != nil {
+				return nil, nil, err
+			}
+			exprs = append(exprs, expr)
 			imports = append(imports, strconv.Quote(authImport))
 		case "use":
 			// //@use <expr> emits the expression verbatim as a per-op option.
@@ -285,13 +339,26 @@ func renderOpts(mods []Annotation, authImport string) (exprs []string, imports [
 			// annotated file's import block) and supplied in Imports.
 			expr := strings.Join(m.Args, " ")
 			if expr == "" {
-				return nil, nil, fmt.Errorf("//@use needs a middleware expression, e.g. //@use ratelimit.Per(time.Minute, 60)")
+				return nil, nil, m.errf("//@use needs a middleware expression, e.g. //@use ratelimit.Per(time.Minute, 60)")
+			}
+			if err := checkExpr(m, expr); err != nil {
+				return nil, nil, err
 			}
 			exprs = append(exprs, expr)
 			imports = append(imports, m.Imports...)
 		default:
-			return nil, nil, fmt.Errorf("unhandled modifier //@%s", m.Keyword)
+			return nil, nil, m.errf("unhandled modifier //@%s", m.Keyword)
 		}
 	}
 	return exprs, imports, nil
+}
+
+// checkExpr rejects an option expression that isn't parseable Go AT THE
+// ANNOTATION, instead of letting it explode later as a syntax error inside
+// the generated file where the source of the text is invisible.
+func checkExpr(m Annotation, expr string) error {
+	if _, err := parser.ParseExpr(expr); err != nil {
+		return m.errf("//@%s expression %q is not valid Go: %v", m.Keyword, expr, err)
+	}
+	return nil
 }
