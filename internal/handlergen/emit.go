@@ -84,7 +84,10 @@ var primaryKeywords = map[string]bool{
 	"subscription": true, "ws": true, "worker": true,
 }
 
-var modifierKeywords = map[string]bool{"auth": true, "use": true}
+var modifierKeywords = map[string]bool{"auth": true, "session": true, "use": true}
+
+// sessionImportPath is the sessions extension, for the //@session modifier.
+const sessionImportPath = "github.com/paulmanoni/nexus/extension/session"
 
 // isPrimaryKeyword reports whether kw registers an endpoint/provider. A keyword
 // containing a dot (e.g. "inertia.Page") is a CUSTOM extension decorator: it
@@ -417,6 +420,13 @@ func renderOpts(mods []Annotation, authImport string) (exprs []string, imports [
 			if needsAuth {
 				imports = append(imports, strconv.Quote(authImport))
 			}
+		case "session":
+			expr, err := renderSessionOption(m)
+			if err != nil {
+				return nil, nil, err
+			}
+			exprs = append(exprs, expr)
+			imports = append(imports, strconv.Quote(sessionImportPath))
 		case "use":
 			// //@use <expr> emits the expression verbatim as a per-op option.
 			// Its package imports are resolved by the caller (the CLI reads the
@@ -502,6 +512,29 @@ func renderAuthOption(m Annotation) (expr string, needsAuthImport bool, err erro
 		return "", false, m.errf("unknown //@auth capability %q — use Required, Requires <PERM…>, or Public%s",
 			head, authSuggestion(head))
 	}
+}
+
+// renderSessionOption turns a //@session modifier into its option
+// expression. The one capability is Required (case-insensitive, bare or the
+// Required() call form) — the flow-continuity gate session.Required():
+//
+//	//@session Required → session.Required()
+func renderSessionOption(m Annotation) (string, error) {
+	if len(m.Args) == 0 {
+		return "", m.errf("//@session needs a capability: Required")
+	}
+	head := m.Args[0]
+	if head == "Required()" || strings.EqualFold(head, "required") {
+		if len(m.Args) > 1 {
+			return "", m.errf("//@session Required takes no arguments (got %v)", m.Args[1:])
+		}
+		return "session.Required()", nil
+	}
+	hint := ""
+	if editDistance(strings.ToLower(strings.TrimSuffix(head, "()")), "required") <= 2 {
+		hint = " (did you mean Required?)"
+	}
+	return "", m.errf("unknown //@session capability %q — use Required%s", head, hint)
 }
 
 // authSuggestion returns a did-you-mean hint for a near-miss capability.

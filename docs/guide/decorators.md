@@ -48,6 +48,7 @@ One primary annotation per function, plus optional modifiers:
 | `//@ws <PATH> <TYPE>` | A WebSocket message handler |
 | `//@worker <NAME>` | A background worker |
 | `//@auth Required` / `//@auth Requires PERM…` / `//@auth Public` | Modifier: an auth gate (bare tokens; legacy `Requires("X")` also accepted) |
+| `//@session Required` | Modifier: flow-continuity gate — 428 unless the request arrived with an established session |
 | `//@use <expr>` | Modifier: per-op middleware |
 | `//@<pkg>.<Func> args…` | A custom decorator from an extension, for example `//@inertia.Page GET /users Users/Index` |
 

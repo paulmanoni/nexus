@@ -174,6 +174,7 @@ type Session struct {
 	id      string // "" until a cookie arrived or the first write minted one
 	data    map[string]any
 	loaded  bool
+	present bool // the request's id had a live entry in the store
 	dirty   bool
 	destroy bool
 	closed  bool // saved (or inert) — further writes drop
@@ -197,7 +198,23 @@ func (s *Session) load() {
 	}
 	if data, err := s.cfg.Store.Load(ctx, s.id); err == nil && data != nil {
 		s.data = data
+		s.present = true
 	}
+}
+
+// Established reports whether the request ARRIVED with a live session: a
+// valid session cookie whose entry exists (and hasn't expired) in the store.
+// A fresh request, an unknown or expired id, and a session first written
+// during this request all report false — it describes the inbound state,
+// which is what a continuity gate ([Required]) needs.
+func (s *Session) Established() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.id == "" {
+		return false
+	}
+	s.load()
+	return s.present
 }
 
 // Get returns the value stored under key, or nil.

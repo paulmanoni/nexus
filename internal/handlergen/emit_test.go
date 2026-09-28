@@ -288,6 +288,38 @@ func TestEmit_AuthGrammar(t *testing.T) {
 	bad([]string{"Admin"}, "unknown //@auth capability")
 }
 
+// TestEmit_SessionGrammar: the //@session modifier — bare or call-form
+// Required, case-insensitive, with positioned errors and a did-you-mean.
+func TestEmit_SessionGrammar(t *testing.T) {
+	rest := Annotation{Func: "NewX", Keyword: "rest", Args: []string{"GET", "/x"}, Line: 1}
+	for _, args := range [][]string{{"Required"}, {"required"}, {"Required()"}} {
+		got, err := Emit(Config{Package: "h"}, []Annotation{rest,
+			{Func: "NewX", Keyword: "session", Args: args, Line: 2},
+		})
+		if err != nil {
+			t.Fatalf("Emit(session %v): %v", args, err)
+		}
+		if !strings.Contains(string(got), "session.Required()") ||
+			!strings.Contains(string(got), `"github.com/paulmanoni/nexus/extension/session"`) {
+			t.Errorf("Emit(session %v) missing gate or import:\n%s", args, got)
+		}
+	}
+
+	bad := func(args []string, want string) {
+		t.Helper()
+		_, err := Emit(Config{Package: "h"}, []Annotation{rest,
+			{Func: "NewX", Keyword: "session", Args: args, File: "h/s.go", Line: 2},
+		})
+		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "h/s.go:2:") {
+			t.Errorf("Emit(session %v): error %v, want positioned error containing %q", args, err, want)
+		}
+	}
+	bad(nil, "needs a capability")
+	bad([]string{"Required", "extra"}, "takes no arguments")
+	bad([]string{"Requierd"}, "did you mean Required?")
+	bad([]string{"Fresh"}, "unknown //@session capability")
+}
+
 func TestEmit_Errors(t *testing.T) {
 	cases := []struct {
 		name string

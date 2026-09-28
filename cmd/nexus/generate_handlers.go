@@ -11,7 +11,7 @@ import (
 // handlerKeywords is the //@ directive set `nexus generate handlers` consumes.
 // Anything outside this set is left for other tools (or ignored).
 var handlerKeywords = []string{
-	"provide", "rest", "query", "mutation", "subscription", "ws", "worker", "auth", "use",
+	"provide", "rest", "query", "mutation", "subscription", "ws", "worker", "auth", "session", "use",
 }
 
 type handlersOptions struct {
@@ -46,6 +46,7 @@ Annotations:
     //@auth Required                  -> auth.Required() option
     //@auth Requires <PERM> [<PERM>…] -> auth.Requires("PERM", …) (bare or quoted)
     //@auth Public                    -> nexus.Public() (deny-by-default opt-out)
+    //@session Required               -> session.Required() option (flow continuity)
 
 Examples:
     nexus generate handlers ./...        # scan from cwd

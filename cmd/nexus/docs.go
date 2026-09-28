@@ -2622,7 +2622,20 @@ Handle API:
     s.Get(key) any        s.GetString(key)      s.Set(key, v)
     s.Delete(key)         s.Clear()             s.Touch()
     s.ID()                s.Cycle()             s.Destroy()
+    s.Established()       — the request ARRIVED with a live session
 Values must round-trip JSON (numbers come back as float64).
+
+Flow-continuity gate — session.Required() is a per-op option that
+rejects requests arriving WITHOUT an established session with 428
+Precondition Required (restart the flow; it is not authentication —
+that is auth.Required's job). Guard the later steps of a multi-step
+form or checkout:
+
+    nexus.AsRest("POST", "/checkout/confirm", NewConfirm, session.Required())
+
+    //@rest POST /checkout/confirm
+    //@session Required
+    func NewConfirm(...) (...)
 
 Config:
     session.Config{
