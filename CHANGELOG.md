@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.64.0] - 2026-09-28
+
+### Added
+
+- **Package-level decorators: `//@module`, `//@path`, `//@routeprefix`.** On
+  the package doc comment, `//@module <name>` names the generated
+  `nexus.Module` group (default stays the package name), and
+  `//@path <prefix>` / `//@routeprefix <prefix>` emit `nexus.Path` /
+  `nexus.RoutePrefix` as the module's leading options. Scope is enforced both
+  ways with `file:line` errors (a package directive on a function, or a
+  function directive / custom decorator on the package doc); conflicting
+  values across a package's files name both locations, agreeing duplicates
+  dedupe; prefixes must start with `/`. The keywords join the scanner's
+  did-you-mean list. Rides deco v0.18.0 (package-level `Scan` hits).
+
 ## [1.63.0] - 2026-09-28
 
 ### Added
