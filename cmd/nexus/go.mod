@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/paulmanoni/deco v0.14.0
+	github.com/paulmanoni/deco v0.17.0
 	github.com/paulmanoni/nexus v1.60.3
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
