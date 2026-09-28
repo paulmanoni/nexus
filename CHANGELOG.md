@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.63.0] - 2026-09-28
+
+### Added
+
+- **`session.Required()` and the `//@session` decorator.** The session
+  extension gains its per-op surface: `Session.Established()` reports whether
+  the request arrived with a live session (valid cookie, unexpired store
+  entry), and `session.Required()` is a cross-transport per-op gate that
+  rejects unestablished requests with 428 Precondition Required — flow
+  continuity for the later steps of a multi-step form or checkout, distinct
+  from authentication (`auth.Required`). Fails closed without
+  `session.Module`. Decorator form `//@session Required` follows the
+  normalized grammar (bare or call form, case-insensitive capability,
+  `file:line` errors with a did-you-mean); the generated file imports
+  `extension/session` only when used.
+
 ## [1.62.0] - 2026-09-28
 
 ### Added
