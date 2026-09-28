@@ -89,6 +89,13 @@ func aggregatorResult(root string, results []handlergen.Result) (handlergen.Resu
 	return handlergen.Result{Path: filepath.Join(mainDir, "nexus_imports_gen.go"), Content: content}, true, nil
 }
 
+// devScanCache makes the per-rebuild annotation scan incremental: `nexus
+// dev` re-scans the whole tree before every build, and the cache re-parses
+// only the files that changed since the previous one. Process-lifetime state
+// keyed on (path, mtime, size); a one-shot `nexus generate handlers` simply
+// fills it once.
+var devScanCache = transpiler.NewScanCache()
+
 // handlerGenFileName is the file `nexus generate handlers` writes (committed)
 // and `nexus dev` injects via overlay (ephemeral). Shared so the two paths
 // agree on the target path.
@@ -104,7 +111,7 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 	// Scan ALL //@ directives, then keep the built-in keywords plus any
 	// QUALIFIED (pkg.Func) custom-extension decorator. Unqualified directives
 	// we don't recognize are ignored (they may belong to another tool).
-	hits, err := transpiler.Scan(root)
+	hits, err := devScanCache.Scan(root)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}

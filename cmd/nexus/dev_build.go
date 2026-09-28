@@ -53,29 +53,34 @@ func (b *devBuilder) close() {
 // text is the most important thing on screen, so it isn't reshaped by
 // the log prettifier.
 //
-// Flags mirror what `go run` was invoked with before: -gcflags=all=-N -l
-// disables optimization + inlining for the whole graph (markedly faster
-// compiles; dev binaries are never perf-sensitive) and -ldflags="-w -s"
-// drops DWARF and the symbol table so the linker — the one step no cache
-// makes incremental, and which measurement puts at essentially the entire
-// rebuild — has less to emit. -s is safe for panic tracebacks: the Go
-// runtime symbolizes from pclntab, not the Mach-O/ELF symtab; delve needs
-// DWARF anyway, which --debug restores along with the symtab.
+// The default flags optimize for the LINK — the one step no cache makes
+// incremental, and which measurement puts at essentially the entire rebuild:
+// -ldflags="-w -s" drops DWARF and the symbol table so the linker has less
+// to emit, and code compiles OPTIMIZED, which keeps every object (and so the
+// linked binary) smaller — and shares the build cache with the user's own
+// `go build` / `go test` runs instead of forcing a private -N -l set. The
+// old default paired all=-N -l with -w -s: a binary too stripped for delve
+// yet still paying deoptimized-size link times — the worst of both.
 //
-// -w is on by default (--debug turns it back off, for delve and full panic
-// traces). On a large app it's worth ~20% of every rebuild, and dev binaries
-// are thrown away on the next save.
+// --debug flips the whole trade at once: DWARF + symtab kept AND
+// -gcflags=all=-N -l, so delve gets both the debug info and unoptimized
+// code. Panic tracebacks are accurate in both modes (the runtime symbolizes
+// from pclntab, which tracks inlined frames).
+//
+// -buildvcs=false skips the per-build git stamping (`go` shells out to git
+// otherwise) — a throwaway dev binary needs no VCS metadata.
 func (b *devBuilder) build(ctx context.Context, target, overlayPath string, out io.Writer) (string, error) {
 	b.seq++
 	bin := filepath.Join(b.dir, fmt.Sprintf("app-%d%s", b.seq, exeSuffix()))
 
-	args := []string{"build"}
+	args := []string{"build", "-buildvcs=false"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
 	}
-	args = append(args, "-gcflags=all=-N -l")
 	if b.fast {
 		args = append(args, "-ldflags=-w -s")
+	} else {
+		args = append(args, "-gcflags=all=-N -l")
 	}
 	// Compile from inside the target's own directory when it resolves to a
 	// real path, so a target outside the CLI's module (or in a nested one)

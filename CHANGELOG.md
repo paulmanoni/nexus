@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`nexus dev` rebuilds are ~30% faster.** The default dev build now
+  compiles OPTIMIZED: the old default paired `-gcflags=all=-N -l` with the
+  DWARF-stripping `-ldflags=-w -s` — a binary too stripped for delve that
+  still paid deoptimized-size link times (and forced a private build cache).
+  Optimized objects shrink the binary (~14% on a large app), which shrinks
+  the link — the step that dominates every rebuild — and the cache is now
+  shared with your own `go build`/`go test` runs. `--debug` flips the whole
+  trade at once: DWARF + symtab + `-N -l`, for delve. Dev builds also pass
+  `-buildvcs=false` (no per-build git stamping), and the per-rebuild
+  annotation scan is incremental (deco v0.19.0 ScanCache: only changed files
+  re-parse). Measured on a ~100MB app: 0.60s → 0.40s per warm rebuild.
+
+### Added
+
+- `nexus dev --time-build` prints a per-rebuild breakdown
+  (`⏱ codegen 42ms · build 380ms · prewarm 210ms`) so a slow rebuild can be
+  diagnosed instead of guessed at.
+
 ## [1.66.1] - 2026-09-29
 
 ### Changed

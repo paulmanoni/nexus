@@ -51,6 +51,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		legacyGoRun bool
 		distWatch   bool
 		rawLogs     bool
+		timeBuild   bool
 		logFormat   string
 		logPattern  string
 	)
@@ -88,7 +89,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, frontendDir, verbose, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, legacyGoRun, distWatch, rawLogs, logFormat, logPattern, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, legacyGoRun, distWatch, rawLogs, timeBuild, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -113,9 +114,11 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 	// inverse and the one worth documenting.
 	_ = cmd.Flags().MarkDeprecated("fast", "it is the default; pass --debug to keep DWARF instead")
 	cmd.Flags().BoolVar(&debugBuild, "debug", false,
-		"keep DWARF in the dev binary so delve can attach and panic traces stay complete (slower link; the inverse of --fast)")
+		"debuggable dev binary: keep DWARF + symtab and compile unoptimized (-gcflags=all=-N -l) so delve attaches cleanly (slower build and link; the inverse of --fast)")
 	cmd.Flags().BoolVar(&noEmbedStub, "no-embed-stub", false,
 		"embed the real frontend bundle in the dev binary instead of stubbing it out (dev serves the bundle from disk, so the embedded copy is normally dead weight)")
+	cmd.Flags().BoolVar(&timeBuild, "time-build", false,
+		"print a per-rebuild timing breakdown (codegen · build · prewarm) so slow rebuilds can be diagnosed")
 	cmd.Flags().BoolVar(&legacyGoRun, "go-run", false,
 		"legacy dev loop: launch via `go run`, killing the app before every rebuild (default: build-then-swap — the old binary keeps serving while the next one compiles)")
 	cmd.Flags().BoolVar(&distWatch, "dist", false,
@@ -232,7 +235,7 @@ func (e *userError) Error() string { return e.msg }
 // is green (see devBuilder). legacyGoRun restores the old `go run`
 // loop, which kills the app first and leaves it down for the whole
 // compile.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, legacyGoRun, distWatch, rawLogs bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, legacyGoRun, distWatch, rawLogs, timeBuild bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
@@ -473,12 +476,14 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 			cleanupOverlay()
 			cleanupOverlay = nil
 		}
+		codegenStart := time.Now()
 		if op, cl, err := buildDevOverlay(target, distStubRoot); err != nil {
 			fmt.Fprintf(stderr, "%s●%s handler codegen skipped: %v\n", ansiYellow, ansiReset, err)
 			overlayPath = ""
 		} else {
 			overlayPath, cleanupOverlay = op, cl
 		}
+		codegenDur := time.Since(codegenStart)
 
 		// Build-then-swap. The child from the previous iteration is still
 		// serving here — nothing is torn down until the build is green.
@@ -506,7 +511,8 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 				}
 				continue
 			}
-			fmt.Fprintf(stdout, "  %s● built in %s%s\n", ansiDim, time.Since(start).Round(time.Millisecond), ansiReset)
+			buildDur := time.Since(start)
+			fmt.Fprintf(stdout, "  %s● built in %s%s\n", ansiDim, buildDur.Round(time.Millisecond), ansiReset)
 
 			// Identical bytes mean the running process already IS this
 			// build — the save didn't reach the app's build graph (a
@@ -528,7 +534,14 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 
 			// Pay the OS's first-exec cost (code-signature validation)
 			// now, while the outgoing child is still answering requests.
+			prewarmStart := time.Now()
 			builder.prewarm(ctx, binPath)
+			if timeBuild {
+				fmt.Fprintf(stdout, "  %s⏱ codegen %s · build %s · prewarm %s%s\n", ansiDim,
+					codegenDur.Round(time.Millisecond),
+					buildDur.Round(time.Millisecond),
+					time.Since(prewarmStart).Round(time.Millisecond), ansiReset)
+			}
 		}
 
 		// The port is single-occupancy, so the outgoing child dies only
