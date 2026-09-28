@@ -2,7 +2,7 @@
 // checked-out tree instead of published versions. `go install
 // <module>@version` ignores this file, so released installs are
 // unaffected.
-go 1.26.2
+go 1.27.1
 
 use (
 	.
