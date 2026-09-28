@@ -147,6 +147,9 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 				return nil, a.errf("%s has two primary annotations (//@%s at line %d and //@%s) — a function registers exactly once",
 					a.Func, g.primary.Keyword, g.primary.Line, a.Keyword)
 			}
+			if err := normalizeKnownDecorator(&a); err != nil {
+				return nil, err
+			}
 			p := a
 			g.primary = &p
 			g.line = a.Line
@@ -291,6 +294,92 @@ func renderPrimary(a Annotation, fn string, opts []string) (string, error) {
 		return fmt.Sprintf("%s(%s%s)", a.Keyword, fn, optTail), nil
 	}
 	return "", a.errf("unhandled primary //@%s", a.Keyword)
+}
+
+// inertiaImportPath identifies the inertia extension however its import is
+// aliased, so //@inertia.Page (or //@in.Page) gets first-class argument
+// handling below.
+const inertiaImportPath = "github.com/paulmanoni/nexus/extension/inertia"
+
+// normalizeKnownDecorator rewrites the argument list of well-known extension
+// decorators so their annotations read naturally — bare tokens instead of
+// hand-quoted Go strings — and malformed values fail AT the annotation with
+// file:line, not as a compile error inside the generated file. Decorators the
+// table doesn't know pass through verbatim, as before.
+func normalizeKnownDecorator(a *Annotation) error {
+	if strings.HasSuffix(a.Keyword, ".Page") && importsHavePath(a.Imports, inertiaImportPath) {
+		return normalizeInertiaPage(a)
+	}
+	return nil
+}
+
+// normalizeInertiaPage handles //@inertia.Page <METHOD> <PATH> <Component>.
+// Tokens may be bare (GET /users Users/Index) or quoted; the method accepts
+// the comma multi-verb form (get,post → "GET,POST") in any case.
+func normalizeInertiaPage(a *Annotation) error {
+	if len(a.Args) != 3 {
+		return a.errf("//@%s needs <METHOD> <PATH> <Component>, e.g. //@%s GET /users Users/Index (got %v)",
+			a.Keyword, a.Keyword, a.Args)
+	}
+	method, err := decoratorToken(a, a.Args[0])
+	if err != nil {
+		return err
+	}
+	verbs := strings.Split(method, ",")
+	for i, v := range verbs {
+		verbs[i] = strings.ToUpper(strings.TrimSpace(v))
+		switch verbs[i] {
+		case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		default:
+			return a.errf("//@%s method %q is not an HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)", a.Keyword, v)
+		}
+	}
+	path, err := decoratorToken(a, a.Args[1])
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(path, "/") {
+		return a.errf("//@%s path %q must start with \"/\"", a.Keyword, path)
+	}
+	component, err := decoratorToken(a, a.Args[2])
+	if err != nil {
+		return err
+	}
+	if component == "" {
+		return a.errf("//@%s component name is empty — name the client component, e.g. Users/Index", a.Keyword)
+	}
+	a.Args = []string{
+		strconv.Quote(strings.Join(verbs, ",")),
+		strconv.Quote(path),
+		strconv.Quote(component),
+	}
+	return nil
+}
+
+// decoratorToken returns a directive token's value: a quoted token is
+// unquoted (and must be well-formed), a bare token is itself.
+func decoratorToken(a *Annotation, tok string) (string, error) {
+	if !strings.HasPrefix(tok, `"`) {
+		return tok, nil
+	}
+	v, err := strconv.Unquote(tok)
+	if err != nil {
+		return "", a.errf("//@%s argument %s is not a valid quoted string", a.Keyword, tok)
+	}
+	return v, nil
+}
+
+// importsHavePath reports whether any of the annotation's import lines
+// (`"path"` or `alias "path"`) names path.
+func importsHavePath(lines []string, path string) bool {
+	for _, l := range lines {
+		if i := strings.IndexByte(l, '"'); i >= 0 {
+			if p, err := strconv.Unquote(l[i:]); err == nil && p == path {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // restMethod validates //@rest's METHOD token against the HTTP verbs and

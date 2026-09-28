@@ -129,7 +129,7 @@ render on the client.
 
 ```go
 //@auth Required
-//@inertia.Page "GET" "/users" "Users/Index"
+//@inertia.Page GET /users Users/Index
 func NewListUsers(svc *UserService, p nexus.Params[ListArgs]) (UsersProps, error)
 ```
 

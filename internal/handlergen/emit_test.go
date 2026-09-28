@@ -186,6 +186,57 @@ func TestEmit_MultiRoleAuth(t *testing.T) {
 	}
 }
 
+// TestEmit_InertiaPageNormalization: //@inertia.Page takes bare tokens (or
+// quoted ones), case-normalises the verbs, and rejects malformed values at
+// the annotation — instead of emitting invalid Go into the generated file.
+func TestEmit_InertiaPageNormalization(t *testing.T) {
+	inertiaImp := []string{`"github.com/paulmanoni/nexus/extension/inertia"`}
+
+	ok := func(args []string, want string) {
+		t.Helper()
+		got, err := Emit(Config{Package: "h"}, []Annotation{
+			{Func: "NewUsers", Keyword: "inertia.Page", Args: args, Imports: inertiaImp, Line: 1},
+		})
+		if err != nil {
+			t.Fatalf("Emit(%v): %v", args, err)
+		}
+		if !strings.Contains(string(got), want) {
+			t.Errorf("Emit(%v) missing %q:\n%s", args, want, got)
+		}
+	}
+	// Bare tokens, quoted tokens, and mixed case all land on the same call.
+	ok([]string{"GET", "/users", "Users/Index"}, `inertia.Page("GET", "/users", "Users/Index", NewUsers)`)
+	ok([]string{`"GET"`, `"/users"`, `"Users/Index"`}, `inertia.Page("GET", "/users", "Users/Index", NewUsers)`)
+	ok([]string{"get,post", "/login", "Login"}, `inertia.Page("GET,POST", "/login", "Login", NewUsers)`)
+
+	bad := func(args []string, want string) {
+		t.Helper()
+		_, err := Emit(Config{Package: "h"}, []Annotation{
+			{Func: "NewUsers", Keyword: "inertia.Page", Args: args, Imports: inertiaImp, File: "h/p.go", Line: 4},
+		})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Emit(%v): error %v, want containing %q", args, err, want)
+		}
+		if err != nil && !strings.Contains(err.Error(), "h/p.go:4:") {
+			t.Errorf("Emit(%v): error %v lacks file:line", args, err)
+		}
+	}
+	bad([]string{"GET", "/users"}, "needs <METHOD> <PATH> <Component>")
+	bad([]string{"FETCH", "/users", "Users/Index"}, "not an HTTP method")
+	bad([]string{"GET", "users", "Users/Index"}, `must start with "/"`)
+
+	// A .Page decorator from some OTHER package keeps the verbatim contract.
+	got, err := Emit(Config{Package: "h"}, []Annotation{
+		{Func: "F", Keyword: "cms.Page", Args: []string{`"a"`, `slug`}, Imports: []string{`"example.com/cms"`}, Line: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `cms.Page("a", slug, F)`) {
+		t.Errorf("foreign .Page decorator must pass through verbatim:\n%s", got)
+	}
+}
+
 func TestEmit_Errors(t *testing.T) {
 	cases := []struct {
 		name string

@@ -232,3 +232,37 @@ func NewList() {}
 		t.Fatalf("foreign keyword must not error: %v", err)
 	}
 }
+
+// TestScanHandlerSites_InertiaPage: the //@inertia.Page decorator end to end —
+// bare tokens resolve, normalise, and emit a quoted registrar call; a bad verb
+// is a positioned error at the annotation.
+func TestScanHandlerSites_InertiaPage(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "h.go"), `package h
+
+import _ "github.com/paulmanoni/nexus/extension/inertia"
+
+//@inertia.Page get,post /login Login
+func NewLogin() {}
+`)
+	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(results) != 1 || !strings.Contains(string(results[0].Content), `inertia.Page("GET,POST", "/login", "Login", NewLogin)`) {
+		t.Fatalf("bare-token inertia.Page not normalised:\n%v", results)
+	}
+
+	dir2 := t.TempDir()
+	writeFile(t, filepath.Join(dir2, "h.go"), `package h
+
+import _ "github.com/paulmanoni/nexus/extension/inertia"
+
+//@inertia.Page FETCH /login Login
+func NewLogin() {}
+`)
+	_, err = scanHandlerSites(dir2, "nexus_handlers_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "not an HTTP method") || !strings.Contains(err.Error(), "h.go:5:") {
+		t.Fatalf("bad verb should be a positioned annotation error, got: %v", err)
+	}
+}

@@ -147,7 +147,7 @@ existing `Option`-returning registrar (the universal nexus pattern):
   codegen records the returned option into the same `decorate.Module(...)` drain
   as the built-ins.
   ```go
-  //@inertia.Page "GET" "/users" "Users/Index"
+  //@inertia.Page GET /users Users/Index
   //   → decorate.Record(inertia.Page("GET", "/users", "Users/Index", NewUsers))
   ```
 - `pkg` is imported from the annotated file (handlers using the extension —

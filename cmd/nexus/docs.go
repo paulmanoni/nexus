@@ -771,10 +771,16 @@ bundled into the SSR build). nexus build runs "vite build --ssr src/ssr.ts"
 whenever src/ssr.ts exists; run "node web/dist/ssr/ssr.js" beside the app.
 Under nexus dev the SSR server isn't running, so pages render client-side.
 
-Decorator form — annotate the handler instead of listing it in a Module:
+Decorator form — annotate the handler instead of listing it in a Module.
+Tokens are bare (quoting also works); verbs normalise case and accept the
+comma multi-verb form; a bad method/path/component is a file:line error at
+the annotation:
 
-    //@inertia.Page "GET" "/users" "Users/Index"
+    //@inertia.Page GET /users Users/Index
     func NewListUsers(svc *UserService, p nexus.Params[ListArgs]) (UsersProps, error)
+
+    //@inertia.Page get,post /login Login
+    func NewLogin(...) (any, error)
 
 The codegen auto-resolves the inertia import for the generated file (from the
 file, a sibling file in the package, a nexus.toml [decorators.imports] hint,
@@ -785,7 +791,7 @@ inertia.Page(args…, fn, auth.Required()). The registrar must accept the option
 type (inertia.Page takes ...nexus.RestOption; a compile error if it doesn't):
 
     //@auth Required
-    //@inertia.Page "GET" "/admin" "Admin/Index"
+    //@inertia.Page GET /admin Admin/Index
     func NewAdmin(...) (AdminProps, error)
 `,
 

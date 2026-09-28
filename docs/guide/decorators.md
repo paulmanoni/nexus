@@ -49,7 +49,7 @@ One primary annotation per function, plus optional modifiers:
 | `//@worker <NAME>` | A background worker |
 | `//@auth Required` / `//@auth Requires("X")` | Modifier: an auth gate |
 | `//@use <expr>` | Modifier: per-op middleware |
-| `//@<pkg>.<Func> args…` | A custom decorator from an extension, for example `//@inertia.Page "GET" "/users" "Users/Index"` |
+| `//@<pkg>.<Func> args…` | A custom decorator from an extension, for example `//@inertia.Page GET /users Users/Index` |
 
 A custom decorator becomes `pkg.Func(args…, fn)`. The codegen resolves the `pkg` import
 by looking, in order, at:

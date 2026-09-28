@@ -2,6 +2,7 @@ package inertia
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/paulmanoni/nexus/httpx"
@@ -52,6 +53,9 @@ import (
 const Icon = "app-window"
 
 func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexus.Option {
+	if err := validatePage(method, path, component, fn); err != nil {
+		return nexus.Error(err)
+	}
 	full := make([]nexus.RestOption, 0, len(opts)+3)
 	full = append(full, nexus.WithRenderer(pageRenderer{component: component}))
 	full = append(full, nexus.WithIcon(Icon))
@@ -67,6 +71,31 @@ func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexu
 		out = append(out, nexus.AsRest(m, path, fn, full...))
 	}
 	return nexus.Options(out...)
+}
+
+// validatePage rejects a malformed registration at option-build time, so a
+// bad Page call (direct or via the //@inertia.Page decorator) fails the boot
+// with a message naming the page, instead of surfacing later as a route that
+// never matches or a client-side "component not found".
+func validatePage(method, path, component string, fn any) error {
+	for _, m := range splitMethods(method) {
+		switch m {
+		case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		default:
+			return fmt.Errorf("inertia.Page(%q, %q, %q): %q is not an HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)",
+				method, path, component, m)
+		}
+	}
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("inertia.Page(%q, %q, %q): path must start with \"/\"", method, path, component)
+	}
+	if strings.TrimSpace(component) == "" {
+		return fmt.Errorf("inertia.Page(%q, %q, …): component name is empty — name the client component, e.g. \"Users/Index\"", method, path)
+	}
+	if fn == nil {
+		return fmt.Errorf("inertia.Page(%q, %q, %q): handler is nil", method, path, component)
+	}
+	return nil
 }
 
 // splitMethods parses a method spec like "GET", "GET,POST", or "GET POST"
