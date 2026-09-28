@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.60.4] - 2026-09-28
+
+### Added
+
+- **`extension/proxy`: `Config.UpstreamHost`** for upstreams behind name-based
+  virtual hosting (shared hosting, cPanel/ISPConfig, a CDN). The upstream sees
+  its own host as the `Host` header so the right site answers, and the
+  response is pointed back at the proxy: an absolute `Location` redirect to
+  the upstream origin becomes path-only, and a `Set-Cookie` `Domain` naming
+  the upstream host is dropped so the browser keeps the cookie on the proxy's
+  domain. The default (preserve the inbound host for `ALLOWED_HOSTS`/CSRF) is
+  unchanged.
+- **CLI: stricter, positioned `//@` decorator diagnostics.** Every codegen
+  error now points at the annotation in `file:line` form. A typo'd keyword
+  (`//@quer`, `//@Rest`) errors with a did-you-mean suggestion (conservative
+  matching, so other tools' keywords stay ignored); `//@rest` validates the
+  HTTP method (normalising case) and requires a `/`-prefixed path (ditto
+  `//@ws`); `//@query`/`//@mutation`/`//@subscription`/`//@provide` reject
+  stray arguments; `//@auth` and `//@use` expressions are parse-checked at the
+  annotation instead of failing inside the generated file.
+
+### Changed
+
+- CLI: the annotation scanner moves to deco v0.17.0, and the `cmd/nexus`
+  module's go directive follows it to 1.27.1.
+
 ## [1.60.3] - 2026-09-25
 
 ### Fixed
