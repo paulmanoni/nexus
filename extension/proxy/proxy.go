@@ -96,6 +96,13 @@ type Config struct {
 	// prefix the upstream doesn't expect). Optional; identity when nil.
 	RewritePath func(string) string
 
+	// UpstreamHost sends the upstream's own host as the Host header instead of
+	// the inbound one, and rewrites upstream-origin redirects and cookie
+	// domains back to the proxy. Set it when the upstream is name-based
+	// virtual hosting (a PHP site on shared hosting, cPanel/ISPConfig, behind a
+	// CDN) — without it the upstream's web server picks the wrong site.
+	UpstreamHost bool
+
 	// Transport overrides the HTTP transport used to reach the upstream (custom
 	// timeouts, TLS, connection pool). Optional; http.DefaultTransport when nil.
 	Transport http.RoundTripper
@@ -145,7 +152,7 @@ func (s *pluginState) boot(_ context.Context, app *nexus.App) error {
 		}
 	}
 
-	rp, err := buildReverseProxy(s.cfg.Upstream, s.cfg.SetHeaders, s.cfg.RewritePath, s.cfg.Transport)
+	rp, err := buildReverseProxy(s.cfg.Upstream, s.cfg.SetHeaders, s.cfg.RewritePath, s.cfg.UpstreamHost, s.cfg.Transport)
 	if err != nil {
 		return err
 	}

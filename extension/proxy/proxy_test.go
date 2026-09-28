@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/paulmanoni/nexus/registry"
@@ -24,7 +25,7 @@ func TestReverseProxy_Forwards(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	rp, err := buildReverseProxy(upstream.URL, map[string]string{"X-Internal": "secret"}, nil, nil)
+	rp, err := buildReverseProxy(upstream.URL, map[string]string{"X-Internal": "secret"}, nil, false, nil)
 	if err != nil {
 		t.Fatalf("buildReverseProxy: %v", err)
 	}
@@ -57,6 +58,42 @@ func TestReverseProxy_Forwards(t *testing.T) {
 	}
 }
 
+// TestReverseProxy_UpstreamHost covers name-based vhost upstreams: the
+// upstream sees its own Host, and its redirects/cookies point back at the proxy.
+func TestReverseProxy_UpstreamHost(t *testing.T) {
+	var gotHost string
+	var upstreamURL string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		http.SetCookie(w, &http.Cookie{Name: "PHPSESSID", Value: "abc", Domain: "127.0.0.1", Path: "/"})
+		w.Header().Add("Set-Cookie", "other=1; Domain=example.org; Path=/")
+		http.Redirect(w, r, upstreamURL+"/login.php?next=%2F", http.StatusFound)
+	}))
+	defer upstream.Close()
+	upstreamURL = upstream.URL
+
+	rp, err := buildReverseProxy(upstream.URL, nil, nil, true, nil)
+	if err != nil {
+		t.Fatalf("buildReverseProxy: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	rp.ServeHTTP(rec, httptest.NewRequest("GET", "http://api.example/", nil))
+
+	if want := strings.TrimPrefix(upstream.URL, "http://"); gotHost != want {
+		t.Errorf("upstream Host = %q, want %q", gotHost, want)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/login.php?next=%2F" {
+		t.Errorf("Location = %q, want path-only", loc)
+	}
+	cookies := rec.Header().Values("Set-Cookie")
+	if len(cookies) != 2 || strings.Contains(strings.ToLower(cookies[0]), "domain=") {
+		t.Errorf("upstream cookie Domain not stripped: %q", cookies)
+	}
+	if !strings.Contains(cookies[1], "Domain=example.org") {
+		t.Errorf("foreign cookie Domain should be kept: %q", cookies[1])
+	}
+}
+
 // TestReverseProxy_RewritePath applies a path rewrite before forwarding.
 func TestReverseProxy_RewritePath(t *testing.T) {
 	var gotPath string
@@ -65,7 +102,7 @@ func TestReverseProxy_RewritePath(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	rp, err := buildReverseProxy(upstream.URL, nil, func(p string) string { return "/legacy" + p }, nil)
+	rp, err := buildReverseProxy(upstream.URL, nil, func(p string) string { return "/legacy" + p }, false, nil)
 	if err != nil {
 		t.Fatalf("buildReverseProxy: %v", err)
 	}
@@ -83,7 +120,7 @@ func TestReverseProxy_UpstreamDown(t *testing.T) {
 	dead := l.URL
 	l.Close()
 
-	rp, err := buildReverseProxy(dead, nil, nil, nil)
+	rp, err := buildReverseProxy(dead, nil, nil, false, nil)
 	if err != nil {
 		t.Fatalf("buildReverseProxy: %v", err)
 	}
@@ -99,7 +136,7 @@ func TestReverseProxy_UpstreamDown(t *testing.T) {
 
 func TestBuildReverseProxy_BadUpstream(t *testing.T) {
 	for _, bad := range []string{"", "not-a-url", "/relative/only"} {
-		if _, err := buildReverseProxy(bad, nil, nil, nil); err == nil {
+		if _, err := buildReverseProxy(bad, nil, nil, false, nil); err == nil {
 			t.Errorf("upstream %q: expected error, got nil", bad)
 		}
 	}
