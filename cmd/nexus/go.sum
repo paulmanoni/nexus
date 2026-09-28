@@ -51,8 +51,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/paulmanoni/deco v0.18.0 h1:KbmXCTEVCAgeWczIZTxyNgjWpg+AyltOZ7s0kRIgga0=
 github.com/paulmanoni/deco v0.18.0/go.mod h1:TiUaLgiglpNGYzqmmdPoK8oXu02y8+y9P1LCVAZ+6mY=
-github.com/paulmanoni/nexus v1.65.1 h1:XVLlzWcCGpDWBaxrtIH+FDUiIdt1KM6wNupJS6S27iY=
-github.com/paulmanoni/nexus v1.65.1/go.mod h1:gXde3pTSqjKQl4XBqRRRoWRtppXhWubVKJ0g9JC4rUg=
+github.com/paulmanoni/nexus v1.66.0 h1:HLE9IPS2tp0QNU/M6LJ/zCs/WFu091v5ez4YfcnQme4=
+github.com/paulmanoni/nexus v1.66.0/go.mod h1:gXde3pTSqjKQl4XBqRRRoWRtppXhWubVKJ0g9JC4rUg=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
 github.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
