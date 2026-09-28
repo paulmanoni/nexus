@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.60.5] - 2026-09-28
+
+### Changed
+
+- CLI: the annotation scanner moves to deco v0.17.1 (its `deco version`
+  self-report and single-file guard; no behaviour change for nexus's own
+  scanning).
+
 ## [1.60.4] - 2026-09-28
 
 ### Added

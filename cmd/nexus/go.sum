@@ -49,8 +49,8 @@ github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELU
 github.com/muesli/cancelreader v0.2.2/go.mod h1:3XuTXfFS2VjM+HTLZY9Ak0l6eUKfijIfMUZ4EgX0QYo=
 github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc=
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
-github.com/paulmanoni/deco v0.17.0 h1:27iWH1xUfIS2zwAC2Z549bzaJ5N+wdl03bOPNFNUnQ4=
-github.com/paulmanoni/deco v0.17.0/go.mod h1:TiUaLgiglpNGYzqmmdPoK8oXu02y8+y9P1LCVAZ+6mY=
+github.com/paulmanoni/deco v0.17.1 h1:Jq1mFsIBYe8RV+upS5Z66krEY8jz3NdMoB5KauS+gbo=
+github.com/paulmanoni/deco v0.17.1/go.mod h1:TiUaLgiglpNGYzqmmdPoK8oXu02y8+y9P1LCVAZ+6mY=
 github.com/paulmanoni/nexus v1.60.4 h1:S63jklswgOweZ1MdWgtVLIxnITqSfk6uLZGClatqgvE=
 github.com/paulmanoni/nexus v1.60.4/go.mod h1:gXde3pTSqjKQl4XBqRRRoWRtppXhWubVKJ0g9JC4rUg=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
