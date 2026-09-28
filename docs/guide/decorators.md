@@ -50,6 +50,7 @@ One primary annotation per function, plus optional modifiers:
 | `//@auth Required` / `//@auth Requires PERM…` / `//@auth Public` | Modifier: an auth gate (bare tokens; legacy `Requires("X")` also accepted) |
 | `//@session Required` | Modifier: flow-continuity gate — 428 unless the request arrived with an established session |
 | `//@use <expr>` | Modifier: per-op middleware |
+| `//@module <name>` / `//@path <prefix>` / `//@routeprefix <prefix>` | Package doc comment: name the module group, prefix its routes (`nexus.Path`/`nexus.RoutePrefix`) |
 | `//@<pkg>.<Func> args…` | A custom decorator from an extension, for example `//@inertia.Page GET /users Users/Index` |
 
 A custom decorator becomes `pkg.Func(args…, fn)`. The codegen resolves the `pkg` import

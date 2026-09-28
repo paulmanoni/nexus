@@ -266,3 +266,45 @@ func NewLogin() {}
 		t.Fatalf("bad verb should be a positioned annotation error, got: %v", err)
 	}
 }
+
+// TestScanHandlerSites_PackageDirectives: //@module and //@path on the
+// package doc comment flow through the scanner into the generated module.
+func TestScanHandlerSites_PackageDirectives(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "h.go"), `// Package billing handles invoicing.
+//
+//@module billing
+//@path /billing
+package billing
+
+//@rest GET /invoices
+func NewList() {}
+`)
+	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got := string(results[0].Content)
+	for _, want := range []string{`nexus.Module("billing",`, `nexus.Path("/billing"),`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("generated module missing %q:\n%s", want, got)
+		}
+	}
+
+	// A custom decorator on the package doc is refused with a position.
+	dir2 := t.TempDir()
+	writeFile(t, filepath.Join(dir2, "h.go"), `// Package h.
+//
+//@inertia.Page GET /x X
+package h
+
+import _ "github.com/paulmanoni/nexus/extension/inertia"
+
+//@query
+func NewX() {}
+`)
+	_, err = scanHandlerSites(dir2, "nexus_handlers_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "function-level") || !strings.Contains(err.Error(), "h.go:3:") {
+		t.Fatalf("custom decorator on package doc should be a positioned error, got: %v", err)
+	}
+}

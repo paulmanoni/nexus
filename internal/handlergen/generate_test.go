@@ -73,3 +73,66 @@ func TestGenerate_Deterministic(t *testing.T) {
 		t.Fatalf("results not sorted by path: %s", r1[0].Path)
 	}
 }
+
+// TestGenerate_PackageDirectives: //@module renames the group, //@path and
+// //@routeprefix become the module's leading options, duplicates agreeing
+// across files dedupe, conflicts and scope misuse are positioned errors.
+func TestGenerate_PackageDirectives(t *testing.T) {
+	fn := Site{Dir: "d", Pkg: "billing", File: "d/h.go", Func: "NewCharge",
+		Keyword: "rest", Args: []string{"POST", "/charge"}, Line: 10}
+
+	res, err := Generate([]Site{
+		{Dir: "d", Pkg: "billing", File: "d/doc.go", Keyword: "module", Args: []string{"billing-api"}, Line: 3, PackageLevel: true},
+		{Dir: "d", Pkg: "billing", File: "d/doc.go", Keyword: "path", Args: []string{"/billing"}, Line: 4, PackageLevel: true},
+		{Dir: "d", Pkg: "billing", File: "d/other.go", Keyword: "module", Args: []string{"billing-api"}, Line: 2, PackageLevel: true}, // agreeing duplicate
+		fn,
+	}, "gen.go")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	got := string(res[0].Content)
+	for _, want := range []string{
+		`nexus.Module("billing-api",`,
+		`nexus.Path("/billing"),`,
+		`nexus.AsRest("POST", "/charge", NewCharge)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "nexus.Path") > strings.Index(got, "nexus.AsRest") {
+		t.Errorf("nexus.Path must lead the option list:\n%s", got)
+	}
+
+	cases := []struct {
+		name string
+		site Site
+		want string
+	}{
+		{"conflict", Site{Dir: "d", Pkg: "billing", File: "d/other.go", Keyword: "module",
+			Args: []string{"other"}, Line: 2, PackageLevel: true}, "conflicts with"},
+		{"function-level misuse", Site{Dir: "d", Pkg: "billing", File: "d/h.go", Keyword: "path",
+			Args: []string{"/x"}, Func: "NewCharge", Line: 9}, "package-level — put it on the package doc comment"},
+		{"function keyword on package doc", Site{Dir: "d", Pkg: "billing", File: "d/doc.go", Keyword: "query",
+			Line: 5, PackageLevel: true}, "not a package-level directive"},
+		{"bad prefix", Site{Dir: "d", Pkg: "billing", File: "d/doc.go", Keyword: "path",
+			Args: []string{"billing"}, Line: 4, PackageLevel: true}, `must start with "/"`},
+		{"module missing name", Site{Dir: "d", Pkg: "billing", File: "d/doc.go", Keyword: "module",
+			Line: 3, PackageLevel: true}, "needs exactly a module name"},
+	}
+	base := []Site{
+		{Dir: "d", Pkg: "billing", File: "d/doc.go", Keyword: "module", Args: []string{"billing-api"}, Line: 3, PackageLevel: true},
+		fn,
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Generate(append(append([]Site{}, base...), c.site), "gen.go")
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error %v, want containing %q", err, c.want)
+			}
+			if !strings.Contains(err.Error(), c.site.File+":") {
+				t.Fatalf("error %v lacks position from %s", err, c.site.File)
+			}
+		})
+	}
+}

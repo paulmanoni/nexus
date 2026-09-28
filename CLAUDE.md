@@ -688,6 +688,8 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
 //@subscription                   //@ws <PATH> <TYPE>          //@worker <NAME>
 //@auth Required | Requires PERM… | Public  (modifier)                   //@use <expr>  (modifier, per-op middleware)
 //@session Required  (modifier — session.Required(), the 428 flow-continuity gate)
+//@module <name> | //@path <prefix> | //@routeprefix <prefix>  (PACKAGE doc comment —
+                                  name the module group / prefix its routes)
 //@<pkg>.<Func> args…             custom extension decorator — emits pkg.Func(args…, fn);
                                   the registrar returns a nexus.Option (e.g. inertia.Page,
                                   reusing its existing signature). pkg is imported from the

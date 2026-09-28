@@ -49,10 +49,17 @@ func (a Annotation) errf(format string, args ...any) error {
 type Config struct {
 	Package        string // package clause of the generated file (required)
 	Module         string // nexus.Module name for the group; defaults to Package
+	Path           string // nexus.Path prefix for the module (REST + GraphQL); "" = none
+	RoutePrefix    string // nexus.RoutePrefix (REST-only) for the module; "" = none
 	NexusImport    string // default github.com/paulmanoni/nexus
 	DecorateImport string // default github.com/paulmanoni/nexus/decorate
 	AuthImport     string // default github.com/paulmanoni/nexus/extension/auth
 }
+
+// packageDirectiveKeywords are the //@ directives that live on the PACKAGE
+// doc comment and configure the whole generated module, rather than
+// registering a function.
+var packageDirectiveKeywords = map[string]bool{"module": true, "path": true, "routeprefix": true}
 
 // DefaultModule is the dashboard module name used when annotations live in the
 // main package (or a package whose name makes a poor module label) — so those
@@ -220,6 +227,14 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	// call in the app.
 	b.WriteString("func init() {\n")
 	fmt.Fprintf(&b, "\tdecorate.Register(nexus.Module(%s,\n", strconv.Quote(cfg.Module))
+	// Package-level prefixes lead the option list, mirroring hand-written
+	// module wiring.
+	if cfg.Path != "" {
+		fmt.Fprintf(&b, "\t\tnexus.Path(%s),\n", strconv.Quote(cfg.Path))
+	}
+	if cfg.RoutePrefix != "" {
+		fmt.Fprintf(&b, "\t\tnexus.RoutePrefix(%s),\n", strconv.Quote(cfg.RoutePrefix))
+	}
 	for _, s := range stmts {
 		fmt.Fprintf(&b, "\t\t%s,\n", s.text)
 	}

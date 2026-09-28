@@ -125,14 +125,19 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 			}
 			continue
 		}
+		if h.PackageLevel && qualified {
+			return nil, fmt.Errorf("%s:%d: //@%s is a custom decorator, which is function-level — annotate a function, not the package doc",
+				displayRel(h.File), h.Pos.Line, kw)
+		}
 		site := handlergen.Site{
-			Dir:     filepath.Dir(h.File),
-			Pkg:     h.Pkg,
-			File:    displayRel(h.File),
-			Func:    h.Func,
-			Keyword: kw,
-			Args:    h.Args,
-			Line:    h.Pos.Line,
+			Dir:          filepath.Dir(h.File),
+			Pkg:          h.Pkg,
+			File:         displayRel(h.File),
+			Func:         h.Func,
+			Keyword:      kw,
+			Args:         h.Args,
+			Line:         h.Pos.Line,
+			PackageLevel: h.PackageLevel,
 		}
 		switch {
 		case kw == "use":

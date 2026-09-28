@@ -12,6 +12,7 @@ import (
 // Anything outside this set is left for other tools (or ignored).
 var handlerKeywords = []string{
 	"provide", "rest", "query", "mutation", "subscription", "ws", "worker", "auth", "session", "use",
+	"module", "path", "routeprefix",
 }
 
 type handlersOptions struct {
@@ -47,6 +48,11 @@ Annotations:
     //@auth Requires <PERM> [<PERM>…] -> auth.Requires("PERM", …) (bare or quoted)
     //@auth Public                    -> nexus.Public() (deny-by-default opt-out)
     //@session Required               -> session.Required() option (flow continuity)
+
+Package doc directives (on the comment above the package clause):
+    //@module <name>                  -> names the nexus.Module group (default: package name)
+    //@path <prefix>                  -> nexus.Path(prefix): REST+GraphQL module prefix
+    //@routeprefix <prefix>           -> nexus.RoutePrefix(prefix): REST-only prefix
 
 Examples:
     nexus generate handlers ./...        # scan from cwd
