@@ -237,6 +237,57 @@ func TestEmit_InertiaPageNormalization(t *testing.T) {
 	}
 }
 
+// TestEmit_AuthGrammar: the //@auth modifier reads naturally — bare tokens,
+// case-insensitive capability, unquoted permissions, a Public marking — while
+// the legacy call form keeps working; typos fail at the annotation with a
+// suggestion instead of an undefined identifier in the generated file.
+func TestEmit_AuthGrammar(t *testing.T) {
+	rest := Annotation{Func: "NewX", Keyword: "rest", Args: []string{"GET", "/x"}, Line: 1}
+
+	ok := func(authArgs []string, want string, wantAuthImport bool) {
+		t.Helper()
+		got, err := Emit(Config{Package: "h"}, []Annotation{rest,
+			{Func: "NewX", Keyword: "auth", Args: authArgs, Line: 2},
+		})
+		if err != nil {
+			t.Fatalf("Emit(auth %v): %v", authArgs, err)
+		}
+		if !strings.Contains(string(got), want) {
+			t.Errorf("Emit(auth %v) missing %q:\n%s", authArgs, want, got)
+		}
+		hasImport := strings.Contains(string(got), `"github.com/paulmanoni/nexus/extension/auth"`)
+		if hasImport != wantAuthImport {
+			t.Errorf("Emit(auth %v): auth import present = %v, want %v", authArgs, hasImport, wantAuthImport)
+		}
+	}
+	ok([]string{"Required"}, "auth.Required()", true)
+	ok([]string{"required"}, "auth.Required()", true) // capability is case-insensitive
+	ok([]string{"Requires", "ADMIN"}, `auth.Requires("ADMIN")`, true)
+	ok([]string{"Requires", "ADMIN", "HR"}, `auth.Requires("ADMIN", "HR")`, true)
+	ok([]string{"Requires", `"ROLE X"`}, `auth.Requires("ROLE X")`, true) // quoted keeps spaces
+	ok([]string{"Public"}, "nexus.Public()", false)
+	ok([]string{"Required()"}, "auth.Required()", true)                    // legacy call form
+	ok([]string{`Requires("A",`, `"B")`}, `auth.Requires("A", "B")`, true) // legacy multi-role
+
+	bad := func(authArgs []string, want string) {
+		t.Helper()
+		_, err := Emit(Config{Package: "h"}, []Annotation{rest,
+			{Func: "NewX", Keyword: "auth", Args: authArgs, File: "h/a.go", Line: 2},
+		})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Emit(auth %v): error %v, want containing %q", authArgs, err, want)
+		}
+		if err != nil && !strings.Contains(err.Error(), "h/a.go:2:") {
+			t.Errorf("Emit(auth %v): error %v lacks file:line", authArgs, err)
+		}
+	}
+	bad(nil, "needs a capability")
+	bad([]string{"Requires"}, "needs at least one permission")
+	bad([]string{"Required", "ADMIN"}, "//@auth Requires ADMIN") // steers to the right spelling
+	bad([]string{"Requeired"}, "did you mean Required?")
+	bad([]string{"Admin"}, "unknown //@auth capability")
+}
+
 func TestEmit_Errors(t *testing.T) {
 	cases := []struct {
 		name string

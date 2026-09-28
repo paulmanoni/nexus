@@ -23,7 +23,7 @@ type GetUserArgs struct {
 func NewGetUser(s *UserService, p nexus.Params[GetUserArgs]) (*User, error) { ... }
 
 //@mutation
-//@auth Requires("users:write")
+//@auth Requires users:write
 func NewCreateUser(s *UserService, p nexus.Params[CreateUserArgs]) (*User, error) { ... }
 ```
 
@@ -47,7 +47,7 @@ One primary annotation per function, plus optional modifiers:
 | `//@query` / `//@mutation` / `//@subscription` | A GraphQL field |
 | `//@ws <PATH> <TYPE>` | A WebSocket message handler |
 | `//@worker <NAME>` | A background worker |
-| `//@auth Required` / `//@auth Requires("X")` | Modifier: an auth gate |
+| `//@auth Required` / `//@auth Requires PERM…` / `//@auth Public` | Modifier: an auth gate (bare tokens; legacy `Requires("X")` also accepted) |
 | `//@use <expr>` | Modifier: per-op middleware |
 | `//@<pkg>.<Func> args…` | A custom decorator from an extension, for example `//@inertia.Page GET /users Users/Index` |
 

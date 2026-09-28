@@ -116,7 +116,7 @@ func NewUsersService(app *nexus.App) *UsersService { ... }
 func NewGetUser(s *UsersService, p nexus.Params[GetArgs]) (*User, error) { ... }
 
 //@mutation
-//@auth Requires("ADMIN")
+//@auth Requires ADMIN
 func NewCreateUser(s *UsersService, p nexus.Params[NewUser]) (*User, error) { ... }
 ```
 ```go
@@ -187,7 +187,7 @@ pages, branded `app-window`) and `examples/notes` `widgets.Panel`
 //@subscription                  → decorate.Subscription(fn, opts…)
 //@ws <PATH> <TYPE>              → decorate.WS(path, type, fn, opts…)
 //@worker <NAME>                 → decorate.Worker(name, fn)
-//@auth Required | Requires("X") → appended as an opt: auth.Required()/auth.Requires("X")
+//@auth Required | Requires PERM… | Public → appended as an opt: auth.Required()/auth.Requires("PERM")/nexus.Public()
 //@use <expr>                    → appended as an opt
 ```
 Auth/middleware annotations compile to existing option values — no new runtime

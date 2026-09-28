@@ -43,7 +43,9 @@ Annotations:
     //@subscription                   -> decorate.Subscription(fn, opts…)
     //@ws <PATH> <TYPE>               -> decorate.WS(path, type, fn, opts…)
     //@worker <NAME>                  -> decorate.Worker(name, fn)
-    //@auth Required | Requires("X")  -> auth.Required()/auth.Requires("X") option
+    //@auth Required                  -> auth.Required() option
+    //@auth Requires <PERM> [<PERM>…] -> auth.Requires("PERM", …) (bare or quoted)
+    //@auth Public                    -> nexus.Public() (deny-by-default opt-out)
 
 Examples:
     nexus generate handlers ./...        # scan from cwd

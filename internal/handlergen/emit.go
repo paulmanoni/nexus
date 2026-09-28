@@ -409,19 +409,14 @@ func renderOpts(mods []Annotation, authImport string) (exprs []string, imports [
 	for _, m := range mods {
 		switch m.Keyword {
 		case "auth":
-			if len(m.Args) == 0 {
-				return nil, nil, m.errf("//@auth needs Required or Requires(\"ROLE\")")
-			}
-			expr := strings.Join(m.Args, " ")
-			if !strings.Contains(expr, "(") {
-				expr += "()" // //@auth Required → auth.Required()
-			}
-			expr = "auth." + expr
-			if err := checkExpr(m, expr); err != nil {
+			expr, needsAuth, err := renderAuthOption(m)
+			if err != nil {
 				return nil, nil, err
 			}
 			exprs = append(exprs, expr)
-			imports = append(imports, strconv.Quote(authImport))
+			if needsAuth {
+				imports = append(imports, strconv.Quote(authImport))
+			}
 		case "use":
 			// //@use <expr> emits the expression verbatim as a per-op option.
 			// Its package imports are resolved by the caller (the CLI reads the
@@ -440,6 +435,105 @@ func renderOpts(mods []Annotation, authImport string) (exprs []string, imports [
 		}
 	}
 	return exprs, imports, nil
+}
+
+// renderAuthOption turns an //@auth modifier into its option expression.
+// The grammar reads naturally — bare tokens, capability case-insensitive:
+//
+//	//@auth Required                → auth.Required()
+//	//@auth Requires ADMIN HR       → auth.Requires("ADMIN", "HR")
+//	//@auth Public                  → nexus.Public() (deny-by-default opt-out)
+//	//@auth Requires("ADMIN", "HR") → unchanged (legacy call form)
+//
+// Unknown capabilities fail at the annotation with a suggestion, so a typo
+// never becomes an undefined identifier inside the generated file.
+// needsAuthImport is false for Public, which lives in the nexus core.
+func renderAuthOption(m Annotation) (expr string, needsAuthImport bool, err error) {
+	if len(m.Args) == 0 {
+		return "", false, m.errf("//@auth needs a capability: Required, Requires <PERM…>, or Public")
+	}
+	head := m.Args[0]
+
+	// Legacy call form: //@auth Requires("A", "B") / Required(). Validate the
+	// capability, pass the expression through parse-checked.
+	if i := strings.IndexByte(head, '('); i >= 0 {
+		switch cap := head[:i]; cap {
+		case "Required", "Requires":
+			expr := "auth." + strings.Join(m.Args, " ")
+			return expr, true, checkExpr(m, expr)
+		case "Public":
+			return "nexus.Public()", false, nil
+		default:
+			return "", false, m.errf("unknown //@auth capability %q — use Required, Requires <PERM…>, or Public%s",
+				cap, authSuggestion(cap))
+		}
+	}
+
+	switch strings.ToLower(head) {
+	case "required":
+		if len(m.Args) > 1 {
+			return "", false, m.errf("//@auth Required takes no arguments (got %v) — to require permissions: //@auth Requires %s",
+				m.Args[1:], strings.Join(m.Args[1:], " "))
+		}
+		return "auth.Required()", true, nil
+	case "public":
+		if len(m.Args) > 1 {
+			return "", false, m.errf("//@auth Public takes no arguments (got %v)", m.Args[1:])
+		}
+		return "nexus.Public()", false, nil
+	case "requires":
+		perms := m.Args[1:]
+		if len(perms) == 0 {
+			return "", false, m.errf("//@auth Requires needs at least one permission, e.g. //@auth Requires ADMIN")
+		}
+		quoted := make([]string, len(perms))
+		for i, p := range perms {
+			v, err := decoratorToken(&m, p)
+			if err != nil {
+				return "", false, err
+			}
+			if v == "" {
+				return "", false, m.errf("//@auth Requires has an empty permission (got %v)", m.Args)
+			}
+			quoted[i] = strconv.Quote(v)
+		}
+		return "auth.Requires(" + strings.Join(quoted, ", ") + ")", true, nil
+	default:
+		return "", false, m.errf("unknown //@auth capability %q — use Required, Requires <PERM…>, or Public%s",
+			head, authSuggestion(head))
+	}
+}
+
+// authSuggestion returns a did-you-mean hint for a near-miss capability.
+func authSuggestion(got string) string {
+	lower := strings.ToLower(got)
+	for _, cap := range []string{"Required", "Requires", "Public"} {
+		if d := editDistance(lower, strings.ToLower(cap)); d <= 2 {
+			return fmt.Sprintf(" (did you mean %s?)", cap)
+		}
+	}
+	return ""
+}
+
+// editDistance is the Levenshtein distance between two short ASCII words.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
 
 // checkExpr rejects an option expression that isn't parseable Go AT THE

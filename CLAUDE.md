@@ -678,7 +678,7 @@ func NewUserService(app *nexus.App) *UserService { ... }
 func NewGetUser(s *UserService, p nexus.Params[GetArgs]) (*User, error) { ... }
 
 //@mutation
-//@auth Requires("ADMIN")
+//@auth Requires ADMIN
 func NewCreateUser(s *UserService, p nexus.Params[NewUser]) (*User, error) { ... }
 ```
 
@@ -686,7 +686,7 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
 ```
 //@provide                        //@rest <METHOD> <PATH>      //@query / //@mutation
 //@subscription                   //@ws <PATH> <TYPE>          //@worker <NAME>
-//@auth Required | Requires("X")  (modifier)                   //@use <expr>  (modifier, per-op middleware)
+//@auth Required | Requires PERM… | Public  (modifier)                   //@use <expr>  (modifier, per-op middleware)
 //@<pkg>.<Func> args…             custom extension decorator — emits pkg.Func(args…, fn);
                                   the registrar returns a nexus.Option (e.g. inertia.Page,
                                   reusing its existing signature). pkg is imported from the
