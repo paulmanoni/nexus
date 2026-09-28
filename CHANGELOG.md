@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.65.1] - 2026-09-29
+
 ### Added
 
 - **Resource logs are state transitions, not retry spam.** A database or
