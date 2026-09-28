@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.61.0] - 2026-09-28
+
+### Added
+
+- **Seamless `//@inertia.Page` decorator.** Annotations read naturally — bare
+  tokens instead of hand-quoted Go strings
+  (`//@inertia.Page GET /users Users/Index`,
+  `//@inertia.Page get,post /login Login`). The codegen gains a
+  known-decorator normalization seam keyed on the resolved import path
+  (aliased imports included): tokens are auto-quoted, verbs case-normalised
+  with the comma multi-verb form kept, and a wrong arg count, non-HTTP verb,
+  or path without `/` fails at the annotation with `file:line` instead of
+  emitting invalid Go into the generated file. Quoted tokens still work, and
+  `.Page` decorators from other packages keep the verbatim contract.
+- **`inertia.Page` validates at boot.** An invalid verb, a path not starting
+  with `/`, an empty component, or a nil handler returns `nexus.Error`, so a
+  bad direct call fails the boot with a message naming the page instead of a
+  route that never matches or a client-side "component not found".
+
 ## [1.60.5] - 2026-09-28
 
 ### Changed
