@@ -411,7 +411,33 @@ func (l *viteLogWriter) emit(line string) {
 	if !l.verbose && viteNoiseLine(line) {
 		return
 	}
+	// A nexus-vite-plugin diagnostic (a missing page component, a broken
+	// [env] key, a hot-file problem) is actionable and easy to lose in the
+	// [web] stream — render it loud instead of as passthrough.
+	if warn, ok := vitePluginWarning(line); ok {
+		fmt.Fprintf(l.w, "%s%s[web] ⚠%s %s%s%s\n", ansiBold, ansiYellow, ansiReset, ansiYellow, warn, ansiReset)
+		return
+	}
 	fmt.Fprintf(l.w, "%s[web]%s %s\n", ansiCyan, ansiReset, line)
+}
+
+// vitePluginWarning recognizes a WARNING logged by nexus-vite-plugin — a
+// line whose content starts with "[nexus]" — and returns it stripped of
+// Vite's own decoration. The plugin's two informational lines ("restored
+// <hot file>" and "dev server <origin> → <hot file>") stay ordinary
+// passthrough; keep this list in sync with the plugin's logger.info calls.
+func vitePluginWarning(line string) (string, bool) {
+	s := strings.TrimSpace(ansiEscapeRE.ReplaceAllString(line, ""))
+	i := strings.Index(s, "[nexus] ")
+	if i < 0 {
+		return "", false
+	}
+	s = s[i:]
+	rest := strings.TrimPrefix(s, "[nexus] ")
+	if strings.HasPrefix(rest, "restored ") || strings.HasPrefix(rest, "dev server ") {
+		return "", false
+	}
+	return s, true
 }
 
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)

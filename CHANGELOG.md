@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `nexus dev`: nexus-vite-plugin diagnostics in the `[web]` stream — a missing
+  page component, a broken `[env]` key, a hot-file problem — now render on a
+  highlighted `[web] ⚠` line in amber instead of ordinary cyan passthrough,
+  so they stand out when the console is busy. The plugin's informational
+  lines are unchanged.
+
 ## [1.65.0] - 2026-09-29
 
 ### Added

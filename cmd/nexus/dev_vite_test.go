@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,6 +86,7 @@ func TestViteNoiseLine(t *testing.T) {
 const serveFrontendMain = `package main
 
 import (
+	"io"
 	"embed"
 
 	"github.com/paulmanoni/nexus"
@@ -198,4 +200,37 @@ func TestStartDevFrontend_NoViteWithoutPackageJSON(t *testing.T) {
 			t.Fatalf("frontend = %+v, notes %q", f, notes.String())
 		}
 	})
+}
+
+// TestViteLogWriter_PluginWarningsAreLoud: nexus-vite-plugin diagnostics
+// (missing page components, [env] problems) render on a highlighted ⚠ line
+// so they don't drown in the [web] stream; the plugin's informational lines
+// stay ordinary passthrough.
+func TestViteLogWriter_PluginWarningsAreLoud(t *testing.T) {
+	var out strings.Builder
+	w := newViteLogWriter(&out, false)
+	io.WriteString(w, "[nexus] page component '/User/Index' (GET /testme) → not a path under src/Pages — create the file, or fix the component name passed to inertia.Page\n")
+	io.WriteString(w, "\x1b[33m[nexus] [env] key \"a b\" can't be read as import.meta.env.a b (every dotted segment must be an identifier); skipped.\x1b[0m\n")
+	io.WriteString(w, "[nexus] restored .vite/nexus-hot.json for the dev server (pid 123)\n")
+	io.WriteString(w, "[nexus] dev server http://localhost:5173 → .vite/nexus-hot.json\n")
+	io.WriteString(w, "ordinary vite output\n")
+	got := out.String()
+
+	if n := strings.Count(got, "[web] ⚠"); n != 2 {
+		t.Errorf("want 2 highlighted warnings, got %d:\n%s", n, got)
+	}
+	if !strings.Contains(got, "⚠\x1b[0m \x1b[33m[nexus] page component") {
+		t.Errorf("page warning not highlighted:\n%q", got)
+	}
+	for _, info := range []string{"restored .vite/nexus-hot.json", "dev server http://localhost:5173"} {
+		if !strings.Contains(got, info) {
+			t.Errorf("info line dropped: %q\n%s", info, got)
+		}
+	}
+	if strings.Contains(got, "⚠\x1b[0m \x1b[33m[nexus] restored") || strings.Contains(got, "⚠\x1b[0m \x1b[33m[nexus] dev server") {
+		t.Errorf("info lines must not be highlighted:\n%s", got)
+	}
+	if !strings.Contains(got, "[web]\x1b[0m ordinary vite output") {
+		t.Errorf("ordinary output regressed:\n%s", got)
+	}
 }
