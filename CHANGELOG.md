@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.62.0] - 2026-09-28
+
+### Added
+
+- **Seamless `//@auth` decorator grammar.** Bare tokens, case-insensitive
+  capability, unquoted permissions: `//@auth Required`,
+  `//@auth Requires ADMIN HR` (→ `auth.Requires("ADMIN", "HR")`), and the new
+  `//@auth Public` (→ `nexus.Public()`, the deny-by-default opt-out, added
+  without pulling in the auth import). The legacy call form
+  (`//@auth Requires("A", "B")`) keeps working, parse-checked as before.
+  Mistakes fail at the annotation with `file:line`: a missing capability,
+  `Requires` with no permissions (previously a vacuously-passing gate),
+  `Required`/`Public` with stray arguments, and unknown capabilities with a
+  did-you-mean suggestion.
+
 ## [1.61.0] - 2026-09-28
 
 ### Added
