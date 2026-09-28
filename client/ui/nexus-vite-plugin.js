@@ -1054,6 +1054,7 @@ export default function nexusAutoSelect(options = {}) {
       const check = () => {
         const missing = findMissingPages()
         if (!missing) return
+        const hadWarnings = warnedPages.size > 0
         const now = new Set()
         let fresh = 0
         for (const [name, routes] of missing) {
@@ -1063,6 +1064,11 @@ export default function nexusAutoSelect(options = {}) {
           logger.warn(`[nexus] page component ${describeMissingPage(name, routes)} — ${pagesHint}`)
         }
         warnedPages = now
+        // All-clear once every previously-missing page resolves, so the dev
+        // loop's status strip can retire its pinned warning.
+        if (hadWarnings && now.size === 0) {
+          logger.info(`[nexus] pages ok — every registered page component resolves`)
+        }
         if (fresh && !warnedPagesDir && pagesDirMissing()) {
           warnedPagesDir = true
           logger.warn(`[nexus] ${pagesDirHint()}`)

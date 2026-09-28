@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Resource logs are state transitions, not retry spam.** A database or
+  redis outage now logs the moment it goes down (with the fix hint), then
+  widening still-down heartbeats (10s → 1m → 5m; a NEW error kind always
+  breaks through), then one recovery line with the outage's shape
+  (`db: reconnected … attempts=47 down_for=2m10s`) — instead of one
+  identical line per retry tick. Backed by `internal/logx.Transition`,
+  adopted by `db.Manager` (connect, ping-lost) and the redis cache
+  supervisor (connect, health check); every line carries structured
+  `resource`/`state`/`attempts`/`down_for` fields.
+- **`nexus dev` status strip.** Abnormal state stays pinned to the bottom of
+  the console while logs scroll above (the buildkit/npm pattern): down
+  resources (`✖ db:main: down 2m0s (24×)`, from the fields above) and
+  unresolved Inertia page components (`⚠ 2 page components unresolved`,
+  retired by the plugin's new `[nexus] pages ok` all-clear once the files
+  exist). Renders nothing while everything is healthy; disabled off-tty,
+  under `--raw-logs`, and with `NO_COLOR`, so piped output stays clean.
+
 ### Changed
 
 - `nexus dev`: nexus-vite-plugin diagnostics in the `[web]` stream — a missing

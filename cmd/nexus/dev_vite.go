@@ -80,6 +80,9 @@ type devViteConfig struct {
 	// Grace is how long stop waits between SIGTERM and SIGKILL.
 	// 0 = viteKillGrace.
 	Grace time.Duration
+	// Strip, when set, receives the plugin's unresolved-page state so it
+	// stays pinned at the bottom of the console (nil-safe).
+	Strip *statusStrip
 }
 
 // devHotTimeout is how long a started Vite gets to write its hot file
@@ -184,6 +187,7 @@ func (v *devVite) start() {
 		return
 	}
 	lw := newViteLogWriter(v.cfg.Out, v.cfg.Verbose)
+	lw.strip = v.cfg.Strip
 	cmd.Stdout = lw
 	cmd.Stderr = lw
 
@@ -375,6 +379,11 @@ type viteLogWriter struct {
 	verbose bool
 	mu      sync.Mutex
 	buf     []byte
+
+	// strip + pages keep the "N page components unresolved" entry pinned to
+	// the dev status strip until the plugin's `[nexus] pages ok` all-clear.
+	strip *statusStrip
+	pages map[string]bool
 }
 
 func newViteLogWriter(w io.Writer, verbose bool) *viteLogWriter {
@@ -416,9 +425,40 @@ func (l *viteLogWriter) emit(line string) {
 	// [web] stream — render it loud instead of as passthrough.
 	if warn, ok := vitePluginWarning(line); ok {
 		fmt.Fprintf(l.w, "%s%s[web] ⚠%s %s%s%s\n", ansiBold, ansiYellow, ansiReset, ansiYellow, warn, ansiReset)
+		l.notePageWarning(warn)
 		return
 	}
+	// The plugin's all-clear: every registered page resolves again.
+	if strings.Contains(line, "[nexus] pages ok") {
+		l.pages = nil
+		l.strip.Clear("pages")
+	}
 	fmt.Fprintf(l.w, "%s[web]%s %s\n", ansiCyan, ansiReset, line)
+}
+
+// pageWarnRE pulls the component name out of the plugin's missing-page line.
+var pageWarnRE = regexp.MustCompile(`page component '([^']+)'`)
+
+// notePageWarning keeps unresolved page components pinned on the status
+// strip. Other plugin warnings (env keys, hot file) are one-shot — the loud
+// line suffices — so only page state is tracked.
+func (l *viteLogWriter) notePageWarning(warn string) {
+	if l.strip == nil {
+		return
+	}
+	m := pageWarnRE.FindStringSubmatch(warn)
+	if m == nil {
+		return
+	}
+	if l.pages == nil {
+		l.pages = map[string]bool{}
+	}
+	l.pages[m[1]] = true
+	label := fmt.Sprintf("⚠ page component %s unresolved — see [web] ⚠", m[1])
+	if len(l.pages) > 1 {
+		label = fmt.Sprintf("⚠ %d page components unresolved — see [web] ⚠", len(l.pages))
+	}
+	l.strip.Set("pages", label)
 }
 
 // vitePluginWarning recognizes a WARNING logged by nexus-vite-plugin — a
@@ -434,7 +474,8 @@ func vitePluginWarning(line string) (string, bool) {
 	}
 	s = s[i:]
 	rest := strings.TrimPrefix(s, "[nexus] ")
-	if strings.HasPrefix(rest, "restored ") || strings.HasPrefix(rest, "dev server ") {
+	if strings.HasPrefix(rest, "restored ") || strings.HasPrefix(rest, "dev server ") ||
+		strings.HasPrefix(rest, "pages ok") {
 		return "", false
 	}
 	return s, true

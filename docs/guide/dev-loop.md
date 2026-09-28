@@ -108,6 +108,33 @@ requests = true       # one console line per HTTP request (dev only)
 Formatting turns off when stdout isn't a terminal, so `nexus dev > log` keeps raw JSON.
 Color honors `NO_COLOR`.
 
+### The status strip
+
+Abnormal state stays **pinned to the bottom line** while logs scroll above it:
+
+```
+✖ db:main: down 2m0s (24×) · ⚠ 2 page components unresolved — see [web] ⚠
+```
+
+It shows down resources and unresolved Inertia page components, disappears
+when everything is healthy, and is off entirely when output isn't a terminal
+(or under `--raw-logs` / `NO_COLOR`).
+
+### Resource outages log as transitions
+
+A database or redis that goes down logs **once** (with a fix hint), then a
+still-down heartbeat on a widening schedule (10s → 1m → 5m — a new error kind
+always breaks through immediately), then one recovery line closing the story:
+
+```
+WARN  db: cannot reach the server, retrying in the background  resource=db:main state=down fix=nothing is listening on …
+WARN  db: still unreachable, retrying in the background        resource=db:main state=still-down attempts=24 down_for=2m0s
+INFO  db: reconnected                                          resource=db:main state=up attempts=47 down_for=2m10s
+```
+
+The same structured fields drive the status strip, so an outage can't scroll
+out of sight.
+
 ## Useful flags
 
 | Flag | Does |

@@ -259,6 +259,12 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	case "raw", "json", "off", "none":
 		prettyLogs = false
 	}
+	// The status strip pins abnormal state (a down resource, unresolved page
+	// components) to the bottom of the console. Every log destination is
+	// routed through it so it can erase/redraw around each write; disabled
+	// (a pure passthrough) off-tty, under --raw-logs, and with NO_COLOR.
+	strip := newStatusStrip(stdout, prettyLogs && os.Getenv("NO_COLOR") == "")
+	stdout, stderr = strip.Wrap(stdout), strip.Wrap(stderr)
 	var logFmt logFormatter
 	if prettyLogs {
 		f, ok := resolveLogFormatter(logFormat, logPattern)
@@ -326,6 +332,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		Out:      stdout,
 		Notes:    stderr,
 		Color:    stdoutIsTerminal(),
+		Strip:    strip,
 	})
 	frontendDir = front.Dir
 	fp, vite := front.Project, front.Vite
@@ -538,7 +545,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		if first && vite != nil {
 			viteSettled = vite.settledCh()
 		}
-		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, viteSettled, stdout, stderr)
+		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, strip, viteSettled, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -576,7 +583,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 // nexus.Boot resolves nexus.toml from the same place either way.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, viteSettled <-chan struct{}, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, strip *statusStrip, viteSettled <-chan struct{}, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	cmd := exec.Command(binPath)
 	if binPath == "" {
 		// Legacy --go-run path. The flags mirror devBuilder.build:
@@ -609,8 +616,9 @@ func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devS
 	outW, errW := stdout, stderr
 	if prettyLogs {
 		color := os.Getenv("NO_COLOR") == ""
-		outW = newLogPretty(stdout, color, logFmt)
-		errW = newLogPretty(stderr, color, logFmt)
+		olp, elp := newLogPretty(stdout, color, logFmt), newLogPretty(stderr, color, logFmt)
+		olp.strip, elp.strip = strip, strip
+		outW, errW = olp, elp
 	}
 	cmd.Stdout = newAddrFinder(outW, detectedCh)
 	cmd.Stderr = newAddrFinder(errW, detectedCh)

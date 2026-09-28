@@ -28,7 +28,7 @@ import (
 
 func init() {
 	cache.RegisterRedis(func(m *cache.Manager) cache.RedisSupervisor {
-		return &supervisor{m: m}
+		return &supervisor{m: m, avail: logx.NewTransition("redis")}
 	})
 }
 
@@ -71,9 +71,10 @@ type supervisor struct {
 	m      *cache.Manager
 	client *redis.Client
 
-	// downFor collapses the unreachable-redis line that would otherwise
-	// reprint on every reconnect tick for as long as redis is down.
-	downFor logx.RepeatGuard
+	// avail shapes the reconnect-tick failures into state transitions: one
+	// line when redis goes down, widening still-down heartbeats, one line on
+	// recovery.
+	avail *logx.Transition
 }
 
 func (s *supervisor) executor() failsafe.Executor[*redis.Client] {
@@ -166,6 +167,10 @@ func (s *supervisor) connect() {
 		if logx.IsRetryState(err) {
 			return
 		}
+		ev, tf := s.avail.Fail(err)
+		if ev == logx.EventNone {
+			return
+		}
 		// Warn, not Error: the cache is still fully functional on memory, so
 		// this degrades the deployment rather than breaking the app. At Error
 		// it also collected a stack trace under a development logger, for a
@@ -175,16 +180,19 @@ func (s *supervisor) connect() {
 		if hint := logx.Hint(err, "redis", addr); hint != "" {
 			fields = append(fields, zap.String("fix", hint))
 		}
-		if suppressed, ok := s.downFor.Allow(logx.Signature(err), time.Minute); ok {
-			if suppressed > 0 {
-				fields = append(fields, zap.Int("repeated", suppressed))
-			}
-			log.Warn("cache: redis unreachable, serving from memory", fields...)
+		fields = append(fields, tf...)
+		msg := "cache: redis unreachable, serving from memory"
+		if ev == logx.EventStillDown {
+			msg = "cache: redis still unreachable, serving from memory"
 		}
+		log.Warn(msg, fields...)
 		return
 	}
 	s.client = client
-	s.downFor.Reset()
+	if ev, tf := s.avail.OK(); ev == logx.EventRecovered {
+		log.Info("cache: redis connected, leaving memory fallback",
+			append([]zap.Field{zap.String("address", cfg.RedisAddress())}, tf...)...)
+	}
 	s.m.ActivateRedis(&backend{client: client})
 }
 
@@ -198,7 +206,13 @@ func (s *supervisor) healthCheck() {
 	// PING is the canonical Redis liveness probe: no pre-existing state,
 	// clean error only on transport failure.
 	if _, err := client.Ping(ctx).Result(); err != nil {
-		s.m.Logger().Error("cache: health check failed, switching to memory", zap.Error(err))
+		// Feed the availability tracker so this is the outage's ONE "went
+		// down" line; the reconnect ticks that follow continue as still-down
+		// heartbeats instead of re-announcing.
+		if ev, tf := s.avail.Fail(err); ev != logx.EventNone {
+			s.m.Logger().Error("cache: redis health check failed, switching to memory",
+				append([]zap.Field{zap.Error(err)}, tf...)...)
+		}
 		_ = client.Close()
 		s.client = nil
 		s.m.FallBackToMemory()

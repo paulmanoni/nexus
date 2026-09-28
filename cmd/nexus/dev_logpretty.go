@@ -35,6 +35,11 @@ type logPretty struct {
 	color bool
 	fmt   logFormatter // chosen renderer (pretty / logfmt / pattern / …)
 
+	// strip, when set, mirrors resource availability transitions (the
+	// resource/state fields logx.Transition stamps) onto the dev status
+	// strip, so a down database or redis stays visible under the scroll.
+	strip *statusStrip
+
 	mu  sync.Mutex
 	buf []byte
 }
@@ -85,7 +90,46 @@ func (l *logPretty) render(line []byte) string {
 	if !ok {
 		return string(line)
 	}
+	l.observeResourceState(rec)
 	return l.fmt(rec, l.palette())
+}
+
+// observeResourceState lifts logx.Transition's resource/state fields onto
+// the status strip: down and still-down pin an entry, up clears it.
+func (l *logPretty) observeResourceState(rec zapRecord) {
+	if l.strip == nil {
+		return
+	}
+	var resource, state, attempts, downFor string
+	for _, f := range rec.fields {
+		switch f.k {
+		case "resource":
+			resource = f.v
+		case "state":
+			state = f.v
+		case "attempts":
+			attempts = f.v
+		case "down_for":
+			downFor = f.v
+		}
+	}
+	if resource == "" || state == "" {
+		return
+	}
+	key := "res:" + resource
+	switch state {
+	case "up":
+		l.strip.Clear(key)
+	case "down", "still-down":
+		label := "✖ " + resource + ": down"
+		if downFor != "" {
+			label += " " + downFor
+		}
+		if attempts != "" {
+			label += " (" + attempts + "×)"
+		}
+		l.strip.Set(key, label)
+	}
 }
 
 // zapRecord is the decoded shape of one structured log line. Fields holds

@@ -200,9 +200,11 @@ type Manager struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 
-	// downFor collapses the connect failure that repeats on every
-	// maintain() tick while a server is unreachable.
-	downFor logx.RepeatGuard
+	// avail shapes the connect/ping failures that repeat on every
+	// maintain() tick into state transitions: one line when the server goes
+	// down, widening still-down heartbeats, one line on recovery.
+	availOnce sync.Once
+	availT    *logx.Transition
 
 	// envNames + bindName drive NexusEnv / NexusServices when the
 	// auto-walk fires. Populated via WithEnvNames / WithBindName
@@ -394,29 +396,41 @@ func (m *Manager) connect() error {
 	m.db = db
 	m.isConnected = true
 	m.mu.Unlock()
-	// The next outage is news again.
-	m.downFor.Reset()
-	m.logger.Info("db: connected",
+	fields := []zap.Field{
 		zap.String("name", m.bindName),
 		zap.String("driver", string(m.cfg.Driver)),
-		zap.String("address", m.cfg.Address()))
+		zap.String("address", m.cfg.Address()),
+	}
+	if ev, tf := m.avail().OK(); ev == logx.EventRecovered {
+		// The outage's shape closes the story the down/still-down lines told.
+		m.logger.Info("db: reconnected", append(fields, tf...)...)
+	} else {
+		m.logger.Info("db: connected", fields...)
+	}
 	return nil
 }
 
-// reportUnreachable logs a connect failure at most once a minute per distinct
-// error, naming the database, where it looked, and what to do about it. The
-// maintain() loop retries every 5 seconds, so the unguarded version reprinted
-// the same line twelve times a minute per database for as long as the server
-// was down — with six databases configured that buried everything else.
+// avail returns the availability tracker, named after the binding.
+func (m *Manager) avail() *logx.Transition {
+	m.availOnce.Do(func() { m.availT = logx.NewTransition("db:" + m.bindName) })
+	return m.availT
+}
+
+// reportUnreachable logs a connect failure as a state transition — the
+// moment the server goes down, then widening still-down heartbeats — naming
+// the database, where it looked, and what to do about it. The maintain()
+// loop retries every 5 seconds, so the unguarded version reprinted the same
+// line twelve times a minute per database for as long as the server was
+// down — with six databases configured that buried everything else.
 func (m *Manager) reportUnreachable(err error) {
 	if logx.IsRetryState(err) {
 		return
 	}
-	addr := m.cfg.Address()
-	suppressed, ok := m.downFor.Allow(logx.Signature(err), time.Minute)
-	if !ok {
+	ev, tf := m.avail().Fail(err)
+	if ev == logx.EventNone {
 		return
 	}
+	addr := m.cfg.Address()
 	fields := []zap.Field{
 		zap.String("name", m.bindName),
 		zap.String("driver", string(m.cfg.Driver)),
@@ -427,10 +441,12 @@ func (m *Manager) reportUnreachable(err error) {
 	if hint := logx.Hint(err, string(m.cfg.Driver), addr); hint != "" {
 		fields = append(fields, zap.String("fix", hint))
 	}
-	if suppressed > 0 {
-		fields = append(fields, zap.Int("repeated", suppressed))
+	fields = append(fields, tf...)
+	msg := "db: cannot reach the server, retrying in the background"
+	if ev == logx.EventStillDown {
+		msg = "db: still unreachable, retrying in the background"
 	}
-	m.logger.Warn("db: cannot reach the server, retrying in the background", fields...)
+	m.logger.Warn(msg, fields...)
 }
 
 func (m *Manager) markDisconnected() {
@@ -463,7 +479,14 @@ func (m *Manager) maintain() {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			if err := m.Ping(ctx); err != nil {
-				m.logger.Warn("db: ping failed", zap.Error(err))
+				// Feed the availability tracker so this is the outage's ONE
+				// "went down" line; the connect retries that follow continue
+				// as still-down heartbeats instead of re-announcing.
+				if ev, tf := m.avail().Fail(err); ev != logx.EventNone {
+					m.logger.Warn("db: connection lost", append([]zap.Field{
+						zap.String("name", m.bindName), zap.Error(err),
+					}, tf...)...)
+				}
 				m.markDisconnected()
 			}
 			cancel()
