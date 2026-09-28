@@ -79,6 +79,12 @@ func Generate(sites []Site, outName string) ([]Result, error) {
 		}
 		for _, d := range declsByDir[dir] {
 			cfg.RouterDecls = append(cfg.RouterDecls, d.RouterDecl)
+			if d.autoJoin {
+				if cfg.Module != "" || cfg.Path != "" || cfg.RoutePrefix != "" {
+					return nil, d.site.errf("//@router %s (package-named) already groups and prefixes this package — drop the //@module///@path///@routeprefix directives", d.Name)
+				}
+				cfg.AutoRouter = d.Name
+			}
 		}
 		cfg.KnownRouters = known
 		content, err := Emit(cfg, anns)
@@ -98,6 +104,10 @@ type declWithPos struct {
 	RouterDecl
 	pkg  string
 	site Site
+	// autoJoin marks the package-named form (//@router <prefix> …, no name):
+	// the router takes the package's name and every op in the declaring
+	// package registers on it without needing //@on.
+	autoJoin bool
 }
 
 // collectRouterDecls peels //@router declarations out of the site list —
@@ -119,7 +129,7 @@ func collectRouterDecls(sites []Site) (byDir map[string][]declWithPos, known map
 		if !s.PackageLevel {
 			return nil, nil, nil, a.errf("//@router is package-level — put it on the package doc comment, above `package %s`", s.Pkg)
 		}
-		d, err := parseRouterDecl(a)
+		d, err := parseRouterDecl(a, s.Pkg)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -130,7 +140,7 @@ func collectRouterDecls(sites []Site) (byDir map[string][]declWithPos, known map
 			return nil, nil, nil, a.errf("//@router %s conflicts with its declaration at %s:%d — declare a router once",
 				d.Name, prev.site.File, prev.site.Line)
 		}
-		dw := declWithPos{RouterDecl: d.RouterDecl, pkg: s.Pkg, site: s}
+		dw := declWithPos{RouterDecl: d.RouterDecl, pkg: s.Pkg, site: s, autoJoin: d.autoJoin}
 		decls[d.Name] = dw
 		byDir[s.Dir] = append(byDir[s.Dir], dw)
 		known[d.Name] = true
@@ -159,20 +169,43 @@ func (s Site) errf(format string, args ...any) error {
 	return Annotation{Func: s.Func, File: s.File, Line: s.Line}.errf(format, args...)
 }
 
-// parseRouterDecl parses `//@router <name> <prefix> [parent=<name>]
-// [auth=<Required|Requires(P1,P2)>]`.
-func parseRouterDecl(a Annotation) (declWithPos, error) {
-	if len(a.Args) < 2 {
-		return declWithPos{}, a.errf("//@router needs <name> <prefix>, e.g. //@router billing /billing (got %v)", a.Args)
+// parseRouterDecl parses the two //@router forms:
+//
+//	//@router <name> <prefix> [parent=…] [auth=…]   // explicit, cross-package
+//	//@router <prefix> [parent=…] [auth=…]          // package-named: the router
+//	                                                // takes the package's name and
+//	                                                // the package's ops auto-join
+//
+// The forms are told apart by the first argument: a "/"-prefixed token is a
+// prefix (package-named form), anything else is the router's name.
+func parseRouterDecl(a Annotation, pkg string) (declWithPos, error) {
+	if len(a.Args) < 1 {
+		return declWithPos{}, a.errf("//@router needs a <prefix> (package-named) or <name> <prefix>, e.g. //@router /billing (got %v)", a.Args)
 	}
-	d := RouterDecl{Name: a.Args[0], Prefix: a.Args[1]}
+	var d RouterDecl
+	rest := a.Args
+	if strings.HasPrefix(a.Args[0], "/") {
+		// Package-named form: the same default //@module uses.
+		name := pkg
+		if name == "" || name == "main" {
+			name = DefaultModule
+		}
+		d = RouterDecl{Name: name, Prefix: a.Args[0]}
+		rest = a.Args[1:]
+	} else {
+		if len(a.Args) < 2 {
+			return declWithPos{}, a.errf("//@router %s needs a <prefix>, e.g. //@router %s /billing (got %v)", a.Args[0], a.Args[0], a.Args)
+		}
+		d = RouterDecl{Name: a.Args[0], Prefix: a.Args[1]}
+		rest = a.Args[2:]
+	}
 	if d.Name == "" || strings.ContainsRune(d.Name, '=') {
-		return declWithPos{}, a.errf("//@router needs a name first, e.g. //@router billing /billing (got %v)", a.Args)
+		return declWithPos{}, a.errf("//@router needs a name or a /-prefix first, e.g. //@router billing /billing (got %v)", a.Args)
 	}
 	if !strings.HasPrefix(d.Prefix, "/") {
 		return declWithPos{}, a.errf("//@router %s prefix %q must start with \"/\"", d.Name, d.Prefix)
 	}
-	for _, kv := range a.Args[2:] {
+	for _, kv := range rest {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok || v == "" {
 			return declWithPos{}, a.errf("//@router %s: %q is not a key=value option (parent=<name>, auth=<Required|Requires(P1,P2)>)", d.Name, kv)
@@ -190,7 +223,7 @@ func parseRouterDecl(a Annotation) (declWithPos, error) {
 			return declWithPos{}, a.errf("//@router %s: unknown option %q (parent, auth)", d.Name, k)
 		}
 	}
-	return declWithPos{RouterDecl: d}, nil
+	return declWithPos{RouterDecl: d, autoJoin: strings.HasPrefix(a.Args[0], "/")}, nil
 }
 
 // routerAuthExpr renders a //@router auth= value: Required, or

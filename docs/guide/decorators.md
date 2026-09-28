@@ -126,7 +126,25 @@ with stacking prefixes, shared gates, and cross-package membership.
 package api
 ```
 
-Any handler in any package joins with `//@on`:
+The name is optional when the router *is* the package — the same default
+`//@module` uses. `//@router <prefix>` names the router after the package, and
+every op in that package joins it automatically:
+
+```go
+// Package billing.
+//
+//@router /billing parent=v1
+package billing
+
+//@rest GET /invoices
+func NewListInvoices(...) (...)   // joins "billing" — no //@on needed
+```
+
+(One package-named router per package; it replaces `//@module`/`//@path`
+there, and mixing them is an error. `//@on <other>` on an op still wins.)
+
+For cross-package routers, declare with an explicit name; any handler in any
+package then joins with `//@on`:
 
 ```go
 //@rest GET /invoices

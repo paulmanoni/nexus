@@ -57,9 +57,12 @@ type Config struct {
 
 	// RouterDecls are this package's //@router declarations, emitted as
 	// nexus.RouterDecl calls; KnownRouters is every declared name across the
-	// scan, for validating //@on references.
+	// scan, for validating //@on references. AutoRouter, when set (the
+	// package-named //@router <prefix> form), is the router every op in this
+	// package registers on unless it says //@on elsewhere.
 	RouterDecls  []RouterDecl
 	KnownRouters map[string]bool
+	AutoRouter   string
 }
 
 // RouterDecl is one //@router declaration ready to emit.
@@ -215,6 +218,11 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		text, err := renderPrimary(*g.primary, fn, opts)
 		if err != nil {
 			return nil, err
+		}
+		if onRouter == "" {
+			// The package-named //@router form: the package's own ops join it
+			// automatically, //@on elsewhere still wins.
+			onRouter = cfg.AutoRouter
 		}
 		if onRouter != "" {
 			// The op registers on the named router (assembled by the runtime)

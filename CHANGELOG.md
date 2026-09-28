@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `//@router <prefix>` (no name) declares a PACKAGE-NAMED router — the same
+  default `//@module` uses (package name, `main` → `app`) — and every op in
+  the declaring package joins it automatically, no `//@on` needed
+  (`//@on <other>` still wins). It subsumes `//@module`/`//@path` for that
+  package; mixing them is a positioned error. The explicit
+  `//@router <name> <prefix>` form is unchanged.
+
 ## [1.65.1] - 2026-09-29
 
 ### Added

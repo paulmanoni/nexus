@@ -53,9 +53,12 @@ Package doc directives (on the comment above the package clause):
     //@module <name>                  -> names the nexus.Module group (default: package name)
     //@path <prefix>                  -> nexus.Path(prefix): REST+GraphQL module prefix
     //@routeprefix <prefix>           -> nexus.RoutePrefix(prefix): REST-only prefix
+    //@router <prefix> [parent=…] [auth=…]
+                                      -> package-named router: takes the package name
+                                         and the package's ops join it automatically
     //@router <name> <prefix> [parent=<name>] [auth=Required|Requires(P1,P2)]
-                                      -> declare a FastAPI-style router: prefixes stack
-                                         under parent, auth applies to every member op
+                                      -> named router: prefixes stack under parent,
+                                         auth applies to every member op
 
 Router membership (on a handler, with any primary):
     //@on <name>                      -> register this op on the named router instead

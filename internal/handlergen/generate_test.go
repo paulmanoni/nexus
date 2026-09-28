@@ -200,3 +200,64 @@ func TestGenerate_Routers(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerate_PackageNamedRouter: //@router <prefix> (no name) takes the
+// package's name — the same default //@module uses — and every op in the
+// declaring package joins it automatically; //@on elsewhere still wins, and
+// mixing it with //@module///@path is a positioned error.
+func TestGenerate_PackageNamedRouter(t *testing.T) {
+	sites := []Site{
+		{Dir: "b", Pkg: "billing", File: "b/doc.go", Keyword: "router",
+			Args: []string{"/billing", "parent=v1"}, Line: 3, PackageLevel: true},
+		{Dir: "api", Pkg: "api", File: "api/doc.go", Keyword: "router",
+			Args: []string{"v1", "/api/v1"}, Line: 3, PackageLevel: true},
+		{Dir: "b", Pkg: "billing", File: "b/h.go", Func: "NewList",
+			Keyword: "rest", Args: []string{"GET", "/invoices"}, Line: 10},
+		{Dir: "b", Pkg: "billing", File: "b/h.go", Func: "NewElsewhere",
+			Keyword: "query", Line: 20},
+		{Dir: "b", Pkg: "billing", File: "b/h.go", Func: "NewElsewhere",
+			Keyword: "on", Args: []string{"v1"}, Line: 21},
+	}
+	res, err := Generate(sites, "gen.go")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var billing string
+	for _, r := range res {
+		if strings.Contains(r.Path, "b/") {
+			billing = string(r.Content)
+		}
+	}
+	for _, want := range []string{
+		`nexus.RouterDecl("billing", "/billing", "v1")`,             // name defaulted to the package
+		`nexus.OnRouter("billing", nexus.AsRest("GET", "/invoices"`, // auto-join, no //@on written
+		`nexus.OnRouter("v1", nexus.AsQuery(NewElsewhere))`,         // explicit //@on wins
+	} {
+		if !strings.Contains(billing, want) {
+			t.Errorf("package-named router output missing %q:\n%s", want, billing)
+		}
+	}
+
+	// main-package form maps to the "app" default.
+	res, err = Generate([]Site{
+		{Dir: "m", Pkg: "main", File: "m/doc.go", Keyword: "router", Args: []string{"/api"}, Line: 2, PackageLevel: true},
+		{Dir: "m", Pkg: "main", File: "m/h.go", Func: "NewX", Keyword: "query", Line: 5},
+	}, "gen.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(res[0].Content); !strings.Contains(got, `nexus.RouterDecl("app", "/api", "")`) ||
+		!strings.Contains(got, `nexus.OnRouter("app", nexus.AsQuery(NewX))`) {
+		t.Errorf("main package should default to app:\n%s", got)
+	}
+
+	// Mixing the auto form with //@path is refused with a position.
+	_, err = Generate([]Site{
+		{Dir: "b", Pkg: "billing", File: "b/doc.go", Keyword: "router", Args: []string{"/billing"}, Line: 3, PackageLevel: true},
+		{Dir: "b", Pkg: "billing", File: "b/doc.go", Keyword: "path", Args: []string{"/x"}, Line: 4, PackageLevel: true},
+		{Dir: "b", Pkg: "billing", File: "b/h.go", Func: "NewList", Keyword: "query", Line: 10},
+	}, "gen.go")
+	if err == nil || !strings.Contains(err.Error(), "already groups and prefixes") || !strings.Contains(err.Error(), "b/doc.go:3") {
+		t.Fatalf("auto router + //@path should be a positioned error, got: %v", err)
+	}
+}
