@@ -131,6 +131,15 @@ render on the client.
 //@auth Required
 //@inertia.Page GET /users Users/Index
 func NewListUsers(svc *UserService, p nexus.Params[ListArgs]) (UsersProps, error)
+
+//@inertia.Page get,post /login Login
+func NewLogin(...) (any, error)
 ```
+
+Tokens are bare (quoting also works), verbs normalise case and accept the comma
+multi-verb form, and a wrong arg count, non-HTTP verb, or path without `/` is a
+`file:line` error at the annotation. `inertia.Page` also validates at boot, so a
+bad direct call fails startup with the page named instead of rendering a broken
+component.
 
 `extension/inertia/inertiatest` runs pages in-process for tests.

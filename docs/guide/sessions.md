@@ -25,6 +25,30 @@ The session is lazy:
 
 Values must round-trip through JSON.
 
+## Requiring a session
+
+`session.Required()` is a per-op gate for **flow continuity**: it rejects requests
+that did not arrive with an established session — no cookie, or an unknown or
+expired id — with `428 Precondition Required`, telling the client to restart the
+flow. Use it on the later steps of a multi-step form or checkout:
+
+```go
+nexus.AsRest("POST", "/checkout/confirm", NewConfirm, session.Required())
+```
+
+Decorator form:
+
+```go
+//@rest POST /checkout/confirm
+//@session Required
+func NewConfirm(...) (...)
+```
+
+It is not authentication — that stays `auth.Required`'s job — and it fails closed
+when `session.Module` isn't installed. Handlers can ask the same question directly
+with `s.Established()`, which reports whether the request *arrived* with a live
+session (a session first written during the current request reports false).
+
 ## Stores
 
 | Store | Survives |

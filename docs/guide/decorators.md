@@ -61,6 +61,58 @@ by looking, in order, at:
 3. a `[decorators.imports]` hint in `nexus.toml`
 4. the module's import graph
 
+## Errors are strict and positioned
+
+Every mistake fails at the annotation with a `file:line` your editor can jump to —
+never as a compile error inside the invisible generated file:
+
+- A **typo'd keyword** (`//@quer`, `//@Rest`, `//@mutations`) errors with a
+  did-you-mean suggestion. Genuinely foreign `//@` keywords from other tools are
+  still ignored, so coexistence is preserved.
+- `//@rest` validates the HTTP method (and normalises case, so `//@rest get /users`
+  registers as `GET`) and requires the path to start with `/`. `//@ws` checks its
+  path the same way.
+- `//@query`/`//@mutation`/`//@subscription`/`//@provide` reject stray arguments —
+  the op name derives from the function; override it with `//@use nexus.Op("name")`.
+- `//@auth` and `//@use` expressions are parse-checked at the annotation.
+- Known extension decorators are validated too: `//@inertia.Page` takes bare tokens
+  (`//@inertia.Page get,post /login Login` — quoting optional, verbs case-normalised)
+  and rejects a wrong arg count, a non-HTTP verb, or a bad path at the annotation.
+
+## Auth and session gates
+
+The `//@auth` modifier reads naturally — bare tokens, capability case-insensitive:
+
+```go
+//@auth Required                // auth.Required()
+//@auth Requires ADMIN HR       // auth.Requires("ADMIN", "HR")
+//@auth Public                  // nexus.Public() — the deny-by-default opt-out
+```
+
+`//@session Required` attaches `session.Required()`, the flow-continuity gate: 428
+Precondition Required unless the request arrived with an established session. See
+[Sessions](./sessions#requiring-a-session).
+
+## Package-level directives
+
+A package's registration group is configured on the **package doc comment**:
+
+```go
+// Package billing handles invoicing.
+//
+//@module billing
+//@path /billing
+package billing
+```
+
+- `//@module <name>` names the generated `nexus.Module` (default: the package name).
+- `//@path <prefix>` prefixes the module's REST **and** GraphQL routes (`nexus.Path`).
+- `//@routeprefix <prefix>` is the REST-only variant (`nexus.RoutePrefix`).
+
+Scope is enforced both ways: a package directive on a function — or a function
+directive on the package doc — is a positioned error, and two files declaring
+conflicting values error naming both locations.
+
 ## How the wiring is generated
 
 - **`nexus dev` and `nexus build`** generate the registrations on the fly and pass them

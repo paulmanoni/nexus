@@ -79,6 +79,7 @@ export default defineConfig({
             { text: 'Opaque IDs', link: '/guide/maskid' },
             { text: 'Request-scoped values', link: '/guide/scoped' },
             { text: 'Workers & crons', link: '/guide/workers' },
+            { text: 'Legacy proxy', link: '/guide/proxy' },
           ],
         },
         {

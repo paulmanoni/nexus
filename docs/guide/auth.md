@@ -64,6 +64,21 @@ nexus.AsMutation(NewCreateOrder,
 - **Wildcard permissions.** `auth.Authorization{Authority: auth.Wildcard()}` lets
   `orders:*` grant `orders:read`.
 
+- **Decorator form.** The same gates attach as `//@auth` modifiers — bare tokens,
+  capability case-insensitive:
+
+  ```go
+  //@mutation
+  //@auth Requires orders:create
+  func NewCreateOrder(...) (...)
+
+  //@rest GET /health
+  //@auth Public
+  func NewHealth(...) (...)
+  ```
+
+  See [`//@` decorators](./decorators#auth-and-session-gates).
+
 ## Who is calling
 
 ```go
