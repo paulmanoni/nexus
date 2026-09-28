@@ -6,6 +6,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.65.0] - 2026-09-29
+
+### Added
+
+- **FastAPI-style routers.** `nexus.Router` is a first-class registration
+  group: `NewRouter(name, prefix, shared...)` carries a URL prefix and shared
+  per-op options (any `MiddlewareOption` — auth/session gates, `nexus.Use`),
+  collects `.Rest/.Query/.Mutation/.Subscription/.WS/.Worker/.Provide`
+  registrations, and nests through `Include` — prefixes stack, shared options
+  inherit downward and run ahead of each op's own. A `*Router` is an
+  `Option`: pass only the root to `Boot`/`Run` (an included router, a double
+  mount, or an `Include` cycle is a boot error). Each router is its own
+  dashboard module.
+- **Decorator form: `//@router` and `//@on`.** A package doc comment declares
+  routers — `//@router billing /billing parent=v1 auth=Requires(ADMIN)` —
+  and `//@on billing` beside any primary registers that op there instead of
+  the package module, from any package. Generated code records through the
+  new `RouterDecl`/`OnRouter` options; a deferred source assembles the tree
+  after every package init. Scan-wide validation with `file:line` errors:
+  conflicting re-declarations name both positions, unknown parents and
+  parent cycles, unknown `//@on` names with a did-you-mean over the declared
+  routers. Ops without `//@on` stay on their package module, unchanged.
+
 ## [1.64.0] - 2026-09-28
 
 ### Added
