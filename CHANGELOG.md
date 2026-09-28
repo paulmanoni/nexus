@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.66.0] - 2026-09-29
+
 ### Added
 
 - `//@router <prefix>` (no name) declares a PACKAGE-NAMED router — the same
