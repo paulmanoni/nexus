@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -424,7 +425,10 @@ func (l *viteLogWriter) emit(line string) {
 	// [env] key, a hot-file problem) is actionable and easy to lose in the
 	// [web] stream — render it loud instead of as passthrough.
 	if warn, ok := vitePluginWarning(line); ok {
-		fmt.Fprintf(l.w, "%s%s[web] ⚠%s %s%s%s\n", ansiBold, ansiYellow, ansiReset, ansiYellow, warn, ansiReset)
+		// The ⚠ [web] brand already says who is talking; the plugin's own
+		// [nexus] prefix would just be noise on the highlighted line.
+		fmt.Fprintf(l.w, "%s%s[web] ⚠%s %s%s%s\n", ansiBold, ansiYellow, ansiReset,
+			ansiYellow, strings.TrimPrefix(warn, "[nexus] "), ansiReset)
 		l.notePageWarning(warn)
 		return
 	}
@@ -436,12 +440,18 @@ func (l *viteLogWriter) emit(line string) {
 	fmt.Fprintf(l.w, "%s[web]%s %s\n", ansiCyan, ansiReset, line)
 }
 
-// pageWarnRE pulls the component name out of the plugin's missing-page line.
-var pageWarnRE = regexp.MustCompile(`page component '([^']+)'`)
+// pageWarnRE pulls the component name out of the plugin's missing-page line;
+// pageExpectRE pulls the file the plugin expects for it, so the strip can say
+// what to create instead of pointing back into the scroll.
+var (
+	pageWarnRE   = regexp.MustCompile(`page component '([^']+)'`)
+	pageExpectRE = regexp.MustCompile(`expected ([^ ]+)\.\{`)
+)
 
 // notePageWarning keeps unresolved page components pinned on the status
-// strip. Other plugin warnings (env keys, hot file) are one-shot — the loud
-// line suffices — so only page state is tracked.
+// strip, self-contained: one missing page shows the file to create, an
+// invalid name says to fix it, several list the names. Other plugin warnings
+// (env keys, hot file) are one-shot — the loud line suffices.
 func (l *viteLogWriter) notePageWarning(warn string) {
 	if l.strip == nil {
 		return
@@ -450,13 +460,26 @@ func (l *viteLogWriter) notePageWarning(warn string) {
 	if m == nil {
 		return
 	}
+	name := m[1]
+	hint := "fix the component name passed to inertia.Page"
+	if e := pageExpectRE.FindStringSubmatch(warn); e != nil {
+		hint = "create " + e[1] + ".*"
+	}
 	if l.pages == nil {
 		l.pages = map[string]bool{}
 	}
-	l.pages[m[1]] = true
-	label := fmt.Sprintf("⚠ page component %s unresolved — see [web] ⚠", m[1])
+	l.pages[name] = true
+	label := fmt.Sprintf("⚠ page '%s' missing — %s", name, hint)
 	if len(l.pages) > 1 {
-		label = fmt.Sprintf("⚠ %d page components unresolved — see [web] ⚠", len(l.pages))
+		names := make([]string, 0, len(l.pages))
+		for n := range l.pages {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		if len(names) > 3 {
+			names = append(names[:3], "…")
+		}
+		label = fmt.Sprintf("⚠ %d pages missing: %s", len(l.pages), strings.Join(names, ", "))
 	}
 	l.strip.Set("pages", label)
 }

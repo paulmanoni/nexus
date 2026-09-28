@@ -125,7 +125,9 @@ func (l *logPretty) observeResourceState(rec zapRecord) {
 		if downFor != "" {
 			label += " " + downFor
 		}
-		if attempts != "" {
+		// A first failure's "(1×)" is noise; attempts earn their place once
+		// the outage has a history.
+		if attempts != "" && attempts != "1" {
 			label += " (" + attempts + "×)"
 		}
 		l.strip.Set(key, label)

@@ -64,7 +64,7 @@ func TestLogPretty_ResourceStateOnStrip(t *testing.T) {
 	lp.strip = s
 
 	io.WriteString(lp, `{"level":"warn","msg":"db: cannot reach the server","resource":"db:main","state":"down","attempts":1}`+"\n")
-	if !strings.Contains(out.String(), "✖ db:main: down (1×)") {
+	if !strings.Contains(out.String(), "✖ db:main: down") || strings.Contains(out.String(), "(1×)") {
 		t.Fatalf("down state not pinned:\n%q", out.String())
 	}
 	io.WriteString(lp, `{"level":"warn","msg":"db: still unreachable","resource":"db:main","state":"still-down","attempts":24,"down_for":"2m0s"}`+"\n")
@@ -87,12 +87,12 @@ func TestViteLogWriter_PageWarningsPinAndClear(t *testing.T) {
 	w.strip = s
 
 	io.WriteString(w, "[nexus] page component '/User/Index' (GET /testme) → not a path under src/Pages — fix it\n")
-	if !strings.Contains(out.String(), "⚠ page component /User/Index unresolved") {
-		t.Fatalf("single warning not pinned:\n%q", out.String())
+	if !strings.Contains(out.String(), "⚠ page '/User/Index' missing — fix the component name passed to inertia.Page") {
+		t.Fatalf("single invalid-name warning not pinned with its fix:\n%q", out.String())
 	}
 	io.WriteString(w, "[nexus] page component 'Ghost/Page' (GET /g) → expected src/Pages/Ghost/Page.{vue} — fix it\n")
-	if !strings.Contains(out.String(), "⚠ 2 page components unresolved") {
-		t.Fatalf("count not updated:\n%q", out.String())
+	if !strings.Contains(out.String(), "⚠ 2 pages missing: /User/Index, Ghost/Page") {
+		t.Fatalf("count/names not updated:\n%q", out.String())
 	}
 	io.WriteString(w, "[nexus] pages ok — every registered page component resolves\n")
 	io.WriteString(w, "plain\n")
@@ -101,5 +101,19 @@ func TestViteLogWriter_PageWarningsPinAndClear(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "[nexus] pages ok") {
 		t.Fatal("pages ok line should pass through as info")
+	}
+}
+
+// TestViteLogWriter_SinglePageShowsCreateHint: a lone missing page with a
+// valid name pins the FILE to create, self-contained — no pointer back into
+// the scroll.
+func TestViteLogWriter_SinglePageShowsCreateHint(t *testing.T) {
+	var out strings.Builder
+	s := newStatusStrip(&out, true)
+	w := newViteLogWriter(s.Wrap(&out), false)
+	w.strip = s
+	io.WriteString(w, "[nexus] page component 'Users/Index' (GET /testme) → expected src/Pages/Users/Index.{vue,tsx,jsx,svelte,ts,js} — create the file, or fix the component name passed to inertia.Page\n")
+	if !strings.Contains(out.String(), "⚠ page 'Users/Index' missing — create src/Pages/Users/Index.*") {
+		t.Fatalf("create hint not pinned:\n%q", out.String())
 	}
 }

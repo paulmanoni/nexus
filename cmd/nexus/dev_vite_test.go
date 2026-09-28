@@ -219,7 +219,7 @@ func TestViteLogWriter_PluginWarningsAreLoud(t *testing.T) {
 	if n := strings.Count(got, "[web] ⚠"); n != 2 {
 		t.Errorf("want 2 highlighted warnings, got %d:\n%s", n, got)
 	}
-	if !strings.Contains(got, "⚠\x1b[0m \x1b[33m[nexus] page component") {
+	if !strings.Contains(got, "⚠\x1b[0m \x1b[33mpage component") {
 		t.Errorf("page warning not highlighted:\n%q", got)
 	}
 	for _, info := range []string{"restored .vite/nexus-hot.json", "dev server http://localhost:5173"} {

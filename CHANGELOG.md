@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.66.1] - 2026-09-29
+
+### Changed
+
+- `nexus dev`: the status strip's entries are self-contained. A missing page
+  pins the file to create (`⚠ page 'Users/Index' missing — create
+  src/Pages/Users/Index.*`) or the fix for an invalid name, several list
+  their names — instead of pointing back into the scroll; the highlighted
+  `[web] ⚠` line drops the redundant `[nexus]` prefix; and a resource's
+  attempt count only shows once an outage has a history (no `(1×)`).
+
 ## [1.66.0] - 2026-09-29
 
 ### Added
