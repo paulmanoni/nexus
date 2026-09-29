@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.72.0] - 2026-09-29
+
 ### Added
 
 - **Shared job drivers.** A `jobs.Store` interface sits behind the jobs
