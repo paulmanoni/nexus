@@ -25,8 +25,11 @@ binary, with the frontend embedded in it.
   tags drive binding, validation and the GraphQL schema.
 - **Dependency injection.** Constructors go into a DI graph. Handlers and services
   receive their dependencies as parameters.
+- **Controllers.** A struct whose methods are the actions, with Rails-style resources,
+  custom member and collection actions, and a per-action `Authorize` hook.
 - **Frontend.** A normal Vite project (Vue, React or anything else) under `web/`,
-  embedded at build time. Inertia.js pages and SSR are supported.
+  embedded at build time. Inertia.js pages, resources and SSR are supported, with typed
+  links and form actions generated from the Go routes.
 - **Client SDK.** A typed JS/TS client and Vue composables, generated from your
   registered endpoints and served by the binary.
 - **Dashboard.** A live architecture graph, an endpoint tester, traces, crons, rate

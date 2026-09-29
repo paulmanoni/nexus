@@ -34,6 +34,13 @@ Calls are typed from your Go handlers: argument shapes, return types, GraphQL op
 WebSocket messages. Vue composables such as `useQuery`, `useMutation`, `useAuth`,
 `useCrud` and `useWS` ship alongside.
 
+Inertia pages are not REST calls, so they have their own module,
+`nexus-client/pages`. `pageUrl('Users/Show', { id })` builds a page link, and
+`pageAction('Users/Update', { id })` returns a resource write action's
+`[method, url]`. Both are typed from the Go routes; see
+[Linking to pages](./inertia#linking-to-pages) and
+[Calling resource actions](./inertia#calling-resource-actions-from-the-frontend).
+
 ## Envelopes and batching
 
 For ops registered with [`nexus.Envelope`](./handlers#response-envelopes):

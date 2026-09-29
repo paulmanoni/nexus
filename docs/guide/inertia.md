@@ -193,7 +193,7 @@ dump writes them, and `nexus client --out` writes them too. They are also served
 
 ## Resources
 
-`inertia.Resource` is a [controller](./modules#controllers) whose actions are pages and
+`inertia.Resource` is a [controller](./controllers) whose actions are pages and
 forms. It registers whichever of the conventional methods the controller defines:
 
 | Method | Route | Response |

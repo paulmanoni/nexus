@@ -27,13 +27,13 @@ features:
     link: /guide/handlers
     linkText: Handlers
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="14" y="3" rx="1"/><path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3"/></svg>'
-    title: Dependency injection built in
-    details: Handlers and services take their dependencies as parameters. A small built-in container wires them; uber/fx is available as an option.
-    link: /guide/modules
-    linkText: Modules & services
+    title: Controllers and DI built in
+    details: Group actions on a controller struct, or declare a Rails-style resource with custom actions. A small built-in container injects every dependency; uber/fx is optional.
+    link: /guide/controllers
+    linkText: Controllers
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>'
     title: Vite frontend, embedded
-    details: An ordinary Vite project under web/ with HMR in development. nexus build embeds the output, so you still deploy one Go binary. Inertia pages are supported.
+    details: An ordinary Vite project under web/ with HMR in development. nexus build embeds the output, so you still deploy one Go binary. Inertia pages and resources get typed links and form actions.
     link: /guide/frontend
     linkText: Frontend
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>'
