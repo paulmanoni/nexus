@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.69.0] - 2026-09-29
+
 ### Added
 
 - **Controllers.** `nexus.Controller[T](prefix, gates...)` is a router bound to
