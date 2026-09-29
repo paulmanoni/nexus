@@ -27,6 +27,26 @@ nexus.Controller[*UsersController]("/users", auth.Required()).
   `Query` and `Mutation`; these are named after the method and need an explicit
   `nexus.Arg` for scalars. `Provide` or `Supply` adds the controller itself.
 
+## Inside a module
+
+A controller placed in a `nexus.Module` mounts under the module's `Path`, and its
+GraphQL actions serve on the module's endpoint:
+
+```go
+nexus.Module("admin", nexus.Path("/admin"),
+    nexus.Controller[*UsersController]("/users").     // GET /admin/users/:id
+        Provide(NewUsersController).
+        Get("/:id", (*UsersController).Show).
+        Query((*UsersController).UserRows),            // POST /admin/graphql
+)
+```
+
+- **The prefix is a REST prefix.** GraphQL actions never move to `<prefix>/graphql`.
+  They serve on the enclosing module's endpoint, or on the app's `/graphql` outside
+  a module, so the frontend's GraphQL calls don't depend on how actions are grouped.
+- **Trailing slashes.** `.TrailingSlash()` registers every action at both `/users/:id`
+  and `/users/:id/`. This helps when existing links use both forms, as in a Django port.
+
 ## Resources
 
 `nexus.Resource` registers the conventional actions the controller defines:
@@ -98,6 +118,51 @@ nexus.Controller[*ReportsController]("/reports").
 This hook is how [`inertia.Resource`](./inertia#resources) makes a custom GET render
 the page `<Folder>/<Method>` and a custom write redirect back, so its custom actions
 behave like its conventional ones.
+Calls add up: each function's options apply after the previous one's, so defaults you
+add to an `inertia.Resource` extend its page rendering instead of replacing it.
+
+## Pages from any action
+
+`inertia.Component` renders one action as an Inertia page with any component name.
+It needs no resource conventions and works on a plain `nexus.Controller`:
+
+```go
+nexus.Controller[*ListsController]("").
+    Provide(NewListsController).
+    Get("/longlist/:pk/view", (*ListsController).Longlist, inertia.Component("Admin/AdvertLonglist"))
+```
+
+On an `inertia.Resource` it overrides the conventional `<Folder>/<Method>` component.
+
+## Decorator form
+
+Controllers can be declared with [`//@` annotations](./decorators#controllers)
+instead of a registration chain. Put `//@controller` on the type and annotate its
+methods:
+
+```go
+// UsersController serves the users pages.
+//
+//@controller /users trailing-slash
+//@auth Required
+type UsersController struct{ users *UserService }
+
+//@provide
+func NewUsersController(users *UserService) *UsersController { … }
+
+//@page GET /
+func (c *UsersController) Index(ctx context.Context) (IndexProps, error)       // page Users/Index
+
+//@page GET /:id/view Admin/UserDetail
+//@auth Requires view_user
+func (c *UsersController) Show(ctx context.Context, id int64) (ShowProps, error)
+
+//@query
+func (c *UsersController) UserRows(ctx context.Context, in RowsArgs) ([]UserRow, error)
+```
+
+The generator emits exactly the `nexus.Controller[*UsersController](…)` chain you
+would write by hand.
 
 ## Authorizing actions
 

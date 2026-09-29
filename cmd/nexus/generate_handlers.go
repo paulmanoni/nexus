@@ -12,7 +12,7 @@ import (
 // Anything outside this set is left for other tools (or ignored).
 var handlerKeywords = []string{
 	"provide", "rest", "query", "mutation", "subscription", "ws", "worker", "auth", "session", "use",
-	"module", "path", "routeprefix", "router", "on",
+	"module", "path", "routeprefix", "router", "on", "page", "controller",
 }
 
 type handlersOptions struct {

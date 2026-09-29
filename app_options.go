@@ -125,6 +125,12 @@ func Module(name string, opts ...Option) Option {
 		if ma, ok := o.(moduleAnnotator); ok {
 			ma.setModule(name)
 		}
+		// A router expands into its own module, which would shadow this
+		// one's prefix — so it takes the prefix itself.
+		if ea, ok := o.(enclosingAnnotator); ok {
+			ea.setEnclosing(prefix, publicPath)
+			continue
+		}
 		if prefix != "" {
 			if rp, ok := o.(restPrefixAnnotator); ok {
 				rp.setRestPrefix(prefix)

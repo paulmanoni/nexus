@@ -342,3 +342,84 @@ func NewStats() {}
 		}
 	}
 }
+
+// TestScanHandlerSites_Controller: //@controller on a type and annotations on
+// its methods become one nexus.Controller chain; a method of an unannotated
+// type registers as a method expression; the type's //@auth is shared.
+func TestScanHandlerSites_Controller(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "users.go"), `//@path /admin
+package users
+
+import "context"
+
+// UsersController serves the users pages.
+//
+// @controller /users
+// @auth Required
+type UsersController struct{}
+
+//@page GET /
+func (c *UsersController) Index(ctx context.Context) (string, error) { return "", nil }
+
+//@page GET /:id/view Admin/UserDetail
+//@auth Requires view_user
+func (c *UsersController) Show(ctx context.Context, id int64) (string, error) { return "", nil }
+
+//@query
+func (c UsersController) UserRows(ctx context.Context) ([]string, error) { return nil, nil }
+
+type Health struct{}
+
+//@rest GET /health
+func (h *Health) Ping(ctx context.Context) (string, error) { return "", nil }
+`)
+	writeFile(t, filepath.Join(dir, "more.go"), `package users
+
+import "context"
+
+type Other struct{}
+
+// Index on another type must not collide with UsersController.Index.
+//
+//@rest GET /other
+func (o Other) Index(ctx context.Context) (string, error) { return "", nil }
+`)
+	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("want one generated file, got %d", len(results))
+	}
+	got := string(results[0].Content)
+	for _, want := range []string{
+		`nexus.Path("/admin")`,
+		`nexus.Controller[*UsersController]("/users", auth.Required()).`,
+		`Rest("GET", "", (*UsersController).Index, inertia.Component("Users/Index")).`,
+		`Rest("GET", "/:id/view", (*UsersController).Show, inertia.Component("Admin/UserDetail"), auth.Requires("view_user")).`,
+		`Query((*UsersController).UserRows)`,
+		`nexus.AsRest("GET", "/health", (*Health).Ping)`,
+		`nexus.AsRest("GET", "/other", Other.Index)`,
+		`"github.com/paulmanoni/nexus/extension/inertia"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("generated file lacks %s:\n%s", want, got)
+		}
+	}
+
+	bad := t.TempDir()
+	writeFile(t, filepath.Join(bad, "x.go"), `package x
+
+//@controller /x
+//@rest GET /x
+type X struct{}
+
+//@page GET /
+func (x *X) Index() (string, error) { return "", nil }
+`)
+	_, err = scanHandlerSites(bad, "nexus_handlers_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "x.go:4:") || !strings.Contains(err.Error(), "cannot annotate a type") {
+		t.Fatalf("a primary on a type should be a positioned error, got: %v", err)
+	}
+}

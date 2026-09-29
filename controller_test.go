@@ -184,9 +184,9 @@ func TestControllerAuthorize(t *testing.T) {
 	if code != 403 || !strings.Contains(body, "you cannot delete this") {
 		t.Fatalf("refused action = %d %s, want 403 with the message", code, body)
 	}
-	// A router prefix also mounts its GraphQL at <prefix>/graphql.
+	// A controller's prefix is REST-only: its GraphQL stays on the app's endpoint.
 	gw := httptest.NewRecorder()
-	greq := httptest.NewRequest("POST", "/things/graphql", strings.NewReader(`{"query":"{ stats { name } }"}`))
+	greq := httptest.NewRequest("POST", "/graphql", strings.NewReader(`{"query":"{ stats { name } }"}`))
 	greq.Header.Set("Content-Type", "application/json")
 	app.ServeHTTP(gw, greq)
 	if got := gw.Body.String(); !strings.Contains(got, `"stats"`) {
@@ -269,5 +269,98 @@ func TestArgBodyModeGraphQL(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(got), &res); err != nil || res.Data.Rename.ID != 4 || res.Data.Rename.Name != "zed" {
 		t.Fatalf("rename = %s", got)
+	}
+}
+
+type ListingsController struct{}
+
+func (c *ListingsController) Index(ctx context.Context) (string, error) { return "listings", nil }
+func (c *ListingsController) ListingRows(ctx context.Context) (string, error) {
+	return "rows", nil
+}
+
+// Inside a module, a controller stacks under the module's Path, and its
+// GraphQL serves on the module's endpoint rather than <prefix>/graphql.
+func TestControllerInsideModule(t *testing.T) {
+	app, stop, err := InProcess(Config{},
+		Module("market", Path("/market"),
+			Controller[*ListingsController]("/listings").Supply(&ListingsController{}).
+				Get("", (*ListingsController).Index).
+				Query((*ListingsController).ListingRows),
+			NewRouter("reports", "/reports").Rest("GET", "/daily", func() (string, error) { return "daily", nil }),
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	if code, body := ctlDo(t, app, "GET", "/market/listings", ""); code != 200 || !strings.Contains(body, "listings") {
+		t.Errorf("GET /market/listings = %d %s", code, body)
+	}
+	if code, body := ctlDo(t, app, "GET", "/market/reports/daily", ""); code != 200 || !strings.Contains(body, "daily") {
+		t.Errorf("plain router in a module: GET /market/reports/daily = %d %s", code, body)
+	}
+	for path, want := range map[string]bool{"/market/graphql": true, "/market/listings/graphql": false, "/listings/graphql": false} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", path, strings.NewReader(`{"query":"{ listingRows }"}`))
+		r.Header.Set("Content-Type", "application/json")
+		app.ServeHTTP(w, r)
+		if got := strings.Contains(w.Body.String(), `"listingRows":"rows"`); got != want {
+			t.Errorf("POST %s answered listingRows = %v, want %v (%d %s)", path, got, want, w.Code, w.Body.String())
+		}
+	}
+}
+
+type composeCtl struct{}
+
+func (c *composeCtl) Index(ctx context.Context) (string, error) { return "i", nil }
+
+// ActionDefaults calls add up instead of replacing each other.
+func TestActionDefaultsCompose(t *testing.T) {
+	app, stop, err := InProcess(Config{},
+		Controller[*composeCtl]("/c").Supply(&composeCtl{}).
+			ActionDefaults(func(method, path, action string) []RestOption { return []RestOption{Tag("first", action)} }).
+			ActionDefaults(func(method, path, action string) []RestOption { return []RestOption{Tag("second", method)} }).
+			Get("", (*composeCtl).Index),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	for _, e := range app.Registry().Endpoints() {
+		if e.Path == "/c" && (e.Tags["first"] != "Index" || e.Tags["second"] != "GET") {
+			t.Errorf("tags = %v, want both defaults applied", e.Tags)
+		}
+	}
+}
+
+type slashCtl struct{}
+
+func (c *slashCtl) Index(ctx context.Context) (string, error) { return "index", nil }
+func (c *slashCtl) Show(ctx context.Context, id int64) (string, error) {
+	return fmt.Sprint("show-", id), nil
+}
+
+func TestControllerTrailingSlash(t *testing.T) {
+	app, stop, err := InProcess(Config{},
+		Module("m", Path("/m"),
+			Controller[*slashCtl]("/things").Supply(&slashCtl{}).TrailingSlash().
+				Get("", (*slashCtl).Index).
+				Get("/:id/view", (*slashCtl).Show)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	for path, want := range map[string]string{
+		"/m/things": "index", "/m/things/": "index",
+		"/m/things/4/view": "show-4", "/m/things/4/view/": "show-4",
+	} {
+		if code, body := ctlDo(t, app, "GET", path, ""); code != 200 || !strings.Contains(body, want) {
+			t.Errorf("GET %s = %d %s, want %s", path, code, body, want)
+		}
+	}
+	if code, _ := ctlDo(t, app, "GET", "/m/things/4/view/extra", ""); code != 404 {
+		t.Errorf("a trailing-slash twin must not match deeper paths: got %d", code)
 	}
 }

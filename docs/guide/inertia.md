@@ -234,6 +234,9 @@ inertia.Resource[*ArticlesController]("/articles", auth.Required()).
 - **The component folder comes from the type:** `ArticlesController` gives
   `Articles`. `inertia.ResourceAs[T]("Admin/Articles", "/admin/articles")` names it
   explicitly.
+- **One action, any component.** `inertia.Component("Admin/ArticleStats")` on a single
+  action renders that component instead. It also turns an action of a plain
+  `nexus.Controller` into a page ([Pages from any action](./controllers#pages-from-any-action)).
 - **Everything else is the controller's.** Gates, `Authorize` and nested prefixes work
   as they do for any controller.
 

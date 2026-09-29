@@ -38,6 +38,16 @@ type Router struct {
 	parent   string
 	errs     []error
 	expanded bool
+
+	// enclosing is the REST prefix of the nexus.Module the router sits in
+	// (Module stamps it), so a router inside Module("x", Path("/x"), …)
+	// mounts under /x. gqlHome is that module's public path: where a
+	// REST-only router's GraphQL ops mount.
+	enclosing string
+	gqlHome   string
+	// restOnly makes the prefix a REST-only RoutePrefix: GraphQL ops stay on
+	// the enclosing endpoint instead of moving to <prefix>/graphql.
+	restOnly bool
 }
 
 // NewRouter creates a router. name labels the dashboard module; prefix ("" or
@@ -144,7 +154,23 @@ func (r *Router) nexusOption() di.Option {
 	if r.parent != "" {
 		return Error(fmt.Errorf("nexus: router %q is included in %q — pass only the root router", r.name, r.parent)).nexusOption()
 	}
-	return r.expand("", nil).nexusOption()
+	return r.expand(r.enclosing, nil).nexusOption()
+}
+
+// setEnclosing records the enclosing nexus.Module's REST prefix and public
+// path; Module calls it on the routers among its children.
+func (r *Router) setEnclosing(prefix, publicPath string) {
+	r.enclosing = prefix + r.enclosing
+	if r.gqlHome == "" {
+		r.gqlHome = publicPath
+	}
+}
+
+// enclosingAnnotator is implemented by routers (and controllers): options
+// that expand into their own module and so need the enclosing module's
+// prefix handed to them rather than stamped on their ops.
+type enclosingAnnotator interface {
+	setEnclosing(prefix, publicPath string)
 }
 
 func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Option {
@@ -160,7 +186,15 @@ func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Optio
 	sh = append(append(sh, inherited...), r.shared...)
 
 	opts := make([]Option, 0, len(r.builders)+len(r.attached)+len(r.raw)+1)
-	if full != "" {
+	switch {
+	case r.restOnly:
+		if full != "" {
+			opts = append(opts, RoutePrefix(full))
+		}
+		if r.gqlHome != "" {
+			registerModulePublicPath(r.name, r.gqlHome)
+		}
+	case full != "":
 		opts = append(opts, Path(full))
 	}
 	for _, b := range r.builders {
@@ -180,6 +214,9 @@ func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Optio
 
 	out := []Option{Module(r.name, opts...)}
 	for _, c := range r.children {
+		if c.gqlHome == "" {
+			c.gqlHome = r.gqlHome
+		}
 		out = append(out, c.expand(full, sh))
 	}
 	return Options(out...)

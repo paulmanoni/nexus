@@ -255,6 +255,17 @@ type restOptionFn func(*restConfig)
 
 func (f restOptionFn) applyToRest(c *restConfig) { f(c) }
 
+// RestOptions bundles several REST options into one, applied in order — for
+// extensions whose single option expands to a renderer, tags and an icon
+// (inertia.Component).
+func RestOptions(opts ...RestOption) RestOption {
+	return restOptionFn(func(c *restConfig) {
+		for _, o := range opts {
+			o.applyToRest(c)
+		}
+	})
+}
+
 // asRestInvoke builds a synthetic di.Invoke: the constructor fx sees takes
 // (*App, deps...) and registers the handler on the Gin engine + the registry.
 // We build its signature via reflect.FuncOf so any dep type the handler named

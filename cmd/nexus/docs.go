@@ -682,8 +682,31 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
   error takes the action's normal error path (403 via nexus.ErrForbidden).
   .ActionDefaults(func(method, path, action string) []nexus.RestOption) sets
   the options every action starts from (explicit options win;
-  nexus.NoActionDefaults() skips them) — how inertia.Resource turns custom
-  actions into pages and redirects (nexus docs inertia).`,
+  nexus.NoActionDefaults() skips them; calls add up) — how inertia.Resource
+  turns custom actions into pages and redirects (nexus docs inertia).
+
+  Inside nexus.Module("x", nexus.Path("/x"), ctrl) the controller mounts
+  under /x; its prefix is REST-only, so GraphQL actions serve on the module's
+  endpoint (/x/graphql), never <prefix>/graphql. .TrailingSlash() registers
+  every action at /p and /p/. inertia.Component("Admin/Page") renders any
+  action as that Inertia page.
+
+  Decorator form — //@controller on the type, annotations on its methods:
+
+    //@controller /users trailing-slash
+    //@auth Required                        // shared by every action
+    type UsersController struct{ … }
+
+    //@page GET / Users/Index               // component optional: <Folder>/<Method>
+    func (c *UsersController) Index(ctx context.Context) (IndexProps, error)
+
+    //@query
+    func (c *UsersController) UserRows(ctx context.Context, in RowsArgs) ([]Row, error)
+
+  Paths are relative to the prefix ("/" is the prefix itself); an action may
+  carry several //@page / //@rest routes; the constructor still needs
+  //@provide. Methods of types without //@controller register as method
+  expressions ((*T).M) with the receiver from DI.`,
 
 	"inertia": `
 INERTIA
@@ -860,6 +883,14 @@ type (inertia.Page takes ...nexus.RestOption; a compile error if it doesn't):
     //@auth Required
     //@inertia.Page GET /admin Admin/Index
     func NewAdmin(...) (AdminProps, error)
+
+//@page METHOD PATH Component is the built-in spelling of the same thing. On a
+//@controller's method the component may be left out (<Folder>/<Method>) and
+the path is relative to the controller's prefix (nexus docs module).
+
+Controllers: inertia.Resource[T](prefix) registers Index/New/Show/Edit pages
+and Create/Update/Destroy form actions; inertia.Component("Admin/X") makes
+any single action (on any controller) render that page.
 `,
 
 	"inertiatest": `

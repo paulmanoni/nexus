@@ -47,6 +47,8 @@ One primary annotation per function, plus optional modifiers:
 | `//@query` / `//@mutation` / `//@subscription` | A GraphQL field |
 | `//@ws <PATH> <TYPE>` | A WebSocket message handler |
 | `//@worker <NAME>` | A background worker |
+| `//@page <METHOD> <PATH> [Component]` | An Inertia page (`inertia.Page`; on a controller method the component defaults to `<Folder>/<Method>`) |
+| `//@controller <prefix> [trailing-slash]` | On a type: a [controller](./controllers) whose annotated methods are its actions |
 | `//@auth Required` / `//@auth Requires PERM…` / `//@auth Public` | Modifier: an auth gate (bare tokens; legacy `Requires("X")` also accepted) |
 | `//@session Required` | Modifier: flow-continuity gate — 428 unless the request arrived with an established session |
 | `//@use <expr>` | Modifier: per-op middleware |
@@ -112,6 +114,42 @@ package billing
 Scope is enforced both ways: a package directive on a function — or a function
 directive on the package doc — is a positioned error, and two files declaring
 conflicting values error naming both locations.
+
+## Controllers
+
+Methods can be annotated too, and the generated code calls them as method expressions
+such as `(*UsersController).Show`, with the receiver supplied by DI. Put
+`//@controller <prefix>` on the type to make those methods one
+[controller](./controllers):
+
+```go
+//@controller /users trailing-slash
+//@auth Required
+type UsersController struct{ users *UserService }
+
+//@page GET /
+func (c *UsersController) Index(ctx context.Context) (IndexProps, error)
+
+//@page GET /:id/view Admin/UserDetail
+//@auth Requires view_user
+func (c *UsersController) Show(ctx context.Context, id int64) (ShowProps, error)
+
+//@mutation
+func (c *UsersController) SaveUser(ctx context.Context, in SaveUser) (*User, error)
+```
+
+- **Type-level modifiers are shared.** `//@auth`, `//@session` and `//@use` on the type
+  apply to every action.
+- **Paths are relative to the prefix.** `/` or `""` is the prefix itself.
+  `trailing-slash` registers each route at both `/x` and `/x/`.
+- **An action may map to several routes** with more than one `//@page` or `//@rest`
+  line. A plain function still registers exactly once.
+- **Actions take** `//@page`, `//@rest`, `//@query` and `//@mutation`. `//@inertia.Page`
+  on an action reads as `//@page`.
+- **The controller is its own router,** so an action can't take `//@on`.
+- **The constructor still needs `//@provide`** (or any other provider).
+- **Either comment form works.** gofmt rewrites `//@x` in a doc comment as `// @x`,
+  and both are read.
 
 ## Routers (FastAPI-style)
 

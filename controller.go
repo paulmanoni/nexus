@@ -42,7 +42,8 @@ type ControllerRouter[T any] struct {
 	*Router
 	ctrl     reflect.Type
 	authz    bool
-	defaults func(method, path, action string) []RestOption
+	defaults []func(method, path, action string) []RestOption
+	slash    bool
 }
 
 // ActionAuthorizer is implemented by a controller that authorizes each action
@@ -71,11 +72,16 @@ var ErrForbidden = errors.New("forbidden")
 
 // Controller creates a ControllerRouter for controller type T (typically a
 // pointer to a struct) mounted at prefix. The dashboard module is named after
-// the type: UsersController → "users".
+// the type: UsersController → "users". The prefix is a REST prefix: GraphQL
+// actions serve on the endpoint of the enclosing nexus.Module (or the app's),
+// never on <prefix>/graphql. Inside Module("x", Path("/x"), …) the prefix
+// stacks under /x.
 func Controller[T any](prefix string, shared ...MiddlewareOption) *ControllerRouter[T] {
 	t := reflect.TypeFor[T]()
+	r := NewRouter(controllerName(t), prefix, shared...)
+	r.restOnly = true
 	return &ControllerRouter[T]{
-		Router: NewRouter(controllerName(t), prefix, shared...),
+		Router: r,
 		ctrl:   t,
 		authz:  t.Implements(reflect.TypeFor[ActionAuthorizer]()),
 	}
@@ -180,9 +186,21 @@ func (c *ControllerRouter[T]) Collection(method, name string, action any, opts .
 // method and path are the action's (path relative to the prefix); action is
 // its method name. The defaults apply before the action's own options, so an
 // explicit option wins; nexus.NoActionDefaults() on an action skips them. It
-// applies to actions registered before and after the call.
+// applies to actions registered before and after the call. Calls add up: each
+// function's options apply after the previous one's, so defaults set on an
+// inertia.Resource extend its page rendering rather than replace it.
 func (c *ControllerRouter[T]) ActionDefaults(fn func(method, path, action string) []RestOption) *ControllerRouter[T] {
-	c.defaults = fn
+	c.defaults = append(c.defaults, fn)
+	return c
+}
+
+// TrailingSlash registers every REST action at its path and at the path with
+// a trailing slash — /users/:id and /users/:id/ — for apps whose existing
+// links use both (a Django port, say). An action at the prefix itself serves
+// /users and /users/. It applies to actions registered before and after the
+// call.
+func (c *ControllerRouter[T]) TrailingSlash() *ControllerRouter[T] {
+	c.slash = true
 	return c
 }
 
@@ -236,25 +254,35 @@ func (c *ControllerRouter[T]) rest(method, path string, action any, name string,
 			skipDefaults = true
 		}
 	}
-	c.builders = append(c.builders, func(full string, sh []MiddlewareOption) Option {
-		all := make([]RestOption, 0, len(sh)+len(opts)+1)
-		for _, m := range sh {
-			all = append(all, m)
-		}
-		if !explicitArg {
-			arg, err := inferPathArgs(fn, name, method, full+path)
-			if err != nil {
-				return Error(err)
+	// Each route is its own builder: a module stamps its prefix only on the
+	// ops it holds directly, not on ones bundled inside an Options.
+	build := func(route string, twin bool) func(string, []MiddlewareOption) Option {
+		return func(full string, sh []MiddlewareOption) Option {
+			if twin && (!c.slash || strings.HasSuffix(path, "/")) {
+				return Options()
 			}
-			if arg != nil {
-				all = append(all, *arg)
+			all := make([]RestOption, 0, len(sh)+len(opts)+1)
+			for _, m := range sh {
+				all = append(all, m)
 			}
+			if !explicitArg {
+				arg, err := inferPathArgs(fn, name, method, full+path)
+				if err != nil {
+					return Error(err)
+				}
+				if arg != nil {
+					all = append(all, *arg)
+				}
+			}
+			if !skipDefaults {
+				for _, d := range c.defaults {
+					all = append(all, d(method, path, name)...)
+				}
+			}
+			return AsRest(method, route, fn, append(all, opts...)...)
 		}
-		if c.defaults != nil && !skipDefaults {
-			all = append(all, c.defaults(method, path, name)...)
-		}
-		return AsRest(method, path, fn, append(all, opts...)...)
-	})
+	}
+	c.builders = append(c.builders, build(path, false), build(path+"/", true))
 	return c
 }
 

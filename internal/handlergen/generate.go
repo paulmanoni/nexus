@@ -22,6 +22,15 @@ type Site struct {
 	Line    int
 	Imports []string // import lines a //@use expression needs (resolved by the caller)
 
+	// Recv and Method are set when the annotated function is a method: Recv
+	// is the receiver's type name, Method the method's, and Func the method
+	// expression the generated code calls, e.g. "(*UsersController).Show".
+	Recv, Method string
+
+	// TypeLevel marks a directive on a type's doc comment — //@controller and
+	// its //@auth//@session//@use modifiers. Func is then the type's name.
+	TypeLevel bool
+
 	// PackageLevel marks a directive found on the package doc comment
 	// (//@module, //@path, //@routeprefix) — it configures the generated
 	// module instead of registering a function.
@@ -262,7 +271,8 @@ func splitPackageDirectives(cfg Config, group []Site) (Config, []Annotation, err
 	seen := map[string]first{}
 	anns := make([]Annotation, 0, len(group))
 	for _, s := range group {
-		a := Annotation{Func: s.Func, Keyword: s.Keyword, Args: s.Args, File: s.File, Line: s.Line, Imports: s.Imports}
+		a := Annotation{Func: s.Func, Keyword: s.Keyword, Args: s.Args, File: s.File, Line: s.Line, Imports: s.Imports,
+			Recv: s.Recv, Method: s.Method, TypeLevel: s.TypeLevel}
 		if !packageDirectiveKeywords[s.Keyword] {
 			if s.PackageLevel {
 				return cfg, nil, a.errf("//@%s is not a package-level directive — annotate a function instead", s.Keyword)

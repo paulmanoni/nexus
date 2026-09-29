@@ -76,6 +76,26 @@ func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexu
 	return nexus.Options(out...)
 }
 
+// Component renders an action as the Inertia page component — what Page does
+// for a handler, as an option, so a controller action (or any REST handler)
+// becomes a page with no resource conventions and any component name:
+//
+//	nexus.Controller[*ListsController]("/lists").
+//	    Get("/:pk/view", (*ListsController).Longlist, inertia.Component("Admin/AdvertLonglist"))
+//
+// On an inertia.Resource it overrides the conventional <Folder>/<Method>
+// component. It is what the //@page annotation generates.
+func Component(name string) nexus.RestOption {
+	if strings.TrimSpace(name) == "" {
+		panic("inertia.Component: component name is empty — name the client component, e.g. \"Users/Index\"")
+	}
+	return nexus.RestOptions(
+		nexus.WithRenderer(pageRenderer{component: name}),
+		nexus.WithIcon(Icon),
+		nexus.Tag(registry.PageTag, name),
+	)
+}
+
 // validatePage rejects a malformed registration at option-build time, so a
 // bad Page call (direct or via the //@inertia.Page decorator) fails the boot
 // with a message naming the page, instead of surfacing later as a route that

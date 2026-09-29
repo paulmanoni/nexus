@@ -118,7 +118,9 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 	// One resolver per scan: its per-file/dir caches and the (lazy) module
 	// import graph are shared across every qualified //@pkg.Func annotation.
 	res := newSelectorResolver(root)
+	decls := newDeclIndex()
 	sites := make([]handlergen.Site, 0, len(hits))
+	dirs := map[string]bool{}
 	for _, h := range hits {
 		kw := h.Keyword
 		qualified := strings.Contains(kw, ".")
@@ -146,6 +148,16 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 			Line:         h.Pos.Line,
 			PackageLevel: h.PackageLevel,
 		}
+		if h.Func != "" && !h.PackageLevel {
+			m, err := decls.method(h.File, h.Func, h.Pos.Line)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: //@%s on %s: %w", displayRel(h.File), h.Pos.Line, kw, h.Func, err)
+			}
+			if m != nil {
+				site.Recv, site.Method, site.Func = m.recv, m.name, m.expr()
+			}
+		}
+		dirs[filepath.Dir(h.File)] = true
 		switch {
 		case kw == "use":
 			// //@use expressions may reference imported packages (e.g.
@@ -169,7 +181,157 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 		}
 		sites = append(sites, site)
 	}
+	typeSites, err := decls.typeSites(dirs)
+	if err != nil {
+		return nil, err
+	}
+	sites = append(sites, typeSites...)
 	return handlergen.Generate(sites, outName)
+}
+
+// declIndex answers what the directive scan leaves out: which receiver an
+// annotated method has, and the //@controller directives on type
+// declarations (the scan reads function and package doc comments only).
+// Files are parsed once per scan.
+type declIndex struct {
+	files map[string]*ast.File
+	fset  *token.FileSet
+}
+
+func newDeclIndex() *declIndex {
+	return &declIndex{files: map[string]*ast.File{}, fset: token.NewFileSet()}
+}
+
+func (d *declIndex) parse(file string) (*ast.File, error) {
+	if f, ok := d.files[file]; ok {
+		return f, nil
+	}
+	f, err := parser.ParseFile(d.fset, file, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	d.files[file] = f
+	return f, nil
+}
+
+// methodDecl is an annotated method's receiver.
+type methodDecl struct {
+	name, recv string
+	ptr        bool
+}
+
+// expr is the method expression generated code calls: (*T).M or T.M.
+func (m methodDecl) expr() string {
+	if m.ptr {
+		return "(*" + m.recv + ")." + m.name
+	}
+	return m.recv + "." + m.name
+}
+
+// method finds the method named name whose doc comment holds the directive
+// on line; nil when the annotated function is not a method.
+func (d *declIndex) method(file, name string, line int) (*methodDecl, error) {
+	f, err := d.parse(file)
+	if err != nil {
+		return nil, err
+	}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || fn.Name.Name != name || fn.Doc == nil || len(fn.Recv.List) == 0 {
+			continue
+		}
+		if line < d.fset.Position(fn.Doc.Pos()).Line || line > d.fset.Position(fn.Doc.End()).Line {
+			continue
+		}
+		t := fn.Recv.List[0].Type
+		m := &methodDecl{name: name}
+		if star, ok := t.(*ast.StarExpr); ok {
+			m.ptr, t = true, star.X
+		}
+		id, ok := t.(*ast.Ident)
+		if !ok {
+			return nil, fmt.Errorf("the receiver of %s is generic — annotated methods need a plain (non-generic) receiver type", name)
+		}
+		m.recv = id.Name
+		return m, nil
+	}
+	return nil, nil
+}
+
+// typeDirectiveKeywords are the //@ directives read from type doc comments:
+// //@controller and the modifiers it shares with every action. Other nexus
+// keywords found there are passed on so the generator can reject them.
+var typeDirectiveKeywords = map[string]bool{"controller": true, "auth": true, "session": true, "use": true}
+
+// typeSites returns the //@ directives on the type declarations of the given
+// package directories, as type-level sites.
+func (d *declIndex) typeSites(dirs map[string]bool) ([]handlergen.Site, error) {
+	sorted := make([]string, 0, len(dirs))
+	for dir := range dirs {
+		sorted = append(sorted, dir)
+	}
+	sort.Strings(sorted)
+	var out []handlergen.Site
+	for _, dir := range sorted {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") ||
+				strings.HasSuffix(name, "_gen.go") || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+				continue
+			}
+			file := filepath.Join(dir, name)
+			f, err := d.parse(file)
+			if err != nil {
+				continue // the build reports unparseable files
+			}
+			for _, decl := range f.Decls {
+				gd, ok := decl.(*ast.GenDecl)
+				if !ok || gd.Tok != token.TYPE {
+					continue
+				}
+				for _, spec := range gd.Specs {
+					ts := spec.(*ast.TypeSpec)
+					doc := ts.Doc
+					if doc == nil && len(gd.Specs) == 1 {
+						doc = gd.Doc
+					}
+					if doc == nil {
+						continue
+					}
+					for _, c := range doc.List {
+						// Like the function scan: gofmt rewrites //@x in a doc
+						// comment as // @x, and both forms are directives.
+						text, ok := strings.CutPrefix(strings.TrimSpace(strings.TrimLeft(c.Text, "/")), "@")
+						if !ok {
+							continue
+						}
+						fields := strings.Fields(text)
+						if len(fields) == 0 || (!typeDirectiveKeywords[fields[0]] && !builtinHandlerKeyword(fields[0])) {
+							continue
+						}
+						line := d.fset.Position(c.Pos()).Line
+						site := handlergen.Site{
+							Dir: dir, Pkg: f.Name.Name, File: displayRel(file), Func: ts.Name.Name,
+							Keyword: fields[0], Args: fields[1:], Line: line, TypeLevel: true,
+						}
+						if site.Keyword == "use" {
+							imps, err := resolveUseImports(file, site.Args)
+							if err != nil {
+								return nil, fmt.Errorf("%s:%d: //@use on %s: %w", displayRel(file), line, ts.Name.Name, err)
+							}
+							site.Imports = imps
+						}
+						out = append(out, site)
+					}
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 // displayRel shows a path relative to the cwd when it sits beneath it (how go

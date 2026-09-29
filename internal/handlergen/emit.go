@@ -32,6 +32,9 @@ type Annotation struct {
 	File    string   // source file of the directive (as the caller wants it shown in errors)
 	Line    int      // source line — errors point here; also gives statements a stable order
 	Imports []string // import lines this directive's expression needs (//@use); e.g. `"github.com/x/rl"`
+
+	Recv, Method string // set for a method: its receiver type and name (Func is the method expression)
+	TypeLevel    bool   // a directive on a type (//@controller and its modifiers); Func is the type name
 }
 
 // errf builds an error anchored at the annotation's source position, in the
@@ -103,8 +106,12 @@ func (c *Config) applyDefaults() {
 
 var primaryKeywords = map[string]bool{
 	"provide": true, "rest": true, "query": true, "mutation": true,
-	"subscription": true, "ws": true, "worker": true,
+	"subscription": true, "ws": true, "worker": true, "page": true,
 }
+
+// typeModifierKeywords are the modifiers a //@controller type accepts; they
+// become the controller's shared options.
+var typeModifierKeywords = map[string]bool{"auth": true, "session": true, "use": true}
 
 var modifierKeywords = map[string]bool{"auth": true, "on": true, "session": true, "use": true}
 
@@ -122,7 +129,7 @@ func isPrimaryKeyword(kw string) bool {
 // optsAllowed reports whether a primary kind accepts per-op modifiers.
 func optsAllowed(kind string) bool {
 	switch kind {
-	case "rest", "query", "mutation", "subscription", "ws":
+	case "rest", "query", "mutation", "subscription", "ws", "page":
 		return true
 	}
 	// Custom extension decorators (//@pkg.Func, e.g. //@inertia.Page) accept
@@ -153,31 +160,57 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	type group struct {
 		fn        string
 		primary   *Annotation
+		more      []Annotation // further route annotations — allowed on controller actions only
 		modifiers []Annotation
+		file      string
 		line      int
 	}
 	order := []string{}
 	groups := map[string]*group{}
+	controllers := map[string]*controllerDecl{}
+	var controllerOrder []string
+	typeMods := map[string][]Annotation{}
 	for i := range anns {
 		a := anns[i]
+		if a.TypeLevel {
+			switch {
+			case a.Keyword == "controller":
+				if prev, dup := controllers[a.Func]; dup {
+					return nil, a.errf("%s has two //@controller annotations (the other at line %d)", a.Func, prev.decl.Line)
+				}
+				prefix, slash, err := controllerPrefix(a)
+				if err != nil {
+					return nil, err
+				}
+				controllers[a.Func] = &controllerDecl{typ: a.Func, prefix: prefix, slash: slash, decl: a}
+				controllerOrder = append(controllerOrder, a.Func)
+			case typeModifierKeywords[a.Keyword]:
+				typeMods[a.Func] = append(typeMods[a.Func], a)
+			default:
+				return nil, a.errf("//@%s cannot annotate a type — a type takes //@controller <prefix>, plus //@auth, //@session or //@use for every action", a.Keyword)
+			}
+			continue
+		}
+		if a.Keyword == "controller" {
+			return nil, a.errf("//@controller annotates a type — put it on `type %s struct`, and annotate its methods with //@page, //@rest, //@query or //@mutation", strings.TrimPrefix(a.Recv, "*"))
+		}
 		g, ok := groups[a.Func]
 		if !ok {
-			g = &group{fn: a.Func, line: a.Line}
+			g = &group{fn: a.Func, file: a.File, line: a.Line}
 			groups[a.Func] = g
 			order = append(order, a.Func)
 		}
 		switch {
 		case isPrimaryKeyword(a.Keyword):
 			if g.primary != nil {
-				return nil, a.errf("%s has two primary annotations (//@%s at line %d and //@%s) — a function registers exactly once",
-					a.Func, g.primary.Keyword, g.primary.Line, a.Keyword)
-			}
-			if err := normalizeKnownDecorator(&a); err != nil {
-				return nil, err
+				// Checked once controllers are known: an action may map to
+				// several routes, a function registers once.
+				g.more = append(g.more, a)
+				continue
 			}
 			p := a
 			g.primary = &p
-			g.line = a.Line
+			g.file, g.line = a.File, a.Line
 			// A custom decorator carries its package import.
 			for _, imp := range a.Imports {
 				imports[imp] = true
@@ -189,15 +222,19 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		}
 	}
 
-	type stmt struct {
-		line int
-		text string
+	for typ, mods := range typeMods {
+		c, ok := controllers[typ]
+		if !ok {
+			return nil, mods[0].errf("//@%s on type %s needs //@controller <prefix> on the same type", mods[0].Keyword, typ)
+		}
+		c.shared = mods
 	}
+
 	var stmts []stmt
 	for _, fn := range order {
 		g := groups[fn]
 		if g.primary == nil {
-			return nil, g.modifiers[0].errf("%s has modifier annotations but no primary — add //@rest, //@query, //@mutation, //@subscription, //@ws, //@worker or //@provide", fn)
+			return nil, g.modifiers[0].errf("%s has modifier annotations but no primary — add //@rest, //@page, //@query, //@mutation, //@subscription, //@ws, //@worker or //@provide (an older nexus CLI ignores //@page — update it)", fn)
 		}
 		if len(g.modifiers) > 0 && !optsAllowed(g.primary.Keyword) {
 			m := g.modifiers[0]
@@ -215,6 +252,37 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		for _, imp := range optImports {
 			imports[imp] = true
 		}
+		c, isAction := controllers[g.primary.Recv]
+		isAction = isAction && g.primary.Recv != ""
+		if len(g.more) > 0 {
+			a := g.more[0]
+			if !isAction || !isRouteKeyword(g.primary.Keyword) || !isRouteKeyword(a.Keyword) {
+				return nil, a.errf("%s has two primary annotations (//@%s at line %d and //@%s) — a function registers exactly once (a //@controller action may carry several //@page or //@rest routes)",
+					a.Func, g.primary.Keyword, g.primary.Line, a.Keyword)
+			}
+		}
+		if isAction {
+			if onRouter != "" {
+				return nil, g.primary.errf("//@on cannot route one action of controller %s — a controller is its own router; put its prefix on //@controller", c.typ)
+			}
+			for _, route := range append([]Annotation{*g.primary}, g.more...) {
+				call, usesInertia, err := renderControllerAction(c, route, opts)
+				if err != nil {
+					return nil, err
+				}
+				if usesInertia {
+					imports[strconv.Quote(inertiaImportPath)] = true
+				}
+				c.calls = append(c.calls, stmt{file: route.File, line: route.Line, text: call})
+			}
+			continue
+		}
+		if err := normalizeKnownDecorator(g.primary); err != nil {
+			return nil, err
+		}
+		if g.primary.Keyword == "page" {
+			imports[strconv.Quote(inertiaImportPath)] = true
+		}
 		text, err := renderPrimary(*g.primary, fn, opts)
 		if err != nil {
 			return nil, err
@@ -229,7 +297,21 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 			// instead of the package module.
 			text = fmt.Sprintf("nexus.OnRouter(%s, %s)", strconv.Quote(onRouter), text)
 		}
-		stmts = append(stmts, stmt{line: g.line, text: text})
+		stmts = append(stmts, stmt{file: g.file, line: g.line, text: text})
+	}
+	for _, typ := range controllerOrder {
+		c := controllers[typ]
+		if len(c.calls) == 0 {
+			continue // a //@controller with no annotated actions registers nothing
+		}
+		shared, sharedImports, err := renderOpts(c.shared, cfg.AuthImport)
+		if err != nil {
+			return nil, err
+		}
+		for _, imp := range sharedImports {
+			imports[imp] = true
+		}
+		stmts = append(stmts, stmt{file: c.decl.File, line: c.decl.Line, text: c.render(shared)})
 	}
 	for _, rd := range cfg.RouterDecls {
 		if rd.AuthExpr != "" {
@@ -239,6 +321,8 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	if len(stmts) == 0 && len(cfg.RouterDecls) == 0 {
 		return nil, nil
 	}
+	// Top-level statements keep line order (stable output for committed files);
+	// file order applies within a controller's chain.
 	sort.SliceStable(stmts, func(i, j int) bool { return stmts[i].line < stmts[j].line })
 
 	importLines := make([]string, 0, len(imports))
@@ -335,6 +419,19 @@ func renderPrimary(a Annotation, fn string, opts []string) (string, error) {
 		}
 		return fmt.Sprintf("nexus.AsWS(%s, %s, %s%s)",
 			strconv.Quote(a.Args[0]), strconv.Quote(a.Args[1]), fn, optTail), nil
+	case "page":
+		if len(a.Args) != 3 {
+			return "", a.errf("//@page on a function needs <METHOD> <PATH> <Component>, e.g. //@page GET /users Users/Index (got %v) — the component may be left out only on a //@controller's methods", a.Args)
+		}
+		verbs, path, component, err := pageArgs(a, "")
+		if err != nil {
+			return "", err
+		}
+		if err := checkRoutePath(a, "page", path); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("inertia.Page(%s, %s, %s, %s%s)",
+			strconv.Quote(strings.Join(verbs, ",")), strconv.Quote(path), strconv.Quote(component), fn, optTail), nil
 	case "query", "mutation", "subscription":
 		if len(a.Args) != 0 {
 			return "", a.errf("//@%s takes no arguments (got %v) — the op name derives from the function name; "+
@@ -677,4 +774,188 @@ func checkExpr(m Annotation, expr string) error {
 		return m.errf("//@%s expression %q is not valid Go: %v", m.Keyword, expr, err)
 	}
 	return nil
+}
+
+// isRouteKeyword reports whether a primary annotation maps a URL route —
+// the kinds a controller action may repeat.
+func isRouteKeyword(kw string) bool {
+	return kw == "rest" || kw == "page" || strings.HasSuffix(kw, ".Page")
+}
+
+// stmt is one registration expression in the generated module, ordered by the
+// source line of its annotation.
+type stmt struct {
+	file string
+	line int
+	text string
+}
+
+// sortStmts orders a controller's calls by source file, then line: its
+// actions read in the order its files are laid out.
+func sortStmts(ss []stmt) {
+	sort.SliceStable(ss, func(i, j int) bool {
+		if ss[i].file != ss[j].file {
+			return ss[i].file < ss[j].file
+		}
+		return ss[i].line < ss[j].line
+	})
+}
+
+// controllerDecl is a //@controller type: its prefix, its shared modifiers,
+// and the calls its annotated methods add to the nexus.Controller chain.
+type controllerDecl struct {
+	typ    string
+	prefix string
+	slash  bool
+	decl   Annotation
+	shared []Annotation
+	calls  []stmt
+}
+
+// render builds the nexus.Controller[*T](prefix, shared…).Action(…)… chain.
+func (c *controllerDecl) render(shared []string) string {
+	sortStmts(c.calls)
+	args := append([]string{strconv.Quote(c.prefix)}, shared...)
+	var b strings.Builder
+	fmt.Fprintf(&b, "nexus.Controller[*%s](%s)", c.typ, strings.Join(args, ", "))
+	if c.slash {
+		b.WriteString(".\nTrailingSlash()")
+	}
+	for _, call := range c.calls {
+		b.WriteString(".\n")
+		b.WriteString(call.text)
+	}
+	return b.String()
+}
+
+// controllerPrefix reads //@controller <prefix> [trailing-slash]: the prefix
+// is "/"-rooted, or "" / "/" for a controller whose actions carry their full
+// paths; trailing-slash registers every action at path and path+"/".
+func controllerPrefix(a Annotation) (prefix string, slash bool, err error) {
+	if len(a.Args) < 1 || len(a.Args) > 2 {
+		return "", false, a.errf("//@controller needs a <prefix>, optionally followed by trailing-slash, e.g. //@controller /users (got %v)", a.Args)
+	}
+	if len(a.Args) == 2 {
+		if a.Args[1] != "trailing-slash" {
+			return "", false, a.errf("//@controller option %q is unknown — the one option is trailing-slash", a.Args[1])
+		}
+		slash = true
+	}
+	p, err := decoratorToken(&a, a.Args[0])
+	if err != nil {
+		return "", false, err
+	}
+	if p == "/" {
+		p = ""
+	}
+	if p != "" && !strings.HasPrefix(p, "/") {
+		return "", false, a.errf("//@controller prefix %q must start with \"/\"", p)
+	}
+	return strings.TrimSuffix(p, "/"), slash, nil
+}
+
+// actionPath reads a controller action's path, relative to the controller's
+// prefix: "" (or "/") is the prefix itself, anything else starts with "/".
+func actionPath(a Annotation, tok string) (string, error) {
+	p, err := decoratorToken(&a, tok)
+	if err != nil {
+		return "", err
+	}
+	if p == "/" {
+		return "", nil
+	}
+	if p != "" && !strings.HasPrefix(p, "/") {
+		return "", a.errf("//@%s path %q must start with \"/\" (it is relative to the controller's prefix; \"\" or / is the prefix itself)", a.Keyword, p)
+	}
+	return p, nil
+}
+
+// pageArgs validates //@page <METHOD> <PATH> [Component]: comma-separated
+// verbs, the path token (unquoted, unchecked), and the component —
+// defaultComponent when the argument is left out.
+func pageArgs(a Annotation, defaultComponent string) (verbs []string, path, component string, err error) {
+	method, err := decoratorToken(&a, a.Args[0])
+	if err != nil {
+		return nil, "", "", err
+	}
+	for _, v := range strings.Split(method, ",") {
+		v = strings.ToUpper(strings.TrimSpace(v))
+		switch v {
+		case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		default:
+			return nil, "", "", a.errf("//@%s method %q is not an HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)", a.Keyword, v)
+		}
+		verbs = append(verbs, v)
+	}
+	if path, err = decoratorToken(&a, a.Args[1]); err != nil {
+		return nil, "", "", err
+	}
+	component = defaultComponent
+	if len(a.Args) == 3 {
+		if component, err = decoratorToken(&a, a.Args[2]); err != nil {
+			return nil, "", "", err
+		}
+	}
+	if strings.TrimSpace(component) == "" {
+		return nil, "", "", a.errf("//@%s component name is empty — name the client component, e.g. Users/Index", a.Keyword)
+	}
+	return verbs, path, component, nil
+}
+
+// renderControllerAction renders one annotated method as a call on its
+// controller's chain. usesInertia reports an inertia.Component in the call.
+func renderControllerAction(c *controllerDecl, a Annotation, opts []string) (call string, usesInertia bool, err error) {
+	fn := fmt.Sprintf("(*%s).%s", c.typ, a.Method)
+	optTail := ""
+	if len(opts) > 0 {
+		optTail = ", " + strings.Join(opts, ", ")
+	}
+	kw := a.Keyword
+	if strings.HasSuffix(kw, ".Page") && importsHavePath(a.Imports, inertiaImportPath) {
+		kw = "page" // //@inertia.Page on an action reads as //@page
+	}
+	switch kw {
+	case "rest":
+		if len(a.Args) != 2 {
+			return "", false, a.errf("//@rest needs <METHOD> <PATH>, e.g. //@rest GET /:id (got %v)", a.Args)
+		}
+		method, err := restMethod(a)
+		if err != nil {
+			return "", false, err
+		}
+		path, err := actionPath(a, a.Args[1])
+		if err != nil {
+			return "", false, err
+		}
+		return fmt.Sprintf("Rest(%s, %s, %s%s)", strconv.Quote(method), strconv.Quote(path), fn, optTail), false, nil
+	case "page":
+		if len(a.Args) != 2 && len(a.Args) != 3 {
+			return "", false, a.errf("//@page needs <METHOD> <PATH> [Component], e.g. //@page GET /:id Users/Show (got %v)", a.Args)
+		}
+		folder := strings.TrimSuffix(c.typ, "Controller")
+		if folder == "" {
+			folder = c.typ
+		}
+		verbs, rawPath, component, err := pageArgs(a, folder+"/"+a.Method)
+		if err != nil {
+			return "", false, err
+		}
+		path, err := actionPath(a, strconv.Quote(rawPath))
+		if err != nil {
+			return "", false, err
+		}
+		calls := make([]string, len(verbs))
+		for i, v := range verbs {
+			calls[i] = fmt.Sprintf("Rest(%s, %s, %s, inertia.Component(%s)%s)",
+				strconv.Quote(v), strconv.Quote(path), fn, strconv.Quote(component), optTail)
+		}
+		return strings.Join(calls, ".\n"), true, nil
+	case "query", "mutation":
+		if len(a.Args) != 0 {
+			return "", false, a.errf("//@%s takes no arguments (got %v) — the op name derives from the method name", a.Keyword, a.Args)
+		}
+		builder := map[string]string{"query": "Query", "mutation": "Mutation"}[kw]
+		return fmt.Sprintf("%s(%s%s)", builder, fn, optTail), false, nil
+	}
+	return "", false, a.errf("//@%s is not available on a controller action — a //@controller's methods take //@page, //@rest, //@query or //@mutation", a.Keyword)
 }

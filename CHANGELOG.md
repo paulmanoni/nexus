@@ -6,6 +6,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Controllers in decorator form.** `//@controller <prefix> [trailing-slash]`
+  on a type turns its annotated methods into one `nexus.Controller[*T]`
+  chain. `//@auth`, `//@session` and `//@use` on the type are shared by every
+  action.
+  - Methods take `//@page`, `//@rest`, `//@query` and `//@mutation`.
+  - Paths are relative to the prefix.
+  - An action may carry several routes.
+- **`//@page <METHOD> <PATH> [Component]`.** An Inertia page annotation. On a
+  plain function it becomes `inertia.Page`. On a controller method it becomes
+  an action rendered through `inertia.Component`, and the component defaults to
+  `<Folder>/<Method>`.
+- **`inertia.Component(name)`** renders any REST action as that Inertia page.
+  It works on plain controllers, and on an `inertia.Resource` it overrides the
+  conventional component.
+- **`ControllerRouter.TrailingSlash()`** registers every action at `/p` and at
+  `/p/`, for apps whose links use both forms.
+- **`nexus.RestOptions(...)`** bundles several REST options into one.
+
+### Changed
+
+- **A controller's GraphQL actions stay on the enclosing endpoint.** They now
+  serve on the enclosing module's GraphQL endpoint (or the app's `/graphql`),
+  not on `<prefix>/graphql`, so a controller's prefix is REST-only. Plain
+  `nexus.Router`s keep mounting GraphQL at `<prefix>/graphql`.
+- **`ActionDefaults` calls add up.** Each function's options apply after the
+  previous one's. Previously the last call replaced the others, so defaults set
+  on an `inertia.Resource` replaced its page rendering.
+
+### Fixed
+
+- **Routers and controllers inside a module mount under its `Path`.**
+  `nexus.Module("x", nexus.Path("/x"), ctrl)` used to register the
+  controller's routes at the root.
+- **Annotated methods generate valid code.** They now emit the method
+  expression `(*T).M`. Previously they emitted the bare method name, which did
+  not compile.
+
 ## [1.69.0] - 2026-09-29
 
 ### Added

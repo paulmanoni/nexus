@@ -192,3 +192,48 @@ func TestInertiaResource(t *testing.T) {
 		t.Errorf("invalid create = %d → %q (flash %v), want 303 back with errors", res.StatusCode, res.Header.Get("Location"), flashed)
 	}
 }
+
+type ListsController struct{}
+
+func (c *ListsController) Longlist(ctx context.Context, pk int64) (articleProps, error) {
+	return articleProps{Article: article{ID: pk, Title: "longlist"}}, nil
+}
+
+type ReportsController struct{}
+
+func (c *ReportsController) Index(ctx context.Context) (map[string]any, error) {
+	return map[string]any{"reports": 3}, nil
+}
+
+// inertia.Component renders any controller action as a page, and overrides a
+// resource's conventional component.
+func TestInertiaComponent(t *testing.T) {
+	addr := "127.0.0.1:8872"
+	bootInertia(t, addr,
+		nexus.Module("admin", nexus.Path("/admin"),
+			nexus.Controller[*ListsController]("").Supply(&ListsController{}).
+				Get("/longlist/:pk/view", (*ListsController).Longlist, inertia.Component("Admin/AdvertLonglist")),
+			inertia.Resource[*ReportsController]("/reports").Supply(&ReportsController{}).
+				ActionDefaults(func(method, path, action string) []nexus.RestOption {
+					if action == "Index" {
+						return []nexus.RestOption{inertia.Component("Admin/Reports")}
+					}
+					return nil
+				}),
+		),
+	)
+	xhr := map[string]string{"X-Inertia": "true"}
+	for path, want := range map[string]string{
+		"/admin/longlist/4/view": "Admin/AdvertLonglist",
+		"/admin/reports":         "Admin/Reports",
+	} {
+		res, body := resourceReq(t, "GET", addr, path, "", xhr)
+		var page struct {
+			Component string `json:"component"`
+		}
+		_ = json.Unmarshal([]byte(body), &page)
+		if res.StatusCode != 200 || page.Component != want {
+			t.Errorf("GET %s = %d %s, want component %s", path, res.StatusCode, body, want)
+		}
+	}
+}

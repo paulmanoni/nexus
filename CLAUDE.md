@@ -513,7 +513,20 @@ via a wrapper, so its error takes the action's normal path; `nexus.ErrForbidden`
 (`.Query/.Mutation`) keep the method-derived name and mount at `<prefix>/graphql` like any
 router. `.ActionDefaults(func(method, path, action string) []nexus.RestOption)` sets the
 options every REST action starts from (explicit options win; `nexus.NoActionDefaults()`
-opts one action out) — the hook a controller flavour uses for custom actions.
+opts one action out; calls add up) — the hook a controller flavour uses for custom
+actions. Inside `nexus.Module("x", nexus.Path("/x"), ctrl)` a controller (or router)
+mounts under `/x`; a controller's prefix is REST-only, so its GraphQL actions serve on the
+enclosing module's endpoint (or the app's `/graphql`), never `<prefix>/graphql` (plain
+routers keep `<prefix>/graphql`). `.TrailingSlash()` registers each action at `/p` and `/p/`.
+`inertia.Component("Admin/Page")` renders any action as that page (built on
+`nexus.RestOptions`, which bundles REST options). **Decorator form:** `//@controller <prefix>
+[trailing-slash]` on a type (+ type-level `//@auth`/`//@session`/`//@use` shared by every
+action) makes its annotated methods one `nexus.Controller[*T]` chain; methods take
+`//@page METHOD PATH [Component]` (component defaults to `<Folder>/<Method>`; `//@inertia.Page`
+reads the same), `//@rest`, `//@query`, `//@mutation`; paths are relative (`/` = the prefix);
+an action may repeat `//@page`/`//@rest`; the constructor still needs `//@provide`. Annotated
+methods on types without `//@controller` register as method expressions `(*T).M`.
+gofmt's `// @x` form is read like `//@x` (type directives included).
 
 **Inertia resources (`inertia.Resource[T](prefix)`).** A controller whose actions are
 pages and forms: Index `GET /`, New `GET /new`, Show `GET /:id`, Edit `GET /:id/edit`
@@ -732,6 +745,9 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
                                   Go API: nexus.NewRouter/Include — pass the root to Boot)
 //@module <name> | //@path <prefix> | //@routeprefix <prefix>  (PACKAGE doc comment —
                                   name the module group / prefix its routes)
+//@page <METHOD> <PATH> [Component]  inertia page (component optional on a controller method)
+//@controller <prefix> [trailing-slash]  (TYPE doc comment — its annotated methods become
+                                  one nexus.Controller chain; see Controllers above)
 //@<pkg>.<Func> args…             custom extension decorator — emits pkg.Func(args…, fn);
                                   the registrar returns a nexus.Option (e.g. inertia.Page,
                                   reusing its existing signature). pkg is imported from the
