@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.70.0] - 2026-09-29
+
 ### Added
 
 - **Controllers in decorator form.** `//@controller <prefix> [trailing-slash]`
