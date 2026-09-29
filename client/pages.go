@@ -188,6 +188,34 @@ func queryTSType(t registry.TypeRef) string {
 	return "PageQueryValue"
 }
 
+// pageAction is one Inertia form action as pageAction sees it.
+type pageAction struct {
+	Method string   `json:"method"`
+	Path   string   `json:"path"`
+	Params []string `json:"params"`
+}
+
+// pageActions picks one route per form action (inertia.Resource's write
+// routes): POST before PUT before PATCH before DELETE, slash-less twins first.
+func pageActions(m Manifest) map[string]pageAction {
+	rank := map[string]int{"POST": 0, "PUT": 1, "PATCH": 2, "DELETE": 3}
+	out := map[string]pageAction{}
+	for _, e := range m.Endpoints {
+		if e.Action == "" || e.Transport != string(registry.REST) {
+			continue
+		}
+		method := strings.ToUpper(e.Method)
+		if have, ok := out[e.Action]; ok {
+			hr := rank[strings.ToUpper(have.Method)]
+			if rank[method] > hr || (rank[method] == hr && len(have.Path) <= len(e.Path)) {
+				continue
+			}
+		}
+		out[e.Action] = pageAction{Method: strings.ToLower(method), Path: e.Path, Params: pathParams(e.Path)}
+	}
+	return out
+}
+
 func pageComponents(routes map[string][]pageRoute) []string {
 	comps := make([]string, 0, len(routes))
 	for c := range routes {
@@ -208,8 +236,8 @@ func pageComponents(routes map[string][]pageRoute) []string {
 // parameter into the query string, and prefixes the manifest's BasePath.
 // Returns "" when the manifest has no pages.
 func GeneratePagesJS(m Manifest) string {
-	routes := pageRoutes(m)
-	if len(routes) == 0 {
+	routes, actions := pageRoutes(m), pageActions(m)
+	if len(routes) == 0 && len(actions) == 0 {
 		return ""
 	}
 	table := map[string][]pageRoute{}
@@ -217,6 +245,7 @@ func GeneratePagesJS(m Manifest) string {
 		table[c] = rs
 	}
 	body, _ := json.MarshalIndent(table, "", "  ")
+	actionBody, _ := json.MarshalIndent(actions, "", "  ")
 	base, _ := json.Marshal(m.BasePath)
 
 	var b strings.Builder
@@ -225,6 +254,7 @@ func GeneratePagesJS(m Manifest) string {
 	fmt.Fprintf(&b, "// Schema version: %s\n\n", m.Version)
 	fmt.Fprintf(&b, "const basePath = %s\n\n", base)
 	fmt.Fprintf(&b, "export const pageRoutes = %s\n\n", body)
+	fmt.Fprintf(&b, "export const pageActions = %s\n\n", actionBody)
 	b.WriteString(pagesRuntimeJS)
 	return b.String()
 }
@@ -246,10 +276,7 @@ export function pageUrl(component, params, opts) {
     route = routes.find((r) => r.params.every((k) => filled(p[k])))
     if (!route) throw new Error('pageUrl: "' + component + '" needs path parameters for one of: ' + routes.map((r) => r.path).join(', '))
   }
-  const path = route.path.replace(/([:*])([A-Za-z0-9_]+)/g, (_, kind, name) =>
-    kind === '*'
-      ? String(p[name]).split('/').map(encodeURIComponent).join('/')
-      : encodeURIComponent(String(p[name])))
+  const path = buildPath(route.path, p)
   const qs = new URLSearchParams()
   const add = (k, v) => {
     if (v === undefined || v === null) return
@@ -261,6 +288,22 @@ export function pageUrl(component, params, opts) {
   const q = qs.toString()
   return basePath + path + (q ? '?' + q : '')
 }
+
+export function pageAction(action, params) {
+  const a = pageActions[action]
+  if (!a) throw new Error('pageAction: no form action is registered as "' + action + '"')
+  const p = params || {}
+  const missing = a.params.filter((k) => !filled(p[k]))
+  if (missing.length) throw new Error('pageAction: "' + action + '" needs ' + missing.join(', '))
+  return [a.method, basePath + buildPath(a.path, p)]
+}
+
+function buildPath(path, p) {
+  return path.replace(/([:*])([A-Za-z0-9_]+)/g, (_, kind, name) =>
+    kind === '*'
+      ? String(p[name]).split('/').map(encodeURIComponent).join('/')
+      : encodeURIComponent(String(p[name])))
+}
 `
 
 // GeneratePagesDTS projects a manifest into pages.d.ts, the typings for
@@ -269,8 +312,8 @@ export function pageUrl(component, params, opts) {
 // optional — so a wrong component, a missing id, or a misspelled parameter
 // is a compile error. Returns "" when the manifest has no pages.
 func GeneratePagesDTS(m Manifest) string {
-	routes := pageRoutes(m)
-	if len(routes) == 0 {
+	routes, actions := pageRoutes(m), pageActions(m)
+	if len(routes) == 0 && len(actions) == 0 {
 		return ""
 	}
 	var b strings.Builder
@@ -345,7 +388,22 @@ export declare function pageUrl<C extends PageComponent>(
 export declare const pageRoutes: {
   readonly [C in PageComponent]: ReadonlyArray<{ readonly path: NexusPageRouteTemplates[C]; readonly params: readonly string[] }>
 }
+
+export type PageActionName = keyof NexusPageActions
+export type PageActionMethod = 'post' | 'put' | 'patch' | 'delete'
+
+/**
+ * The method and URL of an Inertia form action (inertia.Resource's Create,
+ * Update, Destroy), ready for useForm's submit:
+ *
+ *   form.submit(...pageAction('Users/Update', { id: user.id }))
+ */
+export declare function pageAction<A extends PageActionName>(
+  action: A,
+  ...args: {} extends NexusPageActions[A] ? [params?: NexusPageActions[A]] : [params: NexusPageActions[A]]
+): [method: PageActionMethod, url: string]
 `)
+	writePageActionTypes(&b, actions)
 	return b.String()
 }
 
@@ -391,4 +449,22 @@ func WritePagesFiles(outDir string, m Manifest, stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// writePageActionTypes emits NexusPageActions: each form action's path
+// parameters (its body is the form's data, not part of the URL).
+func writePageActionTypes(b *strings.Builder, actions map[string]pageAction) {
+	names := make([]string, 0, len(actions))
+	for n := range actions {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	b.WriteString("\n/** Path parameters per Inertia form action. */\n")
+	b.WriteString("export interface NexusPageActions {\n")
+	for _, n := range names {
+		a := actions[n]
+		fmt.Fprintf(b, "  /** %s %s */\n", strings.ToUpper(a.Method), escapeComment(a.Path))
+		fmt.Fprintf(b, "  %s: %s\n", tsLiteral(n), routeParamsType(pageRoute{Params: a.Params}))
+	}
+	b.WriteString("}\n")
 }

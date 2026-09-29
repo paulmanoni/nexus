@@ -175,6 +175,11 @@ nexus.Resource[*UsersController]("/users", auth.Required()).
 - **Nesting works too:** a resource at `/posts/:postId/comments`, or one included in a
   router with that prefix, gives its actions both parameters, as in
   `Show(ctx, postID, id int64)`.
+- **Pages and forms instead of JSON:** [`inertia.Resource`](./inertia#resources) adds
+  `New` and `Edit` pages and turns writes into redirects, custom actions included.
+  `ActionDefaults` is the hook that makes this work, and you can use it for your own
+  flavours of controller. It picks the default options for every action by verb,
+  path and method name.
 
 ### Authorizing actions
 

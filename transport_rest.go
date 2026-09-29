@@ -461,6 +461,15 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			return
 		}
 		if sh.resultIdx < 0 {
+			if er, ok := renderer.(EmptyRenderer); ok {
+				if rerr := er.RenderEmpty(c); rerr != nil {
+					_ = c.Error(errtrace.Wrap(rerr))
+					if !c.Writer.Written() {
+						c.JSON(http.StatusInternalServerError, httpx.H{"error": rerr.Error()})
+					}
+				}
+				return
+			}
 			c.Status(defaultSuccessStatus(method))
 			return
 		}

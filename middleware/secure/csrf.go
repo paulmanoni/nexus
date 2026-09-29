@@ -54,6 +54,12 @@ func CSRFHandler(cfg *CSRFConfig) httpx.HandlerFunc {
 		cookieTok, _ := c.Cookie(cfg.CookieName)
 		sent := c.GetHeader(cfg.HeaderName)
 		if sent == "" {
+			// axios — and so Inertia's router and useForm — echoes the
+			// XSRF-TOKEN cookie as X-XSRF-TOKEN (the Laravel/Rails
+			// convention). ensureToken keeps that cookie equal to ours.
+			sent = c.GetHeader(AxiosCSRFHeader)
+		}
+		if sent == "" {
 			// Fall back to a form field for classic HTML form posts.
 			// FormValue only reads the body for form content types, so
 			// JSON bodies (which carry the header) are untouched.
@@ -79,14 +85,32 @@ func DefaultSkip(c *httpx.Ctx) bool {
 
 // ensureToken mints and sets a fresh token cookie when the request
 // doesn't already carry one, so a first GET seeds the SPA.
+//
+// It also mirrors the token into an XSRF-TOKEN cookie, which axios reads and
+// echoes as X-XSRF-TOKEN on its own — so an Inertia app's forms carry the
+// token with no client setup.
 func ensureToken(c *httpx.Ctx, cfg *CSRFConfig) {
-	if existing, err := c.Cookie(cfg.CookieName); err == nil && existing != "" {
+	token, err := c.Cookie(cfg.CookieName)
+	if err != nil || token == "" {
+		token = GenerateToken(cfg.TokenBytes)
+		setTokenCookie(c, cfg, cfg.CookieName, token)
+	}
+	if cfg.CookieName == AxiosCSRFCookie {
 		return
 	}
-	setTokenCookie(c, cfg, GenerateToken(cfg.TokenBytes))
+	if mirror, err := c.Cookie(AxiosCSRFCookie); err != nil || mirror != token {
+		setTokenCookie(c, cfg, AxiosCSRFCookie, token)
+	}
 }
 
-func setTokenCookie(c *httpx.Ctx, cfg *CSRFConfig, token string) {
+// AxiosCSRFCookie / AxiosCSRFHeader are the names axios uses for CSRF by
+// default: it reads the cookie and sends its value in the header.
+const (
+	AxiosCSRFCookie = "XSRF-TOKEN"
+	AxiosCSRFHeader = "X-XSRF-TOKEN"
+)
+
+func setTokenCookie(c *httpx.Ctx, cfg *CSRFConfig, name, token string) {
 	secure := requestIsHTTPS(c)
 	if cfg.CookieSecure != nil {
 		secure = *cfg.CookieSecure
@@ -95,7 +119,7 @@ func setTokenCookie(c *httpx.Ctx, cfg *CSRFConfig, token string) {
 	// HttpOnly is deliberately false: the SPA's JavaScript must read the
 	// cookie to echo it in the header. That readability is safe — the
 	// token is per-session and only proves same-origin, not a credential.
-	c.SetCookie(cfg.CookieName, token, cfg.MaxAge, cfg.CookiePath, cfg.CookieDomain, secure, false)
+	c.SetCookie(name, token, cfg.MaxAge, cfg.CookiePath, cfg.CookieDomain, secure, false)
 }
 
 // GenerateToken returns a base64url-encoded cryptographically random

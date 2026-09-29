@@ -91,6 +91,12 @@ type EndpointInfo struct {
 	// against the pages directory. Empty for every other endpoint.
 	Page string `json:"page,omitempty"`
 
+	// Action names an Inertia form action (inertia.Resource's Create /
+	// Update / Destroy — registry.PageActionTag): a write route that
+	// redirects. The generator keys pageAction on it and leaves the route
+	// out of RestEndpoints.
+	Action string `json:"action,omitempty"`
+
 	Deprecated        bool   `json:"deprecated,omitempty"`
 	DeprecationReason string `json:"deprecationReason,omitempty"`
 }
@@ -270,6 +276,7 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 			info.AuthFlow = e.Tags[authFlowTagKey]
 			info.Envelope = e.Tags[registry.EnvelopeTag] == "true"
 			info.Page = e.Tags[registry.PageTag]
+			info.Action = e.Tags[registry.PageActionTag]
 		}
 		m.Endpoints = append(m.Endpoints, info)
 	}

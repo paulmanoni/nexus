@@ -46,6 +46,10 @@ func pagesFixture(basePath string) Manifest {
 			page("GET", "/auth/login", "Auth/Login", nil),
 			page("POST", "/auth/logout", "Auth/Login", nil),
 			page("GET", "/files/*path", "Files/Show", nil),
+			{Transport: "rest", Method: "POST", Path: "/articles", Action: "Articles/Create"},
+			{Transport: "rest", Method: "PATCH", Path: "/articles/:id", Action: "Articles/Update"},
+			{Transport: "rest", Method: "PUT", Path: "/articles/:id", Action: "Articles/Update"},
+			{Transport: "rest", Method: "DELETE", Path: "/articles/:id", Action: "Articles/Destroy"},
 			{Transport: "rest", Method: "GET", Path: "/api/users"},
 		},
 	}
@@ -98,6 +102,10 @@ func TestGeneratePagesDTS(t *testing.T) {
 		"  'Files/Show': { path: string | number }\n",
 		"  'Permits/Form': '/permits/edit/:id' | '/permits/register'\n",
 		"export declare function pageUrl<C extends PageComponent>(",
+		"export interface NexusPageActions {",
+		"  'Articles/Create': { [key: string]: never }\n",
+		"  /** PUT /articles/:id */\n  'Articles/Update': { id: string | number }\n",
+		"export declare function pageAction<A extends PageActionName>(",
 	} {
 		if !strings.Contains(d, want) {
 			t.Errorf("pages.d.ts missing %q\n---\n%s", want, d)
@@ -119,7 +127,7 @@ func TestPageUrlRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := `
-import { pageUrl } from './pages.mjs'
+import { pageUrl, pageAction } from './pages.mjs'
 const out = {}
 const run = (k, f) => { try { out[k] = f() } catch (e) { out[k] = 'ERR ' + e.message } }
 run('edit', () => pageUrl('Permits/Form', { id: 42, tab: 'docs' }))
@@ -132,6 +140,11 @@ run('splat', () => pageUrl('Files/Show', { path: 'a b/c.pdf' }))
 run('unknown', () => pageUrl('Nope'))
 run('badRoute', () => pageUrl('Permits/Form', {}, { route: '/nope' }))
 run('missing', () => pageUrl('Files/Show', {}))
+run('create', () => pageAction('Articles/Create').join(' '))
+run('update', () => pageAction('Articles/Update', { id: 5 }).join(' '))
+run('destroy', () => pageAction('Articles/Destroy', { id: 'a b' }).join(' '))
+run('noAction', () => pageAction('Nope/Update'))
+run('noParam', () => pageAction('Articles/Update'))
 console.log(JSON.stringify(out))
 `
 	if err := os.WriteFile(filepath.Join(dir, "run.mjs"), []byte(script), 0o644); err != nil {
@@ -155,10 +168,18 @@ console.log(JSON.stringify(out))
 		"list":     "/app/users?page=2&status=open&status=held",
 		"extra":    "/app/users?sort=-name",
 		"splat":    "/app/files/a%20b/c.pdf",
+		"create":   "post /app/articles",
+		"update":   "put /app/articles/5",
+		"destroy":  "delete /app/articles/a%20b",
 	}
 	for k, w := range want {
 		if got[k] != w {
 			t.Errorf("%s = %q, want %q", k, got[k], w)
+		}
+	}
+	for _, k := range []string{"noAction", "noParam"} {
+		if !strings.HasPrefix(got[k], "ERR pageAction:") {
+			t.Errorf("%s = %q, want a pageAction error", k, got[k])
 		}
 	}
 	for _, k := range []string{"unknown", "badRoute", "missing"} {
@@ -197,5 +218,17 @@ func TestWritePagesFiles_WritesAndRemoves(t *testing.T) {
 	}
 	if _, err := os.Stat(own); err != nil {
 		t.Error("a hand-written pages.js must be left alone")
+	}
+}
+
+// Form actions redirect rather than answer JSON, so they stay out of the
+// typed REST surface.
+func TestPageActionsLeaveRestEndpoints(t *testing.T) {
+	d := GenerateClientDTS(pagesFixture(""))
+	if strings.Contains(d, "'DELETE /articles/:id'") || strings.Contains(d, "'POST /articles'") {
+		t.Fatalf("form actions leaked into RestEndpoints:\n%s", d)
+	}
+	if !strings.Contains(d, "'GET /api/users'") {
+		t.Fatal("ordinary REST endpoints must stay")
 	}
 }

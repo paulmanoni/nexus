@@ -40,8 +40,9 @@ import (
 // Router in a parent with Include).
 type ControllerRouter[T any] struct {
 	*Router
-	ctrl  reflect.Type
-	authz bool
+	ctrl     reflect.Type
+	authz    bool
+	defaults func(method, path, action string) []RestOption
 }
 
 // ActionAuthorizer is implemented by a controller that authorizes each action
@@ -167,6 +168,32 @@ func (c *ControllerRouter[T]) Collection(method, name string, action any, opts .
 	return c.Rest(method, "/"+strings.TrimPrefix(name, "/"), action, opts...)
 }
 
+// ActionDefaults sets the options every REST action on c starts from, chosen
+// per action — the hook a flavour of controller uses to give custom actions
+// its own rendering. extension/inertia's Resource sets it so a custom GET is
+// a page and a custom write redirects, exactly like the conventional actions:
+//
+//	c.ActionDefaults(func(method, path, action string) []nexus.RestOption {
+//	    return []nexus.RestOption{nexus.WithIcon("zap")}
+//	})
+//
+// method and path are the action's (path relative to the prefix); action is
+// its method name. The defaults apply before the action's own options, so an
+// explicit option wins; nexus.NoActionDefaults() on an action skips them. It
+// applies to actions registered before and after the call.
+func (c *ControllerRouter[T]) ActionDefaults(fn func(method, path, action string) []RestOption) *ControllerRouter[T] {
+	c.defaults = fn
+	return c
+}
+
+// NoActionDefaults exempts one action from its controller's ActionDefaults —
+// a plain JSON endpoint on an Inertia resource, say.
+func NoActionDefaults() RestOption { return noActionDefaults{} }
+
+type noActionDefaults struct{}
+
+func (noActionDefaults) applyToRest(*restConfig) {}
+
 // Query registers action as a GraphQL query (its op name comes from the method
 // name). Scalar parameters need an explicit nexus.Arg — GraphQL has no path.
 func (c *ControllerRouter[T]) Query(action any, opts ...GqlOption) *ControllerRouter[T] {
@@ -200,10 +227,13 @@ func (c *ControllerRouter[T]) rest(method, path string, action any, name string,
 		c.errs = append(c.errs, err)
 		return c
 	}
-	explicitArg := false
+	explicitArg, skipDefaults := false, false
 	for _, o := range opts {
-		if _, ok := o.(ArgOption); ok {
+		switch o.(type) {
+		case ArgOption:
 			explicitArg = true
+		case noActionDefaults:
+			skipDefaults = true
 		}
 	}
 	c.builders = append(c.builders, func(full string, sh []MiddlewareOption) Option {
@@ -219,6 +249,9 @@ func (c *ControllerRouter[T]) rest(method, path string, action any, name string,
 			if arg != nil {
 				all = append(all, *arg)
 			}
+		}
+		if c.defaults != nil && !skipDefaults {
+			all = append(all, c.defaults(method, path, name)...)
 		}
 		return AsRest(method, path, fn, append(all, opts...)...)
 	})

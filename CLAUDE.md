@@ -511,7 +511,26 @@ prefix). `ActionAuthorizer` (`Authorize(ctx, action string) error`) runs before 
 via a wrapper, so its error takes the action's normal path; `nexus.ErrForbidden` → 403
 (`MapCRUDError`), and the refusal still `errors.Is` its original error. GraphQL actions
 (`.Query/.Mutation`) keep the method-derived name and mount at `<prefix>/graphql` like any
-router.
+router. `.ActionDefaults(func(method, path, action string) []nexus.RestOption)` sets the
+options every REST action starts from (explicit options win; `nexus.NoActionDefaults()`
+opts one action out) — the hook a controller flavour uses for custom actions.
+
+**Inertia resources (`inertia.Resource[T](prefix)`).** A controller whose actions are
+pages and forms: Index `GET /`, New `GET /new`, Show `GET /:id`, Edit `GET /:id/edit`
+render `<Folder>/<Method>` (folder from the type, `ArticlesController` → `Articles`;
+`ResourceAs[T]("Admin/Articles", prefix)` names it); Create `POST /` → 303 to the new
+record's Show (its `ID`/`json:"id"` field, maskid-masked), Update `PUT`+`PATCH /:id` → 303 to
+Show, Destroy `DELETE /:id` → 303 to Index (fallbacks when those are missing). Custom
+`Member`/`Collection`/verb actions follow suit: GET → page `<Folder>/<Method>`, other verbs
+→ 303 back (Referer, else one segment up); `nexus.NoActionDefaults()` keeps one JSON.
+`nexus.Errors` from a write flashes + goes back. Write routes are tagged
+`registry.PageActionTag` and leave the REST SDK; the frontend sends them with
+`pageAction('Articles/Update', { id })` from `nexus-client/pages`, which returns `[method,
+url]` (spread into `form.submit(...)`, or `router.visit(url, { method })`), typed by
+`NexusPageActions`. Handlers returning nothing render through the renderer's
+`EmptyRenderer`; Inertia props may be a string-keyed map as well as a struct. The CSRF
+middleware mirrors its token into an `XSRF-TOKEN` cookie and accepts `X-XSRF-TOKEN`
+(axios's convention), so Inertia forms pass with `csrf = true`.
 
 ---
 

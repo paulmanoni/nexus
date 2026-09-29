@@ -40,6 +40,9 @@ It uses a double-submit cookie:
 
 - Safe methods set a `csrftoken` cookie.
 - Unsafe methods must echo it in `X-CSRFToken`, or in a `csrf_token` form field.
+- The same token is mirrored into an `XSRF-TOKEN` cookie, and `X-XSRF-TOKEN` is
+  accepted too. That is the convention axios follows on its own, so Inertia forms
+  pass without any client setup.
 - Requests carrying an `Authorization` header are skipped.
 - The cookie's `Secure` flag follows the request scheme, so development over http works.
 

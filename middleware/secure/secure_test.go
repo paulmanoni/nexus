@@ -275,3 +275,41 @@ func TestGenerateTokenUniqueAndSized(t *testing.T) {
 		t.Fatalf("token too short: %d chars", len(a))
 	}
 }
+
+// axios (Inertia's router and useForm) reads XSRF-TOKEN and sends
+// X-XSRF-TOKEN: the mirror cookie carries the same token, and the header is
+// checked against the real cookie exactly like X-CSRFToken.
+func TestCSRFAxiosConvention(t *testing.T) {
+	t.Parallel()
+	r := newCSRFEngine(t, CSRFConfig{})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ping", nil))
+	tok, mirror := csrfCookie(t, w, DefaultCSRFCookie), csrfCookie(t, w, AxiosCSRFCookie)
+	if tok == nil || mirror == nil || mirror.Value != tok.Value || mirror.HttpOnly {
+		t.Fatalf("want a readable XSRF-TOKEN mirroring csrftoken, got %v / %v", tok, mirror)
+	}
+
+	// An existing csrftoken without a mirror gets one on the next GET.
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.AddCookie(&http.Cookie{Name: DefaultCSRFCookie, Value: "old-tok"})
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if m := csrfCookie(t, w, AxiosCSRFCookie); m == nil || m.Value != "old-tok" {
+		t.Fatalf("mirror for an existing token = %v, want old-tok", m)
+	}
+
+	for _, tc := range []struct {
+		header string
+		want   int
+	}{{"tok-9", 200}, {"forged", http.StatusForbidden}} {
+		req := httptest.NewRequest(http.MethodPost, "/ping", nil)
+		req.AddCookie(&http.Cookie{Name: DefaultCSRFCookie, Value: "tok-9"})
+		req.Header.Set(AxiosCSRFHeader, tc.header)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != tc.want {
+			t.Errorf("X-XSRF-TOKEN %q: got %d, want %d", tc.header, w.Code, tc.want)
+		}
+	}
+}

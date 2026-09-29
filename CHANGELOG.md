@@ -26,6 +26,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Update(ctx, id int64, in UserInput)` + `Arg("id")`. The body's fields merge
   into the arguments, and on REST a name that is a route segment binds from the
   path only, so a JSON body cannot override it.
+- **Custom controller actions with defaults.**
+  `ControllerRouter.ActionDefaults(fn)` sets the options every REST action on
+  a controller starts from, chosen by verb, path and method name. Explicit
+  options still win, and `nexus.NoActionDefaults()` exempts one action.
+- **Inertia resources.** `inertia.Resource[T](prefix)` is a controller whose
+  actions are pages and forms:
+  - `Index`, `New`, `Show` and `Edit` render `<Folder>/<Method>`.
+  - `Create`, `Update` (on PUT and PATCH) and `Destroy` answer with a 303 to the
+    new record's page, the record or the list.
+  - Custom actions follow suit: a GET is a page, and any other verb redirects
+    back.
+  - `nexus.Errors` from a write goes back to the form.
+  - `inertia.ResourceAs[T](folder, prefix)` names the component folder.
+- **`pageAction` in `nexus-client/pages`.** `pageAction('Articles/Update',
+  { id })` returns the action's `[method, url]`, ready for `form.submit(...)`
+  or `router.visit`. It is typed by `NexusPageActions`, and resource write
+  routes (`registry.PageActionTag`) no longer appear among the REST SDK's
+  endpoints.
+- **`nexus.EmptyRenderer`.** A renderer can answer for handlers that return
+  only an error.
+
+### Fixed
+
+- **Map props in Inertia.** A handler returning a string-keyed map as its
+  props now renders them. Previously they were dropped.
+- **CSRF with Inertia forms.** The CSRF middleware mirrors its token into an
+  `XSRF-TOKEN` cookie and accepts `X-XSRF-TOKEN`, the pair axios uses on its
+  own. Scaffolded Inertia apps enable CSRF, so their forms were refused with
+  403 until now.
 
 ## [1.68.0] - 2026-09-29
 

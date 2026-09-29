@@ -191,6 +191,92 @@ For query parameters that the Go handler reads without declaring them, pass
 dump writes them, and `nexus client --out` writes them too. They are also served at
 `/__nexus/client/pages.js`.
 
+## Resources
+
+`inertia.Resource` is a [controller](./modules#controllers) whose actions are pages and
+forms. It registers whichever of the conventional methods the controller defines:
+
+| Method | Route | Response |
+|---|---|---|
+| `Index` | `GET /articles` | page `Articles/Index` |
+| `New` | `GET /articles/new` | page `Articles/New` |
+| `Show` | `GET /articles/:id` | page `Articles/Show` |
+| `Edit` | `GET /articles/:id/edit` | page `Articles/Edit` |
+| `Create` | `POST /articles` | 303 to the new record's `Show` (`Index` without one) |
+| `Update` | `PUT` and `PATCH /articles/:id` | 303 to `Show` (`Index` without one) |
+| `Destroy` | `DELETE /articles/:id` | 303 to `Index` (back without one) |
+
+```go
+type ArticlesController struct{ articles *ArticleService }
+
+func (c *ArticlesController) Show(ctx context.Context, id int64) (ShowProps, error)
+func (c *ArticlesController) Create(ctx context.Context, in ArticleInput) (*Article, error)
+func (c *ArticlesController) Publish(ctx context.Context, id int64) error
+func (c *ArticlesController) Stats(ctx context.Context) (StatsProps, error)
+
+inertia.Resource[*ArticlesController]("/articles", auth.Required()).
+    Provide(NewArticlesController).
+    Member("POST", "publish", (*ArticlesController).Publish). // POST /articles/:id/publish
+    Collection("GET", "stats", (*ArticlesController).Stats)   // page Articles/Stats
+```
+
+- **Page actions return props.** Write actions return the record, or nothing.
+  `Create` reads the new record's `ID` (or `json:"id"`) field to pick the page to
+  redirect to, masked when [`extension/maskid`](./maskid) is on.
+- **Validation needs no extra code.** A write action that returns `nexus.Errors`
+  sends the user back to the form with the field errors.
+- **Custom actions follow the same rules.** `Member`, `Collection` and the verb
+  methods name the action after the method:
+  - A GET renders the page `<Folder>/<Method>`.
+  - Any other verb redirects back after success, to the Referer or else one path
+    segment up.
+  - An action passed `nexus.NoActionDefaults()` stays a plain JSON endpoint.
+- **The component folder comes from the type:** `ArticlesController` gives
+  `Articles`. `inertia.ResourceAs[T]("Admin/Articles", "/admin/articles")` names it
+  explicitly.
+- **Everything else is the controller's.** Gates, `Authorize` and nested prefixes work
+  as they do for any controller.
+
+### Calling resource actions from the frontend
+
+Pages are linked with `pageUrl`, and write actions are sent with `pageAction`, keyed
+the same way. `pageAction` returns the `[method, url]` pair of the action's route, so
+it spreads straight into `form.submit` or feeds `router.visit`:
+
+```vue
+<script setup lang="ts">
+import { Link, router, useForm } from '@inertiajs/vue3'
+import { pageAction, pageUrl } from 'nexus-client/pages'
+import type { NexusPageProps } from 'nexus-client'
+
+const props = defineProps<NexusPageProps['Articles/Edit']>()
+const form = useForm({ title: props.article.title })
+
+const save = () => form.submit(...pageAction('Articles/Update', { id: props.article.id }))
+const publish = () => {
+  const [method, url] = pageAction('Articles/Publish', { id: props.article.id })
+  router.visit(url, { method })
+}
+</script>
+
+<template>
+  <form @submit.prevent="save">
+    <input v-model="form.title" />
+    <p v-if="form.errors.title">{{ form.errors.title }}</p>
+  </form>
+  <button @click="publish">Publish</button>
+  <Link :href="pageUrl('Articles/Stats')">Stats</Link>
+</template>
+```
+
+- **Actions are typed.** `NexusPageActions` in `pages.d.ts` lists every action with
+  its path parameters, so `pageAction('Articles/Update')` without an `id` fails to
+  compile.
+- **Write routes leave the REST SDK.** They are form endpoints, not a JSON API.
+- **CSRF is handled for you.** Inertia's axios sends the `XSRF-TOKEN` cookie back as
+  `X-XSRF-TOKEN`, and the [CSRF middleware](./security) sets and accepts that pair
+  alongside its own.
+
 ## Server-side rendering
 
 ```go

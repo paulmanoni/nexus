@@ -467,6 +467,12 @@ const ProxyTag = "dashboard.proxy"
 // RestEndpoints.
 const PageTag = "inertia.page"
 
+// PageActionTag is the Endpoint.Tags key naming an Inertia form action — a
+// write route of inertia.Resource ("Users/Update"), which redirects rather
+// than answering JSON. The client SDK keys pageAction on it and leaves the
+// route out of RestEndpoints.
+const PageActionTag = "inertia.action"
+
 // SetSharedProp records the value type of a typed page-wide shared prop
 // (inertia.ShareScoped / inertia.ShareTyped) under key. Registering the
 // same key again replaces the type — the last registration wins, matching

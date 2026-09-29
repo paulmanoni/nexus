@@ -163,7 +163,7 @@ func writeRestEndpoints(b *strings.Builder, m Manifest) {
 	rest := filterByTransport(m.Endpoints, "rest")
 	n := 0
 	for _, e := range rest {
-		if e.Page == "" {
+		if e.Page == "" && e.Action == "" {
 			rest[n] = e
 			n++
 		}

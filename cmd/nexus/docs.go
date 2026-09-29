@@ -679,7 +679,11 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
   for whichever methods exist; nested prefixes (/posts/:postId/comments)
   bind every param. A controller implementing
   Authorize(ctx, action string) error has it run before each action — its
-  error takes the action's normal error path (403 via nexus.ErrForbidden).`,
+  error takes the action's normal error path (403 via nexus.ErrForbidden).
+  .ActionDefaults(func(method, path, action string) []nexus.RestOption) sets
+  the options every action starts from (explicit options win;
+  nexus.NoActionDefaults() skips them) — how inertia.Resource turns custom
+  actions into pages and redirects (nexus docs inertia).`,
 
 	"inertia": `
 INERTIA
@@ -748,6 +752,24 @@ instead of the plain {"error": …} JSON that makes the Inertia client show its
 inertia.ErrorProps{Status, Message} and the error's status (404/409/400 for
 the CRUD sentinels, else 500), shared props included; form submits redirect
 back with the message under errors._global. Off by default.
+
+Resources — a controller whose actions are pages and forms:
+
+    inertia.Resource[*ArticlesController]("/articles", auth.Required()).
+        Provide(NewArticlesController).
+        Member("POST", "publish", (*ArticlesController).Publish).  // → 303 back
+        Collection("GET", "stats", (*ArticlesController).Stats)    // page Articles/Stats
+
+  Index GET / · New GET /new · Show GET /:id · Edit GET /:id/edit are pages
+  (Articles/<Method>); Create POST / → 303 to the new Show, Update PUT+PATCH
+  /:id → 303 to Show, Destroy DELETE /:id → 303 to Index. Custom actions: a
+  GET is the page <Folder>/<Method>, other verbs 303 back (Referer, else one
+  segment up); nexus.NoActionDefaults() keeps one as JSON. nexus.Errors from a
+  write goes back to the form. ResourceAs[T]("Admin/Articles", prefix) names
+  the folder. Frontend:
+
+    form.submit(...pageAction('Articles/Update', { id }))   // [method, url]
+    const [method, url] = pageAction('Articles/Publish', { id }); router.visit(url, { method })
 
 Redirects — return as the handler's error:
 

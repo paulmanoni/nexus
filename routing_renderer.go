@@ -40,6 +40,14 @@ type ErrorRenderer interface {
 	RenderError(c *httpx.Ctx, err error) (handled bool, rerr error)
 }
 
+// EmptyRenderer is an optional companion to ResponseRenderer for handlers
+// that return only an error: on success the framework calls RenderEmpty
+// instead of writing a bare status. Inertia's resource actions use it so a
+// Destroy that returns just an error still redirects.
+type EmptyRenderer interface {
+	RenderEmpty(c *httpx.Ctx) error
+}
+
 // WithRenderer attaches a ResponseRenderer to a single AsRest registration,
 // replacing the default JSON success write. It is a REST-only option (GraphQL
 // and WebSocket returns are encoded by their own transports).

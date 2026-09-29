@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/paulmanoni/nexus"
@@ -296,20 +297,8 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 		}
 		rv = rv.Elem()
 	}
-	if rv.Kind() != reflect.Struct {
-		return out, meta, nil
-	}
-	rt := rv.Type()
-	for i := 0; i < rt.NumField(); i++ {
-		f := rt.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		key := wireName(f)
-		if key == "-" {
-			continue
-		}
-		p, resolve := classifyProp(rv.Field(i))
+	add := func(key string, fv reflect.Value) error {
+		p, resolve := classifyProp(fv)
 
 		// A deferred prop that isn't being sent this round is advertised
 		// on full visits (grouped) so the client knows to fetch it next.
@@ -324,11 +313,11 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 			meta.deferred[group] = append(meta.deferred[group], key)
 		}
 		if !include(key, p.kind) {
-			continue
+			return nil
 		}
 		val, err := resolve()
 		if err != nil {
-			return nil, propsMeta{}, err
+			return err
 		}
 		out[key] = val
 		// Merge flagging — skipped when the client asked to reset this key.
@@ -341,6 +330,38 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 			}
 			if (p.kind == kindMerge || p.kind == kindDeepMerge) && p.matchOn != "" {
 				meta.matchOn = append(meta.matchOn, key+"."+p.matchOn)
+			}
+		}
+		return nil
+	}
+
+	switch rv.Kind() {
+	case reflect.Struct:
+		rt := rv.Type()
+		for i := 0; i < rt.NumField(); i++ {
+			f := rt.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			key := wireName(f)
+			if key == "-" {
+				continue
+			}
+			if err := add(key, rv.Field(i)); err != nil {
+				return nil, propsMeta{}, err
+			}
+		}
+	case reflect.Map:
+		// A string-keyed map gives its entries as props, like struct
+		// fields (Prop wrappers included), in key order.
+		if rv.Type().Key().Kind() != reflect.String {
+			return out, meta, nil
+		}
+		keys := rv.MapKeys()
+		sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+		for _, k := range keys {
+			if err := add(k.String(), rv.MapIndex(k)); err != nil {
+				return nil, propsMeta{}, err
 			}
 		}
 	}
