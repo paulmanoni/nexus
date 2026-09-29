@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"reflect"
 	"sync"
 	"time"
@@ -205,7 +206,16 @@ func (s *store) Insert(ctx context.Context, rec jobs.Record) (jobs.ID, bool, err
 		return rec.ID, res.RowsAffected == 1, nil
 	}
 	now := rec.CreatedAt.UTC()
-	for range 3 {
+	for try := range 10 {
+		if try > 0 {
+			// Another writer holds the key (or, on SQLite, the write lock):
+			// back off a little, with jitter, before looking again.
+			select {
+			case <-ctx.Done():
+				return "", false, ctx.Err()
+			case <-time.After(time.Duration(try*5+rand.IntN(10)) * time.Millisecond):
+			}
+		}
 		var id jobs.ID
 		inserted := false
 		err := g.Transaction(func(tx *gorm.DB) error {
