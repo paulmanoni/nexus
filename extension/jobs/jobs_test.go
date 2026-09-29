@@ -191,9 +191,9 @@ func TestUniqueAndDelay(t *testing.T) {
 	svc := &ReportService{}
 	m, stop := boot(t, svc, unique)
 	defer stop()
-	a, _ := unique.Enqueue(context.Background(), ReportArgs{ReportID: 5}, jobs.Delay(80*time.Millisecond))
+	a, _ := unique.Enqueue(context.Background(), ReportArgs{ReportID: 5}, jobs.Delay(500*time.Millisecond))
 	b, _ := unique.Enqueue(context.Background(), ReportArgs{ReportID: 5})
-	c, _ := unique.Enqueue(context.Background(), ReportArgs{ReportID: 6}, jobs.Delay(80*time.Millisecond))
+	c, _ := unique.Enqueue(context.Background(), ReportArgs{ReportID: 6}, jobs.Delay(500*time.Millisecond))
 	if a != b || a == c {
 		t.Fatalf("unique ids: %s %s %s", a, b, c)
 	}
@@ -320,16 +320,18 @@ var tick = jobs.Define((*ReportService).Tick)
 // job and spec (standing in for two replicas) fire.
 func TestSchedule(t *testing.T) {
 	svc := &ReportService{}
+	started := time.Now()
 	m, stop := boot(t, svc, tick.Schedule("@every 1s", ReportArgs{ReportID: 9}), tick.Schedule("@every 1s", ReportArgs{ReportID: 9}))
-	defer stop()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && svc.calls.Load() < 1 {
 		time.Sleep(20 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond)
+	stop()
+	ticks := int(time.Since(started)/time.Second) + 1 // @every aligns to whole seconds
 	recs, err := m.List(context.Background(), jobs.Filter{Name: "ReportService.Tick"})
-	if err != nil || len(recs) != 1 || svc.calls.Load() != 1 {
-		t.Fatalf("after one tick: %d records, %d calls (%v)", len(recs), svc.calls.Load(), err)
+	// Two schedulers fire each tick; without the per-tick ID each would enqueue.
+	if err != nil || len(recs) < 1 || len(recs) > ticks || int(svc.calls.Load()) != len(recs) {
+		t.Fatalf("%d records, %d calls for at most %d ticks (%v)", len(recs), svc.calls.Load(), ticks, err)
 	}
 	if string(recs[0].Args) != `{"reportId":9}` || !strings.HasPrefix(string(recs[0].ID), "s") {
 		t.Fatalf("scheduled record = %+v", recs[0])

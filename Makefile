@@ -76,7 +76,8 @@ cover:
 	go tool cover -func=coverage.out | tail -1
 
 cover-check:
-	@go test -covermode=atomic -coverprofile=coverage.out ./... >/dev/null
+	@go test -covermode=atomic -coverprofile=coverage.out ./... > coverage.log 2>&1 || \
+		{ grep -E -- '--- FAIL|^FAIL|panic:|_test.go:[0-9]+' coverage.log; exit 1; }
 	@total=$$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,"",$$3); print $$3}'); \
 	echo "main-module coverage: $$total% (floor $(COVER_MIN)%)"; \
 	awk -v t=$$total -v min=$(COVER_MIN) 'BEGIN { if (t+0 < min+0) { printf "FAIL: coverage %.1f%% < floor %d%%\n", t, min; exit 1 } }'
