@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.68.0] - 2026-09-29
+
 ### Added
 
 - **Inertia error pages.** `inertia.Config{ErrorPage: "Error"}` names a
