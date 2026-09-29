@@ -63,6 +63,28 @@ The default cache is **in-memory only** and pulls in no heavy dependencies. Blan
 import, go-redis is never linked. `cache.BindFromConfig[Cache]("session")` reads a
 `[cache.session]` table.
 
+### Choosing the store per cache
+
+With the Redis backend imported, a cache uses Redis in production and memory elsewhere.
+`driver` overrides that for one cache:
+
+```toml
+[cache.session]
+driver = "redis"     # Redis in every environment; boot fails without the backend import
+
+[cache.lookups]
+driver = "memory"    # never Redis, even in production with the backend imported
+```
+
+- **Default.** `driver = "auto"`, or leaving it out, keeps the environment rule.
+- **In code** set `cache.Config{Driver: cache.DriverMemory}`.
+- **From the environment**, `CACHE_DRIVER` sets the default for every cache built from
+  `NewConfig`. A per-cache key such as `CACHE_SESSION_DRIVER=memory` overrides it through
+  `nexus.Get`.
+- **On the dashboard,** the cache resource shows its driver, for example
+  `memory (redis disabled)`.
+- **An unknown driver fails the boot.** So does `redis` without the backend import.
+
 ## Pay for what you import
 
 The binders live in `db` and `extension/cache`, not the nexus root package. Importing

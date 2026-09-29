@@ -26,6 +26,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`nexus.RequestIdentity(ctx)`** exposes the authenticated subject the
   registered identity sources report. Jobs use it to record who enqueued
   them.
+- **Per-cache Redis switch.** `cache.Config.Driver` (the `driver` key in
+  `[cache.<name>]`, `CACHE_DRIVER` or `CACHE_<NAME>_DRIVER`) picks the store
+  for one cache:
+  - `memory` keeps it off Redis even in production with the Redis backend
+    imported.
+  - `redis` uses Redis in every environment.
+  - `auto`, the default, is the existing environment rule.
+
+  An unknown driver, or `redis` without the backend import, fails the boot.
+  The dashboard shows the effective driver.
 
 ## [1.70.0] - 2026-09-29
 

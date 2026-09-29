@@ -14,7 +14,8 @@ import "github.com/paulmanoni/nexus"
 // reads the block:
 //
 //	[cache.session]
-//	environment        = "production"   # "production" engages Redis (needs the redis backend imported)
+//	driver             = "memory"       # memory: never Redis | redis: always (backend must be imported) | auto (default)
+//	environment        = "production"   # under auto, "production" engages Redis (needs the redis backend imported)
 //	redis_host         = "localhost"
 //	redis_port         = "6379"
 //	redis_password     = "${REDIS_PASSWORD}"
@@ -24,6 +25,10 @@ import "github.com/paulmanoni/nexus"
 //	connect_timeout    = "5s"
 //	reconnect_interval = "30s"
 //	persist_path       = ".nexus/dev-cache.gob"
+//
+// driver = "memory" is how one cache opts out of Redis while others (in
+// the same production app, with the redis backend imported) keep it; an
+// ENV override works per cache too (CACHE_SESSION_DRIVER=memory).
 //
 // Every key is optional and falls back to NewConfig()'s default, so a block
 // with only redis_host/redis_port set is enough. Lifecycle options
@@ -42,6 +47,7 @@ func configFromTOML(name string) *Config {
 	c := NewConfig()
 	p := "cache." + name + "."
 	c.Environment = nexus.Get(p+"environment", c.Environment)
+	c.Driver = nexus.Get(p+"driver", c.Driver)
 	c.RedisHost = nexus.Get(p+"redis_host", c.RedisHost)
 	c.RedisPort = nexus.Get(p+"redis_port", c.RedisPort)
 	c.RedisPassword = nexus.Get(p+"redis_password", c.RedisPassword)

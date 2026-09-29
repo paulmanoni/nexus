@@ -850,6 +850,11 @@ File-backed SQLite now gets a small read pool by default (WAL-friendly);
   or Prometheus). Redis is opt-in database/sql-style: blank-import
   `_ ".../extension/cache/redis"` and a `production`-mode Manager keeps a Redis connection
   with transparent memory failover. Without that import the binary never links go-redis.
+- **Per-cache store — `driver`** (`cache.Config.Driver`, `[cache.<name>] driver`, env
+  `CACHE_DRIVER` / `CACHE_<NAME>_DRIVER`): `""`/`"auto"` = Redis in production when the
+  backend is linked (the default); `"memory"` = never Redis (opt one cache out while others
+  keep it); `"redis"` = Redis in every environment. An unknown driver, or `redis` without the
+  backend import, fails `cache.Bind` at boot; the dashboard shows the effective driver.
 - Cache-backed metrics (multi-replica counters) are opt-in via
   `Config.Stores.Metrics = cache.NewMetricsStore(mgr)`; the default is an in-process
   memory store with no cache dependency.

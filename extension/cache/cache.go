@@ -29,8 +29,10 @@ package cache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,12 +50,19 @@ var ErrNotFound = errors.New("cache: key not found")
 // Config holds cache configuration. Populate via NewConfig (env-driven) or
 // construct directly.
 type Config struct {
-	// Environment controls Redis behavior. "production" attempts Redis and
-	// keeps reconnecting; anything else stays on memory. Redis only ever
-	// engages when the redis backend is registered (blank-import
-	// extension/cache/redis); otherwise this is a no-op and the Manager is
-	// memory-only regardless of Environment.
+	// Environment controls Redis behavior under the auto driver.
+	// "production" attempts Redis and keeps reconnecting; anything else
+	// stays on memory. Redis only ever engages when the redis backend is
+	// registered (blank-import extension/cache/redis); otherwise this is a
+	// no-op and the Manager is memory-only regardless of Environment.
 	Environment string
+
+	// Driver picks the store explicitly, overriding Environment:
+	// DriverMemory keeps this cache in memory even when the redis backend
+	// is linked and the app runs in production; DriverRedis uses Redis in
+	// every environment (and fails the boot when the backend isn't
+	// linked). Empty (or "auto") is the Environment rule above.
+	Driver string
 
 	RedisHost     string
 	RedisPort     string
@@ -82,8 +91,15 @@ type Config struct {
 	PersistPath string
 }
 
-// NewConfig builds a Config from env vars: APP_ENV, REDIS_HOST, REDIS_PORT,
-// REDIS_PASSWORD, NEXUS_DEV_CACHE_FILE. Defaults: env=development,
+// Cache drivers, the values of Config.Driver.
+const (
+	DriverAuto   = ""       // Redis in production when the redis backend is linked, memory otherwise
+	DriverMemory = "memory" // never Redis
+	DriverRedis  = "redis"  // Redis in every environment; the redis backend must be linked
+)
+
+// NewConfig builds a Config from env vars: APP_ENV, CACHE_DRIVER, REDIS_HOST,
+// REDIS_PORT, REDIS_PASSWORD, NEXUS_DEV_CACHE_FILE. Defaults: env=development,
 // host=localhost, port=6379, db=0, 15m/10m expiries, 5s connect timeout,
 // 30s reconnect. PersistPath auto-defaults to ".nexus/dev-cache.gob" when
 // NEXUS_DEV=1 (set by `nexus dev`) so tokens + cached state survive the
@@ -99,6 +115,7 @@ func NewConfig() *Config {
 	}
 	return &Config{
 		Environment:       env,
+		Driver:            os.Getenv("CACHE_DRIVER"),
 		RedisHost:         os.Getenv("REDIS_HOST"),
 		RedisPort:         os.Getenv("REDIS_PORT"),
 		RedisPassword:     os.Getenv("REDIS_PASSWORD"),
@@ -109,6 +126,43 @@ func NewConfig() *Config {
 		ReconnectInterval: 30 * time.Second,
 		PersistPath:       persistPath,
 	}
+}
+
+// driver returns the normalized driver name ("auto" reads as DriverAuto).
+func (c *Config) driver() string {
+	d := strings.ToLower(strings.TrimSpace(c.Driver))
+	if d == "auto" {
+		return DriverAuto
+	}
+	return d
+}
+
+// Validate reports an unknown Driver, or DriverRedis without the redis
+// backend linked. cache.Bind fails the boot with it.
+func (c *Config) Validate() error {
+	switch c.driver() {
+	case DriverAuto, DriverMemory:
+		return nil
+	case DriverRedis:
+		if newRedisSupervisor == nil {
+			return errors.New(`cache: driver "redis" needs the redis backend — add the blank import _ "github.com/paulmanoni/nexus/extension/cache/redis"`)
+		}
+		return nil
+	}
+	return fmt.Errorf("cache: unknown driver %q — use %q, %q or %q", c.Driver, "auto", DriverMemory, DriverRedis)
+}
+
+// UsesRedis reports whether this config engages Redis (when the redis
+// backend is linked): always for DriverRedis, never for DriverMemory, in
+// production for the auto driver.
+func (c *Config) UsesRedis() bool {
+	switch c.driver() {
+	case DriverMemory:
+		return false
+	case DriverRedis:
+		return true
+	}
+	return c.Environment == "production"
 }
 
 // RedisAddress returns host:port, filling in localhost:6379 when blank.
@@ -224,11 +278,14 @@ func (m *Manager) FallBackToMemory() {
 }
 
 // Start restores the persist file (if any) and, when the Redis backend is
-// registered and Environment is "production", launches the supervisor. Safe
-// to call once.
+// registered and the config uses Redis (Config.UsesRedis), launches the
+// supervisor. Safe to call once.
 func (m *Manager) Start() {
 	m.loadPersistFile()
-	if m.config.Environment != "production" || newRedisSupervisor == nil {
+	if !m.config.UsesRedis() || newRedisSupervisor == nil {
+		if m.config.driver() == DriverRedis {
+			m.logger.Error("cache: driver is redis but the redis backend isn't linked — serving from memory")
+		}
 		return
 	}
 	m.sup = newRedisSupervisor(m)
@@ -326,14 +383,31 @@ func (m *Manager) AsResource(name, description string, opts ...resource.Option) 
 			if m.IsRedisConnected() {
 				backend = "redis"
 			}
-			return map[string]any{
+			details := map[string]any{
 				"backend": backend,
+				"driver":  m.driverLabel(),
 				"env":     m.config.Environment,
-				"address": m.config.RedisAddress(),
 			}
+			if m.config.UsesRedis() {
+				details["address"] = m.config.RedisAddress()
+			}
+			return details
 		}),
 	}
 	return resource.NewCache(name, description, nil, func() bool { return true }, append(base, opts...)...)
+}
+
+// driverLabel names the effective driver for the dashboard.
+func (m *Manager) driverLabel() string {
+	switch {
+	case m.config.driver() == DriverMemory:
+		return "memory (redis disabled)"
+	case m.config.UsesRedis() && newRedisSupervisor == nil:
+		return "memory (redis backend not linked)"
+	case m.config.UsesRedis():
+		return "redis"
+	}
+	return "memory"
 }
 
 // --- memory backend --------------------------------------------------------
