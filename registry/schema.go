@@ -372,8 +372,14 @@ func collectStructFields(t reflect.Type, refs map[string]NamedType, depth int, o
 			continue
 		}
 		jsonTag := f.Tag.Get("json")
+		pathName := tagName(f.Tag, "path", "uri")
 		if jsonTag == "-" {
-			continue
+			if pathName == "" {
+				continue
+			}
+			// A path parameter kept out of the JSON body is still an
+			// argument of the call: surface it under its path name.
+			jsonTag = pathName
 		}
 		gqlTag := f.Tag.Get("graphql")
 		if gqlTag == "-" {
@@ -447,7 +453,7 @@ func collectStructFields(t reflect.Type, refs map[string]NamedType, depth int, o
 			Type:        ft,
 			Optional:    opt,
 			Description: f.Tag.Get("desc"),
-			Path:        tagName(f.Tag, "path", "uri"),
+			Path:        pathName,
 			Query:       tagName(f.Tag, "query", "form"),
 		}
 		if jsonName == f.Name {

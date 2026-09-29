@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Controllers.** `nexus.Controller[T](prefix, gates...)` is a router bound to
+  one controller type: a struct whose methods are the actions, constructed once
+  through DI and shown as one dashboard module (`UsersController` → `users`).
+  Actions are method expressions (`.Get("/:id", (*UsersController).Show)`), and
+  their bare scalar parameters bind from the route's path parameters by
+  position, with no `nexus.Arg`. `nexus.Resource[T](prefix)` registers the
+  conventional actions the controller defines (Index, Show, Create, Update on
+  PUT and PATCH, Destroy), plus `Member` and `Collection` for custom ones;
+  nested prefixes bind every parameter.
+- **`ActionAuthorizer`.** A controller with `Authorize(ctx, action string)
+  error` has it run before each action; the error ends the request through the
+  action's normal error path.
+- **`nexus.ErrForbidden`**, mapped to 403 by `MapCRUDError`.
+- **`nexus.Arg` body mode.** A handler's trailing struct is now accepted as the
+  request body, with the named scalars before it:
+  `Update(ctx, id int64, in UserInput)` + `Arg("id")`. The body's fields merge
+  into the arguments, and on REST a name that is a route segment binds from the
+  path only, so a JSON body cannot override it.
+
 ## [1.68.0] - 2026-09-29
 
 ### Added

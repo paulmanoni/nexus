@@ -429,6 +429,11 @@ well; three or more deserve a dto. Boot errors: a struct-taking
 parameter ("register it directly"), Params[T] handlers, name/arity
 mismatches, duplicate or invalid names.
 
+A scalar may precede a body struct — Update(ctx, id int64, in UserInput)
+with nexus.Arg("id"): the names map onto the scalars before the struct,
+the body's fields merge into the args, and on REST a name that is a route
+segment (:id) binds from the path only, so a JSON body cannot override it.
+
 Use Params[T] only when the handler needs more than ctx+args
 (Source/Info, the HTTP method). Note: the trailing-struct rule
 means a ZERO-arg VALUE-receiver method expression (func(S)) would
@@ -656,7 +661,25 @@ Example:
     whose GraphQL mount is /billing/graphql automatically. One
     declaration. Use nexus.RoutePrefix + service.AtGraphQL
     separately if you need different paths for REST vs GraphQL.
-`,
+
+
+CONTROLLERS — a struct whose methods are actions, one dashboard module:
+
+    nexus.Controller[*UsersController]("/users", auth.Required()).
+        Provide(NewUsersController).
+        Get("/:id", (*UsersController).Show).          // Show(ctx, id int64)
+        Post("/:id/suspend", (*UsersController).Suspend)
+
+    nexus.Resource[*UsersController]("/users")        // Index/Show/Create/Update/Destroy
+        .Member("POST", "suspend", …) .Collection("GET", "search", …)
+
+  Bare scalar params bind from the route's path params by position (no
+  nexus.Arg); a trailing struct is the body. Resource maps Index GET /,
+  Show GET /:id, Create POST /, Update PUT+PATCH /:id, Destroy DELETE /:id
+  for whichever methods exist; nested prefixes (/posts/:postId/comments)
+  bind every param. A controller implementing
+  Authorize(ctx, action string) error has it run before each action — its
+  error takes the action's normal error path (403 via nexus.ErrForbidden).`,
 
 	"inertia": `
 INERTIA

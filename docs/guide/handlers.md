@@ -113,6 +113,23 @@ cannot see parameter names, so check the order when two parameters share a type.
 Non-pointer parameters are required, and pointer parameters are optional. One or two
 scalars work well this way. Three or more deserve a struct.
 
+A scalar can come before a body struct. The struct is the request body, and the names
+map onto the scalars just before it:
+
+```go
+func (s *UserService) Update(ctx context.Context, id int64, in UserInput) (*User, error)
+
+nexus.AsRest("PUT", "/users/:id", (*UserService).Update, nexus.Arg("id"))
+```
+
+On REST, a name that is also a route segment (`:id`) binds **only** from the path. A
+JSON body can't override it, so `PUT /users/5` with `{"id": 6}` still updates user 5.
+The body's exported fields are merged into the generated arguments, so its type may be
+unexported.
+
+REST binds these tags but doesn't enforce `validate:` rules on them; only GraphQL
+arguments are validated.
+
 ## Per-op options
 
 Options follow the handler in any registration:

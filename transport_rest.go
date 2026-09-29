@@ -52,7 +52,7 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
 		return rawOption{o: di.Error(err)}
 	}
-	sh, err := inspectHandlerArgs(fn, cfg.argNames)
+	sh, err := inspectHandlerArgs(fn, cfg.argNames, routePathParams(path)...)
 	if err != nil {
 		return rawOption{o: di.Error(err)}
 	}

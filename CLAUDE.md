@@ -498,6 +498,21 @@ The dashboard's Architecture graph **groups by module**. Option helpers:
 - `nexus.Path("/x")` — module URL prefix (REST + GraphQL). `nexus.RoutePrefix("/x")` —
   REST-only prefix.
 
+**Controllers (`nexus.Controller` / `nexus.Resource`).** A struct whose methods are
+actions, DI-constructed once, one dashboard module (`UsersController` → `users`):
+`nexus.Controller[*UsersController]("/users", auth.Required()).Provide(NewUsersController).Get("/:id",
+(*UsersController).Show)`. Actions must be method expressions on the type; bare scalar
+params bind from the route's path params positionally (inferred `nexus.Arg`; explicit
+`Arg` wins), a trailing struct is the body. `nexus.Resource[T](prefix)` registers the
+conventional actions T defines — Index `GET /`, Show `GET /:id`, Create `POST /`, Update
+`PUT`+`PATCH /:id`, Destroy `DELETE /:id` — plus `.Member(verb, name, …)` /
+`.Collection(…)`; nested prefixes bind every param (router builders get the full stacked
+prefix). `ActionAuthorizer` (`Authorize(ctx, action string) error`) runs before each action
+via a wrapper, so its error takes the action's normal path; `nexus.ErrForbidden` → 403
+(`MapCRUDError`), and the refusal still `errors.Is` its original error. GraphQL actions
+(`.Query/.Mutation`) keep the method-derived name and mount at `<prefix>/graphql` like any
+router.
+
 ---
 
 ## 4. Services
@@ -558,7 +573,11 @@ Names map POSITIONALLY onto the handler's LAST len(names) params, in order
 The args struct is synthesized at registration (tagged json/query/uri/graphql),
 so schema, SDK, and every binder see what a wrapper would have declared;
 non-pointer params are required, pointer params optional; the op name still
-derives from the method. One or two scalars ride `Arg` well — three or more
+derives from the method. **Body mode:** a trailing struct is the body and the names map
+onto the scalars before it (`Update(ctx, id int64, in UserInput)` + `Arg("id")`); its
+exported fields merge into the synthesized args (unexported body types fine), and on REST a
+name that is a route segment binds from the path only (`json:"-"`), so a body can't
+override it. REST doesn't enforce `validate:` tags (GraphQL does). One or two scalars ride `Arg` well — three or more
 deserve a dto. A struct-taking param is rejected with "register it directly".
 
 **Raw form input (`*nexus.Form`) + validation errors (`nexus.Errors`).** For

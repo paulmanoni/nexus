@@ -31,9 +31,9 @@ type Router struct {
 	name     string
 	prefix   string
 	shared   []MiddlewareOption
-	builders []func(shared []MiddlewareOption) Option
-	attached []Option // pre-built ops (decorator form); shared applies via annotator
-	raw      []Option // Provide/Register — grouped, never gated
+	builders []func(prefix string, shared []MiddlewareOption) Option // prefix: the full, stacked route prefix
+	attached []Option                                                // pre-built ops (decorator form); shared applies via annotator
+	raw      []Option                                                // Provide/Register — grouped, never gated
 	children []*Router
 	parent   string
 	errs     []error
@@ -55,7 +55,7 @@ func NewRouter(name, prefix string, shared ...MiddlewareOption) *Router {
 
 // Rest registers a REST endpoint on the router.
 func (r *Router) Rest(method, path string, fn any, opts ...RestOption) *Router {
-	r.builders = append(r.builders, func(sh []MiddlewareOption) Option {
+	r.builders = append(r.builders, func(_ string, sh []MiddlewareOption) Option {
 		all := make([]RestOption, 0, len(sh)+len(opts))
 		for _, m := range sh {
 			all = append(all, m)
@@ -77,7 +77,7 @@ func (r *Router) Subscription(fn any, opts ...GqlOption) *Router {
 }
 
 func (r *Router) gql(as func(any, ...GqlOption) Option, fn any, opts []GqlOption) *Router {
-	r.builders = append(r.builders, func(sh []MiddlewareOption) Option {
+	r.builders = append(r.builders, func(_ string, sh []MiddlewareOption) Option {
 		all := make([]GqlOption, 0, len(sh)+len(opts))
 		for _, m := range sh {
 			all = append(all, m)
@@ -89,7 +89,7 @@ func (r *Router) gql(as func(any, ...GqlOption) Option, fn any, opts []GqlOption
 
 // WS registers a WebSocket message handler on the router.
 func (r *Router) WS(path, msgType string, fn any, opts ...WSOption) *Router {
-	r.builders = append(r.builders, func(sh []MiddlewareOption) Option {
+	r.builders = append(r.builders, func(_ string, sh []MiddlewareOption) Option {
 		all := make([]WSOption, 0, len(sh)+len(opts))
 		for _, m := range sh {
 			all = append(all, m)
@@ -164,7 +164,7 @@ func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Optio
 		opts = append(opts, Path(full))
 	}
 	for _, b := range r.builders {
-		opts = append(opts, b(sh))
+		opts = append(opts, b(full, sh))
 	}
 	for _, op := range r.attached {
 		if a, ok := op.(sharedMiddlewareAnnotator); ok {

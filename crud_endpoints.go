@@ -509,6 +509,8 @@ func MapCRUDError(err error) (status int, ok bool) {
 		return http.StatusConflict, true
 	case errors.Is(err, ErrCRUDValidation):
 		return http.StatusBadRequest, true
+	case errors.Is(err, ErrForbidden):
+		return http.StatusForbidden, true
 	}
 	return 0, false
 }

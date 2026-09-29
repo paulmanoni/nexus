@@ -70,6 +70,9 @@ const (
 	// only for binding and schema; the ORIGINAL method is called directly,
 	// so an Arg op pays no reflect.MakeFunc trampoline on the hot path.
 	paramArgField
+	// paramArgBody is a trailing body struct rebuilt from the bound args
+	// struct's copied fields — nexus.Arg's body mode.
+	paramArgBody
 )
 
 type paramSlot struct {
@@ -93,8 +96,9 @@ type handlerShape struct {
 	hasParams  bool         // true when argsType came from a Params[T] param
 	returnType reflect.Type // nil for handlers returning only error
 	hasError   bool
-	errorIdx   int // index of the error return; -1 if none
-	resultIdx  int // index of the result return; -1 if none
+	errorIdx   int      // index of the error return; -1 if none
+	resultIdx  int      // index of the result return; -1 if none
+	argBody    *argBody // nexus.Arg body mode; nil otherwise
 }
 
 // inspectHandler reflects on fn and builds a handlerShape. Returns an error
@@ -289,6 +293,8 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 			}
 		case paramArgField:
 			in[i] = args.Field(slot.depPos)
+		case paramArgBody:
+			in[i] = sh.argBody.build(args)
 		}
 	}
 	out := sh.funcVal.Call(in)

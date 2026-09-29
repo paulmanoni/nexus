@@ -1,0 +1,273 @@
+package nexus
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+type ctlUser struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// userInput is unexported on purpose: body mode must not need an exported type.
+type userInput struct {
+	Name string `json:"name" validate:"required"`
+}
+
+type UsersController struct{ calls []string }
+
+func NewUsersController() *UsersController { return &UsersController{} }
+
+func (c *UsersController) Index(ctx context.Context) ([]ctlUser, error) {
+	return []ctlUser{{ID: 1, Name: "ada"}}, nil
+}
+
+func (c *UsersController) Show(ctx context.Context, id int64) (*ctlUser, error) {
+	if id == 404 {
+		return nil, ErrCRUDNotFound
+	}
+	return &ctlUser{ID: id, Name: "ada"}, nil
+}
+
+func (c *UsersController) Create(ctx context.Context, in userInput) (*ctlUser, error) {
+	return &ctlUser{ID: 7, Name: in.Name}, nil
+}
+
+func (c *UsersController) Update(ctx context.Context, id int64, in userInput) (*ctlUser, error) {
+	return &ctlUser{ID: id, Name: in.Name}, nil
+}
+
+func (c *UsersController) Destroy(ctx context.Context, id int64) error {
+	c.calls = append(c.calls, fmt.Sprint("destroy-", id))
+	return nil
+}
+
+func (c *UsersController) Suspend(ctx context.Context, id int64) (*ctlUser, error) {
+	return &ctlUser{ID: id, Name: "suspended"}, nil
+}
+
+func (c *UsersController) Search(ctx context.Context, q struct {
+	Term string `query:"q"`
+}) ([]ctlUser, error) {
+	return []ctlUser{{ID: 2, Name: q.Term}}, nil
+}
+
+func ctlDo(t *testing.T, app *App, method, path, body string) (int, string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	app.ServeHTTP(w, req)
+	return w.Code, w.Body.String()
+}
+
+func TestResourceConventions(t *testing.T) {
+	ctl := NewUsersController()
+	app, stop, err := InProcess(Config{},
+		Resource[*UsersController]("/users").
+			Supply(ctl).
+			Member("POST", "suspend", (*UsersController).Suspend).
+			Collection("GET", "search", (*UsersController).Search),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+
+	cases := []struct{ method, path, body, want string }{
+		{"GET", "/users", "", `"name":"ada"`},
+		{"GET", "/users/42", "", `"id":42`},
+		{"POST", "/users", `{"name":"grace"}`, `"name":"grace"`},
+		{"PUT", "/users/5", `{"name":"lin"}`, `{"id":5,"name":"lin"}`},
+		{"PATCH", "/users/5", `{"name":"lin"}`, `{"id":5,"name":"lin"}`},
+		// The route segment is the only source of the id: a body id is ignored.
+		{"PUT", "/users/5", `{"id":6,"name":"lin"}`, `{"id":5,"name":"lin"}`},
+		{"POST", "/users/9/suspend", "", `"name":"suspended"`},
+		{"GET", "/users/search?q=kay", "", `"name":"kay"`},
+	}
+	for _, tc := range cases {
+		code, body := ctlDo(t, app, tc.method, tc.path, tc.body)
+		if code >= 300 || !strings.Contains(body, tc.want) {
+			t.Errorf("%s %s = %d %s, want %s", tc.method, tc.path, code, body, tc.want)
+		}
+	}
+	if code, _ := ctlDo(t, app, "DELETE", "/users/3", ""); code >= 300 || len(ctl.calls) != 1 || ctl.calls[0] != "destroy-3" {
+		t.Errorf("DELETE /users/3 = %d, calls %v", code, ctl.calls)
+	}
+	if code, _ := ctlDo(t, app, "GET", "/users/404", ""); code != 404 {
+		t.Errorf("CRUD sentinel from an action = %d, want 404", code)
+	}
+
+	var mod string
+	for _, e := range app.Registry().Endpoints() {
+		if e.Path == "/users/:id" {
+			mod = e.Module
+		}
+	}
+	if mod != "users" {
+		t.Errorf("dashboard module = %q, want users", mod)
+	}
+}
+
+type CommentsController struct{}
+
+func (c *CommentsController) Show(ctx context.Context, postID, id int64) (string, error) {
+	return fmt.Sprintf("post-%d-comment-%d", postID, id), nil
+}
+
+// A resource nested under a parent path gets the parent's parameters too —
+// including one contributed by an enclosing router.
+func TestResourceNested(t *testing.T) {
+	posts := NewRouter("posts", "/posts/:postId")
+	posts.Include(Resource[*CommentsController]("/comments").Supply(&CommentsController{}).Router)
+	app, stop, err := InProcess(Config{}, posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	if code, body := ctlDo(t, app, "GET", "/posts/3/comments/8", ""); code != 200 || !strings.Contains(body, "post-3-comment-8") {
+		t.Fatalf("nested show = %d %s", code, body)
+	}
+}
+
+type GuardedController struct{ seen []string }
+
+func (c *GuardedController) Authorize(ctx context.Context, action string) error {
+	c.seen = append(c.seen, action)
+	switch action {
+	case "Destroy":
+		return errors.New("you cannot delete this")
+	case "Show":
+		if ctx.Value(ctlKey{}) == "hide" {
+			return ErrCRUDNotFound
+		}
+	}
+	return nil
+}
+
+type ctlKey struct{}
+
+func (c *GuardedController) Show(ctx context.Context, id int64) (string, error) {
+	return fmt.Sprint("shown-", id), nil
+}
+
+// No context parameter: the Authorize wrapper supplies one.
+func (c *GuardedController) Destroy(id int64) error { return nil }
+
+func (c *GuardedController) Stats(ctx context.Context) (*ctlUser, error) {
+	return &ctlUser{Name: "stats"}, nil
+}
+
+func TestControllerAuthorize(t *testing.T) {
+	ctl := &GuardedController{}
+	app, stop, err := InProcess(Config{},
+		Resource[*GuardedController]("/things").Supply(ctl).Query((*GuardedController).Stats),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+
+	if code, body := ctlDo(t, app, "GET", "/things/4", ""); code != 200 || !strings.Contains(body, "shown-4") {
+		t.Fatalf("allowed action = %d %s", code, body)
+	}
+	code, body := ctlDo(t, app, "DELETE", "/things/4", "")
+	if code != 403 || !strings.Contains(body, "you cannot delete this") {
+		t.Fatalf("refused action = %d %s, want 403 with the message", code, body)
+	}
+	// A router prefix also mounts its GraphQL at <prefix>/graphql.
+	gw := httptest.NewRecorder()
+	greq := httptest.NewRequest("POST", "/things/graphql", strings.NewReader(`{"query":"{ stats { name } }"}`))
+	greq.Header.Set("Content-Type", "application/json")
+	app.ServeHTTP(gw, greq)
+	if got := gw.Body.String(); !strings.Contains(got, `"stats"`) {
+		t.Fatalf("GraphQL action keeps its method name = %s", got)
+	}
+	want := []string{"Show", "Destroy", "Stats"}
+	if strings.Join(ctl.seen, ",") != strings.Join(want, ",") {
+		t.Fatalf("Authorize saw %v, want %v", ctl.seen, want)
+	}
+	if !errors.Is(forbiddenError{ErrCRUDNotFound}, ErrCRUDNotFound) {
+		t.Fatal("a refusal keeps the meaning of the error it wraps")
+	}
+}
+
+type badController struct{}
+
+func (c *badController) Show(ctx context.Context, a, b int64) (string, error) { return "", nil }
+func (c *badController) Ping(ctx context.Context) (string, error)             { return "", nil }
+
+type noActions struct{}
+
+func TestControllerBootErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		opt  Option
+		want string
+	}{
+		{"param count", Controller[*badController]("/b").Supply(&badController{}).Get("/:id", (*badController).Show), "path parameter(s)"},
+		{"not a method", Controller[*badController]("/b").Get("/x", (*UsersController).Index), "not a method of"},
+		{"no actions", Resource[*noActions]("/n"), "defines none of"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stop, err := InProcess(Config{}, tc.opt)
+			if stop != nil {
+				defer func() { _ = stop(context.Background()) }()
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want boot error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestControllerName(t *testing.T) {
+	for in, want := range map[string]string{
+		controllerName(reflect.TypeFor[*UsersController]()):   "users",
+		controllerName(reflect.TypeFor[CommentsController]()): "comments",
+		controllerName(reflect.TypeFor[*noActions]()):         "noActions",
+	} {
+		if in != want {
+			t.Errorf("controllerName = %q, want %q", in, want)
+		}
+	}
+}
+
+// Arg body mode on GraphQL: the scalar and the body's fields are all
+// arguments of the field.
+type argBodySvc struct{}
+
+func (s *argBodySvc) Rename(ctx context.Context, id int64, in userInput) (*ctlUser, error) {
+	return &ctlUser{ID: id, Name: in.Name}, nil
+}
+
+func TestArgBodyModeGraphQL(t *testing.T) {
+	app, stop, err := InProcess(Config{},
+		Supply(&argBodySvc{}, &argSvc{}),
+		AsQuery((*argSvc).FetchUser, Arg("id")),
+		AsMutation((*argBodySvc).Rename, Arg("id")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	got := postGraphQL(t, app, `mutation { rename(id: 4, name: "zed") { id name } }`)
+	var res struct {
+		Data struct {
+			Rename ctlUser `json:"rename"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(got), &res); err != nil || res.Data.Rename.ID != 4 || res.Data.Rename.Name != "zed" {
+		t.Fatalf("rename = %s", got)
+	}
+}

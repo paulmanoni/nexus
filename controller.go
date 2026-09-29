@@ -1,0 +1,381 @@
+package nexus
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"unicode"
+)
+
+// ControllerRouter is a Router bound to one controller type: a struct whose
+// methods are the actions. The controller is constructed once through DI (its
+// dependencies are its constructor's parameters), every action shares the
+// router's prefix and gates, and the whole controller shows as one module on
+// the dashboard.
+//
+//	type UsersController struct{ users *UserService }
+//
+//	func NewUsersController(users *UserService) *UsersController { … }
+//
+//	func (c *UsersController) Show(ctx context.Context, id int64) (*User, error)
+//	func (c *UsersController) Suspend(ctx context.Context, id int64, in SuspendInput) error
+//
+//	nexus.Controller[*UsersController]("/users", auth.Required()).
+//	    Provide(NewUsersController).
+//	    Get("/:id", (*UsersController).Show).
+//	    Post("/:id/suspend", (*UsersController).Suspend, auth.Requires("users:suspend"))
+//
+// Actions are method expressions on the controller type. Bare scalar
+// parameters bind from the route's path parameters by position — the route
+// above gives Show and Suspend their id with no nexus.Arg — and a trailing
+// struct is the request body (see nexus.Arg). An explicit nexus.Arg on the
+// action overrides the inference.
+//
+// A controller that implements ActionAuthorizer has Authorize called before
+// every action, with the request's context and the action's method name.
+//
+// A *ControllerRouter is an Option (pass it to Boot/Run, or include its
+// Router in a parent with Include).
+type ControllerRouter[T any] struct {
+	*Router
+	ctrl  reflect.Type
+	authz bool
+}
+
+// ActionAuthorizer is implemented by a controller that authorizes each action
+// itself — the typed, explicit form of a before-action hook:
+//
+//	func (c *UsersController) Authorize(ctx context.Context, action string) error {
+//	    if action == "Destroy" && !auth.Can(ctx, "users:delete") {
+//	        return errors.New("you cannot delete users")
+//	    }
+//	    return nil
+//	}
+//
+// It runs after the router's gates (so the identity is resolved) and before
+// the action. A non-nil error ends the request through the action's normal
+// error path — a REST 403 (ErrForbidden), a GraphQL error, the Inertia
+// ErrorPage — unless it already maps elsewhere (a nexus.ErrCRUDNotFound stays
+// a 404; nexus.Errors stays a validation response).
+type ActionAuthorizer interface {
+	Authorize(ctx context.Context, action string) error
+}
+
+// ErrForbidden reports that the caller may not perform the request. Handlers
+// and ActionAuthorizer hooks return it (or wrap it); MapCRUDError maps it to
+// 403.
+var ErrForbidden = errors.New("forbidden")
+
+// Controller creates a ControllerRouter for controller type T (typically a
+// pointer to a struct) mounted at prefix. The dashboard module is named after
+// the type: UsersController → "users".
+func Controller[T any](prefix string, shared ...MiddlewareOption) *ControllerRouter[T] {
+	t := reflect.TypeFor[T]()
+	return &ControllerRouter[T]{
+		Router: NewRouter(controllerName(t), prefix, shared...),
+		ctrl:   t,
+		authz:  t.Implements(reflect.TypeFor[ActionAuthorizer]()),
+	}
+}
+
+// Resource creates a ControllerRouter for T and registers its conventional
+// actions — whichever of these methods the controller defines:
+//
+//	Index    GET    <prefix>
+//	Show     GET    <prefix>/:id
+//	Create   POST   <prefix>
+//	Update   PUT    <prefix>/:id   (and PATCH)
+//	Destroy  DELETE <prefix>/:id
+//
+// Path parameters bind as for Controller: Show(ctx, id int64) gets the :id,
+// and a nested resource at "/posts/:postId/comments" gives its actions the
+// postId too (Show(ctx, postID, id int64)). Add further actions with Member,
+// Collection or the verb methods.
+func Resource[T any](prefix string, shared ...MiddlewareOption) *ControllerRouter[T] {
+	c := Controller[T](prefix, shared...)
+	found := false
+	for _, a := range resourceActions {
+		m, ok := c.ctrl.MethodByName(a.method)
+		if !ok {
+			continue
+		}
+		found = true
+		for _, verb := range a.verbs {
+			c.rest(verb, a.path, m.Func.Interface(), a.method, nil)
+		}
+	}
+	if !found {
+		c.errs = append(c.errs, fmt.Errorf(
+			"nexus: Resource[%s] defines none of Index, Show, Create, Update, Destroy — use Controller for custom routes", c.ctrl))
+	}
+	return c
+}
+
+var resourceActions = []struct {
+	method string
+	verbs  []string
+	path   string
+}{
+	{"Index", []string{"GET"}, ""},
+	{"Create", []string{"POST"}, ""},
+	{"Show", []string{"GET"}, "/:id"},
+	{"Update", []string{"PUT", "PATCH"}, "/:id"},
+	{"Destroy", []string{"DELETE"}, "/:id"},
+}
+
+// Get registers action at GET path (relative to the controller's prefix).
+func (c *ControllerRouter[T]) Get(path string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.Rest("GET", path, action, opts...)
+}
+
+// Post registers action at POST path.
+func (c *ControllerRouter[T]) Post(path string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.Rest("POST", path, action, opts...)
+}
+
+// Put registers action at PUT path.
+func (c *ControllerRouter[T]) Put(path string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.Rest("PUT", path, action, opts...)
+}
+
+// Patch registers action at PATCH path.
+func (c *ControllerRouter[T]) Patch(path string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.Rest("PATCH", path, action, opts...)
+}
+
+// Delete registers action at DELETE path.
+func (c *ControllerRouter[T]) Delete(path string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.Rest("DELETE", path, action, opts...)
+}
+
+// Rest registers action at method + path.
+func (c *ControllerRouter[T]) Rest(method, path string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.rest(method, path, action, "", opts)
+}
+
+// Member registers a resource member action at <prefix>/:id/<name>:
+// Member("POST", "publish", (*PostsController).Publish) → POST /posts/:id/publish.
+func (c *ControllerRouter[T]) Member(method, name string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.Rest(method, "/:id/"+strings.TrimPrefix(name, "/"), action, opts...)
+}
+
+// Collection registers a resource collection action at <prefix>/<name>:
+// Collection("GET", "search", (*PostsController).Search) → GET /posts/search.
+func (c *ControllerRouter[T]) Collection(method, name string, action any, opts ...RestOption) *ControllerRouter[T] {
+	return c.Rest(method, "/"+strings.TrimPrefix(name, "/"), action, opts...)
+}
+
+// Query registers action as a GraphQL query (its op name comes from the method
+// name). Scalar parameters need an explicit nexus.Arg — GraphQL has no path.
+func (c *ControllerRouter[T]) Query(action any, opts ...GqlOption) *ControllerRouter[T] {
+	return c.gqlAction("query", AsQuery, action, opts)
+}
+
+// Mutation registers action as a GraphQL mutation.
+func (c *ControllerRouter[T]) Mutation(action any, opts ...GqlOption) *ControllerRouter[T] {
+	return c.gqlAction("mutation", AsMutation, action, opts)
+}
+
+// Provide adds constructors (usually the controller's own) under the
+// controller's module.
+func (c *ControllerRouter[T]) Provide(fns ...any) *ControllerRouter[T] {
+	c.Router.Provide(fns...)
+	return c
+}
+
+// Supply adds a ready-made controller (or other values) under the
+// controller's module — the alternative to a constructor via Provide.
+func (c *ControllerRouter[T]) Supply(vals ...any) *ControllerRouter[T] {
+	c.Router.Register(Supply(vals...))
+	return c
+}
+
+// rest registers one REST action. name is the action name Authorize sees;
+// empty means "derive it from the method expression".
+func (c *ControllerRouter[T]) rest(method, path string, action any, name string, opts []RestOption) *ControllerRouter[T] {
+	fn, name, err := c.prepare(action, name)
+	if err != nil {
+		c.errs = append(c.errs, err)
+		return c
+	}
+	explicitArg := false
+	for _, o := range opts {
+		if _, ok := o.(ArgOption); ok {
+			explicitArg = true
+		}
+	}
+	c.builders = append(c.builders, func(full string, sh []MiddlewareOption) Option {
+		all := make([]RestOption, 0, len(sh)+len(opts)+1)
+		for _, m := range sh {
+			all = append(all, m)
+		}
+		if !explicitArg {
+			arg, err := inferPathArgs(fn, name, method, full+path)
+			if err != nil {
+				return Error(err)
+			}
+			if arg != nil {
+				all = append(all, *arg)
+			}
+		}
+		return AsRest(method, path, fn, append(all, opts...)...)
+	})
+	return c
+}
+
+func (c *ControllerRouter[T]) gqlAction(kind string, as func(any, ...GqlOption) Option, action any, opts []GqlOption) *ControllerRouter[T] {
+	fn, _, err := c.prepare(action, "")
+	if err != nil {
+		c.errs = append(c.errs, err)
+		return c
+	}
+	// The op name comes from the method, before an Authorize wrapper hides it;
+	// an explicit nexus.Op among opts still wins (it applies later).
+	named := append([]GqlOption{Op(opNameFromFunc(action, kind))}, opts...)
+	c.Router.gql(as, fn, named)
+	return c
+}
+
+// prepare validates that action is a method expression on the controller
+// type and, when the controller authorizes its actions, wraps it.
+func (c *ControllerRouter[T]) prepare(action any, name string) (any, string, error) {
+	v := reflect.ValueOf(action)
+	if !v.IsValid() || v.Kind() != reflect.Func {
+		return nil, "", fmt.Errorf("nexus: Controller[%s]: action must be a method expression like (%s).Index, got %T", c.ctrl, c.ctrl, action)
+	}
+	if v.Type().NumIn() == 0 || v.Type().In(0) != c.ctrl {
+		return nil, "", fmt.Errorf("nexus: Controller[%s]: action %s is not a method of %s — pass a method expression like (%s).Index",
+			c.ctrl, v.Type(), c.ctrl, c.ctrl)
+	}
+	if name == "" {
+		name = runtimeFuncName(v)
+	}
+	if !c.authz {
+		return action, name, nil
+	}
+	wrapped, err := wrapAuthorize(v, name)
+	if err != nil {
+		return nil, "", fmt.Errorf("nexus: Controller[%s].%s: %w", c.ctrl, name, err)
+	}
+	return wrapped, name, nil
+}
+
+// wrapAuthorize returns a func with fn's parameters (plus a context.Context
+// after the receiver when fn has none) that calls the receiver's Authorize
+// before fn. The error travels as fn's own error return.
+func wrapAuthorize(fn reflect.Value, action string) (any, error) {
+	ft := fn.Type()
+	errType := reflect.TypeFor[error]()
+	if ft.NumOut() == 0 || ft.Out(ft.NumOut()-1) != errType {
+		return nil, fmt.Errorf("the controller implements Authorize, so its actions must return an error (got %s)", ft)
+	}
+	ctxIdx := -1
+	for i := 0; i < ft.NumIn(); i++ {
+		if ft.In(i) == contextType {
+			ctxIdx = i
+			break
+		}
+	}
+	in := make([]reflect.Type, 0, ft.NumIn()+1)
+	for i := 0; i < ft.NumIn(); i++ {
+		in = append(in, ft.In(i))
+	}
+	injected := ctxIdx < 0
+	if injected {
+		in = append([]reflect.Type{in[0], contextType}, in[1:]...)
+		ctxIdx = 1
+	}
+	out := make([]reflect.Type, ft.NumOut())
+	for i := range out {
+		out[i] = ft.Out(i)
+	}
+	wrapper := reflect.MakeFunc(reflect.FuncOf(in, out, false), func(args []reflect.Value) []reflect.Value {
+		ctx, _ := args[ctxIdx].Interface().(context.Context)
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := args[0].Interface().(ActionAuthorizer).Authorize(ctx, action); err != nil {
+			res := make([]reflect.Value, len(out))
+			for i, t := range out {
+				res[i] = reflect.Zero(t)
+			}
+			e := reflect.New(errType).Elem()
+			e.Set(reflect.ValueOf(error(forbiddenError{err})))
+			res[len(res)-1] = e
+			return res
+		}
+		if injected {
+			args = append([]reflect.Value{args[0]}, args[2:]...)
+		}
+		return fn.Call(args)
+	})
+	return wrapper.Interface(), nil
+}
+
+// forbiddenError carries an Authorize refusal: its message, and both the
+// original error and ErrForbidden for errors.Is/As — so a refusal that is
+// already a 404 or a validation error keeps that meaning.
+type forbiddenError struct{ err error }
+
+func (e forbiddenError) Error() string   { return e.err.Error() }
+func (e forbiddenError) Unwrap() []error { return []error{e.err, ErrForbidden} }
+
+// inferPathArgs returns the nexus.Arg an action needs to bind its bare scalar
+// parameters from the route's path parameters, positionally. Nil when the
+// action takes no bare scalars (its path parameters come from a tagged struct,
+// or it needs none).
+func inferPathArgs(fn any, action, method, route string) (*ArgOption, error) {
+	ft := reflect.TypeOf(fn)
+	end := ft.NumIn()
+	if end > 0 && ft.In(end-1).Kind() == reflect.Struct && !ft.In(end-1).Implements(paramsMarkerType) {
+		end--
+	}
+	n := 0
+	for i := end - 1; i >= 1 && isScalarParam(ft.In(i)); i-- {
+		n++
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	params := routePathParams(route)
+	if n != len(params) {
+		return nil, fmt.Errorf("nexus: action %s at %s %s takes %d bare parameter(s) but the route has %d path parameter(s) %v — match them, or pass nexus.Arg / an args struct",
+			action, method, route, n, len(params), params)
+	}
+	arg := Arg(params...)
+	return &arg, nil
+}
+
+func isScalarParam(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+// controllerName names a controller's dashboard module after its type:
+// *UsersController → "users", BillingController → "billing".
+func controllerName(t reflect.Type) string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	name := strings.TrimSuffix(t.Name(), "Controller")
+	if name == "" {
+		name = t.Name()
+	}
+	if name == "" {
+		return "controller"
+	}
+	r := []rune(name)
+	r[0] = unicode.ToLower(r[0])
+	return string(r)
+}
