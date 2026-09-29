@@ -36,6 +36,16 @@ features:
     details: An ordinary Vite project under web/ with HMR in development. nexus build embeds the output, so you still deploy one Go binary. Inertia pages and resources get typed links and form actions.
     link: /guide/frontend
     linkText: Frontend
+  - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>'
+    title: Background jobs
+    details: Typed jobs with retries, timeouts, progress and checkpoints. Run them in memory, on your SQL database or Redis, or on RabbitMQ, across as many replicas as you like.
+    link: /guide/jobs
+    linkText: Background jobs
+  - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>'
+    title: Databases, caches, storage and mail
+    details: Bind Postgres, MySQL or SQLite, a memory or Redis cache, local or S3 storage and SMTP mail from nexus.toml. Each is injected and shown on the dashboard.
+    link: /guide/resources
+    linkText: Databases & caches
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>'
     title: Live dashboard
     details: /__nexus draws your modules, endpoints, resources, workers and crons, and streams traffic over a WebSocket. It is locked down by default in production.

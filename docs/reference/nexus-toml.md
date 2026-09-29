@@ -117,6 +117,42 @@ Read by `cache.BindFromConfig`, `storage.BindFromConfig` and `mail.BindFromConfi
 are the snake_case config field names. See [File storage](/guide/storage) and
 [Mail](/guide/mail).
 
+A cache can also choose its store with `driver`:
+
+```toml
+[cache.session]
+driver = "memory"   # memory: never Redis | redis: in every environment | auto (default): Redis in production
+```
+
+See [choosing the store per cache](/guide/resources#choosing-the-store-per-cache).
+
+## `[jobs]`
+
+Read by `jobs.Module`. See [Background jobs](/guide/jobs).
+
+```toml
+[jobs]
+driver = "db"              # memory | db | redis | rabbitmq (default: the bound driver's, else memory)
+run    = true              # false: enqueue here, run the jobs elsewhere
+shutdown_grace = "10s"     # running jobs get this long on shutdown (0 under nexus dev)
+lease  = "30s"             # db/redis: a claim's lease, renewed while the job runs
+poll   = "1s"              # db/redis: how often idle workers check for work
+
+[jobs.queues]              # queue → concurrent workers (default: default = 4)
+default = 4
+low     = 1
+
+[jobs.redis]               # jobsredis.Bind
+url    = "redis://:password@redis:6379/2"   # else REDIS_URL
+prefix = "{nexus:jobs}:"
+
+[jobs.rabbitmq]            # jobsamqp.Bind
+url              = "amqp://user:pass@rabbitmq:5672/"   # else RABBIT_URL
+prefix           = "nexus.jobs."
+consumer_timeout = "8h"    # keep above your longest jobs.Timeout
+delivery_limit   = 20
+```
+
 ## `[env.*]`
 
 Top-level. Each key becomes a process environment variable, and it can be referenced

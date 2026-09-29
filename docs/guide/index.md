@@ -32,6 +32,8 @@ binary, with the frontend embedded in it.
   links and form actions generated from the Go routes.
 - **Client SDK.** A typed JS/TS client and Vue composables, generated from your
   registered endpoints and served by the binary.
+- **Background jobs.** Typed jobs with queues, retries, timeouts, progress, checkpoints
+  and cron schedules, on an in-memory, SQL, Redis or RabbitMQ driver.
 - **Dashboard.** A live architecture graph, an endpoint tester, traces, crons, rate
   limits and cached identities.
 - **Batteries.** Databases (GORM), caches (memory or Redis), file storage (local or S3),

@@ -90,6 +90,11 @@ driver = "memory"    # never Redis, even in production with the backend imported
 The binders live in `db` and `extension/cache`, not the nexus root package. Importing
 `nexus` alone does not pull GORM, SQL drivers, Redis or Prometheus into your build.
 
+The same rule applies to [background jobs](./jobs). `extension/jobs` itself has no heavy
+dependencies. `jobsdb` pulls in GORM, which a database app links anyway. `jobsredis` and
+`jobsamqp` are separate modules, so their Redis and AMQP clients reach your build only
+when you import them.
+
 ## Other resources
 
 Register anything else, such as a queue, by hand:
