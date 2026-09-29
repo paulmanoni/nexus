@@ -330,3 +330,20 @@ func TestOutStructSpread(t *testing.T) {
 		t.Fatalf("out spread: %+v %+v", p, c)
 	}
 }
+
+type optDep struct{}
+
+// An optional dependency whose provider fails is an error, not a zero value
+// (dig/fx semantics); one with no provider is zero.
+func TestOptionalProviderErrorPropagates(t *testing.T) {
+	boom := errors.New("boom")
+	consumer := Annotate(func(d *optDep) int { return 1 }, ParamTags(`optional:"true"`))
+	err := New(Provide(func() (*optDep, error) { return nil, boom }), Provide(consumer), Invoke(func(int) {})).Err()
+	if !errors.Is(err, boom) {
+		t.Fatalf("failing optional provider: err = %v, want boom", err)
+	}
+	ran := false
+	if err := New(Provide(consumer), Invoke(func(n int) { ran = n == 1 })).Err(); err != nil || !ran {
+		t.Fatalf("absent optional provider: err = %v, ran %v", err, ran)
+	}
+}

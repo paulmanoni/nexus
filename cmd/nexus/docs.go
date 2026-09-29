@@ -925,19 +925,39 @@ Name (stable across renames). jobs.Permanent(err) fails without retrying; a pani
 fails with its stack. Run: Progress, SetResult, Checkpoint/Resume (continue after a
 failure or shutdown), ID, Attempt, Actor (nexus.RequestIdentity of the enqueuer).
 
-Inject *jobs.Manager: Get(id) → Record{State, Progress, Result, Error, …},
-Cancel(id), List(jobs.Filter{Name, State, Actor, Limit}).
+Inject *jobs.Manager: Get(ctx, id) → Record{State, Progress, Result, Error, …},
+Cancel(ctx, id) (reaches a job running in another process at its next lease
+renewal), List(ctx, jobs.Filter{Name, State, Actor, Limit}).
+
+Schedules — one job per tick, even across replicas (the tick's ID is derived):
+
+    SendDigest.Schedule("0 7 * * *", DigestArgs{})   // also "@every 15m", "CRON_TZ=… 0 8 * * *"
+
+Drivers (same API):
+  memory  built in; in-process, carried across nexus dev rebuilds
+  db      jobsdb.Bind[DB]()   (extension/jobs/jobsdb; T embeds *db.Manager) —
+          Postgres/MySQL/SQLite, tables nexus_jobs + nexus_job_uniques created on
+          first use (jobsdb.NoMigrate / jobsdb.Migrate), version-checked writes
+  redis   jobsredis.Bind(jobsredis.Config{URL})  (separate module
+          extension/jobs/jobsredis; [jobs.redis] url/prefix, else REDIS_URL) —
+          Lua claims, WATCH/MULTI updates, {nexus:jobs}: hash-tagged keys
+
+Shared drivers: workers lease what they claim (renewed every lease/3); a dead
+process's jobs are taken over when leases lapse (a crash uses up an attempt);
+every write checks ownership (jobs.ErrLostOwnership otherwise).
 
     [jobs]
-    driver = "memory"        # the one driver so far: in-process, survives nexus dev rebuilds
-    run    = true            # false: enqueue only
+    driver = "db"            # memory | db | redis (default: the bound store's, else memory)
+    run    = true            # false: enqueue only (web replicas)
     shutdown_grace = "10s"   # then running jobs are cancelled and requeued (0 under nexus dev)
+    lease  = "30s"
+    poll   = "1s"            # idle polling of a shared store
     [jobs.queues]
     default = 4              # workers per queue
 
 At-least-once delivery: an interrupted job runs again — keep handlers
-idempotent. The dashboard's "jobs" queue node shows per-queue counts, the
-registered jobs and the latest failure.
+idempotent. The dashboard's "jobs" queue node shows the driver, per-queue
+counts, the registered jobs and the latest failure.
 `,
 
 	"inertiatest": `

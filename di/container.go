@@ -167,6 +167,21 @@ func (c *container) resolve(t reflect.Type) (reflect.Value, error) {
 	return v, nil
 }
 
+// provides reports whether t can be resolved at all — a value, a provider,
+// or an In struct. An optional dependency is zero only when it can't: once
+// something provides it, its constructor's error is the caller's error too
+// (dig/fx semantics), rather than a silent zero.
+func (c *container) provides(t reflect.Type) bool {
+	if _, ok := c.values[t]; ok {
+		return true
+	}
+	if embedsIn(t) {
+		return true
+	}
+	_, ok := c.byType[t]
+	return ok
+}
+
 // noProviderError explains a missing dependency. A pointer/value mismatch
 // between what a provider returns and what a consumer asks for is the most
 // common wiring mistake, so it gets named rather than left to be guessed.
@@ -218,11 +233,11 @@ func (c *container) resolveIn(t reflect.Type) (reflect.Value, error) {
 			out.Field(i).Set(slice)
 			continue
 		}
+		if field.Tag.Get("optional") == "true" && !c.provides(field.Type) {
+			continue // leave zero value
+		}
 		v, err := c.resolve(field.Type)
 		if err != nil {
-			if field.Tag.Get("optional") == "true" {
-				continue // leave zero value
-			}
 			return reflect.Value{}, err
 		}
 		out.Field(i).Set(v)
@@ -350,12 +365,12 @@ func (c *container) resolveParams(ft reflect.Type, paramTags []string, who strin
 		if isVariadicParam {
 			break // ignore the variadic argument (dig/fx parity)
 		}
+		if tagOptional(paramTags, i) && !c.provides(pt) {
+			args = append(args, reflect.Zero(pt))
+			continue
+		}
 		v, rerr := c.resolve(pt)
 		if rerr != nil {
-			if tagOptional(paramTags, i) {
-				args = append(args, reflect.Zero(pt))
-				continue
-			}
 			return nil, false, fmt.Errorf("%w\n\tneeded by %s (parameter %d)", rerr, who, i+1)
 		}
 		args = append(args, v)

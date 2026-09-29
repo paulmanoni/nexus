@@ -1058,11 +1058,22 @@ enqueue annotated jobs with `jobs.Enqueue(ctx, (*Svc).M, args)` (ambiguous if a 
 defined twice). `*jobs.Run`: `Progress(done,total,msg)` (returns ctx.Err() once it should
 stop), `SetResult`, `Checkpoint`/`Resume`, `ID/Attempt/Actor` (enqueuer via
 `nexus.RequestIdentity`). `jobs.Permanent(err)` skips retries; panics fail with the stack.
-Inject `*jobs.Manager` for `Get(id)` / `Cancel(id)` / `List(jobs.Filter{…})`. `[jobs]` driver
-(`memory` only so far — in-process, carried across `nexus dev` rebuilds), `run` (false =
-enqueue only), `shutdown_grace` (default 10s, 0 in dev; then cancel + requeue),
-`[jobs.queues] name = workers`. At-least-once delivery. Dashboard: a `jobs` queue node with
-per-queue counts and the latest failure.
+Inject `*jobs.Manager` for `Get(ctx, id)` / `Cancel(ctx, id)` / `List(ctx, jobs.Filter{…})`.
+`X.Schedule("0 7 * * *" | "@every 15m" | "CRON_TZ=… …", args)` is an Option (registers the job
+too) enqueuing one job per tick across replicas (deterministic tick ID; missed ticks skipped).
+Drivers behind `jobs.Store`: `memory` (default; in-process, carried across `nexus dev`
+rebuilds), `db` = `jobsdb.Bind[DB]()` (`extension/jobs/jobsdb`, GORM, any dialect; tables
+`nexus_jobs`/`nexus_job_uniques` auto-created, `jobsdb.NoMigrate()`/`Migrate`; version-checked
+CAS writes), `redis` = `jobsredis.Bind(jobsredis.Config{URL, Prefix})` (SEPARATE module
+`extension/jobs/jobsredis`; `[jobs.redis] url`, else `REDIS_URL`; Lua claim/insert, WATCH/MULTI
+updates, `{nexus:jobs}:` keys). A `jobs.Store` in DI (optional dep of `jobs.Module`) selects its
+driver. Shared stores: lease per claim (`[jobs] lease` 30s, renewed every lease/3), takeover of a
+dead worker's jobs (a crash spends an attempt), ownership-checked writes (`jobs.ErrLostOwnership`),
+cross-process cancel via the lease heartbeat, `poll` (1s) for idle workers. `[jobs]` `run`
+(false = enqueue only), `shutdown_grace` (10s, 0 in dev; then cancel + requeue),
+`[jobs.queues] name = workers`. At-least-once delivery. Dashboard: a `jobs` queue node with the
+driver, per-queue counts and the latest failure. Each app binds a job's receiver separately, so
+two apps in one process don't share services.
 
 ---
 

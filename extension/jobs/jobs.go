@@ -80,9 +80,9 @@ func Define[S, A any](fn func(S, context.Context, *Run, A) error, opts ...Option
 	}
 	d := newDefinition(fn, reflect.TypeFor[A](), opts)
 	d.recvType = reflect.TypeFor[S]()
-	d.bind = func(recv reflect.Value) {
+	d.bind = func(recv reflect.Value) callFunc {
 		s := recv.Interface().(S)
-		d.call = func(ctx context.Context, run *Run, raw json.RawMessage) error {
+		return func(ctx context.Context, run *Run, raw json.RawMessage) error {
 			var a A
 			if err := decodeArgs(raw, &a); err != nil {
 				return Permanent(err)
@@ -156,7 +156,10 @@ func Unique(ttl time.Duration) Option { return func(d *definition) { d.unique = 
 // EnqueueOption configures one Enqueue call.
 type EnqueueOption func(*enqueueConfig)
 
-type enqueueConfig struct{ runAt time.Time }
+type enqueueConfig struct {
+	runAt time.Time
+	id    ID // a caller-chosen ID: inserting one that exists is a no-op
+}
 
 // Delay runs the job no sooner than d from now.
 func Delay(d time.Duration) EnqueueOption {
@@ -181,6 +184,9 @@ func Permanent(err error) error {
 	return permanentError{err}
 }
 
+// callFunc runs one attempt of a job with its JSON arguments.
+type callFunc func(context.Context, *Run, json.RawMessage) error
+
 // definition is one job's registration.
 type definition struct {
 	name        string
@@ -192,9 +198,9 @@ type definition struct {
 
 	fnPtr    uintptr
 	argsType reflect.Type
-	recvType reflect.Type             // nil for DefineFunc
-	bind     func(recv reflect.Value) // Define: binds the DI receiver
-	call     func(context.Context, *Run, json.RawMessage) error
+	recvType reflect.Type                      // nil for DefineFunc
+	bind     func(recv reflect.Value) callFunc // Define: binds the DI receiver, per app
+	call     callFunc                          // DefineFunc: needs no receiver
 
 	mu  sync.RWMutex
 	mgr *Manager
@@ -271,10 +277,11 @@ func (d *definition) option() nexus.Option {
 	errType := reflect.TypeFor[error]()
 	fn := reflect.MakeFunc(reflect.FuncOf(in, []reflect.Type{errType}, false), func(args []reflect.Value) []reflect.Value {
 		m := args[0].Interface().(*Manager)
+		call := d.call
 		if d.bind != nil {
-			d.bind(args[1])
+			call = d.bind(args[1])
 		}
-		err := m.register(d)
+		err := m.register(d, call)
 		out := reflect.New(errType).Elem()
 		if err != nil {
 			out.Set(reflect.ValueOf(err))

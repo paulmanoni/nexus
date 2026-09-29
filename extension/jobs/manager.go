@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/resource"
 )
 
@@ -23,17 +25,20 @@ import (
 // nexus.toml, then fall back to the defaults noted per field:
 //
 //	[jobs]
-//	driver = "memory"         # the one driver in this release
+//	driver = "db"             # memory | db | redis (db and redis need a store bound)
 //	run    = true             # false: this process enqueues but runs nothing
 //	shutdown_grace = "10s"    # how long running jobs get to finish on shutdown
+//	lease  = "30s"            # a claimed job's lease, renewed while it runs
+//	poll   = "1s"             # how often idle workers look for work in a shared store
 //
 //	[jobs.queues]             # queue → concurrent workers
 //	default = 4
 //	low     = 1
 type Config struct {
-	// Driver stores the jobs. "memory" (the default, and the one driver in
-	// this release) keeps them in the process; they survive `nexus dev`
-	// rebuilds but not restarts.
+	// Driver names the store. "memory" keeps jobs in the process (they
+	// survive `nexus dev` rebuilds, not restarts). "db" (jobsdb.Bind) and
+	// "redis" (jobsredis.Bind) keep them where several processes share them.
+	// Default: the bound store's driver, else "memory".
 	Driver string
 
 	// Queues maps each queue to its number of concurrent workers. Default
@@ -41,8 +46,7 @@ type Config struct {
 	Queues map[string]int
 
 	// DisableWorkers makes this process enqueue without running jobs — a web
-	// replica beside dedicated worker replicas. (With the memory driver
-	// nothing else would run them, so boot warns.) nexus.toml: run = false.
+	// replica beside dedicated worker replicas. nexus.toml: run = false.
 	DisableWorkers bool
 
 	// ShutdownGrace is how long running jobs may keep going once shutdown
@@ -50,8 +54,18 @@ type Config struct {
 	// Default 10s, or 0 under `nexus dev` (a rebuild shouldn't wait).
 	ShutdownGrace time.Duration
 
+	// Lease is how long a claim holds without renewal (default 30s). A
+	// running job's lease is renewed every Lease/3; when a process dies,
+	// another takes its jobs over once their leases lapse.
+	Lease time.Duration
+
+	// PollInterval is how often idle workers check a shared store for work
+	// (default 1s). An enqueue in the same process wakes them at once.
+	PollInterval time.Duration
+
 	// Retention keeps finished jobs this long for lookups and the dashboard
-	// (default 24h); KeepFinished caps how many are kept (default 1000).
+	// (default 24h); KeepFinished also caps how many the memory store keeps
+	// (default 1000).
 	Retention    time.Duration
 	KeepFinished int
 
@@ -60,19 +74,41 @@ type Config struct {
 	Logger *slog.Logger
 }
 
-func (c Config) resolve() (Config, error) {
-	if c.Driver == "" {
-		c.Driver = nexus.Get("jobs.driver", "memory")
+// NamedStore is a Store that names its driver ("db", "redis"), so
+// Config.Driver can default to it and check it.
+type NamedStore interface {
+	Store
+	Driver() string
+}
+
+func (c Config) resolve(store Store) (Config, Store, error) {
+	bound := ""
+	if ns, ok := store.(NamedStore); ok {
+		bound = ns.Driver()
+	} else if store != nil {
+		bound = "custom"
 	}
-	if c.Driver != "memory" {
-		return c, fmt.Errorf("jobs: unknown driver %q — this release ships \"memory\"", c.Driver)
+	if c.Driver == "" {
+		def := "memory"
+		if bound != "" {
+			def = bound
+		}
+		c.Driver = nexus.Get("jobs.driver", def)
+	}
+	switch {
+	case c.Driver == "memory":
+		store = newMemoryStore()
+	case bound == "":
+		return c, nil, fmt.Errorf("jobs: driver %q needs a store — bind one: jobsdb.Bind[YourDB]() or jobsredis.Bind[YourCache]()", c.Driver)
+	case c.Driver != bound && bound != "custom":
+		return c, nil, fmt.Errorf("jobs: driver is %q but the bound store is %q", c.Driver, bound)
 	}
 	if c.Queues == nil {
 		c.Queues = map[string]int{}
 		for q, v := range nexus.Get[map[string]any]("jobs.queues") {
 			n, err := toInt(v)
 			if err != nil || n < 1 {
-				return c, fmt.Errorf("jobs: [jobs.queues] %s = %v — want a worker count of 1 or more", q, v)
+				return c, nil, fmt.Errorf("jobs: [jobs.queues] %s = %v — want a worker count of 1 or more", q, v)
 			}
 			c.Queues[q] = n
 		}
@@ -90,6 +126,12 @@ func (c Config) resolve() (Config, error) {
 		}
 		c.ShutdownGrace = nexus.Get("jobs.shutdown_grace", def)
 	}
+	if c.Lease == 0 {
+		c.Lease = nexus.Get("jobs.lease", 30*time.Second)
+	}
+	if c.PollInterval == 0 {
+		c.PollInterval = nexus.Get("jobs.poll", time.Second)
+	}
 	if c.Retention == 0 {
 		c.Retention = 24 * time.Hour
 	}
@@ -99,7 +141,7 @@ func (c Config) resolve() (Config, error) {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
-	return c, nil
+	return c, store, nil
 }
 
 func toInt(v any) (int, error) {
@@ -116,18 +158,20 @@ func toInt(v any) (int, error) {
 
 // Module installs the jobs runtime: a *Manager in DI (inject it to look jobs
 // up or cancel them), worker pools that start with the app and drain on
-// shutdown, and a "jobs" resource on the dashboard.
+// shutdown, and a "jobs" resource on the dashboard. A jobs.Store in DI —
+// jobsdb.Bind or jobsredis.Bind provides one — selects that driver.
 func Module(cfg Config) nexus.Option {
+	ctor := func(lc nexus.Lifecycle, store Store) (*Manager, error) {
+		resolved, st, err := cfg.resolve(store)
+		if err != nil {
+			return nil, err
+		}
+		m := newManager(resolved, st)
+		lc.Append(nexus.Hook{OnStart: m.start, OnStop: m.stop})
+		return m, nil
+	}
 	return nexus.Options(
-		nexus.Provide(func(lc nexus.Lifecycle) (*Manager, error) {
-			resolved, err := cfg.resolve()
-			if err != nil {
-				return nil, err
-			}
-			m := newManager(resolved)
-			lc.Append(nexus.Hook{OnStart: m.start, OnStop: m.stop})
-			return m, nil
-		}),
+		nexus.Raw(di.Provide(di.Annotate(ctor, di.ParamTags("", `optional:"true"`)))),
 		nexus.Invoke(func(app *nexus.App, m *Manager) { app.Register(m.asResource()) }),
 	)
 }
@@ -135,53 +179,82 @@ func Module(cfg Config) nexus.Option {
 // Manager runs and tracks jobs. Inject *jobs.Manager to look a job up or
 // cancel it.
 type Manager struct {
-	cfg   Config
-	store *memoryStore
-	log   *slog.Logger
+	cfg    Config
+	store  Store
+	log    *slog.Logger
+	worker string // this process, as recorded on the jobs it claims
 
-	mu      sync.Mutex
-	defs    map[string]*definition
-	running map[ID]*execution
-	wake    map[string]chan struct{}
+	mu        sync.Mutex
+	defs      map[string]*definition
+	calls     map[string]callFunc // each job, bound to this app's receiver
+	running   map[ID]*execution
+	pending   map[ID]int // cancels that arrived between a claim here and its run starting: attempt
+	wake      map[string]chan struct{}
+	schedules []*schedule
 
 	runCtx     context.Context // cancelled after the shutdown grace
 	cancelRuns context.CancelFunc
 	stopping   chan struct{}
 	stopOnce   sync.Once
 	workers    sync.WaitGroup
+	background sync.WaitGroup // heartbeat, maintenance, scheduler
+
+	statsMu   sync.Mutex
+	statsAt   time.Time
+	statsLast Stats
 }
 
 type execution struct {
+	rec       Record
 	cancel    context.CancelFunc
 	cancelled bool // by Manager.Cancel, not by shutdown
+	lost      bool // another worker took the job over
 }
 
-func newManager(cfg Config) *Manager {
+func newManager(cfg Config, store Store) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		cfg:        cfg,
-		store:      newMemoryStore(),
+		store:      store,
 		log:        cfg.Logger,
+		worker:     workerName(),
 		defs:       map[string]*definition{},
+		calls:      map[string]callFunc{},
 		running:    map[ID]*execution{},
+		pending:    map[ID]int{},
 		wake:       map[string]chan struct{}{},
 		runCtx:     ctx,
 		cancelRuns: cancel,
 		stopping:   make(chan struct{}),
 	}
-	nexus.PreserveDev("jobs", m.store)
+	if ms, ok := store.(*memoryStore); ok {
+		nexus.PreserveDev("jobs", ms)
+	}
 	return m
+}
+
+func workerName() string {
+	host, _ := os.Hostname()
+	var b [3]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), hex.EncodeToString(b[:]))
+}
+
+// storeCtx bounds one store call.
+func (m *Manager) storeCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second)
 }
 
 // register attaches a definition to this manager; the job's queue gets a
 // wake channel (and a worker pool, when it starts).
-func (m *Manager) register(d *definition) error {
+func (m *Manager) register(d *definition, call callFunc) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if prev, dup := m.defs[d.name]; dup && prev != d {
 		return fmt.Errorf("jobs: two jobs are named %q — give one jobs.Name(...)", d.name)
 	}
 	m.defs[d.name] = d
+	m.calls[d.name] = call
 	if _, ok := m.wake[d.queue]; !ok {
 		m.wake[d.queue] = make(chan struct{}, 1)
 	}
@@ -192,25 +265,32 @@ func (m *Manager) register(d *definition) error {
 }
 
 func (m *Manager) start(context.Context) error {
+	m.background.Add(1)
+	go m.maintain()
 	if m.cfg.DisableWorkers {
-		m.log.Warn("jobs: workers disabled (run = false) — with the memory driver, jobs enqueued here never run")
+		if !m.store.Shared() {
+			m.log.Warn("jobs: workers disabled (run = false) with the memory driver — jobs enqueued here never run")
+		}
 		return nil
 	}
 	m.mu.Lock()
 	queues := make(map[string]int, len(m.wake))
 	for q := range m.wake {
-		n := m.cfg.Queues[q]
-		if n < 1 {
-			n = 1
-		}
-		queues[q] = n
+		queues[q] = max(m.cfg.Queues[q], 1)
 	}
+	hasSchedules := len(m.schedules) > 0
 	m.mu.Unlock()
 	for q, n := range queues {
 		for range n {
 			m.workers.Add(1)
 			go m.work(q)
 		}
+	}
+	m.background.Add(1)
+	go m.heartbeat()
+	if hasSchedules {
+		m.background.Add(1)
+		go m.runSchedules()
 	}
 	return nil
 }
@@ -219,6 +299,7 @@ func (m *Manager) start(context.Context) error {
 // them (they are requeued) and waits for them to return.
 func (m *Manager) stop(ctx context.Context) error {
 	m.stopOnce.Do(func() { close(m.stopping) })
+	defer m.background.Wait()
 	// Workers return once their current job does; idle ones return now.
 	done := make(chan struct{})
 	go func() { m.workers.Wait(); close(done) }()
@@ -240,7 +321,8 @@ func (m *Manager) stop(ctx context.Context) error {
 }
 
 // work is one worker of queue: claim a due job, run it, repeat; sleep until
-// woken by an enqueue, the next delayed job is due, or shutdown.
+// woken by an enqueue here, the poll interval (shared stores), the next
+// delayed job, or shutdown.
 func (m *Manager) work(queue string) {
 	defer m.workers.Done()
 	m.mu.Lock()
@@ -252,14 +334,25 @@ func (m *Manager) work(queue string) {
 			return
 		default:
 		}
-		if rec, ok := m.store.claim(queue, time.Now()); ok {
+		ctx, cancel := m.storeCtx()
+		rec, ok, err := m.store.Claim(ctx, queue, m.worker, time.Now(), m.cfg.Lease)
+		cancel()
+		if err != nil {
+			m.log.Warn("jobs: claim failed", "queue", queue, "error", err)
+		}
+		if ok {
 			m.execute(rec)
 			continue
 		}
 		wait := time.Minute
-		if next, ok := m.store.nextDue(queue); ok {
-			wait = max(time.Until(next), time.Millisecond)
+		if m.store.Shared() || err != nil {
+			wait = m.cfg.PollInterval
 		}
+		ctx, cancel = m.storeCtx()
+		if next, ok, _ := m.store.NextDue(ctx, queue); ok {
+			wait = min(wait, max(time.Until(next), time.Millisecond))
+		}
+		cancel()
 		timer := time.NewTimer(wait)
 		select {
 		case <-m.stopping:
@@ -274,10 +367,13 @@ func (m *Manager) work(queue string) {
 
 func (m *Manager) execute(rec Record) {
 	m.mu.Lock()
-	d := m.defs[rec.Name]
+	d, call := m.defs[rec.Name], m.calls[rec.Name]
 	m.mu.Unlock()
-	if d == nil || d.call == nil {
-		m.finish(rec, StateFailed, fmt.Sprintf("no job named %q is registered in this process", rec.Name))
+	if d == nil || call == nil {
+		m.settle(rec, func(r *Record) {
+			r.State, r.FinishedAt = StateFailed, time.Now()
+			r.Error = fmt.Sprintf("no job named %q is registered in this process", rec.Name)
+		})
 		return
 	}
 
@@ -288,9 +384,13 @@ func (m *Manager) execute(rec Record) {
 	} else {
 		ctx, cancel = context.WithCancel(m.runCtx)
 	}
-	exec := &execution{cancel: cancel}
+	exec := &execution{rec: rec, cancel: cancel}
 	m.mu.Lock()
 	m.running[rec.ID] = exec
+	if attempt, ok := m.pending[rec.ID]; ok {
+		delete(m.pending, rec.ID)
+		rec.CancelRequested = rec.CancelRequested || attempt == rec.Attempt
+	}
 	m.mu.Unlock()
 	defer func() {
 		cancel()
@@ -298,71 +398,177 @@ func (m *Manager) execute(rec Record) {
 		delete(m.running, rec.ID)
 		m.mu.Unlock()
 	}()
+	if rec.CancelRequested {
+		m.markCancelled(exec)
+	}
 
-	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, actor: rec.Actor, ctx: ctx}
-	err := m.call(d, ctx, run, rec.Args)
+	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, worker: rec.Worker, actor: rec.Actor, ctx: ctx, exec: exec}
+	err := m.call(call, ctx, run, rec.Args)
 
 	m.mu.Lock()
-	byCancel := exec.cancelled
+	byCancel, lost := exec.cancelled, exec.lost
 	m.mu.Unlock()
 	switch {
+	case lost:
+		m.log.Warn("jobs: attempt abandoned — another worker took the job over", "job", rec.Name, "id", rec.ID)
 	case err == nil:
-		m.finish(rec, StateSucceeded, "")
+		m.settle(rec, func(r *Record) { r.State, r.FinishedAt, r.Error = StateSucceeded, time.Now(), "" })
 	case byCancel:
-		m.finish(rec, StateCancelled, "cancelled")
+		m.settle(rec, func(r *Record) { r.State, r.FinishedAt, r.Error = StateCancelled, time.Now(), "cancelled" })
 	case m.runCtx.Err() != nil:
 		// Interrupted by shutdown: back to the queue, the attempt uncounted.
-		m.store.update(rec.ID, func(r *Record) {
-			r.State, r.Attempt, r.StartedAt, r.RunAt = StateQueued, r.Attempt-1, time.Time{}, time.Now()
+		m.settle(rec, func(r *Record) {
+			r.State, r.Attempt, r.RunAt = StateQueued, r.Attempt-1, time.Now()
+			r.StartedAt, r.Worker, r.LeaseUntil = time.Time{}, "", time.Time{}
 		})
 	default:
 		m.fail(d, rec, err)
 	}
 }
 
+// settle writes an attempt's outcome, if the attempt still owns the job.
+func (m *Manager) settle(rec Record, fn func(*Record)) {
+	ctx, cancel := m.storeCtx()
+	defer cancel()
+	_, ok, err := m.store.Update(ctx, rec.ID, func(r *Record) bool {
+		if r.State != StateRunning || r.Attempt != rec.Attempt || r.Worker != rec.Worker {
+			return false
+		}
+		fn(r)
+		return true
+	})
+	m.invalidateStats()
+	if err != nil {
+		m.log.Error("jobs: recording the outcome failed", "job", rec.Name, "id", rec.ID, "error", err)
+	} else if !ok {
+		m.log.Warn("jobs: outcome not recorded — the job was taken over", "job", rec.Name, "id", rec.ID)
+	}
+}
+
 // call runs the job, turning a panic into an error.
-func (m *Manager) call(d *definition, ctx context.Context, run *Run, args json.RawMessage) (err error) {
+func (m *Manager) call(call callFunc, ctx context.Context, run *Run, args json.RawMessage) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			err = Permanent(fmt.Errorf("panic: %v\n%s", p, debug.Stack()))
 		}
 	}()
-	return d.call(ctx, run, args)
+	return call(ctx, run, args)
 }
 
 func (m *Manager) fail(d *definition, rec Record, err error) {
 	var perm permanentError
 	if rec.Attempt < d.maxAttempts && !errors.As(err, &perm) {
 		wait := d.backoff(rec.Attempt)
-		m.store.update(rec.ID, func(r *Record) {
+		m.settle(rec, func(r *Record) {
 			r.State, r.Error, r.RunAt = StateQueued, err.Error(), time.Now().Add(wait)
+			r.Worker, r.LeaseUntil = "", time.Time{}
 		})
 		m.log.Warn("jobs: attempt failed, retrying", "job", rec.Name, "id", rec.ID,
 			"attempt", rec.Attempt, "retryIn", wait, "error", err)
 		return
 	}
-	m.finish(rec, StateFailed, err.Error())
+	m.settle(rec, func(r *Record) { r.State, r.FinishedAt, r.Error = StateFailed, time.Now(), err.Error() })
 	m.log.Error("jobs: job failed", "job", rec.Name, "id", rec.ID, "attempts", rec.Attempt, "error", err)
 }
 
-func (m *Manager) finish(rec Record, state State, msg string) {
-	now := time.Now()
-	m.store.update(rec.ID, func(r *Record) {
-		r.State, r.FinishedAt = state, now
-		if msg != "" {
-			r.Error = msg
+// heartbeat renews the leases of this process's running jobs, and relays
+// cancel requests another process recorded.
+func (m *Manager) heartbeat() {
+	defer m.background.Done()
+	tick := time.NewTicker(max(m.cfg.Lease/3, 10*time.Millisecond))
+	defer tick.Stop()
+	for {
+		select {
+		case <-m.stopping:
+			// Keep renewing while jobs drain: stop only once workers are done.
+			done := make(chan struct{})
+			go func() { m.workers.Wait(); close(done) }()
+			for {
+				select {
+				case <-done:
+					return
+				case <-tick.C:
+					m.renewLeases()
+				}
+			}
+		case <-tick.C:
 		}
-		if state == StateSucceeded {
-			r.Error = ""
+		m.renewLeases()
+	}
+}
+
+func (m *Manager) renewLeases() {
+	m.mu.Lock()
+	execs := make([]*execution, 0, len(m.running))
+	for _, e := range m.running {
+		execs = append(execs, e)
+	}
+	m.mu.Unlock()
+	for _, e := range execs {
+		ctx, cancel := m.storeCtx()
+		rec, ok, err := m.store.Update(ctx, e.rec.ID, func(r *Record) bool {
+			if r.State != StateRunning || r.Attempt != e.rec.Attempt || r.Worker != e.rec.Worker {
+				return false
+			}
+			r.LeaseUntil = time.Now().Add(m.cfg.Lease)
+			return true
+		})
+		cancel()
+		switch {
+		case err != nil:
+			m.log.Warn("jobs: lease renewal failed", "id", e.rec.ID, "error", err)
+		case !ok:
+			m.loseOwnership(e)
+		case rec.CancelRequested:
+			m.markCancelled(e)
 		}
-	})
-	m.store.prune(now, m.cfg.Retention, m.cfg.KeepFinished)
+	}
+}
+
+func (m *Manager) markCancelled(e *execution) {
+	m.mu.Lock()
+	e.cancelled = true
+	m.mu.Unlock()
+	e.cancel()
+}
+
+func (m *Manager) loseOwnership(e *execution) {
+	if e == nil {
+		return
+	}
+	m.mu.Lock()
+	e.lost = true
+	m.mu.Unlock()
+	e.cancel()
+}
+
+// maintain prunes finished jobs once a minute.
+func (m *Manager) maintain() {
+	defer m.background.Done()
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+	for {
+		m.prune()
+		select {
+		case <-m.stopping:
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+func (m *Manager) prune() {
+	ctx, cancel := m.storeCtx()
+	defer cancel()
+	if err := m.store.Prune(ctx, time.Now().Add(-m.cfg.Retention), m.cfg.KeepFinished); err != nil {
+		m.log.Warn("jobs: pruning finished jobs failed", "error", err)
+	}
 }
 
 func (m *Manager) enqueue(ctx context.Context, d *definition, args json.RawMessage, ec enqueueConfig) (ID, error) {
 	now := time.Now()
-	rec := &Record{
-		ID:          newID(),
+	rec := Record{
+		ID:          ec.id,
 		Name:        d.name,
 		Queue:       d.queue,
 		Args:        args,
@@ -370,6 +576,9 @@ func (m *Manager) enqueue(ctx context.Context, d *definition, args json.RawMessa
 		MaxAttempts: d.maxAttempts,
 		CreatedAt:   now,
 		RunAt:       now,
+	}
+	if rec.ID == "" {
+		rec.ID = newID()
 	}
 	if !ec.runAt.IsZero() {
 		rec.RunAt = ec.runAt
@@ -382,7 +591,13 @@ func (m *Manager) enqueue(ctx context.Context, d *definition, args json.RawMessa
 		rec.UniqueKey = hex.EncodeToString(sum[:16])
 		rec.UniqueUntil = now.Add(d.unique)
 	}
-	id, _ := m.store.insert(rec, now)
+	sctx, cancel := m.storeCtx()
+	defer cancel()
+	id, _, err := m.store.Insert(sctx, rec)
+	if err != nil {
+		return "", fmt.Errorf("jobs: enqueue %s: %w", d.name, err)
+	}
+	m.invalidateStats()
 	m.mu.Lock()
 	wake := m.wake[d.queue]
 	m.mu.Unlock()
@@ -394,103 +609,94 @@ func (m *Manager) enqueue(ctx context.Context, d *definition, args json.RawMessa
 }
 
 // Get returns the job's record — state, progress, result, error.
-func (m *Manager) Get(id ID) (Record, bool) { return m.store.get(id) }
-
-// Cancel stops a job: a queued one never runs, a running one has its context
-// cancelled (it ends when the job returns). Finished jobs are left as they
-// are; false means there was no such job.
-func (m *Manager) Cancel(id ID) bool {
-	rec, ok := m.store.get(id)
-	if !ok {
-		return false
-	}
-	switch rec.State {
-	case StateQueued:
-		m.store.update(id, func(r *Record) {
-			if r.State == StateQueued {
-				r.State, r.FinishedAt, r.Error = StateCancelled, time.Now(), "cancelled"
-			}
-		})
-	case StateRunning:
-		m.mu.Lock()
-		if exec, ok := m.running[id]; ok {
-			exec.cancelled = true
-			exec.cancel()
-		}
-		m.mu.Unlock()
-	}
-	return true
+func (m *Manager) Get(ctx context.Context, id ID) (Record, bool, error) {
+	return m.store.Get(ctx, id)
 }
 
-// Filter narrows List.
-type Filter struct {
-	Name  string // one job's records
-	State State  // one state
-	Actor string // enqueued by one user
-	Limit int    // at most this many (0: all)
+// Cancel stops a job: a queued one never runs; a running one has its context
+// cancelled — at once in this process, within a lease renewal in another.
+// Finished jobs are left as they are; false means there was no such job.
+func (m *Manager) Cancel(ctx context.Context, id ID) (bool, error) {
+	rec, ok, err := m.store.Update(ctx, id, func(r *Record) bool {
+		switch r.State {
+		case StateQueued:
+			r.State, r.FinishedAt, r.Error = StateCancelled, time.Now(), "cancelled"
+			return true
+		case StateRunning:
+			r.CancelRequested = true
+			return true
+		}
+		return false
+	})
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		_, exists, err := m.store.Get(ctx, id)
+		return exists, err
+	}
+	if rec.State == StateRunning {
+		m.mu.Lock()
+		e := m.running[id]
+		if e == nil && rec.Worker == m.worker {
+			// Claimed here, not started yet: the run picks this up as it starts.
+			m.pending[id] = rec.Attempt
+		}
+		m.mu.Unlock()
+		if e != nil && e.rec.Attempt == rec.Attempt {
+			m.markCancelled(e)
+		}
+	}
+	return true, nil
 }
 
 // List returns records, newest first.
-func (m *Manager) List(f Filter) []Record {
-	out := m.store.list(func(r *Record) bool {
-		return (f.Name == "" || r.Name == f.Name) && (f.State == "" || r.State == f.State) &&
-			(f.Actor == "" || r.Actor == f.Actor)
-	})
-	if f.Limit > 0 && len(out) > f.Limit {
-		out = out[:f.Limit]
-	}
-	return out
+func (m *Manager) List(ctx context.Context, f Filter) ([]Record, error) {
+	return m.store.List(ctx, f)
 }
 
 // asResource shows the queues on the dashboard: per-queue counts and the
 // latest failure, live.
 func (m *Manager) asResource() resource.Resource {
 	return resource.NewQueue("jobs", "Background jobs ("+m.cfg.Driver+")", nil,
-		func() bool { return true },
+		func() bool { _, err := m.stats(); return err == nil },
 		resource.WithDetails(m.details))
 }
 
-func (m *Manager) details() map[string]any {
-	type counts struct{ running, queued, delayed, failed, succeeded int }
-	per := map[string]*counts{}
-	m.mu.Lock()
-	for _, d := range m.defs {
-		if per[d.queue] == nil {
-			per[d.queue] = &counts{}
-		}
+// invalidateStats drops the cached counts after a change made here.
+func (m *Manager) invalidateStats() {
+	m.statsMu.Lock()
+	m.statsAt = time.Time{}
+	m.statsMu.Unlock()
+}
+
+// stats returns store counts, cached for 2s (changes made in this process
+// clear it): the dashboard asks every frame.
+func (m *Manager) stats() (Stats, error) {
+	m.statsMu.Lock()
+	defer m.statsMu.Unlock()
+	if time.Since(m.statsAt) < 2*time.Second {
+		return m.statsLast, nil
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	st, err := m.store.Stats(ctx, time.Now())
+	if err != nil {
+		return Stats{}, err
+	}
+	m.statsAt, m.statsLast = time.Now(), st
+	return st, nil
+}
+
+func (m *Manager) details() map[string]any {
+	m.mu.Lock()
 	names := make([]string, 0, len(m.defs))
-	for n := range m.defs {
+	queues := map[string]bool{}
+	for n, d := range m.defs {
 		names = append(names, n)
+		queues[d.queue] = true
 	}
 	m.mu.Unlock()
-	now := time.Now()
-	var lastFailure *Record
-	for _, r := range m.store.list(nil) {
-		c := per[r.Queue]
-		if c == nil {
-			c = &counts{}
-			per[r.Queue] = c
-		}
-		switch r.State {
-		case StateRunning:
-			c.running++
-		case StateQueued:
-			if r.RunAt.After(now) {
-				c.delayed++
-			} else {
-				c.queued++
-			}
-		case StateFailed:
-			c.failed++
-			if lastFailure == nil {
-				r := r
-				lastFailure = &r
-			}
-		case StateSucceeded:
-			c.succeeded++
-		}
-	}
 	sort.Strings(names)
 	details := map[string]any{
 		"driver": m.cfg.Driver,
@@ -499,12 +705,21 @@ func (m *Manager) details() map[string]any {
 	if m.cfg.DisableWorkers {
 		details["workers"] = "off (run = false)"
 	}
-	for q, c := range per {
+	st, err := m.stats()
+	if err != nil {
+		details["store"] = "unavailable: " + firstLine(err.Error())
+		return details
+	}
+	for q := range st.Queues {
+		queues[q] = true
+	}
+	for q := range queues {
+		c := st.Queues[q]
 		var parts []string
 		for _, n := range []struct {
 			v    int
 			word string
-		}{{c.running, "running"}, {c.queued, "queued"}, {c.delayed, "delayed"}, {c.failed, "failed"}, {c.succeeded, "done"}} {
+		}{{c.Running, "running"}, {c.Queued, "queued"}, {c.Delayed, "delayed"}, {c.Failed, "failed"}, {c.Succeeded, "done"}, {c.Cancelled, "cancelled"}} {
 			if n.v > 0 {
 				parts = append(parts, fmt.Sprintf("%d %s", n.v, n.word))
 			}
@@ -519,9 +734,9 @@ func (m *Manager) details() map[string]any {
 		}
 		details["queue "+q] = fmt.Sprintf("%s · %d worker%s", strings.Join(parts, " · "), workers, plural)
 	}
-	if lastFailure != nil {
-		details["last failure"] = fmt.Sprintf("%s (%s ago): %s", lastFailure.Name,
-			now.Sub(lastFailure.FinishedAt).Round(time.Second), firstLine(lastFailure.Error))
+	if f := st.LastFailure; f != nil {
+		details["last failure"] = fmt.Sprintf("%s (%s ago): %s", f.Name,
+			time.Since(f.FinishedAt).Round(time.Second), firstLine(f.Error))
 	}
 	return details
 }

@@ -102,12 +102,12 @@ func waitState(t *testing.T, m *jobs.Manager, id jobs.ID, want jobs.State) jobs.
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if rec, ok := m.Get(id); ok && rec.State == want {
+		if rec, ok, _ := m.Get(context.Background(), id); ok && rec.State == want {
 			return rec
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	rec, _ := m.Get(id)
+	rec, _, _ := m.Get(context.Background(), id)
 	t.Fatalf("job %s: state %s (error %q), want %s", id, rec.State, rec.Error, want)
 	return rec
 }
@@ -175,13 +175,13 @@ func TestCancelQueuedAndRunning(t *testing.T) {
 	running, _ := generate.Enqueue(context.Background(), ReportArgs{ReportID: 1})
 	waitState(t, m, running, jobs.StateRunning)
 	delayed, _ := generate.Enqueue(context.Background(), ReportArgs{ReportID: 2}, jobs.Delay(time.Hour))
-	m.Cancel(delayed)
-	m.Cancel(running)
+	_, _ = m.Cancel(context.Background(), delayed)
+	_, _ = m.Cancel(context.Background(), running)
 	waitState(t, m, running, jobs.StateCancelled)
-	if rec, _ := m.Get(delayed); rec.State != jobs.StateCancelled {
+	if rec, _, _ := m.Get(context.Background(), delayed); rec.State != jobs.StateCancelled {
 		t.Fatalf("queued job state %s after Cancel", rec.State)
 	}
-	if m.Cancel("nope") {
+	if found, _ := m.Cancel(context.Background(), "nope"); found {
 		t.Fatal("Cancel of an unknown job reported true")
 	}
 }
@@ -197,7 +197,7 @@ func TestUniqueAndDelay(t *testing.T) {
 	if a != b || a == c {
 		t.Fatalf("unique ids: %s %s %s", a, b, c)
 	}
-	if rec, _ := m.Get(a); rec.State != jobs.StateQueued {
+	if rec, _, _ := m.Get(context.Background(), a); rec.State != jobs.StateQueued {
 		t.Fatalf("delayed job ran early: %s", rec.State)
 	}
 	waitState(t, m, a, jobs.StateSucceeded)
@@ -218,7 +218,7 @@ func TestShutdownRequeuesRunningJobs(t *testing.T) {
 	id, _ := generate.Enqueue(context.Background(), ReportArgs{})
 	waitState(t, m, id, jobs.StateRunning)
 	_ = stop(context.Background())
-	if rec, _ := m.Get(id); rec.State != jobs.StateQueued || rec.Attempt != 0 {
+	if rec, _, _ := m.Get(context.Background(), id); rec.State != jobs.StateQueued || rec.Attempt != 0 {
 		t.Fatalf("after shutdown: state %s attempt %d, want queued/0", rec.State, rec.Attempt)
 	}
 }
@@ -266,7 +266,7 @@ func TestBootErrors(t *testing.T) {
 	}{
 		{"closure without a name", []nexus.Option{jobs.Module(jobs.Config{}), closure}, "no stable name"},
 		{"duplicate names", []nexus.Option{jobs.Module(jobs.Config{}), dupA, dupB}, `two jobs are named "dup"`},
-		{"unknown driver", []nexus.Option{jobs.Module(jobs.Config{Driver: "kafka"}), dupA}, `unknown driver "kafka"`},
+		{"driver without a store", []nexus.Option{jobs.Module(jobs.Config{Driver: "db"}), dupA}, `driver "db" needs a store`},
 		{"no module", []nexus.Option{dupA}, "Manager"},
 	}
 	for _, tc := range cases {
@@ -306,5 +306,43 @@ func TestDashboardDetails(t *testing.T) {
 	}
 	if n, _ := details["jobs"].(string); !strings.Contains(n, "ReportService.Generate") {
 		t.Errorf("jobs = %v", details["jobs"])
+	}
+}
+
+func (s *ReportService) Tick(ctx context.Context, run *jobs.Run, a ReportArgs) error {
+	s.calls.Add(1)
+	return nil
+}
+
+var tick = jobs.Define((*ReportService).Tick)
+
+// A schedule enqueues each tick once, even when two schedules for the same
+// job and spec (standing in for two replicas) fire.
+func TestSchedule(t *testing.T) {
+	svc := &ReportService{}
+	m, stop := boot(t, svc, tick.Schedule("@every 1s", ReportArgs{ReportID: 9}), tick.Schedule("@every 1s", ReportArgs{ReportID: 9}))
+	defer stop()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && svc.calls.Load() < 1 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	recs, err := m.List(context.Background(), jobs.Filter{Name: "ReportService.Tick"})
+	if err != nil || len(recs) != 1 || svc.calls.Load() != 1 {
+		t.Fatalf("after one tick: %d records, %d calls (%v)", len(recs), svc.calls.Load(), err)
+	}
+	if string(recs[0].Args) != `{"reportId":9}` || !strings.HasPrefix(string(recs[0].ID), "s") {
+		t.Fatalf("scheduled record = %+v", recs[0])
+	}
+}
+
+func TestBadSchedule(t *testing.T) {
+	_, stop, err := nexus.InProcess(nexus.Config{}, jobs.Module(jobs.Config{}), nexus.Supply(&ReportService{}),
+		tick.Schedule("every tuesday-ish", ReportArgs{}))
+	if stop != nil {
+		defer func() { _ = stop(context.Background()) }()
+	}
+	if err == nil || !strings.Contains(err.Error(), "every tuesday-ish") {
+		t.Fatalf("want a boot error naming the schedule, got %v", err)
 	}
 }

@@ -6,6 +6,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Shared job drivers.** A `jobs.Store` interface sits behind the jobs
+  runtime, and two new drivers let several processes share one queue:
+  - `jobsdb.Bind[DB]()` (`extension/jobs/jobsdb`): any GORM database, with
+    version-checked atomic writes and tables created on first use.
+  - `jobsredis.Bind(jobsredis.Config{})`: a new separate module,
+    `extension/jobs/jobsredis`, using Lua claims and optimistic
+    transactions.
+- **Leases on shared stores.** A claimed job is leased, and the lease is
+  renewed while the job runs.
+  - A dead process's jobs are taken over once their leases lapse.
+  - Every write checks that the attempt still owns the job
+    (`jobs.ErrLostOwnership`).
+  - Cancelling reaches a job running in another process.
+  - New settings: `[jobs] lease`, `poll`, `driver = "db" | "redis"`.
+- **Scheduled jobs.** `Job.Schedule(spec, args)` enqueues on a cron
+  schedule (`0 7 * * *`, `@every 15m`, `CRON_TZ=…`). Each tick is enqueued
+  once across replicas.
+
+### Changed
+
+- **`jobs.Manager` methods take a context and return an error.** `Get`,
+  `Cancel` and `List` now read a store that may be a database.
+- **Each app binds a job's receiver separately.** Previously a job's DI
+  receiver was bound on its process-wide definition, so a second app in the
+  same process rebound it.
+
+### Fixed
+
+- **Failing providers of optional dependencies are reported.** A dependency
+  tagged `optional:"true"` whose provider exists but fails now fails the
+  boot, as in dig/fx. The built-in container used to pass the zero value
+  silently.
+
 ## [1.71.0] - 2026-09-29
 
 ### Added

@@ -3,7 +3,9 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -26,24 +28,27 @@ func (s State) Finished() bool {
 
 // Record is one enqueued job: what to run, and everything known about it.
 type Record struct {
-	ID          ID              `json:"id"`
-	Name        string          `json:"name"`
-	Queue       string          `json:"queue"`
-	Args        json.RawMessage `json:"args,omitempty"`
-	State       State           `json:"state"`
-	Attempt     int             `json:"attempt"`
-	MaxAttempts int             `json:"maxAttempts"`
-	Progress    Progress        `json:"progress"`
-	Error       string          `json:"error,omitempty"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	Checkpoint  json.RawMessage `json:"checkpoint,omitempty"`
-	Actor       string          `json:"actor,omitempty"`
-	UniqueKey   string          `json:"uniqueKey,omitempty"`
-	UniqueUntil time.Time       `json:"uniqueUntil,omitzero"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	RunAt       time.Time       `json:"runAt"`
-	StartedAt   time.Time       `json:"startedAt,omitzero"`
-	FinishedAt  time.Time       `json:"finishedAt,omitzero"`
+	ID              ID              `json:"id"`
+	Name            string          `json:"name"`
+	Queue           string          `json:"queue"`
+	Args            json.RawMessage `json:"args,omitempty"`
+	State           State           `json:"state"`
+	Attempt         int             `json:"attempt"`
+	MaxAttempts     int             `json:"maxAttempts"`
+	Progress        Progress        `json:"progress"`
+	Error           string          `json:"error,omitempty"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	Checkpoint      json.RawMessage `json:"checkpoint,omitempty"`
+	Actor           string          `json:"actor,omitempty"`
+	UniqueKey       string          `json:"uniqueKey,omitempty"`
+	UniqueUntil     time.Time       `json:"uniqueUntil,omitzero"`
+	Worker          string          `json:"worker,omitempty"`    // the process running the current attempt
+	LeaseUntil      time.Time       `json:"leaseUntil,omitzero"` // its claim, renewed while it runs
+	CancelRequested bool            `json:"cancelRequested,omitempty"`
+	CreatedAt       time.Time       `json:"createdAt"`
+	RunAt           time.Time       `json:"runAt"`
+	StartedAt       time.Time       `json:"startedAt,omitzero"`
+	FinishedAt      time.Time       `json:"finishedAt,omitzero"`
 }
 
 // Progress is a job's own account of how far it got.
@@ -53,14 +58,90 @@ type Progress struct {
 	Message string `json:"message,omitempty"`
 }
 
+// Store keeps jobs. The memory store is built in; jobsdb provides one on a
+// SQL database, which several processes can share. Implementations are safe
+// for concurrent use.
+type Store interface {
+	// Insert adds rec. When a job with rec.ID exists already, or rec.UniqueKey
+	// is set and a job with that key is still pending and inside its
+	// UniqueUntil, it returns that job's ID and false instead.
+	Insert(ctx context.Context, rec Record) (ID, bool, error)
+
+	// Claim hands worker the oldest due job of queue — a queued one whose
+	// RunAt has passed or, in a shared store, a running one whose lease
+	// expired — marking it running with Attempt+1 and a lease until
+	// now+lease. False when nothing is due.
+	Claim(ctx context.Context, queue, worker string, now time.Time, lease time.Duration) (Record, bool, error)
+
+	// Update reads the record, lets fn change it, and writes it back when fn
+	// returns true — atomically with respect to other writers. False when
+	// there is no such record or fn declined.
+	Update(ctx context.Context, id ID, fn func(*Record) bool) (Record, bool, error)
+
+	Get(ctx context.Context, id ID) (Record, bool, error)
+	List(ctx context.Context, f Filter) ([]Record, error)
+
+	// NextDue is the earliest RunAt among queued jobs of queue.
+	NextDue(ctx context.Context, queue string) (time.Time, bool, error)
+
+	// Stats counts jobs per queue and state, for the dashboard.
+	Stats(ctx context.Context, now time.Time) (Stats, error)
+
+	// Prune deletes finished jobs that finished before cutoff. keep, when
+	// positive, also caps how many finished jobs remain (stores may ignore
+	// it; the memory store honors it).
+	Prune(ctx context.Context, cutoff time.Time, keep int) error
+
+	// Shared reports whether other processes use this store too: workers
+	// then poll for work and lease what they claim.
+	Shared() bool
+}
+
+// Stats is a store's count of jobs.
+type Stats struct {
+	Queues      map[string]QueueStats
+	LastFailure *Record
+}
+
+// QueueStats counts one queue's jobs by state; Delayed are queued jobs whose
+// RunAt is still ahead.
+type QueueStats struct {
+	Running, Queued, Delayed, Failed, Succeeded, Cancelled int
+}
+
+// Filter narrows List.
+type Filter struct {
+	Name  string // one job's records
+	State State  // one state
+	Actor string // enqueued by one user
+	Limit int    // at most this many (0: all)
+}
+
+// Matches reports whether rec passes the filter (Limit aside) — for stores
+// that filter in Go.
+func (f Filter) Matches(rec *Record) bool {
+	return (f.Name == "" || rec.Name == f.Name) && (f.State == "" || rec.State == f.State) &&
+		(f.Actor == "" || rec.Actor == f.Actor)
+}
+
+// ErrLostOwnership is what a job sees (from Progress, SetResult, Checkpoint)
+// once another worker has taken it over — its lease expired, say, after a
+// long pause. The job should stop; the new owner runs it.
+var ErrLostOwnership = errors.New("jobs: this attempt no longer owns the job")
+
 // Run is the running attempt's handle, passed to every job: progress,
 // result, checkpoints, and who enqueued it.
 type Run struct {
 	m       *Manager
 	id      ID
 	attempt int
+	worker  string
 	actor   string
 	ctx     context.Context
+	exec    *execution
+
+	mu           sync.Mutex
+	lastProgress time.Time
 }
 
 // ID is the job's ID.
@@ -73,16 +154,31 @@ func (r *Run) Attempt() int { return r.attempt }
 // enqueuing request ("" when there was none).
 func (r *Run) Actor() string { return r.actor }
 
+// progressEvery bounds how often Progress writes to the store.
+const progressEvery = 250 * time.Millisecond
+
 // Progress records how far the job got — done of total, and a message — for
-// the dashboard and for pages polling the job. It returns the context's error
-// once the job is cancelled, times out or the app shuts down, so a loop that
-// reports progress also notices it should stop:
+// the dashboard and for pages polling the job. Writes are coalesced (at most
+// one per 250ms, plus the final one). It returns the context's error once the
+// job is cancelled, times out or the app shuts down, so a loop that reports
+// progress also notices it should stop:
 //
 //	if err := run.Progress(i, n, "sending"); err != nil { return err }
 func (r *Run) Progress(done, total int, message string) error {
-	r.m.store.update(r.id, func(rec *Record) {
-		rec.Progress = Progress{Done: done, Total: total, Message: message}
-	})
+	now := time.Now()
+	r.mu.Lock()
+	due := now.Sub(r.lastProgress) >= progressEvery || (total > 0 && done >= total)
+	if due {
+		r.lastProgress = now
+	}
+	r.mu.Unlock()
+	if due {
+		if err := r.write(func(rec *Record) {
+			rec.Progress = Progress{Done: done, Total: total, Message: message}
+		}); err != nil {
+			return err
+		}
+	}
 	return r.ctx.Err()
 }
 
@@ -92,8 +188,7 @@ func (r *Run) SetResult(v any) error {
 	if err != nil {
 		return fmt.Errorf("jobs: result doesn't encode as JSON: %w", err)
 	}
-	r.m.store.update(r.id, func(rec *Record) { rec.Result = raw })
-	return nil
+	return r.write(func(rec *Record) { rec.Result = raw })
 }
 
 // Checkpoint saves state (JSON) that a later attempt of this job — after a
@@ -104,15 +199,16 @@ func (r *Run) Checkpoint(state any) error {
 	if err != nil {
 		return fmt.Errorf("jobs: checkpoint doesn't encode as JSON: %w", err)
 	}
-	r.m.store.update(r.id, func(rec *Record) { rec.Checkpoint = raw })
-	return nil
+	return r.write(func(rec *Record) { rec.Checkpoint = raw })
 }
 
 // Resume loads the last Checkpoint into state; false when there is none.
 func (r *Run) Resume(state any) (bool, error) {
-	rec, ok := r.m.store.get(r.id)
-	if !ok || len(rec.Checkpoint) == 0 {
-		return false, nil
+	ctx, cancel := r.m.storeCtx()
+	defer cancel()
+	rec, ok, err := r.m.store.Get(ctx, r.id)
+	if err != nil || !ok || len(rec.Checkpoint) == 0 {
+		return false, err
 	}
 	if err := json.Unmarshal(rec.Checkpoint, state); err != nil {
 		return false, fmt.Errorf("jobs: checkpoint doesn't decode: %w", err)
@@ -120,35 +216,69 @@ func (r *Run) Resume(state any) (bool, error) {
 	return true, nil
 }
 
-// memoryStore keeps records in the process. Safe for concurrent use.
+// owns reports whether rec is still this attempt's to write.
+func (r *Run) owns(rec *Record) bool {
+	return rec.State == StateRunning && rec.Attempt == r.attempt && rec.Worker == r.worker
+}
+
+// write applies fn to the record if this attempt still owns it; when it
+// doesn't, the run is cancelled and ErrLostOwnership returned.
+func (r *Run) write(fn func(*Record)) error {
+	ctx, cancel := r.m.storeCtx()
+	defer cancel()
+	_, ok, err := r.m.store.Update(ctx, r.id, func(rec *Record) bool {
+		if !r.owns(rec) {
+			return false
+		}
+		fn(rec)
+		return true
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		r.m.loseOwnership(r.exec)
+		return ErrLostOwnership
+	}
+	return nil
+}
+
+// memoryStore keeps records in the process.
 type memoryStore struct {
 	mu      sync.Mutex
 	records map[ID]*Record
 	order   []ID // enqueue order: claims are FIFO among due jobs
 }
 
+// NewMemoryStore returns the in-process store the memory driver uses.
+func NewMemoryStore() Store { return newMemoryStore() }
+
 func newMemoryStore() *memoryStore { return &memoryStore{records: map[ID]*Record{}} }
 
-// insert adds rec, unless a live job with the same unique key exists — then
-// it returns that job's ID instead.
-func (s *memoryStore) insert(rec *Record, now time.Time) (ID, bool) {
+func (s *memoryStore) Shared() bool { return false }
+
+func (s *memoryStore) Insert(_ context.Context, rec Record) (ID, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.records[rec.ID]; exists {
+		return rec.ID, false, nil
+	}
 	if rec.UniqueKey != "" {
 		for _, id := range s.order {
 			other := s.records[id]
-			if other.UniqueKey == rec.UniqueKey && !other.State.Finished() && now.Before(other.UniqueUntil) {
-				return other.ID, false
+			if other.UniqueKey == rec.UniqueKey && !other.State.Finished() && rec.CreatedAt.Before(other.UniqueUntil) {
+				return other.ID, false, nil
 			}
 		}
 	}
-	s.records[rec.ID] = rec
+	s.records[rec.ID] = &rec
 	s.order = append(s.order, rec.ID)
-	return rec.ID, true
+	return rec.ID, true, nil
 }
 
-// claim marks the oldest due job of queue running and returns a copy.
-func (s *memoryStore) claim(queue string, now time.Time) (Record, bool) {
+// Claim takes the oldest due queued job. Running jobs are never reclaimed:
+// in one process, a running job's worker is alive.
+func (s *memoryStore) Claim(_ context.Context, queue, worker string, now time.Time, lease time.Duration) (Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range s.order {
@@ -157,14 +287,15 @@ func (s *memoryStore) claim(queue string, now time.Time) (Record, bool) {
 			rec.State = StateRunning
 			rec.Attempt++
 			rec.StartedAt = now
-			return *rec, true
+			rec.Worker = worker
+			rec.LeaseUntil = now.Add(lease)
+			return *rec, true, nil
 		}
 	}
-	return Record{}, false
+	return Record{}, false, nil
 }
 
-// nextDue is the earliest future RunAt among queued jobs of queue.
-func (s *memoryStore) nextDue(queue string) (time.Time, bool) {
+func (s *memoryStore) NextDue(_ context.Context, queue string) (time.Time, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var next time.Time
@@ -174,47 +305,89 @@ func (s *memoryStore) nextDue(queue string) (time.Time, bool) {
 			next = rec.RunAt
 		}
 	}
-	return next, !next.IsZero()
+	return next, !next.IsZero(), nil
 }
 
-func (s *memoryStore) update(id ID, fn func(*Record)) (Record, bool) {
+func (s *memoryStore) Update(_ context.Context, id ID, fn func(*Record) bool) (Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[id]
 	if !ok {
-		return Record{}, false
+		return Record{}, false, nil
 	}
-	fn(rec)
-	return *rec, true
+	next := *rec
+	if !fn(&next) {
+		return *rec, false, nil
+	}
+	*rec = next
+	return next, true, nil
 }
 
-func (s *memoryStore) get(id ID) (Record, bool) {
+func (s *memoryStore) Get(_ context.Context, id ID) (Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.records[id]
 	if !ok {
-		return Record{}, false
+		return Record{}, false, nil
 	}
-	return *rec, true
+	return *rec, true, nil
 }
 
-// list returns copies of the records, newest first, that keep says to.
-func (s *memoryStore) list(keep func(*Record) bool) []Record {
+// List returns matching records, newest first.
+func (s *memoryStore) List(_ context.Context, f Filter) ([]Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Record
 	for i := len(s.order) - 1; i >= 0; i-- {
 		rec := s.records[s.order[i]]
-		if keep == nil || keep(rec) {
+		if f.Matches(rec) {
 			out = append(out, *rec)
+			if f.Limit > 0 && len(out) == f.Limit {
+				break
+			}
 		}
 	}
-	return out
+	return out, nil
 }
 
-// prune drops finished records older than retention, and the oldest finished
-// ones beyond limit.
-func (s *memoryStore) prune(now time.Time, retention time.Duration, limit int) {
+func (s *memoryStore) Stats(_ context.Context, now time.Time) (Stats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := Stats{Queues: map[string]QueueStats{}}
+	for i := len(s.order) - 1; i >= 0; i-- {
+		rec := s.records[s.order[i]]
+		q := st.Queues[rec.Queue]
+		countState(&q, rec, now)
+		st.Queues[rec.Queue] = q
+		if rec.State == StateFailed && (st.LastFailure == nil || rec.FinishedAt.After(st.LastFailure.FinishedAt)) {
+			r := *rec
+			st.LastFailure = &r
+		}
+	}
+	return st, nil
+}
+
+// countState adds rec to q.
+func countState(q *QueueStats, rec *Record, now time.Time) {
+	switch rec.State {
+	case StateRunning:
+		q.Running++
+	case StateQueued:
+		if rec.RunAt.After(now) {
+			q.Delayed++
+		} else {
+			q.Queued++
+		}
+	case StateFailed:
+		q.Failed++
+	case StateSucceeded:
+		q.Succeeded++
+	case StateCancelled:
+		q.Cancelled++
+	}
+}
+
+func (s *memoryStore) Prune(_ context.Context, cutoff time.Time, keep int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	finished := 0
@@ -226,7 +399,7 @@ func (s *memoryStore) prune(now time.Time, retention time.Duration, limit int) {
 	kept := s.order[:0]
 	for _, id := range s.order {
 		rec := s.records[id]
-		if rec.State.Finished() && (now.Sub(rec.FinishedAt) > retention || finished > limit) {
+		if rec.State.Finished() && (rec.FinishedAt.Before(cutoff) || (keep > 0 && finished > keep)) {
 			delete(s.records, id)
 			finished--
 			continue
@@ -234,13 +407,15 @@ func (s *memoryStore) prune(now time.Time, retention time.Duration, limit int) {
 		kept = append(kept, id)
 	}
 	s.order = kept
+	return nil
 }
 
 // SnapshotDev and RestoreDev carry the queue across `nexus dev` rebuilds.
 // A job running when the snapshot was taken was interrupted, so it comes
 // back queued, its attempt not counted.
 func (s *memoryStore) SnapshotDev() ([]byte, error) {
-	return json.Marshal(s.list(nil))
+	recs, _ := s.List(context.Background(), Filter{})
+	return json.Marshal(recs)
 }
 
 func (s *memoryStore) RestoreDev(b []byte) error {
@@ -248,17 +423,15 @@ func (s *memoryStore) RestoreDev(b []byte) error {
 	if err := json.Unmarshal(b, &recs); err != nil {
 		return err
 	}
+	sort.SliceStable(recs, func(i, j int) bool { return recs[i].CreatedAt.Before(recs[j].CreatedAt) })
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := len(recs) - 1; i >= 0; i-- { // list is newest first
-		rec := recs[i]
+	for _, rec := range recs {
 		if _, exists := s.records[rec.ID]; exists {
 			continue
 		}
 		if rec.State == StateRunning {
-			rec.State = StateQueued
-			rec.Attempt--
-			rec.StartedAt = time.Time{}
+			rec.State, rec.Attempt, rec.StartedAt, rec.Worker, rec.LeaseUntil = StateQueued, rec.Attempt-1, time.Time{}, "", time.Time{}
 		}
 		s.records[rec.ID] = &rec
 		s.order = append(s.order, rec.ID)

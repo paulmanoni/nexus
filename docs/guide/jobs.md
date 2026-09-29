@@ -3,11 +3,15 @@
 `extension/jobs` runs work outside the request that asks for it. Jobs are queued,
 retried, cancellable, and report progress that a page can show.
 
-::: tip Phase one
-This release ships the **memory** driver. Jobs live in the process: they survive
-`nexus dev` rebuilds, but not restarts, and they don't spread across replicas. A durable
-database driver comes next. The API below won't change.
-:::
+Three drivers store the jobs:
+
+| Driver | Package | Jobs survive | Shared by |
+|---|---|---|---|
+| `memory` (default) | built in | `nexus dev` rebuilds | one process |
+| `db` | `extension/jobs/jobsdb` | restarts | every process on the database |
+| `redis` | `extension/jobs/jobsredis` (its own module) | restarts, if Redis persists | every process on the Redis |
+
+The API is the same whichever you pick. See [Drivers](#drivers).
 
 ## Define a job
 
@@ -88,30 +92,118 @@ missing record. A panic fails the job with its stack trace.
 Inject `*jobs.Manager`:
 
 ```go
-rec, ok := m.Get(id)        // State, Progress, Result, Error, Attempt, Actor…
-m.Cancel(id)                // a queued job never runs; a running one's context is cancelled
-m.List(jobs.Filter{Name: "ReportService.Export", State: jobs.StateFailed, Limit: 20})
+rec, ok, err := m.Get(ctx, id)   // State, Progress, Result, Error, Attempt, Actor…
+found, err := m.Cancel(ctx, id)  // a queued job never runs; a running one's context is cancelled
+recs, err := m.List(ctx, jobs.Filter{Name: "ReportService.Export", State: jobs.StateFailed, Limit: 20})
 ```
 
-Jobs are delivered **at least once**: a job interrupted by shutdown runs again, so make
-handlers idempotent.
+- **Cancelling reaches other processes.** A job running in another process is
+  cancelled at its next lease renewal.
+- **Delivery is at least once.** A job interrupted by a shutdown or a crash runs again,
+  so make handlers idempotent.
+
+## Schedules
+
+A job handle runs on a cron schedule:
+
+```go
+nexus.Boot(jobs.Module(jobs.Config{}),
+    SendDigest.Schedule("0 7 * * *", DigestArgs{}),                     // daily at 07:00
+    Cleanup.Schedule("@every 15m", CleanupArgs{}),
+    Payroll.Schedule("CRON_TZ=Africa/Dar_es_Salaam 0 8 1 * *", PayrollArgs{}),
+)
+```
+
+- **The option registers the job too.** `Schedule` also registers the job, so you don't
+  pass it to `Boot` separately.
+- **Each tick is one job, even with several replicas.** Its ID derives from the job,
+  the schedule and the tick. With a shared driver, every process runs the scheduler and
+  each tick is still enqueued once.
+- **Missed ticks are skipped,** not caught up, if nothing was running at the time.
+
+## Drivers
+
+### Memory
+
+The default. Jobs live in the process and are carried across `nexus dev` rebuilds. A job
+the old process was running starts again, resuming from its checkpoint. Nothing survives
+a restart, and each process has its own queue.
+
+### Database
+
+```go
+import "github.com/paulmanoni/nexus/extension/jobs/jobsdb"
+
+type DB struct{ *db.Manager }
+
+nexus.Boot(
+    db.BindFromConfig[DB]("main"),
+    jobsdb.Bind[DB](),            // with a store in DI, jobs.Module uses it
+    jobs.Module(jobs.Config{}),
+)
+```
+
+- **Any GORM database works:** Postgres, MySQL and SQLite behave the same.
+- **Tables are created on first use** (`nexus_jobs`, `nexus_job_uniques`). Pass
+  `jobsdb.NoMigrate()` to leave that to your own migrations, which can call
+  `jobsdb.Migrate(gormDB)`.
+- **Claims and updates are atomic.** Every write is conditional on the row's version.
+- **An outage doesn't stop the app.** While the database is unreachable, workers log and
+  keep polling.
+
+### Redis
+
+```go
+import "github.com/paulmanoni/nexus/extension/jobs/jobsredis"
+
+nexus.Boot(
+    jobsredis.Bind(jobsredis.Config{}), // [jobs.redis] url, else REDIS_URL, else localhost
+    jobs.Module(jobs.Config{}),
+)
+```
+
+```toml
+[jobs.redis]
+url    = "redis://:password@redis:6379/2"
+prefix = "{nexus:jobs}:"   # the default; one hash tag keeps Redis Cluster happy
+```
+
+- **It's a separate module** (`go get github.com/paulmanoni/nexus/extension/jobs/jobsredis`),
+  so apps that don't use it link no Redis client.
+- **Claims and enqueues are Lua scripts;** updates are optimistic transactions.
+- **Make Redis durable** (AOF or RDB persistence) if jobs must survive a Redis restart.
+  Also keep this Redis's eviction policy `noeviction`, so it never drops job keys.
+
+### How several processes share a queue
+
+- **Leases.** A worker claims a job with a lease (`[jobs] lease`, default 30s) and renews
+  it every third of that while the job runs. If the process dies, the lease lapses and
+  another process takes the job over.
+- **Crashes use up attempts.** A job whose worker died on its last attempt fails, with
+  an error saying its worker was lost.
+- **Every write checks ownership.** Progress, results, checkpoints and the outcome are
+  written only while the attempt still owns the job. An attempt that lost its lease (after
+  a long GC pause, say) sees `jobs.ErrLostOwnership`, and its context is cancelled.
+- **Web and worker replicas.** Web replicas can set `run = false` to enqueue without
+  running jobs; worker replicas run them.
 
 ## Configuration
 
 ```toml
 [jobs]
-driver = "memory"          # the one driver in this release
+driver = "db"              # memory | db | redis — default: the bound store's, else memory
 run    = true              # false: enqueue here, run elsewhere
 shutdown_grace = "10s"     # running jobs get this long on shutdown (0 under nexus dev)
+lease  = "30s"             # a claim's lease, renewed while the job runs
+poll   = "1s"              # how often idle workers check a shared store
 
 [jobs.queues]              # queue → concurrent workers (default: default = 4)
 default = 4
 low     = 1
 ```
 
-- **Shutdown.** Workers stop taking jobs, running jobs get the grace period, and then
-  their contexts are cancelled and they are requeued.
-- **`nexus dev`.** The queue is carried across the rebuild, and a job the old process was
-  running starts again in the new one, resuming from its checkpoint.
-- **Dashboard.** A `jobs` queue node shows each queue's running, queued, delayed, failed
-  and finished counts, the registered jobs, and the latest failure.
+- **Shutdown.** Workers stop taking jobs, and running jobs get the grace period. Then
+  their contexts are cancelled and they are requeued without using up an attempt.
+- **Finished jobs are kept for 24h** (`Config.Retention`), then pruned.
+- **Dashboard.** A `jobs` queue node shows the driver, each queue's running, queued,
+  delayed, failed and finished counts, the registered jobs, and the latest failure.
