@@ -10,8 +10,11 @@ Three drivers store the jobs:
 | `memory` (default) | built in | `nexus dev` rebuilds | one process |
 | `db` | `extension/jobs/jobsdb` | restarts | every process on the database |
 | `redis` | `extension/jobs/jobsredis` (its own module) | restarts, if Redis persists | every process on the Redis |
+| `rabbitmq` | `extension/jobs/jobsamqp` (its own module) | restarts | every process on the broker |
 
-The API is the same whichever you pick. See [Drivers](#drivers).
+The memory, database and Redis drivers keep a record per job, so a job can be looked up,
+cancelled and tracked. The RabbitMQ driver keeps jobs as messages instead: delivery is
+pushed and durable, but there's no per-job state (see [RabbitMQ](#rabbitmq)).
 
 ## Define a job
 
@@ -174,7 +177,57 @@ prefix = "{nexus:jobs}:"   # the default; one hash tag keeps Redis Cluster happy
 - **Make Redis durable** (AOF or RDB persistence) if jobs must survive a Redis restart.
   Also keep this Redis's eviction policy `noeviction`, so it never drops job keys.
 
+### RabbitMQ
+
+```go
+import "github.com/paulmanoni/nexus/extension/jobs/jobsamqp"
+
+nexus.Boot(
+    jobsamqp.Bind(jobsamqp.Config{}), // [jobs.rabbitmq] url, else RABBIT_URL, else localhost
+    jobs.Module(jobs.Config{}),
+)
+```
+
+```toml
+[jobs.rabbitmq]
+url              = "amqp://user:pass@rabbitmq:5672/"
+prefix           = "nexus.jobs."   # queue names
+consumer_timeout = "8h"            # the longest a job may run
+delivery_limit   = 20              # deliveries before a crashing job is dead-lettered
+```
+
+Each job queue becomes three kinds of RabbitMQ queue:
+
+| Queue | What it holds |
+|---|---|
+| `nexus.jobs.<queue>` | The work: a quorum queue |
+| `nexus.jobs.<queue>.failed` | Jobs that failed for good |
+| `nexus.jobs.<queue>.delay.<ms>` | Delayed jobs and retries, waiting until due; deleted when idle |
+
+- **Delivery is confirmed.** An enqueue returns once the broker confirms the message. A
+  worker acknowledges only after the job finishes, so a worker that crashes mid-job hands
+  the message back and another process runs it.
+- **Long jobs need the consumer timeout.** RabbitMQ closes a channel whose delivery stays
+  unacknowledged past its consumer timeout, 30 minutes by default, and the job would run
+  again. The work queues are declared with `x-consumer-timeout` (default 8h, RabbitMQ
+  3.12+). Keep it above your longest `jobs.Timeout`.
+- **Changing queue arguments means deleting the queue.** RabbitMQ refuses to redeclare a
+  queue with different arguments, so delete the queue before changing `consumer_timeout`
+  or `delivery_limit`.
+- **Crash loops end in `.failed`.** A job that crashes its worker again and again is
+  dead-lettered there after `delivery_limit` deliveries, instead of looping forever.
+- **Shutdown hands jobs on.** A job interrupted by shutdown is republished with its
+  checkpoint and without counting the attempt, and it continues in the next process.
+- **There's no per-job state.** `Manager.Get`, `Cancel` and `List` return
+  `jobs.ErrUnsupported`, progress and results aren't stored, and `jobs.Unique` is refused
+  at boot. Checkpoints still travel with a job into its next attempt.
+- **Run schedules on one replica.** Every process that runs a schedule enqueues each
+  tick, since there's no shared record to dedupe against.
+- **The dashboard shows** each queue's waiting messages, plus what this process ran.
+
 ### How several processes share a queue
+
+This applies to the database and Redis drivers.
 
 - **Leases.** A worker claims a job with a lease (`[jobs] lease`, default 30s) and renews
   it every third of that while the job runs. If the process dies, the lease lapses and
@@ -191,7 +244,7 @@ prefix = "{nexus:jobs}:"   # the default; one hash tag keeps Redis Cluster happy
 
 ```toml
 [jobs]
-driver = "db"              # memory | db | redis — default: the bound store's, else memory
+driver = "db"              # memory | db | redis | rabbitmq — default: the bound driver's, else memory
 run    = true              # false: enqueue here, run elsewhere
 shutdown_grace = "10s"     # running jobs get this long on shutdown (0 under nexus dev)
 lease  = "30s"             # a claim's lease, renewed while the job runs

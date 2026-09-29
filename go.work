@@ -9,6 +9,7 @@ use (
 	./cmd/nexus
 	./di/fxcontainer
 	./extension/cache/redis
+	./extension/jobs/jobsamqp
 	./extension/jobs/jobsredis
 	./httpx/ginrouter
 )

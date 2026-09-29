@@ -941,6 +941,13 @@ Drivers (same API):
   redis   jobsredis.Bind(jobsredis.Config{URL})  (separate module
           extension/jobs/jobsredis; [jobs.redis] url/prefix, else REDIS_URL) —
           Lua claims, WATCH/MULTI updates, {nexus:jobs}: hash-tagged keys
+  rabbitmq jobsamqp.Bind(jobsamqp.Config{URL})  (separate module
+          extension/jobs/jobsamqp; [jobs.rabbitmq] url/prefix/consumer_timeout/
+          delivery_limit, else RABBIT_URL) — jobs are persistent messages in
+          quorum queues nexus.jobs.<q> (+ .failed, + .delay.<ms> TTL queues);
+          publish confirms, ack after the job, x-consumer-timeout (default 8h —
+          keep it above your longest Timeout). No per-job state: Get/Cancel/List
+          return jobs.ErrUnsupported, Unique refused, schedules on one replica
 
 Shared drivers: workers lease what they claim (renewed every lease/3); a dead
 process's jobs are taken over when leases lapse (a crash uses up an attempt);

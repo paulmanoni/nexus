@@ -81,11 +81,16 @@ type NamedStore interface {
 	Driver() string
 }
 
-func (c Config) resolve(store Store) (Config, Store, error) {
+func (c Config) resolve(store Store, broker Broker) (Config, Store, error) {
 	bound := ""
-	if ns, ok := store.(NamedStore); ok {
+	switch ns, ok := store.(NamedStore); {
+	case store != nil && broker != nil:
+		return c, nil, errors.New("jobs: both a store and a broker are bound — bind one driver")
+	case broker != nil:
+		bound = broker.Driver()
+	case ok:
 		bound = ns.Driver()
-	} else if store != nil {
+	case store != nil:
 		bound = "custom"
 	}
 	if c.Driver == "" {
@@ -99,7 +104,7 @@ func (c Config) resolve(store Store) (Config, Store, error) {
 	case c.Driver == "memory":
 		store = newMemoryStore()
 	case bound == "":
-		return c, nil, fmt.Errorf("jobs: driver %q needs a store — bind one: jobsdb.Bind[YourDB]() or jobsredis.Bind[YourCache]()", c.Driver)
+		return c, nil, fmt.Errorf("jobs: driver %q needs its store bound — jobsdb.Bind[YourDB](), jobsredis.Bind(…) or jobsamqp.Bind(…)", c.Driver)
 	case c.Driver != bound && bound != "custom":
 		return c, nil, fmt.Errorf("jobs: driver is %q but the bound store is %q", c.Driver, bound)
 	}
@@ -161,17 +166,21 @@ func toInt(v any) (int, error) {
 // shutdown, and a "jobs" resource on the dashboard. A jobs.Store in DI —
 // jobsdb.Bind or jobsredis.Bind provides one — selects that driver.
 func Module(cfg Config) nexus.Option {
-	ctor := func(lc nexus.Lifecycle, store Store) (*Manager, error) {
-		resolved, st, err := cfg.resolve(store)
+	ctor := func(lc nexus.Lifecycle, store Store, broker Broker) (*Manager, error) {
+		resolved, st, err := cfg.resolve(store, broker)
 		if err != nil {
 			return nil, err
 		}
+		if broker != nil {
+			st = nil
+		}
 		m := newManager(resolved, st)
+		m.broker = broker
 		lc.Append(nexus.Hook{OnStart: m.start, OnStop: m.stop})
 		return m, nil
 	}
 	return nexus.Options(
-		nexus.Raw(di.Provide(di.Annotate(ctor, di.ParamTags("", `optional:"true"`)))),
+		nexus.Raw(di.Provide(di.Annotate(ctor, di.ParamTags("", `optional:"true"`, `optional:"true"`)))),
 		nexus.Invoke(func(app *nexus.App, m *Manager) { app.Register(m.asResource()) }),
 	)
 }
@@ -180,7 +189,8 @@ func Module(cfg Config) nexus.Option {
 // cancel it.
 type Manager struct {
 	cfg    Config
-	store  Store
+	store  Store  // nil with a broker
+	broker Broker // a message-broker driver, or nil
 	log    *slog.Logger
 	worker string // this process, as recorded on the jobs it claims
 
@@ -198,6 +208,9 @@ type Manager struct {
 	stopOnce   sync.Once
 	workers    sync.WaitGroup
 	background sync.WaitGroup // heartbeat, maintenance, scheduler
+
+	counts     brokerCounts   // broker driver: what this process ran
+	deliveries sync.WaitGroup // broker driver: deliveries being handled
 
 	statsMu   sync.Mutex
 	statsAt   time.Time
@@ -253,6 +266,9 @@ func (m *Manager) register(d *definition, call callFunc) error {
 	if prev, dup := m.defs[d.name]; dup && prev != d {
 		return fmt.Errorf("jobs: two jobs are named %q — give one jobs.Name(...)", d.name)
 	}
+	if m.broker != nil && d.unique > 0 {
+		return fmt.Errorf("jobs: %s uses jobs.Unique, which the %s driver can't honor (it keeps no per-job state)", d.name, m.broker.Driver())
+	}
 	m.defs[d.name] = d
 	m.calls[d.name] = call
 	if _, ok := m.wake[d.queue]; !ok {
@@ -265,10 +281,12 @@ func (m *Manager) register(d *definition, call callFunc) error {
 }
 
 func (m *Manager) start(context.Context) error {
-	m.background.Add(1)
-	go m.maintain()
+	if m.store != nil {
+		m.background.Add(1)
+		go m.maintain()
+	}
 	if m.cfg.DisableWorkers {
-		if !m.store.Shared() {
+		if m.store != nil && !m.store.Shared() {
 			m.log.Warn("jobs: workers disabled (run = false) with the memory driver — jobs enqueued here never run")
 		}
 		return nil
@@ -280,14 +298,24 @@ func (m *Manager) start(context.Context) error {
 	}
 	hasSchedules := len(m.schedules) > 0
 	m.mu.Unlock()
-	for q, n := range queues {
-		for range n {
+	if m.broker != nil {
+		for q, n := range queues {
 			m.workers.Add(1)
-			go m.work(q)
+			go m.consume(q, n)
 		}
+		if hasSchedules {
+			m.log.Info("jobs: schedules run in this process — with a message-broker driver every process that runs them enqueues each tick; run them on one replica")
+		}
+	} else {
+		for q, n := range queues {
+			for range n {
+				m.workers.Add(1)
+				go m.work(q)
+			}
+		}
+		m.background.Add(1)
+		go m.heartbeat()
 	}
-	m.background.Add(1)
-	go m.heartbeat()
 	if hasSchedules {
 		m.background.Add(1)
 		go m.runSchedules()
@@ -593,7 +621,13 @@ func (m *Manager) enqueue(ctx context.Context, d *definition, args json.RawMessa
 	}
 	sctx, cancel := m.storeCtx()
 	defer cancel()
-	id, _, err := m.store.Insert(sctx, rec)
+	id := rec.ID
+	var err error
+	if m.broker != nil {
+		err = m.broker.Publish(sctx, rec)
+	} else {
+		id, _, err = m.store.Insert(sctx, rec)
+	}
 	if err != nil {
 		return "", fmt.Errorf("jobs: enqueue %s: %w", d.name, err)
 	}
@@ -610,6 +644,9 @@ func (m *Manager) enqueue(ctx context.Context, d *definition, args json.RawMessa
 
 // Get returns the job's record — state, progress, result, error.
 func (m *Manager) Get(ctx context.Context, id ID) (Record, bool, error) {
+	if m.broker != nil {
+		return Record{}, false, ErrUnsupported
+	}
 	return m.store.Get(ctx, id)
 }
 
@@ -617,6 +654,9 @@ func (m *Manager) Get(ctx context.Context, id ID) (Record, bool, error) {
 // cancelled — at once in this process, within a lease renewal in another.
 // Finished jobs are left as they are; false means there was no such job.
 func (m *Manager) Cancel(ctx context.Context, id ID) (bool, error) {
+	if m.broker != nil {
+		return false, ErrUnsupported
+	}
 	rec, ok, err := m.store.Update(ctx, id, func(r *Record) bool {
 		switch r.State {
 		case StateQueued:
@@ -652,6 +692,9 @@ func (m *Manager) Cancel(ctx context.Context, id ID) (bool, error) {
 
 // List returns records, newest first.
 func (m *Manager) List(ctx context.Context, f Filter) ([]Record, error) {
+	if m.broker != nil {
+		return nil, ErrUnsupported
+	}
 	return m.store.List(ctx, f)
 }
 
@@ -680,7 +723,13 @@ func (m *Manager) stats() (Stats, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	st, err := m.store.Stats(ctx, time.Now())
+	var st Stats
+	var err error
+	if m.broker != nil {
+		st, err = m.brokerStats(ctx)
+	} else {
+		st, err = m.store.Stats(ctx, time.Now())
+	}
 	if err != nil {
 		return Stats{}, err
 	}
@@ -733,6 +782,10 @@ func (m *Manager) details() map[string]any {
 			plural = ""
 		}
 		details["queue "+q] = fmt.Sprintf("%s · %d worker%s", strings.Join(parts, " · "), workers, plural)
+	}
+	if m.broker != nil {
+		details["this process"] = fmt.Sprintf("%d running · %d done · %d failed · %d retried",
+			m.counts.running.Load(), m.counts.succeeded.Load(), m.counts.failed.Load(), m.counts.retried.Load())
 	}
 	if f := st.LastFailure; f != nil {
 		details["last failure"] = fmt.Sprintf("%s (%s ago): %s", f.Name,

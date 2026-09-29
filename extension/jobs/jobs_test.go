@@ -266,7 +266,7 @@ func TestBootErrors(t *testing.T) {
 	}{
 		{"closure without a name", []nexus.Option{jobs.Module(jobs.Config{}), closure}, "no stable name"},
 		{"duplicate names", []nexus.Option{jobs.Module(jobs.Config{}), dupA, dupB}, `two jobs are named "dup"`},
-		{"driver without a store", []nexus.Option{jobs.Module(jobs.Config{Driver: "db"}), dupA}, `driver "db" needs a store`},
+		{"driver without a store", []nexus.Option{jobs.Module(jobs.Config{Driver: "db"}), dupA}, `driver "db" needs its store bound`},
 		{"no module", []nexus.Option{dupA}, "Manager"},
 	}
 	for _, tc := range cases {

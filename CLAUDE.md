@@ -1066,8 +1066,14 @@ rebuilds), `db` = `jobsdb.Bind[DB]()` (`extension/jobs/jobsdb`, GORM, any dialec
 `nexus_jobs`/`nexus_job_uniques` auto-created, `jobsdb.NoMigrate()`/`Migrate`; version-checked
 CAS writes), `redis` = `jobsredis.Bind(jobsredis.Config{URL, Prefix})` (SEPARATE module
 `extension/jobs/jobsredis`; `[jobs.redis] url`, else `REDIS_URL`; Lua claim/insert, WATCH/MULTI
-updates, `{nexus:jobs}:` keys). A `jobs.Store` in DI (optional dep of `jobs.Module`) selects its
-driver. Shared stores: lease per claim (`[jobs] lease` 30s, renewed every lease/3), takeover of a
+updates, `{nexus:jobs}:` keys), `rabbitmq` = `jobsamqp.Bind(jobsamqp.Config{URL, Prefix,
+ConsumerTimeout, DeliveryLimit})` (SEPARATE module `extension/jobs/jobsamqp`; a `jobs.Broker`,
+not a Store: persistent messages in quorum queues `nexus.jobs.<q>` + `.failed` + `.delay.<ms>` TTL
+queues; confirms; ack after the job; `x-consumer-timeout` default 8h (RabbitMQ 3.12+, keep above
+the longest Timeout; changing args needs the queue deleted); no per-job state → Get/Cancel/List
+return `jobs.ErrUnsupported`, Unique refused at boot, schedules should run on one replica;
+checkpoints travel in the message). A `jobs.Store` or `jobs.Broker` in DI (optional deps of
+`jobs.Module`; both is a boot error) selects its driver. Shared stores: lease per claim (`[jobs] lease` 30s, renewed every lease/3), takeover of a
 dead worker's jobs (a crash spends an attempt), ownership-checked writes (`jobs.ErrLostOwnership`),
 cross-process cancel via the lease heartbeat, `poll` (1s) for idle workers. `[jobs]` `run`
 (false = enqueue only), `shutdown_grace` (10s, 0 in dev; then cancel + requeue),

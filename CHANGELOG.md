@@ -22,6 +22,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (`jobs.ErrLostOwnership`).
   - Cancelling reaches a job running in another process.
   - New settings: `[jobs] lease`, `poll`, `driver = "db" | "redis"`.
+- **RabbitMQ driver.** `jobsamqp.Bind(jobsamqp.Config{})` is a new separate
+  module, `extension/jobs/jobsamqp`, implementing the new `jobs.Broker`
+  interface.
+  - Jobs are persistent messages in quorum queues, with a `.failed`
+    dead-letter queue and TTL delay queues.
+  - Publishes wait for broker confirms, and a job is acknowledged only after
+    it finishes.
+  - Queues get `x-consumer-timeout` (default 8h) so jobs can run for hours,
+    and a delivery limit ends crash loops.
+  - Shutdown republishes interrupted jobs with their checkpoints.
+  - The broker keeps no per-job state, so `Manager.Get`, `Cancel` and `List`
+    return `jobs.ErrUnsupported`.
 - **Scheduled jobs.** `Job.Schedule(spec, args)` enqueues on a cron
   schedule (`0 7 * * *`, `@every 15m`, `CRON_TZ=…`). Each tick is enqueued
   once across replicas.

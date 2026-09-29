@@ -139,6 +139,7 @@ type Run struct {
 	actor   string
 	ctx     context.Context
 	exec    *execution
+	local   *Record // broker driver: the delivered job, changed in place
 
 	mu           sync.Mutex
 	lastProgress time.Time
@@ -204,6 +205,18 @@ func (r *Run) Checkpoint(state any) error {
 
 // Resume loads the last Checkpoint into state; false when there is none.
 func (r *Run) Resume(state any) (bool, error) {
+	if r.local != nil {
+		r.mu.Lock()
+		cp := r.local.Checkpoint
+		r.mu.Unlock()
+		if len(cp) == 0 {
+			return false, nil
+		}
+		if err := json.Unmarshal(cp, state); err != nil {
+			return false, fmt.Errorf("jobs: checkpoint doesn't decode: %w", err)
+		}
+		return true, nil
+	}
 	ctx, cancel := r.m.storeCtx()
 	defer cancel()
 	rec, ok, err := r.m.store.Get(ctx, r.id)
@@ -224,6 +237,12 @@ func (r *Run) owns(rec *Record) bool {
 // write applies fn to the record if this attempt still owns it; when it
 // doesn't, the run is cancelled and ErrLostOwnership returned.
 func (r *Run) write(fn func(*Record)) error {
+	if r.local != nil {
+		r.mu.Lock()
+		fn(r.local)
+		r.mu.Unlock()
+		return nil
+	}
 	ctx, cancel := r.m.storeCtx()
 	defer cancel()
 	_, ok, err := r.m.store.Update(ctx, r.id, func(rec *Record) bool {
