@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.67.0] - 2026-09-29
+
 ### Added
 
 - **Typed page URLs for Inertia apps.** `import { pageUrl } from
@@ -23,6 +25,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `nexus-client/pages` and the tsconfig merge maps it.
 - The SDK manifest's field schema records each field's URL binding name
   (`path` for `path:`/`uri:` tags, `query` for `query:`/`form:` tags).
+
+### Fixed
+
+- An ineffectual assignment in the `//@router` parser that failed the
+  golangci-lint gate.
 
 ## [1.66.2] - 2026-09-29
 
