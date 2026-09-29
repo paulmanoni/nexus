@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.71.0] - 2026-09-29
+
 ### Added
 
 - **Background jobs (`extension/jobs`), phase one.** A job is a method whose
