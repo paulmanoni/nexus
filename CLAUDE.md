@@ -1134,6 +1134,17 @@ const props = defineProps<NexusPageProps['Users/Index']>()
 ```
 (indexed access only — Vue's compiler rejects a generic helper), and `usePage().props`
 is typed through the generated `inertia.d.ts`. Pages are not REST calls in the SDK.
+
+**Typed page URLs (`pageUrl`).** Links come from the Go routes, keyed by component:
+`import { pageUrl } from 'nexus-client/pages'` → `router.visit(pageUrl('Users/Show',
+{ id, tab }))` → `/users/42?tab=…`. Path params (from the route template) are required,
+the handler's `query:`/`form:`-tagged args are optional query params, anything else is a
+type error; ids take `string | number` (maskid), `route_prefix` is applied. Several routes
+per component: GET before POST, trailing-slash twins collapse, the most specific route
+whose path params are given wins; `{ route }` forces one, `{ query }` adds undeclared
+params. Generated as `web/sdk/pages.{js,d.ts}` (dev dump, `nexus client --out`, served at
+`/__nexus/client/pages.js`); the Vite plugin aliases `nexus-client/pages` and the tsconfig
+merge maps it. `registry.FieldSchema.Path/Query` carry each field's URL binding name.
 `nexus({ pages: 'src/Pages' })` in `vite.config` warns in dev and fails `vite build`
 when a registered component has no file.
 

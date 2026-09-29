@@ -235,6 +235,10 @@ type Handler struct {
 	// dtsInertia is inertia.d.ts; empty (and the route 404s) when the
 	// manifest has no pages or typed shared props.
 	dtsInertia cachedAsset
+	// pagesJS / dtsPages are pages.js + pages.d.ts (pageUrl); empty, and
+	// their routes 404, when the manifest has no Inertia pages.
+	pagesJS  cachedAsset
+	dtsPages cachedAsset
 }
 
 // Default auth-section hints applied when auth.Config leaves them
@@ -330,6 +334,8 @@ func (h *Handler) Reload() {
 	h.dtsVue = cachedAsset{}
 	h.dtsReact = cachedAsset{}
 	h.dtsInertia = cachedAsset{}
+	h.pagesJS = cachedAsset{}
+	h.dtsPages = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -350,6 +356,8 @@ func (h *Handler) SetAuthInfo(fn func() ExtractorInfo) {
 	h.dtsVue = cachedAsset{}
 	h.dtsReact = cachedAsset{}
 	h.dtsInertia = cachedAsset{}
+	h.pagesJS = cachedAsset{}
+	h.dtsPages = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -366,6 +374,8 @@ func (h *Handler) SetAuthMeta(meta AuthMeta) {
 	h.dtsVue = cachedAsset{}
 	h.dtsReact = cachedAsset{}
 	h.dtsInertia = cachedAsset{}
+	h.pagesJS = cachedAsset{}
+	h.dtsPages = cachedAsset{}
 	h.mu.Unlock()
 }
 
@@ -543,6 +553,7 @@ func (h *Handler) build() {
 		vueDTS := GenerateVueDTS(m)
 		reactDTS := GenerateReactDTS(m)
 		inertiaDTS := GenerateInertiaDTS(m)
+		pagesJS, pagesDTS := GeneratePagesJS(m), GeneratePagesDTS(m)
 		h.mu.Lock()
 		if err == nil {
 			h.manifest = newCachedAsset(body)
@@ -551,6 +562,8 @@ func (h *Handler) build() {
 		h.dtsVue = newCachedAsset([]byte(vueDTS))
 		h.dtsReact = newCachedAsset([]byte(reactDTS))
 		h.dtsInertia = newCachedAsset([]byte(inertiaDTS))
+		h.pagesJS = newCachedAsset([]byte(pagesJS))
+		h.dtsPages = newCachedAsset([]byte(pagesDTS))
 		h.mu.Unlock()
 	})
 }
@@ -714,6 +727,28 @@ func MountWithContributions(e httpx.Router, reg *registry.Registry, authInfo fun
 			h.build()
 			h.mu.Lock()
 			asset := h.dtsInertia
+			h.mu.Unlock()
+			if len(asset.body) == 0 {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			serveCachedAsset(c, "application/typescript; charset=utf-8", asset)
+		})
+		g.GET("/pages.js", func(c *httpx.Ctx) {
+			h.build()
+			h.mu.Lock()
+			asset := h.pagesJS
+			h.mu.Unlock()
+			if len(asset.body) == 0 {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			serveCachedAsset(c, "application/javascript; charset=utf-8", asset)
+		})
+		g.GET("/pages.d.ts", func(c *httpx.Ctx) {
+			h.build()
+			h.mu.Lock()
+			asset := h.dtsPages
 			h.mu.Unlock()
 			if len(asset.body) == 0 {
 				c.Status(http.StatusNotFound)

@@ -61,6 +61,14 @@ type FieldSchema struct {
 	Type        TypeRef `json:"type"`
 	Optional    bool    `json:"optional,omitempty"`
 	Description string  `json:"description,omitempty"`
+
+	// Path / Query are the names the REST binder reads the field under
+	// from the URL: `path:"id"` (or the legacy `uri:"id"`) binds from the
+	// :id path segment, `query:"page"` (or `form:"page"`, which the query
+	// binder falls back to) from ?page=. Empty when the field doesn't bind
+	// from that source. Generated page-URL helpers build URLs from them.
+	Path  string `json:"path,omitempty"`
+	Query string `json:"query,omitempty"`
 }
 
 // WalkType reflects a Go type into a TypeRef. Named struct types are
@@ -439,6 +447,8 @@ func collectStructFields(t reflect.Type, refs map[string]NamedType, depth int, o
 			Type:        ft,
 			Optional:    opt,
 			Description: f.Tag.Get("desc"),
+			Path:        tagName(f.Tag, "path", "uri"),
+			Query:       tagName(f.Tag, "query", "form"),
 		}
 		if jsonName == f.Name {
 			fs.JSONName = ""
@@ -505,4 +515,21 @@ func dominantField(g []collectedField) (collectedField, bool) {
 		return collectedField{}, false
 	}
 	return g[0], true
+}
+
+// tagName is the name a struct tag gives a field — the first
+// comma-separated token of the first present, non-empty, non-"-" tag
+// among keys. "" when none applies.
+func tagName(tag reflect.StructTag, keys ...string) string {
+	for _, k := range keys {
+		v, ok := tag.Lookup(k)
+		if !ok {
+			continue
+		}
+		name := strings.SplitN(v, ",", 2)[0]
+		if name != "" && name != "-" {
+			return name
+		}
+	}
+	return ""
 }

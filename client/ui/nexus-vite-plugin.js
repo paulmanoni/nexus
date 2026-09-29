@@ -1204,17 +1204,21 @@ export default function nexusAutoSelect(options = {}) {
         }
       }
 
-      // `import … from 'nexus-client'` resolves to the SDK the Go app
-      // writes, matching the tsconfig paths entry the Go side merges.
-      // Vite puts plugin aliases ahead of the user's and the first match
-      // wins, so the alias is added only when the user has none for the
-      // name — their own mapping (a wrapper module) must win.
+      // `import … from 'nexus-client'` (and 'nexus-client/pages', the
+      // pageUrl helper) resolve to the SDK the Go app writes, matching the
+      // tsconfig paths entries the Go side merges. Vite puts plugin aliases
+      // ahead of the user's and the first match wins, so each alias is added
+      // only when the user has none for the name — their own mapping (a
+      // wrapper module) must win.
+      const sdkAliases = []
+      const sdkRoot = dirname(manifestPathFor(resolve(userConfig.root || process.cwd()), options.sdkDir))
       if (!userAliases(userConfig, 'nexus-client')) {
-        const root = resolve(userConfig.root || process.cwd())
-        out.resolve = {
-          alias: [{ find: /^nexus-client$/, replacement: join(dirname(manifestPathFor(root, options.sdkDir)), 'client.js') }],
-        }
+        sdkAliases.push({ find: /^nexus-client$/, replacement: join(sdkRoot, 'client.js') })
       }
+      if (!userAliases(userConfig, 'nexus-client/pages')) {
+        sdkAliases.push({ find: /^nexus-client\/pages$/, replacement: join(sdkRoot, 'pages.js') })
+      }
+      if (sdkAliases.length) out.resolve = { alias: sdkAliases }
 
       const server = userConfig.server || {}
       explicitOrigin = server.origin || ''

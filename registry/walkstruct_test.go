@@ -306,3 +306,33 @@ func lowerFirst(s string) string {
 	}
 	return string(r)
 }
+
+// Path / Query record the names the REST binder reads a field under from
+// the URL, with the legacy uri: and the form: fallback honoured.
+func TestWalkStruct_URLBindingNames(t *testing.T) {
+	type args struct {
+		ID     uint   `path:"id"`
+		Legacy uint   `uri:"pk" json:"pk"`
+		Page   int    `query:"page"`
+		Tab    string `form:"tab,omitempty"`
+		Both   string `query:"q" form:"ignored"`
+		Body   string `json:"body"`
+		Skip   string `query:"-"`
+	}
+	refs := map[string]NamedType{}
+	WalkType(reflect.TypeOf(args{}), refs)
+	nt, ok := refs["args"]
+	if !ok {
+		t.Fatalf("args not recorded in refs: %v", refs)
+	}
+	want := map[string][2]string{
+		"ID": {"id", ""}, "Legacy": {"pk", ""}, "Page": {"", "page"},
+		"Tab": {"", "tab"}, "Both": {"", "q"}, "Body": {"", ""}, "Skip": {"", ""},
+	}
+	for _, f := range nt.Fields {
+		w := want[f.Name]
+		if f.Path != w[0] || f.Query != w[1] {
+			t.Errorf("%s: path=%q query=%q, want path=%q query=%q", f.Name, f.Path, f.Query, w[0], w[1])
+		}
+	}
+}

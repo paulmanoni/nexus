@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Typed page URLs for Inertia apps.** `import { pageUrl } from
+  'nexus-client/pages'` builds a page's URL from its Go route, keyed by the
+  Inertia component (`pageUrl('Users/Show', { id, tab })` →
+  `/users/42?tab=…`). Path parameters are required, the handler's
+  `query:`-tagged arguments are optional query parameters, and anything else
+  is a type error, so a renamed component, a missing id or a misspelled
+  parameter fails to compile and a changed Go path updates every link. When
+  several routes render a component, the most specific one whose path
+  parameters are given wins; `{ route }` picks one and `{ query }` adds
+  parameters the handler reads without declaring. Generated as
+  `web/sdk/pages.js` + `pages.d.ts` by the development dump and `nexus client
+  --out`, and served at `/__nexus/client/pages.js`; nexus-vite-plugin aliases
+  `nexus-client/pages` and the tsconfig merge maps it.
+- The SDK manifest's field schema records each field's URL binding name
+  (`path` for `path:`/`uri:` tags, `query` for `query:`/`form:` tags).
+
 ## [1.66.2] - 2026-09-29
 
 ### Changed

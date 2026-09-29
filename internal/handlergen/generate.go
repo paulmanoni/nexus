@@ -183,7 +183,7 @@ func parseRouterDecl(a Annotation, pkg string) (declWithPos, error) {
 		return declWithPos{}, a.errf("//@router needs a <prefix> (package-named) or <name> <prefix>, e.g. //@router /billing (got %v)", a.Args)
 	}
 	var d RouterDecl
-	rest := a.Args
+	var rest []string
 	if strings.HasPrefix(a.Args[0], "/") {
 		// Package-named form: the same default //@module uses.
 		name := pkg

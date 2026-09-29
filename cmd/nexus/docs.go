@@ -750,6 +750,20 @@ a page takes its props type from the Go handler's return type —
 (indexed access; Vue's compiler rejects a generic helper). usePage().props
 is typed from inertia.ShareScoped[T] / ShareTyped[T]; plain Share is untyped.
 
+Page URLs: build links from the Go routes, keyed by component —
+
+    import { pageUrl } from 'nexus-client/pages'
+    router.visit(pageUrl('Users/Show', { id: user.id, tab: 'orders' }))
+    // → /users/42?tab=orders
+
+Path parameters come from the route and are required; the handler's
+query:-tagged arguments are optional query parameters; anything else is a
+type error, and the route prefix is applied. When several routes render a
+component, the most specific one whose path parameters are given wins (GET
+before POST, trailing-slash twins collapse); { route } picks one, and
+{ query } adds parameters the handler reads without declaring. pages.js +
+pages.d.ts sit in web/sdk beside the rest of the SDK.
+
 Dev: the browser opens the app's origin, as for every frontend; the page
 loads its modules from Vite through the hot file (see "nexus docs frontend").
 

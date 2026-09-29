@@ -81,6 +81,9 @@ func (h *Handler) Dump(outDir, tsconfig, viteConfig string, stdout io.Writer) er
 	if err := WriteInertiaDTS(filepath.Join(outDir, "inertia.d.ts"), inertiaDTS, stdout); err != nil {
 		return err
 	}
+	if err := WritePagesFiles(outDir, h.Manifest(), stdout); err != nil {
+		return err
+	}
 
 	// nexus.ts is a one-time wiring scaffold (singleton client +
 	// composable re-exports + type re-exports). Written ONLY when
@@ -139,6 +142,13 @@ func WriteIfChanged(path string, body []byte, stdout io.Writer) error {
 // it would break type-checking. A file without the generated banner is the
 // developer's and is left alone. Shared by Dump and `nexus client`.
 func WriteInertiaDTS(path string, body []byte, stdout io.Writer) error {
+	return writeOrRemoveGenerated(path, body, "no Inertia pages or typed shared props", stdout)
+}
+
+// writeOrRemoveGenerated writes body to path when it is non-empty; when it
+// is empty, a previously generated copy (one carrying the generated banner)
+// is removed, and why is reported. A hand-written file is left alone.
+func writeOrRemoveGenerated(path string, body []byte, why string, stdout io.Writer) error {
 	if len(body) > 0 {
 		return WriteIfChanged(path, body, stdout)
 	}
@@ -149,7 +159,7 @@ func WriteInertiaDTS(path string, body []byte, stdout io.Writer) error {
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove %s: %w", path, err)
 	}
-	fdumpLine(stdout, ansiYellow, "removed", path, "no Inertia pages or typed shared props")
+	fdumpLine(stdout, ansiYellow, "removed", path, why)
 	return nil
 }
 
@@ -257,7 +267,7 @@ func mergePaths(configPath string, doc map[string]any, outDir string, stdout io.
 		// A project that points 'nexus-client' somewhere of its own (a
 		// wrapper module) keeps it; only a mapping that names a generated
 		// SDK file is ours to update.
-		if k == "nexus-client" && !generatedClientMapping(paths[k]) {
+		if (k == "nexus-client" || k == "nexus-client/pages") && !generatedClientMapping(paths[k]) {
 			continue
 		}
 		paths[k] = v
@@ -354,7 +364,8 @@ func generatedClientMapping(v any) bool {
 	}
 	for _, e := range list {
 		s, _ := e.(string)
-		if !strings.HasSuffix(s, "/client.d.ts") && !strings.HasSuffix(s, "/client.js") {
+		if !strings.HasSuffix(s, "/client.d.ts") && !strings.HasSuffix(s, "/client.js") &&
+			!strings.HasSuffix(s, "/pages.d.ts") && !strings.HasSuffix(s, "/pages.js") {
 			return false
 		}
 	}
@@ -492,6 +503,7 @@ func pathMappings(outDir, base string) (map[string][]string, error) {
 	}
 	return map[string][]string{
 		"nexus-client":              {rel + "/client.d.ts"},
+		"nexus-client/pages":        {rel + "/pages.d.ts"},
 		"/__nexus/client/client.js": {rel + "/client.js"},
 		"/__nexus/client/vue.js":    {rel + "/vue.js"},
 	}, nil

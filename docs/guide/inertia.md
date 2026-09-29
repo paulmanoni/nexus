@@ -110,6 +110,49 @@ Use indexed access as shown, because Vue's compiler rejects a generic helper.
 `nexus({ pages: 'src/Pages' })` in `vite.config.ts` checks that every registered page
 has a component. It warns in development and fails `vite build`.
 
+## Linking to pages
+
+Build page URLs from the Go routes instead of writing them by hand. `pageUrl` takes the
+page's component, the same key as `NexusPageProps`:
+
+```vue
+<script setup lang="ts">
+import { Link, router } from '@inertiajs/vue3'
+import { pageUrl } from 'nexus-client/pages'
+
+router.visit(pageUrl('Users/Show', { id: user.id, tab: 'orders' }))  // → /users/42?tab=orders
+</script>
+
+<template>
+  <Link :href="pageUrl('Users/Index', { page: 2 })">Next</Link>
+</template>
+```
+
+- **Path parameters** come from the route (`/users/:id`) and are required.
+- **Query parameters** are the handler's `query:`-tagged arguments, and they are
+  optional. Anything else is a type error.
+- **Ids** accept a string or a number, so masked IDs from
+  [`extension/maskid`](./maskid) work.
+- **Route prefix.** The app's `route_prefix` is applied for you.
+
+So a renamed component, a missing ID or a misspelled parameter fails to compile. When
+you change a page's path in Go, every link follows.
+
+When several routes render one component (say `/users/new` and `/users/:id/edit` both
+render `Users/Form`):
+
+- `pageUrl` picks the most specific route whose path parameters you passed.
+- Trailing-slash twins count as one route.
+- GET routes are preferred over POST routes.
+- To choose one explicitly, pass `{ route: '/users/:id/edit' }`.
+
+For query parameters that the Go handler reads without declaring them, pass
+`{ query: { … } }`.
+
+`pages.js` and `pages.d.ts` sit next to the rest of the SDK in `web/sdk`. The development
+dump writes them, and `nexus client --out` writes them too. They are also served at
+`/__nexus/client/pages.js`.
+
 ## Server-side rendering
 
 ```go
