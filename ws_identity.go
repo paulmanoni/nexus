@@ -31,6 +31,12 @@ func RegisterRequestIdentity(fn RequestIdentityFunc) {
 	requestIdentityMu.Unlock()
 }
 
+// RequestIdentity reports the authenticated subject of a request, as the
+// registered identity sources (extension/auth, or the app's own) see it. It
+// is what extensions record as "who did this" — the enqueuer of a background
+// job, for instance.
+func RequestIdentity(ctx context.Context) (id string, ok bool) { return requestIdentity(ctx) }
+
 // requestIdentity asks each registered source, in order.
 func requestIdentity(ctx context.Context) (string, bool) {
 	requestIdentityMu.RLock()

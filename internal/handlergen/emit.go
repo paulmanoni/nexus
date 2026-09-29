@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Annotation is one //@ directive found on a function. A function may carry one
@@ -106,7 +107,7 @@ func (c *Config) applyDefaults() {
 
 var primaryKeywords = map[string]bool{
 	"provide": true, "rest": true, "query": true, "mutation": true,
-	"subscription": true, "ws": true, "worker": true, "page": true,
+	"subscription": true, "ws": true, "worker": true, "page": true, "job": true,
 }
 
 // typeModifierKeywords are the modifiers a //@controller type accepts; they
@@ -253,7 +254,7 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 			imports[imp] = true
 		}
 		c, isAction := controllers[g.primary.Recv]
-		isAction = isAction && g.primary.Recv != ""
+		isAction = isAction && g.primary.Recv != "" && g.primary.Keyword != "job"
 		if len(g.more) > 0 {
 			a := g.more[0]
 			if !isAction || !isRouteKeyword(g.primary.Keyword) || !isRouteKeyword(a.Keyword) {
@@ -282,6 +283,12 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		}
 		if g.primary.Keyword == "page" {
 			imports[strconv.Quote(inertiaImportPath)] = true
+		}
+		if g.primary.Keyword == "job" {
+			imports[strconv.Quote(jobsImportPath)] = true
+			if jobNeedsTime(*g.primary) {
+				imports[strconv.Quote("time")] = true
+			}
 		}
 		text, err := renderPrimary(*g.primary, fn, opts)
 		if err != nil {
@@ -432,6 +439,16 @@ func renderPrimary(a Annotation, fn string, opts []string) (string, error) {
 		}
 		return fmt.Sprintf("inertia.Page(%s, %s, %s, %s%s)",
 			strconv.Quote(strings.Join(verbs, ",")), strconv.Quote(path), strconv.Quote(component), fn, optTail), nil
+	case "job":
+		opts, err := jobOptions(a)
+		if err != nil {
+			return "", err
+		}
+		define := "jobs.DefineFunc"
+		if a.Recv != "" {
+			define = "jobs.Define"
+		}
+		return fmt.Sprintf("%s(%s)", define, strings.Join(append([]string{fn}, opts...), ", ")), nil
 	case "query", "mutation", "subscription":
 		if len(a.Args) != 0 {
 			return "", a.errf("//@%s takes no arguments (got %v) — the op name derives from the function name; "+
@@ -958,4 +975,74 @@ func renderControllerAction(c *controllerDecl, a Annotation, opts []string) (cal
 		return fmt.Sprintf("%s(%s%s)", builder, fn, optTail), false, nil
 	}
 	return "", false, a.errf("//@%s is not available on a controller action — a //@controller's methods take //@page, //@rest, //@query or //@mutation", a.Keyword)
+}
+
+// jobsImportPath is the background-jobs extension, for //@job.
+const jobsImportPath = "github.com/paulmanoni/nexus/extension/jobs"
+
+// jobOptions renders //@job [queue] [timeout=D] [retry=N] [unique=D]
+// [name=X] [queue=Q] as jobs.* option expressions.
+func jobOptions(a Annotation) ([]string, error) {
+	var opts []string
+	for i, tok := range a.Args {
+		k, v, kv := strings.Cut(tok, "=")
+		if !kv {
+			if i != 0 {
+				return nil, a.errf("//@job: %q — the queue name comes first, then key=value options (timeout, retry, unique, name, queue)", tok)
+			}
+			k, v = "queue", tok
+		}
+		val, err := decoratorToken(&a, v)
+		if err != nil {
+			return nil, err
+		}
+		switch k {
+		case "queue", "name":
+			if val == "" {
+				return nil, a.errf("//@job %s is empty", k)
+			}
+			opts = append(opts, fmt.Sprintf("jobs.%s(%s)", map[string]string{"queue": "Queue", "name": "Name"}[k], strconv.Quote(val)))
+		case "retry":
+			n, err := strconv.Atoi(val)
+			if err != nil || n < 0 {
+				return nil, a.errf("//@job retry=%s is not a count of 0 or more", val)
+			}
+			opts = append(opts, fmt.Sprintf("jobs.Retry(%d)", n))
+		case "timeout", "unique":
+			d, err := time.ParseDuration(val)
+			if err != nil || d <= 0 {
+				return nil, a.errf("//@job %s=%s is not a duration like 30s, 10m or 2h", k, val)
+			}
+			opts = append(opts, fmt.Sprintf("jobs.%s(%s)", map[string]string{"timeout": "Timeout", "unique": "Unique"}[k], durationExpr(d)))
+		default:
+			return nil, a.errf("//@job: unknown option %q (timeout, retry, unique, name, queue)", k)
+		}
+	}
+	return opts, nil
+}
+
+// jobNeedsTime reports whether a //@job's options mention a duration.
+func jobNeedsTime(a Annotation) bool {
+	for _, tok := range a.Args {
+		if strings.HasPrefix(tok, "timeout=") || strings.HasPrefix(tok, "unique=") {
+			return true
+		}
+	}
+	return false
+}
+
+// durationExpr writes d as readable Go: 2*time.Hour, 90*time.Second.
+func durationExpr(d time.Duration) string {
+	for _, u := range []struct {
+		d    time.Duration
+		expr string
+	}{{time.Hour, "time.Hour"}, {time.Minute, "time.Minute"}, {time.Second, "time.Second"}, {time.Millisecond, "time.Millisecond"}} {
+		if d%u.d == 0 {
+			if n := d / u.d; n != 1 {
+				return fmt.Sprintf("%d*%s", n, u.expr)
+			}
+			return u.expr
+		}
+	}
+	return fmt.Sprintf("time.Duration(%d)", int64(d))
 }

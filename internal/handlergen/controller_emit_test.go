@@ -119,3 +119,49 @@ func TestEmit_ControllerTrailingSlash(t *testing.T) {
 		t.Fatalf("unknown controller option: %v", err)
 	}
 }
+
+func TestEmit_Job(t *testing.T) {
+	got, err := Emit(Config{Package: "reports"}, []Annotation{
+		{Func: "NewReportService", Keyword: "provide", Line: 1},
+		method("ReportService", "Generate", "job", 5, "low", "timeout=2h", "retry=3", "unique=90s"),
+		{Func: "SendDigest", Keyword: "job", Line: 9},
+		{Func: "C", Keyword: "controller", Args: []string{"/c"}, Line: 12, TypeLevel: true},
+		method("C", "Index", "page", 14, "GET", "/"),
+		method("C", "Rebuild", "job", 16, "name=rebuild-index"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`jobs.Define((*ReportService).Generate, jobs.Queue("low"), jobs.Timeout(2*time.Hour), jobs.Retry(3), jobs.Unique(90*time.Second)),`,
+		`jobs.DefineFunc(SendDigest),`,
+		`jobs.Define((*C).Rebuild, jobs.Name("rebuild-index")),`,
+		`"github.com/paulmanoni/nexus/extension/jobs"`,
+		`"time"`,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"retry=-1"}, "not a count"},
+		{[]string{"timeout=soon"}, "not a duration"},
+		{[]string{"priority=high"}, "unknown option"},
+		{[]string{"retry=1", "low"}, "queue name comes first"},
+	} {
+		_, err := Emit(Config{Package: "p"}, []Annotation{{Func: "J", Keyword: "job", Args: tc.args, Line: 1, File: "j.go"}})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("//@job %v: want error containing %q, got %v", tc.args, tc.want, err)
+		}
+	}
+	_, err = Emit(Config{Package: "p"}, []Annotation{
+		{Func: "J", Keyword: "job", Line: 1, File: "j.go"},
+		{Func: "J", Keyword: "auth", Args: []string{"Required"}, Line: 2, File: "j.go"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not accept modifier") {
+		t.Errorf("//@auth on a job: %v", err)
+	}
+}

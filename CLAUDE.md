@@ -746,6 +746,7 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
 //@module <name> | //@path <prefix> | //@routeprefix <prefix>  (PACKAGE doc comment —
                                   name the module group / prefix its routes)
 //@page <METHOD> <PATH> [Component]  inertia page (component optional on a controller method)
+//@job [queue] [timeout=D] [retry=N] [unique=D] [name=X]  background job (extension/jobs)
 //@controller <prefix> [trailing-slash]  (TYPE doc comment — its annotated methods become
                                   one nexus.Controller chain; see Controllers above)
 //@<pkg>.<Func> args…             custom extension decorator — emits pkg.Func(args…, fn);
@@ -1040,6 +1041,23 @@ app.Cron("refresh", "@every 30s").
     Handler(func(ctx context.Context) error { return nil })
 ```
 Worker/cron resource + service deps are auto-detected for the graph.
+
+**Background jobs (`extension/jobs`).** Queued, retried, cancellable work with progress.
+A job is `func (s *Svc) M(ctx context.Context, run *jobs.Run, a Args) error` (receiver from
+DI, args JSON): `var X = jobs.Define((*Svc).M, jobs.Queue("low"), jobs.Timeout(d),
+jobs.Retry(n), jobs.Backoff(fn), jobs.Unique(ttl), jobs.Name("…"))` — the handle is a
+`nexus.Option` (pass to Boot with `jobs.Module(jobs.Config{})`) and `X.Enqueue(ctx, args,
+jobs.Delay(d)|jobs.At(t))`; `jobs.DefineFunc` for plain funcs (closures need `jobs.Name`).
+Decorator: `//@job [queue] [timeout=2h] [retry=3] [unique=10m] [name=x]` on a method or func;
+enqueue annotated jobs with `jobs.Enqueue(ctx, (*Svc).M, args)` (ambiguous if a method is
+defined twice). `*jobs.Run`: `Progress(done,total,msg)` (returns ctx.Err() once it should
+stop), `SetResult`, `Checkpoint`/`Resume`, `ID/Attempt/Actor` (enqueuer via
+`nexus.RequestIdentity`). `jobs.Permanent(err)` skips retries; panics fail with the stack.
+Inject `*jobs.Manager` for `Get(id)` / `Cancel(id)` / `List(jobs.Filter{…})`. `[jobs]` driver
+(`memory` only so far — in-process, carried across `nexus dev` rebuilds), `run` (false =
+enqueue only), `shutdown_grace` (default 10s, 0 in dev; then cancel + requeue),
+`[jobs.queues] name = workers`. At-least-once delivery. Dashboard: a `jobs` queue node with
+per-queue counts and the latest failure.
 
 ---
 

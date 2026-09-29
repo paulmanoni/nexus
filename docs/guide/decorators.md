@@ -47,6 +47,7 @@ One primary annotation per function, plus optional modifiers:
 | `//@query` / `//@mutation` / `//@subscription` | A GraphQL field |
 | `//@ws <PATH> <TYPE>` | A WebSocket message handler |
 | `//@worker <NAME>` | A background worker |
+| `//@job [queue] [timeout=D] [retry=N] [unique=D] [name=X]` | A [background job](./jobs) (`jobs.Define` on a method, `jobs.DefineFunc` on a function) |
 | `//@page <METHOD> <PATH> [Component]` | An Inertia page (`inertia.Page`; on a controller method the component defaults to `<Folder>/<Method>`) |
 | `//@controller <prefix> [trailing-slash]` | On a type: a [controller](./controllers) whose annotated methods are its actions |
 | `//@auth Required` / `//@auth Requires PERM…` / `//@auth Public` | Modifier: an auth gate (bare tokens; legacy `Requires("X")` also accepted) |

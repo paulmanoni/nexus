@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Background jobs (`extension/jobs`), phase one.** A job is a method whose
+  receiver comes from DI and whose arguments are a JSON struct.
+  - Define it with `jobs.Define((*Svc).M, opts…)` or `//@job`, then enqueue
+    it through the returned handle or with `jobs.Enqueue(ctx, (*Svc).M,
+    args)`.
+  - Options: queues with their own worker counts, timeouts, retries with
+    backoff, `jobs.Permanent` errors, `Unique` enqueues, and `Delay`/`At`.
+  - `*jobs.Run` reports progress, stores a result and checkpoints state for
+    the next attempt.
+  - `*jobs.Manager` gets, cancels and lists jobs.
+  - On shutdown, running jobs get a grace period, then are cancelled and
+    requeued.
+  - The memory driver keeps jobs in the process and carries them across
+    `nexus dev` rebuilds.
+  - A `jobs` queue resource shows live counts on the dashboard.
+- **`nexus.RequestIdentity(ctx)`** exposes the authenticated subject the
+  registered identity sources report. Jobs use it to record who enqueued
+  them.
+
 ## [1.70.0] - 2026-09-29
 
 ### Added

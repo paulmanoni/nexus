@@ -207,6 +207,7 @@ var topicSummaries = map[string]string{
 	"ws":          "AsWS — typed WebSocket envelopes, session fan-out",
 	"frontend":    "Vite frontend: ServeFrontend, the dev handshake, nexus dev/build",
 	"inertia":     "extension/inertia — Inertia.js pages: props handlers, no API",
+	"jobs":        "extension/jobs — background jobs: queued, retried, cancellable, with progress",
 	"inertiatest": "extension/inertia/inertiatest — in-process test harness for Inertia pages",
 	"nexustoml":   "nexus.toml — server, dashboard, introspection, env, extensions",
 	"peer":        "extension/peer — typed RPC between nexus apps",
@@ -891,6 +892,52 @@ the path is relative to the controller's prefix (nexus docs module).
 Controllers: inertia.Resource[T](prefix) registers Index/New/Show/Edit pages
 and Create/Update/Destroy form actions; inertia.Component("Admin/X") makes
 any single action (on any controller) render that page.
+`,
+
+	"jobs": `
+JOBS
+
+  import "github.com/paulmanoni/nexus/extension/jobs"
+
+A job is a method whose receiver comes from DI and whose args are a JSON struct:
+
+    func (s *ReportService) Export(ctx context.Context, run *jobs.Run, a ExportArgs) error {
+        if err := run.Progress(i, n, "rendering"); err != nil { return err } // cancelled/stopping
+        return run.SetResult(ExportFile{URL: url})
+    }
+
+    var ExportReport = jobs.Define((*ReportService).Export,
+        jobs.Queue("low"), jobs.Timeout(2*time.Hour), jobs.Retry(3))
+
+    nexus.Boot(jobs.Module(jobs.Config{}), ExportReport)
+    id, err := ExportReport.Enqueue(ctx, ExportArgs{ReportID: 7}, jobs.Delay(time.Minute))
+
+Decorator form (the generator emits jobs.Define / jobs.DefineFunc):
+
+    //@job low timeout=2h retry=3 unique=10m name=report-export
+    func (s *ReportService) Export(ctx context.Context, run *jobs.Run, a ExportArgs) error
+
+    id, err := jobs.Enqueue(ctx, (*ReportService).Export, args)  // by method expression
+
+Options: Queue, Timeout (cancels the attempt), Retry(n) (default none; 5s doubling,
+capped 1h), Backoff(fn), Unique(ttl) (same job+args while pending → same ID),
+Name (stable across renames). jobs.Permanent(err) fails without retrying; a panic
+fails with its stack. Run: Progress, SetResult, Checkpoint/Resume (continue after a
+failure or shutdown), ID, Attempt, Actor (nexus.RequestIdentity of the enqueuer).
+
+Inject *jobs.Manager: Get(id) → Record{State, Progress, Result, Error, …},
+Cancel(id), List(jobs.Filter{Name, State, Actor, Limit}).
+
+    [jobs]
+    driver = "memory"        # the one driver so far: in-process, survives nexus dev rebuilds
+    run    = true            # false: enqueue only
+    shutdown_grace = "10s"   # then running jobs are cancelled and requeued (0 under nexus dev)
+    [jobs.queues]
+    default = 4              # workers per queue
+
+At-least-once delivery: an interrupted job runs again — keep handlers
+idempotent. The dashboard's "jobs" queue node shows per-queue counts, the
+registered jobs and the latest failure.
 `,
 
 	"inertiatest": `

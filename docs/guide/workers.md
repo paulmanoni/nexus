@@ -46,3 +46,6 @@ The dashboard's Crons tab shows:
 
 The dependencies of workers and crons (resources and services) are detected
 automatically and drawn on the architecture graph.
+
+For work a request hands off (an export, a batch of emails, a report), with retries,
+progress and cancellation, use [background jobs](./jobs) instead of a hand-rolled worker.
