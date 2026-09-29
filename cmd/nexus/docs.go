@@ -718,6 +718,14 @@ route to ONE handler that branches on nexus.Params[T].Method:
     inertia.Page("GET,POST", "/login", "Login", NewLogin, nexus.Public())
     // NewLogin: if p.Method == "GET" → render; else authenticate + redirect.
 
+Error pages — inertia.Config{ErrorPage: "Error"} renders that component when a
+page handler (or a Defer/Optional prop) returns an error nothing else claims,
+instead of the plain {"error": …} JSON that makes the Inertia client show its
+"invalid response" modal. GET visits get the page with
+inertia.ErrorProps{Status, Message} and the error's status (404/409/400 for
+the CRUD sentinels, else 500), shared props included; form submits redirect
+back with the message under errors._global. Off by default.
+
 Redirects — return as the handler's error:
 
     return nil, inertia.Redirect("/users")              // 303 See Other

@@ -115,6 +115,24 @@ type Config struct {
 	// back to client rendering. Off by default; useful in tests/CI to catch a
 	// broken SSR pipeline, like Inertia's throw_on_error.
 	SSRStrict bool
+	// ErrorPage is the component rendered when a page handler returns an
+	// error nothing else claims (not a Redirect/Location, not validation
+	// errors). A GET or HEAD visit renders it with ErrorProps{Status,
+	// Message} and the error's status code — the status is the one the REST
+	// error path would use (404/409/400 for the CRUD sentinels, else 500) —
+	// so the browser shows the app's own page instead of Inertia's "invalid
+	// response" modal over raw JSON. Any other method (a form submit)
+	// redirects back with the message flashed under errors._global, which
+	// useForm already reads. The error is still recorded on the request's
+	// trace. Empty (the default) keeps the plain JSON error response.
+	ErrorPage string
+}
+
+// ErrorProps are the props Config.ErrorPage receives. Shared props (the
+// app's auth user, csrf token…) are included as on any page.
+type ErrorProps struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
 }
 
 // Engine renders Inertia responses for an app. One is built per app via Module
@@ -141,6 +159,7 @@ type Engine struct {
 	ssr         SSRRenderer             // server-side renderer (Config.SSR); nil = client-only
 	onSSRError  func(error)             // Config.OnSSRError
 	ssrStrict   bool                    // Config.SSRStrict
+	errorPage   string                  // Config.ErrorPage
 	reactForced bool                    // Config.React, applied to a hot-file entry too
 
 	envOnce sync.Once
@@ -220,6 +239,7 @@ func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 		ssr:         cfg.SSR,
 		onSSRError:  cfg.OnSSRError,
 		ssrStrict:   cfg.SSRStrict,
+		errorPage:   cfg.ErrorPage,
 		reactForced: cfg.React,
 		logf:        log.Printf,
 	}

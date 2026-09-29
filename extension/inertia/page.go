@@ -3,7 +3,10 @@ package inertia
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+
+	"braces.dev/errtrace"
 
 	"github.com/paulmanoni/nexus/httpx"
 	"github.com/paulmanoni/nexus/registry"
@@ -122,7 +125,14 @@ func (p pageRenderer) Render(c *httpx.Ctx, result any) error {
 	if !ok {
 		return errors.New("inertia: engine not installed — add inertia.Module(...) to your app")
 	}
-	return eng.render(c, p.component, result)
+	err := eng.render(c, p.component, result)
+	// A prop that fails to resolve (a Defer/Optional thunk returning an
+	// error) surfaces here rather than from the handler; with an error page
+	// configured it answers the same way a handler error does.
+	if err != nil && eng.errorPage != "" && !c.Writer.Written() {
+		return eng.renderError(c, err)
+	}
+	return err
 }
 
 // RenderError implements nexus.ErrorRenderer: it claims inertia.Redirect /
@@ -146,5 +156,26 @@ func (p pageRenderer) RenderError(c *httpx.Ctx, err error) (bool, error) {
 	if errors.As(err, &ne) {
 		return true, writeValidationRedirect(c, &validationError{fields: ne.First()})
 	}
-	return false, nil
+	// Anything else fails the request. With Config.ErrorPage set it still
+	// answers in the Inertia protocol.
+	eng, ok := engineFromGin(c)
+	if !ok || eng.errorPage == "" {
+		return false, nil
+	}
+	return true, eng.renderError(c, err)
+}
+
+// renderError answers a failed page request in the Inertia protocol: the
+// app's error page for a visit, a flashed global error for a form submit.
+// The error is recorded on the request's trace either way.
+func (e *Engine) renderError(c *httpx.Ctx, err error) error {
+	_ = c.Error(errtrace.Wrap(err))
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+		return writeValidationRedirect(c, &validationError{fields: map[string]string{nexus.GlobalErrorKey: err.Error()}})
+	}
+	status := http.StatusInternalServerError
+	if mapped, ok := nexus.MapCRUDError(err); ok {
+		status = mapped
+	}
+	return e.renderStatus(c, e.errorPage, ErrorProps{Status: status, Message: err.Error()}, status)
 }

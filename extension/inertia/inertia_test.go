@@ -130,15 +130,25 @@ func wantVersion() string {
 
 func bootInertia(t *testing.T, addr string, extra ...nexus.Option) {
 	t.Helper()
+	bootInertiaWith(t, addr, nil, extra...)
+}
+
+// bootInertiaWith is bootInertia with a hook to adjust the inertia.Config.
+func bootInertiaWith(t *testing.T, addr string, tweak func(*inertia.Config), extra ...nexus.Option) {
+	t.Helper()
 	fsys := fstest.MapFS{
 		"dist/.vite/manifest.json": {Data: []byte(manifestJSON)},
 	}
+	cfg := inertia.Config{Frontend: fsys, Root: "dist", Head: inertia.Head{
+		Title: "NXHEAD",
+		Links: []inertia.Link{{Rel: "stylesheet", Href: "/x.css"}},
+	}}
+	if tweak != nil {
+		tweak(&cfg)
+	}
 	ready := make(chan struct{})
 	opts := append([]nexus.Option{
-		inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", Head: inertia.Head{
-			Title: "NXHEAD",
-			Links: []inertia.Link{{Rel: "stylesheet", Href: "/x.css"}},
-		}}),
+		inertia.Module(cfg),
 		inertia.Share(func(ctx context.Context) (string, any) { return "csrf", "tok-123" }),
 		inertia.Page("GET", "/widgets", "Widgets/Index", NewWidgets),
 		nexus.Invoke(func() { close(ready) }),

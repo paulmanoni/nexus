@@ -54,6 +54,12 @@ type pageObject struct {
 // initial browser navigation (HTML document shell). Either way the props are
 // resolved once, honoring partial-reload and Optional/Always rules.
 func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
+	return e.renderStatus(c, component, result, http.StatusOK)
+}
+
+// renderStatus is render with the response status set explicitly — the
+// error page answers with the error's status rather than 200.
+func (e *Engine) renderStatus(c *httpx.Ctx, component string, result any, status int) error {
 	// Asset head/version are decided per request: the dev server can come,
 	// go, or move ports while the app runs (see assets).
 	assets := e.assets()
@@ -115,7 +121,7 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 		c.Header("Vary", headerInertia)
 		c.Header(headerInertia, "true")
 		c.Header("Content-Type", "application/json; charset=utf-8")
-		c.Status(http.StatusOK)
+		c.Status(status)
 		_, err = c.Writer.Write(blob)
 		return err
 	}
@@ -187,7 +193,7 @@ func (e *Engine) render(c *httpx.Ctx, component string, result any) error {
 	// of the same URL (which expects the JSON page object), or vice versa.
 	c.Header("Vary", headerInertia)
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.Status(http.StatusOK)
+	c.Status(status)
 	_, err = c.Writer.Write(doc)
 	return err
 }

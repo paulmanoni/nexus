@@ -82,6 +82,44 @@ inertia.Page("GET,POST", "/login", "Auth/Login", NewLogin, nexus.Public())
   `OnError: iauth.ErrorHandler("/login", ...)` from `extension/inertia/iauth` in your
   `auth.Config`.
 
+## Error pages
+
+By default, a page handler that returns an ordinary error gets the plain REST error
+response, `{"error": "…"}`. So does a prop thunk (`Defer`, `Optional`) that fails. The
+Inertia client treats that as an invalid response and shows its error modal over the raw
+JSON. Name a component to render instead:
+
+```go
+inertia.Module(inertia.Config{ErrorPage: "Error"})
+```
+
+```vue
+<!-- web/src/Pages/Error.vue -->
+<script setup lang="ts">
+defineProps<{ status: number; message: string }>()
+</script>
+
+<template>
+  <h1>{{ status === 404 ? 'Not found' : 'Something went wrong' }}</h1>
+  <p>{{ message }}</p>
+</template>
+```
+
+- **Page visits (GET).** The error page renders with `inertia.ErrorProps{Status,
+  Message}` and the error's HTTP status. Shared props (your layout's user and so on) are
+  included, as on any page. The status is the one the REST path would use: 404, 409 or
+  400 for `nexus.ErrCRUDNotFound`, `ErrCRUDConflict` or `ErrCRUDValidation`, and 500
+  otherwise.
+- **Form submits (POST/PUT/…).** They redirect back with the message in
+  `errors._global`, which `useForm` already exposes. Rendering a page at the POST URL
+  would lose the form.
+- **Unchanged.** `inertia.Redirect`, `inertia.Location` and validation errors behave as
+  before. The error is still recorded on the request's trace in the dashboard.
+
+`Message` is the error's text, so return messages meant for users from your services.
+The error page component isn't a registered route, so the Vite `pages` check doesn't
+cover it. Make sure the file exists.
+
 ## The page document
 
 Pages render into your `index.html`: the Vite-transformed page in development, the built

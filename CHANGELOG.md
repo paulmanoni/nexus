@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Inertia error pages.** `inertia.Config{ErrorPage: "Error"}` names a
+  component to render when a page handler returns an error nothing else
+  claims, or when a `Defer`/`Optional` prop fails to resolve. Previously
+  those fell through to the plain `{"error": …}` JSON response, which the
+  Inertia client shows as an "invalid response" modal. Page visits (GET)
+  now get the error page with `inertia.ErrorProps{Status, Message}` and the
+  error's status (404/409/400 for the CRUD sentinels, else 500), shared
+  props included; form submits redirect back with the message under
+  `errors._global`, which `useForm` reads. Redirects and validation errors
+  are unchanged, and the error is still recorded on the request trace. Off
+  by default.
+
 ## [1.67.0] - 2026-09-29
 
 ### Added

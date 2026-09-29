@@ -1135,6 +1135,14 @@ const props = defineProps<NexusPageProps['Users/Index']>()
 (indexed access only — Vue's compiler rejects a generic helper), and `usePage().props`
 is typed through the generated `inertia.d.ts`. Pages are not REST calls in the SDK.
 
+**Error pages (`inertia.Config.ErrorPage`).** Without it, a page handler error — or a
+failing `Defer`/`Optional` prop — falls through to the REST `{"error": …}` JSON and the
+Inertia client shows its "invalid response" modal. With `ErrorPage: "Error"`, GET visits
+render that component with `inertia.ErrorProps{Status, Message}` at the error's status
+(`nexus.MapCRUDError`, else 500; shared props included), and form submits 303 back with
+the message under `errors._global`. Redirects/validation unchanged; the error is still
+traced.
+
 **Typed page URLs (`pageUrl`).** Links come from the Go routes, keyed by component:
 `import { pageUrl } from 'nexus-client/pages'` → `router.visit(pageUrl('Users/Show',
 { id, tab }))` → `/users/42?tab=…`. Path params (from the route template) are required,
