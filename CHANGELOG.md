@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.74.0] - 2026-09-30
+
 ### Fixed
 
 - Package selectors inside `//@use` expressions now resolve through the full
