@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.39.0
-	github.com/paulmanoni/nexus v1.73.0
+	github.com/paulmanoni/nexus v1.74.0
 	github.com/redis/go-redis/v9 v9.19.0
 )
 
