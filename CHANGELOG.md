@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.73.0] - 2026-09-30
+
 ### Added
 
 - **Annotated actions on Go-declared controllers.** Annotate a type's methods
