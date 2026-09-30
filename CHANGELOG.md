@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.75.1] - 2026-09-30
+
 ### Fixed
 
 - `//@use` expression identifiers that name a top-level declaration of the
