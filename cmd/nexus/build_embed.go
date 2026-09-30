@@ -83,6 +83,13 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 		return fmt.Errorf("nexus build: frontend: %w", err)
 	}
 
+	// Tailwind stylesheets for server-rendered views compile once, minified,
+	// before go build embeds or serves them.
+	frontendDir, _ := resolveFrontendDir(mainDir, opts.Frontend)
+	if err := buildTailwind(cwd, frontendDir, opts.Stdout); err != nil {
+		return fmt.Errorf("nexus build: css: %w", err)
+	}
+
 	// Inject the decorator-form handler registrations (//@rest / //@provide / …)
 	// via a `go build -overlay`, so NOTHING is written into the source tree (zero
 	// churn) — mirroring `nexus dev`. Run `nexus generate handlers` to eject
@@ -100,7 +107,7 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 	args := []string{"build"}
 	if overlayPath != "" {
 		args = append(args, "-overlay="+overlayPath)
-		fmt.Fprintln(opts.Stdout, "handler codegen: injected via overlay")
+		fmt.Fprintln(opts.Stdout, "handler codegen and views: injected via overlay")
 	}
 	// Bake nexus.toml into the binary via the linker so the built artifact
 	// is self-contained — no config file needs to ship alongside it. The

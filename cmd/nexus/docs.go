@@ -207,6 +207,7 @@ var topicSummaries = map[string]string{
 	"ws":          "AsWS — typed WebSocket envelopes, session fan-out",
 	"frontend":    "Vite frontend: ServeFrontend, the dev handshake, nexus dev/build",
 	"inertia":     "extension/inertia — Inertia.js pages: props handlers, no API",
+	"views":       "nexus/view — reactive templ pages: signals, shards, templUI, no JS build",
 	"jobs":        "extension/jobs — background jobs: queued, retried, cancellable, with progress",
 	"inertiatest": "extension/inertia/inertiatest — in-process test harness for Inertia pages",
 	"nexustoml":   "nexus.toml — server, dashboard, introspection, env, extensions",
@@ -719,6 +720,60 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
   generated form is nexus.ControllerActions(func(c *nexus.ControllerRouter[*T]) {…});
   inertia.AsPage() is the Go form of //@page without a component.`,
 
+	"views": `
+VIEWS (github.com/paulmanoni/nexus/view — its own module)
+
+Server-rendered templ pages that stay reactive without a JavaScript build.
+You write plain templ; what is reactive follows from what it reads:
+
+    {{ count := view.State(ctx, 0) }}               state owned by the component
+    <p>Clicked { count.Get() } times</p>            text reading a signal: kept current
+    <button disabled?={ count.Get() == 0 }>          attribute reading a signal: kept current
+    <button onclick={ count.Set(count.Get() + 1) }>  on* + Set: runs in the browser
+    oninput={ view.Do(func(e view.Event) { q.Set(e.Target.Value) }) }
+    if count.Get() >= 5 { … } else { … }            branch chosen in the browser
+    {{ pets := view.Use[*Store](ctx).Search(q.Get()) }}
+                                                    server code reads q: a shard,
+                                                    re-rendered on the server when q changes
+
+Shared page state comes from DI: a struct of *view.Signal fields, provided
+like a service; each page gets its own copy.
+
+    type Search struct{ Query *view.Signal[string] }
+    func NewSearch() *Search { return &Search{Query: view.Initial("")} }
+    {{ q := view.Use[*Search](ctx).Query }}         // in any component
+
+Pages and gates are directives above a component:
+
+    //@page GET /
+    //@auth Required
+    templ Home() { … }
+
+A shard inherits the gates of the pages that render it (they must agree),
+or names its own //@auth. The app needs no view wiring:
+
+    nexus.Boot(nexus.Provide(NewStore, NewSearch))
+
+nexus dev: generates views on start and on every .templ save (written to
+disk, gitignore them — gopls reads them), and runs the Tailwind standalone
+CLI for any stylesheet that does @import "tailwindcss" (input.css →
+output.css; sources.generated.css lists your templates plus every Go
+dependency shipping .templ files). nexus build: views via the overlay,
+Tailwind minified. nexus generate views [--check]: write / verify on disk.
+
+Component libraries (templUI): reactive attributes go in Props.Attributes,
+and view.Assets serves the library's files:
+
+    @button.Button(button.Props{Attributes: templ.Attributes{
+        "onclick": count.Set(count.Get() + 1), "disabled": count.Get() >= 10,
+    }}) { +1 }
+
+    mux := http.NewServeMux(); utils.SetupScriptRoutes(mux, dev)
+    view.Assets("/templui/js/", mux)
+
+Browser values (shard arguments, restored signals) are user input: validate
+them. Example: view/example.
+`,
 	"inertia": `
 INERTIA
 

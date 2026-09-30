@@ -367,6 +367,20 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		fmt.Fprintf(stderr, "%s●%s --dist needs a frontend with a package.json · ignored\n", ansiYellow, ansiReset)
 	}
 
+	// Code generation the project needs (views, for .templ files) runs once
+	// now — before the watcher starts, so its first output does not queue a
+	// second build — and again when a file it watches changes.
+	var onChange []func(string)
+	if gens := devGenerators(projectRoot); len(gens) > 0 {
+		runner := newGeneratorRunner(ctx, gens, stdout)
+		runner.runAll()
+		onChange = append(onChange, runner.changed)
+	}
+	// Tailwind stylesheets for server-rendered views (not the Vite
+	// frontend's) compile in watch mode beside the app.
+	stopCSS := startDevTailwind(projectRoot, frontendDir, stdout, stderr)
+	defer stopCSS()
+
 	var restartCh chan struct{}
 	if watch {
 		restartCh = make(chan struct{}, 1)
@@ -380,7 +394,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		if frontendDir != "" {
 			ignore = append(ignore, frontendDir)
 		}
-		if err := watchSource(ctx, root, restartCh, stderr, ignore); err != nil {
+		if err := watchSource(ctx, root, restartCh, stderr, ignore, onChange...); err != nil {
 			fmt.Fprintf(stderr, "watcher disabled: %v\n", err)
 			restartCh = nil
 		}

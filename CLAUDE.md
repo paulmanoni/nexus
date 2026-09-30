@@ -268,6 +268,30 @@ pages render client-side.
 
 ---
 
+### Reactive templ views (`nexus/view`)
+`github.com/paulmanoni/nexus/view` (its own module) renders templ components and
+keeps them reactive with no JS build. Plain templ; reads decide reactivity:
+`{{ c := view.State(ctx, 0) }}` (component state), `{ c.Get() }` / `attr={…c.Get()…}`
+(kept current in the browser), `onclick={ c.Set(…) }` or `view.Do(func(e view.Event){…})`
+(the only actions — signals have Get and Set), `if c.Get()…` (branch chosen in the
+browser), and server code reading a signal (`{{ }}`, `for`, component args) makes the
+component a **shard** re-rendered on the server (a nexus op). Shared page state is DI:
+a struct of `*view.Signal` fields (`view.Initial(v)` defaults), read with
+`view.Use[*T](ctx).Field` — each page gets its own copy; services come back as is.
+`//@page GET /` / `//@auth` / `//@use` above a component register it; a shard inherits
+its pages' gates (module-wide render graph; they must agree) or names its own. Zero
+wiring: the generator emits `view_gen.go` per package (pages, shards, `view.Expose` for
+every `view.Use[T]`) and `view_imports_gen.go` in main. **`nexus dev`** generates on start
+and on every `.templ` save (to disk — gitignore `*_templ.go`, `view_gen.go`,
+`view_imports_gen.go`; gopls needs them) and runs `tailwindcss --watch` for any stylesheet
+with `@import "tailwindcss"` (outside the Vite frontend; `input.css`→`output.css`, writing
+`sources.generated.css` with @source for the project + Go deps shipping .templ). **`nexus
+build`**: views via the overlay, Tailwind minified. `nexus generate views [--check]`.
+Component libraries (templUI): reactive entries in a `templ.Attributes{…}` literal
+(Props.Attributes) compile like element attributes; `view.Assets(prefix, handler)` serves
+library/CSS files. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+`nexus docs views`, docs/guide/views.md, example `view/example`.
+
 ## 2. App entry & config (`nexus.toml`)
 
 `nexus.Boot(opts...)` loads `nexus.toml` automatically (runtime config +

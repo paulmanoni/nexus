@@ -17,6 +17,7 @@ import (
 
 	"github.com/paulmanoni/deco/transpiler"
 	"github.com/paulmanoni/nexus/internal/handlergen"
+	"github.com/paulmanoni/nexus/view/viewgen"
 )
 
 // allHandlerArtifacts returns every file the codegen produces under root: one
@@ -122,6 +123,12 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 	sites := make([]handlergen.Site, 0, len(hits))
 	dirs := map[string]bool{}
 	for _, h := range hits {
+		// templ copies a component's doc comment into its generated Go, so a
+		// view's //@page / //@auth reappears in *_templ.go. Those directives
+		// belong to the .templ source, which the views generator compiles.
+		if strings.HasSuffix(h.File, "_templ.go") {
+			continue
+		}
 		kw := h.Keyword
 		qualified := strings.Contains(kw, ".")
 		if !builtinHandlerKeyword(kw) && !qualified {
@@ -676,7 +683,7 @@ func importsOfFile(file string) (map[string]string, error) {
 // temp dir; callers must invoke it once the build that consumes the overlay has
 // finished.
 func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err error) {
-	return buildDevOverlay(root, "")
+	return buildOverlay(root, "", true)
 }
 
 // buildDevOverlay is buildHandlerOverlay plus, when distStubRoot is non-empty,
@@ -685,13 +692,29 @@ func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err e
 //
 // Only `nexus dev` passes a distStubRoot: `nexus build` produces the real
 // binary and must embed the real bundle.
+//
+// nexus dev keeps views out of the overlay: its generator writes them to
+// disk, where gopls reads them too.
 func buildDevOverlay(root, distStubRoot string) (overlayPath string, cleanup func(), err error) {
+	return buildOverlay(root, distStubRoot, false)
+}
+
+// buildOverlay assembles the overlay: handler registrations, the dist stubs
+// (dev), and, with views, the compiled .templ views (nexus build) — so a
+// fresh clone builds without generated files in the tree.
+func buildOverlay(root, distStubRoot string, views bool) (overlayPath string, cleanup func(), err error) {
 	noop := func() {}
 	results, err := allHandlerArtifacts(root, handlerGenFileName)
 	if err != nil {
 		return "", noop, err
 	}
-	if len(results) == 0 && distStubRoot == "" {
+	var plan *viewgen.Plan
+	if views && viewgen.HasTemplates(root) {
+		if plan, err = viewgen.Generate(root); err != nil {
+			return "", noop, fmt.Errorf("views: %w", err)
+		}
+	}
+	if len(results) == 0 && distStubRoot == "" && plan == nil {
 		return "", noop, nil
 	}
 
@@ -709,6 +732,24 @@ func buildDevOverlay(root, distStubRoot string) (overlayPath string, cleanup fun
 			return "", noop, err
 		}
 		replace[r.Path] = shadow
+	}
+
+	if plan != nil {
+		i := len(results)
+		for path, content := range plan.Files {
+			shadow := filepath.Join(tmp, fmt.Sprintf("%d_%s", i, filepath.Base(path)))
+			i++
+			if err := os.WriteFile(shadow, content, 0o644); err != nil {
+				cleanup()
+				return "", noop, err
+			}
+			replace[path] = shadow
+		}
+		for _, path := range plan.Remove {
+			if _, err := os.Stat(path); err == nil {
+				replace[path] = ""
+			}
+		}
 	}
 
 	stubs, err := distStubReplacements(distStubRoot, tmp)

@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Reactive templ views: `github.com/paulmanoni/nexus/view`.** This is a new
+  module. It renders templ components and keeps them reactive without a
+  JavaScript build. What updates depends on what each template reads.
+  - Component state: `view.State(ctx, v)`.
+  - Shared page state through DI: a struct of `*view.Signal` fields, read
+    with `view.Use[*T](ctx)`. Each page render gets its own copy.
+  - Text and attributes that read a signal update in the browser.
+  - `Set` and `view.Do` are the actions.
+  - An `if` on a signal is decided in the browser.
+  - Shards are components re-rendered on the server. They are nexus ops that
+    inherit their pages' gates.
+  - `//@page`, `//@auth` and `//@use` directives above a component register
+    it, with no wiring.
+- **`nexus dev` compiles views.** On start and on every `.templ` save, the
+  generated Go is written to disk for gopls, and the usual rebuild follows.
+  - It also runs the Tailwind standalone CLI for stylesheets that import
+    Tailwind.
+  - It writes `sources.generated.css`, covering Go dependencies that ship
+    `.templ` files, so imported component libraries such as templUI get
+    their classes.
+- `nexus build` compiles views through the build overlay and builds
+  Tailwind stylesheets minified.
+- New command: `nexus generate views [--check]`.
+- `view.Assets(prefix, handler)` serves a component library's files.
+  `templ.Attributes{…}` literals in `Props.Attributes` accept reactive
+  entries.
+
+### Fixed
+
+- Handler codegen ignores `//@` directives that templ copies from a view's
+  doc comment into its generated `*_templ.go`.
+
 ## [1.75.1] - 2026-09-30
 
 ### Fixed

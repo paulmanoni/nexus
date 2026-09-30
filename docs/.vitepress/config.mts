@@ -58,6 +58,7 @@ export default defineConfig({
           items: [
             { text: 'Vite frontend', link: '/guide/frontend' },
             { text: 'Inertia pages', link: '/guide/inertia' },
+            { text: 'Reactive views (templ)', link: '/guide/views' },
             { text: 'Client SDK', link: '/guide/client-sdk' },
           ],
         },

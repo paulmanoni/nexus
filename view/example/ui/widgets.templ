@@ -1,0 +1,67 @@
+package ui
+
+import (
+	"github.com/templui/templui/components/button"
+	"github.com/templui/templui/components/dialog"
+
+	"github.com/paulmanoni/nexus/view"
+)
+
+// Counter drives templUI buttons: reactive attributes go in Props.Attributes.
+templ Counter() {
+	{{ count := view.State(ctx, 0) }}
+	@Section("Counter") {
+		<div class="flex items-center gap-2">
+			@button.Button(button.Props{ID: "inc", Attributes: templ.Attributes{
+				"onclick": count.Set(count.Get() + 1),
+			}}) {
+				+1
+			}
+			@button.Button(button.Props{ID: "reset", Variant: button.VariantOutline, Attributes: templ.Attributes{
+				"onclick":  count.Set(0),
+				"disabled": count.Get() == 0,
+			}}) {
+				reset
+			}
+			<span>Clicked <b id="count">{ count.Get() }</b> times</span>
+		</div>
+		if count.Get() >= 5 {
+			<p id="five">High five!</p>
+		} else {
+			<p id="more" class="text-muted-foreground">{ 5 - count.Get() } more to a high five</p>
+		}
+	}
+}
+
+// Details toggles in the browser; About is a templUI dialog, driven by
+// templUI's own script.
+templ Details() {
+	{{ open := view.State(ctx, false) }}
+	@Section("Toggle") {
+		<div class="flex gap-2">
+			@button.Button(button.Props{ID: "toggle", Variant: button.VariantSecondary, Attributes: templ.Attributes{
+				"onclick": open.Set(!open.Get()),
+			}}) {
+				Details
+			}
+			@dialog.Trigger(dialog.TriggerProps{For: "about"}) {
+				@button.Button(button.Props{ID: "about-open", Variant: button.VariantOutline}) {
+					About
+				}
+			}
+		</div>
+		<p id="details" hidden?={ !open.Get() }>Rendered on the server, shown and hidden in the browser.</p>
+		@dialog.Dialog(dialog.Props{ID: "about"}) {
+			@dialog.Content() {
+				@dialog.Header() {
+					@dialog.Title() {
+						nexus/view + templUI
+					}
+					@dialog.Description() {
+						templUI components, reactive through nexus/view.
+					}
+				}
+			}
+		}
+	}
+}

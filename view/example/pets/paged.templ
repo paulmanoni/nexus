@@ -1,0 +1,19 @@
+package pets
+
+import "github.com/paulmanoni/nexus/view"
+
+templ Paged() {
+	{{ page := view.State(ctx, 1) }}
+	{{ pets, last := view.Use[*Store](ctx).Page(page.Get(), 3) }}
+	<section class="rounded-lg border p-4 space-y-3">
+		<h2 class="text-lg font-semibold">All pets</h2>
+		<ul id="paged">
+			for _, p := range pets {
+				<li>{ p.Name }</li>
+			}
+		</ul>
+		<button id="prev" onclick={ page.Set(page.Get() - 1) } disabled?={ page.Get() <= 1 }>prev</button>
+		<span id="page">page { page.Get() } of { last }</span>
+		<button id="next" onclick={ page.Set(page.Get() + 1) } disabled?={ page.Get() >= last }>next</button>
+	</section>
+}

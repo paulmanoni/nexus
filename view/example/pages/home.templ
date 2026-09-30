@@ -1,0 +1,23 @@
+package pages
+
+import (
+	"github.com/paulmanoni/nexus/view/example/pets"
+	"github.com/paulmanoni/nexus/view/example/ui"
+)
+
+//@page GET /
+templ Home() {
+	@ui.Layout("nexus/view") {
+		<h1 class="text-2xl font-bold">
+			nexus/view
+			@pets.SearchSummary()
+		</h1>
+		@ui.Counter()
+		@ui.Details()
+		@ui.Section("Pets") {
+			@pets.SearchBox()
+			@pets.PetResults()
+		}
+		@pets.Paged()
+	}
+}

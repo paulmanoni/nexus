@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "di/fxcontainer", "httpx/ginrouter", "extension/jobs/jobsamqp", "extension/jobs/jobsredis"]
+        module: [".", "di/fxcontainer", "httpx/ginrouter", "extension/jobs/jobsamqp", "extension/jobs/jobsredis", "view"]
     env:
       GIN_MODE: release
     steps:
@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "di/fxcontainer", "httpx/ginrouter", "extension/jobs/jobsamqp", "extension/jobs/jobsredis"]
+        module: [".", "di/fxcontainer", "httpx/ginrouter", "extension/jobs/jobsamqp", "extension/jobs/jobsredis", "view"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -103,3 +103,5 @@ jobs:
           go-version: "stable"
       - name: Check generated handlers are up to date
         run: make generate-check
+      - name: nexus/view example (generated views, vet, test)
+        run: make view-example

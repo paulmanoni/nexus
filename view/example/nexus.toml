@@ -1,0 +1,6 @@
+[runtime]
+environment   = "development"
+introspection = true
+
+[runtime.server]
+addr = ":8090"

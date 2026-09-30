@@ -15,11 +15,12 @@
 #   make cover          # coverage profile + per-func report (main module)
 #   make cover-check    # fail if main-module coverage drops below COVER_MIN
 #   make generate-check # CI drift gate for committed //@ handler codegen
+#   make view-example   # generate the nexus/view example's views, then vet + test it
 #   make golden-update  # regenerate golden files after an intentional change
 #   make ci             # everything CI runs
 
 # All Go modules in the repo (dir containing a go.mod).
-MODULES := . cmd/nexus di/fxcontainer httpx/ginrouter extension/cache/redis extension/jobs/jobsamqp extension/jobs/jobsredis
+MODULES := . cmd/nexus di/fxcontainer httpx/ginrouter extension/cache/redis extension/jobs/jobsamqp extension/jobs/jobsredis view
 
 # Pinned golangci-lint version — keep in sync with .github/workflows/ci.yml
 # so `make lint` and CI enforce the exact same linters (config: .golangci.yml).
@@ -32,7 +33,7 @@ COVER_MIN ?= 45
 # gin prints router debug noise unless told it's in release mode.
 export GIN_MODE := release
 
-.PHONY: test vet fmt fmt-check lint cover cover-check generate-check golden-update ci tidy
+.PHONY: test vet fmt fmt-check lint cover cover-check generate-check view-example golden-update ci tidy
 
 test:
 	@for m in $(MODULES); do \
@@ -89,6 +90,13 @@ generate-check:
 	go build -o bin/nexus ./cmd/nexus
 	@cd examples/notes && ../../bin/nexus generate handlers --check ./...
 
+# The nexus/view example keeps its generated views out of git (nexus dev and
+# nexus build produce them), so generate them with the CLI before vet + test.
+view-example:
+	go build -o bin/nexus ./cmd/nexus
+	./bin/nexus generate views view/example
+	cd view/example && go vet ./... && go test -race -count=1 ./...
+
 golden-update:
 	UPDATE_GOLDEN=1 go test ./client/... ./internal/handlergen/... ./registry/... -run Golden -count=1
 
@@ -98,4 +106,4 @@ tidy:
 		( cd $$m && go mod tidy ) || exit 1; \
 	done
 
-ci: fmt-check vet lint test cover-check generate-check
+ci: fmt-check vet lint test cover-check generate-check view-example

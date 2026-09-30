@@ -43,7 +43,11 @@ import (
 // Cancellation: closing ctx stops the watcher goroutine and closes
 // the underlying fsnotify watcher. out is left open — consumers
 // that select on ctx.Done() shut down naturally.
-func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr io.Writer, ignore []string) error {
+//
+// onChange, when given, hears every edited file in the watched tree —
+// not just build inputs — so a code generator can react to its own
+// sources (a .templ file); its Go output then rebuilds as usual.
+func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr io.Writer, ignore []string, onChange ...func(path string)) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -74,6 +78,11 @@ func watchSource(ctx context.Context, root string, out chan<- struct{}, stderr i
 			case ev, ok := <-w.Events:
 				if !ok {
 					return
+				}
+				if len(onChange) > 0 && scope.edited(ev) {
+					for _, fn := range onChange {
+						fn(ev.Name)
+					}
 				}
 				rebuild := scope.relevant(ev)
 				// New directory created? Add it to the watch list so
@@ -309,6 +318,18 @@ func (s *watchScope) relevant(ev fsnotify.Event) bool {
 		return true
 	}
 	return isGoBuildFile(base)
+}
+
+// edited reports whether ev is a real edit of a file in the dev loop's
+// view: written, created or renamed, not hidden, not .nexusignore'd.
+func (s *watchScope) edited(ev fsnotify.Event) bool {
+	if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+		return false
+	}
+	if strings.HasPrefix(filepath.Base(ev.Name), ".") {
+		return false
+	}
+	return !s.userIgnore.match(ev.Name, false)
 }
 
 // isGoBuildFile reports whether base names a file whose change

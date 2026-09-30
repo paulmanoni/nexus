@@ -1,0 +1,31 @@
+package ui
+
+import (
+	"github.com/templui/templui/components/dialog"
+
+	"github.com/paulmanoni/nexus/view"
+)
+
+templ Layout(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title }</title>
+			<link rel="stylesheet" href="/assets/css/output.css"/>
+			@view.Script()
+			@dialog.Script()
+		</head>
+		<body class="mx-auto max-w-2xl p-6 space-y-4">
+			{ children... }
+		</body>
+	</html>
+}
+
+templ Section(title string) {
+	<section class="rounded-lg border p-4 space-y-3">
+		<h2 class="text-lg font-semibold">{ title }</h2>
+		{ children... }
+	</section>
+}

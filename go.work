@@ -12,4 +12,6 @@ use (
 	./extension/jobs/jobsamqp
 	./extension/jobs/jobsredis
 	./httpx/ginrouter
+	./view
+	./view/example
 )

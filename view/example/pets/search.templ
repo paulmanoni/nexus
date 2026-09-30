@@ -1,0 +1,33 @@
+package pets
+
+import (
+	"strings"
+
+	"github.com/paulmanoni/nexus/view/example/state"
+	"github.com/paulmanoni/nexus/view"
+)
+
+// SearchBox, SearchSummary and PetResults share the Search state without
+// passing it.
+templ SearchBox() {
+	{{ q := view.Use[*state.Search](ctx).Query }}
+	<input id="q" class="w-full rounded-md border px-3 py-2" value={ q.Get() } oninput={ view.Do(func(e view.Event) { q.Set(e.Target.Value) }) } placeholder="Search pets"/>
+}
+
+templ SearchSummary() {
+	{{ q := view.Use[*state.Search](ctx).Query }}
+	<small id="summary" hidden?={ strings.TrimSpace(q.Get()) == "" }>— searching { strings.TrimSpace(q.Get()) }</small>
+}
+
+templ PetResults() {
+	{{ q := view.Use[*state.Search](ctx).Query }}
+	{{ pets := view.Use[*Store](ctx).Search(q.Get()) }}
+	<ul id="pets">
+		for _, p := range pets {
+			<li>{ p.Name } <small>{ p.Kind }</small></li>
+		}
+		if len(pets) == 0 {
+			<li>No pets match.</li>
+		}
+	</ul>
+}
