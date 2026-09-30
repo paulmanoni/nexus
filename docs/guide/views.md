@@ -53,6 +53,8 @@ the shard, and keeps them current as you save.
 
 ## The rules
 
+::: v-pre
+
 | You write | What happens |
 | --- | --- |
 | `{{ x := view.State(ctx, v) }}` | state owned by one component instance (call it unconditionally, at the top — like a React hook) |
@@ -65,6 +67,8 @@ the shard, and keeps them current as you save.
 | `{{ … x.Get() … }}`, `for … x.Get()`, `@C(x.Get())` | server code reads the signal: the component is a **shard**, re-rendered on the server when `x` changes |
 | `//@page GET /path` above a component | registers it as a page |
 | `//@auth Required`, `//@auth Requires p…`, `//@auth Public`, `//@use expr` | its gates |
+
+:::
 
 - Signals have two methods, `Get` and `Set`. In markup, `Set` *describes* what an
   event does; it changes nothing on the server.

@@ -36,6 +36,11 @@ features:
     details: An ordinary Vite project under web/ with HMR in development. nexus build embeds the output, so you still deploy one Go binary. Inertia pages and resources get typed links and form actions.
     link: /guide/frontend
     linkText: Frontend
+  - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>'
+    title: Reactive views and live pages
+    details: Write templ components with signals that react in the browser, no JavaScript build needed. Live pages keep state on the server, handle events over a WebSocket and send only small patches back.
+    link: /guide/views
+    linkText: Reactive views
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>'
     title: Background jobs
     details: Typed jobs with retries, timeouts, progress and checkpoints. Run them in memory, on your SQL database or Redis, or on RabbitMQ, across as many replicas as you like.

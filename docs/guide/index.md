@@ -30,6 +30,9 @@ binary, with the frontend embedded in it.
 - **Frontend.** A normal Vite project (Vue, React or anything else) under `web/`,
   embedded at build time. Inertia.js pages, resources and SSR are supported, with typed
   links and form actions generated from the Go routes.
+- **Reactive views.** Server-rendered templ components with signals that update in the
+  browser without a JavaScript build, and LiveView-style live pages whose events run on the
+  server and travel back as small patches over a WebSocket.
 - **Client SDK.** A typed JS/TS client and Vue composables, generated from your
   registered endpoints and served by the binary.
 - **Background jobs.** Typed jobs with queues, retries, timeouts, progress, checkpoints
