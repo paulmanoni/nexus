@@ -782,10 +782,14 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
   `pkg` import resolved for the generated file. The codegen resolves it
   automatically: from the annotated file's imports → its sibling files in the
   same package → a `nexus.toml` `[decorators.imports]` hint → the module import
-  graph (`go list`). So you usually need no import in the annotated file; if a
-  selector is ambiguous or not a dependency, add `[decorators.imports]` (selector
-  → import path) to `nexus.toml`, or import the package. A blank import
-  (`_ "…/pkg"`) in the annotated file also works as an explicit opt-in.
+  graph (`go list`), where the main module's own packages outrank dependency
+  packages sharing the name. Package selectors inside `//@use` expressions
+  resolve through the same cascade. So you usually need no import in the
+  annotated file; if a selector is ambiguous (inside the module, or between
+  foreign packages with no local candidate) or not a dependency, add
+  `[decorators.imports]` (selector → import path) to `nexus.toml`, or import the
+  package. A blank import (`_ "…/pkg"`) in the annotated file also works as an
+  explicit opt-in.
 
 Brand decorator-registered endpoints on the dashboard with `nexus.WithIcon(name)`
 (a cross-transport per-op option, like `HideFromDashboard()`); extension

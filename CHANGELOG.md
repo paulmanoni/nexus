@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Package selectors inside `//@use` expressions now resolve through the full
+  import cascade (file imports → sibling files → `[decorators.imports]` → the
+  module graph) instead of only the annotated file's imports — previously a
+  selector imported nowhere in the file was silently skipped and the generated
+  file failed to compile with `undefined: pkg`; a blank import was the
+  workaround. Identifiers the cascade cannot place (package-level values used
+  in the expression) are still left alone.
+- The module-graph layer now prefers the main module's own packages over
+  dependency packages sharing the same name: `utils` resolves to the project's
+  `utils` even when several dependencies ship one (three packages named `utils`
+  is normal in a real build graph). Only a tie inside the module, or between
+  foreign packages with no local candidate, still reports ambiguity.
+
 ## [1.73.0] - 2026-09-30
 
 ### Added

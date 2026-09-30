@@ -160,9 +160,9 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 		dirs[filepath.Dir(h.File)] = true
 		switch {
 		case kw == "use":
-			// //@use expressions may reference imported packages (e.g.
-			// //@use ratelimit.Per(...)); resolve those from the annotated file.
-			imps, err := resolveUseImports(h.File, h.Args)
+			// //@use expressions may reference packages (e.g.
+			// //@use ratelimit.Per(...)); resolve them through the full cascade.
+			imps, err := resolveUseImports(res, h.File, h.Args)
 			if err != nil {
 				return nil, fmt.Errorf("%s:%d: //@use on %s: %w", displayRel(h.File), h.Pos.Line, h.Func, err)
 			}
@@ -181,7 +181,7 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 		}
 		sites = append(sites, site)
 	}
-	typeSites, err := decls.typeSites(dirs)
+	typeSites, err := decls.typeSites(dirs, res)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ var typeDirectiveKeywords = map[string]bool{"controller": true, "auth": true, "s
 
 // typeSites returns the //@ directives on the type declarations of the given
 // package directories, as type-level sites.
-func (d *declIndex) typeSites(dirs map[string]bool) ([]handlergen.Site, error) {
+func (d *declIndex) typeSites(dirs map[string]bool, res *selectorResolver) ([]handlergen.Site, error) {
 	sorted := make([]string, 0, len(dirs))
 	for dir := range dirs {
 		sorted = append(sorted, dir)
@@ -319,7 +319,7 @@ func (d *declIndex) typeSites(dirs map[string]bool) ([]handlergen.Site, error) {
 							Keyword: fields[0], Args: fields[1:], Line: line, TypeLevel: true,
 						}
 						if site.Keyword == "use" {
-							imps, err := resolveUseImports(file, site.Args)
+							imps, err := resolveUseImports(res, file, site.Args)
 							if err != nil {
 								return nil, fmt.Errorf("%s:%d: //@use on %s: %w", displayRel(file), line, ts.Name.Name, err)
 							}
@@ -446,13 +446,22 @@ func (r *selectorResolver) resolve(file, sel string) (string, error) {
 	// Layer 3 — the module import graph, matched on real package name. It's
 	// cached across scans (see pkgIndex); a selector that isn't in the cached
 	// copy earns one rebuild, since a dependency added mid-session is exactly
-	// what a miss looks like.
-	graph, err := pkgs.moduleGraph(r.root, false)
+	// what a miss looks like. The main module's own packages outrank
+	// dependencies: `utils` means the project's utils even when gorm and two
+	// other deps ship a package by that name — only a tie *inside* the module
+	// (or between foreign packages with no local candidate) is ambiguous.
+	graph, local, err := pkgs.moduleGraph(r.root, false)
 	if err == nil && len(graph[sel]) == 0 {
-		graph, err = pkgs.moduleGraph(r.root, true)
+		graph, local, err = pkgs.moduleGraph(r.root, true)
 	}
 	if err != nil {
 		return "", fmt.Errorf("package %q is not imported here and the module graph could not be read (%v) — import it or set [decorators.imports].%s in nexus.toml", sel, err, sel)
+	}
+	if paths := local[sel]; len(paths) == 1 {
+		return importLineFor(sel, paths[0]), nil
+	} else if len(paths) > 1 {
+		sort.Strings(paths)
+		return "", fmt.Errorf("package %q is ambiguous across %s — import it explicitly or set [decorators.imports].%s in nexus.toml", sel, strings.Join(paths, ", "), sel)
 	}
 	switch paths := graph[sel]; len(paths) {
 	case 1:
@@ -539,22 +548,26 @@ func loadDecoratorHints(root string) map[string]string {
 // own import block. Selectors that aren't imported packages (a local var or
 // type referenced in the expression) are left out — they resolve in the
 // generated file's own package.
-func resolveUseImports(file string, exprArgs []string) ([]string, error) {
+func resolveUseImports(res *selectorResolver, file string, exprArgs []string) ([]string, error) {
 	expr := strings.Join(exprArgs, " ")
 	e, err := parser.ParseExpr(expr)
 	if err != nil {
 		return nil, fmt.Errorf("parse expression %q: %w", expr, err)
-	}
-	fileImports, err := importsOfFile(file)
-	if err != nil {
-		return nil, err
 	}
 	seen := map[string]bool{}
 	var lines []string
 	ast.Inspect(e, func(n ast.Node) bool {
 		if sel, ok := n.(*ast.SelectorExpr); ok {
 			if id, ok := sel.X.(*ast.Ident); ok {
-				if line, ok := fileImports[id.Name]; ok && !seen[line] {
+				// The full cascade (file imports, siblings, nexus.toml hints,
+				// module graph with the module-local tie-break) — so
+				// `//@use utils.Wrap(...)` needs no import anywhere. A miss is
+				// tolerated: the identifier may be a package-level value of the
+				// annotated package (cfg.Timeout), not a package selector; a
+				// wrong guess can't misbehave silently, since an import that
+				// collides with a package-level name fails the overlay compile.
+				line, err := res.resolve(file, id.Name)
+				if err == nil && !seen[line] {
 					seen[line] = true
 					lines = append(lines, line)
 				}

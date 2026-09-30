@@ -62,7 +62,17 @@ by looking, in order, at:
 1. the annotated file's imports
 2. the other files in the same package
 3. a `[decorators.imports]` hint in `nexus.toml`
-4. the module's import graph
+4. the module's import graph — where **your own module's packages outrank
+   dependencies**: `//@use utils.Wrap(...)` means the project's `utils` even when
+   three dependencies ship a package by that name, with no import and no hint.
+   Only a tie inside the module, or between foreign packages with no local
+   candidate, asks you to disambiguate.
+
+Package selectors inside `//@use` (and type-level `//@use`) expressions resolve
+through the same cascade, so the annotated file needs no import — not even a
+blank one — for the packages its expressions name. The import lands only in the
+generated file. An identifier the cascade can't place is left alone: it may be a
+package-level value of the annotated package (`cfg.Timeout`), not a package.
 
 ## Errors are strict and positioned
 

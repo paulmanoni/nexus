@@ -423,3 +423,51 @@ func (x *X) Index() (string, error) { return "", nil }
 		t.Fatalf("a primary on a type should be a positioned error, got: %v", err)
 	}
 }
+
+// The main module's own package must win the selector over a dependency
+// package with the same name (three packages named "utils" is normal in a
+// real build graph); only a tie inside the module stays ambiguous.
+func TestResolveLayer3PrefersModuleLocal(t *testing.T) {
+	dir := t.TempDir()
+	dep := filepath.Join(dir, "dep")
+	writeFile(t, filepath.Join(dep, "go.mod"), "module example.com/dep\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(dep, "foo", "foo.go"), "package foo\n")
+
+	m := filepath.Join(dir, "m")
+	writeFile(t, filepath.Join(m, "go.mod"),
+		"module example.com/m\n\ngo 1.21\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ../dep\n")
+	writeFile(t, filepath.Join(m, "foo", "foo.go"), "package foo\n")
+	writeFile(t, filepath.Join(m, "other", "other.go"), "package other\n\nimport _ \"example.com/dep/foo\"\n")
+	annotated := filepath.Join(m, "pages", "p.go")
+	writeFile(t, annotated, "package pages\n")
+
+	r := newSelectorResolver(m)
+	got, err := r.resolve(annotated, "foo")
+	if err != nil {
+		t.Fatalf("module-local tie-break: %v", err)
+	}
+	if got != `"example.com/m/foo"` {
+		t.Errorf("module-local tie-break: got %q, want the main module's package", got)
+	}
+}
+
+// A //@use expression's package selectors resolve through the full cascade —
+// a project package needs no import anywhere in the annotated package — while
+// an unresolvable identifier (a package-level value, not a package) is skipped
+// rather than failing the scan.
+func TestResolveUseImportsCascade(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/m\n\ngo 1.21\n")
+	writeFile(t, filepath.Join(dir, "utils", "u.go"), "package utils\n")
+	annotated := filepath.Join(dir, "pages", "p.go")
+	writeFile(t, annotated, "package pages\n\nvar cfg = struct{ Limit int }{}\n")
+
+	r := newSelectorResolver(dir)
+	imps, err := resolveUseImports(r, annotated, []string{"wrap(utils.Envelope,", "cfg.Limit)"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imps) != 1 || imps[0] != `"example.com/m/utils"` {
+		t.Errorf("use cascade: got %v, want the project's utils import alone", imps)
+	}
+}

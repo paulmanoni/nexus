@@ -48,7 +48,8 @@ type pkgIndex struct {
 	byDir      map[string]string // package dir -> import path
 	loaded     bool
 
-	graph       map[string][]string // package name -> import path(s)
+	graph       map[string][]string // package name -> import path(s), whole build graph
+	localGraph  map[string][]string // package name -> import path(s), main module only
 	graphErr    error
 	graphLoaded bool
 
@@ -113,21 +114,24 @@ func (i *pkgIndex) importPath(root, dir string) (string, error) {
 }
 
 // moduleGraph indexes every package in the build graph by its real package
-// name. Lazy: only the qualified-decorator path needs it. refresh forces a
+// name — all of them, plus the subset that lives in the main module itself,
+// so a selector shared between the project and a dependency (three packages
+// named "utils" is normal in a real graph) resolves to the project's own.
+// Lazy: only the qualified-decorator path needs it. refresh forces a
 // rebuild, which is how a selector miss gets a second chance after the user
 // adds a dependency mid-session.
-func (i *pkgIndex) moduleGraph(root string, refresh bool) (map[string][]string, error) {
+func (i *pkgIndex) moduleGraph(root string, refresh bool) (all, local map[string][]string, err error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if err := i.ensure(root); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if i.graphLoaded && !refresh {
-		return i.graph, i.graphErr
+		return i.graph, i.localGraph, i.graphErr
 	}
-	i.graph, i.graphErr = i.loadGraph(i.root)
+	i.graph, i.localGraph, i.graphErr = i.loadGraph(i.root)
 	i.graphLoaded = true
-	return i.graph, i.graphErr
+	return i.graph, i.localGraph, i.graphErr
 }
 
 // ensure loads the index when it is empty or built for another root, and
@@ -154,7 +158,7 @@ func (i *pkgIndex) reload(root string) error {
 		return err
 	}
 	i.byDir, i.mainPkgDir, i.loaded = byDir, mainDir, true
-	i.graph, i.graphErr, i.graphLoaded = nil, nil, false
+	i.graph, i.localGraph, i.graphErr, i.graphLoaded = nil, nil, nil, false
 	i.stamp = moduleStamp(root)
 	return nil
 }
@@ -209,29 +213,35 @@ func (i *pkgIndex) listOne(dir string) (string, error) {
 
 // loadGraph indexes the build-graph closure by package name. Main packages
 // are skipped — they can't be imported by the generated file.
-func (i *pkgIndex) loadGraph(root string) (map[string][]string, error) {
+func (i *pkgIndex) loadGraph(root string) (all, local map[string][]string, err error) {
 	i.listRuns++
 	cmd := exec.Command("go", "list", "-deps", "-json", "./...")
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	graph := map[string][]string{}
+	all, local = map[string][]string{}, map[string][]string{}
 	dec := json.NewDecoder(bytes.NewReader(out))
 	for dec.More() {
-		var p struct{ ImportPath, Name string }
+		var p struct {
+			ImportPath, Name string
+			Module           *struct{ Main bool }
+		}
 		if err := dec.Decode(&p); err != nil {
 			break
 		}
 		if p.Name == "" || p.Name == "main" {
 			continue
 		}
-		if !slices.Contains(graph[p.Name], p.ImportPath) {
-			graph[p.Name] = append(graph[p.Name], p.ImportPath)
+		if !slices.Contains(all[p.Name], p.ImportPath) {
+			all[p.Name] = append(all[p.Name], p.ImportPath)
+		}
+		if p.Module != nil && p.Module.Main && !slices.Contains(local[p.Name], p.ImportPath) {
+			local[p.Name] = append(local[p.Name], p.ImportPath)
 		}
 	}
-	return graph, nil
+	return all, local, nil
 }
 
 // findModuleRoot walks up from dir to the nearest directory holding a
