@@ -199,6 +199,24 @@ func Invoke(fns ...any) Option {
 	return invokeOption{specs: specs}
 }
 
+// Defer resolves to the Option fn returns when the tree is collected — at
+// boot, after every package init has run — rather than when it is built. It
+// lets a value declared in a package-level variable (a router in a module)
+// pick up registrations that generated init() code records later. fn runs
+// once per Collect; a nil result is a no-op.
+func Defer(fn func() Option) Option { return deferOption{fn: fn} }
+
+type deferOption struct{ fn func() Option }
+
+func (o deferOption) applyOption(s *Spec) {
+	if o.fn == nil {
+		return
+	}
+	if opt := o.fn(); opt != nil {
+		opt.applyOption(s)
+	}
+}
+
 // Options bundles several Options into one. Empty input is a no-op.
 func Options(opts ...Option) Option { return optionsGroup{opts: opts} }
 

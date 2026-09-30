@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"unicode"
+
+	"github.com/paulmanoni/nexus/di"
 )
 
 // ControllerRouter is a Router bound to one controller type: a struct whose
@@ -77,14 +80,96 @@ var ErrForbidden = errors.New("forbidden")
 // never on <prefix>/graphql. Inside Module("x", Path("/x"), …) the prefix
 // stacks under /x.
 func Controller[T any](prefix string, shared ...MiddlewareOption) *ControllerRouter[T] {
+	return newController[T](controllerName(reflect.TypeFor[T]()), prefix, shared...)
+}
+
+func newController[T any](name, prefix string, shared ...MiddlewareOption) *ControllerRouter[T] {
 	t := reflect.TypeFor[T]()
-	r := NewRouter(controllerName(t), prefix, shared...)
+	r := NewRouter(name, prefix, shared...)
 	r.restOnly = true
-	return &ControllerRouter[T]{
+	c := &ControllerRouter[T]{
 		Router: r,
 		ctrl:   t,
 		authz:  t.Implements(reflect.TypeFor[ActionAuthorizer]()),
 	}
+	r.claims = append(r.claims, t)
+	r.hooks = append(r.hooks, func() {
+		for _, fn := range annotatedActions(t) {
+			fn.(func(*ControllerRouter[T]))(c)
+		}
+	})
+	return c
+}
+
+// ControllerActions records actions for controller type T — what the
+// //@page, //@rest, //@query and //@mutation annotations on T's methods
+// generate when T carries no //@controller:
+//
+//	nexus.ControllerActions(func(c *nexus.ControllerRouter[*AdminController]) {
+//	    c.Rest("GET", "/", (*AdminController).Dashboard, inertia.Component("Admin/Dashboard"))
+//	    c.Query((*AdminController).AdminStats)
+//	})
+//
+// A nexus.Controller[T] or nexus.Resource[T] declared in Go takes them: they
+// mount under its prefix, its module's Path, its gates and Authorize — so the
+// Go code says where the controller lives and the annotations say what it
+// does. With no such controller in the app, they register on their own,
+// under the module the returned Option sits in.
+func ControllerActions[T any](fn func(*ControllerRouter[T])) Option {
+	t := reflect.TypeFor[T]()
+	controllerActionsReg.Lock()
+	controllerActionsReg.m[t] = append(controllerActionsReg.m[t], fn)
+	controllerActionsReg.Unlock()
+	return &actionsFallback[T]{}
+}
+
+var controllerActionsReg = struct {
+	sync.Mutex
+	m map[reflect.Type][]any
+}{m: map[reflect.Type][]any{}}
+
+func annotatedActions(t reflect.Type) []any {
+	controllerActionsReg.Lock()
+	defer controllerActionsReg.Unlock()
+	return append([]any(nil), controllerActionsReg.m[t]...)
+}
+
+// actionsFallback registers T's recorded actions on a controller of their
+// own when no controller for T in the app claimed them.
+type actionsFallback[T any] struct {
+	enclosing, publicPath, module string
+	ctrl                          *ControllerRouter[T]
+}
+
+func (f *actionsFallback[T]) setEnclosing(prefix, publicPath string) {
+	f.enclosing, f.publicPath = prefix+f.enclosing, publicPath
+}
+
+func (f *actionsFallback[T]) setModule(name string) { f.module = name }
+
+func (f *actionsFallback[T]) nexusOption() di.Option {
+	return di.Defer(func() di.Option {
+		t := reflect.TypeFor[T]()
+		if claimedIn(t, currentBuild()) {
+			return nil
+		}
+		if f.ctrl == nil {
+			name := f.module // group under the enclosing module, as plain registrations would
+			if name == "" {
+				name = controllerName(t)
+			}
+			f.ctrl = newController[T](name, "")
+			f.ctrl.enclosing, f.ctrl.gqlHome = f.enclosing, f.publicPath
+		}
+		return f.ctrl.Router.resolve()
+	})
+}
+
+// RequireActions fails the boot with msg when the controller ends up with no
+// actions at all — conventional, custom or annotated.
+func (c *ControllerRouter[T]) RequireActions(msg string) *ControllerRouter[T] {
+	c.requireActions = msg
+	return c
 }
 
 // Resource creates a ControllerRouter for T and registers its conventional
@@ -114,8 +199,8 @@ func Resource[T any](prefix string, shared ...MiddlewareOption) *ControllerRoute
 		}
 	}
 	if !found {
-		c.errs = append(c.errs, fmt.Errorf(
-			"nexus: Resource[%s] defines none of Index, Show, Create, Update, Destroy — use Controller for custom routes", c.ctrl))
+		c.RequireActions(fmt.Sprintf(
+			"nexus: Resource[%s] has no actions — it defines none of Index, Show, Create, Update, Destroy, and no other action (annotated, Member, Collection or a verb method) was added", c.ctrl))
 	}
 	return c
 }
@@ -204,6 +289,38 @@ func (c *ControllerRouter[T]) TrailingSlash() *ControllerRouter[T] {
 	return c
 }
 
+// ActionOption is a REST option chosen by the controller action it is given
+// to: fn receives the controller type and the action's method name. It is how
+// an option names something after its action — inertia.AsPage() renders
+// (*UsersController).Show as the page Users/Show:
+//
+//	nexus.Controller[*UsersController]("/users").
+//	    Get("/:id", (*UsersController).Show, inertia.AsPage())
+//
+// Outside a controller action (a plain AsRest) it fails the boot.
+func ActionOption(fn func(ctrl reflect.Type, action string) RestOption) RestOption {
+	return restOptionFn(func(c *restConfig) {
+		if c.action == nil {
+			if c.optErr == nil {
+				c.optErr = errors.New("an action option (e.g. inertia.AsPage) is only valid on a controller action — name the value explicitly here")
+			}
+			return
+		}
+		if o := fn(c.action.ctrl, c.action.name); o != nil {
+			o.applyToRest(c)
+		}
+	})
+}
+
+// actionContext tells the options that follow which controller action they
+// are applied to.
+type actionContext struct {
+	ctrl reflect.Type
+	name string
+}
+
+func (a *actionContext) applyToRest(c *restConfig) { c.action = a }
+
 // NoActionDefaults exempts one action from its controller's ActionDefaults —
 // a plain JSON endpoint on an Inertia resource, say.
 func NoActionDefaults() RestOption { return noActionDefaults{} }
@@ -261,7 +378,8 @@ func (c *ControllerRouter[T]) rest(method, path string, action any, name string,
 			if twin && (!c.slash || strings.HasSuffix(path, "/")) {
 				return Options()
 			}
-			all := make([]RestOption, 0, len(sh)+len(opts)+1)
+			all := make([]RestOption, 0, len(sh)+len(opts)+2)
+			all = append(all, &actionContext{ctrl: c.ctrl, name: name})
 			for _, m := range sh {
 				all = append(all, m)
 			}

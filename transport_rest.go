@@ -49,6 +49,9 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	for _, o := range opts {
 		o.applyToRest(cfg)
 	}
+	if cfg.optErr != nil {
+		return rawOption{o: di.Error(fmt.Errorf("nexus: %s %s: %w", method, path, cfg.optErr))}
+	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
 		return rawOption{o: di.Error(err)}
 	}
@@ -96,6 +99,9 @@ func AsRestHandler(method, path string, factory any, opts ...RestOption) Option 
 	cfg := &restConfig{}
 	for _, o := range opts {
 		o.applyToRest(cfg)
+	}
+	if cfg.optErr != nil {
+		return rawOption{o: di.Error(fmt.Errorf("nexus: %s %s: %w", method, path, cfg.optErr))}
 	}
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
 		return rawOption{o: di.Error(err)}
@@ -185,6 +191,13 @@ type restConfig struct {
 	// endpoints, which JSON-marshal their return value. See
 	// routing_renderer.go.
 	renderer ResponseRenderer
+	// action is the controller action being registered, set by
+	// ControllerRouter so an ActionOption can resolve against it; nil for a
+	// plain AsRest.
+	action *actionContext
+	// optErr is an option that could not apply (an ActionOption outside a
+	// controller); AsRest reports it at boot.
+	optErr error
 }
 
 // restOption is the Option returned by AsRest. Parallels gqlFieldOption —

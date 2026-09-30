@@ -119,9 +119,13 @@ conflicting values error naming both locations.
 ## Controllers
 
 Methods can be annotated too, and the generated code calls them as method expressions
-such as `(*UsersController).Show`, with the receiver supplied by DI. Put
-`//@controller <prefix>` on the type to make those methods one
-[controller](./controllers):
+such as `(*UsersController).Show`, with the receiver supplied by DI. Without
+`//@controller`, a type's annotated actions go to the `nexus.Controller` or
+`nexus.Resource` your code declares for it. Your code keeps the module, path and
+gates, and the annotations bring the routes
+([annotated actions, declared in Go](./controllers#annotated-actions-declared-in-go)).
+Put `//@controller <prefix>` on the type to declare the whole
+[controller](./controllers) with annotations:
 
 ```go
 //@controller /users trailing-slash

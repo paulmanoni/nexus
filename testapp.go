@@ -38,6 +38,7 @@ func InProcess(cfg Config, opts ...Option) (app *App, stop func(context.Context)
 	all = append(all, unwrap(collectDeferredOptions())...)
 	all = append(all, capture, fxLateOptions())
 
+	beginBuild()
 	c := di.New(all...)
 	if buildErr := c.Err(); buildErr != nil {
 		return nil, nil, buildErr

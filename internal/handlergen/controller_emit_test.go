@@ -56,7 +56,9 @@ func init() {
 			Rest("GET", "/export", (*UsersController).Export).
 			Query((*UsersController).UserRows).
 			Mutation((*UsersController).SaveUser, auth.Requires("add_user")),
-		nexus.AsRest("GET", "/ping", (*Helpers).Ping),
+		nexus.ControllerActions(func(c *nexus.ControllerRouter[*Helpers]) {
+			c.Rest("GET", "/ping", (*Helpers).Ping)
+		}),
 		inertia.Page("GET", "/about", "About", NewAbout),
 	))
 }
@@ -163,5 +165,38 @@ func TestEmit_Job(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not accept modifier") {
 		t.Errorf("//@auth on a job: %v", err)
+	}
+}
+
+// Annotated methods of a type without //@controller are collected into one
+// nexus.ControllerActions call, paths as written, for a Go-declared controller.
+func TestEmit_ImplicitActions(t *testing.T) {
+	inertiaImport := []string{`"github.com/paulmanoni/nexus/extension/inertia"`}
+	anns := []Annotation{
+		method("DashboardController", "Index", "page", 10, "GET", "/", "Admin/Dashboard"),
+		method("DashboardController", "Index", "auth", 11, "Required"),
+		method("DashboardController", "Forbidden", "page", 20, "GET", "/forbidden"),
+		{Func: "(*DashboardController).Form", Recv: "DashboardController", Method: "Form", Keyword: "inertia.Page",
+			Args: []string{"GET,POST", "/form", "Admin/Form"}, Line: 30, Imports: inertiaImport},
+		method("DashboardController", "Stats", "query", 40),
+	}
+	got, err := Emit(Config{Package: "admin"}, anns)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	for _, want := range []string{
+		"nexus.ControllerActions(func(c *nexus.ControllerRouter[*DashboardController]) {\n",
+		`c.Rest("GET", "/", (*DashboardController).Index, inertia.Component("Admin/Dashboard"), auth.Required())`,
+		`c.Rest("GET", "/forbidden", (*DashboardController).Forbidden, inertia.Component("Dashboard/Forbidden"))`,
+		`c.Rest("GET", "/form", (*DashboardController).Form, inertia.Component("Admin/Form"))`,
+		`c.Rest("POST", "/form", (*DashboardController).Form, inertia.Component("Admin/Form"))`,
+		`c.Query((*DashboardController).Stats)`,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("generated file lacks %s:\n%s", want, got)
+		}
+	}
+	if _, err := Emit(Config{Package: "admin"}, []Annotation{method("DashboardController", "Index", "page", 10, "GET", "rel")}); err == nil {
+		t.Error("a relative path without //@controller must be rejected")
 	}
 }

@@ -232,6 +232,8 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	}
 
 	var stmts []stmt
+	implicit := map[string]*controllerDecl{}
+	var implicitOrder []string
 	for _, fn := range order {
 		g := groups[fn]
 		if g.primary == nil {
@@ -255,6 +257,18 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 		}
 		c, isAction := controllers[g.primary.Recv]
 		isAction = isAction && g.primary.Recv != "" && g.primary.Keyword != "job"
+		// A pointer-receiver method of a type without //@controller: its route actions are
+		// recorded for the type (nexus.ControllerActions), so a Controller or
+		// Resource declared in Go can take them; unclaimed, they register on
+		// their own as before.
+		if !isAction && strings.HasPrefix(g.primary.Func, "(*") && onRouter == "" && cfg.AutoRouter == "" && isImplicitAction(*g.primary) {
+			if implicit[g.primary.Recv] == nil {
+				implicit[g.primary.Recv] = &controllerDecl{typ: g.primary.Recv, verbatim: true,
+					decl: Annotation{File: g.file, Line: g.line}}
+				implicitOrder = append(implicitOrder, g.primary.Recv)
+			}
+			c, isAction = implicit[g.primary.Recv], true
+		}
 		if len(g.more) > 0 {
 			a := g.more[0]
 			if !isAction || !isRouteKeyword(g.primary.Keyword) || !isRouteKeyword(a.Keyword) {
@@ -305,6 +319,10 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 			text = fmt.Sprintf("nexus.OnRouter(%s, %s)", strconv.Quote(onRouter), text)
 		}
 		stmts = append(stmts, stmt{file: g.file, line: g.line, text: text})
+	}
+	for _, typ := range implicitOrder {
+		c := implicit[typ]
+		stmts = append(stmts, stmt{file: c.decl.File, line: c.decl.Line, text: c.renderActions()})
 	}
 	for _, typ := range controllerOrder {
 		c := controllers[typ]
@@ -821,12 +839,13 @@ func sortStmts(ss []stmt) {
 // controllerDecl is a //@controller type: its prefix, its shared modifiers,
 // and the calls its annotated methods add to the nexus.Controller chain.
 type controllerDecl struct {
-	typ    string
-	prefix string
-	slash  bool
-	decl   Annotation
-	shared []Annotation
-	calls  []stmt
+	typ      string
+	prefix   string
+	slash    bool
+	verbatim bool // a type without //@controller: paths as written, rendered as ControllerActions
+	decl     Annotation
+	shared   []Annotation
+	calls    []stmt
 }
 
 // render builds the nexus.Controller[*T](prefix, shared…).Action(…)… chain.
@@ -843,6 +862,31 @@ func (c *controllerDecl) render(shared []string) string {
 		b.WriteString(call.text)
 	}
 	return b.String()
+}
+
+// renderActions renders a type's recorded actions as one
+// nexus.ControllerActions call.
+func (c *controllerDecl) renderActions() string {
+	sortStmts(c.calls)
+	var b strings.Builder
+	fmt.Fprintf(&b, "nexus.ControllerActions(func(c *nexus.ControllerRouter[*%s]) {\n", c.typ)
+	for _, call := range c.calls {
+		for _, part := range strings.Split(call.text, ".\n") {
+			b.WriteString("c." + part + "\n")
+		}
+	}
+	b.WriteString("})")
+	return b.String()
+}
+
+// isImplicitAction reports whether a method's annotation is a route action
+// a controller can take.
+func isImplicitAction(a Annotation) bool {
+	switch a.Keyword {
+	case "rest", "page", "query", "mutation":
+		return true
+	}
+	return strings.HasSuffix(a.Keyword, ".Page") && importsHavePath(a.Imports, inertiaImportPath)
 }
 
 // controllerPrefix reads //@controller <prefix> [trailing-slash]: the prefix
@@ -885,6 +929,19 @@ func actionPath(a Annotation, tok string) (string, error) {
 		return "", a.errf("//@%s path %q must start with \"/\" (it is relative to the controller's prefix; \"\" or / is the prefix itself)", a.Keyword, p)
 	}
 	return p, nil
+}
+
+// path reads an action's path: relative to a //@controller prefix, or as
+// written (it must start with "/") for a type without one.
+func (c *controllerDecl) path(a Annotation, tok string) (string, error) {
+	if !c.verbatim {
+		return actionPath(a, tok)
+	}
+	p, err := decoratorToken(&a, tok)
+	if err != nil {
+		return "", err
+	}
+	return p, checkRoutePath(a, a.Keyword, p)
 }
 
 // pageArgs validates //@page <METHOD> <PATH> [Component]: comma-separated
@@ -940,7 +997,7 @@ func renderControllerAction(c *controllerDecl, a Annotation, opts []string) (cal
 		if err != nil {
 			return "", false, err
 		}
-		path, err := actionPath(a, a.Args[1])
+		path, err := c.path(a, a.Args[1])
 		if err != nil {
 			return "", false, err
 		}
@@ -957,7 +1014,7 @@ func renderControllerAction(c *controllerDecl, a Annotation, opts []string) (cal
 		if err != nil {
 			return "", false, err
 		}
-		path, err := actionPath(a, strconv.Quote(rawPath))
+		path, err := c.path(a, strconv.Quote(rawPath))
 		if err != nil {
 			return "", false, err
 		}

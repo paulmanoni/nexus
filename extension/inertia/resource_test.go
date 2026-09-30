@@ -212,7 +212,8 @@ func TestInertiaComponent(t *testing.T) {
 	bootInertia(t, addr,
 		nexus.Module("admin", nexus.Path("/admin"),
 			nexus.Controller[*ListsController]("").Supply(&ListsController{}).
-				Get("/longlist/:pk/view", (*ListsController).Longlist, inertia.Component("Admin/AdvertLonglist")),
+				Get("/longlist/:pk/view", (*ListsController).Longlist, inertia.Component("Admin/AdvertLonglist")).
+				Get("/longlist/:pk", (*ListsController).Longlist, inertia.AsPage()),
 			inertia.Resource[*ReportsController]("/reports").Supply(&ReportsController{}).
 				ActionDefaults(func(method, path, action string) []nexus.RestOption {
 					if action == "Index" {
@@ -226,6 +227,7 @@ func TestInertiaComponent(t *testing.T) {
 	for path, want := range map[string]string{
 		"/admin/longlist/4/view": "Admin/AdvertLonglist",
 		"/admin/reports":         "Admin/Reports",
+		"/admin/longlist/4":      "Lists/Longlist", // AsPage: <Folder>/<Method>
 	} {
 		res, body := resourceReq(t, "GET", addr, path, "", xhr)
 		var page struct {
@@ -235,5 +237,15 @@ func TestInertiaComponent(t *testing.T) {
 		if res.StatusCode != 200 || page.Component != want {
 			t.Errorf("GET %s = %d %s, want component %s", path, res.StatusCode, body, want)
 		}
+	}
+}
+
+// AsPage names a page after its controller action, so outside one there is no
+// name to give and the boot fails.
+func TestAsPageNeedsAController(t *testing.T) {
+	_, _, err := nexus.InProcess(nexus.Config{},
+		nexus.AsRest("GET", "/x", func() (string, error) { return "", nil }, inertia.AsPage()))
+	if err == nil || !strings.Contains(err.Error(), "only valid on a controller action") {
+		t.Fatalf("err = %v, want the controller-only error", err)
 	}
 }

@@ -567,6 +567,7 @@ func Run(cfg Config, opts ...Option) {
 			}})
 		}).nexusOption())
 	}
+	beginBuild()
 	inst := backend.Build(di.Collect(all...))
 	// Both backends need this. The fx adapter installs fx.NopLogger and Run()
 	// never consults Err(), so a wiring failure there used to exit 1 with an

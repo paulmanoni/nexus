@@ -94,6 +94,7 @@ func printManifestAndExitIfRequested(cfg Config, opts []Option) {
 	var app *App
 	all = append(all, di.Populate(&app))
 
+	beginBuild()
 	built := di.New(all...)
 	if err := built.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, "nexus: print-manifest: graph error:", err)

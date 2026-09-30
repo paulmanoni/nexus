@@ -103,8 +103,8 @@ func ResourceAs[T any](folder, prefix string, shared ...nexus.MiddlewareOption) 
 	register("Destroy", []string{"DELETE"}, "/:id", redirect(destroyTo))
 
 	if !found {
-		c.Register(nexus.Error(fmt.Errorf(
-			"inertia: Resource[%s] defines none of Index, New, Show, Edit, Create, Update, Destroy — use nexus.Controller for custom routes", t)))
+		c.RequireActions(fmt.Sprintf(
+			"inertia: Resource[%s] has no actions — it defines none of Index, New, Show, Edit, Create, Update, Destroy, and no other action was added", t))
 	}
 	return c
 }

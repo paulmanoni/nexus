@@ -399,7 +399,7 @@ func (o Other) Index(ctx context.Context) (string, error) { return "", nil }
 		`Rest("GET", "", (*UsersController).Index, inertia.Component("Users/Index")).`,
 		`Rest("GET", "/:id/view", (*UsersController).Show, inertia.Component("Admin/UserDetail"), auth.Requires("view_user")).`,
 		`Query((*UsersController).UserRows)`,
-		`nexus.AsRest("GET", "/health", (*Health).Ping)`,
+		"nexus.ControllerActions(func(c *nexus.ControllerRouter[*Health]) {\n\t\t\tc.Rest(\"GET\", \"/health\", (*Health).Ping)\n\t\t}),",
 		`nexus.AsRest("GET", "/other", Other.Index)`,
 		`"github.com/paulmanoni/nexus/extension/inertia"`,
 	} {

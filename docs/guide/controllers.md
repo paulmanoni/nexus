@@ -134,6 +134,18 @@ nexus.Controller[*ListsController]("").
 
 On an `inertia.Resource` it overrides the conventional `<Folder>/<Method>` component.
 
+`inertia.AsPage()` names the page after the action instead: `<Folder>/<Method>`, with
+the folder taken from the controller type. It's the Go form of a `//@page` line
+without a component:
+
+```go
+nexus.Controller[*UsersController]("/users").
+    Get("/:id", (*UsersController).Show, inertia.AsPage())   // page Users/Show
+```
+
+It only works on a controller action. On a plain `AsRest` the boot fails, because
+there's no action to name the page after.
+
 ## Decorator form
 
 Controllers can be declared with [`//@` annotations](./decorators#controllers)
@@ -163,6 +175,76 @@ func (c *UsersController) UserRows(ctx context.Context, in RowsArgs) ([]UserRow,
 
 The generator emits exactly the `nexus.Controller[*UsersController](…)` chain you
 would write by hand.
+
+### Annotated actions, declared in Go
+
+You can annotate the actions and still declare the controller in Go. Leave
+`//@controller` off the type and annotate its methods:
+
+```go
+type DashboardController struct{ stats *StatsService }
+
+//@page GET / Admin/Dashboard
+//@auth Required
+func (c *DashboardController) Index(ctx context.Context) (IndexProps, error)
+
+//@page GET /forbidden
+//@use nexus.Public()
+func (c *DashboardController) Forbidden(ctx context.Context) (ForbiddenProps, error)   // Dashboard/Forbidden
+
+//@query
+//@auth Required
+func (c *DashboardController) DashboardStats(ctx context.Context) (*Stats, error)
+```
+
+A `nexus.Controller` or `nexus.Resource` for that type then serves those actions.
+The module, path and gates stay in code:
+
+```go
+var Module = nexus.Module("admin",
+    nexus.Path("/admin"),
+    nexus.Resource[*DashboardController]("/").
+        Provide(NewDashboardController),
+)
+```
+
+This serves `GET /admin/`, `GET /admin/forbidden`, and `dashboardStats` on
+`/admin/graphql`.
+
+- **Paths are written as-is.** Without a `//@controller` prefix, `/` means `/`, and
+  the Go controller's prefix (here `/`) goes in front of each one.
+- **Actions from both places add up.** A Resource's conventional methods, the chain's
+  own `Get`/`Member`/… calls and the annotated actions are all registered.
+- **Without a Go declaration** the annotated actions register on their own, as a
+  controller in their package's module.
+- **The generated code** is one `nexus.ControllerActions` call per type. You can write
+  that call by hand too:
+
+```go
+nexus.ControllerActions(func(c *nexus.ControllerRouter[*DashboardController]) {
+    c.Rest("GET", "/", (*DashboardController).Index, inertia.Component("Admin/Dashboard"), auth.Required())
+})
+```
+
+Only pointer-receiver methods are collected this way. A method with a value receiver
+still registers on its own, as `T.M`.
+
+### Every annotation has a Go form
+
+| Annotation | Go |
+| --- | --- |
+| `//@controller /users` on the type | `nexus.Controller[*UsersController]("/users")` |
+| `//@controller /users trailing-slash` | `….TrailingSlash()` |
+| `//@auth` / `//@session` / `//@use` on the type | `nexus.Controller[*T]("/users", auth.Required(), …)` |
+| `//@page GET /:id Admin/User` | `.Get("/:id", (*T).Show, inertia.Component("Admin/User"))` |
+| `//@page GET /:id` (no component) | `.Get("/:id", (*T).Show, inertia.AsPage())` |
+| `//@page GET,POST /form` | `.Get(…)` and `.Post(…)` |
+| `//@rest GET /export` | `.Get("/export", (*T).Export)` |
+| `//@query` / `//@mutation` | `.Query((*T).Rows)` / `.Mutation((*T).Save)` |
+| `//@auth` / `//@use` on a method | options on that action: `.Get(…, auth.Requires("x"))` |
+| `//@provide` on the constructor | `.Provide(NewT)` |
+| annotated methods, no `//@controller` | `nexus.ControllerActions[*T](func(c) {…})` |
+| `//@path /admin` on the package | `nexus.Module("admin", nexus.Path("/admin"), …)` |
 
 ## Authorizing actions
 

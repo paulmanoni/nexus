@@ -6,6 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Annotated actions on Go-declared controllers.** Annotate a type's methods
+  and leave `//@controller` off the type. A `nexus.Controller[*T]` or
+  `nexus.Resource[*T]` declared in Go then serves those actions, and the
+  module, `nexus.Path` and gates stay in code. For example,
+  `nexus.Module("admin", nexus.Path("/admin"), nexus.Resource[*T]("/"))` needs
+  no package-level `//@path`.
+  - The generator emits one `nexus.ControllerActions(...)` per type, with
+    paths as written. You can call it by hand too.
+  - When no Go declaration exists, the actions register on their own, under
+    the package's module.
+- **`inertia.AsPage()`.** It renders a controller action as the page
+  `<Folder>/<Method>`, the Go form of a `//@page` without a component. It's
+  built on the new `nexus.ActionOption`, a REST option resolved against the
+  action it's given to.
+- `di.Defer` resolves an option when the container collects the option tree,
+  not when it's constructed.
+
+### Changed
+
+- A `Resource` with none of the conventional methods no longer fails at
+  construction. It fails at boot only if it ends up with no actions at all,
+  so annotated or custom actions are enough.
+- `nexus.Resource[T]("/")` is the same as `("")`: the module's path itself.
+- Mounting the same router twice in one app is now a boot error.
+
 ## [1.72.0] - 2026-09-29
 
 ### Added

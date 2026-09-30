@@ -1,10 +1,13 @@
 package nexus
 
 import (
+	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/paulmanoni/nexus/di"
 )
@@ -48,11 +51,27 @@ type Router struct {
 	// restOnly makes the prefix a REST-only RoutePrefix: GraphQL ops stay on
 	// the enclosing endpoint instead of moving to <prefix>/graphql.
 	restOnly bool
+
+	// hooks run once, as the router expands — after every package init — so
+	// a controller can take the actions generated code registered for its
+	// type. claims are the controller types this router tree serves.
+	hooks  []func()
+	claims []reflect.Type
+	// requireActions, when set, fails the boot with this message if the
+	// router ends up with nothing registered.
+	requireActions string
+
+	mu         sync.Mutex
+	cached     di.Option // the expansion, reused by later builds in the process
+	resolvedIn uint64    // the build that last resolved this router
 }
 
 // NewRouter creates a router. name labels the dashboard module; prefix ("" or
 // "/"-prefixed) prepends every route, stacking under Include.
 func NewRouter(name, prefix string, shared ...MiddlewareOption) *Router {
+	if prefix == "/" {
+		prefix = "" // the enclosing path itself
+	}
 	r := &Router{name: name, prefix: prefix, shared: shared}
 	if name == "" {
 		r.errs = append(r.errs, fmt.Errorf("nexus: NewRouter needs a name"))
@@ -150,11 +169,68 @@ func (r *Router) Include(child *Router) *Router {
 // (the decorator-form path).
 func (r *Router) attach(op Option) { r.attached = append(r.attached, op) }
 
+// nexusOption defers the expansion to boot (di.Defer): a router declared in a
+// package-level variable is built before the package's generated init()
+// records the actions annotated on its controller type.
 func (r *Router) nexusOption() di.Option {
 	if r.parent != "" {
 		return Error(fmt.Errorf("nexus: router %q is included in %q — pass only the root router", r.name, r.parent)).nexusOption()
 	}
-	return r.expand(r.enclosing, nil).nexusOption()
+	return di.Defer(r.resolve)
+}
+
+// resolve expands the router once per process and hands the result to each
+// build; within one build a second resolution is a double mount. It records
+// the build's claims on the controller types the tree serves.
+func (r *Router) resolve() di.Option {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	gen := currentBuild()
+	if r.resolvedIn == gen && r.cached != nil {
+		return Error(fmt.Errorf("nexus: router %q mounted twice — the same router passed twice", r.name)).nexusOption()
+	}
+	r.resolvedIn = gen
+	if r.cached == nil {
+		r.cached = r.expand(r.enclosing, nil).nexusOption()
+	}
+	r.claim(gen)
+	return r.cached
+}
+
+func (r *Router) claim(gen uint64) {
+	for _, t := range r.claims {
+		claimType(t, gen)
+	}
+	for _, c := range r.children {
+		c.claim(gen)
+	}
+}
+
+// buildGen numbers builds, so claims and double-mount checks are per build
+// even when a process boots several apps (tests).
+var buildGen atomic.Uint64
+
+func currentBuild() uint64 { return buildGen.Load() }
+
+// beginBuild starts a new build; Run calls it before collecting options.
+func beginBuild() { buildGen.Add(1) }
+
+var claimed = struct {
+	sync.Mutex
+	m map[reflect.Type]uint64
+}{m: map[reflect.Type]uint64{}}
+
+func claimType(t reflect.Type, gen uint64) {
+	claimed.Lock()
+	claimed.m[t] = gen
+	claimed.Unlock()
+}
+
+func claimedIn(t reflect.Type, gen uint64) bool {
+	claimed.Lock()
+	defer claimed.Unlock()
+	g, ok := claimed.m[t]
+	return ok && g == gen
 }
 
 // setEnclosing records the enclosing nexus.Module's REST prefix and public
@@ -178,8 +254,14 @@ func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Optio
 		return Error(fmt.Errorf("nexus: router %q mounted twice — a cycle, or the same router passed twice", r.name))
 	}
 	r.expanded = true
+	for _, h := range r.hooks {
+		h()
+	}
 	if len(r.errs) > 0 {
 		return Error(r.errs[0])
+	}
+	if r.requireActions != "" && len(r.builders) == 0 && len(r.attached) == 0 {
+		return Error(errors.New(r.requireActions))
 	}
 	full := parentPrefix + r.prefix
 	sh := make([]MiddlewareOption, 0, len(inherited)+len(r.shared))

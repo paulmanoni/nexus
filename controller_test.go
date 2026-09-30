@@ -364,3 +364,84 @@ func TestControllerTrailingSlash(t *testing.T) {
 		t.Errorf("a trailing-slash twin must not match deeper paths: got %d", code)
 	}
 }
+
+// annotCtl stands in for a controller whose actions come from annotations:
+// ControllerActions is what the generator emits for them.
+type annotCtl struct{}
+
+func (c *annotCtl) Home(ctx context.Context) (string, error)  { return "home", nil }
+func (c *annotCtl) Other(ctx context.Context) (string, error) { return "other", nil }
+func (c *annotCtl) Stats(ctx context.Context) (*ctlUser, error) {
+	return &ctlUser{Name: "stats"}, nil
+}
+
+// A Resource declared in Go takes the annotated actions: they mount under
+// its module's Path, and the fallback the generated code also returns stays
+// silent — even though the Resource has no conventional actions of its own.
+func TestResourceTakesAnnotatedActions(t *testing.T) {
+	module := Module("admin", Path("/admin"),
+		Resource[*annotCtl]("/").Supply(&annotCtl{}),
+	)
+	generated := Module("admin", ControllerActions(func(c *ControllerRouter[*annotCtl]) {
+		c.Get("/", (*annotCtl).Home)
+		c.Get("/other", (*annotCtl).Other)
+		c.Query((*annotCtl).Stats)
+	}))
+	for build := 1; build <= 2; build++ { // the same module boots again (tests do)
+		app, stop, err := InProcess(Config{}, module, generated)
+		if err != nil {
+			t.Fatalf("build %d: %v", build, err)
+		}
+		for path, want := range map[string]string{"/admin/": "home", "/admin/other": "other"} {
+			if code, body := ctlDo(t, app, "GET", path, ""); code != 200 || !strings.Contains(body, want) {
+				t.Errorf("build %d: GET %s = %d %s", build, path, code, body)
+			}
+		}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/admin/graphql", strings.NewReader(`{"query":"{ stats { name } }"}`))
+		r.Header.Set("Content-Type", "application/json")
+		app.ServeHTTP(w, r)
+		if !strings.Contains(w.Body.String(), `"stats"`) {
+			t.Errorf("build %d: GraphQL on the module endpoint = %s", build, w.Body.String())
+		}
+		_ = stop(context.Background())
+	}
+}
+
+type standaloneCtl struct{}
+
+func (c *standaloneCtl) Ping(ctx context.Context) (string, error) { return "pong", nil }
+
+// With no controller for the type in the app, the actions register on their
+// own under the module they were generated into.
+func TestControllerActionsStandalone(t *testing.T) {
+	app, stop, err := InProcess(Config{},
+		Supply(&standaloneCtl{}),
+		Module("tools", Path("/tools"), ControllerActions(func(c *ControllerRouter[*standaloneCtl]) {
+			c.Get("/ping", (*standaloneCtl).Ping)
+		})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	if code, body := ctlDo(t, app, "GET", "/tools/ping", ""); code != 200 || !strings.Contains(body, "pong") {
+		t.Fatalf("GET /tools/ping = %d %s", code, body)
+	}
+	for _, e := range app.Registry().Endpoints() {
+		if e.Path == "/tools/ping" && e.Module != "tools" {
+			t.Errorf("module = %q, want the enclosing tools module", e.Module)
+		}
+	}
+}
+
+func TestRouterMountedTwiceInOneApp(t *testing.T) {
+	r := NewRouter("dup", "/dup").Rest("GET", "", func() (string, error) { return "x", nil })
+	_, stop, err := InProcess(Config{}, r, r)
+	if stop != nil {
+		defer func() { _ = stop(context.Background()) }()
+	}
+	if err == nil || !strings.Contains(err.Error(), "mounted twice") {
+		t.Fatalf("want a double-mount error, got %v", err)
+	}
+}

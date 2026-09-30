@@ -706,8 +706,18 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
 
   Paths are relative to the prefix ("/" is the prefix itself); an action may
   carry several //@page / //@rest routes; the constructor still needs
-  //@provide. Methods of types without //@controller register as method
-  expressions ((*T).M) with the receiver from DI.`,
+  //@provide.
+
+  Without //@controller, a type's annotated actions (paths as written) go
+  to the nexus.Controller / nexus.Resource declared for it in Go — the
+  module, Path and gates stay in code:
+
+    nexus.Module("admin", nexus.Path("/admin"),
+        nexus.Resource[*DashboardController]("/").Provide(NewDashboardController))
+
+  Undeclared, they register on their own under the package's module. The
+  generated form is nexus.ControllerActions(func(c *nexus.ControllerRouter[*T]) {…});
+  inertia.AsPage() is the Go form of //@page without a component.`,
 
 	"inertia": `
 INERTIA

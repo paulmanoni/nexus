@@ -3,6 +3,7 @@ package di
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -345,5 +346,27 @@ func TestOptionalProviderErrorPropagates(t *testing.T) {
 	ran := false
 	if err := New(Provide(consumer), Invoke(func(n int) { ran = n == 1 })).Err(); err != nil || !ran {
 		t.Fatalf("absent optional provider: err = %v, ran %v", err, ran)
+	}
+}
+
+// Defer resolves when the tree is collected, in its place in the order.
+func TestDeferResolvesAtCollect(t *testing.T) {
+	var order []string
+	late := "unset"
+	opt := Options(
+		Invoke(func() { order = append(order, "first") }),
+		Defer(func() Option {
+			v := late // read at Collect, not when Defer was called
+			return Invoke(func() { order = append(order, v) })
+		}),
+		Invoke(func() { order = append(order, "last") }),
+		Defer(func() Option { return nil }),
+	)
+	late = "deferred"
+	if err := New(opt).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "first,deferred,last" {
+		t.Fatalf("order = %v", order)
 	}
 }

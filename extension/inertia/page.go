@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"braces.dev/errtrace"
@@ -94,6 +95,20 @@ func Component(name string) nexus.RestOption {
 		nexus.WithIcon(Icon),
 		nexus.Tag(registry.PageTag, name),
 	)
+}
+
+// AsPage renders a controller action as the Inertia page named after it —
+// <Folder>/<Method>, the folder from the controller type (UsersController →
+// Users) — the Go form of a //@page annotation without a component:
+//
+//	nexus.Controller[*UsersController]("/users").
+//	    Get("/:id", (*UsersController).Show, inertia.AsPage())   // Users/Show
+//
+// Only valid on a controller action; name the page with Component elsewhere.
+func AsPage() nexus.RestOption {
+	return nexus.ActionOption(func(ctrl reflect.Type, action string) nexus.RestOption {
+		return Component(componentFolder(ctrl) + "/" + action)
+	})
 }
 
 // validatePage rejects a malformed registration at option-build time, so a

@@ -525,7 +525,13 @@ action) makes its annotated methods one `nexus.Controller[*T]` chain; methods ta
 `//@page METHOD PATH [Component]` (component defaults to `<Folder>/<Method>`; `//@inertia.Page`
 reads the same), `//@rest`, `//@query`, `//@mutation`; paths are relative (`/` = the prefix);
 an action may repeat `//@page`/`//@rest`; the constructor still needs `//@provide`. Annotated
-methods on types without `//@controller` register as method expressions `(*T).M`.
+pointer-receiver methods on types without `//@controller` are collected per type
+(`nexus.ControllerActions`, paths as written) and served by the `nexus.Controller`/`Resource`
+declared for that type in Go — so `nexus.Module("admin", nexus.Path("/admin"),
+nexus.Resource[*T]("/").Provide(NewT))` takes the annotated routes, with path and gates in
+code; undeclared, they register on their own under the package's module.
+`inertia.AsPage()` (built on `nexus.ActionOption`) is the Go form of a component-less `//@page`.
+Every annotation has a Go equivalent (table in docs/guide/controllers.md).
 gofmt's `// @x` form is read like `//@x` (type directives included).
 
 **Inertia resources (`inertia.Resource[T](prefix)`).** A controller whose actions are
