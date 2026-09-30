@@ -225,9 +225,34 @@ plain link.
 }
 ```
 
-Live updates travel as patches against the page's previous render (the
-changed stretches only); a large rewrite falls back to the full render, and
-a browser that loses track asks for one.
+### What travels
+
+- **The first render comes over HTTP, once.** The socket that connects next
+  mounts, renders and compares with what the page already has: identical, and
+  nothing is sent; different (a `Mount` that does more once `Connected()`),
+  and the page is corrected. The first change carries the render the browser
+  patches against from then on.
+- **Updates send what changed.** Renders are cut into tokens — each text node,
+  attribute value and `view.Send` argument its own token — and diffed. A patch
+  copies unchanged runs, sends changed values, reuses markup already on the
+  page (a new list item sends only its values), and names markup the
+  connection has seen before by a dictionary index, so it never travels
+  twice. On a 100-row board (37 KB rendered):
+
+  | Change | Sent |
+  | --- | --- |
+  | a count | 15 B |
+  | a new row | 92 B |
+  | adopting a row (first time / after) | 283 B / 112 B |
+
+  Messages are compressed (`permessage-deflate`); a full render, when one is
+  needed, is about 1.5 KB. A patch that would not be clearly smaller than the
+  render is sent as the render; a browser that loses track asks for one.
+- **Reconnects.** A dropped socket retries with jittered backoff (at once when
+  the network returns or the tab is looked at again); the page shows
+  `data-nx-live-state="disconnected"` meanwhile — style it. Events sent while
+  disconnected are queued and delivered once connected. The server mounts
+  afresh and sends the full render; browser-side signals keep their values.
 
 ## The toolchain
 

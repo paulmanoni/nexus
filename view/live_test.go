@@ -87,7 +87,7 @@ func dialLive(t *testing.T, srv *httptest.Server, path string) *websocket.Conn {
 
 var (
 	pagesMu sync.Mutex
-	pages   = map[*websocket.Conn][]string{} // what each test connection's browser holds
+	pages   = map[*websocket.Conn]*mirror{} // what each test connection's browser holds
 )
 
 // reply reads the next reply and, like the browser, rebuilds a patch into
@@ -101,16 +101,20 @@ func reply(t *testing.T, conn *websocket.Conn) liveReply {
 	}
 	pagesMu.Lock()
 	defer pagesMu.Unlock()
+	m := pages[conn]
+	if m == nil {
+		m = &mirror{}
+		pages[conn] = m
+	}
 	switch {
 	case r.Patch != nil:
-		html, ok := apply(pages[conn], jsonSteps(r.Patch))
-		if !ok || len(tokenize(html)) != r.N {
+		html, ok := m.apply(jsonSteps(r.Patch), r.N)
+		if !ok {
 			t.Fatalf("a patch that does not apply: %+v", r)
 		}
 		r.HTML = html
-		pages[conn] = tokenize(html)
 	case r.HTML != "":
-		pages[conn] = tokenize(r.HTML)
+		m.full(r.HTML)
 	}
 	return r
 }
@@ -119,9 +123,16 @@ func reply(t *testing.T, conn *websocket.Conn) liveReply {
 func jsonSteps(p []any) []any {
 	out := make([]any, len(p))
 	for i, s := range p {
-		if f, ok := s.(float64); ok {
-			out[i] = int(f)
-		} else {
+		switch v := s.(type) {
+		case float64:
+			out[i] = int(v)
+		case []any:
+			ints := make([]int, len(v))
+			for j := range v {
+				ints[j] = int(v[j].(float64))
+			}
+			out[i] = ints
+		default:
 			out[i] = s
 		}
 	}
@@ -137,7 +148,7 @@ func TestLivePage(t *testing.T) {
 	b, _ := io.ReadAll(res.Body)
 	page := string(b)
 	for _, want := range []string{
-		`<nx-live data-nx-live="/count/ana/_live">`,
+		`<nx-live data-nx-live="/count/ana/_live" data-nx-live-join="`,
 		`<p id="n">10</p>`,     // the DI template's default
 		`<p id="o">hi ana</p>`, // a DI dependency and a path parameter in Mount
 		`<p id="m">page</p>`,   // not connected on the first render

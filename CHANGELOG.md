@@ -54,9 +54,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     - A successful submit resets the form.
   - A panic in a live page is reported to it as an error, and the
     connection stays up.
-  - **Updates send only what changed:** a patch against the previous render.
-    A large rewrite falls back to the full render, and a browser that loses
-    track asks for one.
+  - **The first render arrives over HTTP only.** The connecting socket sends
+    nothing unless its own mount renders differently.
+  - **Updates send only what changed.** A patch carries text nodes,
+    attribute values and `view.Send` arguments as values, reuses markup
+    already on the page, and refers by index to markup the connection has
+    seen before.
+    - On a 100-row board: 15 B for a count change, 92 B for a new row.
+    - Messages are compressed.
+  - **Reconnects** use jittered backoff, retry at once when the network or
+    the tab comes back, and queue events while disconnected. The server
+    mounts fresh.
 - **`view.Link`** is in-app navigation.
   - It fetches the target page and patches it into the current one, with no
     document reload.

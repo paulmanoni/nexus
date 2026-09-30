@@ -377,7 +377,7 @@ func (d *liveDef) pageHandler() any {
 			if err != nil {
 				return err
 			}
-			attr := ` data-nx-live="` + html.EscapeString(socket) + `"`
+			attr := ` data-nx-live="` + html.EscapeString(socket) + `" data-nx-live-join="` + keepJoin(string(body)) + `"`
 			if loc := bodyTag.FindIndex(body); loc != nil {
 				// A full document: the <body> is the live root.
 				_, err = w.Write(append(append(append([]byte{}, body[:loc[1]]...), attr...), body[loc[1]:]...))
@@ -418,7 +418,9 @@ type upgraded struct{}
 
 func (upgraded) Render(*httpx.Ctx, any) error { return nil }
 
-var liveUpgrader = websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin}
+// liveUpgrader compresses messages (permessage-deflate) when the browser
+// offers it, as every browser does: a full render shrinks several times over.
+var liveUpgrader = websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin, EnableCompression: true}
 
 const (
 	liveWriteWait  = 10 * time.Second
@@ -449,28 +451,27 @@ func (d *liveDef) socketHandler() any {
 }
 
 func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn, in *instance) {
-	// last is the render the browser holds, so the next one can travel as
-	// a patch against it; nil forces a full render.
-	var last []string
+	// patches holds the render the browser has and the dictionary it
+	// shares, so the next render travels as a patch against them.
+	var patches differ
 	render := func(ref int, invalid bool) liveReply {
 		body, err := in.render(ctx)
 		if err != nil {
 			return liveReply{Ref: ref, Error: err.Error()}
 		}
 		html := string(body)
-		tokens := tokenize(html)
-		prev := last
-		last = tokens
-		if prev != nil {
-			if patch, ok := diff(prev, tokens); ok && worthPatching(patch, html) {
-				return liveReply{Ref: ref, Patch: patch, N: len(tokens), Invalid: invalid}
-			}
+		if patch, n, full := patches.next(html); !full {
+			return liveReply{Ref: ref, Patch: patch, N: n, Invalid: invalid}
 		}
 		return liveReply{Ref: ref, HTML: html, Invalid: invalid}
 	}
 	send := func(r liveReply) bool {
+		b, err := marshal(r)
+		if err != nil {
+			return false
+		}
 		_ = conn.SetWriteDeadline(time.Now().Add(liveWriteWait))
-		return conn.WriteJSON(r) == nil
+		return conn.WriteMessage(websocket.TextMessage, b) == nil
 	}
 	sendRender := func() bool { return send(render(0, false)) }
 	sock := &Socket{connected: true, inbox: make(chan Message, liveInbox)}
@@ -479,8 +480,19 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 		send(liveReply{Error: err.Error()})
 		return
 	}
-	if !sendRender() {
+	// The page arrived over HTTP: when this connection renders the same,
+	// send nothing — the first change carries the render the browser will
+	// patch against. Otherwise (Mount did more once connected, or there is
+	// no HTTP render to compare with: a reconnect) send the render now.
+	body, err := in.render(ctx)
+	if err != nil {
+		send(liveReply{Error: err.Error()})
 		return
+	}
+	if joined, ok := takeJoin(c.Request.URL.Query().Get("join")); !ok || joined != string(body) {
+		if !sendRender() {
+			return
+		}
 	}
 
 	_ = conn.SetReadDeadline(time.Now().Add(livePongWait))
@@ -527,7 +539,7 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 				return
 			}
 			if ev.Event == "__resync" { // the browser lost track: send the whole render
-				last = nil
+				patches.forget()
 				if !send(render(ev.Ref, in.errs != nil)) {
 					return
 				}

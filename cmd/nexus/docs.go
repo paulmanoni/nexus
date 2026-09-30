@@ -789,8 +789,10 @@ sends the fields to an event whose last parameter is a form-tagged struct;
 returning nexus.Errors re-renders with view.Errors(ctx).Field("name"), and a
 successful submit resets the form.
 Navigation: @view.Link("/board") { Board } fetches and patches the page in
-place (no reload; live sockets follow; back/forward work). Live updates
-travel as patches against the previous render.
+place (no reload; live sockets follow; back/forward work). The first render
+comes over HTTP only; updates travel as compressed token patches (values,
+reused markup, a per-connection dictionary). A dropped socket reconnects with
+backoff, queues events meanwhile, and gets a fresh mount.
 
 Browser values (shard arguments, restored signals, event arguments) are user
 input: validate them. Example: view/example (/ and /board).

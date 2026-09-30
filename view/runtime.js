@@ -408,28 +408,52 @@
   }
 
   // Live updates arrive as patches against the previous render, cut into
-  // tokens after every '>' exactly as the server cuts them (diff.go):
-  // n copies n old tokens, -n skips n, a string is inserted.
+  // tokens exactly as the server cuts them (diff.go): n copies n old tokens,
+  // -n skips n, a string is inserted, [p, n] inserts n old tokens from p.
   function tokenize(html) {
     var out = [];
-    while (html.length) {
-      var i = html.indexOf(">");
-      if (i < 0) {
-        out.push(html);
-        break;
+    var start = 0;
+    for (var i = 0; i < html.length; i++) {
+      var ch = html.charCodeAt(i);
+      if (ch === 60) { // <
+        if (i > start) {
+          out.push(html.slice(start, i));
+          start = i;
+        }
+      } else if (ch === 62 || ch === 34) { // > "
+        out.push(html.slice(start, i + 1));
+        start = i + 1;
+      } else if (ch === 59 && i >= 4 && html.slice(i - 4, i + 1) === "&#34;") { // an escaped quote
+        out.push(html.slice(start, i + 1));
+        start = i + 1;
       }
-      out.push(html.slice(0, i + 1));
-      html = html.slice(i + 1);
     }
+    if (start < html.length) out.push(html.slice(start));
     return out;
   }
 
-  function applyPatch(old, patch) {
+  // The connection's dictionary of long tokens, built exactly as the
+  // server builds it (diff.go): every token of 16+ characters in order of
+  // first appearance, up to 4096, reset with every full render.
+  function newDict() { return { ids: new Map(), words: [] }; }
+
+  function observe(dict, tokens) {
+    tokens.forEach(function (t) {
+      if (utf8len(t) < 16 || dict.words.length >= 4096 || dict.ids.has(t)) return;
+      dict.ids.set(t, dict.words.length);
+      dict.words.push(t);
+    });
+  }
+
+  function applyPatch(old, patch, dict) {
     var out = [];
     var i = 0;
     patch.forEach(function (step) {
       if (typeof step === "string") {
         tokenize(step).forEach(function (t) { out.push(t); });
+      } else if (Array.isArray(step)) {
+        if (step.length === 1) out.push(dict.words[step[0]]);
+        else for (var r = 0; r < step[1]; r++) out.push(old[step[0] + r]);
       } else if (step > 0) {
         for (var n = 0; n < step; n++) out.push(old[i++]);
       } else {
@@ -439,8 +463,17 @@
     return out;
   }
 
-  nx._applyPatch = function (oldHTML, patchJSON) {
-    return applyPatch(tokenize(oldHTML), JSON.parse(patchJSON)).join("");
+  // _patcher is the browser side of a connection's patches, for tests.
+  nx._patcher = function () {
+    var last = [], dict = newDict();
+    return {
+      full: function (html) { last = tokenize(html); dict = newDict(); observe(dict, last); },
+      apply: function (patchJSON) {
+        last = applyPatch(last, JSON.parse(patchJSON), dict);
+        observe(dict, last);
+        return last.join("");
+      },
+    };
   };
 
   // live connects each live root to its socket: the server sends the
@@ -449,16 +482,29 @@
   // again.
   var liveRoots = new Map(); // root element -> { ws }
 
+  // The page's first render came over HTTP: the first connection names it
+  // (data-nx-live-join) so the server sends nothing it already has. A
+  // reconnect gets a fresh mount and its full render. Events sent while
+  // disconnected wait in a queue and go out once the socket is back.
   function connectLive(root) {
     var path = root.getAttribute("data-nx-live");
-    var state = { ws: null, delay: 500, ref: 0, submits: {}, path: path, closed: false };
+    var join = root.getAttribute("data-nx-live-join");
+    var state = { ws: null, delay: 500, timer: null, ref: 0, submits: {}, queue: [], path: path, closed: false };
     liveRoots.set(root, state);
     function open() {
-      var ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + path);
+      clearTimeout(state.timer);
+      state.timer = null;
+      var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path;
+      if (join) url += "?join=" + encodeURIComponent(join);
+      join = null; // a join is good for the first connection only
+      var ws = new WebSocket(url);
       state.ws = ws;
       ws.onopen = function () {
         state.delay = 500;
         root.setAttribute("data-nx-live-state", "connected");
+        var queued = state.queue;
+        state.queue = [];
+        queued.forEach(function (msg) { ws.send(JSON.stringify(msg)); });
       };
       ws.onmessage = function (m) {
         var msg = JSON.parse(m.data);
@@ -474,16 +520,19 @@
         root.removeAttribute("data-nx-live-error");
         var html;
         if (msg.patch) {
-          var tokens = applyPatch(state.last || [], msg.patch);
-          if (tokens.length !== msg.n) {
+          var tokens = applyPatch(state.last || [], msg.patch, state.dict);
+          if (tokens.length !== msg.n || tokens.indexOf(undefined) >= 0) {
             // Out of step with the server: ask for the whole render.
             ws.send(JSON.stringify({ event: "__resync" }));
             return;
           }
           state.last = tokens;
+          observe(state.dict, tokens);
           html = tokens.join("");
         } else if (typeof msg.html === "string") {
           state.last = tokenize(msg.html);
+          state.dict = newDict();
+          observe(state.dict, state.last);
           html = msg.html;
         } else {
           return;
@@ -506,11 +555,25 @@
       ws.onclose = function () {
         if (state.closed) return; // navigated away: stay closed
         root.setAttribute("data-nx-live-state", "disconnected");
-        setTimeout(open, state.delay);
+        state.last = null; // the reconnect sends a full render
+        // Back off with jitter, so a restarted server is not hit by every
+        // page at once.
+        state.timer = setTimeout(open, state.delay * (0.75 + Math.random() / 2));
         state.delay = Math.min(state.delay * 2, 10000);
       };
     }
+    state.reconnectNow = function () {
+      if (state.closed || !state.timer) return;
+      state.delay = 500;
+      open();
+    };
     open();
+  }
+
+  // Reconnect at once when the network returns or the tab is looked at
+  // again, instead of waiting out the backoff.
+  function reconnectAll() {
+    liveRoots.forEach(function (state) { if (state.reconnectNow) state.reconnectNow(); });
   }
 
   // syncLive matches sockets to the page: roots that left the document, or
@@ -586,17 +649,20 @@
   function liveState(el, event) {
     var root = el.closest("[data-nx-live]");
     var state = root && liveRoots.get(root);
-    if (!state || !state.ws || state.ws.readyState !== 1) {
-      console.warn("nexus view: live page not connected yet; " + event + " dropped");
+    if (!state) {
+      console.warn("nexus view: " + event + " is not inside a live page");
       return null;
     }
     return { root: root, state: state };
   }
 
+  // liveSend sends an event, or queues it while the socket is down.
   function liveSend(live, msg) {
     msg.ref = ++live.state.ref;
     live.root.setAttribute("aria-busy", "true");
-    live.state.ws.send(JSON.stringify(msg));
+    var ws = live.state.ws;
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
+    else if (live.state.queue.length < 50) live.state.queue.push(msg);
     return msg.ref;
   }
 
@@ -646,6 +712,10 @@
       walk(document.documentElement, []);
       syncLive();
       document.addEventListener("click", onNavClick);
+      window.addEventListener("online", reconnectAll);
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible") reconnectAll();
+      });
       window.addEventListener("popstate", function () { navigate(location.href, false); });
     };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
