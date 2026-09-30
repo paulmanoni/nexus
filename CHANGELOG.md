@@ -54,6 +54,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     - A successful submit resets the form.
   - A panic in a live page is reported to it as an error, and the
     connection stays up.
+  - **Updates send only what changed:** a patch against the previous render.
+    A large rewrite falls back to the full render, and a browser that loses
+    track asks for one.
+- **`view.Link`** is in-app navigation.
+  - It fetches the target page and patches it into the current one, with no
+    document reload.
+  - Live sockets connect and close with the page.
+  - The title and any stylesheets or scripts the new page needs are updated.
+  - Back and forward work.
 - `view.Assets(prefix, handler)` serves a component library's files.
   `templ.Attributes{…}` literals in `Props.Attributes` accept reactive
   entries.

@@ -788,6 +788,9 @@ Forms: <form onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }
 sends the fields to an event whose last parameter is a form-tagged struct;
 returning nexus.Errors re-renders with view.Errors(ctx).Field("name"), and a
 successful submit resets the form.
+Navigation: @view.Link("/board") { Board } fetches and patches the page in
+place (no reload; live sockets follow; back/forward work). Live updates
+travel as patches against the previous render.
 
 Browser values (shard arguments, restored signals, event arguments) are user
 input: validate them. Example: view/example (/ and /board).

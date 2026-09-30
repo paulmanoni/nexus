@@ -207,6 +207,28 @@ func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
   library's `Props.Attributes`
   (`templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}`).
 
+## Navigation
+
+`view.Link` is an in-app link: following it fetches the page and patches it
+into the current one — no document reload — with live pages connecting and
+disconnecting as needed, the title and needed stylesheets/scripts updated,
+and the back and forward buttons working. Shared DI state keeps its value
+across pages. A modified click (new tab) or another site's link behaves as a
+plain link.
+
+```templ
+@view.Link("/board") {
+	Adoption board
+}
+@view.Link("/", templ.Attributes{"class": "underline"}) {
+	Home
+}
+```
+
+Live updates travel as patches against the page's previous render (the
+changed stretches only); a large rewrite falls back to the full render, and
+a browser that loses track asks for one.
+
 ## The toolchain
 
 | Command | Views | Tailwind |
@@ -269,7 +291,7 @@ the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
   patch in place).
 - Live pages: one goroutine per connected page; `view.Broadcast` reaches the
   pages connected to this process only (a replica's own pages); file inputs are
-  not sent over the socket; diffs and in-app navigation are not in yet.
+  not sent over the socket.
 - `/`, `%`, indexing and field access (other than the event's) do not compile to
   the browser yet.
 - `/_view/*` ignores nexus `route_prefix`.

@@ -407,6 +407,42 @@
     });
   }
 
+  // Live updates arrive as patches against the previous render, cut into
+  // tokens after every '>' exactly as the server cuts them (diff.go):
+  // n copies n old tokens, -n skips n, a string is inserted.
+  function tokenize(html) {
+    var out = [];
+    while (html.length) {
+      var i = html.indexOf(">");
+      if (i < 0) {
+        out.push(html);
+        break;
+      }
+      out.push(html.slice(0, i + 1));
+      html = html.slice(i + 1);
+    }
+    return out;
+  }
+
+  function applyPatch(old, patch) {
+    var out = [];
+    var i = 0;
+    patch.forEach(function (step) {
+      if (typeof step === "string") {
+        tokenize(step).forEach(function (t) { out.push(t); });
+      } else if (step > 0) {
+        for (var n = 0; n < step; n++) out.push(old[i++]);
+      } else {
+        i -= step;
+      }
+    });
+    return out;
+  }
+
+  nx._applyPatch = function (oldHTML, patchJSON) {
+    return applyPatch(tokenize(oldHTML), JSON.parse(patchJSON)).join("");
+  };
+
   // live connects each live root to its socket: the server sends the
   // rendered page after mounting and after every event; the browser patches
   // it in place. A dropped connection reconnects, and the server mounts
@@ -415,7 +451,7 @@
 
   function connectLive(root) {
     var path = root.getAttribute("data-nx-live");
-    var state = { ws: null, delay: 500, ref: 0, submits: {} };
+    var state = { ws: null, delay: 500, ref: 0, submits: {}, path: path, closed: false };
     liveRoots.set(root, state);
     function open() {
       var ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + path);
@@ -436,14 +472,30 @@
           return;
         }
         root.removeAttribute("data-nx-live-error");
+        var html;
+        if (msg.patch) {
+          var tokens = applyPatch(state.last || [], msg.patch);
+          if (tokens.length !== msg.n) {
+            // Out of step with the server: ask for the whole render.
+            ws.send(JSON.stringify({ event: "__resync" }));
+            return;
+          }
+          state.last = tokens;
+          html = tokens.join("");
+        } else if (typeof msg.html === "string") {
+          state.last = tokenize(msg.html);
+          html = msg.html;
+        } else {
+          return;
+        }
         var next;
         if (root.tagName === "BODY") {
-          next = new DOMParser().parseFromString(msg.html, "text/html").body;
+          next = new DOMParser().parseFromString(html, "text/html").body;
           next.setAttribute("data-nx-live", path);
           next.setAttribute("data-nx-live-state", "connected");
         } else {
           next = root.cloneNode(false);
-          next.innerHTML = msg.html;
+          next.innerHTML = html;
         }
         morph(root, next);
         walk(root, []);
@@ -452,12 +504,83 @@
         if (submitted && !msg.invalid && submitted.isConnected) submitted.reset();
       };
       ws.onclose = function () {
+        if (state.closed) return; // navigated away: stay closed
         root.setAttribute("data-nx-live-state", "disconnected");
         setTimeout(open, state.delay);
         state.delay = Math.min(state.delay * 2, 10000);
       };
     }
     open();
+  }
+
+  // syncLive matches sockets to the page: roots that left the document, or
+  // now name another live page, close; new roots connect.
+  function syncLive() {
+    liveRoots.forEach(function (state, root) {
+      if (!root.isConnected || root.getAttribute("data-nx-live") !== state.path) {
+        state.closed = true;
+        if (state.ws) state.ws.close();
+        liveRoots.delete(root);
+      }
+    });
+    Array.from(document.querySelectorAll("[data-nx-live]")).forEach(function (root) {
+      if (!liveRoots.has(root)) connectLive(root);
+    });
+  }
+
+  // ---- in-app navigation (view.Link) ---------------------------------------
+
+  // navigate replaces the page with the one at url without reloading: the
+  // body is patched in place, stylesheets and scripts the new head needs are
+  // added, and live sockets follow. Anything unexpected falls back to a
+  // normal page load.
+  function navigate(url, push) {
+    return fetch(url, { headers: { Accept: "text/html" }, credentials: "same-origin" })
+      .then(function (res) {
+        var type = res.headers.get("Content-Type") || "";
+        if (!res.ok || type.indexOf("text/html") !== 0) throw new Error("not a page");
+        return res.text().then(function (text) { return { text: text, url: res.url || url }; });
+      })
+      .then(function (page) {
+        var doc = new DOMParser().parseFromString(page.text, "text/html");
+        mergeHead(doc.head);
+        morph(document.body, doc.body);
+        if (push) history.pushState({ nx: true }, "", page.url);
+        walk(document.body, []);
+        reapply(document.body);
+        syncLive();
+        if (push) window.scrollTo(0, 0);
+      })
+      .catch(function () {
+        location.href = url;
+      });
+  }
+
+  function mergeHead(head) {
+    if (head.querySelector("title")) document.title = head.querySelector("title").textContent;
+    Array.from(head.querySelectorAll('link[rel="stylesheet"][href]')).forEach(function (l) {
+      if (!document.head.querySelector('link[rel="stylesheet"][href="' + l.getAttribute("href") + '"]')) {
+        document.head.appendChild(document.importNode(l, true));
+      }
+    });
+    Array.from(head.querySelectorAll("script[src]")).forEach(function (sc) {
+      var src = sc.getAttribute("src");
+      if (document.head.querySelector('script[src="' + src + '"]')) return;
+      var el = document.createElement("script"); // an imported script would not run
+      Array.from(sc.attributes).forEach(function (a) { el.setAttribute(a.name, a.value); });
+      document.head.appendChild(el);
+    });
+  }
+
+  function onNavClick(e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest && e.target.closest("a[data-nx-nav]");
+    if (!a || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
+    var url = new URL(a.href, location.href);
+    if (url.origin !== location.origin) return;
+    if (url.pathname === location.pathname && url.search === location.search && url.hash) return; // same page anchor
+    e.preventDefault();
+    navigate(url.href, true);
   }
 
   function liveState(el, event) {
@@ -521,7 +644,9 @@
   if (typeof document !== "undefined") {
     var boot = function () {
       walk(document.documentElement, []);
-      Array.from(document.querySelectorAll("[data-nx-live]")).forEach(connectLive);
+      syncLive();
+      document.addEventListener("click", onNavClick);
+      window.addEventListener("popstate", function () { navigate(location.href, false); });
     };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
     else boot();

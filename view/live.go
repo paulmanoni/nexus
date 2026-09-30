@@ -406,6 +406,8 @@ type liveEvent struct {
 type liveReply struct {
 	Ref     int    `json:"ref,omitempty"` // the event this reply answers; 0 for a push
 	HTML    string `json:"html,omitempty"`
+	Patch   []any  `json:"patch,omitempty"` // or the change from the previous render (diff.go)
+	N       int    `json:"n,omitempty"`     // the patched render's token count, to check it
 	Error   string `json:"error,omitempty"`
 	Invalid bool   `json:"invalid,omitempty"` // the event returned nexus.Errors
 }
@@ -447,12 +449,24 @@ func (d *liveDef) socketHandler() any {
 }
 
 func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn, in *instance) {
+	// last is the render the browser holds, so the next one can travel as
+	// a patch against it; nil forces a full render.
+	var last []string
 	render := func(ref int, invalid bool) liveReply {
 		body, err := in.render(ctx)
 		if err != nil {
 			return liveReply{Ref: ref, Error: err.Error()}
 		}
-		return liveReply{Ref: ref, HTML: string(body), Invalid: invalid}
+		html := string(body)
+		tokens := tokenize(html)
+		prev := last
+		last = tokens
+		if prev != nil {
+			if patch, ok := diff(prev, tokens); ok && worthPatching(patch, html) {
+				return liveReply{Ref: ref, Patch: patch, N: len(tokens), Invalid: invalid}
+			}
+		}
+		return liveReply{Ref: ref, HTML: html, Invalid: invalid}
 	}
 	send := func(r liveReply) bool {
 		_ = conn.SetWriteDeadline(time.Now().Add(liveWriteWait))
@@ -511,6 +525,13 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 		case ev, open := <-events:
 			if !open {
 				return
+			}
+			if ev.Event == "__resync" { // the browser lost track: send the whole render
+				last = nil
+				if !send(render(ev.Ref, in.errs != nil)) {
+					return
+				}
+				continue
 			}
 			if !send(d.event(ctx, in, ev, render)) {
 				return

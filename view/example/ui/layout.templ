@@ -18,6 +18,14 @@ templ Layout(title string) {
 			@dialog.Script()
 		</head>
 		<body class="mx-auto max-w-2xl p-6 space-y-4">
+			<nav class="flex gap-4 text-sm">
+				@view.Link("/", templ.Attributes{"id": "nav-home", "class": "underline"}) {
+					Home
+				}
+				@view.Link("/board", templ.Attributes{"id": "nav-board", "class": "underline"}) {
+					Adoption board
+				}
+			</nav>
 			{ children... }
 		</body>
 	</html>

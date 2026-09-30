@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,6 +85,13 @@ func dialLive(t *testing.T, srv *httptest.Server, path string) *websocket.Conn {
 	return conn
 }
 
+var (
+	pagesMu sync.Mutex
+	pages   = map[*websocket.Conn][]string{} // what each test connection's browser holds
+)
+
+// reply reads the next reply and, like the browser, rebuilds a patch into
+// the full render in r.HTML.
 func reply(t *testing.T, conn *websocket.Conn) liveReply {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -91,7 +99,33 @@ func reply(t *testing.T, conn *websocket.Conn) liveReply {
 	if err := conn.ReadJSON(&r); err != nil {
 		t.Fatal(err)
 	}
+	pagesMu.Lock()
+	defer pagesMu.Unlock()
+	switch {
+	case r.Patch != nil:
+		html, ok := apply(pages[conn], jsonSteps(r.Patch))
+		if !ok || len(tokenize(html)) != r.N {
+			t.Fatalf("a patch that does not apply: %+v", r)
+		}
+		r.HTML = html
+		pages[conn] = tokenize(html)
+	case r.HTML != "":
+		pages[conn] = tokenize(r.HTML)
+	}
 	return r
+}
+
+// jsonSteps turns decoded JSON patch steps (float64 numbers) back into ints.
+func jsonSteps(p []any) []any {
+	out := make([]any, len(p))
+	for i, s := range p {
+		if f, ok := s.(float64); ok {
+			out[i] = int(f)
+		} else {
+			out[i] = s
+		}
+	}
+	return out
 }
 
 func TestLivePage(t *testing.T) {
