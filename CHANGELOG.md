@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.76.0] - 2026-10-01
+
 ### Added
 
 - **Reactive templ views: `github.com/paulmanoni/nexus/view`.** This is a new
