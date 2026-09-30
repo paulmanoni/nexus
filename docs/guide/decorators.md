@@ -228,3 +228,27 @@ shared...)`, `.Rest/.Query/.Mutation/.WS/.Worker/.Provide`, and
   gopls and linters should see the registrations.
 - **`nexus generate handlers --check`** fails when the committed files are out of date.
   Use it as a CI drift gate.
+
+## Testing annotated modules in isolation
+
+`nexus generate handlers` (the eject path) is what makes annotated
+registrations visible to a bare `go test` — but the registry they drain from is
+process-global, so a test binary whose files link several annotated packages
+hands **every** package's registrations to **every** boot. An `InProcess` boot
+of one module then fails on the other packages' missing providers.
+
+Scope the boot instead:
+
+```go
+app, stop, err := nexus.InProcess(nexus.Config{},
+    nexus.DecoratedModules("adverts"),   // only adverts' //@ registrations
+    adverts.Module,
+    /* the module's own deps */)
+```
+
+Only drained modules named in the list participate (decorated modules are named
+after their package; `main` registers as `"app"`). `nexus.DecoratedModules()`
+with no names drops every decorated registration — a boot fully isolated from
+annotations. Booting without the option keeps the old behaviour: everything
+drained participates. Boots are repeatable within one binary — the drain is a
+snapshot, so test order no longer decides which boot sees the registrations.

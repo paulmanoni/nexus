@@ -35,7 +35,7 @@ func InProcess(cfg Config, opts ...Option) (app *App, stop func(context.Context)
 	// every user-declared field/middleware is visible.
 	all := []di.Option{fxEarlyOptions(cfg)}
 	all = append(all, unwrap(opts)...)
-	all = append(all, unwrap(collectDeferredOptions())...)
+	all = append(all, unwrap(filterDeferredOptions(opts, collectDeferredOptions()))...)
 	all = append(all, capture, fxLateOptions())
 
 	beginBuild()

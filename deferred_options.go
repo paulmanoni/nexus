@@ -1,5 +1,7 @@
 package nexus
 
+import "github.com/paulmanoni/nexus/di"
+
 // deferredOptionSources are functions that yield Options at Boot/Run time —
 // AFTER every package init() has run. This is the seam that lets nexus/decorate
 // auto-wire //@-annotated registrations without the app writing an explicit
@@ -26,6 +28,60 @@ func collectDeferredOptions() []Option {
 	var out []Option
 	for _, fn := range deferredOptionSources {
 		out = append(out, fn()...)
+	}
+	return out
+}
+
+// DecoratedModules limits which //@-annotated (decorate-registered) modules
+// this boot accepts: of the registrations the deferred sources drain, only
+// top-level modules whose name is listed participate; everything else drained
+// is dropped. Hand-written options are never affected, and without this
+// option every drained registration participates, as before.
+//
+// It exists for tests. The decorate registry is process-global, so an
+// InProcess boot in a test binary sees the registrations of EVERY annotated
+// package any test file links — booting one module in isolation then fails on
+// the other packages' providers. Scope the boot instead:
+//
+//	nexus.InProcess(nexus.Config{},
+//	    nexus.DecoratedModules("adverts"),   // only adverts' //@ registrations
+//	    adverts.Module, ...)
+//
+// With no names, every decorated registration is dropped — a boot fully
+// isolated from annotations. Decorated modules are named after their package
+// (the main package registers as "app"). The option is read from the boot's
+// top-level option list only.
+func DecoratedModules(names ...string) Option {
+	return decoratedModulesOption{names: names}
+}
+
+type decoratedModulesOption struct{ names []string }
+
+func (d decoratedModulesOption) nexusOption() di.Option { return di.Options() }
+
+// filterDeferredOptions applies any DecoratedModules markers among the boot's
+// own options to the drained deferred registrations. No marker → drained
+// passes through untouched.
+func filterDeferredOptions(userOpts, drained []Option) []Option {
+	var keep map[string]bool
+	for _, o := range userOpts {
+		if d, ok := o.(decoratedModulesOption); ok {
+			if keep == nil {
+				keep = map[string]bool{}
+			}
+			for _, n := range d.names {
+				keep[n] = true
+			}
+		}
+	}
+	if keep == nil {
+		return drained
+	}
+	var out []Option
+	for _, o := range drained {
+		if m, ok := o.(moduleOption); ok && keep[m.name] {
+			out = append(out, o)
+		}
 	}
 	return out
 }

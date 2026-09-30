@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `nexus.DecoratedModules(names...)` scopes which `//@`-registered modules a
+  boot accepts — for test binaries whose files link several annotated packages,
+  an `InProcess` boot of one module no longer trips over the others' providers.
+  With no names it drops every decorated registration; without the option,
+  everything drained participates as before.
+
+### Changed
+
+- `decorate.Drain` now returns a snapshot without clearing the registry, so
+  every boot in a multi-boot process (a test binary) sees the same
+  registrations instead of only the first; `decorate.Reset` remains the
+  explicit clear. A production process boots once, so nothing changes there.
+
 ## [1.74.0] - 2026-09-30
 
 ### Fixed

@@ -776,6 +776,10 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
   source tree** (zero churn). `nexus generate handlers` is the **eject** path:
   run it to commit `*_gen.go` so a bare `go build`/`go install`/`go test` (without
   the nexus CLI) and static tooling (gopls, linters) see the registrations.
+  In a test binary linking several annotated packages, scope each InProcess
+  boot with `nexus.DecoratedModules("<pkg>")` so one module's test is isolated
+  from the others' registrations (the drain is a snapshot — repeated boots in
+  one binary all see them; no names = drop all decorated registrations).
   (`nexus build` fails fast if codegen can't resolve a decorator; `nexus dev`
   warns and lets `go run` surface the underlying error.)
 - A qualified custom decorator (`//@pkg.Func`, e.g. `//@inertia.Page`) needs the

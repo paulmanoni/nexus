@@ -54,20 +54,26 @@ func Register(opts ...nexus.Option) {
 	reg.mu.Unlock()
 }
 
-// Drain returns every registered option and clears the registry. nexus.Boot/Run
-// calls it automatically (registered as a deferred option source in init);
-// exported for tests and advanced wiring.
+// Drain returns a snapshot of every registered option. nexus.Boot/Run calls it
+// automatically (registered as a deferred option source in init); exported for
+// tests and advanced wiring.
+//
+// Drain does NOT clear the registry. Register runs from package init, once per
+// binary, so in a process that boots several apps — a test binary above all —
+// every boot must see the same registrations, not just whichever boot came
+// first. A production process boots once, so nothing registers twice. Scope
+// what a boot accepts with nexus.DecoratedModules; clear explicitly with Reset.
 func Drain() []nexus.Option {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	out := reg.opts
-	reg.opts = nil
+	out := make([]nexus.Option, len(reg.opts))
+	copy(out, reg.opts)
 	return out
 }
 
 func init() { nexus.RegisterDeferredOptions(Drain) }
 
-// Pending reports how many options are buffered (un-drained). Useful in tests.
+// Pending reports how many options are buffered. Useful in tests.
 func Pending() int {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()

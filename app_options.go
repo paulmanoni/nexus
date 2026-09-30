@@ -32,6 +32,16 @@ type rawOption struct{ o di.Option }
 
 func (r rawOption) nexusOption() di.Option { return r.o }
 
+// moduleOption is what Module returns: a rawOption that remembers its module
+// name, so DecoratedModules can filter decorate-drained registrations without
+// reaching into the di graph. Behaviorally identical to rawOption.
+type moduleOption struct {
+	name string
+	o    di.Option
+}
+
+func (m moduleOption) nexusOption() di.Option { return m.o }
+
 // routerOption carries a chosen HTTP router backend. It is consumed BEFORE the
 // graph is built (Run scans for it and seeds Config.Router, since the router
 // is constructed inside New(cfg) which runs ahead of user options). Its
@@ -137,7 +147,7 @@ func Module(name string, opts ...Option) Option {
 			}
 		}
 	}
-	return rawOption{o: di.Module(name, unwrap(opts)...)}
+	return moduleOption{name: name, o: di.Module(name, unwrap(opts)...)}
 }
 
 // Options bundles multiple Option values into a single Option.
@@ -544,7 +554,7 @@ func Run(cfg Config, opts ...Option) {
 	// Deferred sources (e.g. nexus/decorate's //@-annotation drain) contribute
 	// AFTER the app's own options and BEFORE autoMountGraphQL, so their
 	// endpoints take part in schema assembly like any hand-written module.
-	all = append(all, unwrap(collectDeferredOptions())...)
+	all = append(all, unwrap(filterDeferredOptions(opts, collectDeferredOptions()))...)
 	all = append(all, fxLateOptions())
 	// Bound the whole stop chain, not just the HTTP drain. The listener
 	// hook already caps its own Shutdown; this covers everything after
