@@ -294,7 +294,9 @@ like a Resource): server-owned state per connected page over a WebSocket; the DI
 the template, each page/connection gets a copy; conventions `Mount(ctx, [*view.Socket], deps…,
 pathParams…) error`, `templ (x *T) Render()`, events = exported `func(ctx, deps…, args…) error`
 (deps are pointer/interface params) sent with `view.Send(x.Method, args…)`; the page is re-rendered
-and patched in place (focus/typing kept; signals win over the server copy). Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+and patched in place (focus/typing kept; signals win over the server copy). Push: `sock.Subscribe(topics…)`
+in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(ctx, deps…, msg view.Message)
+error`, then re-render (in-process: a replica's own pages). Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 `nexus docs views`, docs/guide/views.md, example `view/example`.
 
 ## 2. App entry & config (`nexus.toml`)

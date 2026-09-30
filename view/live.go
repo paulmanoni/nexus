@@ -38,6 +38,7 @@ import (
 //
 //	Mount(ctx, [*view.Socket], deps…, pathParams…) error fills the state
 //	Render() templ.Component                              renders it (a templ method component)
+//	Info(ctx, deps…, msg view.Message) error              optional: runs on a broadcast to a topic Mount subscribed to
 //	Cancel(ctx, deps…, args…) error                       an event: any other exported method of this shape
 //
 // Dependencies are pointer or interface parameters, injected from DI; the
@@ -79,6 +80,8 @@ func (l *LiveRouter[T]) Provide(fns ...any) *LiveRouter[T] {
 // Socket is what Mount can take to learn about the page it fills.
 type Socket struct {
 	connected bool
+	inbox     chan Message
+	topics    []string
 }
 
 // Connected reports whether this Mount is for the live connection (true) or
@@ -157,6 +160,7 @@ type liveDef struct {
 	t        reflect.Type // *T
 	params   []string     // the prefix's path parameter names, in order
 	mount    *liveMethod
+	info     *liveMethod
 	events   map[string]*liveMethod
 	depTypes []reflect.Type // every dependency type any method takes
 	depIndex map[reflect.Type]int
@@ -187,6 +191,13 @@ func newLiveDef(t reflect.Type, prefix string) (*liveDef, error) {
 				return nil, fmt.Errorf("view.Live[%s]: Mount must be func(ctx context.Context, [*view.Socket,] deps…, pathParams…) error, got %s", t, m.Type)
 			}
 			continue // not an event: a helper method
+		}
+		if m.Name == "Info" {
+			if len(lm.args) != 1 || m.Type.In(lm.args[0]) != reflect.TypeFor[Message]() {
+				return nil, fmt.Errorf("view.Live[%s]: Info must be func(ctx context.Context, deps…, msg view.Message) error, got %s", t, m.Type)
+			}
+			d.info = lm
+			continue
 		}
 		if m.Name == "Mount" {
 			if len(lm.args) != len(d.params) {
@@ -248,6 +259,20 @@ func (in *instance) call(ctx context.Context, m *liveMethod, live *Socket, raw [
 	if len(raw) != len(m.args) {
 		return fmt.Errorf("takes %d argument(s), got %d", len(m.args), len(raw))
 	}
+	args := make([]reflect.Value, len(m.args))
+	for n, i := range m.args {
+		p := reflect.New(ft.In(i))
+		if err := json.Unmarshal(raw[n], p.Interface()); err != nil {
+			return fmt.Errorf("argument %d: %v", n+1, err)
+		}
+		args[n] = p.Elem()
+	}
+	return in.callValues(ctx, m, live, args)
+}
+
+// callValues runs m with its arguments as Go values.
+func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket, args []reflect.Value) error {
+	ft := m.fn.Type()
 	params := make([]reflect.Value, ft.NumIn())
 	params[0] = in.v
 	params[1] = reflect.ValueOf(&ctx).Elem()
@@ -258,18 +283,14 @@ func (in *instance) call(ctx context.Context, m *liveMethod, live *Socket, raw [
 		params[i] = in.deps[in.def.depIndex[ft.In(i)]]
 	}
 	for n, i := range m.args {
-		p := reflect.New(ft.In(i))
-		if err := json.Unmarshal(raw[n], p.Interface()); err != nil {
-			return fmt.Errorf("argument %d: %v", n+1, err)
-		}
-		params[i] = p.Elem()
+		params[i] = args[n]
 	}
 	out := m.fn.Call(params)
 	err, _ := out[0].Interface().(error)
 	return err
 }
 
-func (in *instance) mount(ctx context.Context, c *httpx.Ctx, connected bool) error {
+func (in *instance) mount(ctx context.Context, c *httpx.Ctx, sock *Socket) error {
 	if in.def.mount == nil {
 		return nil
 	}
@@ -286,7 +307,7 @@ func (in *instance) mount(ctx context.Context, c *httpx.Ctx, connected bool) err
 			raw[i] = json.RawMessage(v)
 		}
 	}
-	if err := in.call(ctx, in.def.mount, &Socket{connected: connected}, raw); err != nil {
+	if err := in.call(ctx, in.def.mount, sock, raw); err != nil {
 		return fmt.Errorf("Mount: %w", err)
 	}
 	return nil
@@ -325,7 +346,7 @@ func (d *liveDef) pageHandler() any {
 		ctx := args[0].Interface().(context.Context)
 		c := args[1].Interface().(*httpx.Ctx)
 		in := d.instance(args[2], args[3:])
-		if err := in.mount(ctx, c, false); err != nil {
+		if err := in.mount(ctx, c, &Socket{}); err != nil {
 			return fail(err)
 		}
 		socket := strings.TrimSuffix(c.Request.URL.Path, "/") + "/_live"
@@ -411,7 +432,9 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 		}
 		return send(liveReply{HTML: string(body)})
 	}
-	if err := in.mount(ctx, c, true); err != nil {
+	sock := &Socket{connected: true, inbox: make(chan Message, liveInbox)}
+	defer sock.close()
+	if err := in.mount(ctx, c, sock); err != nil {
 		send(liveReply{Error: err.Error()})
 		return
 	}
@@ -444,6 +467,20 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 			if conn.WriteMessage(websocket.PingMessage, nil) != nil {
 				return
 			}
+		case msg := <-sock.inbox:
+			// Handle every message already waiting, then render once.
+			failed := d.inform(ctx, in, sock, msg, send)
+			for drained := false; !drained && !failed; {
+				select {
+				case more := <-sock.inbox:
+					failed = d.inform(ctx, in, sock, more, send)
+				default:
+					drained = true
+				}
+			}
+			if failed || !sendRender() {
+				return
+			}
 		case ev, open := <-events:
 			if !open {
 				return
@@ -469,6 +506,18 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 			}
 		}
 	}
+}
+
+// inform runs Info for msg; it reports whether the connection failed. An
+// Info error is sent to the page, which keeps its state.
+func (d *liveDef) inform(ctx context.Context, in *instance, sock *Socket, msg Message, send func(liveReply) bool) bool {
+	if d.info == nil {
+		return false
+	}
+	if err := in.callValues(ctx, d.info, sock, []reflect.Value{reflect.ValueOf(msg)}); err != nil {
+		return !send(liveReply{Error: "Info: " + err.Error()})
+	}
+	return false
 }
 
 func isExported(name string) bool {

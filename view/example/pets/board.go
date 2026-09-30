@@ -9,7 +9,8 @@ import (
 )
 
 // Board is a live page: its state lives on the server, one copy per
-// connected page, and changes through events.
+// connected page. Adoptions are shared: every event broadcasts, and every
+// open board refreshes.
 type Board struct {
 	Pets    []Pet
 	Adopted map[string]bool
@@ -17,38 +18,42 @@ type Board struct {
 
 func NewBoard() *Board { return &Board{} }
 
-func (b *Board) Mount(ctx context.Context, store *Store) error {
+// adoptions is the topic every board listens on.
+const adoptions = "adoptions"
+
+func (b *Board) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
+	sock.Subscribe(adoptions)
 	b.Pets = store.All()
-	b.Adopted = map[string]bool{}
+	b.Adopted = store.Adopted()
 	return nil
 }
 
 // Adopt is an event: name comes from the browser, so it is checked.
-func (b *Board) Adopt(ctx context.Context, name string) error {
-	if !b.has(name) {
+func (b *Board) Adopt(ctx context.Context, store *Store, name string) error {
+	if !store.Has(name) {
 		return fmt.Errorf("no pet named %q", name)
 	}
-	b.Adopted[name] = true
+	store.SetAdopted(name, true)
+	view.Broadcast(ctx, adoptions, name)
 	return nil
 }
 
-func (b *Board) Return(ctx context.Context, name string) error {
-	delete(b.Adopted, name)
+func (b *Board) Return(ctx context.Context, store *Store, name string) error {
+	store.SetAdopted(name, false)
+	view.Broadcast(ctx, adoptions, name)
 	return nil
 }
 
-func (b *Board) Clear(ctx context.Context) error {
-	b.Adopted = map[string]bool{}
+func (b *Board) Clear(ctx context.Context, store *Store) error {
+	store.ClearAdoptions()
+	view.Broadcast(ctx, adoptions, "")
 	return nil
 }
 
-func (b *Board) has(name string) bool {
-	for _, p := range b.Pets {
-		if p.Name == name {
-			return true
-		}
-	}
-	return false
+// Info runs on every board when anyone's adoption changes.
+func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error {
+	b.Adopted = store.Adopted()
+	return nil
 }
 
 // Module mounts the live board, declared like a nexus.Resource.

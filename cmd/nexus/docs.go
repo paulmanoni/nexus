@@ -781,6 +781,9 @@ declared like a Resource; the DI instance is the template:
     templ (b *Board) Render() { <button onclick={ view.Send(b.Adopt, p.Name) }>adopt</button> }
 
 After each event the page is re-rendered and patched in place (focus kept).
+Server push: sock.Subscribe("topic") in Mount; view.Broadcast(ctx, "topic",
+data) from anywhere runs every subscribed page's optional
+Info(ctx, deps…, msg view.Message) error, then re-renders it.
 
 Browser values (shard arguments, restored signals, event arguments) are user
 input: validate them. Example: view/example (/ and /board).

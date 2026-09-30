@@ -139,6 +139,32 @@ templ (b *Board) Render() {
 - The first request renders the page on the server; the page then connects
   (`<path>/_live`), mounts again with `Connected()` true, and reconnects if the
   socket drops. Gates on `view.Live` apply to both.
+- **Server push.** `sock.Subscribe(topics…)` in `Mount` (it only takes effect on
+  the live connection) makes the page hear `view.Broadcast(ctx, topic, data)`
+  — sent from an event, a handler, a job, anywhere. The page's optional
+  `Info(ctx, deps…, msg view.Message) error` runs, then it re-renders; with
+  several messages waiting it handles them all and renders once. `Info` is
+  never callable from the browser.
+
+```go
+func (b *Board) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
+	sock.Subscribe("adoptions")
+	b.Adopted = store.Adopted()
+	return nil
+}
+
+func (b *Board) Adopt(ctx context.Context, store *Store, name string) error {
+	store.SetAdopted(name, true)
+	view.Broadcast(ctx, "adoptions", name) // every open board refreshes
+	return nil
+}
+
+func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error {
+	b.Adopted = store.Adopted()
+	return nil
+}
+```
+
 - `view.Send` also works in a component library's `Props.Attributes`
   (`templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}`).
 
@@ -202,8 +228,9 @@ the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
   assume its condition.
 - A shard re-render replaces its HTML: focus inside a shard is lost (live pages
   patch in place).
-- Live pages: one goroutine per connected page; server push (pubsub), form
-  events and diffs are not in yet.
+- Live pages: one goroutine per connected page; `view.Broadcast` reaches the
+  pages connected to this process only (a replica's own pages); form events
+  and diffs are not in yet.
 - `/`, `%`, indexing and field access (other than the event's) do not compile to
   the browser yet.
 - `/_view/*` ignores nexus `route_prefix`.

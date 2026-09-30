@@ -40,6 +40,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - The page is re-rendered and patched in place, so focus and typing
     survive.
   - Signals keep working for browser-only state.
+  - **Server push:** `sock.Subscribe(topics…)` in `Mount`, then
+    `view.Broadcast(ctx, topic, data)` from anywhere. Each subscribed page
+    runs its optional `Info(ctx, deps…, msg view.Message) error` and
+    re-renders. Delivery is in-process, so it reaches only the pages
+    connected to that replica.
 - `view.Assets(prefix, handler)` serves a component library's files.
   `templ.Attributes{…}` literals in `Props.Attributes` accept reactive
   entries.
