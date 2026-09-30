@@ -71,8 +71,10 @@ by looking, in order, at:
 Package selectors inside `//@use` (and type-level `//@use`) expressions resolve
 through the same cascade, so the annotated file needs no import — not even a
 blank one — for the packages its expressions name. The import lands only in the
-generated file. An identifier the cascade can't place is left alone: it may be a
-package-level value of the annotated package (`cfg.Timeout`), not a package.
+generated file. An identifier that names a top-level declaration of the annotated package
+(`cfg.Timeout`) is recognised as a value and skipped outright — it never
+reaches the module graph, and no shadowing import is synthesized for it;
+anything else the cascade cannot place is left alone.
 
 ## Errors are strict and positioned
 
@@ -249,6 +251,3 @@ app, stop, err := nexus.InProcess(nexus.Config{},
 Only drained modules named in the list participate (decorated modules are named
 after their package; `main` registers as `"app"`). `nexus.DecoratedModules()`
 with no names drops every decorated registration — a boot fully isolated from
-annotations. Booting without the option keeps the old behaviour: everything
-drained participates. Boots are repeatable within one binary — the drain is a
-snapshot, so test order no longer decides which boot sees the registrations.

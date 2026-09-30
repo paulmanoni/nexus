@@ -471,3 +471,27 @@ func TestResolveUseImportsCascade(t *testing.T) {
 		t.Errorf("use cascade: got %v, want the project's utils import alone", imps)
 	}
 }
+
+// A //@use identifier that names a package-level declaration of the annotated
+// package is a value, not a package: it must be skipped WITHOUT consulting the
+// module graph (a miss there forces a `go list -deps` rebuild on every scan —
+// ~1s per save on a real app) and without synthesizing a shadowing import.
+func TestResolveUseImportsSkipsPackageDecls(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/m\n\ngo 1.21\n")
+	annotated := filepath.Join(dir, "pages", "p.go")
+	writeFile(t, annotated, "package pages\n\nvar cfg = struct{ Limit int }{}\n\nvar log = struct{ Printf func(string) }{}\n")
+
+	r := newSelectorResolver(dir)
+	before := pkgs.listRuns
+	imps, err := resolveUseImports(r, annotated, []string{"wrap(cfg.Limit,", "log.Printf)"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imps) != 0 {
+		t.Errorf("declared identifiers produced imports %v — a synthesized \"log\" import would collide with the package-level log", imps)
+	}
+	if got := pkgs.listRuns - before; got != 0 {
+		t.Errorf("declared identifiers hit the module graph (%d go list run(s)) — every scan would pay a graph rebuild", got)
+	}
+}

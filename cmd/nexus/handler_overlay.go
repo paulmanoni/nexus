@@ -417,6 +417,7 @@ type selectorResolver struct {
 
 	fileCache map[string]map[string]string // file -> selector -> import line
 	dirCache  map[string]map[string]string // package dir -> merged selector -> import line
+	declCache map[string]map[string]bool   // package dir -> top-level declared names
 	hints     map[string]string            // [decorators.imports] from nexus.toml
 }
 
@@ -425,6 +426,7 @@ func newSelectorResolver(root string) *selectorResolver {
 		root:      root,
 		fileCache: map[string]map[string]string{},
 		dirCache:  map[string]map[string]string{},
+		declCache: map[string]map[string]bool{},
 		hints:     loadDecoratorHints(root),
 	}
 }
@@ -489,6 +491,51 @@ func (r *selectorResolver) fileImports(file string) map[string]string {
 
 // dirImports returns (cached) the merged selector->import map for every .go file
 // in a package directory, so an import in any sibling file resolves.
+// packageDecls returns the top-level declared names (vars, consts, types,
+// plain funcs) of the non-test package files in dir, cached. A //@use
+// expression identifier that names one of them is a package-level VALUE, not a
+// package selector: it must not be import-resolved — a synthesized import
+// would either collide with the declaration in the generated file or, worse,
+// miss into the module graph and force a rebuild on every scan.
+func (r *selectorResolver) packageDecls(dir string) map[string]bool {
+	if m, ok := r.declCache[dir]; ok {
+		return m
+	}
+	decls := map[string]bool{}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		// Best-effort: a file mid-edit that doesn't parse contributes nothing.
+		f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, e.Name()), nil, parser.SkipObjectResolution)
+		if err != nil || f == nil {
+			continue
+		}
+		for _, d := range f.Decls {
+			switch d := d.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil && d.Name != nil {
+					decls[d.Name.Name] = true
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					switch s := spec.(type) {
+					case *ast.ValueSpec:
+						for _, n := range s.Names {
+							decls[n.Name] = true
+						}
+					case *ast.TypeSpec:
+						decls[s.Name.Name] = true
+					}
+				}
+			}
+		}
+	}
+	r.declCache[dir] = decls
+	return decls
+}
+
 func (r *selectorResolver) dirImports(dir string) map[string]string {
 	if m, ok := r.dirCache[dir]; ok {
 		return m
@@ -556,9 +603,13 @@ func resolveUseImports(res *selectorResolver, file string, exprArgs []string) ([
 	}
 	seen := map[string]bool{}
 	var lines []string
+	decls := res.packageDecls(filepath.Dir(file))
 	ast.Inspect(e, func(n ast.Node) bool {
 		if sel, ok := n.(*ast.SelectorExpr); ok {
 			if id, ok := sel.X.(*ast.Ident); ok {
+				if decls[id.Name] {
+					return true // a package-level value of the annotated package, not a package
+				}
 				// The full cascade (file imports, siblings, nexus.toml hints,
 				// module graph with the module-local tie-break) — so
 				// `//@use utils.Wrap(...)` needs no import anywhere. A miss is

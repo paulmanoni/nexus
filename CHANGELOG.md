@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `//@use` expression identifiers that name a top-level declaration of the
+  annotated package are recognised as values and skipped before the import
+  cascade — previously such an identifier missed every layer and forced a
+  module-graph rebuild (`go list -deps`) on every scan, adding ~1s per save
+  on a large app; it could also synthesize an import that shadowed the
+  declaration in the generated file.
+
 ## [1.75.0] - 2026-09-30
 
 ### Added
