@@ -771,8 +771,19 @@ and view.Assets serves the library's files:
     mux := http.NewServeMux(); utils.SetupScriptRoutes(mux, dev)
     view.Assets("/templui/js/", mux)
 
-Browser values (shard arguments, restored signals) are user input: validate
-them. Example: view/example.
+Live pages keep state on the server, per connected page, over a WebSocket —
+declared like a Resource; the DI instance is the template:
+
+    view.Live[*Board]("/board", auth.Required()).Provide(NewBoard)
+
+    func (b *Board) Mount(ctx context.Context, store *Store) error      // deps, then path params
+    func (b *Board) Adopt(ctx context.Context, name string) error      // an event: deps, then args
+    templ (b *Board) Render() { <button onclick={ view.Send(b.Adopt, p.Name) }>adopt</button> }
+
+After each event the page is re-rendered and patched in place (focus kept).
+
+Browser values (shard arguments, restored signals, event arguments) are user
+input: validate them. Example: view/example (/ and /board).
 `,
 	"inertia": `
 INERTIA

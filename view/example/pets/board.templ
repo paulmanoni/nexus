@@ -1,0 +1,39 @@
+package pets
+
+import (
+	"strconv"
+
+	"github.com/templui/templui/components/button"
+
+	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/view/example/ui"
+)
+
+templ (b *Board) Render() {
+	@ui.Layout("Adoption board") {
+		<h1 class="text-2xl font-bold">Adoption board</h1>
+		@ui.Section("Pets") {
+			{{ note := view.State(ctx, "") }}
+			<input id="note" class="w-full rounded-md border px-3 py-2" value={ note.Get() } oninput={ view.Do(func(e view.Event) { note.Set(e.Target.Value) }) } placeholder="A note — kept while the board updates"/>
+			<p><b id="adopted">{ strconv.Itoa(len(b.Adopted)) }</b> adopted</p>
+			<ul class="space-y-2">
+				for _, p := range b.Pets {
+					<li id={ "pet-" + p.Name } class="flex items-center gap-2">
+						<span class="w-24">{ p.Name }</span>
+						if b.Adopted[p.Name] {
+							<span class="text-muted-foreground">adopted</span>
+							@button.Button(button.Props{ID: "return-" + p.Name, Variant: button.VariantOutline, Attributes: templ.Attributes{"onclick": view.Send(b.Return, p.Name)}}) {
+								return
+							}
+						} else {
+							@button.Button(button.Props{ID: "adopt-" + p.Name, Attributes: templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}}) {
+								adopt
+							}
+						}
+					</li>
+				}
+			</ul>
+			<button id="clear" class="underline" onclick={ view.Send(b.Clear) }>clear all</button>
+		}
+	}
+}

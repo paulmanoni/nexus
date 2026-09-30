@@ -284,3 +284,71 @@ templ Counter() {
 		}
 	}
 }
+
+// A live page's Render is a templ method component: its browser-side
+// reactivity compiles, view.Send passes through as templ's own script
+// attribute, and a server read of a signal is refused.
+func TestMethodComponent(t *testing.T) {
+	src := `package app
+
+import "github.com/paulmanoni/nexus/view"
+
+templ (l *OrdersLive) Render() {
+	{{ open := view.State(ctx, false) }}
+	<button onclick={ open.Set(!open.Get()) }>filters</button>
+	<div hidden?={ !open.Get() }>…</div>
+	for _, o := range l.Orders {
+		<li>{ o.Name } <button onclick={ view.Send(l.Cancel, o.ID) }>cancel</button></li>
+	}
+}
+`
+	res, err := File("app/orders.templ", src, &Package{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(res.Go)
+	for _, want := range []string{
+		`ctx = view.Enter(ctx, "OrdersLive.Render")`,
+		`view.OnAttr("click", "h`,
+		`view.Bind("hidden", "b`,
+		`templ.ComponentScript = view.Send(l.Cancel, o.ID)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("generated Go lacks %s", want)
+		}
+	}
+	if strings.Contains(got, "view.ShardStart()") {
+		t.Error("a method component is never a shard")
+	}
+	bad := strings.Replace(src, "for _, o := range l.Orders {", "for _, o := range find(open.Get()) {", 1)
+	if _, err := File("app/orders.templ", bad, &Package{}); err == nil || !strings.Contains(err.Error(), "keeps server data in its own fields") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// templ drops a script value inside templ.Attributes, so a live event passed
+// to a component library's Props.Attributes becomes attribute text.
+func TestSendInAttributes(t *testing.T) {
+	src := `package app
+
+import (
+	"github.com/paulmanoni/nexus/view"
+	"example.com/ui/button"
+)
+
+templ (b *Board) Render() {
+	for _, p := range b.Pets {
+		@button.Button(button.Props{Attributes: templ.Attributes{"id": "adopt", "onclick": view.Send(b.Adopt, p.Name)}}) {
+			adopt
+		}
+	}
+}
+`
+	res, err := File("app/board.templ", src, &Package{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(res.Go); !strings.Contains(got, `templ.Attributes{"id": "adopt", "onclick": view.SendAttr(view.Send(b.Adopt, p.Name))}`) {
+		t.Errorf("generated Go:\n%s", got)
+	}
+}

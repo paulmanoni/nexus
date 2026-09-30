@@ -289,7 +289,12 @@ with `@import "tailwindcss"` (outside the Vite frontend; `input.css`→`output.c
 build`**: views via the overlay, Tailwind minified. `nexus generate views [--check]`.
 Component libraries (templUI): reactive entries in a `templ.Attributes{…}` literal
 (Props.Attributes) compile like element attributes; `view.Assets(prefix, handler)` serves
-library/CSS files. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+library/CSS files. **Live pages** (`view.Live[*T](prefix, gates…).Provide(NewT)`, declared
+like a Resource): server-owned state per connected page over a WebSocket; the DI instance is
+the template, each page/connection gets a copy; conventions `Mount(ctx, [*view.Socket], deps…,
+pathParams…) error`, `templ (x *T) Render()`, events = exported `func(ctx, deps…, args…) error`
+(deps are pointer/interface params) sent with `view.Send(x.Method, args…)`; the page is re-rendered
+and patched in place (focus/typing kept; signals win over the server copy). Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 `nexus docs views`, docs/guide/views.md, example `view/example`.
 
 ## 2. App entry & config (`nexus.toml`)

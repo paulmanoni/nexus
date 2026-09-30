@@ -78,6 +78,70 @@ the shard, and keeps them current as you save.
 - Everything the directives do has a Go form — `view.Page(m, p, C, gates…)`,
   `view.Shard(C, gates…)`, `view.Expose[T]()` — and a Go registration wins.
 
+## Live pages
+
+A live page keeps its state **on the server**, one copy per connected page, and
+changes through events sent over a WebSocket — for pages whose state must not
+live in the browser or that change while you look (admin boards, dashboards).
+It is declared like a `nexus.Resource`:
+
+```go
+var Module = nexus.Module("pets",
+	nexus.Path("/admin"),
+	view.Live[*Board]("/board", auth.Required()).
+		Provide(NewBoard),
+)
+
+type Board struct {
+	Pets    []Pet
+	Adopted map[string]bool
+}
+
+func NewBoard() *Board { return &Board{} }
+
+// Mount fills this page's copy: dependencies first, path parameters last.
+func (b *Board) Mount(ctx context.Context, store *Store) error {
+	b.Pets, b.Adopted = store.All(), map[string]bool{}
+	return nil
+}
+
+// An event is an exported method: dependencies first, then its arguments.
+func (b *Board) Adopt(ctx context.Context, name string) error {
+	b.Adopted[name] = true
+	return nil
+}
+```
+
+```templ
+templ (b *Board) Render() {
+	for _, p := range b.Pets {
+		if b.Adopted[p.Name] {
+			<span>{ p.Name } adopted</span>
+		} else {
+			<button onclick={ view.Send(b.Adopt, p.Name) }>adopt { p.Name }</button>
+		}
+	}
+}
+```
+
+- **The DI instance is the template.** Each page render and each connection gets
+  its own copy; `Mount` fills it (`sock *view.Socket` tells it whether the page
+  is connected). `Render()` is a templ method component.
+- **Events are methods** of the shape `func(ctx, deps…, args…) error`:
+  dependencies are pointer or interface parameters, injected from DI; the rest
+  are the arguments `view.Send(b.Adopt, p.Name)` passes. Any such exported method
+  is callable by a client that can open the page — authorize and validate
+  inside it; an error is reported to the page, which keeps its state.
+- After each event the server renders again and the browser **patches the page
+  in place**: focus, caret and what you are typing survive. Signals still work
+  inside `Render` for browser-only state (a note field, a toggle) — the signal
+  wins over the server's copy of its value.
+- The first request renders the page on the server; the page then connects
+  (`<path>/_live`), mounts again with `Connected()` true, and reconnects if the
+  socket drops. Gates on `view.Live` apply to both.
+- `view.Send` also works in a component library's `Props.Attributes`
+  (`templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}`).
+
 ## The toolchain
 
 | Command | Views | Tailwind |
@@ -136,7 +200,10 @@ the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
 
 - An `if` on a signal renders every branch on the server, so a branch must not
   assume its condition.
-- A shard re-render replaces its HTML: focus inside a shard is lost.
+- A shard re-render replaces its HTML: focus inside a shard is lost (live pages
+  patch in place).
+- Live pages: one goroutine per connected page; server push (pubsub), form
+  events and diffs are not in yet.
 - `/`, `%`, indexing and field access (other than the event's) do not compile to
   the browser yet.
 - `/_view/*` ignores nexus `route_prefix`.

@@ -205,6 +205,7 @@ type component struct {
 	readAt   parser.Position // where the first server read is
 	uses     bool            // uses any reactive feature
 	calls    []string        // components it renders
+	method   bool            // a method component (a live page's Render)
 }
 
 func (f *fileRewriter) template(t *parser.HTMLTemplate, doc string) {
@@ -239,6 +240,16 @@ func (f *fileRewriter) template(t *parser.HTMLTemplate, doc string) {
 	}
 	info.Uses = usedTypes(t)
 	t.Children = c.nodes(t.Children)
+	if c.method {
+		if info.Method != "" || info.HasGates {
+			f.fail(t.Range.From, "%s is a method component: register its type with view.Live, and gate it there", c.name)
+			return
+		}
+		if len(c.reads) > 0 {
+			f.fail(c.readAt, "%s reads %s on the server — a live page keeps server data in its own fields; read the signal in the browser, or keep the value in the struct", c.name, c.reads[0])
+			return
+		}
+	}
 	shard := len(c.reads) > 0 || f.pkg.Shards[c.name]
 	info.Shard, info.Calls = shard, c.calls
 	f.components = append(f.components, info)
@@ -276,10 +287,19 @@ func (c *component) signature(t *parser.HTMLTemplate) bool {
 		return false
 	}
 	fd := file.Decls[0].(*ast.FuncDecl)
-	if fd.Recv != nil {
-		return false // method components: not reactive in this version
-	}
 	c.name = fd.Name.Name
+	if fd.Recv != nil && len(fd.Recv.List) == 1 {
+		// A method component — a live page's Render. Its scope is named
+		// after the type and the method.
+		recv := fd.Recv.List[0].Type
+		if star, ok := recv.(*ast.StarExpr); ok {
+			recv = star.X
+		}
+		if id, ok := recv.(*ast.Ident); ok {
+			c.name = id.Name + "." + fd.Name.Name
+			c.method = true
+		}
+	}
 	for _, p := range fd.Type.Params.List {
 		isSignal := strings.Contains(src[p.Type.Pos()-1:p.Type.End()-1], "view.Signal")
 		for _, n := range p.Names {
@@ -731,6 +751,7 @@ func (c *component) attrLiterals(expr *parser.Expression, stmts bool) {
 
 func (c *component) attrLiteral(lit *ast.CompositeLit, full string, at parser.Expression, base int) (string, bool) {
 	var static, parts []string
+	sends := false
 	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
 		if !ok {
@@ -743,6 +764,13 @@ func (c *component) attrLiteral(lit *ast.CompositeLit, full string, at parser.Ex
 		name, _ := strconv.Unquote(key.Value)
 		val := full[kv.Value.Pos()-1 : kv.Value.End()-1]
 		offset := strconv.Itoa(int(kv.Value.Pos()) - 1 - base)
+		if strings.HasPrefix(name, "on") && isViewCall(kv.Value, "Send") {
+			// templ drops a script value inside templ.Attributes: pass the
+			// live event as the attribute's text instead.
+			static = append(static, key.Value+": view.SendAttr("+val+")")
+			sends = true
+			continue
+		}
 		handler := strings.HasPrefix(name, "on") && jsgen.IsAction(kv.Value)
 		if !handler && len(c.signalReads(kv.Value)) == 0 {
 			static = append(static, key.Value+": "+val)
@@ -767,6 +795,9 @@ func (c *component) attrLiteral(lit *ast.CompositeLit, full string, at parser.Ex
 		}
 	}
 	if len(parts) == 0 {
+		if sends {
+			return "templ.Attributes{" + strings.Join(static, ", ") + "}", true
+		}
 		return "", false
 	}
 	return "view.Attrs(templ.Attributes{" + strings.Join(static, ", ") + "}, " + strings.Join(parts, ", ") + ")", true

@@ -31,6 +31,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `nexus build` compiles views through the build overlay and builds
   Tailwind stylesheets minified.
 - New command: `nexus generate views [--check]`.
+- **Live pages: `view.Live[*T](prefix, gates…).Provide(NewT)`.** Each
+  connected page holds its own state on the server, and events travel over
+  a WebSocket. It is declared like a Resource.
+  - Conventions: `Mount`, a templ method component `Render()`, and events,
+    which are exported `func(ctx, deps…, args…) error` methods.
+  - `view.Send(x.Method, args…)` sends an event.
+  - The page is re-rendered and patched in place, so focus and typing
+    survive.
+  - Signals keep working for browser-only state.
 - `view.Assets(prefix, handler)` serves a component library's files.
   `templ.Attributes{…}` literals in `Props.Attributes` accept reactive
   entries.

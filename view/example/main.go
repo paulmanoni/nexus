@@ -22,6 +22,7 @@ func app() []nexus.Option {
 	utils.SetupScriptRoutes(templui, true)
 	return []nexus.Option{
 		nexus.Provide(pets.NewStore, state.NewSearch),
+		pets.Module,
 		view.Assets("/templui/js/", templui),
 		view.Assets("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets")))),
 	}

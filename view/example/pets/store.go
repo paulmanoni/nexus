@@ -14,6 +14,9 @@ func NewStore() *Store {
 	}}
 }
 
+// All returns every pet.
+func (s *Store) All() []Pet { return append([]Pet(nil), s.pets...) }
+
 func (s *Store) Search(q string) []Pet {
 	q = strings.ToLower(strings.TrimSpace(q))
 	var out []Pet

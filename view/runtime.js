@@ -190,7 +190,35 @@
     }
   }
 
+  // wired remembers what each element was wired with, so wiring again (after
+  // a live update patches the page) leaves unchanged elements alone and
+  // rewires only those whose data-nx-* attributes changed.
+  var wired = new WeakMap();
+
+  function nxSignature(el) {
+    var sig = "";
+    Array.from(el.attributes).forEach(function (a) {
+      if (a.name.indexOf("data-nx-bind-") === 0 || a.name.indexOf("data-nx-on-") === 0) sig += a.name + "=" + a.value + ";";
+    });
+    return sig;
+  }
+
+  function unwire(el) {
+    var w = wired.get(el);
+    if (!w) return;
+    w.effects.forEach(dispose);
+    w.listeners.forEach(function (l) { el.removeEventListener(l[0], l[1]); });
+    wired.delete(el);
+  }
+
   function wire(el, owner) {
+    var sig = nxSignature(el);
+    var prev = wired.get(el);
+    if (prev && prev.sig === sig) return;
+    unwire(el);
+    if (!sig) return;
+    var w = { sig: sig, effects: [], listeners: [] };
+    wired.set(el, w);
     Array.from(el.attributes).forEach(function (a) {
       var spec, caps, fn;
       if (a.name.indexOf("data-nx-bind-") === 0) {
@@ -198,19 +226,22 @@
         spec = JSON.parse(a.value);
         caps = hydrate(spec.caps || {});
         fn = twin(spec.fn);
-        effect(function () { apply(el, name, fn(caps)); }, owner);
+        var e = effect(function () { apply(el, name, fn(caps)); }, owner);
+        w.effects.push(e);
       } else if (a.name.indexOf("data-nx-on-") === 0) {
         var event = a.name.slice("data-nx-on-".length);
         spec = JSON.parse(a.value);
         caps = hydrate(spec.caps || {});
         fn = twin(spec.fn);
-        el.addEventListener(event, function (e) {
+        var handler = function (ev) {
           try {
-            fn(caps, e);
+            fn(caps, ev);
           } catch (err) {
             console.error("nexus view:", err);
           }
-        });
+        };
+        el.addEventListener(event, handler);
+        w.listeners.push([event, handler]);
       }
     });
   }
@@ -298,11 +329,149 @@
     mount();
   }
 
+  // ---- live pages ---------------------------------------------------------
+
+  // morph patches el to match next in place: attributes and children are
+  // updated, matching elements by id or else by position and tag, so focus,
+  // selection and the value being typed survive a live update.
+  function morph(el, next) {
+    syncAttributes(el, next);
+    morphChildren(el, next);
+  }
+
+  function syncAttributes(el, next) {
+    Array.from(el.attributes).forEach(function (a) {
+      if (!next.hasAttribute(a.name)) el.removeAttribute(a.name);
+    });
+    Array.from(next.attributes).forEach(function (a) {
+      if (el.getAttribute(a.name) !== a.value) el.setAttribute(a.name, a.value);
+    });
+    var focused = typeof document !== "undefined" && el === document.activeElement;
+    if ((el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") && !focused) {
+      var v = next.getAttribute("value");
+      if (el.tagName !== "SELECT" && el.value !== (v == null ? "" : v)) el.value = v == null ? "" : v;
+      if (el.type === "checkbox" || el.type === "radio") el.checked = next.hasAttribute("checked");
+    }
+  }
+
+  function sameKind(a, b) {
+    if (a.nodeType !== b.nodeType) return false;
+    if (a.nodeType !== 1) return true;
+    if (a.tagName !== b.tagName) return false;
+    return !a.id || !b.id || a.id === b.id;
+  }
+
+  function morphChildren(el, next) {
+    if (el.tagName === "TEXTAREA") return; // its text is its value
+    var kids = Array.from(next.childNodes);
+    var cur = el.firstChild;
+    kids.forEach(function (n) {
+      var match = null;
+      if (n.nodeType === 1 && n.id) {
+        var byId = Array.from(el.children).find(function (c) { return c.id === n.id; });
+        if (byId) match = byId;
+      }
+      if (!match && cur && sameKind(cur, n)) match = cur;
+      if (match) {
+        if (match !== cur) el.insertBefore(match, cur);
+        if (n.nodeType === 1) morph(match, n);
+        else if (match.nodeValue !== n.nodeValue) match.nodeValue = n.nodeValue;
+        cur = match.nextSibling;
+      } else {
+        el.insertBefore(document.importNode(n, true), cur);
+      }
+    });
+    while (cur) {
+      var gone = cur;
+      cur = cur.nextSibling;
+      if (gone.nodeType === 1) {
+        unwire(gone);
+        Array.from(gone.querySelectorAll("*")).forEach(unwire);
+      }
+      el.removeChild(gone);
+    }
+  }
+
+  // reapply re-runs the bindings under root after a live patch. The server
+  // renders a signal's value as it knows it, but browser-side state (what
+  // the user typed into a field bound to a signal) is newer: the signal wins.
+  function reapply(root) {
+    [root].concat(Array.from(root.querySelectorAll("*"))).forEach(function (el) {
+      var w = wired.get(el);
+      if (w) w.effects.forEach(run);
+    });
+  }
+
+  // live connects each live root to its socket: the server sends the
+  // rendered page after mounting and after every event; the browser patches
+  // it in place. A dropped connection reconnects, and the server mounts
+  // again.
+  var liveRoots = new Map(); // root element -> { ws }
+
+  function connectLive(root) {
+    var path = root.getAttribute("data-nx-live");
+    var state = { ws: null, delay: 500 };
+    liveRoots.set(root, state);
+    function open() {
+      var ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + path);
+      state.ws = ws;
+      ws.onopen = function () {
+        state.delay = 500;
+        root.setAttribute("data-nx-live-state", "connected");
+      };
+      ws.onmessage = function (m) {
+        var msg = JSON.parse(m.data);
+        root.removeAttribute("aria-busy");
+        if (msg.error) {
+          console.error("nexus view: live:", msg.error);
+          root.setAttribute("data-nx-live-error", msg.error);
+          return;
+        }
+        root.removeAttribute("data-nx-live-error");
+        var next;
+        if (root.tagName === "BODY") {
+          next = new DOMParser().parseFromString(msg.html, "text/html").body;
+          next.setAttribute("data-nx-live", path);
+          next.setAttribute("data-nx-live-state", "connected");
+        } else {
+          next = root.cloneNode(false);
+          next.innerHTML = msg.html;
+        }
+        morph(root, next);
+        walk(root, []);
+        reapply(root);
+      };
+      ws.onclose = function () {
+        root.setAttribute("data-nx-live-state", "disconnected");
+        setTimeout(open, state.delay);
+        state.delay = Math.min(state.delay * 2, 10000);
+      };
+    }
+    open();
+  }
+
+  nx.live = {
+    // send is what view.Send renders into an on* attribute.
+    send: function (el, event, args) {
+      var root = el.closest("[data-nx-live]");
+      var state = root && liveRoots.get(root);
+      if (!state || !state.ws || state.ws.readyState !== 1) {
+        console.warn("nexus view: live page not connected yet; " + event + " dropped");
+        return;
+      }
+      root.setAttribute("aria-busy", "true");
+      state.ws.send(JSON.stringify({ event: event, args: args }));
+    },
+  };
+
   nx.signal = signal;
   root.__nx = nx;
 
   if (typeof document !== "undefined") {
-    var boot = function () { walk(document.documentElement, []); };
+    var boot = function () {
+      walk(document.documentElement, []);
+      Array.from(document.querySelectorAll("[data-nx-live]")).forEach(connectLive);
+    };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
     else boot();
   }
