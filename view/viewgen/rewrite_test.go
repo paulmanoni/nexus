@@ -348,7 +348,7 @@ templ (b *Board) Render() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(res.Go); !strings.Contains(got, `templ.Attributes{"id": "adopt", "onclick": view.SendAttr(view.Send(b.Adopt, p.Name))}`) {
+	if got := string(res.Go); !strings.Contains(got, `templ.Attributes{"id": "adopt", "onclick": view.ScriptAttr(view.Send(b.Adopt, p.Name))}`) {
 		t.Errorf("generated Go:\n%s", got)
 	}
 }

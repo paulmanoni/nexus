@@ -784,6 +784,10 @@ After each event the page is re-rendered and patched in place (focus kept).
 Server push: sock.Subscribe("topic") in Mount; view.Broadcast(ctx, "topic",
 data) from anywhere runs every subscribed page's optional
 Info(ctx, deps…, msg view.Message) error, then re-renders it.
+Forms: <form onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }>
+sends the fields to an event whose last parameter is a form-tagged struct;
+returning nexus.Errors re-renders with view.Errors(ctx).Field("name"), and a
+successful submit resets the form.
 
 Browser values (shard arguments, restored signals, event arguments) are user
 input: validate them. Example: view/example (/ and /board).

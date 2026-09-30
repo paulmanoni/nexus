@@ -764,10 +764,10 @@ func (c *component) attrLiteral(lit *ast.CompositeLit, full string, at parser.Ex
 		name, _ := strconv.Unquote(key.Value)
 		val := full[kv.Value.Pos()-1 : kv.Value.End()-1]
 		offset := strconv.Itoa(int(kv.Value.Pos()) - 1 - base)
-		if strings.HasPrefix(name, "on") && isViewCall(kv.Value, "Send") {
+		if strings.HasPrefix(name, "on") && (isViewCall(kv.Value, "Send") || isViewCall(kv.Value, "Submit") || isViewCall(kv.Value, "Change")) {
 			// templ drops a script value inside templ.Attributes: pass the
 			// live event as the attribute's text instead.
-			static = append(static, key.Value+": view.SendAttr("+val+")")
+			static = append(static, key.Value+": view.ScriptAttr("+val+")")
 			sends = true
 			continue
 		}

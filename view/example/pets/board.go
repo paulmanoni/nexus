@@ -3,6 +3,7 @@ package pets
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/view"
@@ -14,6 +15,48 @@ import (
 type Board struct {
 	Pets    []Pet
 	Adopted map[string]bool
+	Draft   PetInput // the add form, as last validated
+}
+
+// PetInput is the add form: bound from its fields by their form tags.
+type PetInput struct {
+	Name string `form:"name"`
+	Kind string `form:"kind"`
+}
+
+func (in PetInput) check(store *Store) error {
+	errs := nexus.NewErrors()
+	switch name := strings.TrimSpace(in.Name); {
+	case name == "":
+		errs.Field("name", "a name is required")
+	case store.Has(name):
+		errs.Field("name", name+" is already here")
+	}
+	if strings.TrimSpace(in.Kind) == "" {
+		errs.Field("kind", "what kind of pet?")
+	}
+	if errs.Any() {
+		return errs
+	}
+	return nil
+}
+
+// Validate runs as the add form is typed into.
+func (b *Board) Validate(ctx context.Context, store *Store, in PetInput) error {
+	b.Draft = in
+	return in.check(store)
+}
+
+// Add is the add form's submit: every open board gets the new pet.
+func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
+	b.Draft = in
+	if err := in.check(store); err != nil {
+		return err
+	}
+	store.Add(Pet{Name: strings.TrimSpace(in.Name), Kind: strings.TrimSpace(in.Kind)})
+	b.Draft = PetInput{}
+	view.Broadcast(ctx, adoptions, in.Name)
+	return nil
 }
 
 func NewBoard() *Board { return &Board{} }
@@ -50,8 +93,9 @@ func (b *Board) Clear(ctx context.Context, store *Store) error {
 	return nil
 }
 
-// Info runs on every board when anyone's adoption changes.
+// Info runs on every board when anyone's adoption or a new pet arrives.
 func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error {
+	b.Pets = store.All()
 	b.Adopted = store.Adopted()
 	return nil
 }

@@ -35,5 +35,16 @@ templ (b *Board) Render() {
 			</ul>
 			<button id="clear" class="underline" onclick={ view.Send(b.Clear) }>clear all</button>
 		}
+		@ui.Section("Add a pet") {
+			<form id="add" class="space-y-2" onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }>
+				<input id="add-name" name="name" class="w-full rounded-md border px-3 py-2" value={ b.Draft.Name } placeholder="Name"/>
+				<p id="name-err" class="text-sm text-destructive">{ view.Errors(ctx).Field("name") }</p>
+				<input id="add-kind" name="kind" class="w-full rounded-md border px-3 py-2" value={ b.Draft.Kind } placeholder="Kind"/>
+				<p id="kind-err" class="text-sm text-destructive">{ view.Errors(ctx).Field("kind") }</p>
+				@button.Button(button.Props{ID: "add-submit", Type: button.TypeSubmit}) {
+					Add
+				}
+			</form>
+		}
 	}
 }

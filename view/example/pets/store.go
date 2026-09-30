@@ -23,9 +23,22 @@ func NewStore() *Store {
 }
 
 // All returns every pet.
-func (s *Store) All() []Pet { return append([]Pet(nil), s.pets...) }
+func (s *Store) All() []Pet {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Pet(nil), s.pets...)
+}
+
+// Add adds a pet.
+func (s *Store) Add(p Pet) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pets = append(s.pets, p)
+}
 
 func (s *Store) Search(q string) []Pet {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	q = strings.ToLower(strings.TrimSpace(q))
 	var out []Pet
 	for _, p := range s.pets {
@@ -39,6 +52,8 @@ func (s *Store) Search(q string) []Pet {
 // Page returns one page of pets and the number of pages. page comes from
 // the browser, so it is clamped.
 func (s *Store) Page(page, size int) ([]Pet, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	last := (len(s.pets) + size - 1) / size
 	page = min(max(page, 1), last)
 	from := (page - 1) * size
@@ -47,6 +62,8 @@ func (s *Store) Page(page, size int) ([]Pet, int) {
 
 // Has reports whether a pet by that name exists.
 func (s *Store) Has(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, p := range s.pets {
 		if p.Name == name {
 			return true

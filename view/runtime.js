@@ -339,18 +339,23 @@
     morphChildren(el, next);
   }
 
+  // A form field's current value belongs to the user until the server
+  // says otherwise: it is overwritten only when the server's value (or
+  // checked) attribute itself changed, and never while the field has focus.
   function syncAttributes(el, next) {
+    var field = el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+    var oldValue = el.getAttribute("value"), oldChecked = el.hasAttribute("checked");
     Array.from(el.attributes).forEach(function (a) {
       if (!next.hasAttribute(a.name)) el.removeAttribute(a.name);
     });
     Array.from(next.attributes).forEach(function (a) {
       if (el.getAttribute(a.name) !== a.value) el.setAttribute(a.name, a.value);
     });
-    var focused = typeof document !== "undefined" && el === document.activeElement;
-    if ((el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") && !focused) {
-      var v = next.getAttribute("value");
-      if (el.tagName !== "SELECT" && el.value !== (v == null ? "" : v)) el.value = v == null ? "" : v;
-      if (el.type === "checkbox" || el.type === "radio") el.checked = next.hasAttribute("checked");
+    if (!field || (typeof document !== "undefined" && el === document.activeElement)) return;
+    var newValue = next.getAttribute("value");
+    if (el.tagName !== "SELECT" && newValue !== oldValue) el.value = newValue == null ? "" : newValue;
+    if ((el.type === "checkbox" || el.type === "radio") && next.hasAttribute("checked") !== oldChecked) {
+      el.checked = next.hasAttribute("checked");
     }
   }
 
@@ -410,7 +415,7 @@
 
   function connectLive(root) {
     var path = root.getAttribute("data-nx-live");
-    var state = { ws: null, delay: 500 };
+    var state = { ws: null, delay: 500, ref: 0, submits: {} };
     liveRoots.set(root, state);
     function open() {
       var ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + path);
@@ -422,6 +427,9 @@
       ws.onmessage = function (m) {
         var msg = JSON.parse(m.data);
         root.removeAttribute("aria-busy");
+        var submitted = msg.ref ? state.submits[msg.ref] : null;
+        if (msg.ref) delete state.submits[msg.ref];
+        if (submitted) submitted.removeAttribute("aria-busy");
         if (msg.error) {
           console.error("nexus view: live:", msg.error);
           root.setAttribute("data-nx-live-error", msg.error);
@@ -440,6 +448,8 @@
         morph(root, next);
         walk(root, []);
         reapply(root);
+        // A successful submit resets its form to the server-rendered values.
+        if (submitted && !msg.invalid && submitted.isConnected) submitted.reset();
       };
       ws.onclose = function () {
         root.setAttribute("data-nx-live-state", "disconnected");
@@ -450,17 +460,58 @@
     open();
   }
 
+  function liveState(el, event) {
+    var root = el.closest("[data-nx-live]");
+    var state = root && liveRoots.get(root);
+    if (!state || !state.ws || state.ws.readyState !== 1) {
+      console.warn("nexus view: live page not connected yet; " + event + " dropped");
+      return null;
+    }
+    return { root: root, state: state };
+  }
+
+  function liveSend(live, msg) {
+    msg.ref = ++live.state.ref;
+    live.root.setAttribute("aria-busy", "true");
+    live.state.ws.send(JSON.stringify(msg));
+    return msg.ref;
+  }
+
+  // formFields collects a form's fields: name -> every value.
+  function formFields(form) {
+    var out = {};
+    new FormData(form).forEach(function (v, k) {
+      if (typeof v !== "string") return; // files are not sent over the socket
+      (out[k] = out[k] || []).push(v);
+    });
+    return out;
+  }
+
+  var changeTimers = new WeakMap();
+
   nx.live = {
     // send is what view.Send renders into an on* attribute.
     send: function (el, event, args) {
-      var root = el.closest("[data-nx-live]");
-      var state = root && liveRoots.get(root);
-      if (!state || !state.ws || state.ws.readyState !== 1) {
-        console.warn("nexus view: live page not connected yet; " + event + " dropped");
-        return;
-      }
-      root.setAttribute("aria-busy", "true");
-      state.ws.send(JSON.stringify({ event: event, args: args }));
+      var live = liveState(el, event);
+      if (live) liveSend(live, { event: event, args: args });
+    },
+    // submit is what view.Submit renders into a form's onsubmit.
+    submit: function (e, form, event) {
+      if (e) e.preventDefault();
+      var live = liveState(form, event);
+      if (!live) return;
+      form.setAttribute("aria-busy", "true");
+      var ref = liveSend(live, { event: event, form: formFields(form) });
+      live.state.submits[ref] = form;
+    },
+    // change is what view.Change renders into a form's oninput/onchange:
+    // the fields go to the server after typing pauses.
+    change: function (e, form, event) {
+      clearTimeout(changeTimers.get(form));
+      changeTimers.set(form, setTimeout(function () {
+        var live = liveState(form, event);
+        if (live) liveSend(live, { event: event, form: formFields(form) });
+      }, 150));
     },
   };
 

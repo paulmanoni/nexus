@@ -165,7 +165,46 @@ func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error 
 }
 ```
 
-- `view.Send` also works in a component library's `Props.Attributes`
+- **Forms.** `view.Submit(b.Add)` on a form's `onsubmit` sends its fields to an
+  event whose last parameter is a struct, bound by `form:"name"` tags exactly
+  as a REST form binds; `view.Change(b.Validate)` on `oninput`/`onchange` sends
+  them as the user types (debounced). An event that returns `nexus.Errors`
+  re-renders with them — read them with `view.Errors(ctx).Field("name")` — and
+  the form keeps what was typed; on success the form resets to its
+  server-rendered values. A field's value is overwritten only when the
+  server's `value` attribute changes, and never while it has focus.
+
+```go
+type PetInput struct {
+	Name string `form:"name"`
+	Kind string `form:"kind"`
+}
+
+func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
+	errs := nexus.NewErrors()
+	if in.Name == "" {
+		errs.Field("name", "a name is required")
+	}
+	if errs.Any() {
+		return errs
+	}
+	store.Add(Pet{Name: in.Name, Kind: in.Kind})
+	return nil
+}
+```
+
+```templ
+<form onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }>
+	<input name="name" value={ b.Draft.Name }/>
+	<p>{ view.Errors(ctx).Field("name") }</p>
+	<button type="submit">Add</button>
+</form>
+```
+
+- A panic in `Mount`, `Render`, an event or `Info` is reported to the page as
+  an error; the connection stays up.
+- `view.Send`, `view.Submit` and `view.Change` also work in a component
+  library's `Props.Attributes`
   (`templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}`).
 
 ## The toolchain
@@ -229,8 +268,8 @@ the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
 - A shard re-render replaces its HTML: focus inside a shard is lost (live pages
   patch in place).
 - Live pages: one goroutine per connected page; `view.Broadcast` reaches the
-  pages connected to this process only (a replica's own pages); form events
-  and diffs are not in yet.
+  pages connected to this process only (a replica's own pages); file inputs are
+  not sent over the socket; diffs and in-app navigation are not in yet.
 - `/`, `%`, indexing and field access (other than the event's) do not compile to
   the browser yet.
 - `/_view/*` ignores nexus `route_prefix`.

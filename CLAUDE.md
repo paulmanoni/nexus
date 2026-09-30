@@ -296,7 +296,10 @@ pathParams…) error`, `templ (x *T) Render()`, events = exported `func(ctx, dep
 (deps are pointer/interface params) sent with `view.Send(x.Method, args…)`; the page is re-rendered
 and patched in place (focus/typing kept; signals win over the server copy). Push: `sock.Subscribe(topics…)`
 in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(ctx, deps…, msg view.Message)
-error`, then re-render (in-process: a replica's own pages). Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+error`, then re-render (in-process: a replica's own pages). Forms: `view.Submit(x.Add)` /
+`view.Change(x.Validate)` on a form send its fields to an event whose last param is a `form:`-tagged
+struct (httpx binder); returning `nexus.Errors` re-renders with `view.Errors(ctx).Field(name)`,
+success resets the form; a field's value changes only when the server's value attr changes. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 `nexus docs views`, docs/guide/views.md, example `view/example`.
 
 ## 2. App entry & config (`nexus.toml`)

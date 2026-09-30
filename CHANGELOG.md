@@ -45,6 +45,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     runs its optional `Info(ctx, deps…, msg view.Message) error` and
     re-renders. Delivery is in-process, so it reaches only the pages
     connected to that replica.
+  - **Forms:** `view.Submit(x.Add)` and `view.Change(x.Validate)` send a
+    form's fields to an event whose last parameter is a `form:`-tagged
+    struct.
+    - `view.Change` sends them as the user types, debounced.
+    - Returning `nexus.Errors` re-renders the page with
+      `view.Errors(ctx).Field(name)`.
+    - A successful submit resets the form.
+  - A panic in a live page is reported to it as an error, and the
+    connection stays up.
 - `view.Assets(prefix, handler)` serves a component library's files.
   `templ.Attributes{…}` literals in `Props.Attributes` accept reactive
   entries.

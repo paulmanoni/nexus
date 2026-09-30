@@ -102,15 +102,23 @@ func Send(method any, args ...any) templ.ComponentScript {
 	if err != nil {
 		panic(fmt.Sprintf("view.Send(%s): arguments are not JSON-encodable: %v", name, err))
 	}
-	nameJSON, _ := json.Marshal(name)
-	// templ writes Call into the attribute as is: escape it for HTML.
-	return templ.ComponentScript{Call: html.EscapeString("__nx.live.send(this," + string(nameJSON) + "," + string(b) + ")")}
+	return templ.ComponentScript{Call: htmlAttr("__nx.live.send(this," + jsonString(name) + "," + string(b) + ")")}
 }
 
-// SendAttr is a live event as attribute text, for an attribute map: templ
-// renders a script only on an element's own on* attribute, so the generator
-// rewrites templ.Attributes{"onclick": view.Send(…)} to use this.
-func SendAttr(event templ.ComponentScript) string { return html.UnescapeString(event.Call) }
+// htmlAttr escapes a script for an attribute: templ writes Call into the
+// attribute as is.
+func htmlAttr(js string) string { return html.EscapeString(js) }
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// ScriptAttr is a live event (Send, Submit, Change) as attribute text, for
+// an attribute map: templ renders a script only on an element's own on*
+// attribute, so the generator rewrites templ.Attributes{"onclick":
+// view.Send(…)} to use this.
+func ScriptAttr(event templ.ComponentScript) string { return html.UnescapeString(event.Call) }
 
 var methodValueName = regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)-fm$`)
 
@@ -242,6 +250,7 @@ type instance struct {
 	def  *liveDef
 	v    reflect.Value // *T
 	deps []reflect.Value
+	errs *nexus.Errors // the validation errors of the last event
 }
 
 func (d *liveDef) instance(template reflect.Value, deps []reflect.Value) *instance {
@@ -270,8 +279,14 @@ func (in *instance) call(ctx context.Context, m *liveMethod, live *Socket, raw [
 	return in.callValues(ctx, m, live, args)
 }
 
-// callValues runs m with its arguments as Go values.
-func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket, args []reflect.Value) error {
+// callValues runs m with its arguments as Go values. A panic becomes an
+// error, so a bug in one event does not drop the page's connection.
+func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket, args []reflect.Value) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
 	ft := m.fn.Type()
 	params := make([]reflect.Value, ft.NumIn())
 	params[0] = in.v
@@ -286,7 +301,7 @@ func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket,
 		params[i] = args[n]
 	}
 	out := m.fn.Call(params)
-	err, _ := out[0].Interface().(error)
+	err, _ = out[0].Interface().(error)
 	return err
 }
 
@@ -313,13 +328,20 @@ func (in *instance) mount(ctx context.Context, c *httpx.Ctx, sock *Socket) error
 	return nil
 }
 
-// render renders the instance: its Render() component into HTML.
-func (in *instance) render(ctx context.Context) ([]byte, error) {
+// render renders the instance: its Render() component into HTML. A panic
+// becomes an error.
+func (in *instance) render(ctx context.Context) (_ []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("Render panicked: %v", r)
+		}
+	}()
 	comp, _ := in.v.MethodByName("Render").Call(nil)[0].Interface().(templ.Component)
 	if comp == nil {
 		return nil, errors.New("Render returned nil")
 	}
 	var buf bytes.Buffer
+	ctx = context.WithValue(ctx, formErrorsKey{}, in.errs)
 	if err := comp.Render(withRender(ctx, &render{}), &buf); err != nil {
 		return nil, err
 	}
@@ -375,13 +397,17 @@ func (d *liveDef) pageHandler() any {
 }
 
 type liveEvent struct {
-	Event string            `json:"event"`
-	Args  []json.RawMessage `json:"args"`
+	Ref   int                 `json:"ref,omitempty"` // echoed in the event's reply
+	Event string              `json:"event"`
+	Args  []json.RawMessage   `json:"args,omitempty"`
+	Form  map[string][]string `json:"form,omitempty"` // a form event's fields
 }
 
 type liveReply struct {
-	HTML  string `json:"html,omitempty"`
-	Error string `json:"error,omitempty"`
+	Ref     int    `json:"ref,omitempty"` // the event this reply answers; 0 for a push
+	HTML    string `json:"html,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Invalid bool   `json:"invalid,omitempty"` // the event returned nexus.Errors
 }
 
 // upgraded is the renderer of the socket route: the handler already took
@@ -421,17 +447,18 @@ func (d *liveDef) socketHandler() any {
 }
 
 func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn, in *instance) {
+	render := func(ref int, invalid bool) liveReply {
+		body, err := in.render(ctx)
+		if err != nil {
+			return liveReply{Ref: ref, Error: err.Error()}
+		}
+		return liveReply{Ref: ref, HTML: string(body), Invalid: invalid}
+	}
 	send := func(r liveReply) bool {
 		_ = conn.SetWriteDeadline(time.Now().Add(liveWriteWait))
 		return conn.WriteJSON(r) == nil
 	}
-	sendRender := func() bool {
-		body, err := in.render(ctx)
-		if err != nil {
-			return send(liveReply{Error: err.Error()})
-		}
-		return send(liveReply{HTML: string(body)})
-	}
+	sendRender := func() bool { return send(render(0, false)) }
 	sock := &Socket{connected: true, inbox: make(chan Message, liveInbox)}
 	defer sock.close()
 	if err := in.mount(ctx, c, sock); err != nil {
@@ -485,27 +512,46 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 			if !open {
 				return
 			}
-			m, known := d.events[ev.Event]
-			if !known || !isExported(ev.Event) {
-				if !send(liveReply{Error: fmt.Sprintf("no event %q", ev.Event)}) {
-					return
-				}
-				continue
-			}
-			if err := in.call(ctx, m, nil, ev.Args); err != nil {
-				if errors.Is(err, nexus.ErrForbidden) {
-					log.Printf("view: live %s: event %s refused: %v", d.t, ev.Event, err)
-				}
-				if !send(liveReply{Error: fmt.Sprintf("%s: %v", ev.Event, err)}) {
-					return
-				}
-				continue
-			}
-			if !sendRender() {
+			if !send(d.event(ctx, in, ev, render)) {
 				return
 			}
 		}
 	}
+}
+
+// event runs one browser event and returns its reply: the new render, or
+// an error. A nexus.Errors from the method is not a failure: the page
+// re-renders with it (view.Errors) and the reply is marked invalid.
+func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render func(int, bool) liveReply) liveReply {
+	m, known := d.events[ev.Event]
+	if !known || !isExported(ev.Event) {
+		return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("no event %q", ev.Event)}
+	}
+	var err error
+	if ev.Form != nil {
+		if len(m.args) != 1 {
+			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: a form event takes one argument, the form struct", ev.Event)}
+		}
+		arg, berr := bindForm(m.fn.Type().In(m.args[0]), ev.Form)
+		if berr != nil {
+			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: %v", ev.Event, berr)}
+		}
+		err = in.callValues(ctx, m, nil, []reflect.Value{arg})
+	} else {
+		err = in.call(ctx, m, nil, ev.Args)
+	}
+	if errs, ok := validation(err); ok {
+		in.errs = errs
+		return render(ev.Ref, true)
+	}
+	if err != nil {
+		if errors.Is(err, nexus.ErrForbidden) {
+			log.Printf("view: live %s: event %s refused: %v", d.t, ev.Event, err)
+		}
+		return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: %v", ev.Event, err)}
+	}
+	in.errs = nil
+	return render(ev.Ref, false)
 }
 
 // inform runs Info for msg; it reports whether the connection failed. An
