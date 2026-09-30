@@ -7,7 +7,8 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/paulmanoni/deco v0.19.0
-	github.com/paulmanoni/nexus v1.75.1
+	github.com/paulmanoni/nexus v1.76.0
+	github.com/paulmanoni/nexus/view v1.76.0
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
@@ -16,6 +17,8 @@ require (
 
 require (
 	braces.dev/errtrace v0.4.0 // indirect
+	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
+	github.com/a-h/templ v0.3.1020 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
 	github.com/charmbracelet/x/ansi v0.10.1 // indirect
