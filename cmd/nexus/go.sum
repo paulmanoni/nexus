@@ -63,10 +63,10 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/paulmanoni/deco v0.19.0 h1:HL269XcFktEBuBAMHxLVqzPhp7P5sql+WgCaH6bVXUs=
 github.com/paulmanoni/deco v0.19.0/go.mod h1:TiUaLgiglpNGYzqmmdPoK8oXu02y8+y9P1LCVAZ+6mY=
-github.com/paulmanoni/nexus v1.77.0 h1:RaN437y98xBSD/wpM27t/aAPN69szc8vAcilQq5ITA0=
-github.com/paulmanoni/nexus v1.77.0/go.mod h1:gXde3pTSqjKQl4XBqRRRoWRtppXhWubVKJ0g9JC4rUg=
-github.com/paulmanoni/nexus/view v1.77.0 h1:2ib+OxgWIxXhPvF4FbrfqpMwTPllQt0wVSgOHbbckSQ=
-github.com/paulmanoni/nexus/view v1.77.0/go.mod h1:IqkdoRfqvweVuAI7rleaVDGQplDXlEcz1I5QzZe8t4A=
+github.com/paulmanoni/nexus v1.77.1 h1:i/RjV0NY/6kfqktgxrU5BkhBd7NpxmCVuee1x0yc5io=
+github.com/paulmanoni/nexus v1.77.1/go.mod h1:gXde3pTSqjKQl4XBqRRRoWRtppXhWubVKJ0g9JC4rUg=
+github.com/paulmanoni/nexus/view v1.77.1 h1:LBn8NGrfOhPrFoEUg9EWtIy2lxF2y9ARLDH5rwwwdXA=
+github.com/paulmanoni/nexus/view v1.77.1/go.mod h1:M2udccogNacwaITb/pXQx3mLzgeJiexxe+oYXNrUs3k=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
 github.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

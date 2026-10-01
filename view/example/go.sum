@@ -28,10 +28,10 @@ github.com/graphql-go/graphql v0.8.1 h1:p7/Ou/WpmulocJeEx7wjQy611rtXGQaAcXGqanuM
 github.com/graphql-go/graphql v0.8.1/go.mod h1:nKiHzRM0qopJEwCITUuIsxk9PlVlwIiiI8pnJEhordQ=
 github.com/graphql-go/handler v0.2.4 h1:gz9q11TUHPNUpqzV8LMa+rkqM5NUuH/nkE3oF2LS3rI=
 github.com/graphql-go/handler v0.2.4/go.mod h1:gsQlb4gDvURR0bgN8vWQEh+s5vJALM2lYL3n3cf6OxQ=
-github.com/paulmanoni/nexus v1.77.0 h1:RaN437y98xBSD/wpM27t/aAPN69szc8vAcilQq5ITA0=
-github.com/paulmanoni/nexus v1.77.0/go.mod h1:gXde3pTSqjKQl4XBqRRRoWRtppXhWubVKJ0g9JC4rUg=
-github.com/paulmanoni/nexus/view v1.77.0 h1:2ib+OxgWIxXhPvF4FbrfqpMwTPllQt0wVSgOHbbckSQ=
-github.com/paulmanoni/nexus/view v1.77.0/go.mod h1:IqkdoRfqvweVuAI7rleaVDGQplDXlEcz1I5QzZe8t4A=
+github.com/paulmanoni/nexus v1.77.1 h1:i/RjV0NY/6kfqktgxrU5BkhBd7NpxmCVuee1x0yc5io=
+github.com/paulmanoni/nexus v1.77.1/go.mod h1:gXde3pTSqjKQl4XBqRRRoWRtppXhWubVKJ0g9JC4rUg=
+github.com/paulmanoni/nexus/view v1.77.1 h1:LBn8NGrfOhPrFoEUg9EWtIy2lxF2y9ARLDH5rwwwdXA=
+github.com/paulmanoni/nexus/view v1.77.1/go.mod h1:M2udccogNacwaITb/pXQx3mLzgeJiexxe+oYXNrUs3k=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
 github.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
