@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "paths": {
+      "/__nexus/client/client.js": [
+        "./sdk/client.js"
+      ],
+      "/__nexus/client/vue.js": [
+        "./sdk/vue.js"
+      ],
+      "@/*": [
+        "./src/*"
+      ],
+      "nexus-client": [
+        "./sdk/client.d.ts"
+      ],
+      "nexus-client/pages": [
+        "./sdk/pages.d.ts"
+      ]
+    },
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": [
+      "vite/client"
+    ]
+  },
+  "include": [
+    "src",
+    "sdk/client.d.ts"
+  ]
+}

@@ -157,3 +157,18 @@ func TestPage(t *testing.T) {
 		t.Fatalf("twins.js = %d:\n%s", code, js)
 	}
 }
+
+// The islands are rendered with their fallback; without a frontend build
+// (as in this test) they say why they cannot load instead of failing the page.
+func TestIslands(t *testing.T) {
+	h := boot(t)
+	_, home := do(t, h, "GET", "/", "")
+	if !strings.Contains(home, `<nx-island data-c="KindChart"`) || !strings.Contains(home, `data-when="visible"`) ||
+		!strings.Contains(home, `{&#34;kind&#34;:&#34;cat&#34;,&#34;count&#34;:2}`) {
+		t.Fatalf("home lacks the KindChart island:\n%s", home)
+	}
+	_, board := do(t, h, "GET", "/board", "")
+	if !strings.Contains(board, `<nx-island data-c="AdoptionMeter"`) || !strings.Contains(board, "loading the meter") {
+		t.Fatalf("board lacks the AdoptionMeter island:\n%s", board)
+	}
+}

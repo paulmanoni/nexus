@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Islands in templ views: `view.NewIsland`.** An island mounts a component
+  of the project's Vite frontend into a templ page, for widgets a JavaScript
+  framework does better (editors, charts, drag and drop).
+  - Declare one with its props type:
+    `var Chart = view.NewIsland[ChartProps]("Chart")`.
+  - Place it like a component: `@Chart(props, view.Visible()) { fallback }`.
+    The children are the server-rendered fallback until it mounts.
+  - Each file under `web/src/islands` is an island named by its path:
+    `.vue` mounts with Vue, `.tsx`/`.jsx` with React, and a `.ts`/`.js`
+    module exports `mount(el, props, ctx)`.
+  - It mounts on load, or later with `view.Idle()`, `view.Visible()` or
+    `view.Media(query)`. Each island is its own lazily loaded chunk.
+  - **Typed props.** The client SDK types each island's props as
+    `NexusIslandProps['Chart']`, from the Go type.
+  - **Page signals.** A `*view.Signal` field stays live: the island gets the
+    value and is updated when it changes. A Vue island sets it back with
+    `update:<prop>` (so `defineModel` works), a React island with
+    `set<Prop>`, and a `mount` module with `ctx.set`.
+  - **Server rendering.** `view.SSR()` renders the island on the islands
+    server, and the browser hydrates it. `nexus({ islands: { ssr: true } })`
+    builds `web/dist/ssr/islands.js`, a Node server with its dependencies
+    inside; `view.IslandServer(url)` points elsewhere. Under `nexus dev`,
+    or when the server is down, the island renders in the browser.
+  - **Live pages and navigation.** On a live page a re-render updates a
+    mounted island's props without remounting it. `view.Link` and shard
+    re-renders unmount islands that leave the page.
+  - **Dev and build.** `nexus dev` loads islands from Vite with hot reload;
+    `nexus build` adds the islands loader to the Vite build, and the binary
+    reads it from the manifest. A frontend made only of islands needs no
+    `index.html`.
+  - **Without a build.** In a Go test, or with a build that lacks the island,
+    the page still renders and the island's `data-error` says why.
+- **nexus-vite-plugin `islands` option.** It takes a directory, `false`, or
+  `{ dir, ssr }`; the default is `src/islands`.
+  - It builds the `nexus-islands` entry and tells the app, through the dev
+    hot file, that Vite serves islands.
+  - It warns in dev, and fails the build, when an island declared in Go has
+    no file.
+  - `web/src/islands/_setup.ts` installs Vue plugins or wraps React islands
+    in providers.
+- **`registry.SchemaAs`.** A type can say it appears to clients as another
+  type; `view.Signal[T]` types as `T`.
+
 ## [1.76.0] - 2026-10-01
 
 ### Added

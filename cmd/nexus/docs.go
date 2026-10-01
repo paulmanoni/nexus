@@ -207,7 +207,7 @@ var topicSummaries = map[string]string{
 	"ws":          "AsWS — typed WebSocket envelopes, session fan-out",
 	"frontend":    "Vite frontend: ServeFrontend, the dev handshake, nexus dev/build",
 	"inertia":     "extension/inertia — Inertia.js pages: props handlers, no API",
-	"views":       "nexus/view — reactive templ pages: signals, shards, templUI, no JS build",
+	"views":       "nexus/view — reactive templ pages: signals, shards, live pages, islands",
 	"jobs":        "extension/jobs — background jobs: queued, retried, cancellable, with progress",
 	"inertiatest": "extension/inertia/inertiatest — in-process test harness for Inertia pages",
 	"nexustoml":   "nexus.toml — server, dashboard, introspection, env, extensions",
@@ -794,8 +794,34 @@ comes over HTTP only; updates travel as compressed token patches (values,
 reused markup, a per-connection dictionary). A dropped socket reconnects with
 backoff, queues events meanwhile, and gets a fresh mount.
 
+Islands mount a component of the Vite frontend (the one ServeFrontend
+serves) into a templ page. Each file under web/src/islands is one, named by
+its path without the extension: .vue mounts with Vue, .tsx/.jsx with React,
+.ts/.js exports mount(el, props, ctx) → { update(props), unmount() }.
+Declare it once with its props type, then place it like a component:
+
+    var Chart = view.NewIsland[ChartProps]("Chart")      // NexusIslandProps['Chart'] in the SDK
+    @Chart(ChartProps{Points: pts}, view.Visible(), view.SSR()) {
+        <div class="h-64 animate-pulse"></div>        // shown until it mounts
+    }
+
+Strategies: load (default), view.Idle(), view.Visible(), view.Media(query).
+Props are JSON (public). A *view.Signal field stays live: the island gets the
+value and is updated when it changes; a Vue island sets it with
+emit('update:field') (defineModel), React with props.setField, mount modules
+with ctx.set. view.SSR() renders on the islands server (nexus({ islands:
+{ ssr: true } }) builds web/dist/ssr/islands.js — node it beside the binary,
+:13715; view.IslandServer(url) elsewhere); dev and a down server render in
+the browser only. The plugin warns (dev) / fails the build for a declared
+island without a file. nexus dev loads islands from Vite (hot reload); nexus
+build adds the islands loader entry and the binary reads the manifest. A live
+page's re-render updates a mounted island's props without remounting it;
+view.Link unmounts the islands that leave the page. web/src/islands/_setup.ts:
+default export takes the Vue app, or wraps the React element. With nothing to
+load from (a Go test) the children stay and data-error says why.
+
 Browser values (shard arguments, restored signals, event arguments) are user
-input: validate them. Example: view/example (/ and /board).
+input: validate them. Example: view/example (/ and /board, two Vue islands).
 `,
 	"inertia": `
 INERTIA

@@ -3,6 +3,7 @@ package view
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 
 	"github.com/a-h/templ"
 )
@@ -72,6 +73,10 @@ func Do(fn func(e Event)) templ.ComponentScript { return uncompiled }
 var uncompiled = templ.ComponentScript{
 	Call: `console.warn('nexus view: this action was not compiled - generate the templates with nexus (nexus dev, nexus build, nexus generate views)')`,
 }
+
+// NexusSchemaAs types a signal as its value in the client SDK: an island
+// receives the value.
+func (*Signal[T]) NexusSchemaAs() reflect.Type { return reflect.TypeFor[T]() }
 
 type signalWire[T any] struct {
 	ID string `json:"$sig"`

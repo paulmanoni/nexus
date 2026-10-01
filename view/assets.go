@@ -17,6 +17,12 @@ import (
 //go:embed runtime.js
 var runtimeJS string
 
+// importJS gives the runtime import(), which a classic script cannot parse
+// everywhere: islands load their modules through it. Script puts it first,
+// so it runs before the runtime; the event covers a page that does not.
+const importJS = "window.__nxImport = function (url) { return import(url); };\n" +
+	"window.dispatchEvent(new Event(\"nx:import\"));\n"
+
 // RuntimeJS is the browser runtime, for tests that run compiled
 // expressions outside a browser.
 func RuntimeJS() string { return runtimeJS }
@@ -65,7 +71,8 @@ func version(s string) string {
 //	    @view.Script()
 //	</head>
 func Script() templ.Component {
-	return templ.Raw(`<style>nx-t,nx-if,nx-shard{display:contents}nx-if[hidden]{display:none}</style>` +
+	return templ.Raw(`<style>nx-t,nx-if,nx-shard{display:contents}nx-if[hidden]{display:none}nx-island{display:block}</style>` +
+		`<script type="module" src="/_view/import.js?v=` + version(importJS) + `"></script>` +
 		`<script src="/_view/twins.js?v=` + version(twinsJS()) + `" defer></script>` +
 		`<script src="/_view/runtime.js?v=` + version(runtimeJS) + `" defer></script>`)
 }

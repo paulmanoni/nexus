@@ -305,7 +305,25 @@ is HTTP-only (a join id lets the socket skip resending it); updates travel as to
 compressed; reconnect = jittered backoff + queued events + fresh mount.
 `@view.Link(href, attrs…) { … }` is in-app navigation: fetch + patch the body, head assets merged,
 live sockets follow, history/back work. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
-`nexus docs views`, docs/guide/views.md, example `view/example`.
+**Islands**: `var Chart = view.NewIsland[ChartProps]("Chart")` declares one (props type → registry
+`SetIsland` → manifest `islands` → `NexusIslandProps` in client.d.ts; `*view.Signal[T]` types as `T` via
+`registry.SchemaAs`); `@Chart(props, view.Visible(), view.SSR()) { fallback }` places it. It mounts a
+component of the Vite frontend `ServeFrontend` serves: each file under `web/src/islands` is one, named by
+its path without the extension (.vue → Vue, .tsx/.jsx → React, .ts/.js exporting `mount(el, props, ctx)` →
+`{update, unmount}`); strategies load/`Idle()`/`Visible()`/`Media(q)`; props are JSON (an object). Signal
+props stay live (runtime hydrates + tracks them; `update` on change) and islands set them back: Vue
+`update:<prop>` (defineModel), React `set<Prop>`, `ctx.set`. `view.SSR()` POSTs to the islands server
+(`nexus({ islands: { ssr: true } })` builds `dist/ssr/islands.js`, a Node server with deps inside, :13715,
+`view.IslandServer(url)`), skipped in dev, on live-socket re-renders, and when it's down; the browser then
+hydrates (`data-ssr`). nexus-vite-plugin's `islands` option (default `src/islands`) builds a `nexus-islands`
+entry (loader → one lazy chunk per island; an index-less project needs no entry), flags `islands` in the
+hot file, and checks declared names vs files (dev warn / build error). The Go side loads islands from Vite
+in dev and from the manifest otherwise (`vitemanifest.IslandsFile`/`IslandPrefix`; `EntryKey` skips the
+loader; a name missing from the build → `data-error`). Live re-renders update a mounted island's props (no
+remount); `view.Link`/shards unmount islands that leave. No loader (a Go test) → children stay +
+`data-error`. `/_view/import.js` (a module script `view.Script` loads first) gives the classic runtime
+`import()`. `_setup.ts` default export: Vue app hook / React wrapper.
+`nexus docs views`, docs/guide/views.md, example `view/example` (+ `web/`).
 
 ## 2. App entry & config (`nexus.toml`)
 

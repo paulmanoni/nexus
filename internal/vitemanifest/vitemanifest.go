@@ -71,12 +71,32 @@ func Load(fsys fs.FS, root string) (*Manifest, error) {
 	return nil, fmt.Errorf("no Vite manifest (tried %s): %w", strings.Join(tried, ", "), fs.ErrNotExist)
 }
 
-// EntryKey is the key of the entry chunk. With several, the lexically
-// smallest, so the choice does not depend on map order. "" when there is none.
+// IslandsEntry is the chunk name of the islands loader, the extra entry
+// nexus-vite-plugin adds when the project has an islands directory.
+const IslandsEntry = "nexus-islands"
+
+// IslandPrefix starts the manifest key of each island's chunk; the island's
+// name follows.
+const IslandPrefix = "virtual:nexus-island/"
+
+// IslandsFile is the islands loader's emitted file, or "" when the build has
+// none.
+func (m *Manifest) IslandsFile() string {
+	for _, c := range m.Chunks {
+		if c.IsEntry && c.Name == IslandsEntry && c.File != "" {
+			return c.File
+		}
+	}
+	return ""
+}
+
+// EntryKey is the key of the app's entry chunk — never the islands loader.
+// With several, the lexically smallest, so the choice does not depend on map
+// order. "" when there is none.
 func (m *Manifest) EntryKey() string {
 	key := ""
 	for k, c := range m.Chunks {
-		if c.IsEntry && c.File != "" && (key == "" || k < key) {
+		if c.IsEntry && c.File != "" && c.Name != IslandsEntry && (key == "" || k < key) {
 			key = k
 		}
 	}

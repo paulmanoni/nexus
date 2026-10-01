@@ -19,5 +19,8 @@ templ Home() {
 			@pets.PetResults()
 		}
 		@pets.Paged()
+		@ui.Section("By kind") {
+			@pets.Chart()
+		}
 	}
 }

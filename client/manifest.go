@@ -35,6 +35,11 @@ type Manifest struct {
 	// signature. The engine's own `errors` prop is Inertia's to type.
 	SharedProps map[string]*registry.TypeRef `json:"sharedProps,omitempty"`
 
+	// Islands maps each view island (view.NewIsland) to its props type.
+	// The generator emits NexusIslandProps from it, and nexus-vite-plugin
+	// checks every name against the islands directory.
+	Islands map[string]*registry.TypeRef `json:"islands,omitempty"`
+
 	// Projected marks the stripped (non-Public) manifest served to
 	// anonymous browsers — auth flows only, no schemas, no GraphQL/CRUD
 	// ops. The runtime SDK reads it to turn the otherwise-cryptic
@@ -337,6 +342,14 @@ func buildManifest(reg *registry.Registry, authInfo func() ExtractorInfo, schema
 			}
 		}
 		m.Auth = ai
+	}
+
+	if islands := reg.Islands(); len(islands) > 0 {
+		m.Islands = make(map[string]*registry.TypeRef, len(islands))
+		for k, v := range islands {
+			t := v
+			m.Islands[k] = &t
+		}
 	}
 
 	if shared := reg.SharedProps(); len(shared) > 0 {

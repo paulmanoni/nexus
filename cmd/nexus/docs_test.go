@@ -116,13 +116,14 @@ func TestDocsCmd_List(t *testing.T) {
 }
 
 // TestDocsTopics_ViteOnly guards against the retired frontend models
-// creeping back: islands, nexus add, the viteless engine as a current
+// creeping back: the islands.src/ layout (view.Island islands, under the
+// Vite project's src/islands, are current), nexus add, the viteless engine as a current
 // tool, and the :5173 "open Vite's port" advice. (The CLI topic may still
 // name a "viteless-era" directory or its viteless.config.ts — what the
 // migration hint says.)
 func TestDocsTopics_ViteOnly(t *testing.T) {
 	for name, body := range docsTopics {
-		for _, bad := range []string{"islands", "nexus add", ":5173", "zero-install", "esm.sh", "--frontend-cmd <"} {
+		for _, bad := range []string{"islands.src", "islands/index.html", "nexus add", ":5173", "zero-install", "esm.sh", "--frontend-cmd <"} {
 			if strings.Contains(body, bad) {
 				t.Errorf("topic %q still mentions %q", name, bad)
 			}

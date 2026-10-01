@@ -1,12 +1,14 @@
 // Command example is a nexus app whose pages are reactive templ components,
 // spread over packages — pages/ (the page), ui/ (layout and widgets, built
 // on templUI), pets/ (the store and its components, including two shards)
-// and state/ (shared page state, provided with DI).
+// and state/ (shared page state, provided with DI) — plus two Vue islands
+// from the Vite project in web/ (web/src/islands).
 //
 //	nexus dev        (from this directory)
 package main
 
 import (
+	"embed"
 	"net/http"
 
 	"github.com/templui/templui/utils"
@@ -17,6 +19,9 @@ import (
 	"github.com/paulmanoni/nexus/view/example/state"
 )
 
+//go:embed all:web/dist
+var webFS embed.FS
+
 func app() []nexus.Option {
 	templui := http.NewServeMux()
 	utils.SetupScriptRoutes(templui, true)
@@ -25,6 +30,7 @@ func app() []nexus.Option {
 		pets.Module,
 		view.Assets("/templui/js/", templui),
 		view.Assets("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets")))),
+		nexus.ServeFrontend(webFS, "web/dist"),
 	}
 }
 

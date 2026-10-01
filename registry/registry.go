@@ -229,6 +229,9 @@ type Registry struct {
 	// sharedProps holds the typed Inertia shared props recorded via
 	// SetSharedProp (key → walked value type). Lazily allocated.
 	sharedProps map[string]TypeRef
+	// islands holds the props type of every view island (name → walked
+	// type), recorded via SetIsland. Lazily allocated.
+	islands map[string]TypeRef
 	// globalMiddlewares is the ordered list of middleware names
 	// installed on the engine root (app-wide). Every request goes
 	// through these before per-endpoint stacks. Dashboard renders them
@@ -488,6 +491,37 @@ func (r *Registry) SetSharedProp(key string, t TypeRef) {
 		r.sharedProps = map[string]TypeRef{}
 	}
 	r.sharedProps[key] = t
+}
+
+// SetIsland records the props type of a view island (view.NewIsland) under
+// its name. The client SDK manifest projects the set as islands →
+// NexusIslandProps, and nexus-vite-plugin checks each name against the
+// islands directory.
+func (r *Registry) SetIsland(name string, t TypeRef) {
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	defer func() { r.mu.Unlock(); r.notifyChanged() }()
+	if r.islands == nil {
+		r.islands = map[string]TypeRef{}
+	}
+	r.islands[name] = t
+}
+
+// Islands returns a copy of the island props types recorded via SetIsland,
+// or nil when none were.
+func (r *Registry) Islands() map[string]TypeRef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.islands) == 0 {
+		return nil
+	}
+	out := make(map[string]TypeRef, len(r.islands))
+	for k, v := range r.islands {
+		out[k] = v
+	}
+	return out
 }
 
 // SharedProps returns a copy of the typed shared props recorded via

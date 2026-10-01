@@ -306,6 +306,166 @@ nexus.Boot(
 templUI's scripts initialize content that appears later, so its widgets keep
 working inside re-rendered shards.
 
+## Islands
+
+Some widgets are better written with a JavaScript framework: a rich text
+editor, a chart library, a drag-and-drop board. An island puts a component of
+the project's Vite frontend into a templ page, and only that part of the page
+loads JavaScript for it.
+
+Each file under `web/src/islands` is an island, named by its path there
+without the extension (`Chart`, `admin/Editor`):
+
+| File | Mounted with |
+| --- | --- |
+| `.vue` | Vue (`createApp`, or `createSSRApp` to hydrate) |
+| `.tsx`, `.jsx` | React (`createRoot`, or `hydrateRoot`) |
+| `.ts`, `.js` | its own `export function mount(el, props, ctx)`, returning `{ update(props), unmount() }` |
+
+### Declaring and placing an island
+
+Declare each island once in Go, with the type of its props:
+
+```go
+var Chart = view.NewIsland[ChartProps]("Chart")
+
+type ChartProps struct {
+	Points []int `json:"points"`
+}
+```
+
+Then place it like a component. Its children are rendered on the server and
+stay until the island mounts:
+
+```templ
+templ Stats(points []int) {
+	@Chart(ChartProps{Points: points}, view.Visible()) {
+		<div class="h-64 animate-pulse rounded bg-muted"></div>
+	}
+}
+```
+
+The Go compiler checks the props where the island is placed. The client SDK
+types them for the component as `NexusIslandProps`:
+
+```vue
+<script setup lang="ts">
+import type { NexusIslandProps } from 'nexus-client'
+const props = defineProps<NexusIslandProps['Chart']>()
+</script>
+```
+
+Props travel as JSON (public, like any page data) and must encode to an
+object. By default an island mounts as soon as the page loads.
+`view.Idle()` waits for the browser to be idle, `view.Visible()` until it is
+about to scroll into view, and `view.Media("(min-width: 768px)")` until the
+query matches. Each island is its own lazily loaded chunk, so a page
+downloads only the islands it shows.
+
+The Vite plugin checks names against files both ways. An island declared in
+Go with no file is a warning under `nexus dev` and fails `vite build`. A file
+nothing declares is reported.
+
+### Page signals in props
+
+A props field may be a page signal. The island receives its value, and is
+updated when the signal changes anywhere on the page:
+
+```go
+type ChartProps struct {
+	Kinds []KindCount           `json:"kinds"`
+	Query *view.Signal[string] `json:"query"` // typed as string for the island
+}
+```
+
+```templ
+{{ q := view.Use[*Search](ctx).Query }}
+@Chart(ChartProps{Kinds: kinds, Query: q})
+```
+
+The island can also set the signal, and everything that reads it follows:
+bindings, branches, and shards re-rendered on the server.
+
+- A Vue island emits `update:query`. That means `defineModel('query')` works.
+- A React island calls `props.setQuery(v)`.
+- A `mount` module calls `ctx.set('query', v)`. `ctx.signals` lists the
+  signal props.
+
+### Rendering on the server
+
+`view.SSR()` renders an island on the server too, so its HTML is in the page
+before any JavaScript runs (search engines, slow phones). The browser
+hydrates it when it mounts:
+
+```templ
+@Chart(props, view.Visible(), view.SSR()) { … }
+```
+
+Turn on the server build in `vite.config`:
+
+```js
+nexus({ islands: { ssr: true } })
+```
+
+`nexus build` then also writes `web/dist/ssr/islands.js`. That file is a
+small Node server with every dependency inside, so it runs without
+`node_modules`. Run it beside the binary:
+
+```sh
+node web/dist/ssr/islands.js     # listens on 127.0.0.1:13715
+```
+
+- **Another address:** set `NEXUS_ISLANDS_PORT` / `NEXUS_ISLANDS_HOST`,
+  and point the app at it with `view.IslandServer(url)`.
+- **Under `nexus dev`:** islands render in the browser only.
+- **When the server is down:** the island renders in the browser only and
+  the app logs why. The page still renders either way.
+- **`.ts` / `.js` islands:** export `render(props)` for SSR.
+- **Live pages:** a socket re-render never calls the islands server, because
+  the mounted island keeps its DOM.
+
+### The frontend
+
+The frontend is the one `nexus.ServeFrontend` serves. A templ app whose
+frontend is only islands needs no `index.html` and no entry:
+
+```js
+// web/vite.config.js
+import vue from '@vitejs/plugin-vue'
+import nexus from './sdk/nexus-vite-plugin.js'
+
+export default { plugins: [vue(), nexus()] }
+```
+
+```go
+//go:embed all:web/dist
+var webFS embed.FS
+
+nexus.Boot(nexus.ServeFrontend(webFS, "web/dist"))
+```
+
+Under `nexus dev` islands load from Vite with hot reload. `nexus build`
+adds the islands loader to the Vite build, and the binary loads it from the
+manifest. Vue plugins (a router, i18n, a component library) or React
+providers go in `web/src/islands/_setup.ts`: its default export takes the Vue
+app, or wraps the React element.
+
+Islands work with the rest of the package:
+
+- **Live pages.** A re-render with new props updates the mounted island
+  instead of remounting it, so its own state survives.
+- **Navigation.** `view.Link` unmounts the islands that leave the page and
+  mounts the new ones.
+- **Shards.** An island inside a shard is mounted again when the shard
+  re-renders.
+
+Without a build to load from (a Go test, or a build that lacks the island)
+the page still renders. The island keeps its children, its element's
+`data-error` says why, and the server logs it once.
+
+The app's own static files must not share Vite's output directory. If the app
+serves `/assets/`, set `build.assetsDir` in `vite.config` to something else.
+
 ## Editor support
 
 Every file is plain templ, so templ's tooling works unchanged: the templ language
@@ -324,5 +484,11 @@ the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
 - `/`, `%`, indexing and field access (other than the event's) do not compile to
   the browser yet.
 - `/_view/*` ignores nexus `route_prefix`.
+- An island's signal props are its top-level fields; a signal nested deeper
+  is passed as its value but cannot be set from the island. Svelte and other
+  frameworks mount through a `.ts` module that exports `mount` (and `render`
+  for SSR).
 
-See `view/example` for a multi-package app built on templUI.
+See `view/example` for a multi-package app built on templUI, with two Vue
+islands in `view/example/web`: a server-rendered chart bound to the page's
+search signal, and a meter on the live board.

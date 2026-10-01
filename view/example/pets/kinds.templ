@@ -1,0 +1,15 @@
+package pets
+
+import (
+	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/view/example/state"
+)
+
+// Chart places the KindChart island: rendered on the server (SSR), so the
+// bars are in the page from the start, and live once it scrolls into view.
+templ Chart() {
+	{{ q := view.Use[*state.Search](ctx).Query }}
+	@KindChart(kindChart(view.Use[*Store](ctx).All(), q), view.Visible(), view.SSR()) {
+		<div class="h-40 animate-pulse rounded-md bg-gray-100"></div>
+	}
+}

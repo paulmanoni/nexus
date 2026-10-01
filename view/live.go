@@ -445,7 +445,7 @@ func (d *liveDef) socketHandler() any {
 		}
 		defer conn.Close()
 		in := d.instance(args[2], args[3:])
-		d.serve(ctx, c, conn, in)
+		d.serve(context.WithValue(withApp(ctx, c), socketKey{}, true), c, conn, in)
 		return ok
 	}).Interface()
 }

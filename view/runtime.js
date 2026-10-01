@@ -252,6 +252,10 @@
       shard(el, owner);
       return;
     }
+    if (el.tagName === "NX-ISLAND") {
+      island(el); // its insides belong to the island's framework
+      return;
+    }
     wire(el, owner);
     Array.from(el.children).forEach(function (c) { walk(c, owner); });
   }
@@ -317,6 +321,7 @@
           if (watcher) dispose(watcher);
           el.innerHTML = html;
           mount();
+          sweepIslands();
         })
         .catch(function (err) {
           if (err.name !== "AbortError") console.error("nexus view:", err);
@@ -335,6 +340,17 @@
   // updated, matching elements by id or else by position and tag, so focus,
   // selection and the value being typed survive a live update.
   function morph(el, next) {
+    if (el.tagName === "NX-ISLAND" && islands.has(el)) {
+      // A mounted island keeps its DOM: new props reach it through walk.
+      // Another island in its place unmounts it, and the fallback returns.
+      if (next.getAttribute("data-c") === el.getAttribute("data-c")) {
+        var mounted = el.getAttribute("data-nx-island"); // the browser's own
+        syncAttributes(el, next);
+        if (mounted) el.setAttribute("data-nx-island", mounted);
+        return;
+      }
+      unmountIsland(el);
+    }
     syncAttributes(el, next);
     morphChildren(el, next);
   }
@@ -549,6 +565,7 @@
         morph(root, next);
         walk(root, []);
         reapply(root);
+        sweepIslands();
         // A successful submit resets its form to the server-rendered values.
         if (submitted && !msg.invalid && submitted.isConnected) submitted.reset();
       };
@@ -591,6 +608,195 @@
     });
   }
 
+  // ---- islands (view.NewIsland) --------------------------------------------
+
+  // An island is a component of the Vite frontend mounted into an
+  // <nx-island>: data-c names it, data-l is the loader module (which maps
+  // names to lazily imported adapters), data-p its props as JSON, data-when
+  // when to mount, data-ssr that the server rendered its HTML. An adapter
+  // exports mount(el, props, ctx), returning { update(props), unmount() }.
+  // Signals in the props stay live: the island gets their values, is
+  // updated when one changes, and sets a top-level one with ctx.set.
+  var islands = new Map(); // element -> state
+  var loaders = new Map(); // loader URL -> its module (a promise)
+
+  function island(el) {
+    var props = el.getAttribute("data-p") || "{}";
+    var st = islands.get(el);
+    if (st) {
+      if (st.props !== props) {
+        st.props = props;
+        st.live = hydrate(JSON.parse(props));
+        if (st.handle) watchIsland(el, st, true);
+      }
+      return;
+    }
+    st = { name: el.getAttribute("data-c"), props: props, live: hydrate(JSON.parse(props)), handle: null, effects: [], stop: null, gone: false };
+    islands.set(el, st);
+    if (!el.hasAttribute("data-l")) {
+      console.error("nexus view: island " + st.name + " cannot load: " + el.getAttribute("data-error"));
+      return;
+    }
+    st.stop = when(el, el.getAttribute("data-when") || "load", function () {
+      st.stop = null;
+      loadIsland(el, st);
+    });
+  }
+
+  // when calls go once the island's strategy allows, and returns a function
+  // that cancels the wait.
+  function when(el, strategy, go) {
+    if (strategy === "idle") {
+      var idle = root.requestIdleCallback || function (f) { return setTimeout(f, 200); };
+      var cancelIdle = root.cancelIdleCallback || clearTimeout;
+      var id = idle(go);
+      return function () { cancelIdle(id); };
+    }
+    if (strategy === "visible" && root.IntersectionObserver) {
+      var io = new IntersectionObserver(function (entries) {
+        if (entries.some(function (e) { return e.isIntersecting; })) {
+          io.disconnect();
+          go();
+        }
+      }, { rootMargin: "200px" });
+      io.observe(el);
+      return function () { io.disconnect(); };
+    }
+    if (strategy.indexOf("media:") === 0 && root.matchMedia) {
+      var mq = root.matchMedia(strategy.slice(6));
+      if (!mq.matches) {
+        var onChange = function () {
+          if (!mq.matches) return;
+          mq.removeEventListener("change", onChange);
+          go();
+        };
+        mq.addEventListener("change", onChange);
+        return function () { mq.removeEventListener("change", onChange); };
+      }
+    }
+    go();
+    return null;
+  }
+
+  // plain is v with every signal replaced by its current value.
+  function plain(v) {
+    if (Array.isArray(v)) return v.map(plain);
+    if (v && typeof v === "object") {
+      if (typeof v.$sig === "string" && typeof v.peek === "function") return v.peek();
+      var o = {};
+      for (var k in v) o[k] = plain(v[k]);
+      return o;
+    }
+    return v;
+  }
+
+  function signalProps(live) {
+    return Object.keys(live).filter(function (k) {
+      return live[k] && typeof live[k].$sig === "string" && typeof live[k].set === "function";
+    });
+  }
+
+  function islandContext(el, st) {
+    return {
+      hydrate: el.hasAttribute("data-ssr"),
+      signals: signalProps(st.live),
+      set: function (name, v) {
+        var h = st.live && st.live[name];
+        if (h && typeof h.set === "function") h.set(v);
+        else console.warn("nexus view: island " + st.name + ": " + name + " is not a signal prop");
+      },
+    };
+  }
+
+  function loadIsland(el, st) {
+    var url = el.getAttribute("data-l");
+    var loader = loaders.get(url);
+    if (!loader) {
+      loader = importer().then(function (load) { return load(url); });
+      loaders.set(url, loader);
+    }
+    loader
+      .then(function (m) {
+        var map = (m && m.islands) || root.__nxIslands || {};
+        var load = map[st.name];
+        if (!load) throw new Error("no island named " + st.name + " in src/islands");
+        return load();
+      })
+      .then(function (m) {
+        if (st.gone) return;
+        st.handle = m.mount(el, plain(st.live), islandContext(el, st)) || {};
+        el.removeAttribute("data-ssr"); // hydrated once; a remount renders afresh
+        el.setAttribute("data-nx-island", "mounted");
+        watchIsland(el, st, false);
+      })
+      .catch(function (err) {
+        el.setAttribute("data-nx-island", "failed");
+        console.error("nexus view: island " + st.name + ":", err);
+      });
+  }
+
+  // watchIsland (re)starts the effect that hands the island new values when
+  // a signal in its props changes; now also updates it straight away (new
+  // props from the server).
+  function watchIsland(el, st, now) {
+    st.effects.forEach(dispose);
+    st.effects = [];
+    var first = !now;
+    effect(function () {
+      track(st.live);
+      if (first) {
+        first = false;
+        return;
+      }
+      updateIsland(el, st);
+    }, st.effects);
+  }
+
+  // importer resolves to import() once /_view/import.js has run.
+  function importer() {
+    if (root.__nxImport) return Promise.resolve(root.__nxImport);
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(new Error("/_view/import.js did not load: is view.Script() in the page head?")); }, 10000);
+      root.addEventListener("nx:import", function () {
+        clearTimeout(t);
+        resolve(root.__nxImport);
+      }, { once: true });
+    });
+  }
+
+  // updateIsland hands an island its current props; a module without
+  // update is mounted again.
+  function updateIsland(el, st) {
+    if (!st.handle) return;
+    if (st.handle.update) {
+      st.handle.update(plain(st.live));
+      return;
+    }
+    if (st.handle.unmount) st.handle.unmount();
+    st.handle = null;
+    st.effects.forEach(dispose);
+    st.effects = [];
+    loadIsland(el, st);
+  }
+
+  function unmountIsland(el) {
+    var st = islands.get(el);
+    if (!st) return;
+    islands.delete(el);
+    st.gone = true;
+    if (st.stop) st.stop();
+    st.effects.forEach(dispose);
+    if (st.handle && st.handle.unmount) st.handle.unmount();
+    el.removeAttribute("data-nx-island");
+  }
+
+  // sweepIslands unmounts islands that left the page.
+  function sweepIslands() {
+    islands.forEach(function (st, el) {
+      if (!el.isConnected) unmountIsland(el);
+    });
+  }
+
   // ---- in-app navigation (view.Link) ---------------------------------------
 
   // navigate replaces the page with the one at url without reloading: the
@@ -612,6 +818,7 @@
         walk(document.body, []);
         reapply(document.body);
         syncLive();
+        sweepIslands();
         if (push) window.scrollTo(0, 0);
       })
       .catch(function () {

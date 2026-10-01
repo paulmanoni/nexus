@@ -16,6 +16,9 @@ templ (b *Board) Render() {
 			{{ note := view.State(ctx, "") }}
 			<input id="note" class="w-full rounded-md border px-3 py-2" value={ note.Get() } oninput={ view.Do(func(e view.Event) { note.Set(e.Target.Value) }) } placeholder="A note — kept while the board updates"/>
 			<p><b id="adopted">{ strconv.Itoa(len(b.Adopted)) }</b> adopted</p>
+			@AdoptionMeter(MeterProps{Adopted: len(b.Adopted), Total: len(b.Pets)}) {
+				<p class="text-sm text-muted-foreground">loading the meter…</p>
+			}
 			<ul class="space-y-2">
 				for _, p := range b.Pets {
 					<li id={ "pet-" + p.Name } class="flex items-center gap-2">

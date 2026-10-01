@@ -70,6 +70,15 @@ func (o TagOption) apply(b *baseEndpointConfig) {
 //
 // A nil t or empty key is ignored. Call during option wiring (an Invoke);
 // the manifest is built after boot.
+// RegisterIsland records a view island's props type (view.NewIsland does
+// it at boot), so the client SDK types it as NexusIslandProps[name].
+func (a *App) RegisterIsland(name string, t reflect.Type) {
+	if name == "" || t == nil {
+		return
+	}
+	a.registry.SetIsland(name, registry.WalkType(t, a.schemaRefs()))
+}
+
 func (a *App) RegisterSharedProp(key string, t reflect.Type) {
 	if key == "" || t == nil {
 		return

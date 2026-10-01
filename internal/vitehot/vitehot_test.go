@@ -440,3 +440,12 @@ func TestValidateOrigin(t *testing.T) {
 		}
 	}
 }
+
+// An islands-only frontend declares just the loader: no page shell, and no
+// entry for an Inertia shell to load.
+func TestIslandsLoaderIsNotTheAppEntry(t *testing.T) {
+	h := &Hot{Entries: []string{IslandsModule}}
+	if h.Entry() != "" || h.ModuleEntry() != "" || h.HasHTMLEntry() {
+		t.Fatalf("Entry=%q ModuleEntry=%q HasHTMLEntry=%v", h.Entry(), h.ModuleEntry(), h.HasHTMLEntry())
+	}
+}

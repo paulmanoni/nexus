@@ -1,0 +1,172 @@
+{
+  "version": "client.v1",
+  "basePath": "",
+  "services": [
+    {
+      "name": "app"
+    },
+    {
+      "name": "board"
+    }
+  ],
+  "endpoints": [
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/",
+      "name": "GET /",
+      "return": {
+        "kind": "any"
+      }
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/_view/import.js",
+      "name": "GET /_view/import.js"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/_view/runtime.js",
+      "name": "GET /_view/runtime.js"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "POST",
+      "path": "/_view/shard/pets.Paged-f8c0eb",
+      "name": "POST /_view/shard/pets.Paged-f8c0eb",
+      "description": "view shard pets.Paged-f8c0eb"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "POST",
+      "path": "/_view/shard/pets.PetResults-175d88",
+      "name": "POST /_view/shard/pets.PetResults-175d88",
+      "description": "view shard pets.PetResults-175d88"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/_view/twins.js",
+      "name": "GET /_view/twins.js"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/assets/*path",
+      "name": "GET /assets/*path"
+    },
+    {
+      "service": "app",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/templui/js/*path",
+      "name": "GET /templui/js/*path"
+    },
+    {
+      "service": "board",
+      "module": "board",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/board",
+      "name": "GET /board",
+      "return": {
+        "kind": "any"
+      }
+    },
+    {
+      "service": "board",
+      "module": "board",
+      "transport": "rest",
+      "method": "GET",
+      "path": "/board/_live",
+      "name": "GET /board/_live",
+      "return": {
+        "kind": "any"
+      }
+    }
+  ],
+  "refs": {
+    "ChartProps": {
+      "fields": [
+        {
+          "name": "Kinds",
+          "jsonName": "kinds",
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "ref",
+              "ref": "KindCount"
+            }
+          }
+        },
+        {
+          "name": "Query",
+          "jsonName": "query",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        }
+      ]
+    },
+    "KindCount": {
+      "fields": [
+        {
+          "name": "Kind",
+          "jsonName": "kind",
+          "type": {
+            "kind": "primitive",
+            "primitive": "string"
+          }
+        },
+        {
+          "name": "Count",
+          "jsonName": "count",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        }
+      ]
+    },
+    "MeterProps": {
+      "fields": [
+        {
+          "name": "Adopted",
+          "jsonName": "adopted",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        },
+        {
+          "name": "Total",
+          "jsonName": "total",
+          "type": {
+            "kind": "primitive",
+            "primitive": "integer"
+          }
+        }
+      ]
+    }
+  },
+  "islands": {
+    "AdoptionMeter": {
+      "kind": "ref",
+      "ref": "MeterProps"
+    },
+    "KindChart": {
+      "kind": "ref",
+      "ref": "ChartProps"
+    }
+  }
+}

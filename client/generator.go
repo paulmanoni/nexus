@@ -52,6 +52,7 @@ func GenerateClientDTS(m Manifest) string {
 	writeGraphqlOps(&b, m)
 	writeWSMessages(&b, m)
 	writeInertiaTypes(&b, m)
+	writeIslandTypes(&b, m)
 	writeClientRuntime(&b)
 	return b.String()
 }
@@ -323,6 +324,27 @@ func writeInertiaTypes(b *strings.Builder, m Manifest) {
 		fmt.Fprintf(b, "  %s%s: %s\n", tsKey(k), opt, core)
 	}
 	b.WriteString("  [key: string]: unknown\n")
+	b.WriteString("}\n\n")
+}
+
+// writeIslandTypes emits NexusIslandProps (island name → props type), only
+// when the app declares islands. An island component reads its props as
+//
+//	defineProps<NexusIslandProps['Chart']>()
+func writeIslandTypes(b *strings.Builder, m Manifest) {
+	if len(m.Islands) == 0 {
+		return
+	}
+	names := make([]string, 0, len(m.Islands))
+	for n := range m.Islands {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	b.WriteString("// ── view islands (keyed by name) ─────────────────────────────\n\n")
+	b.WriteString("export interface NexusIslandProps {\n")
+	for _, n := range names {
+		fmt.Fprintf(b, "  %s: %s\n", tsLiteral(n), pagePropsType(m.Islands[n]))
+	}
 	b.WriteString("}\n\n")
 }
 

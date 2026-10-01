@@ -1036,3 +1036,123 @@ test('env: a sourcemap comes back when magic-string is available', async (t) => 
   if (hasMagicString) assert.ok(r.map && r.map.mappings, 'map generated')
   else assert.equal(r.map, null)
 })
+
+// ---- nexus-islands ---------------------------------------------------------
+
+function islandsProject(t) {
+  const root = tmpRoot(t)
+  const dir = join(root, 'src', 'islands')
+  mkdirSync(join(dir, 'admin'), { recursive: true })
+  for (const f of ['Chart.vue', 'admin/Editor.tsx', 'Clock.ts', '_setup.ts', 'Chart.test.ts', 'types.d.ts']) {
+    writeFileSync(join(dir, f), '')
+  }
+  return { root, dir }
+}
+
+function islandsPlugins(options = {}) {
+  const plugins = nexus(options)
+  return { islands: plugins.find((p) => p.name === 'nexus-islands'), hot: plugins.find((p) => p.name === 'nexus-hot') }
+}
+
+test('islands: the loader maps every island to a lazily imported adapter', (t) => {
+  const { root } = islandsProject(t)
+  const { islands } = islandsPlugins()
+  islands.config({ root }, { command: 'serve', mode: 'development' })
+  islands.configResolved({ command: 'serve', plugins: [] })
+  assert.equal(islands.resolveId('virtual:nexus-islands'), '\0virtual:nexus-islands')
+  const loader = islands.load('\0virtual:nexus-islands')
+  for (const name of ['Chart', 'admin/Editor', 'Clock']) {
+    assert.ok(loader.includes(`"${name}": () => import("virtual:nexus-island/${name}")`), loader)
+  }
+  for (const not of ['_setup', 'Chart.test', 'types']) assert.ok(!loader.includes(`"${not}"`), loader)
+  assert.ok(!loader.includes('@react-refresh'), 'no React plugin, no preamble')
+
+  const ctx = { addWatchFile() {}, error(m) { throw new Error(m) } }
+  const vue = islands.load.call(ctx, '\0virtual:nexus-island/Chart')
+  assert.match(vue, /from 'vue'/)
+  assert.match(vue, /import setup from ".*\/src\/islands\/_setup\.ts"/)
+  assert.match(islands.load.call(ctx, '\0virtual:nexus-island/admin/Editor'), /from 'react-dom\/client'/)
+  assert.match(islands.load.call(ctx, '\0virtual:nexus-island/Clock'), /^export \{ mount \} from ".*\/Clock\.ts"/)
+  assert.throws(() => islands.load.call(ctx, '\0virtual:nexus-island/Nope'), /no island named Nope/)
+})
+
+test('islands: React islands get the Fast Refresh preamble in dev', (t) => {
+  const { root } = islandsProject(t)
+  const { islands } = islandsPlugins()
+  islands.config({ root }, { command: 'serve', mode: 'development' })
+  islands.configResolved({ command: 'serve', plugins: [{ name: 'vite:react-refresh' }] })
+  assert.match(islands.load('\0virtual:nexus-islands'), /^import RefreshRuntime from '\/@react-refresh'/)
+})
+
+test('islands: the build adds the loader entry beside the app entries', (t) => {
+  const { root } = islandsProject(t)
+  const build = (options, input, env = {}) => {
+    const { islands } = islandsPlugins(options)
+    islands.config({ root, build: env.ssr ? { ssr: 'src/ssr.ts' } : {} }, { command: 'build', mode: 'production' })
+    return islands.options({ input })
+  }
+  // Vite's default index.html, absent: an islands-only build.
+  assert.deepEqual(build({}, join(root, 'index.html')).input, { 'nexus-islands': 'virtual:nexus-islands' })
+  writeFileSync(join(root, 'index.html'), '')
+  assert.deepEqual(build({}, join(root, 'index.html')).input, {
+    index: join(root, 'index.html'),
+    'nexus-islands': 'virtual:nexus-islands',
+  })
+  assert.deepEqual(build({}, ['src/main.ts']).input, { main: 'src/main.ts', 'nexus-islands': 'virtual:nexus-islands' })
+  assert.deepEqual(build({}, { app: 'src/app.ts' }).input, { app: 'src/app.ts', 'nexus-islands': 'virtual:nexus-islands' })
+  assert.equal(build({ islands: false }, 'src/main.ts'), null)
+  assert.equal(build({}, 'src/main.ts', { ssr: true }), null)
+  assert.equal(build({ islands: 'src/none' }, 'src/main.ts'), null)
+})
+
+test('islands: the hot file says the dev server serves islands', async (t) => {
+  const { root } = islandsProject(t)
+  const { islands, hot } = islandsPlugins()
+  islands.config({ root }, { command: 'serve', mode: 'development' })
+  hot.config({ root }, { command: 'serve', mode: 'development' })
+  hot.configResolved(resolvedConfig(root))
+  const server = mockServer()
+  hot.configureServer(server)
+  await server.listen()
+  const written = JSON.parse(readFileSync(join(root, 'dist', '.vite', 'nexus-hot.json'), 'utf8'))
+  assert.equal(written.islands, true)
+  // No index.html: the loader is the only entry, so the app serves no shell.
+  assert.deepEqual(written.entries, ['virtual:nexus-islands'])
+})
+
+test('islands: adapters get the signal context; renderers and the server render on the server', (t) => {
+  const { root } = islandsProject(t)
+  const { islands } = islandsPlugins({ islands: { ssr: true } })
+  islands.config({ root }, { command: 'build', mode: 'production' })
+  islands.configResolved({ command: 'build', plugins: [] })
+  const ctx = { addWatchFile() {}, error(m) { throw new Error(m) } }
+  const vue = islands.load.call(ctx, '\0virtual:nexus-island/Chart')
+  assert.match(vue, /models\['onUpdate:' \+ k\]/)
+  assert.match(vue, /ctx\.hydrate \? createSSRApp : createApp/)
+  assert.match(islands.load.call(ctx, '\0virtual:nexus-island/admin/Editor'), /hydrateRoot\(el/)
+  assert.equal(islands.resolveId('virtual:nexus-islands-server'), '\0virtual:nexus-islands-server')
+  const server = islands.load.call(ctx, '\0virtual:nexus-islands-server')
+  assert.match(server, /"Chart": \(\) => import\("virtual:nexus-island-server\/Chart"\)/)
+  assert.match(server, /NEXUS_ISLANDS_PORT\) \|\| 13715/)
+  assert.match(islands.load.call(ctx, '\0virtual:nexus-island-server/Chart'), /from 'vue\/server-renderer'/)
+  assert.match(islands.load.call(ctx, '\0virtual:nexus-island-server/admin/Editor'), /from 'react-dom\/server'/)
+  assert.match(islands.load.call(ctx, '\0virtual:nexus-island-server/Clock'), /exports no render\(props\) for SSR/)
+})
+
+test('islands: a build fails on a declared island without a file, and reports unused ones', (t) => {
+  const { root } = islandsProject(t)
+  mkdirSync(join(root, 'sdk'), { recursive: true })
+  const write = (islands) => writeFileSync(join(root, 'sdk', 'manifest.json'), JSON.stringify({ endpoints: [], islands }))
+  const run = () => {
+    const { islands } = islandsPlugins()
+    islands.config({ root }, { command: 'build', mode: 'production' })
+    islands.configResolved({ command: 'build', plugins: [], root })
+    const warns = []
+    islands.buildStart.call({ warn: (m) => warns.push(m), error: (m) => { throw new Error(m) } })
+    return warns
+  }
+  write({ Chart: {}, Clock: {}, 'admin/Editor': {}, Map: {} })
+  assert.throws(run, /1 island\(s\) the app declares have no file under src\/islands: Map/)
+  write({ Chart: {} })
+  assert.deepEqual(run(), ['islands nothing declares (view.NewIsland): Clock, admin/Editor'])
+})

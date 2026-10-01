@@ -79,7 +79,14 @@ type Hot struct {
 	Base    string   `json:"base"`
 	Entries []string `json:"entries"`
 	PID     int      `json:"pid"`
+	// Islands reports that the project has an islands directory: the dev
+	// server serves IslandsModule, the loader view.Island mounts from.
+	Islands bool `json:"islands,omitempty"`
 }
+
+// IslandsModule is the dev server's id for the islands loader; the browser
+// imports it at URL("@id/" + IslandsModule).
+const IslandsModule = "virtual:nexus-islands"
 
 // URL resolves a path served by the dev server, honouring Vite's base.
 //
@@ -120,14 +127,17 @@ func (h *Hot) prefix() string {
 // ClientURL is the Vite client script that drives HMR.
 func (h *Hot) ClientURL() string { return h.URL("@vite/client") }
 
-// Entry is the first declared entry, or "" when none was declared. It may be
+// Entry is the first declared entry, or "" when none was declared; the
+// islands loader is not the app's entry. It may be
 // index.html — Vite's default input for an SPA. Use ModuleEntry when the
 // caller needs something a <script> tag can load.
 func (h *Hot) Entry() string {
-	if len(h.Entries) == 0 {
-		return ""
+	for _, e := range h.Entries {
+		if e != IslandsModule {
+			return e
+		}
 	}
-	return h.Entries[0]
+	return ""
 }
 
 // ModuleEntry is the first declared entry that is a module rather than an
@@ -135,7 +145,7 @@ func (h *Hot) Entry() string {
 // Inertia page) needs this; one that serves index.html does not.
 func (h *Hot) ModuleEntry() string {
 	for _, e := range h.Entries {
-		if e != "" && !isHTML(e) {
+		if e != "" && e != IslandsModule && !isHTML(e) {
 			return e
 		}
 	}

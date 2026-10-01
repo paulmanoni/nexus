@@ -219,3 +219,25 @@ func TestImmutableUsesTheRecordsNames(t *testing.T) {
 		}
 	}
 }
+
+// The islands loader is an entry of its own: found by its chunk name, and
+// never taken for the app's entry, even when its key sorts first.
+func TestIslandsEntry(t *testing.T) {
+	m, err := Load(fstest.MapFS{".vite/manifest.json": {Data: []byte(`{
+  "src/main.ts": {"file":"assets/main-DfUgamcr.js","name":"main","isEntry":true},
+  "nexus-islands": {"file":"assets/nexus-islands-B2xQ9fLk.js","name":"nexus-islands","isEntry":true}
+}`)}}, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.EntryKey(); got != "src/main.ts" {
+		t.Fatalf("EntryKey = %q, want the app's entry", got)
+	}
+	if got := m.IslandsFile(); got != "assets/nexus-islands-B2xQ9fLk.js" {
+		t.Fatalf("IslandsFile = %q", got)
+	}
+	plain, _ := Load(fstest.MapFS{".vite/manifest.json": {Data: []byte(sample)}}, ".")
+	if got := plain.IslandsFile(); got != "" {
+		t.Fatalf("a build without islands: IslandsFile = %q", got)
+	}
+}

@@ -103,6 +103,9 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 	if isSchemaOpaque(t) {
 		return TypeRef{Kind: "any", Optional: true}
 	}
+	if as := schemaAs(t); as != nil {
+		return WalkType(as, refs)
+	}
 	// time.Time is special — render as primitive string. Has to come
 	// before the struct branch.
 	if t == reflect.TypeOf(time.Time{}) {
@@ -110,6 +113,9 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 	}
 	switch t.Kind() {
 	case reflect.Pointer:
+		if schemaAs(t.Elem()) != nil {
+			return WalkType(t.Elem(), refs) // present whenever its owner is
+		}
 		ref := WalkType(t.Elem(), refs)
 		ref.Optional = true
 		return ref
@@ -189,6 +195,31 @@ func WalkType(t reflect.Type, refs map[string]NamedType) TypeRef {
 type SchemaOpaque interface{ NexusSchemaOpaque() }
 
 var schemaOpaqueType = reflect.TypeOf((*SchemaOpaque)(nil)).Elem()
+
+// SchemaAs is implemented by a type whose clients see another type in its
+// place: WalkType walks NexusSchemaAs's result instead. view.Signal[T] is
+// the case in point — an island receives the signal's value, a T. The
+// method is called on a zero value.
+type SchemaAs interface{ NexusSchemaAs() reflect.Type }
+
+var schemaAsType = reflect.TypeOf((*SchemaAs)(nil)).Elem()
+
+// schemaAs is the type t stands for, or nil. Like isSchemaOpaque it accepts
+// a marker on the pointer receiver.
+func schemaAs(t reflect.Type) reflect.Type {
+	switch {
+	case t.Kind() == reflect.Interface:
+		return nil
+	case t.Implements(schemaAsType):
+		if t.Kind() == reflect.Pointer {
+			return nil // the pointer case walks the element, which answers
+		}
+		return reflect.Zero(t).Interface().(SchemaAs).NexusSchemaAs()
+	case reflect.PointerTo(t).Implements(schemaAsType):
+		return reflect.New(t).Interface().(SchemaAs).NexusSchemaAs()
+	}
+	return nil
+}
 
 // isSchemaOpaque reports whether t (or *t, for value types whose marker
 // sits on the pointer receiver) implements SchemaOpaque. Interface types

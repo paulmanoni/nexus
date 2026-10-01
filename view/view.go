@@ -40,8 +40,14 @@ func options() []nexus.Option {
 	return []nexus.Option{
 		nexus.AsRestHandler("GET", "/_view/runtime.js",
 			func() httpx.HandlerFunc { return serveJS(func() string { return runtimeJS }) }, nexus.HideFromDashboard()),
+		nexus.AsRestHandler("GET", "/_view/import.js",
+			func() httpx.HandlerFunc { return serveJS(func() string { return importJS }) }, nexus.HideFromDashboard()),
 		nexus.AsRestHandler("GET", "/_view/twins.js",
 			func() httpx.HandlerFunc { return serveJS(twinsJS) }, nexus.HideFromDashboard()),
+		nexus.Invoke(func(app *nexus.App) {
+			lastApp.Store(app)
+			registerIslands(app)
+		}),
 	}
 }
 
@@ -67,7 +73,7 @@ func (renderer) Render(c *httpx.Ctx, result any) error {
 		return fmt.Errorf("view: the handler returned %T, want a templ.Component", result)
 	}
 	var buf bytes.Buffer
-	if err := comp.Render(withRender(c.Request.Context(), &render{}), &buf); err != nil {
+	if err := comp.Render(withRender(withApp(c.Request.Context(), c), &render{}), &buf); err != nil {
 		return err
 	}
 	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())
