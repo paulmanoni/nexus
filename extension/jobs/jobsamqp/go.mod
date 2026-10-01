@@ -3,7 +3,7 @@ module github.com/paulmanoni/nexus/extension/jobs/jobsamqp
 go 1.26.2
 
 require (
-	github.com/paulmanoni/nexus v1.77.1
+	github.com/paulmanoni/nexus v1.77.2
 	github.com/rabbitmq/amqp091-go v1.13.0
 )
 
