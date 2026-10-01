@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.77.0] - 2026-10-01
+
 ### Added
 
 - **Islands in templ views: `view.NewIsland`.** An island mounts a component
