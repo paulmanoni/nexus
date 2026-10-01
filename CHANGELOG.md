@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.77.2] - 2026-10-01
+
+### Fixed
+
+- **In-app navigation only patches in view pages.** `view.Link` and the Back
+  button patched whatever HTML a fetch returned into the page, so a redirect
+  (an expired session, a page another app serves) could put a foreign page,
+  such as an Inertia shell, into a templ document without the styles its
+  server adds on a real page load. A page that doesn't load the view runtime
+  now gets a full page load, and Back is handled in place only for history
+  entries the runtime made; the browser restores every other entry itself.
+
 ## [1.77.1] - 2026-10-01
 
 ### Added

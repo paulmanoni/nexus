@@ -805,16 +805,21 @@
   // navigate replaces the page with the one at url without reloading: the
   // body is patched in place, stylesheets and scripts the new head needs are
   // added, and live sockets follow. Anything unexpected falls back to a
-  // normal page load.
+  // normal page load, including a page that isn't a view page (one a
+  // redirect led to, or another app's shell), which only a real load renders
+  // as its server meant it.
   function navigate(url, push) {
+    var target = url;
     return fetch(url, { headers: { Accept: "text/html" }, credentials: "same-origin" })
       .then(function (res) {
         var type = res.headers.get("Content-Type") || "";
+        if (res.url) target = res.url;
         if (!res.ok || type.indexOf("text/html") !== 0) throw new Error("not a page");
-        return res.text().then(function (text) { return { text: text, url: res.url || url }; });
+        return res.text().then(function (text) { return { text: text, url: target }; });
       })
       .then(function (page) {
         var doc = new DOMParser().parseFromString(page.text, "text/html");
+        if (!doc.querySelector('script[src*="/_view/runtime.js"]')) throw new Error("not a view page");
         mergeHead(doc.head);
         morph(document.body, doc.body);
         if (push) history.pushState({ nx: true }, "", page.url);
@@ -825,7 +830,8 @@
         if (push) window.scrollTo(0, 0);
       })
       .catch(function () {
-        location.href = url;
+        if (push) location.assign(target);
+        else location.replace(target);
       });
   }
 
@@ -926,7 +932,16 @@
       document.addEventListener("visibilitychange", function () {
         if (document.visibilityState === "visible") reconnectAll();
       });
-      window.addEventListener("popstate", function () { navigate(location.href, false); });
+      // Only entries this runtime made are patched in place; the browser
+      // restores every other entry itself.
+      var mark = function () {
+        if (!history.state || !history.state.nx) history.replaceState(Object.assign({}, history.state, { nx: true }), "");
+      };
+      mark();
+      window.addEventListener("hashchange", mark);
+      window.addEventListener("popstate", function (e) {
+        if (e.state && e.state.nx) navigate(location.href, false);
+      });
     };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
     else boot();
