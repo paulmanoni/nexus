@@ -294,7 +294,8 @@ like a Resource): server-owned state per connected page over a WebSocket; the DI
 the template, each page/connection gets a copy; conventions `Mount(ctx, [*view.Socket], deps…,
 pathParams…) error`, `templ (x *T) Render()`, events = exported `func(ctx, deps…, args…) error`
 (deps are pointer/interface params) sent with `view.Send(x.Method, args…)`; the page is re-rendered
-and patched in place (focus/typing kept; signals win over the server copy). Push: `sock.Subscribe(topics…)`
+and patched in place (focus/typing kept; signals win over the server copy; an element with an `id` and
+`data-nx-ignore` is left as the browser has it until its id changes — script-drawn charts, app shells). Push: `sock.Subscribe(topics…)`
 in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(ctx, deps…, msg view.Message)
 error`, then re-render (in-process: a replica's own pages). Forms: `view.Submit(x.Add)` /
 `view.Change(x.Validate)` on a form send its fields to an event whose last param is a `form:`-tagged

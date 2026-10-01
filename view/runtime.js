@@ -340,6 +340,9 @@
   // updated, matching elements by id or else by position and tag, so focus,
   // selection and the value being typed survive a live update.
   function morph(el, next) {
+    // data-nx-ignore: the element is the browser's while its id holds (a
+    // chart a script drew into, say); a new id replaces it.
+    if (el.hasAttribute("data-nx-ignore") && el.id && el.id === next.id) return;
     if (el.tagName === "NX-ISLAND" && islands.has(el)) {
       // A mounted island keeps its DOM: new props reach it through walk.
       // Another island in its place unmounts it, and the fallback returns.

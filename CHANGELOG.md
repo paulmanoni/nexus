@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.77.1] - 2026-10-01
+
+### Added
+
+- **`data-nx-ignore` for live pages.** An element with an `id` and
+  `data-nx-ignore` is left as the browser has it when a live page or in-app
+  navigation patches the page, until a render gives it another `id`. Use it
+  for markup a script owns, such as a chart's canvas (the patch would strip
+  the size the chart library set) or an app shell's open menus.
+
 ## [1.77.0] - 2026-10-01
 
 ### Added

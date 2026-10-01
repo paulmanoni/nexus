@@ -140,6 +140,10 @@ templ (b *Board) Render() {
   in place**: focus, caret and what you are typing survive. Signals still work
   inside `Render` for browser-only state (a note field, a toggle) — the signal
   wins over the server's copy of its value.
+- **`data-nx-ignore`** leaves an element (with an `id`) as the browser has it:
+  something a script drew into, like a chart canvas, or a shell whose menus
+  and collapsed state the user set. A render that gives it a new `id` (a chart
+  whose data changed) replaces it.
 - The first request renders the page on the server; the page then connects
   (`<path>/_live`), mounts again with `Connected()` true, and reconnects if the
   socket drops. Gates on `view.Live` apply to both.
