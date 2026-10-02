@@ -4,12 +4,14 @@ go 1.26.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.39.0
-	github.com/paulmanoni/nexus v1.77.3
+	github.com/paulmanoni/nexus v1.78.0
 	github.com/redis/go-redis/v9 v9.19.0
 )
 
 require (
 	braces.dev/errtrace v0.4.0 // indirect
+	github.com/Oudwins/tailwind-merge-go v0.2.0 // indirect
+	github.com/a-h/templ v0.3.1020 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

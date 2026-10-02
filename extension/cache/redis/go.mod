@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/failsafe-go/failsafe-go v0.9.6
-	github.com/paulmanoni/nexus v1.77.3
+	github.com/paulmanoni/nexus v1.78.0
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	go.uber.org/zap v1.28.0
@@ -12,6 +12,8 @@ require (
 
 require (
 	braces.dev/errtrace v0.4.0 // indirect
+	github.com/Oudwins/tailwind-merge-go v0.2.0 // indirect
+	github.com/a-h/templ v0.3.1020 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect

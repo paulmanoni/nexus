@@ -4,8 +4,8 @@ go 1.26.2
 
 require (
 	github.com/a-h/templ v0.3.1020
-	github.com/paulmanoni/nexus v1.77.3
-	github.com/paulmanoni/nexus/view v1.77.3
+	github.com/paulmanoni/nexus v1.78.0
+	github.com/paulmanoni/nexus/view v1.78.0
 	github.com/templui/templui v1.13.2
 )
 
