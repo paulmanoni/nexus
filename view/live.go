@@ -97,7 +97,20 @@ func (s *Socket) Connected() bool { return s != nil && s.connected }
 // args are encoded when the page renders; the server decodes them into the
 // method's argument parameters.
 func Send(method any, args ...any) templ.ComponentScript {
-	name := methodName(method)
+	return send(methodName(method), args)
+}
+
+// SendTo is Send for the method named name on recv, for a live page whose
+// type is generic: Go builds a generic type's method values as closures that
+// don't carry the method's name, so Send can't read it. It panics, as Send
+// does, when recv has no such method.
+//
+//	<button onclick={ view.SendTo(p, "Edit", row.ID) }>edit</button>
+func SendTo(recv any, name string, args ...any) templ.ComponentScript {
+	return send(namedMethod(recv, name), args)
+}
+
+func send(name string, args []any) templ.ComponentScript {
 	b, err := json.Marshal(args)
 	if err != nil {
 		panic(fmt.Sprintf("view.Send(%s): arguments are not JSON-encodable: %v", name, err))
@@ -131,9 +144,22 @@ func methodName(method any) string {
 	full := runtime.FuncForPC(v.Pointer()).Name()
 	m := methodValueName.FindStringSubmatch(full)
 	if m == nil {
+		if strings.Contains(full, "[...]") {
+			// Go builds a generic type's method values as closures, which
+			// don't carry the method's name.
+			panic(fmt.Sprintf("view.Send: %s is a method of a generic type, which view can't name — use view.SendTo(recv, \"Method\", …) (or SubmitTo, ChangeTo)", full))
+		}
 		panic(fmt.Sprintf("view.Send: %s is not a method value — pass l.Cancel, not a function", full))
 	}
 	return m[1]
+}
+
+// namedMethod checks that recv has an exported method called name.
+func namedMethod(recv any, name string) string {
+	if _, ok := reflect.TypeOf(recv).MethodByName(name); !ok || !isExported(name) {
+		panic(fmt.Sprintf("view.SendTo: %T has no exported method %q", recv, name))
+	}
+	return name
 }
 
 func liveName(t reflect.Type) string {

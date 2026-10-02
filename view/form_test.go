@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -147,4 +149,53 @@ func TestLivePanicIsAnError(t *testing.T) {
 	if r := reply(t, c); r.Ref != 8 {
 		t.Fatalf("the connection did not survive: %+v", r)
 	}
+}
+
+func TestBindFormValues(t *testing.T) {
+	sent := map[string][]string{"name": {"Rex"}, "tags": {"a", "b"}}
+	v, err := bindForm(reflect.TypeFor[url.Values](), sent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := v.Interface().(url.Values)
+	if got.Get("name") != "Rex" || len(got["tags"]) != 2 {
+		t.Fatalf("got %v", got)
+	}
+	if _, err := bindForm(reflect.TypeFor[int](), sent); err == nil || !strings.Contains(err.Error(), "url.Values") {
+		t.Fatalf("a non-struct should be refused, naming the choices: %v", err)
+	}
+}
+
+type genericLive[T any] struct{ v T }
+
+func (g *genericLive[T]) Ping(ctx context.Context) error { return nil }
+
+func TestSendNamesGenericMethods(t *testing.T) {
+	defer func() {
+		msg := fmt.Sprint(recover())
+		if !strings.Contains(msg, "generic type") {
+			t.Fatalf("want a generic-type explanation, got %q", msg)
+		}
+	}()
+	g := &genericLive[int]{}
+	// A generic method value taken inside generic code is a closure.
+	sendFrom(g)
+}
+
+func sendFrom[T any](g *genericLive[T]) { Send(g.Ping) }
+
+func TestSendToNamesMethodsOfGenericTypes(t *testing.T) {
+	g := &genericLive[int]{}
+	if got := SendTo(g, "Ping", 7).Call; !strings.Contains(got, "&#34;Ping&#34;") || !strings.Contains(got, "[7]") {
+		t.Fatalf("SendTo: %s", got)
+	}
+	if got := SubmitTo(g, "Ping").Call; !strings.Contains(got, "submit") {
+		t.Fatalf("SubmitTo: %s", got)
+	}
+	defer func() {
+		if msg := fmt.Sprint(recover()); !strings.Contains(msg, `no exported method "Nope"`) {
+			t.Fatalf("want a missing-method panic, got %q", msg)
+		}
+	}()
+	SendTo(g, "Nope")
 }
