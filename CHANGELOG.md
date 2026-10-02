@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.77.3] - 2026-10-02
+
+### Fixed
+
+- **A `<select>` follows the server's choice on live pages.** Once a user
+  picked an option, a browser stops letting the options' `selected`
+  attributes move the selection, so a select kept the user's old choice
+  after the server rendered a different one (a form reset to new defaults,
+  another record loaded) and the next form event sent the stale value back.
+  A select now takes the option the server marks whenever that changed and
+  the select doesn't have focus, the rule text fields already follow; a
+  user's choice the server agrees with is left alone.
+
 ## [1.77.2] - 2026-10-01
 
 ### Fixed

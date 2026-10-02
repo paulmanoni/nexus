@@ -354,8 +354,34 @@
       }
       unmountIsland(el);
     }
+    var chosen = el.tagName === "SELECT" ? markedOptions(el) : null;
     syncAttributes(el, next);
     morphChildren(el, next);
+    if (chosen !== null) syncSelection(el, chosen);
+  }
+
+  // markedOptions are the options the server marks selected, as it rendered
+  // them last.
+  function markedOptions(select) {
+    return Array.from(select.options)
+      .filter(function (o) { return o.hasAttribute("selected"); })
+      .map(function (o) { return o.value; })
+      .join("\u0000");
+  }
+
+  // syncSelection follows the server's choice of option, like a field's
+  // value: when the options it marks selected changed, and the select hasn't
+  // focus. (A select the user changed no longer follows its options'
+  // selected attributes on its own.)
+  function syncSelection(select, before) {
+    if (markedOptions(select) === before) return;
+    if (typeof document !== "undefined" && select === document.activeElement) return;
+    var any = false;
+    Array.from(select.options).forEach(function (o) {
+      o.selected = o.hasAttribute("selected");
+      any = any || o.selected;
+    });
+    if (!any && !select.multiple && select.options.length) select.selectedIndex = 0;
   }
 
   // A form field's current value belongs to the user until the server
