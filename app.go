@@ -480,6 +480,9 @@ func New(cfg Config) *App {
 			// endpoint unmounted (fail-closed). The orchestration
 			// platform sets NEXUS_ADMIN_TOKEN at deploy time.
 			AdminToken: os.Getenv(EnvAdminToken),
+			// SchemaRefs resolves the named types endpoint schemas point
+			// at, for the console's Input / Try it sections.
+			SchemaRefs: a.SchemaRefs,
 			// Plugins closure adapts app.Plugins() (PluginRecord) into
 			// the dashboard's own PluginInfo shape so the package can
 			// surface plugin metadata without importing nexus.

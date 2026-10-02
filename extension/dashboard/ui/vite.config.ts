@@ -13,5 +13,7 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     emptyOutDir: true,
+    // The console reads .vite/manifest.json to load the entry as an island.
+    manifest: true,
   },
 })

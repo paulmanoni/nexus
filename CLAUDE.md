@@ -1260,14 +1260,25 @@ headers on by default, opt-in CSRF. `nexus docs security`.
 
 ## 9. Dashboard (`/__nexus`)
 
-Live introspection UI (needs introspection open — see §2). Tabs: **Architecture**
-(graph grouped by module — drill into a module to see its endpoints/services/
-resources/workers/crons; collapsed at scale; edges bundle with counts; ELK layout,
-minimap, dark mode; live traffic pulses), Endpoints (per-op tester), Crons, Rate
-limits, Auth, Traces. Gate it behind your own middleware via
-`Config.Middleware.Dashboard`.
+Live introspection UI (needs introspection open — see §2). A server-rendered
+**templ + templUI console** (`extension/dashboard/console*.templ`; nifi-style slate
+top bar, status bar, dense tables, light/dark) with tabs: **Architecture** (`/__nexus/`
+— the Vue topology canvas embedded as an island: graph grouped by module, drill-down,
+collapsed at scale, bundled edges, ELK layout, minimap, live traffic pulses),
+**Endpoints** (`/__nexus/ui/endpoints` — module/service rail, server-side search ·
+sort · 100-row pages; detail page with input schema, recent errors, a REST/GraphQL/WS
+tester and rate-limit overrides), **Services**, **Resources**, **Workers & Crons**
+(run/pause/resume), **Traces** (+ waterfall per trace), **Auth** (cached identities,
+invalidate, live 401/403 rejections from the trace buffer; when auth is wired), **Runtime** (global chain, plugins, middleware,
+GraphQL cache). Gate it behind your own middleware via `Config.Middleware.Dashboard`.
+Editing it: `make dashboard` regenerates the templ code and the embedded Tailwind CSS
+(`assets/console.css`, both committed — a plain `go build` needs neither tool); the
+canvas is `ui/` (`npm run build`, committed `ui/dist`). The templUI components are
+vendored under `internal/ui` (no templUI module dependency).
 
-The dashboard is **WebSocket-driven, not polled**: `/__nexus/live` pushes one
+The dashboard is **WebSocket-driven, not polled**: the console re-renders its live
+regions when `/__nexus/live` pushes (a 304 when nothing on screen changed), and
+`/__nexus/live` pushes one
 state snapshot (services, endpoints, resources, workers, stats, crons,
 ratelimits, graphqlCache, middlewares, auth) on change + a 5s heartbeat, and
 `/__nexus/events` streams traces — gathered only while a client is connected,

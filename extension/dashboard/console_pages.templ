@@ -1,0 +1,434 @@
+package dashboard
+
+import (
+	"github.com/paulmanoni/nexus/extension/cron"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/badge"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/button"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/icon"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/table"
+	"github.com/paulmanoni/nexus/registry"
+)
+
+// ---- Services ----
+
+templ servicesPage(v servicesView) {
+	@pageHead("Services", v.Pager.Total) {
+		@searchBox(v.Q, "Search services…")
+	}
+	<div class="p-4">
+		<div class="overflow-x-auto rounded-sm border bg-card">
+			@table.Table(table.Props{ID: "services"}) {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() {
+							@sortHead(v.Q, "name", "Service", false)
+						}
+						@table.Head(table.HeadProps{Class: "text-right"}) {
+							@sortHead(v.Q, "eps", "Endpoints", true)
+						}
+						@table.Head() {
+							Resources
+						}
+						@table.Head() {
+							Depends on
+						}
+						@table.Head(table.HeadProps{Class: "text-right"}) {
+							@sortHead(v.Q, "reqs", "Requests", true)
+						}
+						@table.Head(table.HeadProps{Class: "text-right"}) {
+							@sortHead(v.Q, "errs", "Errors", true)
+						}
+					}
+				}
+				@table.Body() {
+					for _, s := range v.Rows {
+						@table.Row() {
+							@table.Cell(table.CellProps{Class: "max-w-0 w-[34%]"}) {
+								<div class="flex items-center gap-2">
+									<span class="truncate font-medium">{ s.Name }</span>
+									if s.Remote {
+										@badge.Badge(badge.Props{Variant: badge.VariantInfo}) {
+											remote
+										}
+									}
+									if s.Deployment != "" {
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											{ s.Deployment }
+										}
+									}
+								</div>
+								if s.Description != "" {
+									<div class="truncate text-[11.5px] text-muted-foreground">{ s.Description }</div>
+								}
+							}
+							@table.Cell(table.CellProps{Class: "text-right tabular-nums"}) {
+								<a href={ templ.SafeURL(Prefix + "/ui/endpoints?q=" + queryEscape(s.Name)) } class="text-accent-text no-underline hover:underline">{ itoa(s.Endpoints) }</a>
+							}
+							@table.Cell(table.CellProps{Class: "max-w-[260px]"}) {
+								@chipsMax(s.ResourceDeps, badge.VariantOutline, 4)
+							}
+							@table.Cell(table.CellProps{Class: "max-w-[260px]"}) {
+								@chipsMax(s.ServiceDeps, badge.VariantSecondary, 4)
+							}
+							@table.Cell(table.CellProps{Class: "text-right tabular-nums"}) {
+								{ fmtNum(s.Reqs) }
+							}
+							@table.Cell(table.CellProps{Class: "text-right tabular-nums"}) {
+								<span class={ errClass(s.Errors) }>{ fmtNum(s.Errors) }</span>
+							}
+						}
+					}
+					if len(v.Rows) == 0 {
+						@emptyRow(6, emptyMessage(v.Q, "No services registered."))
+					}
+				}
+			}
+		</div>
+		@pagerBar(v.Q, v.Pager)
+	</div>
+}
+
+templ chips(items []string, v badge.Variant) {
+	@chipsMax(items, v, 0)
+}
+
+// chipsMax lists up to max items (0 = all) and counts the rest, so a
+// service using forty resources stays one row.
+templ chipsMax(items []string, v badge.Variant, max int) {
+	if len(items) == 0 {
+		<span class="text-muted-foreground">—</span>
+	} else {
+		<div class="flex flex-wrap gap-1">
+			for i, it := range items {
+				if max == 0 || i < max {
+					@badge.Badge(badge.Props{Variant: v}) {
+						{ it }
+					}
+				}
+			}
+			if max > 0 && len(items) > max {
+				<span class="text-[11px] text-muted-foreground" title={ moreTitle(items[max:]) }>+{ itoa(len(items) - max) }</span>
+			}
+		</div>
+	}
+}
+
+// ---- Resources ----
+
+templ resourcesPage(v resourcesView) {
+	@pageHead("Resources", v.Pager.Total) {
+		if v.Down > 0 {
+			<div class="flex rounded-sm border border-border-strong bg-card p-px text-[12px]">
+				@segLink("All", v.Q.href("down", ""), v.Q.Args["down"] == "")
+				@segLink("Down ("+itoa(v.Down)+")", v.Q.href("down", "1"), v.Q.Args["down"] != "")
+			</div>
+		}
+		@searchBox(v.Q, "Search resources…")
+	}
+	<div class="p-4">
+		<div class="overflow-x-auto rounded-sm border bg-card">
+			@table.Table(table.Props{ID: "resources"}) {
+				@table.Header() {
+					@table.Row() {
+						@table.Head(table.HeadProps{Class: "w-8"}) {}
+						@table.Head() {
+							Resource
+						}
+						@table.Head() {
+							Kind
+						}
+						@table.Head() {
+							Used by
+						}
+						@table.Head() {
+							Details
+						}
+					}
+				}
+				@table.Body() {
+					for _, r := range v.Rows {
+						@table.Row() {
+							@table.Cell() {
+								<span title={ healthText(r.Healthy) } class={ "inline-block size-2.5 rounded-full", templ.KV("bg-ok", r.Healthy), templ.KV("bg-err", !r.Healthy) }></span>
+							}
+							@table.Cell(table.CellProps{Class: "max-w-0 w-[28%]"}) {
+								<div class="flex items-center gap-2">
+									<span class="truncate font-medium">{ r.Name }</span>
+									if !r.Healthy {
+										@badge.Badge(badge.Props{Variant: badge.VariantErr}) {
+											down
+										}
+									}
+								</div>
+								if r.Description != "" {
+									<div class="truncate text-[11.5px] text-muted-foreground">{ r.Description }</div>
+								}
+							}
+							@table.Cell() {
+								@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+									{ string(r.Kind) }
+								}
+							}
+							@table.Cell(table.CellProps{Class: "max-w-[300px]"}) {
+								@chipsMax(r.AttachedTo, badge.VariantSecondary, 4)
+							}
+							@table.Cell(table.CellProps{Class: "max-w-0 w-[30%]"}) {
+								if len(r.Details) > 0 {
+									<details>
+										<summary class="cursor-pointer truncate font-mono text-[11.5px] text-muted-foreground">{ detailsSummary(r.Details) }</summary>
+										<dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-3 font-mono text-[11.5px]">
+											for _, k := range sortedKeys(r.Details) {
+												<dt class="text-muted-foreground">{ k }</dt>
+												<dd class="break-all">{ detailValue(r.Details[k]) }</dd>
+											}
+										</dl>
+									</details>
+								} else {
+									<span class="text-muted-foreground">—</span>
+								}
+							}
+						}
+					}
+					if len(v.Rows) == 0 {
+						@emptyRow(5, emptyMessage(v.Q, "No resources. Databases, caches, queues and disks appear here once bound (db.Bind, cache.Bind, storage.Bind…)."))
+					}
+				}
+			}
+		</div>
+		@pagerBar(v.Q, v.Pager)
+	</div>
+}
+
+// ---- Workers & Crons ----
+
+templ jobsPage(st *consoleState) {
+	@pageHead("Workers & Crons", len(st.Workers)+len(st.Crons)) {
+		@filterBox("#jobs", "Filter…")
+	}
+	<div id="jobs" class="flex flex-col gap-4 p-4">
+		@section("Workers") {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() {
+							Worker
+						}
+						@table.Head() {
+							Status
+						}
+						@table.Head() {
+							Started
+						}
+						@table.Head() {
+							Uses
+						}
+						@table.Head() {
+							Last error
+						}
+					}
+				}
+				@table.Body() {
+					for _, w := range st.Workers {
+						@table.Row(table.RowProps{Attributes: templ.Attributes{"data-search": searchText(w.Name, w.Description, w.Status)}}) {
+							@table.Cell(table.CellProps{Class: "max-w-0 w-[30%]"}) {
+								<div class="font-medium">{ w.Name }</div>
+								if w.Description != "" {
+									<div class="truncate text-[11.5px] text-muted-foreground">{ w.Description }</div>
+								}
+							}
+							@table.Cell() {
+								@workerStatus(w)
+							}
+							@table.Cell(table.CellProps{Class: "text-muted-foreground whitespace-nowrap"}) {
+								@timeAgo(w.StartedAt)
+							}
+							@table.Cell() {
+								@chips(append(append([]string{}, w.ResourceDeps...), w.ServiceDeps...), badge.VariantOutline)
+							}
+							@table.Cell(table.CellProps{Class: "max-w-0 font-mono text-[11.5px] text-err"}) {
+								<div class="truncate" title={ w.LastError }>{ w.LastError }</div>
+							}
+						}
+					}
+					if len(st.Workers) == 0 {
+						@emptyRow(5, "No workers (nexus.AsWorker) registered.")
+					}
+				}
+			}
+		}
+		@section("Crons") {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() {
+							Job
+						}
+						@table.Head() {
+							Schedule
+						}
+						@table.Head() {
+							State
+						}
+						@table.Head() {
+							Next run
+						}
+						@table.Head() {
+							Last run
+						}
+						@table.Head(table.HeadProps{Class: "text-right"}) {
+							Actions
+						}
+					}
+				}
+				@table.Body() {
+					for _, c := range st.Crons {
+						@table.Row(table.RowProps{Attributes: templ.Attributes{"data-search": searchText(c.Name, c.Description, c.Service, c.Schedule)}}) {
+							@table.Cell(table.CellProps{Class: "max-w-0 w-[26%]"}) {
+								<div class="font-medium">{ c.Name }</div>
+								<div class="truncate text-[11.5px] text-muted-foreground">
+									if c.Service != "" {
+										{ c.Service } ·
+									}
+									{ c.Description }
+								</div>
+							}
+							@table.Cell(table.CellProps{Class: "font-mono text-[12px]"}) {
+								{ c.Schedule }
+							}
+							@table.Cell() {
+								@cronState(c)
+							}
+							@table.Cell(table.CellProps{Class: "text-muted-foreground whitespace-nowrap"}) {
+								if c.Paused {
+									—
+								} else if c.NextRun != nil {
+									@timeUntil(*c.NextRun)
+								}
+							}
+							@table.Cell(table.CellProps{Class: "max-w-0"}) {
+								@cronLastRun(c)
+							}
+							@table.Cell(table.CellProps{Class: "text-right whitespace-nowrap"}) {
+								<div class="inline-flex gap-1">
+									@button.Button(button.Props{Variant: button.VariantOutline, Size: button.SizeSm, Disabled: c.Running, Attributes: templ.Attributes{
+										"data-post": Prefix + "/crons/" + pathEscape(c.Name) + "/trigger", "data-success": "Triggered " + c.Name,
+									}}) {
+										@icon.Icon("play", "size-3")
+										Run now
+									}
+									if c.Paused {
+										@button.Button(button.Props{Variant: button.VariantOutline, Size: button.SizeSm, Attributes: templ.Attributes{
+											"data-post": Prefix + "/crons/" + pathEscape(c.Name) + "/resume", "data-success": "Resumed " + c.Name,
+										}}) {
+											Resume
+										}
+									} else {
+										@button.Button(button.Props{Variant: button.VariantGhost, Size: button.SizeSm, Attributes: templ.Attributes{
+											"data-post": Prefix + "/crons/" + pathEscape(c.Name) + "/pause", "data-success": "Paused " + c.Name,
+										}}) {
+											@icon.Icon("pause", "size-3")
+											Pause
+										}
+									}
+								</div>
+							}
+						}
+						if len(c.History) > 0 {
+							<tr class="border-b" data-search={ searchText(c.Name) }>
+								<td colspan="6" class="px-3 pb-2">
+									<details>
+										<summary class="cursor-pointer text-[11.5px] text-muted-foreground">History ({ itoa(len(c.History)) })</summary>
+										<ul class="mt-1 flex flex-col gap-0.5 font-mono text-[11.5px]">
+											for i := len(c.History) - 1; i >= 0; i-- {
+												{{ h := c.History[i] }}
+												<li class="flex gap-3">
+													<span class="text-muted-foreground">{ stamp(h.Started) }</span>
+													<span class={ templ.KV("text-ok", h.Success), templ.KV("text-err", !h.Success) }>
+														if h.Success {
+															ok
+														} else {
+															failed
+														}
+													</span>
+													<span>{ fmtMs(h.DurationMs) }</span>
+													if h.Manual {
+														<span class="text-muted-foreground">manual</span>
+													}
+													<span class="truncate text-err">{ h.Error }</span>
+												</li>
+											}
+										</ul>
+									</details>
+								</td>
+							</tr>
+						}
+					}
+					if len(st.Crons) == 0 {
+						@emptyRow(6, "No crons (app.Cron) registered.")
+					}
+				}
+			}
+		}
+	</div>
+}
+
+templ workerStatus(w registry.Worker) {
+	switch w.Status {
+		case "running":
+			@badge.Badge(badge.Props{Variant: badge.VariantOK}) {
+				running
+			}
+		case "failed":
+			@badge.Badge(badge.Props{Variant: badge.VariantErr}) {
+				failed
+			}
+		case "starting":
+			@badge.Badge(badge.Props{Variant: badge.VariantInfo}) {
+				starting
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				{ w.Status }
+			}
+	}
+}
+
+templ cronState(c cron.Snapshot) {
+	switch {
+		case c.Running:
+			@badge.Badge(badge.Props{Variant: badge.VariantInfo}) {
+				running
+			}
+		case c.Paused:
+			@badge.Badge(badge.Props{Variant: badge.VariantWarn}) {
+				paused
+			}
+		case c.LastRun != nil && !c.LastRun.Success:
+			@badge.Badge(badge.Props{Variant: badge.VariantErr}) {
+				failing
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOK}) {
+				scheduled
+			}
+	}
+}
+
+templ cronLastRun(c cron.Snapshot) {
+	if c.LastRun == nil {
+		<span class="text-muted-foreground">never</span>
+	} else {
+		<div class="flex items-center gap-1.5 whitespace-nowrap">
+			if c.LastRun.Success {
+				@icon.Icon("check-circle", "size-3.5 text-ok")
+			} else {
+				@icon.Icon("x-circle", "size-3.5 text-err")
+			}
+			@timeAgo(c.LastRun.Started)
+			<span class="text-muted-foreground">· { fmtMs(c.LastRun.DurationMs) }</span>
+		</div>
+		if c.LastRun.Error != "" {
+			<div class="truncate font-mono text-[11px] text-err" title={ c.LastRun.Error }>{ c.LastRun.Error }</div>
+		}
+	}
+}

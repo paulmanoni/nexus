@@ -1,0 +1,582 @@
+package dashboard
+
+import (
+	"strings"
+	"time"
+
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/badge"
+	"github.com/paulmanoni/nexus/extension/metrics"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/button"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/icon"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/input"
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/table"
+	"github.com/paulmanoni/nexus/registry"
+)
+
+// architecturePage hosts the Vue topology canvas (ui/) as an island: it
+// owns its live socket, layout and inspector, so the console leaves it alone
+// (the page is Static) and only refreshes the status bar around it.
+templ architecturePage(b vueBundle) {
+	if b.JS == "" {
+		@emptyState("network", "Topology canvas not built", "Run `npm run build` in extension/dashboard/ui to embed the architecture canvas.")
+	} else {
+		for _, css := range b.CSS {
+			<link rel="stylesheet" href={ css }/>
+		}
+		<div id="app" data-embedded class="absolute inset-0" data-keep></div>
+		<script type="module" src={ b.JS }></script>
+	}
+}
+
+templ verbChip(e registry.Endpoint) {
+	<span class={ "inline-flex min-w-[58px] justify-center rounded-sm border bg-card px-1 font-mono text-[10.5px] font-semibold leading-[18px]", verbClass(e) }>{ transportLabel(e) }</span>
+}
+
+templ endpointsPage(st *consoleState, v endpointsView) {
+	<div class="flex h-full min-h-0">
+		@groupRail(v)
+		<div class="flex min-w-0 flex-1 flex-col overflow-auto">
+			@pageHead("Endpoints", v.Pager.Total) {
+				<div class="flex rounded-sm border border-border-strong bg-card p-px text-[12px]" role="tablist">
+					@segLink("All", v.Q.href("t", ""), v.Q.Args["t"] == "")
+					@segLink("REST", v.Q.href("t", "rest"), v.Q.Args["t"] == "rest")
+					@segLink("GraphQL", v.Q.href("t", "graphql"), v.Q.Args["t"] == "graphql")
+					@segLink("WebSocket", v.Q.href("t", "websocket"), v.Q.Args["t"] == "websocket")
+				</div>
+				@searchBox(v.Q, "Search endpoints…")
+			}
+			<div class="p-4">
+				<div class="overflow-x-auto rounded-sm border bg-card">
+					@table.Table(table.Props{ID: "endpoints"}) {
+						@table.Header() {
+							@table.Row() {
+								@table.Head(table.HeadProps{Class: "w-[76px]"}) {
+									Verb
+								}
+								@table.Head() {
+									@sortHead(v.Q, "name", "Endpoint", false)
+								}
+								@table.Head() {
+									Service
+								}
+								@table.Head() {
+									Gates
+								}
+								@table.Head(table.HeadProps{Class: "text-right"}) {
+									@sortHead(v.Q, "reqs", "Requests", true)
+								}
+								@table.Head(table.HeadProps{Class: "text-right"}) {
+									@sortHead(v.Q, "errs", "Errors", true)
+								}
+								@table.Head(table.HeadProps{Class: "text-right"}) {
+									@sortHead(v.Q, "last", "Last", true)
+								}
+							}
+						}
+						@table.Body() {
+							for _, e := range v.Rows {
+								@endpointRow(st, e)
+							}
+							if len(v.Rows) == 0 {
+								@emptyRow(7, emptyMessage(v.Q, "No endpoints registered."))
+							}
+						}
+					}
+				</div>
+				@pagerBar(v.Q, v.Pager)
+			</div>
+		</div>
+	</div>
+}
+
+templ endpointRow(st *consoleState, e registry.Endpoint) {
+	{{ s := st.stat(e) }}
+	@table.Row(table.RowProps{Class: "cursor-pointer", Attributes: templ.Attributes{"data-href": endpointHref(e)}}) {
+		@table.Cell() {
+			@verbChip(e)
+		}
+		@table.Cell(table.CellProps{Class: "max-w-0 w-[45%]"}) {
+			<a href={ templ.SafeURL(endpointHref(e)) } class="block truncate font-medium text-foreground no-underline hover:text-accent-text">{ endpointTitle(e) }</a>
+			<div class="truncate text-[11.5px] text-muted-foreground">{ endpointSubtitle(e) }</div>
+		}
+		@table.Cell(table.CellProps{Class: "max-w-[220px] truncate text-muted-foreground"}) {
+			{ e.Service }
+			if e.Module != "" && e.Module != e.Service {
+				<span class="text-[11px]">· { e.Module }</span>
+			}
+		}
+		@table.Cell() {
+			<div class="flex flex-wrap gap-1">
+				for _, g := range gates(e) {
+					@badge.Badge(badge.Props{Variant: badge.VariantInfo}) {
+						{ strings.TrimPrefix(g, "auth:") }
+					}
+				}
+				if e.RateLimit != nil {
+					@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+						{ itoa(e.RateLimit.RPM) }/min
+					}
+				}
+				if e.Deprecated {
+					@badge.Badge(badge.Props{Variant: badge.VariantWarn}) {
+						deprecated
+					}
+				}
+			</div>
+		}
+		@table.Cell(table.CellProps{Class: "text-right tabular-nums"}) {
+			{ fmtNum(s.Count) }
+		}
+		@table.Cell(table.CellProps{Class: "text-right tabular-nums"}) {
+			if s.Errors > 0 {
+				<span class="font-semibold text-err" title={ s.LastError }>{ fmtNum(s.Errors) }</span>
+			} else {
+				<span class="text-muted-foreground">0</span>
+			}
+		}
+		@table.Cell(table.CellProps{Class: "text-right text-muted-foreground whitespace-nowrap"}) {
+			@timeAgo(s.LastAt)
+		}
+	}
+}
+
+// groupRail scopes the endpoint list to a module (or service): the
+// console's folder tree, so a thousand endpoints read as a dozen groups.
+templ groupRail(v endpointsView) {
+	{{ cur := v.Q.Args["g"] }}
+	<aside class="hidden w-56 flex-none flex-col border-r bg-card md:flex">
+		<div class="border-b px-3 py-2.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+			{ v.GroupLabel }
+			<span class="float-right">{ itoa(len(v.Groups)) }</span>
+		</div>
+		<nav class="min-h-0 flex-1 overflow-y-auto py-1 text-[12.5px]">
+			@railLink(v.Q.href("g", ""), "All endpoints", v.All, 0, cur == "")
+			for _, g := range v.Groups {
+				@railLink(v.Q.href("g", g.Key), g.Key, g.Endpoints, g.Errors, cur == g.Key)
+			}
+		</nav>
+	</aside>
+}
+
+templ railLink(href, label string, n int, errs int64, on bool) {
+	<a
+		href={ templ.SafeURL(href) }
+		title={ label }
+		class={ "flex items-center gap-2 border-l-2 px-3 py-1 no-underline",
+			templ.KV("border-primary bg-accent-soft font-medium text-foreground", on),
+			templ.KV("border-transparent text-foreground hover:bg-muted", !on) }
+	>
+		<span class="min-w-0 flex-1 truncate">{ label }</span>
+		if errs > 0 {
+			<span class="size-1.5 flex-none rounded-full bg-err" title={ fmtNum(errs) + " errors" }></span>
+		}
+		<span class="flex-none text-[11px] tabular-nums text-muted-foreground">{ itoa(n) }</span>
+	</a>
+}
+
+// searchBox searches a list on the server: console.js keeps ?q= in the URL
+// and re-renders the list as the operator types.
+templ searchBox(q listQuery, placeholder string) {
+	<label class="relative flex w-64 items-center">
+		<span class="pointer-events-none absolute left-2 text-muted-foreground">
+			@icon.Icon("search", "size-3.5")
+		</span>
+		<input
+			type="search"
+			data-query
+			value={ q.Q }
+			placeholder={ placeholder }
+			class="h-7 w-full rounded-sm border border-input bg-card pr-2 pl-7 text-[12.5px] outline-none placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+		/>
+	</label>
+}
+
+templ sortHead(q listQuery, col, label string, numeric bool) {
+	<a href={ templ.SafeURL(q.sortHref(col, numeric)) } class={ "no-underline hover:text-foreground", templ.KV("text-foreground", q.Sort == col), templ.KV("text-muted-foreground", q.Sort != col) }>{ label }{ q.sortMark(col) }</a>
+}
+
+templ pagerBar(q listQuery, p pager) {
+	if p.Pages > 1 {
+		<div class="mt-2 flex items-center gap-2 text-[12px] text-muted-foreground">
+			<span>{ itoa(p.From + 1) }–{ itoa(p.To) } of { itoa(p.Total) }</span>
+			<span class="flex-1"></span>
+			@button.Button(button.Props{Variant: button.VariantOutline, Size: button.SizeSm, Href: q.href("p", itoa(p.Page-1)), Disabled: p.Page <= 1}) {
+				Previous
+			}
+			<span>Page { itoa(p.Page) } of { itoa(p.Pages) }</span>
+			@button.Button(button.Props{Variant: button.VariantOutline, Size: button.SizeSm, Href: q.href("p", itoa(p.Page+1)), Disabled: p.Page >= p.Pages}) {
+				Next
+			}
+		</div>
+	}
+}
+
+templ segLink(label, href string, on bool) {
+	<a
+		href={ templ.SafeURL(href) }
+		class={ "rounded-[1px] px-2.5 py-0.5 font-medium no-underline",
+			templ.KV("bg-primary text-primary-foreground", on),
+			templ.KV("text-muted-foreground hover:bg-muted hover:text-foreground", !on) }
+	>{ label }</a>
+}
+
+templ backLink(href, label string) {
+	<a href={ templ.SafeURL(href) } class="inline-flex items-center gap-1 text-[12px] text-muted-foreground no-underline hover:text-foreground">
+		@icon.Icon("arrow-left", "size-3.5")
+		{ label }
+	</a>
+}
+
+templ endpointPage(st *consoleState, e registry.Endpoint, recent []metrics.ErrorEvent) {
+	{{ s := st.stat(e) }}
+	<div class="border-b bg-card px-4 py-2.5">
+		@backLink(Prefix+"/ui/endpoints", "Endpoints")
+		<div class="mt-1.5 flex flex-wrap items-center gap-2">
+			@verbChip(e)
+			<h1 class="text-[15px] font-semibold">{ endpointTitle(e) }</h1>
+			if e.Transport != registry.REST {
+				<span class="font-mono text-[12px] text-muted-foreground">{ endpointPath(e) }</span>
+			}
+			if e.Deprecated {
+				@badge.Badge(badge.Props{Variant: badge.VariantWarn}) {
+					deprecated
+				}
+			}
+		</div>
+		if e.Description != "" {
+			<p class="mt-1 max-w-3xl text-[12.5px] text-muted-foreground">{ e.Description }</p>
+		}
+	</div>
+	<div class="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_460px]">
+		<div class="flex min-w-0 flex-col gap-4">
+			<div class="grid grid-cols-2 gap-px overflow-hidden rounded-sm border bg-border md:grid-cols-4">
+				@metric("Requests", fmtNum(s.Count), "")
+				@metric("Errors", fmtNum(s.Errors), errClass(s.Errors))
+				@metric("Error rate", errRate(s.Count, s.Errors), "")
+				@metricTime("Last request", s.LastAt)
+			</div>
+			@section("Overview") {
+				<dl>
+					@kv("Service") {
+						if e.Service != "" {
+							{ e.Service }
+						} else {
+							<span class="text-muted-foreground">default</span>
+						}
+					}
+					if e.Module != "" {
+						@kv("Module") {
+							{ e.Module }
+						}
+					}
+					@kv("Transport") {
+						{ string(e.Transport) }
+						if e.Method != "" {
+							· { e.Method }
+						}
+					}
+					@kv("Path") {
+						<code class="font-mono text-[12px]">{ e.Path }</code>
+					}
+					if e.ReturnType != "" || e.ReturnSchema != nil {
+						@kv("Returns") {
+							<code class="font-mono text-[12px]">
+								if e.ReturnType != "" {
+									{ e.ReturnType }
+								} else {
+									{ typeName(e.ReturnSchema) }
+								}
+							</code>
+						}
+					}
+					@kv("Middleware") {
+						if len(e.Middleware) == 0 {
+							<span class="text-muted-foreground">none</span>
+						}
+						<div class="flex flex-wrap gap-1">
+							for _, m := range e.Middleware {
+								@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+									{ m }
+								}
+							}
+						</div>
+					}
+					if len(e.Resources) > 0 {
+						@kv("Resources") {
+							{ strings.Join(e.Resources, ", ") }
+						}
+					}
+					if len(e.ServiceDeps) > 0 {
+						@kv("Uses services") {
+							{ strings.Join(e.ServiceDeps, ", ") }
+						}
+					}
+					if e.DeprecationReason != "" {
+						@kv("Deprecation") {
+							{ e.DeprecationReason }
+						}
+					}
+					@kv("Registered") {
+						{ stamp(e.RegisteredAt) }
+					}
+				</dl>
+			}
+			@argsSection(st, e)
+			@section("Recent errors") {
+				if len(recent) == 0 {
+					<p class="px-3 py-4 text-[12.5px] text-muted-foreground">No errors recorded.</p>
+				} else {
+					<ul class="divide-y">
+						for _, ev := range recent {
+							<li class="px-3 py-2 text-[12.5px]">
+								<div class="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+									@timeAgo(ev.Timestamp)
+									if ev.IP != "" {
+										<span>· { ev.IP }</span>
+									}
+								</div>
+								<div class="mt-0.5 font-mono text-[12px] break-words text-err">{ ev.Message }</div>
+								if ev.Stack != "" {
+									<details class="mt-1">
+										<summary class="cursor-pointer text-[11.5px] text-muted-foreground">stack</summary>
+										<pre class="mt-1 max-h-72 overflow-auto rounded-sm bg-sunken p-2 font-mono text-[11px] leading-4">{ ev.Stack }</pre>
+									</details>
+								}
+							</li>
+						}
+					</ul>
+				}
+			}
+		</div>
+		<div class="flex min-w-0 flex-col gap-4">
+			@section("Try it") {
+				@tester(st, e)
+			}
+			@rateLimitSection(st, e)
+		</div>
+	</div>
+}
+
+templ metricTime(label string, t time.Time) {
+	<div class="bg-card px-3 py-2">
+		<div class="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{ label }</div>
+		<div class="mt-0.5 text-[18px] font-semibold tabular-nums">
+			@timeAgo(t)
+		</div>
+	</div>
+}
+
+templ metric(label, value, class string) {
+	<div class="bg-card px-3 py-2">
+		<div class="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{ label }</div>
+		<div class={ "mt-0.5 text-[18px] font-semibold tabular-nums", class }>{ value }</div>
+	</div>
+}
+
+templ argsSection(st *consoleState, e registry.Endpoint) {
+	if e.Transport == registry.GraphQL && len(e.Args) > 0 {
+		@section("Arguments") {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() {
+							Name
+						}
+						@table.Head() {
+							Type
+						}
+						@table.Head() {
+							Default
+						}
+						@table.Head() {
+							Description
+						}
+					}
+				}
+				@table.Body() {
+					for _, a := range e.Args {
+						@table.Row() {
+							@table.Cell(table.CellProps{Class: "font-mono"}) {
+								{ a.Name }
+							}
+							@table.Cell(table.CellProps{Class: "font-mono text-accent-text"}) {
+								{ a.Type }
+							}
+							@table.Cell(table.CellProps{Class: "font-mono text-muted-foreground"}) {
+								if a.Default != nil {
+									{ detailValue(a.Default) }
+								}
+							}
+							@table.Cell(table.CellProps{Class: "text-muted-foreground"}) {
+								{ a.Description }
+							}
+						}
+					}
+				}
+			}
+		}
+	} else if fields := st.argFields(e); len(fields) > 0 {
+		@section("Input") {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() {
+							Field
+						}
+						@table.Head() {
+							Type
+						}
+						@table.Head() {
+							From
+						}
+						@table.Head() {
+							Description
+						}
+					}
+				}
+				@table.Body() {
+					for _, f := range fields {
+						@table.Row() {
+							@table.Cell(table.CellProps{Class: "font-mono"}) {
+								{ fieldName(f) }
+								if !f.Optional {
+									<span class="text-err">*</span>
+								}
+							}
+							@table.Cell(table.CellProps{Class: "font-mono text-accent-text"}) {
+								{ typeName(&f.Type) }
+							}
+							@table.Cell(table.CellProps{Class: "text-muted-foreground"}) {
+								{ fieldSource(f) }
+							}
+							@table.Cell(table.CellProps{Class: "text-muted-foreground"}) {
+								{ f.Description }
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// tester sends real requests from the browser (console.js). It is data-keep:
+// live refreshes never reset what the operator typed or the response.
+templ tester(st *consoleState, e registry.Endpoint) {
+	<form data-tester={ string(e.Transport) } data-keep class="flex flex-col gap-2 p-3">
+		switch e.Transport {
+			case registry.GraphQL:
+				<div class="flex gap-2">
+					<span class="inline-flex h-7 items-center rounded-sm border bg-muted px-2 font-mono text-[11.5px] font-semibold">POST</span>
+					@input.Input(input.Props{Name: "url", Value: e.Path, Class: "font-mono"})
+				</div>
+				@fieldLabel("Query")
+				<textarea name="query" rows="8" spellcheck="false" class={ textareaClass }>{ st.graphqlTemplate(e) }</textarea>
+				@fieldLabel("Variables")
+				<textarea name="variables" rows="4" spellcheck="false" class={ textareaClass }>{ graphqlVariables(e) }</textarea>
+			case registry.WebSocket:
+				@fieldLabel("Socket")
+				@input.Input(input.Props{Name: "url", Value: e.Path, Class: "font-mono"})
+				@fieldLabel("Message type")
+				@input.Input(input.Props{Name: "type", Value: e.Name, Class: "font-mono"})
+				@fieldLabel("Data")
+				<textarea name="data" rows="5" spellcheck="false" class={ textareaClass }>{ "{}" }</textarea>
+			default:
+				<input type="hidden" name="method" value={ strings.ToUpper(e.Method) }/>
+				<div class="flex gap-2">
+					<span class="inline-flex h-7 items-center rounded-sm border bg-muted px-2 font-mono text-[11.5px] font-semibold">{ strings.ToUpper(e.Method) }</span>
+					@input.Input(input.Props{Name: "url", Value: e.Path, Class: "font-mono"})
+				</div>
+				if ps := pathParams(e.Path); len(ps) > 0 {
+					<p class="text-[11.5px] text-muted-foreground">Replace the path parameters: <span class="font-mono">{ strings.Join(ps, ", ") }</span></p>
+				}
+				@fieldLabel("Headers")
+				<textarea name="headers" rows="3" spellcheck="false" class={ textareaClass }>{ "{\n  \"Content-Type\": \"application/json\"\n}" }</textarea>
+				switch strings.ToUpper(e.Method) {
+					case "POST", "PUT", "PATCH", "DELETE":
+						@fieldLabel("Body")
+						<textarea name="body" rows="6" spellcheck="false" class={ textareaClass }>{ st.restBody(e) }</textarea>
+				}
+		}
+		<div class="flex items-center gap-2">
+			@button.Button(button.Props{Type: button.TypeSubmit}) {
+				@icon.Icon("send")
+				if e.Transport == registry.WebSocket {
+					Connect &amp; send
+				} else {
+					Send
+				}
+			}
+			<span data-tester-status class="text-[12px] text-muted-foreground"></span>
+		</div>
+		<pre data-tester-output class="hidden max-h-96 overflow-auto rounded-sm border bg-sunken p-2 font-mono text-[11.5px] leading-4"></pre>
+	</form>
+}
+
+const textareaClass = "w-full rounded-sm border border-input bg-card p-2 font-mono text-[12px] leading-4 outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+
+templ fieldLabel(label string) {
+	<span class="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{ label }</span>
+}
+
+templ rateLimitSection(st *consoleState, e registry.Endpoint) {
+	{{ rec, has := st.Limits[e.Service+"."+e.Name] }}
+	@section("Rate limit") {
+		<div class="flex flex-col gap-3 p-3 text-[12.5px]">
+			if !has && e.RateLimit == nil {
+				<p class="text-muted-foreground">No limit declared. Set one to throttle this endpoint until the next restart.</p>
+			} else {
+				<div class="grid grid-cols-2 gap-2">
+					<div>
+						@fieldLabel("Declared")
+						<div class="mt-0.5 tabular-nums">{ limitText(rec.Declared.RPM, rec.Declared.Burst, rec.Declared.PerIP) }</div>
+					</div>
+					<div>
+						@fieldLabel("Effective")
+						<div class="mt-0.5 tabular-nums">
+							{ limitText(rec.Effective.RPM, rec.Effective.Burst, rec.Effective.PerIP) }
+							if rec.Overridden {
+								@badge.Badge(badge.Props{Variant: badge.VariantWarn, Class: "ml-1"}) {
+									override
+								}
+							}
+						</div>
+					</div>
+				</div>
+			}
+			<form
+				data-json-form
+				data-method="POST"
+				data-action={ Prefix + "/ratelimits?service=" + queryEscape(e.Service) + "&op=" + queryEscape(e.Name) }
+				data-success="Rate limit updated"
+				class="flex flex-wrap items-end gap-2"
+			>
+				<label class="flex w-24 flex-col gap-1">
+					@fieldLabel("Per minute")
+					@input.Input(input.Props{Name: "rpm", Type: input.TypeNumber, Value: itoa(rec.Effective.RPM), Required: true, Attributes: templ.Attributes{"min": "0", "data-type": "number"}})
+				</label>
+				<label class="flex w-20 flex-col gap-1">
+					@fieldLabel("Burst")
+					@input.Input(input.Props{Name: "burst", Type: input.TypeNumber, Value: itoa(rec.Effective.Burst), Attributes: templ.Attributes{"min": "0", "data-type": "number"}})
+				</label>
+				<label class="flex h-7 items-center gap-1.5">
+					<input type="checkbox" name="perIP" data-type="bool" checked?={ rec.Effective.PerIP } class="accent-[var(--primary)]"/>
+					Per IP
+				</label>
+				@button.Button(button.Props{Type: button.TypeSubmit}) {
+					Apply
+				}
+				if rec.Overridden {
+					@button.Button(button.Props{Variant: button.VariantOutline, Attributes: templ.Attributes{
+						"data-post":    Prefix + "/ratelimits?service=" + queryEscape(e.Service) + "&op=" + queryEscape(e.Name),
+						"data-method":  "DELETE",
+						"data-success": "Override removed",
+					}}) {
+						@icon.Icon("rotate-ccw")
+						Reset
+					}
+				}
+			</form>
+		</div>
+	}
+}

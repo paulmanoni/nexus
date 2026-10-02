@@ -1,0 +1,229 @@
+package dashboard
+
+import (
+	"time"
+
+	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/icon"
+)
+
+// themeBoot sets the theme before first paint: the saved choice (shared with
+// the topology canvas), else the OS preference.
+const themeBoot = `(function(){try{var t=localStorage.getItem('nexus.theme');if(t!=='light'&&t!=='dark'){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme='light'}})()`
+
+templ consoleDocument(st *consoleState, p page) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ p.Title } · { st.Name }</title>
+			@templ.Raw("<script>" + themeBoot + "</script>")
+			<link rel="icon" href={ "data:image/svg+xml," + faviconSVG }/>
+			<link rel="stylesheet" href={ Prefix + "/ui/assets/console.css" }/>
+			<script src={ Prefix + "/ui/assets/console.js" } defer></script>
+		</head>
+		<body class="flex h-dvh flex-col overflow-hidden bg-background text-foreground antialiased">
+			@topBar(st, p)
+			<div id="nx-status">
+				@statusBar(st)
+			</div>
+			@mainArea(p)
+			<div id="nx-toasts" class="pointer-events-none fixed right-3 bottom-10 z-50 flex w-80 flex-col gap-2"></div>
+		</body>
+	</html>
+}
+
+// consolePartial is a live refresh: the regions console.js morphs in place.
+templ consolePartial(st *consoleState, p page) {
+	<div id="nx-status">
+		@statusBar(st)
+	</div>
+	@mainArea(p)
+}
+
+templ mainArea(p page) {
+	<main
+		id="nx-main"
+		data-tab={ p.Tab }
+		if p.Static {
+			data-static
+			class="relative min-h-0 flex-1 overflow-hidden"
+		} else {
+			class="relative min-h-0 flex-1 overflow-auto"
+		}
+	>
+		@p.Body
+	</main>
+}
+
+const faviconSVG = `%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231491c1'/%3E%3Cpath d='M16 6l8.7 5v10L16 26l-8.7-5V11z' fill='none' stroke='white' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E`
+
+templ brandMark() {
+	<svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true">
+		<rect width="32" height="32" rx="6" fill="var(--nx-accent)"></rect>
+		<path d="M16 6l8.7 5v10L16 26l-8.7-5V11z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"></path>
+		<circle cx="16" cy="16" r="3" fill="#fff"></circle>
+	</svg>
+}
+
+templ topBar(st *consoleState, p page) {
+	<nav class="flex h-[38px] flex-none items-center gap-1 border-b border-black bg-chrome px-3 text-[12.5px]">
+		<a href={ templ.SafeURL(Prefix + "/") } class="mr-4 flex items-center gap-2 font-semibold tracking-[0.01em] text-chrome-text no-underline">
+			@brandMark()
+			<span>{ st.Name }</span>
+		</a>
+		<div class="flex h-full min-w-0 items-stretch overflow-x-auto [scrollbar-width:none]">
+			for _, t := range st.tabs() {
+				<a
+					href={ templ.SafeURL(t.Href) }
+					class={ "inline-flex items-center gap-1.5 border-b-2 px-3 font-medium whitespace-nowrap no-underline transition-colors",
+						templ.KV("border-primary text-white", t.ID == p.Tab),
+						templ.KV("border-transparent text-chrome-text-2 hover:bg-chrome-2 hover:text-chrome-text", t.ID != p.Tab) }
+				>
+					@icon.Icon(t.Icon)
+					{ t.Label }
+				</a>
+			}
+		</div>
+		<span class="flex-1"></span>
+		if st.Deployment != "" {
+			<span class="mr-1 rounded-sm bg-chrome-2 px-2 py-0.5 text-[11px] font-medium text-chrome-text-2" title="Deployment unit">{ st.Deployment }</span>
+		}
+		if st.Version != "" {
+			<span class="mr-1.5 text-[11px] text-chrome-text-2">{ st.Version }</span>
+		}
+		<button type="button" data-theme-toggle title="Toggle theme" class="inline-flex size-7 cursor-pointer items-center justify-center rounded-sm text-chrome-text-2 hover:bg-chrome-2 hover:text-chrome-text">
+			<span class="dark:hidden">
+				@icon.Icon("moon")
+			</span>
+			<span class="hidden dark:inline">
+				@icon.Icon("sun")
+			</span>
+		</button>
+	</nav>
+}
+
+templ statusBar(st *consoleState) {
+	{{ reqs, errs := st.totals() }}
+	<div class="flex h-7 flex-none items-center gap-4 overflow-x-auto border-b bg-sunken px-3 text-[11.5px] whitespace-nowrap text-muted-foreground [scrollbar-width:none]">
+		<span class="inline-flex items-center gap-1.5" data-live-indicator>
+			<span class="size-2 rounded-full bg-ok" data-live-dot></span>
+			<span data-live-label>Live</span>
+		</span>
+		@statusItem("boxes", itoa(len(st.Services)), "services")
+		@statusItem("route", itoa(len(st.Endpoints)), "endpoints")
+		<span class="inline-flex items-center gap-1.5">
+			@icon.Icon("database", "size-3")
+			<b class="font-semibold text-foreground">{ itoa(len(st.Resources)) }</b> resources
+			if n := st.resourcesDown(); n > 0 {
+				<span class="font-semibold text-err">· { itoa(n) } down</span>
+			}
+		</span>
+		<span class="inline-flex items-center gap-1.5">
+			@icon.Icon("cpu", "size-3")
+			<b class="font-semibold text-foreground">{ itoa(len(st.Workers)) }</b> workers
+			if n := st.workersFailed(); n > 0 {
+				<span class="font-semibold text-err">· { itoa(n) } failed</span>
+			}
+		</span>
+		@statusItem("clock", itoa(len(st.Crons)), "crons")
+		<span class="inline-flex items-center gap-1.5">
+			@icon.Icon("activity", "size-3")
+			<b class="font-semibold text-foreground">{ fmtNum(reqs) }</b> requests
+			<span class={ templ.KV("font-semibold text-err", errs > 0) }>· { fmtNum(errs) } errors</span>
+		</span>
+		if st.Auth != nil {
+			@statusItem("user", itoa(len(st.Auth.Identities)), "cached identities")
+		}
+		<span class="flex-1"></span>
+	</div>
+}
+
+templ statusItem(ic, n, label string) {
+	<span class="inline-flex items-center gap-1.5">
+		@icon.Icon(ic, "size-3")
+		<b class="font-semibold text-foreground">{ n }</b> { label }
+	</span>
+}
+
+// pageHead is a tab's title row: name, a count, then tools on the right.
+templ pageHead(title string, count int) {
+	<div class="flex flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
+		<h1 class="text-[15px] font-semibold">{ title }</h1>
+		if count >= 0 {
+			<span class="rounded-sm bg-muted px-1.5 text-[11px] font-semibold text-muted-foreground">{ itoa(count) }</span>
+		}
+		<span class="flex-1"></span>
+		{ children... }
+	</div>
+}
+
+// filterBox narrows rows of the table named by target (client-side; the
+// query survives live refreshes).
+templ filterBox(target, placeholder string) {
+	<label class="relative flex w-64 items-center">
+		<span class="pointer-events-none absolute left-2 text-muted-foreground">
+			@icon.Icon("search", "size-3.5")
+		</span>
+		<input
+			type="search"
+			data-filter={ target }
+			placeholder={ placeholder }
+			class="h-7 w-full rounded-sm border border-input bg-card pr-2 pl-7 text-[12.5px] outline-none placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40"
+		/>
+	</label>
+}
+
+templ section(title string) {
+	<section class="min-w-0 rounded-sm border bg-card">
+		<header class="flex items-center gap-2 border-b px-3 py-2">
+			<h2 class="text-[12.5px] font-semibold">{ title }</h2>
+		</header>
+		<div class="overflow-x-auto">
+			{ children... }
+		</div>
+	</section>
+}
+
+templ emptyState(ic, title, msg string) {
+	<div class="flex h-full min-h-60 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
+		@icon.Icon(ic, "size-7")
+		<h2 class="text-[15px] font-semibold text-foreground">{ title }</h2>
+		<p class="max-w-md text-[13px]">{ msg }</p>
+	</div>
+}
+
+templ emptyRow(cols int, msg string) {
+	<tr>
+		<td colspan={ itoa(cols) } class="px-3 py-6 text-center text-[12.5px] text-muted-foreground">{ msg }</td>
+	</tr>
+}
+
+// timeAgo and timeUntil render a moment the browser keeps relative ("12s
+// ago", "in 4m") — console.js ticks them — so the HTML only changes when
+// the moment does and an idle page's refresh is a 304.
+templ timeAgo(t time.Time) {
+	if t.IsZero() {
+		<span class="text-muted-foreground">—</span>
+	} else {
+		<time data-ago datetime={ rfc3339(t) } title={ stamp(t) }>{ stamp(t) }</time>
+	}
+}
+
+templ timeUntil(t time.Time) {
+	if t.IsZero() {
+		<span class="text-muted-foreground">—</span>
+	} else {
+		<time data-until datetime={ rfc3339(t) } title={ stamp(t) }>{ stamp(t) }</time>
+	}
+}
+
+// kv is one label/value line in a detail panel.
+templ kv(label string) {
+	<div class="grid grid-cols-[140px_1fr] gap-3 border-b px-3 py-1.5 text-[12.5px] last:border-0">
+		<dt class="text-muted-foreground">{ label }</dt>
+		<dd class="min-w-0 break-words">
+			{ children... }
+		</dd>
+	</div>
+}

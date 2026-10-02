@@ -1,8 +1,9 @@
 /* ----------------------------------------------------------------------
  * tokens.css — single source of truth for the dashboard's visual system.
  *
- * "signal" identity (Nexus endpoint redesign). Imported by style.css;
- * nothing else should define design tokens. New components reference these
+ * The palette follows the console's: slate, flat, nearly square, colour
+ * reserved for state. Imported by style.css; nothing else should define
+ * design tokens. New components reference these
  * vars rather than literal hex so light + dark + accent theming stay
  * coherent.
  *
@@ -18,8 +19,8 @@
 
 :root {
   /* — Typography ------------------------------------------------------ */
-  --font-sans: 'Geist Variable', 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-sans: 'Helvetica Neue', Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   /* legacy aliases kept for any literal references */
   --font-ui: var(--font-sans);
 
@@ -40,13 +41,13 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --radius-sm: 4px;
-  --radius:    6px;
-  --radius-md: 9px;
-  --radius-lg: 14px;
+  --radius-sm: 2px;
+  --radius:    2px;
+  --radius-md: 3px;
+  --radius-lg: 3px;
   /* redesign radius aliases */
-  --r-card: 14px;
-  --r-sm:   9px;
+  --r-card: 3px;
+  --r-sm:   2px;
   --r-pill: 999px;
 
   --speed: 240ms;
@@ -67,24 +68,24 @@
 :root,
 :root[data-theme="dark"] {
   /* Surfaces / lines / text (signal names) */
-  --surface:    #11151d;
-  --surface-2:  #161b24;
-  --surface-3:  #1c222d;
-  --ink:        #eef2f7;
-  --ink-2:      #aab4c0;
-  --ink-3:      #69737f;
-  --line:        #232b35;
-  --line-2:      #1a212a;
-  --line-strong: #2e3744;
+  --surface:    #24292d;
+  --surface-2:  #1f2427;
+  --surface-3:  #2c3237;
+  --ink:        #dde3e6;
+  --ink-2:      #a6b3ba;
+  --ink-3:      #7f939e;
+  --line:        #363d43;
+  --line-2:      #2c3237;
+  --line-strong: #4c555c;
 
   /* Legacy neutral aliases → signal surfaces */
-  --bg:         #07090d;
-  --bg-2:       #0a0e13;
-  --bg-subtle:  #0a0e13;
+  --bg:         #191d20;
+  --bg-2:       #1b1f22;
+  --bg-subtle:  #1b1f22;
   --bg-card:    var(--surface);
   --bg-hover:   var(--surface-3);
   --bg-active:  var(--surface-2);
-  --bg-error:   #2a1414;
+  --bg-error:   #2e1c19;
   --border:        var(--line);
   --border-strong: var(--line-strong);
   --text:       var(--ink);
@@ -92,34 +93,34 @@
   --text-dim:   var(--ink-3);
 
   /* Accent (teal) — overridable live by the Tweaks accent picker */
-  --accent:      #2fe0c6;
-  --accent-2:    #25c4ae;
-  --accent-hover:#25c4ae;
-  --accent-ink:  #04211d;
-  --accent-soft: rgba(47, 224, 198, .13);
-  --accent-line: rgba(47, 224, 198, .42);
-  --accent-glow: rgba(47, 224, 198, .42);
-  --canvas-glow: rgba(47, 224, 198, .09);
+  --accent:      #3fb0da;
+  --accent-2:    #5ec3e8;
+  --accent-hover:#5ec3e8;
+  --accent-ink:  #0b1a20;
+  --accent-soft: rgba(63, 176, 218, .14);
+  --accent-line: rgba(63, 176, 218, .45);
+  --accent-glow: rgba(63, 176, 218, .25);
+  --canvas-glow: transparent;
   --violet:      #8b8bf0;
   --violet-soft: rgba(139, 139, 240, .14);
 
   /* Diagnostic / status hues */
-  --err:        #ff6166;
-  --err-soft:   rgba(255, 97, 102, .14);
-  --warn:       #f5a623;
-  --warn-soft:  rgba(245, 166, 35, .14);
+  --err:        #d47b6e;
+  --err-soft:   rgba(212, 123, 110, .16);
+  --warn:       #d9b757;
+  --warn-soft:  rgba(217, 183, 87, .16);
   --authc:      #9b7bff;
   --auth-soft:  rgba(155, 123, 255, .14);
 
   /* Status set (legacy names) */
-  --st-healthy:        #35c489;
-  --st-healthy-soft:   rgba(53, 196, 137, .16);
+  --st-healthy:        #5cb567;
+  --st-healthy-soft:   rgba(92, 181, 103, .16);
   --st-warn:           var(--warn);
   --st-warn-soft:      var(--warn-soft);
   --st-error:          var(--err);
   --st-error-soft:     var(--err-soft);
-  --st-throttled:      #0ea5e9;
-  --st-throttled-soft: rgba(14, 165, 233, .16);
+  --st-throttled:      #3fb0da;
+  --st-throttled-soft: rgba(63, 176, 218, .16);
   --st-inactive:       var(--ink-3);
   --st-inactive-soft:  rgba(105, 115, 127, .18);
   --success:      var(--st-healthy);
@@ -145,22 +146,22 @@
   --ws-soft:      rgba(240, 181, 74, .15);
 
   /* Edges / grid */
-  --edge:        #2b333f;
-  --edge-strong: #3c4655;
-  --grid:        #161d27;
-  --grid-2:      #131922;
+  --edge:        #4c555c;
+  --edge-strong: #7f8c8d;
+  --grid:        #2e353a;
+  --grid-2:      #23282c;
 
   /* Shadows / glass / sheen */
-  --shadow-sm:  0 1px 2px rgba(0, 0, 0, .4);
-  --shadow-md:  0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px rgba(0, 0, 0, .28);
-  --shadow-lg:  0 2px 6px rgba(0, 0, 0, .45), 0 12px 36px rgba(0, 0, 0, .4);
+  --shadow-sm:  0 1px 1px rgba(0, 0, 0, .5);
+  --shadow-md:  0 1px 2px rgba(0, 0, 0, .55);
+  --shadow-lg:  0 6px 20px rgba(0, 0, 0, .5);
   --shadow-card: var(--shadow-md);
-  --shadow-pop:  0 12px 40px rgba(0, 0, 0, .55);
-  --shadow-sel:  0 0 0 1.5px var(--accent), 0 0 28px var(--accent-glow);
-  --glow:        0 0 0 1px rgba(47, 224, 198, .05);
-  --hi:          rgba(255, 255, 255, .055);
-  --glass:       rgba(16, 20, 28, .6);
-  --glass-line:  rgba(255, 255, 255, .08);
+  --shadow-pop:  0 6px 20px rgba(0, 0, 0, .55);
+  --shadow-sel:  0 0 0 1.5px var(--accent);
+  --glow:        none;
+  --hi:          transparent;
+  --glass:       rgba(36, 41, 45, .96);
+  --glass-line:  #363d43;
 
   /* Vue Flow canvas */
   --canvas-bg:  var(--bg);
@@ -172,50 +173,50 @@
 /* ===================================================================== */
 :root[data-theme="light"] {
   --surface:    #ffffff;
-  --surface-2:  #f8fafc;
-  --surface-3:  #f2f5f8;
-  --ink:        #0f141b;
-  --ink-2:      #4b5663;
-  --ink-3:      #8b95a2;
-  --line:        #e3e8ee;
-  --line-2:      #edf1f5;
-  --line-strong: #d3dae2;
+  --surface-2:  #f4f6f7;
+  --surface-3:  #e8ecef;
+  --ink:        #262626;
+  --ink-2:      #4d5d68;
+  --ink-3:      #728e9b;
+  --line:        #c9d1d6;
+  --line-2:      #dde3e7;
+  --line-strong: #a8b3ba;
 
-  --bg:         #f1f4f7;
-  --bg-2:       #e9edf2;
-  --bg-subtle:  #e9edf2;
+  --bg:         #f6f7f8;
+  --bg-2:       #eceff1;
+  --bg-subtle:  #eceff1;
   --bg-card:    var(--surface);
   --bg-hover:   var(--surface-3);
   --bg-active:  var(--surface-2);
-  --bg-error:   #fef2f2;
+  --bg-error:   #f7e4e1;
   --border:        var(--line);
   --border-strong: var(--line-strong);
   --text:       var(--ink);
   --text-muted: var(--ink-2);
   --text-dim:   var(--ink-3);
 
-  --accent:      #0d9488;
-  --accent-2:    #0b7c72;
-  --accent-hover:#0b7c72;
+  --accent:      #1491c1;
+  --accent-2:    #0f7ba5;
+  --accent-hover:#0f7ba5;
   --accent-ink:  #ffffff;
-  --accent-soft: rgba(13, 148, 136, .10);
-  --accent-line: rgba(13, 148, 136, .32);
-  --accent-glow: rgba(13, 148, 136, .22);
-  --canvas-glow: rgba(13, 148, 136, .06);
+  --accent-soft: #dceef5;
+  --accent-line: rgba(20, 145, 193, .45);
+  --accent-glow: rgba(20, 145, 193, .2);
+  --canvas-glow: transparent;
   --violet:      #5b5bd6;
   --violet-soft: rgba(91, 91, 214, .10);
 
-  --err:        #e0453f;
-  --err-soft:   rgba(224, 69, 63, .10);
-  --warn:       #c47d09;
-  --warn-soft:  rgba(196, 125, 9, .12);
+  --err:        #ba554a;
+  --err-soft:   #f7e4e1;
+  --warn:       #a8841f;
+  --warn-soft:  #faf2dd;
   --authc:      #6d4dff;
   --auth-soft:  rgba(109, 77, 255, .10);
 
-  --st-healthy:        #2f9e6a;
-  --st-healthy-soft:   rgba(47, 158, 106, .12);
-  --st-throttled:      #0284c7;
-  --st-throttled-soft: rgba(2, 132, 199, .12);
+  --st-healthy:        #3f9a4b;
+  --st-healthy-soft:   #e2f0e2;
+  --st-throttled:      #1491c1;
+  --st-throttled-soft: #ddeef5;
 
   --cat-service:  #5b5bd6;
   --cat-database: #2d6fe0;
@@ -235,19 +236,19 @@
   --graphql-soft: rgba(212, 86, 79, .12);
   --ws-soft:      rgba(184, 121, 26, .14);
 
-  --edge:        #c2cad4;
-  --edge-strong: #9aa6b4;
-  --grid:        #dde3ea;
-  --grid-2:      #e9edf2;
+  --edge:        #a8b3ba;
+  --edge-strong: #7f8c8d;
+  --grid:        #d3d9dd;
+  --grid-2:      #e3e7ea;
 
-  --shadow-sm:  0 1px 2px rgba(16, 24, 40, .05);
-  --shadow-md:  0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .06);
-  --shadow-lg:  0 2px 6px rgba(16, 24, 40, .08), 0 12px 30px rgba(16, 24, 40, .12);
+  --shadow-sm:  0 1px 1px rgba(0, 0, 0, .12);
+  --shadow-md:  0 1px 2px rgba(0, 0, 0, .16);
+  --shadow-lg:  0 6px 20px rgba(0, 0, 0, .22);
   --shadow-card: var(--shadow-md);
-  --shadow-pop:  0 8px 30px rgba(16, 24, 40, .14), 0 2px 6px rgba(16, 24, 40, .08);
-  --shadow-sel:  0 0 0 1.5px var(--accent), 0 10px 30px rgba(13, 148, 136, .18);
+  --shadow-pop:  0 6px 20px rgba(0, 0, 0, .28);
+  --shadow-sel:  0 0 0 1.5px var(--accent);
   --glow:        none;
-  --hi:          rgba(255, 255, 255, .8);
-  --glass:       rgba(255, 255, 255, .64);
-  --glass-line:  rgba(15, 22, 30, .07);
+  --hi:          transparent;
+  --glass:       rgba(255, 255, 255, .97);
+  --glass-line:  #c9d1d6;
 }

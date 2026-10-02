@@ -17,6 +17,7 @@
 #   make generate-check # CI drift gate for committed //@ handler codegen
 #   make view-example   # generate the nexus/view example's views, then vet + test it
 #   make golden-update  # regenerate golden files after an intentional change
+#   make dashboard      # regenerate the /__nexus console (templ + Tailwind CSS)
 #   make ci             # everything CI runs
 
 # All Go modules in the repo (dir containing a go.mod).
@@ -33,7 +34,7 @@ COVER_MIN ?= 45
 # gin prints router debug noise unless told it's in release mode.
 export GIN_MODE := release
 
-.PHONY: test vet fmt fmt-check lint cover cover-check generate-check view-example golden-update ci tidy
+.PHONY: test vet fmt fmt-check lint cover cover-check generate-check view-example golden-update dashboard ci tidy
 
 test:
 	@for m in $(MODULES); do \
@@ -96,6 +97,15 @@ view-example:
 	go build -o bin/nexus ./cmd/nexus
 	./bin/nexus generate views view/example
 	cd view/example && go vet ./... && go test -race -count=1 ./...
+
+# The /__nexus console: templ components and the Tailwind stylesheet are
+# committed (extension/dashboard/*_templ.go, assets/console.css) so a plain
+# go build needs neither tool. TEMPL/TAILWIND override the binaries.
+TEMPL ?= go run github.com/a-h/templ/cmd/templ@v0.3.1020
+TAILWIND ?= tailwindcss
+dashboard:
+	$(TEMPL) generate -path extension/dashboard
+	$(TAILWIND) -i extension/dashboard/console.input.css -o extension/dashboard/assets/console.css --minify
 
 golden-update:
 	UPDATE_GOLDEN=1 go test ./client/... ./internal/handlergen/... ./registry/... -run Golden -count=1

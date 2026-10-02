@@ -1,0 +1,170 @@
+/* The console's stylesheet source. Compiled into assets/console.css (embedded)
+   by `make dashboard-css`; commit the output so a plain go build needs no
+   Node or Tailwind.
+
+   The palette is nifi's — an instrument, not a document: slate chrome, flat
+   bordered surfaces, nearly square corners, and colour reserved for state.
+   It is mapped onto templUI's (shadcn) token names so the vendored
+   components in internal/ui read it unchanged. */
+@import "tailwindcss";
+
+@source "./*.templ";
+@source "./internal/ui/**/*.templ";
+@source "./internal/ui/**/*.go";
+@source "./console*.go";
+
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@theme inline {
+  --font-sans: "Helvetica Neue", Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+
+  --color-background: var(--nx-bg);
+  --color-foreground: var(--nx-text);
+  --color-card: var(--nx-bg-elev);
+  --color-card-foreground: var(--nx-text);
+  --color-popover: var(--nx-bg-elev);
+  --color-popover-foreground: var(--nx-text);
+  --color-primary: var(--nx-accent);
+  --color-primary-foreground: #fff;
+  --color-secondary: var(--nx-bg-sunken);
+  --color-secondary-foreground: var(--nx-text-2);
+  --color-muted: var(--nx-bg-hover);
+  --color-muted-foreground: var(--nx-text-3);
+  --color-accent: var(--nx-bg-hover);
+  --color-accent-foreground: var(--nx-text);
+  --color-destructive: var(--nx-err);
+  --color-border: var(--nx-border);
+  --color-border-strong: var(--nx-border-strong);
+  --color-input: var(--nx-border-strong);
+  --color-ring: var(--nx-accent);
+  --color-sunken: var(--nx-bg-sunken);
+
+  --color-accent-soft: var(--nx-accent-soft);
+  --color-accent-text: var(--nx-accent-text);
+  --color-chrome: var(--nx-chrome);
+  --color-chrome-2: var(--nx-chrome-2);
+  --color-chrome-text: var(--nx-chrome-text);
+  --color-chrome-text-2: var(--nx-chrome-text-2);
+
+  --color-ok: var(--nx-ok);
+  --color-ok-soft: var(--nx-ok-soft);
+  --color-warn: var(--nx-warn);
+  --color-warn-soft: var(--nx-warn-soft);
+  --color-err: var(--nx-err);
+  --color-err-soft: var(--nx-err-soft);
+
+  --color-rest: var(--nx-rest);
+  --color-query: var(--nx-query);
+  --color-mutation: var(--nx-mutation);
+  --color-ws: var(--nx-ws);
+}
+
+:root {
+  --nx-bg: #eceff1;
+  --nx-bg-elev: #ffffff;
+  --nx-bg-sunken: #e3e7ea;
+  --nx-bg-hover: #e8ecef;
+  --nx-border: #c9d1d6;
+  --nx-border-strong: #a8b3ba;
+  --nx-text: #262626;
+  --nx-text-2: #4d5d68;
+  --nx-text-3: #728e9b;
+
+  --nx-chrome: #303030;
+  --nx-chrome-2: #3c3c3c;
+  --nx-chrome-text: #e4e8ea;
+  --nx-chrome-text-2: #a6b3ba;
+  --nx-accent: #1491c1;
+  --nx-accent-soft: #dceef5;
+  --nx-accent-text: #106b8f;
+
+  --nx-ok: #3f9a4b;
+  --nx-ok-soft: #e2f0e2;
+  --nx-warn: #a8841f;
+  --nx-warn-soft: #faf2dd;
+  --nx-err: #ba554a;
+  --nx-err-soft: #f7e4e1;
+
+  --nx-rest: #3f9a4b;
+  --nx-query: #1491c1;
+  --nx-mutation: #ba554a;
+  --nx-ws: #c7822e;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --nx-bg: #1b1f22;
+  --nx-bg-elev: #24292d;
+  --nx-bg-sunken: #16191c;
+  --nx-bg-hover: #2c3237;
+  --nx-border: #363d43;
+  --nx-border-strong: #4c555c;
+  --nx-text: #dde3e6;
+  --nx-text-2: #a6b3ba;
+  --nx-text-3: #7f939e;
+
+  --nx-chrome: #17191b;
+  --nx-chrome-2: #202325;
+  --nx-chrome-text: #dde3e6;
+  --nx-chrome-text-2: #93a3ac;
+  --nx-accent: #3fb0da;
+  --nx-accent-soft: #14323f;
+  --nx-accent-text: #6cc6e8;
+
+  --nx-ok: #5cb567;
+  --nx-ok-soft: #172a19;
+  --nx-warn: #d9b757;
+  --nx-warn-soft: #2c2614;
+  --nx-err: #d47b6e;
+  --nx-err-soft: #2e1c19;
+
+  --nx-rest: #5cb567;
+  --nx-query: #3fb0da;
+  --nx-mutation: #d47b6e;
+  --nx-ws: #d9a05b;
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: var(--nx-border-strong) transparent;
+  }
+  html,
+  body {
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  body {
+    @apply bg-background font-sans text-foreground;
+  }
+  a {
+    color: var(--nx-accent-text);
+  }
+  :focus-visible {
+    outline-color: var(--nx-accent);
+  }
+}
+
+@layer components {
+  .nx-toast {
+    @apply pointer-events-auto rounded-sm border bg-card px-3 py-2 text-[12.5px] shadow-lg;
+    border-left-width: 3px;
+  }
+  .nx-toast[data-kind="ok"] {
+    border-left-color: var(--nx-ok);
+  }
+  .nx-toast[data-kind="err"] {
+    border-left-color: var(--nx-err);
+  }
+  [data-filtered-out] {
+    display: none !important;
+  }
+}

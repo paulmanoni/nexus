@@ -1,0 +1,66 @@
+package badge
+
+import "github.com/paulmanoni/nexus/extension/dashboard/internal/ui/utils"
+
+type Variant string
+
+const (
+	VariantDefault     Variant = "default"
+	VariantSecondary   Variant = "secondary"
+	VariantDestructive Variant = "destructive"
+	VariantOutline     Variant = "outline"
+	VariantOK          Variant = "ok"
+	VariantWarn        Variant = "warn"
+	VariantErr         Variant = "err"
+	VariantInfo        Variant = "info"
+)
+
+type Props struct {
+	ID         string
+	Class      string
+	Attributes templ.Attributes
+	Variant    Variant
+}
+
+templ Badge(props ...Props) {
+	{{ var p Props }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	<span
+		if p.ID != "" {
+			id={ p.ID }
+		}
+		class={
+			utils.TwMerge(
+				"inline-flex items-center gap-1 rounded-sm border px-1.5 text-[11px] leading-4 font-medium whitespace-nowrap shrink-0 [&>svg]:size-3",
+				p.variantClasses(),
+				p.Class,
+			),
+		}
+		{ p.Attributes... }
+	>
+		{ children... }
+	</span>
+}
+
+func (p Props) variantClasses() string {
+	switch p.Variant {
+	case VariantOK:
+		return "border-ok/30 bg-ok-soft text-ok"
+	case VariantWarn:
+		return "border-warn/40 bg-warn-soft text-warn"
+	case VariantErr:
+		return "border-err/30 bg-err-soft text-err"
+	case VariantInfo:
+		return "border-primary/30 bg-accent-soft text-accent-text"
+	case VariantDestructive:
+		return "border-transparent bg-destructive text-white"
+	case VariantOutline:
+		return "text-foreground"
+	case VariantSecondary:
+		return "border-transparent bg-secondary text-secondary-foreground"
+	default:
+		return "border-transparent bg-primary text-primary-foreground"
+	}
+}

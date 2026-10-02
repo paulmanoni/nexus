@@ -6,4 +6,7 @@ import '@vue-flow/minimap/dist/style.css'
 import './style.css'
 import App from './App.vue'
 
-createApp(App).mount('#app')
+// Inside the console's Architecture tab (the templ shell owns the header and
+// theme), the canvas runs embedded: no header of its own.
+const el = document.getElementById('app')
+createApp(App, { embedded: el.hasAttribute('data-embedded') }).mount(el)

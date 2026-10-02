@@ -205,10 +205,21 @@ function stampClusters(allNodes, ctx) {
   }
 }
 
+const props = defineProps({ embedded: Boolean })
+
 // Dark-mode theme toggle. tokens.css already ships a [data-theme="dark"]
 // block; we just flip the attribute on <html> and remember the choice.
-// Dark is the redesign's default identity; honour a saved preference.
-const theme = ref(typeof localStorage !== 'undefined' && localStorage.getItem('nexus.theme') === 'light' ? 'light' : 'dark')
+// Embedded in the console, the shell owns the theme: follow its attribute.
+const theme = ref(
+  props.embedded && typeof document !== 'undefined' && document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme
+    : typeof localStorage !== 'undefined' && localStorage.getItem('nexus.theme') === 'light' ? 'light' : 'dark')
+if (props.embedded && typeof MutationObserver !== 'undefined') {
+  new MutationObserver(() => {
+    const t = document.documentElement.dataset.theme
+    if (t && t !== theme.value) theme.value = t
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+}
 function applyTheme() {
   if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', theme.value)
 }
@@ -2189,7 +2200,7 @@ onMounted(() => {
   // own the open/close shortcut here.
   window.addEventListener('keydown', onGlobalKey)
   // App identity for the header brand block.
-  fetchConfig().then(cfg => { if (cfg) { config.value = cfg; if (cfg.Name) document.title = cfg.Name } })
+  fetchConfig().then(cfg => { if (cfg) { config.value = cfg; if (cfg.Name && !props.embedded) document.title = cfg.Name } })
   // 1s heartbeat drives relative "ago" labels + rolling rate windows.
   nowTimer = setInterval(() => { now.value = (now.value + 1) % 100000 }, 1000)
 })
@@ -2204,9 +2215,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" :class="'density-' + density">
-    <!-- Header — brand, single Architecture tab, plugins / jump / tweaks / theme -->
-    <header class="hdr">
+  <div class="app" :class="['density-' + density, { 'is-embedded': embedded }]">
+    <!-- Header — brand, single Architecture tab, plugins / jump / tweaks / theme.
+         Embedded in the console, its top bar replaces this one. -->
+    <header class="hdr" v-if="!embedded">
       <div class="brand">
         <div class="brand-mark"><Hexagon :size="18" :stroke-width="2" /></div>
         <div>
@@ -2249,24 +2261,28 @@ onUnmounted(() => {
         <!-- Floating toolbar (top-left): layout mode + fit/live -->
         <div class="float-tl">
           <div class="seg">
-            <button :class="{ 'is-active': mode === 'layered' }" @click="setMode('layered')"><LayoutGrid :size="14" :stroke-width="2" />Layered</button>
-            <button :class="{ 'is-active': mode === 'flow' }" @click="setMode('flow')"><Workflow :size="14" :stroke-width="2" />Flow</button>
+            <button :class="{ 'is-active': mode === 'layered' }" @click="setMode('layered')" title="Layered"><LayoutGrid :size="14" :stroke-width="2" /><span class="lbl">Layered</span></button>
+            <button :class="{ 'is-active': mode === 'flow' }" @click="setMode('flow')" title="Flow"><Workflow :size="14" :stroke-width="2" /><span class="lbl">Flow</span></button>
           </div>
           <div class="seg">
-            <button @click="fit"><Maximize2 :size="14" :stroke-width="2" />Fit</button>
-            <button :class="{ 'is-active': live }" @click="toggleLive"><Zap :size="14" :stroke-width="2" />Live</button>
+            <button @click="fit" title="Fit"><Maximize2 :size="14" :stroke-width="2" /><span class="lbl">Fit</span></button>
+            <button :class="{ 'is-active': live }" @click="toggleLive" title="Live"><Zap :size="14" :stroke-width="2" /><span class="lbl">Live</span></button>
           </div>
           <div class="seg" v-if="expandedClusters.size > 0">
-            <button @click="collapseAllClusters"><Layers :size="14" :stroke-width="2" />Collapse</button>
+            <button @click="collapseAllClusters" title="Collapse"><Layers :size="14" :stroke-width="2" /><span class="lbl">Collapse</span></button>
+          </div>
+          <div class="seg" v-if="embedded">
+            <button @click="cmdkOpen = true" title="Jump to anything"><Search :size="14" :stroke-width="2" /><span class="lbl">Jump</span><span class="kbd lbl">⌘K</span></button>
+            <button :class="{ 'is-active': tweaksOpen }" @click="tweaksOpen = !tweaksOpen" title="Tweaks"><SlidersHorizontal :size="14" :stroke-width="2" /><span class="lbl">Tweaks</span></button>
           </div>
         </div>
 
         <!-- Highlight filter cluster (bottom-left) -->
         <div class="float-bl">
           <span class="hl-label">Highlight</span>
-          <button class="hl-chip" data-k="errors" :class="{ 'is-on': overlays.has('errors') }" @click="toggleOverlay('errors')"><AlertTriangle :size="14" :stroke-width="2" />Errors</button>
-          <button class="hl-chip" data-k="limits" :class="{ 'is-on': overlays.has('limits') }" @click="toggleOverlay('limits')"><Gauge :size="14" :stroke-width="2" />Limits</button>
-          <button class="hl-chip" data-k="auth" :class="{ 'is-on': overlays.has('auth') }" @click="toggleOverlay('auth')"><ShieldCheck :size="14" :stroke-width="2" />Auth</button>
+          <button class="hl-chip" data-k="errors" :class="{ 'is-on': overlays.has('errors') }" @click="toggleOverlay('errors')" title="Errors"><AlertTriangle :size="14" :stroke-width="2" /><span class="lbl">Errors</span></button>
+          <button class="hl-chip" data-k="limits" :class="{ 'is-on': overlays.has('limits') }" @click="toggleOverlay('limits')" title="Limits"><Gauge :size="14" :stroke-width="2" /><span class="lbl">Limits</span></button>
+          <button class="hl-chip" data-k="auth" :class="{ 'is-on': overlays.has('auth') }" @click="toggleOverlay('auth')" title="Auth"><ShieldCheck :size="14" :stroke-width="2" /><span class="lbl">Auth</span></button>
         </div>
 
         <!-- Activity pill (top-right) -->
@@ -2400,6 +2416,18 @@ onUnmounted(() => {
 
 /* floating toolbar (top-left) */
 .float-tl { position: absolute; top: 14px; left: 14px; z-index: 12; display: flex; gap: 10px; align-items: flex-start; }
+/* embedded, the toolbar carries Jump + Tweaks too: wrap short of the activity pill */
+.is-embedded .float-tl { flex-wrap: wrap; max-width: calc(100% - 250px); }
+/* a narrow canvas shows the floating controls as icons, on one row */
+.canvas-wrap { container-type: inline-size; }
+/* the zoom controls sit above the Highlight bar, not under it */
+.canvas-wrap :deep(.vue-flow__controls) { bottom: 58px; }
+@container (max-width: 980px) {
+  .canvas-wrap :deep(.vue-flow__minimap) { transform: scale(.7); transform-origin: bottom right; }
+  .float-tl .lbl, .float-bl .lbl, .float-bl .hl-label { display: none; }
+  .float-tl .seg button, .float-bl .hl-chip { padding-left: 8px; padding-right: 8px; }
+  .is-embedded .float-tl { flex-wrap: nowrap; gap: 6px; }
+}
 .seg {
   display: inline-flex; border-radius: var(--r-sm); padding: 3px; gap: 2px;
   background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow-card);

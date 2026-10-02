@@ -1,6 +1,7 @@
 // Package dashboard mounts the nexus introspection surface under /__nexus.
-// Ships a Vue dashboard (embedded from ui/dist), a JSON registry listing, and
-// a WebSocket event stream.
+// Ships a templ console (console*.templ) whose Architecture tab embeds the
+// Vue topology canvas (ui/dist), a JSON registry listing, and a WebSocket
+// event stream.
 package dashboard
 
 import (
@@ -61,6 +62,11 @@ type Config struct {
 	// nexus.New populates this by adapting app.Plugins() at mount time;
 	// nil leaves the endpoint unmounted.
 	Plugins func() []PluginInfo `json:"-"`
+
+	// SchemaRefs returns the named-type pool endpoint schemas reference
+	// (TypeRef Kind "ref"), so the console can show an endpoint's input
+	// fields and prefill its tester. Nil shows refs by name only.
+	SchemaRefs func() map[string]registry.NamedType `json:"-"`
 }
 
 // PluginInfo mirrors nexus.PluginRecord in a form the dashboard can
@@ -97,7 +103,8 @@ type TabInfo struct {
 //	POST /__nexus/crons/:name/resume  -> resume scheduled ticks
 //	GET  /__nexus/events           -> WebSocket: backlog (since=N) then live trace events
 //	GET  /__nexus/manifest         -> live manifest JSON (admin-token gated)
-//	GET  /__nexus/, /assets/*      -> embedded Vue dashboard
+//	GET  /__nexus/, /ui/*          -> the console (templ pages; console.go)
+//	GET  /__nexus/assets/*         -> the Architecture tab's Vue canvas bundle
 //
 // The events endpoint is only mounted if bus != nil. The manifest
 // endpoint is only mounted when BOTH cfg.Manifest != nil AND
@@ -169,6 +176,7 @@ func Mount(e httpx.Router, reg *registry.Registry, bus *trace.Bus, sched *cron.S
 	// — the UI subscribes once and renders live. /events stays separate
 	// for per-request trace pulses.
 	g.GET("/live", streamLive(reg, ms, sched, rl, gqlStats, notifier))
+	mountConsole(g, &consoleSources{cfg: cfg, reg: reg, bus: bus, sched: sched, rl: rl, ms: ms, gql: gqlStats})
 	mountUI(g)
 }
 

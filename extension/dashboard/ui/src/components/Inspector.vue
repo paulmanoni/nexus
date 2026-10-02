@@ -348,9 +348,8 @@ function workerState(s) {
 
 <style scoped>
 .inspector {
-  width: 380px; flex: none; background: var(--surface); border-left: 1px solid var(--line);
-  display: flex; flex-direction: column; min-height: 0;
-  box-shadow: -8px 0 30px rgba(0, 0, 0, .12); font-family: var(--font-sans);
+  width: clamp(280px, 30vw, 380px); flex: none; background: var(--surface); border-left: 1px solid var(--line);
+  display: flex; flex-direction: column; min-height: 0; font-family: var(--font-sans);
 }
 :root[data-theme="light"] .inspector { box-shadow: -8px 0 24px rgba(16, 24, 40, .04); }
 

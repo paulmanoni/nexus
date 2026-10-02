@@ -1,0 +1,128 @@
+package button
+
+import "github.com/paulmanoni/nexus/extension/dashboard/internal/ui/utils"
+
+type Variant string
+type Size string
+type Type string
+
+const (
+	VariantDefault     Variant = "default"
+	VariantDestructive Variant = "destructive"
+	VariantOutline     Variant = "outline"
+	VariantSecondary   Variant = "secondary"
+	VariantGhost       Variant = "ghost"
+	VariantLink        Variant = "link"
+)
+
+const (
+	TypeButton Type = "button"
+	TypeReset  Type = "reset"
+	TypeSubmit Type = "submit"
+)
+
+const (
+	SizeDefault Size = "default"
+	SizeSm      Size = "sm"
+	SizeLg      Size = "lg"
+	SizeIcon    Size = "icon"
+)
+
+type Props struct {
+	ID         string
+	Class      string
+	Attributes templ.Attributes
+	Variant    Variant
+	Size       Size
+	FullWidth  bool
+	Href       string
+	Target     string
+	Disabled   bool
+	Type       Type
+	Form       string
+}
+
+templ Button(props ...Props) {
+	{{ var p Props }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	if p.Type == "" {
+		{{ p.Type = TypeButton }}
+	}
+	if p.Href != "" && !p.Disabled {
+		<a
+			if p.ID != "" {
+				id={ p.ID }
+			}
+			href={ templ.SafeURL(p.Href) }
+			if p.Target != "" {
+				target={ p.Target }
+			}
+			class={ p.classes() }
+			{ p.Attributes... }
+		>
+			{ children... }
+		</a>
+	} else {
+		<button
+			if p.ID != "" {
+				id={ p.ID }
+			}
+			class={ p.classes() }
+			if p.Type != "" {
+				type={ string(p.Type) }
+			}
+			if p.Form != "" {
+				form={ p.Form }
+			}
+			disabled?={ p.Disabled }
+			{ p.Attributes... }
+		>
+			{ children... }
+		</button>
+	}
+}
+
+func (b Props) classes() string {
+	return utils.TwMerge(
+		"inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border text-[12.5px] font-medium transition-colors",
+		"disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-3.5 shrink-0 [&_svg]:shrink-0",
+		"outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+		"cursor-pointer",
+		b.variantClasses(),
+		b.sizeClasses(),
+		utils.If(b.FullWidth, "w-full"),
+		b.Class,
+	)
+}
+
+func (b Props) variantClasses() string {
+	switch b.Variant {
+	case VariantDestructive:
+		return "border-destructive/40 bg-card text-destructive hover:bg-destructive hover:text-white"
+	case VariantOutline:
+		return "border-border-strong bg-card text-foreground hover:bg-muted"
+	case VariantSecondary:
+		return "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80"
+	case VariantGhost:
+		return "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
+	case VariantLink:
+		return "border-transparent text-primary underline-offset-4 hover:underline px-0"
+	default:
+		return "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
+	}
+}
+
+func (b Props) sizeClasses() string {
+	switch b.Size {
+	case SizeSm:
+		return "h-6 px-2 text-xs"
+	case SizeLg:
+		return "h-9 px-4"
+	case SizeIcon:
+		return "size-7"
+	default:
+		return "h-7 px-2.5"
+	}
+}

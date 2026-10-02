@@ -26,6 +26,8 @@ require (
 )
 
 require (
+	github.com/Oudwins/tailwind-merge-go v0.2.0
+	github.com/a-h/templ v0.3.1020
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
@@ -38,6 +40,7 @@ require (
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

@@ -7,20 +7,27 @@ There is nothing to set up.
 
 ## Tabs
 
+The dashboard is a console in the style of a NiFi-like operations tool: a slate top bar
+with one tab per surface, a live status bar, and dense tables. It follows your light
+or dark preference.
+
 | Tab | Shows |
 |---|---|
 | **Architecture** | Modules, endpoints, services, resources, workers and crons, with dependency edges. Drill into a module, pan the minimap, and watch live traffic pulse along the edges. It is built to stay readable with more than 1000 nodes. |
-| **Endpoints** | Every REST route and GraphQL op, with an in-page tester. |
-| **Crons** | Schedules, last runs and results, with pause, resume and trigger controls. |
-| **Rate limits** | Declared and effective limits, editable live. |
-| **Auth** | Cached identities, a live stream of 401/403 rejections, and per-row invalidation. |
-| **Traces** | A filterable stream of request events. |
+| **Endpoints** | Every REST route, GraphQL op and WebSocket message, scoped by a module (or service) rail and searched, sorted and paged on the server, so thousands of endpoints stay fast. Each endpoint has a page with its input schema, recent errors, an in-page tester, and its rate limit (editable live). |
+| **Services** | Each service with its endpoint count, resources, dependencies and traffic. Sort by requests or errors to find the noisy ones. |
+| **Resources** | Databases, caches, queues and disks with their health. Failing ones come first. |
+| **Workers & Crons** | Worker status and last error; cron schedules, next and last runs, with run, pause and resume controls. |
+| **Traces** | Recent requests from the trace buffer, searchable, with a waterfall per trace. |
+| **Auth** | Cached identities, with invalidation by identity or token, and a live list of recent 401/403 rejections (reason, endpoint, identity), each linked to its trace. Shown when `auth.Module` is wired. |
+| **Runtime** | The global middleware chain, plugins, the middleware catalogue and GraphQL document-cache stats. |
 
 ![Traces](/traces.png)
 
 The dashboard is driven by WebSockets, not polling. `/__nexus/live` pushes a state
-snapshot when something changes, and `/__nexus/events` streams traces. Data is gathered
-only while a client is connected, so endpoints pay nothing per request.
+snapshot when something changes, and the open tab re-renders in place (or gets a cheap
+304 when nothing it shows has changed). `/__nexus/events` streams traces. Data is
+gathered only while a client is connected, so endpoints pay nothing per request.
 
 ## Turning it on
 
