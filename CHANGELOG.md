@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.78.2] - 2026-10-02
+
+### Added
+
+- **Events on generic live pages.** `view.SendTo(recv, "Method", args…)`,
+  `view.SubmitTo` and `view.ChangeTo` name an event by its method name on the
+  live page, checked against the page's type when it renders. Go builds a
+  generic type's method values as closures without their method's name, so
+  `view.Send` couldn't name them; it now explains that instead of saying the
+  argument isn't a method value.
+- **A form event may take `url.Values`**: the fields as sent, for an editor
+  that binds them itself.
+
 ## [1.78.1] - 2026-10-02
 
 ### Fixed
