@@ -6,6 +6,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.78.0] - 2026-10-02
+
+### Changed
+
+- **The dashboard is a templ + templUI console.** `/__nexus` is now
+  server-rendered: one tab per surface — Architecture, Endpoints, Services,
+  Resources, Workers & Crons, Traces, Auth and Runtime — under a slate top
+  bar and a live status bar, with dense tables in light or dark. The
+  Architecture tab keeps the Vue topology canvas, embedded and re-skinned to
+  match; its bundled web fonts are gone.
+- **Large apps stay fast.** Endpoints is scoped by a module (or service)
+  rail, and big lists are searched, sorted and paged on the server, with the
+  view kept in the URL; an 850-service app's Endpoints page went from 3.8 MB
+  of HTML to under 150 KB. Live updates re-render what is on screen in place
+  and cost a 304 when nothing changed.
+
+### Added
+
+- **An endpoint page** with its input schema, recent errors (with stacks), a
+  REST/GraphQL/WebSocket tester and live rate-limit overrides.
+- **Auth's rejection stream on the console**: the 401/403s still in the trace
+  buffer, newest first, each linked to its trace, updating as they happen.
+- `dashboard.Config.SchemaRefs`, `trace.Bus.Recent` and `trace.Bus.Spans`.
+- `make dashboard` regenerates the console's templ code and Tailwind CSS
+  (both committed; a plain `go build` needs neither tool).
+
+### Dependencies
+
+- `github.com/a-h/templ` and `github.com/Oudwins/tailwind-merge-go`. The
+  templUI components are vendored, so templUI's own module graph is not
+  pulled in.
+
 ## [1.77.3] - 2026-10-02
 
 ### Fixed
