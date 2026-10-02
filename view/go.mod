@@ -6,11 +6,12 @@ require (
 	github.com/a-h/templ v0.3.1020
 	github.com/dop251/goja v0.0.0-20260926152631-39ec2650adc9
 	github.com/gorilla/websocket v1.5.3
-	github.com/paulmanoni/nexus v1.77.3
+	github.com/paulmanoni/nexus v1.78.0
 )
 
 require (
 	braces.dev/errtrace v0.4.0 // indirect
+	github.com/Oudwins/tailwind-merge-go v0.2.0 // indirect
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
 	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
