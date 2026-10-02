@@ -309,7 +309,7 @@ function workerState(s) {
         <div class="ov-title">{{ appName }} topology</div>
         <div class="ov-sub">Auto-generated from the Nexus registry — every module, endpoint, and resource the framework wired up at boot.</div>
         <div class="ov-grid">
-          <div class="ov-card"><div class="k">Services</div><div class="v">{{ totals.services }}</div></div>
+          <div class="ov-card"><div class="k">Modules</div><div class="v">{{ totals.services }}</div></div>
           <div class="ov-card"><div class="k">Endpoints</div><div class="v">{{ totals.eps }}</div></div>
           <div class="ov-card"><div class="k">Live</div><div class="v">{{ totals.rps }}<small>/s</small></div></div>
           <div class="ov-card"><div class="k">Errors</div><div class="v">{{ totals.errs }}</div></div>

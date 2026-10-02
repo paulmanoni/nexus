@@ -8,7 +8,7 @@ import {
   Hexagon, Search, SlidersHorizontal, Sun, Moon, LayoutGrid, Workflow,
   Maximize2, Zap, AlertTriangle, Gauge, ShieldCheck, Layers,
 } from 'lucide-vue-next'
-import { elkLayout, applyPositions } from '../lib/elkLayout.js'
+import { elkLayout, applyPositions, wrapTallLayers } from '../lib/elkLayout.js'
 
 import ServiceNode from '../components/ServiceNode.vue'
 import ServiceDepNode from '../components/ServiceDepNode.vue'
@@ -719,7 +719,8 @@ async function layout(ns, es, mode = 'layered') {
     return { id: n.id, width: w, height: h }
   })
   try {
-    const pos = await elkLayout(sized, es, mode === 'flow' ? FLOW_OPTS : {})
+    let pos = await elkLayout(sized, es, mode === 'flow' ? FLOW_OPTS : {})
+    if (mode !== 'flow') pos = wrapTallLayers(sized, pos)
     return applyPositions(ns, pos)
   } catch (err) {
     console.warn('[nexus] ELK layout failed — falling back to grid:', err)
@@ -2420,8 +2421,10 @@ onUnmounted(() => {
 .is-embedded .float-tl { flex-wrap: wrap; max-width: calc(100% - 250px); }
 /* a narrow canvas shows the floating controls as icons, on one row */
 .canvas-wrap { container-type: inline-size; }
-/* the zoom controls sit above the Highlight bar, not under it */
-.canvas-wrap :deep(.vue-flow__controls) { bottom: 58px; }
+/* the zoom controls sit above the Highlight bar, not under it — and stay
+   26px squares (the global #app button rule would pad them into slabs) */
+.canvas-wrap :deep(.vue-flow__controls) { bottom: 50px; }
+.canvas-wrap :deep(.vue-flow__controls-button) { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: 0; border-width: 0 0 1px; }
 @container (max-width: 980px) {
   .canvas-wrap :deep(.vue-flow__minimap) { transform: scale(.7); transform-origin: bottom right; }
   .float-tl .lbl, .float-bl .lbl, .float-bl .hl-label { display: none; }
@@ -2429,13 +2432,13 @@ onUnmounted(() => {
   .is-embedded .float-tl { flex-wrap: nowrap; gap: 6px; }
 }
 .seg {
-  display: inline-flex; border-radius: var(--r-sm); padding: 3px; gap: 2px;
+  display: inline-flex; border-radius: var(--r-sm); padding: 2px; gap: 1px;
   background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow-card);
   -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
 }
 .seg button {
-  font-family: inherit; font-size: 12.5px; font-weight: 520; color: var(--ink-2);
-  border: none; background: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 520; color: var(--ink-2);
+  border: none; background: none; padding: 3px 8px; border-radius: var(--radius-sm); cursor: pointer; gap: 5px;
   display: inline-flex; align-items: center; gap: 7px; transition: all var(--speed) var(--ease);
 }
 .seg button:hover { color: var(--ink); }
@@ -2445,7 +2448,7 @@ onUnmounted(() => {
 .float-bl {
   position: absolute; bottom: 14px; left: 14px; z-index: 12;
   display: flex; align-items: center; gap: 4px;
-  border-radius: var(--r-sm); padding: 5px 6px 5px 12px;
+  border-radius: var(--r-sm); padding: 2px 3px 2px 10px;
   background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow-card);
   -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
 }
@@ -2454,8 +2457,8 @@ onUnmounted(() => {
   text-transform: uppercase; margin-right: 6px;
 }
 .hl-chip {
-  font-family: inherit; font-size: 12.5px; font-weight: 520; color: var(--ink-2);
-  border: 1px solid transparent; background: none; padding: 5px 11px; border-radius: 7px;
+  font-family: inherit; font-size: 12px; font-weight: 520; color: var(--ink-2);
+  border: 1px solid transparent; background: none; padding: 3px 8px; border-radius: var(--radius-sm);
   cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all var(--speed) var(--ease);
 }
 .hl-chip:hover { background: var(--surface-3); color: var(--ink); }
@@ -2467,7 +2470,7 @@ onUnmounted(() => {
 .activity {
   position: absolute; top: 14px; right: 14px; z-index: 12;
   display: flex; align-items: center; gap: 12px;
-  border-radius: var(--r-sm); padding: 8px 13px;
+  border-radius: var(--r-sm); padding: 4px 10px;
   background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow-card);
   -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
 }

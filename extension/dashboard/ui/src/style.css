@@ -20,11 +20,11 @@ body {
   text-rendering: optimizeLegibility;
   overflow: hidden;
 }
-#app ::selection { background: var(--accent-soft); }
+:where(#app) ::selection { background: var(--accent-soft); }
 
-#app :is(h1, h2, h3, h4) { font-weight: 600; }
+:where(#app) :is(h1, h2, h3, h4) { font-weight: 600; }
 
-#app button {
+:where(#app) button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -40,13 +40,13 @@ body {
   transition: background var(--speed) var(--ease), border-color var(--speed) var(--ease), color var(--speed) var(--ease);
   white-space: nowrap;
 }
-#app button:hover { background: var(--bg-hover); border-color: var(--border-strong); }
-#app button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#app button:disabled { opacity: 0.5; cursor: not-allowed; }
-#app button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-#app button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+:where(#app) button:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+:where(#app) button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:where(#app) button:disabled { opacity: 0.5; cursor: not-allowed; }
+:where(#app) button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+:where(#app) button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
-#app :is(input, textarea, select) {
+:where(#app) :is(input, textarea, select) {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -57,12 +57,12 @@ body {
   width: 100%;
   transition: border-color 120ms, box-shadow 120ms;
 }
-#app :is(input, textarea, select):focus {
+:where(#app) :is(input, textarea, select):focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-#app textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
+:where(#app) textarea { resize: vertical; font-family: var(--font-mono); font-size: 12px; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 10px; }
