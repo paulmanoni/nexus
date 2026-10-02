@@ -112,6 +112,24 @@ func (b *Bus) Publish(e Event) {
 	}
 }
 
+// Recent returns every event currently in the ring, oldest first (by the
+// bus-wide ID). Unlike Subscribe it registers nothing — a one-off read for
+// views that render the buffer as a page.
+func (b *Bus) Recent() []Event {
+	var out []Event
+	for i := range b.shards {
+		sh := &b.shards[i]
+		sh.mu.Lock()
+		start := (sh.next - sh.size + sh.capacity) % sh.capacity
+		for j := 0; j < sh.size; j++ {
+			out = append(out, sh.buf[(start+j)%sh.capacity])
+		}
+		sh.mu.Unlock()
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 // SnapshotByTrace returns every event currently in the ring whose TraceID
 // matches, in publish order. Backs the dashboard's per-trace waterfall view.
 // Returns nil when no events match. One trace lives in one shard, so this
