@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.78.1] - 2026-10-02
+
+### Fixed
+
+- **The architecture canvas stays legible in big apps.** A layer holding
+  dozens of modules was one column, so the graph was a tall sliver whose
+  cards fit-to-view shrank past reading; tall layers now wrap into balanced
+  columns. The canvas's toolbar, highlight and zoom buttons are compact
+  again (its scoped element styles had started to outrank the components'
+  own), and the inspector labels its count of groups Modules.
+
 ## [1.78.0] - 2026-10-02
 
 ### Changed
