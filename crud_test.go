@@ -98,8 +98,8 @@ func TestAsCRUD_RestEndpoints(t *testing.T) {
 	}
 	resp.Body.Close()
 	// ErrCRUDNotFound must surface as 404, not the generic 500 the
-	// AsRest error path used to give. Guards the sentinel-mapping
-	// wired into AsRest via MapCRUDError.
+	// AsRest error path used to give: the sentinel is
+	// rendered by its code (ErrCRUDNotFound is a NotFound nexus.Error).
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get-after-delete: status=%d, want 404", resp.StatusCode)
 	}

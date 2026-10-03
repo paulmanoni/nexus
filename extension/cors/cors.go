@@ -41,6 +41,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
@@ -193,7 +194,7 @@ func NewMiddleware(cfg Config) middleware.Middleware {
 			Description: "CORS preflight + header policy",
 			Kind:        middleware.KindBuiltin,
 			HTTP: func(c *httpx.Ctx) {
-				c.AbortWithStatusJSON(500, httpx.H{"error": msg})
+				c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusInternalServerError, errors.New(msg)))
 			},
 		}
 	}
@@ -202,7 +203,7 @@ func NewMiddleware(cfg Config) middleware.Middleware {
 		Name:        "cors",
 		Description: "CORS preflight + header policy",
 		Kind:        middleware.KindBuiltin,
-		HTTP:         corsHandler(&cfg, matcher),
+		HTTP:        corsHandler(&cfg, matcher),
 	}
 }
 

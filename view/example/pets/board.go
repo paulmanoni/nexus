@@ -25,7 +25,7 @@ type PetInput struct {
 }
 
 func (in PetInput) check(store *Store) error {
-	errs := nexus.NewErrors()
+	errs := nexus.Invalid()
 	switch name := strings.TrimSpace(in.Name); {
 	case name == "":
 		errs.Field("name", "a name is required")

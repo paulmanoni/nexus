@@ -289,15 +289,18 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 		if len(env.Data) > 0 {
 			if err := json.Unmarshal(maskhook.UnmaskJSON(env.Data), ptr.Interface()); err != nil {
 				// Decode failed before the handler ran — close the
-				// root trace with a 400-style status so the waterfall
+				// root trace with the error's status so the waterfall
 				// doesn't show an open-ended request.
-				finish(400, err)
-				_ = sess.Send("error", map[string]string{
-					"type":    env.Type,
-					"message": "invalid payload: " + err.Error(),
-				})
+				bad := bindError(err)
+				finish(bad.HTTPStatus(), bad)
+				_ = sess.Send("error", wsErrorEvent(env.Type, bad))
 				return
 			}
+		}
+		if err := validateValue(ptr); err != nil {
+			finish(InvalidInput.HTTPStatus(), err)
+			_ = sess.Send("error", wsErrorEvent(env.Type, err))
+			return
 		}
 		argsVal = ptr.Elem()
 	}
@@ -310,7 +313,7 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 	err := callWSHandler(h, ci, argsVal)
 	status := 200
 	if err != nil {
-		status = 500
+		status = ErrorOf(err).HTTPStatus()
 	}
 	finish(status, err)
 	if app.bus != nil {
@@ -335,10 +338,7 @@ func dispatchWSMessage(app *App, ep *wsEndpoint, conn *ws.Connection, raw []byte
 		app.bus.Publish(ev)
 	}
 	if err != nil {
-		_ = sess.Send("error", map[string]string{
-			"type":    env.Type,
-			"message": err.Error(),
-		})
+		_ = sess.Send("error", wsErrorEvent(env.Type, err))
 	}
 }
 

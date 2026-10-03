@@ -26,7 +26,7 @@ func PermissionMiddleware(perms []string) graph.FieldMiddleware {
 			}
 			// real code: principal := p.Context.Value("principal").(*Principal)
 			// for _, want := range perms { if principal.HasRole(want) return next(p) }
-			// return nil, ErrForbidden
+			// return nil, nexus.Forbidden
 			return next(p)
 		}
 	}

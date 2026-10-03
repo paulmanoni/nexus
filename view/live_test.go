@@ -3,7 +3,6 @@ package view
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +41,7 @@ func (l *counterLive) Mount(ctx context.Context, sock *Socket, g *greeter, name 
 // Add is an event: a dependency (*greeter) first, then its argument.
 func (l *counterLive) Add(ctx context.Context, g *greeter, n int) error {
 	if n <= 0 {
-		return errors.New("n must be positive")
+		return nexus.Err(nexus.Conflict, "n must be positive")
 	}
 	l.Count += n
 	return nil

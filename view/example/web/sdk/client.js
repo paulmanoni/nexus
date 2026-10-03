@@ -30,7 +30,8 @@ export class NexusError extends Error {
    * @param {string} message
    * @param {object} extra
    * @param {number} [extra.status]   HTTP status (REST), graphql code (GQL)
-   * @param {string} [extra.code]     framework-side error code if surfaced
+   * @param {string} [extra.code]     the error's code (INVALID_INPUT, NOT_FOUND, …)
+   * @param {object} [extra.errors]   per-field messages of an INVALID_INPUT error
    * @param {any}    [extra.payload]  raw decoded response body
    * @param {string} [extra.endpoint] endpoint identifier for context
    */
@@ -39,6 +40,7 @@ export class NexusError extends Error {
     this.name = 'NexusError'
     this.status = extra.status
     this.code = extra.code
+    this.errors = extra.errors
     this.payload = extra.payload
     this.endpoint = extra.endpoint
   }
@@ -447,9 +449,9 @@ export class NexusClient {
         const alias = 'a' + i
         const perAlias = aliasErrors.get(alias)
         if (docError) {
-          e.reject(new NexusError(docError.message, { payload: body, endpoint: e.name }))
+          e.reject(new NexusError(docError.message, { code: docError.extensions?.code, payload: body, endpoint: e.name }))
         } else if (perAlias) {
-          e.reject(new NexusError(perAlias.message, { payload: body, endpoint: e.name }))
+          e.reject(new NexusError(perAlias.message, { code: perAlias.extensions?.code, payload: body, endpoint: e.name }))
         } else {
           e.resolve(body.data ? body.data[alias] : undefined)
         }
@@ -539,7 +541,7 @@ export class NexusClient {
     const r = await this._fetch(url, init)
     const body = await r.json()
     if (body.errors && body.errors.length) {
-      throw new NexusError(body.errors[0].message, { payload: body, endpoint: name })
+      throw new NexusError(body.errors[0].message, { code: body.errors[0].extensions?.code, errors: body.errors[0].extensions?.errors, payload: body, endpoint: name })
     }
     // Return data[name] when present (the typical single-field
     // response); fall back to the whole data object so multi-field
@@ -652,8 +654,9 @@ export class NexusClient {
       body = await r.text()
     }
     if (!r.ok) {
-      const msg = (body && typeof body === 'object' && body.error) || `HTTP ${r.status}`
-      throw new NexusError(msg, { status: r.status, payload: body, endpoint })
+      const obj = body && typeof body === 'object' ? body : {}
+      const msg = obj.message || obj.error || `HTTP ${r.status}`
+      throw new NexusError(msg, { status: r.status, code: obj.code, errors: obj.errors, payload: body, endpoint })
     }
     return body
   }

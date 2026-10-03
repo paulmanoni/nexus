@@ -87,7 +87,7 @@ func TestLoginEndpoint_InvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	if body["error"] == nil {
+	if body["message"] == nil || body["code"] != "UNAUTHENTICATED" {
 		t.Errorf("401 body should carry an error, got %v", body)
 	}
 	if body["identity"] != nil {
@@ -150,7 +150,7 @@ func TestLoginEndpoint_BadBody(t *testing.T) {
 	defer stop(context.Background())
 
 	rec, _ := postJSON(t, app, "/auth/login", `not-json`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
 	}
 }

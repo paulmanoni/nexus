@@ -15,6 +15,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 )
 
 type petForm struct {
@@ -43,7 +44,7 @@ func (s *shelterLive) Add(ctx context.Context, in petForm) error {
 }
 
 func check(in petForm) error {
-	errs := nexus.NewErrors()
+	errs := nexus.Invalid()
 	if strings.TrimSpace(in.Name) == "" {
 		errs.Field("name", "a name is required")
 	}
@@ -130,6 +131,7 @@ func (p *panicky) Render() templ.Component {
 
 // A panicking event is reported to the page; the connection survives.
 func TestLivePanicIsAnError(t *testing.T) {
+	t.Setenv(dev.Env, "1") // a panic's message is shown under nexus dev only
 	app, stop, err := nexus.InProcess(config.Runtime{}, Live[*panicky]("/p").Provide(func() *panicky { return &panicky{} }))
 	if err != nil {
 		t.Fatal(err)

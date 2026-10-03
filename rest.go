@@ -33,7 +33,9 @@ import (
 //     json:"x"     → ShouldBindJSON (for non-GET; default when other binders are absent)
 //   - The return may be (T, error), (T), (error), or nothing. T gets
 //     JSON-marshalled with status 200 (201 for POST) on success; errors
-//     become status 500 with {"error": "..."}.
+//     render through the error model (see Error): the status of their code
+//     with {"code", "message", "errors"}. Args are validated (validate:
+//     tags) after binding; a failure is a 422 InvalidInput.
 //
 // Returns an di.Option; drop it into di.Provide.
 //
@@ -406,12 +408,16 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 		if sh.hasArgs {
 			ptr := reflect.New(sh.argsType)
 			if err := bindArgs(c, ptr.Interface()); err != nil {
-				status := http.StatusBadRequest
 				var tooLarge *http.MaxBytesError
 				if errors.As(err, &tooLarge) {
-					status = http.StatusRequestEntityTooLarge
+					c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusRequestEntityTooLarge, err))
+					return
 				}
-				c.JSON(status, httpx.H{"error": err.Error()})
+				WriteError(c, bindError(err))
+				return
+			}
+			if err := validateValue(ptr); err != nil {
+				WriteError(c, err)
 				return
 			}
 			args = ptr.Elem()
@@ -438,48 +444,23 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 					if rerr != nil {
 						_ = c.Error(errtrace.Wrap(rerr))
 						if !c.Writer.Written() {
-							c.JSON(http.StatusInternalServerError, httpx.H{"error": rerr.Error()})
+							WriteError(c, rerr)
 						}
 					}
 					return
 				}
 			}
 			// Validation errors are a normal outcome, not a failure of the
-			// endpoint: render the accumulated field/global messages as a
-			// 422 and skip the error-trace/500 machinery. Inertia pages
-			// never reach here — their renderer's RenderError turned the
-			// same value into a flash + 303 above.
-			var verrs *Errors
-			if errors.As(err, &verrs) {
-				c.JSON(http.StatusUnprocessableEntity, httpx.H{
-					"message": "validation failed",
-					"errors":  verrs.FieldErrors(),
-				})
-				return
+			// endpoint: they skip the error-trace machinery. Every other
+			// error is recorded with errtrace.Wrap, which captures THIS
+			// frame as a bottom-of-stack marker so the dashboard's
+			// "▸ stack" toggle has something to show; c.Error hands it to
+			// the metrics recorder. Inertia pages never reach here — their
+			// renderer's RenderError answered above.
+			if CodeOf(err) != InvalidInput {
+				_ = c.Error(errtrace.Wrap(err))
 			}
-			// errtrace.Wrap captures THIS frame as a bottom-of-stack
-			// marker (the framework's REST boundary). User code that
-			// chained `errtrace.Wrap` at each return appends frames
-			// above; user code that didn't still gets a one-frame
-			// trace pointing at this call site so the dashboard's
-			// "▸ stack" toggle has something useful to show.
-			//
-			// c.Error attaches the wrapped err to gin.Context so the
-			// metrics recorder downstream reads it from c.Errors and
-			// stores the formatted trace on the *trace.StackError.
-			err = errtrace.Wrap(err)
-			_ = c.Error(err)
-			// Sentinel-aware status mapping — handlers (typically
-			// AsCRUD's generated ones, but any handler is free to
-			// participate) can return ErrCRUDNotFound / Conflict /
-			// Validation to surface the right HTTP code instead of a
-			// generic 500. Anything not mapped stays a 500 so we
-			// never silently downgrade a real bug.
-			status := http.StatusInternalServerError
-			if mapped, ok := MapCRUDError(err); ok {
-				status = mapped
-			}
-			c.JSON(status, httpx.H{"error": err.Error()})
+			WriteError(c, err)
 			return
 		}
 		// A handler that takes *httpx.Ctx may have already written the
@@ -494,7 +475,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 				if rerr := er.RenderEmpty(c); rerr != nil {
 					_ = c.Error(errtrace.Wrap(rerr))
 					if !c.Writer.Written() {
-						c.JSON(http.StatusInternalServerError, httpx.H{"error": rerr.Error()})
+						WriteError(c, rerr)
 					}
 				}
 				return
@@ -506,7 +487,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 			if rerr := renderer.Render(c, result); rerr != nil {
 				_ = c.Error(errtrace.Wrap(rerr))
 				if !c.Writer.Written() {
-					c.JSON(http.StatusInternalServerError, httpx.H{"error": rerr.Error()})
+					WriteError(c, rerr)
 				}
 			}
 			return

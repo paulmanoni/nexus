@@ -27,11 +27,11 @@ import (
 func (j *Job[A]) Schedule(spec string, args A) nexus.Option {
 	sched, err := cron.ParseStandard(spec)
 	if err != nil {
-		return nexus.Error(fmt.Errorf("jobs: %s: schedule %q: %w", j.def.name, spec, err))
+		return nexus.FailBoot(fmt.Errorf("jobs: %s: schedule %q: %w", j.def.name, spec, err))
 	}
 	raw, err := json.Marshal(args)
 	if err != nil {
-		return nexus.Error(fmt.Errorf("jobs: %s: schedule arguments don't encode as JSON: %w", j.def.name, err))
+		return nexus.FailBoot(fmt.Errorf("jobs: %s: schedule arguments don't encode as JSON: %w", j.def.name, err))
 	}
 	s := &schedule{def: j.def, spec: spec, sched: sched, args: raw}
 	return nexus.Options(j.Option, nexus.Invoke(func(m *Manager) {

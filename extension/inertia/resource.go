@@ -28,7 +28,7 @@ import (
 // The component folder comes from the type name (UsersController → Users);
 // ResourceAs names it explicitly. Page actions return their props; Create
 // returns the created record, whose ID field (or json "id") picks the Show to
-// redirect to. A write action that returns nexus.Errors sends the user back to
+// redirect to. A write action that returns nexus.Invalid() sends the user back to
 // the form with the field errors, as any Inertia form does.
 //
 // It is a nexus.Controller underneath: path parameters bind to bare scalar

@@ -82,7 +82,10 @@ export type ExtractRestPath<K>   = K extends `${string} ${infer P}` ? P : never
 /** Throws on non-2xx responses; status + payload + endpoint surfaced. */
 export class NexusError extends Error {
   status?: number
+  /** INVALID_INPUT, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT, TOO_MANY_REQUESTS, UNAVAILABLE or INTERNAL */
   code?: string
+  /** per-field messages of an INVALID_INPUT error; global ones under _global */
+  errors?: Record<string, string[]>
   payload?: unknown
   endpoint?: string
 }

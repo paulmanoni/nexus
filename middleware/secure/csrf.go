@@ -4,11 +4,13 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // safeMethods are the HTTP methods RFC 7231 defines as safe. They can't
@@ -182,8 +184,5 @@ func hostOf(raw string) string {
 }
 
 func reject(c *httpx.Ctx, reason string) {
-	c.AbortWithStatusJSON(http.StatusForbidden, httpx.H{
-		"error":  "forbidden",
-		"reason": reason,
-	})
+	c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusForbidden, errors.New("csrf: "+reason)))
 }

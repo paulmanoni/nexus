@@ -183,7 +183,7 @@ func Module(cfg Config) nexus.Option {
 	if codec == nil {
 		key, err := resolveKey(cfg.Key)
 		if err != nil {
-			return nexus.Error(err)
+			return nexus.FailBoot(err)
 		}
 		codec = NewAESCodec(key)
 	}

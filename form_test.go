@@ -14,7 +14,7 @@ import (
 
 // nexus.Form: source-unified raw reads (JSON / multipart / urlencoded /
 // query), file streaming, Bind back into the typed world, FormFrom on the
-// handler's ctx — and nexus.Errors rendering as 422 on REST.
+// handler's ctx — and nexus.Invalid() rendering as 422 on REST.
 
 type formEcho struct {
 	Title string   `json:"title"`
@@ -51,7 +51,7 @@ func formApp(t *testing.T) (*App, func()) {
 		}),
 		AsRest("POST", "/bind", func(fm *Form) (*formEcho, error) {
 			if fm.Get("title") == "" { // raw read first, then Bind must still work
-				return nil, NewErrors().Field("title", "required")
+				return nil, Invalid().Field("title", "required")
 			}
 			var dto formEcho
 			if err := fm.Bind(&dto); err != nil {
@@ -153,36 +153,13 @@ func TestErrorsRenderAs422(t *testing.T) {
 	}
 }
 
-func TestErrorsAccumulator(t *testing.T) {
-	e := NewErrors()
-	if e.Any() {
-		t.Fatal("fresh accumulator must be empty")
-	}
-	e.Field("email", "taken").Field("email", "invalid").Global("provider down")
-	if !e.Any() {
-		t.Fatal("Any after adds")
-	}
-	fe := e.FieldErrors()
-	if len(fe["email"]) != 2 || fe[GlobalErrorKey][0] != "provider down" {
-		t.Fatalf("FieldErrors = %v", fe)
-	}
-	first := e.First()
-	if first["email"] != "taken" || first[GlobalErrorKey] != "provider down" {
-		t.Fatalf("First = %v", first)
-	}
-	ext := e.Extensions()
-	if ext["code"] != "VALIDATION" {
-		t.Fatalf("Extensions = %v", ext)
-	}
-}
-
 // A *Form param on a non-REST transport must be a typed nil whose methods
 // no-op rather than panic.
 func TestFormNilOnGraphQL(t *testing.T) {
 	app, stop, err := InProcess(config.Runtime{},
 		AsQuery(func(ctx context.Context, fm *Form) (*formEcho, error) {
 			if fm != nil {
-				return nil, NewErrors().Global("form must be nil off REST")
+				return nil, Invalid().Global("form must be nil off REST")
 			}
 			_ = fm.Get("x") // nil receiver must not panic
 			return &formEcho{Title: "gql-ok"}, nil

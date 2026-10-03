@@ -2,10 +2,12 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // Endpoints opts auth.Module into mounting its own HTTP front doors, so a
@@ -125,7 +127,7 @@ func endpointOptions(e Endpoints) []nexus.Option {
 				return func(c *httpx.Ctx) {
 					h := m.tokenHandler()
 					if h == nil {
-						c.JSON(http.StatusNotImplemented, httpx.H{"error": "no token server configured"})
+						c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusNotImplemented, errors.New("no token server configured")))
 						return
 					}
 					h(c)

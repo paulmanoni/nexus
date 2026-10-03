@@ -267,7 +267,7 @@ func lookup(fn any) []*definition {
 // receiver from DI.
 func (d *definition) option() nexus.Option {
 	if d.err != nil {
-		return nexus.Error(d.err)
+		return nexus.FailBoot(d.err)
 	}
 	managerType := reflect.TypeFor[*Manager]()
 	in := []reflect.Type{managerType}

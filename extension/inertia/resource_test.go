@@ -44,7 +44,7 @@ func (c *ArticlesController) Edit(ctx context.Context, id int64) (articleProps, 
 }
 func (c *ArticlesController) Create(ctx context.Context, in articleInput) (*article, error) {
 	if in.Title == "" {
-		return nil, nexus.NewErrors().Field("title", "is required")
+		return nil, nexus.Invalid().Field("title", "is required")
 	}
 	return &article{ID: 7, Title: in.Title}, nil
 }

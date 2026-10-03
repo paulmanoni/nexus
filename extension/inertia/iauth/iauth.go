@@ -32,7 +32,7 @@ type errorHandler struct {
 	loginURL string
 	// api handles denials for non-page, non-GraphQL requests (programmatic
 	// API/SDK clients). Lets an app keep its own JSON envelope; nil falls back
-	// to the framework's default {"error": ...} body.
+	// to the framework's error body ({"code", "message"}).
 	api auth.ErrorHandler
 }
 

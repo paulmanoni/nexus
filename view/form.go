@@ -2,7 +2,6 @@ package view
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +23,8 @@ import (
 //
 //	<form onsubmit={ view.Submit(b.Add) }>
 //
-// If method returns nexus.Errors the page re-renders with them (view.Errors)
+// The struct's validate: tags are checked first. If they fail, or method
+// returns an InvalidInput error (nexus.Invalid()), the page re-renders with them (view.Errors)
 // and the form keeps what was typed; on success the form resets to its
 // server-rendered values.
 func Submit(method any) templ.ComponentScript { return formScript("submit", methodName(method)) }
@@ -51,16 +51,16 @@ func formScript(kind, name string) templ.ComponentScript {
 
 // FormErrors are the validation errors of the event that last ran, for
 // Render to show beside the fields.
-type FormErrors struct{ errs *nexus.Errors }
+type FormErrors struct{ errs *nexus.Error }
 
 type formErrorsKey struct{}
 
-// Errors returns the validation errors the page's last event returned (a
-// nexus.Errors), empty when it succeeded.
+// Errors returns the validation errors of the page's last event — its
+// InvalidInput error's field map — empty when it succeeded.
 //
 //	if msg := view.Errors(ctx).Field("name"); msg != "" { <p class="error">{ msg }</p> }
 func Errors(ctx context.Context) FormErrors {
-	e, _ := ctx.Value(formErrorsKey{}).(*nexus.Errors)
+	e, _ := ctx.Value(formErrorsKey{}).(*nexus.Error)
 	return FormErrors{errs: e}
 }
 
@@ -108,10 +108,13 @@ func bindForm(t reflect.Type, values map[string][]string) (reflect.Value, error)
 	return ptr.Elem(), nil
 }
 
-// validation reports whether err is (or wraps) a nexus.Errors.
-func validation(err error) (*nexus.Errors, bool) {
-	var e *nexus.Errors
-	if errors.As(err, &e) && e.Any() {
+// validation reports whether err is an InvalidInput error with field (or
+// global) messages to show beside the form.
+func validation(err error) (*nexus.Error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	if e := nexus.ErrorOf(err); e.Code == nexus.InvalidInput && e.Any() {
 		return e, true
 	}
 	return nil, false

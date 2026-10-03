@@ -913,7 +913,7 @@ func TestShareProvideRenders(t *testing.T) {
 	}
 }
 
-// nexus.Errors returned from a page handler must ride the same flash + 303
+// nexus.Invalid() returned from a page handler must ride the same flash + 303
 // flow as inertia.Invalid — field messages plus the global message under
 // errors._global, on the one object useForm watches.
 func TestNexusErrorsFlashWithGlobal(t *testing.T) {
@@ -922,7 +922,7 @@ func TestNexusErrorsFlashWithGlobal(t *testing.T) {
 		if p.Method == http.MethodGet {
 			return regProps{Title: "Two"}, nil
 		}
-		return nil, nexus.NewErrors().
+		return nil, nexus.Invalid().
 			Field("email", "already taken").
 			Global("provider unreachable")
 	}
@@ -930,7 +930,7 @@ func TestNexusErrorsFlashWithGlobal(t *testing.T) {
 
 	res, _ := doReq(t, "POST", addr, "/two", map[string]string{"X-Inertia": "true"})
 	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("nexus.Errors should 303, got %d", res.StatusCode)
+		t.Fatalf("nexus.Invalid() should 303, got %d", res.StatusCode)
 	}
 	var flash string
 	for _, ck := range res.Cookies() {

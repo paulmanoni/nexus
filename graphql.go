@@ -2,6 +2,7 @@ package nexus
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -302,6 +303,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		for arg, vs := range cfg.argValidators {
 			r.WithArgValidator(arg, vs...)
 		}
+		r.WithErrorMapper(graphqlError)
 		// Deny-by-default gate (if an extension installed one and this
 		// field isn't Public()) runs ahead of the field's own middleware
 		// so the identity check precedes any permission check.
@@ -347,9 +349,12 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 				argsPtr := reflect.New(capturedArgsType)
 				if capturedInputName != "" {
 					if err := bindInputObject(argsPtr.Interface(), capturedInputName, p.Args); err != nil {
-						return nil, err
+						return nil, bindError(err)
 					}
 				} else if err := bindGqlArgs(argsPtr.Interface(), p.Args); err != nil {
+					return nil, bindError(err)
+				}
+				if err := validateValue(argsPtr); err != nil {
 					return nil, err
 				}
 				argsVal = argsPtr.Elem()
@@ -487,10 +492,10 @@ func attachRateLimitMiddleware(r *graph.UnifiedResolver[any], app *App, service,
 				scope = ClientIP(p.Context)
 			}
 			if ok, retry := store.Allow(p.Context, ratelimit.GlobalKey, scope); !ok {
-				return nil, fmt.Errorf("global rate limit exceeded — retry after %s", retry.Round(10_000_000))
+				return nil, Errf(TooMany, "global rate limit exceeded — retry after %s", retry.Round(10_000_000))
 			}
 			if ok, retry := store.Allow(p.Context, key, scope); !ok {
-				return nil, fmt.Errorf("rate limit exceeded — retry after %s", retry.Round(10_000_000))
+				return nil, Errf(TooMany, "rate limit exceeded — retry after %s", retry.Round(10_000_000))
 			}
 			return next(p)
 		}
@@ -799,6 +804,10 @@ func buildValidator(rule string) *graph.Validator {
 		min, max := parseBounds(strings.TrimPrefix(rule, "len="))
 		v := graph.StringLength(min, max)
 		return &v
+	case strings.HasPrefix(rule, "int="):
+		min, max := parseIntBounds(strings.TrimPrefix(rule, "int="))
+		v := graph.IntRange(min, max)
+		return &v
 	case strings.HasPrefix(rule, "oneof="):
 		vals := strings.Split(strings.TrimPrefix(rule, "oneof="), "|")
 		anyVals := make([]any, len(vals))
@@ -822,6 +831,22 @@ func parseBounds(s string) (int, int) {
 	}
 	min, _ := strconv.Atoi(parts[0])
 	max, _ := strconv.Atoi(parts[1])
+	return min, max
+}
+
+// parseIntBounds reads "min|max" for int=; an empty side is unbounded.
+func parseIntBounds(s string) (int, int) {
+	min, max := math.MinInt, math.MaxInt
+	lo, hi, ok := strings.Cut(s, "|")
+	if !ok {
+		return min, max
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(lo)); err == nil {
+		min = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(hi)); err == nil {
+		max = n
+	}
 	return min, max
 }
 

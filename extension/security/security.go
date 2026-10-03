@@ -20,6 +20,7 @@
 package security
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
@@ -77,7 +78,7 @@ func NewHeadersMiddleware(cfg HeadersConfig) middleware.Middleware {
 		Name:        "security-headers",
 		Description: "Security response headers",
 		Kind:        middleware.KindBuiltin,
-		HTTP:         secure.HeadersHandler(&cfg),
+		HTTP:        secure.HeadersHandler(&cfg),
 	}
 }
 
@@ -94,7 +95,7 @@ func NewCSRFMiddleware(cfg CSRFConfig) middleware.Middleware {
 			Description: "CSRF double-submit check",
 			Kind:        middleware.KindBuiltin,
 			HTTP: func(c *httpx.Ctx) {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, httpx.H{"error": msg})
+				c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusInternalServerError, errors.New(msg)))
 			},
 		}
 	}
@@ -102,7 +103,7 @@ func NewCSRFMiddleware(cfg CSRFConfig) middleware.Middleware {
 		Name:        "csrf",
 		Description: "CSRF double-submit check",
 		Kind:        middleware.KindBuiltin,
-		HTTP:         secure.CSRFHandler(&cfg),
+		HTTP:        secure.CSRFHandler(&cfg),
 	}
 }
 

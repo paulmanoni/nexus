@@ -3,7 +3,6 @@ package nexus
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,7 +78,7 @@ type envSvc struct{}
 
 func (s *envSvc) FindUser(ctx context.Context, a probeArgs) (*probeOut, error) {
 	if a.Name == "missing" {
-		return nil, errors.New("no such user")
+		return nil, Err(NotFound, "no such user")
 	}
 	return &probeOut{Greeting: "found " + a.Name}, nil
 }

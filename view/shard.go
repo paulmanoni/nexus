@@ -58,7 +58,7 @@ type shardDef struct {
 func Shard(component any, opts ...nexus.RestOption) nexus.Option {
 	v := reflect.ValueOf(component)
 	if !v.IsValid() || v.Kind() != reflect.Func || v.Type().NumOut() != 1 || v.Type().Out(0) != reflect.TypeFor[templ.Component]() {
-		return nexus.Error(fmt.Errorf("view.Shard: want a templ component function, got %T", component))
+		return nexus.FailBoot(fmt.Errorf("view.Shard: want a templ component function, got %T", component))
 	}
 	d := &shardDef{route: shardRoute(component), fn: v}
 	shardsMu.Lock()
@@ -113,11 +113,8 @@ func (d *shardDef) serve(c *httpx.Ctx) {
 		err = comp.Render(ctx, &buf)
 	}
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, nexus.ErrForbidden) {
-			status = http.StatusForbidden
-		}
-		c.String(status, err.Error())
+		ne := nexus.ErrorOf(err)
+		c.String(ne.HTTPStatus(), ne.Error())
 		return
 	}
 	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())

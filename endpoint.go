@@ -650,7 +650,10 @@ func WithRenderer(r ResponseRenderer) RestOption {
 //	nexus.AsQuery((*UserService).ListUsers, nexus.Envelope(Wrap[[]UserRow]))
 //
 // On GraphQL the schema (and the generated SDK) declare W, not T — the
-// envelope is part of the contract, not a serialization trick. An error the
+// envelope is part of the contract, not a serialization trick. The wrap
+// receives a handler's error as the *nexus.Error it maps to (ErrorOf: its
+// code, and an uncoded error's message hidden outside nexus dev), so
+// err.Error() is safe to put on the wire. An error the
 // wrap converts into a value (the usual case) reaches the client as a normal
 // 200/data response; an error the wrap returns follows the transport's
 // standard error path. Binding and validation failures happen before the
@@ -727,6 +730,9 @@ func entryReturnType(sh handlerShape, env *envelopeSpec) reflect.Type {
 // on the way out (a typed-nil W must become an untyped nil result, the
 // same contract callHandler applies to plain handlers).
 func (e *envelopeSpec) apply(result any, err error) (any, error) {
+	if err != nil {
+		err = ErrorOf(err)
+	}
 	w, werr := e.call(result, err)
 	if w != nil {
 		if rv := reflect.ValueOf(w); (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface) && rv.IsNil() {

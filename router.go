@@ -175,7 +175,7 @@ func (r *Router) attach(op Option) { r.attached = append(r.attached, op) }
 // records the actions annotated on its controller type.
 func (r *Router) nexusOption() di.Option {
 	if r.parent != "" {
-		return Error(fmt.Errorf("nexus: router %q is included in %q — pass only the root router", r.name, r.parent)).nexusOption()
+		return FailBoot(fmt.Errorf("nexus: router %q is included in %q — pass only the root router", r.name, r.parent)).nexusOption()
 	}
 	return di.Defer(r.resolve)
 }
@@ -188,7 +188,7 @@ func (r *Router) resolve() di.Option {
 	defer r.mu.Unlock()
 	gen := currentBuild()
 	if r.resolvedIn == gen && r.cached != nil {
-		return Error(fmt.Errorf("nexus: router %q mounted twice — the same router passed twice", r.name)).nexusOption()
+		return FailBoot(fmt.Errorf("nexus: router %q mounted twice — the same router passed twice", r.name)).nexusOption()
 	}
 	r.resolvedIn = gen
 	if r.cached == nil {
@@ -252,17 +252,17 @@ type enclosingAnnotator interface {
 
 func (r *Router) expand(parentPrefix string, inherited []MiddlewareOption) Option {
 	if r.expanded {
-		return Error(fmt.Errorf("nexus: router %q mounted twice — a cycle, or the same router passed twice", r.name))
+		return FailBoot(fmt.Errorf("nexus: router %q mounted twice — a cycle, or the same router passed twice", r.name))
 	}
 	r.expanded = true
 	for _, h := range r.hooks {
 		h()
 	}
 	if len(r.errs) > 0 {
-		return Error(r.errs[0])
+		return FailBoot(r.errs[0])
 	}
 	if r.requireActions != "" && len(r.builders) == 0 && len(r.attached) == 0 {
-		return Error(errors.New(r.requireActions))
+		return FailBoot(errors.New(r.requireActions))
 	}
 	full := parentPrefix + r.prefix
 	sh := make([]MiddlewareOption, 0, len(inherited)+len(r.shared))
@@ -370,7 +370,7 @@ func assembleRouters() []Option {
 			if prev.prefix == d.prefix && prev.parent == d.parent {
 				continue // agreeing duplicate (re-generated file), harmless
 			}
-			return []Option{Error(fmt.Errorf("nexus: router %q declared twice with different definitions", d.name))}
+			return []Option{FailBoot(fmt.Errorf("nexus: router %q declared twice with different definitions", d.name))}
 		}
 		r := NewRouter(d.name, d.prefix, d.shared...)
 		r.parent = d.parent // provisional; verified below
@@ -391,7 +391,7 @@ func assembleRouters() []Option {
 		}
 		p, ok := routers[r.parent]
 		if !ok {
-			return []Option{Error(fmt.Errorf("nexus: router %q names unknown parent %q (declared: %s)",
+			return []Option{FailBoot(fmt.Errorf("nexus: router %q names unknown parent %q (declared: %s)",
 				n, r.parent, strings.Join(names, ", ")))}
 		}
 		r.parent = "" // Include re-sets it; clear the provisional value
@@ -405,7 +405,7 @@ func assembleRouters() []Option {
 	for _, n := range memberNames {
 		r, ok := routers[n]
 		if !ok {
-			return []Option{Error(fmt.Errorf("nexus: //nexus:on names unknown router %q (declared: %s)",
+			return []Option{FailBoot(fmt.Errorf("nexus: //nexus:on names unknown router %q (declared: %s)",
 				n, strings.Join(names, ", ")))}
 		}
 		for _, op := range members[n] {
@@ -420,7 +420,7 @@ func assembleRouters() []Option {
 	// A cycle leaves some routers unexpanded (never reached from a root).
 	for _, n := range names {
 		if !routers[n].expanded {
-			return []Option{Error(fmt.Errorf("nexus: router %q is unreachable — its parent chain forms a cycle", n))}
+			return []Option{FailBoot(fmt.Errorf("nexus: router %q is unreachable — its parent chain forms a cycle", n))}
 		}
 	}
 	return out
