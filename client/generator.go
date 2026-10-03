@@ -471,7 +471,7 @@ export class NexusClient {
     opts?: { headers?: Record<string, string>; signal?: AbortSignal; batch?: boolean; unwrap?: boolean },
   ): Promise<GqlData<K>>
 
-  /** CRUD handle for AsCRUD-registered entities. */
+  /** CRUD handle over a conventional REST resource (nexus.Resource). */
   crud(name: string): CrudHandle
 
   /** WebSocket handle — typed by path via WSMessages. */

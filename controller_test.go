@@ -33,7 +33,7 @@ func (c *UsersController) Index(ctx context.Context) ([]ctlUser, error) {
 
 func (c *UsersController) Show(ctx context.Context, id int64) (*ctlUser, error) {
 	if id == 404 {
-		return nil, ErrCRUDNotFound
+		return nil, NotFound
 	}
 	return &ctlUser{ID: id, Name: "ada"}, nil
 }
@@ -150,7 +150,7 @@ func (c *GuardedController) Authorize(ctx context.Context, action string) error 
 		return errors.New("you cannot delete this")
 	case "Show":
 		if ctx.Value(ctlKey{}) == "hide" {
-			return ErrCRUDNotFound
+			return NotFound
 		}
 	}
 	return nil
@@ -198,7 +198,7 @@ func TestControllerAuthorize(t *testing.T) {
 	if strings.Join(ctl.seen, ",") != strings.Join(want, ",") {
 		t.Fatalf("Authorize saw %v, want %v", ctl.seen, want)
 	}
-	if !errors.Is(forbiddenError(ErrCRUDNotFound), ErrCRUDNotFound) || CodeOf(forbiddenError(errors.New("no"))) != Forbidden {
+	if !errors.Is(forbiddenError(NotFound), NotFound) || CodeOf(forbiddenError(errors.New("no"))) != Forbidden {
 		t.Fatal("a refusal keeps the meaning of the error it wraps")
 	}
 }

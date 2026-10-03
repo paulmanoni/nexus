@@ -47,8 +47,8 @@ func Use(m middleware.Middleware) MiddlewareOption {
 // nexus.Use(...) expression can appear wherever the transport accepts it.
 //
 // MiddlewareOption also satisfies the top-level Option interface as a
-// no-op so callers can flow it through Option-typed variadic slots
-// (notably nexus.AsCRUD, which accepts ...Option). The option still
+// no-op so callers can flow it through Option-typed variadic slots. The
+// option still
 // only takes effect via applyToRest / applyToGql / applyToWS — the
 // no-op nexusOption() exists purely for type-system passage.
 type MiddlewareOption struct{ mw middleware.Middleware }

@@ -50,7 +50,6 @@ export default defineConfig({
             { text: 'Controllers', link: '/guide/controllers' },
             { text: '//nexus: decorators', link: '/guide/decorators' },
             { text: 'Forms & validation errors', link: '/guide/forms' },
-            { text: 'Generated CRUD', link: '/guide/crud' },
           ],
         },
         {

@@ -3,12 +3,10 @@ package nexus
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -352,57 +350,6 @@ func BenchmarkE2E_GraphQL_Mutation(b *testing.B) {
 		for pb.Next() {
 			req, _ := http.NewRequest("POST", "/graphql", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
-			rec := httptest.NewRecorder()
-			engine.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				b.Fatalf("status %d: %s", rec.Code, rec.Body.String())
-			}
-		}
-	})
-}
-
-// --- 5. CRUD memory-store path -------------------------------------
-
-type benchNote struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Body  string `json:"body"`
-}
-
-// BenchmarkE2E_CRUD_Read drives the AsCRUD-generated GET /benchnotes/:id
-// path after seeding one row. This is the "read by id" hot path most
-// apps actually serve: AsRest mount + URI bind + Store.Read + JSON.
-func BenchmarkE2E_CRUD_Read(b *testing.B) {
-	mod := Module("bench_crud",
-		Provide(func(app *App) *Service { return app.Service("notes-bench") }),
-		AsCRUD[benchNote](MemoryResolver[benchNote](nil, nil)),
-	)
-	app := newBenchApp(b, mod)
-	defer app.Stop()
-	engine := app.Router()
-
-	// Seed one note so reads have a target.
-	seedReq, _ := http.NewRequest("POST", "/benchnotes",
-		strings.NewReader(`{"title":"t","body":"b"}`))
-	seedReq.Header.Set("Content-Type", "application/json")
-	seedRec := httptest.NewRecorder()
-	engine.ServeHTTP(seedRec, seedReq)
-	if seedRec.Code >= 300 {
-		b.Fatalf("seed failed: %d %s", seedRec.Code, seedRec.Body.String())
-	}
-	var seeded struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(seedRec.Body.Bytes(), &seeded); err != nil {
-		b.Fatalf("seed decode: %v (body=%s)", err, seedRec.Body.String())
-	}
-	readPath := "/benchnotes/" + seeded.ID
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		req, _ := http.NewRequest("GET", readPath, nil)
-		for pb.Next() {
 			rec := httptest.NewRecorder()
 			engine.ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {

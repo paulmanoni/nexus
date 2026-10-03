@@ -553,8 +553,8 @@ export class NexusClient {
   }
 
   /**
-   * crud returns a CRUD handle scoped to a registered AsCRUD entity
-   * by plural name (e.g. nx.crud('pets').list()). The handle uses
+   * crud returns a CRUD handle over a conventional REST resource (a
+   * nexus.Resource) by its path (e.g. nx.crud('pets').list()). The handle uses
    * the conventional REST routes (GET /<plural>, GET /<plural>/:id,
    * POST /<plural>, PATCH /<plural>/:id, DELETE /<plural>/:id).
    */

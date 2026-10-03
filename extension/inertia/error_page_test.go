@@ -19,7 +19,7 @@ func failingPages() nexus.Option {
 		return nil, nexus.Err(nexus.Internal, "qualifications could not be loaded")
 	}
 	missing := func(p nexus.Params[struct{}]) (any, error) {
-		return nil, fmt.Errorf("user 9: %w", nexus.ErrCRUDNotFound)
+		return nil, fmt.Errorf("user 9: %w", nexus.NotFound)
 	}
 	moved := func(p nexus.Params[struct{}]) (any, error) {
 		return nil, inertia.Redirect("/elsewhere")

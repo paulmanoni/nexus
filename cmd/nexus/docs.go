@@ -2188,7 +2188,7 @@ accessToken). Configure the token field + CSRF pair on the server:
 
 ─── CRUD ─────────────────────────────────────────────────────────────
 
-For entities registered via nexus.AsCRUD[Pet]:
+For a conventional REST resource (nexus.Resource[*PetsController]("/pets")):
 
     const pets = nx.crud('pets')
     await pets.list()

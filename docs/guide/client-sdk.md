@@ -27,7 +27,7 @@ const found = await nx.query('searchPets', { q: 'cat' })     // GraphQL query
 await nx.mutate('createPet', { name: 'Rex' })                // GraphQL mutation
 await nx.auth.login({ username, password })                  // auth flow
 nx.ws('/events').on('chat.message', render)                  // WebSocket
-const pets = nx.crud('pets')                                 // AsCRUD endpoints
+const pets = nx.crud('pets')                                 // a nexus.Resource's routes
 ```
 
 Calls are typed from your Go handlers: argument shapes, return types, GraphQL ops and
