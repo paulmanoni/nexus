@@ -1,0 +1,28 @@
+package ui
+
+func badgeClass(v Variant) string {
+	base := "ui-badge inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium"
+	switch v {
+	case Primary:
+		return join(base, "border-transparent bg-[color:var(--ui-primary)] text-[color:var(--ui-primary-fg)]")
+	case Outline:
+		return join(base, "border-[color:var(--ui-border)] text-[color:var(--ui-fg)]")
+	case Danger:
+		return join(base, "border-transparent bg-[color:var(--ui-danger)]/12 text-[color:var(--ui-danger)]")
+	case Success:
+		return join(base, "border-transparent bg-[color:var(--ui-success)]/12 text-[color:var(--ui-success)]")
+	case Warning:
+		return join(base, "border-transparent bg-[color:var(--ui-warning)]/15 text-[color:var(--ui-warning-text)]")
+	case Info:
+		return join(base, "border-transparent bg-[color:var(--ui-info)]/12 text-[color:var(--ui-info)]")
+	}
+	return join(base, "border-transparent bg-[color:var(--ui-secondary)] text-[color:var(--ui-secondary-fg)]")
+}
+
+// Badge is a small status label; its children are the text. It has the
+// Secondary look when variant is empty.
+templ Badge(variant Variant) {
+	<span class={ badgeClass(variant) }>
+		{ children... }
+	</span>
+}

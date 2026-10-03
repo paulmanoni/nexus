@@ -1,0 +1,206 @@
+package ui
+
+import (
+	"context"
+	"strconv"
+
+	"github.com/paulmanoni/nexus/v2/view"
+)
+
+// FieldProps configures a Field: a form control with its label, help text
+// and error message.
+type FieldProps struct {
+	// Name is the control's form name. The error message defaults to the
+	// live page's validation error for it (view.Errors).
+	Name     string
+	ID       string // the control's id, which the label points at; Name when empty
+	Label    string
+	Help     string
+	Error    string // overrides the validation error
+	Required bool   // marks the label
+	Class    string
+}
+
+// fieldError is the message shown under a field: the explicit one, else
+// the live page's validation error for name.
+func fieldError(ctx context.Context, name, explicit string) string {
+	if explicit != "" || name == "" {
+		return explicit
+	}
+	return view.Errors(ctx).Field(name)
+}
+
+// Field lays out a label, the control (its children: an Input, Select,
+// Textarea or any markup), help text and the error message.
+templ Field(p FieldProps) {
+	{{ msg := fieldError(ctx, p.Name, p.Error) }}
+	<div class={ join("ui-field grid gap-1.5", p.Class) }>
+		if p.Label != "" {
+			<label for={ or(p.ID, p.Name) } class="text-sm font-medium leading-none text-[color:var(--ui-fg)]">
+				{ p.Label }
+				if p.Required {
+					<span class="text-[color:var(--ui-danger)]" aria-hidden="true">*</span>
+				}
+			</label>
+		}
+		{ children... }
+		if p.Help != "" && msg == "" {
+			<p id={ or(p.ID, p.Name) + "-help" } class="text-xs text-[color:var(--ui-muted-fg)]">{ p.Help }</p>
+		}
+		<p id={ or(p.ID, p.Name) + "-error" } class="ui-field-error text-xs font-medium text-[color:var(--ui-danger)]" hidden?={ msg == "" }>{ msg }</p>
+	</div>
+}
+
+const controlBase = "w-full rounded-[var(--ui-radius)] border border-[color:var(--ui-input)] bg-[color:var(--ui-bg)] px-3 text-sm text-[color:var(--ui-fg)] shadow-xs transition-colors placeholder:text-[color:var(--ui-muted-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-ring)] disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-[color:var(--ui-danger)] aria-invalid:ring-[color:var(--ui-danger)]/30"
+
+// InputProps configures an Input.
+type InputProps struct {
+	Name        string
+	ID          string // Name when empty
+	Type        string // "text" when empty
+	Value       string
+	Placeholder string
+	Required    bool
+	Disabled    bool
+	ReadOnly    bool
+	// Invalid marks the control; it is also marked when the live page has
+	// a validation error for Name.
+	Invalid bool
+	Class   string
+	Attrs   templ.Attributes
+}
+
+func controlAttrs(ctx context.Context, name, id string, invalid bool, attrs templ.Attributes) templ.Attributes {
+	a := templ.Attributes{}
+	if name != "" {
+		a["name"] = name
+	}
+	if id = or(id, name); id != "" {
+		a["id"] = id
+	}
+	if invalid || (name != "" && view.Errors(ctx).Field(name) != "") {
+		a["aria-invalid"] = "true"
+		a["aria-describedby"] = id + "-error"
+	}
+	return merge(a, attrs)
+}
+
+// Input is a text-like input. In a view.Submit form it sends its value
+// under Name; view.Errors marks it invalid.
+templ Input(p InputProps) {
+	<input
+		type={ or(p.Type, "text") }
+		class={ join(controlBase, "h-9 py-1", p.Class) }
+		value={ p.Value }
+		if p.Placeholder != "" {
+			placeholder={ p.Placeholder }
+		}
+		required?={ p.Required }
+		disabled?={ p.Disabled }
+		readonly?={ p.ReadOnly }
+		{ controlAttrs(ctx, p.Name, p.ID, p.Invalid, p.Attrs)... }
+	/>
+}
+
+// TextareaProps configures a Textarea.
+type TextareaProps struct {
+	Name        string
+	ID          string
+	Value       string
+	Placeholder string
+	Rows        int // 3 when 0
+	Required    bool
+	Disabled    bool
+	Invalid     bool
+	Class       string
+	Attrs       templ.Attributes
+}
+
+// Textarea is a multi-line input.
+templ Textarea(p TextareaProps) {
+	<textarea
+		class={ join(controlBase, "min-h-16 py-2", p.Class) }
+		rows={ rows(p.Rows) }
+		if p.Placeholder != "" {
+			placeholder={ p.Placeholder }
+		}
+		required?={ p.Required }
+		disabled?={ p.Disabled }
+		{ controlAttrs(ctx, p.Name, p.ID, p.Invalid, p.Attrs)... }
+	>{ p.Value }</textarea>
+}
+
+func rows(n int) string {
+	if n <= 0 {
+		n = 3
+	}
+	return strconv.Itoa(n)
+}
+
+// Option is one choice of a Select.
+type Option struct {
+	Value    string
+	Label    string // Value when empty
+	Disabled bool
+}
+
+// SelectProps configures a Select.
+type SelectProps struct {
+	Name        string
+	ID          string
+	Options     []Option
+	Value       string // the chosen option's value
+	Placeholder string // a first, empty option
+	Required    bool
+	Disabled    bool
+	Invalid     bool
+	Class       string
+	Attrs       templ.Attributes
+}
+
+// Select is a native select. The chosen option follows Value on every
+// render, live updates included.
+templ Select(p SelectProps) {
+	<select
+		class={ join(controlBase, "h-9 py-1 pr-8", p.Class) }
+		required?={ p.Required }
+		disabled?={ p.Disabled }
+		{ controlAttrs(ctx, p.Name, p.ID, p.Invalid, p.Attrs)... }
+	>
+		if p.Placeholder != "" {
+			<option value="" selected?={ p.Value == "" }>{ p.Placeholder }</option>
+		}
+		for _, o := range p.Options {
+			<option value={ o.Value } selected?={ o.Value == p.Value } disabled?={ o.Disabled }>{ or(o.Label, o.Value) }</option>
+		}
+	</select>
+}
+
+// CheckboxProps configures a Checkbox.
+type CheckboxProps struct {
+	Name     string
+	ID       string
+	Value    string // "on" when empty
+	Label    string
+	Checked  bool
+	Disabled bool
+	Class    string
+	Attrs    templ.Attributes
+}
+
+// Checkbox is a checkbox with its label beside it.
+templ Checkbox(p CheckboxProps) {
+	<label class={ join("inline-flex items-center gap-2 text-sm text-[color:var(--ui-fg)] has-disabled:opacity-50", p.Class) }>
+		<input
+			type="checkbox"
+			class="size-4 rounded border-[color:var(--ui-input)] accent-[color:var(--ui-primary)]"
+			value={ or(p.Value, "on") }
+			checked?={ p.Checked }
+			disabled?={ p.Disabled }
+			{ controlAttrs(ctx, p.Name, p.ID, false, p.Attrs)... }
+		/>
+		if p.Label != "" {
+			<span>{ p.Label }</span>
+		}
+	</label>
+}

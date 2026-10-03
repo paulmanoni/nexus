@@ -1,0 +1,47 @@
+package ui
+
+import "strconv"
+
+// ToastProps configures a Toast.
+type ToastProps struct {
+	// ID tells toasts apart: the browser shows each id once, so a live page
+	// that keeps rendering the same toast shows it once. Title and Text
+	// when empty.
+	ID      string
+	Title   string
+	Text    string
+	Variant Variant // Success, Danger, Warning, Info; neutral when empty
+	// Duration in milliseconds before it fades: 4000 when 0, -1 to keep it
+	// until dismissed.
+	Duration int
+}
+
+func toastDuration(d int) string {
+	if d == 0 {
+		d = 4000
+	}
+	return strconv.Itoa(d)
+}
+
+func toastID(p ToastProps) string {
+	if p.ID != "" {
+		return p.ID
+	}
+	return p.Title + "|" + p.Text
+}
+
+// Toast shows a short message in the corner of the page. Render it from a
+// live page after an event: the browser lifts it into its toast stack and
+// shows each ID once — as in ui.Toast(ui.ToastProps{ID: x.FlashID, Text:
+// x.Flash, Variant: ui.Success}) under an if on x.Flash.
+//
+// Browser code shows one with nxui.toast(text, {variant, title, duration}).
+templ Toast(p ToastProps) {
+	<div
+		hidden
+		data-ui-toast={ toastID(p) }
+		data-ui-variant={ string(p.Variant) }
+		data-ui-title={ p.Title }
+		data-ui-duration={ toastDuration(p.Duration) }
+	>{ p.Text }</div>
+}

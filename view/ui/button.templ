@@ -1,0 +1,154 @@
+package ui
+
+// ButtonProps configures a Button. A button with Href is a link; Nav makes
+// it an in-app link (view.Link's navigation).
+type ButtonProps struct {
+	ID      string
+	Variant Variant // Primary when empty
+	Size    Size    // Md when empty
+	// Icon is drawn before the label: ui.Icon("plus"), or any component.
+	Icon     templ.Component
+	IconOnly bool   // a square button with no label: give it a Title
+	Title    string // the tooltip, and the label of an icon-only button
+	Type     string // "button" (default), "submit" or "reset"
+	Href     string
+	Nav      bool
+	Disabled bool
+	// Loading shows a spinner in place of the icon and disables the
+	// button. ui.Loading sets the same state in the browser while its
+	// event is in flight.
+	Loading bool
+	// Hotkey clicks the button on a key combination: "mod+s" is Ctrl+S, or
+	// Cmd+S on a Mac.
+	Hotkey string
+	// OnClick is the click's script: view.Send(x.Save), ui.Loading(…).
+	OnClick templ.ComponentScript
+	Class   string
+	Attrs   templ.Attributes
+}
+
+const buttonBase = "ui-btn inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--ui-radius)] text-sm font-medium transition-colors select-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-ring)] focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+
+func buttonClass(p ButtonProps) string {
+	var v string
+	switch p.Variant {
+	case Secondary:
+		v = "bg-[color:var(--ui-secondary)] text-[color:var(--ui-secondary-fg)] hover:bg-[color:var(--ui-secondary)]/80"
+	case Outline:
+		v = "border border-[color:var(--ui-border)] bg-[color:var(--ui-bg)] text-[color:var(--ui-fg)] hover:bg-[color:var(--ui-accent)] hover:text-[color:var(--ui-accent-fg)]"
+	case Ghost:
+		v = "text-[color:var(--ui-fg)] hover:bg-[color:var(--ui-accent)] hover:text-[color:var(--ui-accent-fg)]"
+	case Danger:
+		v = "bg-[color:var(--ui-danger)] text-[color:var(--ui-danger-fg)] hover:bg-[color:var(--ui-danger)]/90"
+	case Success:
+		v = "bg-[color:var(--ui-success)] text-[color:var(--ui-success-fg)] hover:bg-[color:var(--ui-success)]/90"
+	case Warning:
+		v = "bg-[color:var(--ui-warning)] text-[color:var(--ui-warning-fg)] hover:bg-[color:var(--ui-warning)]/90"
+	case Info:
+		v = "bg-[color:var(--ui-info)] text-[color:var(--ui-info-fg)] hover:bg-[color:var(--ui-info)]/90"
+	case LinkStyle:
+		v = "text-[color:var(--ui-primary)] underline-offset-4 hover:underline"
+	default:
+		v = "bg-[color:var(--ui-primary)] text-[color:var(--ui-primary-fg)] hover:bg-[color:var(--ui-primary)]/90"
+	}
+	var s string
+	switch {
+	case p.IconOnly && p.Size == Sm:
+		s = "size-8"
+	case p.IconOnly && p.Size == Lg:
+		s = "size-10"
+	case p.IconOnly:
+		s = "size-9"
+	case p.Size == Sm:
+		s = "h-8 px-3 text-xs"
+	case p.Size == Lg:
+		s = "h-10 px-6"
+	default:
+		s = "h-9 px-4"
+	}
+	return join(buttonBase, v, s, p.Class)
+}
+
+func buttonType(t string) string {
+	if t == "" {
+		return "button"
+	}
+	return t
+}
+
+func (p ButtonProps) attrs() templ.Attributes {
+	a := templ.Attributes{}
+	if p.ID != "" {
+		a["id"] = p.ID
+	}
+	if p.Title != "" {
+		a["title"] = p.Title
+		if p.IconOnly {
+			a["aria-label"] = p.Title
+		}
+	}
+	if p.Hotkey != "" {
+		a["data-ui-hotkey"] = p.Hotkey
+	}
+	if p.Loading {
+		a["aria-busy"] = "true"
+	}
+	return merge(a, p.Attrs)
+}
+
+// Button is a button — or, with Href, a link that looks like one — with an
+// optional icon before its label (its children), as in
+// ui.Button(ui.ButtonProps{Icon: ui.Icon("plus"), OnClick: view.Send(x.New)})
+// with "New order" as its children.
+templ Button(p ButtonProps) {
+	if p.Href != "" {
+		<a
+			href={ templ.SafeURL(p.Href) }
+			class={ buttonClass(p) }
+			if p.Nav {
+				data-nx-nav
+			}
+			if p.Disabled || p.Loading {
+				aria-disabled="true"
+				tabindex="-1"
+			}
+			if hasScript(p.OnClick) {
+				onclick={ p.OnClick }
+			}
+			{ p.attrs()... }
+		>
+			@buttonInner(p) {
+				{ children... }
+			}
+		</a>
+	} else {
+		<button
+			type={ buttonType(p.Type) }
+			class={ buttonClass(p) }
+			disabled?={ p.Disabled || p.Loading }
+			if hasScript(p.OnClick) {
+				onclick={ p.OnClick }
+			}
+			{ p.attrs()... }
+		>
+			@buttonInner(p) {
+				{ children... }
+			}
+		</button>
+	}
+}
+
+templ buttonInner(p ButtonProps) {
+	<span class="ui-btn-spinner hidden">
+		@Icon("spinner")
+	</span>
+	if p.Icon != nil {
+		<span class="ui-btn-icon inline-flex">
+			@p.Icon
+		</span>
+	}
+	if p.IconOnly {
+		<span class="sr-only">{ p.Title }</span>
+	}
+	{ children... }
+}

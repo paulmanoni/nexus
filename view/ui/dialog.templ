@@ -1,0 +1,107 @@
+package ui
+
+// DialogProps configures a Dialog. A dialog is one of two kinds:
+//
+//   - Server-owned (OnClose set): the live page renders it while it is open
+//     and closes it in the event OnClose sends — what a confirm step or an
+//     edit form with validation wants.
+//   - Browser-side (ID set, no OnClose): rendered hidden, opened by an
+//     element with ui.OpenDialog(id) and closed by one with ui.CloseDialog()
+//     or its close button. Live updates leave it as the browser has it.
+type DialogProps struct {
+	ID          string
+	Title       string
+	Description string
+	Icon        templ.Component // shown in a tile beside the title
+	Size        Size            // Sm (24rem), Md (32rem, default), Lg (48rem)
+	OnClose     templ.ComponentScript
+	// Persistent keeps Esc and a backdrop click from closing it.
+	Persistent bool
+	// Open shows a browser-side dialog on first render.
+	Open   bool
+	Footer templ.Component
+	Class  string
+}
+
+func dialogWidth(s Size) string {
+	switch s {
+	case Sm:
+		return "max-w-sm"
+	case Lg:
+		return "max-w-3xl"
+	}
+	return "max-w-lg"
+}
+
+func dialogTitleID(p DialogProps) string {
+	if p.ID == "" {
+		return ""
+	}
+	return p.ID + "-title"
+}
+
+// Dialog is a modal: a backdrop, a panel with a title, its body (the
+// children) and an optional footer of actions.
+templ Dialog(p DialogProps) {
+	<div
+		class="ui-dialog fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+		data-ui-dialog
+		if p.ID != "" {
+			id={ p.ID }
+		}
+		if !hasScript(p.OnClose) {
+			hidden?={ !p.Open }
+			data-nx-ignore
+		}
+		if p.Persistent {
+			data-persistent
+		}
+	>
+		<div
+			role="dialog"
+			aria-modal="true"
+			if p.ID != "" {
+				aria-labelledby={ dialogTitleID(p) }
+			}
+			class={ join("ui-dialog-panel flex max-h-[calc(100vh-2rem)] w-full flex-col rounded-[calc(var(--ui-radius)+4px)] border border-[color:var(--ui-border)] bg-[color:var(--ui-bg)] text-[color:var(--ui-fg)] shadow-xl", dialogWidth(p.Size), p.Class) }
+		>
+			<header class="flex items-start gap-3 px-6 pt-5 pb-3">
+				if p.Icon != nil {
+					<span class="flex size-9 shrink-0 items-center justify-center rounded-[var(--ui-radius)] bg-[color:var(--ui-muted)] text-[color:var(--ui-muted-fg)]">
+						@p.Icon
+					</span>
+				}
+				<div class="min-w-0 flex-1">
+					<h2
+						if p.ID != "" {
+							id={ dialogTitleID(p) }
+						}
+						class="text-lg font-semibold leading-tight"
+					>{ p.Title }</h2>
+					if p.Description != "" {
+						<p class="mt-1 text-sm text-[color:var(--ui-muted-fg)]">{ p.Description }</p>
+					}
+				</div>
+				if hasScript(p.OnClose) {
+					<button type="button" class={ dialogCloseClass } aria-label="Close" data-ui-dialog-close onclick={ p.OnClose }>
+						@Icon("x")
+					</button>
+				} else {
+					<button type="button" class={ dialogCloseClass } aria-label="Close" data-ui-dialog-close data-ui-close>
+						@Icon("x")
+					</button>
+				}
+			</header>
+			<div class="flex-1 overflow-y-auto px-6 pb-5 text-sm">
+				{ children... }
+			</div>
+			if p.Footer != nil {
+				<footer class="flex flex-wrap justify-end gap-2 border-t border-[color:var(--ui-border)] px-6 py-3">
+					@p.Footer
+				</footer>
+			}
+		</div>
+	</div>
+}
+
+const dialogCloseClass = "inline-flex size-8 shrink-0 items-center justify-center rounded-[var(--ui-radius)] text-[color:var(--ui-muted-fg)] cursor-pointer hover:bg-[color:var(--ui-accent)] hover:text-[color:var(--ui-fg)]"

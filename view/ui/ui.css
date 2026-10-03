@@ -1,0 +1,272 @@
+/* nexus/view/ui: theme tokens and the rules utilities can't express.
+   Components read --ui-* tokens. Each falls back to the shadcn/templUI
+   token of the same role (--primary, --border, …), so an app that defines
+   those is matched as is; otherwise the defaults below apply. Override any
+   --ui-* token on :root (and under .dark) to theme the kit. */
+
+:root,
+.light {
+  --ui-radius: var(--radius, 0.5rem);
+  --ui-bg: var(--background, #ffffff);
+  --ui-fg: var(--foreground, #0a0a0a);
+  --ui-muted: var(--muted, #f4f4f5);
+  --ui-muted-fg: var(--muted-foreground, #71717a);
+  --ui-accent: var(--accent, #f4f4f5);
+  --ui-accent-fg: var(--accent-foreground, #18181b);
+  --ui-border: var(--border, #e4e4e7);
+  --ui-input: var(--input, #e4e4e7);
+  --ui-ring: var(--ring, #a1a1aa);
+  --ui-popover: var(--popover, #ffffff);
+  --ui-popover-fg: var(--popover-foreground, #0a0a0a);
+  --ui-primary: var(--primary, #18181b);
+  --ui-primary-fg: var(--primary-foreground, #fafafa);
+  --ui-secondary: var(--secondary, #f4f4f5);
+  --ui-secondary-fg: var(--secondary-foreground, #18181b);
+  --ui-danger: var(--destructive, #dc2626);
+  --ui-danger-fg: #ffffff;
+  --ui-success: #16a34a;
+  --ui-success-fg: #ffffff;
+  --ui-warning: #f59e0b;
+  --ui-warning-fg: #1c1917;
+  --ui-warning-text: #b45309;
+  --ui-info: #2563eb;
+  --ui-info-fg: #ffffff;
+  --ui-veil: rgb(255 255 255 / 0.6);
+  --ui-toast-bg: #18181b;
+  --ui-toast-fg: #fafafa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --ui-bg: var(--background, #0a0a0a);
+    --ui-fg: var(--foreground, #fafafa);
+    --ui-muted: var(--muted, #27272a);
+    --ui-muted-fg: var(--muted-foreground, #a1a1aa);
+    --ui-accent: var(--accent, #27272a);
+    --ui-accent-fg: var(--accent-foreground, #fafafa);
+    --ui-border: var(--border, #27272a);
+    --ui-input: var(--input, #3f3f46);
+    --ui-ring: var(--ring, #71717a);
+    --ui-popover: var(--popover, #18181b);
+    --ui-popover-fg: var(--popover-foreground, #fafafa);
+    --ui-primary: var(--primary, #fafafa);
+    --ui-primary-fg: var(--primary-foreground, #18181b);
+    --ui-secondary: var(--secondary, #27272a);
+    --ui-secondary-fg: var(--secondary-foreground, #fafafa);
+    --ui-danger: var(--destructive, #ef4444);
+    --ui-success: #22c55e;
+    --ui-warning-text: #fbbf24;
+    --ui-info: #3b82f6;
+    --ui-veil: rgb(10 10 10 / 0.55);
+    --ui-toast-bg: #fafafa;
+    --ui-toast-fg: #18181b;
+  }
+}
+
+.dark {
+  --ui-bg: var(--background, #0a0a0a);
+  --ui-fg: var(--foreground, #fafafa);
+  --ui-muted: var(--muted, #27272a);
+  --ui-muted-fg: var(--muted-foreground, #a1a1aa);
+  --ui-accent: var(--accent, #27272a);
+  --ui-accent-fg: var(--accent-foreground, #fafafa);
+  --ui-border: var(--border, #27272a);
+  --ui-input: var(--input, #3f3f46);
+  --ui-ring: var(--ring, #71717a);
+  --ui-popover: var(--popover, #18181b);
+  --ui-popover-fg: var(--popover-foreground, #fafafa);
+  --ui-primary: var(--primary, #fafafa);
+  --ui-primary-fg: var(--primary-foreground, #18181b);
+  --ui-secondary: var(--secondary, #27272a);
+  --ui-secondary-fg: var(--secondary-foreground, #fafafa);
+  --ui-danger: var(--destructive, #ef4444);
+  --ui-success: #22c55e;
+  --ui-warning-text: #fbbf24;
+  --ui-info: #3b82f6;
+  --ui-veil: rgb(10 10 10 / 0.55);
+  --ui-toast-bg: #fafafa;
+  --ui-toast-fg: #18181b;
+}
+
+/* Hidden means hidden, whatever display utility the element carries. */
+[data-ui-dialog][hidden],
+[data-ui-menu][hidden],
+[data-ui-panel][hidden],
+[data-ui-toast][hidden] {
+  display: none !important;
+}
+
+/* A button whose event is in flight (ui.Loading, or ButtonProps.Loading):
+   the spinner replaces its icon. */
+.ui-btn[aria-busy="true"] {
+  pointer-events: none;
+}
+.ui-btn[aria-busy="true"] .ui-btn-spinner {
+  display: inline-flex;
+}
+.ui-btn[aria-busy="true"] .ui-btn-icon {
+  display: none;
+}
+
+/* A search box shows its spinner while the live page works on it. */
+.ui-search-spinner {
+  display: none;
+}
+[data-nx-live][aria-busy="true"] .ui-search:focus-within .ui-search-spinner,
+.ui-search.is-loading .ui-search-spinner {
+  display: block;
+}
+.ui-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* The loader over an element while an event works (ui.Loading). ui.js
+   adds the class; the reply, or the next render of the element's class,
+   removes it. */
+.ui-loading {
+  position: relative;
+  pointer-events: none;
+}
+.ui-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: inherit;
+  background: var(--ui-veil);
+}
+.ui-loading::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 21;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: -0.875rem 0 0 -0.875rem;
+  border: 3px solid var(--ui-border);
+  border-top-color: var(--ui-primary);
+  border-radius: 50%;
+  animation: ui-spin 0.7s linear infinite;
+}
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Dialogs: the page under an open one doesn't scroll; a click on the
+   backdrop of a persistent one only bounces it. */
+body:has([data-ui-dialog]:not([hidden])) {
+  overflow: hidden;
+}
+.ui-dialog-panel {
+  animation: ui-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ui-dialog-panel.ui-bounce {
+  animation: ui-bounce 0.3s ease-in-out;
+}
+@keyframes ui-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@keyframes ui-bounce {
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+/* Menus open with a short fade. */
+[data-ui-menu]:not([hidden]) {
+  animation: ui-fade 0.12s ease;
+}
+@keyframes ui-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Toasts: ui.js keeps the stack outside <body>, so live updates and
+   in-app navigation leave it alone. */
+.ui-toaster {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  max-width: calc(100vw - 2rem);
+  pointer-events: none;
+  font-family: inherit;
+}
+.ui-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: 22rem;
+  max-width: 100%;
+  padding: 0.75rem 0.875rem;
+  border-radius: var(--ui-radius);
+  border-left: 4px solid transparent;
+  background: var(--ui-toast-bg);
+  color: var(--ui-toast-fg);
+  font-size: 0.875rem;
+  line-height: 1.35;
+  box-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.45);
+  pointer-events: auto;
+  animation: ui-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.ui-toast.is-leaving {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.ui-toast[data-variant="success"] {
+  border-left-color: var(--ui-success);
+}
+.ui-toast[data-variant="danger"] {
+  border-left-color: var(--ui-danger);
+}
+.ui-toast[data-variant="warning"] {
+  border-left-color: var(--ui-warning);
+}
+.ui-toast[data-variant="info"] {
+  border-left-color: var(--ui-info);
+}
+.ui-toast-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ui-toast-title {
+  font-weight: 600;
+  margin-bottom: 0.125rem;
+}
+.ui-toast-close {
+  flex: none;
+  border: 0;
+  padding: 0 0.25rem;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.ui-toast-close:hover {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-dialog-panel,
+  .ui-toast,
+  [data-ui-menu]:not([hidden]) {
+    animation: none;
+  }
+  .ui-loading::before {
+    animation-duration: 2s;
+  }
+}

@@ -1,0 +1,323 @@
+package ui
+
+import "strconv"
+
+// Column is one column of a DataTable.
+type Column struct {
+	Key      string // what OnSort receives
+	Label    string
+	Sortable bool
+	Align    string // "right" or "center"; left when empty
+	Class    string // on the header cell
+}
+
+// TableProps configures a DataTable. Paging, search and sorting are the
+// server's: the table shows the state it is given and sends events — the
+// live page re-renders it with the next page, the matches, the new order.
+type TableProps struct {
+	ID      string // prefixes the table's element ids; "table" when empty
+	Columns []Column
+	// Rows is the number of rows on this page; 0 shows the empty state.
+	Rows int
+	// Total is the number of rows across every page; with PageSize it
+	// draws the footer (counts and pager).
+	Total    int
+	Page     int // 1-based
+	PageSize int
+	// PageSizes offers page sizes in the footer, sent as the form field
+	// "size" through OnSearch.
+	PageSizes []int
+	Sort      string // the sorted column's Key
+	Desc      bool
+	// Query is the search box's value, sent as the form field "q".
+	Query             string
+	SearchPlaceholder string
+	// OnSearch is the search form's event — view.Change(x.Search) — whose
+	// struct takes `form:"q"` and `form:"size"`. None hides the search box.
+	OnSearch templ.ComponentScript
+	OnSort   func(key string) templ.ComponentScript
+	OnPage   func(page int) templ.ComponentScript
+	// Toolbar sits beside the search box: tabs, filters, a New button.
+	Toolbar templ.Component
+	// Empty replaces the default empty state.
+	Empty     templ.Component
+	EmptyText string
+	// Actions adds a header cell for rows' RowActions.
+	Actions bool
+	Class   string
+}
+
+func (p TableProps) id(suffix string) string { return or(p.ID, "table") + suffix }
+
+func (p TableProps) last() int {
+	if p.PageSize <= 0 || p.Total <= 0 {
+		return 1
+	}
+	return (p.Total + p.PageSize - 1) / p.PageSize
+}
+
+func (p TableProps) span() int {
+	n := len(p.Columns)
+	if p.Actions {
+		n++
+	}
+	return max(n, 1)
+}
+
+// pageWindow is the pager's page numbers: the first, the last, the current
+// one and its neighbours; 0 marks a gap.
+func pageWindow(page, last int) []int {
+	if last <= 7 {
+		out := make([]int, last)
+		for i := range out {
+			out[i] = i + 1
+		}
+		return out
+	}
+	page = min(max(page, 1), last)
+	var out []int
+	add := func(n int) {
+		if len(out) > 0 && out[len(out)-1] != 0 && n > out[len(out)-1]+1 {
+			out = append(out, 0)
+		}
+		if len(out) == 0 || n > out[len(out)-1] {
+			out = append(out, n)
+		}
+	}
+	add(1)
+	for n := max(page-1, 2); n <= min(page+1, last-1); n++ {
+		add(n)
+	}
+	add(last)
+	return out
+}
+
+func showing(p TableProps) (from, to int) {
+	if p.Rows == 0 || p.PageSize <= 0 {
+		return 0, 0
+	}
+	from = (max(p.Page, 1)-1)*p.PageSize + 1
+	return from, from + p.Rows - 1
+}
+
+func align(a string) string {
+	switch a {
+	case "right":
+		return "text-right"
+	case "center":
+		return "text-center"
+	}
+	return "text-left"
+}
+
+func ariaSort(p TableProps, c Column) string {
+	switch {
+	case !c.Sortable || p.Sort != c.Key:
+		return "none"
+	case p.Desc:
+		return "descending"
+	}
+	return "ascending"
+}
+
+func sortIcon(p TableProps, c Column) string {
+	switch {
+	case p.Sort != c.Key:
+		return "chevrons-up-down"
+	case p.Desc:
+		return "chevron-down"
+	}
+	return "chevron-up"
+}
+
+const pagerButton = "inline-flex h-8 min-w-8 items-center justify-center rounded-[var(--ui-radius)] px-2 text-sm text-[color:var(--ui-fg)] cursor-pointer hover:bg-[color:var(--ui-accent)] disabled:pointer-events-none disabled:opacity-40 aria-[current=page]:border aria-[current=page]:border-[color:var(--ui-border)] aria-[current=page]:bg-[color:var(--ui-bg)] aria-[current=page]:font-semibold aria-[current=page]:shadow-xs"
+
+// DataTable is a table with a toolbar (search box and Toolbar), sortable
+// headers, an empty state and a pager. Its children are the rows —
+// TableRow, or plain <tr> elements:
+//
+//	for _, o := range x.Orders {
+//	    TableRow(ui.RowProps{Href: "/orders/" + o.ID, Actions: x.actions(o)}) {
+//	        <td>{ o.Number }</td>
+//	    }
+//	}
+templ DataTable(p TableProps) {
+	<div id={ p.id("") } class={ join("ui-table overflow-hidden rounded-[calc(var(--ui-radius)+2px)] border border-[color:var(--ui-border)] bg-[color:var(--ui-bg)] text-[color:var(--ui-fg)]", p.Class) }>
+		if hasScript(p.OnSearch) || p.Toolbar != nil {
+			<div class="flex flex-wrap items-center gap-2 border-b border-[color:var(--ui-border)] p-3">
+				if hasScript(p.OnSearch) {
+					<form id={ p.id("-search") } class="min-w-48 flex-1" role="search" oninput={ p.OnSearch } onchange={ p.OnSearch } onsubmit="event.preventDefault()">
+						@SearchInput(p.id("-q"), "q", p.Query, or(p.SearchPlaceholder, "Search…"))
+						if len(p.PageSizes) > 0 {
+							<input type="hidden" name="size" value={ strconv.Itoa(p.PageSize) }/>
+						}
+					</form>
+				}
+				if p.Toolbar != nil {
+					<div class="flex flex-wrap items-center gap-2">
+						@p.Toolbar
+					</div>
+				}
+			</div>
+		}
+		<div class="overflow-x-auto">
+			<table class="w-full caption-bottom border-collapse text-sm [&_td]:px-3 [&_td]:py-2.5 [&_td]:align-middle">
+				<thead class="bg-[color:var(--ui-muted)]/50">
+					<tr class="border-b border-[color:var(--ui-border)]">
+						for _, c := range p.Columns {
+							<th scope="col" class={ join("h-10 px-3 font-medium text-[color:var(--ui-muted-fg)] whitespace-nowrap", align(c.Align), c.Class) } aria-sort={ ariaSort(p, c) }>
+								if c.Sortable && p.OnSort != nil {
+									<button type="button" class="inline-flex items-center gap-1 cursor-pointer hover:text-[color:var(--ui-fg)]" onclick={ p.OnSort(c.Key) }>
+										{ c.Label }
+										@Icon(sortIcon(p, c), "size-3.5")
+									</button>
+								} else {
+									{ c.Label }
+								}
+							</th>
+						}
+						if p.Actions {
+							<th scope="col" class="h-10 w-12 px-3"><span class="sr-only">Actions</span></th>
+						}
+					</tr>
+				</thead>
+				<tbody>
+					if p.Rows == 0 {
+						<tr>
+							<td colspan={ strconv.Itoa(p.span()) }>
+								if p.Empty != nil {
+									@p.Empty
+								} else {
+									@EmptyState(or(p.EmptyText, emptyText(p)))
+								}
+							</td>
+						</tr>
+					} else {
+						{ children... }
+					}
+				</tbody>
+			</table>
+		</div>
+		if p.PageSize > 0 && p.Total > 0 {
+			@tableFooter(p)
+		}
+	</div>
+}
+
+func emptyText(p TableProps) string {
+	if p.Query != "" {
+		return "No matches for “" + p.Query + "”."
+	}
+	return "Nothing here yet."
+}
+
+templ tableFooter(p TableProps) {
+	{{ from, to := showing(p) }}
+	{{ last := p.last() }}
+	<div class="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--ui-border)] px-3 py-2 text-sm">
+		<p class="text-[color:var(--ui-muted-fg)]">
+			Showing <b class="font-medium text-[color:var(--ui-fg)]">{ strconv.Itoa(from) }–{ strconv.Itoa(to) }</b> of <b class="font-medium text-[color:var(--ui-fg)]">{ strconv.Itoa(p.Total) }</b>
+		</p>
+		<div class="flex flex-wrap items-center gap-4">
+			if len(p.PageSizes) > 0 && hasScript(p.OnSearch) {
+				<form id={ p.id("-size") } class="flex items-center gap-2 text-[color:var(--ui-muted-fg)]" onchange={ p.OnSearch } onsubmit="event.preventDefault()">
+					<input type="hidden" name="q" value={ p.Query }/>
+					<label for={ p.id("-size-select") }>Rows</label>
+					<select id={ p.id("-size-select") } name="size" class="h-8 rounded-[var(--ui-radius)] border border-[color:var(--ui-input)] bg-[color:var(--ui-bg)] px-2 text-sm text-[color:var(--ui-fg)]">
+						for _, n := range p.PageSizes {
+							<option value={ strconv.Itoa(n) } selected?={ n == p.PageSize }>{ strconv.Itoa(n) }</option>
+						}
+					</select>
+				</form>
+			}
+			if last > 1 && p.OnPage != nil {
+				<nav class="flex items-center gap-1" aria-label="Pages">
+					<button type="button" class={ pagerButton } aria-label="Previous page" disabled?={ p.Page <= 1 } onclick={ p.OnPage(p.Page - 1) }>
+						@Icon("chevron-left")
+					</button>
+					for _, n := range pageWindow(p.Page, last) {
+						if n == 0 {
+							<span class="px-1 text-[color:var(--ui-muted-fg)]">…</span>
+						} else if n == p.Page {
+							<button type="button" class={ pagerButton } aria-current="page" onclick={ p.OnPage(n) }>{ strconv.Itoa(n) }</button>
+						} else {
+							<button type="button" class={ pagerButton } onclick={ p.OnPage(n) }>{ strconv.Itoa(n) }</button>
+						}
+					}
+					<button type="button" class={ pagerButton } aria-label="Next page" disabled?={ p.Page >= last } onclick={ p.OnPage(p.Page + 1) }>
+						@Icon("chevron-right")
+					</button>
+				</nav>
+			}
+		</div>
+	</div>
+}
+
+// RowProps configures a TableRow.
+type RowProps struct {
+	ID string
+	// Href opens the row's page when it is clicked anywhere but on its own
+	// links, buttons and fields — as an in-app link.
+	Href string
+	// Actions are the row's RowActions menu, in a last cell.
+	Actions []MenuItem
+	Class   string
+	Attrs   templ.Attributes
+}
+
+func (r RowProps) attrs() templ.Attributes {
+	a := templ.Attributes{}
+	if r.ID != "" {
+		a["id"] = r.ID
+	}
+	if r.Href != "" {
+		a["data-ui-href"] = r.Href
+	}
+	return merge(a, r.Attrs)
+}
+
+// TableRow is a DataTable row; its children are the cells.
+templ TableRow(r RowProps) {
+	<tr class={ join("border-b border-[color:var(--ui-border)] last:border-0 transition-colors hover:bg-[color:var(--ui-muted)]/50 data-[ui-href]:cursor-pointer", r.Class) } { r.attrs()... }>
+		{ children... }
+		if len(r.Actions) > 0 {
+			<td class="w-12 text-right">
+				@RowActions(r.Actions...)
+			</td>
+		}
+	</tr>
+}
+
+// EmptyState is the message a list shows when it has nothing to show; its
+// children (a button, say) sit under the message.
+templ EmptyState(message string) {
+	<div class="flex flex-col items-center gap-2 px-6 py-12 text-center text-sm text-[color:var(--ui-muted-fg)]">
+		<span class="flex size-10 items-center justify-center rounded-full bg-[color:var(--ui-muted)]">
+			@Icon("inbox", "size-5")
+		</span>
+		<p>{ message }</p>
+		{ children... }
+	</div>
+}
+
+// SearchInput is a search box: a magnifying glass, the input, and a
+// spinner shown while a live page works on what is typed.
+templ SearchInput(id, name, value, placeholder string) {
+	<div class="ui-search relative">
+		<span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[color:var(--ui-muted-fg)]">
+			@Icon("search")
+		</span>
+		<input
+			type="search"
+			id={ id }
+			name={ name }
+			value={ value }
+			placeholder={ placeholder }
+			autocomplete="off"
+			class={ join(controlBase, "h-9 py-1 pl-8 pr-8") }
+		/>
+		<span class="ui-search-spinner pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[color:var(--ui-muted-fg)]">
+			@Icon("spinner")
+		</span>
+	</div>
+}
