@@ -361,16 +361,13 @@ type Server struct {
 	TrustedProxies []string
 
 	// MaxBodyBytes caps request bodies; over-limit requests get 413.
-	//
-	// OFF by default. Every JSON-binding handler is otherwise a
-	// memory-exhaustion primitive — an anonymous client can stream until
-	// the process dies — so setting this is worth doing. It's opt-in
-	// because the framework can't know whether an app serves large
-	// uploads, and cutting those off at a value nexus picked would be a
-	// worse failure than the risk it guards against.
+	// 0 means the default, 32MB (nexus.DefaultMaxBodyBytes); -1 turns
+	// the cap off. Without a cap every JSON-binding handler is a
+	// memory-exhaustion primitive. An endpoint that takes larger bodies
+	// (an upload) raises its own with nexus.MaxBody.
 	//
 	//	[runtime.server]
-	//	max_body_bytes = 33554432   # 32MB
+	//	max_body_bytes = 104857600   # 100MB
 	MaxBodyBytes int64
 }
 

@@ -406,7 +406,12 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 		if sh.hasArgs {
 			ptr := reflect.New(sh.argsType)
 			if err := bindArgs(c, ptr.Interface()); err != nil {
-				c.JSON(http.StatusBadRequest, httpx.H{"error": err.Error()})
+				status := http.StatusBadRequest
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					status = http.StatusRequestEntityTooLarge
+				}
+				c.JSON(status, httpx.H{"error": err.Error()})
 				return
 			}
 			args = ptr.Elem()

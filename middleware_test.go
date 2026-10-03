@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/graph"
@@ -171,5 +172,73 @@ func TestClientIPOnREST(t *testing.T) {
 	app.ServeHTTP(httptest.NewRecorder(), req)
 	if got != "203.0.113.7" {
 		t.Fatalf("ClientIP = %q", got)
+	}
+}
+
+// Bodies are capped at 32MB by default; MaxBody moves one endpoint's cap,
+// and max_body_bytes = -1 turns the default off.
+func TestBodyCapDefaultsAndMaxBody(t *testing.T) {
+	type in struct {
+		Data string `json:"data"`
+	}
+	echo := func(ctx context.Context, a in) (int, error) { return len(a.Data), nil }
+	post := func(app *App, path string, n int) int {
+		body := `{"data":"` + strings.Repeat("x", n) + `"}`
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		app.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	app, stop, err := InProcess(config.Runtime{},
+		AsRest("POST", "/default", echo),
+		AsRest("POST", "/small", echo, MaxBody(64)),
+		AsRest("POST", "/large", echo, MaxBody(64<<20)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	if c := post(app, "/default", 1<<20); c >= 300 {
+		t.Errorf("1MB on the default cap: %d", c)
+	}
+	if c := post(app, "/default", 33<<20); c != 413 {
+		t.Errorf("33MB on the default cap: %d, want 413", c)
+	}
+	if c := post(app, "/small", 100); c != 413 {
+		t.Errorf("100B on MaxBody(64): %d, want 413", c)
+	}
+	if c := post(app, "/large", 33<<20); c >= 300 {
+		t.Errorf("33MB on MaxBody(64MB): %d", c)
+	}
+
+	off := config.Runtime{}
+	off.Server.MaxBodyBytes = -1
+	app2, stop2, err := InProcess(off, AsRest("POST", "/any", echo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop2(context.Background())
+	if c := post(app2, "/any", 33<<20); c >= 300 {
+		t.Errorf("33MB with the cap off: %d", c)
+	}
+}
+
+// Timeout gives the handler a context deadline.
+func TestEndpointTimeout(t *testing.T) {
+	var deadline time.Time
+	app, stop, err := InProcess(config.Runtime{},
+		AsRest("GET", "/t", func(ctx context.Context) (string, error) {
+			deadline, _ = ctx.Deadline()
+			return "ok", nil
+		}, Timeout(2*time.Second)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/t", nil))
+	if d := time.Until(deadline); d <= 0 || d > 2*time.Second {
+		t.Fatalf("deadline in %v, want within 2s", d)
 	}
 }

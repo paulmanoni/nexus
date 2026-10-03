@@ -303,9 +303,9 @@ func New(cfg config.Runtime) *App {
 	// Cap request bodies before any binding runs, so an anonymous client
 	// can't stream unbounded bytes into memory. Sits right behind recovery
 	// so it covers every route including 404s and the dashboard.
-	if limit := maxBodyBytes(cfg); limit > 0 {
-		engine.Use(bodyLimitMiddleware(limit))
-	}
+	// Installed even with the cap off (max_body_bytes = -1), so an
+	// endpoint's MaxBody still has a body to cap.
+	engine.Use(bodyLimitMiddleware(maxBodyBytes(cfg)))
 	// Publish the WebSocket upgrade allowlist before any listener binds —
 	// every upgrader in the process (AsWS, GraphQL subscriptions, the
 	// dashboard streams) reads it through httpx.CheckWebSocketOrigin.

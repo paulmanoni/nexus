@@ -1,14 +1,17 @@
 package nexus
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"reflect"
 	"runtime/debug"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
@@ -147,8 +150,8 @@ func checkBundleTransports(bundles []middleware.Middleware, t middleware.Transpo
 // r.Body.
 func bodyLimitMiddleware(limit int64) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
-		if c.Request != nil && c.Request.Body != nil {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		if c.Request != nil && c.Request.Body != nil && c.Request.Body != http.NoBody {
+			c.Request.Body = &limitedBody{rc: c.Request.Body, w: c.Writer, limit: limit}
 		}
 		c.Next()
 		// MaxBytesReader already sets the status to 413 on the
@@ -160,6 +163,69 @@ func bodyLimitMiddleware(limit int64) httpx.HandlerFunc {
 				httpx.H{"error": "request body too large"})
 		}
 	}
+}
+
+// limitedBody applies the body cap at the first read, so an endpoint's
+// MaxBody — which runs after the app-wide middleware but before its
+// handler reads — can still raise or lower it.
+type limitedBody struct {
+	rc     io.ReadCloser
+	w      http.ResponseWriter
+	limit  int64 // ≤ 0: no cap
+	reader io.ReadCloser
+}
+
+func (b *limitedBody) Read(p []byte) (int, error) {
+	if b.reader == nil {
+		b.reader = b.rc
+		if b.limit > 0 {
+			b.reader = http.MaxBytesReader(b.w, b.rc, b.limit)
+		}
+	}
+	return b.reader.Read(p)
+}
+
+func (b *limitedBody) Close() error { return b.rc.Close() }
+
+// MaxBody sets the request-body cap for one endpoint, replacing the app's
+// ([runtime.server] max_body_bytes, 32MB by default); n ≤ 0 removes it —
+// for an upload endpoint that streams to storage, say:
+//
+//	nexus.AsRest("POST", "/files", (*Files).Upload, nexus.MaxBody(2<<30))
+func MaxBody(n int64) MiddlewareOption {
+	return Use(middleware.Middleware{
+		Name:        "max-body",
+		Kind:        middleware.KindBuiltin,
+		Description: fmt.Sprintf("request body cap: %d bytes", n),
+		HTTP: func(c *httpx.Ctx) {
+			if lb, ok := c.Request.Body.(*limitedBody); ok && lb.reader == nil {
+				lb.limit = n
+			}
+			c.Next()
+		},
+	})
+}
+
+// Timeout bounds one endpoint: its context is cancelled after d and the
+// connection's read and write deadlines are set to match, so a slow client
+// can't hold the handler past it. Long streams (SSE, downloads) simply
+// don't set one; there is no app-wide write timeout by default.
+func Timeout(d time.Duration) MiddlewareOption {
+	return Use(middleware.Middleware{
+		Name:        "timeout",
+		Kind:        middleware.KindBuiltin,
+		Description: "request timeout: " + d.String(),
+		HTTP: func(c *httpx.Ctx) {
+			deadline := time.Now().Add(d)
+			rc := http.NewResponseController(c.Writer)
+			_ = rc.SetReadDeadline(deadline)
+			_ = rc.SetWriteDeadline(deadline)
+			ctx, cancel := context.WithDeadline(c.Request.Context(), deadline)
+			defer cancel()
+			c.SetRequestContext(ctx)
+			c.Next()
+		},
+	})
 }
 
 // bodyLimitExceeded reports whether any error recorded on the context came

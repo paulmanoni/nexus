@@ -62,15 +62,20 @@ func idleTimeout(cfg config.Runtime) time.Duration {
 	}
 }
 
-// maxBodyBytes resolves the request-body cap. Off unless the operator sets
-// one: nexus can't know whether an app streams large uploads, and silently
-// rejecting them at some framework-chosen ceiling would be a worse failure
-// than the exhaustion risk it guards against.
+// DefaultMaxBodyBytes is the request-body cap when the operator sets none.
+const DefaultMaxBodyBytes = 32 << 20
+
+// maxBodyBytes resolves the request-body cap: max_body_bytes when set, -1
+// to turn the cap off, else DefaultMaxBodyBytes. An endpoint that takes
+// larger bodies says so with MaxBody.
 func maxBodyBytes(cfg config.Runtime) int64 {
-	if cfg.Server.MaxBodyBytes > 0 {
+	switch {
+	case cfg.Server.MaxBodyBytes > 0:
 		return cfg.Server.MaxBodyBytes
+	case cfg.Server.MaxBodyBytes < 0:
+		return 0
 	}
-	return 0
+	return DefaultMaxBodyBytes
 }
 
 // shutdownTimeout resolves the drain window: explicit config wins, then the
