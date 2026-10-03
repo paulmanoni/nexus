@@ -27,7 +27,7 @@ func TestCoreSecurityEndToEnd(t *testing.T) {
 			// CSRF is opt-in (it matters only for cookie/session auth);
 			// enable it explicitly for this end-to-end check. Headers
 			// are on by default with no config at all.
-			Security: &config.Security{EnableCSRF: true},
+			Security: &config.Security{CSRF: new(true)},
 		},
 	},
 		nexus.AsRest("GET", "/thing", newEcho),
@@ -95,6 +95,6 @@ func TestHeadersOnByDefault(t *testing.T) {
 	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Fatalf("headers should be on by default: X-Content-Type-Options=%q", got)
 	}
-	// CSRF is OFF by default: a token-less POST is not rejected here
+	// CSRF is off when nothing in the app needs it: a token-less POST is not rejected here
 	// (there's no POST route; the header check above is the proof).
 }

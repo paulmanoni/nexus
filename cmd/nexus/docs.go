@@ -201,7 +201,7 @@ var topicSummaries = map[string]string{
 	"module":      "nexus.Module, Provide, ProvideService, route prefix",
 	"auth":        "auth.Module setup, Required, Requires, User[T]",
 	"oauth2":      "oauth2.Module — go-oauth2 server + auth bridge",
-	"security":    "Built-in security headers (on) + opt-in CSRF via nexus.toml",
+	"security":    "Built-in security headers (on) + CSRF (on with cookie auth/forms)",
 	"rest":        "AsRest — REST endpoints with reflective handlers",
 	"graphql":     "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":          "AsWS — typed WebSocket envelopes, session fan-out",
@@ -1406,7 +1406,7 @@ from the request scheme, so dev over http works.
 In Go instead of TOML (same effect):
 
     nexus.Run(config.Runtime{Middleware: config.Middleware{
-        Security: &config.Security{EnableCSRF: true, HSTSMaxAge: 31536000},
+        Security: &config.Security{CSRF: new(true), HSTSMaxAge: 31536000},
     }})
 
 extension/security — the pieces the core path can't offer:

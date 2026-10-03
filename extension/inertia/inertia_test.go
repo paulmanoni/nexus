@@ -155,7 +155,7 @@ func bootInertiaWith(t *testing.T, addr string, tweak func(*inertia.Config), ext
 		nexus.Invoke(func() { close(ready) }),
 	}, extra...)
 	go func() {
-		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10}, opts...)
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10, Middleware: testNoCSRF}, opts...)
 	}()
 	<-ready
 	deadline := time.Now().Add(3 * time.Second)
@@ -663,7 +663,7 @@ func TestFrontendAutoDiscovery(t *testing.T) {
 	}
 	ready := make(chan struct{})
 	go func() {
-		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10},
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10, Middleware: testNoCSRF},
 			nexus.Frontend(fsys, "dist"), // names + serves the bundle once
 			inertia.Module(inertia.Config{}),  // no Frontend → auto-discovered
 			inertia.Page("GET", "/p", "P", NewWidgets),
@@ -863,7 +863,7 @@ func TestHistoryEncryptDefault(t *testing.T) {
 	fsys := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
 	ready := make(chan struct{})
 	go func() {
-		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10},
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10, Middleware: testNoCSRF},
 			inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", EncryptHistory: true}),
 			inertia.Page("GET", "/home", "Home", NewWidgets),
 			nexus.Invoke(func() { close(ready) }),
@@ -1008,3 +1008,8 @@ func TestShareScoped(t *testing.T) {
 		t.Fatalf("a failed ShareTyped must omit its key, got %#v", page.Props["typedBroken"])
 	}
 }
+
+// testNoCSRF turns CSRF off for tests that drive page flows with raw
+// requests: Inertia apps get it on by default, and the double-submit check
+// is covered on its own.
+var testNoCSRF = config.Middleware{Security: &config.Security{CSRF: new(false)}}

@@ -959,15 +959,12 @@ name = "{{.Name}}"
 # csp     = "default-src 'self'"  # opt-in Content-Security-Policy
 # hsts_max_age = 31536000         # opt-in HSTS (seconds) — set once you serve https
 {{if .IsInertia}}
-# CSRF is ON for this app: Inertia posts from cookie/session-backed forms,
-# which is exactly what double-submit CSRF protects. The generated client
-# already sends the csrftoken cookie back as X-CSRFToken.
-csrf = true
+# CSRF is on for this app without a key: Inertia posts from cookie-backed
+# forms, which is what double-submit CSRF protects, so the module turns it
+# on. The generated client already sends the csrftoken cookie back.
 {{else}}
-# CSRF is OFF by default: a token-authenticated API (bearer / the typed
-# client SDK) isn't CSRF-vulnerable. Turn it on if you serve cookie/session-
-# authenticated, server-rendered HTML forms (a template engine).
-# csrf = true
+# CSRF follows what the app uses: on with cookie sessions, a cookie auth
+# scheme or Inertia; off for a token-only API. Force it with csrf = true|false.
 {{end}}
 # Databases live at the TOP level (not under [runtime]); wire each with
 # db.BindFromConfig[YourType]("name") in code.

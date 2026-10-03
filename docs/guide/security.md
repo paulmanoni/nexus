@@ -28,13 +28,14 @@ hsts_max_age    = 31536000            # opt-in HSTS, once you serve https
 
 ```toml
 [runtime.middleware.security]
-csrf = true
+csrf = true   # force on; false forces off; unset follows the app
 ```
 
-CSRF is off by default because a token-authenticated API is not CSRF-vulnerable: a
-browser never attaches a bearer token cross-site on its own. Turn it on when you serve
-cookie- or session-authenticated HTML forms, from a template engine or from Inertia with
-session cookies.
+CSRF follows what the app uses. It turns on by itself when the app relies on cookies a
+browser sends on its own — `extension/session`, an auth scheme reading a cookie,
+Inertia — each of which calls `App.RequireCSRF`. A token-authenticated API stays
+without it: a browser never attaches a bearer token cross-site. `csrf = true` or
+`csrf = false` forces it either way.
 
 It uses a double-submit cookie:
 

@@ -328,7 +328,7 @@ type securityBlock struct {
 	ReferrerPolicy   string `toml:"referrer_policy"` // "" default, "-" to omit
 	CSP              string `toml:"csp"`             // "" → not sent
 	HSTSMaxAge       int    `toml:"hsts_max_age"`    // >0 → send HSTS
-	CSRF             bool   `toml:"csrf"`            // default false; true enables CSRF
+	CSRF             *bool  `toml:"csrf"`            // unset: on when the app uses cookies or forms
 	CSRFCookieSecure *bool  `toml:"csrf_cookie_secure"`
 }
 
@@ -438,7 +438,7 @@ func (b runtimeBlock) toConfig() (Runtime, error) {
 			ReferrerPolicy:   s.ReferrerPolicy,
 			CSP:              s.CSP,
 			HSTSMaxAge:       s.HSTSMaxAge,
-			EnableCSRF:       s.CSRF,
+			CSRF:             s.CSRF,
 			CSRFCookieSecure: s.CSRFCookieSecure,
 		}
 	}

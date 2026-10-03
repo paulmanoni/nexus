@@ -17,7 +17,7 @@ import (
 // probe routes, returning the handler and stop func.
 func bootApp(t *testing.T, cfg Config) http.Handler {
 	t.Helper()
-	app, stop, err := nexus.InProcess(config.Runtime{},
+	app, stop, err := nexus.InProcess(config.Runtime{Middleware: testNoCSRF},
 		Module(cfg),
 		nexus.AsRestHandler("GET", "/read", func() httpx.HandlerFunc {
 			return func(c *httpx.Ctx) {
@@ -211,3 +211,7 @@ func TestMemoryStore_TTLAndDevState(t *testing.T) {
 		t.Fatalf("restore must not clobber the new process's write, got %v", d)
 	}
 }
+
+// testNoCSRF turns CSRF off for tests that drive session flows with raw
+// requests: cookie sessions get it on by default.
+var testNoCSRF = config.Middleware{Security: &config.Security{CSRF: new(false)}}

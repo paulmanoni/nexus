@@ -33,6 +33,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/middleware/secure"
 )
 
 // App is a started, listener-less nexus app under test. It is an http.Handler.
@@ -67,8 +68,14 @@ func New(tb testing.TB, cfg config.Runtime, opts ...nexus.Option) *App {
 
 // Do drives an arbitrary request through the mounted router and returns the
 // recorded response. This is the primitive the REST/GraphQL helpers build on.
+//
+// Like the browser SDK, it carries the CSRF token: an unsafe request without
+// an Authorization header or a token of its own gets a matching token cookie
+// and header, so apps with CSRF on (cookie sessions, Inertia) test as their
+// pages run. To see the check reject a request, drive App.ServeHTTP directly.
 func (a *App) Do(req *http.Request) *Response {
 	a.tb.Helper()
+	withCSRFToken(req)
 	rec := httptest.NewRecorder()
 	a.ServeHTTP(rec, req)
 	return &Response{tb: a.tb, rec: rec, Code: rec.Code}
@@ -187,4 +194,26 @@ func encodeBody(tb testing.TB, body any) io.Reader {
 		}
 		return bytes.NewReader(raw)
 	}
+}
+
+// testCSRFToken is the double-submit token the test client sends.
+const testCSRFToken = "nexustest-csrf-token"
+
+func withCSRFToken(req *http.Request) {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return
+	}
+	if req.Header.Get("Authorization") != "" || req.Header.Get(secure.DefaultCSRFHeader) != "" ||
+		req.Header.Get(secure.AxiosCSRFHeader) != "" {
+		return
+	}
+	// A token the app already set (a cookie jar replaying it) is echoed,
+	// as the browser SDK and axios do; otherwise the client brings its own.
+	if ck, err := req.Cookie(secure.DefaultCSRFCookie); err == nil && ck.Value != "" {
+		req.Header.Set(secure.DefaultCSRFHeader, ck.Value)
+		return
+	}
+	req.AddCookie(&http.Cookie{Name: secure.DefaultCSRFCookie, Value: testCSRFToken})
+	req.Header.Set(secure.DefaultCSRFHeader, testCSRFToken)
 }

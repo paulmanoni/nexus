@@ -173,6 +173,12 @@ type App struct {
 	appMiddleware          []middleware.Middleware
 	appMiddlewareInstalled bool
 
+	// CSRF: csrfAuto when the config left it to the app; csrfReasons is
+	// what asked for it (RequireCSRF); csrfLate once every option ran.
+	securityConfig                    *config.Security
+	csrfAuto, csrfLate, csrfInstalled bool
+	csrfReasons                       []string
+
 	// introspect + introspectionNets are the parsed Config knobs used
 	// to gate GraphQL __schema queries (in addition to the dashboard).
 	// True / non-empty network = bypass; the GraphQL adapter calls

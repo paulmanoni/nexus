@@ -51,7 +51,7 @@ introspection = true            # opens /__nexus (off by default)
 
 [runtime.server]
 addr           = ":8080"
-max_body_bytes = 33554432       # off by default; set it in production
+max_body_bytes = 104857600      # default 32MB; -1 turns the cap off
 
 [runtime.dashboard]
 enabled = true

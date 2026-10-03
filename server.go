@@ -385,6 +385,7 @@ func fxLateOptions() di.Option {
 		// App-wide middleware (nexus.Middleware) goes on in stage order
 		// once every user option has declared its own.
 		di.Invoke(func(a *App) { a.installAppMiddleware() }),
+		di.Invoke(func(a *App) { a.installAutoCSRF() }),
 		// The listeners' lifecycle hook goes last, so it starts after every
 		// resource and worker the options registered — setup tasks then see
 		// connected resources before the first request — and stops first,

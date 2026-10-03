@@ -312,7 +312,11 @@ const securityStatusKey = "nexus.security.status"
 // status map for the dashboard either way.
 func (a *App) installSecurity(sc *config.Security) {
 	headersOn := sc == nil || !sc.DisableHeaders
-	csrfOn := sc != nil && sc.EnableCSRF
+	csrfOn := sc != nil && sc.CSRF != nil && *sc.CSRF
+	// Unset: decided once every option has run, by whether anything the
+	// app uses asked for it (RequireCSRF).
+	a.csrfAuto = sc == nil || sc.CSRF == nil
+	a.securityConfig = sc
 
 	if headersOn {
 		hc := secure.HeadersConfig{}
@@ -335,24 +339,56 @@ func (a *App) installSecurity(sc *config.Security) {
 	}
 
 	if csrfOn {
-		cc := secure.CSRFConfig{}
-		if sc != nil {
-			cc.CookieSecure = sc.CSRFCookieSecure
-		}
-		secure.ApplyCSRFDefaults(&cc)
-		a.engine.Use(secure.CSRFHandler(&cc))
-		a.registry.RegisterMiddleware(middleware.Info{
-			Name:        "csrf",
-			Kind:        middleware.KindBuiltin,
-			Description: "CSRF double-submit check (built-in)",
-		})
-		a.registry.RegisterGlobalMiddleware("csrf")
+		a.installCSRF("forced on by config")
 	}
 
 	a.SetValue(securityStatusKey, map[string]any{
 		"headers": headersOn,
 		"csrf":    csrfOn,
 	})
+}
+
+// RequireCSRF records that something the app uses — cookie sessions, an
+// auth scheme reading a cookie, Inertia or server-rendered forms — needs
+// CSRF protection. Extensions call it from their module; unless the
+// config forces CSRF off, the double-submit check is then installed once
+// every option has run.
+func (a *App) RequireCSRF(reason string) {
+	a.csrfReasons = append(a.csrfReasons, reason)
+	if a.csrfInstalled || !a.csrfAuto || !a.csrfLate {
+		return
+	}
+	a.installCSRF(reason)
+}
+
+// installAutoCSRF runs after every option: CSRF goes on when it was left
+// to the app and something asked for it.
+func (a *App) installAutoCSRF() {
+	a.csrfLate = true
+	if a.csrfAuto && !a.csrfInstalled && len(a.csrfReasons) > 0 {
+		a.installCSRF(strings.Join(a.csrfReasons, ", "))
+	}
+}
+
+func (a *App) installCSRF(reason string) {
+	cc := secure.CSRFConfig{}
+	if a.securityConfig != nil {
+		cc.CookieSecure = a.securityConfig.CSRFCookieSecure
+	}
+	secure.ApplyCSRFDefaults(&cc)
+	a.engine.Use(secure.CSRFHandler(&cc))
+	a.registry.RegisterMiddleware(middleware.Info{
+		Name:        "csrf",
+		Kind:        middleware.KindBuiltin,
+		Description: "CSRF double-submit check (built-in): " + reason,
+	})
+	a.registry.RegisterGlobalMiddleware("csrf")
+	a.csrfInstalled = true
+	if v, ok := a.Value(securityStatusKey); ok {
+		if st, ok := v.(map[string]any); ok {
+			st["csrf"] = true
+		}
+	}
 }
 
 // Middleware registers app-wide middleware: it runs on every request —

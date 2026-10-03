@@ -497,7 +497,7 @@ func Module(cfg Config) nexus.Option {
 		pluginOpts = append(pluginOpts, endpointOptions(cfg.Endpoints)...)
 	}
 
-	return extension.Use(extension.Plugin{
+	plugin := extension.Use(extension.Plugin{
 		Name:    "auth",
 		Version: "1",
 		Options: pluginOpts,
@@ -540,6 +540,26 @@ func Module(cfg Config) nexus.Option {
 		// NexusContribute invocation).
 		Contributor: authContributor{},
 	})
+	// A cookie credential is sent by the browser on its own, cross-site
+	// included: such an app needs CSRF protection.
+	for _, sc := range schemesIn {
+		if readsCookie(InspectExtractor(sc.Extract)) {
+			return nexus.Options(plugin, nexus.Invoke(func(a *nexus.App) { a.RequireCSRF("cookie authentication") }))
+		}
+	}
+	return plugin
+}
+
+func readsCookie(info ExtractorInfo) bool {
+	if info.Strategy == "cookie" {
+		return true
+	}
+	for _, c := range info.Chain {
+		if readsCookie(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // Single wires auth with one bearer-token scheme — the overwhelmingly

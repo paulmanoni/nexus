@@ -355,9 +355,10 @@ route_prefix = ""                        # prepended to every REST/GraphQL/WS ro
 # idle_timeout   = "120s"                 # keep-alive cap (default 120s; "-1s" = Go's)
 # read_timeout   = "0s"                   # OFF by default (would cut large uploads)
 # write_timeout  = "0s"                   # OFF by default (would cut SSE/downloads)
-# max_body_bytes = 33554432               # OFF by default — set it; every JSON
-                                          # handler is otherwise an unbounded
-                                          # memory sink. Over-limit → 413.
+# max_body_bytes = 104857600              # default 32MB; -1 turns the cap off.
+                                          # Over-limit → 413. One endpoint moves
+                                          # its own with nexus.MaxBody(n);
+                                          # nexus.Timeout(d) bounds one endpoint.
 # shutdown_timeout = "10s"               # graceful-drain window on SIGINT/SIGTERM.
                                           # Default 10s in prod, 250ms under nexus dev.
                                           # In-flight request contexts are cancelled when
@@ -391,15 +392,16 @@ burst = 50
 
 # Built-in web security (extension/security shares this engine). Security
 # response headers are ON by default even without this block; keys here only
-# tune them or enable the opt-ins. CSRF is OFF by default (a token-auth API
-# isn't CSRF-vulnerable) — enable it for cookie/session HTML forms.
+# tune them or enable the opt-ins. CSRF follows what the app uses: it turns on
+# by itself with cookie sessions, a cookie auth scheme or Inertia (each calls
+# App.RequireCSRF), and stays off for a token-only API. `csrf` forces it.
 [runtime.middleware.security]
 # headers        = false                 # turn the default headers off
 # frame_options  = "SAMEORIGIN"          # "-" omits X-Frame-Options
 # referrer_policy = "no-referrer"
 csp            = "default-src 'self'"     # opt-in Content-Security-Policy
 hsts_max_age   = 31536000                 # opt-in HSTS (seconds; needs https)
-csrf           = true                     # opt-in double-submit CSRF
+# csrf         = false                    # force CSRF off (or true: force on)
 
 # Databases — TOP LEVEL (not under [runtime]); wired in code via
 # db.BindFromConfig[T]("name") (T embeds *db.Manager). Inline values OR a config-server key_prefix.
@@ -1259,7 +1261,7 @@ id, err := auth.Authenticate(ctx, auth.Password{Username: "alice", Password: "s3
 
 **Built-in web security** (headers + CSRF) is separate from identity — it's the
 `[runtime.middleware.security]` block (§2) / `extension/security` plugin: safe response
-headers on by default, opt-in CSRF. `nexus docs security`.
+headers on by default, CSRF on when the app uses cookies or forms. `nexus docs security`.
 
 ---
 

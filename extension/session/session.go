@@ -117,7 +117,7 @@ func Module(cfg Config) nexus.Option {
 		dev.Preserve("session.store", ms)
 	}
 
-	return extension.Use(extension.Plugin{
+	plugin := extension.Use(extension.Plugin{
 		Name:    "session",
 		Version: "1",
 		Icon:    "cookie",
@@ -127,6 +127,7 @@ func Module(cfg Config) nexus.Option {
 			}),
 		},
 	})
+	return nexus.Options(plugin, nexus.Invoke(func(a *nexus.App) { a.RequireCSRF("cookie sessions (extension/session)") }))
 }
 
 // ctxKey carries the *Session on the request context so both

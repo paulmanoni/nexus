@@ -182,7 +182,7 @@ func Module(cfg Config) nexus.Option {
 	if cfg.RootView == "" {
 		cfg.RootView = "app"
 	}
-	return extension.Use(extension.Plugin{
+	plugin := extension.Use(extension.Plugin{
 		Name:    "inertia",
 		Version: "1",
 		Icon:    Icon,
@@ -200,6 +200,7 @@ func Module(cfg Config) nexus.Option {
 			}),
 		},
 	})
+	return nexus.Options(plugin, nexus.Invoke(func(a *nexus.App) { a.RequireCSRF("Inertia pages and forms") }))
 }
 
 // newEngine builds the engine from Config + Share providers + the app (used to

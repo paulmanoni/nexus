@@ -15,7 +15,7 @@ import (
 // once a prior request stored state and handed out the cookie.
 func TestRequiredGate(t *testing.T) {
 	cfg := Config{Store: NewMemoryStore()}
-	app, stop, err := nexus.InProcess(config.Runtime{},
+	app, stop, err := nexus.InProcess(config.Runtime{Middleware: testNoCSRF},
 		Module(cfg),
 		nexus.AsRestHandler("POST", "/start", func() httpx.HandlerFunc {
 			return func(c *httpx.Ctx) {

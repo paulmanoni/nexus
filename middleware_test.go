@@ -2,6 +2,7 @@ package nexus
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -240,5 +241,41 @@ func TestEndpointTimeout(t *testing.T) {
 	app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/t", nil))
 	if d := time.Until(deadline); d <= 0 || d > 2*time.Second {
 		t.Fatalf("deadline in %v, want within 2s", d)
+	}
+}
+
+// CSRF follows what the app uses: off for a token API, on once something
+// requires it, and the config can force it either way.
+func TestCSRFFollowsTheApp(t *testing.T) {
+	post := func(cfg config.Runtime, opts ...Option) int {
+		t.Helper()
+		opts = append(opts, AsRest("POST", "/things", func(ctx context.Context) (string, error) { return "ok", nil }))
+		app, stop, err := InProcess(cfg, opts...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stop(context.Background())
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/things", nil)
+		req.AddCookie(&http.Cookie{Name: "sid", Value: "x"})
+		app.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	needs := Invoke(func(a *App) { a.RequireCSRF("cookie sessions") })
+	if c := post(config.Runtime{}); c >= 400 {
+		t.Errorf("token API: %d, want no CSRF check", c)
+	}
+	if c := post(config.Runtime{}, needs); c != http.StatusForbidden {
+		t.Errorf("app with cookie sessions: %d, want 403 without a token", c)
+	}
+	off := config.Runtime{}
+	off.Middleware.Security = &config.Security{CSRF: new(false)}
+	if c := post(off, needs); c >= 400 {
+		t.Errorf("forced off: %d", c)
+	}
+	on := config.Runtime{}
+	on.Middleware.Security = &config.Security{CSRF: new(true)}
+	if c := post(on); c != http.StatusForbidden {
+		t.Errorf("forced on: %d, want 403", c)
 	}
 }

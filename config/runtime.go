@@ -457,14 +457,13 @@ type Middleware struct {
 
 // Security declares the framework's built-in security middleware.
 // The zero value (and a nil *Security) yields the secure default:
-// the three safe response headers on, CSRF off.
+// the three safe response headers on, CSRF following what the app uses.
 //
-// CSRF is off by default on purpose. A nexus app is usually a
-// token-authenticated API (bearer / the typed client SDK), where CSRF
-// is not the relevant threat — a browser never auto-attaches a bearer
-// token cross-site. Enable it (EnableCSRF, or `csrf = true`) when you
-// serve cookie/session-authenticated, server-rendered HTML forms (a
-// template engine, or Inertia backed by session cookies).
+// CSRF matters where a browser sends credentials on its own — cookies.
+// It turns on by itself when the app uses cookie-based auth or forms
+// (extension/session, Inertia, an auth scheme reading a cookie); a
+// token-only API, where a browser never attaches the bearer token
+// cross-site, runs without it. Set CSRF to force it either way.
 type Security struct {
 	// DisableHeaders turns off the security response headers. They are
 	// on by default: X-Frame-Options: DENY, X-Content-Type-Options:
@@ -485,9 +484,10 @@ type Security struct {
 	// so it's safe to set once you serve https.
 	HSTSMaxAge int
 
-	// EnableCSRF turns on double-submit-cookie CSRF enforcement. See
-	// the type doc for why it defaults off.
-	EnableCSRF bool
+	// CSRF forces double-submit-cookie CSRF enforcement on (true) or
+	// off (false). Nil: on when something the app uses needs it — see
+	// the type doc and App.RequireCSRF.
+	CSRF *bool
 
 	// CSRFCookieSecure forces the CSRF cookie's Secure flag. Nil → auto
 	// (Secure when the request arrived over https). Set false only if a

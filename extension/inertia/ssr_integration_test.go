@@ -33,7 +33,7 @@ func bootSSR(t *testing.T, addr string, ssr inertia.SSRRenderer, onErr func(erro
 	fsys := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
 	ready := make(chan struct{})
 	go func() {
-		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10},
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10, Middleware: testNoCSRF},
 			inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", SSR: ssr, OnSSRError: onErr, SSRStrict: strict}),
 			inertia.Page("GET", "/p", "P", NewWidgets),
 			nexus.Invoke(func() { close(ready) }),
