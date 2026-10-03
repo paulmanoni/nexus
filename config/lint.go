@@ -8,10 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/paulmanoni/nexus/v2/internal/extnames"
-
-	"github.com/pelletier/go-toml/v2"
-
 	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
@@ -43,12 +39,10 @@ import (
 //     here would crash at boot, so catching them at lint time
 //     is the point.
 //   - GraphQL.DocumentCacheSize must be non-negative.
-//   - Keys the loader has no field for — a typo (`adress`) or a
-//     setting written at the wrong nesting level (`addr` at the
-//     top of the file) — are reported as warnings. Without this
-//     the lint certified such a file as valid while the app ran
-//     on framework defaults. See unknownConfigKeys for the
-//     (deliberately narrow) scope of the check.
+//   - Keys and tables nothing declares — a typo (`adress`), a
+//     setting at the wrong nesting level (`addr` at the top of
+//     the file), an undeclared [section] or an [extensions.x]
+//     with no decoder — are errors, as they fail boot.
 //   - Environment string is informational; we don't constrain
 //     to a known-good list — operators use any naming scheme.
 func LintFile(path string) ([]manifest.Issue, error) {
@@ -59,98 +53,60 @@ func LintFile(path string) ([]manifest.Issue, error) {
 	return lintRuntimeBytes(raw, path)
 }
 
-// lintRuntimeBytes is the bytes-based core of LintFile: expand env vars,
-// parse the [runtime] + [extensions.*] blocks, and lint them. Shared by the
-// `nexus lint` CLI (via LintFile) and the dev boot self-check (autoLoad),
-// so both surface the same config foot-guns. source labels the origin in
-// parse-error messages ("nexus.toml", "embedded nexus.toml").
+// lintRuntimeBytes is the bytes-based core of LintFile: parse the whole
+// document strictly and lint the [runtime] block. Shared by the `nexus lint`
+// CLI (via LintFile) and the dev boot self-check (autoLoad). source labels
+// the origin in messages ("nexus.toml", "embedded nexus.toml").
+//
+// Keys and tables nothing declares are ERRORS — they fail boot. The CLI runs
+// in its own process, so it declares the app's sections (found in the
+// source) before calling this; see `nexus config check`.
 func lintRuntimeBytes(raw []byte, source string) ([]manifest.Issue, error) {
 	expanded, err := manifest.ExpandEnvVars(raw)
 	if err != nil {
-		return nil, fmt.Errorf("nexus: expand env vars in %s: %w", source, err)
+		// Lint without the environment the app runs in: placeholders sit
+		// inside strings, so the raw text has the same shape.
+		expanded = raw
 	}
-	var block runtimeConfigDoc
-	if err := toml.Unmarshal(expanded, &block); err != nil {
+	doc, err := decodeDocument(expanded, source)
+	if err != nil {
 		return []manifest.Issue{{
 			Severity: manifest.SeverityError,
 			Code:     manifest.ErrCode("RUNTIME_PARSE"),
 			Path:     "runtime",
-			Message:  fmt.Sprintf("parse %s: %v", source, err),
+			Message:  err.Error(),
 		}}, nil
 	}
-	issues := lintRuntimeBlock(block.Runtime)
-	issues = append(issues, lintExtensionsFile(expanded)...)
-	// Keys nothing reads. The lint used a non-strict Unmarshal for its whole
-	// life, which is why `nexus lint` happily certified a file whose
-	// `[runtime.server] adress` typo left the app on the default port. Skipped
-	// when the loader already printed the same list for this source (the dev
-	// boot self-check calls us right after configFromTOML).
-	if !unknownConfigKeysReported(source) {
-		issues = append(issues, lintUnknownConfigKeys(source, unknownConfigKeys(expanded))...)
-	}
+	issues := lintRuntimeBlock(doc.runtime())
+	issues = append(issues, ProblemIssues(source, doc.problems)...)
 	return issues, nil
 }
 
-// lintUnknownConfigKeys turns unknown-key detections into lint findings.
-//
-// Severity is WARNING, not error, for the same reason the boot path warns
-// instead of panicking: a key this binary doesn't recognize is usually a
-// mistake but not always one — the whole document is readable through
-// config.Get, so an app may deliberately park its own values in a table the
-// loader owns. The finding's job is to stop the lint from certifying a
-// typo'd file as clean, which a warning does.
-//
-// Path is the dotted key (so editors can jump to it); the message carries the
-// file:line and, when the schema supports a guess, what was probably meant.
-func lintUnknownConfigKeys(source string, keys []unknownConfigKey) []manifest.Issue {
-	out := make([]manifest.Issue, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, manifest.Issue{
-			Severity: manifest.SeverityWarning,
-			Code:     manifest.ErrCode("RUNTIME_UNKNOWN_KEY"),
-			Path:     k.Key(),
-			Message:  fmt.Sprintf("%s:%d: %s%s", source, k.Line, k.describe(), k.hintClause()),
-		})
-	}
-	return out
-}
-
-// lintExtensionsFile parses the [extensions.*] block out of
-// the TOML bytes and warns about declared-but-unregistered
-// extension names.
-//
-// Severity is WARNING (not error) because the lint command
-// runs in the CLI binary's process, which doesn't necessarily
-// import every extension the app binary does — and CAN'T
-// possibly import operator-side custom extensions. The lint
-// is a "did you forget the import?" reminder; the app's own
-// boot path is authoritative and fails loudly if the decoder
-// is genuinely missing.
-//
-// Framework extensions imported by the CLI (see
-// cmd/nexus/extensions_for_lint.go) get validated as expected
-// — only custom/uncommon extensions surface as warnings.
-func lintExtensionsFile(raw []byte) []manifest.Issue {
-	var doc extensionsDoc
-	if err := toml.Unmarshal(raw, &doc); err != nil {
-		// Parse errors already surface from the runtime
-		// loader; don't double-report.
-		return nil
-	}
-	if len(doc.Extensions) == 0 {
-		return nil
-	}
-	registered := extnames.List()
-	var out []manifest.Issue
-	for name := range doc.Extensions {
-		if !extnames.Has(name) {
-			out = append(out, manifest.Issue{
-				Severity: manifest.SeverityWarning,
-				Code:     manifest.ErrCode("RUNTIME_UNKNOWN_EXTENSION"),
-				Path:     fmt.Sprintf("extensions.%s", name),
-				Message:  fmt.Sprintf("no decoder registered for [extensions.%s] in the lint binary — ensure the extension package is imported (blank-import is fine) in main.go; the app's boot will fail loudly if the decoder is also missing there. Registered here: %v", name, registered),
-			})
+// ProblemIssues turns strictness problems into lint findings (severity
+// error: each one fails boot). Path is the dotted key; the message carries
+// file:line and the did-you-mean.
+func ProblemIssues(source string, problems []Problem) []manifest.Issue {
+	out := make([]manifest.Issue, 0, len(problems))
+	for _, p := range problems {
+		code := "RUNTIME_UNKNOWN_KEY"
+		switch p.Kind {
+		case "section":
+			code = "RUNTIME_UNDECLARED_SECTION"
+		case "extension":
+			code = "RUNTIME_UNKNOWN_EXTENSION"
+		case "misplaced":
+			code = "RUNTIME_MISPLACED_KEY"
 		}
+		msg := fmt.Sprintf("%s:%d: %s", source, p.Line, p.Message)
+		if p.Hint != "" {
+			msg += " — " + p.Hint
+		}
+		out = append(out, manifest.Issue{
+			Severity: manifest.SeverityError,
+			Code:     manifest.ErrCode(code),
+			Path:     p.Key(),
+			Message:  msg,
+		})
 	}
 	return out
 }
@@ -295,12 +251,4 @@ func validateListenerScope(s string) error {
 		return nil
 	}
 	return fmt.Errorf("scope %q must be \"public\", \"admin\", or \"internal\"", strings.TrimSpace(s))
-}
-
-// extensionsDoc is the minimal TOML shape for parsing just
-// the [extensions.*] table without claiming the rest of
-// nexus.toml. Sibling tables ([runtime], [environments], etc.)
-// get parsed by their own loaders.
-type extensionsDoc struct {
-	Extensions map[string]map[string]any `toml:"extensions"`
 }

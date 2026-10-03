@@ -146,10 +146,10 @@ func TestLintRuntimeBlock_NegativeRateLimit(t *testing.T) {
 	}
 }
 
-// TestLintRuntimeFile_RoundTrip: drives the full file-reading
+// TestLintFile_RoundTrip: drives the full file-reading
 // path the CLI uses. A nexus.toml with a bad scope surfaces a
 // proper Issue all the way through.
-func TestLintRuntimeFile_RoundTrip(t *testing.T) {
+func TestLintFile_RoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "nexus.toml")
 	if err := os.WriteFile(path, []byte(`
@@ -168,17 +168,17 @@ scope = "private"
 	}
 }
 
-// TestLintRuntimeFile_FileWithoutRuntimeBlock: a nexus.toml
+// TestLintFile_FileWithoutRuntimeBlock: a nexus.toml
 // that has no [runtime] block at all should produce ZERO
 // issues, not error. This lets `nexus lint` call us
 // unconditionally on every nexus.toml.
-func TestLintRuntimeFile_FileWithoutRuntimeBlock(t *testing.T) {
+func TestLintFile_FileWithoutRuntimeBlock(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "nexus.toml")
 	if err := os.WriteFile(path, []byte(`
 # Only deploy manifest content, no [runtime] block.
 [environments.production]
-description = "Prod"
+domain = "app.example.com"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -191,12 +191,10 @@ description = "Prod"
 	}
 }
 
-// TestLintRuntimeFile_ReportsUnknownKeys: the reason this check exists —
-// `nexus lint` used to certify a file whose [runtime.server] typo and
-// top-level mis-nested key left the app on framework defaults ("manifest is
-// valid (0 errors, 0 warnings)"). Both must now surface as findings, each
-// naming its key path, its file:line, and the correction.
-func TestLintRuntimeFile_ReportsUnknownKeys(t *testing.T) {
+// TestLintFile_ReportsUnknownKeys: a [runtime.server] typo and a
+// top-level mis-nested key fail boot, so `nexus lint` reports both as errors,
+// each naming its key path, its file:line, and the correction.
+func TestLintFile_ReportsUnknownKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nexus.toml")
 	mustWriteTOML(t, path, `
 addr = ":9001"
@@ -213,11 +211,11 @@ adress = ":8099"
 	}
 	byPath := map[string]string{}
 	for _, is := range issues {
-		if is.Severity != manifest.SeverityWarning {
-			t.Errorf("%s: severity = %v, want warning (an unknown key must never gate CI as an error)", is.Path, is.Severity)
+		if is.Severity != manifest.SeverityError {
+			t.Errorf("%s: severity = %v, want error (the key fails boot)", is.Path, is.Severity)
 		}
-		if is.Code != "RUNTIME_UNKNOWN_KEY" {
-			t.Errorf("%s: code = %q, want RUNTIME_UNKNOWN_KEY", is.Path, is.Code)
+		if is.Code != "RUNTIME_UNKNOWN_KEY" && is.Code != "RUNTIME_MISPLACED_KEY" {
+			t.Errorf("%s: code = %q", is.Path, is.Code)
 		}
 		byPath[is.Path] = is.Message
 	}
@@ -235,11 +233,11 @@ adress = ":8099"
 	}
 }
 
-// TestLintRuntimeFile_CorrectlyNestedKeysStaySilent: the companion contract —
+// TestLintFile_CorrectlyNestedKeysStaySilent: the companion contract —
 // a file whose runtime keys are all spelled and nested correctly, alongside
-// sections other loaders own ([databases.*], [extensions.*], [env.*]) and an
-// app's own config.Get section, lints clean.
-func TestLintRuntimeFile_CorrectlyNestedKeysStaySilent(t *testing.T) {
+// tables other owners declare ([databases.*], [env.*]) and an app's own
+// declared section, lints clean.
+func TestLintFile_CorrectlyNestedKeysStaySilent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nexus.toml")
 	mustWriteTOML(t, path, `
 [runtime]
@@ -251,13 +249,12 @@ addr = ":8099"
 
 [databases.main]
 driver = "postgres"
-pool_size = 10
 
 [env.client]
 id = "myapp-web"
 
-[app]
-name = "demo"
+[shoptest]
+currency = "EUR"
 `)
 	issues, err := LintFile(path)
 	if err != nil {

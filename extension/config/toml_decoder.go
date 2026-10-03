@@ -1,12 +1,14 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // init registers this extension's TOML decoder so the
@@ -25,6 +27,7 @@ import (
 // just two paths to the same Option.
 func init() {
 	nexus.RegisterExtensionDecoder("config", decode)
+	config.DeclareExtension("config", configTOML{})
 }
 
 // configTOML is the TOML shape for [extensions.config]. Fields
@@ -44,7 +47,9 @@ type configTOML struct {
 // Client()'s defaults when empty.
 func decode(raw []byte) ([]nexus.Option, error) {
 	var c configTOML
-	if err := toml.Unmarshal(raw, &c); err != nil {
+	dec := toml.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
 		return nil, err
 	}
 	if c.Endpoint == "" {

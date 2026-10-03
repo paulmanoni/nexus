@@ -46,7 +46,7 @@ func TestRead_FallsBackToEmbedded(t *testing.T) {
 [runtime.server]
 addr = ":9797"
 
-[app]
+[freetest]
 name = "embedded-demo"
 `))
 
@@ -60,8 +60,8 @@ name = "embedded-demo"
 	if cfg.Server.Addr != ":9797" {
 		t.Errorf("embedded fallback Config.Server.Addr = %q, want :9797", cfg.Server.Addr)
 	}
-	if got := Get[string]("app.name"); got != "embedded-demo" {
-		t.Errorf("embedded fallback should seed base layer: Get(app.name) = %q", got)
+	if got := Get[string]("freetest.name"); got != "embedded-demo" {
+		t.Errorf("embedded fallback should seed base layer: Get(freetest.name) = %q", got)
 	}
 }
 

@@ -31,6 +31,9 @@ type Error struct {
 	// Snippet, when non-empty, is a multi-line annotated excerpt of
 	// the offending TOML (go-toml provides one for syntax errors).
 	Snippet string
+	// Problems lists every undeclared key or table when Stage is "check
+	// keys" (Line is the first one's).
+	Problems []Problem
 }
 
 // Error keeps the flat single-line form for callers that handle the
@@ -40,7 +43,13 @@ func (e *Error) Error() string {
 	if e.Line > 0 {
 		loc = fmt.Sprintf("%s: line %d", e.Source, e.Line)
 	}
-	return fmt.Sprintf("nexus: %s in %s: %v", e.Stage, loc, e.Err)
+	msg := fmt.Sprintf("nexus: %s in %s: %v", e.Stage, loc, e.Err)
+	if len(e.Problems) > 1 {
+		for _, p := range e.Problems {
+			msg += "\n  " + p.String()
+		}
+	}
+	return msg
 }
 
 func (e *Error) Unwrap() error { return e.Err }
