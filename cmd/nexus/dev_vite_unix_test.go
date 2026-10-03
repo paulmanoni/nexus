@@ -79,7 +79,7 @@ func TestDevVite_HotFileIsReadinessAndStopCleansUp(t *testing.T) {
 sleep 60 & wait`)
 	var out, notes syncBuffer
 	v := startDevVite(context.Background(), devViteConfig{WebDir: web, Out: &out, Notes: &notes})
-	waitClosed(t, v.settledCh(), 5*time.Second, "the hot file")
+	waitClosed(t, v.settledCh(), devViteWait, "the hot file")
 
 	if got := v.origin(); got != "http://127.0.0.1:1" {
 		t.Fatalf("origin = %q, want the hot file's", got)
@@ -119,7 +119,7 @@ func TestDevVite_SIGKILLAfterGrace(t *testing.T) {
 sleep 60 & wait`)
 	var out, notes syncBuffer
 	v := startDevVite(context.Background(), devViteConfig{WebDir: web, Out: &out, Notes: &notes, Grace: 200 * time.Millisecond})
-	waitClosed(t, v.settledCh(), 5*time.Second, "the hot file")
+	waitClosed(t, v.settledCh(), devViteWait, "the hot file")
 	pid := v.cmd.Process.Pid
 
 	start := time.Now()
@@ -144,7 +144,7 @@ func TestDevVite_NoHotFileWarns(t *testing.T) {
 	var out, notes syncBuffer
 	v := startDevVite(context.Background(), devViteConfig{WebDir: web, Out: &out, Notes: &notes, HotTimeout: 150 * time.Millisecond})
 	defer v.stop()
-	waitClosed(t, v.settledCh(), 5*time.Second, "the hot-file timeout")
+	waitClosed(t, v.settledCh(), devViteWait, "the hot-file timeout")
 	if !strings.Contains(notes.String(), "wrote no hot file") || !strings.Contains(notes.String(), "nexus-vite-plugin") {
 		t.Errorf("missing-plugin warning not printed: %q", notes.String())
 	}
@@ -156,7 +156,7 @@ exit 1`)
 	var out, notes syncBuffer
 	v := startDevVite(context.Background(), devViteConfig{WebDir: web, Out: &out, Notes: &notes})
 	defer v.stop()
-	waitClosed(t, v.settledCh(), 5*time.Second, "vite's exit")
+	waitClosed(t, v.settledCh(), devViteWait, "vite's exit")
 	if !strings.Contains(out.String(), "[web]") || !strings.Contains(out.String(), "failed to load config") {
 		t.Errorf("vite's stderr not relayed: %q", out.String())
 	}
@@ -173,7 +173,7 @@ sleep 60 & wait`)
 	var out, notes syncBuffer
 	v := startDevVite(context.Background(), devViteConfig{WebDir: web, ServedDist: served, Out: &out, Notes: &notes})
 	defer v.stop()
-	waitClosed(t, v.settledCh(), 5*time.Second, "the hot file")
+	waitClosed(t, v.settledCh(), devViteWait, "the hot file")
 	if !strings.Contains(notes.String(), "build.outDir") {
 		t.Errorf("outDir mismatch not reported: %q", notes.String())
 	}
@@ -187,7 +187,7 @@ func TestDevVite_StopBeforeSpawn(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no npm
 	var out, notes syncBuffer
 	v := startDevVite(context.Background(), devViteConfig{WebDir: web, Out: &out, Notes: &notes})
-	waitClosed(t, v.settledCh(), 5*time.Second, "the failed start")
+	waitClosed(t, v.settledCh(), devViteWait, "the failed start")
 	v.stop()
 	if v.cmd != nil {
 		t.Fatal("spawned without a vite binary")
@@ -246,3 +246,8 @@ func TestWatchDistBuild_RebuildsOnChange(t *testing.T) {
 		t.Errorf("out %q, errs %q", out.String(), errs.String())
 	}
 }
+
+// devViteWait bounds how long a test waits for the child process: generous,
+// since a busy machine (a parallel full-suite run) is slow to start one, and
+// a healthy run returns as soon as the event arrives.
+const devViteWait = 30 * time.Second
