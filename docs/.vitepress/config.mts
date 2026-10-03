@@ -39,6 +39,7 @@ export default defineConfig({
             { text: 'What is nexus?', link: '/guide/' },
             { text: 'Getting started', link: '/guide/getting-started' },
             { text: 'Configuration', link: '/guide/configuration' },
+            { text: 'Migrating to v2', link: '/guide/migrating-to-v2' },
           ],
         },
         {

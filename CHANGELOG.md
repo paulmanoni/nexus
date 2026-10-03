@@ -90,7 +90,7 @@ decisions: [docs/design/v2.md](docs/design/v2.md).
   turns it off). An over-limit JSON body is a 413, not a 400.
 - **CSRF follows what the app uses.** `[runtime.middleware.security] csrf` is
   tri-state: unset turns CSRF on once extension/session, a cookie-reading
-  auth scheme, Inertia or view forms ask for it (`App.RequireCSRF`), and
+  auth scheme or Inertia asks for it (`App.RequireCSRF`), and
   leaves a token-only API without it; `true`/`false` force it.
 - **`AsCRUD` is removed** — a resource is a controller:
   `nexus.Resource[*PetsController]("/pets")` registers the same routes
