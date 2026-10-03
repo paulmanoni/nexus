@@ -21,7 +21,7 @@
 //
 //	id, err := GenerateReport.Enqueue(ctx, ReportArgs{ReportID: 7})
 //
-// A defined job is a nexus.Option: pass it to Boot (or let the //@job
+// A defined job is a nexus.Option: pass it to Boot (or let the //nexus:job
 // annotation register it). jobs.Enqueue(ctx, (*ReportService).Generate, args)
 // enqueues by method expression, for jobs registered by annotation.
 //
@@ -111,12 +111,12 @@ func DefineFunc[A any](fn func(context.Context, *Run, A) error, opts ...Option) 
 }
 
 // Enqueue queues the job defined from fn — the method expression a Define
-// call or a //@job annotation registered — with args.
+// call or a //nexus:job annotation registered — with args.
 func Enqueue[S, A any](ctx context.Context, fn func(S, context.Context, *Run, A) error, args A, opts ...EnqueueOption) (ID, error) {
 	defs := lookup(fn)
 	switch len(defs) {
 	case 0:
-		return "", fmt.Errorf("jobs: %s is not a defined job — annotate it //@job or pass jobs.Define(...) to Boot", funcName(fn))
+		return "", fmt.Errorf("jobs: %s is not a defined job — annotate it //nexus:job or pass jobs.Define(...) to Boot", funcName(fn))
 	case 1:
 		return defs[0].enqueue(ctx, args, opts)
 	}

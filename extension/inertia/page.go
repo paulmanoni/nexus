@@ -52,7 +52,7 @@ import (
 // not called, so it is not emitted as a REST call in the SDK.
 //
 // Icon is the lucide-style icon inertia brands its pages and dashboard entry
-// with. Pages registered via Page (explicitly or through the //@inertia.Page
+// with. Pages registered via Page (explicitly or through the //nexus:inertia.Page
 // decorator) carry it so the dashboard shows them as inertia pages.
 const Icon = "app-window"
 
@@ -85,7 +85,7 @@ func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexu
 //	    Get("/:pk/view", (*ListsController).Longlist, inertia.Component("Admin/AdvertLonglist"))
 //
 // On an inertia.Resource it overrides the conventional <Folder>/<Method>
-// component. It is what the //@page annotation generates.
+// component. It is what the //nexus:page annotation generates.
 func Component(name string) nexus.RestOption {
 	if strings.TrimSpace(name) == "" {
 		panic("inertia.Component: component name is empty — name the client component, e.g. \"Users/Index\"")
@@ -99,7 +99,7 @@ func Component(name string) nexus.RestOption {
 
 // AsPage renders a controller action as the Inertia page named after it —
 // <Folder>/<Method>, the folder from the controller type (UsersController →
-// Users) — the Go form of a //@page annotation without a component:
+// Users) — the Go form of a //nexus:page annotation without a component:
 //
 //	nexus.Controller[*UsersController]("/users").
 //	    Get("/:id", (*UsersController).Show, inertia.AsPage())   // Users/Show
@@ -112,7 +112,7 @@ func AsPage() nexus.RestOption {
 }
 
 // validatePage rejects a malformed registration at option-build time, so a
-// bad Page call (direct or via the //@inertia.Page decorator) fails the boot
+// bad Page call (direct or via the //nexus:inertia.Page decorator) fails the boot
 // with a message naming the page, instead of surfacing later as a route that
 // never matches or a client-side "component not found".
 func validatePage(method, path, component string, fn any) error {

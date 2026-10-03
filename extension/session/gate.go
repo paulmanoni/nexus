@@ -21,7 +21,7 @@ var ErrNoSession = errors.New("session: no established session on this request")
 //
 //	nexus.AsRest("POST", "/checkout/confirm", NewConfirm, session.Required())
 //
-// Decorator form: //@session Required.
+// Decorator form: //nexus:session Required.
 func Required() nexus.MiddlewareOption {
 	gate := mw.FromHandler(mw.NewFunc("session:required", mw.AllTransports,
 		func(rc *mw.RequestCtx, next mw.Next) error {

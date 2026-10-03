@@ -29,7 +29,7 @@ func InProcess(cfg Config, opts ...Option) (app *App, stop func(context.Context)
 
 	// Mirror Run's ordering: early options (Supply cfg, Provide *App,
 	// lifecycle), then user options, then deferred sources (nexus/decorate's
-	// //@-annotation drain — without this, decorator-registered endpoints
+	// //nexus:-annotation drain — without this, decorator-registered endpoints
 	// exist in production but not in tests), then the capture + late options
 	// (autoMountGraphQL) so the GraphQL schema is built after LoadField and
 	// every user-declared field/middleware is visible.
