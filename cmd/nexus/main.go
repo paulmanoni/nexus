@@ -19,6 +19,7 @@
 //	nexus docs [topic]    Show inline documentation; --web opens the docs site.
 //	nexus routes          List the endpoints an app mounts.
 //	nexus lint            Check a manifest's inputs and a nexus.toml's keys.
+//	nexus config          Check nexus.toml (CI) and print its JSON schema.
 //	nexus doctor          Audit a manifest for configuration problems.
 //	nexus pki             Issue mTLS certificates for the peer mesh.
 //	nexus version         Print the CLI version.
@@ -208,6 +209,7 @@ explains itself with --help.`,
 		newDocsCmd(stdout, stderr),
 		newRoutesCmd(stdout, stderr),
 		newLintCmd(stdout, stderr),
+		newConfigCmd(stdout, stderr),
 		newDoctorCmd(stdout, stderr),
 	)
 	// PKI for the peer mesh (extension/peer mTLS).

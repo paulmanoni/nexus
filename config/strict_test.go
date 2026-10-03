@@ -76,6 +76,13 @@ func TestStrict_MisplacedTopLevelKeys(t *testing.T) {
 	if p.Hint != "did you mean [runtime] environment?" {
 		t.Errorf("hint = %q", p.Hint)
 	}
+	if strings.Join(p.Fix, ".") != "runtime.environment" {
+		t.Errorf("fix = %v", p.Fix)
+	}
+	p = onlyProblem(t, "[runtime]\naddr = \":80\"\n")
+	if strings.Join(p.Fix, ".") != "runtime.server.addr" {
+		t.Errorf("fix for a key in the wrong runtime table = %v", p.Fix)
+	}
 	p = onlyProblem(t, "addr = \":9001\"\n")
 	if p.Hint != "did you mean [runtime.server] addr?" {
 		t.Errorf("hint = %q", p.Hint)

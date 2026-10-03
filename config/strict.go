@@ -77,6 +77,10 @@ type Problem struct {
 	Kind string
 	// Message says what is wrong; Hint, when non-empty, what was meant.
 	Message, Hint string
+	// Fix is the path the key belongs at when it is a real setting written
+	// in the wrong table (["runtime","environment"] for a top-level
+	// environment); nil otherwise. `nexus migrate v2` moves such keys.
+	Fix []string
 }
 
 // Key is the dotted form of Path.
@@ -221,6 +225,7 @@ func classifyProblems(strict *toml.StrictMissingError, tree map[string]any, typ 
 			p.Kind = "misplaced"
 			p.Message = fmt.Sprintf("%q is set at the top level of the file, outside any table, where nothing reads it", path[0])
 			p.Hint = unknownConfigKeyHint(schema, leaves, path)
+			p.Fix = misnestFix(leaves, path)
 		case !IsDeclared(path[0]):
 			if seen[path[0]] {
 				continue
@@ -252,11 +257,23 @@ func classifyProblems(strict *toml.StrictMissingError, tree map[string]any, typ 
 			p.Kind = "key"
 			p.Message = fmt.Sprintf("%q is not a key of [%s]", path[len(path)-1], strings.Join(path[:len(path)-1], "."))
 			p.Hint = unknownConfigKeyHint(schema, leaves, path)
+			p.Fix = misnestFix(leaves, path)
 		}
 		out = append(out, p)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Line < out[j].Line })
 	return out
+}
+
+// misnestFix is the full path of the one concrete table that declares the
+// key path ends in, when the key sits elsewhere; nil when there is none.
+func misnestFix(leaves map[string][]string, path []string) []string {
+	leaf := path[len(path)-1]
+	table, ok := bestLeafTable(leaves[leaf], strings.Join(path[:len(path)-1], "."))
+	if !ok || strings.Contains(table, "*") {
+		return nil
+	}
+	return append(strings.Split(table, "."), leaf)
 }
 
 // undeclaredSectionHint says how to make [name] legal: import the framework

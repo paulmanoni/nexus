@@ -1,0 +1,1119 @@
+{
+  "$id": "https://paulmanoni.github.io/nexus/nexus.toml.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "nexus runtime configuration. Every table is declared by nexus, an extension or the app (config.Section); unknown keys fail boot.",
+  "properties": {
+    "cache": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "cleanup_expiry": {
+            "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+            "type": "string"
+          },
+          "connect_timeout": {
+            "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+            "type": "string"
+          },
+          "default_expiry": {
+            "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+            "type": "string"
+          },
+          "driver": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "persist_path": {
+            "type": "string"
+          },
+          "reconnect_interval": {
+            "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+            "type": "string"
+          },
+          "redis_db": {
+            "type": "integer"
+          },
+          "redis_host": {
+            "type": "string"
+          },
+          "redis_password": {
+            "type": "string"
+          },
+          "redis_port": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "cors": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_credentials": {
+          "type": "boolean"
+        },
+        "allow_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_methods": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_origins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "expose_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_age": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "databases": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "type": "boolean"
+          },
+          "driver": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "key_prefix": {
+            "type": "string"
+          },
+          "log": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "port": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "sslmode": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "decorators": {
+      "additionalProperties": false,
+      "properties": {
+        "imports": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "deployments": {
+      "additionalProperties": {},
+      "type": "object"
+    },
+    "env": {
+      "additionalProperties": {},
+      "type": "object"
+    },
+    "environment_overrides": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "cors": {
+            "additionalProperties": false,
+            "properties": {
+              "allow_credentials": {
+                "type": "boolean"
+              },
+              "allow_headers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "allow_methods": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "allow_origins": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "disabled": {
+                "type": "boolean"
+              },
+              "expose_headers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "max_age": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "env_specs": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "default": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "env_scoped": {
+                  "type": "boolean"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "validation": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enum": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "length": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "max": {
+                          "type": "integer"
+                        },
+                        "min": {
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "max": {
+                      "type": "integer"
+                    },
+                    "min": {
+                      "type": "integer"
+                    },
+                    "regex": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "errors": {
+            "additionalProperties": false,
+            "properties": {
+              "capacity": {
+                "type": "integer"
+              },
+              "disabled": {
+                "type": "boolean"
+              },
+              "environment": {
+                "type": "string"
+              },
+              "ignore_paths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "release": {
+                "type": "string"
+              },
+              "sample_rate": {
+                "type": "number"
+              },
+              "server_name": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "file_specs": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "env_scoped": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "integer"
+                },
+                "secret": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "hooks": {
+            "additionalProperties": false,
+            "properties": {
+              "build": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "postdeploy": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "predeploy": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "secret_specs": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "env_scoped": {
+                  "type": "boolean"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "rotate_alert": {
+                  "type": "string"
+                },
+                "validation": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enum": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "length": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "max": {
+                          "type": "integer"
+                        },
+                        "min": {
+                          "type": "integer"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "max": {
+                      "type": "integer"
+                    },
+                    "min": {
+                      "type": "integer"
+                    },
+                    "regex": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "services": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "backup": {
+                  "type": "string"
+                },
+                "ephemeral": {
+                  "type": "boolean"
+                },
+                "expose_as": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "optional": {
+                  "type": "boolean"
+                },
+                "size": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "tls": {
+            "additionalProperties": false,
+            "properties": {
+              "cache_dir": {
+                "type": "string"
+              },
+              "disabled": {
+                "type": "boolean"
+              },
+              "domains": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "email": {
+                "type": "string"
+              },
+              "redirect": {
+                "type": "boolean"
+              },
+              "staging": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "environments": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "autoscale": {
+            "additionalProperties": false,
+            "properties": {
+              "max": {
+                "type": "integer"
+              },
+              "min": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "ttl": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "errors": {
+      "additionalProperties": false,
+      "properties": {
+        "capacity": {
+          "type": "integer"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "ignore_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "release": {
+          "type": "string"
+        },
+        "sample_rate": {
+          "type": "number"
+        },
+        "server_name": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "extensions": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "identity": {
+              "type": "string"
+            },
+            "poll_interval": {
+              "type": "string"
+            },
+            "profile": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "files": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "env_scoped": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "hooks": {
+      "additionalProperties": false,
+      "properties": {
+        "build": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "postdeploy": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "predeploy": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "jobs": {
+      "additionalProperties": false,
+      "properties": {
+        "driver": {
+          "type": "string"
+        },
+        "lease": {
+          "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+          "type": "string"
+        },
+        "poll": {
+          "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+          "type": "string"
+        },
+        "queues": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "rabbitmq": {
+          "additionalProperties": false,
+          "properties": {
+            "consumer_timeout": {
+              "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+              "type": "string"
+            },
+            "delivery_limit": {
+              "type": "integer"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "redis": {
+          "additionalProperties": false,
+          "properties": {
+            "prefix": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "run": {
+          "type": "boolean"
+        },
+        "shutdown_grace": {
+          "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mail": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "driver": {
+            "type": "string"
+          },
+          "encryption": {
+            "type": "string"
+          },
+          "from_address": {
+            "type": "string"
+          },
+          "from_name": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "timeout": {
+            "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "peers": {
+      "additionalProperties": {},
+      "type": "object"
+    },
+    "runtime": {
+      "additionalProperties": false,
+      "properties": {
+        "dashboard": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "devreload": {
+          "additionalProperties": false,
+          "properties": {
+            "exclude": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "environment": {
+          "description": "development | staging | production; NEXUS_ENVIRONMENT overrides it",
+          "type": "string"
+        },
+        "graphql": {
+          "additionalProperties": false,
+          "properties": {
+            "debug": {
+              "type": "boolean"
+            },
+            "disable_playground": {
+              "type": "boolean"
+            },
+            "document_cache_size": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "pretty": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "introspection": {
+          "description": "open the /__nexus dashboard and JSON APIs (off by default)",
+          "type": "boolean"
+        },
+        "introspection_networks": {
+          "description": "CIDRs allowed to reach /__nexus even when introspection is off",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "logging": {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "type": "string"
+            },
+            "level": {
+              "type": "string"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "requests": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "middleware": {
+          "additionalProperties": false,
+          "properties": {
+            "cors": {
+              "additionalProperties": false,
+              "properties": {
+                "allow_credentials": {
+                  "type": "boolean"
+                },
+                "allow_headers": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "allow_methods": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "allow_origins": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "expose_headers": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "max_age": {
+                  "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "ratelimit": {
+              "additionalProperties": false,
+              "properties": {
+                "burst": {
+                  "type": "integer"
+                },
+                "rpm": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "security": {
+              "additionalProperties": false,
+              "properties": {
+                "csp": {
+                  "type": "string"
+                },
+                "csrf": {
+                  "type": "boolean"
+                },
+                "csrf_cookie_secure": {
+                  "type": "boolean"
+                },
+                "frame_options": {
+                  "type": "string"
+                },
+                "headers": {
+                  "type": "boolean"
+                },
+                "hsts_max_age": {
+                  "type": "integer"
+                },
+                "referrer_policy": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "sdk": {
+          "description": "generate and serve the typed client SDK",
+          "type": "boolean"
+        },
+        "server": {
+          "additionalProperties": false,
+          "properties": {
+            "addr": {
+              "description": "listen address, e.g. \":8080\"",
+              "type": "string"
+            },
+            "idle_timeout": {
+              "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+              "type": "string"
+            },
+            "listeners": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "addr": {
+                    "description": "listen address, e.g. \":8080\"",
+                    "type": "string"
+                  },
+                  "scope": {
+                    "description": "public | internal | admin",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "max_body_bytes": {
+              "type": "integer"
+            },
+            "max_header_bytes": {
+              "type": "integer"
+            },
+            "read_timeout": {
+              "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+              "type": "string"
+            },
+            "route_prefix": {
+              "description": "prefix for every REST/GraphQL/WS route",
+              "type": "string"
+            },
+            "shutdown_timeout": {
+              "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+              "type": "string"
+            },
+            "strip_trailing_slash": {
+              "type": "boolean"
+            },
+            "trusted_proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "write_timeout": {
+              "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "trace_capacity": {
+          "description": "request-trace ring buffer size (0 = off)",
+          "type": "integer"
+        },
+        "version": {
+          "type": "string"
+        },
+        "websocket": {
+          "additionalProperties": false,
+          "properties": {
+            "allowed_origins": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "max_connections": {
+              "type": "integer"
+            },
+            "max_message_bytes": {
+              "type": "integer"
+            },
+            "workers": {
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "secrets": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "env_scoped": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "rotate_alert": {
+            "type": "string"
+          },
+          "validation": {
+            "additionalProperties": false,
+            "properties": {
+              "enum": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "length": {
+                "additionalProperties": false,
+                "properties": {
+                  "max": {
+                    "type": "integer"
+                  },
+                  "min": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "max": {
+                "type": "integer"
+              },
+              "min": {
+                "type": "integer"
+              },
+              "regex": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "services": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "backup": {
+            "type": "string"
+          },
+          "ephemeral": {
+            "type": "boolean"
+          },
+          "expose_as": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "optional": {
+            "type": "boolean"
+          },
+          "size": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "storage": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "access_key": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "driver": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "path_style": {
+            "type": "boolean"
+          },
+          "public_base_url": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "secret_key": {
+            "type": "string"
+          },
+          "session_token": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "tls": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_dir": {
+          "type": "string"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "email": {
+          "type": "string"
+        },
+        "redirect": {
+          "type": "boolean"
+        },
+        "staging": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "nexus.toml",
+  "type": "object"
+}

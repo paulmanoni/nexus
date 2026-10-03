@@ -90,6 +90,15 @@ func (h *SectionHandle[T]) Name() string { return h.name }
 // Present reports whether the loaded nexus.toml contains the table.
 func (h *SectionHandle[T]) Present() bool { return h.present.Load() }
 
+// DeclareSchema declares the top-level table [name] with the keys of type t,
+// without a handle to read it through. It is for tools that validate a file
+// outside the app binary — the nexus CLI declares the sections it finds in
+// an app's source this way. Apps use Section.
+func DeclareSchema(name string, t reflect.Type) {
+	shadow, _ := shadowType(t)
+	declare(&sectionDecl{name: name, typ: shadow})
+}
+
 // DeclareExtension records the keys of an [extensions.<name>] block, so they
 // are checked as strictly as a section's (with positions) and appear in the
 // JSON schema. schema is a value or pointer of the block's struct type. The

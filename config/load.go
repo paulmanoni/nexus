@@ -215,12 +215,12 @@ type runtimeBlock struct {
 	Middleware            middlewareBlock `toml:"middleware"`
 	DevReload             devReloadBlock  `toml:"devreload"`
 	Logging               loggingBlock    `toml:"logging"`
-	Environment           string          `toml:"environment"`
+	Environment           string          `toml:"environment" doc:"development | staging | production; NEXUS_ENVIRONMENT overrides it"`
 	Version               string          `toml:"version"`
-	Introspection         bool            `toml:"introspection"`
-	IntrospectionNetworks []string        `toml:"introspection_networks"`
-	TraceCapacity         int             `toml:"trace_capacity"`
-	SDK                   bool            `toml:"sdk"`
+	Introspection         bool            `toml:"introspection" doc:"open the /__nexus dashboard and JSON APIs (off by default)"`
+	IntrospectionNetworks []string        `toml:"introspection_networks" doc:"CIDRs allowed to reach /__nexus even when introspection is off"`
+	TraceCapacity         int             `toml:"trace_capacity" doc:"request-trace ring buffer size (0 = off)"`
+	SDK                   bool            `toml:"sdk" doc:"generate and serve the typed client SDK"`
 }
 
 // loggingBlock is [runtime.logging]. The app reads level and requests
@@ -239,17 +239,17 @@ type devReloadBlock struct {
 
 // serverBlock is the TOML shape of ServerConfig.
 type serverBlock struct {
-	Addr        string                   `toml:"addr"`
-	RoutePrefix string                   `toml:"route_prefix"`
+	Addr        string                   `toml:"addr" doc:"listen address, e.g. \":8080\""`
+	RoutePrefix string                   `toml:"route_prefix" doc:"prefix for every REST/GraphQL/WS route"`
 	Listeners   map[string]listenerBlock `toml:"listeners"`
 	// ShutdownTimeout is a Go duration string ("5s", "500ms"). An
 	// unparseable value is ignored, falling back to the default.
-	ShutdownTimeout string `toml:"shutdown_timeout"`
+	ShutdownTimeout string `toml:"shutdown_timeout" schema:"duration"`
 	// Connection-level limits. Durations are Go duration strings; an
 	// unparseable value falls back to the framework default.
-	IdleTimeout    string `toml:"idle_timeout"`
-	ReadTimeout    string `toml:"read_timeout"`
-	WriteTimeout   string `toml:"write_timeout"`
+	IdleTimeout    string `toml:"idle_timeout" schema:"duration"`
+	ReadTimeout    string `toml:"read_timeout" schema:"duration"`
+	WriteTimeout   string `toml:"write_timeout" schema:"duration"`
 	MaxHeaderBytes int    `toml:"max_header_bytes"`
 	MaxBodyBytes   int64  `toml:"max_body_bytes"`
 	// TrustedProxies: CIDRs whose forwarded headers ClientIP honors.
@@ -273,8 +273,8 @@ type webSocketBlock struct {
 // handles separately. Operators wanting TLS on a Listener should
 // use ServerTLSConfig in Go code.
 type listenerBlock struct {
-	Addr  string `toml:"addr"`
-	Scope string `toml:"scope"` // "public" / "admin" / "internal"
+	Addr  string `toml:"addr" doc:"listen address, e.g. \":8080\""`
+	Scope string `toml:"scope" doc:"public | internal | admin"` // "public" / "admin" / "internal"
 }
 
 // dashboardBlock is the TOML shape of DashboardConfig.
@@ -323,7 +323,7 @@ type corsBlock struct {
 	AllowHeaders     []string `toml:"allow_headers"`
 	ExposeHeaders    []string `toml:"expose_headers"`
 	AllowCredentials bool     `toml:"allow_credentials"`
-	MaxAge           string   `toml:"max_age"` // duration string, e.g. "12h"
+	MaxAge           string   `toml:"max_age" schema:"duration"` // duration string, e.g. "12h"
 }
 
 // rateLimitBlock is the TOML shape of ratelimit.Limit.
