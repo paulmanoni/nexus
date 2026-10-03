@@ -76,7 +76,7 @@ func NewHeadersMiddleware(cfg HeadersConfig) middleware.Middleware {
 		Name:        "security-headers",
 		Description: "Security response headers",
 		Kind:        middleware.KindBuiltin,
-		Gin:         secure.HeadersHandler(&cfg),
+		HTTP:         secure.HeadersHandler(&cfg),
 	}
 }
 
@@ -92,7 +92,7 @@ func NewCSRFMiddleware(cfg CSRFConfig) middleware.Middleware {
 			Name:        "csrf",
 			Description: "CSRF double-submit check",
 			Kind:        middleware.KindBuiltin,
-			Gin: func(c *httpx.Ctx) {
+			HTTP: func(c *httpx.Ctx) {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, httpx.H{"error": msg})
 			},
 		}
@@ -101,7 +101,7 @@ func NewCSRFMiddleware(cfg CSRFConfig) middleware.Middleware {
 		Name:        "csrf",
 		Description: "CSRF double-submit check",
 		Kind:        middleware.KindBuiltin,
-		Gin:         secure.CSRFHandler(&cfg),
+		HTTP:         secure.CSRFHandler(&cfg),
 	}
 }
 

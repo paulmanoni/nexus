@@ -98,7 +98,7 @@ func TestFunc(t *testing.T) {
 }
 
 func TestLegacyBundleTransports(t *testing.T) {
-	ginOnly := AsHandler(Middleware{Name: "g", Gin: func(*httpx.Ctx) {}})
+	ginOnly := AsHandler(Middleware{Name: "g", HTTP: func(*httpx.Ctx) {}})
 	if got := ginOnly.Transports(); got != Transports(TransportREST, TransportWebSocket) {
 		t.Fatalf("gin-only Transports = %s, want {REST, WebSocket}", got)
 	}
@@ -110,7 +110,7 @@ func TestLegacyBundleTransports(t *testing.T) {
 
 	both := AsHandler(Middleware{
 		Name:  "b",
-		Gin:   func(*httpx.Ctx) {},
+		HTTP:   func(*httpx.Ctx) {},
 		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
 	})
 	if got := both.Transports(); got != Transports(TransportREST, TransportWebSocket, TransportGraphQL) {
@@ -177,7 +177,7 @@ func TestLegacyBundleHandle(t *testing.T) {
 	for _, transport := range []Transport{TransportGraphQL, TransportREST} {
 		nextCalled := false
 		rc := newRequestCtx(context.Background(), transport, &fakeCarrier{})
-		err := AsHandler(Middleware{Name: "g", Gin: func(*httpx.Ctx) {}}).
+		err := AsHandler(Middleware{Name: "g", HTTP: func(*httpx.Ctx) {}}).
 			Handle(rc, func(*RequestCtx) error { nextCalled = true; return nil })
 		if err == nil {
 			t.Fatalf("%s: Handle should return the not-wired guard error", transport)

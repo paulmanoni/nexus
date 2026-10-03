@@ -21,7 +21,7 @@ import (
 //	mw.Description = "30 rpm, per-IP"
 //	mw.Kind = middleware.KindBuiltin
 //
-// The current execution path is unchanged: REST/WS still run mw.Gin in the
+// The current execution path is unchanged: REST/WS still run mw.HTTP in the
 // gin chain, GraphQL still wraps mw.Graph around the resolver. FromHandler is
 // the authoring layer; the carriers below bridge each transport into the
 // neutral RequestCtx the Handler sees.
@@ -29,7 +29,7 @@ func FromHandler(h Handler) Middleware {
 	m := Middleware{Name: h.Name(), Kind: KindCustom}
 	set := h.Transports()
 	if set.Has(TransportREST) || set.Has(TransportWebSocket) {
-		m.Gin = ginAdapter(h)
+		m.HTTP = ginAdapter(h)
 	}
 	if set.Has(TransportGraphQL) {
 		m.Graph = graphAdapter(h)

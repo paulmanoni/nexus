@@ -417,7 +417,7 @@ type Middleware struct {
 	// GraphQL POST, WebSocket upgrade, and dashboard request flows
 	// through it in registration order. Use for cross-cutting
 	// concerns (request-id, logger, CORS, auth pre-gate, etc.).
-	// Each bundle's Gin field runs; nil Gin realizations are
+	// Each bundle's HTTP field runs; nil HTTP realizations are
 	// skipped silently. Per-op middleware (via nexus.Use on a
 	// registration) layers on top.
 	Global []middleware.Middleware
@@ -429,7 +429,7 @@ type Middleware struct {
 	// the JSON API, WebSocket events, and the embedded Vue UI in
 	// one pass.
 	//
-	// Bundles whose Gin field is nil are ignored — the dashboard
+	// Bundles whose HTTP field is nil are ignored — the dashboard
 	// is an HTTP surface, so graph-only bundles don't apply.
 	Dashboard []middleware.Middleware
 

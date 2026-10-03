@@ -385,8 +385,8 @@ func New(cfg config.Runtime) *App {
 		a.dashboardMw = append(a.dashboardMw, gate)
 	}
 	for _, b := range cfg.Middleware.Dashboard {
-		if b.Gin != nil {
-			a.dashboardMw = append(a.dashboardMw, b.Gin)
+		if b.HTTP != nil {
+			a.dashboardMw = append(a.dashboardMw, b.HTTP)
 		}
 	}
 
@@ -599,8 +599,8 @@ func New(cfg config.Runtime) *App {
 
 	// User-supplied global middlewares in registration order.
 	for _, m := range cfg.Middleware.Global {
-		if m.Gin != nil {
-			a.engine.Use(m.Gin)
+		if m.HTTP != nil {
+			a.engine.Use(m.HTTP)
 		}
 		a.registry.RegisterMiddleware(m.AsInfo())
 		a.registry.RegisterGlobalMiddleware(m.Name)

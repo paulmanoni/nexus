@@ -27,7 +27,7 @@ func NewMiddleware(store Store, key string) middleware.Middleware {
 		Name:        "metrics",
 		Description: "Request + error counts per endpoint",
 		Kind:        middleware.KindBuiltin,
-		Gin:         ginRecorder(store, key),
+		HTTP:         ginRecorder(store, key),
 		Graph:       graphRecorder(store, key),
 	}
 }

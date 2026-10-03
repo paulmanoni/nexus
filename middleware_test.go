@@ -13,7 +13,7 @@ import (
 )
 
 func ginOnlyBundle(name string) middleware.Middleware {
-	return middleware.Middleware{Name: name, Gin: func(*httpx.Ctx) {}}
+	return middleware.Middleware{Name: name, HTTP: func(*httpx.Ctx) {}}
 }
 
 func graphOnlyBundle(name string) middleware.Middleware {
@@ -26,7 +26,7 @@ func graphOnlyBundle(name string) middleware.Middleware {
 func bothBundle(name string) middleware.Middleware {
 	return middleware.Middleware{
 		Name:  name,
-		Gin:   func(*httpx.Ctx) {},
+		HTTP:   func(*httpx.Ctx) {},
 		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
 	}
 }

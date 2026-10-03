@@ -2410,8 +2410,8 @@ Gate the whole /__nexus/* surface behind your own auth chain:
         Dashboard: nexus.DashboardConfig{Enabled: true},
         Middleware: nexus.MiddlewareConfig{
             Dashboard: []middleware.Middleware{
-                {Name: "auth",  Kind: middleware.KindBuiltin, Gin: bearerAuthGin},
-                {Name: "admin", Kind: middleware.KindCustom,  Gin: requireAdminGin},
+                {Name: "auth",  Kind: middleware.KindBuiltin, HTTP: bearerAuthGin},
+                {Name: "admin", Kind: middleware.KindCustom,  HTTP: requireAdminGin},
             },
         },
     }

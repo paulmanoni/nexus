@@ -81,7 +81,7 @@ func (b *Builder) Handler(h httpx.HandlerFunc) {
 	}
 	if b.metrics != nil {
 		bundle := metrics.NewMiddleware(b.metrics, b.service+"."+endpoint)
-		handlers = append(handlers, bundle.Gin)
+		handlers = append(handlers, bundle.HTTP)
 		mwNames = append(mwNames, bundle.Name)
 		b.reg.RegisterMiddleware(middleware.Info{
 			Name:        bundle.Name,

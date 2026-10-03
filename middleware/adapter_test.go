@@ -17,7 +17,7 @@ func TestFromHandlerRealizations(t *testing.T) {
 	pass := func(rc *RequestCtx, next Next) error { return next(rc) }
 
 	all := FromHandler(NewFunc("a", AllTransports, pass))
-	if all.Gin == nil || all.Graph == nil {
+	if all.HTTP == nil || all.Graph == nil {
 		t.Fatalf("AllTransports handler should yield both realizations")
 	}
 	if all.Name != "a" {
@@ -25,17 +25,17 @@ func TestFromHandlerRealizations(t *testing.T) {
 	}
 
 	restOnly := FromHandler(NewFunc("r", Transports(TransportREST), pass))
-	if restOnly.Gin == nil || restOnly.Graph != nil {
+	if restOnly.HTTP == nil || restOnly.Graph != nil {
 		t.Fatalf("REST-only handler should yield Gin only")
 	}
 
 	wsOnly := FromHandler(NewFunc("w", Transports(TransportWebSocket), pass))
-	if wsOnly.Gin == nil || wsOnly.Graph != nil {
+	if wsOnly.HTTP == nil || wsOnly.Graph != nil {
 		t.Fatalf("WS-only handler should yield Gin (upgrade) only")
 	}
 
 	graphOnly := FromHandler(NewFunc("g", Transports(TransportGraphQL), pass))
-	if graphOnly.Gin != nil || graphOnly.Graph == nil {
+	if graphOnly.HTTP != nil || graphOnly.Graph == nil {
 		t.Fatalf("GraphQL-only handler should yield Graph only")
 	}
 }
@@ -51,7 +51,7 @@ func TestGinAdapterPassThrough(t *testing.T) {
 	mw := FromHandler(h)
 
 	r := stdrouter.New()
-	r.GET("/x", mw.Gin, func(c *httpx.Ctx) { seen = true; c.Status(http.StatusOK) })
+	r.GET("/x", mw.HTTP, func(c *httpx.Ctx) { seen = true; c.Status(http.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.RemoteAddr = "203.0.113.5:1234"
@@ -74,7 +74,7 @@ func TestGinAdapterReject(t *testing.T) {
 	mw := FromHandler(h)
 
 	r := stdrouter.New()
-	r.GET("/x", mw.Gin, func(*httpx.Ctx) { downstream = true })
+	r.GET("/x", mw.HTTP, func(*httpx.Ctx) { downstream = true })
 
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()

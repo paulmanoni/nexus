@@ -355,7 +355,7 @@ func init() {
 func testUserMiddleware() middleware.Middleware {
 	return middleware.Middleware{
 		Name: "test-user",
-		Gin: func(c *httpx.Ctx) {
+		HTTP: func(c *httpx.Ctx) {
 			if u := c.Request.Header.Get("X-Test-User"); u != "" {
 				ctx := context.WithValue(c.Request.Context(), testUserKey{}, u)
 				c.Request = c.Request.WithContext(context.WithValue(ctx, testRequestOnlyKey{}, "per-request"))

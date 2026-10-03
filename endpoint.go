@@ -258,15 +258,15 @@ func buildEndpointChain(
 	}
 
 	metricsBundle := metrics.NewMiddleware(app.metricsStore, metricsKey)
-	chain = append(chain, metricsBundle.Gin)
+	chain = append(chain, metricsBundle.HTTP)
 	mwNames = append(mwNames, metricsBundle.Name)
 	app.registry.RegisterMiddleware(metricsBundle.AsInfo())
 
 	for _, mw := range bundles {
 		app.registry.RegisterMiddleware(mw.AsInfo())
 		mwNames = append(mwNames, mw.Name)
-		if mw.Gin != nil {
-			chain = append(chain, mw.Gin)
+		if mw.HTTP != nil {
+			chain = append(chain, mw.HTTP)
 		}
 	}
 

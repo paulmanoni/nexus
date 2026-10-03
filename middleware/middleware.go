@@ -55,7 +55,7 @@ type Middleware struct {
 	Name        string
 	Description string
 	Kind        Kind              // defaults to KindCustom when unset by factories
-	Gin         httpx.HandlerFunc // REST + WS upgrade path
+	HTTP         httpx.HandlerFunc // REST + WS upgrade path
 	Graph       graph.FieldMiddleware
 	// Requires is declarative metadata: the permission codenames this
 	// bundle enforces (set by auth.Requires). The framework stamps them

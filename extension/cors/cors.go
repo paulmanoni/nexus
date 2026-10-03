@@ -192,7 +192,7 @@ func NewMiddleware(cfg Config) middleware.Middleware {
 			Name:        "cors",
 			Description: "CORS preflight + header policy",
 			Kind:        middleware.KindBuiltin,
-			Gin: func(c *httpx.Ctx) {
+			HTTP: func(c *httpx.Ctx) {
 				c.AbortWithStatusJSON(500, httpx.H{"error": msg})
 			},
 		}
@@ -202,7 +202,7 @@ func NewMiddleware(cfg Config) middleware.Middleware {
 		Name:        "cors",
 		Description: "CORS preflight + header policy",
 		Kind:        middleware.KindBuiltin,
-		Gin:         corsHandler(&cfg, matcher),
+		HTTP:         corsHandler(&cfg, matcher),
 	}
 }
 

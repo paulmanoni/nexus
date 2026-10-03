@@ -18,7 +18,7 @@ func (b legacyBundle) Name() string { return b.mw.Name }
 // REST + the WS upgrade route; Graph backs GraphQL (redesign §3.1, §9 step 2).
 func (b legacyBundle) Transports() TransportSet {
 	var s TransportSet
-	if b.mw.Gin != nil {
+	if b.mw.HTTP != nil {
 		s |= bit(TransportREST) | bit(TransportWebSocket)
 	}
 	if b.mw.Graph != nil {

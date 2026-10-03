@@ -20,12 +20,12 @@ import (
 func TestNewMiddlewareREST(t *testing.T) {
 	s := NewMemoryStore()
 	mw := NewMiddleware(s, "rest.key", Limit{RPM: 600, Burst: 1})
-	if mw.Gin == nil {
+	if mw.HTTP == nil {
 		t.Fatal("expected a Gin realization")
 	}
 
 	r := stdrouter.New()
-	r.GET("/x", mw.Gin, func(c *httpx.Ctx) { c.Status(http.StatusOK) })
+	r.GET("/x", mw.HTTP, func(c *httpx.Ctx) { c.Status(http.StatusOK) })
 	do := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
@@ -73,7 +73,7 @@ func TestNewMiddlewarePerIP(t *testing.T) {
 	mw := NewMiddleware(s, "perip.key", Limit{RPM: 600, Burst: 1, PerIP: true})
 
 	r := stdrouter.New()
-	r.GET("/x", mw.Gin, func(c *httpx.Ctx) { c.Status(http.StatusOK) })
+	r.GET("/x", mw.HTTP, func(c *httpx.Ctx) { c.Status(http.StatusOK) })
 	req := func(ip string) int {
 		w := httptest.NewRecorder()
 		rq := httptest.NewRequest(http.MethodGet, "/x", nil)
