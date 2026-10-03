@@ -4,3 +4,7 @@ introspection = true
 
 [runtime.server]
 addr = ":8090"
+
+[runtime.dashboard]
+enabled = true
+name    = "nexus/view example"

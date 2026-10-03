@@ -205,13 +205,18 @@ func (st *consoleState) endpointsView(q listQuery) endpointsView {
 		if e.Module != "" {
 			v.GroupLabel = "Modules"
 		}
-		if transport != "" && string(e.Transport) != transport {
+		switch {
+		case transport == "view":
+			if e.Tags[registry.ViewTag] == "" {
+				continue
+			}
+		case transport != "" && string(e.Transport) != transport:
 			continue
 		}
 		if group != "" && g != group {
 			continue
 		}
-		if !q.matches(e.Name, e.Path, e.Service, e.Module, e.Description, string(e.Transport), e.Method, strings.Join(e.Middleware, " ")) {
+		if !q.matches(e.Name, e.Path, e.Service, e.Module, e.Description, string(e.Transport), e.Method, strings.Join(e.Middleware, " "), e.Tags[registry.ViewTag], e.Tags[registry.ViewComponentTag]) {
 			continue
 		}
 		rows = append(rows, e)

@@ -38,17 +38,17 @@
       "service": "app",
       "transport": "rest",
       "method": "POST",
-      "path": "/_view/shard/pets.Paged-f8c0eb",
-      "name": "POST /_view/shard/pets.Paged-f8c0eb",
-      "description": "view shard pets.Paged-f8c0eb"
+      "path": "/_view/shard/pets.Paged-97f5a7",
+      "name": "POST /_view/shard/pets.Paged-97f5a7",
+      "description": "view shard pets.Paged-97f5a7"
     },
     {
       "service": "app",
       "transport": "rest",
       "method": "POST",
-      "path": "/_view/shard/pets.PetResults-175d88",
-      "name": "POST /_view/shard/pets.PetResults-175d88",
-      "description": "view shard pets.PetResults-175d88"
+      "path": "/_view/shard/pets.PetResults-1f211c",
+      "name": "POST /_view/shard/pets.PetResults-1f211c",
+      "description": "view shard pets.PetResults-1f211c"
     },
     {
       "service": "app",

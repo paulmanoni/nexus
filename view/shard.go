@@ -19,6 +19,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // maxShardBody bounds a shard request.
@@ -64,7 +65,11 @@ func Shard(component any, opts ...nexus.RestOption) nexus.Option {
 	shardsMu.Lock()
 	shards[d.route] = d
 	shardsMu.Unlock()
-	opts = append([]nexus.RestOption{nexus.Describe("view shard " + d.route)}, opts...)
+	opts = append([]nexus.RestOption{
+		nexus.Describe("view shard " + d.route),
+		nexus.Tag(registry.ViewTag, "shard"),
+		nexus.Tag(registry.ViewComponentTag, componentName(component)),
+	}, opts...)
 	return nexus.AsRest("POST", "/_view/shard/"+d.route, d.serve, opts...)
 }
 
@@ -175,4 +180,10 @@ func ShardEnd(component any, args []any, reads []any) templ.Component {
 		_, err = io.WriteString(w, `</nx-shard>`)
 		return err
 	})
+}
+
+// componentName is a component function as a reader knows it: pkg.Name.
+func componentName(component any) string {
+	full := runtime.FuncForPC(reflect.ValueOf(component).Pointer()).Name()
+	return full[strings.LastIndexByte(full, '/')+1:]
 }

@@ -138,3 +138,24 @@ func BenchmarkOpGates(b *testing.B) {
 		OpGates(ctx, app)
 	}
 }
+
+// A page is gated under its component name as well as its route, so a
+// view's navigation can ask about pets.Board without knowing /board.
+func TestOpGatesKnowPagesByComponent(t *testing.T) {
+	app, stop, err := nexus.InProcess(config.Runtime{},
+		nexus.AsRest("GET", "/board", func() (string, error) { return "", nil },
+			Requires("pets.adopt"),
+			nexus.Tag(registry.ViewTag, "live"), nexus.Tag(registry.ViewComponentTag, "pets.Board")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	adopter := WithIdentity(context.Background(), &Identity{ID: "u", Roles: []string{"pets.adopt"}})
+	if g := OpGates(adopter, app); !g["pets.Board"] || !g["GET /board"] {
+		t.Fatalf("adopter: %v", g)
+	}
+	if g := OpGates(context.Background(), app); g["pets.Board"] {
+		t.Fatalf("anonymous may open the board: %v", g)
+	}
+}

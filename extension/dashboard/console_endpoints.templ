@@ -42,6 +42,7 @@ templ endpointsPage(st *consoleState, v endpointsView) {
 					@segLink("REST", v.Q.href("t", "rest"), v.Q.Args["t"] == "rest")
 					@segLink("GraphQL", v.Q.href("t", "graphql"), v.Q.Args["t"] == "graphql")
 					@segLink("WebSocket", v.Q.href("t", "websocket"), v.Q.Args["t"] == "websocket")
+					@segLink("Views", v.Q.href("t", "view"), v.Q.Args["t"] == "view")
 				</div>
 				@searchBox(v.Q, "Search endpoints…")
 			}
@@ -277,6 +278,25 @@ templ endpointPage(st *consoleState, e registry.Endpoint, recent []metrics.Error
 					}
 					@kv("Path") {
 						<code class="font-mono text-[12px]">{ e.Path }</code>
+					}
+					if kind := e.Tags[registry.ViewTag]; kind != "" {
+						@kv("View") {
+							{ kind }
+							if c := e.Tags[registry.ViewComponentTag]; c != "" {
+								· <code class="font-mono text-[12px]">{ c }</code>
+							}
+						}
+					}
+					if events := liveEvents(e); len(events) > 0 {
+						@kv("Events") {
+							<div class="flex flex-wrap gap-1">
+								for _, ev := range events {
+									@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+										<span class="font-mono">{ ev }</span>
+									}
+								}
+							</div>
+						}
 					}
 					if e.ReturnType != "" || e.ReturnSchema != nil {
 						@kv("Returns") {

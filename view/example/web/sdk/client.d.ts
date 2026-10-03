@@ -25,8 +25,8 @@ export interface RestEndpoints {
   'GET /': { args: {}; return: unknown }
   'GET /_view/import.js': { args: {}; return: void }
   'GET /_view/runtime.js': { args: {}; return: void }
-  'POST /_view/shard/pets.Paged-f8c0eb': { args: {}; return: void }
-  'POST /_view/shard/pets.PetResults-175d88': { args: {}; return: void }
+  'POST /_view/shard/pets.Paged-97f5a7': { args: {}; return: void }
+  'POST /_view/shard/pets.PetResults-1f211c': { args: {}; return: void }
   'GET /_view/twins.js': { args: {}; return: void }
   'GET /assets/*path': { args: {}; return: void }
   'GET /templui/js/*path': { args: {}; return: void }
@@ -54,7 +54,10 @@ export type ExtractRestPath<K>   = K extends `${string} ${infer P}` ? P : never
 /** Throws on non-2xx responses; status + payload + endpoint surfaced. */
 export class NexusError extends Error {
   status?: number
+  /** INVALID_INPUT, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT, TOO_MANY_REQUESTS, UNAVAILABLE or INTERNAL */
   code?: string
+  /** per-field messages of an INVALID_INPUT error; global ones under _global */
+  errors?: Record<string, string[]>
   payload?: unknown
   endpoint?: string
 }
@@ -143,7 +146,7 @@ export class NexusClient {
     opts?: { headers?: Record<string, string>; signal?: AbortSignal; batch?: boolean; unwrap?: boolean },
   ): Promise<GqlData<K>>
 
-  /** CRUD handle for AsCRUD-registered entities. */
+  /** CRUD handle over a conventional REST resource (nexus.Resource). */
   crud(name: string): CrudHandle
 
   /** WebSocket handle — typed by path via WSMessages. */

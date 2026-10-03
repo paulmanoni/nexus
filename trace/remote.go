@@ -109,6 +109,9 @@ func NewRootSpan(ctx context.Context, name, service, endpoint, transport string,
 			DurationMs: time.Since(span.Start).Milliseconds(),
 			Error:      errStr,
 			Timestamp:  time.Now(),
+			// Attributes set while the request ran (sizes, counts,
+			// outcomes) arrive with its end.
+			Meta: span.snapshotAttrs(),
 		})
 	}
 	return ctx, span, finish

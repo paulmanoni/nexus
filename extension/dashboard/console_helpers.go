@@ -95,6 +95,11 @@ func recentRequests(bus *trace.Bus, onlyErrors bool) []requestRow {
 		if r.Path == "" {
 			r.Path = e.Path
 		}
+		// A request with no HTTP shape (a live page event, a WebSocket
+		// frame) reads as its transport and name.
+		if r.Path == "" && r.Method == "" && e.Name != "" && e.Kind == trace.KindRequestStart {
+			r.Method, r.Path = strings.ToUpper(e.Transport), e.Name
+		}
 		// request.op names the operation that actually ran (a GraphQL
 		// field, not "POST /graphql"); other events only fill gaps.
 		if e.Kind == trace.KindRequestOp || r.Service == "" {
@@ -220,6 +225,9 @@ func errRate(count, errs int64) string {
 
 // transportLabel is the short verb column: GET / QUERY / WS.
 func transportLabel(e registry.Endpoint) string {
+	if v := e.Tags[registry.ViewTag]; v != "" {
+		return strings.ToUpper(v)
+	}
 	switch e.Transport {
 	case registry.WebSocket:
 		return "WS"
@@ -237,6 +245,14 @@ func transportLabel(e registry.Endpoint) string {
 
 // verbClass colours the verb chip by transport, as the canvas does.
 func verbClass(e registry.Endpoint) string {
+	switch e.Tags[registry.ViewTag] {
+	case "page":
+		return "text-query border-query/40"
+	case "live":
+		return "text-ws border-ws/40"
+	case "shard":
+		return "text-mutation border-mutation/40"
+	}
 	switch {
 	case e.Transport == registry.WebSocket:
 		return "text-ws border-ws/40"
@@ -596,6 +612,9 @@ func pathEscape(s string) string { return url.PathEscape(s) }
 // endpointTitle names an endpoint in lists: a REST route by its path (its
 // registered name already repeats the verb), anything else by its op name.
 func endpointTitle(e registry.Endpoint) string {
+	if e.Tags[registry.ViewTag] == "shard" && e.Tags[registry.ViewComponentTag] != "" {
+		return e.Tags[registry.ViewComponentTag]
+	}
 	if e.Transport == registry.REST && e.Path != "" {
 		return e.Path
 	}
@@ -722,4 +741,13 @@ func statusText(n int) string {
 		return "denied"
 	}
 	return strconv.Itoa(n)
+}
+
+// liveEvents splits a live page's view.events tag into its events.
+func liveEvents(e registry.Endpoint) []string {
+	v := e.Tags[registry.ViewEventsTag]
+	if v == "" {
+		return nil
+	}
+	return strings.Split(v, "; ")
 }

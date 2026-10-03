@@ -127,23 +127,31 @@ func buildGateTable(reg *registry.Registry, version uint64) *gateTable {
 	groups := map[string]int{} // joined perms string → index into t.groups
 	seen := map[string]bool{}
 	for _, e := range reg.Endpoints() {
-		if e.Name == "" || seen[e.Name] {
-			continue
+		// A page is also known by its component (pets.Board), so a view's
+		// navigation can ask about the page without knowing its route.
+		names := []string{e.Name}
+		if v := e.Tags[registry.ViewTag]; (v == "page" || v == "live") && e.Tags[registry.ViewComponentTag] != "" {
+			names = append(names, e.Tags[registry.ViewComponentTag])
 		}
-		seen[e.Name] = true
-		t.total++
 		tag := e.Tags[registry.AuthRequiresTag]
-		if tag == "" {
-			t.open = append(t.open, e.Name)
-			continue
+		for _, name := range names {
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			t.total++
+			if tag == "" {
+				t.open = append(t.open, name)
+				continue
+			}
+			idx, ok := groups[tag]
+			if !ok {
+				idx = len(t.groups)
+				groups[tag] = idx
+				t.groups = append(t.groups, gateGroup{perms: splitPerms(tag)})
+			}
+			t.groups[idx].ops = append(t.groups[idx].ops, name)
 		}
-		idx, ok := groups[tag]
-		if !ok {
-			idx = len(t.groups)
-			groups[tag] = idx
-			t.groups = append(t.groups, gateGroup{perms: splitPerms(tag)})
-		}
-		t.groups[idx].ops = append(t.groups[idx].ops, e.Name)
 	}
 	return t
 }

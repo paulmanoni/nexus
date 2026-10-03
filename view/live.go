@@ -66,7 +66,7 @@ func Live[T any](prefix string, gates ...nexus.MiddlewareOption) *LiveRouter[T] 
 		r.Register(nexus.FailBoot(err))
 		return l
 	}
-	r.Rest("GET", "", def.pageHandler(), HTML())
+	r.Rest("GET", "", def.pageHandler(), append([]nexus.RestOption{HTML()}, def.liveTags()...)...)
 	r.Rest("GET", "/_live", def.socketHandler(), nexus.WithRenderer(upgraded{}), nexus.HideFromDashboard())
 	return l
 }
@@ -571,7 +571,7 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 				}
 				continue
 			}
-			if !send(d.event(ctx, in, ev, render)) {
+			if !send(d.observedEvent(ctx, in, ev, render)) {
 				return
 			}
 		}

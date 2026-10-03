@@ -1011,3 +1011,17 @@ func (r *Registry) probeHealthy(res resource.Resource) bool {
 		return false
 	}
 }
+
+// View endpoints (package view) carry these tags so the dashboard can show
+// them as pages rather than plain REST routes:
+//
+//   - ViewTag: "page" (a rendered page), "live" (a live page) or "shard"
+//     (a component re-rendered on the server).
+//   - ViewComponentTag: the page's component or live type.
+//   - ViewEventsTag: a live page's events with their argument types,
+//     "; "-separated: "Add(int); Reset()".
+const (
+	ViewTag          = "view"
+	ViewComponentTag = "view.component"
+	ViewEventsTag    = "view.events"
+)

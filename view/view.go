@@ -32,6 +32,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 func init() { nexus.RegisterDeferredOptions(options) }
@@ -60,7 +61,9 @@ func Page(method, path string, component func() templ.Component, opts ...nexus.R
 // handler that builds its component from request data:
 //
 //	nexus.AsRest("GET", "/pets/:id", NewPetPage, view.HTML())
-func HTML() nexus.RestOption { return nexus.WithRenderer(renderer{}) }
+func HTML() nexus.RestOption {
+	return nexus.RestOptions(nexus.WithRenderer(renderer{}), nexus.Tag(registry.ViewTag, "page"))
+}
 
 type renderer struct{}
 

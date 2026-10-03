@@ -497,3 +497,17 @@ the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
 See `view/example` for a multi-package app built on templUI, with two Vue
 islands in `view/example/web`: a server-rendered chart bound to the page's
 search signal, and a meter on the live board.
+
+## On the dashboard
+
+Pages, live pages and shards are endpoints like any other, and `/__nexus` shows
+them as such: the endpoint list marks them PAGE, LIVE or SHARD (filter with
+**Views**), and a live page's detail lists its component and its events with
+their argument types — `Add(pets.PetInput)`, `Clear()`. Every live event is its
+own trace, named `Type.Event` (`pets.Board.Adopt`), carrying how long the event
+and its render took (`live.duration_ms`) and what travelled back (`live.render`:
+`patch` or `full`, `live.bytes`).
+
+A page's gates feed `auth.OpGates` under its route (`GET /board`) and under its
+component (`pets.Board`), so navigation can ask whether the user may open a page
+from the same declaration that guards it.
