@@ -802,7 +802,7 @@ func introspectionAllowed(c *httpx.Ctx, introspect bool, networks []*net.IPNet) 
 		return false
 	}
 	// RemoteIP is the actual TCP peer. ClientIP would honor
-	// X-Forwarded-For if Gin's TrustedProxies is configured, which
+	// X-Forwarded-For from trusted proxies, which
 	// is spoofable by default — wrong default for a security gate.
 	ip := net.ParseIP(c.RemoteIP())
 	if ip == nil {

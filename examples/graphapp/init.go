@@ -12,7 +12,7 @@ import (
 //
 // createRateLimit shows the cross-transport middleware pattern: one
 // ratelimit.NewMiddleware call produces a middleware.Middleware bundle
-// with Gin + Graph realizations. nexus.Use attaches it to the resolver;
+// with HTTP + Graph realizations. nexus.Use attaches it to the resolver;
 // the same bundle could be reused on a REST AsRest registration.
 var createRateLimit = nexus.Use(ratelimit.NewMiddleware(
 	// Store comes from the app's default ratelimit.MemoryStore at boot;

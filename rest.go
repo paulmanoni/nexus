@@ -77,7 +77,7 @@ type restConfig struct {
 	baseEndpointConfig
 	service string // optional explicit service name; auto-derived if empty
 	// pathPrefix is prepended to the route's path before the endpoint
-	// is mounted on Gin. Set either per-endpoint via nexus.RoutePrefix
+	// is mounted on the router. Set either per-endpoint via nexus.RoutePrefix
 	// as a RestOption, or module-wide by passing nexus.RoutePrefix as
 	// an opt to nexus.Module — the framework stamps it on every REST
 	// child of that module.
@@ -177,7 +177,7 @@ func RestOptions(opts ...RestOption) RestOption {
 }
 
 // asRestInvoke builds a synthetic di.Invoke: the constructor fx sees takes
-// (*App, deps...) and registers the handler on the Gin engine + the registry.
+// (*App, deps...) and registers the handler on the router + the registry.
 // We build its signature via reflect.FuncOf so any dep type the handler named
 // flows through fx's dependency resolution unchanged.
 func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option {

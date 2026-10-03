@@ -542,7 +542,7 @@ func (h *Hub) ServeGin(gctx *httpx.Ctx) {
 	h.Serve(gctx, websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin})
 }
 
-// serve is what the Builder wires into Gin when WithHub is used. It upgrades
+// serve is what the Builder wires into the router when WithHub is used. It upgrades
 // the HTTP connection, runs the identify hook, registers the conn, and starts
 // the read/write pumps.
 func (h *Hub) serve(gctx *httpx.Ctx, upgrader websocket.Upgrader) {

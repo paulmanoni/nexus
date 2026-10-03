@@ -198,7 +198,7 @@ func (a *App) wsEndpointFor(path, service string) (*wsEndpoint, bool) {
 }
 
 // mountWSEndpoint wires the hub's OnMessage to the framework's dispatch, mounts
-// the GET upgrade route on Gin with trace + metrics + user middleware, and
+// the GET upgrade route on the router with trace + metrics + user middleware, and
 // binds the hub's Start/Stop to di.Lifecycle so it shuts down cleanly.
 func mountWSEndpoint(app *App, lc di.Lifecycle, ep *wsEndpoint, cfg *wsConfig, firstMsgType string) {
 	hub := ep.hub

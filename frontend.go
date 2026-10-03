@@ -74,8 +74,7 @@ func init() {
 //
 //	nexus.Run(config.Runtime{...},
 //	    nexus.Frontend(webFS, "web/dist"),
-//	    uaa.Module,
-//	    interview.Module,
+//	    users.Module,
 //	)
 //
 // The `root` argument is the directory inside fsys that holds

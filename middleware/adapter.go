@@ -10,9 +10,9 @@ import (
 
 // FromHandler turns one unified Handler into a transport bundle, generating
 // exactly the realizations the Handler declares it can serve (redesign §3–4).
-// A Handler that declares AllTransports gets both a Gin and a Graph
+// A Handler that declares AllTransports gets both an HTTP and a Graph
 // realization from a SINGLE implementation — this is what lets the built-ins
-// (auth, ratelimit, …) drop their duplicated Gin/Graph pairs.
+// (auth, ratelimit, …) drop their duplicated HTTP/Graph pairs.
 //
 // The returned bundle's Name/Kind come from the Handler; callers may set
 // Description (and override Kind) on the value before attaching:

@@ -117,15 +117,19 @@ func TestDocsCmd_List(t *testing.T) {
 
 // TestDocsTopics_ViteOnly guards against the retired frontend models
 // creeping back: the islands.src/ layout (view.Island islands, under the
-// Vite project's src/islands, are current), nexus add, the viteless engine as a current
+// Vite project's src/islands, are current), the retired nexus add (nexus add ui is
+// current), the viteless engine as a current
 // tool, the :5173 "open Vite's port" advice, and the removed --frontend-cmd,
 // --go-run and --tooling flags.
 func TestDocsTopics_ViteOnly(t *testing.T) {
 	for name, body := range docsTopics {
-		for _, bad := range []string{"islands.src", "islands/index.html", "nexus add", ":5173", "zero-install", "esm.sh", "--frontend-cmd", "--go-run", "--tooling", "NEXUS_VITE_DEV"} {
+		for _, bad := range []string{"islands.src", "islands/index.html", ":5173", "zero-install", "esm.sh", "--frontend-cmd", "--go-run", "--tooling", "NEXUS_VITE_DEV"} {
 			if strings.Contains(body, bad) {
 				t.Errorf("topic %q still mentions %q", name, bad)
 			}
+		}
+		if strings.Contains(strings.ReplaceAll(body, "nexus add ui", ""), "nexus add") {
+			t.Errorf("topic %q still mentions nexus add", name)
 		}
 		if strings.Contains(body, "viteless") {
 			t.Errorf("topic %q still describes viteless", name)

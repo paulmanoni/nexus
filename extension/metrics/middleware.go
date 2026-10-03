@@ -15,12 +15,12 @@ import (
 )
 
 // NewMiddleware returns a transport-agnostic middleware bundle that
-// counts requests + errors for key. Same bundle serves REST (via Gin)
+// counts requests + errors for key. Same bundle serves REST (via HTTP)
 // and GraphQL (via Graph); nexus auto-attaches it to every reflective
 // registration so the dashboard populates without extra wiring.
 //
 // For custom transports (raw gin routes not registered via AsRest, etc.)
-// you can call NewMiddleware directly and thread the Gin realization
+// you can call NewMiddleware directly and thread the HTTP realization
 // through c.Next.
 func NewMiddleware(store Store, key string) middleware.Middleware {
 	return middleware.Middleware{
@@ -37,7 +37,7 @@ func NewMiddleware(store Store, key string) middleware.Middleware {
 // (red pulse + error count increment); 4xx failures also carry their
 // status through to the request.op event so operators can tell
 // "client-error rejection" from "server-error meltdown" in the
-// Traces tab. Gin's c.ClientIP() honors trusted-proxy headers so
+// Traces tab. httpx.ClientIP honors trusted-proxy headers so
 // it's the right source for the IP surfaced in the error dialog.
 //
 // Deferred + recover pattern: the recording must run whether c.Next()

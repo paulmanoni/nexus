@@ -1,4 +1,4 @@
-// Package rest wires REST endpoints onto a Gin engine and records metadata
+// Package rest wires REST endpoints onto the router and records metadata
 // about them in the nexus registry.
 package rest
 
@@ -64,7 +64,7 @@ func (b *Builder) Tag(k, v string) *Builder {
 	return b
 }
 
-// Handler mounts the endpoint on Gin and records it in the registry. Terminal.
+// Handler mounts the endpoint on the router and records it in the registry. Terminal.
 //
 // Middleware chain (in order): trace (request.start/end) → metrics
 // (per-op count + request.op event) → user-supplied .Use() middlewares

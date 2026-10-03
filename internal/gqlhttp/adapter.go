@@ -1,5 +1,5 @@
 // Package gql mounts a GraphQL schema (typically assembled by
-// github.com/paulmanoni/nexus/v2/graph) onto Gin and introspects its operations
+// github.com/paulmanoni/nexus/v2/graph) onto the router and introspects its operations
 // into the nexus registry. nexus does NOT own schema assembly — the caller
 // keeps using go-graph (or graphql-go directly) and hands nexus the finished *graphql.Schema.
 package gqlhttp
@@ -402,7 +402,7 @@ func isJSONContentType(ct string) bool {
 
 // goGraphHandler delegates to graph.NewHTTP so resolvers can read user
 // details out of rootValue and the Playground works. nexus still owns
-// tracing and middleware composition at the Gin layer.
+// tracing and middleware composition at the HTTP layer.
 //
 // Status-code override: graph.NewHTTP writes the response directly
 // (no hook between "compute result" and "send headers"), so the

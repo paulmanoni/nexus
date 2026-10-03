@@ -9,7 +9,7 @@
 //     label each entry.
 //
 //  2. Middleware — an executable BUNDLE. Carries one realization per
-//     transport (Gin for REST + WS upgrades, Graph for GraphQL field
+//     transport (HTTP for REST + WS upgrades, Graph for GraphQL field
 //     resolution). Factories like ratelimit.NewMiddleware produce one,
 //     and nexus.Use(mw) accepts it on any registration regardless of
 //     transport. Transports pick the field they can honor and ignore

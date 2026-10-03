@@ -168,7 +168,7 @@ func inspectHandler(fn any) (handlerShape, error) {
 			sh.hasCtx = true
 		case sh.funcType.In(i) == ginContextType:
 			// *httpx.Ctx — REST-only. GraphQL resolvers don't have
-			// a Gin context available; callHandler leaves the slot nil
+			// an HTTP context available; callHandler leaves the slot nil
 			// in that case which would panic on first use, which is the
 			// right signal to the author that the handler is REST-only.
 			sh.slots[i] = paramSlot{kind: paramGinCtx}

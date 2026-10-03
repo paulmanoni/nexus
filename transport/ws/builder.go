@@ -1,4 +1,4 @@
-// Package ws wires WebSocket endpoints onto a Gin engine using gorilla/websocket
+// Package ws wires WebSocket endpoints onto the router using gorilla/websocket
 // and records metadata about them in the nexus registry.
 package ws
 
@@ -65,7 +65,7 @@ func (b *Builder) Tag(k, v string) *Builder               { b.tags[k] = v; retur
 // install hooks on the Hub instead (hub.OnMessage, hub.OnConnect, ...).
 func (b *Builder) WithHub(h *Hub) *Builder { b.hub = h; return b }
 
-// Mount attaches the WebSocket endpoint to Gin and records it in the registry. Terminal.
+// Mount attaches the WebSocket endpoint to the router and records it in the registry. Terminal.
 //
 // Tracing: NO trace.Middleware on the upgrade route. WS upgrade is a
 // one-time HTTP request that promotes to a long-lived connection;

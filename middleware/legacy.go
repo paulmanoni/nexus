@@ -14,7 +14,7 @@ func AsHandler(mw Middleware) Handler { return legacyBundle{mw: mw} }
 
 func (b legacyBundle) Name() string { return b.mw.Name }
 
-// Transports infers the set from which realizations are present: Gin backs
+// Transports infers the set from which realizations are present: HTTP backs
 // REST + the WS upgrade route; Graph backs GraphQL (redesign §3.1, §9 step 2).
 func (b legacyBundle) Transports() TransportSet {
 	var s TransportSet

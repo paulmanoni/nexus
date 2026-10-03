@@ -189,7 +189,7 @@ type lifecycleHolder struct {
 
 // buildServer assembles the peer HTTP/2 server. It mounts the
 // three peer-protocol routes on a fresh mux (not on the user's
-// Gin engine — peer traffic is strictly separate from public
+// router — peer traffic is strictly separate from public
 // HTTP), wires the configured TLS, and returns a stopped Server
 // ready for ListenAndServeTLS.
 //

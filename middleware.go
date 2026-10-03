@@ -25,7 +25,7 @@ import (
 // Use attaches a transport-agnostic middleware bundle to a registration.
 // Works on AsRest, AsQuery, AsMutation, (future AsSubscription /
 // AsWebSocket) — each transport picks the realization it understands from
-// the bundle (Gin for REST/WS upgrade, Graph for GraphQL). Missing fields
+// the bundle (HTTP for REST/WS upgrade, Graph for GraphQL). Missing fields
 // are silently ignored so a single bundle can degrade gracefully across
 // transports.
 //
@@ -77,7 +77,7 @@ func (m MiddlewareOption) applyToGql(c *gqlConfig) {
 }
 
 // applyToRest wires this middleware into a REST registration. Same
-// fallback rule as applyToGql — skip the handler slot if Gin is nil, but
+// fallback rule as applyToGql — skip the handler slot if HTTP is nil, but
 // always record the name for the dashboard.
 func (m MiddlewareOption) applyToRest(c *restConfig) {
 	c.bundles = append(c.bundles, m.mw)
@@ -115,7 +115,7 @@ func stampRequiresTag(b *baseEndpointConfig, perms []string) {
 // endpoint for the diagnostic ("POST /quick", "createOrder", …).
 //
 // A bundle that declares NO transports at all (a pure dashboard label with
-// no Gin/Graph realization, e.g. a metadata marker) is left alone: it claims
+// no HTTP/Graph realization, e.g. a metadata marker) is left alone: it claims
 // to protect nothing, so attaching it anywhere is harmless. Only middleware
 // that genuinely enforces something on transport X — and is attached to
 // transport Y where it would silently not run — is rejected.

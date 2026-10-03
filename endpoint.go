@@ -72,7 +72,7 @@ type baseEndpointConfig struct {
 
 	// bundles holds the full middleware.Middleware values attached via
 	// nexus.Use — the registry uses AsInfo() from each to label the
-	// endpoint's middleware list. Per-transport realizations (Gin,
+	// endpoint's middleware list. Per-transport realizations (HTTP,
 	// Graph) are extracted at apply time; this slice is the canonical
 	// metadata source for the dashboard.
 	bundles []middleware.Middleware
@@ -228,7 +228,7 @@ func attachEndpointResources(app *App, service string, deps []reflect.Value, _ [
 	})
 }
 
-// buildEndpointChain assembles the standard Gin middleware chain shared by
+// buildEndpointChain assembles the standard HTTP middleware chain shared by
 // REST and WebSocket endpoint mounts: optional trace → metrics → user
 // bundles → final handler. Each bundle is also registered with the app's
 // registry, and the returned mwNames slice is the value to put on the

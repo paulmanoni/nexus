@@ -149,6 +149,24 @@ and hidden directories are skipped):
   annotations  //@x and // @x nexus annotations in .go and .templ files become
                Go directives: //nexus:x (built-in keywords and custom
                //@pkg.Func decorators; other tools' @-annotations are left alone).
+  nexus.toml   keys v1 silently ignored because they sat in the wrong table
+               (a top-level environment, an addr under [runtime]) move to the
+               table the strict v2 check names; typos and undeclared sections
+               are left for nexus config check.
+  assembly     app-assembly code with no mechanical v2 form gets a
+               // TODO(nexus v2): comment naming its replacement:
+               Config.Middleware.Global (nexus.Middleware), AsCRUD
+               (nexus.Resource), pre-serve nexus.Invoke work (nexus.Setup).
+  op names     GraphQL registrations of a NewXxx handler get nexus.Op("xxx")
+               (or //nexus:use nexus.Op("xxx") when annotated), keeping the v1
+               wire name now that v2 no longer strips New.
+  fields       renamed struct fields in nexus composite literals:
+               middleware.Middleware{Gin: …} becomes {HTTP: …}.
+  spreads      nexus.MustLoadExtensions()... loses its spread (it returns one
+               Option in v2).
+  sections     every top-level nexus.toml table nothing declares is declared in
+               main.go as config.Section[map[string]any], so strict config
+               boots; a TODO asks for a typed struct.
 
 Changed .go files are gofmt'ed. Re-running is a no-op. --dry-run prints
 every change without writing.

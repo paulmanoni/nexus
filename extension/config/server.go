@@ -178,7 +178,7 @@ func (st *serverState) boot(ctx context.Context) error {
 		}
 		// Loud announcement — config.Server runs on its own
 		// listener separate from the main app's port. New users
-		// hit Gin's 404 when they point Client at the app's port
+		// hit the router's 404 when they point Client at the app's port
 		// instead of this one. Matches the framework's
 		// "nexus: listening on …" pattern so the line survives
 		// in `nexus dev` output.
