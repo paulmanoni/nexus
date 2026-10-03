@@ -326,10 +326,6 @@ func opNameFromFunc(fn any, fallback string) string {
 	if name == "" {
 		return fallback
 	}
-	// Trim leading "New" if followed by an uppercase letter.
-	if strings.HasPrefix(name, "New") && len(name) > 3 && unicode.IsUpper(rune(name[3])) {
-		name = name[3:]
-	}
 	// Lowercase the first rune.
 	for i, r := range name {
 		if i == 0 {

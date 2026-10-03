@@ -20,8 +20,8 @@ type gqlPing struct {
 	Message string `graphql:"message"`
 }
 
-// NewGqlPing mounts as the GraphQL query field "gqlPing".
-func NewGqlPing(ctx context.Context) (*gqlPing, error) {
+// GqlPing mounts as the GraphQL query field "gqlPing".
+func GqlPing(ctx context.Context) (*gqlPing, error) {
 	return &gqlPing{Message: "pong"}, nil
 }
 
@@ -58,7 +58,7 @@ func TestDenyByDefault_GatesGraphQLFields(t *testing.T) {
 		Authentication: auth.Authentication{Schemes: []auth.Scheme{{Resolve: resolver}}},
 		Authorization:  auth.Authorization{Default: auth.Authenticated()},
 	},
-		nexus.AsQuery(NewGqlPing),
+		nexus.AsQuery(GqlPing),
 	)
 
 	url := "http://" + addr + "/graphql"

@@ -26,14 +26,14 @@ type searchArgs struct {
 	Q string `graphql:"q,required"`
 }
 
-// NewSearchUsers becomes the GraphQL field "searchUsers".
-func NewSearchUsers(p nexus.Params[searchArgs]) ([]*User, error) {
+// SearchUsers becomes the GraphQL field "searchUsers".
+func SearchUsers(p nexus.Params[searchArgs]) ([]*User, error) {
 	return []*User{{ID: "1", Name: p.Args.Q}}, nil
 }
 
 var module = nexus.Module("users",
 	nexus.AsRest("GET", "/users/:id", NewGetUser),
-	nexus.AsQuery(NewSearchUsers),
+	nexus.AsQuery(SearchUsers),
 )
 
 func TestREST(t *testing.T) {

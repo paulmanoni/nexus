@@ -500,10 +500,10 @@ type maskGQLArgs struct {
 }
 
 // A package-level func, not a closure: the GraphQL field name is derived
-// from the constructor's name (NewGetItem -> getItem).
+// from the constructor's name (GetItem -> getItem).
 var maskGQLSeen int
 
-func NewGetItem(_ *Service, p Params[maskGQLArgs]) (*maskItem, error) {
+func GetItem(_ *Service, p Params[maskGQLArgs]) (*maskItem, error) {
 	maskGQLSeen = p.Args.ID
 	return &maskItem{ID: p.Args.ID, OwnerID: 7, Count: 3, Title: "hello"}, nil
 }
@@ -518,7 +518,7 @@ func TestMaskID_GraphQLScalarRoundTrip(t *testing.T) {
 	maskGQLSeen = 0
 	mod := Module("maskid_gql",
 		Provide(func(app *App) *Service { return app.Service("gqlitems") }),
-		AsQuery(NewGetItem),
+		AsQuery(GetItem),
 	)
 	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
@@ -571,11 +571,11 @@ type maskUnscopedItem struct {
 	OwnerID int `json:"ownerId"`
 }
 
-func NewGetScoped(_ *Service, p Params[maskGQLArgs]) (*maskScopedItem, error) {
+func GetScoped(_ *Service, p Params[maskGQLArgs]) (*maskScopedItem, error) {
 	return &maskScopedItem{ID: p.Args.ID, OwnerID: 7}, nil
 }
 
-func NewGetUnscoped(_ *Service, p Params[maskGQLArgs]) (*maskUnscopedItem, error) {
+func GetUnscoped(_ *Service, p Params[maskGQLArgs]) (*maskUnscopedItem, error) {
 	return &maskUnscopedItem{ID: p.Args.ID, OwnerID: 7}, nil
 }
 
@@ -592,8 +592,8 @@ func TestMaskID_GraphQLHonoursTheTypeScope(t *testing.T) {
 
 	mod := Module("maskid_gql_scope",
 		Provide(func(app *App) *Service { return app.Service("scopeitems") }),
-		AsQuery(NewGetScoped),
-		AsQuery(NewGetUnscoped),
+		AsQuery(GetScoped),
+		AsQuery(GetUnscoped),
 	)
 	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
