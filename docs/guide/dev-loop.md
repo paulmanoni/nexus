@@ -95,8 +95,10 @@ mid-session embeds the current frontend.
 
 ## Logs
 
-JSON log lines are shown as colored columns: time, level, source and message. Configure
-the format in `nexus.toml`:
+The app logs through `log/slog`: `App.Logger()` (also provided into DI as `*slog.Logger`)
+writes JSON to stdout, and `nexus.WithLogger(l)` swaps in any other handler. JSON log
+lines — slog's shape, or zap's for apps that log with zap themselves — are shown as
+colored columns: time, level, source and message. Configure the format in `nexus.toml`:
 
 ```toml
 [runtime.logging]

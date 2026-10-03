@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
-	"go.uber.org/zap"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
@@ -29,15 +29,15 @@ import (
 //	"error"                       errors only
 //	"warn" / "true" / "on"        slow queries + errors (GORM's default)
 //	"info" / "all"                every SQL statement
-func resolveGormLogger(level string, logger *zap.Logger) gormlogger.Interface {
+func resolveGormLogger(level string, logger *slog.Logger) gormlogger.Interface {
 	lvl := resolveLogLevel(level, devMode())
 	if lvl == gormlogger.Silent {
 		return gormlogger.Default.LogMode(gormlogger.Silent)
 	}
 	if logger == nil {
-		logger = zap.NewNop()
+		logger = slog.New(slog.DiscardHandler)
 	}
-	return zapGorm{log: logger, level: lvl, slow: 200 * time.Millisecond}
+	return slogGorm{log: logger, level: lvl, slow: 200 * time.Millisecond}
 }
 
 // resolveLogLevel maps a configured level string (+ whether we're in dev) to a
@@ -78,34 +78,34 @@ func devMode() bool {
 // duplicate is the less useful of the two.
 const gormInitFailure = "failed to initialize database"
 
-// zapGorm adapts GORM's logger onto the Manager's zap logger. Before this,
+// slogGorm adapts GORM's logger onto the Manager's slog logger. Before this,
 // GORM wrote to stdout through the stdlib logger, so SQL and connect errors
 // arrived in a different format from every other line the app logs, at a level
 // nothing could filter, and outside the reach of `nexus dev`'s log view.
-type zapGorm struct {
-	log   *zap.Logger
+type slogGorm struct {
+	log   *slog.Logger
 	level gormlogger.LogLevel
 	slow  time.Duration
 }
 
-func (l zapGorm) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
+func (l slogGorm) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
 	l.level = level
 	return l
 }
 
-func (l zapGorm) Info(_ context.Context, msg string, args ...any) {
+func (l slogGorm) Info(_ context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Info {
 		l.log.Info("db: " + fmt.Sprintf(msg, args...))
 	}
 }
 
-func (l zapGorm) Warn(_ context.Context, msg string, args ...any) {
+func (l slogGorm) Warn(_ context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Warn {
 		l.log.Warn("db: " + fmt.Sprintf(msg, args...))
 	}
 }
 
-func (l zapGorm) Error(_ context.Context, msg string, args ...any) {
+func (l slogGorm) Error(_ context.Context, msg string, args ...any) {
 	if l.level < gormlogger.Error {
 		return
 	}
@@ -121,23 +121,23 @@ func (l zapGorm) Error(_ context.Context, msg string, args ...any) {
 
 // Trace is GORM's per-query hook. Record-not-found is a normal query result
 // rather than a fault, so it never reaches Error.
-func (l zapGorm) Trace(_ context.Context, begin time.Time, fc func() (string, int64), err error) {
+func (l slogGorm) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	if l.level <= gormlogger.Silent {
 		return
 	}
 	elapsed := time.Since(begin)
 	sql, rows := fc()
-	fields := []zap.Field{
-		zap.String("sql", sql),
-		zap.Int64("rows", rows),
-		zap.Duration("took", elapsed),
+	fields := []slog.Attr{
+		slog.String("sql", sql),
+		slog.Int64("rows", rows),
+		slog.String("took", elapsed.String()),
 	}
 	switch {
 	case err != nil && l.level >= gormlogger.Error && !errors.Is(err, gorm.ErrRecordNotFound):
-		l.log.Error("db: query failed", append(fields, zap.Error(err))...)
+		l.log.LogAttrs(ctx, slog.LevelError, "db: query failed", append(fields, slog.Any("error", err))...)
 	case l.slow > 0 && elapsed > l.slow && l.level >= gormlogger.Warn:
-		l.log.Warn("db: slow query", append(fields, zap.Duration("threshold", l.slow))...)
+		l.log.LogAttrs(ctx, slog.LevelWarn, "db: slow query", append(fields, slog.String("threshold", l.slow.String()))...)
 	case l.level >= gormlogger.Info:
-		l.log.Info("db: query", fields...)
+		l.log.LogAttrs(ctx, slog.LevelInfo, "db: query", fields...)
 	}
 }

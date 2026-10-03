@@ -81,10 +81,11 @@ csrf            = true           # double-submit CSRF (off by default)
 
 ## `[runtime.logging]`
 
-Used by `nexus dev`.
+`level` sets the app logger's level; the rest is used by `nexus dev`.
 
 ```toml
 [runtime.logging]
+level    = "info"                # debug | info | warn | error (App.Logger's default handler)
 format   = "pretty"              # pretty | logfmt | pattern | raw
 pattern  = "%time  %-5level  %caller  %msg  %fields"
 requests = true                  # dev-only per-request console lines

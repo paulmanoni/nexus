@@ -600,12 +600,18 @@ func (e *wiringError) Hint() string  { return e.hint }
 // wiringHints maps a type named by a "no provider for" error to the line that
 // fixes it. These are types the binders ask for on the app's behalf, so the
 // developer has never written them down and the bare error reads as a puzzle.
-var wiringHints = map[string]string{
-	"*zap.Logger": "add nexus.Provide(zap.NewExample) — or zap.NewProduction; the db / cache / mail / storage binders take a logger",
-}
+// (The binders' *slog.Logger needs no entry: the framework provides it.)
+var wiringHints = map[string]string{}
+
+// loggerDupHint fixes the one collision a migrating app hits: providing its
+// own *slog.Logger beside the framework's.
+const loggerDupHint = "the framework provides *slog.Logger — pass yours with nexus.WithLogger(l) instead of Provide/Supply"
 
 func wiringHint(err error) string {
 	msg := err.Error()
+	if strings.Contains(msg, "*slog.Logger") && (strings.Contains(msg, "already") || strings.Contains(msg, "more than once")) {
+		return loggerDupHint
+	}
 	for typ, hint := range wiringHints {
 		if strings.Contains(msg, "no provider for "+typ) {
 			return hint

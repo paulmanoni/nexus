@@ -16,7 +16,7 @@
 // fx:
 //
 //	fx.New(
-//	    fx.Provide(zap.NewExample),
+//	    fx.Supply(slog.Default()),
 //	    cache.Module,                 // provides *cache.Manager + *cache.Config
 //	    fx.Invoke(func(app *nexus.App, m *cache.Manager) {
 //	        app.Register(m.AsResource("session-cache", "Hybrid redis/memory"))
@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,6 @@ import (
 
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/vmihailenco/msgpack/v5"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2/resource"
 )
@@ -213,7 +213,7 @@ func RegisterRedis(f func(*Manager) RedisSupervisor) { newRedisSupervisor = f }
 // the Redis supervisor reports a connectivity change.
 type Manager struct {
 	config *Config
-	logger *zap.Logger
+	logger *slog.Logger
 
 	mu     sync.RWMutex
 	mem    *memoryBackend // always present
@@ -231,9 +231,9 @@ type Manager struct {
 // "production", Start() launches the async connect + reconnect loop — an
 // unreachable Redis never delays boot; the Manager serves from memory until
 // Redis comes up, then flips atomically.
-func NewManager(cfg *Config, logger *zap.Logger) *Manager {
+func NewManager(cfg *Config, logger *slog.Logger) *Manager {
 	if logger == nil {
-		logger = zap.NewNop()
+		logger = slog.New(slog.DiscardHandler)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	mem := &memoryBackend{c: gocache.New(cfg.DefaultExpiry, cfg.CleanupExpiry)}
@@ -250,7 +250,7 @@ func NewManager(cfg *Config, logger *zap.Logger) *Manager {
 // Config, Logger, and Context expose the bits the Redis supervisor needs
 // without it reaching into Manager internals.
 func (m *Manager) Config() *Config          { return m.config }
-func (m *Manager) Logger() *zap.Logger      { return m.logger }
+func (m *Manager) Logger() *slog.Logger     { return m.logger }
 func (m *Manager) Context() context.Context { return m.ctx }
 
 // ActivateRedis swaps the active backend to b and marks Redis connected.
@@ -313,12 +313,12 @@ func (m *Manager) loadPersistFile() {
 	err := m.mem.c.LoadFile(m.config.PersistPath)
 	switch {
 	case err == nil:
-		m.logger.Info("cache: restored from disk", zap.String("path", m.config.PersistPath))
+		m.logger.Info("cache: restored from disk", slog.String("path", m.config.PersistPath))
 	case os.IsNotExist(err):
 		// First boot — nothing to load. Stay silent.
 	default:
 		m.logger.Warn("cache: load persist file failed",
-			zap.String("path", m.config.PersistPath), zap.Error(err))
+			slog.String("path", m.config.PersistPath), slog.Any("error", err))
 	}
 }
 
@@ -334,10 +334,10 @@ func (m *Manager) savePersistFile() {
 	}
 	if err := m.mem.c.SaveFile(m.config.PersistPath); err != nil {
 		m.logger.Warn("cache: save persist file failed",
-			zap.String("path", m.config.PersistPath), zap.Error(err))
+			slog.String("path", m.config.PersistPath), slog.Any("error", err))
 		return
 	}
-	m.logger.Info("cache: snapshot written", zap.String("path", m.config.PersistPath))
+	m.logger.Info("cache: snapshot written", slog.String("path", m.config.PersistPath))
 }
 
 // IsRedisConnected reports whether Redis is the currently active store.

@@ -32,7 +32,7 @@ import (
 //     clean stop; anything else sets Status="failed" + LastError.
 //
 //     nexus.AsWorker("cache-invalidation",
-//     func(ctx context.Context, db *OatsDB, cache *CacheManager, logger *zap.Logger) error {
+//     func(ctx context.Context, db *DB, cache *CacheManager, logger *slog.Logger) error {
 //     for !db.IsConnected() {
 //     select {
 //     case <-ctx.Done(): return ctx.Err()

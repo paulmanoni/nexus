@@ -19,7 +19,5 @@ require (
 	github.com/graphql-go/handler v0.2.4 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 )

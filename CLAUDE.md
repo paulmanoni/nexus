@@ -221,7 +221,11 @@ build. No rebuild loop — `dist/` is excluded from the watch and the Go-source 
 ignores `web/dist` writes.
 
 ### Dev server logs (columnar, configurable — Django/Spring-style)
-`nexus dev` reshapes the app's structured (zap-JSON) log lines into a columnar,
+The app logs through `log/slog`: `App.Logger()` — also DI-provided as `*slog.Logger`,
+taken by the db/cache binders and `nexus.Managed` — writes JSON to stdout (AddSource,
+level from `[runtime.logging] level`, default info); `nexus.WithLogger(l)` replaces it
+(wrap a zap core in an `slog.Handler` for zap's encoder; don't `Provide` a second one).
+`nexus dev` reshapes the app's structured JSON log lines (slog's, or zap's) into a columnar,
 colorized **Dev Server Logs** view — `time · LEVEL · source(file:line) · message
 key=value` (info=cyan, warn=amber, error=red). Non-JSON output (gin, the
 `nexus: listening on …` banner, panics) passes through untouched, and the

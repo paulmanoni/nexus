@@ -24,6 +24,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -33,7 +34,6 @@ import (
 	"github.com/failsafe-go/failsafe-go/circuitbreaker"
 	"github.com/failsafe-go/failsafe-go/retrypolicy"
 	"github.com/paulmanoni/nexus/v2/resource/connlog"
-	"go.uber.org/zap"
 
 	"gorm.io/gorm"
 )
@@ -192,7 +192,7 @@ func defaultPool(cfg Config) PoolConfig {
 type Manager struct {
 	cfg         Config
 	pool        PoolConfig
-	logger      *zap.Logger
+	logger      *slog.Logger
 	executor    failsafe.Executor[*gorm.DB]
 	mu          sync.RWMutex
 	db          *gorm.DB
@@ -218,8 +218,14 @@ type Manager struct {
 // Option tweaks a Manager at construction time.
 type Option func(*Manager)
 
-// WithLogger attaches a zap logger. Without one, Manager runs silently.
-func WithLogger(l *zap.Logger) Option { return func(m *Manager) { m.logger = l } }
+// WithLogger attaches a *slog.Logger. Without one, Manager runs silently.
+func WithLogger(l *slog.Logger) Option {
+	return func(m *Manager) {
+		if l != nil {
+			m.logger = l
+		}
+	}
+}
 
 // WithPool overrides the default connection-pool sizing.
 func WithPool(p PoolConfig) Option { return func(m *Manager) { m.pool = p } }
@@ -251,16 +257,15 @@ func NewManager(cfg Config, opts ...Option) *Manager {
 	m := &Manager{
 		cfg:    cfg,
 		pool:   defaultPool(cfg),
-		logger: zap.NewNop(),
+		logger: slog.New(slog.DiscardHandler),
 		ctx:    ctx,
 		cancel: cancel,
 	}
-	m.executor = defaultExecutor(m.logger)
 	for _, opt := range opts {
 		opt(m)
 	}
-	// If an option changed the logger, refresh the default executor so its
-	// OnRetry hook logs via the user's logger.
+	// Built after the options so a WithLogger reaches the default executor
+	// (its OnRetry hook), unless WithExecutor supplied one.
 	if m.executor == nil {
 		m.executor = defaultExecutor(m.logger)
 	}
@@ -270,7 +275,7 @@ func NewManager(cfg Config, opts ...Option) *Manager {
 // defaultExecutor is the exact retry + circuit-breaker profile oats uses.
 // Infinite retries with exponential backoff (500ms → 2s, 25ms jitter), and
 // a circuit breaker that opens after 10 consecutive failures for 10 seconds.
-func defaultExecutor(logger *zap.Logger) failsafe.Executor[*gorm.DB] {
+func defaultExecutor(logger *slog.Logger) failsafe.Executor[*gorm.DB] {
 	retry := retrypolicy.NewBuilder[*gorm.DB]().
 		WithDelay(500*time.Millisecond).
 		WithBackoff(2, time.Second).
@@ -280,8 +285,8 @@ func defaultExecutor(logger *zap.Logger) failsafe.Executor[*gorm.DB] {
 			// progress rather than a problem. The Manager logs once when
 			// the attempts are exhausted, which is the reportable event.
 			logger.Debug("db: retrying connect",
-				zap.Int("attempt", e.Attempts()),
-				zap.Error(e.LastError()))
+				slog.Int("attempt", e.Attempts()),
+				slog.Any("error", e.LastError()))
 		}).
 		Build()
 	cb := circuitbreaker.NewBuilder[*gorm.DB]().
@@ -396,16 +401,16 @@ func (m *Manager) connect() error {
 	m.db = db
 	m.isConnected = true
 	m.mu.Unlock()
-	fields := []zap.Field{
-		zap.String("name", m.bindName),
-		zap.String("driver", string(m.cfg.Driver)),
-		zap.String("address", m.cfg.Address()),
+	fields := []slog.Attr{
+		slog.String("name", m.bindName),
+		slog.String("driver", string(m.cfg.Driver)),
+		slog.String("address", m.cfg.Address()),
 	}
 	if ev, tf := m.avail().OK(); ev == connlog.EventRecovered {
 		// The outage's shape closes the story the down/still-down lines told.
-		m.logger.Info("db: reconnected", append(fields, tf...)...)
+		m.logger.LogAttrs(context.Background(), slog.LevelInfo, "db: reconnected", append(fields, tf...)...)
 	} else {
-		m.logger.Info("db: connected", fields...)
+		m.logger.LogAttrs(context.Background(), slog.LevelInfo, "db: connected", fields...)
 	}
 	return nil
 }
@@ -431,22 +436,22 @@ func (m *Manager) reportUnreachable(err error) {
 		return
 	}
 	addr := m.cfg.Address()
-	fields := []zap.Field{
-		zap.String("name", m.bindName),
-		zap.String("driver", string(m.cfg.Driver)),
-		zap.String("database", m.cfg.Database),
-		zap.String("address", addr),
-		zap.String("error", connlog.Cause(err)),
+	fields := []slog.Attr{
+		slog.String("name", m.bindName),
+		slog.String("driver", string(m.cfg.Driver)),
+		slog.String("database", m.cfg.Database),
+		slog.String("address", addr),
+		slog.String("error", connlog.Cause(err)),
 	}
 	if hint := connlog.Hint(err, string(m.cfg.Driver), addr); hint != "" {
-		fields = append(fields, zap.String("fix", hint))
+		fields = append(fields, slog.String("fix", hint))
 	}
 	fields = append(fields, tf...)
 	msg := "db: cannot reach the server, retrying in the background"
 	if ev == connlog.EventStillDown {
 		msg = "db: still unreachable, retrying in the background"
 	}
-	m.logger.Warn(msg, fields...)
+	m.logger.LogAttrs(context.Background(), slog.LevelWarn, msg, fields...)
 }
 
 func (m *Manager) markDisconnected() {
@@ -483,8 +488,8 @@ func (m *Manager) maintain() {
 				// "went down" line; the connect retries that follow continue
 				// as still-down heartbeats instead of re-announcing.
 				if ev, tf := m.avail().Fail(err); ev != connlog.EventNone {
-					m.logger.Warn("db: connection lost", append([]zap.Field{
-						zap.String("name", m.bindName), zap.Error(err),
+					m.logger.LogAttrs(context.Background(), slog.LevelWarn, "db: connection lost", append([]slog.Attr{
+						slog.String("name", m.bindName), slog.Any("error", err),
 					}, tf...)...)
 				}
 				m.markDisconnected()

@@ -2,9 +2,9 @@ package db
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/paulmanoni/nexus/v2/di"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2/manifest"
 )
@@ -45,7 +45,7 @@ type ProvideOptions struct {
 //
 // reg comes from the fx graph — *nexus.App satisfies the interface
 // via its Declare* methods. Auto-supplied by fxEarlyOptions.
-func Provide(lc di.Lifecycle, opts ProvideOptions, logger *zap.Logger, reg manifest.Registrar) *Manager {
+func Provide(lc di.Lifecycle, opts ProvideOptions, logger *slog.Logger, reg manifest.Registrar) *Manager {
 	cfg := LoadConfig(opts.Driver, opts.EnvNames, opts.Defaults)
 	managerOpts := []Option{WithEnvNames(opts.EnvNames), WithBindName(opts.BindName)}
 	if logger != nil {

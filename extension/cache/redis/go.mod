@@ -7,7 +7,6 @@ require (
 	github.com/paulmanoni/nexus/v2 v2.0.0
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	go.uber.org/zap v1.28.0
 )
 
 require (
@@ -27,7 +26,6 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 )
 

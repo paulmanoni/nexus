@@ -493,9 +493,6 @@ import (
 {{- if .IsInertiaSSR}}
 	"github.com/paulmanoni/nexus/v2/extension/inertia/ssrhttp"
 {{- end}}
-{{- if .HasResources}}
-	"go.uber.org/zap"
-{{- end}}
 {{- if or .HasResources .HasAuth}}
 
 {{- end}}
@@ -544,9 +541,6 @@ func main() {
 		// Inertia pages render into web/index.html — the bundle
 		// ServeFrontend names (built in production, Vite's in dev).
 		inertia.Module(inertia.Config{}),
-{{- end}}
-{{- if .HasResources}}
-		nexus.Provide(zap.NewExample),
 {{- end}}
 {{- if .HasDB}}
 		nexus.Provide(resources.NewDB),
@@ -649,7 +643,10 @@ REDIS_PASSWORD=
 const tmplDatabaseGoTpl = `package resources
 
 import (
+	"log/slog"
+{{- if ne .DB "sqlite"}}
 	"os"
+{{- end}}
 
 	"github.com/paulmanoni/nexus/v2/db"
 {{- if eq .DB "postgres"}}
@@ -660,14 +657,15 @@ import (
 	_ "github.com/paulmanoni/nexus/v2/db/sqlite" // links the pure-Go SQLite engine
 {{- end}}
 	"github.com/paulmanoni/nexus/v2/resource"
-	"go.uber.org/zap"
 )
 
 type DB struct {
 	*db.Manager
 }
 
-func NewDB(logger *zap.Logger) *DB {
+// NewDB takes the app's logger, which nexus provides (nexus.WithLogger
+// replaces it).
+func NewDB(logger *slog.Logger) *DB {
 	m := db.NewManager(db.Config{
 {{- if eq .DB "postgres"}}
 		Driver:   db.Postgres,
@@ -711,9 +709,10 @@ func (m *DB) NexusResources() []resource.Resource {
 const tmplCacheGo = `package resources
 
 import (
+	"log/slog"
+
 	"github.com/paulmanoni/nexus/v2/extension/cache"
 	"github.com/paulmanoni/nexus/v2/resource"
-	"go.uber.org/zap"
 )
 
 type CacheManager struct {
@@ -725,7 +724,7 @@ type CacheManager struct {
 // the manager keeps trying Redis in the background; otherwise it
 // stays on the in-memory store and never blocks startup on a
 // missing Redis.
-func NewCacheManager(logger *zap.Logger) *CacheManager {
+func NewCacheManager(logger *slog.Logger) *CacheManager {
 	m := cache.NewManager(cache.NewConfig(), logger)
 	m.Start()
 	return &CacheManager{m}

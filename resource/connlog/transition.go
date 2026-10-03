@@ -1,10 +1,9 @@
 package connlog
 
 import (
+	"log/slog"
 	"sync"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 // Event is what a Transition tells its caller to log for one attempt:
@@ -50,8 +49,9 @@ func NewTransition(resource string) *Transition {
 
 // Fail records a failed attempt. ev says whether (and how) to log it;
 // fields carries resource/state/attempts and, past the first line, how long
-// the outage has run.
-func (t *Transition) Fail(err error) (ev Event, fields []zap.Field) {
+// the outage has run (down_for, a duration string), ready for
+// slog.Logger.LogAttrs.
+func (t *Transition) Fail(err error) (ev Event, fields []slog.Attr) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
@@ -80,7 +80,7 @@ func (t *Transition) Fail(err error) (ev Event, fields []zap.Field) {
 
 // OK records a successful attempt. EventRecovered (with the outage's length
 // and attempt count) when the dependency was down; EventNone otherwise.
-func (t *Transition) OK() (ev Event, fields []zap.Field) {
+func (t *Transition) OK() (ev Event, fields []slog.Attr) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.down {
@@ -98,14 +98,14 @@ func (t *Transition) Down() bool {
 	return t.down
 }
 
-func (t *Transition) fieldsLocked(state string, withDuration bool) []zap.Field {
-	fields := []zap.Field{
-		zap.String("resource", t.resource),
-		zap.String("state", state),
-		zap.Int("attempts", t.attempts),
+func (t *Transition) fieldsLocked(state string, withDuration bool) []slog.Attr {
+	fields := []slog.Attr{
+		slog.String("resource", t.resource),
+		slog.String("state", state),
+		slog.Int("attempts", t.attempts),
 	}
 	if withDuration {
-		fields = append(fields, zap.Duration("down_for", t.now().Sub(t.since).Round(time.Second)))
+		fields = append(fields, slog.String("down_for", t.now().Sub(t.since).Round(time.Second).String()))
 	}
 	return fields
 }

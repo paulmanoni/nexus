@@ -13,6 +13,7 @@ package redis
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/failsafe-go/failsafe-go"
@@ -20,7 +21,6 @@ import (
 	retryPolicy "github.com/failsafe-go/failsafe-go/retrypolicy"
 	"github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2/extension/cache"
 	"github.com/paulmanoni/nexus/v2/resource/connlog"
@@ -89,7 +89,7 @@ func (s *supervisor) executor() failsafe.Executor[*redis.Client] {
 		WithJitter(25).
 		OnRetry(func(e failsafe.ExecutionEvent[*redis.Client]) {
 			log.Debug("cache: retrying redis connect",
-				zap.Int("attempt", e.Attempts()), zap.Error(e.LastError()))
+				slog.Int("attempt", e.Attempts()), slog.Any("error", e.LastError()))
 		}).Build()
 	cb := circuitbreaker.NewBuilder[*redis.Client]().
 		WithFailureThreshold(5).
@@ -158,7 +158,7 @@ func (s *supervisor) connect() {
 			_ = c.Close()
 			// Debug, not Error: this is one attempt of a retry the policy
 			// owns, and the outcome is reported once below.
-			log.Debug("cache: redis ping failed", zap.Error(err))
+			log.Debug("cache: redis ping failed", slog.Any("error", err))
 			return nil, err
 		}
 		return c, nil
@@ -176,22 +176,22 @@ func (s *supervisor) connect() {
 		// it also collected a stack trace under a development logger, for a
 		// condition no stack can explain.
 		addr := cfg.RedisAddress()
-		fields := []zap.Field{zap.String("address", addr), zap.String("error", connlog.Cause(err))}
+		fields := []slog.Attr{slog.String("address", addr), slog.String("error", connlog.Cause(err))}
 		if hint := connlog.Hint(err, "redis", addr); hint != "" {
-			fields = append(fields, zap.String("fix", hint))
+			fields = append(fields, slog.String("fix", hint))
 		}
 		fields = append(fields, tf...)
 		msg := "cache: redis unreachable, serving from memory"
 		if ev == connlog.EventStillDown {
 			msg = "cache: redis still unreachable, serving from memory"
 		}
-		log.Warn(msg, fields...)
+		log.LogAttrs(context.Background(), slog.LevelWarn, msg, fields...)
 		return
 	}
 	s.client = client
 	if ev, tf := s.avail.OK(); ev == connlog.EventRecovered {
-		log.Info("cache: redis connected, leaving memory fallback",
-			append([]zap.Field{zap.String("address", cfg.RedisAddress())}, tf...)...)
+		log.LogAttrs(context.Background(), slog.LevelInfo, "cache: redis connected, leaving memory fallback",
+			append([]slog.Attr{slog.String("address", cfg.RedisAddress())}, tf...)...)
 	}
 	s.m.ActivateRedis(&backend{client: client})
 }
@@ -210,8 +210,8 @@ func (s *supervisor) healthCheck() {
 		// down" line; the reconnect ticks that follow continue as still-down
 		// heartbeats instead of re-announcing.
 		if ev, tf := s.avail.Fail(err); ev != connlog.EventNone {
-			s.m.Logger().Error("cache: redis health check failed, switching to memory",
-				append([]zap.Field{zap.Error(err)}, tf...)...)
+			s.m.Logger().LogAttrs(ctx, slog.LevelError, "cache: redis health check failed, switching to memory",
+				append([]slog.Attr{slog.Any("error", err)}, tf...)...)
 		}
 		_ = client.Close()
 		s.client = nil
