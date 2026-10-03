@@ -356,10 +356,9 @@ func (a *App) runStartupTasks(ctx context.Context) error {
 		if t.Run == nil {
 			continue
 		}
-		if err := t.Run(); err != nil {
+		if err := t.Run(ctx); err != nil {
 			return fmt.Errorf("nexus: startup task %q: %w", t.Name, err)
 		}
-		_ = ctx // reserved for future cancellation propagation
 	}
 	return nil
 }

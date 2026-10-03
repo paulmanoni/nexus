@@ -336,7 +336,7 @@ func resolveListeners(ls map[string]config.Listener, fallbackAddr string) []reso
 }
 
 // fxEarlyOptions runs BEFORE user options in nexus.Run.
-// Supplies Config, provides *App, registers lifecycle.
+// Supplies Config, provides *App and the framework primitives.
 func fxEarlyOptions(cfg config.Runtime) di.Option {
 	return di.Options(
 		di.Supply(cfg),
@@ -359,7 +359,6 @@ func fxEarlyOptions(cfg config.Runtime) di.Option {
 		// uniformly regardless of where the supplying extension sits in
 		// the option list.
 		di.Invoke(di.Annotate(applyDefaultGate, di.ParamTags("", `optional:"true"`))),
-		di.Invoke(registerLifecycle),
 	)
 }
 
@@ -378,6 +377,11 @@ func fxLateOptions() di.Option {
 		// App-wide middleware (nexus.Middleware) goes on in stage order
 		// once every user option has declared its own.
 		di.Invoke(func(a *App) { a.installAppMiddleware() }),
+		// The listeners' lifecycle hook goes last, so it starts after every
+		// resource and worker the options registered — setup tasks then see
+		// connected resources before the first request — and stops first,
+		// so traffic drains before those resources close.
+		di.Invoke(registerLifecycle),
 	)
 }
 

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -842,4 +844,82 @@ func IfNotDev(opts ...Option) Option {
 		return Options() // no-op
 	}
 	return Options(opts...)
+}
+
+// Setup registers work that must finish before the app serves —
+// migrations, roles, indexes, seeds, backfills:
+//
+//	nexus.Setup(EnsureReportRole, EnsureIndexes)
+//
+// Each fn's parameters come from DI like a provider's, except a
+// context.Context, which receives the boot context; it returns nothing or
+// an error. Setup functions run after every resource and worker has
+// started and before the listeners open, in declaration order; the first
+// error stops boot, naming the function. They are listed in the deployment
+// manifest as pre-start tasks.
+func Setup(fns ...any) Option {
+	opts := make([]Option, 0, len(fns))
+	for _, fn := range fns {
+		opts = append(opts, setupTask(fn))
+	}
+	return Options(opts...)
+}
+
+func setupTask(fn any) Option {
+	v := reflect.ValueOf(fn)
+	t := v.Type()
+	if t.Kind() != reflect.Func || t.IsVariadic() || t.NumOut() > 1 || (t.NumOut() == 1 && t.Out(0) != errorType) {
+		return rawOption{di.Error(fmt.Errorf("nexus.Setup: %T must be a func(deps…) error", fn))}
+	}
+	name := funcDisplayName(v)
+	// The invoke resolves the DI parameters now; the task runs them at
+	// boot, with the context in whichever slot asks for one.
+	in := []reflect.Type{appPtrType}
+	var ctxAt []int
+	for i := 0; i < t.NumIn(); i++ {
+		if t.In(i) == contextType {
+			ctxAt = append(ctxAt, i)
+			continue
+		}
+		in = append(in, t.In(i))
+	}
+	invoke := reflect.MakeFunc(reflect.FuncOf(in, nil, false), func(args []reflect.Value) []reflect.Value {
+		deps := args[1:]
+		args[0].Interface().(*App).AddStartupTask(manifest.StartupTask{
+			Name: name,
+			Run: func(ctx context.Context) error {
+				call := make([]reflect.Value, 0, t.NumIn())
+				d := 0
+				for i := 0; i < t.NumIn(); i++ {
+					if slices.Contains(ctxAt, i) {
+						call = append(call, reflect.ValueOf(ctx))
+						continue
+					}
+					call = append(call, deps[d])
+					d++
+				}
+				out := v.Call(call)
+				if len(out) == 1 && !out[0].IsNil() {
+					return out[0].Interface().(error)
+				}
+				return nil
+			},
+		})
+		return nil
+	})
+	return Invoke(invoke.Interface())
+}
+
+// funcDisplayName is a function's name as a reader knows it: the package
+// path dropped, a method's receiver kept (users.(*Store).Seed → (*Store).Seed).
+func funcDisplayName(v reflect.Value) string {
+	f := runtime.FuncForPC(v.Pointer())
+	if f == nil {
+		return v.Type().String()
+	}
+	name := f.Name()
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return strings.TrimSuffix(name, "-fm")
 }

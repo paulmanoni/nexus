@@ -3,9 +3,11 @@ package nexus
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -488,5 +490,40 @@ func TestParseLogLevel(t *testing.T) {
 		if got := parseLogLevel(in); got != want {
 			t.Errorf("parseLogLevel(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// Setup functions get DI parameters and the boot context, run in
+// declaration order after resources started, and an error stops boot.
+func TestSetup(t *testing.T) {
+	type store struct{ started bool }
+	var ran []string
+	newStore := func(lc Lifecycle) *store {
+		s := &store{}
+		lc.Append(Hook{OnStart: func(context.Context) error { s.started = true; return nil }})
+		return s
+	}
+	migrate := func(ctx context.Context, s *store) error {
+		if ctx == nil || !s.started {
+			t.Errorf("migrate ran before its store started (ctx=%v)", ctx)
+		}
+		ran = append(ran, "migrate")
+		return nil
+	}
+	seed := func(s *store) { ran = append(ran, "seed") }
+
+	_, stop, err := InProcess(config.Runtime{}, Provide(newStore), Setup(migrate, seed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop(context.Background())
+	if !slices.Equal(ran, []string{"migrate", "seed"}) {
+		t.Fatalf("ran = %v", ran)
+	}
+
+	failing := func() error { return errors.New("no schema") }
+	_, _, err = InProcess(config.Runtime{}, Setup(failing))
+	if err == nil || !strings.Contains(err.Error(), "no schema") || !strings.Contains(err.Error(), "TestSetup") {
+		t.Fatalf("err = %v, want the cause and the function's name", err)
 	}
 }

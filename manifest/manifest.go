@@ -25,6 +25,7 @@
 package manifest
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -340,8 +341,8 @@ type StartupTask struct {
 	Description string `json:"description,omitempty"`
 	// Phase is "pre-start" today; reserved for "post-start", "pre-stop"
 	// future expansion. Encoded as a string for forward compatibility.
-	Phase string       `json:"phase"`
-	Run   func() error `json:"-"`
+	Phase string                          `json:"phase"`
+	Run   func(ctx context.Context) error `json:"-"`
 }
 
 // WorkerSummary, CronSummary, EndpointSummary mirror what /__nexus/workers,
