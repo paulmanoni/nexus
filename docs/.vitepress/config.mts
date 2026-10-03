@@ -90,6 +90,7 @@ export default defineConfig({
           items: [
             { text: 'Deployment', link: '/guide/deployment' },
             { text: 'Router & DI backends', link: '/guide/backends' },
+            { text: 'Preparing for 2.0', link: '/guide/v2' },
           ],
         },
       ],

@@ -5,6 +5,13 @@ handlers with `//@` comments and let nexus generate the registrations. The resul
 same `AsRest`/`AsQuery`/`Provide` options you would write by hand, so both styles can be
 mixed.
 
+::: tip The 2.0 spelling: `//nexus:x`
+Since v1.80 every annotation also reads in Go's directive form — `//nexus:rest GET
+/users/:id`, no space after the slashes — which is the only spelling nexus 2.0 reads.
+`//@x` keeps working in v1 and is reported as a v2 notice; see
+[Preparing for 2.0](./v2.md#annotations-are-go-directives).
+:::
+
 ```go
 package users
 

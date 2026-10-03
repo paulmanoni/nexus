@@ -81,5 +81,6 @@ and `--web` opens this site.
 
 | Command | |
 |---|---|
+| `nexus lint --v2 [dir]` | List what nexus 2.0 removes, renames or rejects in the project, by file:line — see [Preparing for 2.0](/guide/v2) |
 | `nexus pki ...` | Generate mTLS certificates for the [peer mesh](https://github.com/paulmanoni/nexus/blob/main/extension/peer/README.md) |
 | `nexus version` | Print the CLI version |
