@@ -2,10 +2,10 @@ package db
 
 import (
 	"context"
+	"log/slog"
 	"reflect"
 
 	"github.com/paulmanoni/nexus/v2/di"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/internal/bindutil"
@@ -66,7 +66,7 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 		panic("db.Bind: build func must not be nil")
 	}
 
-	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
+	ctor := func(lc di.Lifecycle, logger *slog.Logger) (*T, error) {
 		m := NewManager(build(), WithLogger(logger), WithBindName(name))
 		lc.Append(di.Hook{
 			OnStart: func(context.Context) error { m.Start(); return nil },

@@ -3,9 +3,9 @@ package nexus
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/paulmanoni/nexus/v2/di"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2/resource"
 )
@@ -35,7 +35,7 @@ import (
 //     }
 //
 //     nexus.Managed("rabbitmq",
-//     func(logger *zap.Logger) (*RabbitMQ, error) {
+//     func(logger *slog.Logger) (*RabbitMQ, error) {
 //     cfg := rabbitmq.NewRabbitMQConfig()
 //     return &RabbitMQ{rabbitmq.NewRabbitMQManager(cfg, logger), cfg}, nil
 //     },
@@ -45,8 +45,9 @@ import (
 //     },
 //     )
 //
-// Handlers inject *RabbitMQ unchanged.
-func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFor func(*T) resource.Resource) Option {
+// Handlers inject *RabbitMQ unchanged. build receives the app's logger
+// (App.Logger — the default JSON logger, or the one WithLogger installed).
+func Managed[T any](name string, build func(*slog.Logger) (*T, error), resourceFor func(*T) resource.Resource) Option {
 	if name == "" {
 		panic("nexus.Managed: name must not be empty")
 	}
@@ -54,7 +55,7 @@ func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFo
 		panic("nexus.Managed: build func must not be nil")
 	}
 
-	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
+	ctor := func(lc di.Lifecycle, logger *slog.Logger) (*T, error) {
 		t, err := build(logger)
 		if err != nil {
 			return nil, fmt.Errorf("nexus.Managed[%q]: %w", name, err)

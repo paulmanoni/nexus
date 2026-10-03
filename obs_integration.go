@@ -340,6 +340,12 @@ func fxEarlyOptions(cfg config.Runtime) di.Option {
 		// trivially cheap and the value is unused if no one
 		// depends on it.
 		di.Provide(NewNotifier),
+		// *slog.Logger is the app's logger (App.Logger), replaceable with
+		// WithLogger; installLogger resolves that choice before any user
+		// invoke runs. Apps that want zap's encoder wrap a zap core in an
+		// slog.Handler and pass it to WithLogger.
+		di.Provide(provideLogger),
+		di.Invoke(di.Annotate(installLogger, di.ParamTags("", `optional:"true"`))),
 		// Stash any extension-supplied default endpoint gate on the app
 		// BEFORE the per-endpoint invokes run, so deny-by-default applies
 		// uniformly regardless of where the supplying extension sits in

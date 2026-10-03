@@ -7,7 +7,6 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
-	"go.uber.org/zap"
 )
 
 type fakeSupervisor struct{ started *int }
@@ -88,7 +87,6 @@ type badCache struct{ *Manager }
 
 func TestBindRejectsBadDriver(t *testing.T) {
 	_, stop, err := nexus.InProcess(config.Runtime{},
-		nexus.Supply(zap.NewNop()),
 		Bind[badCache]("bad", func() *Config { c := NewConfig(); c.Driver = "memcached"; return c }),
 		nexus.Invoke(func(*badCache) {}),
 	)

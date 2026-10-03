@@ -2,9 +2,9 @@ package cache
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/paulmanoni/nexus/v2/di"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2/manifest"
 )
@@ -21,7 +21,7 @@ import (
 // every app that uses cache.Module gets the registration for free.
 // Apps that build their own *App via nexus.New() still wire it
 // the same way.
-func Provide(lc di.Lifecycle, cfg *Config, logger *zap.Logger, reg manifest.Registrar) *Manager {
+func Provide(lc di.Lifecycle, cfg *Config, logger *slog.Logger, reg manifest.Registrar) *Manager {
 	m := NewManager(cfg, logger)
 	reg.DeclareEnvProvider(m)
 	reg.DeclareServiceProvider(m)

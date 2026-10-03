@@ -23,7 +23,5 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	go.uber.org/multierr v1.10.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 )

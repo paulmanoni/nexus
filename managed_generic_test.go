@@ -2,12 +2,12 @@ package nexus
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2/resource"
 )
@@ -35,7 +35,7 @@ func TestManaged_LifecycleAndInjectionAndResource(t *testing.T) {
 
 	var got *fakeHandle
 	opt := Managed("fake",
-		func(_ *zap.Logger) (*fakeHandle, error) {
+		func(_ *slog.Logger) (*fakeHandle, error) {
 			return &fakeHandle{fakeMgr: &fakeMgr{}, cfg: "configured"}, nil
 		},
 		func(h *fakeHandle) resource.Resource {
@@ -46,7 +46,7 @@ func TestManaged_LifecycleAndInjectionAndResource(t *testing.T) {
 
 	fxapp := di.New(
 		di.Supply(app),
-		di.Supply(zap.NewNop()),
+		di.Supply(slog.New(slog.DiscardHandler)),
 		opt.nexusOption(),
 		di.Populate(&got),
 	)
@@ -85,10 +85,10 @@ func TestManaged_ClosePathAndNilResource(t *testing.T) {
 	type h struct{ *closerMgr }
 	var got *h
 	opt := Managed("closer",
-		func(_ *zap.Logger) (*h, error) { return &h{&closerMgr{}}, nil },
+		func(_ *slog.Logger) (*h, error) { return &h{&closerMgr{}}, nil },
 		nil, // no dashboard resource
 	)
-	fxapp := di.New(di.Supply(app), di.Supply(zap.NewNop()), opt.nexusOption(), di.Populate(&got))
+	fxapp := di.New(di.Supply(app), di.Supply(slog.New(slog.DiscardHandler)), opt.nexusOption(), di.Populate(&got))
 	ctx := context.Background()
 	if err := fxapp.Start(ctx); err != nil {
 		t.Fatalf("start: %v", err)

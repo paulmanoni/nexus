@@ -3,10 +3,10 @@ package cache
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 
 	"github.com/paulmanoni/nexus/v2/di"
-	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/internal/bindutil"
@@ -44,7 +44,7 @@ func Bind[T any](name string, build func() *Config, opts ...BindOption) nexus.Op
 		panic("cache.Bind: build func must not be nil")
 	}
 
-	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
+	ctor := func(lc di.Lifecycle, logger *slog.Logger) (*T, error) {
 		cfg := build()
 		if err := cfg.Validate(); err != nil {
 			return nil, fmt.Errorf("cache.Bind(%q): %w", name, err)

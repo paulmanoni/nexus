@@ -34,11 +34,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
@@ -78,6 +80,9 @@ type App struct {
 	// "/users/" route as "/users" (see ServeHTTP). Stored here because
 	// the rewrite happens at the App boundary, ahead of any backend.
 	stripSlash bool
+	// logger backs App.Logger (see logger.go); nil until first use or a
+	// WithLogger override.
+	logger atomic.Pointer[slog.Logger]
 	// extValues is a per-app key/value store extensions use to stash
 	// boot-time state they must read at request time without relying on
 	// gin-middleware install ordering (which fx.Module route registration

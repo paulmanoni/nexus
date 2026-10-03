@@ -2,21 +2,15 @@ package connlog
 
 import (
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
-
-	"go.uber.org/zap"
 )
 
-func fieldMap(fs []zap.Field) map[string]any {
+func fieldMap(fs []slog.Attr) map[string]any {
 	out := map[string]any{}
 	for _, f := range fs {
-		switch f.Type {
-		case 15: // zapcore.StringType
-			out[f.Key] = f.String
-		default:
-			out[f.Key] = f.Integer
-		}
+		out[f.Key] = f.Value.Any()
 	}
 	return out
 }
@@ -68,7 +62,7 @@ func TestTransition(t *testing.T) {
 	now = now.Add(time.Second)
 	ev, fs = tr.OK()
 	m = fieldMap(fs)
-	if ev != EventRecovered || m["state"] != "up" || m["down_for"].(int64) <= 0 {
+	if ev != EventRecovered || m["state"] != "up" || m["down_for"] == "0s" {
 		t.Fatalf("recovery: ev=%v fields=%v", ev, m)
 	}
 	if ev, _ := tr.OK(); ev != EventNone {
