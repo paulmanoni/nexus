@@ -40,7 +40,7 @@ type (
 
 // securityStatusKey mirrors the framework's App.Value key where
 // installSecurity records the active posture. Kept in sync with
-// app_security.go in package nexus.
+// middleware.go in package nexus.
 const securityStatusKey = "nexus.security.status"
 
 // Plugin adds a dashboard "Security" tab that reports whether the

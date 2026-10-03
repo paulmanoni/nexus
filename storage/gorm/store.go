@@ -1,5 +1,5 @@
 // Package gorm is the GORM-backed nexus.Store[T] adapter referenced by
-// crud_store.go's doc comment. It turns any GORM-mapped struct into a
+// crud.go's doc comment. It turns any GORM-mapped struct into a
 // production-ready Store the AsCRUD generator can drive directly.
 //
 // Usage:
@@ -221,7 +221,7 @@ func (s *Store[T]) resolveSort(raw string) (col string, desc bool, ok bool) {
 	return "", false, false
 }
 
-// reflectIDAccessors mirrors the helper in nexus/crud_reflect.go. We
+// reflectIDAccessors mirrors the helper in nexus/crud.go. We
 // duplicate it here rather than re-export it to keep the parent package's
 // surface area unchanged.
 func reflectIDAccessors[T any]() (func(*T) string, func(*T, string), error) {

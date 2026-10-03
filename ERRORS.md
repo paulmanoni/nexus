@@ -46,9 +46,9 @@ The recover sites — **one per context, and this list must stay complete**:
 
 | Context        | Recover site                                    |
 |----------------|-------------------------------------------------|
-| REST / GraphQL | `recoveryMiddleware` (`app_recovery.go`, global — `/graphql` is an HTTP route) |
-| WebSocket      | `callWSHandler` (`transport_ws.go`)             |
-| Workers        | `runWorker` (`app_workers.go`)                  |
+| REST / GraphQL | `recoveryMiddleware` (`middleware.go`, global — `/graphql` is an HTTP route) |
+| WebSocket      | `callWSHandler` (`websocket.go`)             |
+| Workers        | `runWorker` (`workers.go`)                  |
 | Crons          | cron dispatch (`extension/cron/cron.go`)        |
 | Pubsub subs    | subscriber dispatch (`extension/pubsub`)        |
 
@@ -70,4 +70,4 @@ nexus runs a **boot self-check** — the `nexus.toml` config lint plus every
 `nexus.RegisterBootCheck(...)` topology check — and prints findings to stderr at
 startup. Advisory only (never aborts) and dev-only (zero cost in prod). It's how a
 junior sees the problem *before* deploy. A package with a deferred-until-runtime
-failure mode should register a `BootCheck` from its `init()` (see `pubsub/boot_check.go`).
+failure mode should register a `BootCheck` from its `init()` (see `pubsub/boot.go`).

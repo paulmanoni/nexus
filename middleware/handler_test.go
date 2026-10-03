@@ -171,7 +171,7 @@ func TestRequestCtx(t *testing.T) {
 
 func TestLegacyBundleHandle(t *testing.T) {
 	// Handle is a guard on every transport: legacy realizations run
-	// natively (app_use.go reads Transports()), and the old stub's
+	// natively (middleware.go reads Transports()), and the old stub's
 	// graphql pass-through silently DROPPED a real FieldMiddleware.
 	// It must fail loudly instead — never call next.
 	for _, transport := range []Transport{TransportGraphQL, TransportREST} {

@@ -28,7 +28,7 @@ func (b legacyBundle) Transports() TransportSet {
 }
 
 // Handle is unreachable today: the only consumer of AsHandler
-// (app_use.go) reads Transports() and runs the legacy realizations
+// (middleware.go) reads Transports() and runs the legacy realizations
 // natively per transport. Fail loudly if a future chain builder
 // starts calling it — the previous stub silently DROPPED a legacy
 // graph.FieldMiddleware, which is worse than an error.

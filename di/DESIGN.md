@@ -38,15 +38,15 @@ duplicate typed providers and dependency cycles error.
 
 1. **Seam type.** Change `nexus.Option`'s hidden method from
    `nexusOption() fx.Option` to a di-level intent (`nexusOption() di.Option`),
-   and rewrite the wrappers in `app_options.go`:
+   and rewrite the wrappers in `boot.go`:
    `Provide/Supply/Invoke/Options/Module/Raw` → the `di.*` equivalents.
-   The reflective `reflect.MakeFunc` invoke synthesis in `transport_rest.go`,
-   `transport_graph.go`, `app_workers.go` stays — it just emits `di.Invoke` /
+   The reflective `reflect.MakeFunc` invoke synthesis in `rest.go`,
+   `graphql.go`, `workers.go` stays — it just emits `di.Invoke` /
    `di.Provide(di.Annotate(..))` instead of the fx forms.
-2. **In-structs.** `manifest_automount.go` (`autoMountIn`) and
-   `routing_default_gate.go` swap `fx.In` → `di.In` (tags unchanged).
-3. **Lifecycle.** `obs_integration.go`, `db/bind.go`, `extension/cache/bind.go`,
-   `app_workers.go`, `pubsub/broker.go` swap `fx.Lifecycle`/`fx.Hook` →
+2. **In-structs.** `automount.go` (`autoMountIn`) and
+   `endpoint.go` swap `fx.In` → `di.In` (tags unchanged).
+3. **Lifecycle.** `server.go`, `db/bind.go`, `extension/cache/bind.go`,
+   `workers.go`, `pubsub/broker.go` swap `fx.Lifecycle`/`fx.Hook` →
    `di.Lifecycle`/`di.Hook`.
 4. **Run.** `Run()` builds `di.New(all...)` and calls `.Run()`; replace the
    `fxevent` quiet-logger paths with plain stderr handling (di already prints
@@ -60,7 +60,7 @@ duplicate typed providers and dependency cycles error.
 
 The migration is complete on branch `feat/di-seam`:
 
-- `nexus.Option` is now `nexusOption() di.Option`; `app_options.go` Run path
+- `nexus.Option` is now `nexusOption() di.Option`; `boot.go` Run path
   selects a `di.Backend` (default `di.Builtin()`), collects the option tree to a
   `di.Spec`, and runs it.
 - The two `fx.In` consumers (`autoMountGraphQL`, `applyDefaultGate`) are now

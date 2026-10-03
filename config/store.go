@@ -283,7 +283,7 @@ func configKeyToEnv(key string) string {
 var configLookupEnv = os.LookupEnv
 
 // subscribeConfig registers an OnConfigChange callback. Used by
-// the public OnConfigChange function in config_get.go.
+// the public OnChange function in get.go.
 func subscribeConfig(key string, fn func(any)) {
 	s := activeConfigStore.Load()
 	if s == nil {

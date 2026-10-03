@@ -93,7 +93,7 @@ func Load(path ...string) (Runtime, error) {
 }
 
 // configFromTOML is the bytes-based core of LoadConfig, shared by the
-// disk path and the build-time embedded copy (see config_embed.go). It
+// disk path and the build-time embedded copy (see config/embed.go). It
 // performs the same side effects LoadConfig always has — ${VAR}
 // expansion, publishing the [env] table, seeding the nexus.Get base
 // layer, and stashing [databases.*] specs — then returns the runtime

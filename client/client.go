@@ -304,7 +304,7 @@ func (m AuthMeta) Empty() bool {
 // belong to the wire layer, not the auto-dump path).
 //
 // Empty outdir signals "no dump configured" — the caller (the
-// OnStart hook in nexus's obs_integration.go) skips the dump
+// OnStart hook in nexus's server.go) skips the dump
 // entirely. Off is reported as "" for each knob, so callers never see
 // the sentinel. The hook adds the development gate on top; a non-empty
 // outdir here is "where", not "whether".
