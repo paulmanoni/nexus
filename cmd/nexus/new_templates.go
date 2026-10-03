@@ -915,13 +915,17 @@ func StubAuthenticator(ctx context.Context, clientID, username, password string)
 // tmplDeployTOML is the starter config. main.go loads it via
 // nexus.Boot(); operators edit settings here instead of in code.
 // Fields absent from the TOML fall back to framework defaults.
-const tmplDeployTOML = `# nexus.toml — runtime config for this app.
+const tmplDeployTOML = `#:schema https://paulmanoni.github.io/nexus/nexus.toml.schema.json
+# nexus.toml — runtime config for this app.
 #
 # nexus.Boot() in main.go loads this file automatically: the [runtime]
 # table, any [extensions.*] blocks, and the config.Get value store. Edit
 # settings here, not in code; absent fields fall back to framework
 # defaults. Every runtime key lives UNDER [runtime] (or a [runtime.<sub>]
-# table). Read any value in code with config.Get[T]("section.key").
+# table). The file is strict: an unknown key or an undeclared section
+# fails boot — declare your own tables with config.Section[T]("name"),
+# and check the file with "nexus config check". The #:schema line above
+# gives editors key completion.
 
 [runtime]
 # "development" turns on dev-only behaviour for a plain "go run ." (nexus

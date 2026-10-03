@@ -1,18 +1,10 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"reflect"
-	"sort"
-	"strings"
-	"sync"
 	"time"
-
-	"github.com/pelletier/go-toml/v2"
 
 	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
 	"github.com/paulmanoni/nexus/v2/internal/bootui"
@@ -114,34 +106,29 @@ func configFromTOML(raw []byte, source string) (Runtime, error) {
 	if envVars, eerr := configEnvVars(expanded); eerr == nil {
 		applyConfigEnv(envVars)
 	}
-	var block runtimeConfigDoc
-	if err := toml.Unmarshal(expanded, &block); err != nil {
-		return Runtime{}, newConfigError("parse", source, err)
+	// One strict decode of the whole document against every declared table
+	// ([runtime], the framework's own tables, extension blocks, app
+	// sections). A key nothing declares fails the load: go-toml would drop it
+	// without a word, which turns a one-character typo ([runtime.server]
+	// adress) into a mystery default port.
+	doc, err := decodeDocument(expanded, source)
+	if err != nil {
+		return Runtime{}, err
 	}
-	// A second, STRICT pass over the same bytes purely to report keys the
-	// loader has no field for. go-toml drops unknown keys silently, which
-	// turns a one-character typo ([runtime.server] adress) into a mystery
-	// default port — the exact class of bug nobody can debug from the
-	// symptom. Advisory, never fatal: nexus.toml legitimately carries blocks
-	// this binary owns no decoder for (see unownedConfigTables), and the whole
-	// document is readable via config.Get regardless.
-	reportUnknownConfigKeys(source, unknownConfigKeys(expanded))
+	if len(doc.problems) > 0 {
+		return Runtime{}, newKeysError(source, doc.problems)
+	}
 	// Seed the config.Get base layer with the FULL document tree so
-	// config.Get[T]("section.key") resolves anything declared in
-	// nexus.toml — not just the [runtime]/[extensions] blocks the
-	// typed loaders claim. Lowest priority: ENV and the config
-	// extension override it. Best-effort — the typed Unmarshal above
-	// already surfaced any parse error.
-	var full map[string]any
-	if err := toml.Unmarshal(expanded, &full); err == nil {
-		installBaseConfig(full)
-	}
+	// Get[T]("section.key") resolves anything declared in nexus.toml.
+	// Lowest priority: ENV and the config extension override it.
+	installBaseConfig(doc.tree)
 	// Stash the declarative [databases.*] structure blocks so
 	// db.BindFromConfig[T] can resolve them when options are built.
-	// Secrets aren't here — only structure + the config-server
-	// key_prefix.
-	registerDatabaseSpecs(block.Databases)
-	return block.Runtime.toConfig()
+	registerDatabaseSpecs(doc.databases())
+	if err := doc.publishSections(); err != nil {
+		return Runtime{}, newConfigError("decode", source, err)
+	}
+	return doc.runtime().toConfig()
 }
 
 // MustLoad is the fail-fast variant of Load (Boot composes
@@ -167,19 +154,6 @@ func MustLoad(path ...string) Runtime {
 		bootui.Fatal(err)
 	}
 	return cfg
-}
-
-// runtimeConfigDoc wraps the [runtime] table so we can leave the
-// rest of nexus.toml (deployments, inputs, peer mesh) to other
-// loaders without conflict. The top-level Unmarshal walks the
-// document; we read the runtime sub-tree only.
-type runtimeConfigDoc struct {
-	Runtime runtimeBlock `toml:"runtime"`
-	// Databases holds the declarative [databases.<name>] blocks —
-	// connection structure (driver, sslmode, …) plus the config-server
-	// key_prefix to read secret values from. Consumed by
-	// DatabaseFromConfig[T], not by toConfig().
-	Databases map[string]DatabaseSpec `toml:"databases"`
 }
 
 // runtimeBlock is the TOML-tagged mirror of Config. Each
@@ -240,12 +214,22 @@ type runtimeBlock struct {
 	GraphQL               graphQLBlock    `toml:"graphql"`
 	Middleware            middlewareBlock `toml:"middleware"`
 	DevReload             devReloadBlock  `toml:"devreload"`
-	Environment           string          `toml:"environment"`
+	Logging               loggingBlock    `toml:"logging"`
+	Environment           string          `toml:"environment" doc:"development | staging | production; NEXUS_ENVIRONMENT overrides it"`
 	Version               string          `toml:"version"`
-	Introspection         bool            `toml:"introspection"`
-	IntrospectionNetworks []string        `toml:"introspection_networks"`
-	TraceCapacity         int             `toml:"trace_capacity"`
-	SDK                   bool            `toml:"sdk"`
+	Introspection         bool            `toml:"introspection" doc:"open the /__nexus dashboard and JSON APIs (off by default)"`
+	IntrospectionNetworks []string        `toml:"introspection_networks" doc:"CIDRs allowed to reach /__nexus even when introspection is off"`
+	TraceCapacity         int             `toml:"trace_capacity" doc:"request-trace ring buffer size (0 = off)"`
+	SDK                   bool            `toml:"sdk" doc:"generate and serve the typed client SDK"`
+}
+
+// loggingBlock is [runtime.logging]. The app reads level and requests
+// through config.Get; `nexus dev`'s log view reads format and pattern.
+type loggingBlock struct {
+	Level    string `toml:"level"`    // debug | info | warn | error
+	Requests *bool  `toml:"requests"` // dev-only per-request console log (default true)
+	Format   string `toml:"format"`   // pretty | logfmt | pattern | raw | json
+	Pattern  string `toml:"pattern"`  // used when format = "pattern"
 }
 
 // devReloadBlock is the TOML shape of DevReload.
@@ -253,19 +237,19 @@ type devReloadBlock struct {
 	Exclude []string `toml:"exclude"`
 }
 
-// serverBlock is the TOML shape of Server.
+// serverBlock is the TOML shape of ServerConfig.
 type serverBlock struct {
-	Addr        string                   `toml:"addr"`
-	RoutePrefix string                   `toml:"route_prefix"`
+	Addr        string                   `toml:"addr" doc:"listen address, e.g. \":8080\""`
+	RoutePrefix string                   `toml:"route_prefix" doc:"prefix for every REST/GraphQL/WS route"`
 	Listeners   map[string]listenerBlock `toml:"listeners"`
 	// ShutdownTimeout is a Go duration string ("5s", "500ms"). An
 	// unparseable value is ignored, falling back to the default.
-	ShutdownTimeout string `toml:"shutdown_timeout"`
+	ShutdownTimeout string `toml:"shutdown_timeout" schema:"duration"`
 	// Connection-level limits. Durations are Go duration strings; an
 	// unparseable value falls back to the framework default.
-	IdleTimeout    string `toml:"idle_timeout"`
-	ReadTimeout    string `toml:"read_timeout"`
-	WriteTimeout   string `toml:"write_timeout"`
+	IdleTimeout    string `toml:"idle_timeout" schema:"duration"`
+	ReadTimeout    string `toml:"read_timeout" schema:"duration"`
+	WriteTimeout   string `toml:"write_timeout" schema:"duration"`
 	MaxHeaderBytes int    `toml:"max_header_bytes"`
 	MaxBodyBytes   int64  `toml:"max_body_bytes"`
 	// TrustedProxies: CIDRs whose forwarded headers ClientIP honors.
@@ -275,7 +259,7 @@ type serverBlock struct {
 	StripTrailingSlash bool `toml:"strip_trailing_slash"`
 }
 
-// webSocketBlock is the TOML shape of WebSocket.
+// webSocketBlock is the TOML shape of WebSocketConfig.
 type webSocketBlock struct {
 	AllowedOrigins  []string `toml:"allowed_origins"`
 	MaxConnections  int      `toml:"max_connections"`
@@ -289,17 +273,17 @@ type webSocketBlock struct {
 // handles separately. Operators wanting TLS on a Listener should
 // use ServerTLSConfig in Go code.
 type listenerBlock struct {
-	Addr  string `toml:"addr"`
-	Scope string `toml:"scope"` // "public" / "admin" / "internal"
+	Addr  string `toml:"addr" doc:"listen address, e.g. \":8080\""`
+	Scope string `toml:"scope" doc:"public | internal | admin"` // "public" / "admin" / "internal"
 }
 
-// dashboardBlock is the TOML shape of Dashboard.
+// dashboardBlock is the TOML shape of DashboardConfig.
 type dashboardBlock struct {
 	Enabled bool   `toml:"enabled"`
 	Name    string `toml:"name"`
 }
 
-// graphQLBlock is the TOML shape of GraphQL.
+// graphQLBlock is the TOML shape of GraphQLConfig.
 type graphQLBlock struct {
 	Path              string `toml:"path"`
 	DisablePlayground bool   `toml:"disable_playground"`
@@ -308,7 +292,7 @@ type graphQLBlock struct {
 	DocumentCacheSize int    `toml:"document_cache_size"`
 }
 
-// middlewareBlock is the TOML shape of Middleware.
+// middlewareBlock is the TOML shape of MiddlewareConfig.
 // Only data-driven fields are exposed here (CORS settings,
 // rate-limit knobs). Slice-of-middleware fields (Global,
 // Dashboard) require Go-side functions and stay Go-only.
@@ -339,7 +323,7 @@ type corsBlock struct {
 	AllowHeaders     []string `toml:"allow_headers"`
 	ExposeHeaders    []string `toml:"expose_headers"`
 	AllowCredentials bool     `toml:"allow_credentials"`
-	MaxAge           string   `toml:"max_age"` // duration string, e.g. "12h"
+	MaxAge           string   `toml:"max_age" schema:"duration"` // duration string, e.g. "12h"
 }
 
 // rateLimitBlock is the TOML shape of ratelimit.Limit.
@@ -473,492 +457,6 @@ func parseDurationOr(s string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
-}
-
-// ---------------------------------------------------------------------------
-// Unknown-key detection
-// ---------------------------------------------------------------------------
-
-// unknownConfigKey is one nexus.toml entry that no field of runtimeConfigDoc
-// claims — a typo (`adress`), a key written at the wrong nesting level
-// (`addr` at the top of the file instead of under [runtime.server]), or a
-// setting removed in a later framework version.
-//
-// go-toml's default is to drop such an entry without a word, so the operator
-// sees a default value and no explanation. Detection exists to name the key,
-// its file:line, and (where the schema allows a guess) what was probably
-// meant.
-type unknownConfigKey struct {
-	// Path is the TOML table path of the entry, e.g.
-	// ["runtime","server","adress"]. Key joins it with dots.
-	Path []string
-	// Line and Column locate the entry in the source document (1-indexed),
-	// so messages can be a file:line deep link.
-	Line, Column int
-	// Hint is a ready-to-print "did you mean …" clause, empty when the key
-	// resembles nothing in the schema.
-	Hint string
-}
-
-// Key is the dotted form of Path — the same spelling config.Get takes, and
-// the Path of the lint Issue this key produces.
-func (k unknownConfigKey) Key() string { return strings.Join(k.Path, ".") }
-
-// describe renders the finding without the hint: what the key is and why it
-// has no effect. Two shapes, because a mis-nested key and a typo'd key are
-// diagnosed differently.
-func (k unknownConfigKey) describe() string {
-	leaf := k.Path[len(k.Path)-1]
-	if len(k.Path) == 1 {
-		return fmt.Sprintf("%q sits at the top level of the file, where the runtime config loader never reads it", leaf)
-	}
-	return fmt.Sprintf("%q is not a key of [%s]", leaf, strings.Join(k.Path[:len(k.Path)-1], "."))
-}
-
-// hintClause is describe's optional suffix — " — did you mean …?" or "".
-func (k unknownConfigKey) hintClause() string {
-	if k.Hint == "" {
-		return ""
-	}
-	return " — " + k.Hint
-}
-
-// unownedConfigTables lists the top-level nexus.toml tables whose schema
-// belongs to somebody other than the runtime config loader. Unknown keys
-// under these are NOT reported: the loader has no business knowing their
-// shape, so every key inside would look unknown to it.
-//
-//   - Sibling loaders in this repo: [databases.*] (db.BindFromConfig),
-//     [cache.*], [storage.*], [mail.*] (their extensions' BindFromConfig),
-//     [extensions.*] (whichever extension package the app links — the
-//     linting binary may not link it at all), [env.*] (the free-form
-//     process-env / frontend bridge), [decorators.imports] (a nexus CLI
-//     codegen hint), [profiles.*] (extension/config).
-//   - The deploy-manifest surface, which manifest.LoadInputsTOML owns and
-//     the runtime loader is documented to ignore (manifest/toml.go): its
-//     inputs tables plus the reconcile-populated [deployments.*] /
-//     [peers.*] / [services.*].
-//
-// Keys OUTSIDE this set and outside a known table are the interesting ones:
-// they are either a typo in a table this loader does own, or a setting
-// written at the wrong nesting level.
-var unownedConfigTables = map[string]bool{
-	// Sibling loaders.
-	"databases":  true,
-	"cache":      true,
-	"storage":    true,
-	"mail":       true,
-	"extensions": true,
-	"env":        true,
-	"decorators": true,
-	"profiles":   true,
-	// Deploy-manifest surface (manifest.DeployTOMLInputs).
-	"environments":          true,
-	"environment_overrides": true,
-	"secrets":               true,
-	"files":                 true,
-	"hooks":                 true,
-	"tls":                   true,
-	"cors":                  true,
-	"errors":                true,
-	"services":              true,
-	"deployments":           true,
-	"peers":                 true,
-}
-
-// unknownConfigKeys decodes expanded a second time with go-toml's strict
-// mode and returns the entries runtimeConfigDoc has no field for, filtered
-// down to the ones that are actually worth reporting.
-//
-// Two filters carry the whole design, and both exist to keep the report
-// free of false positives — a noisy warning gets ignored, which would waste
-// the check:
-//
-//  1. Unknown TABLES are silent. Any [section] (or [runtime.section]) is a
-//     legitimate place for an app's own configuration: the full document is
-//     seeded into the config.Get base layer, so `[app] name = "demo"` or
-//     `[runtime.logging] format = "pretty"` (read by the `nexus dev` log
-//     prettifier, not by Config) are correct, deliberate, and none of this
-//     loader's business. Only the KEYS of a table the loader does own can
-//     be judged.
-//  2. Keys under unownedConfigTables are silent — their schema belongs to
-//     another loader (see that map).
-//
-// What survives is precisely the high-signal set: a key inside a
-// [runtime.*] table whose schema this file defines, and a key written at
-// the top level of the document (where nothing reads it). Returns nil when
-// the file is clean or unparseable — a genuine parse error is reported by
-// the caller's own non-strict pass, and double-reporting it would only
-// obscure it.
-func unknownConfigKeys(expanded []byte) []unknownConfigKey {
-	var probe runtimeConfigDoc
-	dec := toml.NewDecoder(bytes.NewReader(expanded))
-	dec.DisallowUnknownFields()
-	var strict *toml.StrictMissingError
-	if err := dec.Decode(&probe); !errors.As(err, &strict) {
-		return nil
-	}
-	// The strict error says WHICH keys are unknown but not whether each one
-	// is a table header or a single key; the generic tree answers that.
-	var tree map[string]any
-	if err := toml.Unmarshal(expanded, &tree); err != nil {
-		return nil
-	}
-	schema := runtimeConfigSchema()
-	leaves := runtimeConfigLeaves()
-
-	var out []unknownConfigKey
-	for i := range strict.Errors {
-		de := &strict.Errors[i]
-		path := []string(de.Key())
-		if len(path) == 0 || unownedConfigTables[path[0]] || isTOMLTable(tree, path) {
-			continue
-		}
-		line, col := de.Position()
-		k := unknownConfigKey{
-			Path:   append([]string(nil), path...),
-			Line:   line,
-			Column: col,
-		}
-		k.Hint = unknownConfigKeyHint(schema, leaves, path)
-		out = append(out, k)
-	}
-	// Source order — the operator reads the report next to the file.
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Line < out[j].Line })
-	return out
-}
-
-// isTOMLTable reports whether path names a table (or array of tables) in the
-// generically-decoded document, as opposed to a single key holding a scalar
-// or array value.
-func isTOMLTable(tree map[string]any, path []string) bool {
-	var cur any = tree
-	for _, seg := range path {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return false
-		}
-		cur, ok = m[seg]
-		if !ok {
-			return false
-		}
-	}
-	switch v := cur.(type) {
-	case map[string]any:
-		return true
-	case []any: // [[array.of.tables]]
-		return len(v) > 0 && isMapSlice(v)
-	}
-	return false
-}
-
-// isMapSlice reports whether every element of v is a table, which is what
-// distinguishes an array of tables from a plain array value.
-func isMapSlice(v []any) bool {
-	for _, e := range v {
-		if _, ok := e.(map[string]any); !ok {
-			return false
-		}
-	}
-	return true
-}
-
-// unknownConfigKeyHint guesses what the operator meant, in the order the
-// guesses are trustworthy:
-//
-//  1. Mis-nesting — the key IS a real setting, just in the wrong table.
-//     `addr` at the top level resolves to "[runtime.server] addr", which is
-//     the single most useful thing this check can say: the value looks
-//     right, reads right, and does nothing.
-//  2. Typo — a sibling key of the (owned) table the operator wrote into is
-//     within a couple of edits, so `enabeld` resolves to `enabled`.
-//  3. Neither — name what the table DOES accept. Spelling distance gives up
-//     on the common case of a plausible-but-wrong word (`adress` is four
-//     edits from `addr`, and `pool_size` is near nothing at all), where the
-//     accepted-key list still answers the question immediately.
-//
-// Empty only at the document root, where the answer is (1) or nothing: the
-// root's own "keys" are tables, and listing them would suggest writing a
-// setting there — the very mistake being reported.
-func unknownConfigKeyHint(schema *configSchemaNode, leaves map[string][]string, path []string) string {
-	leaf := path[len(path)-1]
-	parent := strings.Join(path[:len(path)-1], ".")
-
-	if table, ok := bestLeafTable(leaves[leaf], parent); ok {
-		return fmt.Sprintf("did you mean [%s] %s?", table, leaf)
-	}
-	n := schema.lookup(path[:len(path)-1])
-	if n == nil || parent == "" {
-		return ""
-	}
-	if near := nearestName(leaf, n.names()); near != "" {
-		return fmt.Sprintf("did you mean [%s] %s?", parent, near)
-	}
-	if names := n.names(); len(names) > 0 {
-		return fmt.Sprintf("[%s] accepts: %s", parent, previewNames(names, 12))
-	}
-	return ""
-}
-
-// previewNames joins key names for a hint, truncating past max so one
-// oversized table can't swallow the report.
-func previewNames(names []string, max int) string {
-	if len(names) <= max {
-		return strings.Join(names, ", ")
-	}
-	return strings.Join(names[:max], ", ") + ", …"
-}
-
-// bestLeafTable picks the table to name in a mis-nesting hint from the set of
-// tables that declare a key of this name, excluding the table the operator
-// already wrote into. Concrete paths beat wildcard ones (`addr` belongs to
-// both [runtime.server] and [runtime.server.listeners.*]; the former is what
-// an operator means nine times in ten), then shallower beats deeper.
-func bestLeafTable(candidates []string, parent string) (string, bool) {
-	best, found := "", false
-	for _, c := range candidates {
-		if c == parent || c == "" {
-			continue
-		}
-		if !found || betterLeafTable(c, best) {
-			best, found = c, true
-		}
-	}
-	return best, found
-}
-
-// betterLeafTable orders mis-nesting candidates: concrete before wildcard,
-// then shallow before deep, then lexical for a stable message.
-func betterLeafTable(a, b string) bool {
-	if wa, wb := strings.Contains(a, "*"), strings.Contains(b, "*"); wa != wb {
-		return wb
-	}
-	if da, db := strings.Count(a, "."), strings.Count(b, "."); da != db {
-		return da < db
-	}
-	return a < b
-}
-
-// configSchemaNode is the shape of the TOML schema runtimeConfigDoc declares,
-// derived once by reflection over the struct tags. It exists so the hints
-// can't drift from the structs: adding a field to ServerConfigBlock makes it
-// hintable with no second list to maintain.
-//
-// A node with no fields and no wildcard is a leaf (a scalar or array value).
-type configSchemaNode struct {
-	fields map[string]*configSchemaNode
-	// wild is the element schema of a map-typed table
-	// (map[string]ListenerConfigBlock → any [runtime.server.listeners.X]).
-	wild *configSchemaNode
-}
-
-// isLeaf reports whether the node holds a value rather than a table.
-func (n *configSchemaNode) isLeaf() bool { return len(n.fields) == 0 && n.wild == nil }
-
-// names returns the node's declared key names, sorted for deterministic hints.
-func (n *configSchemaNode) names() []string {
-	out := make([]string, 0, len(n.fields))
-	for name := range n.fields {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// lookup walks path from this node, following the wildcard for a table key
-// that isn't a declared field (a listener name). Returns nil when the path
-// leaves the schema.
-func (n *configSchemaNode) lookup(path []string) *configSchemaNode {
-	cur := n
-	for _, seg := range path {
-		switch {
-		case cur == nil:
-			return nil
-		case cur.fields[seg] != nil:
-			cur = cur.fields[seg]
-		case cur.wild != nil:
-			cur = cur.wild
-		default:
-			return nil
-		}
-	}
-	return cur
-}
-
-// runtimeConfigSchema returns the (cached) schema tree of runtimeConfigDoc.
-var runtimeConfigSchema = sync.OnceValue(func() *configSchemaNode {
-	return buildConfigSchema(reflect.TypeOf(runtimeConfigDoc{}))
-})
-
-// runtimeConfigLeaves returns the (cached) index of leaf key name → the
-// dotted paths of every table declaring a key of that name. It is what makes
-// the mis-nesting hint possible: "addr" → ["runtime.server",
-// "runtime.server.listeners.*"].
-var runtimeConfigLeaves = sync.OnceValue(func() map[string][]string {
-	out := map[string][]string{}
-	indexConfigLeaves(runtimeConfigSchema(), "", out)
-	for _, paths := range out {
-		sort.Strings(paths)
-	}
-	return out
-})
-
-// buildConfigSchema reflects a TOML-tagged type into a configSchemaNode.
-// Structs become tables, maps become wildcard tables, everything else a leaf.
-func buildConfigSchema(t reflect.Type) *configSchemaNode {
-	for t != nil && t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-	switch {
-	case t == nil:
-		return &configSchemaNode{}
-	case t.Kind() == reflect.Struct:
-		n := &configSchemaNode{fields: make(map[string]*configSchemaNode, t.NumField())}
-		for i := range t.NumField() {
-			f := t.Field(i)
-			if !f.IsExported() {
-				continue
-			}
-			if name := tomlFieldName(f); name != "" {
-				n.fields[name] = buildConfigSchema(f.Type)
-			}
-		}
-		return n
-	case t.Kind() == reflect.Map:
-		return &configSchemaNode{wild: buildConfigSchema(t.Elem())}
-	}
-	return &configSchemaNode{}
-}
-
-// tomlFieldName is the key a struct field decodes from: its `toml` tag name,
-// or the lowercased field name when untagged (go-toml's own default).
-// Returns "" for a field that never appears in a document (`toml:"-"`).
-func tomlFieldName(f reflect.StructField) string {
-	name, _, _ := strings.Cut(f.Tag.Get("toml"), ",")
-	switch name {
-	case "-":
-		return ""
-	case "":
-		return strings.ToLower(f.Name)
-	}
-	return name
-}
-
-// indexConfigLeaves walks the schema recording, for each leaf key name, the
-// dotted path of the table that declares it. Wildcard tables contribute a
-// "*" segment so a hint can say [runtime.server.listeners.*].
-func indexConfigLeaves(n *configSchemaNode, prefix string, out map[string][]string) {
-	for name, child := range n.fields {
-		if child.isLeaf() {
-			out[name] = append(out[name], prefix)
-			continue
-		}
-		indexConfigLeaves(child, joinConfigPath(prefix, name), out)
-	}
-	if n.wild != nil {
-		indexConfigLeaves(n.wild, joinConfigPath(prefix, "*"), out)
-	}
-}
-
-// joinConfigPath appends one segment to a dotted TOML path, handling the
-// empty (document root) prefix.
-func joinConfigPath(prefix, seg string) string {
-	if prefix == "" {
-		return seg
-	}
-	return prefix + "." + seg
-}
-
-// nearestName returns the candidate within a small edit distance of name, or
-// "" when nothing is close enough to claim. The budget scales with length so
-// short keys ("csp", "rpm") don't collect wrong suggestions: one edit up to 5
-// characters, two beyond. Ties go to the lexically first candidate so the
-// message is deterministic.
-func nearestName(name string, candidates []string) string {
-	budget := 1
-	if len(name) > 5 {
-		budget = 2
-	}
-	best, bestDist := "", budget+1
-	for _, c := range candidates {
-		if d := editDistance(name, c); d < bestDist {
-			best, bestDist = c, d
-		}
-	}
-	if bestDist > budget {
-		return ""
-	}
-	return best
-}
-
-// editDistance is the Levenshtein distance between a and b, computed with a
-// single rolling row. Inputs here are TOML key names (a few dozen bytes at
-// most) compared a handful of times per boot, so the naive algorithm is
-// well inside the noise.
-func editDistance(a, b string) int {
-	prev := make([]int, len(b)+1)
-	cur := make([]int, len(b)+1)
-	for j := range prev {
-		prev[j] = j
-	}
-	for i := 1; i <= len(a); i++ {
-		cur[0] = i
-		for j := 1; j <= len(b); j++ {
-			cost := 1
-			if a[i-1] == b[j-1] {
-				cost = 0
-			}
-			cur[j] = min(prev[j]+1, min(cur[j-1]+1, prev[j-1]+cost))
-		}
-		prev, cur = cur, prev
-	}
-	return prev[len(b)]
-}
-
-// reportedConfigSources remembers which config sources have already had their
-// unknown keys printed, so the dev boot self-check — which renders the same
-// findings through lintRuntimeBytes / reportBootIssues moments later — does
-// not repeat the list. `nexus lint` runs in the CLI process, which never
-// loads a Config, so the CLI always reports.
-var reportedConfigSources sync.Map // source string → struct{}
-
-// reportUnknownConfigKeys prints the boot warning for keys nothing reads and
-// marks source as reported. A no-op for a clean file, and never fatal:
-// breaking boot over an unknown key would take down every existing app whose
-// nexus.toml carries a block this binary has no decoder for.
-func reportUnknownConfigKeys(source string, keys []unknownConfigKey) {
-	if len(keys) == 0 {
-		return
-	}
-	reportedConfigSources.Store(source, struct{}{})
-	writeUnknownConfigKeyWarning(os.Stderr, source, keys)
-}
-
-// unknownConfigKeysReported reports whether source's unknown keys have
-// already reached stderr via the loader. lintRuntimeBytes consults it to stay
-// out of the boot report's way.
-func unknownConfigKeysReported(source string) bool {
-	_, ok := reportedConfigSources.Load(source)
-	return ok
-}
-
-// writeUnknownConfigKeyWarning renders the warning block. Deliberately loud
-// and specific about the CONSEQUENCE rather than the rule — the operator's
-// question is never "is this key known", it is "why is my app on :8080".
-func writeUnknownConfigKeyWarning(w io.Writer, source string, keys []unknownConfigKey) {
-	fmt.Fprintf(w,
-		"nexus: %s declares %d key(s) the runtime config loader does not recognize — "+
-			"each one sets NO runtime option, so the value is silently dropped "+
-			"(listen addr included, which is how an app ends up on :8080):\n",
-		source, len(keys))
-	for _, k := range keys {
-		fmt.Fprintf(w, "  %s:%d: %s%s\n", source, k.Line, k.describe(), k.hintClause())
-	}
-	fmt.Fprintf(w,
-		"  Fix the spelling or the nesting; `nexus lint %s` reports the same list. "+
-			"A value your own code reads with config.Get is fine to keep — give it its "+
-			"own [section] instead of the top level to silence this.\n",
-		source)
 }
 
 // File is a nexus.toml as Boot reads it: the decoded runtime settings, the

@@ -209,30 +209,30 @@ func TestGet_ReadsNexusToml(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "nexus.toml")
 	mustWriteTOML(t, path, `
-[runtime.storage]
+[media.store]
 dir = "media"
 url = "/media"
 
-[storage]
+[media]
 quota = 42
 `)
 	if _, err := config.Load(path); err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
 
-	if got := config.Get[string]("runtime.storage.url"); got != "/media" {
-		t.Errorf("Get(runtime.storage.url) = %q, want %q", got, "/media")
+	if got := config.Get[string]("media.store.url"); got != "/media" {
+		t.Errorf("Get(media.store.url) = %q, want %q", got, "/media")
 	}
-	if got := config.Get[string]("runtime.storage.dir"); got != "media" {
-		t.Errorf("Get(runtime.storage.dir) = %q, want %q", got, "media")
+	if got := config.Get[string]("media.store.dir"); got != "media" {
+		t.Errorf("Get(media.store.dir) = %q, want %q", got, "media")
 	}
 	// Top-level table + int conversion through the snapshot path.
-	if got := config.Get[int]("storage.quota"); got != 42 {
-		t.Errorf("Get(storage.quota) = %d, want 42", got)
+	if got := config.Get[int]("media.quota"); got != 42 {
+		t.Errorf("Get(media.quota) = %d, want 42", got)
 	}
 	// Absent key still returns the supplied default.
-	if got := config.Get[string]("storage.missing", "fallback"); got != "fallback" {
-		t.Errorf("Get(storage.missing) = %q, want fallback", got)
+	if got := config.Get[string]("media.missing", "fallback"); got != "fallback" {
+		t.Errorf("Get(media.missing) = %q, want fallback", got)
 	}
 }
 
@@ -267,22 +267,22 @@ only_in_toml = "base"
 }
 
 // TestGet_EnvOverridesToml: an ENV override outranks the nexus.toml
-// base layer (storage.url → STORAGE_URL).
+// base layer (media.url → MEDIA_URL).
 func TestGet_EnvOverridesToml(t *testing.T) {
 	config.ResetForTest()
 	t.Cleanup(config.ResetForTest)
 
 	path := filepath.Join(t.TempDir(), "nexus.toml")
 	mustWriteTOML(t, path, `
-[storage]
+[media]
 url = "/from-toml"
 `)
 	if _, err := config.Load(path); err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	t.Setenv("STORAGE_URL", "/from-env")
+	t.Setenv("MEDIA_URL", "/from-env")
 
-	if got := config.Get[string]("storage.url"); got != "/from-env" {
+	if got := config.Get[string]("media.url"); got != "/from-env" {
 		t.Errorf("ENV should override base: got %q", got)
 	}
 }
