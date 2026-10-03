@@ -1,6 +1,10 @@
 package nexus
 
-import "os"
+import (
+	"os"
+
+	"github.com/paulmanoni/nexus/internal/v2notice"
+)
 
 // Environment / mode gating for the option chain. These helpers
 // let an app's main() declare options that should ONLY apply in
@@ -43,7 +47,12 @@ import "os"
 // strips it from the codegen output and operator-launched
 // systemd / docker / k8s units don't set it. Treating it as the
 // dev-mode signal is a one-direction guarantee.
-func IsDev() bool { return os.Getenv(NexusDevEnv) == "1" }
+func IsDev() bool {
+	v2notice.Called("nexus.IsDev", v2IsDev)
+	return isDev()
+}
+
+func isDev() bool { return os.Getenv(NexusDevEnv) == "1" }
 
 // IfDev applies the supplied options ONLY when running under
 // `nexus dev` (NEXUS_DEV=1). In production the wrapped block is
@@ -54,7 +63,7 @@ func IsDev() bool { return os.Getenv(NexusDevEnv) == "1" }
 // surrounding nexus.Options(...) call. Empty input is a no-op
 // regardless of mode.
 func IfDev(opts ...Option) Option {
-	if !IsDev() {
+	if !isDev() {
 		return Options() // no-op
 	}
 	return Options(opts...)
@@ -74,7 +83,7 @@ func IfDev(opts ...Option) Option {
 //
 // `nexus dev` skips both; `./bin/app` wires them normally.
 func IfNotDev(opts ...Option) Option {
-	if IsDev() {
+	if isDev() {
 		return Options() // no-op
 	}
 	return Options(opts...)

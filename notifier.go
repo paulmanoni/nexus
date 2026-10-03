@@ -15,7 +15,11 @@ package nexus
 // is generic pub-sub and the original live/ home no longer made
 // sense without the template-engine consumers.
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/paulmanoni/nexus/internal/v2notice"
+)
 
 // Notifier is the shared signal hub. Multiple subsystems call
 // Notify(); multiple consumers (typically just streamLive, but the
@@ -48,6 +52,7 @@ type Notifier struct {
 // wires a singleton into the fx graph; constructors that need a
 // notifier just take a *Notifier param.
 func NewNotifier() *Notifier {
+	v2notice.Called("nexus.NewNotifier", v2NewNotifier)
 	return &Notifier{
 		topics: make(map[string][]chan struct{}),
 	}

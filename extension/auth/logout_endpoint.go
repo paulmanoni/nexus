@@ -6,6 +6,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // LogoutRevoker invalidates the underlying token in the app's own store
@@ -62,6 +63,7 @@ func WithRevoker(revoke LogoutRevoker) LogoutOption {
 // RevokeToken capability. LogoutEndpoint remains a thin wrapper and keeps
 // working.
 func LogoutEndpoint(opts ...LogoutOption) nexus.Option {
+	v2notice.Called("auth.LogoutEndpoint", "auth.Config.Endpoints{Logout: \"/path\"}")
 	cfg := &logoutEndpointConfig{path: "/auth/logout", extract: Bearer()}
 	for _, o := range opts {
 		o(cfg)

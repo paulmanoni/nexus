@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/middleware"
 )
 
@@ -18,12 +19,14 @@ import (
 // neutral middleware package so RequestCtx-backed carriers and this extension
 // share one key without an import cycle. These wrappers stay for back-compat.
 func WithClientIP(ctx context.Context, ip string) context.Context {
+	v2notice.Called("ratelimit.WithClientIP", "removed: the framework records the caller's address on every request; read it with nexus.ClientIP(ctx)")
 	return middleware.WithClientIP(ctx, ip)
 }
 
 // ClientIPFromCtx returns the caller's IP a transport put in ctx, or
 // empty when absent.
 func ClientIPFromCtx(ctx context.Context) string {
+	v2notice.Called("ratelimit.ClientIPFromCtx", "nexus.ClientIP(ctx)")
 	return middleware.ClientIPFromCtx(ctx)
 }
 

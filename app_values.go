@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/internal/vitehot"
 )
 
@@ -32,7 +33,7 @@ func (a *App) setFrontendSource(fsys fs.FS, root string) {
 		devRoot = "."
 	}
 	a.viteHot = vitehot.NewReader(filepath.Join(devRoot, root), func() bool {
-		return vitehot.Enabled(IsDev(), a.Environment())
+		return vitehot.Enabled(isDev(), a.Environment())
 	})
 }
 
@@ -67,6 +68,7 @@ const ginAppKey = "nexus.app"
 // Render(c, result) signature. Returns (nil, false) outside a renderer-bearing
 // request.
 func AppFromGin(c *httpx.Ctx) (*App, bool) {
+	v2notice.Called("nexus.AppFromGin", v2AppFromGin)
 	v, ok := c.Get(ginAppKey)
 	if !ok {
 		return nil, false

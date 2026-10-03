@@ -15,6 +15,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/manifest"
 )
 
@@ -80,6 +81,7 @@ const DefaultConfigPath = "nexus.toml"
 // pluggable Store interfaces) stay Go-only — set those on the
 // returned cfg via direct field assignment before nexus.Run.
 func LoadConfig(path ...string) (Config, error) {
+	v2notice.Called("nexus.LoadConfig", v2LoadConfig)
 	p := DefaultConfigPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]
@@ -161,6 +163,7 @@ func configFromTOML(raw []byte, source string) (Config, error) {
 // Use in main() when the operator has explicitly declared their
 // runtime config in the TOML; saves an `if err != nil` line.
 func MustLoadConfig(path ...string) Config {
+	v2notice.Called("nexus.MustLoadConfig", v2MustLoadConfig)
 	cfg, err := LoadConfig(path...)
 	if err != nil {
 		bootFatal(err)
@@ -930,6 +933,7 @@ func reportUnknownConfigKeys(source string, keys []unknownConfigKey) {
 		return
 	}
 	reportedConfigSources.Store(source, struct{}{})
+	v2notice.Note("unknown or misplaced nexus.toml keys", v2UnknownKeys)
 	writeUnknownConfigKeyWarning(os.Stderr, source, keys)
 }
 

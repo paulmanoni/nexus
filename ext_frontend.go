@@ -26,6 +26,7 @@ import (
 
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/internal/vitehot"
 	"github.com/paulmanoni/nexus/internal/vitemanifest"
 )
@@ -135,6 +136,7 @@ const NexusDevRootEnv = "NEXUS_DEV_ROOT"
 // API and dashboard stay reachable. A config value alone never
 // grants that leniency: nexus.toml's environment ships to production.
 func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
+	v2notice.Called("nexus.ServeFrontend", v2ServeFrontend)
 	cfg := &frontendConfig{}
 	for _, o := range opts {
 		o.applyToFrontend(cfg)

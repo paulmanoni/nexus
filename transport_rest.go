@@ -12,6 +12,7 @@ import (
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
 	"github.com/paulmanoni/nexus/internal/maskhook"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 
 	"github.com/paulmanoni/nexus/middleware"
 	"github.com/paulmanoni/nexus/registry"
@@ -96,6 +97,7 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 // trace middleware attached so request.op events drive the live
 // packet animation.
 func AsRestHandler(method, path string, factory any, opts ...RestOption) Option {
+	v2notice.Called("nexus.AsRestHandler", v2AsRestHandler)
 	cfg := &restConfig{}
 	for _, o := range opts {
 		o.applyToRest(cfg)
@@ -576,6 +578,7 @@ func surveyFor(t reflect.Type) tagSurveyResult {
 	}
 	var sv tagSurveyResult
 	sv.uri, sv.query, sv.header, sv.form, sv.json = tagSurvey(t)
+	noteURITag(t)
 	surveyCache.Store(t, sv)
 	return sv
 }

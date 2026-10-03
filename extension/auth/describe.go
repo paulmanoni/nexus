@@ -1,6 +1,10 @@
 package auth
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/paulmanoni/nexus/internal/v2notice"
+)
 
 // ExtractorInfo describes how a configured Extractor pulls a token
 // off an inbound request — surfaced in the client SDK manifest so a
@@ -50,7 +54,10 @@ func InspectExtractor(e Extractor) ExtractorInfo {
 // nexus.Describe (the cross-transport option that sets an endpoint's
 // description) — this function instead introspects an Extractor for the
 // client SDK manifest, an unrelated meaning that shared the same verb.
-func Describe(e Extractor) ExtractorInfo { return InspectExtractor(e) }
+func Describe(e Extractor) ExtractorInfo {
+	v2notice.Called("auth.Describe", "auth.InspectExtractor (same signature)")
+	return InspectExtractor(e)
+}
 
 // Info returns the auth module's runtime extractor configuration.
 // Used by the client SDK at manifest-build time so the generated

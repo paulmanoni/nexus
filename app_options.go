@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // Option composes a nexus app. Everything returned by Provide, Supply,
@@ -228,7 +229,10 @@ func Supply(values ...any) Option {
 // without importing the DI backend.
 //
 //	if err := cfg.validate(); err != nil { return nexus.Error(err) }
-func Error(err error) Option { return rawOption{o: di.Error(err)} }
+func Error(err error) Option {
+	v2notice.Called("nexus.Error(err) boot option", v2ErrorOption)
+	return rawOption{o: di.Error(err)}
+}
 
 // Invoke runs a function at startup, resolving its parameters from the
 // graph. Use for side-effects on boot — attaching resources, registering
@@ -487,7 +491,7 @@ func autoLoad(path string) (Config, []Option) {
 	// boot in dev, so a bad CIDR / CORS combo / rate limit / unimported
 	// extension surfaces now instead of only when someone remembers to lint.
 	// Advisory (reported by runBootChecks, never aborts); prod pays nothing.
-	if IsDev() {
+	if isDev() {
 		if issues, lerr := lintRuntimeBytes(raw, source); lerr == nil {
 			addPendingBootIssues(issues)
 		}
@@ -506,6 +510,7 @@ func autoLoad(path string) (Config, []Option) {
 // For tests, use InProcess (no listener). See the package doc for the full
 // entry-point rundown.
 func Run(cfg Config, opts ...Option) {
+	v2notice.Called("nexus.Run with a nexus.Config", v2RunConfig)
 	// Print-mode short-circuit. When NEXUS_PRINT_MANIFEST=1 is set,
 	// the orchestration platform is invoking us at build/upload time
 	// to extract the manifest. Build the fx graph, populate *App
@@ -566,8 +571,12 @@ func Run(cfg Config, opts ...Option) {
 	// and every other wiring invoke — so live-topology checks (e.g. "topic has
 	// no transport bound") see the finalized graph. Dev-only: no invoke, no
 	// cost in production.
-	if IsDev() {
-		all = append(all, Invoke(func() { runBootChecks() }).nexusOption())
+	if isDev() {
+		noteChangedDefaults(cfg)
+		all = append(all, Invoke(func() {
+			runBootChecks()
+			v2notice.Flush()
+		}).nexusOption())
 		// Snapshot preserved in-memory state on the way out, so the binary
 		// `nexus dev` is about to swap in can pick it up (see devstate.go).
 		// Registered last => runs first on shutdown, before resources close.

@@ -3,6 +3,8 @@ package nexus
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // Get is the unified config accessor. Walks the active config
@@ -36,6 +38,7 @@ import (
 // lands a little later, at app start. Calls before either is
 // installed return the default (or zero).
 func Get[T any](key string, defaults ...T) T {
+	v2notice.Called("nexus.Get", v2Get)
 	var zero T
 	pickDefault := func() T {
 		if len(defaults) > 0 {
@@ -69,6 +72,7 @@ func Get[T any](key string, defaults ...T) T {
 //
 //	signKey := nexus.MustGet[string]("config.signing.key")
 func MustGet[T any](key string) T {
+	v2notice.Called("nexus.MustGet", v2MustGet)
 	if raw, ok := configEnvOverride(key); ok {
 		v, err := configConvertString[T](raw)
 		if err != nil {

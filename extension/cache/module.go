@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/manifest"
@@ -22,6 +23,7 @@ import (
 // Apps that build their own *App via nexus.New() still wire it
 // the same way.
 func Provide(lc di.Lifecycle, cfg *Config, logger *zap.Logger, reg manifest.Registrar) *Manager {
+	v2notice.NoteZapLogger()
 	m := NewManager(cfg, logger)
 	reg.DeclareEnvProvider(m)
 	reg.DeclareServiceProvider(m)

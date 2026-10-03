@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // DotenvDefaultPath is the file LoadDotenvIfPresent reads when no
@@ -61,6 +62,7 @@ const DotenvDefaultPath = ".env"
 // real shell before launching the binary — the framework's job is
 // to consume what the environment already has, not to be a shell.
 func LoadDotenvIfPresent(path ...string) Option {
+	v2notice.Called("nexus.LoadDotenvIfPresent", v2Dotenv)
 	p := DotenvDefaultPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]
@@ -79,6 +81,7 @@ func LoadDotenvIfPresent(path ...string) Option {
 // to catch "forgot to copy it" mistakes before they become silent
 // `${VAR}` lookup failures).
 func MustLoadDotenv(path ...string) Option {
+	v2notice.Called("nexus.MustLoadDotenv", v2Dotenv)
 	p := DotenvDefaultPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]

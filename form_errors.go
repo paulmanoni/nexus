@@ -3,6 +3,8 @@ package nexus
 import (
 	"sort"
 	"strings"
+
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // GlobalErrorKey is the reserved field name Errors.Global writes under. It is
@@ -36,6 +38,7 @@ type Errors struct {
 // NewErrors returns an empty accumulator. The zero value is not usable —
 // always construct through here.
 func NewErrors() *Errors {
+	v2notice.Called("nexus.NewErrors / nexus.Errors", v2Errors)
 	return &Errors{fields: map[string][]string{}}
 }
 

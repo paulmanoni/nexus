@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/manifest"
@@ -46,6 +47,7 @@ type ProvideOptions struct {
 // reg comes from the fx graph — *nexus.App satisfies the interface
 // via its Declare* methods. Auto-supplied by fxEarlyOptions.
 func Provide(lc di.Lifecycle, opts ProvideOptions, logger *zap.Logger, reg manifest.Registrar) *Manager {
+	v2notice.NoteZapLogger()
 	cfg := LoadConfig(opts.Driver, opts.EnvNames, opts.Defaults)
 	managerOpts := []Option{WithEnvNames(opts.EnvNames), WithBindName(opts.BindName)}
 	if logger != nil {

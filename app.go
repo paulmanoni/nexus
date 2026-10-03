@@ -587,6 +587,7 @@ func New(cfg Config) *App {
 		a.registry.RegisterGlobalMiddleware("rate-limit")
 	}
 
+	noteGlobalMiddleware(cfg)
 	// User-supplied global middlewares in registration order.
 	for _, m := range cfg.Middleware.Global {
 		if m.Gin != nil {
@@ -713,7 +714,7 @@ func (a *App) ClientHandler() *client.Handler {
 // escape hatch — or keep the routes but skip the files with
 // Config.Client.OutDir = client.Off.
 func devAutoMountClientSDK(a *App) {
-	if !IsDev() || a.clientCfg.DevDisabled {
+	if !isDev() || a.clientCfg.DevDisabled {
 		return
 	}
 	if a.clientHandler != nil {

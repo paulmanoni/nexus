@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // Dev-state preservation: carrying in-memory state across a `nexus dev`
@@ -65,6 +67,7 @@ type DevState interface {
 // registering the same name twice replaces the earlier value (the later one
 // wins, which is what a re-created singleton wants).
 func PreserveDev(name string, v DevState) {
+	v2notice.Called("nexus.PreserveDev", v2PreserveDev)
 	devStates.preserve(name, v)
 }
 
@@ -79,6 +82,7 @@ func PreserveDev(name string, v DevState) {
 // be safe to call from another goroutine — take the value's own lock inside
 // them, as the store's regular methods do.
 func PreserveDevJSON[T any](name string, get func() T, set func(T)) {
+	v2notice.Called("nexus.PreserveDevJSON", v2PreserveDevJSON)
 	PreserveDev(name, jsonDevState[T]{get: get, set: set})
 }
 
@@ -212,6 +216,7 @@ func readDevStateFile(path string) map[string][]byte {
 // of ":memory:". Same lifetime either way: the directory is per dev
 // session, so what you write survives rebuilds but not a Ctrl-C.
 func DevStateDir() string {
+	v2notice.Called("nexus.DevStateDir", v2DevStateDir)
 	if os.Getenv(devStateEnv) == "" {
 		return ""
 	}

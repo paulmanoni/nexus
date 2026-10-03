@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulmanoni/nexus/di"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // AsCRUD registers a default set of CRUD endpoints for type T.
@@ -63,6 +64,7 @@ import (
 // Options layer over the generated endpoints — auth.Required(),
 // nexus.Use(...), nexus.OnCreate(...) all work as they do for AsRest.
 func AsCRUD[T any](resolver any, opts ...Option) Option {
+	v2notice.Called("nexus.AsCRUD", v2AsCRUD)
 	if resolver == nil {
 		return rawOption{o: di.Error(errBadResolver)}
 	}
@@ -500,6 +502,7 @@ func readID[T any](item *T) string {
 // next pass when we wire the sentinel mapping into the framework's
 // error renderer.
 func MapCRUDError(err error) (status int, ok bool) {
+	v2notice.Called("nexus.MapCRUDError", v2MapCRUDError)
 	switch {
 	case err == nil:
 		return http.StatusOK, false
@@ -510,6 +513,7 @@ func MapCRUDError(err error) (status int, ok bool) {
 	case errors.Is(err, ErrCRUDValidation):
 		return http.StatusBadRequest, true
 	case errors.Is(err, ErrForbidden):
+		noteErrForbidden(err)
 		return http.StatusForbidden, true
 	}
 	return 0, false

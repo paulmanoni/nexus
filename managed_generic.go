@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"go.uber.org/zap"
 
 	"github.com/paulmanoni/nexus/resource"
@@ -47,6 +48,7 @@ import (
 //
 // Handlers inject *RabbitMQ unchanged.
 func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFor func(*T) resource.Resource) Option {
+	v2notice.Called("nexus.Managed with a func(*zap.Logger)", v2Managed)
 	if name == "" {
 		panic("nexus.Managed: name must not be empty")
 	}
@@ -55,6 +57,7 @@ func Managed[T any](name string, build func(*zap.Logger) (*T, error), resourceFo
 	}
 
 	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
+		v2notice.NoteZapLogger()
 		t, err := build(logger)
 		if err != nil {
 			return nil, fmt.Errorf("nexus.Managed[%q]: %w", name, err)

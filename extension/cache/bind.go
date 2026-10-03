@@ -10,6 +10,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/internal/bindutil"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/resource"
 )
 
@@ -45,6 +46,7 @@ func Bind[T any](name string, build func() *Config, opts ...BindOption) nexus.Op
 	}
 
 	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
+		v2notice.NoteZapLogger()
 		cfg := build()
 		if err := cfg.Validate(); err != nil {
 			return nil, fmt.Errorf("cache.Bind(%q): %w", name, err)

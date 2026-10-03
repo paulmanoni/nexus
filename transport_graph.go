@@ -11,6 +11,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 
 	"github.com/paulmanoni/nexus/extension/ratelimit"
 	"github.com/paulmanoni/nexus/graph"
@@ -205,6 +206,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	// replaces it with an anonymous reflect.MakeFunc.
 	if cfg.opName == "" {
 		cfg.opName = opNameFromFunc(fn, string(kind))
+		noteNewOpName(fn, cfg.opName)
 	}
 	sh, err := inspectHandlerArgs(fn, cfg.argNames)
 	if err != nil {
@@ -466,12 +468,14 @@ func findAppInDeps(deps []reflect.Value, idx int) *App {
 // callers can thread IP into context without importing the lower-level
 // ratelimit package. Kept here for API consistency with other nexus helpers.
 func WithClientIP(ctx context.Context, ip string) context.Context {
+	v2notice.Called("nexus.WithClientIP", v2WithClientIP)
 	return ratelimit.WithClientIP(ctx, ip)
 }
 
 // ClientIPFromCtx pulls the IP stashed via WithClientIP (or
 // ratelimit.WithClientIP). Empty when absent.
 func ClientIPFromCtx(ctx context.Context) string {
+	v2notice.Called("nexus.ClientIPFromCtx", v2ClientIPFromCtx)
 	return ratelimit.ClientIPFromCtx(ctx)
 }
 

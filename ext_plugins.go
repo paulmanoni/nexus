@@ -3,6 +3,7 @@ package nexus
 import (
 	"sync"
 
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/registry"
 )
 
@@ -146,6 +147,7 @@ func (a *App) Plugins() []PluginRecord {
 // Deprecated: see GenerateDriver. Nothing in nexus calls this any more,
 // and nothing consumes what it records.
 func (a *App) RegisterGenerateDriver(drv GenerateDriver) {
+	v2notice.Called("App.RegisterGenerateDriver", v2GenerateDriver)
 	if a.plugins == nil {
 		a.plugins = &pluginState{}
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 )
 
 // LoginRequest is the JSON body the built-in login endpoint accepts. Field
@@ -58,6 +59,7 @@ func WithIssuer(issue LoginIssuer) LoginOption {
 // handler from inside auth.Module and takes the issuer from the Backend's
 // Issue capability. LoginEndpoint remains a thin wrapper and keeps working.
 func LoginEndpoint(opts ...LoginOption) nexus.Option {
+	v2notice.Called("auth.LoginEndpoint", "auth.Config.Endpoints{Login: \"/path\"}, served from Config.Backend")
 	cfg := &loginEndpointConfig{path: "/auth/login"}
 	for _, o := range opts {
 		o(cfg)

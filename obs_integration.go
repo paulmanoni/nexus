@@ -70,7 +70,7 @@ func shutdownTimeout(cfg Config) time.Duration {
 	if cfg.Server.ShutdownTimeout > 0 {
 		return cfg.Server.ShutdownTimeout
 	}
-	if IsDev() {
+	if isDev() {
 		return DevShutdownTimeout
 	}
 	return DefaultShutdownTimeout
@@ -229,7 +229,7 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 			// In dev there is nothing worth draining — an unfinished request
 			// belongs to a process that's about to be replaced — so cut the
 			// handlers loose immediately and let Shutdown collect them.
-			if IsDev() {
+			if isDev() {
 				cancelReqs()
 			}
 			shutCtx, cancel := context.WithTimeout(ctx, drain)
@@ -272,7 +272,7 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
 // tree is dev-tool friction, not a reason to refuse traffic. Files that
 // didn't change print nothing.
 func (a *App) autoDumpClientSDK() {
-	if !vitehot.Enabled(IsDev(), a.Environment()) {
+	if !vitehot.Enabled(isDev(), a.Environment()) {
 		return
 	}
 	h := a.ClientHandler()

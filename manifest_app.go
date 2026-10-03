@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/paulmanoni/nexus/di"
-
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/manifest"
 	"github.com/paulmanoni/nexus/registry"
 	"github.com/paulmanoni/nexus/resource"
@@ -141,7 +141,10 @@ func (a *App) DeclareVolume(v manifest.Volume) {
 //
 // Deprecated: use DeclareVolume — it matches its 13 Declare* siblings
 // (its data-driven counterpart was already DeclareVolumeProvider).
-func (a *App) UseVolume(v manifest.Volume) { a.DeclareVolume(v) }
+func (a *App) UseVolume(v manifest.Volume) {
+	v2notice.Called("App.UseVolume", "App.DeclareVolume (same argument)")
+	a.DeclareVolume(v)
+}
 
 // DeclareVolumeProvider is the data-driven counterpart to DeclareVolume.
 func (a *App) DeclareVolumeProvider(p manifest.VolumeProvider) {
@@ -755,7 +758,10 @@ func DeclareVolume(v manifest.Volume) Option {
 // UseVolume is the original name of DeclareVolume.
 //
 // Deprecated: use DeclareVolume.
-func UseVolume(v manifest.Volume) Option { return DeclareVolume(v) }
+func UseVolume(v manifest.Volume) Option {
+	v2notice.Called("nexus.UseVolume", "nexus.DeclareVolume (same argument)")
+	return DeclareVolume(v)
+}
 
 // AddStartupTask produces an Option that registers a startup task.
 // The task's Run is preserved through to integration step 3 where

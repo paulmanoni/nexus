@@ -9,6 +9,7 @@ import (
 
 	"github.com/paulmanoni/nexus"
 	"github.com/paulmanoni/nexus/internal/bindutil"
+	"github.com/paulmanoni/nexus/internal/v2notice"
 	"github.com/paulmanoni/nexus/resource"
 )
 
@@ -67,6 +68,7 @@ func bindOption[T any](name string, build func() Config, optsFn func() []BindOpt
 	}
 
 	ctor := func(lc di.Lifecycle, logger *zap.Logger) (*T, error) {
+		v2notice.NoteZapLogger()
 		m := NewManager(build(), WithLogger(logger), WithBindName(name))
 		lc.Append(di.Hook{
 			OnStart: func(context.Context) error { m.Start(); return nil },
