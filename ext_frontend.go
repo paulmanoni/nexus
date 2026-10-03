@@ -29,6 +29,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/frontend/vitemanifest"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/devreload"
 )
 
 // init seeds the MIME type registry with the modern-web baseline
@@ -272,7 +273,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 	// CLI's bundler is the producer of those file changes.
 	// Production binaries never run this branch.
 	if devMode {
-		app.frontendStop = mountDevReload(app.engine, devReloadWatchDir(), app.devReloadExclude, func() string {
+		app.frontendStop = devreload.Mount(app.engine, devreload.WatchDir(), app.devReloadExclude, func() string {
 			if h, _ := app.ViteHot().Current(); h != nil {
 				return h.Origin
 			}

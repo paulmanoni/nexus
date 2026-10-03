@@ -1,4 +1,4 @@
-package nexus
+package devreload
 
 import (
 	"crypto/rand"
@@ -112,7 +112,7 @@ func (h *devReloadHub) broadcast() {
 	h.mu.Unlock()
 }
 
-// mountDevReload registers the SSE + script.js routes on the
+// Mount registers the SSE + script.js routes on the
 // engine and starts an fsnotify watcher rooted at watchDir.
 // Called from mountFrontend ONLY when NEXUS_DEV=1.
 //
@@ -131,7 +131,7 @@ func (h *devReloadHub) broadcast() {
 //
 // The returned stop ends the poller and the watcher (the app's
 // OnStop), so an app that stops leaves no goroutine or watch behind.
-func mountDevReload(engine httpx.Router, watchDir string, exclude []string, devServer func() string) (stop func()) {
+func Mount(engine httpx.Router, watchDir string, exclude []string, devServer func() string) (stop func()) {
 	hub := newDevReloadHub()
 	done := make(chan struct{})
 	var once sync.Once
@@ -561,7 +561,7 @@ func devReloadScript() httpx.HandlerFunc {
 	}
 }
 
-// devReloadWatchDir returns the absolute path of the directory
+// WatchDir returns the absolute path of the directory
 // the dev-reload fsnotify watcher should track. Honors the same
 // NEXUS_DEV_ROOT env var ServeFrontend reads in dev mode so the
 // watcher and the disk-FS swap point at the same tree.
@@ -570,7 +570,7 @@ func devReloadScript() httpx.HandlerFunc {
 // resolves — the caller treats "" as "skip the watcher, mount
 // SSE-only". That gracefully degrades to a manual-reload
 // experience instead of crashing the boot.
-func devReloadWatchDir() string {
+func WatchDir() string {
 	root := os.Getenv(dev.RootEnv)
 	if root == "" {
 		root = "."

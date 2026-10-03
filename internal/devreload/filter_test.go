@@ -1,4 +1,4 @@
-package nexus
+package devreload
 
 import (
 	"testing"

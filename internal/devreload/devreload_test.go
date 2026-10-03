@@ -1,4 +1,4 @@
-package nexus
+package devreload
 
 import (
 	"bufio"
@@ -10,15 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/fstest"
 	"time"
 
-	"github.com/paulmanoni/nexus/v2/config"
-	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
@@ -90,7 +86,7 @@ func bootID(t *testing.T, ev sseEvent) string {
 
 func TestDevReloadStreamOpensWithBootID(t *testing.T) {
 	r := stdrouter.New()
-	mountDevReload(r, "", nil, nil)
+	Mount(r, "", nil, nil)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close) // registered first, so it runs after the streams are cancelled
 
@@ -116,7 +112,7 @@ func TestDevReloadStreamOpensWithBootID(t *testing.T) {
 
 func TestDevReloadScriptCarriesBootID(t *testing.T) {
 	r := stdrouter.New()
-	mountDevReload(r, "", nil, nil)
+	Mount(r, "", nil, nil)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close) // registered first, so it runs after the streams are cancelled
 	resp, err := http.Get(srv.URL + "/__nexus/dev/script.js")
@@ -149,7 +145,7 @@ func TestDevReloadFileEvents(t *testing.T) {
 	}
 	var live atomic.Bool
 	r := stdrouter.New()
-	mountDevReload(r, dir, nil, func() string {
+	Mount(r, dir, nil, func() string {
 		if live.Load() {
 			return "http://127.0.0.1:5999"
 		}
@@ -373,34 +369,4 @@ console.log(JSON.stringify(out))
 func strconvQuoteJS(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
-}
-
-// A stopped app leaves no dev-reload poller or watcher running.
-func TestDevReloadStopsWithApp(t *testing.T) {
-	count := func() int {
-		buf := make([]byte, 1<<22)
-		n := runtime.Stack(buf, true)
-		return strings.Count(string(buf[:n]), "nexus.mountDevReload.func")
-	}
-	before := count()
-	dir := t.TempDir()
-	t.Setenv(dev.Env, "1")
-	t.Setenv(dev.RootEnv, dir)
-	for i := 0; i < 3; i++ {
-		fsys := fstest.MapFS{"web/dist/index.html": {Data: []byte("<html>x</html>")}}
-		_, stop, err := InProcess(config.Runtime{}, ServeFrontend(fsys, "web/dist"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := stop(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for count() > before && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if n := count() - before; n > 0 {
-		t.Errorf("%d dev-reload goroutines outlived their stopped apps", n)
-	}
 }
