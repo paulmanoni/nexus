@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [1.80.0] - unreleased
+## [1.80.0] - 2026-10-04
 
 The bridge release to 2.0: nothing changes behaviour; the app tells you,
 while still on v1, everything nexus 2.0 removes, renames or changes, so
@@ -44,10 +44,9 @@ while still on v1, everything nexus 2.0 removes, renames or changes, so
   `nexus dev` / `nexus build` / `nexus generate handlers` run. An unknown
   `//nexus:` keyword, or a spaced `// nexus:rest`, is an error.
 
-### Release note
+### Changed
 
-- Requires a deco release with `transpiler.ScanWith` (deco branch
-  `nexus-directives`); `cmd/nexus` must require it before v1.80.0 is tagged.
+- `cmd/nexus` requires deco v0.20.0 (`transpiler.ScanWith`).
 
 ## [1.78.2] - 2026-10-02
 

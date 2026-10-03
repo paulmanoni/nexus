@@ -65,6 +65,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/paulmanoni/deco v0.19.0 h1:HL269XcFktEBuBAMHxLVqzPhp7P5sql+WgCaH6bVXUs=
 github.com/paulmanoni/deco v0.19.0/go.mod h1:TiUaLgiglpNGYzqmmdPoK8oXu02y8+y9P1LCVAZ+6mY=
+github.com/paulmanoni/deco v0.20.0 h1:OvFbb9gzkQhNIi4WgaZ2w/nlLGT9aiewWFR7KX7L/ww=
+github.com/paulmanoni/deco v0.20.0/go.mod h1:TiUaLgiglpNGYzqmmdPoK8oXu02y8+y9P1LCVAZ+6mY=
 github.com/paulmanoni/nexus v1.78.0 h1:bgj9C52SHQriC2A5183CUpBPJgtMT5yPGX5yj1tbY4I=
 github.com/paulmanoni/nexus v1.78.0/go.mod h1:L4O19/by11W7grQhVVCTSsA57Np0qyXrCJ2GSNIJuL8=
 github.com/paulmanoni/nexus/view v1.78.0 h1:DOgf847T4t2wujOel9dEZSBIDFx1WXzDfO6oMzj9VsY=
