@@ -19,7 +19,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
-// DefaultPath is the conventional file LoadConfig + MustLoadConfig
+// DefaultPath is the conventional file Load + MustLoad
 // read from when no explicit path is provided. Resolved relative to
 // the binary's working directory, matching the rest of the framework's
 // "look in cwd" defaults (lockfile, deploy manifest).
@@ -30,8 +30,8 @@ const DefaultPath = "nexus.toml"
 // keep their zero values; the caller is free to mutate the result
 // before passing it to nexus.Run.
 //
-// Load also seeds the nexus.Get base layer with the FULL
-// nexus.toml document, so nexus.Get[T]("section.key") resolves any
+// Load also seeds the config.Get base layer with the FULL
+// nexus.toml document, so config.Get[T]("section.key") resolves any
 // value declared in nexus.toml (dotted key = TOML table path) with no
 // config extension wired. These values are frozen at boot.
 //
@@ -39,9 +39,9 @@ const DefaultPath = "nexus.toml"
 //
 //   - nexus.Load reads `nexus.toml` at STARTUP → the Config
 //     struct nexus.Run consumes (listen addr, dashboard, GraphQL,
-//     CORS, …) AND the static nexus.Get base layer. Frozen at boot.
+//     CORS, …) AND the static config.Get base layer. Frozen at boot.
 //   - extension/config reads `nexus.config.toml` at RUNTIME and
-//     installs a higher-priority, hot-reloadable nexus.Get snapshot
+//     installs a higher-priority, hot-reloadable config.Get snapshot
 //     (feature flags, sampling rates, remote/server-pushed values).
 //     It overrides the nexus.toml base layer for keys it carries.
 //
@@ -52,7 +52,7 @@ const DefaultPath = "nexus.toml"
 // directly only for the explicit form, e.g. to override a Go-only Config field
 // before calling Run.
 //
-// Path is optional — pass nothing to read DefaultConfigPath
+// Path is optional — pass nothing to read DefaultPath
 // ("nexus.toml") from the current working directory:
 //
 //	cfg, err := nexus.Load()             // reads nexus.toml
@@ -92,10 +92,10 @@ func Load(path ...string) (Runtime, error) {
 	return configFromTOML(raw, p)
 }
 
-// configFromTOML is the bytes-based core of LoadConfig, shared by the
+// configFromTOML is the bytes-based core of Load, shared by the
 // disk path and the build-time embedded copy (see config_embed.go). It
-// performs the same side effects LoadConfig always has — ${VAR}
-// expansion, publishing the [env] table, seeding the nexus.Get base
+// performs the same side effects Load always has — ${VAR}
+// expansion, publishing the [env] table, seeding the config.Get base
 // layer, and stashing [databases.*] specs — then returns the runtime
 // Config. `source` names the origin for error messages (a file path, or
 // "embedded nexus.toml").
@@ -110,7 +110,7 @@ func configFromTOML(raw []byte, source string) (Runtime, error) {
 	}
 	// Publish the [env] table as process environment variables (dotted
 	// names) BEFORE building the config, so extensions, ${VAR} consumers,
-	// and nexus.Get can read them at startup.
+	// and config.Get can read them at startup.
 	if envVars, eerr := configEnvVars(expanded); eerr == nil {
 		applyConfigEnv(envVars)
 	}
@@ -124,10 +124,10 @@ func configFromTOML(raw []byte, source string) (Runtime, error) {
 	// default port — the exact class of bug nobody can debug from the
 	// symptom. Advisory, never fatal: nexus.toml legitimately carries blocks
 	// this binary owns no decoder for (see unownedConfigTables), and the whole
-	// document is readable via nexus.Get regardless.
+	// document is readable via config.Get regardless.
 	reportUnknownConfigKeys(source, unknownConfigKeys(expanded))
-	// Seed the nexus.Get base layer with the FULL document tree so
-	// nexus.Get[T]("section.key") resolves anything declared in
+	// Seed the config.Get base layer with the FULL document tree so
+	// config.Get[T]("section.key") resolves anything declared in
 	// nexus.toml — not just the [runtime]/[extensions] blocks the
 	// typed loaders claim. Lowest priority: ENV and the config
 	// extension override it. Best-effort — the typed Unmarshal above
@@ -144,7 +144,7 @@ func configFromTOML(raw []byte, source string) (Runtime, error) {
 	return block.Runtime.toConfig()
 }
 
-// MustLoad is the fail-fast variant of LoadConfig (Boot composes
+// MustLoad is the fail-fast variant of Load (Boot composes
 // both for you; use this only for the explicit Run form) for binaries
 // that REQUIRE a nexus.toml and treat its absence as a fatal startup
 // error. On failure it prints a structured diagnostic (file:line, the
@@ -153,7 +153,7 @@ func configFromTOML(raw []byte, source string) (Runtime, error) {
 // error, and a panic's goroutine dump would bury the one line that
 // matters.
 //
-// Path is optional — pass nothing to read DefaultConfigPath
+// Path is optional — pass nothing to read DefaultPath
 // ("nexus.toml") from cwd:
 //
 //	cfg := nexus.MustLoad()             // reads nexus.toml
@@ -248,12 +248,12 @@ type runtimeBlock struct {
 	SDK                   bool            `toml:"sdk"`
 }
 
-// devReloadBlock is the TOML shape of DevReloadConfig.
+// devReloadBlock is the TOML shape of DevReload.
 type devReloadBlock struct {
 	Exclude []string `toml:"exclude"`
 }
 
-// serverBlock is the TOML shape of ServerConfig.
+// serverBlock is the TOML shape of Server.
 type serverBlock struct {
 	Addr        string                   `toml:"addr"`
 	RoutePrefix string                   `toml:"route_prefix"`
@@ -275,7 +275,7 @@ type serverBlock struct {
 	StripTrailingSlash bool `toml:"strip_trailing_slash"`
 }
 
-// webSocketBlock is the TOML shape of WebSocketConfig.
+// webSocketBlock is the TOML shape of WebSocket.
 type webSocketBlock struct {
 	AllowedOrigins  []string `toml:"allowed_origins"`
 	MaxConnections  int      `toml:"max_connections"`
@@ -293,13 +293,13 @@ type listenerBlock struct {
 	Scope string `toml:"scope"` // "public" / "admin" / "internal"
 }
 
-// dashboardBlock is the TOML shape of DashboardConfig.
+// dashboardBlock is the TOML shape of Dashboard.
 type dashboardBlock struct {
 	Enabled bool   `toml:"enabled"`
 	Name    string `toml:"name"`
 }
 
-// graphQLBlock is the TOML shape of GraphQLConfig.
+// graphQLBlock is the TOML shape of GraphQL.
 type graphQLBlock struct {
 	Path              string `toml:"path"`
 	DisablePlayground bool   `toml:"disable_playground"`
@@ -308,7 +308,7 @@ type graphQLBlock struct {
 	DocumentCacheSize int    `toml:"document_cache_size"`
 }
 
-// middlewareBlock is the TOML shape of MiddlewareConfig.
+// middlewareBlock is the TOML shape of Middleware.
 // Only data-driven fields are exposed here (CORS settings,
 // rate-limit knobs). Slice-of-middleware fields (Global,
 // Dashboard) require Go-side functions and stay Go-only.
@@ -318,7 +318,7 @@ type middlewareBlock struct {
 	Security  *securityBlock  `toml:"security"`
 }
 
-// securityBlock is the TOML shape of SecurityConfig. A present
+// securityBlock is the TOML shape of Security. A present
 // [runtime.middleware.security] block maps to a populated struct;
 // absent leaves Config.Middleware.Security nil (framework defaults —
 // headers on, CSRF off — still apply).
@@ -332,7 +332,7 @@ type securityBlock struct {
 	CSRFCookieSecure *bool  `toml:"csrf_cookie_secure"`
 }
 
-// corsBlock is the TOML shape of CORSConfig.
+// corsBlock is the TOML shape of CORS.
 type corsBlock struct {
 	AllowOrigins     []string `toml:"allow_origins"`
 	AllowMethods     []string `toml:"allow_methods"`
@@ -351,7 +351,7 @@ type rateLimitBlock struct {
 }
 
 // toConfig converts the TOML-tagged block into the canonical
-// nexus.Config. Validation errors (invalid scope string,
+// config.Runtime. Validation errors (invalid scope string,
 // malformed duration) surface here so misconfiguration fails
 // fast at load time rather than mid-boot.
 func (b runtimeBlock) toConfig() (Runtime, error) {
@@ -500,7 +500,7 @@ type unknownConfigKey struct {
 	Hint string
 }
 
-// Key is the dotted form of Path — the same spelling nexus.Get takes, and
+// Key is the dotted form of Path — the same spelling config.Get takes, and
 // the Path of the lint Issue this key produces.
 func (k unknownConfigKey) Key() string { return strings.Join(k.Path, ".") }
 
@@ -576,7 +576,7 @@ var unownedConfigTables = map[string]bool{
 //
 //  1. Unknown TABLES are silent. Any [section] (or [runtime.section]) is a
 //     legitimate place for an app's own configuration: the full document is
-//     seeded into the nexus.Get base layer, so `[app] name = "demo"` or
+//     seeded into the config.Get base layer, so `[app] name = "demo"` or
 //     `[runtime.logging] format = "pretty"` (read by the `nexus dev` log
 //     prettifier, not by Config) are correct, deliberate, and none of this
 //     loader's business. Only the KEYS of a table the loader does own can
@@ -956,7 +956,7 @@ func writeUnknownConfigKeyWarning(w io.Writer, source string, keys []unknownConf
 	}
 	fmt.Fprintf(w,
 		"  Fix the spelling or the nesting; `nexus lint %s` reports the same list. "+
-			"A value your own code reads with nexus.Get is fine to keep — give it its "+
+			"A value your own code reads with config.Get is fine to keep — give it its "+
 			"own [section] instead of the top level to silence this.\n",
 		source)
 }

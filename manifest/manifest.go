@@ -236,7 +236,7 @@ type Manifest struct {
 type Port struct {
 	Name  string `json:"name"`            // e.g. "http", "admin"
 	Port  int    `json:"port"`            // numeric only — Addr ":9390" → 9390
-	Scope string `json:"scope,omitempty"` // matches nexus.ListenerScope strings
+	Scope string `json:"scope,omitempty"` // matches config.ListenerScope strings
 }
 
 // Health is the probe map. Each path is rooted at the app's external

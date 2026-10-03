@@ -13,7 +13,7 @@ import "os"
 // supplied secrets / certs / config-server endpoints. Wrapping
 // the real options:
 //
-//	nexus.Run(nexus.Config{...},
+//	nexus.Run(config.Runtime{...},
 //	    nexus.IfNotDev(
 //	        tls.Module(tls.Config{Domains: []string{"app.example.com"}}),
 //	        oauth2.Module(...),

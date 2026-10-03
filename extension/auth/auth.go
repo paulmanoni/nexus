@@ -8,7 +8,7 @@
 //
 // Minimal wiring — one bearer scheme via the auth.Single shortcut:
 //
-//	nexus.Run(nexus.Config{...},
+//	nexus.Run(config.Runtime{...},
 //	    auth.Single(func(ctx context.Context, tok string) (*auth.Identity, error) {
 //	        u, err := myAPI.ValidateToken(ctx, tok)
 //	        if err != nil { return nil, err }

@@ -39,7 +39,7 @@ const devEnv = "NEXUS_CONFIG_DEV"
 // stack defaults onto the server's behavior. Returns the
 // nexus.Option to pass to nexus.Run.
 //
-//	nexus.Run(nexus.Config{...},
+//	nexus.Boot(
 //	    config.Server(config.FromTOML("configs/")),
 //	    appModule,
 //	)

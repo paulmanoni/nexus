@@ -11,7 +11,7 @@
 //	import "github.com/paulmanoni/nexus/v2/extension/tls"
 //
 //	nexus.Run(
-//	    nexus.Config{Server: nexus.ServerConfig{Addr: "127.0.0.1:8080"}},
+//	    config.Runtime{Server: config.Server{Addr: "127.0.0.1:8080"}},
 //
 //	    // Public HTTPS listener owned by the plugin
 //	    tls.Plugin(tls.Config{

@@ -83,7 +83,7 @@ const NexusDevRootEnv = "NEXUS_DEV_ROOT"
 //	//go:embed all:web/dist
 //	var webFS embed.FS
 //
-//	nexus.Run(nexus.Config{...},
+//	nexus.Run(config.Runtime{...},
 //	    nexus.ServeFrontend(webFS, "web/dist"),
 //	    uaa.Module,
 //	    interview.Module,

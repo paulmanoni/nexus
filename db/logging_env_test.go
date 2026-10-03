@@ -4,7 +4,7 @@ import "testing"
 
 // NEXUS_ENVIRONMENT overrides a development nexus.toml for SQL logging too,
 // as it does for App.Environment. RUNTIME_ENVIRONMENT stands in for the
-// file's [runtime] environment (nexus.Get's env-override layer).
+// file's [runtime] environment (config.Get's env-override layer).
 func TestDevMode_NexusEnvironmentOverrides(t *testing.T) {
 	t.Setenv("NEXUS_DEV", "")
 	t.Setenv("RUNTIME_ENVIRONMENT", "development")

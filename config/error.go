@@ -34,7 +34,7 @@ type Error struct {
 }
 
 // Error keeps the flat single-line form for callers that handle the
-// error themselves (LoadConfig returns it like any other error).
+// error themselves (Load returns it like any other error).
 func (e *Error) Error() string {
 	loc := e.Source
 	if e.Line > 0 {
@@ -45,7 +45,7 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-// newConfigError classifies err from one load stage into a ConfigError,
+// newConfigError classifies err from one load stage into an Error,
 // pulling out whatever structure the underlying error carries: the
 // failing line and missing variable from manifest's ${VAR} expansion,
 // or the position + annotated snippet from go-toml's DecodeError.

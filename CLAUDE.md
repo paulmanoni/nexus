@@ -56,13 +56,13 @@ func main() {
     nexus.Boot(nexus.ServeFrontend(webFS, "web/dist") /*, modules… */)
 }
 ```
-`nexus.Boot(opts...)` loads `nexus.toml` automatically — runtime `Config`, every
-`[extensions.*]` block, the `[env]` bridge, and the `nexus.Get` value store — then
-runs the app. It's sugar for `nexus.Run(nexus.MustLoadConfig(),
+`nexus.Boot(opts...)` loads `nexus.toml` automatically — runtime `config.Runtime`, every
+`[extensions.*]` block, the `[env]` bridge, and the `config.Get` value store — then
+runs the app. It's sugar for `nexus.Run(config.MustLoad(),
 append(nexus.MustLoadExtensions(), opts...)...)`; a missing `nexus.toml` is tolerated,
 a malformed one panics. Override the path with `NEXUS_CONFIG` or use
 `nexus.BootFrom(path, opts...)`. Reach for `nexus.Run(cfg, opts...)` directly when you
-build `Config` in Go. (Extension packages still need their blank import — Go links only
+build `config.Runtime` in Go. (Extension packages still need their blank import — Go links only
 imported code; `Boot` removes the load calls, not the imports.)
 `ServeFrontend(fs, root, opts...)` is SPA-aware: extensionless paths fall back to
 `index.html`, and REST/GraphQL/WS routes win on conflict. Mount under a sub-path with
@@ -323,14 +323,16 @@ remount); `view.Link`/shards unmount islands that leave. No loader (a Go test) �
 ## 2. App entry & config (`nexus.toml`)
 
 `nexus.Boot(opts...)` loads `nexus.toml` automatically (runtime config +
-`[extensions.*]` + the `[env]` bridge + the `nexus.Get` value store). Edit settings in
+`[extensions.*]` + the `[env]` bridge + the `config.Get` value store). Edit settings in
 the file, not in code; absent keys fall back to framework defaults. The explicit form
-(`nexus.MustLoadConfig()` + `nexus.MustLoadExtensions()` → `nexus.Run`) still works for
-apps that build `Config` in Go.
+(`config.MustLoad()` + `nexus.MustLoadExtensions()` → `nexus.Run`) still works for
+apps that build `config.Runtime` in Go.
 
 **All runtime keys live under `[runtime]`** (or a `[runtime.<sub>]` table) — a key at
 the top level is silently ignored. `[databases.*]` and `[extensions.*]` are top-level.
-Any value (including custom sections) is readable via `nexus.Get[T]("section.key")` —
+Runtime config lives in package `config` (`github.com/paulmanoni/nexus/v2/config`):
+`config.Runtime` and its sub-structs, `config.Load`/`MustLoad`/`Read`, `config.Get`.
+Any value (including custom sections) is readable via `config.Get[T]("section.key")` —
 the dotted key mirrors the TOML table path.
 
 ```toml
@@ -410,7 +412,7 @@ default  = true
                                           # silent in prod). Force with silent/
                                           # false/off | error | warn/true/on | info/all
 
-# Config server (optional) — decoded by MustLoadExtensions; values via nexus.Get.
+# Config server (optional) — decoded by MustLoadExtensions; values via config.Get.
 [extensions.config]
 endpoint = "http://localhost:8078"
 identity = "myapp"
@@ -436,12 +438,12 @@ that key with a warning. SECURITY: `[env]` is still the Go app's process
 environment too — a value the frontend references ships in the bundle, so reference
 only client-public data (an OAuth client id, a public URL), never a server secret.
 
-`nexus docs nexustoml` documents every key. You can also pass `nexus.Config{...}`
+`nexus docs nexustoml` documents every key. You can also pass `config.Runtime{...}`
 inline to `nexus.Run` instead of the file.
 
 **Introspection gate:** the entire `/__nexus` surface (dashboard + JSON APIs) is
 **off by default and 404s** so production binaries are locked down. Set
-`introspection = true` (or `Config.Introspection`) for dev; in production prefer an
+`introspection = true` (or `config.Runtime.Introspection`) for dev; in production prefer an
 admin CIDR allowlist (`introspection_networks = ["10.0.0.0/8"]`). `nexus dev` runs
 with it open.
 
@@ -459,11 +461,11 @@ import (
     "github.com/paulmanoni/nexus/httpx/ginrouter/v2" // or .../httpx/chirouter
 )
 
-nexus.Boot(nexus.WithRouter(ginrouter.New()))     // one line; or Config.Router
+nexus.Boot(nexus.WithRouter(ginrouter.New()))     // one line; or config.Runtime.Router
 nexus.Run(cfg, nexus.WithRouter(chirouter.New()))
 ```
 
-`nexus.WithRouter(...)` (equivalently `Config.Router`) is the only switch — no
+`nexus.WithRouter(...)` (equivalently `config.Runtime.Router`) is the only switch — no
 nexus.toml key (an adapter must be imported to link anyway). Selecting gin/chi pulls
 their dependency trees back in; the stdlib default does not. Route strings use the
 canonical `:id` / `*rest` syntax on every backend (chi/std adapters translate).
@@ -476,7 +478,7 @@ and `chirouter` ship inside the main module (chi has no transitive deps).
 Chain execution (the `c.Next()` / `c.Abort()` flow, recovery, error accumulation)
 lives in `httpx.Ctx`, not the router — so every middleware runs identically on any
 backend, and the router only matches paths + returns params. App-level middleware
-(`Config.Middleware.Global`, etc.) wraps the whole mux so it runs even on 404/405
+(`config.Runtime.Middleware.Global`, etc.) wraps the whole mux so it runs even on 404/405
 (CORS preflight relies on this); per-op middleware runs inside the matched route.
 
 `App.Router() httpx.Router` exposes the live router (replaces the old
@@ -925,7 +927,7 @@ File-backed SQLite now gets a small read pool by default (WAL-friendly);
   keep it); `"redis"` = Redis in every environment. An unknown driver, or `redis` without the
   backend import, fails `cache.Bind` at boot; the dashboard shows the effective driver.
 - Cache-backed metrics (multi-replica counters) are opt-in via
-  `Config.Stores.Metrics = cache.NewMetricsStore(mgr)`; the default is an in-process
+  `config.Runtime.Stores.Metrics = cache.NewMetricsStore(mgr)`; the default is an in-process
   memory store with no cache dependency.
 
 Handlers/services then take `*DB`, `*CacheManager` as constructor params (the DI container injects).
@@ -969,10 +971,10 @@ type Mailer struct{ *mail.Manager }
 
 mail.Bind[Mailer]("smtp", func() mail.Config {
     return mail.Config{
-        Driver: "smtp", Host: nexus.Get[string]("mail.host"),
-        Port: nexus.Get[int]("mail.port", 587),
-        Username: nexus.Get[string]("mail.username"),
-        Password: nexus.Get[string]("mail.password"),   // from env/nexus.toml
+        Driver: "smtp", Host: config.Get[string]("mail.host"),
+        Port: config.Get[int]("mail.port", 587),
+        Username: config.Get[string]("mail.username"),
+        Password: config.Get[string]("mail.password"),   // from env/nexus.toml
         Encryption: "starttls",                          // none | starttls | tls
         FromAddress: "no-reply@example.com", FromName: "Example",
     }
@@ -1005,7 +1007,7 @@ Lazy like Django: no store hit until touched, no save unless modified
 (`s.Touch()` forces one), cookie set on first WRITE only — so write the session
 before the response body. Values must round-trip JSON. Stores: the default
 `NewMemoryStore()` survives `nexus dev` rebuilds (dev-state) but not production
-restarts; `session.CacheStore(nexus.Cache)` rides extension/cache (Redis =
+restarts; `session.CacheStore(resource.Cache)` rides extension/cache (Redis =
 restart-safe + multi-replica); or implement `Store` over your DB. Cookie is
 always HttpOnly, SameSite defaults Lax — set `Secure: true` behind TLS.
 `nexus docs session`.
@@ -1081,19 +1083,19 @@ the identity (resolve-time enrichment rides the auth cache); one that outlives
 requests belongs in extension/cache. Unit tests inject with
 `nexus.WithScopedValue(ctx, handle, v)`. `nexus docs scoped`.
 
-### Config values (`nexus.Get`)
-`nexus.Get[T]("key", default...)` reads from, highest priority first: (1) an ENV
+### Config values (`config.Get`)
+`config.Get[T]("key", default...)` reads from, highest priority first: (1) an ENV
 override (`db.port` → `DB_PORT`), (2) the `[extensions.config]` snapshot when wired
 (hot-reloadable, remote-capable), (3) the **`nexus.toml` base layer** seeded by
-`Boot`/`MustLoadConfig`. Layers resolve per-key, so a key absent from a higher layer
+`Boot`/`config.MustLoad`. Layers resolve per-key, so a key absent from a higher layer
 falls through. Read anywhere:
 ```go
-addr := nexus.Get[string]("runtime.server.addr")     // straight from nexus.toml
-port := nexus.Get[int]("db.port", 5432)              // 2nd arg = default
-ttl  := nexus.Get[time.Duration]("cache.ttl", 5*time.Minute)
+addr := config.Get[string]("runtime.server.addr")     // straight from nexus.toml
+port := config.Get[int]("db.port", 5432)              // 2nd arg = default
+ttl  := config.Get[time.Duration]("cache.ttl", 5*time.Minute)
 ```
 The dotted key mirrors the TOML table path — `[runtime.storage] url` →
-`nexus.Get[string]("runtime.storage.url")` — **no extension needed** for plain
+`config.Get[string]("runtime.storage.url")` — **no extension needed** for plain
 nexus.toml reads. Wire `[extensions.config]` (blank-import `_ ".../extension/config"` +
 the TOML block) only when you need hot-reload, profiles, or a remote config server;
 those values then override the nexus.toml base layer. Databases can pull secrets via
@@ -1266,7 +1268,7 @@ sort · 100-row pages; detail page with input schema, recent errors, a REST/Grap
 tester and rate-limit overrides), **Services**, **Resources**, **Workers & Crons**
 (run/pause/resume), **Traces** (+ waterfall per trace), **Auth** (cached identities,
 invalidate, live 401/403 rejections from the trace buffer; when auth is wired), **Runtime** (global chain, plugins, middleware,
-GraphQL cache). Gate it behind your own middleware via `Config.Middleware.Dashboard`.
+GraphQL cache). Gate it behind your own middleware via `config.Runtime.Middleware.Dashboard`.
 Editing it: `make dashboard` regenerates the templ code and the embedded Tailwind CSS
 (`assets/console.css`, both committed — a plain `go build` needs neither tool); the
 canvas is `ui/` (`npm run build`, committed `ui/dist`). The templUI components are
@@ -1342,7 +1344,7 @@ GraphQL request automatically (`{batch:false}` opts out). Vue:
 — `refresh` refetches every mounted `useOpQuery` of those ops after success,
 `latest` is the auto-save race guard.
 
-**Simplest enable — one switch (`sdk = true`):** set `Config.SDK` (or `[runtime] sdk =
+**Simplest enable — one switch (`sdk = true`):** set `config.Runtime.SDK` (or `[runtime] sdk =
 true` in nexus.toml) and nexus generates + serves the full typed SDK and, when a frontend
 dir is present (any `vite.config.*`), dumps the SDK files into `web/sdk` + wires tsconfig
 so `import 'nexus-client'` resolves with types — no `client.Config` ceremony. **The dump
@@ -1352,7 +1354,7 @@ binary never writes files. `client.Off` on `OutDir` is an explicit "no dump". Po
 in a locked-down production binary; the routes are public and the manifest maps your API
 surface, so vendor with `nexus client --out` instead if you don't want that published.
 `introspection` governs `/__nexus`; `sdk` governs the client. For finer control (custom path, route middleware,
-explicit OutDir, per-deployment gating) set `Config.Client` / `nexus.ClientUse(...)`
+explicit OutDir, per-deployment gating) set `config.Runtime.Client` / `nexus.ClientUse(...)`
 directly instead.
 
 ---

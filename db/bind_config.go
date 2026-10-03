@@ -21,14 +21,14 @@ const (
 // BindFromConfig binds a marker type T to the [databases.<name>] block
 // declared in nexus.toml. Structure (driver, sslmode, timezone) comes from
 // the TOML; each connection value resolves inline-first then via the
-// block's key_prefix against the config server (see nexus.DatabaseSpec) —
+// block's key_prefix against the config server (see config.DatabaseSpec) —
 // so it works with or without a config server. Otherwise identical to
 // Bind[T]: the framework manages lifecycle and dashboard registration, and
 // handlers inject *T unchanged.
 //
 //	db.BindFromConfig[OatsUAADB]("uaa")
 //
-// The [databases.*] blocks are parsed by nexus.LoadConfig / MustLoadConfig
+// The [databases.*] blocks are parsed by config.Load / config.MustLoad
 // / Boot. The spec lookup is DEFERRED to fx-construction time (boot), so
 // this option may be built before the config is loaded — which is the case
 // under nexus.Boot, since Go evaluates a call's arguments before the call
@@ -68,7 +68,7 @@ func resolveSpec(name string) config.DatabaseSpec {
 	spec, ok := config.DatabaseSpecFor(name)
 	if !ok {
 		panic(fmt.Sprintf("db.BindFromConfig[%q]: no [databases.%s] block found — "+
-			"declare it in nexus.toml (loaded by nexus.Boot or nexus.MustLoadConfig)", name, name))
+			"declare it in nexus.toml (loaded by nexus.Boot or config.MustLoad)", name, name))
 	}
 	switch Driver(spec.Driver) {
 	case Postgres, MySQL, SQLite:
@@ -86,7 +86,7 @@ func resolveSpec(name string) config.DatabaseSpec {
 // prefers the inline spec value; failing that, it reads
 // <key_prefix>.<suffix> via get (the config server). Split out from the
 // build closure so the resolution is unit-testable without a live config
-// server (the closure passes nexus.Get as get).
+// server (the closure passes config.Get as get).
 func configFor(spec config.DatabaseSpec, get func(string) string) Config {
 	field := func(inline, suffix string) string {
 		if inline != "" {

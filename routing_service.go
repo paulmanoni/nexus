@@ -26,7 +26,7 @@ type Service struct {
 	graphqlPath string
 
 	// Per-service GraphQL knob. Playground / Debug / Pretty live on
-	// nexus.Config because they're environment-level; Auth is per-service
+	// config.Runtime because they're environment-level; Auth is per-service
 	// because different services often differ (admin vs public).
 	graphqlUserDetFn UserDetailsFn
 }

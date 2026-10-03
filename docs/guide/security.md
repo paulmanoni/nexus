@@ -51,8 +51,8 @@ The client SDK uses the same names, so it needs no changes.
 The Go equivalent:
 
 ```go
-nexus.Config{Middleware: nexus.MiddlewareConfig{
-    Security: &nexus.SecurityConfig{EnableCSRF: true, HSTSMaxAge: 31536000},
+config.Runtime{Middleware: config.Middleware{
+    Security: &config.Security{EnableCSRF: true, HSTSMaxAge: 31536000},
 }}
 ```
 

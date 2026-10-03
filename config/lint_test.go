@@ -161,7 +161,7 @@ scope = "private"
 	}
 	issues, err := LintFile(path)
 	if err != nil {
-		t.Fatalf("LintRuntimeFile: %v", err)
+		t.Fatalf("LintFile: %v", err)
 	}
 	if len(issues) == 0 {
 		t.Fatal("expected lint issue for bad scope")
@@ -184,7 +184,7 @@ description = "Prod"
 	}
 	issues, err := LintFile(path)
 	if err != nil {
-		t.Fatalf("LintRuntimeFile: %v", err)
+		t.Fatalf("LintFile: %v", err)
 	}
 	if len(issues) != 0 {
 		t.Errorf("expected no issues for file without [runtime] block, got: %+v", issues)
@@ -206,7 +206,7 @@ adress = ":8099"
 `)
 	issues, err := LintFile(path)
 	if err != nil {
-		t.Fatalf("LintRuntimeFile: %v", err)
+		t.Fatalf("LintFile: %v", err)
 	}
 	if len(issues) != 2 {
 		t.Fatalf("want 2 unknown-key findings, got %d: %+v", len(issues), issues)
@@ -238,7 +238,7 @@ adress = ":8099"
 // TestLintRuntimeFile_CorrectlyNestedKeysStaySilent: the companion contract —
 // a file whose runtime keys are all spelled and nested correctly, alongside
 // sections other loaders own ([databases.*], [extensions.*], [env.*]) and an
-// app's own nexus.Get section, lints clean.
+// app's own config.Get section, lints clean.
 func TestLintRuntimeFile_CorrectlyNestedKeysStaySilent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nexus.toml")
 	mustWriteTOML(t, path, `
@@ -261,7 +261,7 @@ name = "demo"
 `)
 	issues, err := LintFile(path)
 	if err != nil {
-		t.Fatalf("LintRuntimeFile: %v", err)
+		t.Fatalf("LintFile: %v", err)
 	}
 	if len(issues) != 0 {
 		t.Errorf("clean file must lint silently, got: %+v", issues)

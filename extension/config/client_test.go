@@ -105,7 +105,7 @@ func (fs *fakeServer) writeSignerKey(t *testing.T, dir string) string {
 
 // TestClient_FetchVerifyInstall is the headline round-trip:
 // fakeServer serves a signed snapshot, client fetches it,
-// verifies, installs into the store. nexus.Get returns the
+// verifies, installs into the store. config.Get returns the
 // served values. Without this, every other client test is
 // gated on a happy-path that never proved itself.
 func TestClient_FetchVerifyInstall(t *testing.T) {

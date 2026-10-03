@@ -5,7 +5,7 @@
 // handler dispatch, and zero flaky port binding.
 //
 //	func TestGetUser(t *testing.T) {
-//	    app := nexustest.New(t, nexus.Config{}, billing.Module)
+//	    app := nexustest.New(t, config.Runtime{}, billing.Module)
 //
 //	    res := app.GET("/users/42")
 //	    res.AssertStatus(200)

@@ -30,7 +30,7 @@ import (
 //
 //	cfg, err := nexus.ServerTLSConfig("admin.crt", "admin.key", "admin-ca.crt")
 //	if err != nil { log.Fatal(err) }
-//	listener := nexus.Listener{Addr: "10.0.0.5:9443", Scope: nexus.ScopeAdmin, TLS: cfg}
+//	listener := config.Listener{Addr: "10.0.0.5:9443", Scope: config.ScopeAdmin, TLS: cfg}
 func ServerTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 	if certFile == "" || keyFile == "" {
 		return nil, fmt.Errorf("nexus: ServerTLSConfig: certFile and keyFile are required")

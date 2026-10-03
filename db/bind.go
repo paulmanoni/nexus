@@ -30,18 +30,18 @@ import (
 //	    db.Bind[MainDB]("main", func() db.Config {
 //	        return db.Config{
 //	            Driver:   db.Postgres,
-//	            Host:     nexus.Get[string]("db.main.hostname"),
-//	            Port:     nexus.Get[string]("db.main.port"),
-//	            User:     nexus.Get[string]("db.main.username"),
-//	            Password: nexus.Get[string]("db.main.password"),
-//	            Database: nexus.Get[string]("db.main.name"),
+//	            Host:     config.Get[string]("db.main.hostname"),
+//	            Port:     config.Get[string]("db.main.port"),
+//	            User:     config.Get[string]("db.main.username"),
+//	            Password: config.Get[string]("db.main.password"),
+//	            Database: config.Get[string]("db.main.name"),
 //	        }
 //	    }, db.WithDefault()),
 //	    // … modules; handlers keep injecting *MainDB unchanged
 //	)
 //
 // build() is evaluated in the DI constructor (not at option-construction
-// time), so nexus.Get and other startup-time config sources resolve. The
+// time), so config.Get and other startup-time config sources resolve. The
 // framework owns the lifecycle (Start on boot, Stop on shutdown) and
 // registers the connection as a dashboard resource via resource.NewDatabase
 // regardless of whether it connects, so a down database appears (red)
@@ -54,7 +54,7 @@ func Bind[T any](name string, build func() Config, opts ...BindOption) nexus.Opt
 // bindOption is the shared core behind Bind and BindFromConfig. optsFn is
 // evaluated at register time (inside the invoke), NOT at option-construction
 // time, so options derived from data only available after startup — like a
-// [databases.*] block parsed by LoadConfig — resolve lazily. This is what
+// [databases.*] block parsed by config.Load — resolve lazily. This is what
 // lets BindFromConfig work under nexus.Boot, which evaluates its option
 // arguments before it loads nexus.toml.
 func bindOption[T any](name string, build func() Config, optsFn func() []BindOption) nexus.Option {

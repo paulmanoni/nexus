@@ -7,7 +7,7 @@
 // visits, so flash-error and session flows work like a real browser.
 //
 //	func TestUsersPage(t *testing.T) {
-//	    c := inertiatest.New(t, nexus.Config{},
+//	    c := inertiatest.New(t, config.Runtime{},
 //	        inertia.Module(inertia.Config{Frontend: dist, Root: "dist"}),
 //	        inertia.Page("GET", "/users", "Users/Index", NewListUsers),
 //	    )

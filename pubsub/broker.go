@@ -12,7 +12,7 @@ import (
 )
 
 // Broker wires a named message-broker transport declaratively — the
-// pub/sub counterpart to nexus.Database / nexus.Cache. It lives here
+// pub/sub counterpart to nexus.Database / resource.Cache. It lives here
 // (not in the nexus root) because the pubsub package already imports
 // nexus, so the root can't import it back.
 //
@@ -22,12 +22,12 @@ import (
 //
 //	nexus.Run(cfg,
 //	    pubsub.Broker[EventBus]("events", func() (pubsub.Transport, error) {
-//	        return rabbit.New(rabbit.Config{URL: nexus.Get[string]("amqp.url")})
+//	        return rabbit.New(rabbit.Config{URL: config.Get[string]("amqp.url")})
 //	    }),
 //	    // … handlers inject *EventBus and call Publish/Consume on it
 //	)
 //
-// build() runs in the fx constructor (so nexus.Get resolves) and may
+// build() runs in the fx constructor (so config.Get resolves) and may
 // return an error — a failed connect fails boot, matching how a broker
 // is normally treated as required infrastructure. The framework Close()s
 // the transport on shutdown and registers it as a dashboard queue

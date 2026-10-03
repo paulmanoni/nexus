@@ -33,7 +33,7 @@ key_prefix = "db.ajira_db"
 // the core's job is just to parse and store the specs.
 func TestLoadConfig_ParsesDatabaseSpecs(t *testing.T) {
 	if _, err := config.Load(writeTOML(t, tomlWithDatabases)); err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 	uaa, ok := config.DatabaseSpecFor("uaa")
 	if !ok {

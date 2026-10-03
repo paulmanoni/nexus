@@ -10,7 +10,7 @@ the proxy config.
 import "github.com/paulmanoni/nexus/v2/extension/proxy"
 
 nexus.Boot(proxy.Module(proxy.Config{
-    Upstream: nexus.Get[string]("upstream.url", "http://127.0.0.1:8000"),
+    Upstream: config.Get[string]("upstream.url", "http://127.0.0.1:8000"),
     Group:    "Django (legacy)",
     Routes: []proxy.Route{
         {Method: "GET", Path: "/reports/:id"},

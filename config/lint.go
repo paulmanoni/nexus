@@ -59,9 +59,9 @@ func LintFile(path string) ([]manifest.Issue, error) {
 	return lintRuntimeBytes(raw, path)
 }
 
-// lintRuntimeBytes is the bytes-based core of LintRuntimeFile: expand env vars,
+// lintRuntimeBytes is the bytes-based core of LintFile: expand env vars,
 // parse the [runtime] + [extensions.*] blocks, and lint them. Shared by the
-// `nexus lint` CLI (via LintRuntimeFile) and the dev boot self-check (autoLoad),
+// `nexus lint` CLI (via LintFile) and the dev boot self-check (autoLoad),
 // so both surface the same config foot-guns. source labels the origin in
 // parse-error messages ("nexus.toml", "embedded nexus.toml").
 func lintRuntimeBytes(raw []byte, source string) ([]manifest.Issue, error) {
@@ -96,7 +96,7 @@ func lintRuntimeBytes(raw []byte, source string) ([]manifest.Issue, error) {
 // Severity is WARNING, not error, for the same reason the boot path warns
 // instead of panicking: a key this binary doesn't recognize is usually a
 // mistake but not always one — the whole document is readable through
-// nexus.Get, so an app may deliberately park its own values in a table the
+// config.Get, so an app may deliberately park its own values in a table the
 // loader owns. The finding's job is to stop the lint from certifying a
 // typo'd file as clean, which a warning does.
 //
@@ -155,7 +155,7 @@ func lintExtensionsFile(raw []byte) []manifest.Issue {
 	return out
 }
 
-// lintRuntimeBlock is the pure-function core of LintRuntimeFile,
+// lintRuntimeBlock is the pure-function core of LintFile,
 // separated so unit tests can drive it with synthesized blocks
 // without writing TOML to disk.
 func lintRuntimeBlock(b runtimeBlock) []manifest.Issue {
@@ -274,7 +274,7 @@ func lintRuntimeBlock(b runtimeBlock) []manifest.Issue {
 }
 
 // validateAddr accepts host:port shapes including bare ":port"
-// (the convention nexus.Config.Server.Addr uses). Empty addr
+// (the convention config.Runtime.Server.Addr uses). Empty addr
 // should be caught by the caller; we treat empty as malformed
 // here for clarity.
 func validateAddr(addr string) error {

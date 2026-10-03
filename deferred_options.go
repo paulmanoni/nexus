@@ -43,7 +43,7 @@ func collectDeferredOptions() []Option {
 // package any test file links — booting one module in isolation then fails on
 // the other packages' providers. Scope the boot instead:
 //
-//	nexus.InProcess(nexus.Config{},
+//	nexus.InProcess(config.Runtime{},
 //	    nexus.DecoratedModules("adverts"),   // only adverts' //nexus: registrations
 //	    adverts.Module, ...)
 //

@@ -63,8 +63,8 @@ Three ways to expose it safely, from narrowest to broadest:
 - **Your own middleware** in front of the dashboard:
 
   ```go
-  nexus.Config{
-      Middleware: nexus.MiddlewareConfig{
+  config.Runtime{
+      Middleware: config.Middleware{
           Dashboard: []middleware.Middleware{requireAdmin},
       },
   }

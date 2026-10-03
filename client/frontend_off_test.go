@@ -46,7 +46,7 @@ func TestApplyFrontendDefaults_OffTSConfigKeepsDump(t *testing.T) {
 	}
 }
 
-// TestApplyFrontendDefaults_Idempotent: nexus.Config.SDK defaults the
+// TestApplyFrontendDefaults_Idempotent: config.Runtime.SDK defaults the
 // Config and Mount defaults it again; the second pass must change
 // nothing.
 func TestApplyFrontendDefaults_Idempotent(t *testing.T) {

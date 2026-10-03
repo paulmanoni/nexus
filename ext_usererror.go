@@ -11,7 +11,7 @@ import "strings"
 //
 //	nexus error [topology]: Deployment "users-svc" not in Topology.Peers
 //	  declared peers: [checkout-svc orders-svc]
-//	  hint: add Topology.Peers["users-svc"] in main.go's nexus.Config — URL may be empty for the active unit
+//	  hint: add Topology.Peers["users-svc"] in main.go's config.Runtime — URL may be empty for the active unit
 //
 // User code typically doesn't construct these — the framework emits
 // them at known failure boundaries. They behave like normal errors

@@ -13,7 +13,7 @@
 // from:
 //
 //   - Boot(opts...) — the default. Loads nexus.toml (runtime Config, every
-//     [extensions.*] block, the [env] bridge, the nexus.Get store), then runs.
+//     [extensions.*] block, the [env] bridge, the config.Get store), then runs.
 //     Use BootFrom(path, opts...) for an explicit config path. This is what
 //     scaffolded apps use; settings live in the file, not in code.
 //   - Run(cfg, opts...) — when you build Config in Go (a shared Store value, a
@@ -24,8 +24,8 @@
 //     package wraps this.
 //
 // Everything else is a building block Boot composes for you and you rarely call
-// directly: New(cfg) (construct an *App without running), LoadConfig /
-// MustLoadConfig (read Config from TOML), and LoadExtensionOptions /
+// directly: New(cfg) (construct an *App without running), config.Load /
+// config.MustLoad (read config.Runtime from TOML), and LoadExtensionOptions /
 // MustLoadExtensions (read [extensions.*] options from TOML).
 package nexus
 
@@ -633,7 +633,7 @@ func (a *App) Bus() *trace.Bus              { return a.bus }
 // the catch-all collides with framework routes (the /__nexus
 // dashboard, your API, the SPA fallback) and takes the whole app
 // down. A blank/root prefix is exactly what an unset config value
-// yields — e.g. nexus.Get on a key that isn't in the config store
+// yields — e.g. config.Get on a key that isn't in the config store
 // returns "" — so the failure is easy to hit by accident.
 //
 // Static refuses to crash for it: a blank, root, or /__nexus-shadowing

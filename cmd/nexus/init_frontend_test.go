@@ -20,13 +20,16 @@ func TestInitFrontend_OnGoOnlyProject(t *testing.T) {
 	// (no --frontend) produces.
 	mainGo := `package main
 
-import "github.com/paulmanoni/nexus/v2"
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+)
 
 func main() {
 	nexus.Run(
-		nexus.Config{
-			Server:    nexus.ServerConfig{Addr: ":8080"},
-			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "myapp"},
+		config.Runtime{
+			Server:    config.Server{Addr: ":8080"},
+			Dashboard: config.Dashboard{Enabled: true, Name: "myapp"},
 		},
 		helloModule,
 	)
@@ -131,11 +134,14 @@ func TestInitFrontend_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	mainGo := `package main
 
-import "github.com/paulmanoni/nexus/v2"
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+)
 
 func main() {
 	nexus.Run(
-		nexus.Config{Server: nexus.ServerConfig{Addr: ":8080"}},
+		config.Runtime{Server: config.Server{Addr: ":8080"}},
 		helloModule,
 	)
 }

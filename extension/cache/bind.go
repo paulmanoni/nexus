@@ -24,13 +24,13 @@ import (
 //	nexus.Run(cfg,
 //	    cache.Bind[SessionCache]("session", func() *cache.Config {
 //	        c := cache.NewConfig()
-//	        c.RedisHost = nexus.Get[string]("cache.redis.host")
-//	        c.RedisPort = nexus.Get[string]("cache.redis.port")
+//	        c.RedisHost = config.Get[string]("cache.redis.host")
+//	        c.RedisPort = config.Get[string]("cache.redis.port")
 //	        return c
 //	    }, cache.WithDefault()),
 //	)
 //
-// build() runs in the DI constructor (so nexus.Get resolves), the
+// build() runs in the DI constructor (so config.Get resolves), the
 // framework Start()s the manager on boot and Stop()s it on shutdown, and
 // the connection is registered as a dashboard resource via the manager's
 // AsResource (which reports Redis-vs-memory health). Handlers inject

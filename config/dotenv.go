@@ -21,7 +21,7 @@ const DotenvDefaultPath = ".env"
 // file:
 //
 //	func main() {
-//	    nexus.Run(nexus.Config{...},
+//	    nexus.Run(config.Runtime{...},
 //	        nexus.LoadDotenv(),   // ← reads .env if present
 //	        appModule,
 //	    )

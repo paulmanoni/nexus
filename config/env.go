@@ -83,7 +83,7 @@ func configEnvVars(expanded []byte) (map[string]string, error) {
 }
 
 // applyConfigEnv publishes each [env] entry as a process environment
-// variable so the app, extensions, and nexus.Get see it. The TOML
+// variable so the app, extensions, and config.Get see it. The TOML
 // declaration is authoritative (it has already absorbed ${VAR} expansion),
 // so it overwrites any inherited value.
 func applyConfigEnv(vars map[string]string) {
@@ -94,9 +94,9 @@ func applyConfigEnv(vars map[string]string) {
 
 // EnvVars reads the [env] table from a nexus.toml and returns the flattened
 // dotted name→value map (e.g. {"client.id": "myapp-web"}), with
-// ${VAR} placeholders expanded. Path defaults to DefaultConfigPath. The CLI
+// ${VAR} placeholders expanded. Path defaults to DefaultPath. The CLI
 // uses it to expose the same values to the frontend build/dev server; the
-// runtime publishes them as env vars via LoadConfig. Returns (nil, nil) when
+// runtime publishes them as env vars via Load. Returns (nil, nil) when
 // the file is absent or has no [env] table.
 //
 // Only the [env] table is expanded: a ${DB_PASSWORD} in [databases.main]

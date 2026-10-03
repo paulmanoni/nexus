@@ -3,7 +3,7 @@
 //
 // GLOBAL enforcement does NOT live here. The framework applies security
 // headers by default and enables CSRF from [runtime.middleware.security]
-// in nexus.toml (see nexus.Config's Middleware.Security field) — no Go
+// in nexus.toml (see config.Runtime's Middleware.Security field) — no Go
 // required, and no risk of the middleware being installed twice. This
 // package adds the two things the core path can't:
 //

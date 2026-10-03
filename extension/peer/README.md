@@ -10,7 +10,7 @@ The same `peer.Module(...)` call wires both sides; pass `Listen` to accept calls
 import "github.com/paulmanoni/nexus/v2/extension/peer"
 
 // orders-svc: exposes createOrder to other apps in the mesh
-nexus.Run(nexus.Config{...},
+nexus.Run(config.Runtime{...},
     peer.Module(peer.Config{
         Identity:       "orders-svc",
         Listen:         ":7000",
@@ -37,7 +37,7 @@ func NewCreateOrder(svc *Service, p nexus.Params[CreateArgs]) (*Order, error) { 
 
 ```go
 // checkout-svc: calls orders-svc.createOrder
-nexus.Run(nexus.Config{...},
+nexus.Run(config.Runtime{...},
     peer.Module(peer.Config{
         Identity: "checkout-svc",
         TLS:      peer.TLSConfig{Cert: "/etc/checkout.crt", Key: "/etc/checkout.key"},

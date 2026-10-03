@@ -213,7 +213,7 @@ var topicSummaries = map[string]string{
 	"nexustoml":   "nexus.toml — server, dashboard, introspection, env, extensions",
 	"peer":        "extension/peer — typed RPC between nexus apps",
 	"pki":         "nexus pki — generate mTLS certs for the peer mesh",
-	"config":      "extension/config — Spring-style config server + nexus.Get",
+	"config":      "extension/config — Spring-style config server + config.Get",
 	"storage":     "extension/storage — file/object storage: local + S3 disks",
 	"mail":        "extension/mail — outbound email: SMTP + log (dev), MIME, attachments",
 	"session":     "extension/session — Django-style server-side sessions (cookie + store)",
@@ -311,7 +311,10 @@ A minimal nexus app: one module, one query, dashboard at /__nexus/.
 
     package main
 
-    import "github.com/paulmanoni/nexus/v2"
+    import (
+        "github.com/paulmanoni/nexus/v2"
+        "github.com/paulmanoni/nexus/v2/config"
+    )
 
     type AdvertsService struct{ *nexus.Service }
 
@@ -325,9 +328,9 @@ A minimal nexus app: one module, one query, dashboard at /__nexus/.
 
     func main() {
         nexus.Run(
-            nexus.Config{
-                Server:        nexus.ServerConfig{Addr: ":8080"},
-                Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Adverts"},
+            config.Runtime{
+                Server:        config.Server{Addr: ":8080"},
+                Dashboard:     config.Dashboard{Enabled: true, Name: "Adverts"},
                 Introspection: true, // open /__nexus in dev (404s by default)
             },
             nexus.Module("adverts",
@@ -344,7 +347,7 @@ Run it:
 Open http://localhost:8080/__nexus/ for the dashboard.
 
 Prefer config in a file? nexus.Boot loads nexus.toml automatically —
-runtime Config, every [extensions.*] block, and the nexus.Get value
+the [runtime] table, every [extensions.*] block, and the config.Get value
 store — then runs the app. That's what 'nexus new' scaffolds (see
 'nexus docs nexustoml'):
 
@@ -352,11 +355,11 @@ store — then runs the app. That's what 'nexus new' scaffolds (see
         nexus.Boot(nexus.Module("orders", ...))
     }
 
-  - Boot is sugar for: nexus.Run(nexus.MustLoadConfig(),
+  - Boot is sugar for: nexus.Run(config.MustLoad(),
     append(nexus.MustLoadExtensions(), opts...)...).
-  - nexus.Get[T]("section.key") then reads any value from nexus.toml
+  - config.Get[T]("section.key") then reads any value from nexus.toml
     (dotted key = TOML table path), no extension wiring needed.
-  - Use nexus.Run if you'd rather build Config in Go.
+  - Use nexus.Run if you'd rather build config.Runtime in Go.
 `,
 
 	"handlers": `
@@ -1095,7 +1098,7 @@ and returns a *Page with prop/merge/defer/redirect/validation assertions. A cook
 jar persists across visits, so flash-error and session flows work like a browser.
 
     func TestUsersPage(t *testing.T) {
-        c := inertiatest.New(t, nexus.Config{},
+        c := inertiatest.New(t, config.Runtime{},
             nexus.ServeFrontend(dist, "dist"),
             inertia.Module(inertia.Config{}),
             inertia.Page("GET", "/users", "Users/Index", NewListUsers),
@@ -1402,8 +1405,8 @@ from the request scheme, so dev over http works.
 
 In Go instead of TOML (same effect):
 
-    nexus.Run(nexus.Config{Middleware: nexus.MiddlewareConfig{
-        Security: &nexus.SecurityConfig{EnableCSRF: true, HSTSMaxAge: 31536000},
+    nexus.Run(config.Runtime{Middleware: config.Middleware{
+        Security: &config.Security{EnableCSRF: true, HSTSMaxAge: 31536000},
     }})
 
 extension/security — the pieces the core path can't offer:
@@ -1437,7 +1440,7 @@ Minimal app — password grant against your user store:
 
     import "github.com/paulmanoni/nexus/v2/extension/oauth2"
 
-    nexus.Run(nexus.Config{...},
+    nexus.Run(config.Runtime{...},
         oauth2.Module(oauth2.Config{
             Authenticator: func(ctx context.Context, _, username, password string) (string, error) {
                 u, err := users.Authenticate(ctx, username, password)
@@ -1707,7 +1710,7 @@ NEXUS.TOML (runtime config)
 
 Loaded by main.go:
 
-    cfg  := nexus.MustLoadConfig()      // the [runtime] table -> nexus.Config
+    cfg  := config.MustLoad()      // the [runtime] table -> config.Runtime
     opts := nexus.MustLoadExtensions()  // [extensions.*]      -> []Option
     nexus.Run(cfg, append(opts, modules...)...)
 
@@ -1795,9 +1798,9 @@ Inline values OR a config-server key_prefix:
     driver     = "postgres"
     key_prefix = "db.uaa"           # reads db.uaa.{host,port,username,password,name}
 
-nexus.Get reads from nexus.toml directly: nexus.Get[T]("section.key")
+config.Get reads from nexus.toml directly: config.Get[T]("section.key")
 resolves any value declared here (dotted key = TOML table path, e.g.
-[runtime.storage] url -> nexus.Get[string]("runtime.storage.url")), with
+[runtime.storage] url -> config.Get[string]("runtime.storage.url")), with
 NO extension wired. ENV (STORAGE_URL) overrides it; [extensions.config]
 (when wired) overrides it too, hot-reloadably.
 
@@ -1806,7 +1809,7 @@ nexus.MustLoadExtensions) when the matching extension is blank-imported
 (_ "github.com/paulmanoni/nexus/v2/extension/config" — Go links only
 imported code, so the import is still required):
 
-    [extensions.config]             # config server — hot-reloadable nexus.Get values
+    [extensions.config]             # config server — hot-reloadable config.Get values
     endpoint = "http://localhost:8078"
     identity = "myapp"
     profile  = "default"
@@ -1955,17 +1958,17 @@ Routes mounted under cfg.Client.Path (default /__nexus/client):
 
 ─── ENABLE ON THE SERVER ────────────────────────────────────────────
 
-One line on the Config literal:
+One line on the config.Runtime literal:
 
     nexus.Run(
-        nexus.Config{
-            Server: nexus.ServerConfig{Addr: ":8080"},
+        config.Runtime{
+            Server: config.Server{Addr: ":8080"},
             Client: client.Config{Enabled: true},
         },
         modules...,
     )
 
-…or via the option chain instead of the Config.Client field:
+…or via the option chain instead of the config.Runtime Client field:
 
     nexus.ClientUse(client.Config{Enabled: true})
 
@@ -1973,7 +1976,7 @@ For TS / IDE-friendly setups, OutDir + TSConfig auto-write the
 SDK files + path mappings to disk on startup so frontend tooling
 picks them up without a manual "nexus client --out" step:
 
-    nexus.Config{
+    config.Runtime{
         Client: client.Config{
             Enabled:  true,
             Public:   false,             // default: skinny public manifest
@@ -2005,14 +2008,14 @@ that vendor sdk/client.d.ts at build time can stay on the safe
 default and lose nothing in TS completion (types are vendored,
 not fetched).
 
-Beyond the Public flag, a Config.Client mount sits behind the
+Beyond the Public flag, a config.Runtime.Client mount sits behind the
 introspection gate (open under nexus dev / when introspection is on,
 404 otherwise) — same as the dashboard. Serve that mount from a
 locked-down production binary by setting Client.Unguarded; prefer
 vendoring sdk/ at build time instead.
 
 The one-switch front door is different: "[runtime] sdk = true" (or
-Config.SDK) mounts a public, ungated SDK regardless of introspection,
+config.Runtime.SDK) mounts a public, ungated SDK regardless of introspection,
 because the app's own browser bundle imports it and a production
 binary is expected to lock the dashboard down while still serving its
 frontend. Introspection governs /__nexus; sdk governs the client;
@@ -2289,7 +2292,7 @@ Plays cleanly with the rest of the framework:
 
 ─── TROUBLESHOOTING ──────────────────────────────────────────────────
 
-  Manifest 404           Config.Client.Enabled = false (or never set)
+  Manifest 404           config.Runtime.Client.Enabled = false (or never set)
   Auth section missing   auth.Module isn't wired — bridge needs both
   401 on every call      check manifest.auth.strategy matches what
                          your handler expects (bearer ≠ cookie)
@@ -2370,7 +2373,7 @@ is a perf win, NOT a security boundary.
 DASHBOARD
 
 Mounted at /__nexus/ when Dashboard.Enabled is true — BUT the whole
-surface 404s unless introspection is open (Config.Introspection: true,
+surface 404s unless introspection is open (config.Runtime.Introspection: true,
 or introspection = true in nexus.toml; see 'nexus docs nexustoml').
 It's off by default so prod binaries stay locked down; 'nexus dev' and
 the 'nexus new' scaffold turn it on. Tabs:
@@ -2395,9 +2398,9 @@ Tab selection persists in ?tab= — shareable, bookmarkable.
 
 Gate the whole /__nexus/* surface behind your own auth chain:
 
-    nexus.Config{
-        Dashboard: nexus.DashboardConfig{Enabled: true},
-        Middleware: nexus.MiddlewareConfig{
+    config.Runtime{
+        Dashboard: config.Dashboard{Enabled: true},
+        Middleware: config.Middleware{
             Dashboard: []middleware.Middleware{
                 {Name: "auth",  Kind: middleware.KindBuiltin, Gin: bearerAuthGin},
                 {Name: "admin", Kind: middleware.KindCustom,  Gin: requireAdminGin},
@@ -2427,7 +2430,7 @@ Server side:
 
     import "github.com/paulmanoni/nexus/v2/extension/peer"
 
-    nexus.Run(nexus.Config{...},
+    nexus.Run(config.Runtime{...},
         peer.Module(peer.Config{
             Identity:       "orders-svc",
             Listen:         ":7000",
@@ -2560,30 +2563,38 @@ Flags:
 CONFIG
 
 extension/config wires Spring-Cloud-Config-style configuration into a
-nexus mesh. Three entrypoints — pick one per app:
+nexus mesh. Its package name, config, matches the nexus/config package
+that reads the values, so import it under another name:
 
-  config.Server(source, ...opts)  hosts the source of truth
-  config.Client(serverURL, ...)   fetches + verifies + caches (sealed)
-  config.Local(yamlPath, ...)     reads a local plaintext yaml
+    import (
+        "github.com/paulmanoni/nexus/v2/config"
+        configext "github.com/paulmanoni/nexus/v2/extension/config"
+    )
+
+Three entrypoints — pick one per app:
+
+  configext.Server(source, ...opts)  hosts the source of truth
+  configext.Client(serverURL, ...)   fetches + verifies + caches (sealed)
+  configext.Local(yamlPath, ...)     reads a local plaintext yaml
 
 Every entrypoint installs the same package-level store; handlers
-read values via nexus.Get regardless of where they came from.
+read values via config.Get regardless of where they came from.
 
 ──── Reading config from handlers ────────────────────────────
 
-    addr := nexus.Get[string]("config.server.addr")
-    port := nexus.Get[int]("config.server.port", 8080)       // default
-    ttl  := nexus.Get[time.Duration]("config.cache.ttl", 5*time.Minute)
+    addr := config.Get[string]("config.server.addr")
+    port := config.Get[int]("config.server.port", 8080)       // default
+    ttl  := config.Get[time.Duration]("config.cache.ttl", 5*time.Minute)
 
     // Strict — panics if missing; for keys whose absence is a boot bug
-    signKey := nexus.MustGet[string]("config.signing.key")
+    signKey := config.MustGet[string]("config.signing.key")
 
     // Subtree → typed struct
     var pay PaymentConfig
-    nexus.BindConfig("config.payment", &pay)
+    config.Bind("config.payment", &pay)
 
     // Hot reload
-    nexus.OnConfigChange("config.api.timeout", func(v any) {
+    config.OnChange("config.api.timeout", func(v any) {
         if d, ok := v.(time.Duration); ok { svc.timeout.Store(d) }
     })
 
@@ -2592,10 +2603,10 @@ Resolution priority (highest first):
   2. Server snapshot / local yaml
   3. Default arg (or T's zero value)
 
-──── config.Local — single yaml, plaintext on disk ───────────
+──── configext.Local — single yaml, plaintext on disk ────────
 
-    nexus.Run(nexus.Config{...},
-        config.Local("nexus.config.yaml"),
+    nexus.Run(config.Runtime{...},
+        configext.Local("nexus.config.yaml"),
         appModule,
     )
 
@@ -2611,13 +2622,13 @@ The yaml stays human-readable + git-friendly. Profile-keyed:
         api:
           timeout: 30s
 
-Profile selected with config.LocalProfile("prod"); default is
+Profile selected with configext.LocalProfile("prod"); default is
 "default."
 
-──── config.Server — host the source of truth ────────────────
+──── configext.Server — host the source of truth ────────────────
 
-    config.Server(config.FromYAML("configs/"))            // local folder
-    config.Server(config.FromGit("git@host:platform/cfg.git"))  // git repo
+    configext.Server(configext.FromYAML("configs/"))            // local folder
+    configext.Server(configext.FromGit("git@host:platform/cfg.git"))  // git repo
 
 Local layout (one file per app, profile-keyed):
 
@@ -2637,26 +2648,26 @@ Dev one-liner runs out of the box (auth=none gated by
 NEXUS_CONFIG_DEV=1, self-signed TLS auto-generated, signing key
 auto-generated in .configd/). Production adds:
 
-    config.Server(config.FromGit("git@..."),
-        config.WithListen(":7100"),
-        config.WithSigning("/etc/configd/sign.key", "configd-2026-q2"),
-        config.WithTLS("/etc/configd/server.crt", "/etc/configd/server.key",
+    configext.Server(configext.FromGit("git@..."),
+        configext.WithListen(":7100"),
+        configext.WithSigning("/etc/configd/sign.key", "configd-2026-q2"),
+        configext.WithTLS("/etc/configd/server.crt", "/etc/configd/server.key",
                        "/etc/configd/ca.crt"),
-        config.WithAuth(config.AuthMTLS),
-        config.WithApps(map[string]config.AppPolicy{
+        configext.WithAuth(configext.AuthMTLS),
+        configext.WithApps(map[string]configext.AppPolicy{
             "app1": {Profiles: []string{"prod", "staging"}},
         }),
     )
 
-──── config.Client — server-backed, cache sealed on disk ─────
+──── configext.Client — server-backed, cache sealed on disk ─────
 
-    config.Client("https://configd.internal:7100",
-        config.Identity("app1"),
-        config.Profile("prod"),
-        config.SignerKey("/etc/app1/configd-sign.pub"),
-        config.CachePath("/var/lib/app1/config.cache"),
-        config.WithClientTLS("/etc/ca.crt", "/etc/app1.crt", "/etc/app1.key"),
-        config.OnUnreachable(config.UseCacheOrFail),
+    configext.Client("https://configd.internal:7100",
+        configext.Identity("app1"),
+        configext.Profile("prod"),
+        configext.SignerKey("/etc/app1/configd-sign.pub"),
+        configext.CachePath("/var/lib/app1/config.cache"),
+        configext.WithClientTLS("/etc/ca.crt", "/etc/app1.crt", "/etc/app1.key"),
+        configext.OnUnreachable(configext.UseCacheOrFail),
     )
 
 The cache file on disk is AES-256-GCM sealed; the framework
@@ -2667,7 +2678,7 @@ config.
 
 ──── Live refresh ────────────────────────────────────────────
 
-config.Client opens a WebSocket to /__config/subscribe at boot
+configext.Client opens a WebSocket to /__config/subscribe at boot
 and processes version-change events for the lifetime of the
 process. Server-side reloads (file save, future git webhook)
 fan out to every subscriber; clients re-fetch + verify + apply
@@ -2719,8 +2730,8 @@ Wire a disk like a cache or database — a typed Bind that embeds
 Switch to S3 (or MinIO / R2 / Spaces) by changing only the Config:
 
     storage.Config{Driver: "s3", Bucket: "my-app", Region: "us-east-1",
-        AccessKey: nexus.Get[string]("s3.key"),
-        SecretKey: nexus.Get[string]("s3.secret"),
+        AccessKey: config.Get[string]("s3.key"),
+        SecretKey: config.Get[string]("s3.secret"),
         // Endpoint: "https://minio.internal:9000",  // S3-compatible stores
     }
 
@@ -2930,7 +2941,7 @@ Config:
 Stores:
   - NewMemoryStore()  — dev + single replica. Survives nexus dev
     rebuilds (dev-state); a PRODUCTION restart clears it.
-  - session.CacheStore(c nexus.Cache) — rides the cache manager;
+  - session.CacheStore(c resource.Cache) — rides the cache manager;
     with extension/cache/redis imported, sessions survive restarts
     and are shared across replicas. Production shape.
   - Or implement Store (Load/Save/Delete) over your own DB.
@@ -2956,17 +2967,17 @@ Wire a mailer like a cache, database, or disk — a typed Bind that embeds
     nexus.Run(cfg, mail.Bind[Mailer]("smtp", func() mail.Config {
         return mail.Config{
             Driver:      "smtp",
-            Host:        nexus.Get[string]("mail.host"),
-            Port:        nexus.Get[int]("mail.port", 587),
-            Username:    nexus.Get[string]("mail.username"),
-            Password:    nexus.Get[string]("mail.password"),  // from env/nexus.toml
+            Host:        config.Get[string]("mail.host"),
+            Port:        config.Get[int]("mail.port", 587),
+            Username:    config.Get[string]("mail.username"),
+            Password:    config.Get[string]("mail.password"),  // from env/nexus.toml
             Encryption:  "starttls",                          // none | starttls | tls
             FromAddress: "no-reply@example.com",
             FromName:    "Example",
         }
     }, mail.WithDefault()))
 
-Config secrets via nexus.toml (read through nexus.Get, never hard-coded):
+Config secrets via nexus.toml (read through config.Get, never hard-coded):
 
     [mail]
     host     = "smtp.example.com"
