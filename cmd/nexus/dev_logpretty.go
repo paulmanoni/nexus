@@ -14,7 +14,8 @@ import (
 )
 
 // logPretty is an io.Writer that reshapes the child app's structured
-// (zap-JSON) log lines into the columnar, colorized "Dev Server Logs" view:
+// (slog or zap JSON) log lines into the columnar, colorized "Dev Server Logs"
+// view:
 //
 //	13:58:21  INFO   auth/server.go:112      oauth token store ready  path=data/oauth_tokens.db
 //	13:58:21  WARN   settings/automigrate.go auto-migrate skipped     reason=db not connected
@@ -22,9 +23,9 @@ import (
 //
 // Columns mirror the design: time · level badge · source (caller) · message +
 // key=value fields. Levels carry the design palette (info=cyan, warn=amber,
-// error=red). Lines that aren't zap-JSON objects (gin output, the framework's
-// "nexus: listening on …" banner, panics, plain prints) pass through verbatim,
-// so nothing is ever swallowed.
+// error=red). Lines that aren't structured JSON log objects (gin output, the
+// framework's "nexus: listening on …" banner, panics, plain prints) pass
+// through verbatim, so nothing is ever swallowed.
 //
 // It line-buffers: writes arrive as arbitrary byte chunks, so partial lines are
 // held until their terminating newline. Concurrency-safe — stdout and stderr
@@ -56,7 +57,7 @@ func newLogPretty(w io.Writer, color bool, f logFormatter) *logPretty {
 // only decides layout, not whether to colorize. New formats are added by
 // writing one of these and registering it in resolveLogFormatter — the
 // Django-/Spring-style "pluggable formatter" seam.
-type logFormatter func(r zapRecord, c palette) string
+type logFormatter func(r logRecord, c palette) string
 
 func (l *logPretty) Write(p []byte) (int, error) {
 	l.mu.Lock()
@@ -86,7 +87,7 @@ func (l *logPretty) render(line []byte) string {
 	if len(t) == 0 || t[0] != '{' {
 		return string(line)
 	}
-	rec, ok := parseZapLine(t)
+	rec, ok := parseLogLine(t)
 	if !ok {
 		return string(line)
 	}
@@ -96,7 +97,7 @@ func (l *logPretty) render(line []byte) string {
 
 // observeResourceState lifts connlog.Transition's resource/state fields onto
 // the status strip: down and still-down pin an entry, up clears it.
-func (l *logPretty) observeResourceState(rec zapRecord) {
+func (l *logPretty) observeResourceState(rec logRecord) {
 	if l.strip == nil {
 		return
 	}
@@ -134,9 +135,9 @@ func (l *logPretty) observeResourceState(rec zapRecord) {
 	}
 }
 
-// zapRecord is the decoded shape of one structured log line. Fields holds
+// logRecord is the decoded shape of one structured log line. Fields holds
 // every key that isn't one of the well-known columns, rendered as key=value.
-type zapRecord struct {
+type logRecord struct {
 	level      string
 	ts         string
 	caller     string
@@ -147,30 +148,40 @@ type zapRecord struct {
 
 type kv struct{ k, v string }
 
-// parseZapLine decodes a zap-JSON line. Returns ok=false for anything that
-// isn't a JSON object carrying a "msg" (the one field zap always emits) — that
-// filter keeps arbitrary JSV payloads the app might print from being captured.
-func parseZapLine(b []byte) (zapRecord, bool) {
+// parseLogLine decodes a structured JSON log line in either of two shapes:
+// log/slog's JSON handler (time / level / msg / source — the framework's own
+// logger) or zap's (ts / level / msg / caller — apps that still log with zap
+// themselves). Returns ok=false for anything that isn't a JSON object carrying
+// a "msg" (the one field both always emit) — that filter keeps arbitrary JSON
+// payloads the app might print from being captured.
+func parseLogLine(b []byte) (logRecord, bool) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	var m map[string]any
 	if err := dec.Decode(&m); err != nil {
-		return zapRecord{}, false
+		return logRecord{}, false
 	}
 	if _, hasMsg := m["msg"]; !hasMsg {
-		return zapRecord{}, false
+		return logRecord{}, false
 	}
-	r := zapRecord{
-		level:      asString(m["level"]),
-		ts:         formatTS(m["ts"]),
+	ts := m["ts"]
+	if ts == nil {
+		ts = m["time"]
+	}
+	r := logRecord{
+		level:      normalizeLevel(asString(m["level"])),
+		ts:         formatTS(ts),
 		msg:        asString(m["msg"]),
 		caller:     asString(m["caller"]),
 		stacktrace: asString(m["stacktrace"]),
 	}
 	if r.caller == "" {
+		r.caller = formatSource(m["source"])
+	}
+	if r.caller == "" {
 		r.caller = asString(m["logger"])
 	}
-	skip := map[string]bool{"level": true, "ts": true, "msg": true, "caller": true, "logger": true, "stacktrace": true}
+	skip := map[string]bool{"level": true, "ts": true, "time": true, "msg": true, "caller": true, "source": true, "logger": true, "stacktrace": true}
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		if !skip[k] {
@@ -182,6 +193,44 @@ func parseZapLine(b []byte) (zapRecord, bool) {
 		r.fields = append(r.fields, kv{k, asString(m[k])})
 	}
 	return r, true
+}
+
+// normalizeLevel maps slog's level names (DEBUG / INFO / WARN / ERROR, plus
+// offsets such as "INFO+2") onto the lowercase vocabulary zap uses, so the
+// formatters and palette deal in one spelling.
+func normalizeLevel(l string) string {
+	l = strings.ToLower(l)
+	if i := strings.IndexAny(l, "+-"); i > 0 {
+		l = l[:i]
+	}
+	return l
+}
+
+// formatSource renders slog's AddSource object
+// ({"function":…,"file":"/abs/dir/file.go","line":12}) the way zap prints a
+// short caller: the last directory, the file, and the line. A plain string
+// passes through.
+func formatSource(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case map[string]any:
+		file := strings.ReplaceAll(asString(x["file"]), `\`, "/")
+		if file == "" {
+			return ""
+		}
+		if i := strings.LastIndexByte(file, '/'); i >= 0 {
+			if j := strings.LastIndexByte(file[:i], '/'); j >= 0 {
+				file = file[j+1:]
+			}
+		}
+		if line := asString(x["line"]); line != "" {
+			file += ":" + line
+		}
+		return file
+	default:
+		return ""
+	}
 }
 
 // Column widths, tuned to the design's proportions while staying compact in a
@@ -231,7 +280,7 @@ const slowRequest = 500 * time.Millisecond
 
 // prettyFormatter is the default "Dev Server Logs" renderer: the columnar
 // time · level · source · message + key=value layout from the design.
-func prettyFormatter(r zapRecord, c palette) string {
+func prettyFormatter(r logRecord, c palette) string {
 	lc := c.level(r.level)
 
 	var b strings.Builder
@@ -315,7 +364,7 @@ func resolveLogFormatter(name, pattern string) (logFormatter, bool) {
 // logfmtFormatter renders one record as a single logfmt line — the dense,
 // greppable style (level=info ts=13:58:21 caller=… msg="…" key=value). The
 // level keeps its color; everything else is plain so it pipes cleanly.
-func logfmtFormatter(r zapRecord, c palette) string {
+func logfmtFormatter(r logRecord, c palette) string {
 	var b strings.Builder
 	b.WriteString(c.level(r.level))
 	b.WriteString("level=")
@@ -370,7 +419,7 @@ const defaultLogPattern = "%time  %-5level  %caller  %msg  %fields"
 // Only the level token carries color (matching the other formatters); the rest
 // stays plain so custom layouts read predictably.
 func patternFormatter(pattern string) logFormatter {
-	return func(r zapRecord, c palette) string {
+	return func(r logRecord, c palette) string {
 		var b strings.Builder
 		for i := 0; i < len(pattern); i++ {
 			if pattern[i] != '%' || i == len(pattern)-1 {
@@ -407,7 +456,7 @@ func scanPatternToken(rest string) (tok string, adv int) {
 	return rest[:k], k
 }
 
-func renderPatternToken(tok string, r zapRecord, c palette) string {
+func renderPatternToken(tok string, r logRecord, c palette) string {
 	// Split an optional leading width spec ("-5") from the verb.
 	width, verb := 0, tok
 	if dash := strings.IndexFunc(tok, func(ru rune) bool { return ru >= 'a' && ru <= 'z' || ru >= 'A' && ru <= 'Z' }); dash > 0 {
@@ -552,9 +601,9 @@ func asString(v any) string {
 	}
 }
 
-// formatTS renders zap's timestamp as HH:MM:SS. zap.NewProduction emits epoch
-// seconds (a JSON number); ISO8601 strings and already-short clock strings are
-// handled too. Unparseable values fall back to their raw text.
+// formatTS renders a log timestamp as HH:MM:SS: slog's RFC3339 "time" string
+// or zap.NewProduction's epoch seconds (a JSON number); other ISO8601 strings
+// and already-short clock strings are handled too. Unparseable values fall back to their raw text.
 func formatTS(v any) string {
 	switch x := v.(type) {
 	case json.Number:

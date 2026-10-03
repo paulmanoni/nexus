@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// sampleLines mirrors the design's data: zap-JSON log records plus a couple of
+// sampleLines mirrors the design's data: zap-shaped JSON log records plus a couple of
 // non-JSON lines that must pass through untouched.
 var sampleLines = strings.Join([]string{
 	`{"level":"info","ts":1781787501,"caller":"auth/server.go:112","msg":"oauth token store ready","path":"data/oauth_tokens.db"}`,
@@ -43,6 +43,35 @@ func TestLogPrettyColumns(t *testing.T) {
 	}
 }
 
+// TestLogPrettySlogJSON: log/slog's JSON handler shape (time / upper-case
+// level / msg / AddSource object) renders like a zap line — clock time, level
+// badge, short caller, and the remaining attrs as fields.
+func TestLogPrettySlogJSON(t *testing.T) {
+	line := `{"time":"2026-10-03T13:58:21.123456+03:00","level":"WARN","source":{"function":"github.com/x/app/db.(*Manager).Start","file":"/home/u/app/db/db.go","line":321},"msg":"db: still unreachable","resource":"db:main","state":"still-down","attempts":3}`
+	rec, ok := parseLogLine([]byte(line))
+	if !ok {
+		t.Fatal("slog JSON line not recognized")
+	}
+	if rec.level != "warn" || rec.ts != "13:58:21" || rec.caller != "db/db.go:321" || rec.msg != "db: still unreachable" {
+		t.Fatalf("decoded = %+v", rec)
+	}
+	for _, f := range rec.fields {
+		if f.k == "time" || f.k == "source" || f.k == "level" {
+			t.Errorf("well-known key %q leaked into fields", f.k)
+		}
+	}
+	if got := normalizeLevel("INFO+2"); got != "info" {
+		t.Errorf("normalizeLevel(INFO+2) = %q", got)
+	}
+	var out bytes.Buffer
+	newLogPretty(&out, false, prettyFormatter).Write([]byte(line + "\n"))
+	for _, want := range []string{"13:58:21", "WARN", "db/db.go:321", "attempts=3"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("pretty output missing %q\n%s", want, out.String())
+		}
+	}
+}
+
 func TestLogPrettyPartialLineBuffering(t *testing.T) {
 	var out bytes.Buffer
 	lp := newLogPretty(&out, false, prettyFormatter)
@@ -69,7 +98,7 @@ func TestResolveLogFormatter(t *testing.T) {
 }
 
 func TestLogfmtFormatter(t *testing.T) {
-	r := zapRecord{level: "info", ts: "13:58:21", caller: "db/db.go:321", msg: "db connected", fields: []kv{{"driver", "mysql"}}}
+	r := logRecord{level: "info", ts: "13:58:21", caller: "db/db.go:321", msg: "db connected", fields: []kv{{"driver", "mysql"}}}
 	got := logfmtFormatter(r, palette{})
 	for _, want := range []string{"level=info", "ts=13:58:21", "caller=db/db.go:321", "msg=", "db connected", "driver=mysql"} {
 		if !strings.Contains(got, want) {
@@ -79,7 +108,7 @@ func TestLogfmtFormatter(t *testing.T) {
 }
 
 func TestPatternFormatter(t *testing.T) {
-	r := zapRecord{level: "warn", ts: "13:58:21", caller: "x/y.go:1", msg: "hi", fields: []kv{{"k", "v"}}}
+	r := logRecord{level: "warn", ts: "13:58:21", caller: "x/y.go:1", msg: "hi", fields: []kv{{"k", "v"}}}
 	f := patternFormatter("%time %-5level %caller %msg %fields")
 	got := f(r, palette{})
 	for _, want := range []string{"13:58:21", "WARN", "x/y.go:1", "hi", "k=v"} {

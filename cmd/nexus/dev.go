@@ -241,8 +241,8 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
 	defer stop()
 
-	// Columnar "Dev Server Logs" view: reshape the child's zap-JSON log lines
-	// into the time · level · source · message layout. Off when --raw-logs is
+	// Columnar "Dev Server Logs" view: reshape the child's slog/zap JSON log
+	// lines into the time · level · source · message layout. Off when --raw-logs is
 	// set or stdout isn't a tty (so piping/redirecting keeps the raw JSON for
 	// grep/jq). Color further honors NO_COLOR.
 	//
