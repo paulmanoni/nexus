@@ -41,6 +41,11 @@ type lintOptions struct {
 	// and the exit code. Useful in CI when warnings are tracked but
 	// not blocking.
 	quiet bool
+
+	// v2 switches the command to the nexus 2.0 preview: the positional
+	// argument is a project directory (default "."), and the report lists
+	// what 2.0 removes or renames by file and line (lint_v2.go).
+	v2 bool
 }
 
 // newLintCmd is the `nexus lint` cobra command. Reads a manifest
@@ -97,12 +102,25 @@ Input sources:
   nexus lint --binary=PATH     an already-built app binary (asks it for its
                                own manifest via NEXUS_PRINT_MANIFEST=1)
 
+Preparing for nexus 2.0:
+  nexus lint --v2 [dir]        list every v1 API, //@ annotation, uri: tag,
+                               NewXxx op name and nexus.toml key that 2.0
+                               removes, renames or rejects — by file:line,
+                               with the replacement (advisory; exit 0)
+
 Format detection (in priority order):
   1. Explicit --toml flag
   2. .toml file extension → TOML
   3. Default → JSON (preserves the pipe-from-print-mode CI workflow)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if opts.v2 {
+				root := "."
+				if len(args) > 0 {
+					root = args[0]
+				}
+				return runLintV2(stdout, root, opts.jsonOut)
+			}
 			if len(args) > 0 {
 				opts.filePath = args[0]
 			}
@@ -115,6 +133,7 @@ Format detection (in priority order):
 	// --toml is the only input-format override.
 	cmd.Flags().BoolVar(&opts.jsonOut, "json", false, "emit issues as JSON instead of the text report")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress warning-severity issues from output")
+	cmd.Flags().BoolVar(&opts.v2, "v2", false, "report what nexus 2.0 removes or renames in the project at [dir] (default .), by file and line")
 	cmd.Flags().StringVar(&opts.binaryPath, "binary", "", "lint an already-built app binary at this path (instead of reading a manifest file)")
 
 	var tomlIn bool
