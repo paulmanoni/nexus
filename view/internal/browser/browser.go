@@ -49,6 +49,9 @@ type Host struct {
 	Navigate func(method, url, body, contentType string)
 	// Console receives console output ("log", "warn", "error", …).
 	Console func(level, msg string)
+	// Cookie is document.cookie at url: "name=value; …". The page can't
+	// set cookies; responses set them on the host's side.
+	Cookie func(url string) string
 }
 
 // Browser is one page realm.
@@ -90,6 +93,12 @@ func New(host Host) (*Browser, error) {
 		}
 	})
 	set("fetch", b.fetch)
+	set("cookie", func(u string) string {
+		if b.host.Cookie == nil {
+			return ""
+		}
+		return b.host.Cookie(u)
+	})
 	set("wsOpen", b.wsOpen)
 	set("wsSend", b.wsSend)
 	set("wsClose", b.wsClose)

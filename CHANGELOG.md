@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-04
+
+### Fixed
+
+- **View pages work with CSRF on.** Shard re-renders are POSTs, and they
+  carried no token, so an app that turned CSRF on (cookie sessions, a cookie
+  auth scheme, Inertia, or `csrf = true`) got a 403 for every shard. The view
+  runtime now sends `X-XSRF-TOKEN` with each re-render, and gives a plain
+  same-origin POST form a `csrf_token` field as it submits (a form with its
+  own field keeps it). Live-page events are unchanged: the WebSocket is
+  same-origin checked.
+- The security guide's Go example used the v1 field `EnableCSRF`; it is
+  `CSRF: new(true)` in v2.
+
+### Added
+
+- `viewtest` pages expose their cookie jar as `document.cookie`.
+
 ## [2.0.0] - 2026-10-04
 
 nexus 2.0 collects every breaking change in one major version. Most of the

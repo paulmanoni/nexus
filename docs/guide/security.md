@@ -47,13 +47,17 @@ It uses a double-submit cookie:
 - Requests carrying an `Authorization` header are skipped.
 - The cookie's `Secure` flag follows the request scheme, so development over http works.
 
-The client SDK uses the same names, so it needs no changes.
+The client SDK uses the same names, so it needs no changes. Neither do view pages: the
+view runtime sends `X-XSRF-TOKEN` with every shard re-render, and gives a plain
+same-origin POST form a `csrf_token` field as it submits (a form that has one keeps
+its own). Live-page events travel over the WebSocket, which is same-origin checked
+instead.
 
 The Go equivalent:
 
 ```go
 config.Runtime{Middleware: config.Middleware{
-    Security: &config.Security{EnableCSRF: true, HSTSMaxAge: 31536000},
+    Security: &config.Security{CSRF: new(true), HSTSMaxAge: 31536000},
 }}
 ```
 

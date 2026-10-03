@@ -258,6 +258,11 @@ option with that value, on a textarea it is the text:
 A field bound to a signal (`value={ q.Get() }`) follows the signal: browser
 state is newer than the server's copy.
 
+Forms that post over plain HTTP need nothing for CSRF: when the app's CSRF
+middleware is on, the runtime adds the token as a `csrf_token` field to a
+same-origin POST form as it submits, and sends it with every shard re-render.
+See [Web security](./security#csrf).
+
 ## Navigation
 
 `view.Link` is an in-app link: following it fetches the page and patches it

@@ -714,6 +714,8 @@
       var root = this.documentElement;
       return (root && root.children.find(function (c) { return c.tagName === tag; })) || null;
     }
+    get cookie() { return go.cookie(G.location.href); }
+    set cookie(v) {}
     get title() {
       var t = this.querySelector("title");
       return t ? t.textContent.replace(/\s+/g, " ").trim() : "";

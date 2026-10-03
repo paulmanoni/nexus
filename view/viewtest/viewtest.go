@@ -230,6 +230,7 @@ func (p *Page) load(n navigation) {
 			p.nav = &navigation{method, u, body, contentType}
 		},
 		Console: p.log,
+		Cookie:  p.cookie,
 	})
 	if err != nil {
 		p.t.Fatal(err)
@@ -285,6 +286,20 @@ func (p *Page) request(method, u string, header http.Header, body string) (*brow
 	}
 	final := res.Request.URL.String()
 	return &browser.Response{Status: res.StatusCode, URL: final, Header: res.Header, Body: string(b), Redirected: final != u}, nil
+}
+
+// cookie is document.cookie: the jar's cookies for u. The jar doesn't keep
+// HttpOnly, so the page sees those too.
+func (p *Page) cookie(u string) string {
+	ref, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	var parts []string
+	for _, c := range p.client.Jar.Cookies(ref) {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (p *Page) log(level, msg string) {

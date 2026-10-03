@@ -307,7 +307,7 @@ in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(c
 error`, then re-render (in-process: a replica's own pages). Forms: `view.Submit(x.Add)` /
 `view.Change(x.Validate)` on a form send its fields to an event whose last param is a `form:`-tagged
 struct (httpx binder); failing its `validate:` tags or returning `nexus.Invalid()` re-renders with `view.Errors(ctx).Field(name)`,
-success resets the form. Field rules (docs/guide/views.md "Form fields"): a field keeps what the user typed until
+success resets the form. With CSRF on, the runtime sends `X-XSRF-TOKEN` on shard re-renders and adds a `csrf_token` field to same-origin POST forms as they submit. Field rules (docs/guide/views.md "Form fields"): a field keeps what the user typed until
 the server's value (input `value`, textarea text, select's `selected` options, `checked`) changes; a focused field
 is never overwritten; `view.Value(v)` (spread: `<input { view.Value(x.V)... }/>`, also select/textarea) makes a field
 take the server's value on every render. The first render

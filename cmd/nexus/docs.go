@@ -1458,7 +1458,9 @@ How it works (double-submit cookie): safe methods (GET/HEAD) mint a
 random token in a non-HttpOnly "csrftoken" cookie; unsafe methods must
 echo it in the "X-CSRFToken" header (or a "csrf_token" form field).
 Those names match the generated client SDK, so an existing frontend
-needs no change. Requests with an Authorization header (token APIs) are
+needs no change; view pages neither — the view runtime sends the token
+with shard re-renders and adds csrf_token to same-origin POST forms as
+they submit. Requests with an Authorization header (token APIs) are
 skipped — not CSRF-vulnerable. The cookie's Secure flag auto-derives
 from the request scheme, so dev over http works.
 

@@ -305,7 +305,7 @@
       el.setAttribute("aria-busy", "true");
       fetch("/_view/shard/" + encodeURIComponent(m.shard), {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "text/html" },
+        headers: csrfHeaders({ "Content-Type": "application/json", Accept: "text/html" }),
         body: JSON.stringify({ path: m.path, args: snapshot(args), states: states }),
         signal: mine.signal,
         credentials: "same-origin",
@@ -1022,6 +1022,40 @@
     },
   };
 
+  // ---- CSRF ---------------------------------------------------------------
+
+  // csrfToken is the XSRF-TOKEN cookie nexus's CSRF middleware keeps
+  // readable for scripts; "" when CSRF is off.
+  function csrfToken() {
+    var m = /(?:^|;\s*)XSRF-TOKEN=([^;]*)/.exec(document.cookie || "");
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+
+  function csrfHeaders(h) {
+    var t = csrfToken();
+    if (t) h["X-XSRF-TOKEN"] = t;
+    return h;
+  }
+
+  // onFormSubmit gives a plain same-origin POST form the token as its
+  // csrf_token field, unless it carries one already.
+  function onFormSubmit(e) {
+    var form = e.target;
+    if (!form || form.tagName !== "FORM") return;
+    var by = e.submitter;
+    var method = (by && by.getAttribute("formmethod")) || form.getAttribute("method") || "get";
+    if (method.toLowerCase() !== "post") return;
+    var t = csrfToken();
+    if (!t || form.querySelector('input[name="csrf_token"]')) return;
+    var action = (by && by.getAttribute("formaction")) || form.getAttribute("action") || location.href;
+    if (new URL(action, location.href).origin !== location.origin) return;
+    var f = document.createElement("input");
+    f.type = "hidden";
+    f.name = "csrf_token";
+    f.value = t;
+    form.appendChild(f);
+  }
+
   nx.signal = signal;
   root.__nx = nx;
 
@@ -1031,6 +1065,7 @@
       ownFields(document.documentElement);
       syncLive();
       document.addEventListener("click", onNavClick);
+      document.addEventListener("submit", onFormSubmit, true);
       window.addEventListener("online", reconnectAll);
       document.addEventListener("visibilitychange", function () {
         if (document.visibilityState === "visible") reconnectAll();

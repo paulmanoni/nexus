@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/view/viewtest"
 	"github.com/paulmanoni/nexus/view/example/v2/pets"
 )
@@ -50,6 +53,23 @@ func TestHomeInBrowser(t *testing.T) {
 	p.Click("#nav-board")
 	p.Expect("h1").Text("Adoption board")
 	p.Expect("#adopt-Biscuit").Exists()
+}
+
+// With CSRF on — any cookie session, cookie auth or Inertia turns it on —
+// shard re-renders carry the token the page's first GET set.
+func TestShardsWithCSRF(t *testing.T) {
+	h, stop, err := nexus.InProcess(config.Runtime{Middleware: config.Middleware{Security: &config.Security{CSRF: new(true)}}}, app()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stop(context.Background()) })
+
+	p := viewtest.Get(t, h, "/")
+	p.Fill("#q", "cat")
+	p.Expect("#pets").ContainsText("Mochi")
+	if txt := p.Text("#pets"); strings.Contains(txt, "Biscuit") {
+		t.Fatalf("results for cat: %s", txt)
+	}
 }
 
 // The live board end to end: events, the add form and its validation, a
