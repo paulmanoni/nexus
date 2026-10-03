@@ -88,9 +88,11 @@ type UpdateOrderArgs struct {
 | `form:"x"` | Form field |
 | `json:"x"` | JSON body |
 | `graphql:"name,required"` | GraphQL argument name and nullability |
-| `validate:"..."` | Validation rules, for example `required` or `len=3\|120` |
+| `validate:"..."` | Validation rules: `required`, `len=min\|max`, `int=min\|max`, `oneof=a\|b\|c`, comma-separated |
 
-A binding or validation failure is rejected before your handler runs.
+A binding or validation failure is rejected before your handler runs, on every
+transport, as an `InvalidInput` error with a message per failing field (see
+[Errors](#errors)).
 
 ## Scalar arguments: `nexus.Arg`
 
@@ -127,8 +129,51 @@ JSON body can't override it, so `PUT /users/5` with `{"id": 6}` still updates us
 The body's exported fields are merged into the generated arguments, so its type may be
 unexported.
 
-REST binds these tags but doesn't enforce `validate:` rules on them; only GraphQL
-arguments are validated.
+`validate:` rules on these arguments (and on a body struct's fields) are enforced on
+REST as on GraphQL.
+
+## Errors
+
+A handler returns a `*nexus.Error` — or any error wrapping one — to say how the request
+failed:
+
+```go
+return nil, nexus.Err(nexus.NotFound, "user not found")
+return nil, nexus.Errf(nexus.Conflict, "email %s is taken", in.Email)
+return nil, nexus.Invalid().Field("email", "already taken").Global("try again")
+return nil, nexus.Forbidden // a bare code is an error too
+```
+
+`nexus.Error{Code, Message, Fields, Cause}` has one of eight codes, and every transport
+renders it through one table:
+
+| Code | REST | GraphQL `extensions.code` |
+|---|---|---|
+| `InvalidInput` | 422 | `INVALID_INPUT` (+ `errors` field map) |
+| `Unauthenticated` | 401 | `UNAUTHENTICATED` |
+| `Forbidden` | 403 | `FORBIDDEN` |
+| `NotFound` | 404 | `NOT_FOUND` |
+| `Conflict` | 409 | `CONFLICT` |
+| `TooMany` | 429 | `TOO_MANY_REQUESTS` |
+| `Unavailable` | 503 | `UNAVAILABLE` |
+| `Internal` | 500 | `INTERNAL` |
+
+- **REST** answers the code's status with `{"code", "message", "errors"}`.
+- **WebSocket** sends an `error` event `{type, code, message, errors}`; the connection
+  stays open.
+- **Inertia** sends an `InvalidInput` back to the form (303, `errors` prop); any other
+  error renders the [error page](./inertia#error-pages) with the code's status.
+- **Views** show an `InvalidInput`'s fields through `view.Errors(ctx)`.
+- **Any other error is `Internal`.** Its message is shown under `nexus dev` and replaced
+  by `internal error` otherwise, so a driver error never reaches a client in
+  production. The dashboard trace keeps the original.
+- `errors.Is(err, nexus.NotFound)` matches a code, and `errors.Is`/`errors.As` see
+  through `Cause`. `nexus.CodeOf(err)` and `nexus.ErrorOf(err)` give the code and the
+  mapped error.
+- Auth gates (`auth.Required`, `auth.Requires`) answer `Unauthenticated` and
+  `Forbidden`; rate limits answer `TooMany` — through the same table.
+- A raw handler (an `*httpx.Ctx` parameter) writes an error with
+  `nexus.WriteError(c, err)`.
 
 ## Per-op options
 
@@ -180,6 +225,8 @@ nexus.AsQuery((*UserService).ListUsers, nexus.Envelope(Wrap[[]User]))
 The handler keeps returning `([]User, error)`. The GraphQL schema and the generated SDK
 declare the envelope type.
 
+- The wrap receives the handler's error as the `*nexus.Error` it maps to, so
+  `err.Error()` never carries a hidden internal message.
 - An error the wrap converts into a value is sent as a normal 200 response.
 - An error the wrap returns follows the standard error path.
 - Binding and validation failures happen before the handler and are never wrapped.

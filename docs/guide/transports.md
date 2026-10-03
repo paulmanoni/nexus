@@ -68,7 +68,9 @@ Every message uses one envelope format:
 { "type": "chat.send", "data": { "text": "hi" }, "timestamp": 1700000000 }
 ```
 
-A handler error comes back as a `{"type": "error", ...}` envelope, and the connection
+A handler error comes back as an `error` event whose data is `{type, code, message,
+errors}` (see [Errors](./handlers#errors)); a payload failing its `validate:` tags gets
+the same event with `INVALID_INPUT` before the handler runs. The connection
 stays open. Unknown types are dropped.
 
 `*WSSession` provides these methods:

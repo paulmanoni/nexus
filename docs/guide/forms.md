@@ -36,12 +36,15 @@ typed struct. Code further down the call stack can reach the form with
 `*Form` is for REST and Inertia. On GraphQL and WebSocket the parameter is a typed nil
 whose methods do nothing.
 
-## `nexus.Errors`
+## Validation errors: `nexus.Invalid()`
 
-Collect field and global errors, then return them as the handler's error:
+`validate:` tags on the argument struct are checked on every transport before the
+handler runs (see [Handlers](./handlers#errors)). For checks only the handler can make,
+collect field and global errors with `nexus.Invalid()`, then return them as the handler's
+error:
 
 ```go
-errs := nexus.NewErrors()
+errs := nexus.Invalid()
 if taken {
     errs.Field("email", "is already registered")
 }
@@ -53,13 +56,16 @@ if errs.Any() {
 }
 ```
 
-Each transport renders them in its own convention:
+`nexus.Invalid()` is a `*nexus.Error` with the `InvalidInput` code. Each transport
+renders it in its own convention:
 
 | Transport | Response |
 |---|---|
-| REST | `422 {"message": "validation failed", "errors": {"email": ["is already registered"]}}` |
+| REST | `422 {"code": "INVALID_INPUT", "message": "validation failed: email", "errors": {"email": ["is already registered"]}}` |
 | Inertia | A 303 redirect back. The next render's `errors` prop holds each field's first message, with global errors under `errors._global`, which is what `useForm` expects. |
-| GraphQL | A GraphQL error with `extensions: {code: "VALIDATION", errors: {...}}` |
+| GraphQL | A GraphQL error with `extensions: {code: "INVALID_INPUT", errors: {...}}` |
+| WebSocket | An `error` event `{type, code: "INVALID_INPUT", message, errors}` |
+| Views | The page re-renders; `view.Errors(ctx).Field("email")` reads the message |
 
 Use field keys that match the argument struct's `json` tags, so the frontend binds each
 message to the right input.

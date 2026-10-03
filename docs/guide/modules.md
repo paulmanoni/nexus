@@ -62,7 +62,7 @@ func NewPoller(lc nexus.Lifecycle, db *DB) *Poller {
 Databases, caches, workers, crons and the HTTP listeners all register their start and
 stop this way.
 
-`nexus.Error(err)` reports an error while options are being built, and boot fails with
+`nexus.FailBoot(err)` reports an error while options are being built, and boot fails with
 it.
 
 The container is built in and has no dependencies. `go.uber.org/fx` is available as an

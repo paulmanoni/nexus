@@ -65,7 +65,8 @@ type Store[T any] interface {
 ```
 
 Return `nexus.ErrCRUDNotFound` (404), `nexus.ErrCRUDConflict` (409) or
-`nexus.ErrCRUDValidation` (400). Any other error is a 500.
+`nexus.ErrCRUDValidation` (422) — `nexus.Error` values with those codes — or any
+[`nexus.Error`](./handlers#errors). Any other error is a 500.
 
 Options such as `auth.Required()` and `nexus.Use(...)` apply to every generated endpoint.
 The client SDK exposes them as `nx.crud('pets')`.

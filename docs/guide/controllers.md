@@ -262,9 +262,9 @@ func (c *UsersController) Authorize(ctx context.Context, action string) error {
 ```
 
 - **Refusal is a normal action error.** A refused action ends through the action's
-  usual error path: a REST 403 (`nexus.ErrForbidden`), a GraphQL error, or the Inertia
-  [error page](./inertia#error-pages).
-- **Errors that already mean something keep that meaning.** `nexus.ErrCRUDNotFound`
-  stays a 404, and `nexus.Errors` stays a validation response.
+  usual error path as `nexus.Forbidden` with the error's message: a REST 403, a GraphQL
+  `FORBIDDEN`, or the Inertia [error page](./inertia#error-pages).
+- **Errors that already have a code keep it.** `nexus.Err(nexus.NotFound, …)` stays a
+  404, and `nexus.Invalid()` stays a validation response.
 - **Actions must return an error.** If an action takes no `context.Context`, the hook
   still gets one.
