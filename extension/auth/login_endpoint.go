@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -16,63 +15,14 @@ type LoginRequest struct {
 }
 
 // LoginIssuer turns a freshly-authenticated identity into the response body
-// — typically issuing and returning a token. When a LoginEndpoint has no
-// issuer, the endpoint returns the identity itself.
+// — typically issuing and returning a token. Without an issuer the login
+// endpoint returns the identity itself.
 type LoginIssuer func(ctx context.Context, id *Identity) (any, error)
 
-// loginEndpointConfig holds the resolved LoginEndpoint options.
-type loginEndpointConfig struct {
-	path  string
-	issue LoginIssuer
-}
-
-// LoginOption configures LoginEndpoint.
-type LoginOption func(*loginEndpointConfig)
-
-// LoginAt overrides the endpoint path (default "/auth/login").
-func LoginAt(path string) LoginOption {
-	return func(c *loginEndpointConfig) { c.path = path }
-}
-
-// WithIssuer sets the function that shapes the success response — e.g. mints
-// a JWT or session token from the identity. Without it the endpoint returns
-// the identity as {"identity": ...}.
-func WithIssuer(issue LoginIssuer) LoginOption {
-	return func(c *loginEndpointConfig) { c.issue = issue }
-}
-
-// LoginEndpoint registers a POST endpoint that authenticates a username /
-// password through Manager.Login (i.e. the login-capable Config.Backend) and
-// returns the result — the HTTP front door for the cohesive backend, so an
-// app no longer hand-writes a login handler just to reach Manager.Login.
-//
-//	auth.Module(auth.Config{ Backend: auth.UseBackend(NewAuthBackend) }),
-//	auth.LoginEndpoint(auth.LoginAt("/auth/login"), auth.WithIssuer(mintJWT)),
-//
-// It is Public (you can't require a token to obtain one). Invalid
-// credentials return 401 with {"error": ...}; success returns the issuer's
-// body, or {"identity": ...} when no issuer is set. Requires a Config.Backend
-// that implements Login — without one every request gets 401.
-//
-// Deprecated: set Config.Endpoints.Login instead, which mounts the same
-// handler from inside auth.Module and takes the issuer from the Backend's
-// Issue capability. LoginEndpoint remains a thin wrapper and keeps working.
-func LoginEndpoint(opts ...LoginOption) nexus.Option {
-	cfg := &loginEndpointConfig{path: "/auth/login"}
-	for _, o := range opts {
-		o(cfg)
-	}
-	return nexus.AsRestHandler("POST", cfg.path,
-		func(m *Manager) httpx.HandlerFunc { return LoginHandler(m, cfg.issue) },
-		nexus.Describe("Authenticate a username/password via the auth backend."),
-		nexus.Public(),
-	)
-}
-
-// LoginHandler is the raw login handler LoginEndpoint installs, exported so
+// LoginHandler is the raw login handler Config.Endpoints.Login mounts, exported so
 // an app whose issuer needs DI dependencies (e.g. a token server) can wire
 // it inside its own AsRestHandler factory — where those deps ARE injected —
-// instead of the static WithIssuer callback:
+// instead of the Backend's Issue capability:
 //
 //	nexus.AsRestHandler("POST", "/auth/login",
 //	    func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {

@@ -235,7 +235,7 @@ func (s *Server) Issue(ctx context.Context, id *auth.Identity) (any, error) {
 }
 
 // RevokeToken removes an access token from the store — the revoke half,
-// powering auth.Config.Endpoints.Logout / Revoke and LogoutEndpoint.
+// powering auth.Config.Endpoints.Logout / Revoke.
 func (s *Server) RevokeToken(ctx context.Context, token string) error {
 	return s.Manager.RemoveAccessToken(ctx, token)
 }

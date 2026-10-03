@@ -193,8 +193,7 @@ type Config struct {
 	// login, logout, token, revoke — using the Backend's capabilities, so a
 	// single auth.Module call owns the whole auth surface instead of the app
 	// hand-wiring AsRest lines. Each is off unless its path is set; the zero
-	// value mounts nothing. Supersedes the standalone LoginEndpoint /
-	// LogoutEndpoint options. See Endpoints.
+	// value mounts nothing. See Endpoints.
 	Endpoints Endpoints
 
 	// OnResolve fires after every successful resolution — good for

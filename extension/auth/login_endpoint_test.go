@@ -43,14 +43,21 @@ func postJSON(t *testing.T, app *nexus.App, path, body string) (*httptest.Respon
 	return rec, out
 }
 
-func newLoginApp(t *testing.T, opts ...auth.LoginOption) (*nexus.App, func(context.Context) error) {
+// issuingBackend adds the Issue capability, which shapes the login body.
+type issuingBackend struct{ loginBackend }
+
+func (issuingBackend) Issue(_ context.Context, id *auth.Identity) (any, error) {
+	return map[string]any{"token": "tok-for-" + id.ID}, nil
+}
+
+func newLoginApp(t *testing.T, path string, backend any) (*nexus.App, func(context.Context) error) {
 	t.Helper()
 	app, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Module(auth.Config{
 			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
-			Backend:        auth.StaticBackend(loginBackend{}),
+			Backend:        auth.StaticBackend(backend),
+			Endpoints:      auth.Endpoints{Login: path},
 		}),
-		auth.LoginEndpoint(opts...),
 	)
 	if err != nil {
 		t.Fatalf("InProcess: %v", err)
@@ -59,7 +66,7 @@ func newLoginApp(t *testing.T, opts ...auth.LoginOption) (*nexus.App, func(conte
 }
 
 func TestLoginEndpoint_Success(t *testing.T) {
-	app, stop := newLoginApp(t)
+	app, stop := newLoginApp(t, "/auth/login", loginBackend{})
 	defer stop(context.Background())
 
 	rec, body := postJSON(t, app, "/auth/login", `{"username":"alice","password":"s3cret"}`)
@@ -73,7 +80,7 @@ func TestLoginEndpoint_Success(t *testing.T) {
 }
 
 func TestLoginEndpoint_InvalidCredentials(t *testing.T) {
-	app, stop := newLoginApp(t)
+	app, stop := newLoginApp(t, "/auth/login", loginBackend{})
 	defer stop(context.Background())
 
 	rec, body := postJSON(t, app, "/auth/login", `{"username":"alice","password":"wrong"}`)
@@ -88,11 +95,8 @@ func TestLoginEndpoint_InvalidCredentials(t *testing.T) {
 	}
 }
 
-func TestLoginEndpoint_WithIssuer(t *testing.T) {
-	app, stop := newLoginApp(t, auth.LoginAt("/signin"), auth.WithIssuer(
-		func(_ context.Context, id *auth.Identity) (any, error) {
-			return map[string]any{"token": "tok-for-" + id.ID}, nil
-		}))
+func TestLoginEndpoint_BackendIssue(t *testing.T) {
+	app, stop := newLoginApp(t, "/signin", issuingBackend{})
 	defer stop(context.Background())
 
 	rec, body := postJSON(t, app, "/signin", `{"username":"alice","password":"s3cret"}`)
@@ -112,7 +116,7 @@ func (s *tokenSvc) issue(id string) string { return s.prefix + id }
 
 // TestLoginHandler_DIIssuer proves the exported LoginHandler can be wired in
 // an app-owned AsRestHandler factory whose issuer closes over a DI-injected
-// service — the pattern for token servers that a static WithIssuer can't see.
+// service — the pattern for token servers whose issuer needs DI deps.
 func TestLoginHandler_DIIssuer(t *testing.T) {
 	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Provide(func() *tokenSvc { return &tokenSvc{prefix: "tok:"} }),
@@ -142,7 +146,7 @@ func TestLoginHandler_DIIssuer(t *testing.T) {
 }
 
 func TestLoginEndpoint_BadBody(t *testing.T) {
-	app, stop := newLoginApp(t)
+	app, stop := newLoginApp(t, "/auth/login", loginBackend{})
 	defer stop(context.Background())
 
 	rec, _ := postJSON(t, app, "/auth/login", `not-json`)
