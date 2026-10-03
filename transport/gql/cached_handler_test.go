@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	"github.com/graphql-go/graphql"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestCachedHandler_HitProducesSameResult drives two identical queries

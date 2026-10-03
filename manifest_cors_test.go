@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
 // newCORSEngine wires the CORS middleware onto a bare engine with one

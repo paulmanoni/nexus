@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 type Router struct {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/graphql-go/graphql"
 
-	"github.com/paulmanoni/nexus/graph"
+	"github.com/paulmanoni/nexus/v2/graph"
 )
 
 // Rebuild what asGqlField does to a resolver, then verify the assembled

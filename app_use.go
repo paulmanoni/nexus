@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // Use attaches a transport-agnostic middleware bundle to a registration.

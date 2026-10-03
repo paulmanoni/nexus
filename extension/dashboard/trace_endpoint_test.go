@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // publishTrace seeds a bus with a realistic request/span event sequence

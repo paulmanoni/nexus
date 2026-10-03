@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	nexusmanifest "github.com/paulmanoni/nexus/manifest"
+	nexusmanifest "github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // writeManifestFile drops a Manifest as JSON into a temp dir and

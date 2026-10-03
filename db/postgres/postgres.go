@@ -1,14 +1,14 @@
 // Package postgres links gorm's Postgres driver (pgx) into nexus/db.
 // Blank-import it to enable Driver "postgres":
 //
-//	_ "github.com/paulmanoni/nexus/db/postgres"
+//	_ "github.com/paulmanoni/nexus/v2/db/postgres"
 package postgres
 
 import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	"github.com/paulmanoni/nexus/db"
+	"github.com/paulmanoni/nexus/v2/db"
 )
 
 func init() {

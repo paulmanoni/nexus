@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // BootCheck is a boot-time self-check: it inspects live app topology after

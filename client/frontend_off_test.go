@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // webLayout builds the canonical detectable layout: web/vite.config.ts

@@ -13,8 +13,8 @@ import (
 
 	"github.com/a-h/templ"
 
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // vueBundle is the topology canvas's built entry, read from the Vite

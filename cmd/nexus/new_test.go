@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/v2/client"
 )
 
 // TestScaffoldAndBuild exercises the scaffolder end-to-end: we generate
@@ -62,8 +62,8 @@ func TestScaffoldAndBuild(t *testing.T) {
 	}
 
 	addReplace := exec.Command("go", "mod", "edit",
-		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
-		"-require", "github.com/paulmanoni/nexus@v0.0.0",
+		"-replace", "github.com/paulmanoni/nexus/v2="+repoRoot,
+		"-require", "github.com/paulmanoni/nexus/v2@v2.0.0",
 	)
 	addReplace.Dir = dir
 	if out, err := addReplace.CombinedOutput(); err != nil {
@@ -142,8 +142,8 @@ func TestScaffold_Inertia_Builds(t *testing.T) {
 	}
 
 	addReplace := exec.Command("go", "mod", "edit",
-		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
-		"-require", "github.com/paulmanoni/nexus@v0.0.0",
+		"-replace", "github.com/paulmanoni/nexus/v2="+repoRoot,
+		"-require", "github.com/paulmanoni/nexus/v2@v2.0.0",
 	)
 	addReplace.Dir = dir
 	if out, err := addReplace.CombinedOutput(); err != nil {
@@ -229,8 +229,8 @@ func TestScaffold_InertiaSSR_Builds(t *testing.T) {
 	}
 
 	addReplace := exec.Command("go", "mod", "edit",
-		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
-		"-require", "github.com/paulmanoni/nexus@v0.0.0",
+		"-replace", "github.com/paulmanoni/nexus/v2="+repoRoot,
+		"-require", "github.com/paulmanoni/nexus/v2@v2.0.0",
 	)
 	addReplace.Dir = dir
 	if out, err := addReplace.CombinedOutput(); err != nil {
@@ -386,8 +386,8 @@ func TestScaffoldFullStack_Builds(t *testing.T) {
 	}
 
 	addReplace := exec.Command("go", "mod", "edit",
-		"-replace", "github.com/paulmanoni/nexus="+repoRoot,
-		"-require", "github.com/paulmanoni/nexus@v0.0.0",
+		"-replace", "github.com/paulmanoni/nexus/v2="+repoRoot,
+		"-require", "github.com/paulmanoni/nexus/v2@v2.0.0",
 	)
 	addReplace.Dir = dir
 	if out, err := addReplace.CombinedOutput(); err != nil {

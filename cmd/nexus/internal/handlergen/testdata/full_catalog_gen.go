@@ -3,11 +3,11 @@
 package handlers
 
 import (
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/decorate"
-	"github.com/paulmanoni/nexus/extension/auth"
-	"github.com/paulmanoni/nexus/extension/inertia"
-	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/decorate"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
 	"time"
 )
 

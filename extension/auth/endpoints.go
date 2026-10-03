@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // Endpoints opts auth.Module into mounting its own HTTP front doors, so a

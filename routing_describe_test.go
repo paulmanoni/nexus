@@ -3,7 +3,7 @@ package nexus
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestDescribe_CrossTransport proves nexus.Describe sets the registry

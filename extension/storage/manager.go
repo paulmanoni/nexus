@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // Manager is the injectable storage handle. User code embeds *Manager in

@@ -3,7 +3,7 @@ package pets
 import (
 	"sort"
 
-	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/v2/view"
 )
 
 // The Vue islands under web/src/islands this package places on its pages.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // Manager is the injectable mail handle. User code embeds *Manager in a

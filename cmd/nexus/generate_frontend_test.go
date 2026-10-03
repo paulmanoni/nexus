@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // fixtureManifestJSON writes a minimal client.Manifest to disk and

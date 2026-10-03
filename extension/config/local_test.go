@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // resetStore wraps nexus.ClearConfigStoreForTest so each test

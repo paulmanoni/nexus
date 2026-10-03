@@ -3,7 +3,7 @@ package nexus
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // TestCollectBootIssues verifies the boot self-check merges config-file issues

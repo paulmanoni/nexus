@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/manifest"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/manifest"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // fakeTransport is a recording transport used to assert that

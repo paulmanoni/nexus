@@ -3,7 +3,7 @@ package nexus
 import (
 	"sync"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 )
 
 // pathOption is the marker carrying a module's public URL

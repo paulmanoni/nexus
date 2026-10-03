@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 func TestEmbeddedTransportField(t *testing.T) {

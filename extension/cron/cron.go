@@ -18,7 +18,7 @@ import (
 
 	rc "github.com/robfig/cron/v3"
 
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // HandlerFunc is the user-supplied work. Return an error to mark the run

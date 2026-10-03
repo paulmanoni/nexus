@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/graphql-go/graphql"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
 // schemaWithDummyField is a minimal schema for the gate tests —

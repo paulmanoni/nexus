@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus/view/viewgen"
+	"github.com/paulmanoni/nexus/v2/view/viewgen"
 )
 
 // devGenerator is code generation nexus dev keeps current: it runs once
@@ -34,7 +34,7 @@ func devGenerators(root string) []devGenerator {
 }
 
 // viewsGenerator compiles the project's reactive templ views (package
-// github.com/paulmanoni/nexus/view). It writes the generated Go to disk —
+// github.com/paulmanoni/nexus/v2/view). It writes the generated Go to disk —
 // gopls reads it to resolve components across packages — and reruns on a
 // .templ save, or on a Go edit that may declare what templates use (a
 // state struct, a view.Shard registration).

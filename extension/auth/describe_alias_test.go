@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 // TestDescribeAlias pins the deprecation contract: the old auth.Describe

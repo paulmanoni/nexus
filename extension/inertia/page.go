@@ -9,10 +9,10 @@ import (
 
 	"braces.dev/errtrace"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/registry"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // Page registers an Inertia page route. The handler is an ordinary nexus

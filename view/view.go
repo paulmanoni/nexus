@@ -30,8 +30,8 @@ import (
 
 	"github.com/a-h/templ"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 func init() { nexus.RegisterDeferredOptions(options) }

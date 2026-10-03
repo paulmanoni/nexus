@@ -3,7 +3,7 @@ package frontend
 import (
 	"fmt"
 
-	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/v2/extension"
 )
 
 // Render is the Generate driver's entrypoint. Walks the registry +

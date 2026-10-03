@@ -45,9 +45,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // Config tunes the session extension. The zero value is a working

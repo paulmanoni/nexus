@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitepress'
 
-const repo = 'https://github.com/paulmanoni/nexus'
+const repo = 'https://github.com/paulmanoni/nexus/v2'
 
 export default defineConfig({
   title: 'nexus',
@@ -26,7 +26,7 @@ export default defineConfig({
         text: 'Links',
         items: [
           { text: 'Changelog', link: `${repo}/blob/main/CHANGELOG.md` },
-          { text: 'pkg.go.dev', link: 'https://pkg.go.dev/github.com/paulmanoni/nexus' },
+          { text: 'pkg.go.dev', link: 'https://pkg.go.dev/github.com/paulmanoni/nexus/v2' },
           { text: 'Examples', link: `${repo}/tree/main/examples` },
         ],
       },

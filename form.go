@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // Form is the raw-input escape hatch for handlers whose input is genuinely

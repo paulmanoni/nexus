@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // TestGinRecorder_Publishes4xxStatus proves the metrics recorder

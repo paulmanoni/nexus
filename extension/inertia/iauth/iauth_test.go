@@ -8,11 +8,11 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
-	"github.com/paulmanoni/nexus/extension/inertia"
-	"github.com/paulmanoni/nexus/extension/inertia/iauth"
-	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/extension/inertia/iauth"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 const manifestJSON = `{"src/main.ts":{"file":"assets/m.js","isEntry":true}}`

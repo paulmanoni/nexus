@@ -3,8 +3,8 @@ package cors
 import (
 	"fmt"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // resolveConfig merges the in-code Config with the manifest's cors:

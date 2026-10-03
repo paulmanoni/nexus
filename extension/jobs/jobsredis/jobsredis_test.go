@@ -11,9 +11,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/jobs"
-	"github.com/paulmanoni/nexus/extension/jobs/jobsredis"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/jobs"
+	"github.com/paulmanoni/nexus/extension/jobs/jobsredis/v2"
 )
 
 var bg = context.Background()

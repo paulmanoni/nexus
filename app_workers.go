@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // AsWorker registers a long-lived background worker. The framework

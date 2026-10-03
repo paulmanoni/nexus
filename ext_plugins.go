@@ -3,7 +3,7 @@ package nexus
 import (
 	"sync"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // PluginRecord is the inert metadata snapshot for a registered plugin.

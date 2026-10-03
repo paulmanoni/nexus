@@ -3,7 +3,7 @@ package handlergen
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/internal/golden"
+	"github.com/paulmanoni/nexus/cmd/nexus/v2/internal/golden"
 )
 
 // TestEmit_Golden snapshots the FULL generated _gen.go for a broad annotation
@@ -25,10 +25,10 @@ func TestEmit_Golden(t *testing.T) {
 		{Func: "NewChatSend", Keyword: "auth", Args: []string{"Required"}, Line: 61},
 		{Func: "NewThrottled", Keyword: "rest", Args: []string{"POST", "/throttled"}, Line: 70},
 		{Func: "NewThrottled", Keyword: "use", Args: []string{"ratelimit.Per(time.Minute,", "60)"}, Line: 71,
-			Imports: []string{`"github.com/paulmanoni/nexus/extension/ratelimit"`, `"time"`}},
+			Imports: []string{`"github.com/paulmanoni/nexus/v2/extension/ratelimit"`, `"time"`}},
 		{Func: "NewReaper", Keyword: "worker", Args: []string{"reaper"}, Line: 80},
 		{Func: "NewDashboard", Keyword: "inertia.Page", Args: []string{`"GET"`, `"/dash"`, `"Dashboard"`}, Line: 90,
-			Imports: []string{`"github.com/paulmanoni/nexus/extension/inertia"`}},
+			Imports: []string{`"github.com/paulmanoni/nexus/v2/extension/inertia"`}},
 		{Func: "NewDashboard", Keyword: "auth", Args: []string{"Required"}, Line: 91},
 	}
 

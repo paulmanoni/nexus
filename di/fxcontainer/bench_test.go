@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 )
 
 // Head-to-head: the SAME graph (deep chain + large value group + lifecycle

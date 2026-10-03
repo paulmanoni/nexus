@@ -12,7 +12,7 @@ nexus new my-app --inertia          # add --ssr for server-side rendering
 ## Wiring
 
 ```go
-import "github.com/paulmanoni/nexus/extension/inertia"
+import "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 //go:embed all:web/dist
 var webFS embed.FS
@@ -283,7 +283,7 @@ const publish = () => {
 ## Server-side rendering
 
 ```go
-import "github.com/paulmanoni/nexus/extension/inertia/ssrhttp"
+import "github.com/paulmanoni/nexus/v2/extension/inertia/ssrhttp"
 
 inertia.Module(inertia.Config{SSR: ssrhttp.New("")}) // "" = http://127.0.0.1:13714
 ```

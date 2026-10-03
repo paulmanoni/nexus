@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // Sentinel + default values shared by the header and CSRF logic.

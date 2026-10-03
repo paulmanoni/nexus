@@ -1,7 +1,7 @@
 package ws
 
 import (
-	"github.com/paulmanoni/nexus/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 
 	"context"
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // --- Event -----------------------------------------------------------------

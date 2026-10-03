@@ -3,7 +3,7 @@ package db
 import (
 	"os"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // EnvNames maps each Config field that's normally env-driven to the

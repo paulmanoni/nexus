@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // Managed is the general-purpose declarative binder for any resource

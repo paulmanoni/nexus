@@ -15,11 +15,11 @@ import (
 	"github.com/go-oauth2/oauth2/v4/server"
 	"github.com/go-oauth2/oauth2/v4/store"
 	"github.com/google/uuid"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 // PasswordAuthenticator validates a (username, password) pair against

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // TestLoadDeployManifest_PopulatesDeclarations verifies that loading

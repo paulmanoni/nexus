@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestReverseProxy_Forwards verifies the core forwarding: path + headers reach

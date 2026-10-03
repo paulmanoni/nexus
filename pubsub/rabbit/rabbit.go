@@ -48,7 +48,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/paulmanoni/nexus/pubsub"
+	"github.com/paulmanoni/nexus/v2/pubsub"
 )
 
 // Config carries connection + tuning knobs. Zero-value Prefetch

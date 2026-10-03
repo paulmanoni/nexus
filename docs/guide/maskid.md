@@ -5,7 +5,7 @@ the wire, and converts them back before your handler runs. Handlers, models and 
 using `int64` keys.
 
 ```go
-import "github.com/paulmanoni/nexus/extension/maskid"
+import "github.com/paulmanoni/nexus/v2/extension/maskid"
 
 nexus.Boot(maskid.Module(maskid.Config{Key: os.Getenv("MASKID_KEY")}))
 ```

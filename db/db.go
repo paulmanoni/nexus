@@ -32,7 +32,7 @@ import (
 	"github.com/failsafe-go/failsafe-go"
 	"github.com/failsafe-go/failsafe-go/circuitbreaker"
 	"github.com/failsafe-go/failsafe-go/retrypolicy"
-	"github.com/paulmanoni/nexus/internal/logx"
+	"github.com/paulmanoni/nexus/v2/resource/connlog"
 	"go.uber.org/zap"
 
 	"gorm.io/gorm"
@@ -95,9 +95,9 @@ func (c Config) DSN() string {
 // Driver registry — the database/sql pattern. Importing nexus/db links
 // NO engine; each driver is a blank-import subpackage:
 //
-//	_ "github.com/paulmanoni/nexus/db/postgres"
-//	_ "github.com/paulmanoni/nexus/db/mysql"
-//	_ "github.com/paulmanoni/nexus/db/sqlite"
+//	_ "github.com/paulmanoni/nexus/v2/db/postgres"
+//	_ "github.com/paulmanoni/nexus/v2/db/mysql"
+//	_ "github.com/paulmanoni/nexus/v2/db/sqlite"
 //
 // Before this, db.go imported all three unconditionally, so every app
 // with a database linked the transpiled-C SQLite engine (~5MB), the
@@ -151,7 +151,7 @@ func (c Config) Dialector() gorm.Dialector {
 }
 
 func missingDriverMsg(d Driver) string {
-	return fmt.Sprintf("db: driver %q is not linked into this binary — add the blank import:\n\n\t_ \"github.com/paulmanoni/nexus/db/%s\"\n\n(drivers became opt-in so a Postgres app no longer ships the SQLite engine, and vice versa)", d, d)
+	return fmt.Sprintf("db: driver %q is not linked into this binary — add the blank import:\n\n\t_ \"github.com/paulmanoni/nexus/v2/db/%s\"\n\n(drivers became opt-in so a Postgres app no longer ships the SQLite engine, and vice versa)", d, d)
 }
 
 // PoolConfig tunes the underlying *sql.DB pool. Postgres/MySQL get a
@@ -204,7 +204,7 @@ type Manager struct {
 	// maintain() tick into state transitions: one line when the server goes
 	// down, widening still-down heartbeats, one line on recovery.
 	availOnce sync.Once
-	availT    *logx.Transition
+	availT    *connlog.Transition
 
 	// envNames + bindName drive NexusEnv / NexusServices when the
 	// auto-walk fires. Populated via WithEnvNames / WithBindName
@@ -401,7 +401,7 @@ func (m *Manager) connect() error {
 		zap.String("driver", string(m.cfg.Driver)),
 		zap.String("address", m.cfg.Address()),
 	}
-	if ev, tf := m.avail().OK(); ev == logx.EventRecovered {
+	if ev, tf := m.avail().OK(); ev == connlog.EventRecovered {
 		// The outage's shape closes the story the down/still-down lines told.
 		m.logger.Info("db: reconnected", append(fields, tf...)...)
 	} else {
@@ -411,8 +411,8 @@ func (m *Manager) connect() error {
 }
 
 // avail returns the availability tracker, named after the binding.
-func (m *Manager) avail() *logx.Transition {
-	m.availOnce.Do(func() { m.availT = logx.NewTransition("db:" + m.bindName) })
+func (m *Manager) avail() *connlog.Transition {
+	m.availOnce.Do(func() { m.availT = connlog.NewTransition("db:" + m.bindName) })
 	return m.availT
 }
 
@@ -423,11 +423,11 @@ func (m *Manager) avail() *logx.Transition {
 // line twelve times a minute per database for as long as the server was
 // down — with six databases configured that buried everything else.
 func (m *Manager) reportUnreachable(err error) {
-	if logx.IsRetryState(err) {
+	if connlog.IsRetryState(err) {
 		return
 	}
 	ev, tf := m.avail().Fail(err)
-	if ev == logx.EventNone {
+	if ev == connlog.EventNone {
 		return
 	}
 	addr := m.cfg.Address()
@@ -436,14 +436,14 @@ func (m *Manager) reportUnreachable(err error) {
 		zap.String("driver", string(m.cfg.Driver)),
 		zap.String("database", m.cfg.Database),
 		zap.String("address", addr),
-		zap.String("error", logx.Cause(err)),
+		zap.String("error", connlog.Cause(err)),
 	}
-	if hint := logx.Hint(err, string(m.cfg.Driver), addr); hint != "" {
+	if hint := connlog.Hint(err, string(m.cfg.Driver), addr); hint != "" {
 		fields = append(fields, zap.String("fix", hint))
 	}
 	fields = append(fields, tf...)
 	msg := "db: cannot reach the server, retrying in the background"
-	if ev == logx.EventStillDown {
+	if ev == connlog.EventStillDown {
 		msg = "db: still unreachable, retrying in the background"
 	}
 	m.logger.Warn(msg, fields...)
@@ -482,7 +482,7 @@ func (m *Manager) maintain() {
 				// Feed the availability tracker so this is the outage's ONE
 				// "went down" line; the connect retries that follow continue
 				// as still-down heartbeats instead of re-announcing.
-				if ev, tf := m.avail().Fail(err); ev != logx.EventNone {
+				if ev, tf := m.avail().Fail(err); ev != connlog.EventNone {
 					m.logger.Warn("db: connection lost", append([]zap.Field{
 						zap.String("name", m.bindName), zap.Error(err),
 					}, tf...)...)

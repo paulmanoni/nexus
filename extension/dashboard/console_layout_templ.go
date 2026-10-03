@@ -11,7 +11,7 @@ import templruntime "github.com/a-h/templ/runtime"
 import (
 	"time"
 
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/icon"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/icon"
 )
 
 // themeBoot sets the theme before first paint: the saved choice (shared with

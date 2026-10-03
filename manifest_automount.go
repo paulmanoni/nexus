@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/resource"
-	"github.com/paulmanoni/nexus/transport/gql"
+	"github.com/paulmanoni/nexus/v2/extension/metrics"
+	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/resource"
+	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
 // autoMountIn bundles the inputs autoMountGraphQL works over: every GqlField

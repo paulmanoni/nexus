@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/routertest"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/routertest"
 )
 
 // The stdlib adapter must satisfy the shared router seam contract (named/

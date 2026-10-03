@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/view"
 )
 
 // Board is a live page: its state lives on the server, one copy per

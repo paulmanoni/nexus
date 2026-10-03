@@ -3,7 +3,7 @@ package inertia
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // redirect is the sentinel a page handler returns (as its error) to issue an

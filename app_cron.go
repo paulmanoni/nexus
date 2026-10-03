@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/paulmanoni/nexus/extension/cron"
+	"github.com/paulmanoni/nexus/v2/extension/cron"
 )
 
 // Cron starts building a scheduled job. Finalize with .Handler(fn). Jobs run

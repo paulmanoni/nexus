@@ -5,7 +5,7 @@
 // dashboard.
 //
 // nexus does NOT replace the caller's GraphQL layer: hand it a *graphql.Schema
-// (typically built with github.com/paulmanoni/nexus/graph) and it mounts + introspects.
+// (typically built with github.com/paulmanoni/nexus/v2/graph) and it mounts + introspects.
 //
 // # Entry points
 //
@@ -40,22 +40,22 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 
-	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/extension/cron"
-	"github.com/paulmanoni/nexus/extension/dashboard"
-	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/extension/ratelimit"
-	"github.com/paulmanoni/nexus/internal/vitehot"
-	"github.com/paulmanoni/nexus/manifest"
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/resource"
-	"github.com/paulmanoni/nexus/trace"
-	"github.com/paulmanoni/nexus/transport/gql"
-	"github.com/paulmanoni/nexus/transport/ws"
+	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/extension/cron"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard"
+	"github.com/paulmanoni/nexus/v2/extension/metrics"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
+	"github.com/paulmanoni/nexus/v2/manifest"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/resource"
+	"github.com/paulmanoni/nexus/v2/trace"
+	"github.com/paulmanoni/nexus/v2/transport/gql"
+	"github.com/paulmanoni/nexus/v2/transport/ws"
 )
 
 // EnvAdminToken is the env var the framework reads for the admin

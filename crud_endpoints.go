@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // AsCRUD registers a default set of CRUD endpoints for type T.

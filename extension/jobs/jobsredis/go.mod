@@ -1,10 +1,10 @@
-module github.com/paulmanoni/nexus/extension/jobs/jobsredis
+module github.com/paulmanoni/nexus/extension/jobs/jobsredis/v2
 
 go 1.26.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.39.0
-	github.com/paulmanoni/nexus v1.78.2
+	github.com/paulmanoni/nexus/v2 v2.0.0
 	github.com/redis/go-redis/v9 v9.19.0
 )
 

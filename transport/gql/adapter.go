@@ -1,5 +1,5 @@
 // Package gql mounts a GraphQL schema (typically assembled by
-// github.com/paulmanoni/nexus/graph) onto Gin and introspects its operations
+// github.com/paulmanoni/nexus/v2/graph) onto Gin and introspects its operations
 // into the nexus registry. nexus does NOT own schema assembly — the caller
 // keeps using go-graph (or graphql-go directly) and hands nexus the finished *graphql.Schema.
 package gql
@@ -13,14 +13,14 @@ import (
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/parser"
 	"github.com/graphql-go/graphql/language/source"
-	"github.com/paulmanoni/nexus/dataloader"
-	graph "github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/dataloader"
+	graph "github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 
-	"github.com/paulmanoni/nexus/extension/ratelimit"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // Options tunes how the GraphQL endpoint is served. Pass values via the

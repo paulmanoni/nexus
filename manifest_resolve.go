@@ -5,7 +5,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // resolveEffectiveManifest builds the base manifest from declared

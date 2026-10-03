@@ -14,8 +14,8 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/paulmanoni/nexus/extension/ratelimit"
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // DefaultConfigPath is the conventional file LoadConfig + MustLoadConfig

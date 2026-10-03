@@ -10,7 +10,7 @@ func method(recv, name, kw string, line int, args ...string) Annotation {
 }
 
 func TestEmit_Controller(t *testing.T) {
-	inertiaImport := []string{`"github.com/paulmanoni/nexus/extension/inertia"`}
+	inertiaImport := []string{`"github.com/paulmanoni/nexus/v2/extension/inertia"`}
 	anns := []Annotation{
 		{Func: "NewUsersController", Keyword: "provide", Line: 5},
 		{Func: "UsersController", Keyword: "controller", Args: []string{"/users"}, Line: 10, TypeLevel: true},
@@ -38,10 +38,10 @@ func TestEmit_Controller(t *testing.T) {
 package users
 
 import (
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/decorate"
-	"github.com/paulmanoni/nexus/extension/auth"
-	"github.com/paulmanoni/nexus/extension/inertia"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/decorate"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
 )
 
 func init() {
@@ -138,7 +138,7 @@ func TestEmit_Job(t *testing.T) {
 		`jobs.Define((*ReportService).Generate, jobs.Queue("low"), jobs.Timeout(2*time.Hour), jobs.Retry(3), jobs.Unique(90*time.Second)),`,
 		`jobs.DefineFunc(SendDigest),`,
 		`jobs.Define((*C).Rebuild, jobs.Name("rebuild-index")),`,
-		`"github.com/paulmanoni/nexus/extension/jobs"`,
+		`"github.com/paulmanoni/nexus/v2/extension/jobs"`,
 		`"time"`,
 	} {
 		if !strings.Contains(string(got), want) {
@@ -171,7 +171,7 @@ func TestEmit_Job(t *testing.T) {
 // Annotated methods of a type without //@controller are collected into one
 // nexus.ControllerActions call, paths as written, for a Go-declared controller.
 func TestEmit_ImplicitActions(t *testing.T) {
-	inertiaImport := []string{`"github.com/paulmanoni/nexus/extension/inertia"`}
+	inertiaImport := []string{`"github.com/paulmanoni/nexus/v2/extension/inertia"`}
 	anns := []Annotation{
 		method("DashboardController", "Index", "page", 10, "GET", "/", "Admin/Dashboard"),
 		method("DashboardController", "Index", "auth", 11, "Required"),

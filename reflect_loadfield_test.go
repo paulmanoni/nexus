@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/paulmanoni/nexus/dataloader"
-	"github.com/paulmanoni/nexus/graph"
+	"github.com/paulmanoni/nexus/v2/dataloader"
+	"github.com/paulmanoni/nexus/v2/graph"
 )
 
 // TestLoadField_BatchesNListChildrenIntoOneCall is the headline

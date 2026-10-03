@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // Store persists session data by ID. Implementations must be safe for

@@ -1,4 +1,4 @@
-module github.com/paulmanoni/nexus/cmd/nexus
+module github.com/paulmanoni/nexus/cmd/nexus/v2
 
 go 1.27.1
 
@@ -7,8 +7,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/paulmanoni/deco v0.19.0
-	github.com/paulmanoni/nexus v1.78.0
-	github.com/paulmanoni/nexus/view v1.78.0
+	github.com/paulmanoni/nexus/v2 v2.0.0
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
@@ -57,7 +56,7 @@ require (
 //     cmd/nexus package in it resolves the path ambiguity.
 //  2. Bump the parent require above to that tag and `go mod tidy`.
 //  3. Tag this module as cmd/nexus/vX.Y.Z so
-//     `go install github.com/paulmanoni/nexus/cmd/nexus@latest` works.
+//     `go install github.com/paulmanoni/nexus/cmd/nexus/v2@latest` works.
 // In-repo development builds against the checked-out parent via the
 // root go.work; no replace directive here — `go install pkg@version`
 // refuses modules that carry one.

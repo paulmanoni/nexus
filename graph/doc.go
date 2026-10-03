@@ -17,7 +17,7 @@
 //
 // Start immediately with the default schema:
 //
-//	import "github.com/paulmanoni/nexus/graph"
+//	import "github.com/paulmanoni/nexus/v2/graph"
 //
 //	func main() {
 //	    handler := graph.NewHTTP(&graph.GraphContext{

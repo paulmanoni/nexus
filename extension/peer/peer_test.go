@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // reflectTypeFor is a tiny helper so the tests can ask for the

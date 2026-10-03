@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 func newLogoutApp(t *testing.T, opts ...auth.LogoutOption) (*nexus.App, func(context.Context) error) {

@@ -25,8 +25,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/jobs"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
 // Config says where the queue lives. Zero values read [jobs.redis] in

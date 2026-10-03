@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // slowResource lets a test pin a Healthy() probe duration and

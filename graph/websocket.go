@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/graphql-go/graphql"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // WebSocketManager manages WebSocket connections for GraphQL subscriptions.

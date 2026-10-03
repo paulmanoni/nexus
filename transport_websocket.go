@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/transport/ws"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/transport/ws"
 )
 
 // WSSession is the per-connection handle injected into AsWS handlers. Every

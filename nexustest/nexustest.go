@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // App is a started, listener-less nexus app under test. It is an http.Handler.

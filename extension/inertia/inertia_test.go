@@ -13,9 +13,9 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/inertia"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // pageProps exercises all three prop kinds: a plain field, an Optional (lazy)

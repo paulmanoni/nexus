@@ -5,10 +5,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // fakeMgr mimics a custom manager (db/cache/queue shape): void

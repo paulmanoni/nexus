@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	nexusmanifest "github.com/paulmanoni/nexus/manifest"
+	nexusmanifest "github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // doctorOptions mirrors lintOptions — same input sources, same

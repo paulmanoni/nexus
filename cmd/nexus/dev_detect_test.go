@@ -20,7 +20,7 @@ func TestDetectFrontendDir(t *testing.T) {
 		{
 			"qualified ServeFrontend with web/dist",
 			`package main
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 //go:embed web/dist
 var distFS = "stub"
 func main() { nexus.ServeFrontend(distFS, "web/dist") }
@@ -30,7 +30,7 @@ func main() { nexus.ServeFrontend(distFS, "web/dist") }
 		{
 			"unqualified (dot-import) ServeFrontend",
 			`package main
-import . "github.com/paulmanoni/nexus"
+import . "github.com/paulmanoni/nexus/v2"
 var distFS = "stub"
 func main() { ServeFrontend(distFS, "client/build") }
 `,
@@ -39,7 +39,7 @@ func main() { ServeFrontend(distFS, "client/build") }
 		{
 			"single-segment embed root",
 			`package main
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 var distFS = "stub"
 func main() { nexus.ServeFrontend(distFS, "dist") }
 `,
@@ -48,7 +48,7 @@ func main() { nexus.ServeFrontend(distFS, "dist") }
 		{
 			"non-literal embed root falls through",
 			`package main
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 var (
     distFS = "stub"
     root   = "web/dist"
@@ -67,7 +67,7 @@ func main() {}
 		{
 			"frontend.Plugin(Config{Root: web})",
 			`package main
-import "github.com/paulmanoni/nexus/extension/frontend"
+import "github.com/paulmanoni/nexus/v2/extension/frontend"
 var fs = "stub"
 func main() {
     frontend.Plugin(frontend.Config{Root: "web", FS: fs})
@@ -78,7 +78,7 @@ func main() {
 		{
 			"frontend.Plugin with Root not first field",
 			`package main
-import "github.com/paulmanoni/nexus/extension/frontend"
+import "github.com/paulmanoni/nexus/v2/extension/frontend"
 var fs = "stub"
 func main() {
     frontend.Plugin(frontend.Config{
@@ -93,7 +93,7 @@ func main() {
 		{
 			"frontend.Plugin without Root field falls through",
 			`package main
-import "github.com/paulmanoni/nexus/extension/frontend"
+import "github.com/paulmanoni/nexus/v2/extension/frontend"
 var fs = "stub"
 func main() { frontend.Plugin(frontend.Config{FS: fs}) }
 `,
@@ -102,7 +102,7 @@ func main() { frontend.Plugin(frontend.Config{FS: fs}) }
 		{
 			"frontend.Plugin with non-literal Root falls through",
 			`package main
-import "github.com/paulmanoni/nexus/extension/frontend"
+import "github.com/paulmanoni/nexus/v2/extension/frontend"
 var (
     fs   = "stub"
     root = "web"
@@ -115,8 +115,8 @@ func main() { frontend.Plugin(frontend.Config{Root: root, FS: fs}) }
 			"both ServeFrontend and frontend.Plugin → ServeFrontend wins (legacy first)",
 			`package main
 import (
-    "github.com/paulmanoni/nexus"
-    "github.com/paulmanoni/nexus/extension/frontend"
+    "github.com/paulmanoni/nexus/v2"
+    "github.com/paulmanoni/nexus/v2/extension/frontend"
 )
 var distFS = "stub"
 func main() {
@@ -145,7 +145,7 @@ func TestDetectFrontendDir_SkipsTestsAndGenerated(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "zz_deploy_gen.go"), []byte(
 		`package main
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 var fakeFS = "stub"
 func init() { nexus.ServeFrontend(fakeFS, "STALE/dist") }
 `), 0o644); err != nil {
@@ -153,7 +153,7 @@ func init() { nexus.ServeFrontend(fakeFS, "STALE/dist") }
 	}
 	if err := os.WriteFile(filepath.Join(dir, "main_test.go"), []byte(
 		`package main
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 var testFS = "stub"
 func TestX() { nexus.ServeFrontend(testFS, "TEST/dist") }
 `), 0o644); err != nil {
@@ -161,7 +161,7 @@ func TestX() { nexus.ServeFrontend(testFS, "TEST/dist") }
 	}
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(
 		`package main
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 var distFS = "stub"
 func main() { nexus.ServeFrontend(distFS, "real/dist") }
 `), 0o644); err != nil {

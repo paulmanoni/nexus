@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 func okHandler(ctx context.Context) (map[string]string, error) {

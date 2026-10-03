@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 func TestValidate(t *testing.T) {

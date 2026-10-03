@@ -1,11 +1,11 @@
 package nexus
 
 import (
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/extension/metrics"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // buildEndpointChain assembles the standard Gin middleware chain shared by

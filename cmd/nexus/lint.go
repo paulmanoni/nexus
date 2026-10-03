@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/paulmanoni/nexus"
-	nexusmanifest "github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2"
+	nexusmanifest "github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // lintOptions carries the flags `nexus lint` accepts. The cobra

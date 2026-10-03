@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/v2/client"
 )
 
 // TestDevAutoMountClientSDK covers the dev-only client SDK fallback:

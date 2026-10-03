@@ -311,7 +311,7 @@ A minimal nexus app: one module, one query, dashboard at /__nexus/.
 
     package main
 
-    import "github.com/paulmanoni/nexus"
+    import "github.com/paulmanoni/nexus/v2"
 
     type AdvertsService struct{ *nexus.Service }
 
@@ -721,7 +721,7 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
   inertia.AsPage() is the Go form of //@page without a component.`,
 
 	"views": `
-VIEWS (github.com/paulmanoni/nexus/view — its own module)
+VIEWS (github.com/paulmanoni/nexus/v2/view — its own module)
 
 Server-rendered templ pages that stay reactive without a JavaScript build.
 You write plain templ; what is reactive follows from what it reads:
@@ -836,7 +836,7 @@ struct; the engine wraps it into the Inertia page protocol — JSON for XHR
 visits, a full HTML document for initial loads. Params binding, validation,
 DI, auth gates, tracing and metrics behave exactly like any REST endpoint.
 
-    import "github.com/paulmanoni/nexus/extension/inertia"
+    import "github.com/paulmanoni/nexus/v2/extension/inertia"
 
     //go:embed all:web/dist
     var webFS embed.FS
@@ -919,7 +919,7 @@ Redirects — return as the handler's error:
 Auth gates compose normally (auth.Required, deny-by-default, nexus.Public).
 For login-redirect-instead-of-401 on Inertia visits, use the auth bridge:
 
-    import "github.com/paulmanoni/nexus/extension/inertia/iauth"
+    import "github.com/paulmanoni/nexus/v2/extension/inertia/iauth"
     // page nav → /login redirect; GraphQL → error; API → your envelope:
     auth.Module(auth.Config{ ..., OnError: iauth.ErrorHandler("/login", apiErrors{}) })
 
@@ -962,7 +962,7 @@ loads its modules from Vite through the hot file (see "nexus docs frontend").
 
 Server-side rendering (SSR) — initial loads rendered to HTML, then hydrated:
 
-    import "github.com/paulmanoni/nexus/extension/inertia/ssrhttp"
+    import "github.com/paulmanoni/nexus/v2/extension/inertia/ssrhttp"
 
     inertia.Module(inertia.Config{
         SSR: ssrhttp.New(""), // "" → http://127.0.0.1:13714 (the Node SSR server)
@@ -1013,7 +1013,7 @@ any single action (on any controller) render that page.
 	"jobs": `
 JOBS
 
-  import "github.com/paulmanoni/nexus/extension/jobs"
+  import "github.com/paulmanoni/nexus/v2/extension/jobs"
 
 A job is a method whose receiver comes from DI and whose args are a JSON struct:
 
@@ -1086,7 +1086,7 @@ counts, the registered jobs and the latest failure.
 	"inertiatest": `
 INERTIATEST
 
-  import "github.com/paulmanoni/nexus/extension/inertia/inertiatest"
+  import "github.com/paulmanoni/nexus/v2/extension/inertia/inertiatest"
 
 The Inertia-aware test harness — the inertia layer over nexustest. It boots a
 listener-less App (real router, middleware, DI, reflective dispatch — no socket),
@@ -1155,7 +1155,7 @@ AUTH
 Wires the framework's auth surface: credential extraction → cached
 identity resolution → per-op enforcement → trace events.
 
-    import "github.com/paulmanoni/nexus/extension/auth"
+    import "github.com/paulmanoni/nexus/v2/extension/auth"
 
     resolve := func(ctx context.Context, tok string) (*auth.Identity, error) {
         u, err := myAPI.ValidateToken(ctx, tok)
@@ -1348,7 +1348,7 @@ Endpoints.LogoutExtract (default Bearer()) and are idempotent (200 {"ok":true}).
 FULL OAUTH2 IN ONE CONFIG — the oauth2 extension ships a ready backend that
 implements every capability, so a token server folds into auth.Module:
 
-    import "github.com/paulmanoni/nexus/extension/oauth2"
+    import "github.com/paulmanoni/nexus/v2/extension/oauth2"
 
     auth.Module(auth.Config{
         Backend:   oauth2.Backend(oauth2.Config{Authenticator: authFn, ClientStore: cs}),
@@ -1436,7 +1436,7 @@ To fold OAuth2 into an existing auth.Module instead of a separate call:
 
 Minimal app — password grant against your user store:
 
-    import "github.com/paulmanoni/nexus/extension/oauth2"
+    import "github.com/paulmanoni/nexus/v2/extension/oauth2"
 
     nexus.Run(nexus.Config{...},
         oauth2.Module(oauth2.Config{
@@ -1807,7 +1807,7 @@ NO extension wired. ENV (STORAGE_URL) overrides it; [extensions.config]
 
 EXTENSIONS are decoded automatically by nexus.Boot (or explicitly by
 nexus.MustLoadExtensions) when the matching extension is blank-imported
-(_ "github.com/paulmanoni/nexus/extension/config" — Go links only
+(_ "github.com/paulmanoni/nexus/v2/extension/config" — Go links only
 imported code, so the import is still required):
 
     [extensions.config]             # config server — hot-reloadable nexus.Get values
@@ -1823,7 +1823,7 @@ the module graph. Set a hint only to disambiguate (two deps share a package
 name) or to name a dep not imported anywhere yet:
 
     [decorators.imports]
-    inertia = "github.com/paulmanoni/nexus/extension/inertia"
+    inertia = "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 Slice-of-middleware fields (Global, Dashboard) need Go funcs, so they stay
 in code; everything data-driven lives here.
@@ -2432,7 +2432,7 @@ health probing, and trace stitching across binaries.
 
 Server side:
 
-    import "github.com/paulmanoni/nexus/extension/peer"
+    import "github.com/paulmanoni/nexus/v2/extension/peer"
 
     nexus.Run(nexus.Config{...},
         peer.Module(peer.Config{
@@ -2715,7 +2715,7 @@ chosen by config, so local-in-dev / S3-in-prod is a config change only.
 Wire a disk like a cache or database — a typed Bind that embeds
 *storage.Manager, injected into handlers and shown on the dashboard:
 
-    import "github.com/paulmanoni/nexus/extension/storage"
+    import "github.com/paulmanoni/nexus/v2/extension/storage"
 
     type Uploads struct{ *storage.Manager }
 
@@ -2760,7 +2760,7 @@ runs. Handlers, GORM models and SQL keep using int64 primary keys.
 
 ENABLE
 
-    import "github.com/paulmanoni/nexus/extension/maskid"
+    import "github.com/paulmanoni/nexus/v2/extension/maskid"
 
     nexus.Boot(maskid.Module(maskid.Config{Key: os.Getenv("MASKID_KEY")}))
 
@@ -2883,7 +2883,7 @@ Django-style server-side sessions: a cookie carries an opaque ID,
 the data lives in a pluggable Store, handlers use a lazy handle.
 Works for anonymous visitors and logged-in users alike.
 
-    import "github.com/paulmanoni/nexus/extension/session"
+    import "github.com/paulmanoni/nexus/v2/extension/session"
 
     nexus.Boot(
         session.Module(session.Config{}),   // memory store, 14d TTL
@@ -2956,7 +2956,7 @@ change only.
 Wire a mailer like a cache, database, or disk — a typed Bind that embeds
 *mail.Manager, injected into handlers and shown on the dashboard:
 
-    import "github.com/paulmanoni/nexus/extension/mail"
+    import "github.com/paulmanoni/nexus/v2/extension/mail"
 
     type Mailer struct{ *mail.Manager }
 

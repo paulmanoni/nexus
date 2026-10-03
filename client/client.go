@@ -27,9 +27,9 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // DefaultPath is the URL prefix the SDK routes mount under when

@@ -1,6 +1,6 @@
 package inertia
 
-import "github.com/paulmanoni/nexus/httpx"
+import "github.com/paulmanoni/nexus/v2/httpx"
 
 // Inertia history-state encryption (v2). The client can encrypt the history
 // entry it stores for a page so that browser back/forward doesn't leak prior

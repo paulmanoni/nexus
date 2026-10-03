@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // encodeForTest mirrors what Topic.Publish does internally so tests

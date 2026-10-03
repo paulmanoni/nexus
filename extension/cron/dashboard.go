@@ -3,7 +3,7 @@ package cron
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // MountDashboard mounts the cron introspection + control surface onto

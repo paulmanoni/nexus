@@ -6,7 +6,7 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/language/ast"
 
-	"github.com/paulmanoni/nexus/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
 
 // MaskedID is the scalar that stands in for Int on ID fields when the

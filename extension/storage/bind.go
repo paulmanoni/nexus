@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/internal/bindutil"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/internal/bindutil"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // Config declares a disk. Driver selects the backend; the remaining

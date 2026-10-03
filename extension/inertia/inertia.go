@@ -25,11 +25,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
 )
 
 // AutoVersion is the zero value for Config.Version: derive the Inertia asset

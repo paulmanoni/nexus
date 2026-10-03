@@ -5,7 +5,7 @@ opaque ID, the data lives in a store, and handlers use a lazy handle. It works f
 anonymous visitors and signed-in users, on REST, Inertia and GraphQL.
 
 ```go
-import "github.com/paulmanoni/nexus/extension/session"
+import "github.com/paulmanoni/nexus/v2/extension/session"
 
 nexus.Boot(session.Module(session.Config{}))   // in-memory store, 14-day TTL
 ```

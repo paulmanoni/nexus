@@ -26,7 +26,7 @@ package decorate
 import (
 	"sync"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 var reg struct {

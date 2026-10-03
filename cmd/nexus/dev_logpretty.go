@@ -36,7 +36,7 @@ type logPretty struct {
 	fmt   logFormatter // chosen renderer (pretty / logfmt / pattern / …)
 
 	// strip, when set, mirrors resource availability transitions (the
-	// resource/state fields logx.Transition stamps) onto the dev status
+	// resource/state fields connlog.Transition stamps) onto the dev status
 	// strip, so a down database or redis stays visible under the scroll.
 	strip *statusStrip
 
@@ -94,7 +94,7 @@ func (l *logPretty) render(line []byte) string {
 	return l.fmt(rec, l.palette())
 }
 
-// observeResourceState lifts logx.Transition's resource/state fields onto
+// observeResourceState lifts connlog.Transition's resource/state fields onto
 // the status strip: down and still-down pin an entry, up clears it.
 func (l *logPretty) observeResourceState(rec zapRecord) {
 	if l.strip == nil {

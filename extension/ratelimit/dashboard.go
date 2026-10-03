@@ -3,7 +3,7 @@ package ratelimit
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // MountDashboard mounts the rate-limit introspection + override

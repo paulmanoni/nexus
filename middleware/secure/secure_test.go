@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
 func newHeadersEngine(t *testing.T, cfg HeadersConfig) httpx.Router {

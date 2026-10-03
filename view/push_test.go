@@ -15,7 +15,7 @@ import (
 	"github.com/a-h/templ"
 	"github.com/gorilla/websocket"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // likes is shared server state several live pages show.

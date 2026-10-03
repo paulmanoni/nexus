@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // WithClientIP returns ctx carrying ip. Transports (gin REST handler,

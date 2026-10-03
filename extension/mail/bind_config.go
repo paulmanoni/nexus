@@ -3,7 +3,7 @@ package mail
 import (
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // BindFromConfig binds a marker type T to the [mail.<name>] block in

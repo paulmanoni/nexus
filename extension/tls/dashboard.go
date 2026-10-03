@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // handleListCerts answers GET /__nexus/tls/certs. Returns one row

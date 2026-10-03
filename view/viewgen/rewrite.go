@@ -35,11 +35,11 @@ import (
 	"github.com/a-h/templ/generator"
 	"github.com/a-h/templ/parser/v2"
 
-	"github.com/paulmanoni/nexus/view/viewgen/jsgen"
+	"github.com/paulmanoni/nexus/v2/view/viewgen/jsgen"
 )
 
 // ViewImport is the runtime package generated code calls.
-const ViewImport = "github.com/paulmanoni/nexus/view"
+const ViewImport = "github.com/paulmanoni/nexus/v2/view"
 
 // Result is one compiled .templ file.
 type Result struct {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 func TestSessionCookie_SetClearExtract(t *testing.T) {

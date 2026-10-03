@@ -10,7 +10,7 @@
 ## Resolve a token
 
 ```go
-import "github.com/paulmanoni/nexus/extension/auth"
+import "github.com/paulmanoni/nexus/v2/extension/auth"
 
 resolve := func(ctx context.Context, token string) (*auth.Identity, error) {
     u, err := tokens.Validate(ctx, token)

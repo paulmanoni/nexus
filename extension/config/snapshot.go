@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/paulmanoni/nexus/extension/config/internal/canonical"
-	"github.com/paulmanoni/nexus/internal/dotpath"
+	"github.com/paulmanoni/nexus/v2/extension/config/internal/canonical"
+	"github.com/paulmanoni/nexus/v2/internal/dotpath"
 )
 
 // Snapshot is the on-the-wire shape served at GET /__config/snapshot/:app/:profile.

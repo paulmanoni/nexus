@@ -10,12 +10,12 @@ import (
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/graphql-go/graphql"
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus/extension/ratelimit"
-	"github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // AsQuery registers a GraphQL query from a plain Go handler. The handler's

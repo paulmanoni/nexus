@@ -1,7 +1,7 @@
 // Package sqlite links the pure-Go SQLite engine (glebarez/modernc)
 // into nexus/db. Blank-import it to enable Driver "sqlite":
 //
-//	_ "github.com/paulmanoni/nexus/db/sqlite"
+//	_ "github.com/paulmanoni/nexus/v2/db/sqlite"
 //
 // Kept out of nexus/db itself so a Postgres or MySQL app doesn't ship
 // the transpiled-C SQLite engine (~5MB of binary) it never opens.
@@ -11,7 +11,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
-	"github.com/paulmanoni/nexus/db"
+	"github.com/paulmanoni/nexus/v2/db"
 )
 
 func init() {

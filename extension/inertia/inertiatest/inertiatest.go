@@ -37,8 +37,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/nexustest"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/nexustest"
 )
 
 // Inertia protocol headers (mirrored from the extension so the harness needs no

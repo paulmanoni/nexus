@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 )
 
 // DefaultManifestPath is the file the framework auto-loads from the

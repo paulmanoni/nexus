@@ -14,7 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
 // viteDevFixture is a project dir with web/dist on disk, mounted the way

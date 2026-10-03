@@ -13,10 +13,10 @@ import (
 
 	"github.com/templui/templui/utils"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/view"
-	"github.com/paulmanoni/nexus/view/example/pets"
-	"github.com/paulmanoni/nexus/view/example/state"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/view"
+	"github.com/paulmanoni/nexus/view/example/v2/pets"
+	"github.com/paulmanoni/nexus/view/example/v2/state"
 )
 
 //go:embed all:web/dist

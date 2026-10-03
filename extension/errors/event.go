@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // Event is the plugin's captured-error shape — distinct from

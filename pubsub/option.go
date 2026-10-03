@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // Subscribe registers a subscription against topic. Returns a

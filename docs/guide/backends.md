@@ -10,7 +10,7 @@ The default is the standard library's `net/http.ServeMux`, so a default binary l
 gin or chi. Switch with one option:
 
 ```go
-import "github.com/paulmanoni/nexus/httpx/chirouter" // or .../httpx/ginrouter
+import "github.com/paulmanoni/nexus/v2/httpx/chirouter" // or .../httpx/ginrouter
 
 nexus.Boot(nexus.WithRouter(chirouter.New()))
 ```
@@ -35,7 +35,7 @@ nexus has its own small container, `nexus/di`, and it is the default. A default 
 links no `go.uber.org/fx` or `dig`. To use fx:
 
 ```go
-import "github.com/paulmanoni/nexus/di/fxcontainer" // a separate module
+import "github.com/paulmanoni/nexus/di/fxcontainer/v2" // a separate module
 
 nexus.Boot(nexus.WithContainer(fxcontainer.New()))
 ```

@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // recoveryMiddleware catches handler panics, captures the runtime

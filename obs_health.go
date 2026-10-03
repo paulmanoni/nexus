@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/extension/dashboard"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard"
 )
 
 // healthState tracks two signals every production deployment needs:

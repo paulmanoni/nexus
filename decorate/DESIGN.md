@@ -19,16 +19,16 @@ github.com/paulmanoni/deco            generic //@ transpiler/scanner
   • decorators.Func/FuncValues          (runtime wrappers — optional, unused here)
         │ deco.Scan(dir) → []Hit{Func, Keyword, Args, Pos}
         ▼
-github.com/paulmanoni/nexus/internal/handlergen   nexus-specific emitter
+github.com/paulmanoni/nexus/cmd/nexus/v2/internal/handlergen   nexus-specific emitter
   • Hit[] → Go source: func init(){ decorate.Rest(...); decorate.Provide(...) }
         │ emits init() calls
         ▼
-github.com/paulmanoni/nexus/decorate  runtime contract  (IMPLEMENTED)
+github.com/paulmanoni/nexus/v2/decorate  runtime contract  (IMPLEMENTED)
   • decorate.Rest/Query/Provide/WS/Worker/… → record → nexus.As*/Provide
   • decorate.Module(name) drains → one nexus.Option
   • ZERO build-time deps; plain Go the generated init() calls invoke
         ▲
-github.com/paulmanoni/nexus/cmd/nexus  CLI (toolchain only)
+github.com/paulmanoni/nexus/cmd/nexus/v2  CLI (toolchain only)
   • nexus generate handlers → scan + emit COMMITTED *_gen.go
   • nexus dev               → scan + emit OVERLAY (temp, no churn)
   • nexus build             → nexus generate, then go build
@@ -125,8 +125,8 @@ func NewCreateUser(s *UsersService, p nexus.Params[NewUser]) (*User, error) { ..
 package handlers
 
 import (
-	"github.com/paulmanoni/nexus/decorate"
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2/decorate"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 func init() {

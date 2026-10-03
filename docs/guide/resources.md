@@ -8,8 +8,8 @@ on the dashboard, in red when they are down.
 
 ```go
 import (
-    "github.com/paulmanoni/nexus/db"
-    _ "github.com/paulmanoni/nexus/db/postgres" // the driver(s) you use
+    "github.com/paulmanoni/nexus/v2/db"
+    _ "github.com/paulmanoni/nexus/v2/db/postgres" // the driver(s) you use
 )
 
 type DB struct{ *db.Manager }
@@ -46,8 +46,8 @@ Handlers and services take `*DB` as a parameter. `db.GetDB()` returns the `*gorm
 
 ```go
 import (
-    "github.com/paulmanoni/nexus/extension/cache"
-    _ "github.com/paulmanoni/nexus/extension/cache/redis" // optional: Redis
+    "github.com/paulmanoni/nexus/v2/extension/cache"
+    _ "github.com/paulmanoni/nexus/extension/cache/redis/v2" // optional: Redis
 )
 
 type Cache struct{ *cache.Manager }

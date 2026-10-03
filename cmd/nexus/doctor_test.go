@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	nexusmanifest "github.com/paulmanoni/nexus/manifest"
+	nexusmanifest "github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // writeDoctorTOML drops a TOML doc into a temp file at .toml so

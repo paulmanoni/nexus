@@ -3,7 +3,7 @@ package errors
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // handleRecent answers GET /__nexus/errors/recent. Returns the

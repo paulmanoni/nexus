@@ -13,7 +13,7 @@ const page = `package app
 import (
 	"strings"
 
-	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/v2/view"
 )
 
 //@page GET /
@@ -121,7 +121,7 @@ func TestRegistrations(t *testing.T) {
 		`view.Shard(Results, auth.Required())`,
 		`view.Expose[*Store]()`,
 		`view.Expose[*SearchState]()`,
-		`"github.com/paulmanoni/nexus/extension/auth"`,
+		`"github.com/paulmanoni/nexus/v2/extension/auth"`,
 		`nexus.RegisterDeferredOptions(`,
 	} {
 		if !strings.Contains(src, want) {
@@ -220,7 +220,7 @@ var items []int
 // sees both, so the shard still inherits the page's gates.
 func TestShardAcrossFiles(t *testing.T) {
 	home := "package app\n\n//@page GET /\n//@auth Requires view_pets\ntempl Home() {\n\t@Results()\n}\n"
-	results := "package app\n\nimport \"github.com/paulmanoni/nexus/view\"\n\ntempl Results() {\n\t{{ q := view.Use[*SearchState](ctx).Query }}\n\t{{ rows := find(q.Get()) }}\n\tfor _, r := range rows {\n\t\t<li>{ r }</li>\n\t}\n}\n"
+	results := "package app\n\nimport \"github.com/paulmanoni/nexus/v2/view\"\n\ntempl Results() {\n\t{{ q := view.Use[*SearchState](ctx).Query }}\n\t{{ rows := find(q.Get()) }}\n\tfor _, r := range rows {\n\t\t<li>{ r }</li>\n\t}\n}\n"
 	a, err := File("app/home.templ", home, pkg)
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestLibraryAttributes(t *testing.T) {
 	src := `package app
 
 import (
-	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/v2/view"
 	"example.com/ui/button"
 )
 
@@ -291,7 +291,7 @@ templ Counter() {
 func TestMethodComponent(t *testing.T) {
 	src := `package app
 
-import "github.com/paulmanoni/nexus/view"
+import "github.com/paulmanoni/nexus/v2/view"
 
 templ (l *OrdersLive) Render() {
 	{{ open := view.State(ctx, false) }}
@@ -332,7 +332,7 @@ func TestSendInAttributes(t *testing.T) {
 	src := `package app
 
 import (
-	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/v2/view"
 	"example.com/ui/button"
 )
 

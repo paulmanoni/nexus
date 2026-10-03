@@ -10,8 +10,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
 // pageAssets is what a render needs from the frontend toolchain: where a

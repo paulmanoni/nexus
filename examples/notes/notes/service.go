@@ -1,6 +1,6 @@
 package notes
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 // Service groups every notes endpoint under one node in the dashboard's
 // architecture graph. Handlers take *Service as their first param to ground

@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // Compute is the per-request derivation behind a Scoped value.

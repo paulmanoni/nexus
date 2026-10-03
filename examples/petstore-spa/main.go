@@ -8,9 +8,9 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
-	"github.com/paulmanoni/nexus/extension/frontend"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/frontend"
 )
 
 //go:embed all:web/dist

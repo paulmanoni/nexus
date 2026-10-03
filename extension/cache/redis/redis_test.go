@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/extension/cache"
+	"github.com/paulmanoni/nexus/v2/extension/cache"
 )
 
 type payload struct{ Count int }

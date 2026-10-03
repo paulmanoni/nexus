@@ -3,7 +3,7 @@ package decorate
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 func aHandler() {}

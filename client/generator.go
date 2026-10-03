@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/paulmanoni/nexus/internal/tsgen"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/internal/tsgen"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // GenerateClientDTS projects a SDK manifest into the TypeScript

@@ -15,14 +15,14 @@ import (
 
 	"github.com/a-h/templ"
 
-	"github.com/paulmanoni/nexus/extension/cron"
-	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/extension/ratelimit"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/trace"
-	"github.com/paulmanoni/nexus/transport/gql"
+	"github.com/paulmanoni/nexus/v2/extension/cron"
+	"github.com/paulmanoni/nexus/v2/extension/metrics"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/trace"
+	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
 // The console is the dashboard's server-rendered shell: templ pages built

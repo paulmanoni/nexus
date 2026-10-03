@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // apolloSandboxHTML is the embedded Apollo Sandbox IDE. Sandbox is the

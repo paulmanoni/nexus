@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
 // TestParseIntrospectionNetworks_HappyPath confirms a mixed list of

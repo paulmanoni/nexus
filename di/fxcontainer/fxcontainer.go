@@ -5,7 +5,7 @@
 // dig back into the build. The default nexus binary links neither. Mirrors the
 // httpx/ginrouter seam.
 //
-//	import "github.com/paulmanoni/nexus/di/fxcontainer"
+//	import "github.com/paulmanoni/nexus/di/fxcontainer/v2"
 //
 //	nexus.Boot(nexus.WithContainer(fxcontainer.New()))
 //
@@ -18,7 +18,7 @@
 package fxcontainer
 
 import (
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 	"go.uber.org/fx"
 )
 

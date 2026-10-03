@@ -1,6 +1,6 @@
 package nexus
 
-import "github.com/paulmanoni/nexus/httpx"
+import "github.com/paulmanoni/nexus/v2/httpx"
 
 // ResponseRenderer overrides how a REST endpoint's *successful* return value
 // is written to the response. By default an AsRest handler's return is encoded
@@ -8,7 +8,7 @@ import "github.com/paulmanoni/nexus/httpx"
 // write to custom code instead.
 //
 // This is the single extension point the Inertia integration
-// (github.com/paulmanoni/nexus/extension/inertia) builds on: a page handler
+// (github.com/paulmanoni/nexus/v2/extension/inertia) builds on: a page handler
 // stays an ordinary reflective handler returning a typed props struct, and the
 // renderer wraps that struct into the Inertia page object — emitting JSON for
 // XHR visits or an HTML document shell for full loads. Keeping the hook here

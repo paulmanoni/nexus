@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 	"github.com/pelletier/go-toml/v2"
 )
 

@@ -15,10 +15,10 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/inertia"
-	"github.com/paulmanoni/nexus/internal/vitehot"
-	"github.com/paulmanoni/nexus/nexustest"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
+	"github.com/paulmanoni/nexus/v2/nexustest"
 )
 
 // assetApp boots an in-process app that registers its bundle through

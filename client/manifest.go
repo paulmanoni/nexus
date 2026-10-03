@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // SchemaVersion is the contract version emitted in Manifest.Version.

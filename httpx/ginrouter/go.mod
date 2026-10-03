@@ -1,10 +1,10 @@
-module github.com/paulmanoni/nexus/httpx/ginrouter
+module github.com/paulmanoni/nexus/httpx/ginrouter/v2
 
 go 1.26.2
 
 require (
 	github.com/gin-gonic/gin v1.10.1
-	github.com/paulmanoni/nexus v1.19.0
+	github.com/paulmanoni/nexus/v2 v2.0.0
 )
 
 require (
@@ -37,6 +37,6 @@ require (
 )
 
 // Local development against the parent in this repo. At release this is
-// swapped for a plain `require github.com/paulmanoni/nexus vX.Y.Z` pinned to a
+// swapped for a plain `require github.com/paulmanoni/nexus/v2 vX.Y.Z` pinned to a
 // parent tag that no longer contains httpx/ginrouter.
-replace github.com/paulmanoni/nexus => ../../
+replace github.com/paulmanoni/nexus/v2 => ../../

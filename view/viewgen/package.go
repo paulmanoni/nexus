@@ -31,8 +31,8 @@ import (
 // template gets its view.Expose[T]().
 
 const (
-	nexusImport = "github.com/paulmanoni/nexus"
-	authImport  = "github.com/paulmanoni/nexus/extension/auth"
+	nexusImport = "github.com/paulmanoni/nexus/v2"
+	authImport  = "github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 // directives reads the //@ lines of a component's doc comment.

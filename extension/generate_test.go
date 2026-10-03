@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // TestValidate_Generate exercises the Generate slot's validation rules.

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // Dev-only live reload. When ServeFrontend boots under NEXUS_DEV=1,

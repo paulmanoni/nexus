@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 // TestModule_EndToEnd wires auth.Module through a full nexus.Run-style

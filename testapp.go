@@ -3,7 +3,7 @@ package nexus
 import (
 	"context"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 )
 
 // InProcess assembles and starts an App exactly like Run — same early/user/late

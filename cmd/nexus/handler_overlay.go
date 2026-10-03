@@ -16,8 +16,8 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/paulmanoni/deco/transpiler"
-	"github.com/paulmanoni/nexus/internal/handlergen"
-	"github.com/paulmanoni/nexus/view/viewgen"
+	"github.com/paulmanoni/nexus/cmd/nexus/v2/internal/handlergen"
+	"github.com/paulmanoni/nexus/v2/view/viewgen"
 )
 
 // allHandlerArtifacts returns every file the codegen produces under root: one

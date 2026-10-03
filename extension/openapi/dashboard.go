@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 	"gopkg.in/yaml.v3"
 
-	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/v2/client"
 )
 
 // handleSpecJSON serves the OpenAPI document as JSON. The default

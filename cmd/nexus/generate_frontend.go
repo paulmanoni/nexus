@@ -13,11 +13,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/extension/frontend"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/extension/frontend"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // frontendOptions is the flag-bound state for `nexus generate frontend`.

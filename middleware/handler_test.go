@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/graph"
+	"github.com/paulmanoni/nexus/v2/graph"
 )
 
 // fakeCarrier is an in-package carrier so tests can build a RequestCtx without

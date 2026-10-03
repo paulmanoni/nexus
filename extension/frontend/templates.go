@@ -6,9 +6,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/internal/tsgen"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/internal/tsgen"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // renderClientTS emits _client.ts — the transport-neutral RPC

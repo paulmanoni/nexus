@@ -3,8 +3,8 @@ package ginrouter
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/routertest"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/routertest"
 )
 
 // The gin adapter is opt-in (separate module) but must still satisfy the same

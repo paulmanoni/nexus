@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 func str() registry.TypeRef { return registry.TypeRef{Kind: "primitive", Primitive: "string"} }

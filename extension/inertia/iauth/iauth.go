@@ -5,7 +5,7 @@
 // using inertia without auth don't pull the auth extension (and its
 // dependencies) into the build.
 //
-//	import "github.com/paulmanoni/nexus/extension/inertia/iauth"
+//	import "github.com/paulmanoni/nexus/v2/extension/inertia/iauth"
 //
 //	auth.Module(auth.Config{
 //	    Authentication: auth.Authentication{Schemes: ...},
@@ -18,8 +18,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/paulmanoni/nexus/extension/auth"
-	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 const (

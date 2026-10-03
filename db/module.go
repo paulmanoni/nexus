@@ -3,10 +3,10 @@ package db
 import (
 	"context"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // ProvideOptions packages the inputs for the optional fx-graph

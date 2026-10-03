@@ -11,9 +11,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/extension/dashboard"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard"
 )
 
 // ListenerScope decides which routes a listener exposes. The framework

@@ -14,7 +14,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/v2/client"
 )
 
 // runInitFrontend adds a Vite frontend to an existing Go project at

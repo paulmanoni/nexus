@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/db"
+	"github.com/paulmanoni/nexus/v2/db"
 )
 
 type user struct {

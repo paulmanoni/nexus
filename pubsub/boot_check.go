@@ -3,8 +3,8 @@ package pubsub
 import (
 	"fmt"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // init registers pubsub's boot self-check. Only linked (and thus only run) when

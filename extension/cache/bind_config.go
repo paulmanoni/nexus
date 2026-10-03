@@ -1,6 +1,6 @@
 package cache
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 // BindFromConfig binds a marker type T to the [cache.<name>] block in
 // nexus.toml — the cache counterpart to db.BindFromConfig, so wiring a cache

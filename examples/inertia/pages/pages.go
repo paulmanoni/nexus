@@ -5,8 +5,8 @@
 package pages
 
 import (
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/inertia"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
 )
 
 type usersProps struct {

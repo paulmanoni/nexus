@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestRender_SkipsInertiaPages: a route tagged registry.PageTag renders a

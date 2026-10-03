@@ -4,12 +4,12 @@ import (
 	"context"
 	"reflect"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/internal/bindutil"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/internal/bindutil"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // Bind wires a named database connection declaratively, replacing the

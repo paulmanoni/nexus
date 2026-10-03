@@ -55,7 +55,7 @@ func TestStatusStrip(t *testing.T) {
 	}
 }
 
-// TestLogPretty_ResourceStateOnStrip: logx.Transition's structured fields
+// TestLogPretty_ResourceStateOnStrip: connlog.Transition's structured fields
 // pin and clear resource entries.
 func TestLogPretty_ResourceStateOnStrip(t *testing.T) {
 	var out strings.Builder

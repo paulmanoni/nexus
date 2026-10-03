@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // Type maps a registry TypeRef to a TS type expression:

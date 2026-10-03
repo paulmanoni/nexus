@@ -17,7 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // fakeWSServer extends fakeServer with the /__config/subscribe

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // makeRegistry seeds a registry with the auth-flow-tagged endpoints

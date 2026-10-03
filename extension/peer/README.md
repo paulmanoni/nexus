@@ -7,7 +7,7 @@ Typed RPC between nexus apps over HTTP/2 + JSON. One persistent multiplexed conn
 The same `peer.Module(...)` call wires both sides; pass `Listen` to accept calls, `Peers` to make them, both for the common case:
 
 ```go
-import "github.com/paulmanoni/nexus/extension/peer"
+import "github.com/paulmanoni/nexus/v2/extension/peer"
 
 // orders-svc: exposes createOrder to other apps in the mesh
 nexus.Run(nexus.Config{...},

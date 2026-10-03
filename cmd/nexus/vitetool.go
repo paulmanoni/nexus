@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/client"
 )
 
 // Shared plumbing for driving a real Vite project from `nexus dev` and

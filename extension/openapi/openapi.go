@@ -8,7 +8,7 @@
 // reflection) and emits an OpenAPI document on demand. No build
 // step, no codegen invocation.
 //
-//	import "github.com/paulmanoni/nexus/extension/openapi"
+//	import "github.com/paulmanoni/nexus/v2/extension/openapi"
 //
 //	nexus.Run(
 //	    nexus.Config{
@@ -42,10 +42,10 @@
 package openapi
 
 import (
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
 )
 
 // Config controls the metadata block of the generated spec and a

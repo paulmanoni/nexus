@@ -31,5 +31,5 @@ package main
 //
 // Listed alphabetically.
 import (
-	_ "github.com/paulmanoni/nexus/extension/config"
+	_ "github.com/paulmanoni/nexus/v2/extension/config"
 )

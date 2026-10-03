@@ -43,7 +43,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // ID identifies one enqueued job.

@@ -10,7 +10,7 @@
 package main
 
 import (
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // ChatService is a typed service wrapper so the dashboard's Architecture

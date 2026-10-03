@@ -7,7 +7,7 @@ native the moment a handler exists at its method and path, with no change to
 the proxy config.
 
 ```go
-import "github.com/paulmanoni/nexus/extension/proxy"
+import "github.com/paulmanoni/nexus/v2/extension/proxy"
 
 nexus.Boot(proxy.Module(proxy.Config{
     Upstream: nexus.Get[string]("upstream.url", "http://127.0.0.1:8000"),

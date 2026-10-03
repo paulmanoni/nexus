@@ -6,7 +6,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // init registers this extension's TOML decoder so the

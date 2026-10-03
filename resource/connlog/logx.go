@@ -1,7 +1,7 @@
 // Package logx holds the log-shaping helpers the resource managers share:
 // collapsing a failure that recurs on a retry tick, and turning a bare network
 // error into a line the reader can act on.
-package logx
+package connlog
 
 import (
 	"errors"

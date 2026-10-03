@@ -10,7 +10,7 @@
 // groups them by fingerprint into "issues", and publishes each new
 // occurrence outward.
 //
-//	import "github.com/paulmanoni/nexus/extension/errors"
+//	import "github.com/paulmanoni/nexus/v2/extension/errors"
 //
 //	nexus.Run(
 //	    nexus.Config{Server: nexus.ServerConfig{Addr: ":8080"}},
@@ -43,9 +43,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // Config controls the plugin's capture + reporting policy. Sensible

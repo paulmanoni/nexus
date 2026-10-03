@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 )
 
 // DotenvDefaultPath is the file LoadDotenvIfPresent reads when no

@@ -3,7 +3,7 @@ package cors
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // handlePolicy answers GET /__nexus/cors/policy. Returns the

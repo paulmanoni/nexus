@@ -9,7 +9,7 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 )
 
 // ControllerRouter is a Router bound to one controller type: a struct whose

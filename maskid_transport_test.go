@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/paulmanoni/nexus/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
 
 // The transport wiring is what's under test here, not the cipher, so the

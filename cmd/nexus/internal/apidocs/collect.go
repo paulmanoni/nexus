@@ -18,7 +18,7 @@ import (
 // nexusPkgPath is the import path the collector matches when deciding
 // whether a `pkg.Foo(...)` call is one of our framework hooks. Kept as
 // a constant so a future fork or rename only changes one line.
-const nexusPkgPath = "github.com/paulmanoni/nexus"
+const nexusPkgPath = "github.com/paulmanoni/nexus/v2"
 
 // Collect loads the package(s) matching `pattern` from `dir` and
 // produces an IR Doc by scanning for nexus framework calls.

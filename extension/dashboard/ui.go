@@ -8,7 +8,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 //go:embed all:ui/dist

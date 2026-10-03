@@ -1,4 +1,4 @@
-module github.com/paulmanoni/nexus
+module github.com/paulmanoni/nexus/v2
 
 go 1.26.2
 
@@ -28,6 +28,7 @@ require (
 require (
 	github.com/Oudwins/tailwind-merge-go v0.2.0
 	github.com/a-h/templ v0.3.1020
+	github.com/dop251/goja v0.0.0-20261002135814-104bc28c3abd
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
@@ -35,9 +36,12 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.1 // indirect
+	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
+	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect

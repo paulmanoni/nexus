@@ -3,8 +3,8 @@ package tls
 import (
 	"fmt"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // resolveConfig produces the effective Config the plugin uses at

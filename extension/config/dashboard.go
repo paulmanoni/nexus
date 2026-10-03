@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // ServerStatus is the wire shape served at GET

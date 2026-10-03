@@ -16,8 +16,8 @@ var execCommand = exec.Command
 
 // embedConfigVar is the fully-qualified linker target for the framework's
 // build-time config embed. Must match the package var in
-// github.com/paulmanoni/nexus/config_embed.go.
-const embedConfigVar = "github.com/paulmanoni/nexus.embeddedConfigB64"
+// github.com/paulmanoni/nexus/v2/config_embed.go.
+const embedConfigVar = "github.com/paulmanoni/nexus/v2.embeddedConfigB64"
 
 // embedConfigLDFlag reads nexus.toml from the main package's directory and
 // returns a `-ldflags` value that bakes it (base64-encoded) into the

@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"braces.dev/errtrace"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // NewMiddleware returns a transport-agnostic middleware bundle that

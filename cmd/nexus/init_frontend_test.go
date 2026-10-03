@@ -20,7 +20,7 @@ func TestInitFrontend_OnGoOnlyProject(t *testing.T) {
 	// (no --frontend) produces.
 	mainGo := `package main
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 func main() {
 	nexus.Run(
@@ -93,7 +93,7 @@ func TestInitFrontend_OnBootProject(t *testing.T) {
 	dir := t.TempDir()
 	mainGo := `package main
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 func main() {
 	nexus.Boot(
@@ -134,7 +134,7 @@ func TestInitFrontend_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	mainGo := `package main
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 func main() {
 	nexus.Run(
@@ -168,7 +168,7 @@ func main() {
 // .gitignore when missing, appending to one that lacks the entries, and
 // adding nothing on a re-run.
 func TestInitFrontend_Gitignore(t *testing.T) {
-	mainGo := "package main\n\nimport \"github.com/paulmanoni/nexus\"\n\nfunc main() {\n\tnexus.Boot()\n}\n"
+	mainGo := "package main\n\nimport \"github.com/paulmanoni/nexus/v2\"\n\nfunc main() {\n\tnexus.Boot()\n}\n"
 	scaffolded, err := renderTemplate(".gitignore", tmplGitignoreTpl, scaffoldOpts{Frontend: "vue"})
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestInitFrontend_BadFrontendValue(t *testing.T) {
 // config is pointed out rather than deleted.
 func TestInitFrontend_ForceMigratesLegacyWeb(t *testing.T) {
 	dir := t.TempDir()
-	mainGo := "package main\n\nimport \"github.com/paulmanoni/nexus\"\n\nfunc main() {\n\tnexus.Boot()\n}\n"
+	mainGo := "package main\n\nimport \"github.com/paulmanoni/nexus/v2\"\n\nfunc main() {\n\tnexus.Boot()\n}\n"
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainGo), 0o644)
 	web := filepath.Join(dir, "web")
 	_ = os.MkdirAll(filepath.Join(web, "src"), 0o755)
@@ -362,7 +362,7 @@ func TestInitFrontend_ForceMigratesLegacyWeb(t *testing.T) {
 // earlier copy), and a re-run that changes nothing saves nothing.
 func TestInitFrontend_ForceBacksUpReplacedFiles(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "main.go"), "package main\n\nimport \"github.com/paulmanoni/nexus\"\n\nfunc main() {\n\tnexus.Boot()\n}\n")
+	writeTestFile(t, filepath.Join(dir, "main.go"), "package main\n\nimport \"github.com/paulmanoni/nexus/v2\"\n\nfunc main() {\n\tnexus.Boot()\n}\n")
 	web := filepath.Join(dir, "web")
 	mine := map[string]string{
 		"package.json":   `{"name":"mine","dependencies":{"vue":"^3.5.0","pinia":"^3.0.0"}}`,

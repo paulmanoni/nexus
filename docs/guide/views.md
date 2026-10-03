@@ -1,6 +1,6 @@
 # Reactive views (templ)
 
-`github.com/paulmanoni/nexus/view` renders [templ](https://templ.guide) components
+`github.com/paulmanoni/nexus/v2/view` renders [templ](https://templ.guide) components
 from nexus and keeps them reactive — with no JavaScript build and no Node. You
 write plain templ; what is reactive follows from what the template reads.
 

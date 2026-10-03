@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // AppMailer is the user-style typed handle for the e2e Bind test.

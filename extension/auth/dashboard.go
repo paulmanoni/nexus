@@ -3,7 +3,7 @@ package auth
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // dashboardListHandler builds the GET /__nexus/auth handler. Returns

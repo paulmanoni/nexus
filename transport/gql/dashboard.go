@@ -3,7 +3,7 @@ package gql
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // MountDashboard mounts the GraphQL introspection surface onto the

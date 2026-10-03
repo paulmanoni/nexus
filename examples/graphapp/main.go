@@ -16,8 +16,8 @@
 package main
 
 import (
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
 )
 
 func main() {

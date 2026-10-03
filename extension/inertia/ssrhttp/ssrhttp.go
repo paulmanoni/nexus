@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/paulmanoni/nexus/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
 )
 
 // DefaultURL is the conventional @inertiajs/server production port.

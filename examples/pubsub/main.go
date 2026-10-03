@@ -19,10 +19,10 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/pubsub"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/pubsub"
 )
 
 // PetAdopted carries the fields downstream subscribers care about.

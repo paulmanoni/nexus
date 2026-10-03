@@ -4,11 +4,11 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/pubsub"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/pubsub"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // Use returns a nexus.Option that dials the broker at boot, exposes

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 // meWrap is a wrapper Extra (e.g. a "me" payload that also carries roles)

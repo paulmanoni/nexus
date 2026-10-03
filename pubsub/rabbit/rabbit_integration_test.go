@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/pubsub"
+	"github.com/paulmanoni/nexus/v2/pubsub"
 )
 
 // uniqueName produces topic names that don't collide across reruns

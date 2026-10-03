@@ -14,11 +14,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/db"
-	_ "github.com/paulmanoni/nexus/db/sqlite"
-	"github.com/paulmanoni/nexus/extension/jobs"
-	"github.com/paulmanoni/nexus/extension/jobs/jobsdb"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/db"
+	_ "github.com/paulmanoni/nexus/v2/db/sqlite"
+	"github.com/paulmanoni/nexus/v2/extension/jobs"
+	"github.com/paulmanoni/nexus/v2/extension/jobs/jobsdb"
 )
 
 var bg = context.Background()

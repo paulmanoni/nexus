@@ -3,7 +3,7 @@ package nexus
 import (
 	"context"
 
-	"github.com/paulmanoni/nexus/transport/gql"
+	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
 // SetGraphStatus overrides the HTTP status code for the current

@@ -42,7 +42,7 @@ read-replica routing a matter of choosing the store from `ctx`. Parameters after
 injected from the DI graph. The GORM adapter lives in `storage/gorm`:
 
 ```go
-import nxgorm "github.com/paulmanoni/nexus/storage/gorm"
+import nxgorm "github.com/paulmanoni/nexus/v2/storage/gorm"
 
 nexus.AsCRUD[Pet](
     func(ctx context.Context, db *DB) (nexus.Store[Pet], error) {

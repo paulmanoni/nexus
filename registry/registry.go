@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 type Transport string

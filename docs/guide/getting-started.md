@@ -3,11 +3,11 @@
 ## Install the CLI
 
 ```bash
-go install github.com/paulmanoni/nexus/cmd/nexus@latest
+go install github.com/paulmanoni/nexus/cmd/nexus/v2@latest
 ```
 
 The `nexus` CLI scaffolds projects, runs the dev loop and builds release binaries. The
-framework is an ordinary Go module, `github.com/paulmanoni/nexus`, so you can also add it
+framework is an ordinary Go module, `github.com/paulmanoni/nexus/v2`, so you can also add it
 to an existing project with `go get`.
 
 ## Create an app
@@ -53,7 +53,7 @@ package main
 import (
     "context"
 
-    "github.com/paulmanoni/nexus"
+    "github.com/paulmanoni/nexus/v2"
 )
 
 type Greeter struct{}

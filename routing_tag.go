@@ -3,7 +3,7 @@ package nexus
 import (
 	"reflect"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // Tag stamps one key/value pair onto an endpoint's registry tags — the

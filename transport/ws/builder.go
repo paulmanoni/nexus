@@ -4,10 +4,10 @@ package ws
 
 import (
 	"github.com/gorilla/websocket"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 type ConnectFunc func(c *httpx.Ctx, conn *websocket.Conn) error

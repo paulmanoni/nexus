@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // cachedAsset bundles a static byte body with the precomputed

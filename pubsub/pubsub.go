@@ -35,7 +35,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // TopicConfig is the per-topic knobs. Empty values pick framework

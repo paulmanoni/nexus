@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 type gateOut struct {

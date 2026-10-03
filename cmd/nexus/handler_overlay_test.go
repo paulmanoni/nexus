@@ -240,7 +240,7 @@ func TestScanHandlerSites_InertiaPage(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "h.go"), `package h
 
-import _ "github.com/paulmanoni/nexus/extension/inertia"
+import _ "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 //@inertia.Page get,post /login Login
 func NewLogin() {}
@@ -256,7 +256,7 @@ func NewLogin() {}
 	dir2 := t.TempDir()
 	writeFile(t, filepath.Join(dir2, "h.go"), `package h
 
-import _ "github.com/paulmanoni/nexus/extension/inertia"
+import _ "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 //@inertia.Page FETCH /login Login
 func NewLogin() {}
@@ -298,7 +298,7 @@ func NewList() {}
 //@inertia.Page GET /x X
 package h
 
-import _ "github.com/paulmanoni/nexus/extension/inertia"
+import _ "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 //@query
 func NewX() {}
@@ -401,7 +401,7 @@ func (o Other) Index(ctx context.Context) (string, error) { return "", nil }
 		`Query((*UsersController).UserRows)`,
 		"nexus.ControllerActions(func(c *nexus.ControllerRouter[*Health]) {\n\t\t\tc.Rest(\"GET\", \"/health\", (*Health).Ping)\n\t\t}),",
 		`nexus.AsRest("GET", "/other", Other.Index)`,
-		`"github.com/paulmanoni/nexus/extension/inertia"`,
+		`"github.com/paulmanoni/nexus/v2/extension/inertia"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("generated file lacks %s:\n%s", want, got)

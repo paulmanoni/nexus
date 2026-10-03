@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // pagesRegistry registers one ordinary REST route, a typed page, an untyped

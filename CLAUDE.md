@@ -6,7 +6,7 @@ frontend embedded in the binary, and a live introspection dashboard at `/__nexus
 file tells you how to use every feature. Verify APIs against the installed version; `nexus
 docs <topic>` prints an inline quick-reference for any feature (`nexus docs --list`).
 
-Import path: `github.com/paulmanoni/nexus`. Pure-Go build — no CGO, no build tags.
+Import path: `github.com/paulmanoni/nexus/v2`. Pure-Go build — no CGO, no build tags.
 A frontend is an ordinary npm-managed Vite project: **Node.js 20+ and npm are dev- and
 build-time requirements**; the runtime is still a single Go binary with `web/dist`
 embedded, and runs without Node (an Inertia SSR server is the one opt-in exception).
@@ -269,7 +269,7 @@ pages render client-side.
 ---
 
 ### Reactive templ views (`nexus/view`)
-`github.com/paulmanoni/nexus/view` (its own module) renders templ components and
+`github.com/paulmanoni/nexus/v2/view` (its own module) renders templ components and
 keeps them reactive with no JS build. Plain templ; reads decide reactivity:
 `{{ c := view.State(ctx, 0) }}` (component state), `{ c.Get() }` / `attr={…c.Get()…}`
 (kept current in the browser), `onclick={ c.Set(…) }` or `view.Do(func(e view.Event){…})`
@@ -453,7 +453,7 @@ with it open.
 
 ### HTTP router backend (pluggable; stdlib by default)
 
-nexus is **router-agnostic** behind the `github.com/paulmanoni/nexus/httpx` seam.
+nexus is **router-agnostic** behind the `github.com/paulmanoni/nexus/v2/httpx` seam.
 Handlers and middleware see an `*httpx.Ctx` (a transport-neutral request handle);
 the concrete router is an adapter chosen at boot. **The default is the stdlib
 `net/http.ServeMux` (`httpx/stdrouter`) — zero third-party router deps, so the
@@ -461,8 +461,8 @@ default binary links no gin/sonic/etc.** gin and chi are opt-in:
 
 ```go
 import (
-    "github.com/paulmanoni/nexus"
-    "github.com/paulmanoni/nexus/httpx/ginrouter" // or .../httpx/chirouter
+    "github.com/paulmanoni/nexus/v2"
+    "github.com/paulmanoni/nexus/httpx/ginrouter/v2" // or .../httpx/chirouter
 )
 
 nexus.Boot(nexus.WithRouter(ginrouter.New()))     // one line; or Config.Router
@@ -475,7 +475,7 @@ their dependency trees back in; the stdlib default does not. Route strings use t
 canonical `:id` / `*rest` syntax on every backend (chi/std adapters translate).
 
 **`ginrouter` is a SEPARATE module** so gin stays out of the main module's
-dependency graph entirely — `go get github.com/paulmanoni/nexus/httpx/ginrouter`
+dependency graph entirely — `go get github.com/paulmanoni/nexus/httpx/ginrouter/v2`
 to use it (the import path is unchanged; it just versions independently). `stdrouter`
 and `chirouter` ship inside the main module (chi has no transitive deps).
 
@@ -492,15 +492,15 @@ shorthand (replaces `gin.H`).
 
 ### DI container backend (pluggable; built-in by default)
 
-nexus has its **own dependency-injection container** — `github.com/paulmanoni/nexus/di`,
+nexus has its **own dependency-injection container** — `github.com/paulmanoni/nexus/v2/di`,
 a small zero-third-party-dependency engine — wired behind the same kind of seam as
 the router. **It is the default, so the default binary links no `go.uber.org/fx`,
 `dig`, `multierr`, or `atomic`.** `go.uber.org/fx` is opt-in:
 
 ```go
 import (
-    "github.com/paulmanoni/nexus"
-    "github.com/paulmanoni/nexus/di/fxcontainer"
+    "github.com/paulmanoni/nexus/v2"
+    "github.com/paulmanoni/nexus/di/fxcontainer/v2"
 )
 
 nexus.Boot(nexus.WithContainer(fxcontainer.New()))     // one line
@@ -532,7 +532,7 @@ detail behind those helpers — like fx was before.
   semantics as fx.
 
 **`fxcontainer` is a SEPARATE module** so fx stays out of the main module's dependency
-graph — `go get github.com/paulmanoni/nexus/di/fxcontainer` to use it. The builtin
+graph — `go get github.com/paulmanoni/nexus/di/fxcontainer/v2` to use it. The builtin
 container ships inside the main module.
 
 ---
@@ -782,7 +782,7 @@ Instead of listing every handler in a `nexus.Module(...)`, annotate the handler
 functions with `//@` doc comments and let codegen do the wiring. **Purely
 additive** — it produces the same options as `AsRest`/`AsQuery`/`Provide`, so
 annotated and hand-written registrations coexist. Needs the `decorate` package
-(`github.com/paulmanoni/nexus/decorate`); the codegen scanner lives in the
+(`github.com/paulmanoni/nexus/v2/decorate`); the codegen scanner lives in the
 `nexus` CLI only, so the app binary links no extra deps.
 
 ```go
@@ -868,10 +868,10 @@ Stop on shutdown), provides `*YourType` into the DI graph, and registers it as a
 dashboard resource (shown red if down):
 ```go
 import (
-    "github.com/paulmanoni/nexus"
-    "github.com/paulmanoni/nexus/db"
-    "github.com/paulmanoni/nexus/extension/cache"
-    _ "github.com/paulmanoni/nexus/extension/cache/redis" // opt into Redis (omit → memory-only)
+    "github.com/paulmanoni/nexus/v2"
+    "github.com/paulmanoni/nexus/v2/db"
+    "github.com/paulmanoni/nexus/v2/extension/cache"
+    _ "github.com/paulmanoni/nexus/extension/cache/redis/v2" // opt into Redis (omit → memory-only)
 )
 
 type DB struct{ *db.Manager }          // MUST embed *db.Manager
@@ -898,9 +898,9 @@ app pays for those only when it calls a binder. This mirrors `pubsub.Broker`.
 **SQL drivers are opt-in blank imports** (database/sql style) — `nexus/db` itself
 links NO engine; import the one(s) your app opens:
 ```go
-_ "github.com/paulmanoni/nexus/db/postgres" // pgx
-_ "github.com/paulmanoni/nexus/db/mysql"
-_ "github.com/paulmanoni/nexus/db/sqlite"   // pure-Go engine (~5MB) — don't ship it unused
+_ "github.com/paulmanoni/nexus/v2/db/postgres" // pgx
+_ "github.com/paulmanoni/nexus/v2/db/mysql"
+_ "github.com/paulmanoni/nexus/v2/db/sqlite"   // pure-Go engine (~5MB) — don't ship it unused
 ```
 A Config naming an unlinked driver fails at wiring time with the import to add.
 File-backed SQLite now gets a small read pool by default (WAL-friendly);
@@ -944,7 +944,7 @@ local-in-dev / S3-in-prod is a `Config` change, not a code change. Wire it exact
 cache: a typed `Bind` whose `T` embeds `*storage.Manager`, injected into handlers and shown
 on the dashboard (`resource.KindStorage`).
 ```go
-import "github.com/paulmanoni/nexus/extension/storage"
+import "github.com/paulmanoni/nexus/v2/extension/storage"
 
 type Uploads struct{ *storage.Manager }
 
@@ -966,7 +966,7 @@ log-in-dev / SMTP-in-prod is a `Config` change, not a code change. Wire it exact
 a cache or disk — a typed `Bind` whose `T` embeds `*mail.Manager`, injected into handlers
 and shown on the dashboard (`resource.KindMail`).
 ```go
-import "github.com/paulmanoni/nexus/extension/mail"
+import "github.com/paulmanoni/nexus/v2/extension/mail"
 
 type Mailer struct{ *mail.Manager }
 
@@ -995,7 +995,7 @@ Django-style server-side sessions — a cookie carries an opaque ID, data lives 
 a pluggable `Store`, handlers use a lazy handle. For anonymous visitors and
 logged-in users alike; available on REST, Inertia, and GraphQL (`p.Context`).
 ```go
-import "github.com/paulmanoni/nexus/extension/session"
+import "github.com/paulmanoni/nexus/v2/extension/session"
 
 nexus.Boot(session.Module(session.Config{}))   // memory store, 14-day TTL
 
@@ -1018,7 +1018,7 @@ Replaces sequential integer IDs with 22-char opaque strings on the wire and
 converts them back before the handler runs — handlers, GORM models and SQL keep
 using `int64` keys. One option, no app-code change:
 ```go
-import "github.com/paulmanoni/nexus/extension/maskid"
+import "github.com/paulmanoni/nexus/v2/extension/maskid"
 
 nexus.Boot(maskid.Module(maskid.Config{Key: os.Getenv("MASKID_KEY")}))
 ```
@@ -1158,7 +1158,7 @@ two apps in one process don't share services.
 ## 8. Auth & OAuth2
 
 ```go
-import "github.com/paulmanoni/nexus/extension/auth"
+import "github.com/paulmanoni/nexus/v2/extension/auth"
 
 auth.Module(auth.Config{
     Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {

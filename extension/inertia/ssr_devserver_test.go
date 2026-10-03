@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/paulmanoni/nexus/extension/inertia"
-	"github.com/paulmanoni/nexus/extension/inertia/ssrhttp"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/extension/inertia/ssrhttp"
 )
 
 // devSSRServer is a Vite dev server that also renders (@inertiajs/vite's

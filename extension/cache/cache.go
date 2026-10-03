@@ -8,8 +8,8 @@
 // Redis connection and transparently fails over to memory on outage:
 //
 //	import (
-//	    "github.com/paulmanoni/nexus/extension/cache"
-//	    _ "github.com/paulmanoni/nexus/extension/cache/redis" // enable Redis
+//	    "github.com/paulmanoni/nexus/v2/extension/cache"
+//	    _ "github.com/paulmanoni/nexus/extension/cache/redis/v2" // enable Redis
 //	)
 //
 // Without that import the binary never links go-redis. Typical wiring with
@@ -40,7 +40,7 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // ErrNotFound is returned by Get when the key is absent (or the cache isn't
@@ -145,7 +145,7 @@ func (c *Config) Validate() error {
 		return nil
 	case DriverRedis:
 		if newRedisSupervisor == nil {
-			return errors.New(`cache: driver "redis" needs the redis backend — add the blank import _ "github.com/paulmanoni/nexus/extension/cache/redis"`)
+			return errors.New(`cache: driver "redis" needs the redis backend — add the blank import _ "github.com/paulmanoni/nexus/extension/cache/redis/v2"`)
 		}
 		return nil
 	}

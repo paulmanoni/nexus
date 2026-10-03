@@ -1,6 +1,6 @@
 package nexus
 
-import "github.com/paulmanoni/nexus/middleware"
+import "github.com/paulmanoni/nexus/v2/middleware"
 
 // prependSharedMiddleware implementations: a Router applies its shared
 // options to already-constructed ops (the decorator form) by prepending each

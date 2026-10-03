@@ -3,7 +3,7 @@ package auth
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // ErrorHandler customizes how auth denials render, across every transport.

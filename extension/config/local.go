@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // Local registers a no-server config entrypoint: a single

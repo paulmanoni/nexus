@@ -5,11 +5,11 @@ import (
 
 	"github.com/graphql-go/graphql"
 
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/resource"
-	"github.com/paulmanoni/nexus/transport/gql"
-	"github.com/paulmanoni/nexus/transport/rest"
-	"github.com/paulmanoni/nexus/transport/ws"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/resource"
+	"github.com/paulmanoni/nexus/v2/transport/gql"
+	"github.com/paulmanoni/nexus/v2/transport/rest"
+	"github.com/paulmanoni/nexus/v2/transport/ws"
 )
 
 // Service is a named group of endpoints. Services are the nodes the dashboard

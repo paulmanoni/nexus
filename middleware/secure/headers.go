@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // HeadersHandler builds the per-request security-headers middleware. It

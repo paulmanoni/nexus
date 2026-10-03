@@ -8,7 +8,7 @@ mixed.
 ```go
 package users
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 //@provide
 func NewUserService(app *nexus.App) *UserService {

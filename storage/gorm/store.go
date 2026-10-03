@@ -5,8 +5,8 @@
 // Usage:
 //
 //	import (
-//	    "github.com/paulmanoni/nexus"
-//	    nxgorm "github.com/paulmanoni/nexus/storage/gorm"
+//	    "github.com/paulmanoni/nexus/v2"
+//	    nxgorm "github.com/paulmanoni/nexus/v2/storage/gorm"
 //	)
 //
 //	var Module = nexus.Module("notes",
@@ -32,7 +32,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 	gormpkg "gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )

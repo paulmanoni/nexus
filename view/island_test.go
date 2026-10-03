@@ -18,8 +18,8 @@ import (
 
 	"github.com/a-h/templ"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 type chartProps struct {

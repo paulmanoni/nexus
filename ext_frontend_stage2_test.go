@@ -17,7 +17,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
 // staticVite behaves like a Vite dev server for static files: public/ files

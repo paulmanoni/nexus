@@ -1,6 +1,6 @@
 package nexus
 
-import "github.com/paulmanoni/nexus/registry"
+import "github.com/paulmanoni/nexus/v2/registry"
 
 // HideFromDashboard marks an endpoint as exempt from the introspection
 // dashboard (/__nexus): it is dropped from /__nexus/endpoints, the live

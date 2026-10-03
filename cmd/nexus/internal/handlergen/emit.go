@@ -6,7 +6,7 @@
 // []Annotation, so it is fully testable before deco.Scan exists. Phase 4 maps
 // deco.Hit → handlergen.Annotation.
 //
-// The emitted file calls github.com/paulmanoni/nexus/decorate, so a plain
+// The emitted file calls github.com/paulmanoni/nexus/v2/decorate, so a plain
 // `go build`/`go install` (which never run a generate step or overlay) compiles
 // the registrations as ordinary Go — the invariant that keeps nexus
 // go-install-able.
@@ -55,9 +55,9 @@ type Config struct {
 	Module         string // nexus.Module name for the group; defaults to Package
 	Path           string // nexus.Path prefix for the module (REST + GraphQL); "" = none
 	RoutePrefix    string // nexus.RoutePrefix (REST-only) for the module; "" = none
-	NexusImport    string // default github.com/paulmanoni/nexus
-	DecorateImport string // default github.com/paulmanoni/nexus/decorate
-	AuthImport     string // default github.com/paulmanoni/nexus/extension/auth
+	NexusImport    string // default github.com/paulmanoni/nexus/v2
+	DecorateImport string // default github.com/paulmanoni/nexus/v2/decorate
+	AuthImport     string // default github.com/paulmanoni/nexus/v2/extension/auth
 
 	// RouterDecls are this package's //@router declarations, emitted as
 	// nexus.RouterDecl calls; KnownRouters is every declared name across the
@@ -95,13 +95,13 @@ func (c *Config) applyDefaults() {
 		c.Module = DefaultModule
 	}
 	if c.NexusImport == "" {
-		c.NexusImport = "github.com/paulmanoni/nexus"
+		c.NexusImport = "github.com/paulmanoni/nexus/v2"
 	}
 	if c.DecorateImport == "" {
-		c.DecorateImport = "github.com/paulmanoni/nexus/decorate"
+		c.DecorateImport = "github.com/paulmanoni/nexus/v2/decorate"
 	}
 	if c.AuthImport == "" {
-		c.AuthImport = "github.com/paulmanoni/nexus/extension/auth"
+		c.AuthImport = "github.com/paulmanoni/nexus/v2/extension/auth"
 	}
 }
 
@@ -117,7 +117,7 @@ var typeModifierKeywords = map[string]bool{"auth": true, "session": true, "use":
 var modifierKeywords = map[string]bool{"auth": true, "on": true, "session": true, "use": true}
 
 // sessionImportPath is the sessions extension, for the //@session modifier.
-const sessionImportPath = "github.com/paulmanoni/nexus/extension/session"
+const sessionImportPath = "github.com/paulmanoni/nexus/v2/extension/session"
 
 // isPrimaryKeyword reports whether kw registers an endpoint/provider. A keyword
 // containing a dot (e.g. "inertia.Page") is a CUSTOM extension decorator: it
@@ -494,7 +494,7 @@ func renderPrimary(a Annotation, fn string, opts []string) (string, error) {
 // inertiaImportPath identifies the inertia extension however its import is
 // aliased, so //@inertia.Page (or //@in.Page) gets first-class argument
 // handling below.
-const inertiaImportPath = "github.com/paulmanoni/nexus/extension/inertia"
+const inertiaImportPath = "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 // normalizeKnownDecorator rewrites the argument list of well-known extension
 // decorators so their annotations read naturally — bare tokens instead of
@@ -1035,7 +1035,7 @@ func renderControllerAction(c *controllerDecl, a Annotation, opts []string) (cal
 }
 
 // jobsImportPath is the background-jobs extension, for //@job.
-const jobsImportPath = "github.com/paulmanoni/nexus/extension/jobs"
+const jobsImportPath = "github.com/paulmanoni/nexus/v2/extension/jobs"
 
 // jobOptions renders //@job [queue] [timeout=D] [retry=N] [unique=D]
 // [name=X] [queue=Q] as jobs.* option expressions.

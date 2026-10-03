@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/internal/golden"
+	"github.com/paulmanoni/nexus/v2/internal/golden"
 )
 
 // The framework has no standalone GraphQL-SDL string emitter — the GraphQL

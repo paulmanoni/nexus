@@ -5,7 +5,7 @@ import "encoding/base64"
 // embeddedConfigB64 holds a base64-encoded copy of nexus.toml baked into
 // the binary at build time. `nexus build` sets it via the linker:
 //
-//	go build -ldflags "-X github.com/paulmanoni/nexus.embeddedConfigB64=<base64>"
+//	go build -ldflags "-X github.com/paulmanoni/nexus/v2.embeddedConfigB64=<base64>"
 //
 // so the binary ships as a single self-contained artifact — no nexus.toml
 // needs to travel alongside it. It stays empty for a plain `go build`,

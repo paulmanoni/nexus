@@ -11,7 +11,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
 func get(app *App, path string, hdr ...string) *httptest.ResponseRecorder {

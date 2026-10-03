@@ -3,7 +3,7 @@ package client
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestBuildManifestRelativePaths pins the double-prefix fix: stored endpoint

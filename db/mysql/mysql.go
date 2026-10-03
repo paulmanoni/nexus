@@ -1,14 +1,14 @@
 // Package mysql links gorm's MySQL driver into nexus/db. Blank-import
 // it to enable Driver "mysql":
 //
-//	_ "github.com/paulmanoni/nexus/db/mysql"
+//	_ "github.com/paulmanoni/nexus/v2/db/mysql"
 package mysql
 
 import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
-	"github.com/paulmanoni/nexus/db"
+	"github.com/paulmanoni/nexus/v2/db"
 )
 
 func init() {

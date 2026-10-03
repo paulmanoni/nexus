@@ -3,8 +3,8 @@ package chirouter
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/routertest"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/routertest"
 )
 
 // The chi adapter must satisfy the shared router seam contract — most notably

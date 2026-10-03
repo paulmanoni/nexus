@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // TestConfigFromTOML overlays a [cache.<name>] block onto NewConfig()'s

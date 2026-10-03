@@ -11,12 +11,12 @@ import templruntime "github.com/a-h/templ/runtime"
 import (
 	"strings"
 
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/badge"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/button"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/icon"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/input"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/table"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/badge"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/button"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/icon"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/input"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/table"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // ---- Traces ----

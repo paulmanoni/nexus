@@ -12,9 +12,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/inertia"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // pageJSON is the data-page attribute value the engine writes for /p.

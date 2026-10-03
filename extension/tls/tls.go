@@ -8,7 +8,7 @@
 // handles HTTP-01 ACME challenges and 301-redirects everything else
 // to the HTTPS equivalent.
 //
-//	import "github.com/paulmanoni/nexus/extension/tls"
+//	import "github.com/paulmanoni/nexus/v2/extension/tls"
 //
 //	nexus.Run(
 //	    nexus.Config{Server: nexus.ServerConfig{Addr: "127.0.0.1:8080"}},
@@ -46,8 +46,8 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension"
 )
 
 // Config defines the TLS plugin's cert-issuance policy and the

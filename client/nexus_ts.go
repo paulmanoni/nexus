@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // GenerateNexusTS produces an OPTIONAL barrel file that re-exports

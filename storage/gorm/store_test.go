@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/glebarez/sqlite"
-	"github.com/paulmanoni/nexus"
-	nxgorm "github.com/paulmanoni/nexus/storage/gorm"
+	"github.com/paulmanoni/nexus/v2"
+	nxgorm "github.com/paulmanoni/nexus/v2/storage/gorm"
 	gormpkg "gorm.io/gorm"
 )
 

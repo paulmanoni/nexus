@@ -1,11 +1,10 @@
-module github.com/paulmanoni/nexus/view/example
+module github.com/paulmanoni/nexus/view/example/v2
 
 go 1.26.2
 
 require (
 	github.com/a-h/templ v0.3.1020
-	github.com/paulmanoni/nexus v1.78.0
-	github.com/paulmanoni/nexus/view v1.78.0
+	github.com/paulmanoni/nexus/v2 v2.0.0
 	github.com/templui/templui v1.13.2
 )
 

@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // safeMethods are the HTTP methods RFC 7231 defines as safe. They can't

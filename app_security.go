@@ -1,8 +1,8 @@
 package nexus
 
 import (
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/middleware/secure"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/middleware/secure"
 )
 
 // securityStatusKey is the extValues key under which installSecurity

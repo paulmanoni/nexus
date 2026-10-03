@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus/extension/metrics"
+	"github.com/paulmanoni/nexus/v2/extension/metrics"
 )
 
 // NewMetricsStore returns a metrics.Store backed by a nexus *Manager —

@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // LoginRequest is the JSON body the built-in login endpoint accepts. Field

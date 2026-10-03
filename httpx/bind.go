@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/paulmanoni/nexus/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
 
 // Neutral request binding — replaces gin's ShouldBindUri / ShouldBindQuery /

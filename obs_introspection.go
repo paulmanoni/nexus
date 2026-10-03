@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // devModeBypass reports whether the framework is running under

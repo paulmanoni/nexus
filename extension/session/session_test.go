@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // bootApp builds an in-process app with the session module and a few

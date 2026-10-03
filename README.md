@@ -13,8 +13,8 @@
 
 <p align="center">
   <a href="https://paulmanoni.github.io/nexus/"><img alt="Docs" src="https://img.shields.io/badge/docs-paulmanoni.github.io%2Fnexus-10b981?labelColor=064e3b"></a>
-  <a href="https://pkg.go.dev/github.com/paulmanoni/nexus"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/paulmanoni/nexus.svg"></a>
-  <a href="https://github.com/paulmanoni/nexus/tags"><img alt="Version" src="https://img.shields.io/github/v/tag/paulmanoni/nexus?sort=semver&color=10b981&labelColor=064e3b"></a>
+  <a href="https://pkg.go.dev/github.com/paulmanoni/nexus/v2"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/paulmanoni/nexus/v2.svg"></a>
+  <a href="https://github.com/paulmanoni/nexus/v2/tags"><img alt="Version" src="https://img.shields.io/github/v/tag/paulmanoni/nexus?sort=semver&color=10b981&labelColor=064e3b"></a>
   <a href="go.mod"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/paulmanoni/nexus?color=10b981&labelColor=064e3b"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-10b981?labelColor=064e3b"></a>
 </p>
@@ -64,7 +64,7 @@ curl localhost:8080/hello   -H 'content-type: application/json' -d '{"name":"wor
 ## Quick start
 
 ```bash
-go install github.com/paulmanoni/nexus/cmd/nexus@latest
+go install github.com/paulmanoni/nexus/cmd/nexus/v2@latest
 
 nexus new my-app      # --frontend vue|react, --inertia, --db, --auth …
 cd my-app && go mod tidy

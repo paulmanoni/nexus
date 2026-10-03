@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // corsMiddleware builds a httpx.HandlerFunc from a CORSConfig. The

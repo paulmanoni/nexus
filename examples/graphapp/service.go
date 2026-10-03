@@ -1,6 +1,6 @@
 package main
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 // AdvertsService is a typed wrapper around *nexus.Service. Fx routes the
 // service by type, so distinct graphs (*AdvertsService vs *PetsService)

@@ -3,8 +3,8 @@ package client
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/internal/golden"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/internal/golden"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // goldenManifest is a representative manifest exercising every renderer branch:

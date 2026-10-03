@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // buildReverseProxy constructs a single *httputil.ReverseProxy targeting the

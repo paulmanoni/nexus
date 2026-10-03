@@ -3,8 +3,8 @@ package nexustest_test
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/nexustest"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/nexustest"
 )
 
 type User struct {

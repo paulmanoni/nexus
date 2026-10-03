@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	nexusmanifest "github.com/paulmanoni/nexus/manifest"
+	nexusmanifest "github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // routesOptions captures every flag `nexus routes` accepts. Input

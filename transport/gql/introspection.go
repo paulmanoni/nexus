@@ -9,10 +9,10 @@ import (
 	"sync"
 
 	"github.com/graphql-go/graphql"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	graph "github.com/paulmanoni/nexus/graph"
-	"github.com/paulmanoni/nexus/internal/maskhook"
+	graph "github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
 
 // productionGate runs the full nexus/graph security suite (the

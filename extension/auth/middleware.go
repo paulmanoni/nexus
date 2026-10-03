@@ -4,11 +4,11 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // authMiddleware is the global auth middleware installed by Module on the

@@ -1,7 +1,7 @@
 // Package redis is the opt-in Redis backend for the nexus cache. Blank-import
 // it to enable Redis (the database/sql driver pattern):
 //
-//	import _ "github.com/paulmanoni/nexus/extension/cache/redis"
+//	import _ "github.com/paulmanoni/nexus/extension/cache/redis/v2"
 //
 // Its init() registers a supervisor factory with package cache. After that, a
 // cache.Manager whose Config.Environment is "production" keeps a Redis
@@ -22,13 +22,13 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/extension/cache"
-	"github.com/paulmanoni/nexus/internal/logx"
+	"github.com/paulmanoni/nexus/v2/extension/cache"
+	"github.com/paulmanoni/nexus/v2/resource/connlog"
 )
 
 func init() {
 	cache.RegisterRedis(func(m *cache.Manager) cache.RedisSupervisor {
-		return &supervisor{m: m, avail: logx.NewTransition("redis")}
+		return &supervisor{m: m, avail: connlog.NewTransition("redis")}
 	})
 }
 
@@ -74,7 +74,7 @@ type supervisor struct {
 	// avail shapes the reconnect-tick failures into state transitions: one
 	// line when redis goes down, widening still-down heartbeats, one line on
 	// recovery.
-	avail *logx.Transition
+	avail *connlog.Transition
 }
 
 func (s *supervisor) executor() failsafe.Executor[*redis.Client] {
@@ -164,11 +164,11 @@ func (s *supervisor) connect() {
 		return c, nil
 	})
 	if err != nil {
-		if logx.IsRetryState(err) {
+		if connlog.IsRetryState(err) {
 			return
 		}
 		ev, tf := s.avail.Fail(err)
-		if ev == logx.EventNone {
+		if ev == connlog.EventNone {
 			return
 		}
 		// Warn, not Error: the cache is still fully functional on memory, so
@@ -176,20 +176,20 @@ func (s *supervisor) connect() {
 		// it also collected a stack trace under a development logger, for a
 		// condition no stack can explain.
 		addr := cfg.RedisAddress()
-		fields := []zap.Field{zap.String("address", addr), zap.String("error", logx.Cause(err))}
-		if hint := logx.Hint(err, "redis", addr); hint != "" {
+		fields := []zap.Field{zap.String("address", addr), zap.String("error", connlog.Cause(err))}
+		if hint := connlog.Hint(err, "redis", addr); hint != "" {
 			fields = append(fields, zap.String("fix", hint))
 		}
 		fields = append(fields, tf...)
 		msg := "cache: redis unreachable, serving from memory"
-		if ev == logx.EventStillDown {
+		if ev == connlog.EventStillDown {
 			msg = "cache: redis still unreachable, serving from memory"
 		}
 		log.Warn(msg, fields...)
 		return
 	}
 	s.client = client
-	if ev, tf := s.avail.OK(); ev == logx.EventRecovered {
+	if ev, tf := s.avail.OK(); ev == connlog.EventRecovered {
 		log.Info("cache: redis connected, leaving memory fallback",
 			append([]zap.Field{zap.String("address", cfg.RedisAddress())}, tf...)...)
 	}
@@ -209,7 +209,7 @@ func (s *supervisor) healthCheck() {
 		// Feed the availability tracker so this is the outage's ONE "went
 		// down" line; the reconnect ticks that follow continue as still-down
 		// heartbeats instead of re-announcing.
-		if ev, tf := s.avail.Fail(err); ev != logx.EventNone {
+		if ev, tf := s.avail.Fail(err); ev != connlog.EventNone {
 			s.m.Logger().Error("cache: redis health check failed, switching to memory",
 				append([]zap.Field{zap.Error(err)}, tf...)...)
 		}

@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/extension/frontend"
+	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/extension/frontend"
 )
 
 // devCodegenWatch fires the frontend codegen once per Go-child boot.

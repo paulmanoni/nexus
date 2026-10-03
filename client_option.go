@@ -1,7 +1,7 @@
 package nexus
 
 import (
-	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/v2/client"
 )
 
 // ClientUse is the option-chain alias for setting Config.Client.

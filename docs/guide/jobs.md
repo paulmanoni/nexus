@@ -22,7 +22,7 @@ A job is a method with a fixed shape. Its receiver comes from DI, like a control
 and its arguments are a struct that encodes as JSON:
 
 ```go
-import "github.com/paulmanoni/nexus/extension/jobs"
+import "github.com/paulmanoni/nexus/v2/extension/jobs"
 
 type ExportArgs struct{ ReportID int }
 
@@ -135,7 +135,7 @@ a restart, and each process has its own queue.
 ### Database
 
 ```go
-import "github.com/paulmanoni/nexus/extension/jobs/jobsdb"
+import "github.com/paulmanoni/nexus/v2/extension/jobs/jobsdb"
 
 type DB struct{ *db.Manager }
 
@@ -157,7 +157,7 @@ nexus.Boot(
 ### Redis
 
 ```go
-import "github.com/paulmanoni/nexus/extension/jobs/jobsredis"
+import "github.com/paulmanoni/nexus/extension/jobs/jobsredis/v2"
 
 nexus.Boot(
     jobsredis.Bind(jobsredis.Config{}), // [jobs.redis] url, else REDIS_URL, else localhost
@@ -171,7 +171,7 @@ url    = "redis://:password@redis:6379/2"
 prefix = "{nexus:jobs}:"   # the default; one hash tag keeps Redis Cluster happy
 ```
 
-- **It's a separate module** (`go get github.com/paulmanoni/nexus/extension/jobs/jobsredis`),
+- **It's a separate module** (`go get github.com/paulmanoni/nexus/extension/jobs/jobsredis/v2`),
   so apps that don't use it link no Redis client.
 - **Claims and enqueues are Lua scripts;** updates are optimistic transactions.
 - **Make Redis durable** (AOF or RDB persistence) if jobs must survive a Redis restart.
@@ -180,7 +180,7 @@ prefix = "{nexus:jobs}:"   # the default; one hash tag keeps Redis Cluster happy
 ### RabbitMQ
 
 ```go
-import "github.com/paulmanoni/nexus/extension/jobs/jobsamqp"
+import "github.com/paulmanoni/nexus/extension/jobs/jobsamqp/v2"
 
 nexus.Boot(
     jobsamqp.Bind(jobsamqp.Config{}), // [jobs.rabbitmq] url, else RABBIT_URL, else localhost

@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/paulmanoni/nexus/view/viewgen"
+	"github.com/paulmanoni/nexus/v2/view/viewgen"
 )
 
 func newGenerateViewsCmd(stdout, stderr io.Writer) *cobra.Command {

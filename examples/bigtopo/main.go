@@ -31,11 +31,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 func envInt(key string, def int) int {

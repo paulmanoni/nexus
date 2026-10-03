@@ -163,7 +163,7 @@ func TestGenerate_Routers(t *testing.T) {
 	for _, want := range []string{
 		`nexus.RouterDecl("v1", "/api/v1", "")`,
 		`nexus.RouterDecl("billing", "/billing", "v1", auth.Requires("ADMIN", "HR"))`,
-		`"github.com/paulmanoni/nexus/extension/auth"`,
+		`"github.com/paulmanoni/nexus/v2/extension/auth"`,
 	} {
 		if !strings.Contains(declFile, want) {
 			t.Errorf("decl file missing %q:\n%s", want, declFile)

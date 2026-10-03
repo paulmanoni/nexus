@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/paulmanoni/nexus/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
 
 func codec() *AESCodec { return NewAESCodec([]byte("test-key")) }

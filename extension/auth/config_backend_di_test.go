@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 // dep is an app service the backend closes over, proving UseBackend runs in

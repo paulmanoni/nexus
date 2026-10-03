@@ -3,9 +3,9 @@
 package notes
 
 import (
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/decorate"
-	"github.com/paulmanoni/nexus/examples/notes/widgets"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/decorate"
+	"github.com/paulmanoni/nexus/v2/examples/notes/widgets"
 )
 
 func init() {

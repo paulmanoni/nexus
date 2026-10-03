@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 func TestWrite_CreatesFiles(t *testing.T) {

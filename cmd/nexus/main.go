@@ -5,7 +5,7 @@
 //
 // Install:
 //
-//	go install github.com/paulmanoni/nexus/cmd/nexus@latest
+//	go install github.com/paulmanoni/nexus/cmd/nexus/v2@latest
 //
 // Subcommands:
 //
@@ -40,7 +40,7 @@ import (
 //
 //  1. -ldflags "-X main.Version=v0.21.20" at release time
 //  2. runtime/debug.ReadBuildInfo() — the module version stamped
-//     by `go install github.com/paulmanoni/nexus/cmd/nexus@vX.Y.Z`,
+//     by `go install github.com/paulmanoni/nexus/cmd/nexus/v2@vX.Y.Z`,
 //     or the VCS commit + dirty flag when the user ran
 //     `go install ./cmd/nexus` against a local checkout.
 //  3. "dev" — the literal placeholder for `go run ./cmd/nexus ...`

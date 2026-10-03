@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/paulmanoni/nexus/extension/config/internal/canonical"
+	"github.com/paulmanoni/nexus/v2/extension/config/internal/canonical"
 )
 
 // resolveSnapshot is the core merge: given the full source

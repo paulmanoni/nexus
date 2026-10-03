@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // TestResolveConfig_NoManifest is the v1 path — operator passed Config

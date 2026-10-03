@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
 // fakeVite installs node_modules/.bin/vite in a new frontend dir: a shell

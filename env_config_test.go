@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // writeTOML is defined in database_toml_test.go (same package).

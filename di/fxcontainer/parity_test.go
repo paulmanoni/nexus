@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/di/ditest"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/di/ditest"
 )
 
 // The adapter's whole job is to be observably identical to the builtin

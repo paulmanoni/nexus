@@ -5,5 +5,5 @@ package main
 // Blank imports pull every //@-annotated package into the build so its
 // generated init() registers with decorate; nexus.Boot/Run auto-drains them.
 import (
-	_ "github.com/paulmanoni/nexus/examples/notes/notes"
+	_ "github.com/paulmanoni/nexus/v2/examples/notes/notes"
 )

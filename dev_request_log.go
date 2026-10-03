@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // devRequestLogEnabled reports whether the per-request dev console logger

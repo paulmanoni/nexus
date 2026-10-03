@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/di"
 )
 
 // BackendOption declares the cohesive auth backend for a Config — one type

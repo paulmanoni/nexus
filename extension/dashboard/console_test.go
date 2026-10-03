@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2/extension/metrics"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 // consoleFixture mounts the dashboard over a small registry: one service

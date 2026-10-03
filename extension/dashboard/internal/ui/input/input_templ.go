@@ -8,7 +8,7 @@ package input
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-import "github.com/paulmanoni/nexus/extension/dashboard/internal/ui/utils"
+import "github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/utils"
 
 type Type string
 

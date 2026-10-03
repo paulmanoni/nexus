@@ -17,7 +17,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
 type sseEvent struct{ name, data, retry string }

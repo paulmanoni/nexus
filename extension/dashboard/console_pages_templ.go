@@ -9,12 +9,12 @@ import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
 import (
-	"github.com/paulmanoni/nexus/extension/cron"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/badge"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/button"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/icon"
-	"github.com/paulmanoni/nexus/extension/dashboard/internal/ui/table"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/extension/cron"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/badge"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/button"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/icon"
+	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/table"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // ---- Services ----

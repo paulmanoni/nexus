@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // PeerStatus is the wire shape served at GET /__nexus/peer/list —

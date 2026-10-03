@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // renderReactTS emits react.ts — per-op React hooks paired with each

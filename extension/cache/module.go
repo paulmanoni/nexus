@@ -3,10 +3,10 @@ package cache
 import (
 	"context"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 	"go.uber.org/zap"
 
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // Provide is the fx provider: builds a Manager from a *Config, ties

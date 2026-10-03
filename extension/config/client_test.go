@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // fakeServer is a minimal stand-in for config.Server's HTTP

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/manifest"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
 // printManifestEnv is consulted by Run to decide whether to short-

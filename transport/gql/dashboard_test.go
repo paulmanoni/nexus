@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestStatsRegistry_DashboardEndpoint runs traffic through a mounted

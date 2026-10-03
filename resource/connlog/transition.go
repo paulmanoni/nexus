@@ -1,4 +1,4 @@
-package logx
+package connlog
 
 import (
 	"sync"

@@ -25,9 +25,9 @@ func TestEmit_FullCatalog(t *testing.T) {
 package handlers
 
 import (
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/decorate"
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/decorate"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 func init() {
@@ -75,7 +75,7 @@ func TestEmit_UseModifierWithImport(t *testing.T) {
 	got, err := Emit(Config{Package: "h"}, []Annotation{
 		{Func: "NewX", Keyword: "rest", Args: []string{"POST", "/x"}, Line: 1},
 		{Func: "NewX", Keyword: "use", Args: []string{"ratelimit.Per(time.Minute,", "60)"}, Line: 2,
-			Imports: []string{`"github.com/paulmanoni/nexus/extension/ratelimit"`, `"time"`}},
+			Imports: []string{`"github.com/paulmanoni/nexus/v2/extension/ratelimit"`, `"time"`}},
 	})
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
@@ -84,7 +84,7 @@ func TestEmit_UseModifierWithImport(t *testing.T) {
 	if !strings.Contains(s, `nexus.AsRest("POST", "/x", NewX, ratelimit.Per(time.Minute, 60))`) {
 		t.Fatalf("use expression not emitted as opt:\n%s", s)
 	}
-	if !strings.Contains(s, `"github.com/paulmanoni/nexus/extension/ratelimit"`) || !strings.Contains(s, `"time"`) {
+	if !strings.Contains(s, `"github.com/paulmanoni/nexus/v2/extension/ratelimit"`) || !strings.Contains(s, `"time"`) {
 		t.Fatalf("use imports missing:\n%s", s)
 	}
 }
@@ -92,7 +92,7 @@ func TestEmit_UseModifierWithImport(t *testing.T) {
 func TestEmit_CustomQualifiedDecorator(t *testing.T) {
 	got, err := Emit(Config{Package: "h"}, []Annotation{
 		{Func: "NewDash", Keyword: "inertia.Page", Args: []string{`"GET"`, `"/dash"`, `"Dashboard"`}, Line: 1,
-			Imports: []string{`"github.com/paulmanoni/nexus/extension/inertia"`}},
+			Imports: []string{`"github.com/paulmanoni/nexus/v2/extension/inertia"`}},
 		{Func: "NewBare", Keyword: "widgets.Mount", Line: 2,
 			Imports: []string{`"example.com/widgets"`}},
 	})
@@ -106,7 +106,7 @@ func TestEmit_CustomQualifiedDecorator(t *testing.T) {
 	if !strings.Contains(s, `widgets.Mount(NewBare)`) {
 		t.Fatalf("qualified decorator without args not emitted:\n%s", s)
 	}
-	if !strings.Contains(s, `"github.com/paulmanoni/nexus/extension/inertia"`) || !strings.Contains(s, `"example.com/widgets"`) {
+	if !strings.Contains(s, `"github.com/paulmanoni/nexus/v2/extension/inertia"`) || !strings.Contains(s, `"example.com/widgets"`) {
 		t.Fatalf("custom decorator imports missing:\n%s", s)
 	}
 	// Custom decorators are wrapped in nexus.Module like everything else.
@@ -130,7 +130,7 @@ func TestEmit_CustomDecoratorAppendsModifiers(t *testing.T) {
 	if !strings.Contains(s, `inertia.Page("GET", "/x", "X", F, auth.Required())`) {
 		t.Fatalf("modifier not appended to custom decorator call:\n%s", s)
 	}
-	if !strings.Contains(s, `"github.com/paulmanoni/nexus/extension/auth"`) {
+	if !strings.Contains(s, `"github.com/paulmanoni/nexus/v2/extension/auth"`) {
 		t.Fatalf("auth import missing for custom decorator modifier:\n%s", s)
 	}
 }
@@ -190,7 +190,7 @@ func TestEmit_MultiRoleAuth(t *testing.T) {
 // quoted ones), case-normalises the verbs, and rejects malformed values at
 // the annotation — instead of emitting invalid Go into the generated file.
 func TestEmit_InertiaPageNormalization(t *testing.T) {
-	inertiaImp := []string{`"github.com/paulmanoni/nexus/extension/inertia"`}
+	inertiaImp := []string{`"github.com/paulmanoni/nexus/v2/extension/inertia"`}
 
 	ok := func(args []string, want string) {
 		t.Helper()
@@ -255,7 +255,7 @@ func TestEmit_AuthGrammar(t *testing.T) {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("Emit(auth %v) missing %q:\n%s", authArgs, want, got)
 		}
-		hasImport := strings.Contains(string(got), `"github.com/paulmanoni/nexus/extension/auth"`)
+		hasImport := strings.Contains(string(got), `"github.com/paulmanoni/nexus/v2/extension/auth"`)
 		if hasImport != wantAuthImport {
 			t.Errorf("Emit(auth %v): auth import present = %v, want %v", authArgs, hasImport, wantAuthImport)
 		}
@@ -300,7 +300,7 @@ func TestEmit_SessionGrammar(t *testing.T) {
 			t.Fatalf("Emit(session %v): %v", args, err)
 		}
 		if !strings.Contains(string(got), "session.Required()") ||
-			!strings.Contains(string(got), `"github.com/paulmanoni/nexus/extension/session"`) {
+			!strings.Contains(string(got), `"github.com/paulmanoni/nexus/v2/extension/session"`) {
 			t.Errorf("Emit(session %v) missing gate or import:\n%s", args, got)
 		}
 	}

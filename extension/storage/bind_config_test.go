@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // TestConfigFromTOML reads a [storage.<name>] block into a Config; unseeded

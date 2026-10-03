@@ -10,9 +10,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/extension"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/extension"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // minimalFS is enough to satisfy nexus.ServeFrontend's "index.html

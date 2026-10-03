@@ -3,7 +3,7 @@ package client
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // ContributionsResponse is the wire format served at

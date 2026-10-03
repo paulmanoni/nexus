@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestBuilder_RESTPathParamsBecomeOpenAPIParameters locks in the most

@@ -3,8 +3,8 @@ package nexus
 import (
 	"reflect"
 
-	"github.com/paulmanoni/nexus/middleware"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/middleware"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // baseEndpointConfig holds the fields every transport-specific config

@@ -31,10 +31,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/db"
-	"github.com/paulmanoni/nexus/extension/jobs"
-	"github.com/paulmanoni/nexus/internal/bindutil"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/db"
+	"github.com/paulmanoni/nexus/v2/extension/jobs"
+	"github.com/paulmanoni/nexus/v2/internal/bindutil"
 )
 
 // ErrUnavailable is returned while the database is not connected; workers

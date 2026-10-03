@@ -1,7 +1,7 @@
 # CLI
 
 ```bash
-go install github.com/paulmanoni/nexus/cmd/nexus@latest
+go install github.com/paulmanoni/nexus/cmd/nexus/v2@latest
 ```
 
 ## `nexus new <dir>`

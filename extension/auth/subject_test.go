@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/paulmanoni/nexus/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 func TestSubject_TypedID(t *testing.T) {

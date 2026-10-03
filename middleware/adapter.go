@@ -3,9 +3,9 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/graph"
+	"github.com/paulmanoni/nexus/v2/graph"
 )
 
 // FromHandler turns one unified Handler into a transport bundle, generating

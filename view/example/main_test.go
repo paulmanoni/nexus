@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 func boot(t *testing.T) http.Handler {

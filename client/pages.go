@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // pageRoute is one URL that renders an Inertia component, as the

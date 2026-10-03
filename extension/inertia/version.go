@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"strings"
 
-	"github.com/paulmanoni/nexus/internal/vitemanifest"
+	"github.com/paulmanoni/nexus/v2/frontend/vitemanifest"
 )
 
 // manifestEntry is one record of a Vite build manifest. The parser is shared

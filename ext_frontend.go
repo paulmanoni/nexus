@@ -24,10 +24,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/internal/vitehot"
-	"github.com/paulmanoni/nexus/internal/vitemanifest"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
+	"github.com/paulmanoni/nexus/v2/frontend/vitemanifest"
 )
 
 // init seeds the MIME type registry with the modern-web baseline

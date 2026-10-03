@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus/manifest"
-	"github.com/paulmanoni/nexus/registry"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/manifest"
+	"github.com/paulmanoni/nexus/v2/registry"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // manifestStore holds every declaration registered against an *App by

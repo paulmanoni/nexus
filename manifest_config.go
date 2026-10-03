@@ -3,11 +3,11 @@ package nexus
 import (
 	"time"
 
-	"github.com/paulmanoni/nexus/client"
-	"github.com/paulmanoni/nexus/extension/metrics"
-	"github.com/paulmanoni/nexus/extension/ratelimit"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/extension/metrics"
+	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // Config drives how nexus.Run builds the app. Supply it as the first

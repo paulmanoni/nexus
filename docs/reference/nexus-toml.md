@@ -169,7 +169,7 @@ id = "myapp-web"                 # os.Getenv("client.id"), import.meta.env.clien
 Decoded for extensions that are blank-imported:
 
 ```toml
-[extensions.config]              # _ "github.com/paulmanoni/nexus/extension/config"
+[extensions.config]              # _ "github.com/paulmanoni/nexus/v2/extension/config"
 endpoint      = "http://localhost:8078"
 identity      = "myapp"
 profile       = "default"
@@ -182,7 +182,7 @@ Import hints for [`//@` decorators](/guide/decorators). Usually unnecessary.
 
 ```toml
 [decorators.imports]
-inertia = "github.com/paulmanoni/nexus/extension/inertia"
+inertia = "github.com/paulmanoni/nexus/v2/extension/inertia"
 ```
 
 ## Your own sections

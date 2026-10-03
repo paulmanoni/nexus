@@ -4,7 +4,7 @@
 from local storage in development to S3 in production is a config change.
 
 ```go
-import "github.com/paulmanoni/nexus/extension/storage"
+import "github.com/paulmanoni/nexus/v2/extension/storage"
 
 type Uploads struct{ *storage.Manager }
 

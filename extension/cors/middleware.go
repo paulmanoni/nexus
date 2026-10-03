@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // corsHandler builds the per-request CORS middleware. Two paths run

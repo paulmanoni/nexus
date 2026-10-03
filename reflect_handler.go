@@ -8,7 +8,7 @@ import (
 	"unicode"
 
 	"github.com/graphql-go/graphql"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // callInput is the per-invocation environment callHandler consults to fill
@@ -350,7 +350,7 @@ func runtimeFuncName(v reflect.Value) string {
 	if f == "" {
 		return ""
 	}
-	// e.g. "github.com/paulmanoni/nexus/examples/graphapp.NewListOrders",
+	// e.g. "github.com/paulmanoni/nexus/v2/examples/graphapp.NewListOrders",
 	// or for methods "pkg.(*UserService).CreateUser" — the last dot-segment
 	// is the bare name either way.
 	if idx := strings.LastIndex(f, "."); idx >= 0 {

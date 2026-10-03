@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // Can reports whether the request's identity holds the permission —

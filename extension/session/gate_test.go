@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // TestRequiredGate: session.Required() admits only requests that arrive with

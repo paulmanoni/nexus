@@ -3,7 +3,7 @@ package client
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestAuthMetaOverlay pins the auth.Config → manifest AuthInfo wiring:

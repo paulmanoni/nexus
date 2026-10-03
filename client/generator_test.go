@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // TestGenerateDTS_TinyManifestSnapshot pins the .d.ts output for a

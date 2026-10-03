@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/paulmanoni/nexus"
-	mw "github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2"
+	mw "github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // ErrNoSession is the rejection [Required] renders when a request arrives

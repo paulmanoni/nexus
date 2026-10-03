@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // LogoutRevoker invalidates the underlying token in the app's own store

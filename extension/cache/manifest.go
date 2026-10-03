@@ -1,6 +1,6 @@
 package cache
 
-import "github.com/paulmanoni/nexus/manifest"
+import "github.com/paulmanoni/nexus/v2/manifest"
 
 // ManifestEnv lists the env vars this package's NewConfig reads. Apps
 // that include cache.Module in their nexus.Run options should also

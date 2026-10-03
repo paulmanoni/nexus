@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/internal/maskhook"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // Resource registers a controller's conventional page actions as Inertia

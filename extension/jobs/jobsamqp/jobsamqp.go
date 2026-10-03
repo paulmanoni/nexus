@@ -39,8 +39,8 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/jobs"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
 // Config says where the queues live and how they are declared. Zero values

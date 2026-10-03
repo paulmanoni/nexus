@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
 // TestCachedAsset_HashesAndCompresses asserts the basic invariants:

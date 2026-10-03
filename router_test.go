@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // markMW returns a middleware that records its name, so tests can assert

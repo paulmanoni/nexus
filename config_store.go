@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/paulmanoni/nexus/internal/dotpath"
+	"github.com/paulmanoni/nexus/v2/internal/dotpath"
 )
 
 // configStore is the process-wide config singleton. nexus.Get

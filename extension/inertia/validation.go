@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // headerErrorBag is the Inertia protocol header that scopes validation errors

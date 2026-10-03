@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 func TestAsWorker_RunsUntilStopSignalsCtx(t *testing.T) {

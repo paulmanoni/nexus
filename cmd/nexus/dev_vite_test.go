@@ -89,7 +89,7 @@ import (
 	"io"
 	"embed"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 //go:embed all:client/dist

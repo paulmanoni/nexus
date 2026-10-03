@@ -1,6 +1,6 @@
 package nexus
 
-import "github.com/paulmanoni/nexus/registry"
+import "github.com/paulmanoni/nexus/v2/registry"
 
 // WithIcon sets the dashboard icon for an endpoint — a lucide-style icon name
 // rendered on the endpoint's node in the architecture graph and the endpoints

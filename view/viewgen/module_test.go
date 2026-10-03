@@ -31,7 +31,7 @@ func TestModule(t *testing.T) {
 		"main.go": "package main\n\nfunc main() {}\n",
 		"state/state.go": `package state
 
-import "github.com/paulmanoni/nexus/view"
+import "github.com/paulmanoni/nexus/v2/view"
 
 type Search struct {
 	Query *view.Signal[string]
@@ -55,7 +55,7 @@ templ Home() {
 		"pets/results.templ": `package pets
 
 import (
-	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/v2/view"
 	"example.com/app/state"
 )
 
@@ -83,7 +83,7 @@ templ Results() {
 	for _, want := range []string{
 		`view.Shard(Results, auth.Required(), guards.Admin())`,
 		`"example.com/app/guards"`,
-		`"github.com/paulmanoni/nexus/extension/auth"`,
+		`"github.com/paulmanoni/nexus/v2/extension/auth"`,
 		`view.Expose[*state.Search]()`,
 		`"example.com/app/state"`,
 		`c[\"s.Query\"].get()`, // the compiled JavaScript, inside a Go string

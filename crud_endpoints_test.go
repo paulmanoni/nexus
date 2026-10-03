@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 type AscrudNote struct {

@@ -1,9 +1,9 @@
-module github.com/paulmanoni/nexus/di/fxcontainer
+module github.com/paulmanoni/nexus/di/fxcontainer/v2
 
 go 1.26.2
 
 require (
-	github.com/paulmanoni/nexus v1.19.0
+	github.com/paulmanoni/nexus/v2 v2.0.0
 	go.uber.org/fx v1.24.0
 )
 
@@ -15,6 +15,6 @@ require (
 )
 
 // Local development against the parent in this repo. At release this is
-// swapped for a plain `require github.com/paulmanoni/nexus vX.Y.Z` pinned to a
+// swapped for a plain `require github.com/paulmanoni/nexus/v2 vX.Y.Z` pinned to a
 // parent tag that no longer contains di/fxcontainer.
-replace github.com/paulmanoni/nexus => ../../
+replace github.com/paulmanoni/nexus/v2 => ../../

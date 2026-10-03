@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
 func TestDevPrimaryURL(t *testing.T) {

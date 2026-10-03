@@ -419,8 +419,8 @@ const tmplPagesGo = `package main
 import (
 	"context"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/inertia"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
 )
 
 // HomeProps is the prop bag the "Home" page component receives. Each
@@ -486,12 +486,12 @@ import (
 {{- if .HasFrontend}}
 	"embed"
 {{end}}
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 {{- if .IsInertia}}
-	"github.com/paulmanoni/nexus/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
 {{- end}}
 {{- if .IsInertiaSSR}}
-	"github.com/paulmanoni/nexus/extension/inertia/ssrhttp"
+	"github.com/paulmanoni/nexus/v2/extension/inertia/ssrhttp"
 {{- end}}
 {{- if .HasResources}}
 	"go.uber.org/zap"
@@ -567,7 +567,7 @@ func main() {
 
 const tmplModuleGo = `package main
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 // HelloService — typed wrapper around *nexus.Service so the DI
 // container can route by type. Every handler that declares
@@ -651,15 +651,15 @@ const tmplDatabaseGoTpl = `package resources
 import (
 	"os"
 
-	"github.com/paulmanoni/nexus/db"
+	"github.com/paulmanoni/nexus/v2/db"
 {{- if eq .DB "postgres"}}
-	_ "github.com/paulmanoni/nexus/db/postgres" // links the pgx driver
+	_ "github.com/paulmanoni/nexus/v2/db/postgres" // links the pgx driver
 {{- else if eq .DB "mysql"}}
-	_ "github.com/paulmanoni/nexus/db/mysql" // links the MySQL driver
+	_ "github.com/paulmanoni/nexus/v2/db/mysql" // links the MySQL driver
 {{- else}}
-	_ "github.com/paulmanoni/nexus/db/sqlite" // links the pure-Go SQLite engine
+	_ "github.com/paulmanoni/nexus/v2/db/sqlite" // links the pure-Go SQLite engine
 {{- end}}
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/resource"
 	"go.uber.org/zap"
 )
 
@@ -711,8 +711,8 @@ func (m *DB) NexusResources() []resource.Resource {
 const tmplCacheGo = `package resources
 
 import (
-	"github.com/paulmanoni/nexus/extension/cache"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/extension/cache"
+	"github.com/paulmanoni/nexus/v2/resource"
 	"go.uber.org/zap"
 )
 
@@ -873,7 +873,7 @@ package auth
 import (
 	"context"
 
-	"github.com/paulmanoni/nexus/extension/oauth2"
+	"github.com/paulmanoni/nexus/v2/extension/oauth2"
 )
 
 // Default dev client. Real apps swap NewStaticClientStore for

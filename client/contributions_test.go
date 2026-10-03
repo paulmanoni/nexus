@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
 // TestContributionsHandler_HappyPath serves a stub builder and

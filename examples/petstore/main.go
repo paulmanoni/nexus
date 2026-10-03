@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/trace"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/trace"
 )
 
 func main() {

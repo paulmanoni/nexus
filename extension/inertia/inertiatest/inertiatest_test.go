@@ -7,10 +7,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/paulmanoni/nexus"
-	"github.com/paulmanoni/nexus/extension/inertia"
-	"github.com/paulmanoni/nexus/extension/inertia/inertiatest"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/inertia"
+	"github.com/paulmanoni/nexus/v2/extension/inertia/inertiatest"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 const manifestJSON = `{"src/main.ts":{"file":"assets/main-abc123.js","isEntry":true,"css":["assets/main-xyz.css"]}}`

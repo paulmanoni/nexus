@@ -1,7 +1,7 @@
 package nexus
 
 import (
-	"github.com/paulmanoni/nexus/middleware"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // EndpointGate is a middleware the framework applies to every endpoint by

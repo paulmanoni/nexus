@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus/db"
-	_ "github.com/paulmanoni/nexus/db/sqlite"
-	"github.com/paulmanoni/nexus/resource"
+	"github.com/paulmanoni/nexus/v2/db"
+	_ "github.com/paulmanoni/nexus/v2/db/sqlite"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // DB is a project-local alias for nexus/db.Manager. Typed wrappers below

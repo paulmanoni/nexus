@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/paulmanoni/nexus"
+import "github.com/paulmanoni/nexus/v2"
 
 // BindFromConfig binds a marker type T to the [storage.<name>] block in
 // nexus.toml — the storage counterpart to db.BindFromConfig, so local-in-dev

@@ -4,9 +4,9 @@ import (
 	"context"
 	"reflect"
 
-	"github.com/paulmanoni/nexus/di"
+	"github.com/paulmanoni/nexus/v2/di"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // SharedProvider contributes a prop to EVERY Inertia page response. It runs

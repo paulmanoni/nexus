@@ -6,7 +6,7 @@
 package widgets
 
 import (
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // Stats is a panel payload (a widgets type a handler returns — which also means

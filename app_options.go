@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // Option composes a nexus app. Everything returned by Provide, Supply,

@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/paulmanoni/nexus/httpx"
-	"github.com/paulmanoni/nexus/registry"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 // Large apps register hundreds of services and thousands of endpoints, so

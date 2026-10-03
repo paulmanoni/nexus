@@ -1,6 +1,6 @@
 package nexus
 
-import "github.com/paulmanoni/nexus/di"
+import "github.com/paulmanoni/nexus/v2/di"
 
 // deferredOptionSources are functions that yield Options at Boot/Run time —
 // AFTER every package init() has run. This is the seam that lets nexus/decorate

@@ -11,7 +11,7 @@ import (
 
 	"github.com/a-h/templ"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 //go:embed runtime.js

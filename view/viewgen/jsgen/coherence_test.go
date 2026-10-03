@@ -11,7 +11,7 @@ import (
 
 	"github.com/dop251/goja"
 
-	"github.com/paulmanoni/nexus/view"
+	"github.com/paulmanoni/nexus/v2/view"
 )
 
 // Each case is one expression written twice: as the Go the server

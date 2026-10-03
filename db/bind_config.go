@@ -3,7 +3,7 @@ package db
 import (
 	"fmt"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // The fixed config-key suffixes read under a database's key_prefix. Chosen

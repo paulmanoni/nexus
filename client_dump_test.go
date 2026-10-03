@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paulmanoni/nexus/client"
+	"github.com/paulmanoni/nexus/v2/client"
 )
 
 // dumpProject makes a temp project dir with a detectable frontend

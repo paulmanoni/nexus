@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/paulmanoni/nexus/di"
-	"github.com/paulmanoni/nexus/internal/vitehot"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
 // ratelimitGlobalKey is the store key for the app-wide bucket. Re-declared

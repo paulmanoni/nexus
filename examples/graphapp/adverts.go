@@ -3,7 +3,7 @@ package main
 import (
 	"time"
 
-	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // AdvertsService is the nexus service wrapper for the adverts domain. Every

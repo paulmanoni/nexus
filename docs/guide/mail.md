@@ -4,7 +4,7 @@
 chosen by config: log messages in development, send over SMTP in production.
 
 ```go
-import "github.com/paulmanoni/nexus/extension/mail"
+import "github.com/paulmanoni/nexus/v2/extension/mail"
 
 type Mailer struct{ *mail.Manager }
 

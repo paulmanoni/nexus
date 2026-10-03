@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/paulmanoni/nexus/httpx"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 var _ = time.Second // keep the import even if Enforce ever moves
