@@ -83,6 +83,7 @@ var migrateV2Rules = []migrateRule{
 	{Name: "annotations", Applies: isGoSource, Apply: migrateGoAnnotations},
 	{Name: "annotations", Applies: isTemplSource, Apply: migrateTemplAnnotations},
 	{Name: "nexus.toml", Applies: isNexusTOML, Apply: migrateNexusTOMLKeys},
+	{Name: "assembly", Applies: isGoSource, Apply: migrateGoAssembly},
 }
 
 func isGoSource(rel string) bool    { return strings.HasSuffix(rel, ".go") }
