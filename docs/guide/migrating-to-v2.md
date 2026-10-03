@@ -160,8 +160,8 @@ addr = ":9090"
 ```
 
 **Codemod:** moves every single-line key the strict check pins to one table into that
-table, keeping its text and comment. Typos, undeclared sections and multi-line entries
-are left for `nexus config check`, which prints each problem with its fix (`--json` for
+table, keeping its text and comment. Typos and multi-line entries are left for
+`nexus config check`, which prints each problem with its fix (`--json` for
 CI). Add the schema line at the top of the file for editor completion:
 
 ```toml
@@ -185,6 +185,20 @@ var Shop = config.Section[ShopConfig]("shop", ShopConfig{Currency: "USD"})
 
 func price(p int) string { return format(p, Shop.Get().Currency) }
 ```
+
+**Codemod:** every top-level section of nexus.toml that nothing declares is declared
+free-form in `main.go` — and in each package that reads it, so its tests boot too — with
+a TODO:
+
+```go
+var (
+	// TODO(nexus v2): give [shop] a struct: config.Section[ShopConfig]("shop"), read with .Get()
+	_ = config.Section[map[string]any]("shop")
+)
+```
+
+The app boots unchanged. Resolve the TODO by replacing `map[string]any` with a struct as
+above; declaring the same table again with the same type shares the declaration.
 
 `config.Get("shop.currency")` still works for a declared table. `nexus config check`
 reads `config.Section` calls from your source, so it knows your tables too.
@@ -221,7 +235,8 @@ opts = append(opts, nexus.MustLoadExtensions())
 ```
 
 `LoadExtensionOptions` is `nexus.LoadExtensions`, returning `(nexus.Option, error)`.
-Not rewritten — the compiler points at each call. Under `nexus.Boot` you need neither:
+**Codemod:** drops the `...` after `MustLoadExtensions()`; `LoadExtensionOptions` is
+left to the compiler. Under `nexus.Boot` you need neither:
 `Boot` loads extensions itself.
 
 ## dev, notify and resource
@@ -252,7 +267,8 @@ n := notify.New()
 
 v1 named an op after its handler with a `New` prefix dropped (`NewListPets` →
 `listPets`). v2 uses the name as written (`NewListPets` → `newListPets`), or
-`nexus.Op`.
+`nexus.Op`. On GraphQL the op name is the field name, so this is a wire change there;
+a REST op is named `METHOD /path` either way.
 
 ```go
 // v1
@@ -266,11 +282,11 @@ func (s *PetService) ListPets(ctx context.Context, in ListArgs) ([]Pet, error)
 nexus.AsQuery((*PetService).ListPets)      // field: listPets
 ```
 
-**Codemod:** adds `nexus.Op("xxx")` to `AsQuery` / `AsMutation` / `AsSubscription` /
-`AsRest` / `AsWS` registrations whose handler is `NewXxx`, and `//nexus:use
-nexus.Op("xxx")` to annotated `NewXxx` functions. Registrations that already call
-`nexus.Op` are left alone. GraphQL field names, the generated SDK and `auth.OpGates`
-keys therefore don't move.
+**Codemod:** adds `nexus.Op("xxx")` to `AsQuery` / `AsMutation` / `AsSubscription`
+registrations whose handler is `NewXxx`, and `//nexus:use nexus.Op("xxx")` to
+`NewXxx` functions annotated `//nexus:query`, `//nexus:mutation` or
+`//nexus:subscription`. Registrations that already call `nexus.Op` are left alone.
+GraphQL field names, the generated SDK and `auth.OpGates` keys therefore don't move.
 
 Functions with DI parameters (`NewXxx(svc, db, p nexus.Params[T])`) are still valid
 handlers. To drop the `nexus.Op` later, rename the function (or move it onto a service
@@ -405,7 +421,8 @@ func NewThemeHead(doc *nexus.Document) middleware.Middleware { … }
 ```
 
 Within a stage, declaration order holds across modules. **`middleware.Middleware.Gin`
-is renamed `HTTP`** (not rewritten — the compiler finds each one).
+is renamed `HTTP`**: the codemod rewrites `middleware.Middleware{Gin: …}` literals; a
+field read through a variable (`mw.Gin`) is left to the compiler.
 
 **Codemod:** a TODO on each `Middleware.Global` line. Move each middleware into a
 `nexus.Middleware(...)` option, give it a `Stage`, and if `cfg` is left with only keys
@@ -461,6 +478,44 @@ ip := nexus.ClientIP(ctx)
 The address honours `[runtime.server] trusted_proxies`. **Codemod:**
 `ClientIPFromCtx` → `nexus.ClientIP`; `WithClientIP` (root and `extension/ratelimit`)
 gets a TODO — delete the call, the framework sets the address on every request.
+
+## GraphQL behind a seam
+
+No graphql-go type appears in the public API. `graph` and `transport/gql` are internal;
+what a handler or middleware sees of a resolve is in the `gql` package
+(`github.com/paulmanoni/nexus/v2/gql`).
+
+```go
+// v1
+func Audit(next graph.FieldResolveFn) graph.FieldResolveFn {
+    return func(p graph.ResolveParams) (any, error) { return next(p) }
+}
+
+// v2
+func Audit(next gql.Resolver) gql.Resolver {
+    return func(f gql.Field) (any, error) { return next(f) }
+}
+
+nexus.AsQuery((*OrderService).SearchOrders, nexus.GraphMiddleware("audit", "logs resolves", Audit))
+```
+
+**Codemod:** `graph.FieldMiddleware` → `gql.Middleware`, `graph.FieldResolveFn` →
+`gql.Resolver`, `graph.ResolveParams` → `gql.Field`, `SetStatusCode` →
+`nexus.SetGraphStatus`. TODOs mark the removed names:
+
+- **Validators** (`graph.Required`, `StringLength`, `IntRange`, `OneOf`, `StringMatch`,
+  `Custom`, `nexus.WithArgValidator`) — tag the args field (`validate:"required"`,
+  `validate:"len=3|120"`, `validate:"int=1|100"`, `validate:"oneof=a|b"`), or check in
+  the handler and return `nexus.Invalid().Field(…)`.
+- **`RegisterGqlType`** takes a Go type: `nexus.RegisterGqlType[Address]("ShippingAddress")`
+  for an input object, `nexus.RegisterGqlType("Status", Status("active"), Status("archived"))`
+  for an enum.
+- **Hand-built schemas** (`Service.MountGraphQL`, `transport/gql.Mount`), `GqlField`,
+  `GqlFieldGroup`, `graph.NewResolver` — register the fields with `nexus.AsQuery` /
+  `nexus.AsMutation`.
+- **`graph.GetRootInfo` / `GetRootString`** — put the value on the context.
+
+See [transports](./transports#graphql).
 
 ## Changed defaults
 

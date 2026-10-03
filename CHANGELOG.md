@@ -30,9 +30,10 @@ decisions: [docs/design/v2.md](docs/design/v2.md).
   `//nexus:` keyword is always an error. *Codemod: `.go` and `.templ`.*
 - **An op is named after its handler as written.** v1 dropped a `New` prefix
   (`NewListPets` → `listPets`); v2 uses the method or function name
-  (`newListPets`), or `nexus.Op("…")`. *Codemod: adds `nexus.Op("xxx")` to
+  (`newListPets`), or `nexus.Op("…")`. On GraphQL that name is the field name.
+  *Codemod: adds `nexus.Op("xxx")` to `AsQuery`/`AsMutation`/`AsSubscription`
   registrations of `NewXxx` handlers (and `//nexus:use nexus.Op("xxx")` to
-  annotated ones) so wire names don't move.*
+  annotated ones) so GraphQL field names don't move.*
 - **The config package.** Runtime config types, the nexus.toml loader,
   `Get` and its store, dotenv and env bridging leave the root:
   `nexus.Config` → `config.Runtime`, `ServerConfig` → `config.Server` (and the
@@ -53,8 +54,9 @@ decisions: [docs/design/v2.md](docs/design/v2.md).
   declared, or an `[extensions.x]` block without a registered decoder fails
   boot with its line and a did-you-mean. v1 warned and ignored them. App
   sections are declared with `config.Section[T]`. *Codemod: moves keys the
-  check pins to one table; typos and undeclared sections are left for
-  `nexus config check`.*
+  check pins to one table; declares each undeclared app section free-form
+  (`config.Section[map[string]any]`) with a TODO to type it; typos are left
+  for `nexus config check`.*
 - **One error model.** `nexus.Error{Code, Message, Fields, Cause}` with eight
   codes (`InvalidInput`, `Unauthenticated`, `Forbidden`, `NotFound`,
   `Conflict`, `TooMany`, `Unavailable`, `Internal`), built with
@@ -73,7 +75,8 @@ decisions: [docs/design/v2.md](docs/design/v2.md).
   is gone; `nexus.Middleware` takes middleware values or DI constructors, placed
   by `middleware.Stage` (`Edge`, `Session`, `Auth`, `App`) and declaration
   order. *Codemod: a TODO on each `Middleware.Global` line.*
-- **`middleware.Middleware.Gin` is `HTTP`.**
+- **`middleware.Middleware.Gin` is `HTTP`.** *Codemod: composite literals;
+  a field read through a variable is left to the compiler.*
 - **`ServeFrontend` is `nexus.Frontend`**, which also provides `*nexus.Document`
   (the page shell; Vite's live one under `nexus dev`) into DI. The CLI finds
   the frontend dir from a `nexus.Frontend(...)` call. *Codemod: symbols.*
@@ -86,6 +89,7 @@ decisions: [docs/design/v2.md](docs/design/v2.md).
   hand fails boot. nexus links no zap.
 - **`MustLoadExtensions` returns one `nexus.Option`**, and
   `LoadExtensionOptions` is `LoadExtensions`, returning `(Option, error)`.
+  *Codemod: drops the `...` spread.*
 - **Request bodies are capped at 32MB by default** (`max_body_bytes`; `-1`
   turns it off). An over-limit JSON body is a 413, not a 400.
 - **CSRF follows what the app uses.** `[runtime.middleware.security] csrf` is
@@ -108,6 +112,17 @@ decisions: [docs/design/v2.md](docs/design/v2.md).
 - **Listeners start last and stop first**, after every resource and worker
   has started; `manifest.StartupTask.Run` takes the boot context.
 - **`uri:"x"` struct tags are no longer read**; use `path:"x"`. *Codemod: tags.*
+- **GraphQL sits behind a seam.** No graphql-go type is in the public API:
+  `graph` and `transport/gql` are internal, and the surface is the new `gql`
+  package — `Params[T].Info` is a `gql.Info`, and `GraphMiddleware` and
+  `middleware.Middleware.Graph` take a `gql.Middleware` over a `gql.Field`.
+  `RegisterGqlType` declares an enum or input object from a Go type
+  (`RegisterGqlType[T](name, values…)`). Removed: `Service.MountGraphQL`,
+  `WithArgValidator` and the graph validators (use `validate:` tags),
+  `GqlField`/`GqlFieldGroup`, `graph.GetRootInfo`/`GetRootString`.
+  *Codemod: `graph.FieldMiddleware`/`FieldResolveFn`/`ResolveParams` →
+  `gql.Middleware`/`Resolver`/`Field`, `SetStatusCode` →
+  `nexus.SetGraphStatus`; TODOs for the removed names.*
 
 ### Added
 
