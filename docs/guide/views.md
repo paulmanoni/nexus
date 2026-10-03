@@ -180,8 +180,8 @@ func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error 
   first; an event that fails them, or returns `nexus.Invalid()`, re-renders with
   the errors — read them with `view.Errors(ctx).Field("name")` — and
   the form keeps what was typed; on success the form resets to its
-  server-rendered values. A field's value is overwritten only when the
-  server's `value` attribute changes, and never while it has focus.
+  server-rendered values. How fields and re-renders meet is set out under
+  [Form fields](#form-fields).
 
 ```go
 type PetInput struct {
@@ -215,6 +215,48 @@ func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
 - `view.Send`, `view.Submit` and `view.Change` also work in a component
   library's `Props.Attributes`
   (`templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}`).
+
+### Form fields
+
+A live page re-renders after every event, and the browser patches the page
+while the user may be typing into it. Fields follow these rules — guarantees,
+tested against the runtime on a DOM that keeps field state as a browser does
+(not yet in real browsers):
+
+1. **A field's value belongs to the user until the server's value changes.**
+   After the user types, a re-render that renders the same `value` leaves what
+   they typed; one that renders a different `value` replaces it.
+2. **A focused field is never overwritten** — not its value, its checked state
+   or its selection, whatever the server renders. (A browser on its own lets a
+   changed `value` or `selected` attribute through to a field the user hasn't
+   edited yet; the runtime puts back what was shown.)
+3. **A `<select>` follows the server's chosen option** the same way: when the
+   options the server marks `selected` change, the select shows them; when
+   they don't, the user's choice stands. No option marked means the first.
+4. **A `<textarea>` follows the server's value** — its text — like an input's
+   `value` attribute.
+5. **A checkbox or radio** follows its `checked` attribute by the same rules.
+6. **A form resets after a successful submit** (`view.Submit`) to the values
+   the new render gives it; after an invalid one (validation errors) it keeps
+   what was typed.
+
+`view.Value(v)` marks a field **server-owned**: unless it has focus, it shows
+the server's value after every render, even one that left the value alone —
+for a field the server corrects or clears (a normalised amount, a search box
+an event empties). Spread it into the field; on a select it chooses the
+option with that value, on a textarea it is the text:
+
+```templ
+<input name="amount" { view.Value(b.Amount)... }/>
+<select name="sort" { view.Value(b.Sort)... }>
+	<option value="name">Name</option>
+	<option value="date">Date</option>
+</select>
+<textarea name="notes" { view.Value(b.Notes)... }></textarea>
+```
+
+A field bound to a signal (`value={ q.Get() }`) follows the signal: browser
+state is newer than the server's copy.
 
 ## Navigation
 
@@ -470,6 +512,66 @@ the page still renders. The island keeps its children, its element's
 
 The app's own static files must not share Vite's output directory. If the app
 serves `/assets/`, set `build.assetsDir` in `vite.config` to something else.
+
+## Testing views
+
+`github.com/paulmanoni/nexus/v2/view/viewtest` drives pages end to end in a Go
+test, without a browser. The page is fetched from the app over a real HTTP
+server; the view runtime and the page's compiled expressions run in goja
+against a small DOM; a live page connects its WebSocket to the app; events go
+out as the runtime sends them and patches are applied by its own morph — so
+signals, shards, live events, navigation and the [form rules](#form-fields)
+are the ones the browser runs.
+
+```go
+func TestBuilder(t *testing.T) {
+	app := nexustest.New(t, config.Runtime{}, appOptions()...)
+	p := viewtest.Mount[*reports.Builder](t, app, viewtest.As("staff-token"))
+
+	p.Fill("title", "Sales").Select("ds_keys", "main.id").Click("#run")
+	p.Expect("#save").Enabled()
+	p.Click("#save")
+	p.Expect("#saved li").Text("Sales")
+	p.Expect("title").Value("") // the form reset
+}
+
+func TestHome(t *testing.T) {
+	p := viewtest.Get(t, app, "/")
+	p.Click("#inc").Expect("#count").Text("1")
+	p.Fill("#q", "cat").Expect("#pets").ContainsText("Mochi") // a shard re-render
+}
+```
+
+- **Opening.** `viewtest.Mount[*T](t, app, opts…)` opens the live page
+  `view.Live[*T]` serves (found in the app's registry; `viewtest.At("/orders/42")`
+  for a prefix with parameters) and waits for its socket to join.
+  `viewtest.Get(t, app, path, opts…)` opens any page; `p.Status()` is its HTTP
+  status (a gate's 401, say). `app` is the `*nexus.App` or `nexustest.App`.
+- **Who.** `viewtest.As(token)` sends `Authorization: Bearer token` on every
+  request and on the socket — the identity the app's auth resolves the token
+  to. `viewtest.Header(k, v)` and `viewtest.Cookie(c)` cover other schemes;
+  cookies the app sets are kept.
+- **Locators** are a form field's `name`, else a CSS selector (`#id`, `.class`,
+  `tag`, `[attr=v]`, `:checked`, `:not(…)`, descendant and `>` combinators).
+- **Actions** — `Fill`, `Select` (one value, or several on a multiple select),
+  `Check`/`Uncheck`, `Click`, `Submit`, `Press`, `Focus`/`Blur`, `Visit`, `Back`
+  — act as a person does: the field takes focus, input and change fire, a
+  submit button submits its form, a link navigates. Each first lets the page
+  settle (replies to earlier events arrive, `view.Change`'s debounce runs), so
+  it acts on a quiet page. `Wait()` settles explicitly.
+- **Reading** — `Text`, `Attr`, `Value` (what the field shows, not its `value`
+  attribute), `Checked`, `Exists`, `Count`, `HTML`, `URL`, `Console`.
+- **`Expect(loc)`** assertions — `Exists`, `Absent`, `Count`, `Text`,
+  `ContainsText`, `Attr`, `NoAttr`, `Value`, `Enabled`/`Disabled`,
+  `Checked`/`Unchecked`, `Visible`/`Hidden`, `Focused` — retry until they hold
+  or the timeout (`viewtest.Timeout`, 5s) passes, so they also see what another
+  page's `view.Broadcast` pushes.
+- **Not a browser.** There is no layout or CSS: `Visible` means no `hidden`
+  ancestor. Only the view runtime's scripts run (not a component library's or
+  inline ones), islands don't mount (there is no Vite build to load them
+  from), and file inputs are not supported. Page time is virtual: debounces and
+  reconnect backoffs run without waiting. Checking layout, or behaviour that
+  depends on a real browser's quirks, needs a real browser — not covered yet.
 
 ## Editor support
 

@@ -320,6 +320,7 @@
           inner.length = 0;
           if (watcher) dispose(watcher);
           el.innerHTML = html;
+          ownFields(el);
           mount();
           sweepIslands();
         })
@@ -354,10 +355,96 @@
       }
       unmountIsland(el);
     }
-    var chosen = el.tagName === "SELECT" ? markedOptions(el) : null;
+    if (!isField(el)) {
+      syncAttributes(el, next);
+      morphChildren(el, next);
+      return;
+    }
+    // A form field. What the user sees is kept while the field has focus;
+    // otherwise the field takes the server's value when that value changed
+    // since the last render - or on every render, for a field marked
+    // data-nx-value (view.Value).
+    var focused = typeof document !== "undefined" && el === document.activeElement;
+    var seen = fieldState(el);
+    var before = serverValue(el);
     syncAttributes(el, next);
-    morphChildren(el, next);
-    if (chosen !== null) syncSelection(el, chosen);
+    if (el.tagName === "TEXTAREA") {
+      if (el.textContent !== next.textContent) el.textContent = next.textContent;
+    } else {
+      morphChildren(el, next);
+    }
+    if (focused) restoreField(el, seen);
+    else if (el.hasAttribute("data-nx-value") || serverValue(el) !== before) takeServerValue(el);
+  }
+
+  function isField(el) {
+    return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+  }
+
+  function checkable(el) {
+    return el.tagName === "INPUT" && (el.type === "checkbox" || el.type === "radio");
+  }
+
+  // serverValue is a field's value as the server rendered it: an input's
+  // value (or checked) attribute, a textarea's text, the options a select
+  // marks selected - or, under view.Value, the field's value attribute.
+  function serverValue(el) {
+    if (checkable(el)) return el.hasAttribute("checked") ? "1" : "";
+    if (el.hasAttribute("data-nx-value") && el.hasAttribute("value")) return el.getAttribute("value");
+    if (el.tagName === "TEXTAREA") return el.textContent;
+    if (el.tagName === "SELECT") return markedOptions(el);
+    return el.getAttribute("value");
+  }
+
+  // takeServerValue sets what the user sees to the server's value.
+  function takeServerValue(el) {
+    if (checkable(el)) {
+      el.checked = el.hasAttribute("checked");
+      return;
+    }
+    var owned = el.hasAttribute("data-nx-value") && el.hasAttribute("value");
+    if (el.tagName === "SELECT") {
+      if (owned) {
+        var want = el.getAttribute("value");
+        if (el.value !== want) el.value = want;
+        return;
+      }
+      var any = false;
+      Array.from(el.options).forEach(function (o) {
+        o.selected = o.hasAttribute("selected");
+        any = any || o.selected;
+      });
+      if (!any && !el.multiple && el.options.length) el.selectedIndex = 0;
+      return;
+    }
+    var v = owned || el.tagName !== "TEXTAREA" ? el.getAttribute("value") : el.textContent;
+    if (v == null) v = "";
+    if (el.value !== v) el.value = v;
+  }
+
+  // fieldState is what the user sees in a field; restoreField puts it back
+  // after a patch, so a focused field is never overwritten (a browser lets a
+  // changed value or selected attribute through to a field the user has not
+  // edited yet).
+  function fieldState(el) {
+    if (checkable(el)) return el.checked;
+    if (el.tagName === "SELECT") return Array.from(el.options).map(function (o) { return o.selected ? o.value : null; });
+    return el.value;
+  }
+
+  function restoreField(el, seen) {
+    if (checkable(el)) {
+      if (el.checked !== seen) el.checked = seen;
+    } else if (el.tagName === "SELECT") {
+      // By value: the options may have changed under the user.
+      var chosen = new Set(seen.filter(function (v) { return v !== null; }));
+      Array.from(el.options).forEach(function (o) {
+        var on = chosen.has(o.value);
+        if (o.selected !== on) o.selected = on;
+      });
+    } else if (el.value !== seen) {
+      el.value = seen;
+    }
   }
 
   // markedOptions are the options the server marks selected, as it rendered
@@ -369,39 +456,24 @@
       .join("\u0000");
   }
 
-  // syncSelection follows the server's choice of option, like a field's
-  // value: when the options it marks selected changed, and the select hasn't
-  // focus. (A select the user changed no longer follows its options'
-  // selected attributes on its own.)
-  function syncSelection(select, before) {
-    if (markedOptions(select) === before) return;
-    if (typeof document !== "undefined" && select === document.activeElement) return;
-    var any = false;
-    Array.from(select.options).forEach(function (o) {
-      o.selected = o.hasAttribute("selected");
-      any = any || o.selected;
+  // ownFields gives the fields under root marked with view.Value their
+  // server value: a select or a textarea doesn't read a value attribute on
+  // its own.
+  function ownFields(root) {
+    var list = Array.from(root.querySelectorAll("[data-nx-value]"));
+    if (root.hasAttribute("data-nx-value")) list.unshift(root);
+    list.forEach(function (el) {
+      if (isField(el) && !(typeof document !== "undefined" && el === document.activeElement)) takeServerValue(el);
     });
-    if (!any && !select.multiple && select.options.length) select.selectedIndex = 0;
   }
 
-  // A form field's current value belongs to the user until the server
-  // says otherwise: it is overwritten only when the server's value (or
-  // checked) attribute itself changed, and never while the field has focus.
   function syncAttributes(el, next) {
-    var field = el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
-    var oldValue = el.getAttribute("value"), oldChecked = el.hasAttribute("checked");
     Array.from(el.attributes).forEach(function (a) {
       if (!next.hasAttribute(a.name)) el.removeAttribute(a.name);
     });
     Array.from(next.attributes).forEach(function (a) {
       if (el.getAttribute(a.name) !== a.value) el.setAttribute(a.name, a.value);
     });
-    if (!field || (typeof document !== "undefined" && el === document.activeElement)) return;
-    var newValue = next.getAttribute("value");
-    if (el.tagName !== "SELECT" && newValue !== oldValue) el.value = newValue == null ? "" : newValue;
-    if ((el.type === "checkbox" || el.type === "radio") && next.hasAttribute("checked") !== oldChecked) {
-      el.checked = next.hasAttribute("checked");
-    }
   }
 
   function sameKind(a, b) {
@@ -412,7 +484,6 @@
   }
 
   function morphChildren(el, next) {
-    if (el.tagName === "TEXTAREA") return; // its text is its value
     var kids = Array.from(next.childNodes);
     var cur = el.firstChild;
     kids.forEach(function (n) {
@@ -592,11 +663,15 @@
           next.innerHTML = html;
         }
         morph(root, next);
+        ownFields(root);
         walk(root, []);
         reapply(root);
         sweepIslands();
         // A successful submit resets its form to the server-rendered values.
-        if (submitted && !msg.invalid && submitted.isConnected) submitted.reset();
+        if (submitted && !msg.invalid && submitted.isConnected) {
+          submitted.reset();
+          ownFields(submitted);
+        }
       };
       ws.onclose = function () {
         if (state.closed) return; // navigated away: stay closed
@@ -848,6 +923,7 @@
         if (!doc.querySelector('script[src*="/_view/runtime.js"]')) throw new Error("not a view page");
         mergeHead(doc.head);
         morph(document.body, doc.body);
+        ownFields(document.body);
         if (push) history.pushState({ nx: true }, "", page.url);
         walk(document.body, []);
         reapply(document.body);
@@ -952,6 +1028,7 @@
   if (typeof document !== "undefined") {
     var boot = function () {
       walk(document.documentElement, []);
+      ownFields(document.documentElement);
       syncLive();
       document.addEventListener("click", onNavClick);
       window.addEventListener("online", reconnectAll);

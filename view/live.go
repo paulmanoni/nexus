@@ -66,9 +66,23 @@ func Live[T any](prefix string, gates ...nexus.MiddlewareOption) *LiveRouter[T] 
 		r.Register(nexus.FailBoot(err))
 		return l
 	}
-	r.Rest("GET", "", def.pageHandler(), append([]nexus.RestOption{HTML()}, def.liveTags()...)...)
+	r.Rest("GET", "", def.pageHandler(), append([]nexus.RestOption{HTML(), nexus.Tag(LiveTag, LiveKey(t))}, def.liveTags()...)...)
 	r.Rest("GET", "/_live", def.socketHandler(), nexus.WithRenderer(upgraded{}), nexus.HideFromDashboard())
 	return l
+}
+
+// LiveTag is the registry.Endpoint.Tags key on a live page's GET route; its
+// value is LiveKey of the page's type. It is how tools (viewtest.Mount) find
+// where a live page is served.
+const LiveTag = "view.live"
+
+// LiveKey names a live page's type T (a pointer to a struct) in LiveTag:
+// its package path and type name.
+func LiveKey(t reflect.Type) string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.PkgPath() + "." + t.Name()
 }
 
 // Provide adds constructors — usually T's — under the live page's module.
