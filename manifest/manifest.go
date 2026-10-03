@@ -602,7 +602,7 @@ type Inputs struct {
 	StartupTasks     []StartupTask
 
 	// Direct registrations bypass the provider walk — used by
-	// app.UseVolume(...) and any future app.DeclareEnv(...) calls
+	// app.DeclareVolume(...) and any future app.DeclareEnv(...) calls
 	// that don't go through an interface.
 	DirectEnv      []EnvVar
 	DirectServices []ServiceNeed
@@ -1288,7 +1288,7 @@ func bytesIndex(haystack, needle []byte) int {
 //      func (a *App) DeclareEnvProvider(EnvProvider)
 //      func (a *App) DeclareService(ServiceNeed)
 //      func (a *App) DeclareServiceProvider(ServiceDependencyProvider)
-//      func (a *App) UseVolume(Volume)
+//      func (a *App) DeclareVolume(Volume)
 //      func (a *App) AddStartupTask(StartupTask)
 //
 //    plus an unexported manifestInputs() method that gathers

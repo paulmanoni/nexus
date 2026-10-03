@@ -345,7 +345,7 @@ func makeCreateHandler[T any](resolver CRUDResolver[T]) any {
 
 func makeUpdateHandler[T any](resolver CRUDResolver[T]) any {
 	// gin.Context dep gives us :id without needing the body struct
-	// to also carry a uri:"id" field — JSON-bound bodies don't
+	// to also carry a path:"id" field — JSON-bound bodies don't
 	// reliably surface URI params alongside.
 	return func(c *httpx.Ctx, p Params[T]) (*T, error) {
 		id := c.Param("id")

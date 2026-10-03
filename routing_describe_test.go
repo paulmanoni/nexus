@@ -13,7 +13,7 @@ import (
 // contract that lets one helper supersede the transport-specific Desc/Description.
 func TestDescribe_CrossTransport(t *testing.T) {
 	type args struct {
-		ID string `uri:"id" graphql:"id"`
+		ID string `path:"id" graphql:"id"`
 	}
 	newGet := func(p Params[args]) (string, error) { return "ok", nil }
 	newSearch := func(p Params[args]) (string, error) { return "ok", nil }

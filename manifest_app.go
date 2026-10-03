@@ -138,12 +138,6 @@ func (a *App) DeclareVolume(v manifest.Volume) {
 	declareAppend(a, &a.manifest.volumes, v)
 }
 
-// UseVolume is the original name of DeclareVolume.
-//
-// Deprecated: use DeclareVolume — it matches its 13 Declare* siblings
-// (its data-driven counterpart was already DeclareVolumeProvider).
-func (a *App) UseVolume(v manifest.Volume) { a.DeclareVolume(v) }
-
 // DeclareVolumeProvider is the data-driven counterpart to DeclareVolume.
 func (a *App) DeclareVolumeProvider(p manifest.VolumeProvider) {
 	if p == nil {
@@ -752,11 +746,6 @@ func DeclareService(s manifest.ServiceNeed) Option {
 func DeclareVolume(v manifest.Volume) Option {
 	return Invoke(func(a *App) { a.DeclareVolume(v) })
 }
-
-// UseVolume is the original name of DeclareVolume.
-//
-// Deprecated: use DeclareVolume.
-func UseVolume(v manifest.Volume) Option { return DeclareVolume(v) }
 
 // AddStartupTask produces an Option that registers a startup task.
 // The task's Run is preserved through to integration step 3 where

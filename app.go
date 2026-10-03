@@ -82,7 +82,7 @@ type App struct {
 	// boot-time state they must read at request time without relying on
 	// gin-middleware install ordering (which fx.Module route registration
 	// can run ahead of). The Inertia engine lives here; the page renderer
-	// pulls it via AppFromGin(c) → App.Value(...). See SetValue/Value.
+	// pulls it via the appctx request key → App.Value(...). See SetValue/Value.
 	extValues    sync.Map
 	registry     *registry.Registry
 	bus          *trace.Bus
@@ -498,7 +498,6 @@ func New(cfg config.Runtime) *App {
 						Namespace:    r.Namespace,
 						HasDashboard: r.HasDashboard,
 						HasClient:    r.HasClient,
-						HasGenerate:  r.HasGenerate,
 						LiveEvents:   r.LiveEvents,
 					}
 					if r.Tab != nil {

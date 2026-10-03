@@ -63,7 +63,7 @@ type FieldSchema struct {
 	Description string  `json:"description,omitempty"`
 
 	// Path / Query are the names the REST binder reads the field under
-	// from the URL: `path:"id"` (or the legacy `uri:"id"`) binds from the
+	// from the URL: `path:"id"` binds from the
 	// :id path segment, `query:"page"` (or `form:"page"`, which the query
 	// binder falls back to) from ?page=. Empty when the field doesn't bind
 	// from that source. Generated page-URL helpers build URLs from them.
@@ -403,7 +403,7 @@ func collectStructFields(t reflect.Type, refs map[string]NamedType, depth int, o
 			continue
 		}
 		jsonTag := f.Tag.Get("json")
-		pathName := tagName(f.Tag, "path", "uri")
+		pathName := tagName(f.Tag, "path")
 		if jsonTag == "-" {
 			if pathName == "" {
 				continue

@@ -14,7 +14,7 @@ type User struct {
 }
 
 type getArgs struct {
-	ID string `uri:"id"`
+	ID string `path:"id"`
 }
 
 // NewGetUser is a reflective REST handler: path param -> typed args -> response.

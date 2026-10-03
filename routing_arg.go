@@ -24,7 +24,7 @@ import (
 // DI-injected, context.Context fills from the request.
 //
 // The single- or multi-field args struct is synthesized at registration —
-// each field tagged json/query/uri/graphql under its name — so binding, the
+// each field tagged json/query/path/graphql under its name — so binding, the
 // GraphQL schema, validation surfaces and the generated SDK see exactly what
 // a hand-written wrapper struct would have declared. A non-pointer parameter
 // becomes a REQUIRED argument; a pointer parameter an optional one. The op
@@ -194,7 +194,7 @@ func buildArgStruct(fn any, names []string, pathParams []string) (argStruct, err
 		if pt.Kind() == reflect.Pointer {
 			gqlTag = name // pointer parameter → optional argument
 		}
-		tag := fmt.Sprintf(`json:%q query:%q uri:%q graphql:%q`, name, name, name, gqlTag)
+		tag := fmt.Sprintf(`json:%q query:%q path:%q graphql:%q`, name, name, name, gqlTag)
 		if isPath[name] {
 			// Path only: the route segment is the one source of truth.
 			tag = fmt.Sprintf(`json:"-" path:%q graphql:%q`, name, gqlTag)

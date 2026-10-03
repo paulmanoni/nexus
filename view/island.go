@@ -21,9 +21,10 @@ import (
 	"github.com/a-h/templ"
 
 	"github.com/paulmanoni/nexus/v2"
-	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/frontend/vitemanifest"
+	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/appctx"
 )
 
 // IslandOption says when an island mounts, and whether the server renders it.
@@ -185,7 +186,8 @@ type (
 var lastApp atomic.Pointer[nexus.App]
 
 func withApp(ctx context.Context, c *httpx.Ctx) context.Context {
-	if app, ok := nexus.AppFromGin(c); ok {
+	v, _ := c.Get(appctx.Key)
+	if app, ok := v.(*nexus.App); ok {
 		return context.WithValue(ctx, appKey{}, app)
 	}
 	return ctx
