@@ -94,6 +94,12 @@ var migrateV2Symbols = []migrateSymbol{
 	// 1:1 replacements (docs/design/v2.md §9).
 	{From: "", Old: "UseVolume", To: "", New: "DeclareVolume"},
 	{From: "", Old: "ServeFrontend", To: "", New: "Frontend"},
+	{From: "", Old: "ClientIPFromCtx", To: "", New: "ClientIP"},
+	{From: "extension/ratelimit", Old: "ClientIPFromCtx", To: "", New: "ClientIP"},
+	{From: "", Old: "WithClientIP",
+		Todo: "nexus.WithClientIP is gone; the framework puts the caller's address on every request — read it with nexus.ClientIP(ctx)"},
+	{From: "extension/ratelimit", Old: "WithClientIP",
+		Todo: "ratelimit.WithClientIP is gone; the framework puts the caller's address on every request — read it with nexus.ClientIP(ctx)"},
 	{From: "extension/auth", Old: "Describe", To: "extension/auth", New: "InspectExtractor"},
 }
 

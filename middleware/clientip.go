@@ -6,8 +6,7 @@ import "context"
 // caller's IP, so transport-neutral middleware (rate limiting et al.) can
 // read it via RequestCtx.ClientIP regardless of wire protocol. It lives here
 // — the neutral middleware package — so every carrier and the ratelimit
-// extension share one key without an import cycle. ratelimit.WithClientIP /
-// ClientIPFromCtx delegate to these.
+// extension share one key without an import cycle. nexus.ClientIP reads it.
 type clientIPKey struct{}
 
 // WithClientIP returns ctx carrying ip. Transports (the gin REST handler, the

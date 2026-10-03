@@ -111,3 +111,8 @@ func clientIP(r *http.Request) string {
 	}
 	return peer
 }
+
+// ClientIP is the caller's address for r: the peer address, or the
+// forwarded client when the peer is a trusted proxy ([runtime.server]
+// trusted_proxies). Ctx.ClientIP is the same, memoized per request.
+func ClientIP(r *http.Request) string { return clientIP(r) }

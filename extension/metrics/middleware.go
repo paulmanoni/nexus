@@ -104,7 +104,7 @@ func ginRecorder(store Store, key string) httpx.HandlerFunc {
 }
 
 // graphRecorder wraps a go-graph resolver with the same record-on-exit
-// pattern. IP comes from ratelimit.ClientIPFromCtx — the graphql-go
+// pattern. IP comes from middleware.ClientIPFromCtx — the graphql-go
 // adapter stashes it there pre-resolve.
 func graphRecorder(store Store, key string) graph.FieldMiddleware {
 	return func(next graph.FieldResolveFn) graph.FieldResolveFn {

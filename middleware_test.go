@@ -152,3 +152,24 @@ func TestAppMiddlewareRejectsOtherValues(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Every request carries the caller's address, read with nexus.ClientIP.
+func TestClientIPOnREST(t *testing.T) {
+	var got string
+	app, stop, err := InProcess(config.Runtime{},
+		AsRest("GET", "/ip", func(ctx context.Context) (string, error) {
+			got = ClientIP(ctx)
+			return got, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	req := httptest.NewRequest("GET", "/ip", nil)
+	req.RemoteAddr = "203.0.113.7:51000"
+	app.ServeHTTP(httptest.NewRecorder(), req)
+	if got != "203.0.113.7" {
+		t.Fatalf("ClientIP = %q", got)
+	}
+}

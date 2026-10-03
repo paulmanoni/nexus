@@ -17,8 +17,8 @@ import (
 	graph "github.com/paulmanoni/nexus/v2/graph"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/internal/maskhook"
+	"github.com/paulmanoni/nexus/v2/middleware"
 
-	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/trace"
 )
@@ -189,7 +189,7 @@ func Mount(e httpx.Router, r *registry.Registry, bus *trace.Bus, service, path s
 		// downstream (rate-limit, metrics error recorder) can attribute the
 		// request without the gql adapter leaking gin.Context into graph.
 		hs = append(hs, func(c *httpx.Ctx) {
-			ctx := ratelimit.WithClientIP(c.Request.Context(), c.ClientIP())
+			ctx := middleware.WithClientIP(c.Request.Context(), c.ClientIP())
 			c.Request = c.Request.WithContext(ctx)
 			c.Next()
 		})

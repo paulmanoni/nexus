@@ -1,7 +1,6 @@
 package nexus
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -461,19 +460,6 @@ func findAppInDeps(deps []reflect.Value, idx int) *App {
 	return nil
 }
 
-// WithClientIP is a thin pass-through to ratelimit.WithClientIP so nexus
-// callers can thread IP into context without importing the lower-level
-// ratelimit package. Kept here for API consistency with other nexus helpers.
-func WithClientIP(ctx context.Context, ip string) context.Context {
-	return ratelimit.WithClientIP(ctx, ip)
-}
-
-// ClientIPFromCtx pulls the IP stashed via WithClientIP (or
-// ratelimit.WithClientIP). Empty when absent.
-func ClientIPFromCtx(ctx context.Context) string {
-	return ratelimit.ClientIPFromCtx(ctx)
-}
-
 // attachRateLimitMiddleware wires a rate-limit check onto a resolver. The
 // middleware runs before the handler and enforces TWO buckets in order:
 //
@@ -498,7 +484,7 @@ func attachRateLimitMiddleware(r *graph.UnifiedResolver[any], app *App, service,
 			// per-IP global limit still isolates callers consistently.
 			scope := ""
 			if declared.PerIP {
-				scope = ClientIPFromCtx(p.Context)
+				scope = ClientIP(p.Context)
 			}
 			if ok, retry := store.Allow(p.Context, ratelimit.GlobalKey, scope); !ok {
 				return nil, fmt.Errorf("global rate limit exceeded — retry after %s", retry.Round(10_000_000))

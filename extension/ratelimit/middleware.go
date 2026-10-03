@@ -1,7 +1,6 @@
 package ratelimit
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,23 +8,6 @@ import (
 
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
-
-// WithClientIP returns ctx carrying ip. Transports (gin REST handler,
-// gql adapter, WS upgrade) call this so middleware that scopes buckets
-// per IP can find it.
-//
-// Delegates to middleware.WithClientIP — the canonical key now lives in the
-// neutral middleware package so RequestCtx-backed carriers and this extension
-// share one key without an import cycle. These wrappers stay for back-compat.
-func WithClientIP(ctx context.Context, ip string) context.Context {
-	return middleware.WithClientIP(ctx, ip)
-}
-
-// ClientIPFromCtx returns the caller's IP a transport put in ctx, or
-// empty when absent.
-func ClientIPFromCtx(ctx context.Context) string {
-	return middleware.ClientIPFromCtx(ctx)
-}
 
 // NewMiddleware returns a transport-agnostic middleware bundle that
 // enforces rate limits against store under key. The same bundle can be

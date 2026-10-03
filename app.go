@@ -902,6 +902,10 @@ func (a *App) OnResourceUse(target UseReporter) {
 	})
 }
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Every transport reads the caller's address from the context
+	// (nexus.ClientIP), so it is resolved once here — honouring
+	// trusted_proxies — rather than by each carrier.
+	r = r.WithContext(middleware.WithClientIP(r.Context(), httpx.ClientIP(r)))
 	// Trailing-slash normalization (opt-in): "/users/" is served as
 	// "/users" — an internal rewrite, not a redirect, so POST bodies
 	// survive and clients never see a 3xx. Done here, at the single
@@ -1092,3 +1096,8 @@ func parseLogLevel(s string) slog.Level {
 		return slog.LevelInfo
 	}
 }
+
+// ClientIP is the caller's address for the request ctx belongs to — on
+// every transport, and honouring [runtime.server] trusted_proxies, so a
+// forwarded client is reported only behind a proxy you trust.
+func ClientIP(ctx context.Context) string { return middleware.ClientIPFromCtx(ctx) }
