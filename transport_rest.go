@@ -286,6 +286,9 @@ func RestOptions(opts ...RestOption) RestOption {
 // We build its signature via reflect.FuncOf so any dep type the handler named
 // flows through fx's dependency resolution unchanged.
 func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option {
+	if sh.hasArgs {
+		noteURITag(sh.argsType)
+	}
 	appType := reflect.TypeOf((*App)(nil))
 
 	in := make([]reflect.Type, 0, len(sh.depTypes)+1)
@@ -578,7 +581,6 @@ func surveyFor(t reflect.Type) tagSurveyResult {
 	}
 	var sv tagSurveyResult
 	sv.uri, sv.query, sv.header, sv.form, sv.json = tagSurvey(t)
-	noteURITag(t)
 	surveyCache.Store(t, sv)
 	return sv
 }

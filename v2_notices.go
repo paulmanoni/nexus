@@ -80,7 +80,7 @@ func noteErrForbidden(err error) {
 
 // noteURITag records a `uri:` struct tag on a REST args type.
 func noteURITag(t reflect.Type) {
-	if !v2notice.Enabled() {
+	if !v2notice.Enabled() || t.Kind() != reflect.Struct {
 		return
 	}
 	for i := 0; i < t.NumField(); i++ {

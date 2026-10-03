@@ -52,7 +52,7 @@ func TestV2Notice_URITag(t *testing.T) {
 		ID   string `uri:"id"`
 		Slug string `path:"slug" uri:"slug"`
 	}
-	surveyFor(reflect.TypeOf(GetArgs{}))
+	noteURITag(reflect.TypeOf(GetArgs{}))
 	got := v2Recorded()
 	if !strings.Contains(got, `uri:"id"`) || strings.Contains(got, "slug") {
 		t.Fatalf("recorded %q", got)
