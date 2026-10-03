@@ -10,14 +10,14 @@ import (
 
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/metrics"
-	"github.com/paulmanoni/nexus/v2/graph"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/gqlhttp"
+	"github.com/paulmanoni/nexus/v2/internal/graph"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/resource"
-	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
-// autoMountIn bundles the inputs autoMountGraphQL works over: every GqlField
+// autoMountIn bundles the inputs autoMountGraphQL works over: every gqlField
 // produced by nexus.AsQuery / AsMutation, the Config (for the environment-level
 // GraphQL knobs), and the app. The Fields slice arrives from the
 // "nexus.graph.fields" value group — collected by the container via the
@@ -26,14 +26,14 @@ import (
 type autoMountIn struct {
 	App    *App
 	Cfg    config.Runtime
-	Fields []GqlField
+	Fields []gqlField
 }
 
 // autoMountGraphQL runs once at startup, after every reflective controller
 // constructor has resolved. Collapsing everything into a single function
 // means users write no mount ceremony — service wrapper + AsQuery/AsMutation
 // is all they need. fields is the collected "nexus.graph.fields" group.
-func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
+func autoMountGraphQL(app *App, cfg config.Runtime, fields []gqlField) error {
 	in := autoMountIn{App: app, Cfg: cfg, Fields: fields}
 	if len(in.Fields) == 0 {
 		return nil
@@ -92,7 +92,7 @@ func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
 	// drawing migrations packets/edges as if they came from user —
 	// the dashboard shows the wrong source.
 	moduleServices := map[string]*Service{}
-	resolveUnresolved := func(f GqlField) (GqlField, error) {
+	resolveUnresolved := func(f gqlField) (gqlField, error) {
 		if f.ServiceType != nil && f.Service != nil {
 			return f, nil
 		}
@@ -118,7 +118,7 @@ func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
 	}
 
 	// Partition by (service type, mount path). The service instance is
-	// already unwrapped inside each GqlField (AsQuery did this via the
+	// already unwrapped inside each gqlField (AsQuery did this via the
 	// service-wrapper dep scan or OnService option) so we can read
 	// path/name directly.
 	//
@@ -196,7 +196,7 @@ func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
 		}
 		p, ok := partitions[key]
 		if !ok {
-			p = &servicePartition{serviceType: f.ServiceType, service: f.Service, mountPath: mountPath, shapes: map[string]GqlField{}}
+			p = &servicePartition{serviceType: f.ServiceType, service: f.Service, mountPath: mountPath, shapes: map[string]gqlField{}}
 			partitions[key] = p
 		}
 		switch f.Kind {
@@ -222,7 +222,7 @@ func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
 			if ok && f.Service != nil {
 				key := f.Service.Name() + "." + info.Name
 				mw := metrics.NewMiddleware(in.App.metricsStore, key)
-				u.WithNamedMiddleware(mw.Name, mw.Description, mw.Graph)
+				u.WithNamedMiddleware(mw.Name, mw.Description, graph.Adapt(mw.Graph))
 				in.App.registry.RegisterMiddleware(mw.AsInfo())
 			}
 		}
@@ -255,7 +255,7 @@ func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
 		}
 	}
 
-	// Group partitions by mount path before calling gql.Mount: when N
+	// Group partitions by mount path before calling gqlhttp.Mount: when N
 	// services share the same /graphql path, mounting per-service
 	// would double-register POST/GET on the engine and panic. Merge
 	// their query/mutation lists into one schema per path so each
@@ -333,7 +333,7 @@ func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
 type pathGroup struct {
 	path       string
 	owner      *Service // first service on this path — names the registered endpoint
-	opts       []gql.Option
+	opts       []gqlhttp.Option
 	partitions []*servicePartition
 }
 
@@ -347,19 +347,19 @@ type servicePartition struct {
 	mountPath string
 	queries   []graph.QueryField
 	mutations []graph.MutationField
-	// shapes maps GraphQL field name → the originating GqlField, kept
+	// shapes maps GraphQL field name → the originating gqlField, kept
 	// so the post-mount stamping pass can read each field's
 	// ArgsType / ReturnType and walk them into the registry's
 	// structural schema. Without this, the SDK manifest would have
 	// REST schemas but blank GraphQL ones.
-	shapes map[string]GqlField
+	shapes map[string]gqlField
 }
 
 // mountGroup builds one merged schema for every partition that shares
-// the group's GraphQL path and mounts it with a single gql.Mount
+// the group's GraphQL path and mounts it with a single gqlhttp.Mount
 // call. The owner service (the first partition seen on this path) is
 // the path-level fallback; per-field service is threaded through
-// gql.Mount via WithServiceForField so each query/mutation records
+// gqlhttp.Mount via WithServiceForField so each query/mutation records
 // under its OWN service in the registry. Without this, fields
 // belonging to a different service would all be attributed to the
 // path owner — the dashboard would show a single card containing
@@ -369,7 +369,7 @@ func mountGroup(app *App, g *pathGroup) error {
 	var mutations []graph.MutationField
 	// fieldService maps GraphQL field name → owning service name. Built
 	// while we walk each partition's queries/mutations so the call to
-	// gql.Mount can register endpoints under the right service.
+	// gqlhttp.Mount can register endpoints under the right service.
 	fieldService := map[string]string{}
 	for _, p := range g.partitions {
 		svcName := p.service.Name()
@@ -392,27 +392,27 @@ func mountGroup(app *App, g *pathGroup) error {
 	if err != nil {
 		return fmt.Errorf("nexus: build schema for path %q: %w", g.path, err)
 	}
-	opts := append([]gql.Option(nil), g.opts...)
-	opts = append(opts, gql.WithServiceForField(func(name string) string { return fieldService[name] }))
+	opts := append([]gqlhttp.Option(nil), g.opts...)
+	opts = append(opts, gqlhttp.WithServiceForField(func(name string) string { return fieldService[name] }))
 	// Introspection gate — same source of truth as the dashboard
 	// gate (Config.Introspection + IntrospectionNetworks). Only
 	// installed when at least one is set; an unconfigured app gets
 	// the open default the gql package already had.
 	if app.introspect || len(app.introspectionNets) > 0 {
-		opts = append(opts, gql.WithAllowIntrospection(app.AllowIntrospection))
+		opts = append(opts, gqlhttp.WithAllowIntrospection(app.AllowIntrospection))
 	}
 	// Enroll this mount's DocumentCache (if any) in the app-level
 	// stats registry so /__nexus/graphql/cache and the live WS
 	// snapshot can surface its counters.
 	if app.gqlStats != nil {
-		opts = append(opts, gql.WithStatsRegistry(app.gqlStats))
+		opts = append(opts, gqlhttp.WithStatsRegistry(app.gqlStats))
 	}
 	// Prefix the GraphQL mount with the deployment-wide route prefix
 	// so e.g. users-svc serves at /users/graphql while orders-svc
 	// serves at /orders/graphql. Source-declared per-service
 	// AtGraphQL paths are preserved beneath the prefix.
 	mountedPath := app.PrefixPath(g.path)
-	gql.Mount(app.Router(), app.Registry(), app.Bus(), g.owner.Name(), mountedPath, &schema, opts...)
+	gqlhttp.Mount(app.Router(), app.Registry(), app.Bus(), g.owner.Name(), mountedPath, &schema, opts...)
 
 	for _, p := range g.partitions {
 		for _, q := range p.queries {
@@ -429,13 +429,13 @@ func mountGroup(app *App, g *pathGroup) error {
 	return nil
 }
 
-// stampSchemaFromField walks the GqlField's ArgsType / ReturnType
+// stampSchemaFromField walks the gqlField's ArgsType / ReturnType
 // into registry.TypeRef values and persists them on the just-
 // registered endpoint via SetEndpointSchema. Mirrors what
 // recordEndpointSchema does for REST/WS, but driven from the
 // auto-mount's field-level metadata since GraphQL handlers don't
 // have a single registerEndpoint call site we can hook from.
-func stampSchemaFromField(app *App, service, opName string, f GqlField) {
+func stampSchemaFromField(app *App, service, opName string, f gqlField) {
 	if f.ArgsType == nil && f.ReturnType == nil {
 		return
 	}
@@ -477,7 +477,7 @@ type NexusResourceProvider interface {
 	NexusResources() []resource.Resource
 }
 
-func attachDeclaredResources(app *App, f GqlField) {
+func attachDeclaredResources(app *App, f gqlField) {
 	if f.Service == nil {
 		return
 	}

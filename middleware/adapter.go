@@ -5,7 +5,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 )
 
 // FromHandler turns one unified Handler into a transport bundle, generating
@@ -91,13 +91,13 @@ func ginAdapter(h Handler) httpx.HandlerFunc {
 
 // --- graphql -----------------------------------------------------------------
 
-type graphCarrier struct{ p *graph.ResolveParams }
+type graphCarrier struct{ f *gql.Field }
 
 // header has no general source on a GraphQL resolve — headers are an HTTP
 // concern. Returns empty; auth/identity flows read from Context, not here.
 func (g graphCarrier) header(string) string { return "" }
-func (g graphCarrier) clientIP() string     { return ClientIPFromCtx(g.p.Context) }
-func (g graphCarrier) path() string         { return g.p.Info.FieldName }
+func (g graphCarrier) clientIP() string     { return ClientIPFromCtx(g.f.Context) }
+func (g graphCarrier) path() string         { return g.f.Info.FieldName }
 
 // setHeader is a no-op: a GraphQL field resolve has no response headers.
 func (g graphCarrier) setHeader(string, string) {}
@@ -125,15 +125,15 @@ func (g graphCarrier) rejectJSON(_ int, _ any) error { return errRejected }
 
 // graphAdapter runs a Handler as a field middleware. next invokes the wrapped
 // resolver and threads any context the Handler injected via rc.WithContext.
-func graphAdapter(h Handler) graph.FieldMiddleware {
-	return func(next graph.FieldResolveFn) graph.FieldResolveFn {
-		return func(p graph.ResolveParams) (any, error) {
+func graphAdapter(h Handler) gql.Middleware {
+	return func(next gql.Resolver) gql.Resolver {
+		return func(f gql.Field) (any, error) {
 			var result any
 			var resErr error
-			rc := newRequestCtx(p.Context, TransportGraphQL, graphCarrier{p: &p})
+			rc := newRequestCtx(f.Context, TransportGraphQL, graphCarrier{f: &f})
 			err := h.Handle(rc, func(r *RequestCtx) error {
-				p.Context = r.Context
-				result, resErr = next(p)
+				f.Context = r.Context
+				result, resErr = next(f)
 				return resErr
 			})
 			if err != nil {

@@ -10,7 +10,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 )
 
 // The unified NewMiddleware (ported to middleware.FromHandler) must keep its
@@ -52,9 +52,9 @@ func TestNewMiddlewareGraphQL(t *testing.T) {
 	}
 
 	resolved := 0
-	resolver := func(p graph.ResolveParams) (any, error) { resolved++; return "ok", nil }
+	resolver := func(p gql.Field) (any, error) { resolved++; return "ok", nil }
 	wrapped := mw.Graph(resolver)
-	call := func() (any, error) { return wrapped(graph.ResolveParams{Context: context.Background()}) }
+	call := func() (any, error) { return wrapped(gql.Field{Context: context.Background()}) }
 
 	if _, err := call(); err != nil {
 		t.Fatalf("first call errored: %v", err)

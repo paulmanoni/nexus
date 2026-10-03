@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/internal/graph"
 )
 
 // Validate checks v's `validate:` tags — the rules GraphQL arguments use

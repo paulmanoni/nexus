@@ -51,7 +51,7 @@
 // Coexistence with the existing (*Service).Auth API: auth.Module operates
 // at the app layer via a global middleware, so services that still call
 // (*Service).Auth(UserDetailsFn) keep working as before. Over time,
-// migrate resolvers from graph.GetRootInfo to auth.IdentityFrom/User.
+// move resolvers onto auth.IdentityFrom/User.
 package auth
 
 import (
@@ -411,7 +411,7 @@ func (m *Manager) Login(ctx context.Context, cred Credentials) (*Identity, error
 //
 // Module does NOT touch (*Service).Auth. Services using the older
 // UserDetailsFn hook continue to work alongside; migration is a
-// per-resolver switch from graph.GetRootInfo to auth.User[T].
+// per-resolver switch to auth.User[T].
 func Module(cfg Config) nexus.Option {
 	// A backend can supply the resolver, so schemes may omit Resolve — and
 	// a backend with no schemes at all gets a default bearer scheme.

@@ -10,7 +10,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 )
 
 func TestFromHandlerRealizations(t *testing.T) {
@@ -92,10 +92,10 @@ func TestGraphAdapterPassThrough(t *testing.T) {
 	h := NewFunc("ok", AllTransports, func(rc *RequestCtx, next Next) error { return next(rc) })
 	fm := FromHandler(h).Graph
 
-	resolver := func(p graph.ResolveParams) (any, error) { return "result", nil }
+	resolver := func(p gql.Field) (any, error) { return "result", nil }
 	wrapped := fm(resolver)
 
-	got, err := wrapped(graph.ResolveParams{Context: context.Background()})
+	got, err := wrapped(gql.Field{Context: context.Background()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,10 +111,10 @@ func TestGraphAdapterReject(t *testing.T) {
 	})
 	fm := FromHandler(h).Graph
 
-	resolver := func(p graph.ResolveParams) (any, error) { resolverCalled = true; return "x", nil }
+	resolver := func(p gql.Field) (any, error) { resolverCalled = true; return "x", nil }
 	wrapped := fm(resolver)
 
-	_, err := wrapped(graph.ResolveParams{Context: context.Background()})
+	_, err := wrapped(gql.Field{Context: context.Background()})
 	if err == nil || err.Error() != "forbidden" {
 		t.Fatalf("expected forbidden error, got %v", err)
 	}

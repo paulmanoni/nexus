@@ -8,7 +8,7 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/v2/dataloader"
 	"github.com/paulmanoni/nexus/v2/di"
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/internal/graph"
 )
 
 // LoadField registers a batched virtual field on the GraphQL Object

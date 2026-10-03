@@ -12,9 +12,9 @@ import (
 	"github.com/paulmanoni/nexus/v2/extension/cron"
 	"github.com/paulmanoni/nexus/v2/extension/metrics"
 	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/internal/gqlhttp"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/registry"
-	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
 // heartbeatInterval is the maximum time between snapshot emissions
@@ -50,7 +50,7 @@ type liveSnapshot struct {
 	Stats        []metrics.EndpointStats     `json:"stats,omitempty"`
 	Crons        []cron.Snapshot             `json:"crons,omitempty"`
 	RateLimits   []ratelimit.Record          `json:"ratelimits,omitempty"`
-	GraphQLCache []gql.MountCacheStats       `json:"graphqlCache,omitempty"`
+	GraphQLCache []gqlhttp.MountCacheStats   `json:"graphqlCache,omitempty"`
 	// Middlewares + Global stream the registered middleware catalogue and
 	// the ordered global chain so the dashboard renders them live instead
 	// of polling GET /__nexus/middlewares.
@@ -88,7 +88,7 @@ type Notifier interface {
 	Subscribe() (<-chan struct{}, func())
 }
 
-func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, gqlStats *gql.StatsRegistry, notifier Notifier) httpx.HandlerFunc {
+func streamLive(reg *registry.Registry, ms metrics.Store, sched *cron.Scheduler, rl ratelimit.Store, gqlStats *gqlhttp.StatsRegistry, notifier Notifier) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {

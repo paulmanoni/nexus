@@ -14,10 +14,10 @@ import (
 	"github.com/paulmanoni/nexus/v2/extension/cron"
 	"github.com/paulmanoni/nexus/v2/extension/metrics"
 	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
+	"github.com/paulmanoni/nexus/v2/internal/gqlhttp"
 	"github.com/paulmanoni/nexus/v2/manifest"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/trace"
-	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
 const Prefix = "/__nexus"
@@ -111,7 +111,7 @@ type TabInfo struct {
 // silently expose service/env/cron declarations to the public. The
 // cron + rate-limit + metrics endpoints are always mounted — their
 // stores just return empty lists when nothing has been registered.
-func Mount(e httpx.Router, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier Notifier, gqlStats *gql.StatsRegistry, cfg Config) {
+func Mount(e httpx.Router, reg *registry.Registry, bus *trace.Bus, sched *cron.Scheduler, rl ratelimit.Store, ms metrics.Store, notifier Notifier, gqlStats *gqlhttp.StatsRegistry, cfg Config) {
 	if cfg.Name == "" {
 		cfg.Name = "Nexus"
 	}
@@ -156,7 +156,7 @@ func Mount(e httpx.Router, reg *registry.Registry, bus *trace.Bus, sched *cron.S
 	}
 	// GraphQL document-cache stats — always mounted; the registry
 	// returns an empty list when no caches are enrolled.
-	gql.MountDashboard(g, gqlStats)
+	gqlhttp.MountDashboard(g, gqlStats)
 	// Manifest endpoint mounts only when both pieces are configured —
 	// fail-closed so a missing NEXUS_ADMIN_TOKEN doesn't silently
 	// expose service/env/cron declarations. The auth gate is route-

@@ -59,15 +59,6 @@ var ownersModule = nexus.Module("owners",
 	}),
 )
 
-// --- Graph domain (GraphQL, schema defined in schema.go) ---
-
-var graphModule = nexus.Module("graph",
-	nexus.Invoke(func(app *nexus.App) {
-		graph := app.Service("graph").Describe("GraphQL demo")
-		graph.MountGraphQL("/graphql", buildSchema())
-	}),
-)
-
 // --- Resources (databases + cache) ---
 
 var (

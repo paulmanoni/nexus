@@ -11,9 +11,9 @@
 //
 // Services then reference resources by name, not by instance:
 //
-//	app.Service("adverts").Using("").MountGraphQL(...)              // default DB
-//	app.Service("qb").Using("questions", "session").MountGraphQL(...) // explicit
-//	app.Service("uaa").UsingDefaults().MountGraphQL(...)             // default of every kind
+//	app.Service("orders").Using("")                 // default DB
+//	app.Service("quiz").Using("questions", "session") // explicit
+//	app.Service("users").UsingDefaults()            // default of every kind
 package resource
 
 type Kind string

@@ -23,9 +23,9 @@ import (
 	"github.com/paulmanoni/nexus/v2/extension/dashboard"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/gqlhttp"
 	"github.com/paulmanoni/nexus/v2/notify"
 	"github.com/paulmanoni/nexus/v2/trace/otlp"
-	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
 // ratelimitGlobalKey is the store key for the app-wide bucket. Re-declared
@@ -851,18 +851,20 @@ func introspectionGate(introspect bool, networks []*net.IPNet) httpx.HandlerFunc
 }
 
 // SetGraphStatus overrides the HTTP status code for the current
-// GraphQL request. Call from a graph.FieldMiddleware (the Graph
+// GraphQL request. Call from a gql.Middleware (the Graph
 // realization of a middleware.Middleware bundle) or from a
 // resolver to translate a decision into a non-200 response code:
 //
 //	authMw := middleware.Middleware{
 //	    Name: "auth",
-//	    Graph: func(p graphql.ResolveParams, next graphql.FieldResolveFn) (any, error) {
-//	        if !authed(p.Context) {
-//	            nexus.SetGraphStatus(p.Context, http.StatusUnauthorized)
-//	            return nil, errors.New("unauthorized")
+//	    Graph: func(next gql.Resolver) gql.Resolver {
+//	        return func(f gql.Field) (any, error) {
+//	            if !authed(f.Context) {
+//	                nexus.SetGraphStatus(f.Context, http.StatusUnauthorized)
+//	                return nil, errors.New("unauthorized")
+//	            }
+//	            return next(f)
 //	        }
-//	        return next(p)
 //	    },
 //	}
 //
@@ -872,10 +874,9 @@ func introspectionGate(introspect bool, networks []*net.IPNet) httpx.HandlerFunc
 //
 // No-op when ctx didn't pass through the framework's GraphQL
 // adapter — useful for resolver code under test with a bare
-// graphql.Do call.
+// engine call.
 //
-// Re-export of gql.SetStatusCode so user code stays on the
-// `nexus.` import without pulling in the transport package.
+// The GraphQL transport is internal; this is its public status hook.
 func SetGraphStatus(ctx context.Context, code int) {
-	gql.SetStatusCode(ctx, code)
+	gqlhttp.SetStatusCode(ctx, code)
 }

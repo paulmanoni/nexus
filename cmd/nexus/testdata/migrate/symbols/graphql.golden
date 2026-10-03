@@ -1,0 +1,21 @@
+package users
+
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/gql"
+)
+
+func Audit(next gql.Resolver) gql.Resolver {
+	return func(p gql.Field) (any, error) {
+		return next(p)
+	}
+}
+
+// TODO(nexus v2): nexus.WithArgValidator is gone; use validate:"…" tags, and return nexus.Invalid().Field(…) from the handler for other checks
+var Module = nexus.Module("users",
+	nexus.AsQuery(NewListUsers, nexus.Op("listUsers"),
+		nexus.GraphMiddleware("audit", "logs every resolve", gql.Middleware(Audit)),
+	),
+)
+
+func NewListUsers() ([]string, error) { return nil, nil }

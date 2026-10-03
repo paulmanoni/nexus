@@ -3,11 +3,10 @@ package nexus
 import (
 	"context"
 
-	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/internal/gqlhttp"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/resource"
-	"github.com/paulmanoni/nexus/v2/transport/gql"
 	"github.com/paulmanoni/nexus/v2/transport/rest"
 	"github.com/paulmanoni/nexus/v2/transport/ws"
 )
@@ -30,10 +29,10 @@ type Service struct {
 	graphqlUserDetFn UserDetailsFn
 }
 
-// UserDetailsFn, when set on a service, routes GraphQL requests through
-// graph.NewHTTP so resolvers can read the authenticated user via
-// graph.GetRootInfo(p, "details", &user). Returning an error aborts the
-// request with the framework's standard unauthenticated shape.
+// UserDetailsFn, when set on a service, is called with the GraphQL
+// request's Bearer token; the context it returns is the one resolvers see.
+// The returned details value is available to the engine's validation
+// rules, not to handlers.
 type UserDetailsFn func(ctx context.Context, token string) (context.Context, any, error)
 
 // DefaultGraphQLPath is the mount path nexus.AsQuery / AsMutation use when a
@@ -88,29 +87,30 @@ func (s *Service) Name() string { return s.name }
 // Read by the auto-mount Invoke; users rarely need this.
 func (s *Service) GraphQLPath() string { return s.graphqlPath }
 
-// Auth wires a Bearer-token → user hook. Resolvers read the user via
-// graph.GetRootInfo(p, "details", &user) after successful authentication.
+// Auth wires a Bearer-token → user hook for this service's GraphQL
+// endpoint. The context fn returns becomes the resolvers' context, so put
+// the user there (or use extension/auth, which works on every transport).
 // Per-service because different services often use different auth
 // mechanisms (admin vs public).
 func (s *Service) Auth(fn UserDetailsFn) *Service { s.graphqlUserDetFn = fn; return s }
 
-// graphqlOptions returns the gql.Option slice representing this service's
+// graphqlOptions returns the gqlhttp.Option slice representing this service's
 // current flags combined with the app-wide knobs in cfg. Called by the
 // auto-mount.
-func (s *Service) graphqlOptions(cfg config.Runtime) []gql.Option {
-	var out []gql.Option
+func (s *Service) graphqlOptions(cfg config.Runtime) []gqlhttp.Option {
+	var out []gqlhttp.Option
 	if !cfg.GraphQL.DisablePlayground {
-		out = append(out, gql.WithPlayground(true))
+		out = append(out, gqlhttp.WithPlayground(true))
 	}
 	if cfg.GraphQL.Debug {
-		out = append(out, gql.WithDEBUG(true))
+		out = append(out, gqlhttp.WithDEBUG(true))
 	}
 	if cfg.GraphQL.Pretty {
-		out = append(out, gql.WithPretty(true))
+		out = append(out, gqlhttp.WithPretty(true))
 	}
 	if s.graphqlUserDetFn != nil {
 		fn := s.graphqlUserDetFn
-		out = append(out, gql.WithUserDetailsFn(func(ctx context.Context, token string) (context.Context, any, error) {
+		out = append(out, gqlhttp.WithUserDetailsFn(func(ctx context.Context, token string) (context.Context, any, error) {
 			return fn(ctx, token)
 		}))
 	}
@@ -123,7 +123,7 @@ func (s *Service) graphqlOptions(cfg config.Runtime) []gql.Option {
 		cacheSize = 1024
 	}
 	if cacheSize > 0 {
-		out = append(out, gql.WithDocumentCache(cacheSize))
+		out = append(out, gqlhttp.WithDocumentCache(cacheSize))
 	}
 	return out
 }
@@ -139,13 +139,6 @@ func (s *Service) REST(method, path string) *rest.Builder {
 
 func (s *Service) WebSocket(path string) *ws.Builder {
 	return ws.New(s.app.engine, s.app.registry, s.app.bus, s.name, path)
-}
-
-// MountGraphQL attaches schema (assembled by go-graph or graphql-go) and
-// auto-registers every operation into the nexus registry. Pass gql.With*
-// options for auth (UserDetailsFn), Playground, Pretty, and DEBUG.
-func (s *Service) MountGraphQL(path string, schema *graphql.Schema, opts ...gql.Option) {
-	gql.Mount(s.app.engine, s.app.registry, s.app.bus, s.name, path, schema, opts...)
 }
 
 // Attach links a resource to this service so the dashboard draws an edge.
@@ -164,8 +157,8 @@ func (s *Service) Attach(r resource.Resource) *Service {
 // is marked). Unknown names are attached anyway so the registry shows a
 // disconnected edge — surfacing the typo rather than hiding it.
 //
-//	app.Service("adverts").Using("").MountGraphQL(...)               // default DB
-//	app.Service("qb").Using("questions", "session").MountGraphQL(...) // explicit
+//	app.Service("orders").Using("")                 // default DB
+//	app.Service("quiz").Using("questions", "session") // explicit
 func (s *Service) Using(names ...string) *Service {
 	for _, name := range names {
 		if name == "" {

@@ -31,7 +31,7 @@ func (b legacyBundle) Transports() TransportSet {
 // (middleware.go) reads Transports() and runs the legacy realizations
 // natively per transport. Fail loudly if a future chain builder
 // starts calling it — the previous stub silently DROPPED a legacy
-// graph.FieldMiddleware, which is worse than an error.
+// gql.Middleware, which is worse than an error.
 func (b legacyBundle) Handle(rc *RequestCtx, _ Next) error {
 	return fmt.Errorf("nexus: legacyBundle %q: Handle is not wired; run the legacy realization natively for %s", b.mw.Name, rc.Transport)
 }

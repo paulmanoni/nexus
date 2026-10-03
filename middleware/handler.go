@@ -44,7 +44,7 @@ func (f Func) Transports() TransportSet            { return f.set }
 func (f Func) Handle(rc *RequestCtx, n Next) error { return f.fn(rc, n) }
 
 // carrier is the per-transport backing behind RequestCtx. Each adapter (step
-// 3+) implements it over *gin.Context, graph.ResolveParams, or a WS frame.
+// 3+) implements it over *httpx.Ctx, a gql.Field, or a WS frame.
 // Unexported for now: in steps 1–2 only in-package tests construct a
 // RequestCtx. Step 3 decides whether to export it (or move adapters to an
 // internal sub-package) so package nexus can build one.
@@ -58,7 +58,7 @@ type carrier interface {
 }
 
 // RequestCtx is the transport-neutral request handle middleware sees (§3.2).
-// Middleware never touches gin.Context or graph.ResolveParams — those are
+// Middleware never touches httpx.Ctx or gql.Field — those are
 // carrier internals.
 type RequestCtx struct {
 	Context   context.Context

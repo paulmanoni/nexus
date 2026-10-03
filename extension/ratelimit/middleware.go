@@ -12,7 +12,7 @@ import (
 // NewMiddleware returns a transport-agnostic middleware bundle that
 // enforces rate limits against store under key. The same bundle can be
 // attached to any transport via nexus.Use: gin-based enforcement for
-// REST + WS upgrades, graph.FieldMiddleware for GraphQL resolvers.
+// REST + WS upgrades, a gql.Middleware for GraphQL resolvers.
 //
 // The declared Limit is registered with the store at middleware-create
 // time so the dashboard can show it as a baseline; operators can tune

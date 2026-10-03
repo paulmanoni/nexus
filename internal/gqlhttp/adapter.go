@@ -2,7 +2,7 @@
 // github.com/paulmanoni/nexus/v2/graph) onto Gin and introspects its operations
 // into the nexus registry. nexus does NOT own schema assembly — the caller
 // keeps using go-graph (or graphql-go directly) and hands nexus the finished *graphql.Schema.
-package gql
+package gqlhttp
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 	"github.com/graphql-go/graphql/language/parser"
 	"github.com/graphql-go/graphql/language/source"
 	"github.com/paulmanoni/nexus/v2/dataloader"
-	graph "github.com/paulmanoni/nexus/v2/graph"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	graph "github.com/paulmanoni/nexus/v2/internal/graph"
 	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 	"github.com/paulmanoni/nexus/v2/middleware"
 

@@ -4,8 +4,9 @@
 // event bus, and exposes both under /__nexus for tooling — notably the Vue
 // dashboard.
 //
-// nexus does NOT replace the caller's GraphQL layer: hand it a *graphql.Schema
-// (typically built with github.com/paulmanoni/nexus/v2/graph) and it mounts + introspects.
+// GraphQL schemas are derived from handlers registered with AsQuery and
+// AsMutation; the engine executing them is internal (the gql package holds
+// the types handlers and middleware see).
 //
 // # Entry points
 //
@@ -55,13 +56,13 @@ import (
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
+	"github.com/paulmanoni/nexus/v2/internal/gqlhttp"
 	"github.com/paulmanoni/nexus/v2/manifest"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/notify"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/resource"
 	"github.com/paulmanoni/nexus/v2/trace"
-	"github.com/paulmanoni/nexus/v2/transport/gql"
 	"github.com/paulmanoni/nexus/v2/transport/ws"
 )
 
@@ -238,10 +239,10 @@ type App struct {
 
 	// gqlStats is the per-app registry of DocumentCaches keyed by
 	// GraphQL mount path. Populated by autoMountGraphQL when it
-	// wires gql.WithStatsRegistry into each Mount call. Read by
+	// wires gqlhttp.WithStatsRegistry into each Mount call. Read by
 	// the dashboard (/__nexus/graphql/cache + live WS snapshot)
 	// so operators can verify the cache is hitting.
-	gqlStats *gql.StatsRegistry
+	gqlStats *gqlhttp.StatsRegistry
 
 	// devReloadExclude holds the operator's extra live-reload ignore
 	// globs (Config.DevReload.Exclude / [runtime.devreload] exclude).
@@ -353,7 +354,7 @@ func New(cfg config.Runtime) *App {
 		metricsStore:     cfg.Stores.Metrics,
 		listeners:        listeners,
 		routePrefix:      normalizeRoutePrefix(cfg.Server.RoutePrefix),
-		gqlStats:         gql.NewStatsRegistry(),
+		gqlStats:         gqlhttp.NewStatsRegistry(),
 		devReloadExclude: cfg.DevReload.Exclude,
 		wsHubOpts:        wsHubOpts,
 	}
