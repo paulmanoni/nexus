@@ -15,7 +15,8 @@ use (
 	./view/example
 )
 
-// v2 is unreleased: required v2.0.0 versions resolve to the checkouts.
+// Submodules require a released v2.0.x; inside the repo they resolve to the
+// checkout.
 replace (
 	github.com/paulmanoni/nexus/v2 v2.0.0 => ./
 )
