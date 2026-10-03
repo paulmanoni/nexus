@@ -6,7 +6,7 @@ require (
 	github.com/a-h/templ v0.3.1020
 	github.com/dop251/goja v0.0.0-20260926152631-39ec2650adc9
 	github.com/gorilla/websocket v1.5.3
-	github.com/paulmanoni/nexus v1.78.2
+	github.com/paulmanoni/nexus v1.80.0
 )
 
 require (
