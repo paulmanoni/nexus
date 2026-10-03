@@ -156,9 +156,9 @@ url = "http://example.com"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := LoadExtensionOptions(path)
+	opts, err := loadExtensionList(path)
 	if err != nil {
-		t.Fatalf("LoadExtensionOptions: %v", err)
+		t.Fatalf("LoadExtensions: %v", err)
 	}
 	if len(opts) != 1 {
 		t.Errorf("expected 1 option, got %d", len(opts))
@@ -170,7 +170,7 @@ url = "http://example.com"
 func TestLoadExtensionOptions_MissingFileIsOk(t *testing.T) {
 	resetRegistry(t)
 	tmp := t.TempDir()
-	opts, err := LoadExtensionOptions(filepath.Join(tmp, "absent.toml"))
+	opts, err := loadExtensionList(filepath.Join(tmp, "absent.toml"))
 	if err != nil {
 		t.Errorf("missing file should not error, got: %v", err)
 	}
@@ -220,9 +220,9 @@ api_key = "secret-key-from-env"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := LoadExtensionOptions(path)
+	opts, err := loadExtensionList(path)
 	if err != nil {
-		t.Fatalf("LoadExtensionOptions: %v", err)
+		t.Fatalf("LoadExtensions: %v", err)
 	}
 	if len(opts) != 1 {
 		t.Errorf("expected 1 option from custom ext, got %d", len(opts))
@@ -260,9 +260,9 @@ environment = "production"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opts, err := LoadExtensionOptions(path)
+	opts, err := loadExtensionList(path)
 	if err != nil {
-		t.Fatalf("LoadExtensionOptions: %v", err)
+		t.Fatalf("LoadExtensions: %v", err)
 	}
 	if len(opts) != 0 {
 		t.Errorf("expected 0 options, got %d", len(opts))
@@ -291,4 +291,16 @@ func noopDecoder(raw []byte) ([]Option, error) {
 // Options without applying them.
 func stubOption(_ string) Option {
 	return Raw(di.Options())
+}
+
+// loadExtensionList is LoadExtensions as the list of options it bundles.
+func loadExtensionList(path string) ([]Option, error) {
+	if _, err := LoadExtensions(path); err != nil {
+		return nil, err
+	}
+	raw, err := readFileIfExists(path)
+	if err != nil || raw == nil {
+		return nil, err
+	}
+	return decodeExtensions(raw)
 }

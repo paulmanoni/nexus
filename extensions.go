@@ -242,7 +242,7 @@ func RegisteredExtensionNames() []string {
 	return names
 }
 
-// LoadExtensionOptions reads the [extensions.*] block from
+// LoadExtensions reads the [extensions.*] block from
 // nexus.toml at path (defaults to config.DefaultPath, same as
 // config.Load), looks up each declared extension's decoder,
 // and returns the collected Options ready to be spread into
@@ -254,14 +254,14 @@ func RegisteredExtensionNames() []string {
 // Operators typically combine with config.Load:
 //
 //	cfg := config.MustLoad()
-//	extOpts, err := nexus.LoadExtensionOptions()
+//	extOpts, err := nexus.LoadExtensions()
 //	if err != nil { log.Fatal(err) }
 //	opts := append(extOpts, /* hand-coded options */...)
 //	nexus.Run(cfg, opts...)
 //
 // Or via the convenience helper LoadExtensions which panics:
 //
-//	nexus.Run(config.MustLoad(), nexus.MustLoadExtensions()...)
+//	nexus.Run(config.MustLoad(), nexus.MustLoadExtensions())
 //
 // Behaviour:
 //
@@ -278,7 +278,7 @@ func RegisteredExtensionNames() []string {
 // ordering (extension A depends on B's option) wire those
 // via Go code instead — TOML is for data, not graph
 // dependencies.
-func LoadExtensionOptions(path ...string) ([]Option, error) {
+func LoadExtensions(path ...string) (Option, error) {
 	p := config.DefaultPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]
@@ -288,21 +288,25 @@ func LoadExtensionOptions(path ...string) ([]Option, error) {
 		return nil, err
 	}
 	if raw == nil {
-		return nil, nil
+		return Options(), nil
 	}
-	return decodeExtensions(raw)
+	opts, err := decodeExtensions(raw)
+	if err != nil {
+		return nil, err
+	}
+	return Options(opts...), nil
 }
 
 // MustLoadExtensions is the panic-on-error variant matching
 // config.MustLoad's idiom (Boot composes both for you; use this only for the
 // explicit Run form). Use in main() when an extension
 // block is required to boot.
-func MustLoadExtensions(path ...string) []Option {
-	opts, err := LoadExtensionOptions(path...)
+func MustLoadExtensions(path ...string) Option {
+	opt, err := LoadExtensions(path...)
 	if err != nil {
 		bootui.Fatal(err)
 	}
-	return opts
+	return opt
 }
 
 // decodeExtensions parses the [extensions.*] table out of

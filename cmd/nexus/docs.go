@@ -356,7 +356,7 @@ store — then runs the app. That's what 'nexus new' scaffolds (see
     }
 
   - Boot is sugar for: nexus.Run(config.MustLoad(),
-    append(nexus.MustLoadExtensions(), opts...)...).
+    append([]nexus.Option{nexus.MustLoadExtensions()}, opts...)...).
   - config.Get[T]("section.key") then reads any value from nexus.toml
     (dotted key = TOML table path), no extension wiring needed.
   - Use nexus.Run if you'd rather build config.Runtime in Go.
@@ -1711,8 +1711,8 @@ NEXUS.TOML (runtime config)
 Loaded by main.go:
 
     cfg  := config.MustLoad()      // the [runtime] table -> config.Runtime
-    opts := nexus.MustLoadExtensions()  // [extensions.*]      -> []Option
-    nexus.Run(cfg, append(opts, modules...)...)
+    ext := nexus.MustLoadExtensions()   // [extensions.*]      -> one Option
+    nexus.Run(cfg, append([]nexus.Option{ext}, modules...)...)
 
 ALL runtime keys live under [runtime] (or a [runtime.<sub>] table). A key
 absent from the file leaves its Config field zero-valued, so framework

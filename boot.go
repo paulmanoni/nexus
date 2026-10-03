@@ -379,7 +379,7 @@ func Raw(opt di.Option) Option {
 // layer — then runs the app. It's the zero-boilerplate form of:
 //
 //	cfg  := config.MustLoad()
-//	opts := nexus.MustLoadExtensions()
+//	ext := nexus.MustLoadExtensions()
 //	nexus.Run(cfg, append(opts, userOpts...)...)
 //
 // so main() collapses to:

@@ -35,7 +35,7 @@ nexus.Run(config.Runtime{
 ```
 
 `Boot` is shorthand for
-`nexus.Run(config.MustLoad(), append(nexus.MustLoadExtensions(), opts...)...)`.
+`nexus.Run(config.MustLoad(), append([]nexus.Option{nexus.MustLoadExtensions()}, opts...)...)`.
 
 ::: warning Runtime keys live under `[runtime]`
 Every runtime key belongs in `[runtime]` or a `[runtime.<sub>]` table. A runtime key at

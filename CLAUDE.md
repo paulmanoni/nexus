@@ -59,7 +59,7 @@ func main() {
 `nexus.Boot(opts...)` loads `nexus.toml` automatically — runtime `config.Runtime`, every
 `[extensions.*]` block, the `[env]` bridge, and the `config.Get` value store — then
 runs the app. It's sugar for `nexus.Run(config.MustLoad(),
-append(nexus.MustLoadExtensions(), opts...)...)`; a missing `nexus.toml` is tolerated,
+append([]nexus.Option{nexus.MustLoadExtensions()}, opts...)...)`; a missing `nexus.toml` is tolerated,
 a malformed one — or one with an unknown key or undeclared section — fails boot. Override the path with `NEXUS_CONFIG` or use
 `nexus.BootFrom(path, opts...)`. Reach for `nexus.Run(cfg, opts...)` directly when you
 build `config.Runtime` in Go. (Extension packages still need their blank import — Go links only
