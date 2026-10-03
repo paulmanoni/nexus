@@ -149,6 +149,23 @@ func TestConfigCheck_JSON(t *testing.T) {
 	}
 }
 
+// A scaffolded nexus.toml must boot under strictness.
+func TestScaffoldNexusTOMLIsStrictClean(t *testing.T) {
+	for _, opts := range []scaffoldOpts{
+		{Name: "shop", Frontend: "none"},
+		{Name: "shop", Frontend: "vue", Inertia: true, SSR: true},
+	} {
+		body, err := renderTemplate("nexus.toml", tmplDeployTOML, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		problems, err := config.Check([]byte(body), "nexus.toml")
+		if err != nil || len(problems) != 0 {
+			t.Errorf("%+v: err=%v problems=%+v", opts, err, problems)
+		}
+	}
+}
+
 // The schema published on the docs site is generated from the framework's
 // declarations; regenerate it when they change.
 func TestConfigSchema_PublishedCopyIsCurrent(t *testing.T) {

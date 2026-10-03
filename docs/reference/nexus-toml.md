@@ -4,9 +4,14 @@
 another path. Every key is optional. See [Configuration](/guide/configuration) for how
 values are resolved.
 
-::: tip
-Runtime keys live under `[runtime]` or a `[runtime.<sub>]` table. A runtime key at the
-top level is ignored.
+::: tip The file is strict
+Every table is declared by its owner and every key must be one the table has. A runtime
+key at the top level, a misspelt key, an `[extensions.x]` block without its extension
+imported, or a section nobody declared fails boot with the line and a did-you-mean. Check
+a file with `nexus config check`; see [Strictness](/guide/configuration#strictness).
+
+Editors complete keys from the published JSON schema — add this first line:
+`#:schema https://paulmanoni.github.io/nexus/nexus.toml.schema.json`
 :::
 
 ## `[runtime]`
@@ -115,7 +120,9 @@ key_prefix = "db.reporting"      # reads db.reporting.{host,port,username,passwo
 ## `[cache.*]`, `[storage.*]`, `[mail.*]`
 
 Read by `cache.BindFromConfig`, `storage.BindFromConfig` and `mail.BindFromConfig`. Keys
-are the snake_case config field names. See [File storage](/guide/storage) and
+are the snake_case config field names. Each table is declared by its package, so the app
+must import `extension/cache`, `extension/storage` or `extension/mail` for the file to
+carry it (`[jobs]` likewise needs `extension/jobs`). See [File storage](/guide/storage) and
 [Mail](/guide/mail).
 
 A cache can also choose its store with `driver`:
@@ -167,7 +174,8 @@ id = "myapp-web"                 # os.Getenv("client.id"), import.meta.env.clien
 
 ## `[extensions.*]`
 
-Decoded for extensions that are blank-imported:
+Decoded for extensions that are blank-imported. A block whose extension isn't imported
+fails boot:
 
 ```toml
 [extensions.config]              # _ "github.com/paulmanoni/nexus/v2/extension/config"
@@ -188,7 +196,8 @@ inertia = "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 ## Your own sections
 
-Any other table is readable with `config.Get`:
+Any other top-level table must be declared by the app with `config.Section`, which also
+decodes it into a typed struct and checks its keys:
 
 ```toml
 [shop]
@@ -196,5 +205,14 @@ currency = "EUR"
 ```
 
 ```go
-config.Get[string]("shop.currency")
+type ShopConfig struct {
+    Currency string `toml:"currency"`
+}
+
+var Shop = config.Section[ShopConfig]("shop")
+
+Shop.Get().Currency                   // "EUR"
+config.Get[string]("shop.currency")   // also works, with SHOP_CURRENCY as an override
 ```
+
+See [Your own sections](/guide/configuration#your-own-sections-config-section).

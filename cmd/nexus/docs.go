@@ -1718,6 +1718,21 @@ ALL runtime keys live under [runtime] (or a [runtime.<sub>] table). A key
 absent from the file leaves its Config field zero-valued, so framework
 defaults apply. 'nexus new' scaffolds this block.
 
+THE FILE IS STRICT. Every table is declared by its owner — nexus ([runtime],
+[databases], [env], [extensions], [decorators], deploy tables), a framework
+extension the app imports ([cache] extension/cache, [storage], [mail],
+[jobs]), an extension decoder ([extensions.<name>]), or the app
+(config.Section). Boot fails, in dev and production, with file:line and a
+did-you-mean on: a key at the top level (environment -> [runtime]
+environment), an unknown key or sub-table of a declared table (a typo under
+[runtime.server]), an undeclared section, an [extensions.x] whose package
+isn't imported.
+
+    nexus config check [path]   # the boot rules, exit 1 on a problem (CI)
+    nexus config schema         # JSON schema (editors); published at
+    #:schema https://paulmanoni.github.io/nexus/nexus.toml.schema.json
+    nexus migrate v2            # moves v1's misplaced keys into their tables
+
     [runtime]
     environment   = "development"   # development | staging | production
     version       = "1.0.0"         # shown on /__nexus/config
@@ -1798,14 +1813,26 @@ Inline values OR a config-server key_prefix:
     driver     = "postgres"
     key_prefix = "db.uaa"           # reads db.uaa.{host,port,username,password,name}
 
+YOUR OWN SECTIONS are declared with config.Section, which decodes the table
+into a typed struct and checks its keys (time.Duration reads "30s"):
+
+    type ShopConfig struct {
+        Currency string        `+"`"+`toml:"currency"`+"`"+`
+        Timeout  time.Duration `+"`"+`toml:"timeout"`+"`"+`
+    }
+    var Shop = config.Section[ShopConfig]("shop", ShopConfig{Currency: "USD"})
+    Shop.Get().Currency            // file values over the default
+    config.Section[map[string]any]("flags")   // free-form: keys unchecked
+
 config.Get reads from nexus.toml directly: config.Get[T]("section.key")
 resolves any value declared here (dotted key = TOML table path, e.g.
-[runtime.storage] url -> config.Get[string]("runtime.storage.url")), with
-NO extension wired. ENV (STORAGE_URL) overrides it; [extensions.config]
-(when wired) overrides it too, hot-reloadably.
+[shop] currency -> config.Get[string]("shop.currency")), with NO extension
+wired. ENV (SHOP_CURRENCY) overrides it; [extensions.config] (when wired)
+overrides it too, hot-reloadably.
 
 EXTENSIONS are decoded automatically by nexus.Boot (or explicitly by
-nexus.MustLoadExtensions) when the matching extension is blank-imported
+nexus.MustLoadExtensions) when the matching extension is blank-imported;
+a block whose extension isn't imported fails boot
 (_ "github.com/paulmanoni/nexus/v2/extension/config" — Go links only
 imported code, so the import is still required):
 

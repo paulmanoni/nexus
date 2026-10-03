@@ -60,7 +60,7 @@ func main() {
 `[extensions.*]` block, the `[env]` bridge, and the `config.Get` value store — then
 runs the app. It's sugar for `nexus.Run(config.MustLoad(),
 append(nexus.MustLoadExtensions(), opts...)...)`; a missing `nexus.toml` is tolerated,
-a malformed one panics. Override the path with `NEXUS_CONFIG` or use
+a malformed one — or one with an unknown key or undeclared section — fails boot. Override the path with `NEXUS_CONFIG` or use
 `nexus.BootFrom(path, opts...)`. Reach for `nexus.Run(cfg, opts...)` directly when you
 build `config.Runtime` in Go. (Extension packages still need their blank import — Go links only
 imported code; `Boot` removes the load calls, not the imports.)
@@ -332,12 +332,34 @@ the file, not in code; absent keys fall back to framework defaults. The explicit
 (`config.MustLoad()` + `nexus.MustLoadExtensions()` → `nexus.Run`) still works for
 apps that build `config.Runtime` in Go.
 
-**All runtime keys live under `[runtime]`** (or a `[runtime.<sub>]` table) — a key at
-the top level is silently ignored. `[databases.*]` and `[extensions.*]` are top-level.
+**All runtime keys live under `[runtime]`** (or a `[runtime.<sub>]` table).
+`[databases.*]` and `[extensions.*]` are top-level.
 Runtime config lives in package `config` (`github.com/paulmanoni/nexus/v2/config`):
 `config.Runtime` and its sub-structs, `config.Load`/`MustLoad`/`Read`, `config.Get`.
-Any value (including custom sections) is readable via `config.Get[T]("section.key")` —
-the dotted key mirrors the TOML table path.
+Any value is readable via `config.Get[T]("section.key")` — the dotted key mirrors the
+TOML table path.
+
+**nexus.toml is strict** (dev and production alike). Every table is declared by its
+owner: package `config` ([runtime], [databases], [env], [extensions], [decorators], the
+deploy-manifest tables), the framework extension the app imports ([cache] ←
+extension/cache, [storage], [mail], [jobs]), an extension decoder
+(`RegisterExtensionDecoder` → [extensions.<name>]; `config.DeclareExtension` adds its
+keys), or the app. Boot fails with file:line + a did-you-mean (bootui block, `*config.Error`
+with `Problems`) on a top-level key (`environment` → `[runtime] environment`), an
+unknown key or sub-table of a declared table, an undeclared section, an
+`[extensions.x]` whose package isn't imported. **App sections:**
+`var Shop = config.Section[ShopConfig]("shop", ShopConfig{…defaults})` — package-level,
+decodes `[shop]` over the default (`toml` tags; `time.Duration` reads "30s"), strict on
+T's keys; `Shop.Get()`, `Shop.Present()`; T may be `map[string]X` for `[x.<name>]`
+tables or `map[string]any` for a free-form table. One owner per name (a duplicate
+panics at init). `config.Get` still reads declared sections (with ENV override).
+`nexus config check [path]` runs the boot rules in CI (reads the app's `config.Section`
+/ `RegisterExtensionDecoder` calls from source; `--json`); `nexus lint` reports the same
+as errors. `nexus config schema [--framework] [-o f]` prints the JSON schema generated
+from the declared types (published: `#:schema
+https://paulmanoni.github.io/nexus/nexus.toml.schema.json`, regenerate
+docs/public/nexus.toml.schema.json when config types change — a drift test checks).
+`nexus migrate v2` moves misplaced keys it recognises into their tables.
 
 ```toml
 [runtime]
@@ -442,7 +464,7 @@ that key with a warning. SECURITY: `[env]` is still the Go app's process
 environment too — a value the frontend references ships in the bundle, so reference
 only client-public data (an OAuth client id, a public URL), never a server secret.
 
-`nexus docs nexustoml` documents every key. You can also pass `config.Runtime{...}`
+`nexus docs nexustoml` documents every key and the strictness rules. You can also pass `config.Runtime{...}`
 inline to `nexus.Run` instead of the file.
 
 **Introspection gate:** the entire `/__nexus` surface (dashboard + JSON APIs) is
