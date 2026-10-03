@@ -793,6 +793,20 @@ Field name = the method or function name, first letter lowercased
 (`SearchUsers` → `searchUsers`). Fields are partitioned by service; service-less
 handlers mount on a default partition.
 
+**The engine is behind a seam.** The schema is always derived from handlers (no
+hand-built schema is mounted), and no graphql-go type appears in the public API — the
+engine lives in `internal/graph` + `internal/gqlhttp`. What handlers and middleware see is
+`github.com/paulmanoni/nexus/v2/gql`: `Params[T].Info` is a `gql.Info` (`FieldName`,
+`ParentType`, `Operation`, `OperationName`); a GraphQL-only middleware is a
+`gql.Middleware` (`func(next gql.Resolver) gql.Resolver` over a `gql.Field{Context, Args,
+Source, Info}` — change Context/Args/Source before `next(f)`), attached with
+`nexus.GraphMiddleware(name, desc, mw)` or as `middleware.Middleware.Graph`. Named input
+types come from Go types: `nexus.RegisterGqlType("Status", Status("a"), Status("b"))`
+(enum) / `nexus.RegisterGqlType[Address]("ShippingAddress")` (input object), referenced
+by `graphql:"field,type=Status"`. Custom arg checks return `nexus.Invalid()` from the
+handler (no GraphQL-only validators). `internal/apicheck` fails `go test` if an exported
+identifier reaches a graphql-go type.
+
 **Related fields without N+1 — `LoadField`.** Add a batched (dataloader) field to a
 Go type so nested GraphQL resolvers don't fire one query per parent:
 ```go

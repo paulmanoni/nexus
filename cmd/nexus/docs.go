@@ -1598,12 +1598,15 @@ GRAPHQL
 
 Auto-mounted on a single /graphql endpoint per service. The
 framework partitions fields by service type so each service gets
-its own schema — visible together at one URL.
+its own schema — visible together at one URL. The schema is
+always derived from handlers; no hand-built schema is mounted.
 
-    func NewSearchUsers(svc *UserService, p nexus.Params[SearchArgs]) (*UserList, error)
+    func (s *UserService) SearchUsers(ctx context.Context, in SearchArgs) (*UserList, error)
 
-Field name comes from the constructor name with the "New" prefix
-stripped + first letter lowercased: NewSearchUsers → searchUsers.
+    nexus.AsQuery((*UserService).SearchUsers)
+
+Field name is the method (or function) name with its first letter
+lowercased: SearchUsers → searchUsers. nexus.Op("name") overrides.
 
 Per-service GraphQL path (so different services mount at
 different /graphql URLs):
@@ -1619,11 +1622,40 @@ so a HelloWorld query needs no *Service dep.
 
 Per-op enforcement:
 
-    nexus.AsMutation(NewCreateAdvert,
+    nexus.AsMutation((*OrderService).CreateOrder,
         auth.Required(),
-        auth.Requires("ROLE_CREATE_ADVERT"),
+        auth.Requires("ROLE_CREATE_ORDER"),
         nexus.Use(ratelimit.NewMiddleware(...)),
     )
+
+The engine is internal; handlers and middleware see the types in
+github.com/paulmanoni/nexus/v2/gql:
+
+    nexus.Params[T].Info   gql.Info{FieldName, ParentType,
+                           Operation, OperationName}
+    gql.Middleware         func(next gql.Resolver) gql.Resolver
+    gql.Field              {Context, Args, Source, Info} — change
+                           Context/Args/Source before next(f)
+
+    nexus.AsQuery((*UserService).SearchUsers,
+        nexus.GraphMiddleware("audit", "logs every resolve", Audit))
+
+    func Audit(next gql.Resolver) gql.Resolver {
+        return func(f gql.Field) (any, error) { return next(f) }
+    }
+
+A gql.Middleware is also the Graph realization of a
+middleware.Middleware bundle; for every transport at once write a
+middleware.Handler and attach it with nexus.Use.
+
+Named input types, referenced from an args field's type= tag:
+
+    nexus.RegisterGqlType("Status", Status("active"), Status("archived")) // enum
+    nexus.RegisterGqlType[Address]("ShippingAddress")                     // input object
+
+    type ListArgs struct {
+        Status Status ` + "`" + `graphql:"status,type=Status"` + "`" + `
+    }
 `,
 
 	"ws": `

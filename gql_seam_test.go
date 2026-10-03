@@ -28,6 +28,7 @@ type seamArgs struct {
 	Name   string     `graphql:"name,required"`
 	Status seamStatus `graphql:"status,type=SeamStatus"`
 	Filter seamFilter `graphql:"filter,type=SeamFilter"`
+	Also   seamFilter `graphql:"also"`
 }
 
 func gqlDo(t *testing.T, app *App, query string) string {
@@ -50,7 +51,7 @@ func TestGraphQLSeam(t *testing.T) {
 	handler := func(s *seamService, p Params[seamArgs]) (*seamItem, error) {
 		seenInfo = p.Info
 		tag, _ := p.Context.Value(seamKey{}).(string)
-		return &seamItem{Name: p.Args.Name + "/" + string(p.Args.Status) + "/" + p.Args.Filter.Prefix + "/" + tag}, nil
+		return &seamItem{Name: p.Args.Name + "/" + string(p.Args.Status) + "/" + p.Args.Filter.Prefix + p.Args.Also.Prefix + "/" + tag}, nil
 	}
 	tagCtx := func(next gql.Resolver) gql.Resolver {
 		return func(f gql.Field) (any, error) {
@@ -69,8 +70,8 @@ func TestGraphQLSeam(t *testing.T) {
 	}
 	defer func() { _ = stop(context.Background()) }()
 
-	body := gqlDo(t, app, `{"query":"query Lookup { seamItem(name: \"rex\", status: archived, filter: {prefix: \"p\"}) { name } }"}`)
-	if !strings.Contains(body, `"REX/archived/p/mw"`) {
+	body := gqlDo(t, app, `{"query":"query Lookup { seamItem(name: \"rex\", status: archived, filter: {prefix: \"p\"}, also: {prefix: \"q\"}) { name } }"}`)
+	if !strings.Contains(body, `"REX/archived/pq/mw"`) {
 		t.Fatalf("response = %s", body)
 	}
 	want := gql.Info{FieldName: "seamItem", ParentType: "Query", Operation: "query", OperationName: "Lookup"}

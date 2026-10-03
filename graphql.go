@@ -729,9 +729,10 @@ var namedTypeRegistry sync.Map // map[string]graphql.Input
 //	}
 //
 // Without values, T must be a struct and becomes an input object named
-// name, its fields mapped like an args struct's. Call it once at startup;
-// re-registering a name replaces the earlier type. It panics when T can't
-// be represented.
+// name, its fields mapped like an args struct's; every argument of type T
+// then uses that name. Call it once, before the app boots (from an init
+// or main); re-registering a name replaces the earlier type. It panics
+// when T can't be represented.
 func RegisterGqlType[T any](name string, values ...T) {
 	if name == "" {
 		panic("nexus.RegisterGqlType: empty name")
@@ -757,7 +758,7 @@ func RegisterGqlType[T any](name string, values ...T) {
 	if t.Kind() != reflect.Struct {
 		panic(fmt.Sprintf("nexus.RegisterGqlType(%q): %s is not a struct; pass enum values for a scalar type", name, t))
 	}
-	namedTypeRegistry.Store(name, buildInputObject(t, name, nil))
+	namedTypeRegistry.Store(name, buildInputObject(t, name, func(o *graphql.InputObject) { inputObjectRegistry.Store(t, o) }))
 }
 
 func lookupNamedType(name string) (graphql.Input, bool) {

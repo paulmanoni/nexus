@@ -28,20 +28,67 @@ Handlers that need the raw request can take an `*httpx.Ctx` parameter.
 ## GraphQL
 
 ```go
-nexus.AsQuery(NewSearchOrders)      // field: searchOrders
-nexus.AsMutation(NewCreateOrder)    // field: createOrder
+nexus.AsQuery((*OrderService).SearchOrders)    // field: searchOrders
+nexus.AsMutation((*OrderService).CreateOrder)  // field: createOrder
 ```
 
 - The schema is mounted at `/graphql` (change it with `[runtime.graphql] path`).
 - A browser `GET /graphql` opens the Apollo Sandbox IDE. Turn it off with
   `disable_playground = true`.
-- The field name is the handler name without `New`, with its first letter lowercased.
+- The field name is the method (or function) name with its first letter lowercased;
+  `nexus.Op("name")` overrides it.
 - Fields are grouped by service. A service can have its own endpoint:
   `app.Service("billing").AtGraphQL("/billing/graphql")`.
 - Handlers without a service mount on a default partition.
 - Go struct types become GraphQL object types named after the Go type.
 - Use [`LoadField`](./handlers#batched-graphql-fields-loadfield) for related fields
   without N+1 queries.
+
+The schema is always derived from handlers; nexus doesn't mount a hand-built schema,
+and no type of the GraphQL engine appears in its API. What a handler or middleware
+sees of a resolve is in the `gql` package
+(`github.com/paulmanoni/nexus/v2/gql`):
+
+- `nexus.Params[T].Info` is a `gql.Info`: `FieldName`, `ParentType`, `Operation`
+  (`query` / `mutation` / `subscription`) and `OperationName`.
+- A GraphQL-only middleware is a `gql.Middleware` — a function wrapping the field's
+  `gql.Resolver`. It receives a `gql.Field` (`Context`, `Args`, `Source`, `Info`) and
+  may change `Context`, `Args` or `Source` before calling `next`:
+
+```go
+func Audit(next gql.Resolver) gql.Resolver {
+    return func(f gql.Field) (any, error) {
+        log.Printf("%s.%s", f.Info.ParentType, f.Info.FieldName)
+        return next(f)
+    }
+}
+
+nexus.AsQuery((*OrderService).SearchOrders,
+    nexus.GraphMiddleware("audit", "logs every resolve", Audit))
+```
+
+  The same function is the `Graph` realization of a `middleware.Middleware` bundle.
+  For middleware that should run on every transport, write a `middleware.Handler`
+  and attach it with `nexus.Use`.
+
+**Named input types.** An args field can use an enum or a named input object declared
+from a Go type, referenced by a `type=` tag:
+
+```go
+type Status string
+
+nexus.RegisterGqlType("Status", Status("active"), Status("archived")) // enum
+nexus.RegisterGqlType[Address]("ShippingAddress")                     // input object
+
+type ListOrdersArgs struct {
+    Status Status  `graphql:"status,type=Status"`
+    ShipTo Address `graphql:"shipTo,type=ShippingAddress"`
+}
+```
+
+With values, the type (a string or integer type) becomes an enum whose members are the
+values; without, a struct becomes an input object mapped like an args struct, and every
+argument of that type uses the name.
 
 ## WebSocket
 
