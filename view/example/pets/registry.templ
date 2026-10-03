@@ -1,0 +1,71 @@
+package pets
+
+import (
+	"strconv"
+
+	"github.com/paulmanoni/nexus/v2/view"
+	kit "github.com/paulmanoni/nexus/v2/view/ui"
+	"github.com/paulmanoni/nexus/view/example/v2/ui"
+)
+
+templ (r *Registry) Render() {
+	@ui.Layout("Pet registry") {
+		@kit.PageHeader(kit.PageHeaderProps{
+			Title:       "Pet registry",
+			Description: "Every pet: searched, sorted and paged on the server.",
+			Crumbs:      []kit.Crumb{{Label: "Home", Href: "/"}, {Label: "Registry"}},
+		}) {
+			@kit.Button(kit.ButtonProps{ID: "to-board", Variant: kit.Outline, Href: "/board", Nav: true, Hotkey: "mod+b", Title: "Ctrl/Cmd+B"}) {
+				Adoption board
+			}
+		}
+		@kit.Tabs(kit.TabsProps{ID: "kinds", Pills: true, Tabs: r.tabs()})
+		@kit.DataTable(r.table()) {
+			for _, p := range r.Rows {
+				@kit.TableRow(kit.RowProps{ID: "row-" + p.Name, Href: "/board", Actions: r.actions(p)}) {
+					<td class="font-medium">{ p.Name }</td>
+					<td>
+						@kit.Badge(kit.Outline) {
+							{ p.Kind }
+						}
+					</td>
+					<td>
+						if r.Adopted[p.Name] {
+							@kit.Badge(kit.Success) {
+								adopted
+							}
+						} else {
+							@kit.Badge("") {
+								available
+							}
+						}
+					</td>
+				}
+			}
+		}
+		if r.Confirm != "" {
+			@kit.Dialog(kit.DialogProps{
+				Title:       "Remove " + r.Confirm + "?",
+				Description: "The pet leaves every open board.",
+				Icon:        kit.Icon("trash"),
+				Size:        kit.Sm,
+				OnClose:     view.Send(r.CancelRemove),
+				Footer:      r.confirmFooter(),
+			}) {
+				<p>This can't be undone in the example.</p>
+			}
+		}
+		if r.Flash != "" {
+			@kit.Toast(kit.ToastProps{ID: "flash-" + strconv.Itoa(r.FlashN), Text: r.Flash, Variant: kit.Success})
+		}
+	}
+}
+
+templ (r *Registry) confirmFooter() {
+	@kit.Button(kit.ButtonProps{ID: "cancel-remove", Variant: kit.Ghost, OnClick: view.Send(r.CancelRemove)}) {
+		Cancel
+	}
+	@kit.Button(kit.ButtonProps{ID: "confirm-remove", Variant: kit.Danger, Icon: kit.Icon("trash"), OnClick: kit.Loading(view.Send(r.Remove))}) {
+		Remove
+	}
+}
