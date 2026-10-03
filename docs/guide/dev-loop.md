@@ -58,13 +58,13 @@ assets/**/snapshots     # ** spans directories
 
 ## Keeping state across rebuilds
 
-A rebuild replaces the process, so in-memory maps are lost. `nexus.PreserveDev` hands
+A rebuild replaces the process, so in-memory maps are lost. `dev.Preserve` (package `github.com/paulmanoni/nexus/v2/dev`) hands
 the state to the dev loop:
 
 ```go
 func NewStore() *Store {
     s := &Store{notes: map[int]Note{}}
-    nexus.PreserveDev("notes", s)          // no-op outside nexus dev
+    dev.Preserve("notes", s)          // no-op outside nexus dev
     return s
 }
 
@@ -72,9 +72,9 @@ func (s *Store) SnapshotDev() ([]byte, error) { return json.Marshal(s.notes) }
 func (s *Store) RestoreDev(b []byte) error    { return json.Unmarshal(b, &s.notes) }
 ```
 
-- Without those methods, use `nexus.PreserveDevJSON(name, get, set)`.
+- Without those methods, use `dev.PreserveJSON(name, get, set)`.
 - State that already has an on-disk format, such as SQLite, can live in
-  `nexus.DevStateDir()`. It returns `""` outside `nexus dev`.
+  `dev.StateDir()`. It returns `""` outside `nexus dev`.
 - State survives rebuilds, not Ctrl-C. A failed snapshot or restore is reported and
   skipped, never fatal.
 

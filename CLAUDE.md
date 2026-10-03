@@ -175,28 +175,28 @@ assets/**/snapshots     # ** spans any number of directories
 An ignored directory is pruned, so nothing inside it is watched (a `!` re-include under
 a pruned directory can't resurrect it — same rule git applies).
 
-**Keeping in-memory state across a rebuild (`nexus.PreserveDev`).** The rebuild replaces
+**Keeping in-memory state across a rebuild (`dev.Preserve`).** The rebuild replaces
 the process, so maps die with the old binary. Hand the state to the dev loop instead:
 ```go
 func NewStore() *Store {
     s := &Store{notes: map[int]Note{}}
-    nexus.PreserveDev("notes", s)          // no-op outside nexus dev
+    dev.Preserve("notes", s)          // no-op outside nexus dev
     return s
 }
 func (s *Store) SnapshotDev() ([]byte, error) { return json.Marshal(s.notes) }
 func (s *Store) RestoreDev(b []byte) error    { return json.Unmarshal(b, &s.notes) }
 ```
-Restore happens inside `PreserveDev`, so lazy DI construction is fine; the snapshot is
+Restore happens inside `dev.Preserve`, so lazy DI construction is fine; the snapshot is
 written on the graceful shutdown `nexus dev` triggers before the swap. Without methods to
-write, use `nexus.PreserveDevJSON(name, get, set)`. `auth.MemoryUserStore` implements
-`DevState` already (register it as `nexus.PreserveDev("auth.users", store)`); users the
+write, use `dev.PreserveJSON(name, get, set)`. `auth.MemoryUserStore` implements
+`dev.State` already (register it as `dev.Preserve("auth.users", store)`); users the
 new process seeds itself win over the snapshot. Dev-only (gated on the state file
 `nexus dev` passes), per-session (state survives rebuilds, not Ctrl-C), graceful exits
 only, and best-effort — a failed snapshot/restore is reported and skipped, never fatal.
 Caches are deliberately not preserved. `nexus docs devstate`.
 
 For state that already has its own on-disk format (an embedded key/value store,
-a SQLite handle), `nexus.DevStateDir()` returns that session directory — point
+a SQLite handle), `dev.StateDir()` returns that session directory — point
 the store at a real path instead of `:memory:` and it survives the rebuild;
 outside `nexus dev` it returns `""`, so the production path is untouched.
 `extension/oauth2` does this for its default token store, so an OAuth2 login
@@ -609,11 +609,12 @@ var Module = nexus.Module("billing",     // stamps "billing" on every endpoint i
 )
 ```
 The dashboard's Architecture graph **groups by module**. Option helpers:
-- `nexus.Provide(fns...)` — constructors into the DI graph.
-- `nexus.ProvideService(fn)` — Provide + draw service→service/resource edges from the
-  constructor's params automatically.
-- `nexus.ProvideResources(fns...)` — Provide + auto-register `NexusResourceProvider`s.
-- `nexus.Supply(vals...)` — ready-made values. `nexus.Invoke(fn)` — startup side effect.
+- `nexus.Provide(fns...)` — constructors into the DI graph; service→service/resource
+  edges are drawn from a service constructor's params and `NexusResourceProvider`s are
+  registered automatically.
+- `nexus.Supply(vals...)` — ready-made values. `nexus.Setup(fns...)` — pre-serve work
+  (migrations, indexes, seeds) after resources start, before listeners open.
+  `nexus.Invoke(fn)` — eager construction / side effect.
 - `nexus.Path("/x")` — module URL prefix (REST + GraphQL). `nexus.RoutePrefix("/x")` —
   REST-only prefix.
 
@@ -1501,8 +1502,11 @@ nexus docs [topic]   Inline reference. --web opens the docs site (paulmanoni.git
 nexus migrate v2 [dir]  Codemod a v1 project for v2: /v2 import paths (Go + templ), go.mod
                      requires at v2.0.0 (view dropped — it's in the root module), moved
                      symbols (nexus.Config → config.Runtime, nexus.Get → config.Get, …;
-                     table in --help), uri: → path: tags, //@x → //nexus:x annotations;
-                     gofmt'ed, idempotent. --dry-run lists every edit.
+                     table in --help), the error model, uri: → path: tags, //@x →
+                     //nexus:x annotations, misplaced nexus.toml keys, nexus.Op for v1
+                     NewXxx op names; a // TODO(nexus v2) where a step needs a person.
+                     gofmt'ed, idempotent. --dry-run lists every edit. Step by step:
+                     docs/guide/migrating-to-v2.md.
 nexus doctor         Check the project (Go vs go.mod, nexus v2, nexus.toml, Node/package
                      manager/Vite, Tailwind CLI, generated views) — each problem with its
                      fix — then audit nexus.toml's manifest. `nexus doctor <file|->` audits

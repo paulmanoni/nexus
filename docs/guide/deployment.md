@@ -49,7 +49,7 @@ introspection = false                    # the default: /__nexus returns 404
 introspection_networks = ["10.0.0.0/8"]  # except from your operators' network
 
 [runtime.server]
-max_body_bytes   = 33554432              # cap request bodies (off by default)
+max_body_bytes   = 33554432              # request-body cap (32MB, the default)
 shutdown_timeout = "10s"                 # graceful drain on SIGTERM (the default)
 
 [runtime.middleware.security]
@@ -58,11 +58,11 @@ hsts_max_age = 31536000                  # once you serve https
 
 - **The dashboard** is closed unless introspection is on. `introspection_networks`
   matches the real TCP peer address, not `X-Forwarded-For`.
-- **Request bodies:** set `max_body_bytes`. Otherwise JSON handlers read unbounded
-  bodies.
+- **Request bodies** are capped at 32MB (`max_body_bytes`; `-1` turns the cap off).
+  Over the limit is a 413. Move one endpoint's cap with `nexus.MaxBody(n)`.
 - **Timeouts:** `read_timeout` and `write_timeout` are off by default, because they would
-  cut off large uploads and streams. Set them if your traffic allows. `idle_timeout`
-  defaults to 120s.
+  cut off large uploads and streams; bound one endpoint with `nexus.Timeout(d)` instead.
+  Headers must arrive within 10s, and `idle_timeout` defaults to 120s.
 - **Shutdown:** on SIGINT or SIGTERM, in-flight requests get `shutdown_timeout` to finish.
   Their contexts are then cancelled.
 - **WebSockets** are same-origin by default. List other frontends in

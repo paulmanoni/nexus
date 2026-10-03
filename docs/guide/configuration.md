@@ -18,6 +18,10 @@ It reads:
 - the `[env]` bridge
 - the value store behind `config.Get`
 
+Before it expands `${VAR}`s, the loader applies `.env` beside `nexus.toml`, or the files
+`[runtime] dotenv` lists (`dotenv = ["!.env", ".env.local"]`; a leading `!` makes a file
+required). Real environment variables win over the file.
+
 A missing `nexus.toml` is fine, and defaults apply. A malformed one — or one with a key
 nothing reads (see [Strictness](#strictness)) — fails boot with the file, line and fix.
 Point at a different file with the `NEXUS_CONFIG` environment variable, or call

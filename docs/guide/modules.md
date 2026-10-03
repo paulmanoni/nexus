@@ -20,11 +20,11 @@ func main() {
 
 | Option | Does |
 |---|---|
-| `nexus.Provide(fns...)` | Adds constructors to the DI graph |
-| `nexus.ProvideService(fn)` | Provide, plus dashboard edges drawn from the constructor's parameters |
-| `nexus.ProvideResources(fns...)` | Provide, plus automatic registration of resource providers |
+| `nexus.Provide(fns...)` | Adds constructors to the DI graph; a service wrapper's dependencies become dashboard edges and a resource provider is registered automatically |
 | `nexus.Supply(vals...)` | Adds ready-made values |
-| `nexus.Invoke(fn)` | Runs a startup side effect with injected parameters |
+| `nexus.Setup(fns...)` | Work that must finish before the app serves — migrations, indexes, seeds. Runs after resources start, before the listeners open, in order; an error stops boot |
+| `nexus.Middleware(entries...)` | App-wide middleware (values or DI constructors), placed by `middleware.Stage` |
+| `nexus.Invoke(fn)` | Runs a function eagerly at startup with injected parameters |
 | `nexus.Options(opts...)` | Bundles several options into one |
 | `nexus.Path("/x")` | Prefixes the module's REST routes and mounts its service's GraphQL at `/x/graphql` |
 | `nexus.RoutePrefix("/x")` | Prefixes REST routes only |
@@ -60,7 +60,43 @@ func NewPoller(lc nexus.Lifecycle, db *DB) *Poller {
 ```
 
 Databases, caches, workers, crons and the HTTP listeners all register their start and
-stop this way.
+stop this way. The listeners start last and stop first.
+
+### Setup: work before the app serves
+
+Migrations, roles, indexes and seeds go in `nexus.Setup`. Each function's parameters
+come from DI (a `context.Context` gets the boot context), and it returns nothing or an
+error:
+
+```go
+var Module = nexus.Module("resources",
+    db.BindFromConfig[MainDB]("main", db.WithDefault()),
+    nexus.Setup(EnsureIndexes, SeedRoles),
+)
+
+func EnsureIndexes(ctx context.Context, db *MainDB) error { … }
+```
+
+Setup functions run after every resource and worker has started and before the
+listeners open, in declaration order. The first error stops boot, naming the function.
+
+### App-wide middleware
+
+`nexus.Middleware` registers middleware that runs on every request — REST, GraphQL,
+WebSocket upgrades and unmatched paths. An entry is a `middleware.Middleware` or a
+constructor returning one, with parameters from DI:
+
+```go
+var Compress = middleware.Middleware{Name: "compress", Stage: middleware.Edge, HTTP: compress}
+
+func NewThemeHead(doc *nexus.Document) middleware.Middleware { … }
+
+nexus.Boot(nexus.Middleware(Compress, NewThemeHead), usersModule)
+```
+
+`Stage` places it — `middleware.Edge` (outermost), then the framework's own (CORS,
+security headers, rate limit), then `Session`, `Auth` and `App` (the default) — and
+declaration order holds within a stage, across modules.
 
 `nexus.FailBoot(err)` reports an error while options are being built, and boot fails with
 it.
