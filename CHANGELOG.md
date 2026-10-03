@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-04
+
 ### Added
 
 - **Auth: permissions with wildcards, user kinds, any-of gates.** The first slice
