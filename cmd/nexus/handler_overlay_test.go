@@ -201,8 +201,8 @@ func NewList() {}
 func NewList() {}
 `)
 	_, err = scanHandlerSites(dir2, "nexus_handlers_gen.go")
-	if err == nil || !strings.Contains(err.Error(), "did you mean //@query") {
-		t.Fatalf("typo should suggest //@query, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "did you mean //nexus:query") {
+		t.Fatalf("typo should suggest //nexus:query, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "h.go:3:") {
 		t.Fatalf("typo error should carry file:line, got: %v", err)

@@ -37,6 +37,11 @@ registrations (decorate.Rest/Query/Provide/WS/Worker, with //@auth as options).
 The generated file is ordinary committed Go, so a plain go build / go install
 sees every route — the annotations are sugar, not a required build step.
 
+Every annotation also reads in Go's directive form, //nexus:x (//nexus:rest
+GET /users, no space after the slashes) — the only spelling nexus 2.0 reads.
+The //@x spelling below still works in v1 and is reported as a v2 notice;
+` + "`nexus migrate v2`" + ` rewrites it.
+
 Annotations:
     //@provide                        -> decorate.Provide(fn)
     //@rest <METHOD> <PATH>           -> decorate.Rest(method, path, fn, opts…)
@@ -86,6 +91,7 @@ func runGenerateHandlers(opts handlersOptions, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("nexus generate handlers: %w", err)
 	}
+	reportLegacyDirectives(stderr)
 
 	if opts.Check {
 		var drift []string

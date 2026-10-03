@@ -95,7 +95,7 @@ func aggregatorResult(root string, results []handlergen.Result) (handlergen.Resu
 // only the files that changed since the previous one. Process-lifetime state
 // keyed on (path, mtime, size); a one-shot `nexus generate handlers` simply
 // fills it once.
-var devScanCache = transpiler.NewScanCache()
+var devScanCache = transpiler.NewScanCacheWith(directiveScanOptions)
 
 // handlerGenFileName is the file `nexus generate handlers` writes (committed)
 // and `nexus dev` injects via overlay (ephemeral). Shared so the two paths
@@ -130,16 +130,18 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 			continue
 		}
 		kw := h.Keyword
-		qualified := strings.Contains(kw, ".")
-		if !builtinHandlerKeyword(kw) && !qualified {
-			// Unknown unqualified keyword: a typo of a nexus keyword is an
-			// error (a silently dropped route is baffling to debug); anything
-			// else is left for other tools.
-			if want, close := nearHandlerKeyword(kw); close {
-				return nil, fmt.Errorf("%s:%d: unknown annotation //@%s on %s — did you mean //@%s?",
-					displayRel(h.File), h.Pos.Line, kw, h.Func, want)
+		// //nexus:kw and the v1 //@kw both register; directiveSpelling drops
+		// other tools' @-annotations, rejects typos and records each //@
+		// for the v2 notice.
+		if keep, err := directiveSpelling(h.File, h.Pos.Line, h.Prefix, kw, h.Text); !keep {
+			if err != nil {
+				return nil, err
 			}
 			continue
+		}
+		qualified := strings.Contains(kw, ".")
+		if !builtinHandlerKeyword(kw) && !qualified {
+			return nil, unknownDirective(h.File, h.Pos.Line, kw, h.Func)
 		}
 		if h.PackageLevel && qualified {
 			return nil, fmt.Errorf("%s:%d: //@%s is a custom decorator, which is function-level — annotate a function, not the package doc",
@@ -310,17 +312,33 @@ func (d *declIndex) typeSites(dirs map[string]bool, res *selectorResolver) ([]ha
 						continue
 					}
 					for _, c := range doc.List {
-						// Like the function scan: gofmt rewrites //@x in a doc
-						// comment as // @x, and both forms are directives.
-						text, ok := strings.CutPrefix(strings.TrimSpace(strings.TrimLeft(c.Text, "/")), "@")
-						if !ok {
-							continue
-						}
-						fields := strings.Fields(text)
-						if len(fields) == 0 || (!typeDirectiveKeywords[fields[0]] && !builtinHandlerKeyword(fields[0])) {
+						// Like the function scan: //nexus:x, or the v1 //@x
+						// (which gofmt rewrites as // @x).
+						prefix, fields := splitDirective(c.Text)
+						if len(fields) == 0 {
 							continue
 						}
 						line := d.fset.Position(c.Pos()).Line
+						if prefix == legacyDirectivePrefix {
+							if !typeDirectiveKeywords[fields[0]] && !builtinHandlerKeyword(fields[0]) {
+								continue
+							}
+							recordLegacyDirective(file, line, fields[0])
+						} else {
+							if keep, err := directiveSpelling(file, line, prefix, fields[0], c.Text); !keep {
+								if err != nil {
+									return nil, err
+								}
+								continue
+							}
+							if !typeDirectiveKeywords[fields[0]] && !builtinHandlerKeyword(fields[0]) {
+								if strings.Contains(fields[0], ".") {
+									return nil, fmt.Errorf("%s:%d: //nexus:%s is a custom decorator, which is function-level — annotate a function or method, not the type %s",
+										displayRel(file), line, fields[0], ts.Name.Name)
+								}
+								return nil, unknownDirective(file, line, fields[0], ts.Name.Name)
+							}
+						}
 						site := handlergen.Site{
 							Dir: dir, Pkg: f.Name.Name, File: displayRel(file), Func: ts.Name.Name,
 							Keyword: fields[0], Args: fields[1:], Line: line, TypeLevel: true,
@@ -708,6 +726,7 @@ func buildOverlay(root, distStubRoot string, views bool) (overlayPath string, cl
 	if err != nil {
 		return "", noop, err
 	}
+	reportLegacyDirectives(os.Stderr)
 	var plan *viewgen.Plan
 	if views && viewgen.HasTemplates(root) {
 		if plan, err = viewgen.Generate(root); err != nil {

@@ -35,19 +35,23 @@ const (
 	authImport  = "github.com/paulmanoni/nexus/extension/auth"
 )
 
-// directives reads the //@ lines of a component's doc comment.
+// directives reads the directive lines of a component's doc comment: Go's
+// directive form //nexus:page GET / (the nexus 2.0 spelling) or the v1
+// //@page GET /. Both register the same thing.
 func (f *fileRewriter) directives(info *Component, doc string, at parser.Position) bool {
 	ok := true
 	for _, line := range strings.Split(doc, "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "//") {
-			continue
+		rest, found := strings.CutPrefix(line, "//nexus:")
+		if !found {
+			if !strings.HasPrefix(line, "//") {
+				continue
+			}
+			if rest, found = strings.CutPrefix(strings.TrimSpace(strings.TrimPrefix(line, "//")), "@"); !found {
+				continue
+			}
 		}
-		line = strings.TrimSpace(strings.TrimPrefix(line, "//"))
-		if !strings.HasPrefix(line, "@") {
-			continue
-		}
-		fields := strings.Fields(line[1:])
+		fields := strings.Fields(rest)
 		if len(fields) == 0 {
 			continue
 		}
@@ -68,7 +72,7 @@ func (f *fileRewriter) directives(info *Component, doc string, at parser.Positio
 			}
 			info.Gates, info.HasGates = append(info.Gates, gate), true
 		case "use":
-			expr := strings.TrimSpace(strings.TrimPrefix(line[1:], "use"))
+			expr := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "use"))
 			if _, err := goparser.ParseExpr(expr); err != nil {
 				f.fail(at, "//@use takes a Go expression: %v", err)
 				ok = false
