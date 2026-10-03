@@ -114,7 +114,7 @@ func bindForm(t reflect.Type, values map[string][]string) (reflect.Value, error)
 	if st.Kind() != reflect.Struct {
 		return reflect.Value{}, fmt.Errorf("a form event's last parameter must be a struct or url.Values, got %s", t)
 	}
-	body := url.Values(values).Encode()
+	body := url.Values(checkboxes(st, values)).Encode()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ptr := reflect.New(st)
@@ -125,6 +125,36 @@ func bindForm(t reflect.Type, values map[string][]string) (reflect.Value, error)
 		return ptr, nil
 	}
 	return ptr.Elem(), nil
+}
+
+// checkboxes reads a checked checkbox without a value attribute — which a
+// browser submits as "on" — as true for the bool fields of st the binder
+// fills (its own fields).
+func checkboxes(st reflect.Type, values map[string][]string) map[string][]string {
+	out, copied := values, false
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		ft := f.Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("form"), ",")
+		if ft.Kind() != reflect.Bool || name == "" || name == "-" {
+			continue
+		}
+		if vs := values[name]; len(vs) == 0 || vs[0] != "on" {
+			continue
+		}
+		if !copied {
+			copied = true
+			out = make(map[string][]string, len(values))
+			for k, v := range values {
+				out[k] = v
+			}
+		}
+		out[name] = []string{"true"}
+	}
+	return out
 }
 
 // validation reports whether err is an InvalidInput error with field (or

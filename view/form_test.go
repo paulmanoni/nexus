@@ -187,6 +187,23 @@ func TestSendNamesGenericMethods(t *testing.T) {
 
 func sendFrom[T any](g *genericLive[T]) { Send(g.Ping) }
 
+// A browser submits a checked checkbox with no value attribute as "on".
+func TestBindFormCheckboxOn(t *testing.T) {
+	type input struct {
+		Notify *bool  `form:"notify"`
+		Agree  bool   `form:"agree"`
+		Note   string `form:"note"`
+	}
+	v, err := bindForm(reflect.TypeFor[input](), map[string][]string{"agree": {"on"}, "notify": {"on"}, "note": {"on"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := v.Interface().(input)
+	if !in.Agree || in.Notify == nil || !*in.Notify || in.Note != "on" {
+		t.Fatalf("bound %+v", in)
+	}
+}
+
 func TestSendToNamesMethodsOfGenericTypes(t *testing.T) {
 	g := &genericLive[int]{}
 	if got := SendTo(g, "Ping", 7).Call; !strings.Contains(got, "&#34;Ping&#34;") || !strings.Contains(got, "[7]") {
