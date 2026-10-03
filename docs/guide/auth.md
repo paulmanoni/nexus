@@ -47,7 +47,9 @@ func (u *Users) identity(row User) *auth.Identity {
 nexus.Boot(auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}), …)
 ```
 
-A type that doesn't implement `Users` fails boot, naming the missing method. Two
+A type that doesn't implement `Users` fails boot, naming the missing method.
+`FindLogin`'s identity needs the user's `Kind` when you use areas: signing in under an
+area, and the `next` a sign-in returns to, are checked against it. Two
 optional methods add to it: `SetPassword(ctx, id, encoded string) error` stores
 passwords (`auth.SetPassword`, and a rehash when a stored hash is outdated), and
 `CheckLogin(ctx, id *auth.Identity) error` refuses a sign-in, such as a disabled
