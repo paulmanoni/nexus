@@ -47,6 +47,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		fast        bool
 		debugBuild  bool
 		noEmbedStub bool
+		viewFiles   bool
 		distWatch   bool
 		rawLogs     bool
 		timeBuild   bool
@@ -87,7 +88,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, frontendDir, verbose, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, distWatch, rawLogs, timeBuild, logFormat, logPattern, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, distWatch, rawLogs, timeBuild, viewFiles, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -113,6 +114,8 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"debuggable dev binary: keep DWARF + symtab and compile unoptimized (-gcflags=all=-N -l) so delve attaches cleanly (slower build and link; the inverse of --fast)")
 	cmd.Flags().BoolVar(&noEmbedStub, "no-embed-stub", false,
 		"embed the real frontend bundle in the dev binary instead of stubbing it out (dev serves the bundle from disk, so the embedded copy is normally dead weight)")
+	cmd.Flags().BoolVar(&viewFiles, "view-files", false,
+		"write the compiled views (*_templ.go, view_gen.go, view_imports_gen.go) into the tree, for an editor on plain gopls; by default they compile in memory and the editor gets them from `nexus lsp`")
 	cmd.Flags().BoolVar(&timeBuild, "time-build", false,
 		"print a per-rebuild timing breakdown (codegen · build · prewarm) so slow rebuilds can be diagnosed")
 	cmd.Flags().BoolVar(&distWatch, "dist", false,
@@ -227,7 +230,7 @@ func (e *userError) Error() string { return e.msg }
 // Rebuilds are build-then-swap: the next binary compiles while the
 // current one keeps serving, and the swap happens only once the build
 // is green (see devBuilder).
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, distWatch, rawLogs, timeBuild bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, distWatch, rawLogs, timeBuild, viewFiles bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
@@ -362,8 +365,25 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	// Code generation the project needs (views, for .templ files) runs once
 	// now — before the watcher starts, so its first output does not queue a
 	// second build — and again when a file it watches changes.
+	//
+	// Views compile in memory unless --view-files: the build overlays them
+	// (see buildDevOverlay) and the editor gets them from nexus lsp. A .templ
+	// save is not a Go build input, so the generator asks for the rebuild.
+	var restartCh chan struct{}
+	var rebuildViews func()
+	if !viewFiles {
+		rebuildViews = func() {
+			if restartCh == nil {
+				return
+			}
+			select {
+			case restartCh <- struct{}{}:
+			default:
+			}
+		}
+	}
 	var onChange []func(string)
-	if gens := devGenerators(projectRoot); len(gens) > 0 {
+	if gens := devGenerators(projectRoot, rebuildViews); len(gens) > 0 {
 		runner := newGeneratorRunner(ctx, gens, stdout)
 		runner.runAll()
 		onChange = append(onChange, runner.changed)
@@ -373,7 +393,6 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	stopCSS := startDevTailwind(projectRoot, frontendDir, stdout, stderr)
 	defer stopCSS()
 
-	var restartCh chan struct{}
 	if watch {
 		restartCh = make(chan struct{}, 1)
 		root := projectRoot
@@ -478,7 +497,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 			cleanupOverlay = nil
 		}
 		codegenStart := time.Now()
-		if op, cl, err := buildDevOverlay(target, distStubRoot); err != nil {
+		if op, cl, err := buildDevOverlay(target, distStubRoot, !viewFiles); err != nil {
 			fmt.Fprintf(stderr, "%s●%s handler codegen skipped: %v\n", ansiYellow, ansiReset, err)
 			overlayPath = ""
 		} else {

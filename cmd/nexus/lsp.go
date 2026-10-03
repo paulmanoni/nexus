@@ -44,15 +44,55 @@ references through gopls at the matching position of the generated code.
 Malformed //nexus: directives show up as diagnostics on the .go file.
 
 Point your editor's Go and templ language server at "nexus lsp" (it starts
-gopls itself; --gopls picks the binary).`,
-		Args: cobra.NoArgs,
+gopls itself; --gopls picks the binary).
+
+It stands in for gopls where an editor only lets you swap the binary: "serve"
+and gopls's own flags (-mode=stdio, -rpc.trace, …) are accepted and ignored,
+and any other gopls subcommand ("version", "api-json", …) runs gopls itself.`,
+		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var rest []string
+			for i := 0; i < len(args); i++ {
+				a := args[i]
+				name, value, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
+				switch {
+				case a == "-h" || a == "--help" || a == "help":
+					return cmd.Help()
+				case strings.HasPrefix(a, "-") && (name == "gopls" || name == "log"):
+					if !hasValue && i+1 < len(args) {
+						i++
+						value = args[i]
+					}
+					if name == "gopls" {
+						goplsPath = value
+					} else {
+						logPath = value
+					}
+				default:
+					rest = append(rest, a)
+				}
+			}
 			if goplsPath == "" {
 				p, err := findGopls()
 				if err != nil {
 					return err
 				}
 				goplsPath = p
+			}
+			// A gopls subcommand other than serve is gopls's business.
+			for _, a := range rest {
+				if strings.HasPrefix(a, "-") {
+					continue
+				}
+				if a != "serve" {
+					c := exec.Command(goplsPath, rest...)
+					c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
+					if err := c.Run(); err != nil {
+						return fmt.Errorf("gopls: %w", errExitNonZero)
+					}
+					return nil
+				}
+				break
 			}
 			logw := io.Discard
 			if logPath != "" {
@@ -70,6 +110,7 @@ gopls itself; --gopls picks the binary).`,
 			return runLSP(ctx, os.Stdin, stdout, logw, goplsPath)
 		},
 	}
+	// Parsed by hand (DisableFlagParsing); declared for --help.
 	cmd.Flags().StringVar(&goplsPath, "gopls", "", "gopls binary (default: gopls on PATH, then $GOPATH/bin/gopls)")
 	cmd.Flags().StringVar(&logPath, "log", "", "append a debug log to this file")
 	return cmd

@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,44 +27,98 @@ type devGenerator struct {
 }
 
 // devGenerators are the generators this project needs — today, views when
-// the tree has .templ files. Nothing to configure.
-func devGenerators(root string) []devGenerator {
+// the tree has .templ files. Nothing to configure. With a rebuild func the
+// views compile in memory (the dev build overlays them) and rebuild asks
+// for a restart when they change; without one they are written to disk.
+func devGenerators(root string, rebuild func()) []devGenerator {
 	var out []devGenerator
 	if viewgen.HasTemplates(root) {
-		out = append(out, viewsGenerator(root))
+		if rebuild != nil {
+			out = append(out, viewsCheckGenerator(root, rebuild))
+		} else {
+			out = append(out, viewsGenerator(root))
+		}
 	}
 	return out
 }
 
+// viewsWatch is what the views generators react to: a .templ save, or a Go
+// edit that may declare what templates use (a state struct, a view.Shard
+// registration).
+func viewsWatch(path string) bool {
+	base := filepath.Base(path)
+	if strings.HasSuffix(base, ".templ") {
+		return true
+	}
+	generated := strings.HasSuffix(base, "_templ.go") || base == "view_gen.go" || base == "view_imports_gen.go"
+	return strings.HasSuffix(base, ".go") && !strings.HasSuffix(base, "_test.go") && !generated
+}
+
+// viewsError shows a views compile error with positions relative to the
+// project (they are absolute).
+func viewsError(root string, err error) error {
+	if abs, aerr := filepath.Abs(root); aerr == nil {
+		return errors.New(strings.ReplaceAll(err.Error(), abs+string(filepath.Separator), ""))
+	}
+	return err
+}
+
 // viewsGenerator compiles the project's reactive templ views (package
-// github.com/paulmanoni/nexus/v2/view). It writes the generated Go to disk —
-// gopls reads it to resolve components across packages — and reruns on a
-// .templ save, or on a Go edit that may declare what templates use (a
-// state struct, a view.Shard registration).
+// github.com/paulmanoni/nexus/v2/view) and writes the generated Go to disk,
+// for editors on plain gopls (nexus dev --view-files).
 func viewsGenerator(root string) devGenerator {
 	return devGenerator{
-		name: "views",
-		watches: func(path string) bool {
-			base := filepath.Base(path)
-			if strings.HasSuffix(base, ".templ") {
-				return true
-			}
-			generated := strings.HasSuffix(base, "_templ.go") || base == "view_gen.go" || base == "view_imports_gen.go"
-			return strings.HasSuffix(base, ".go") && !strings.HasSuffix(base, "_test.go") && !generated
-		},
+		name:    "views",
+		watches: viewsWatch,
 		run: func() (string, error) {
 			changed, err := viewgen.Module(root)
 			if err != nil {
-				// Positions are absolute; show them relative to the project.
-				if abs, aerr := filepath.Abs(root); aerr == nil {
-					return "", errors.New(strings.ReplaceAll(err.Error(), abs+string(filepath.Separator), ""))
-				}
-				return "", err
+				return "", viewsError(root, err)
 			}
 			if len(changed) == 0 {
 				return "", nil
 			}
 			return fmt.Sprintf("%d file(s) updated", len(changed)), nil
+		},
+	}
+}
+
+// viewsCheckGenerator compiles the views without writing them: the dev
+// build takes them from its overlay, and the editor from nexus lsp. It
+// reports compile errors as they happen and calls rebuild when the
+// compiled output changes — a .templ save is not a Go build input, so the
+// watcher alone would not restart the app.
+func viewsCheckGenerator(root string, rebuild func()) devGenerator {
+	var last string
+	return devGenerator{
+		name:    "views",
+		watches: viewsWatch,
+		run: func() (string, error) {
+			plan, err := viewgen.Generate(root)
+			if err != nil {
+				return "", viewsError(root, err)
+			}
+			h := sha256.New()
+			paths := make([]string, 0, len(plan.Files))
+			for path := range plan.Files {
+				paths = append(paths, path)
+			}
+			sort.Strings(paths)
+			for _, path := range paths {
+				fmt.Fprintf(h, "%s\x00%d\x00", path, len(plan.Files[path]))
+				h.Write(plan.Files[path])
+			}
+			sum := hex.EncodeToString(h.Sum(nil))
+			first := last == ""
+			if sum == last {
+				return "", nil
+			}
+			last = sum
+			if first {
+				return "compiled in memory", nil
+			}
+			rebuild()
+			return "recompiled", nil
 		},
 	}
 }
