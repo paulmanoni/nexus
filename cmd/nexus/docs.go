@@ -1935,6 +1935,10 @@ CLI CHEATSHEET
   nexus generate handlers    Wire //nexus:-annotated handlers into registrations.
                              --check on either one is a CI drift gate.
 
+  nexus migrate v2 [dir]     Rewrite a v1 project for v2: /v2 import paths,
+                             go.mod requirements, //@x → //nexus:x annotations.
+                             --dry-run lists every change; re-running is a no-op.
+
   nexus docs [topic]         This help. --web opens the documentation site.
 
   nexus version              Print the CLI version.
