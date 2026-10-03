@@ -798,12 +798,24 @@ or names its own //nexus:auth. The app needs no view wiring:
 
     nexus.Boot(nexus.Provide(NewStore, NewSearch))
 
-nexus dev: generates views on start and on every .templ save (written to
-disk, gitignore them — gopls reads them), and runs the Tailwind standalone
-CLI for any stylesheet that does @import "tailwindcss" (input.css →
-output.css; sources.generated.css lists your templates plus every Go
-dependency shipping .templ files). nexus build: views via the overlay,
-Tailwind minified. nexus generate views [--check]: write / verify on disk.
+nexus dev: compiles views on start and on every .templ save, in memory —
+the build overlays them (--view-files writes *_templ.go, view_gen.go and
+view_imports_gen.go to disk instead; gitignore them) — and runs the
+Tailwind standalone CLI for any stylesheet that does @import "tailwindcss"
+(input.css → output.css; sources.generated.css lists your templates plus
+every Go dependency shipping .templ files). nexus build: views via the
+overlay, Tailwind minified. nexus test / nexus vet: go test / go vet through
+the same overlay. nexus generate views [--check]: write / verify on disk.
+
+Editor: run "nexus lsp" for .go and .templ files. It starts gopls and hands
+it the generated Go as unsaved buffers, so Go calling a component
+type-checks and go-to-definition lands in the .templ. .templ files get the
+views compiler's errors, the Go type errors of their expressions, and
+definition / hover / completion through gopls. Malformed //nexus:
+directives are diagnostics. It accepts gopls's "serve" and flags, so an
+editor that only swaps the gopls binary (VS Code: go.alternateTools) can
+run it through a script doing: exec nexus lsp "$@". An editor on plain
+gopls needs nexus dev --view-files.
 
 Component libraries (templUI): reactive attributes go in Props.Attributes,
 and view.Assets serves the library's files:

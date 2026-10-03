@@ -279,12 +279,21 @@ a struct of `*view.Signal` fields (`view.Initial(v)` defaults), read with
 `//nexus:page GET /` / `//nexus:auth` / `//nexus:use` above a component register it; a shard inherits
 its pages' gates (module-wide render graph; they must agree) or names its own. Zero
 wiring: the generator emits `view_gen.go` per package (pages, shards, `view.Expose` for
-every `view.Use[T]`) and `view_imports_gen.go` in main. **`nexus dev`** generates on start
-and on every `.templ` save (to disk — gitignore `*_templ.go`, `view_gen.go`,
-`view_imports_gen.go`; gopls needs them) and runs `tailwindcss --watch` for any stylesheet
-with `@import "tailwindcss"` (outside the Vite frontend; `input.css`→`output.css`, writing
-`sources.generated.css` with @source for the project + Go deps shipping .templ). **`nexus
-build`**: views via the overlay, Tailwind minified. `nexus generate views [--check]`.
+every `view.Use[T]`) and `view_imports_gen.go` in main. That generated Go never sits on
+disk: **`nexus dev`** compiles on start and on every `.templ` save in memory (the build
+overlays it; `--view-files` writes it instead, for an editor on plain gopls — gitignore
+`*_templ.go`, `view_gen.go`, `view_imports_gen.go`) and runs `tailwindcss --watch` for any
+stylesheet with `@import "tailwindcss"` (outside the Vite frontend; `input.css`→`output.css`,
+writing `sources.generated.css` with @source for the project + Go deps shipping .templ).
+**`nexus build`**: views via the overlay, Tailwind minified. **`nexus test` / `nexus vet`**:
+go test/vet through the same overlay. `nexus generate views [--check]` writes/verifies on
+disk. **Editor: `nexus lsp`** for `.go` and `.templ` — it fronts gopls and opens the
+generated Go (views + `//nexus:` handler registrations) as unsaved buffers, so Go calling a
+component type-checks and go-to-definition lands in the `.templ`; `.templ` files get the views
+compiler's errors, Go type errors of their expressions, and definition/hover/completion
+through gopls via templ's source map; bad `//nexus:` directives are diagnostics. It's a
+drop-in gopls (accepts `serve`/gopls flags, passes other subcommands through), so VS Code
+uses it via `go.alternateTools.gopls` and a wrapper script.
 Component libraries (templUI): reactive entries in a `templ.Attributes{…}` literal
 (Props.Attributes) compile like element attributes; `view.Assets(prefix, handler)` serves
 library/CSS files. **Live pages** (`view.Live[*T](prefix, gates…).Provide(NewT)`, declared
@@ -1436,9 +1445,14 @@ nexus dev [dir]      Live dev: the app + dashboard on its own origin, and — wh
                      the dev binary (--debug / --no-embed-stub opt back in).
                      --dist keeps web/dist rebuilt (vite build) in the background so
                      go build always embeds the current frontend. --frontend <dir>
-                     overrides the detected dir.
+                     overrides the detected dir. Views compile in memory
+                     (--view-files writes them to disk).
 nexus build          install (if needed) → vite build [→ vite build --ssr] → web/dist,
                      then go build embeds it. ONE binary (frontend + Go). -o <path>.
+nexus test / vet     go test / go vet with the generated code (handlers, views) overlaid;
+                     arguments pass through.
+nexus lsp            Language server for .go and .templ: gopls plus the generated code
+                     as editor buffers (see Reactive templ views). --gopls, --log.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 nexus generate frontend    Typed TS source tree from a manifest (--check = drift gate).
 nexus generate handlers [./...]  Wire //nexus:-annotated handlers: write nexus_handlers_gen.go
