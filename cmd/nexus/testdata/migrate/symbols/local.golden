@@ -1,0 +1,19 @@
+package main
+
+import (
+	"github.com/paulmanoni/nexus/v2"
+	nexusconfig "github.com/paulmanoni/nexus/v2/config"
+)
+
+// A local named config takes the package name, so the import is aliased.
+func main() {
+	config := nexusconfig.Runtime{Introspection: true}
+	config.Server.Addr = nexusconfig.Get[string]("addr", ":8080")
+	nexus.Run(config)
+}
+
+func dotenv() {
+	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; call config.RequireDotenv() before nexus.Boot and handle its error
+	opt := nexus.MustLoadDotenv()
+	_ = opt
+}

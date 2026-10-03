@@ -1,0 +1,26 @@
+package orders
+
+import (
+	"context"
+
+	nx "github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/extension/config"
+)
+
+// Settings is read from the config server.
+var settings = config.Local("orders.toml")
+
+func load(ctx context.Context, nexus *Store) nx.Config {
+	// nexus here is a parameter, not the package: left alone.
+	_ = nexus.Get("x")
+	return nx.Config{
+		Server:    nx.ServerConfig{Addr: nx.Get[string]("orders.addr")},
+		Dashboard: nx.DashboardConfig{Enabled: true},
+	}
+}
+
+type Store struct{}
+
+func (*Store) Get(string) string { return "" }
+
+func cache(c nx.Cache) {}

@@ -28,8 +28,9 @@ import (
 // itself — which makes the command safe to re-run after a partial migration
 // or a merge that brought v1 code back in.
 //
-// Adding a rule (symbol renames, nexus.toml key moves, …) is one entry in
-// migrateV2Rules: a name, the files it applies to, and the rewrite.
+// Adding a rule (nexus.toml key moves, …) is one entry in migrateV2Rules:
+// a name, the files it applies to, and the rewrite. A moved or renamed
+// exported name is one row in migrateV2Symbols (migrate_symbols.go).
 
 // nexusModule is the v1 root module path; v2 lives at nexusModule + "/v2".
 const nexusModule = "github.com/paulmanoni/nexus"
@@ -76,6 +77,8 @@ type migrateRule struct {
 var migrateV2Rules = []migrateRule{
 	{Name: "imports", Applies: isGoSource, Apply: migrateGoImports},
 	{Name: "imports", Applies: isTemplSource, Apply: migrateTemplImports},
+	{Name: "symbols", Applies: isGoSource, Apply: migrateGoSymbols},
+	{Name: "tags", Applies: isGoSource, Apply: migrateGoTags},
 	{Name: "go.mod", Applies: isGoMod, Apply: migrateGoMod},
 	{Name: "annotations", Applies: isGoSource, Apply: migrateGoAnnotations},
 	{Name: "annotations", Applies: isTemplSource, Apply: migrateTemplAnnotations},
@@ -120,6 +123,14 @@ and hidden directories are skipped):
                  (also cmd/nexus, di/fxcontainer, extension/cache/redis,
                  extension/jobs/jobsamqp, extension/jobs/jobsredis)
                Only import specs change, never other strings.
+  symbols      moved and renamed exported names, in Go files that import nexus
+               (an aliased import is followed; the target package is imported,
+               and an import left unused is dropped). The table is listed below.
+               A name with no mechanical replacement is dropped from the option
+               list it sits in, with a // TODO(nexus v2): comment above its
+               statement. App.UseVolume (a method) is not rewritten.
+  tags         the retired uri:"x" struct tag becomes path:"x" in Go files that
+               import nexus (a field that already has path: drops its uri:).
   go.mod       require lines for those modules move to the new paths at
                ` + nexusV2Version + `; a github.com/paulmanoni/nexus/view requirement is
                dropped (view is part of the root module in v2); replace
@@ -129,7 +140,10 @@ and hidden directories are skipped):
                //@pkg.Func decorators; other tools' @-annotations are left alone).
 
 Changed .go files are gofmt'ed. Re-running is a no-op. --dry-run prints
-every change without writing.`,
+every change without writing.
+
+Symbols:
+` + migrateSymbolTable(migrateV2Symbols),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			root := "."

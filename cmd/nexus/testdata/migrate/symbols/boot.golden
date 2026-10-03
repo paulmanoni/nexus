@@ -1,0 +1,34 @@
+package main
+
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
+)
+
+type GetArgs struct {
+	ID   string `path:"id" json:"id"`
+	Slug string `path:"slug"`
+	Page int    `query:"page"`
+}
+
+// TODO(nexus v2): nexus.LoadDotenvIfPresent() is gone; call config.LoadDotenv() before nexus.Boot and handle its error
+var defaults = []nexus.Option{
+	nexus.DeclareVolume(volume),
+}
+
+func main() {
+	cfg := config.MustLoad()
+	cfg.Server = config.Server{Addr: ":8080"}
+	_ = config.Get[string]("shop.currency")
+	_ = auth.InspectExtractor(auth.Bearer())
+	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; call config.RequireDotenv() before nexus.Boot and handle its error
+	nexus.Run(cfg,
+		nexus.Module("orders"),
+	)
+}
+
+func only() {
+	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; call config.RequireDotenv() before nexus.Boot and handle its error
+	nexus.Boot()
+}

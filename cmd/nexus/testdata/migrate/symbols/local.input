@@ -1,0 +1,15 @@
+package main
+
+import "github.com/paulmanoni/nexus"
+
+// A local named config takes the package name, so the import is aliased.
+func main() {
+	config := nexus.Config{Introspection: true}
+	config.Server.Addr = nexus.Get[string]("addr", ":8080")
+	nexus.Run(config)
+}
+
+func dotenv() {
+	opt := nexus.MustLoadDotenv()
+	_ = opt
+}

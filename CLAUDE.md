@@ -1387,8 +1387,10 @@ nexus generate handlers [./...]  Wire //nexus:-annotated handlers: write nexus_h
                      (Run automatically by nexus dev/build; see §5.)
 nexus docs [topic]   Inline reference. --web opens the docs site (paulmanoni.github.io/nexus).
 nexus migrate v2 [dir]  Codemod a v1 project for v2: /v2 import paths (Go + templ), go.mod
-                     requires at v2.0.0 (view dropped — it's in the root module), //@x →
-                     //nexus:x annotations; gofmt'ed, idempotent. --dry-run lists every edit.
+                     requires at v2.0.0 (view dropped — it's in the root module), moved
+                     symbols (nexus.Config → config.Runtime, nexus.Get → config.Get, …;
+                     table in --help), uri: → path: tags, //@x → //nexus:x annotations;
+                     gofmt'ed, idempotent. --dry-run lists every edit.
 nexus pki ...        Generate mTLS certs for the peer mesh.
 ```
 `nexus build` produces ONE binary (frontend + Go). There is no deployment-split CLI and
