@@ -16,14 +16,14 @@ type LogoutRevoker func(ctx context.Context, token string) error
 
 // LogoutHandler is the raw logout handler Config.Endpoints.Logout mounts, exported
 // so an app whose revoker needs DI dependencies (e.g. a token server) can
-// wire it inside its own AsRestHandler factory — where those deps ARE
-// injected — instead of the Backend's RevokeToken capability:
+// call it from its own raw handler — whose parameters ARE injected —
+// instead of the Backend's RevokeToken capability:
 //
-//	nexus.AsRestHandler("POST", "/auth/logout",
-//	    func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {
-//	        return auth.LogoutHandler(m, auth.Bearer(), func(ctx, tok string) error {
+//	nexus.AsRest("POST", "/auth/logout",
+//	    func(m *auth.Manager, srv *TokenServer, c *httpx.Ctx) {
+//	        auth.LogoutHandler(m, auth.Bearer(), func(ctx context.Context, tok string) error {
 //	            return srv.Revoke(ctx, tok)   // uses the DI-injected srv
-//	        })
+//	        })(c)
 //	    }, nexus.Public())
 //
 // extract nil defaults to Bearer(); revoke may be nil (cache-only logout).

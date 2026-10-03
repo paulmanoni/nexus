@@ -17,19 +17,15 @@ func TestRequiredGate(t *testing.T) {
 	cfg := Config{Store: NewMemoryStore()}
 	app, stop, err := nexus.InProcess(config.Runtime{Middleware: testNoCSRF},
 		Module(cfg),
-		nexus.AsRestHandler("POST", "/start", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) {
-				Get(c.Request.Context()).Set("step", 1)
-				c.String(200, "started")
-			}
+		nexus.AsRest("POST", "/start", func(c *httpx.Ctx) {
+			Get(c.Request.Context()).Set("step", 1)
+			c.String(200, "started")
 		}),
-		nexus.AsRestHandler("GET", "/gated", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) {
-				if !Get(c.Request.Context()).Established() {
-					t.Error("gate admitted a request Established() reports false for")
-				}
-				c.String(200, "in")
+		nexus.AsRest("GET", "/gated", func(c *httpx.Ctx) {
+			if !Get(c.Request.Context()).Established() {
+				t.Error("gate admitted a request Established() reports false for")
 			}
+			c.String(200, "in")
 		}, Required()),
 	)
 	if err != nil {

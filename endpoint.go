@@ -13,7 +13,7 @@ import (
 )
 
 // EndpointOption is the cross-transport per-op option contract: one value
-// that every endpoint builder accepts — AsRest / AsRestHandler, AsQuery /
+// that every endpoint builder accepts — AsRest, AsQuery /
 // AsMutation, and AsWS. It exists so "works on any transport" has a name
 // instead of being an unwritten convention you infer from the fact that a
 // type happens to implement RestOption, GqlOption, and WSOption all at once.
@@ -277,7 +277,7 @@ func buildEndpointChain(
 // Describe sets an endpoint's human-readable description — shown on the
 // introspection dashboard (/__nexus) and, for GraphQL, emitted into the
 // generated SDL documentation. Cross-transport: one expression works on REST
-// (AsRest / AsRestHandler), GraphQL (AsQuery / AsMutation), and WS (AsWS),
+// (AsRest), GraphQL (AsQuery / AsMutation), and WS (AsWS),
 // mirroring HideFromDashboard / WithIcon.
 //
 //	nexus.AsRest("POST", "/devices", NewRegister, nexus.Describe("Register a device"))
@@ -304,7 +304,7 @@ func (o DescribeOption) applyToWS(c *wsConfig)     { c.description = o.text }
 // snapshot, and the architecture graph. The endpoint STILL routes and
 // serves requests normally — this is dashboard-only visibility, not a 404
 // and not an auth gate. Useful for internal/debug/health ops you don't want
-// cluttering the topology. Works on REST (AsRest / AsRestHandler), GraphQL
+// cluttering the topology. Works on REST (AsRest), GraphQL
 // (AsQuery / AsMutation), and WS (AsWS):
 //
 //	nexus.AsRest("GET", "/internal/debug", NewDebug, nexus.HideFromDashboard())
@@ -361,7 +361,7 @@ const PublicTag = "auth.public"
 // Public marks an endpoint as exempt from any framework-installed default
 // gate — the explicit opt-out for deny-by-default auth
 // (auth.Authorization.Default). With no default gate configured it's a
-// harmless no-op marker. Works on REST (AsRest / AsRestHandler), GraphQL
+// harmless no-op marker. Works on REST (AsRest), GraphQL
 // (AsQuery / AsMutation), and WS (AsWS):
 //
 //	nexus.AsRest("GET", "/health", NewHealth, nexus.Public())

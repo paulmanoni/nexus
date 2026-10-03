@@ -197,9 +197,8 @@ func NewAdvertsService(app *App, users *UsersService, db *fakeDB) *AdvertsServic
 	return &AdvertsService{Service: app.Service("adverts")}
 }
 
-// testRestHandlerCtrl is the minimal factory-consumable dep for the
-// AsRestHandler smoke test. Real controllers (DeviceController,
-// DeploymentController) are the use-case this shape targets.
+// testRestHandlerCtrl backs a raw REST handler registered as a method:
+// AsRest with a func(*httpx.Ctx) method writes its own response.
 type testRestHandlerCtrl struct{ counter *int }
 
 func (c *testRestHandlerCtrl) Ping(gc *httpx.Ctx) {
@@ -207,7 +206,7 @@ func (c *testRestHandlerCtrl) Ping(gc *httpx.Ctx) {
 	gc.JSON(200, httpx.H{"ok": true})
 }
 
-func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
+func TestAsRest_RawMethodHandler(t *testing.T) {
 	var counter int
 	ctrl := &testRestHandlerCtrl{counter: &counter}
 
@@ -215,10 +214,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 	fxApp := newTestApp(t,
 		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		Supply(ctrl).nexusOption(),
-		AsRestHandler("GET", "/ping",
-			func(c *testRestHandlerCtrl) httpx.HandlerFunc { return c.Ping },
-			Describe("ping"),
-		).nexusOption(),
+		AsRest("GET", "/ping", (*testRestHandlerCtrl).Ping, Describe("ping")).nexusOption(),
 		di.Populate(&app),
 	)
 	fxApp.RequireStart()
@@ -243,7 +239,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("AsRestHandler did not register the endpoint")
+		t.Fatal("AsRest did not register the raw method handler")
 	}
 }
 

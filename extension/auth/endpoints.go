@@ -95,54 +95,46 @@ func (m *Manager) tokenHandler() httpx.HandlerFunc {
 	return nil
 }
 
-// endpointOptions builds the AsRestHandler options for the configured
-// Endpoints. Each factory injects the *Manager and produces a handler that
-// resolves the backend capability at request time — safe regardless of
+// endpointOptions builds the AsRest options for the configured Endpoints.
+// Each handler takes the *Manager from DI and resolves the backend
+// capability at request time — safe regardless of
 // whether the backend finalize invoke ran before or after route building.
 func endpointOptions(e Endpoints) []nexus.Option {
 	var opts []nexus.Option
 	if e.Login != "" {
-		opts = append(opts, nexus.AsRestHandler("POST", e.Login,
-			func(m *Manager) httpx.HandlerFunc {
-				return func(c *httpx.Ctx) { LoginHandler(m, m.issuer())(c) }
-			},
+		opts = append(opts, nexus.AsRest("POST", e.Login,
+			func(m *Manager, c *httpx.Ctx) { LoginHandler(m, m.issuer())(c) },
 			nexus.Describe("Authenticate a username/password via the auth backend."),
 			nexus.Public(),
 		))
 	}
 	if e.Logout != "" {
-		opts = append(opts, nexus.AsRestHandler("POST", e.Logout,
-			func(m *Manager) httpx.HandlerFunc {
-				return func(c *httpx.Ctx) {
-					LogoutHandler(m, logoutExtractor(e), m.revoker())(c)
-				}
+		opts = append(opts, nexus.AsRest("POST", e.Logout,
+			func(m *Manager, c *httpx.Ctx) {
+				LogoutHandler(m, logoutExtractor(e), m.revoker())(c)
 			},
 			nexus.Describe("Invalidate the presented auth token (logout)."),
 			nexus.Public(),
 		))
 	}
 	if e.Token != "" {
-		opts = append(opts, nexus.AsRestHandler("POST", e.Token,
-			func(m *Manager) httpx.HandlerFunc {
-				return func(c *httpx.Ctx) {
-					h := m.tokenHandler()
-					if h == nil {
-						c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusNotImplemented, errors.New("no token server configured")))
-						return
-					}
-					h(c)
+		opts = append(opts, nexus.AsRest("POST", e.Token,
+			func(m *Manager, c *httpx.Ctx) {
+				h := m.tokenHandler()
+				if h == nil {
+					c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusNotImplemented, errors.New("no token server configured")))
+					return
 				}
+				h(c)
 			},
 			nexus.Describe("Token grant endpoint (OAuth2 password/refresh/client_credentials)."),
 			nexus.Public(),
 		))
 	}
 	if e.Revoke != "" {
-		opts = append(opts, nexus.AsRestHandler("POST", e.Revoke,
-			func(m *Manager) httpx.HandlerFunc {
-				return func(c *httpx.Ctx) {
-					LogoutHandler(m, logoutExtractor(e), m.revoker())(c)
-				}
+		opts = append(opts, nexus.AsRest("POST", e.Revoke,
+			func(m *Manager, c *httpx.Ctx) {
+				LogoutHandler(m, logoutExtractor(e), m.revoker())(c)
 			},
 			nexus.Describe("Revoke the presented auth token."),
 			nexus.Public(),

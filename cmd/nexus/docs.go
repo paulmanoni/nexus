@@ -1402,8 +1402,8 @@ implements every capability, so a token server folds into auth.Module:
     // oauth2.Module(cfg) is now a thin wrapper over exactly this.
 
 When you can't use a ready backend, the exported auth.LoginHandler /
-auth.LogoutHandler let you wire the same handlers in your own AsRestHandler
-factory (DI deps injected there).
+auth.LogoutHandler let you call the same handlers from your own raw AsRest
+handler (func(m *auth.Manager, …deps, c *httpx.Ctx), DI deps injected).
 `,
 
 	"security": `

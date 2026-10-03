@@ -115,7 +115,7 @@ type tokenSvc struct{ prefix string }
 func (s *tokenSvc) issue(id string) string { return s.prefix + id }
 
 // TestLoginHandler_DIIssuer proves the exported LoginHandler can be wired in
-// an app-owned AsRestHandler factory whose issuer closes over a DI-injected
+// an app-owned raw AsRest handler whose issuer closes over a DI-injected
 // service — the pattern for token servers whose issuer needs DI deps.
 func TestLoginHandler_DIIssuer(t *testing.T) {
 	app, stop, err := nexus.InProcess(config.Runtime{},
@@ -124,11 +124,11 @@ func TestLoginHandler_DIIssuer(t *testing.T) {
 			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
 			Backend:        auth.StaticBackend(loginBackend{}),
 		}),
-		nexus.AsRestHandler("POST", "/auth/login",
-			func(m *auth.Manager, svc *tokenSvc) httpx.HandlerFunc {
-				return auth.LoginHandler(m, func(_ context.Context, id *auth.Identity) (any, error) {
+		nexus.AsRest("POST", "/auth/login",
+			func(m *auth.Manager, svc *tokenSvc, c *httpx.Ctx) {
+				auth.LoginHandler(m, func(_ context.Context, id *auth.Identity) (any, error) {
 					return map[string]any{"access_token": svc.issue(id.ID)}, nil
-				})
+				})(c)
 			}, nexus.Public()),
 	)
 	if err != nil {

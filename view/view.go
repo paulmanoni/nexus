@@ -38,12 +38,9 @@ func init() { nexus.RegisterDeferredOptions(options) }
 
 func options() []nexus.Option {
 	return []nexus.Option{
-		nexus.AsRestHandler("GET", "/_view/runtime.js",
-			func() httpx.HandlerFunc { return serveJS(func() string { return runtimeJS }) }, nexus.HideFromDashboard()),
-		nexus.AsRestHandler("GET", "/_view/import.js",
-			func() httpx.HandlerFunc { return serveJS(func() string { return importJS }) }, nexus.HideFromDashboard()),
-		nexus.AsRestHandler("GET", "/_view/twins.js",
-			func() httpx.HandlerFunc { return serveJS(twinsJS) }, nexus.HideFromDashboard()),
+		nexus.AsRest("GET", "/_view/runtime.js", serveJS(func() string { return runtimeJS }), nexus.HideFromDashboard()),
+		nexus.AsRest("GET", "/_view/import.js", serveJS(func() string { return importJS }), nexus.HideFromDashboard()),
+		nexus.AsRest("GET", "/_view/twins.js", serveJS(twinsJS), nexus.HideFromDashboard()),
 		nexus.Invoke(func(app *nexus.App) {
 			lastApp.Store(app)
 			registerIslands(app)
@@ -221,5 +218,5 @@ func clonePerPage(v any, t reflect.Type, r *render) any {
 func Assets(prefix string, handler http.Handler) nexus.Option {
 	route := strings.TrimSuffix(prefix, "/") + "/*path"
 	serve := func(c *httpx.Ctx) { handler.ServeHTTP(c.Writer, c.Request) }
-	return nexus.AsRestHandler("GET", route, func() httpx.HandlerFunc { return serve }, nexus.HideFromDashboard())
+	return nexus.AsRest("GET", route, serve, nexus.HideFromDashboard())
 }

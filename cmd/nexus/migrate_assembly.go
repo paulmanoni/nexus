@@ -16,6 +16,8 @@ var migrateAssemblyFlags = []struct {
 }{
 	{regexp.MustCompile(`\.Middleware\.Global\b`),
 		"Config.Middleware.Global is gone; register app-wide middleware with nexus.Middleware(...) — set middleware.Middleware.Stage for its place"},
+	{regexp.MustCompile(`\bAsRestHandler\(`),
+		"AsRestHandler is gone; register with nexus.AsRest — a raw handler takes its DI deps and *httpx.Ctx as parameters: func(m *Dep, c *httpx.Ctx)"},
 	{regexp.MustCompile(`\bnexus\.Invoke\(\s*\w+\.Ensure\w*|\bnexus\.Invoke\(\s*\w*(Migrate|Seed|Backfill)\w*`),
 		"pre-serve work belongs in nexus.Setup(...): it runs after resources start and before the listeners open"},
 }

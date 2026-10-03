@@ -22,14 +22,14 @@ type LoginIssuer func(ctx context.Context, id *Identity) (any, error)
 
 // LoginHandler is the raw login handler Config.Endpoints.Login mounts, exported so
 // an app whose issuer needs DI dependencies (e.g. a token server) can wire
-// it inside its own AsRestHandler factory — where those deps ARE injected —
+// it inside its own raw handler — whose parameters ARE injected —
 // instead of the Backend's Issue capability:
 //
-//	nexus.AsRestHandler("POST", "/auth/login",
-//	    func(m *auth.Manager, srv *TokenServer) httpx.HandlerFunc {
-//	        return auth.LoginHandler(m, func(ctx, id *auth.Identity) (any, error) {
+//	nexus.AsRest("POST", "/auth/login",
+//	    func(m *auth.Manager, srv *TokenServer, c *httpx.Ctx) {
+//	        auth.LoginHandler(m, func(ctx context.Context, id *auth.Identity) (any, error) {
 //	            return srv.IssueToken(ctx, id.ID)   // uses the DI-injected srv
-//	        })
+//	        })(c)
 //	    }, nexus.Public())
 //
 // It reads {username, password}, runs Manager.Login, and owns the status

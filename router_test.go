@@ -78,12 +78,10 @@ func TestRouterIncludedGuard(t *testing.T) {
 // behaviour, with the shared middleware prepended ahead of the op's own.
 func TestRouterDeclAssembly(t *testing.T) {
 	var log []string
-	handler := func() httpx.HandlerFunc {
-		return func(c *httpx.Ctx) { c.String(200, "ok") }
-	}
+	handler := func(c *httpx.Ctx) { c.String(200, "ok") }
 	RouterDecl("v1", "/api/v1", "")
 	RouterDecl("billing", "/billing", "v1", markMW("decl-shared", &log))
-	OnRouter("billing", AsRestHandler("GET", "/invoices", handler, markMW("per-op", &log)))
+	OnRouter("billing", AsRest("GET", "/invoices", handler, markMW("per-op", &log)))
 
 	app, stop, err := InProcess(config.Runtime{})
 	if err != nil {

@@ -19,31 +19,23 @@ func bootApp(t *testing.T, cfg Config) http.Handler {
 	t.Helper()
 	app, stop, err := nexus.InProcess(config.Runtime{Middleware: testNoCSRF},
 		Module(cfg),
-		nexus.AsRestHandler("GET", "/read", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) {
-				s := Get(c.Request.Context())
-				c.String(200, s.GetString("who"))
-			}
+		nexus.AsRest("GET", "/read", func(c *httpx.Ctx) {
+			s := Get(c.Request.Context())
+			c.String(200, s.GetString("who"))
 		}),
-		nexus.AsRestHandler("POST", "/write", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) {
-				s := Get(c.Request.Context())
-				s.Set("who", "alice")
-				c.String(200, "ok")
-			}
+		nexus.AsRest("POST", "/write", func(c *httpx.Ctx) {
+			s := Get(c.Request.Context())
+			s.Set("who", "alice")
+			c.String(200, "ok")
 		}),
-		nexus.AsRestHandler("POST", "/cycle", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) {
-				s := Get(c.Request.Context())
-				s.Cycle()
-				c.String(200, s.ID())
-			}
+		nexus.AsRest("POST", "/cycle", func(c *httpx.Ctx) {
+			s := Get(c.Request.Context())
+			s.Cycle()
+			c.String(200, s.ID())
 		}),
-		nexus.AsRestHandler("POST", "/logout", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) {
-				Get(c.Request.Context()).Destroy()
-				c.String(200, "bye")
-			}
+		nexus.AsRest("POST", "/logout", func(c *httpx.Ctx) {
+			Get(c.Request.Context()).Destroy()
+			c.String(200, "bye")
 		}),
 	)
 	if err != nil {

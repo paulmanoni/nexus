@@ -70,114 +70,6 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	return asRestInvoke(method, path, cfg, sh)
 }
 
-// AsRestHandler registers a REST endpoint whose handler is a plain
-// httpx.HandlerFunc supplied by a *factory* function. The factory is
-// the fx-resolved piece: its parameters are the deps needed to build
-// the handler (controllers, resources, other services), its single
-// return is the httpx.HandlerFunc that serves requests.
-//
-// Use this when the handler already manages its own request binding
-// and response shaping (typical for code migrated from ad-hoc Gin
-// routes) but you still want module annotation, metrics, and the
-// dashboard packet-animation treatment AsRest provides:
-//
-//	nexus.Module("devices",
-//	    nexus.AsRestHandler("POST", "/api/devices/register",
-//	        func(d *DeviceController) httpx.HandlerFunc { return d.RegisterDevice },
-//	        nexus.Describe("Register a device"),
-//	        auth.Required(),
-//	    ),
-//	)
-//
-// Factory signature requirements:
-//   - Zero or more parameters (fx-injected deps).
-//   - Exactly one return value of type httpx.HandlerFunc.
-//
-// On the dashboard this endpoint appears under its enclosing
-// nexus.Module (same grouping as AsRest / AsQuery), with metrics +
-// trace middleware attached so request.op events drive the live
-// packet animation.
-func AsRestHandler(method, path string, factory any, opts ...RestOption) Option {
-	cfg := &restConfig{}
-	for _, o := range opts {
-		o.applyToRest(cfg)
-	}
-	if cfg.optErr != nil {
-		return rawOption{o: di.Error(fmt.Errorf("nexus: %s %s: %w", method, path, cfg.optErr))}
-	}
-	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
-		return rawOption{o: di.Error(err)}
-	}
-	rt := reflect.TypeOf(factory)
-	ginHandlerType := reflect.TypeOf(httpx.HandlerFunc(nil))
-	if rt == nil || rt.Kind() != reflect.Func {
-		return rawOption{o: di.Error(fmt.Errorf("nexus: AsRestHandler factory must be a function"))}
-	}
-	if rt.NumOut() != 1 || rt.Out(0) != ginHandlerType {
-		return rawOption{o: di.Error(fmt.Errorf("nexus: AsRestHandler factory must return exactly httpx.HandlerFunc (got %s)", rt))}
-	}
-	return asRestHandlerInvoke(method, path, cfg, factory)
-}
-
-// asRestHandlerInvoke synthesizes the di.Invoke for AsRestHandler.
-// Parallel to asRestInvoke but simpler: instead of building a
-// reflective per-request handler, we resolve the factory's deps once
-// at boot, call the factory to get the httpx.HandlerFunc, and mount
-// it directly. The middleware chain (trace → metrics → user .Use()
-// bundles → handler) mirrors asRestInvoke's so the dashboard sees
-// the same shape either way.
-func asRestHandlerInvoke(method, path string, cfg *restConfig, factory any) Option {
-	rt := reflect.TypeOf(factory)
-	appType := reflect.TypeOf((*App)(nil))
-
-	in := make([]reflect.Type, 0, rt.NumIn()+1)
-	in = append(in, appType)
-	depTypes := make([]reflect.Type, rt.NumIn())
-	for i := 0; i < rt.NumIn(); i++ {
-		depTypes[i] = rt.In(i)
-		in = append(in, rt.In(i))
-	}
-	invokeSig := reflect.FuncOf(in, nil, false)
-
-	invokeFn := reflect.MakeFunc(invokeSig, func(args []reflect.Value) []reflect.Value {
-		app := args[0].Interface().(*App)
-		deps := args[1:]
-
-		service := resolveEndpointService(cfg.service, cfg.module, deps, depTypes, app)
-		finalPath := app.PrefixPath(cfg.pathPrefix + path)
-		// Op identifier for REST is "<METHOD> <path>" — guaranteed unique
-		// per endpoint, even when the same factory (e.g. NewList) is wired
-		// under several routes. Using factory-derived names here would
-		// collapse N routes into one Name, which breaks the dashboard's
-		// per-op edges + per-op stats lookups.
-		opName := method + " " + finalPath
-
-		// Invoke the factory once to extract the httpx.HandlerFunc.
-		out := reflect.ValueOf(factory).Call(deps)
-		userHandler := out[0].Interface().(httpx.HandlerFunc)
-
-		chain, mwNames := buildEndpointChain(
-			app, service,
-			service+"."+opName,
-			string(registry.REST),
-			opName,
-			app.gateBundles(cfg.tags, cfg.bundles), userHandler,
-		)
-		app.engine.Handle(method, finalPath, chain...)
-
-		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
-			Name:       opName,
-			Transport:  registry.REST,
-			Method:     method,
-			Path:       finalPath,
-			Middleware: mwNames,
-		})
-		recordEndpointDeps(app, service, opName, deps, depTypes)
-		return nil
-	})
-	return &restOption{o: di.Invoke(invokeFn.Interface()), cfg: cfg}
-}
-
 type restConfig struct {
 	baseEndpointConfig
 	service string // optional explicit service name; auto-derived if empty
@@ -217,7 +109,7 @@ func (r *restOption) setRestPrefix(p string) { r.cfg.pathPrefix = p + r.cfg.path
 
 // restPrefixAnnotator is implemented by options whose path can be
 // prefixed by an enclosing nexus.Module(..., nexus.RoutePrefix("/api"))
-// declaration. Only AsRest / AsRestHandler registrations implement it —
+// declaration. Only AsRest registrations implement it —
 // GraphQL / worker options ignore the prefix.
 type restPrefixAnnotator interface {
 	setRestPrefix(p string)
@@ -227,7 +119,7 @@ type restPrefixAnnotator interface {
 //
 //  1. Inside nexus.Module's opts list — Module picks it up and stamps
 //     the prefix onto every REST child option.
-//  2. As a per-endpoint option to AsRest / AsRestHandler — applied
+//  2. As a per-endpoint option to AsRest — applied
 //     directly via applyToRest.
 //
 // Always safe to include; GraphQL / worker opts silently ignore it.
@@ -241,7 +133,7 @@ func (r routePrefixOption) applyToRest(c *restConfig) {
 // RoutePrefix prepends a string to the paths of the REST endpoints it
 // applies to. Two usage patterns:
 //
-//	// Module-wide: every AsRest / AsRestHandler in the module sees "/api/v1".
+//	// Module-wide: every AsRest in the module sees "/api/v1".
 //	nexus.Module("orders", nexus.RoutePrefix("/api/v1"),
 //	    nexus.AsRest("GET", "/orders", NewListOrders),  // → /api/v1/orders
 //	    nexus.AsRest("POST", "/orders", NewCreateOrder),
@@ -304,8 +196,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		// app.PrefixPath wraps the deployment-wide prefix on top.
 		finalPath := app.PrefixPath(cfg.pathPrefix + path)
 		// REST op identifier — "<METHOD> <path>" — unique per endpoint
-		// even when the same handler is reused across routes. See the
-		// AsRestHandler comment above for context.
+		// even when the same handler is reused across routes.
 		opName := method + " " + finalPath
 		handler := buildGinHandler(method, sh, deps, app.bus, service, finalPath, cfg.renderer, cfg.envelope, app)
 

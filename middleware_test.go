@@ -78,9 +78,7 @@ func TestCheckBundleTransportsMessage(t *testing.T) {
 // intact, identical on every router backend.
 func TestStripTrailingSlash(t *testing.T) {
 	app, stop, err := InProcess(config.Runtime{Server: config.Server{StripTrailingSlash: true}},
-		AsRestHandler("GET", "/users", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) { c.String(200, "list") }
-		}),
+		AsRest("GET", "/users", func(c *httpx.Ctx) { c.String(200, "list") }),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -97,9 +95,7 @@ func TestStripTrailingSlash(t *testing.T) {
 
 	// Off by default: the trailing-slash spelling stays a 404.
 	app2, stop2, err := InProcess(config.Runtime{},
-		AsRestHandler("GET", "/users", func() httpx.HandlerFunc {
-			return func(c *httpx.Ctx) { c.String(200, "list") }
-		}),
+		AsRest("GET", "/users", func(c *httpx.Ctx) { c.String(200, "list") }),
 	)
 	if err != nil {
 		t.Fatal(err)

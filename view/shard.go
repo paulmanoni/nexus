@@ -64,9 +64,8 @@ func Shard(component any, opts ...nexus.RestOption) nexus.Option {
 	shardsMu.Lock()
 	shards[d.route] = d
 	shardsMu.Unlock()
-	factory := func() httpx.HandlerFunc { return d.serve }
 	opts = append([]nexus.RestOption{nexus.Describe("view shard " + d.route)}, opts...)
-	return nexus.AsRestHandler("POST", "/_view/shard/"+d.route, factory, opts...)
+	return nexus.AsRest("POST", "/_view/shard/"+d.route, d.serve, opts...)
 }
 
 // shardRoute names a component's endpoint: its package and name, plus a
