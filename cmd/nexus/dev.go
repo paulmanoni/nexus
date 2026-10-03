@@ -308,7 +308,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	}
 
 	// overlayPath injects the decorator-form handler registrations
-	// (//@rest / //@provide / …) for `nexus dev` WITHOUT writing any
+	// (//nexus:rest / //nexus:provide / …) for `nexus dev` WITHOUT writing any
 	// nexus_handlers_gen.go into the source tree — zero churn while iterating.
 	// It's regenerated at the top of each restart so annotation edits flow in
 	// on the next reload; cleanupOverlay removes the previous temp dir.
@@ -481,7 +481,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	}
 
 	for {
-		// Regenerate the handler-registration overlay from the current //@
+		// Regenerate the handler-registration overlay from the current //nexus:
 		// annotations before each (re)launch, replacing the previous temp dir.
 		// A scan error here usually means a source file won't compile either,
 		// so the build below surfaces the real error — we just warn and drop

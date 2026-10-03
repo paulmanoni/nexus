@@ -62,7 +62,7 @@ type simpleBuildOptions struct {
 //     dependencies first when needed) and writes <frontend>/dist, plus
 //     dist/ssr when src/ssr.ts exists. Skipped when the frontend dir has
 //     no package.json (a pure-Go app, or a static dist).
-//  2. buildHandlerOverlay scans //@ annotations into a temp overlay.
+//  2. buildHandlerOverlay scans //nexus: annotations into a temp overlay.
 //  3. go build compiles the main package. The app's own //go:embed (the
 //     `//go:embed all:web/dist` next to ServeFrontend) picks up the fresh
 //     bundle, and nexus.toml is baked in via -ldflags.
@@ -90,7 +90,7 @@ func runSimpleBuild(opts simpleBuildOptions) error {
 		return fmt.Errorf("nexus build: css: %w", err)
 	}
 
-	// Inject the decorator-form handler registrations (//@rest / //@provide / …)
+	// Inject the decorator-form handler registrations (//nexus:rest / //nexus:provide / …)
 	// via a `go build -overlay`, so NOTHING is written into the source tree (zero
 	// churn) — mirroring `nexus dev`. Run `nexus generate handlers` to eject
 	// committed *_gen.go for a bare `go build` / `go install` / `go test`.

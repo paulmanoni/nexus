@@ -74,8 +74,8 @@ func TestGenerate_Deterministic(t *testing.T) {
 	}
 }
 
-// TestGenerate_PackageDirectives: //@module renames the group, //@path and
-// //@routeprefix become the module's leading options, duplicates agreeing
+// TestGenerate_PackageDirectives: //nexus:module renames the group, //nexus:path and
+// //nexus:routeprefix become the module's leading options, duplicates agreeing
 // across files dedupe, conflicts and scope misuse are positioned errors.
 func TestGenerate_PackageDirectives(t *testing.T) {
 	fn := Site{Dir: "d", Pkg: "billing", File: "d/h.go", Func: "NewCharge",
@@ -137,8 +137,8 @@ func TestGenerate_PackageDirectives(t *testing.T) {
 	}
 }
 
-// TestGenerate_Routers: //@router declarations emit RouterDecl calls (in the
-// declaring package's file, even with no other registrations there), //@on
+// TestGenerate_Routers: //nexus:router declarations emit RouterDecl calls (in the
+// declaring package's file, even with no other registrations there), //nexus:on
 // wraps the op in nexus.OnRouter, cross-package references work, and the
 // error shapes are positioned.
 func TestGenerate_Routers(t *testing.T) {
@@ -201,10 +201,10 @@ func TestGenerate_Routers(t *testing.T) {
 	}
 }
 
-// TestGenerate_PackageNamedRouter: //@router <prefix> (no name) takes the
-// package's name — the same default //@module uses — and every op in the
-// declaring package joins it automatically; //@on elsewhere still wins, and
-// mixing it with //@module///@path is a positioned error.
+// TestGenerate_PackageNamedRouter: //nexus:router <prefix> (no name) takes the
+// package's name — the same default //nexus:module uses — and every op in the
+// declaring package joins it automatically; //nexus:on elsewhere still wins, and
+// mixing it with //nexus:module///@path is a positioned error.
 func TestGenerate_PackageNamedRouter(t *testing.T) {
 	sites := []Site{
 		{Dir: "b", Pkg: "billing", File: "b/doc.go", Keyword: "router",
@@ -230,8 +230,8 @@ func TestGenerate_PackageNamedRouter(t *testing.T) {
 	}
 	for _, want := range []string{
 		`nexus.RouterDecl("billing", "/billing", "v1")`,             // name defaulted to the package
-		`nexus.OnRouter("billing", nexus.AsRest("GET", "/invoices"`, // auto-join, no //@on written
-		`nexus.OnRouter("v1", nexus.AsQuery(NewElsewhere))`,         // explicit //@on wins
+		`nexus.OnRouter("billing", nexus.AsRest("GET", "/invoices"`, // auto-join, no //nexus:on written
+		`nexus.OnRouter("v1", nexus.AsQuery(NewElsewhere))`,         // explicit //nexus:on wins
 	} {
 		if !strings.Contains(billing, want) {
 			t.Errorf("package-named router output missing %q:\n%s", want, billing)
@@ -251,13 +251,13 @@ func TestGenerate_PackageNamedRouter(t *testing.T) {
 		t.Errorf("main package should default to app:\n%s", got)
 	}
 
-	// Mixing the auto form with //@path is refused with a position.
+	// Mixing the auto form with //nexus:path is refused with a position.
 	_, err = Generate([]Site{
 		{Dir: "b", Pkg: "billing", File: "b/doc.go", Keyword: "router", Args: []string{"/billing"}, Line: 3, PackageLevel: true},
 		{Dir: "b", Pkg: "billing", File: "b/doc.go", Keyword: "path", Args: []string{"/x"}, Line: 4, PackageLevel: true},
 		{Dir: "b", Pkg: "billing", File: "b/h.go", Func: "NewList", Keyword: "query", Line: 10},
 	}, "gen.go")
 	if err == nil || !strings.Contains(err.Error(), "already groups and prefixes") || !strings.Contains(err.Error(), "b/doc.go:3") {
-		t.Fatalf("auto router + //@path should be a positioned error, got: %v", err)
+		t.Fatalf("auto router + //nexus:path should be a positioned error, got: %v", err)
 	}
 }

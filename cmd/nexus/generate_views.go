@@ -19,7 +19,7 @@ func newGenerateViewsCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Compile reactive .templ views (package nexus/view) into Go",
 		Long: `Compile every package under dir (default: the current directory) that has
 .templ files, as one unit: each gets its *_templ.go and a view_gen.go
-registering its //@page components, detected shards and exposed types; a
+registering its //nexus:page components, detected shards and exposed types; a
 main package gets view_imports_gen.go linking them.
 
 nexus dev runs this on every .templ save and nexus build compiles through an

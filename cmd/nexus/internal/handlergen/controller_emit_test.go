@@ -25,7 +25,7 @@ func TestEmit_Controller(t *testing.T) {
 		method("UsersController", "UserRows", "query", 60),
 		method("UsersController", "SaveUser", "mutation", 70),
 		method("UsersController", "SaveUser", "auth", 71, "Requires", "add_user"),
-		// A method on a type without //@controller registers as a method expression.
+		// A method on a type without //nexus:controller registers as a method expression.
 		method("Helpers", "Ping", "rest", 80, "GET", "/ping"),
 		{Func: "NewAbout", Keyword: "page", Args: []string{"GET", "/about", "About"}, Line: 90},
 	}
@@ -78,7 +78,7 @@ func TestEmit_ControllerErrors(t *testing.T) {
 		{"auth without controller", []Annotation{
 			{Func: "C", Keyword: "auth", Args: []string{"Required"}, Line: 1, TypeLevel: true, File: "c.go"},
 			method("C", "Index", "page", 5, "GET", "/")},
-			"needs //@controller"},
+			"needs //nexus:controller"},
 		{"primary on a type", []Annotation{{Func: "C", Keyword: "rest", Args: []string{"GET", "/"}, Line: 1, TypeLevel: true, File: "c.go"}},
 			"cannot annotate a type"},
 		{"controller on a method", []Annotation{method("C", "Index", "controller", 3, "/c")}, "annotates a type"},
@@ -91,7 +91,7 @@ func TestEmit_ControllerErrors(t *testing.T) {
 		{"relative path", []Annotation{ctl, method("C", "Show", "page", 3, "GET", ":id")}, `must start with "/"`},
 		{"bad prefix", []Annotation{{Func: "C", Keyword: "controller", Args: []string{"c"}, Line: 1, TypeLevel: true}}, `must start with "/"`},
 		{"page without component on a function", []Annotation{{Func: "NewX", Keyword: "page", Args: []string{"GET", "/x"}, Line: 1}},
-			"may be left out only on a //@controller"},
+			"may be left out only on a //nexus:controller"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,7 +156,7 @@ func TestEmit_Job(t *testing.T) {
 	} {
 		_, err := Emit(Config{Package: "p"}, []Annotation{{Func: "J", Keyword: "job", Args: tc.args, Line: 1, File: "j.go"}})
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("//@job %v: want error containing %q, got %v", tc.args, tc.want, err)
+			t.Errorf("//nexus:job %v: want error containing %q, got %v", tc.args, tc.want, err)
 		}
 	}
 	_, err = Emit(Config{Package: "p"}, []Annotation{
@@ -164,11 +164,11 @@ func TestEmit_Job(t *testing.T) {
 		{Func: "J", Keyword: "auth", Args: []string{"Required"}, Line: 2, File: "j.go"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not accept modifier") {
-		t.Errorf("//@auth on a job: %v", err)
+		t.Errorf("//nexus:auth on a job: %v", err)
 	}
 }
 
-// Annotated methods of a type without //@controller are collected into one
+// Annotated methods of a type without //nexus:controller are collected into one
 // nexus.ControllerActions call, paths as written, for a Go-declared controller.
 func TestEmit_ImplicitActions(t *testing.T) {
 	inertiaImport := []string{`"github.com/paulmanoni/nexus/v2/extension/inertia"`}
@@ -197,6 +197,6 @@ func TestEmit_ImplicitActions(t *testing.T) {
 		}
 	}
 	if _, err := Emit(Config{Package: "admin"}, []Annotation{method("DashboardController", "Index", "page", 10, "GET", "rel")}); err == nil {
-		t.Error("a relative path without //@controller must be rejected")
+		t.Error("a relative path without //nexus:controller must be rejected")
 	}
 }

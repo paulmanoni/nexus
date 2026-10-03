@@ -693,23 +693,23 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
   every action at /p and /p/. inertia.Component("Admin/Page") renders any
   action as that Inertia page.
 
-  Decorator form — //@controller on the type, annotations on its methods:
+  Decorator form — //nexus:controller on the type, annotations on its methods:
 
-    //@controller /users trailing-slash
-    //@auth Required                        // shared by every action
+    //nexus:controller /users trailing-slash
+    //nexus:auth Required                        // shared by every action
     type UsersController struct{ … }
 
-    //@page GET / Users/Index               // component optional: <Folder>/<Method>
+    //nexus:page GET / Users/Index               // component optional: <Folder>/<Method>
     func (c *UsersController) Index(ctx context.Context) (IndexProps, error)
 
-    //@query
+    //nexus:query
     func (c *UsersController) UserRows(ctx context.Context, in RowsArgs) ([]Row, error)
 
   Paths are relative to the prefix ("/" is the prefix itself); an action may
-  carry several //@page / //@rest routes; the constructor still needs
-  //@provide.
+  carry several //nexus:page / //nexus:rest routes; the constructor still needs
+  //nexus:provide.
 
-  Without //@controller, a type's annotated actions (paths as written) go
+  Without //nexus:controller, a type's annotated actions (paths as written) go
   to the nexus.Controller / nexus.Resource declared for it in Go — the
   module, Path and gates stay in code:
 
@@ -718,7 +718,7 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
 
   Undeclared, they register on their own under the package's module. The
   generated form is nexus.ControllerActions(func(c *nexus.ControllerRouter[*T]) {…});
-  inertia.AsPage() is the Go form of //@page without a component.`,
+  inertia.AsPage() is the Go form of //nexus:page without a component.`,
 
 	"views": `
 VIEWS (github.com/paulmanoni/nexus/v2/view — its own module)
@@ -745,12 +745,12 @@ like a service; each page gets its own copy.
 
 Pages and gates are directives above a component:
 
-    //@page GET /
-    //@auth Required
+    //nexus:page GET /
+    //nexus:auth Required
     templ Home() { … }
 
 A shard inherits the gates of the pages that render it (they must agree),
-or names its own //@auth. The app needs no view wiring:
+or names its own //nexus:auth. The app needs no view wiring:
 
     nexus.Boot(nexus.Provide(NewStore, NewSearch))
 
@@ -983,26 +983,26 @@ Tokens are bare (quoting also works); verbs normalise case and accept the
 comma multi-verb form; a bad method/path/component is a file:line error at
 the annotation:
 
-    //@inertia.Page GET /users Users/Index
+    //nexus:inertia.Page GET /users Users/Index
     func NewListUsers(svc *UserService, p nexus.Params[ListArgs]) (UsersProps, error)
 
-    //@inertia.Page get,post /login Login
+    //nexus:inertia.Page get,post /login Login
     func NewLogin(...) (any, error)
 
 The codegen auto-resolves the inertia import for the generated file (from the
 file, a sibling file in the package, a nexus.toml [decorators.imports] hint,
-or the module graph) — your handler file need not import inertia. //@auth /
-//@use modifiers ARE supported on custom decorators — they're appended as
-trailing options, so //@inertia.Page + //@auth Required emits
+or the module graph) — your handler file need not import inertia. //nexus:auth /
+//nexus:use modifiers ARE supported on custom decorators — they're appended as
+trailing options, so //nexus:inertia.Page + //nexus:auth Required emits
 inertia.Page(args…, fn, auth.Required()). The registrar must accept the option
 type (inertia.Page takes ...nexus.RestOption; a compile error if it doesn't):
 
-    //@auth Required
-    //@inertia.Page GET /admin Admin/Index
+    //nexus:auth Required
+    //nexus:inertia.Page GET /admin Admin/Index
     func NewAdmin(...) (AdminProps, error)
 
-//@page METHOD PATH Component is the built-in spelling of the same thing. On a
-//@controller's method the component may be left out (<Folder>/<Method>) and
+//nexus:page METHOD PATH Component is the built-in spelling of the same thing. On a
+//nexus:controller's method the component may be left out (<Folder>/<Method>) and
 the path is relative to the controller's prefix (nexus docs module).
 
 Controllers: inertia.Resource[T](prefix) registers Index/New/Show/Edit pages
@@ -1030,7 +1030,7 @@ A job is a method whose receiver comes from DI and whose args are a JSON struct:
 
 Decorator form (the generator emits jobs.Define / jobs.DefineFunc):
 
-    //@job low timeout=2h retry=3 unique=10m name=report-export
+    //nexus:job low timeout=2h retry=3 unique=10m name=report-export
     func (s *ReportService) Export(ctx context.Context, run *jobs.Run, a ExportArgs) error
 
     id, err := jobs.Enqueue(ctx, (*ReportService).Export, args)  // by method expression
@@ -1817,8 +1817,8 @@ imported code, so the import is still required):
     poll_interval = "30s"
 
 [decorators.imports] (optional) maps a custom decorator's package selector to
-its import path, for the //@ handler codegen. Usually unnecessary — the codegen
-resolves a //@pkg.Func import from the annotated file, its sibling files, and
+its import path, for the //nexus: handler codegen. Usually unnecessary — the codegen
+resolves a //nexus:pkg.Func import from the annotated file, its sibling files, and
 the module graph. Set a hint only to disambiguate (two deps share a package
 name) or to name a dep not imported anywhere yet:
 
@@ -1932,7 +1932,7 @@ CLI CHEATSHEET
   nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 
   nexus generate frontend    Generate the typed TS source tree from a manifest.
-  nexus generate handlers    Wire //@-annotated handlers into registrations.
+  nexus generate handlers    Wire //nexus:-annotated handlers into registrations.
                              --check on either one is a CI drift gate.
 
   nexus docs [topic]         This help. --web opens the documentation site.
@@ -2921,8 +2921,8 @@ form or checkout:
 
     nexus.AsRest("POST", "/checkout/confirm", NewConfirm, session.Required())
 
-    //@rest POST /checkout/confirm
-    //@session Required
+    //nexus:rest POST /checkout/confirm
+    //nexus:session Required
     func NewConfirm(...) (...)
 
 Config:

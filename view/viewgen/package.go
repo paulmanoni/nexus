@@ -21,11 +21,11 @@ import (
 // The package pass registers a package's pages and shards so the app needs
 // no wiring:
 //
-//	//@page GET /
+//	//nexus:page GET /
 //	templ Home() { … }
 //
 // A component whose server code reads a signal is a shard. Its endpoint
-// takes its gates from its own //@auth / //@use lines, or else inherits
+// takes its gates from its own //nexus:auth / //nexus:use lines, or else inherits
 // them from the pages that render it — which must all agree — so a shard is
 // never reachable with fewer gates than its page. Every view.Use[T] in a
 // template gets its view.Expose[T]().
@@ -35,26 +35,40 @@ const (
 	authImport  = "github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
-// directives reads the //@ lines of a component's doc comment.
-func (f *fileRewriter) directives(info *Component, doc string, at parser.Position) bool {
+// directivePrefix marks a component directive: //nexus:page GET /, the form
+// Go reserves for tool directives — the handler scanner reads the same.
+const directivePrefix = "//nexus:"
+
+// directives reads the //nexus: lines of a component's doc comment. docAt
+// is where the doc starts, so a directive error names its own line. The v1
+// spelling (//nexus:page, //nexus:page) is rejected with a pointer to the codemod.
+func (f *fileRewriter) directives(info *Component, doc string, docAt, at parser.Position) bool {
 	ok := true
-	for _, line := range strings.Split(doc, "\n") {
+	for i, line := range strings.Split(doc, "\n") {
+		lineAt := parser.Position{Line: docAt.Line + uint32(i)}
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "//") {
 			continue
 		}
-		line = strings.TrimSpace(strings.TrimPrefix(line, "//"))
-		if !strings.HasPrefix(line, "@") {
+		if legacy := strings.TrimSpace(strings.TrimPrefix(line, "//")); strings.HasPrefix(legacy, "@") {
+			if fields := strings.Fields(legacy[1:]); len(fields) > 0 {
+				f.fail(lineAt, "//@%s is the nexus v1 annotation spelling — write //nexus:%s (run `nexus migrate v2`)", fields[0], fields[0])
+				ok = false
+			}
 			continue
 		}
-		fields := strings.Fields(line[1:])
+		rest, found := strings.CutPrefix(line, directivePrefix)
+		if !found {
+			continue
+		}
+		fields := strings.Fields(rest)
 		if len(fields) == 0 {
 			continue
 		}
 		switch kw, args := fields[0], fields[1:]; kw {
 		case "page":
 			if len(args) != 2 || !strings.HasPrefix(args[1], "/") {
-				f.fail(at, "//@page takes a method and a path: //@page GET /pets")
+				f.fail(at, "//nexus:page takes a method and a path: //nexus:page GET /pets")
 				ok = false
 				continue
 			}
@@ -68,30 +82,30 @@ func (f *fileRewriter) directives(info *Component, doc string, at parser.Positio
 			}
 			info.Gates, info.HasGates = append(info.Gates, gate), true
 		case "use":
-			expr := strings.TrimSpace(strings.TrimPrefix(line[1:], "use"))
+			expr := strings.TrimSpace(strings.TrimPrefix(rest, "use"))
 			if _, err := goparser.ParseExpr(expr); err != nil {
-				f.fail(at, "//@use takes a Go expression: %v", err)
+				f.fail(at, "//nexus:use takes a Go expression: %v", err)
 				ok = false
 				continue
 			}
 			info.Gates, info.HasGates = append(info.Gates, expr), true
 		default:
-			f.fail(at, "unknown directive //@%s — a component takes //@page, //@auth and //@use", kw)
+			f.fail(at, "unknown directive //nexus:%s — a component takes //nexus:page, //nexus:auth and //nexus:use", kw)
 			ok = false
 		}
 	}
 	if info.Method != "" && info.Params > 0 {
-		f.fail(at, "%s is a //@page, so it takes no parameters", info.Name)
+		f.fail(at, "%s is a //nexus:page, so it takes no parameters", info.Name)
 		ok = false
 	}
 	return ok
 }
 
-// authGate turns //@auth arguments into the gate option, with nexus
+// authGate turns //nexus:auth arguments into the gate option, with nexus
 // decorator grammar: Required, Public, Requires PERM…, or bare permissions.
 func authGate(args []string) (string, error) {
 	if len(args) == 0 {
-		return "", errors.New("//@auth takes Required, Public, or permissions")
+		return "", errors.New("//nexus:auth takes Required, Public, or permissions")
 	}
 	switch args[0] {
 	case "Required":
@@ -101,7 +115,7 @@ func authGate(args []string) (string, error) {
 	case "Requires":
 		args = args[1:]
 		if len(args) == 0 {
-			return "", errors.New("//@auth Requires names at least one permission")
+			return "", errors.New("//nexus:auth Requires names at least one permission")
 		}
 	}
 	quoted := make([]string, len(args))
@@ -278,7 +292,7 @@ func Registrations(results []*Result, pkg *Package, all map[string]*Component) (
 		c := comps[n]
 		if !c.Shard || pkg.Shards[n] {
 			if c.HasGates && c.Method == "" && !c.Shard {
-				errList = append(errList, c.errorf("//@auth and //@use gate pages and shards, and %s is neither", n))
+				errList = append(errList, c.errorf("//nexus:auth and //nexus:use gate pages and shards, and %s is neither", n))
 			}
 			continue
 		}
@@ -390,7 +404,7 @@ func shardGates(c *Component, all map[string]*Component) ([]string, map[string]s
 	}
 	sort.Slice(pages, func(i, j int) bool { return pages[i].ID < pages[j].ID })
 	if len(pages) == 0 {
-		return nil, nil, c.errorf("%s is a shard (it reads a signal on the server), and no //@page renders it — give it its own gates: //@auth Required, or //@auth Public", c.Name)
+		return nil, nil, c.errorf("%s is a shard (it reads a signal on the server), and no //nexus:page renders it — give it its own gates: //nexus:auth Required, or //nexus:auth Public", c.Name)
 	}
 	gates := pages[0].Gates
 	for _, p := range pages[1:] {
@@ -399,7 +413,7 @@ func shardGates(c *Component, all map[string]*Component) ([]string, map[string]s
 			for i, p := range pages {
 				names[i] = shortID(p.ID)
 			}
-			return nil, nil, c.errorf("%s is a shard rendered by pages with different gates (%s) — give it its own //@auth", c.Name, strings.Join(names, ", "))
+			return nil, nil, c.errorf("%s is a shard rendered by pages with different gates (%s) — give it its own //nexus:auth", c.Name, strings.Join(names, ", "))
 		}
 	}
 	return gates, pages[0].Imports, nil

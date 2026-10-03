@@ -1,8 +1,8 @@
 // Package widgets is a stand-in for an extension (think inertia) that ships its
 // OWN decorator. It exposes a decorator-form registrar, Panel, that records
-// into the shared decorate registry — so `//@widgets.Panel "/path"` on a
+// into the shared decorate registry — so `//nexus:widgets.Panel "/path"` on a
 // handler generates a call to it, and the result flows through
-// decorate.Module(...) exactly like the built-in //@rest.
+// decorate.Module(...) exactly like the built-in //nexus:rest.
 package widgets
 
 import (
@@ -11,7 +11,7 @@ import (
 
 // Stats is a panel payload (a widgets type a handler returns — which also means
 // the handler's file imports this package, so the codegen can resolve the
-// //@widgets.Panel import).
+// //nexus:widgets.Panel import).
 type Stats struct {
 	Count int `json:"count"`
 }
@@ -26,7 +26,7 @@ const Icon = "layout-panel-top"
 // option — decorate.Record(widgets.Panel(...)) — so the endpoint shows up on
 // the dashboard as a widgets endpoint (just as inertia.Page brands its pages).
 //
-//	//@widgets.Panel "/stats"   → decorate.Record(widgets.Panel("/stats", NewStatsPanel))
+//	//nexus:widgets.Panel "/stats"   → decorate.Record(widgets.Panel("/stats", NewStatsPanel))
 func Panel(path string, ctor any) nexus.Option {
 	return nexus.AsRest("GET", "/widgets"+path, ctor, nexus.WithIcon(Icon))
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,7 +175,7 @@ func TestNearHandlerKeyword(t *testing.T) {
 }
 
 // TestScanHandlerSites_Strictness covers the scan-level guarantees end to end:
-// a lowercase //@rest method is normalised to the HTTP verb, a typo'd keyword
+// a lowercase //nexus:rest method is normalised to the HTTP verb, a typo'd keyword
 // is a positioned error with a suggestion, a malformed directive reports the
 // annotation's own file:line, and genuinely foreign keywords stay ignored.
 func TestScanHandlerSites_Strictness(t *testing.T) {
@@ -182,7 +183,7 @@ func TestScanHandlerSites_Strictness(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "h.go"), `package h
 
-//@rest get /users
+//nexus:rest get /users
 func NewList() {}
 `)
 	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
@@ -197,12 +198,12 @@ func NewList() {}
 	dir2 := t.TempDir()
 	writeFile(t, filepath.Join(dir2, "h.go"), `package h
 
-//@quer
+//nexus:quer
 func NewList() {}
 `)
 	_, err = scanHandlerSites(dir2, "nexus_handlers_gen.go")
-	if err == nil || !strings.Contains(err.Error(), "did you mean //@query") {
-		t.Fatalf("typo should suggest //@query, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "did you mean //nexus:query") {
+		t.Fatalf("typo should suggest //nexus:query, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "h.go:3:") {
 		t.Fatalf("typo error should carry file:line, got: %v", err)
@@ -212,28 +213,108 @@ func NewList() {}
 	dir3 := t.TempDir()
 	writeFile(t, filepath.Join(dir3, "h.go"), `package h
 
-//@rest GET users
+//nexus:rest GET users
 func NewList() {}
 `)
 	_, err = scanHandlerSites(dir3, "nexus_handlers_gen.go")
 	if err == nil || !strings.Contains(err.Error(), "h.go:3:") || !strings.Contains(err.Error(), `must start with "/"`) {
-		t.Fatalf("malformed //@rest should carry file:line and the rule, got: %v", err)
+		t.Fatalf("malformed //nexus:rest should carry file:line and the rule, got: %v", err)
 	}
 
-	// A genuinely foreign keyword stays ignored (coexistence with other tools).
+	// The nexus: namespace is nexus's own: an unknown keyword is an error
+	// even when it is no near miss.
 	dir4 := t.TempDir()
 	writeFile(t, filepath.Join(dir4, "h.go"), `package h
 
-//@deprecated
-//@query
+//nexus:deprecated
+//nexus:query
 func NewList() {}
 `)
-	if _, err := scanHandlerSites(dir4, "nexus_handlers_gen.go"); err != nil {
-		t.Fatalf("foreign keyword must not error: %v", err)
+	_, err = scanHandlerSites(dir4, "nexus_handlers_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "h.go:3:") || !strings.Contains(err.Error(), "unknown annotation //nexus:deprecated") {
+		t.Fatalf("unknown nexus: keyword should be a positioned error, got: %v", err)
+	}
+
+	// Other tools' @-annotations stay ignored (coexistence).
+	dir5 := t.TempDir()
+	writeFile(t, filepath.Join(dir5, "h.go"), `package h
+
+// List lists.
+//
+// @Summary List things
+// @deprecated
+//nexus:query
+func NewList() {}
+`)
+	if _, err := scanHandlerSites(dir5, "nexus_handlers_gen.go"); err != nil {
+		t.Fatalf("foreign @-annotation must not error: %v", err)
 	}
 }
 
-// TestScanHandlerSites_InertiaPage: the //@inertia.Page decorator end to end —
+// TestScanHandlerSites_LegacySpelling: v2 reads only //nexus: directives. A
+// nexus keyword in the v1 //@ spelling — on a function, the package doc or a
+// type, unspaced or gofmt's "// @" — and a spaced "// nexus:" are file:line
+// errors; the v1 ones point at `nexus migrate v2`.
+func TestScanHandlerSites_LegacySpelling(t *testing.T) {
+	cases := map[string]struct{ src, want string }{
+		"func": {"package h\n\n//@rest GET /users\nfunc NewList() {}\n",
+			"h.go:3: //@rest is the nexus v1 annotation spelling"},
+		"gofmt-spaced": {"package h\n\n// List lists.\n//\n// @query\nfunc NewList() {}\n",
+			"h.go:5: //@query is the nexus v1 annotation spelling"},
+		"custom": {"package h\n\n//@inertia.Page GET /login Login\nfunc NewLogin() {}\n",
+			"h.go:3: //@inertia.Page is the nexus v1 annotation spelling"},
+		"package": {"// Package h.\n//\n//@module billing\npackage h\n\n//nexus:query\nfunc NewList() {}\n",
+			"h.go:3: //@module is the nexus v1 annotation spelling"},
+		"type": {"package h\n\n//@controller /users\ntype UsersController struct{}\n\n//nexus:page GET /\nfunc (c *UsersController) Index() {}\n",
+			"h.go:3: //@controller is the nexus v1 annotation spelling"},
+		"spaced-directive": {"package h\n\n// nexus:rest GET /users\nfunc NewList() {}\n",
+			`h.go:3: "// nexus:rest GET /users" is not a Go directive`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "h.go"), tc.src)
+			_, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got: %v", tc.want, err)
+			}
+			if !strings.Contains(tc.want, "not a Go directive") && !strings.Contains(err.Error(), "nexus migrate v2") {
+				t.Fatalf("v1 spelling error should point at nexus migrate v2: %v", err)
+			}
+		})
+	}
+}
+
+// TestScanHandlerSites_GofmtPlacement: gofmt moves //nexus: directives below
+// the doc prose; the scan reads them wherever they sit in the doc comment.
+func TestScanHandlerSites_GofmtPlacement(t *testing.T) {
+	src := []byte(`package h
+
+//nexus:rest GET /users/:id
+//nexus:auth Required
+// GetUser returns one user.
+func NewGetUser() {}
+`)
+	formatted, err := format.Source(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "// GetUser returns one user.\n//\n//nexus:rest GET /users/:id\n//nexus:auth Required\nfunc NewGetUser"
+	if !strings.Contains(string(formatted), want) {
+		t.Fatalf("gofmt did not keep the directives verbatim below the prose:\n%s", formatted)
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "h.go"), string(formatted))
+	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(results) != 1 || !strings.Contains(string(results[0].Content), `nexus.AsRest("GET", "/users/:id", NewGetUser, auth.Required())`) {
+		t.Fatalf("directives below the prose not registered:\n%v", results)
+	}
+}
+
+// TestScanHandlerSites_InertiaPage: the //nexus:inertia.Page decorator end to end —
 // bare tokens resolve, normalise, and emit a quoted registrar call; a bad verb
 // is a positioned error at the annotation.
 func TestScanHandlerSites_InertiaPage(t *testing.T) {
@@ -242,7 +323,7 @@ func TestScanHandlerSites_InertiaPage(t *testing.T) {
 
 import _ "github.com/paulmanoni/nexus/v2/extension/inertia"
 
-//@inertia.Page get,post /login Login
+//nexus:inertia.Page get,post /login Login
 func NewLogin() {}
 `)
 	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
@@ -258,7 +339,7 @@ func NewLogin() {}
 
 import _ "github.com/paulmanoni/nexus/v2/extension/inertia"
 
-//@inertia.Page FETCH /login Login
+//nexus:inertia.Page FETCH /login Login
 func NewLogin() {}
 `)
 	_, err = scanHandlerSites(dir2, "nexus_handlers_gen.go")
@@ -267,17 +348,17 @@ func NewLogin() {}
 	}
 }
 
-// TestScanHandlerSites_PackageDirectives: //@module and //@path on the
+// TestScanHandlerSites_PackageDirectives: //nexus:module and //nexus:path on the
 // package doc comment flow through the scanner into the generated module.
 func TestScanHandlerSites_PackageDirectives(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "h.go"), `// Package billing handles invoicing.
 //
-//@module billing
-//@path /billing
+//nexus:module billing
+//nexus:path /billing
 package billing
 
-//@rest GET /invoices
+//nexus:rest GET /invoices
 func NewList() {}
 `)
 	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
@@ -295,12 +376,12 @@ func NewList() {}
 	dir2 := t.TempDir()
 	writeFile(t, filepath.Join(dir2, "h.go"), `// Package h.
 //
-//@inertia.Page GET /x X
+//nexus:inertia.Page GET /x X
 package h
 
 import _ "github.com/paulmanoni/nexus/v2/extension/inertia"
 
-//@query
+//nexus:query
 func NewX() {}
 `)
 	_, err = scanHandlerSites(dir2, "nexus_handlers_gen.go")
@@ -309,21 +390,21 @@ func NewX() {}
 	}
 }
 
-// TestScanHandlerSites_Routers: //@router on a package doc plus //@on on a
+// TestScanHandlerSites_Routers: //nexus:router on a package doc plus //nexus:on on a
 // handler flow end to end into RouterDecl + OnRouter emission.
 func TestScanHandlerSites_Routers(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "h.go"), `// Package api.
 //
-//@router v1 /api/v1
-//@router billing /billing parent=v1
+//nexus:router v1 /api/v1
+//nexus:router billing /billing parent=v1
 package api
 
-//@rest GET /invoices
-//@on billing
+//nexus:rest GET /invoices
+//nexus:on billing
 func NewList() {}
 
-//@query
+//nexus:query
 func NewStats() {}
 `)
 	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
@@ -343,35 +424,35 @@ func NewStats() {}
 	}
 }
 
-// TestScanHandlerSites_Controller: //@controller on a type and annotations on
+// TestScanHandlerSites_Controller: //nexus:controller on a type and annotations on
 // its methods become one nexus.Controller chain; a method of an unannotated
-// type registers as a method expression; the type's //@auth is shared.
+// type registers as a method expression; the type's //nexus:auth is shared.
 func TestScanHandlerSites_Controller(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "users.go"), `//@path /admin
+	writeFile(t, filepath.Join(dir, "users.go"), `//nexus:path /admin
 package users
 
 import "context"
 
 // UsersController serves the users pages.
 //
-// @controller /users
-// @auth Required
+//nexus:controller /users
+//nexus:auth Required
 type UsersController struct{}
 
-//@page GET /
+//nexus:page GET /
 func (c *UsersController) Index(ctx context.Context) (string, error) { return "", nil }
 
-//@page GET /:id/view Admin/UserDetail
-//@auth Requires view_user
+//nexus:page GET /:id/view Admin/UserDetail
+//nexus:auth Requires view_user
 func (c *UsersController) Show(ctx context.Context, id int64) (string, error) { return "", nil }
 
-//@query
+//nexus:query
 func (c UsersController) UserRows(ctx context.Context) ([]string, error) { return nil, nil }
 
 type Health struct{}
 
-//@rest GET /health
+//nexus:rest GET /health
 func (h *Health) Ping(ctx context.Context) (string, error) { return "", nil }
 `)
 	writeFile(t, filepath.Join(dir, "more.go"), `package users
@@ -382,7 +463,7 @@ type Other struct{}
 
 // Index on another type must not collide with UsersController.Index.
 //
-//@rest GET /other
+//nexus:rest GET /other
 func (o Other) Index(ctx context.Context) (string, error) { return "", nil }
 `)
 	results, err := scanHandlerSites(dir, "nexus_handlers_gen.go")
@@ -411,11 +492,11 @@ func (o Other) Index(ctx context.Context) (string, error) { return "", nil }
 	bad := t.TempDir()
 	writeFile(t, filepath.Join(bad, "x.go"), `package x
 
-//@controller /x
-//@rest GET /x
+//nexus:controller /x
+//nexus:rest GET /x
 type X struct{}
 
-//@page GET /
+//nexus:page GET /
 func (x *X) Index() (string, error) { return "", nil }
 `)
 	_, err = scanHandlerSites(bad, "nexus_handlers_gen.go")
@@ -451,7 +532,7 @@ func TestResolveLayer3PrefersModuleLocal(t *testing.T) {
 	}
 }
 
-// A //@use expression's package selectors resolve through the full cascade —
+// A //nexus:use expression's package selectors resolve through the full cascade —
 // a project package needs no import anywhere in the annotated package — while
 // an unresolvable identifier (a package-level value, not a package) is skipped
 // rather than failing the scan.
@@ -472,7 +553,7 @@ func TestResolveUseImportsCascade(t *testing.T) {
 	}
 }
 
-// A //@use identifier that names a package-level declaration of the annotated
+// A //nexus:use identifier that names a package-level declaration of the annotated
 // package is a value, not a package: it must be skipped WITHOUT consulting the
 // module graph (a miss there forces a `go list -deps` rebuild on every scan —
 // ~1s per save on a real app) and without synthesizing a shadowing import.

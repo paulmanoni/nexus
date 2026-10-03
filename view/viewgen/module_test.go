@@ -45,9 +45,9 @@ import (
 	"example.com/app/pets"
 )
 
-//@page GET /
-//@auth Required
-//@use guards.Admin()
+//nexus:page GET /
+//nexus:auth Required
+//nexus:use guards.Admin()
 templ Home() {
 	@pets.Results()
 }
@@ -115,7 +115,7 @@ func TestOverlay(t *testing.T) {
 		"tools/lint/main.go": "package main\n\nfunc main() {}\n",
 		"app/pages/home.templ": `package pages
 
-//@page GET /
+//nexus:page GET /
 templ Home() {
 	<p>hi</p>
 }
@@ -163,7 +163,7 @@ func TestModuleTwice(t *testing.T) {
 		"main.go": "package main\n\nfunc main() {}\n",
 		"pages/home.templ": `package pages
 
-//@page GET /
+//nexus:page GET /
 templ Home() {
 	<p>hi</p>
 }
