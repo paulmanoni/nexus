@@ -14,7 +14,7 @@
 #   make lint           # golangci-lint across every module
 #   make cover          # coverage profile + per-func report (main module)
 #   make cover-check    # fail if main-module coverage drops below COVER_MIN
-#   make generate-check # CI drift gate for committed //@ handler codegen
+#   make generate-check # CI drift gate for committed //nexus: handler codegen
 #   make view-example   # generate the nexus/view example's views, then vet + test it
 #   make golden-update  # regenerate golden files after an intentional change
 #   make dashboard      # regenerate the /__nexus console (templ + Tailwind CSS)
@@ -84,7 +84,7 @@ cover-check:
 	echo "main-module coverage: $$total% (floor $(COVER_MIN)%)"; \
 	awk -v t=$$total -v min=$(COVER_MIN) 'BEGIN { if (t+0 < min+0) { printf "FAIL: coverage %.1f%% < floor %d%%\n", t, min; exit 1 } }'
 
-# Drift gate: the committed *_gen.go for //@-annotated handlers must match a fresh
+# Drift gate: the committed *_gen.go for //nexus:-annotated handlers must match a fresh
 # regeneration. Builds the CLI, then --check (no writes; non-zero on drift) in
 # every tree that ships committed generated handlers.
 generate-check:

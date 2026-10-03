@@ -69,7 +69,7 @@ nexus client --out ./web/sdk --tsconfig ./web/tsconfig.json   # merge path mappi
 
 | Command | |
 |---|---|
-| `nexus generate handlers [./...]` | Write the registrations for [`//@` decorators](/guide/decorators). `--check` is a CI drift gate. |
+| `nexus generate handlers [./...]` | Write the registrations for [`//nexus:` decorators](/guide/decorators). `--check` is a CI drift gate. |
 | `nexus generate frontend` | Generate a typed TypeScript source tree from a manifest. `--check` is a drift gate. |
 
 ## `nexus docs [topic]`

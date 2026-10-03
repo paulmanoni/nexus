@@ -1,6 +1,6 @@
 # nexus decorator-form registration — design
 
-Goal: let handler/DI registration be expressed as `//@` annotations on the
+Goal: let handler/DI registration be expressed as `//nexus:` annotations on the
 functions themselves, eliminating hand-maintained `nexus.Module(...)` wiring
 lists — **while staying purely additive**. Decorator-form and explicit
 registration produce identical `nexus.Option`s, share one DI container, and
@@ -13,8 +13,8 @@ and the default `go build`/`go install` binary stays plain Go.
 ## Components (who owns what)
 
 ```
-github.com/paulmanoni/deco            generic //@ transpiler/scanner
-  • parser for //@ comments             ← ADD: deco.Scan() (structured hits)
+github.com/paulmanoni/deco            generic annotation transpiler/scanner
+  • parser for //nexus: comments        ← deco.ScanWith(prefix "nexus:") (structured hits)
   • Generate / Overlay / Transform      (existing wrap/codegen modes)
   • decorators.Func/FuncValues          (runtime wrappers — optional, unused here)
         │ deco.Scan(dir) → []Hit{Func, Keyword, Args, Pos}
@@ -35,14 +35,14 @@ github.com/paulmanoni/nexus/cmd/nexus/v2  CLI (toolchain only)
 ```
 
 **Boundary that keeps it clean:** `deco` never learns about nexus (it just
-surfaces annotations); nexus owns the `//@rest → decorate.Rest` mapping. `deco`
+surfaces annotations); nexus owns the `//nexus:rest → decorate.Rest` mapping. `deco`
 is a dependency of the **CLI only** — the compiled app links just `decorate`
 (plain Go), never deco. Same shape as keeping fx out of the default build.
 
 ## The pipeline — one scanner, one emitter, two sinks
 
 ```
-  source.go (//@rest, //@provide on funcs)
+  source.go (//nexus:rest, //nexus:provide on funcs)
         │  deco.Scan(pkgDir)
         ▼
    []Hit{Func, Keyword, Args, Pos}
@@ -102,21 +102,21 @@ with no committed files).
 myapp/
 ├── main.go            nexus.Boot(decorate.Module("app"), …)
 ├── handlers/
-│   ├── users.go       YOU write: //@rest GET /users/:id  func NewGetUser(...)
+│   ├── users.go       YOU write: //nexus:rest GET /users/:id  func NewGetUser(...)
 │   └── handlers_gen.go GENERATED + COMMITTED: init(){ decorate.Rest(...); … }
 └── web/ …             (frontend, unchanged)
 ```
 
 ```go
 // handlers/users.go — authored
-//@provide
+//nexus:provide
 func NewUsersService(app *nexus.App) *UsersService { ... }
 
-//@rest GET /users/:id
+//nexus:rest GET /users/:id
 func NewGetUser(s *UsersService, p nexus.Params[GetArgs]) (*User, error) { ... }
 
-//@mutation
-//@auth Requires ADMIN
+//nexus:mutation
+//nexus:auth Requires ADMIN
 func NewCreateUser(s *UsersService, p nexus.Params[NewUser]) (*User, error) { ... }
 ```
 ```go
@@ -138,24 +138,24 @@ func init() {
 
 ## Custom decorators for extensions
 
-An extension ships its OWN `//@` decorator with NO new code — it reuses its
+An extension ships its OWN `//nexus:` decorator with NO new code — it reuses its
 existing `Option`-returning registrar (the universal nexus pattern):
 
-- A QUALIFIED keyword `//@pkg.Func args…` generates
+- A QUALIFIED keyword `//nexus:pkg.Func args…` generates
   `decorate.Record(pkg.Func(args…, Fn))`. Because every nexus registrar returns
   a `nexus.Option`, `inertia.Page`, `nexus.AsRest`, etc. work directly — the
   codegen records the returned option into the same `decorate.Module(...)` drain
   as the built-ins.
   ```go
-  //@inertia.Page GET /users Users/Index
+  //nexus:inertia.Page GET /users Users/Index
   //   → decorate.Record(inertia.Page("GET", "/users", "Users/Index", NewUsers))
   ```
 - `pkg` is imported from the annotated file (handlers using the extension —
   e.g. `inertia.Redirect`/props — import it naturally). Each whitespace-
   separated annotation token is a distinct argument (comma-joined); an argument
   can't contain a space.
-- Custom decorators DO take `//@auth`/`//@use` modifiers: they're appended as
-  trailing options to the registrar call (e.g. `//@inertia.Page` + `//@auth
+- Custom decorators DO take `//nexus:auth`/`//nexus:use` modifiers: they're appended as
+  trailing options to the registrar call (e.g. `//nexus:inertia.Page` + `//nexus:auth
   Required` → `inertia.Page(args…, fn, auth.Required())`). The registrar must
   accept the option type (a compile error if it doesn't — the right, loud
   failure); `inertia.Page` takes `...nexus.RestOption`, which `auth.Required()`
@@ -173,22 +173,22 @@ default Puzzle).
 `decorate.Record(o nexus.Option)` is the public hook; `transpiler.Scan` returns
 qualified keywords and the CLI keeps built-ins ∪ any dotted keyword.
 
-Proven end-to-end: `examples/inertia` (`//@inertia.Page` → Inertia-protocol
+Proven end-to-end: `examples/inertia` (`//nexus:inertia.Page` → Inertia-protocol
 pages, branded `app-window`) and `examples/notes` `widgets.Panel`
-(`//@widgets.Panel "/stats"` → `GET /widgets/stats`, branded `layout-panel-top`).
+(`//nexus:widgets.Panel "/stats"` → `GET /widgets/stats`, branded `layout-panel-top`).
 
 ## Annotation catalog → decorate.*
 
 ```
-//@provide                       → decorate.Provide(fn)
-//@supply                        → decorate.Supply(v)
-//@rest <METHOD> <PATH>          → decorate.Rest(method, path, fn, opts…)
-//@query   /  //@mutation        → decorate.Query/Mutation(fn, opts…)
-//@subscription                  → decorate.Subscription(fn, opts…)
-//@ws <PATH> <TYPE>              → decorate.WS(path, type, fn, opts…)
-//@worker <NAME>                 → decorate.Worker(name, fn)
-//@auth Required | Requires PERM… | Public → appended as an opt: auth.Required()/auth.Requires("PERM")/nexus.Public()
-//@use <expr>                    → appended as an opt
+//nexus:provide                       → decorate.Provide(fn)
+//nexus:supply                        → decorate.Supply(v)
+//nexus:rest <METHOD> <PATH>          → decorate.Rest(method, path, fn, opts…)
+//nexus:query   /  //nexus:mutation        → decorate.Query/Mutation(fn, opts…)
+//nexus:subscription                  → decorate.Subscription(fn, opts…)
+//nexus:ws <PATH> <TYPE>              → decorate.WS(path, type, fn, opts…)
+//nexus:worker <NAME>                 → decorate.Worker(name, fn)
+//nexus:auth Required | Requires PERM… | Public → appended as an opt: auth.Required()/auth.Requires("PERM")/nexus.Public()
+//nexus:use <expr>                    → appended as an opt
 ```
 Auth/middleware annotations compile to existing option values — no new runtime
 concept, only placement next to the handler.
@@ -237,8 +237,8 @@ Slots next to the existing `nexus client` SDK codegen.
 5. **DONE** — `nexus dev` injects the registrations via a `go run -overlay`
    (regenerated each restart, zero source-tree churn); `nexus build` refreshes
    the committed `*_gen.go` before compiling. Proven end-to-end: dev serves a
-   `//@rest` route with no committed file on disk; build regenerates it.
-6. **DONE** — `//@use <expr>` middleware annotations (imports resolved from the
+   `//nexus:rest` route with no committed file on disk; build regenerates it.
+6. **DONE** — `//nexus:use <expr>` middleware annotations (imports resolved from the
    annotated file's own import block); fixed the `path:`→`uri:` REST path-param
    doc bug in CLAUDE.md and `nexus docs`. Real end-to-end example at
    `examples/notes` (provide + REST×3 + GraphQL + explicit coexisting endpoint;

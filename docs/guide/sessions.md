@@ -39,8 +39,8 @@ nexus.AsRest("POST", "/checkout/confirm", NewConfirm, session.Required())
 Decorator form:
 
 ```go
-//@rest POST /checkout/confirm
-//@session Required
+//nexus:rest POST /checkout/confirm
+//nexus:session Required
 func NewConfirm(...) (...)
 ```
 

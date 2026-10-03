@@ -48,7 +48,7 @@ export default defineConfig({
             { text: 'REST, GraphQL, WebSocket', link: '/guide/transports' },
             { text: 'Modules & services', link: '/guide/modules' },
             { text: 'Controllers', link: '/guide/controllers' },
-            { text: '//@ decorators', link: '/guide/decorators' },
+            { text: '//nexus: decorators', link: '/guide/decorators' },
             { text: 'Forms & validation errors', link: '/guide/forms' },
             { text: 'Generated CRUD', link: '/guide/crud' },
           ],
