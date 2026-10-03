@@ -1,0 +1,21 @@
+package users
+
+import (
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/graph"
+)
+
+func Audit(next graph.FieldResolveFn) graph.FieldResolveFn {
+	return func(p graph.ResolveParams) (any, error) {
+		return next(p)
+	}
+}
+
+var Module = nexus.Module("users",
+	nexus.AsQuery(NewListUsers,
+		nexus.GraphMiddleware("audit", "logs every resolve", graph.FieldMiddleware(Audit)),
+		nexus.WithArgValidator("name", graph.Required()),
+	),
+)
+
+func NewListUsers() ([]string, error) { return nil, nil }
