@@ -33,11 +33,11 @@ func TestViewsGeneratorWatches(t *testing.T) {
 func TestDevGeneratorsNeedTemplates(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "main.go"), "package main\n")
-	if len(devGenerators(dir)) != 0 {
+	if len(devGenerators(dir, nil)) != 0 {
 		t.Fatal("no .templ files, no generators")
 	}
 	writeFile(t, filepath.Join(dir, "pages", "home.templ"), "package pages\n")
-	if gens := devGenerators(dir); len(gens) != 1 || gens[0].name != "views" {
+	if gens := devGenerators(dir, nil); len(gens) != 1 || gens[0].name != "views" {
 		t.Fatalf("gens = %+v", gens)
 	}
 }

@@ -11,9 +11,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/a-h/templ/parser/v2"
 )
 
 // Plan is what generating a tree produces: files to write, and stale
@@ -21,6 +24,27 @@ import (
 type Plan struct {
 	Files  map[string][]byte // absolute path → content
 	Remove []string          // generated files that should no longer exist
+
+	// Maps holds, under Options.Editor, each *_templ.go file's source map
+	// back to its .templ, keyed like Files.
+	Maps map[string]*TemplMap
+}
+
+// TemplMap ties a generated *_templ.go to the .templ it came from.
+type TemplMap struct {
+	Templ string            // absolute path of the .templ source
+	Map   *parser.SourceMap // .templ positions ↔ generated Go positions (0-based)
+}
+
+// Options tunes GenerateWith for an editor.
+type Options struct {
+	// Sources replaces the on-disk content of .templ files, by absolute
+	// path: an editor's unsaved buffers. A path not on disk adds a file.
+	Sources map[string][]byte
+	// Editor keeps each *_templ.go as templ's generator wrote it, not
+	// gofmt'ed, and records its source map in Plan.Maps — the form a
+	// language server hands gopls so positions map between the two.
+	Editor bool
 }
 
 // Module compiles every package under root that has .templ files, as one
@@ -100,7 +124,10 @@ func (p *Plan) paths() []string {
 // module. Each package gets its *_templ.go files and view_gen.go; a main
 // package gets view_imports_gen.go, importing the registering packages in
 // its directory tree so the binary links them. Nothing is written.
-func Generate(root string) (*Plan, error) {
+func Generate(root string) (*Plan, error) { return GenerateWith(root, Options{}) }
+
+// GenerateWith is Generate reading .templ sources through opts.
+func GenerateWith(root string, opts Options) (*Plan, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -144,17 +171,33 @@ func Generate(root string) (*Plan, error) {
 		results []*Result
 	}
 	plan := &Plan{Files: map[string][]byte{}}
+	if opts.Editor {
+		plan.Maps = map[string]*TemplMap{}
+	}
 	var units []*unit
 	var errList []error
 	all := map[string]*Component{}
-	for _, dir := range templDirs(root) {
+	dirs := templDirs(root)
+	for path := range opts.Sources {
+		if dir := filepath.Dir(path); strings.HasSuffix(path, ".templ") && strings.HasPrefix(dir+string(filepath.Separator), root+string(filepath.Separator)) && !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+	for _, dir := range dirs {
 		u := &unit{dir: dir, pkg: scan(dir)}
 		matches, _ := filepath.Glob(filepath.Join(dir, "*.templ"))
+		for path := range opts.Sources {
+			if filepath.Dir(path) == dir && strings.HasSuffix(path, ".templ") && !slices.Contains(matches, path) {
+				matches = append(matches, path)
+			}
+		}
 		sort.Strings(matches)
 		for _, path := range matches {
-			src, err := os.ReadFile(path)
-			if err != nil {
-				return nil, err
+			src, ok := opts.Sources[path]
+			if !ok {
+				if src, err = os.ReadFile(path); err != nil {
+					return nil, err
+				}
 			}
 			res, err := File(path, string(src), u.pkg)
 			if err != nil {
@@ -165,7 +208,12 @@ func Generate(root string) (*Plan, error) {
 			for _, c := range res.Components {
 				all[c.ID] = c
 			}
-			plan.Files[strings.TrimSuffix(path, ".templ")+"_templ.go"] = res.Go
+			out := strings.TrimSuffix(path, ".templ") + "_templ.go"
+			plan.Files[out] = res.Go
+			if opts.Editor {
+				plan.Files[out] = res.RawGo
+				plan.Maps[out] = &TemplMap{Templ: path, Map: res.SourceMap}
+			}
 		}
 		units = append(units, u)
 	}

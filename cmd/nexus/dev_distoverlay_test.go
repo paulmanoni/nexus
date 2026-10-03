@@ -87,7 +87,7 @@ func TestBuildDevOverlayMergesDistStubs(t *testing.T) {
 	writeFiles(t, dist, map[string]string{"index.html": "<html>real</html>", "assets/x.js": "x"})
 	writeFiles(t, dir, map[string]string{"main.go": "package main\n\nfunc main() {}\n"})
 
-	path, cleanup, err := buildDevOverlay(dir, dist)
+	path, cleanup, err := buildDevOverlay(dir, dist, false)
 	if err != nil {
 		t.Fatalf("buildDevOverlay: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildDevOverlayNoStubRootIsNoop(t *testing.T) {
 		"web/dist/x.js":    "x",
 		"web/dist/idx.txt": "y",
 	})
-	path, cleanup, err := buildDevOverlay(dir, "")
+	path, cleanup, err := buildDevOverlay(dir, "", false)
 	if err != nil {
 		t.Fatalf("buildDevOverlay: %v", err)
 	}

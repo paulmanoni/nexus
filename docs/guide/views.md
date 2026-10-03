@@ -309,13 +309,18 @@ plain link.
 
 | Command | Views | Tailwind |
 | --- | --- | --- |
-| `nexus dev` | generated on start and on every `.templ` save, written to disk (gopls reads them) | `tailwindcss --watch` |
+| `nexus dev` | compiled on start and on every `.templ` save, in memory — the build overlays them; `--view-files` writes them to disk instead | `tailwindcss --watch` |
 | `nexus build` | compiled through the build overlay — nothing written | built once, minified |
+| `nexus test` / `nexus vet` | `go test` / `go vet` through the same overlay | — |
+| `nexus lsp` | handed to gopls as editor buffers (see [Editor support](#editor-support)) | — |
 | `nexus generate views [--check]` | written to disk / verified (CI) | — |
 
-Gitignore the generated files: `*_templ.go`, `view_gen.go`, `view_imports_gen.go`.
-Generation errors point at the `.templ` line and column; `nexus dev` keeps the
-last good build serving until the template compiles again.
+The generated Go (`*_templ.go`, `view_gen.go`, `view_imports_gen.go`) never
+needs to be on disk: every nexus command compiles it through an overlay, and
+the editor gets it from `nexus lsp`. If you write it (`nexus generate views`,
+`nexus dev --view-files`) for a plain `go build`/`go test` or an editor on plain
+gopls, gitignore it. Generation errors point at the `.templ` line and column;
+`nexus dev` keeps the last good build serving until the template compiles again.
 
 **Tailwind:** a stylesheet that does `@import "tailwindcss"` (outside a Vite
 frontend) is compiled with the Tailwind standalone CLI: `input.css` → `output.css`.
@@ -738,9 +743,39 @@ func TestHome(t *testing.T) {
 
 ## Editor support
 
-Every file is plain templ, so templ's tooling works unchanged: the templ language
-server (gopls inside `{ … }` — completion, hover, type errors), `templ fmt`, and
-the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
+Run **`nexus lsp`** as the language server for both `.go` and `.templ` files. It
+starts gopls and sits in front of it:
+
+- **Go files** see the generated code. nexus lsp compiles the views (and the
+  `//nexus:` handler registrations) in memory and opens the result in gopls as
+  unsaved editor buffers, so `pages.Home()` or `pets.Module` type-checks, completes
+  and jumps to definition — into the `.templ`, not the generated Go — with nothing
+  generated on disk. It recompiles as you type in a `.templ` and when a `.go` file
+  is saved.
+- **`.templ` files** get the views compiler's errors (syntax, `//nexus:page`,
+  shard gates, browser-side expressions) and the Go type errors of the expressions
+  inside them, both at the `.templ` line and column. Definition, hover, completion
+  and references on a Go expression are answered by gopls at the matching position
+  of the generated code (templ's source map), and the same code nexus builds —
+  plain templ's language server generates different Go.
+- **`//nexus:` directives** that don't parse (an unknown keyword, the v1 `//@`
+  spelling) are diagnostics on the `.go` file.
+
+Setup — point the editor's Go and templ language servers at `nexus lsp`
+(`--gopls <path>` picks gopls, `--log <file>` writes a debug log):
+
+- **Zed / IntelliJ (GoLand):** set the nexus plugin's language server command to
+  `nexus lsp`, for Go and templ files.
+- **VS Code:** for `.go`, set `"go.alternateTools": {"gopls": "<script>"}` where
+  the script runs `exec nexus lsp "$@"` — nexus lsp stands in for gopls (it accepts
+  `serve` and gopls's flags, and runs any other gopls subcommand, like `version`,
+  with gopls). For `.templ`, use a generic LSP client extension that runs
+  `nexus lsp` for the `templ` language instead of templ's own server.
+- **Neovim / Helix / Emacs:** configure `nexus lsp` as the server for the `go`
+  and `templ` filetypes, in place of gopls and `templ lsp`.
+
+An editor still on plain gopls needs the generated files on disk: run
+`nexus dev --view-files` (or `nexus generate views`). `templ fmt` works unchanged.
 
 ## Limits
 

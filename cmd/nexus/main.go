@@ -205,12 +205,15 @@ explains itself with --help.`,
 		newClientCmd(stdout, stderr),
 		newAPIDocsCmd(stdout, stderr),
 		newMigrateCmd(stdout, stderr),
+		newGoToolCmd("test", stdout, stderr),
+		newGoToolCmd("vet", stdout, stderr),
 	)
 	add(groupInspect,
 		newDocsCmd(stdout, stderr),
 		newRoutesCmd(stdout, stderr),
 		newLintCmd(stdout, stderr),
 		newConfigCmd(stdout, stderr),
+		newLSPCmd(stdout, stderr),
 		newDoctorCmd(stdout, stderr),
 	)
 	// PKI for the peer mesh (extension/peer mTLS).

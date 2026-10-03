@@ -701,10 +701,10 @@ func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err e
 // Only `nexus dev` passes a distStubRoot: `nexus build` produces the real
 // binary and must embed the real bundle.
 //
-// nexus dev keeps views out of the overlay: its generator writes them to
-// disk, where gopls reads them too.
-func buildDevOverlay(root, distStubRoot string) (overlayPath string, cleanup func(), err error) {
-	return buildOverlay(root, distStubRoot, false)
+// views adds the compiled .templ views (the default); nexus dev --view-files
+// writes them to disk instead, and leaves them out.
+func buildDevOverlay(root, distStubRoot string, views bool) (overlayPath string, cleanup func(), err error) {
+	return buildOverlay(root, distStubRoot, views)
 }
 
 // buildOverlay assembles the overlay: handler registrations, the dist stubs
