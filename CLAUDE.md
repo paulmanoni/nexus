@@ -393,6 +393,11 @@ route_prefix = ""                        # prepended to every REST/GraphQL/WS ro
 addr  = "127.0.0.1:7000"
 scope = "admin"                          # public | internal | admin
 
+[runtime.telemetry]                      # trace export to an OpenTelemetry collector
+# otlp_endpoint = "http://localhost:4318" # OTLP/HTTP JSON → /v1/traces; unset = off
+# service_name  = "orders"                # default: the dashboard name
+# [runtime.telemetry.otlp_headers]       # e.g. authorization = "Bearer ${OTLP_TOKEN}"
+
 [runtime.websocket]
 # WebSocket upgrades bypass CORS and carry cookies, so nexus defaults to
 # SAME-ORIGIN for every upgrader: AsWS endpoints, GraphQL subscriptions, and the

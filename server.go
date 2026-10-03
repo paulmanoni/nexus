@@ -24,6 +24,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/notify"
+	"github.com/paulmanoni/nexus/v2/trace/otlp"
 	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
@@ -100,6 +101,33 @@ func shutdownTimeout(cfg config.Runtime) time.Duration {
 // no scope filtering — the back-compat path with no behavioral
 // change for callers who haven't declared Listeners.
 func registerLifecycle(lc di.Lifecycle, app *App, cfg config.Runtime) {
+	// Trace export starts before the listeners and stops after them, so
+	// the last requests' spans are flushed once the servers drained.
+	if cfg.Telemetry.OTLPEndpoint != "" && app.bus != nil {
+		var exp *otlp.Exporter
+		lc.Append(di.Hook{
+			OnStart: func(context.Context) error {
+				name := cfg.Telemetry.ServiceName
+				if name == "" {
+					name = cfg.Dashboard.Name
+				}
+				if name == "" {
+					name = defaultDashboardName
+				}
+				exp = otlp.Start(app.bus, otlp.Config{Endpoint: cfg.Telemetry.OTLPEndpoint, Headers: cfg.Telemetry.OTLPHeaders, ServiceName: name})
+				return nil
+			},
+			OnStop: func(ctx context.Context) error {
+				if exp == nil {
+					return nil
+				}
+				if err := exp.Stop(ctx); err != nil {
+					app.Logger().Warn("trace export: final flush failed", "error", err)
+				}
+				return nil
+			},
+		})
+	}
 	listeners := resolveListeners(app.listeners, cfg.Server.Addr)
 	// Every in-flight request's context descends from reqCtx via BaseContext,
 	// so cancelReqs unblocks handlers that select on their context — an SSE

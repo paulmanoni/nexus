@@ -222,6 +222,10 @@ type Runtime struct {
 	// deploys, prefer a separate internal listener bound to the
 	// loopback / VPN interface (Server.Listeners with ScopeAdmin).
 	IntrospectionNetworks []string
+
+	// Telemetry exports traces to an OpenTelemetry collector
+	// ([runtime.telemetry]); off unless OTLPEndpoint is set.
+	Telemetry Telemetry
 }
 
 // Dashboard groups the /__nexus surface knobs. Both fields
@@ -606,4 +610,15 @@ type GraphQL struct {
 	// using $vars. Check the cache stats on the dashboard if hit
 	// rate is suspiciously low.
 	DocumentCacheSize int
+}
+
+// Telemetry configures trace export over OTLP/HTTP (package trace/otlp).
+type Telemetry struct {
+	// OTLPEndpoint is the collector's base URL; spans POST to
+	// OTLPEndpoint/v1/traces. Empty turns export off.
+	OTLPEndpoint string
+	// OTLPHeaders are sent with every export.
+	OTLPHeaders map[string]string
+	// ServiceName is the exported service.name; default: the dashboard name.
+	ServiceName string
 }

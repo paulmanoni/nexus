@@ -219,6 +219,7 @@ type runtimeBlock struct {
 	Middleware            middlewareBlock `toml:"middleware"`
 	DevReload             devReloadBlock  `toml:"devreload"`
 	Logging               loggingBlock    `toml:"logging"`
+	Telemetry             telemetryBlock  `toml:"telemetry"`
 	Environment           string          `toml:"environment" doc:"development | staging | production; NEXUS_ENVIRONMENT overrides it"`
 	Version               string          `toml:"version"`
 	Introspection         bool            `toml:"introspection" doc:"open the /__nexus dashboard and JSON APIs (off by default)"`
@@ -235,6 +236,14 @@ type loggingBlock struct {
 	Requests *bool  `toml:"requests"` // dev-only per-request console log (default true)
 	Format   string `toml:"format"`   // pretty | logfmt | pattern | raw | json
 	Pattern  string `toml:"pattern"`  // used when format = "pattern"
+}
+
+// telemetryBlock is [runtime.telemetry]: trace export to an OpenTelemetry
+// collector.
+type telemetryBlock struct {
+	OTLPEndpoint string            `toml:"otlp_endpoint" doc:"OTLP/HTTP collector base URL (spans POST to /v1/traces); empty = no export"`
+	OTLPHeaders  map[string]string `toml:"otlp_headers" doc:"headers sent with each export (authentication, tenant)"`
+	ServiceName  string            `toml:"service_name" doc:"service.name of the exported spans (default: the dashboard name)"`
 }
 
 // devReloadBlock is the TOML shape of DevReload.
@@ -346,6 +355,7 @@ type rateLimitBlock struct {
 func (b runtimeBlock) toConfig() (Runtime, error) {
 	cfg := Runtime{
 		Environment:           b.Environment,
+		Telemetry:             Telemetry{OTLPEndpoint: b.Telemetry.OTLPEndpoint, OTLPHeaders: b.Telemetry.OTLPHeaders, ServiceName: b.Telemetry.ServiceName},
 		Version:               b.Version,
 		Introspection:         b.Introspection,
 		IntrospectionNetworks: b.IntrospectionNetworks,

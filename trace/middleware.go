@@ -133,6 +133,7 @@ func StartRequest(c *httpx.Ctx, bus *Bus, service, endpoint, transport string) (
 			Status:     c.Writer.Status(),
 			DurationMs: time.Since(span.Start).Milliseconds(),
 			Error:      errStr,
+			Meta:       span.snapshotAttrs(),
 		})
 	}
 }

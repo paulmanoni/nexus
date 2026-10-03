@@ -272,7 +272,7 @@ type App struct {
 // invoked (either nexus.Run or App.Run for direct callers).
 func New(cfg config.Runtime) *App {
 	traceCapacity := cfg.TraceCapacity
-	if traceCapacity == 0 && cfg.Dashboard.Enabled {
+	if traceCapacity == 0 && (cfg.Dashboard.Enabled || cfg.Telemetry.OTLPEndpoint != "") {
 		// 1024 events covers a few hundred requests in a typical dev
 		// session; user override via Config.TraceCapacity.
 		traceCapacity = 1024

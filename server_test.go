@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -688,5 +689,36 @@ func TestShutdownCancelsInFlightRequests(t *testing.T) {
 	}
 	if el := time.Since(start); el > 2*time.Second {
 		t.Fatalf("Shutdown took %s with one in-flight request; the cancel didn't reach the handler", el)
+	}
+}
+
+// With [runtime.telemetry] otlp_endpoint set, request spans reach the
+// collector — flushed at shutdown at the latest.
+func TestTelemetryExportsRequests(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+	}))
+	defer collector.Close()
+
+	cfg := config.Runtime{Telemetry: config.Telemetry{OTLPEndpoint: collector.URL, ServiceName: "orders"}}
+	app, stop, err := InProcess(cfg, AsRest("GET", "/orders", func(ctx context.Context) ([]string, error) { return nil, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/orders", nil))
+	time.Sleep(50 * time.Millisecond)
+	if err := stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	all := strings.Join(bodies, "\n")
+	if !strings.Contains(all, `"stringValue":"orders"`) || !strings.Contains(all, `"/orders"`) {
+		t.Fatalf("collector got %q", all)
 	}
 }

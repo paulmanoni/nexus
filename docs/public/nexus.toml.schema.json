@@ -930,6 +930,27 @@
           },
           "type": "object"
         },
+        "telemetry": {
+          "additionalProperties": false,
+          "properties": {
+            "otlp_endpoint": {
+              "description": "OTLP/HTTP collector base URL (spans POST to /v1/traces); empty = no export",
+              "type": "string"
+            },
+            "otlp_headers": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "headers sent with each export (authentication, tenant)",
+              "type": "object"
+            },
+            "service_name": {
+              "description": "service.name of the exported spans (default: the dashboard name)",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "trace_capacity": {
           "description": "request-trace ring buffer size (0 = off)",
           "type": "integer"
