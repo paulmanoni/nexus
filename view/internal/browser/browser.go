@@ -439,6 +439,11 @@ func (b *Browser) Settle(horizon float64, timeout time.Duration, busy, stop func
 			b.WaitTask(left)
 			continue
 		}
+		// The host marks work done after queueing its task: one may have
+		// arrived since the tasks above ran.
+		if b.RunTasks() > 0 {
+			continue
+		}
 		if next := b.NextTimer(); next >= 0 && next <= limit {
 			b.RunTimer()
 			continue
