@@ -200,6 +200,7 @@ explains itself with --help.`,
 	)
 	add(groupProject,
 		newInitCmd(stdout, stderr),
+		newAddCmd(stdout, stderr),
 		newGenerateCmd(stdout, stderr),
 		newClientCmd(stdout, stderr),
 		newAPIDocsCmd(stdout, stderr),
