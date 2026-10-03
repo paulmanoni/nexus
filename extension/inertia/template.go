@@ -9,7 +9,7 @@ import (
 )
 
 // devReloadScript is the framework's live-reload shim, mounted by
-// ServeFrontend under nexus dev.
+// nexus.Frontend under nexus dev.
 const devReloadScript = "/__nexus/dev/script.js"
 
 // pageTemplate is the app's index.html (App.FrontendDocument) located for a

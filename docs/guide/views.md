@@ -430,7 +430,7 @@ node web/dist/ssr/islands.js     # listens on 127.0.0.1:13715
 
 ### The frontend
 
-The frontend is the one `nexus.ServeFrontend` serves. A templ app whose
+The frontend is the one `nexus.Frontend` serves. A templ app whose
 frontend is only islands needs no `index.html` and no entry:
 
 ```js
@@ -445,7 +445,7 @@ export default { plugins: [vue(), nexus()] }
 //go:embed all:web/dist
 var webFS embed.FS
 
-nexus.Boot(nexus.ServeFrontend(webFS, "web/dist"))
+nexus.Boot(nexus.Frontend(webFS, "web/dist"))
 ```
 
 Under `nexus dev` islands load from Vite with hot reload. `nexus build`

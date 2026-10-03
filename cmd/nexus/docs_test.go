@@ -39,7 +39,7 @@ func TestDocsCmd_Topic(t *testing.T) {
 		t.Fatalf("execute: %v stderr=%q", err, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"FRONTEND", "ServeFrontend", "FrontendAt", "//go:embed",
+	for _, want := range []string{"FRONTEND", "nexus.Frontend", "FrontendAt", "//go:embed",
 		"nexus-vite-plugin", "nexus-hot.json", "NEXUS_ENVIRONMENT=production", "NEXUS_FRONTEND_DIR"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("topic body missing %q\n%s", want, out)

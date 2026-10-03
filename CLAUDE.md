@@ -40,7 +40,7 @@ web/
 `node_modules/` and `dist/*` (except the stub) are gitignored; `web/sdk` must not be — a
 fresh checkout's `vite.config.ts` imports the plugin from it. **Which dir** (`nexus dev`):
 `--frontend` (cwd-relative) > `NEXUS_FRONTEND_DIR` (project-relative) > the dir main.go's
-`ServeFrontend`/`frontend.Plugin` call names (AST scan, resolved against the package dir)
+`nexus.Frontend`/`frontend.Plugin` call names (AST scan, resolved against the package dir)
 > `web/` when it has a `package.json` — `nexus build` resolves it the same way (it takes
 `--frontend` too). **No `package.json` → no Vite**: a hand-written or prebuilt `dist` is served as-is
 (e.g. `examples/petstore-spa`).
@@ -53,7 +53,7 @@ import "embed"
 var webFS embed.FS
 
 func main() {
-    nexus.Boot(nexus.ServeFrontend(webFS, "web/dist") /*, modules… */)
+    nexus.Boot(nexus.Frontend(webFS, "web/dist") /*, modules… */)
 }
 ```
 `nexus.Boot(opts...)` loads `nexus.toml` automatically — runtime `config.Runtime`, every
@@ -64,7 +64,7 @@ a malformed one panics. Override the path with `NEXUS_CONFIG` or use
 `nexus.BootFrom(path, opts...)`. Reach for `nexus.Run(cfg, opts...)` directly when you
 build `config.Runtime` in Go. (Extension packages still need their blank import — Go links only
 imported code; `Boot` removes the load calls, not the imports.)
-`ServeFrontend(fs, root, opts...)` is SPA-aware: extensionless paths fall back to
+`nexus.Frontend(fs, root, opts...)` is SPA-aware: extensionless paths fall back to
 `index.html`, and REST/GraphQL/WS routes win on conflict. Mount under a sub-path with
 `nexus.FrontendAt("/admin")`. **Caching comes from the build:** a file is `immutable`
 only when the Vite manifest lists it as output *and* its name carries a content hash;
@@ -75,7 +75,7 @@ routes then 404; in development an unbuilt bundle serves a placeholder instead.
 
 **The Vite handshake (`nexus-vite-plugin` + `internal/vitehot`).** With `nexus()` in
 `vite.config`, `vite dev` writes `<outDir>/.vite/nexus-hot.json` (the dev server's
-bound origin, base, entries, pid) and removes it on exit. `ServeFrontend` and the
+bound origin, base, entries, pid) and removes it on exit. `nexus.Frontend` and the
 Inertia engine read it per request — never served, followed only under `nexus dev` or
 `environment = "development"` and only while its dev server is live (running pid, or an
 origin that answers; a file left by a killed Vite reads as absent) — so pages on the Go
@@ -125,7 +125,7 @@ clear error when the tool isn't on PATH; Yarn Plug'n'Play is refused — set
 - On exit Vite gets SIGTERM, then SIGKILL after 2s, and `nexus dev` waits, so the plugin
   removes its hot file. There is no Inertia "mode" any more (no `go list -deps` scan, no
   `[runtime.inertia] enabled`): SPA and Inertia apps share one dev topology.
-In production the embedded `web/dist` is served at the app port via `ServeFrontend`.
+In production the embedded `web/dist` is served at the app port via `nexus.Frontend`.
 
 **Go restarts are build-then-swap.** On a save the next binary compiles while the
 current one keeps serving; only a green build takes the old process down, so the app
@@ -146,11 +146,11 @@ Two defaults follow from that, both dev-only:
 - **DWARF is stripped** (`-ldflags=-w`, the old opt-in `--fast`). Pass `--debug`
   to keep it when you need delve or a complete panic trace.
 - **The frontend bundle is stubbed out of the dev binary.** Under `NEXUS_DEV`
-  `ServeFrontend` reads `web/dist` from disk (and pages load their modules from Vite
+  `nexus.Frontend` reads `web/dist` from disk (and pages load their modules from Vite
   anyway), so the embedded copy is dead weight that gets relinked on every save. `nexus
   dev` maps it to empty files via the same `go build -overlay` it already uses
   for handler codegen — no build tags, no source changes. Scoped strictly to the
-  tree a `ServeFrontend` call names, so assets your app genuinely reads at
+  tree a `nexus.Frontend` call names, so assets your app genuinely reads at
   runtime (fonts, templates, seed data) are untouched. `--no-embed-stub` opts out.
 
 Measured on a ~114MB app: 4.27s → 2.99s per rebuild. Note this is latency-until-
@@ -260,7 +260,7 @@ prints the app's URL. Scaffolds write
 `NEXUS_ENVIRONMENT=production`**, which overrides it. SSR: `ssr.ts` uses
 `@inertiajs/vue3/server`; `nexus build` writes `web/dist/ssr/ssr.js` with its deps bundled
 (`ssr.noExternal`), so `node web/dist/ssr/ssr.js` (:13714) runs beside the binary without
-`node_modules` (it is embedded with `all:web/dist`, but `ServeFrontend` never serves
+`node_modules` (it is embedded with `all:web/dist`, but `nexus.Frontend` never serves
 `dist/ssr`); main.go passes `inertia.Config{SSR: ssrhttp.New("")}`; under `nexus dev`
 pages render client-side.
 
@@ -307,7 +307,7 @@ live sockets follow, history/back work. Generator: `view/viewgen` (+ `viewgen/js
 **Islands**: `var Chart = view.NewIsland[ChartProps]("Chart")` declares one (props type → registry
 `SetIsland` → manifest `islands` → `NexusIslandProps` in client.d.ts; `*view.Signal[T]` types as `T` via
 `registry.SchemaAs`); `@Chart(props, view.Visible(), view.SSR()) { fallback }` places it. It mounts a
-component of the Vite frontend `ServeFrontend` serves: each file under `web/src/islands` is one, named by
+component of the Vite frontend `nexus.Frontend` serves: each file under `web/src/islands` is one, named by
 its path without the extension (.vue → Vue, .tsx/.jsx → React, .ts/.js exporting `mount(el, props, ctx)` →
 `{update, unmount}`); strategies load/`Idle()`/`Visible()`/`Media(q)`; props are JSON (an object). Signal
 props stay live (runtime hydrates + tracks them; `update` on change) and islands set them back: Vue

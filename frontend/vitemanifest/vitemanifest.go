@@ -1,6 +1,6 @@
 // Package vitemanifest reads the manifest `vite build` writes — the prod half
 // of the frontend contract, as internal/vitehot is the dev half. It is the one
-// parser for it: inertia turns it into asset tags, ServeFrontend into cache
+// parser for it: inertia turns it into asset tags, nexus.Frontend into cache
 // policy. nexus-vite-plugin forces build.manifest on, so an app built with the
 // plugin always has one.
 package vitemanifest

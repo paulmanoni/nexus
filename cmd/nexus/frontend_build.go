@@ -16,7 +16,7 @@ const ssrEntry = "src/ssr.ts"
 
 // frontendBuild runs the frontend's own Vite so `go build` can embed its
 // output. The frontend is the directory nexus dev would run
-// (resolveFrontendDir: flag, NEXUS_FRONTEND_DIR, the ServeFrontend call in
+// (resolveFrontendDir: flag, NEXUS_FRONTEND_DIR, the nexus.Frontend call in
 // mainDir's source, then web/), so a build never skips the Vite that dev
 // runs and embeds a stale dist. It is a Vite project when it has a
 // package.json. Then, in order:
@@ -31,7 +31,7 @@ const ssrEntry = "src/ssr.ts"
 //     server bundle to dist/ssr, after the client build so the client's
 //     emptyOutDir can't remove it, and without emptying dist itself;
 //  5. dist must then hold .vite/manifest.json or index.html — what
-//     ServeFrontend and the Inertia engine read.
+//     nexus.Frontend and the Inertia engine read.
 //
 // Vite's output streams to stdout/stderr, so a failing build shows why.
 // A directory without a package.json is not built: a pure-Go app has

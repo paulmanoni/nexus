@@ -77,7 +77,7 @@ func main() {
 		`"embed"`,
 		"//go:embed all:web/dist",
 		"var webFS embed.FS",
-		`nexus.ServeFrontend(webFS, "web/dist")`,
+		`nexus.Frontend(webFS, "web/dist")`,
 	} {
 		if !strings.Contains(patched, want) {
 			t.Errorf("main.go missing %q\n--- body ---\n%s", want, patched)
@@ -88,7 +88,7 @@ func main() {
 // TestInitFrontend_OnBootProject covers the `nexus new` default
 // shape since v1.12.4: main.go calls nexus.Boot(...) with no
 // nexus.Run, so the AST patcher must locate the Boot call to inject
-// ServeFrontend. Regression guard for new → init.
+// nexus.Frontend. Regression guard for new → init.
 func TestInitFrontend_OnBootProject(t *testing.T) {
 	dir := t.TempDir()
 	mainGo := `package main
@@ -118,7 +118,7 @@ func main() {
 	for _, want := range []string{
 		"//go:embed all:web/dist",
 		"var webFS embed.FS",
-		`nexus.ServeFrontend(webFS, "web/dist")`,
+		`nexus.Frontend(webFS, "web/dist")`,
 		"nexus.Boot(",
 	} {
 		if !strings.Contains(patched, want) {
@@ -129,7 +129,7 @@ func main() {
 
 // TestInitFrontend_Idempotent confirms re-running on a project
 // that's already had nexus init --frontend doesn't double-write
-// the islandsFS var or duplicate the ServeFrontend arg.
+// the islandsFS var or duplicate the nexus.Frontend arg.
 func TestInitFrontend_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	mainGo := `package main
@@ -152,14 +152,14 @@ func main() {
 	if err := runInitFrontend(dir, "react", true, &out); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	// Re-run with force; should NOT add ServeFrontend twice.
+	// Re-run with force; should NOT add nexus.Frontend twice.
 	out.Reset()
 	if err := runInitFrontend(dir, "react", true, &out); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, "main.go"))
-	if n := strings.Count(string(body), "nexus.ServeFrontend"); n != 1 {
-		t.Errorf("ServeFrontend appears %d times after re-run, want 1\n%s", n, body)
+	if n := strings.Count(string(body), "nexus.Frontend"); n != 1 {
+		t.Errorf("nexus.Frontend appears %d times after re-run, want 1\n%s", n, body)
 	}
 	if n := strings.Count(string(body), "var webFS embed.FS"); n != 1 {
 		t.Errorf("webFS var appears %d times, want 1", n)
@@ -447,7 +447,7 @@ func TestInitFrontend_OnScaffoldedMain(t *testing.T) {
 	if !directive {
 		t.Fatalf("var webFS lost its //go:embed directive:\n%s", body)
 	}
-	for _, want := range []string{"nexus.ServeFrontend(webFS, \"web/dist\")", "// nexus.Boot loads nexus.toml"} {
+	for _, want := range []string{"nexus.Frontend(webFS, \"web/dist\")", "// nexus.Boot loads nexus.toml"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("main.go missing %q:\n%s", want, body)
 		}

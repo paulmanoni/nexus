@@ -43,11 +43,11 @@ import "embed"
 var webFS embed.FS
 
 func main() {
-    nexus.Boot(nexus.ServeFrontend(webFS, "web/dist"), usersModule)
+    nexus.Boot(nexus.Frontend(webFS, "web/dist"), usersModule)
 }
 ```
 
-`ServeFrontend` works with single-page apps:
+`nexus.Frontend` works with single-page apps:
 
 - A path without an extension falls back to `index.html`.
 - REST, GraphQL and WebSocket routes win on conflict.
@@ -109,7 +109,7 @@ hand-written or prebuilt `dist`.
 
 1. the `--frontend <dir>` flag
 2. the `NEXUS_FRONTEND_DIR` environment variable
-3. the directory named in `main.go`'s `ServeFrontend` call
+3. the directory named in `main.go`'s `nexus.Frontend` call
 4. `web/`, when it has a `package.json`
 
 ## Values from `nexus.toml`

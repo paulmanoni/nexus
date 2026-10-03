@@ -1,7 +1,7 @@
 // Package frontend wires a single-page-app bundle into a nexus app as
 // a first-class plugin. It does three jobs in one declaration:
 //
-//  1. Runtime: mounts the built dist directory via nexus.ServeFrontend
+//  1. Runtime: mounts the built dist directory via nexus.Frontend
 //     under the configured Mount path. Same caching policy + SPA
 //     fallback the standalone helper has — this package is a thin
 //     wrapper, not a reimplementation.
@@ -101,7 +101,7 @@ type Config struct {
 	FS fs.FS
 
 	// FSRoot is the path inside FS that holds index.html — matches
-	// what nexus.ServeFrontend expects. Defaults to
+	// what nexus.Frontend expects. Defaults to
 	// path.Join(Root, Output). Override only when the //go:embed
 	// directive declares a different prefix than the build output.
 	FSRoot string
@@ -187,7 +187,7 @@ type Config struct {
 // di.Error wrapped in extension.Use rather than a confusing boot
 // failure later. The Option composes:
 //
-//   - the runtime ServeFrontend mount, and
+//   - the runtime nexus.Frontend mount, and
 //   - the client SDK routes: manifest + contributions (the CLI codegen
 //     surface), plus the runtime SDK assets when RuntimeSDK is set.
 //
@@ -217,7 +217,7 @@ func Plugin(cfg Config) nexus.Option {
 		Name:    "frontend",
 		Version: pkgVersion,
 		Options: []nexus.Option{
-			nexus.ServeFrontend(cfg.FS, cfg.FSRoot, mountOpts...),
+			nexus.Frontend(cfg.FS, cfg.FSRoot, mountOpts...),
 			mountClientSDK(cfg),
 		},
 	})
@@ -250,7 +250,7 @@ func (c Config) Validate() error {
 }
 
 // validateRuntime is Plugin()'s extra check: the //go:embed FS must
-// be supplied so ServeFrontend can mount the bundle. The CLI codegen
+// be supplied so nexus.Frontend can mount the bundle. The CLI codegen
 // path bypasses this — it never reads the FS.
 func (c Config) validateRuntime() error {
 	if c.FS == nil {

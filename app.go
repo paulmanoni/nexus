@@ -122,20 +122,20 @@ type App struct {
 	// through the late invoke.
 	clientCfg client.Config
 	// frontendFS + frontendRoot record the built bundle registered by
-	// ServeFrontend (the original embed.FS + dist root, before any dev
+	// Frontend (the original embed.FS + dist root, before any dev
 	// swap). Extensions that need to READ the bundle — e.g. inertia.Module
 	// resolving the Vite manifest for its asset version + shell tags — pull
 	// it via FrontendFS() instead of having the bundle passed to them again.
 	frontendFS   fs.FS
 	frontendRoot string
 	// viteHot reads the dev server location nexus-vite-plugin writes; one
-	// instance per frontend, shared by ServeFrontend and inertia.
+	// instance per frontend, shared by Frontend and inertia.
 	viteHot *vitehot.Reader
-	// frontendDoc and frontendMount are set by ServeFrontend; see
+	// frontendDoc and frontendMount are set by Frontend; see
 	// FrontendDocument and FrontendMount.
 	frontendDoc   func(context.Context) (FrontendDocument, error)
 	frontendMount string
-	// frontendStop ends ServeFrontend's dev-reload poller and watcher;
+	// frontendStop ends Frontend's dev-reload poller and watcher;
 	// set only under nexus dev, and run from OnStop.
 	frontendStop func()
 	// cacheMgr is always non-nil — created by New() with a default
@@ -697,7 +697,7 @@ func (a *App) ClientHandler() *client.Handler {
 
 // devAutoMountClientSDK mounts the client SDK's manifest + runtime
 // routes under `nexus dev` (NEXUS_DEV=1) when nothing else has — so a
-// plain ServeFrontend SPA still exposes /__nexus/client/manifest.json.
+// plain Frontend SPA still exposes /__nexus/client/manifest.json.
 // `nexus dev` reads that manifest to auto-sync the vite proxy (folding
 // in every module's RoutePrefix), and the SDK + auto-select plugin
 // consume it too. Wired into fxLateOptions so it runs AFTER user opts:
@@ -939,12 +939,12 @@ func (a *App) SetValue(key, value any) { a.extValues.Store(key, value) }
 // Value returns a previously SetValue'd value, or (nil, false) if absent.
 func (a *App) Value(key any) (any, bool) { return a.extValues.Load(key) }
 
-// setFrontendSource records the built bundle ServeFrontend mounted, so
+// setFrontendSource records the built bundle Frontend mounted, so
 // extensions that read the bundle (not serve it) can discover it.
 func (a *App) setFrontendSource(fsys fs.FS, root string) {
 	a.frontendFS, a.frontendRoot = fsys, root
 	// The hot file is read from disk, relative to the same dev root
-	// ServeFrontend serves from under `nexus dev`; "." otherwise, which is
+	// Frontend serves from under `nexus dev`; "." otherwise, which is
 	// the project directory for a plain `go run .`.
 	devRoot := os.Getenv(dev.RootEnv)
 	if devRoot == "" {
@@ -958,12 +958,12 @@ func (a *App) setFrontendSource(fsys fs.FS, root string) {
 // ViteHot returns the reader for the dev-server hot file nexus-vite-plugin
 // writes, or nil when no frontend was registered. First-party extensions use
 // it to find the Vite dev server instead of guessing — inertia's page shell is
-// the other consumer besides ServeFrontend. Its Current reports a dev server
+// the other consumer besides Frontend. Its Current reports a dev server
 // only while that server is alive; a file left by one that has exited reads
 // as absent (see vitehot.Reader.Current).
 func (a *App) ViteHot() *vitehot.Reader { return a.viteHot }
 
-// FrontendFS returns the built frontend bundle registered by ServeFrontend —
+// FrontendFS returns the built frontend bundle registered by Frontend —
 // the embed.FS and the dist root within it — and whether one was registered.
 // An extension that needs to READ the bundle (e.g. inertia.Module resolving the
 // Vite manifest) calls this instead of having the bundle passed to it again, so
@@ -1014,7 +1014,7 @@ func (a *App) FrontendDocument(ctx context.Context) (FrontendDocument, error) {
 	return a.frontendDoc(ctx)
 }
 
-// FrontendMount is the URL path ServeFrontend serves the bundle under — the
+// FrontendMount is the URL path Frontend serves the bundle under — the
 // route prefix plus FrontendAt — or "" at the site root. A file at
 // "assets/x.js" in the bundle is served at FrontendMount()+"/assets/x.js",
 // which is what a renderer must link to rather than assuming "/".

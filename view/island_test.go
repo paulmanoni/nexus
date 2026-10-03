@@ -63,7 +63,7 @@ func TestIslandFromBuild(t *testing.T) {
 }`)},
 	}
 	status, page := getPage(t, config.Runtime{Environment: "production"},
-		nexus.ServeFrontend(dist, "dist", nexus.FrontendAt("/static")))
+		nexus.Frontend(dist, "dist", nexus.FrontendAt("/static")))
 	want := `<nx-island data-c="Chart" data-l="/static/assets/nexus-islands-B2xQ9fLk.js" ` +
 		`data-p="{&#34;points&#34;:[1,2]}" data-when="visible"><p>loading</p></nx-island>`
 	if status != 200 || page != want {
@@ -84,7 +84,7 @@ func TestIslandFromDevServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, page := getPage(t, config.Runtime{Environment: "development"},
-		nexus.ServeFrontend(os.DirFS(dir), "dist"))
+		nexus.Frontend(os.DirFS(dir), "dist"))
 	if status != 200 || !strings.Contains(page, `data-l="http://127.0.0.1:5173/@id/virtual:nexus-islands"`) {
 		t.Fatalf("status %d: %s", status, page)
 	}
@@ -99,7 +99,7 @@ func TestIslandWithoutAFrontend(t *testing.T) {
 		t.Fatalf("no frontend: status %d: %s", status, page)
 	}
 	dist := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(`{"src/main.ts":{"file":"assets/main.js","isEntry":true}}`)}}
-	status, page = getPage(t, config.Runtime{Environment: "production"}, nexus.ServeFrontend(dist, "dist"))
+	status, page = getPage(t, config.Runtime{Environment: "production"}, nexus.Frontend(dist, "dist"))
 	if status != 200 || !strings.Contains(page, "has no islands loader") {
 		t.Fatalf("a build without islands: status %d: %s", status, page)
 	}
@@ -118,7 +118,7 @@ func TestIslandMissingFromBuild(t *testing.T) {
 	dist := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(`{
   "nexus-islands": {"file":"assets/nexus-islands-B2xQ9fLk.js","name":"nexus-islands","isEntry":true}
 }`)}}
-	status, page := getPage(t, config.Runtime{Environment: "production"}, nexus.ServeFrontend(dist, "dist"))
+	status, page := getPage(t, config.Runtime{Environment: "production"}, nexus.Frontend(dist, "dist"))
 	if status != 200 || !strings.Contains(page, "has no island Chart") {
 		t.Fatalf("status %d: %s", status, page)
 	}
@@ -195,7 +195,7 @@ func TestIslandSSR(t *testing.T) {
 }`)}}
 	page := func(opts ...nexus.Option) string {
 		app, stop, err := nexus.InProcess(config.Runtime{Environment: "production"}, append(opts,
-			nexus.ServeFrontend(dist, "dist"),
+			nexus.Frontend(dist, "dist"),
 			Page("GET", "/", func() templ.Component {
 				return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
 					ctx = templ.WithChildren(ctx, templ.Raw(`<p>loading</p>`))

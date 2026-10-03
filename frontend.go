@@ -33,7 +33,7 @@ import (
 )
 
 // init seeds the MIME type registry with the modern-web baseline
-// ServeFrontend depends on. Go's mime.TypeByExtension() leans on
+// Frontend depends on. Go's mime.TypeByExtension() leans on
 // the host's /etc/mime.types (or the Windows registry, or...) —
 // systems where that file is missing or out-of-date return "" for
 // .js / .css / .woff2 / .mjs, then http.ServeContent falls back
@@ -66,14 +66,14 @@ func init() {
 	}
 }
 
-// ServeFrontend mounts a built single-page-app bundle from an
+// Frontend mounts a built single-page-app bundle from an
 // embedded filesystem. The classic shape:
 //
 //	//go:embed all:web/dist
 //	var webFS embed.FS
 //
 //	nexus.Run(config.Runtime{...},
-//	    nexus.ServeFrontend(webFS, "web/dist"),
+//	    nexus.Frontend(webFS, "web/dist"),
 //	    uaa.Module,
 //	    interview.Module,
 //	)
@@ -123,7 +123,7 @@ func init() {
 // dev server's hot file), where a placeholder page stands in so the
 // API and dashboard stay reachable. A config value alone never
 // grants that leniency: nexus.toml's environment ships to production.
-func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
+func Frontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 	cfg := &frontendConfig{}
 	for _, o := range opts {
 		o.applyToFrontend(cfg)
@@ -149,7 +149,7 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 		if root != "" {
 			s, err := fs.Sub(fsys, root)
 			if err != nil {
-				return fmt.Errorf("nexus: ServeFrontend(root=%q): %w", root, err)
+				return fmt.Errorf("nexus: Frontend(root=%q): %w", root, err)
 			}
 			sub = s
 		}
@@ -163,7 +163,7 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 	})}
 }
 
-// FrontendOption tunes a ServeFrontend call. Returned by helpers
+// FrontendOption tunes a Frontend call. Returned by helpers
 // like FrontendAt; users don't construct these directly.
 type FrontendOption interface {
 	applyToFrontend(*frontendConfig)
@@ -219,10 +219,10 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 		case manErr == nil:
 			// Built, but shell-less: there is no page to fall back to,
 			// so client routes 404 rather than render an empty document.
-			log.Printf("nexus: ServeFrontend: bundle has no index.html (built from %s) — unknown routes return 404", man.Path)
+			log.Printf("nexus: Frontend: bundle has no index.html (built from %s) — unknown routes return 404", man.Path)
 			bootIndex = nil
 		case devMode:
-			log.Printf("nexus: ServeFrontend: nothing built yet (no index.html or Vite manifest) — serving a placeholder page until there is a frontend")
+			log.Printf("nexus: Frontend: nothing built yet (no index.html or Vite manifest) — serving a placeholder page until there is a frontend")
 			bootIndex = placeholderIndexHTML
 		default:
 			// Leniency needs evidence of development happening now — a
@@ -231,14 +231,14 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 			// reader only reports a file whose dev server is alive, so a
 			// stale one left on disk grants nothing.
 			if h, _ := app.ViteHot().Current(); h != nil {
-				log.Printf("nexus: ServeFrontend: nothing built yet — the Vite dev server at %s serves the frontend; a placeholder page stands in while it is down", h.Origin)
+				log.Printf("nexus: Frontend: nothing built yet — the Vite dev server at %s serves the frontend; a placeholder page stands in while it is down", h.Origin)
 				bootIndex = placeholderIndexHTML
 				break
 			}
 			// A bundle with neither a shell nor a manifest was never
 			// built. Fail loud so the broken artifact surfaces at boot,
 			// not at first request.
-			return fmt.Errorf("nexus: ServeFrontend: the bundle has neither index.html nor a Vite manifest — did it build? (run the build, or develop under nexus dev / a running Vite dev server) (%w)", err)
+			return fmt.Errorf("nexus: Frontend: the bundle has neither index.html nor a Vite manifest — did it build? (run the build, or develop under nexus dev / a running Vite dev server) (%w)", err)
 		}
 	}
 	readIndex := func() []byte {
@@ -703,7 +703,7 @@ func (d *devIndex) logFetchFailure(h *vitehot.Hot, err error, instead string) {
 		return
 	}
 	d.lastLogged = msg
-	log.Printf("nexus: ServeFrontend: could not load index.html from the Vite dev server at %s (%v) — %s", h.Origin, err, instead)
+	log.Printf("nexus: Frontend: could not load index.html from the Vite dev server at %s (%v) — %s", h.Origin, err, instead)
 }
 
 // fetchDevIndex asks the dev server for index.html. Vite runs its
@@ -814,7 +814,7 @@ func absolutizeDevHTML(page []byte, origin string) []byte {
 }
 
 // devIndexFromDisk is the fallback when the dev server's index.html cannot
-// be fetched: the page ServeFrontend would have served, with the Vite
+// be fetched: the page Frontend would have served, with the Vite
 // client injected into <head> and root-relative module scripts loaded from
 // the dev server. When the hot file declares a module entry and none of
 // those scripts is it — a placeholder page, or a built index.html that
@@ -883,7 +883,7 @@ func hotErrorPage(err error) []byte {
 }
 
 // placeholderIndexHTML is the friendly fallback served when
-// ServeFrontend boots in dev mode without an index.html. Tells
+// Frontend boots in dev mode without an index.html. Tells
 // the operator their API + dashboard are up + working and shows
 // the canonical "set up a frontend" recipe — no need to leave
 // the browser to figure out next steps.
@@ -936,7 +936,7 @@ var placeholderIndexHTML = []byte(`<!doctype html>
     <li>Add a Vite frontend to this app, then restart <code>nexus dev</code> — it installs the dependencies and runs Vite for you:
 <pre>nexus init --frontend vue      # or react</pre>
     </li>
-    <li>Already have a Vite project? Put <code>nexus()</code> from <code>sdk/nexus-vite-plugin.js</code> in its <code>vite.config</code> and start it (<code>npm run dev</code>) — this page then loads from it — or build it into the path your <code>main.go</code> passes to <code>nexus.ServeFrontend(...)</code>.</li>
+    <li>Already have a Vite project? Put <code>nexus()</code> from <code>sdk/nexus-vite-plugin.js</code> in its <code>vite.config</code> and start it (<code>npm run dev</code>) — this page then loads from it — or build it into the path your <code>main.go</code> passes to <code>nexus.Frontend(...)</code>.</li>
     <li>Call the API from any page with the typed SDK: <code>import { … } from 'nexus-client'</code>, generated into <code>web/sdk</code> under <code>nexus dev</code>.</li>
   </ol>
 
@@ -1065,3 +1065,22 @@ func withReloadShim(devMode bool, page []byte) []byte {
 	out = append(out, devReloadScriptTag...)
 	return append(out, page[at:]...)
 }
+
+// Document is the page shell the app renders into, in the DI graph so
+// middleware and page renderers take it as a parameter rather than reading
+// the embed — which under nexus dev would be stale, since pages then
+// render into the document Vite serves:
+//
+//	func ThemeHead(doc *nexus.Document) middleware.Middleware { … }
+//	nexus.Middleware(ThemeHead)
+//
+// Get returns the current one: the built index.html in production, Vite's
+// live one under nexus dev, or ErrNoFrontendDocument when there is none.
+type Document struct{ app *App }
+
+// Get returns the document pages render into now.
+func (d *Document) Get(ctx context.Context) (FrontendDocument, error) {
+	return d.app.FrontendDocument(ctx)
+}
+
+func provideDocument(a *App) *Document { return &Document{app: a} }

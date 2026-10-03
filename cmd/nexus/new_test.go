@@ -125,7 +125,7 @@ func TestScaffold_Inertia_Builds(t *testing.T) {
 			t.Fatalf("main.go missing %q:\n%s", want, mainGo)
 		}
 	}
-	// The engine finds the bundle through ServeFrontend; naming it again in
+	// The engine finds the bundle through nexus.Frontend; naming it again in
 	// inertia.Config would only be needed for a different source.
 	if !strings.Contains(string(mainGo), "inertia.Module(inertia.Config{})") {
 		t.Fatalf("main.go should pass an empty inertia.Config:\n%s", mainGo)
@@ -343,7 +343,7 @@ func TestScaffoldWithOpts_FullStack(t *testing.T) {
 		"resources.NewDB",
 		"resources.NewCacheManager",
 		"auth.Module",
-		"nexus.ServeFrontend(webFS",
+		"nexus.Frontend(webFS",
 	} {
 		if !strings.Contains(string(mainGo), want) {
 			t.Errorf("main.go missing %q\n--- body ---\n%s", want, mainGo)

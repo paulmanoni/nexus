@@ -168,7 +168,7 @@ type Manifest struct {
 	Entities []Entity `json:"entities,omitempty"`
 
 	// Frontend is non-nil when the app serves an embedded SPA
-	// (nexus.ServeFrontend). The orchestrator uses BuildHash to gate
+	// (nexus.Frontend). The orchestrator uses BuildHash to gate
 	// CDN invalidation on actual asset changes.
 	Frontend *Frontend `json:"frontend,omitempty"`
 
@@ -485,7 +485,7 @@ type EntityField struct {
 	Nullable   bool   `json:"nullable,omitempty"`
 }
 
-// Frontend describes an embedded SPA served by nexus.ServeFrontend.
+// Frontend describes an embedded SPA served by nexus.Frontend.
 // Absent (Manifest.Frontend == nil) when the app serves no frontend —
 // don't emit an empty Frontend{} struct, the omitempty on Manifest
 // handles it.
@@ -621,7 +621,7 @@ type Inputs struct {
 	Modules     []Module
 	Routes      []Route
 	Entities    []Entity
-	// Frontend is non-nil when the app called nexus.ServeFrontend.
+	// Frontend is non-nil when the app called nexus.Frontend.
 	Frontend *Frontend
 	// Admin overrides DefaultAdminPaths(). Zero value (all fields
 	// empty) means "use defaults"; setting any field overrides only

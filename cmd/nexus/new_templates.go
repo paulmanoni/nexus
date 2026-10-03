@@ -525,11 +525,11 @@ func main() {
 	// Config in Go.)
 	nexus.Boot(
 {{- if .HasFrontend}}
-		nexus.ServeFrontend(webFS, "web/dist"),
+		nexus.Frontend(webFS, "web/dist"),
 {{- end}}
 {{- if .IsInertiaSSR}}
 		// Inertia pages render into web/index.html — the bundle
-		// ServeFrontend names (built in production, Vite's in dev). SSR
+		// nexus.Frontend names (built in production, Vite's in dev). SSR
 		// POSTs each first page load to the Node SSR server (nexus build
 		// writes web/dist/ssr/ssr.js; run it with node, default :13714);
 		// any renderer error falls back to client rendering, so a down SSR
@@ -539,7 +539,7 @@ func main() {
 		}),
 {{- else if .IsInertia}}
 		// Inertia pages render into web/index.html — the bundle
-		// ServeFrontend names (built in production, Vite's in dev).
+		// nexus.Frontend names (built in production, Vite's in dev).
 		inertia.Module(inertia.Config{}),
 {{- end}}
 {{- if .HasDB}}

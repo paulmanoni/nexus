@@ -95,7 +95,7 @@ import (
 //go:embed all:client/dist
 var webFS embed.FS
 
-func main() { nexus.Boot(nexus.ServeFrontend(webFS, "client/dist")) }
+func main() { nexus.Boot(nexus.Frontend(webFS, "client/dist")) }
 `
 
 func TestResolveFrontendDir(t *testing.T) {
@@ -141,7 +141,7 @@ func TestResolveFrontendDir(t *testing.T) {
 			t.Fatalf("--frontend must beat NEXUS_FRONTEND_DIR, got %q", dir)
 		}
 	})
-	t.Run("web/package.json without a literal ServeFrontend root", func(t *testing.T) {
+	t.Run("web/package.json without a literal nexus.Frontend root", func(t *testing.T) {
 		pkg := t.TempDir()
 		writeFile(t, filepath.Join(pkg, "main.go"), "package main\nfunc main() {}\n")
 		if dir, _ := resolveFrontendDir(pkg, ""); dir != "" {

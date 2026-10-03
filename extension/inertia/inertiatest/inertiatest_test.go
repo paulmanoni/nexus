@@ -57,7 +57,7 @@ func newClient(t *testing.T, extra ...nexus.Option) *inertiatest.Client {
 		"dist/index.html":          {Data: []byte("<!doctype html><div id=app></div>")},
 	}
 	opts := append([]nexus.Option{
-		nexus.ServeFrontend(fsys, "dist"),
+		nexus.Frontend(fsys, "dist"),
 		inertia.Module(inertia.Config{Head: inertia.Head{Title: "NXHEAD"}}),
 		inertia.Share(func(ctx context.Context) (string, any) { return "csrf", "tok-123" }),
 		inertia.Page("GET", "/widgets", "Widgets/Index", NewWidgets),

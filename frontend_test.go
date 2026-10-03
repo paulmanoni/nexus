@@ -24,22 +24,23 @@ import (
 	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
 // helper for tests — keeps the empty-config call sites readable.
 var noFrontendCfg = &frontendConfig{}
 
-// TestServeFrontend covers the dispatch shape of the SPA mount:
+// TestFrontend covers the dispatch shape of the SPA mount:
 //   - extensionless paths get index.html (SPA routing) with
 //     no-cache headers
 //   - with no Vite manifest, only content-hashed names under /assets/
 //     get the immutable far-future cache header; an unhashed file there
-//     revalidates (see TestServeFrontend_ManifestCachePolicy for the
+//     revalidates (see TestFrontend_ManifestCachePolicy for the
 //     manifest-driven rule)
 //   - other dotted paths (favicon.ico, robots.txt) revalidate
 //   - REST routes registered alongside still win — NoRoute only
 //     fires when nothing else claimed the path
-func TestServeFrontend(t *testing.T) {
+func TestFrontend(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	fsys := fstest.MapFS{
 		"index.html":              {Data: []byte("<html>app</html>")},
@@ -100,13 +101,13 @@ func TestServeFrontend(t *testing.T) {
 	}
 }
 
-// TestServeFrontend_DevModeNoCacheOnAssets pins the fix for the
+// TestFrontend_DevModeNoCacheOnAssets pins the fix for the
 // "browser reloads but UI stays stale" bug: under NEXUS_DEV=1
 // every asset response must carry no-cache so the browser
 // refetches main.js / main.css after the dev-reload shim
 // triggers location.reload(). Heuristic caching otherwise serves
 // the previous bytes and the operator never sees their edits.
-func TestServeFrontend_DevModeNoCacheOnAssets(t *testing.T) {
+func TestFrontend_DevModeNoCacheOnAssets(t *testing.T) {
 	t.Setenv(dev.Env, "1")
 	t.Setenv("GIN_MODE", "test")
 	fsys := fstest.MapFS{
@@ -161,11 +162,11 @@ func TestServeFrontend_DevModeNoCacheOnAssets(t *testing.T) {
 	}
 }
 
-// TestServeFrontendMissingIndex verifies the boot-time guardrail:
+// TestFrontendMissingIndex verifies the boot-time guardrail:
 // without an index.html the mount fails fast so a stale or
 // unbuilt bundle surfaces at compile/start time, not at first
 // request.
-func TestServeFrontendMissingIndex(t *testing.T) {
+func TestFrontendMissingIndex(t *testing.T) {
 	app := New(config.Runtime{})
 	fsys := fstest.MapFS{"assets/main.js": {Data: []byte("x")}}
 	err := mountFrontend(app, fsys, noFrontendCfg)
@@ -177,10 +178,10 @@ func TestServeFrontendMissingIndex(t *testing.T) {
 	}
 }
 
-// TestServeFrontendAtSubPath confirms FrontendAt nests the SPA
+// TestFrontendAtSubPath confirms FrontendAt nests the SPA
 // under a sub-path while leaving sibling paths free for other
 // handlers — the standard "REST at /api, SPA at /admin" shape.
-func TestServeFrontendAtSubPath(t *testing.T) {
+func TestFrontendAtSubPath(t *testing.T) {
 	app := New(config.Runtime{})
 	app.engine.GET("/api/ping", func(c *httpx.Ctx) { c.String(http.StatusOK, "pong") })
 
@@ -220,11 +221,11 @@ func TestServeFrontendAtSubPath(t *testing.T) {
 	}
 }
 
-// TestServeFrontendNormalizesMountPath verifies that FrontendAt
+// TestFrontendNormalizesMountPath verifies that FrontendAt
 // accepts loose input (no leading slash, trailing slash, "/")
 // and normalizes to a canonical "/seg" form internally so the
 // dispatcher's prefix-strip stays straightforward.
-func TestServeFrontendNormalizesMountPath(t *testing.T) {
+func TestFrontendNormalizesMountPath(t *testing.T) {
 	cases := []struct {
 		in  string
 		out string
@@ -245,11 +246,11 @@ func TestServeFrontendNormalizesMountPath(t *testing.T) {
 	}
 }
 
-// TestServeFrontendWithRoutePrefix confirms the SPA mount honors
+// TestFrontendWithRoutePrefix confirms the SPA mount honors
 // the deployment route prefix and refuses to serve unprefixed
 // requests when a prefix is set — otherwise the SPA would swallow
 // requests destined for a different mount sharing the listener.
-func TestServeFrontendWithRoutePrefix(t *testing.T) {
+func TestFrontendWithRoutePrefix(t *testing.T) {
 	app := New(config.Runtime{Server: config.Server{RoutePrefix: "/v1/api"}})
 	fsys := fstest.MapFS{
 		"index.html":     {Data: []byte("<html>app</html>")},
@@ -288,17 +289,17 @@ func TestServeFrontendWithRoutePrefix(t *testing.T) {
 	}
 }
 
-// TestServeFrontend_DevModeReadsFromDisk verifies the NEXUS_DEV
-// swap: when the env var is set, ServeFrontend bypasses the supplied
+// TestFrontend_DevModeReadsFromDisk verifies the NEXUS_DEV
+// swap: when the env var is set, Frontend bypasses the supplied
 // embed-style FS and reads from os.DirFS at NEXUS_DEV_ROOT instead,
 // so a watching frontend toolchain can refresh the served bundle
 // without recompiling Go.
-// TestServeFrontend_DevModeRefreshesIndexHTML pins the bug where
+// TestFrontend_DevModeRefreshesIndexHTML pins the bug where
 // the framework cached index.html at boot — vite's mid-session
 // rewrite would land on disk but the served HTML stayed pointing
 // at the old asset hashes. In dev mode we must re-read on each
 // request so a frontend rebuild is visible on the next refresh.
-func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
+func TestFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	dir := t.TempDir()
 	distDir := dir + "/web/dist"
@@ -343,10 +344,10 @@ func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 	}
 }
 
-// TestServeFrontend_ProductionCachesIndexHTML pins the inverse:
+// TestFrontend_ProductionCachesIndexHTML pins the inverse:
 // outside dev mode the boot-time read is authoritative (assets are
 // content-hashed; re-reading per request is wasted I/O).
-func TestServeFrontend_ProductionCachesIndexHTML(t *testing.T) {
+func TestFrontend_ProductionCachesIndexHTML(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv(dev.Env, "")
 	dir := t.TempDir()
@@ -382,7 +383,7 @@ func TestServeFrontend_ProductionCachesIndexHTML(t *testing.T) {
 	}
 }
 
-func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
+func TestFrontend_DevModeReadsFromDisk(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	dir := t.TempDir()
 	distDir := dir + "/web/dist"
@@ -407,7 +408,7 @@ func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
 	t.Setenv(dev.Env, "1")
 	t.Setenv(dev.RootEnv, dir)
 
-	// ServeFrontend's dev-mode swap fires inside the function before
+	// Frontend's dev-mode swap fires inside the function before
 	// the fx Invoke captures the FS. Re-running its swap logic here
 	// matches what the runtime sees on app boot.
 	fsys := fs.FS(embedFS)
@@ -465,7 +466,7 @@ func viteBundle() fstest.MapFS {
 	}
 }
 
-func TestServeFrontend_ManifestCachePolicy(t *testing.T) {
+func TestFrontend_ManifestCachePolicy(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	app := New(config.Runtime{})
 	if err := mountFrontend(app, viteBundle(), noFrontendCfg); err != nil {
@@ -499,7 +500,7 @@ func TestServeFrontend_ManifestCachePolicy(t *testing.T) {
 	}
 }
 
-func TestServeFrontend_ETagRevalidation(t *testing.T) {
+func TestFrontend_ETagRevalidation(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	app := New(config.Runtime{})
 	if err := mountFrontend(app, viteBundle(), noFrontendCfg); err != nil {
@@ -523,7 +524,7 @@ func TestServeFrontend_ETagRevalidation(t *testing.T) {
 	}
 }
 
-func TestServeFrontend_ShellIsRevalidatedNotUnstored(t *testing.T) {
+func TestFrontend_ShellIsRevalidatedNotUnstored(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	app := New(config.Runtime{})
 	if err := mountFrontend(app, viteBundle(), noFrontendCfg); err != nil {
@@ -538,7 +539,7 @@ func TestServeFrontend_ShellIsRevalidatedNotUnstored(t *testing.T) {
 // An app whose only entry is a module (an Inertia app declaring
 // nexus({ input: 'src/main.ts' })) builds no index.html. The manifest proves
 // the build happened, so it must boot; there is just no shell to fall back to.
-func TestServeFrontend_ShellLessBuildBoots(t *testing.T) {
+func TestFrontend_ShellLessBuildBoots(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	app := New(config.Runtime{})
 	fsys := fstest.MapFS{
@@ -556,7 +557,7 @@ func TestServeFrontend_ShellLessBuildBoots(t *testing.T) {
 	}
 }
 
-func TestServeFrontend_UnbuiltBundleStillFailsFast(t *testing.T) {
+func TestFrontend_UnbuiltBundleStillFailsFast(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	err := mountFrontend(New(config.Runtime{}), fstest.MapFS{"assets/x.js": {Data: []byte("x")}}, noFrontendCfg)
 	if err == nil || !strings.Contains(err.Error(), "neither index.html nor a Vite manifest") {
@@ -582,7 +583,7 @@ func TestAssetCacheControlWithoutManifest(t *testing.T) {
 // happening now — nexus dev, or a live Vite dev server — never the
 // environment value alone: `nexus new` writes environment = "development"
 // into nexus.toml, and deployments ship it.
-func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
+func TestFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 
 	t.Run("environment alone fails fast", func(t *testing.T) {
@@ -678,7 +679,7 @@ func writeHotFile(t *testing.T, dist string, h vitehot.Hot) {
 
 // The reviewer's case, end to end: hash-free kebab-case names are build
 // output but not content-addressed, so they must revalidate.
-func TestServeFrontend_UnhashedKebabNamesRevalidate(t *testing.T) {
+func TestFrontend_UnhashedKebabNamesRevalidate(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	app := New(config.Runtime{})
 	fsys := fstest.MapFS{
@@ -766,7 +767,7 @@ func (f *viteDevFixture) do(t *testing.T, method, path, remote string, hdr ...st
 // (<img src="/logo.svg">, fetch("/config.json")) resolve against the Go
 // origin; they must reach the dev server, which has the current public/
 // files, and fall back to the bundle when it has none.
-func TestServeFrontend_DevServerServesStaticFiles(t *testing.T) {
+func TestFrontend_DevServerServesStaticFiles(t *testing.T) {
 	for _, base := range []string{"/", "/app/"} {
 		for _, mount := range []string{"", "/admin"} {
 			t.Run("base="+base+",mount="+mount, func(t *testing.T) {
@@ -851,7 +852,7 @@ func TestServeFrontend_DevServerServesStaticFiles(t *testing.T) {
 
 // Without a live dev server nothing is forwarded — including under a
 // production binary that finds a hot file naming a live one.
-func TestServeFrontend_NoLiveDevServerNoProxy(t *testing.T) {
+func TestFrontend_NoLiveDevServerNoProxy(t *testing.T) {
 	vite := newStaticVite(t, "/", map[string]string{"logo.svg": "vite-logo"})
 	f := newViteDevFixture(t, "<html>built</html>")
 	if err := os.WriteFile(filepath.Join(f.dist, "logo.svg"), []byte("disk-logo"), 0o644); err != nil {
@@ -873,7 +874,7 @@ func TestServeFrontend_NoLiveDevServerNoProxy(t *testing.T) {
 // A loopback peer is not enough: a local reverse proxy or tunnel makes every
 // visitor loopback, and a DNS-rebinding page reaches the port under its own
 // name. Neither is forwarded, nor are the dev server's internal routes.
-func TestServeFrontend_DevServerProxyOnlyForThisMachine(t *testing.T) {
+func TestFrontend_DevServerProxyOnlyForThisMachine(t *testing.T) {
 	vite := newStaticVite(t, "/", map[string]string{
 		"logo.svg":                "vite-logo",
 		"@fs/etc/hosts.txt":       "fs",
@@ -921,7 +922,7 @@ func TestServeFrontend_DevServerProxyOnlyForThisMachine(t *testing.T) {
 }
 
 // Large files stream through; the proxy doesn't hold the body.
-func TestServeFrontend_DevServerStreamsLargeFiles(t *testing.T) {
+func TestFrontend_DevServerStreamsLargeFiles(t *testing.T) {
 	first := bytes.Repeat([]byte("a"), 64<<10)
 	rest := bytes.Repeat([]byte("b"), 4<<20)
 	release := make(chan struct{})
@@ -975,7 +976,7 @@ func TestServeFrontend_DevServerStreamsLargeFiles(t *testing.T) {
 // A shell-less build answers unknown routes with 404 in production; with a
 // live dev server standing for that build, development must too (the
 // reviewer saw API typos come back as 200 dev pages).
-func TestServeFrontend_ShellLessDevMatchesProduction(t *testing.T) {
+func TestFrontend_ShellLessDevMatchesProduction(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	dir := t.TempDir()
 	dist := filepath.Join(dir, "web", "dist")
@@ -1041,7 +1042,7 @@ func TestDevHTML_EscapesHotFileValues(t *testing.T) {
 
 // The dev server answers for its own page; a redirect must not pull a
 // document from somewhere else into the app's origin.
-func TestServeFrontend_DevIndexRefusesRedirects(t *testing.T) {
+func TestFrontend_DevIndexRefusesRedirects(t *testing.T) {
 	var elsewhereHits int
 	var mu sync.Mutex
 	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1068,7 +1069,7 @@ func TestServeFrontend_DevIndexRefusesRedirects(t *testing.T) {
 	}
 }
 
-func TestServeFrontend_NoDirectoryListings(t *testing.T) {
+func TestFrontend_NoDirectoryListings(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv(dev.Env, "")
 	app := New(config.Runtime{})
@@ -1226,7 +1227,7 @@ func TestApp_FrontendMount(t *testing.T) {
 	for _, c := range cases {
 		app := New(config.Runtime{Server: config.Server{RoutePrefix: c.prefix}})
 		if got := app.FrontendMount(); got != "" {
-			t.Fatalf("before ServeFrontend: %q", got)
+			t.Fatalf("before Frontend: %q", got)
 		}
 		if err := mountFrontend(app, viteBundle(), &frontendConfig{mountPath: c.at}); err != nil {
 			t.Fatal(err)
@@ -1268,7 +1269,7 @@ func TestWithReloadShim(t *testing.T) {
 func noShim(page string) string { return strings.Replace(page, devReloadScriptTag, "", 1) }
 
 // viteDevFixture is a project dir with web/dist on disk, mounted the way
-// ServeFrontend mounts it under nexus dev: disk FS, NEXUS_DEV=1, the hot
+// Frontend mounts it under nexus dev: disk FS, NEXUS_DEV=1, the hot
 // reader rooted at NEXUS_DEV_ROOT/web/dist.
 type viteDevFixture struct {
 	dir, dist string
@@ -1388,10 +1389,10 @@ func newFakeVite(t *testing.T, base string, hits *[]string) *httptest.Server {
 	return srv
 }
 
-// TestServeFrontend_ViteHotServesTransformedIndex: with a live hot file, every
+// TestFrontend_ViteHotServesTransformedIndex: with a live hot file, every
 // index.html response is Vite's transformed page with its asset URLs pointed
 // at the dev server — and nothing that belongs on the Go origin is moved.
-func TestServeFrontend_ViteHotServesTransformedIndex(t *testing.T) {
+func TestFrontend_ViteHotServesTransformedIndex(t *testing.T) {
 	for _, base := range []string{"/", "/app/"} {
 		t.Run("base="+base, func(t *testing.T) {
 			var hits []string
@@ -1457,10 +1458,10 @@ func TestServeFrontend_ViteHotServesTransformedIndex(t *testing.T) {
 	}
 }
 
-// TestServeFrontend_ViteHotFetchFailsFallsBackToDisk: when the dev server
+// TestFrontend_ViteHotFetchFailsFallsBackToDisk: when the dev server
 // won't hand over index.html, the on-disk page is served with the client
 // injected and its module scripts loaded from the dev server.
-func TestServeFrontend_ViteHotFetchFailsFallsBackToDisk(t *testing.T) {
+func TestFrontend_ViteHotFetchFailsFallsBackToDisk(t *testing.T) {
 	notFound := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(notFound.Close)
 	notHTML := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1544,9 +1545,9 @@ func TestServeFrontend_ViteHotFetchFailsFallsBackToDisk(t *testing.T) {
 	}
 }
 
-// TestServeFrontend_ViteHotErrorPage: a hot file that exists but can't be
+// TestFrontend_ViteHotErrorPage: a hot file that exists but can't be
 // understood is reported on the page, never papered over with the build.
-func TestServeFrontend_ViteHotErrorPage(t *testing.T) {
+func TestFrontend_ViteHotErrorPage(t *testing.T) {
 	cases := []struct {
 		name  string
 		write func(*viteDevFixture)
@@ -1581,10 +1582,10 @@ func TestServeFrontend_ViteHotErrorPage(t *testing.T) {
 	}
 }
 
-// TestServeFrontend_StaleHotFileServesTheBuild: nexus dev stops Vite with
+// TestFrontend_StaleHotFileServesTheBuild: nexus dev stops Vite with
 // SIGKILL, so a hot file naming a dead dev server is routine. It reads as
 // absent — the build is served, never an error page.
-func TestServeFrontend_StaleHotFileServesTheBuild(t *testing.T) {
+func TestFrontend_StaleHotFileServesTheBuild(t *testing.T) {
 	dead := exec.Command("true")
 	if err := dead.Run(); err != nil {
 		t.Skipf("no `true` binary: %v", err)
@@ -1609,9 +1610,9 @@ func TestServeFrontend_StaleHotFileServesTheBuild(t *testing.T) {
 	}
 }
 
-// TestServeFrontend_NoHotFileUnchanged: no hot file, or hot files disabled
+// TestFrontend_NoHotFileUnchanged: no hot file, or hot files disabled
 // (a production binary), and the page is the bundle's index.html byte for byte.
-func TestServeFrontend_NoHotFileUnchanged(t *testing.T) {
+func TestFrontend_NoHotFileUnchanged(t *testing.T) {
 	const index = `<html><head></head><body><script type="module" src="/assets/app.js"></script></body></html>`
 	t.Run("dev, no hot file", func(t *testing.T) {
 		f := newViteDevFixture(t, index)
@@ -1633,11 +1634,11 @@ func TestServeFrontend_NoHotFileUnchanged(t *testing.T) {
 	})
 }
 
-// TestServeFrontend_NeverServesHotFile: nothing under .vite/ — the hot file,
+// TestFrontend_NeverServesHotFile: nothing under .vite/ — the hot file,
 // the plugin's temp file, the build manifest, the directory itself — is
 // served, in any mode, with or without a dev server, at the root or under
 // FrontendAt.
-func TestServeFrontend_NeverServesHotFile(t *testing.T) {
+func TestFrontend_NeverServesHotFile(t *testing.T) {
 	hotPaths := []string{
 		"/.vite/nexus-hot.json",
 		"/.vite/nexus-hot.json.4242.tmp",
@@ -1720,7 +1721,7 @@ func TestAbsolutizeDevHTML_LeavesAbsoluteURLs(t *testing.T) {
 // The Inertia SSR bundle `nexus build` writes into dist/ssr rides the embed
 // but is server code: never served. A public/ssr/ folder in a bundle with
 // no SSR build is an ordinary directory.
-func TestServeFrontend_SSRBundleNeverServed(t *testing.T) {
+func TestFrontend_SSRBundleNeverServed(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv(dev.Env, "")
 	get := func(fsys fstest.MapFS, p string) int {
@@ -1768,7 +1769,7 @@ func TestDevReloadStopsWithApp(t *testing.T) {
 	t.Setenv(dev.RootEnv, dir)
 	for i := 0; i < 3; i++ {
 		fsys := fstest.MapFS{"web/dist/index.html": {Data: []byte("<html>x</html>")}}
-		_, stop, err := InProcess(config.Runtime{}, ServeFrontend(fsys, "web/dist"))
+		_, stop, err := InProcess(config.Runtime{}, Frontend(fsys, "web/dist"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1782,5 +1783,29 @@ func TestDevReloadStopsWithApp(t *testing.T) {
 	}
 	if n := count() - before; n > 0 {
 		t.Errorf("%d dev-reload goroutines outlived their stopped apps", n)
+	}
+}
+
+// A middleware constructor can take the frontend document from DI.
+func TestDocumentInDI(t *testing.T) {
+	fsys := fstest.MapFS{"web/dist/index.html": {Data: []byte("<!doctype html><title>shell</title>")}}
+	var got string
+	_, stop, err := InProcess(config.Runtime{},
+		Frontend(fsys, "web/dist"),
+		Middleware(func(doc *Document) middleware.Middleware {
+			d, err := doc.Get(context.Background())
+			if err != nil {
+				t.Errorf("Get: %v", err)
+			}
+			got = string(d.HTML)
+			return middleware.Middleware{Name: "shell"}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	if !strings.Contains(got, "<title>shell</title>") {
+		t.Fatalf("document = %q", got)
 	}
 }

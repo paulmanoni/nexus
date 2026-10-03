@@ -5,14 +5,14 @@
 // object for XHR visits, a full HTML document for initial loads — reusing
 // nexus's params binding, validation, DI, auth gates, tracing, and metrics.
 //
-// Wire it as a module alongside the static-asset serving that ServeFrontend
+// Wire it as a module alongside the static-asset serving that nexus.Frontend
 // provides for the built bundle:
 //
 //	//go:embed all:web/dist
 //	var webFS embed.FS
 //
 //	nexus.Boot(
-//	    nexus.ServeFrontend(webFS, "web/dist"),  // serves assets; names the bundle
+//	    nexus.Frontend(webFS, "web/dist"),  // serves assets; names the bundle
 //	    inertia.Module(inertia.Config{}),        // the page protocol — bundle auto-discovered
 //	    inertia.Share(SharedAuth),
 //	    inertia.Page("GET", "/users", "Users/Index", NewListUsers),
@@ -46,12 +46,12 @@ type Config struct {
 	// Frontend is the embedded filesystem holding the built bundle, read for
 	// the Vite manifest (production asset tags + auto version). OPTIONAL: when
 	// nil, the engine auto-discovers the bundle registered by
-	// nexus.ServeFrontend, so the app names its frontend once. Set this only to
-	// read the manifest from a DIFFERENT source than ServeFrontend serves.
+	// nexus.Frontend, so the app names its frontend once. Set this only to
+	// read the manifest from a DIFFERENT source than nexus.Frontend serves.
 	Frontend fs.FS
 	// Root is the path within Frontend to the build output (e.g. "web/dist").
 	// The manifest is read from Root/.vite/manifest.json. Ignored when Frontend
-	// is nil (the discovered ServeFrontend root is used instead).
+	// is nil (the discovered nexus.Frontend root is used instead).
 	Root string
 	// RootView is the id of the root element the Inertia client mounts on.
 	// Defaults to "app". When pages render into index.html, the engine puts
@@ -62,7 +62,7 @@ type Config struct {
 	// from the manifest hash; a fixed string pins it.
 	Version string
 	// Head is added to the <head> of every full-page load. Pages render into
-	// the app's index.html (nexus.ServeFrontend's — built, or the Vite dev
+	// the app's index.html (nexus.Frontend's — built, or the Vite dev
 	// server's), which already carries its title, meta, stylesheets and
 	// asset tags, so Head is only for what index.html can't say. When there
 	// is no index.html (a module-only build, nexus({ input })), the engine
@@ -130,7 +130,7 @@ type ErrorProps struct {
 
 // Engine renders Inertia responses for an app. One is built per app via Module
 // and shared across requests. The asset head/version are resolved at render
-// time (see assets) so the bundle ServeFrontend registers is visible regardless
+// time (see assets) so the bundle nexus.Frontend registers is visible regardless
 // of option ordering, and a dev server that restarts on another port is
 // followed without a Go restart.
 type Engine struct {
@@ -140,7 +140,7 @@ type Engine struct {
 	encryptHistory bool // app-wide default for page.encryptHistory
 
 	// Frontend-resolution inputs. cfgFrontend/cfgRoot come from Config; when
-	// they're empty the engine auto-discovers the bundle ServeFrontend mounted
+	// they're empty the engine auto-discovers the bundle nexus.Frontend mounted
 	// via app.FrontendFS(), so the app names its frontend in one place.
 	app         *nexus.App
 	cfgFrontend fs.FS
@@ -203,7 +203,7 @@ func Module(cfg Config) nexus.Option {
 }
 
 // newEngine builds the engine from Config + Share providers + the app (used to
-// auto-discover ServeFrontend's bundle). Asset tags + version are resolved
+// auto-discover nexus.Frontend's bundle). Asset tags + version are resolved
 // at render time (see assets), not here, so option order doesn't matter.
 func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 	entry := cfg.Entry

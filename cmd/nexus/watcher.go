@@ -178,7 +178,7 @@ func (s *watchScope) separateModule(dir string) bool {
 // dirs that contain Go source — not artifact subdirs like web/dist
 // or web/sdk that vite would write to and loop us. shouldSkipDir
 // stays in force inside the ignore tree (no embed override) since
-// the frontend bytes don't need to reach the binary; ServeFrontend
+// the frontend bytes don't need to reach the binary; nexus.Frontend
 // reads them off disk in dev.
 func (s *watchScope) addDirs(w *fsnotify.Watcher, root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

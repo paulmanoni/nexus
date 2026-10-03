@@ -348,6 +348,9 @@ func fxEarlyOptions(cfg config.Runtime) di.Option {
 		// trivially cheap and the value is unused if no one
 		// depends on it.
 		di.Provide(notify.New),
+		// *Document is the frontend page shell (nexus.Frontend), for
+		// middleware and renderers that need it.
+		di.Provide(provideDocument),
 		// *slog.Logger is the app's logger (App.Logger), replaceable with
 		// WithLogger; installLogger resolves that choice before any user
 		// invoke runs. Apps that want zap's encoder wrap a zap core in an

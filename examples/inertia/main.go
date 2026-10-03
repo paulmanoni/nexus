@@ -34,7 +34,7 @@ func main() {
 	// blank-import aggregator that pulls in the pages package, and nexus.Run
 	// auto-drains its //nexus:inertia.Page registrations.
 	//
-	// ServeFrontend names + serves the bundle once; inertia.Module auto-discovers
+	// nexus.Frontend names + serves the bundle once; inertia.Module auto-discovers
 	// it and renders pages into its index.html (Vite's in dev, the built one
 	// in production), reading the manifest for the asset version.
 	nexus.Run(
@@ -43,7 +43,7 @@ func main() {
 			Dashboard:     config.Dashboard{Enabled: true, Name: "Inertia"},
 			Server:        config.Server{Addr: ":8080"},
 		},
-		nexus.ServeFrontend(webFS, "web/dist"),
+		nexus.Frontend(webFS, "web/dist"),
 		inertia.Module(inertia.Config{}),
 	)
 }

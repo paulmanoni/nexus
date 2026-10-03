@@ -386,7 +386,7 @@ func Raw(opt di.Option) Option {
 //
 //	func main() {
 //	    nexus.Boot(
-//	        nexus.ServeFrontend(webFS, "web/dist"),
+//	        nexus.Frontend(webFS, "web/dist"),
 //	        billing.Module,
 //	    )
 //	}

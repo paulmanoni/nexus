@@ -41,7 +41,7 @@ type devFrontend struct {
 // (package.json); otherwise nexus dev carries on with the Go app alone.
 // cfg supplies everything but the
 // directories: WebDir comes from the resolution, ServedDist is the
-// ServeFrontend root under pkgDir ("" when unknown).
+// nexus.Frontend root under pkgDir ("" when unknown).
 func startDevFrontend(ctx context.Context, pkgDir, flag, servedDist string, cfg devViteConfig) devFrontend {
 	dir, source := resolveFrontendDir(pkgDir, flag)
 	if dir == "" {
@@ -64,7 +64,7 @@ type devViteConfig struct {
 	WebDir   string // absolute frontend project dir (has package.json)
 	TOMLPath string // nexus.toml, for the [env] bridge
 	// ServedDist is the directory the app reads the hot file from — the
-	// ServeFrontend root under the package dir — or "" when unknown.
+	// nexus.Frontend root under the package dir — or "" when unknown.
 	ServedDist string
 	Verbose    bool
 	// Out receives Vite's filtered, [web]-prefixed log lines. Notes is
@@ -255,7 +255,7 @@ func (v *devVite) awaitHot(pid int, since time.Time) {
 			v.hot, v.hotDir = h, dir
 			v.mu.Unlock()
 			if v.cfg.ServedDist != "" && dir != v.cfg.ServedDist {
-				v.notef("Vite wrote its hot file to %s, but the app reads %s — set build.outDir in vite.config to the directory ServeFrontend serves, or the app will not use the dev server",
+				v.notef("Vite wrote its hot file to %s, but the app reads %s — set build.outDir in vite.config to the directory nexus.Frontend serves, or the app will not use the dev server",
 					vitehot.Path(dir), vitehot.Path(v.cfg.ServedDist))
 			}
 			return

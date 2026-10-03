@@ -30,7 +30,7 @@ func newBuildCmd(stdout, stderr io.Writer) *cobra.Command {
 
 If the app has a frontend with a package.json — the directory nexus dev
 would run: --frontend, else $NEXUS_FRONTEND_DIR, else the one the main
-package's ServeFrontend call names, else web/ — it is built first with
+package's nexus.Frontend call names, else web/ — it is built first with
 the project's own Vite: dependencies are installed if its Vite is
 missing, 'vite build' writes <frontend>/dist (and, when src/ssr.ts
 exists, 'vite build --ssr' writes <frontend>/dist/ssr), with nexus.toml's

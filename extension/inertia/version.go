@@ -10,7 +10,7 @@ import (
 )
 
 // manifestEntry is one record of a Vite build manifest. The parser is shared
-// with nexus.ServeFrontend (internal/vitemanifest), which reads the same file
+// with nexus.Frontend (internal/vitemanifest), which reads the same file
 // for cache policy.
 type manifestEntry = vitemanifest.Chunk
 
@@ -60,7 +60,7 @@ func loadManifest(fsys fs.FS, root string) (manifest, error) {
 //   - the entry's <script type="module">.
 //
 // Dynamic imports are intentionally NOT preloaded (they load on demand). Asset
-// URLs are under mount — App.FrontendMount, the path ServeFrontend serves the
+// URLs are under mount — App.FrontendMount, the path nexus.Frontend serves the
 // bundle at ("" for the site root) — so a route prefix or FrontendAt is
 // honoured. Returns "" when there is no entry.
 func (m manifest) headTags(mount string) string {
@@ -141,7 +141,7 @@ func (m manifest) headTags(mount string) string {
 func devTags(clientURL, entryURL, refreshURL string, react, reloadShim bool) string {
 	var b strings.Builder
 	// /__nexus/dev/script.js is the framework's live-reload shim (mounted by
-	// ServeFrontend under NEXUS_DEV=1): it full-reloads the browser on any file
+	// nexus.Frontend under NEXUS_DEV=1): it full-reloads the browser on any file
 	// change under the project root, so editing a Go page handler or a .vue/.tsx
 	// restarts the page without a manual refresh. The Vite client handles
 	// module loading + HMR.

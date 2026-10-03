@@ -247,7 +247,7 @@ func TestTemplateRootView(t *testing.T) {
 }
 
 // TestModuleOnlyBuildMount: a module-only build (a manifest, no index.html)
-// gets the synthesised document, its asset URLs under wherever ServeFrontend
+// gets the synthesised document, its asset URLs under wherever nexus.Frontend
 // serves the bundle.
 func TestModuleOnlyBuildMount(t *testing.T) {
 	cases := []struct {
@@ -333,7 +333,7 @@ func TestTemplateSSRNonceLoaderInMount(t *testing.T) {
 	mustNotContain(t, body, `.loader{margin:auto}`)
 }
 
-// A separate Inertia bundle (Config.Frontend) is not ServeFrontend's: its
+// A separate Inertia bundle (Config.Frontend) is not nexus.Frontend's: its
 // pages get a synthesised document with its own tags rooted at "/", never the
 // other bundle's index.html or mount path.
 func TestConfigFrontendIgnoresServeFrontendDocument(t *testing.T) {

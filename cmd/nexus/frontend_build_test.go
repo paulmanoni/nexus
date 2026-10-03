@@ -195,7 +195,7 @@ func TestFrontendBuild_FrontendDirOverride(t *testing.T) {
 }
 
 // nexus build must build the frontend nexus dev runs: the one main.go's
-// ServeFrontend call names, not web/. Building web/ (or nothing) there
+// nexus.Frontend call names, not web/. Building web/ (or nothing) there
 // would embed a stale dist.
 func TestFrontendBuild_UsesServeFrontendDir(t *testing.T) {
 	t.Setenv("NEXUS_FRONTEND_DIR", "")
@@ -215,7 +215,7 @@ import (
 //go:embed all:frontend/dist
 var webFS embed.FS
 
-func main() { nexus.Boot(nexus.ServeFrontend(webFS, "frontend/dist")) }
+func main() { nexus.Boot(nexus.Frontend(webFS, "frontend/dist")) }
 `)
 	var out bytes.Buffer
 	if err := frontendBuild(context.Background(), root, "", &out, &out); err != nil {

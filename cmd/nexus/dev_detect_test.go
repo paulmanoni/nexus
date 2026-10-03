@@ -7,7 +7,7 @@ import (
 )
 
 // TestDetectFrontendDir covers the auto-spawn discovery path:
-// nexus dev scans the user's main package for a ServeFrontend
+// nexus dev scans the user's main package for a nexus.Frontend
 // call and derives the frontend project root from the embed-root
 // argument. Each case writes a small main.go fixture, runs the
 // detector, and asserts the inferred dir matches.
@@ -18,21 +18,21 @@ func TestDetectFrontendDir(t *testing.T) {
 		want string
 	}{
 		{
-			"qualified ServeFrontend with web/dist",
+			"qualified nexus.Frontend with web/dist",
 			`package main
 import "github.com/paulmanoni/nexus/v2"
 //go:embed web/dist
 var distFS = "stub"
-func main() { nexus.ServeFrontend(distFS, "web/dist") }
+func main() { nexus.Frontend(distFS, "web/dist") }
 `,
 			"web",
 		},
 		{
-			"unqualified (dot-import) ServeFrontend",
+			"unqualified (dot-import) nexus.Frontend",
 			`package main
 import . "github.com/paulmanoni/nexus/v2"
 var distFS = "stub"
-func main() { ServeFrontend(distFS, "client/build") }
+func main() { nexus.Frontend(distFS, "client/build") }
 `,
 			"client",
 		},
@@ -41,7 +41,7 @@ func main() { ServeFrontend(distFS, "client/build") }
 			`package main
 import "github.com/paulmanoni/nexus/v2"
 var distFS = "stub"
-func main() { nexus.ServeFrontend(distFS, "dist") }
+func main() { nexus.Frontend(distFS, "dist") }
 `,
 			"dist",
 		},
@@ -53,12 +53,12 @@ var (
     distFS = "stub"
     root   = "web/dist"
 )
-func main() { nexus.ServeFrontend(distFS, root) }
+func main() { nexus.Frontend(distFS, root) }
 `,
 			"",
 		},
 		{
-			"no ServeFrontend at all",
+			"no nexus.Frontend at all",
 			`package main
 func main() {}
 `,
@@ -112,7 +112,7 @@ func main() { frontend.Plugin(frontend.Config{Root: root, FS: fs}) }
 			"",
 		},
 		{
-			"both ServeFrontend and frontend.Plugin → ServeFrontend wins (legacy first)",
+			"both nexus.Frontend and frontend.Plugin → nexus.Frontend wins (legacy first)",
 			`package main
 import (
     "github.com/paulmanoni/nexus/v2"
@@ -120,7 +120,7 @@ import (
 )
 var distFS = "stub"
 func main() {
-    nexus.ServeFrontend(distFS, "old/dist")
+    nexus.Frontend(distFS, "old/dist")
     frontend.Plugin(frontend.Config{Root: "new", FS: distFS})
 }
 `,
@@ -147,7 +147,7 @@ func TestDetectFrontendDir_SkipsTestsAndGenerated(t *testing.T) {
 		`package main
 import "github.com/paulmanoni/nexus/v2"
 var fakeFS = "stub"
-func init() { nexus.ServeFrontend(fakeFS, "STALE/dist") }
+func init() { nexus.Frontend(fakeFS, "STALE/dist") }
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func init() { nexus.ServeFrontend(fakeFS, "STALE/dist") }
 		`package main
 import "github.com/paulmanoni/nexus/v2"
 var testFS = "stub"
-func TestX() { nexus.ServeFrontend(testFS, "TEST/dist") }
+func TestX() { nexus.Frontend(testFS, "TEST/dist") }
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestX() { nexus.ServeFrontend(testFS, "TEST/dist") }
 		`package main
 import "github.com/paulmanoni/nexus/v2"
 var distFS = "stub"
-func main() { nexus.ServeFrontend(distFS, "real/dist") }
+func main() { nexus.Frontend(distFS, "real/dist") }
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

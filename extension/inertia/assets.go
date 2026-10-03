@@ -112,7 +112,7 @@ func hotProblem(reader *vitehot.Reader, err error) *assetProblem {
 }
 
 // mount is the URL path the bundle is served under (App.FrontendMount). A
-// Config.Frontend bundle is not the one ServeFrontend mounts, so its assets
+// Config.Frontend bundle is not the one nexus.Frontend mounts, so its assets
 // stay rooted at "/".
 func (e *Engine) mount() string {
 	if !e.ownsDocument() {
@@ -121,9 +121,9 @@ func (e *Engine) mount() string {
 	return e.app.FrontendMount()
 }
 
-// ownsDocument reports whether the pages belong to the bundle ServeFrontend
+// ownsDocument reports whether the pages belong to the bundle nexus.Frontend
 // serves, so its index.html is theirs. With Config.Frontend the pages come
-// from a separate bundle, and ServeFrontend's document (another app's shell)
+// from a separate bundle, and nexus.Frontend's document (another app's shell)
 // must not wrap them.
 func (e *Engine) ownsDocument() bool {
 	return e.app != nil && e.cfgFrontend == nil
@@ -162,7 +162,7 @@ func (e *Engine) noMount(fromDev bool, hot *vitehot.Hot) *assetProblem {
 	if fromDev && hot != nil {
 		source = "the Vite dev server's index.html (" + hot.URL("index.html") + ")"
 	} else if _, root, ok := e.app.FrontendFS(); ok {
-		source = "the built index.html (" + path.Join(root, "index.html") + " in the bundle nexus.ServeFrontend serves)"
+		source = "the built index.html (" + path.Join(root, "index.html") + " in the bundle nexus.Frontend serves)"
 	}
 	return &assetProblem{
 		title: "The page document has no mount element",
@@ -206,7 +206,7 @@ func isJSXEntry(entry string) bool {
 }
 
 // frontendSource is the bundle the manifest is read from: Config.Frontend, or
-// the one ServeFrontend registered.
+// the one nexus.Frontend registered.
 func (e *Engine) frontendSource() (fs.FS, string, bool) {
 	if e.cfgFrontend != nil {
 		return e.cfgFrontend, e.cfgRoot, true
@@ -270,13 +270,13 @@ func (e *Engine) missingAssets(reader *vitehot.Reader, man manifest, manErr erro
 			p.detail = append(p.detail, "No Vite dev server: hot file "+reader.Path()+" not found.")
 		}
 	default:
-		p.detail = append(p.detail, "No Vite dev server: no hot file is watched, because nexus.ServeFrontend is not registered.")
+		p.detail = append(p.detail, "No Vite dev server: no hot file is watched, because nexus.Frontend is not registered.")
 	}
 	_, root, _ := e.frontendSource()
 	tried := strings.Join(manifestCandidates(root), ", ")
 	switch {
 	case !sourced:
-		p.detail = append(p.detail, "No build manifest: no frontend bundle is registered (nexus.ServeFrontend or inertia.Config.Frontend).")
+		p.detail = append(p.detail, "No build manifest: no frontend bundle is registered (nexus.Frontend or inertia.Config.Frontend).")
 	case man.found:
 		p.detail = append(p.detail, "Build manifest "+man.path+" has no entry chunk (no record with \"isEntry\": true and a file).")
 	case manErr != nil && !errors.Is(manErr, fs.ErrNotExist):

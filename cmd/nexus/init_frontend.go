@@ -21,7 +21,7 @@ import (
 // target: the web/ project (package.json, vite.config.ts with
 // nexus-vite-plugin, tsconfig.json, index.html, src entry, the committed
 // web/dist/index.html stub, web/sdk/nexus-vite-plugin.{js,d.ts}) and a
-// patched main.go that embeds web/dist and passes it to ServeFrontend.
+// patched main.go that embeds web/dist and passes it to nexus.Frontend.
 // Used by `nexus init --frontend=vue|react`.
 //
 // An existing web/ is refused unless force is set. With force the project
@@ -32,7 +32,7 @@ import (
 // without losing its sources or its settings.
 //
 // The main.go patch is AST-based — we parse the file with
-// go/parser, insert the missing import + embed decl + ServeFrontend
+// go/parser, insert the missing import + embed decl + nexus.Frontend
 // argument inside the existing app-entry call (nexus.Run, nexus.Boot,
 // or nexus.BootFrom), then write the reformatted source back. Robust
 // against whitespace + comment variations; fails clearly when the
@@ -103,7 +103,7 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 		return fmt.Errorf("nexus init --frontend: %w", err)
 	}
 
-	// 3. Patch main.go to wire the embed + ServeFrontend call.
+	// 3. Patch main.go to wire the embed + nexus.Frontend call.
 	patched, err := patchMainGoForFrontend(mainGoPath)
 	if err != nil {
 		return fmt.Errorf("nexus init --frontend: patch main.go: %w", err)
@@ -289,7 +289,7 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 //
 //  1. "embed" in the import list
 //  2. //go:embed all:web/dist + var webFS embed.FS at file scope
-//  3. nexus.ServeFrontend(webFS, "web/dist") as an extra
+//  3. nexus.Frontend(webFS, "web/dist") as an extra
 //     argument to the nexus.Run(...) call
 //
 // Returns (true, nil) when changes were written, (false, nil) when
@@ -307,7 +307,7 @@ func renderFrontendOnly(opts scaffoldOpts) (map[string]string, error) {
 //     formatted source after the imports (insertEmbedDecl) — an AST
 //     comment without a position would be dropped by the printer
 //   - main func body: find the nexus.Run call expression, insert
-//     a ServeFrontend(...) ast.CallExpr in its arg list after the
+//     a nexus.Frontend(...) ast.CallExpr in its arg list after the
 //     Config literal (the first positional arg)
 func patchMainGoForFrontend(path string) (bool, error) {
 	fset := token.NewFileSet()
@@ -333,7 +333,7 @@ func patchMainGoForFrontend(path string) (bool, error) {
 		added = true
 	}
 
-	// Step 3: ensure nexus.ServeFrontend is one of nexus.Run's args.
+	// Step 3: ensure nexus.Frontend is one of nexus.Run's args.
 	patched, err := ensureServeFrontendArg(file)
 	if err != nil {
 		return false, fmt.Errorf("locate nexus.Run: %w", err)
@@ -459,12 +459,12 @@ func hasVarDecl(file *ast.File, name string) bool {
 
 // ensureServeFrontendArg finds the app-entry call expression inside
 // func main — nexus.Run(...), nexus.Boot(...), or nexus.BootFrom(...)
-// — and inserts nexus.ServeFrontend(webFS, "web/dist") as a new
-// argument if one isn't already present. ServeFrontend is an Option,
+// — and inserts nexus.Frontend(webFS, "web/dist") as a new
+// argument if one isn't already present. nexus.Frontend is an Option,
 // so it slots in as just another trailing argument in every form.
 //
 // Returns (true, nil) when an arg was added; (false, nil) when the
-// call already had ServeFrontend; (false, err) when no entry call
+// call already had nexus.Frontend; (false, err) when no entry call
 // was found (the file's shape doesn't match what we know how to patch).
 //
 // We don't try to disambiguate multiple entry calls — the first one
@@ -500,23 +500,23 @@ func ensureServeFrontendArg(file *ast.File) (bool, error) {
 	}
 
 	// Check whether one of the existing args is already
-	// nexus.ServeFrontend(...).
+	// nexus.Frontend(...).
 	for _, arg := range found.Args {
 		if call, ok := arg.(*ast.CallExpr); ok {
 			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 				if ident, ok := sel.X.(*ast.Ident); ok &&
-					ident.Name == "nexus" && sel.Sel.Name == "ServeFrontend" {
+					ident.Name == "nexus" && sel.Sel.Name == "Frontend" {
 					return false, nil
 				}
 			}
 		}
 	}
 
-	// Build:  nexus.ServeFrontend(webFS, "web/dist")
+	// Build:  nexus.Frontend(webFS, "web/dist")
 	newArg := &ast.CallExpr{
 		Fun: &ast.SelectorExpr{
 			X:   &ast.Ident{Name: "nexus"},
-			Sel: &ast.Ident{Name: "ServeFrontend"},
+			Sel: &ast.Ident{Name: "Frontend"},
 		},
 		Args: []ast.Expr{
 			&ast.Ident{Name: "webFS"},

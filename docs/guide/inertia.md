@@ -19,7 +19,7 @@ var webFS embed.FS
 
 func main() {
     nexus.Boot(
-        nexus.ServeFrontend(webFS, "web/dist"),
+        nexus.Frontend(webFS, "web/dist"),
         inertia.Module(inertia.Config{}),
         inertia.Share(SharedAuth),
         inertia.Page("GET", "/users", "Users/Index", NewListUsers),

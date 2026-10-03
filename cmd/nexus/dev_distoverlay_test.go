@@ -55,7 +55,7 @@ func TestDistStubReplacements(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(top) == 0 {
-		t.Error("top-level index.html stub is empty; ServeFrontend needs it to parse")
+		t.Error("top-level index.html stub is empty; nexus.Frontend needs it to parse")
 	}
 	nested, err := os.ReadFile(rep[filepath.Join(dist, "nested", "index.html")])
 	if err != nil {
@@ -132,8 +132,8 @@ func TestDetectServeFrontendRoot(t *testing.T) {
 		src  string
 		want string
 	}{
-		{"serve frontend", "package main\n\nfunc main() { nexus.Boot(nexus.ServeFrontend(webFS, \"web/dist\")) }\n", "web/dist"},
-		{"custom root", "package main\n\nfunc main() { nexus.Boot(nexus.ServeFrontend(webFS, \"ui/build\")) }\n", "ui/build"},
+		{"serve frontend", "package main\n\nfunc main() { nexus.Boot(nexus.Frontend(webFS, \"web/dist\")) }\n", "web/dist"},
+		{"custom root", "package main\n\nfunc main() { nexus.Boot(nexus.Frontend(webFS, \"ui/build\")) }\n", "ui/build"},
 		{"no call", "package main\n\nfunc main() {}\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

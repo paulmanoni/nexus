@@ -24,7 +24,7 @@ import (
 )
 
 // assetApp boots an in-process app that registers its bundle through
-// ServeFrontend (so App.ViteHot watches <tmp>/dist) and one page at /p. It
+// nexus.Frontend (so App.ViteHot watches <tmp>/dist) and one page at /p. It
 // returns the app and the on-disk dist dir the hot file lives under. The
 // bundle gets a stub index.html unless files carries one.
 func assetApp(t *testing.T, env string, files fstest.MapFS, cfg inertia.Config) (*nexustest.App, string) {
@@ -39,14 +39,14 @@ func assetApp(t *testing.T, env string, files fstest.MapFS, cfg inertia.Config) 
 }
 
 // bootAssets is assetApp without the index.html default: files is the whole
-// bundle, and ServeFrontend takes fopts.
+// bundle, and nexus.Frontend takes fopts.
 func bootAssets(t *testing.T, config config.Runtime, files fstest.MapFS, cfg inertia.Config, fopts ...nexus.FrontendOption) (*nexustest.App, string) {
 	t.Helper()
 	t.Setenv(dev.Env, "")
 	root := t.TempDir()
 	t.Setenv(dev.RootEnv, root)
 	app := nexustest.New(t, config,
-		nexus.ServeFrontend(files, "dist", fopts...),
+		nexus.Frontend(files, "dist", fopts...),
 		inertia.Module(cfg),
 		inertia.Page("GET", "/p", "P", NewWidgets),
 	)

@@ -7,7 +7,7 @@ import (
 )
 
 // devStubIndexHTML is what the stubbed embed serves as index.html. It only has
-// to exist and parse: ServeFrontend reads index.html at boot and fails fast
+// to exist and parse: nexus.Frontend reads index.html at boot and fails fast
 // without it, and under NEXUS_DEV it re-reads the real file from disk per
 // request anyway, so nothing ever renders these bytes.
 const devStubIndexHTML = "<!doctype html><title>nexus dev</title>\n"
@@ -18,13 +18,13 @@ const devStubIndexHTML = "<!doctype html><title>nexus dev</title>\n"
 // without touching a line of the user's code — no build tags, no scaffold
 // change, existing apps included.
 //
-// Why it's safe: under NEXUS_DEV=1 ServeFrontend swaps the embed.FS for
+// Why it's safe: under NEXUS_DEV=1 nexus.Frontend swaps the embed.FS for
 // os.DirFS and serves the real files from the working tree (whose pages
 // load their modules from Vite while it runs). The embedded copy is dead weight
 // during dev — it just gets relinked on every save. On a 9.5MB/198-file
 // bundle that was ~0.5s of every rebuild.
 //
-// Scope is deliberately narrow: ONLY the tree a ServeFrontend call names. Apps
+// Scope is deliberately narrow: ONLY the tree a nexus.Frontend call names. Apps
 // embed assets they genuinely read at runtime (fonts for PDF rendering, seed
 // data, templates); stubbing those would break the app in dev in ways that
 // look like bugs in the user's code.

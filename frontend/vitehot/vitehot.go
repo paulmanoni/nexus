@@ -6,7 +6,7 @@
 // The file lives at <outDir>/.vite/nexus-hot.json — beside the manifest
 // `vite build` writes — because the build output directory is the one path
 // both sides already share: Vite's build.outDir and the root the app passes
-// to nexus.ServeFrontend.
+// to nexus.Frontend.
 //
 // Schema, version 1:
 //

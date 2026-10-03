@@ -93,6 +93,7 @@ var migrateV2Symbols = []migrateSymbol{
 
 	// 1:1 replacements (docs/design/v2.md §9).
 	{From: "", Old: "UseVolume", To: "", New: "DeclareVolume"},
+	{From: "", Old: "ServeFrontend", To: "", New: "Frontend"},
 	{From: "extension/auth", Old: "Describe", To: "extension/auth", New: "InspectExtractor"},
 }
 

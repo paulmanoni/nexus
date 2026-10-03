@@ -18,7 +18,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
-// Dev-only live reload. When ServeFrontend boots under NEXUS_DEV=1,
+// Dev-only live reload. When nexus.Frontend boots under NEXUS_DEV=1,
 // it mounts two extra routes:
 //
 //	GET /__nexus/dev/reload       SSE — opens with a `boot` event naming
@@ -562,7 +562,7 @@ func devReloadScript() httpx.HandlerFunc {
 
 // WatchDir returns the absolute path of the directory
 // the dev-reload fsnotify watcher should track. Honors the same
-// NEXUS_DEV_ROOT env var ServeFrontend reads in dev mode so the
+// NEXUS_DEV_ROOT env var nexus.Frontend reads in dev mode so the
 // watcher and the disk-FS swap point at the same tree.
 //
 // Returns "" when neither the env var nor the working directory

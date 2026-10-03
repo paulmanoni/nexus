@@ -205,7 +205,7 @@ var topicSummaries = map[string]string{
 	"rest":        "AsRest — REST endpoints with reflective handlers",
 	"graphql":     "AsQuery / AsMutation — auto-mounted GraphQL fields",
 	"ws":          "AsWS — typed WebSocket envelopes, session fan-out",
-	"frontend":    "Vite frontend: ServeFrontend, the dev handshake, nexus dev/build",
+	"frontend":    "Vite frontend: nexus.Frontend, the dev handshake, nexus dev/build",
 	"inertia":     "extension/inertia — Inertia.js pages: props handlers, no API",
 	"views":       "nexus/view — reactive templ pages: signals, shards, live pages, islands",
 	"jobs":        "extension/jobs — background jobs: queued, retried, cancellable, with progress",
@@ -799,7 +799,7 @@ comes over HTTP only; updates travel as compressed token patches (values,
 reused markup, a per-connection dictionary). A dropped socket reconnects with
 backoff, queues events meanwhile, and gets a fresh mount.
 
-Islands mount a component of the Vite frontend (the one ServeFrontend
+Islands mount a component of the Vite frontend (the one nexus.Frontend
 serves) into a templ page. Each file under web/src/islands is one, named by
 its path without the extension: .vue mounts with Vue, .tsx/.jsx with React,
 .ts/.js exports mount(el, props, ctx) → { update(props), unmount() }.
@@ -845,14 +845,14 @@ DI, auth gates, tracing and metrics behave exactly like any REST endpoint.
     var webFS embed.FS
 
     nexus.Boot(
-        nexus.ServeFrontend(webFS, "web/dist"),        // names the bundle once
-        inertia.Module(inertia.Config{}),              // finds it via ServeFrontend
+        nexus.Frontend(webFS, "web/dist"),        // names the bundle once
+        inertia.Module(inertia.Config{}),              // finds it via nexus.Frontend
         inertia.Share(SharedAuth),                     // props on every page
         inertia.Page("GET", "/users", "Users/Index", NewListUsers),
     )
 
 Config.Frontend/Root are only for reading the manifest from a different
-source than ServeFrontend serves.
+source than nexus.Frontend serves.
 
 Handler returns props (this IS page.props), not a JSON body:
 
@@ -1099,7 +1099,7 @@ jar persists across visits, so flash-error and session flows work like a browser
 
     func TestUsersPage(t *testing.T) {
         c := inertiatest.New(t, config.Runtime{},
-            nexus.ServeFrontend(dist, "dist"),
+            nexus.Frontend(dist, "dist"),
             inertia.Module(inertia.Config{}),
             inertia.Page("GET", "/users", "Users/Index", NewListUsers),
         )
@@ -1637,7 +1637,7 @@ middleware is ignored (with a warning log).
 	"frontend": `
 FRONTEND (Vite, embedded in the binary)
 
-  nexus.ServeFrontend(fs, root, opts...)
+  nexus.Frontend(fs, root, opts...)
 
 The frontend is an ordinary npm-managed Vite project under web/ (any
 framework, plugin or library); the built web/dist is embedded in the Go
@@ -1649,16 +1649,16 @@ to run the binary.
     //go:embed all:web/dist
     var webFS embed.FS
 
-    nexus.Boot(nexus.ServeFrontend(webFS, "web/dist") /*, modules… */)
+    nexus.Boot(nexus.Frontend(webFS, "web/dist") /*, modules… */)
 
-ServeFrontend is SPA-aware: extensionless paths fall back to index.html,
+nexus.Frontend is SPA-aware: extensionless paths fall back to index.html,
 REST/GraphQL/WebSocket routes win on conflict. A file is cached
 immutable only when the Vite manifest lists it and its name carries a
 content hash; everything else (and the shell) revalidates with an ETag.
 Production boot fails fast when the bundle has neither index.html nor
 .vite/manifest.json; in development an unbuilt bundle gets a placeholder.
 
-    nexus.ServeFrontend(webFS, "web/dist", nexus.FrontendAt("/admin"))
+    nexus.Frontend(webFS, "web/dist", nexus.FrontendAt("/admin"))
 
 nexus-vite-plugin connects the two sides — web/sdk/nexus-vite-plugin.js,
 written by nexus new/init and refreshed by nexus dev/build before Vite
@@ -1695,7 +1695,7 @@ Commands:
 
 Which dir (nexus dev and nexus build alike): --frontend (relative to the
 working directory) > NEXUS_FRONTEND_DIR (relative to the project) > the
-dir main.go's ServeFrontend call names > web/ when it has a
+dir main.go's nexus.Frontend call names > web/ when it has a
 package.json. A dir without package.json is
 served as-is and never built; "nexus init --frontend vue --force" turns it
 into a Vite project — it adds the Vite files, keeps the sources, and saves
@@ -1840,7 +1840,7 @@ CLI CHEATSHEET
 
   nexus init [dir]           Add a Vite frontend (web/) to an EXISTING
                              project and patch main.go to embed web/dist
-                             and serve it with ServeFrontend.
+                             and serve it with nexus.Frontend.
                              --frontend vue|react  (required)
                              --force               add the project files to
                                                    an existing web/, keeping
@@ -1891,7 +1891,7 @@ CLI CHEATSHEET
                              --addr host:port   listen address override
                              --frontend <dir>   frontend dir (cwd-relative);
                                                 beats NEXUS_FRONTEND_DIR and
-                                                the ServeFrontend scan
+                                                the nexus.Frontend scan
                              --dist             keep web/dist rebuilt with
                                                 vite build (+ the SSR build)
                                                 in the background
@@ -1910,7 +1910,7 @@ CLI CHEATSHEET
                                                 web/dist from disk, so the
                                                 embedded copy is dead weight
                                                 relinked on every save. Scoped
-                                                to the ServeFrontend tree only.
+                                                to the nexus.Frontend tree only.
 
   nexus build                Build one binary. With a frontend package.json:
                              deps installed when needed (npm ci, pnpm/yarn/
@@ -2284,7 +2284,7 @@ warns on stderr. See: nexus help client.
 
 Plays cleanly with the rest of the framework:
 
-  - ServeFrontend: SDK routes register before the SPA's NoRoute
+  - nexus.Frontend: SDK routes register before the SPA's NoRoute
     fallback, so /__nexus/client/* never gets swallowed.
   - Multiple backends: construct two NexusClient instances from
     different origins; each fetches its own manifest + carries

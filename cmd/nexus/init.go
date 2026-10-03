@@ -25,7 +25,7 @@ func newInitCmd(stdout, _ io.Writer) *cobra.Command {
 package.json, vite.config.ts (with nexus-vite-plugin), tsconfig.json,
 index.html, src/main.{ts,tsx} + App.{vue,tsx}, sdk/nexus-vite-plugin.{js,d.ts}
 and a committed dist/index.html stub — and patches main.go to embed
-web/dist and serve it with nexus.ServeFrontend. nexus dev installs the
+web/dist and serve it with nexus.Frontend. nexus dev installs the
 dependencies on its first run (npm; Node.js 20+).
 
 Refuses an existing web/ unless --force. With --force the project files

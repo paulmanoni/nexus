@@ -64,7 +64,7 @@ type simpleBuildOptions struct {
 //     no package.json (a pure-Go app, or a static dist).
 //  2. buildHandlerOverlay scans //nexus: annotations into a temp overlay.
 //  3. go build compiles the main package. The app's own //go:embed (the
-//     `//go:embed all:web/dist` next to ServeFrontend) picks up the fresh
+//     `//go:embed all:web/dist` next to nexus.Frontend) picks up the fresh
 //     bundle, and nexus.toml is baked in via -ldflags.
 func runSimpleBuild(opts simpleBuildOptions) error {
 	pkg := opts.MainPackage

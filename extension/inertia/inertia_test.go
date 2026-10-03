@@ -653,8 +653,8 @@ func TestVersionMismatch(t *testing.T) {
 }
 
 // TestFrontendAutoDiscovery asserts inertia.Config{} (no Frontend) resolves its
-// manifest from the bundle ServeFrontend registered — the app names the bundle
-// once, via ServeFrontend, and the engine discovers it through App.FrontendFS.
+// manifest from the bundle nexus.Frontend registered — the app names the bundle
+// once, via nexus.Frontend, and the engine discovers it through App.FrontendFS.
 func TestFrontendAutoDiscovery(t *testing.T) {
 	addr := "127.0.0.1:8832"
 	fsys := fstest.MapFS{
@@ -664,7 +664,7 @@ func TestFrontendAutoDiscovery(t *testing.T) {
 	ready := make(chan struct{})
 	go func() {
 		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10},
-			nexus.ServeFrontend(fsys, "dist"), // names + serves the bundle once
+			nexus.Frontend(fsys, "dist"), // names + serves the bundle once
 			inertia.Module(inertia.Config{}),  // no Frontend → auto-discovered
 			inertia.Page("GET", "/p", "P", NewWidgets),
 			nexus.Invoke(func() { close(ready) }),

@@ -15,7 +15,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
-// minimalFS is enough to satisfy nexus.ServeFrontend's "index.html
+// minimalFS is enough to satisfy nexus.Frontend's "index.html
 // exists" boot check when the Plugin's runtime side is exercised.
 // Most tests stub the FS but never actually boot Fx, so the
 // in-memory fstest map is fine.

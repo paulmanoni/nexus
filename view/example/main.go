@@ -30,7 +30,7 @@ func app() []nexus.Option {
 		pets.Module,
 		view.Assets("/templui/js/", templui),
 		view.Assets("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets")))),
-		nexus.ServeFrontend(webFS, "web/dist"),
+		nexus.Frontend(webFS, "web/dist"),
 	}
 }
 

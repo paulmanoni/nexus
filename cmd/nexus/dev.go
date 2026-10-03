@@ -101,7 +101,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 	cmd.Flags().BoolVar(&noWatch, "no-watch", false,
 		"disable file-watch auto-rebuild (single-process mode only)")
 	cmd.Flags().StringVar(&frontendDir, "frontend", "",
-		"frontend project dir (default: found from the app's ServeFrontend call, or NEXUS_FRONTEND_DIR); with a package.json, its Vite runs alongside the app, logging under [web]")
+		"frontend project dir (default: found from the app's nexus.Frontend call, or NEXUS_FRONTEND_DIR); with a package.json, its Vite runs alongside the app, logging under [web]")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and Vite's full startup banner (all suppressed by default in dev)")
 	cmd.Flags().BoolVar(&fast, "fast", true,
@@ -270,7 +270,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	}
 
 	// The package directory, absolute: every path the source names (the
-	// ServeFrontend root, a frontend.Plugin Root) is relative to it, not to
+	// nexus.Frontend root, a frontend.Plugin Root) is relative to it, not to
 	// wherever nexus dev was started — `nexus dev ./examples/app` from the
 	// repo root must find ./examples/app/web, not ./web.
 	pkgDir, err := filepath.Abs(targetDir(target))
@@ -279,7 +279,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	}
 
 	// distStubRoot names the //go:embed tree the dev build replaces with
-	// stubs — the bundle ServeFrontend mounts, which under NEXUS_DEV is read
+	// stubs — the bundle nexus.Frontend mounts, which under NEXUS_DEV is read
 	// from disk anyway (and whose pages load their modules from Vite while
 	// it runs). Relinking it on every save is pure cost; see
 	// distStubReplacements. Relative to the package, like the source says.
@@ -313,7 +313,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	}()
 
 	// The frontend project (--frontend, NEXUS_FRONTEND_DIR, or the
-	// ServeFrontend / frontend.Plugin call in the source) and, when it has
+	// nexus.Frontend / frontend.Plugin call in the source) and, when it has
 	// a package.json, its own Vite. Vite lives for the whole session — Go
 	// rebuilds don't bounce it; it has its own watcher — and the app finds
 	// it through the hot file, so nothing about it is passed to the child.
@@ -613,7 +613,7 @@ func startDevChild(ctx context.Context, binPath, target, addr, devStatePath stri
 	cmd.Stdout = newAddrFinder(outW, detectedCh)
 	cmd.Stderr = newAddrFinder(errW, detectedCh)
 	cmd.Stdin = os.Stdin
-	// Hand the child a NEXUS_DEV signal so ServeFrontend swaps its
+	// Hand the child a NEXUS_DEV signal so nexus.Frontend swaps its
 	// embed.FS for os.DirFS — a watching frontend toolchain (vite
 	// build --watch, esbuild --watch) can update web/dist/ without
 	// forcing a Go recompile. NEXUS_DEV_ROOT pins the disk root to

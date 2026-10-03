@@ -89,7 +89,7 @@ var (
 //
 // The loader comes from the Vite dev server while one runs (nexus dev), and
 // from the build's manifest otherwise; the frontend is the one
-// nexus.ServeFrontend serves. Without one — no frontend, or a build without
+// nexus.Frontend serves. Without one — no frontend, or a build without
 // this island — the children stay, the reason is logged once and set as the
 // element's data-error, and the page still renders: in a Go test, say.
 func NewIsland[P any](name string) func(props P, opts ...IslandOption) templ.Component {
@@ -220,7 +220,7 @@ func islandsSource(app *nexus.App, name string) (source, error) {
 	}
 	fsys, root, ok := app.FrontendFS()
 	if !ok {
-		return source{}, errors.New("no frontend: islands are built by the Vite project nexus.ServeFrontend serves")
+		return source{}, errors.New("no frontend: islands are built by the Vite project nexus.Frontend serves")
 	}
 	b, err := islandsBuild(app, fsys, root)
 	if err != nil {

@@ -31,9 +31,9 @@ const frontendEnvVar = "NEXUS_FRONTEND_ENV"
 //
 //  1. --frontend (flag, as typed: relative to the working directory);
 //  2. NEXUS_FRONTEND_DIR (relative to the package dir);
-//  3. the ServeFrontend / frontend.Plugin call in the package's source;
+//  3. the nexus.Frontend / frontend.Plugin call in the package's source;
 //  4. <pkgDir>/web when it holds a package.json — for an app whose
-//     ServeFrontend root is not a string literal.
+//     nexus.Frontend root is not a string literal.
 //
 // Returns "" when there is no frontend, else an absolute path and where it
 // came from (for --verbose).

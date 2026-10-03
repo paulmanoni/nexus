@@ -14,10 +14,10 @@ import (
 // frontend-mount call shapes and returns the conventional frontend
 // project root:
 //
-//	nexus.ServeFrontend(distFS, "web/dist")              → "web"
+//	nexus.Frontend(distFS, "web/dist")              → "web"
 //	frontend.Plugin(frontend.Config{Root: "web", ...})   → "web"
 //
-// The legacy ServeFrontend form is checked first to preserve the
+// The legacy nexus.Frontend form is checked first to preserve the
 // pre-extension behavior. The frontend.Plugin form is the new
 // canonical shape — its Root field directly names the frontend
 // project dir, no parent-stripping needed.
@@ -27,8 +27,8 @@ import (
 // or the parser can't read the file. nexus dev falls through to the
 // no-frontend path when this returns empty, so an unparseable
 // source file never breaks the dev loop.
-// detectServeFrontendRoot returns the embed root a ServeFrontend call names
-// literally — "web/dist" for nexus.ServeFrontend(distFS, "web/dist") — or ""
+// detectServeFrontendRoot returns the embed root a nexus.Frontend call names
+// literally — "web/dist" for nexus.Frontend(distFS, "web/dist") — or ""
 // when there's no such call or the argument isn't a string literal.
 //
 // detectFrontendDir strips the trailing component to get the project dir; this
@@ -84,7 +84,7 @@ func detectFrontendDir(pkgDir string) string {
 			continue
 		}
 		if root := serveFrontendRoot(f); root != "" {
-			// ServeFrontend's second arg is "<dir>/dist" by
+			// nexus.Frontend's second arg is "<dir>/dist" by
 			// convention — strip the trailing component to get the
 			// project root. Single-segment paths (already at the
 			// project root) fall back to themselves.
@@ -104,7 +104,7 @@ func detectFrontendDir(pkgDir string) string {
 }
 
 // serveFrontendRoot walks f for the second argument of any
-// ServeFrontend call expression and returns its string-literal
+// nexus.Frontend call expression and returns its string-literal
 // value — or "" when no such call exists, or the second arg is
 // non-literal.
 func serveFrontendRoot(f *ast.File) string {
@@ -137,20 +137,17 @@ func serveFrontendRoot(f *ast.File) string {
 	return found
 }
 
-// isServeFrontendCall recognizes ServeFrontend, nexus.ServeFrontend,
-// and dot-imported ServeFrontend selectors. We don't try to verify
-// the package — anyone naming a helper ServeFrontend in their main
-// package would be picked up too, which is fine: the resulting
-// auto-spawn just tries to watch a real directory and bails if the
-// path doesn't exist.
+// isServeFrontendCall recognizes nexus.Frontend(...). The selector's
+// package must be spelled nexus: Frontend alone is too common a name to
+// claim, and an aliased import is rare enough to fall back to the default
+// web/ dir.
 func isServeFrontendCall(fun ast.Expr) bool {
-	switch f := fun.(type) {
-	case *ast.SelectorExpr:
-		return f.Sel != nil && f.Sel.Name == "ServeFrontend"
-	case *ast.Ident:
-		return f.Name == "ServeFrontend"
+	f, ok := fun.(*ast.SelectorExpr)
+	if !ok || f.Sel == nil || f.Sel.Name != "Frontend" {
+		return false
 	}
-	return false
+	x, ok := f.X.(*ast.Ident)
+	return ok && x.Name == "nexus"
 }
 
 // frontendPluginRoot walks f for a call shaped like
