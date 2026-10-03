@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"go.uber.org/zap"
 )
 
@@ -69,9 +70,9 @@ func TestDriverValidate(t *testing.T) {
 }
 
 func TestDriverFromConfigAndEnv(t *testing.T) {
-	nexus.ClearConfigStoreForTest()
-	t.Cleanup(nexus.ClearConfigStoreForTest)
-	nexus.InstallConfigStore(map[string]any{
+	config.ResetForTest()
+	t.Cleanup(config.ResetForTest)
+	config.InstallStore(map[string]any{
 		"cache": map[string]any{"session": map[string]any{"driver": "memory"}},
 	}, "test")
 	if got := configFromTOML("session").Driver; got != "memory" {
@@ -86,7 +87,7 @@ func TestDriverFromConfigAndEnv(t *testing.T) {
 type badCache struct{ *Manager }
 
 func TestBindRejectsBadDriver(t *testing.T) {
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Supply(zap.NewNop()),
 		Bind[badCache]("bad", func() *Config { c := NewConfig(); c.Driver = "memcached"; return c }),
 		nexus.Invoke(func(*badCache) {}),

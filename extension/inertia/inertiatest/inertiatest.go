@@ -38,6 +38,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/nexustest"
 )
 
@@ -66,7 +67,7 @@ type Client struct {
 
 // New boots cfg+opts through nexustest and returns an Inertia client for it. The
 // underlying app is stopped via t.Cleanup by nexustest.New.
-func New(tb testing.TB, cfg nexus.Config, opts ...nexus.Option) *Client {
+func New(tb testing.TB, cfg config.Runtime, opts ...nexus.Option) *Client {
 	tb.Helper()
 	return Wrap(tb, nexustest.New(tb, cfg, opts...))
 }

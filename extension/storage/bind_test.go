@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 func TestBuildDiskValidation(t *testing.T) {
@@ -51,7 +52,7 @@ type Uploads struct{ *Manager }
 func TestBindEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	var got *Uploads
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		Bind[Uploads]("uploads", func() Config {
 			return Config{Driver: "local", Root: dir}
 		}, WithDefault(), WithDescription("test uploads")),

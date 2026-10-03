@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // testDBHandle is the kind of one-line marker type users declare.
@@ -68,7 +69,7 @@ func TestBind_ReturnsOption(t *testing.T) {
 }
 
 func TestConfigFor_KeyMapping(t *testing.T) {
-	spec := nexus.DatabaseSpec{Driver: "postgres", KeyPrefix: "db.uaa", SSLMode: "disable", TimeZone: "TZ"}
+	spec := config.DatabaseSpec{Driver: "postgres", KeyPrefix: "db.uaa", SSLMode: "disable", TimeZone: "TZ"}
 	seen := map[string]string{
 		"db.uaa.hostname": "h", "db.uaa.port": "5432",
 		"db.uaa.username": "u", "db.uaa.password": "p", "db.uaa.name": "uaadb",
@@ -83,7 +84,7 @@ func TestConfigFor_KeyMapping(t *testing.T) {
 
 func TestConfigFor_InlineNoConfigServer(t *testing.T) {
 	// No key_prefix: all values inline. get must never be consulted.
-	spec := nexus.DatabaseSpec{
+	spec := config.DatabaseSpec{
 		Driver: "postgres", Host: "localhost", Port: "5432",
 		User: "postgres", Password: "secret", Name: "myapp", SSLMode: "disable",
 	}
@@ -100,7 +101,7 @@ func TestConfigFor_InlineNoConfigServer(t *testing.T) {
 
 func TestConfigFor_InlineOverridesPrefix(t *testing.T) {
 	// Inline host wins; the rest fall back to key_prefix.
-	spec := nexus.DatabaseSpec{Driver: "postgres", KeyPrefix: "db.uaa", Host: "inline-host"}
+	spec := config.DatabaseSpec{Driver: "postgres", KeyPrefix: "db.uaa", Host: "inline-host"}
 	get := map[string]string{
 		"db.uaa.hostname": "server-host", "db.uaa.port": "5432",
 		"db.uaa.username": "u", "db.uaa.password": "p", "db.uaa.name": "n",
@@ -139,7 +140,7 @@ key_prefix = "db.good"
 driver     = "mongo"
 key_prefix = "db.x"
 `
-	if _, err := nexus.LoadConfig(writeTOML(t, toml)); err != nil {
+	if _, err := config.Load(writeTOML(t, toml)); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	type H struct{ *Manager }
@@ -173,7 +174,7 @@ key_prefix = "db.good"
 default    = true
 schema     = "main"
 `
-	if _, err := nexus.LoadConfig(writeTOML(t, toml)); err != nil {
+	if _, err := config.Load(writeTOML(t, toml)); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	type H struct{ *Manager }

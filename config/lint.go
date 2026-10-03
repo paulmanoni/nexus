@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"errors"
@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/internal/extnames"
+
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
-// LintRuntimeFile reads nexus.toml at path and returns lint
+// LintFile reads nexus.toml at path and returns lint
 // issues for its [runtime] block. Used by `nexus lint` to
 // validate runtime config alongside the deploy manifest's
 // inputs surface — operators get one command that catches
@@ -49,7 +51,7 @@ import (
 //     (deliberately narrow) scope of the check.
 //   - Environment string is informational; we don't constrain
 //     to a known-good list — operators use any naming scheme.
-func LintRuntimeFile(path string) ([]manifest.Issue, error) {
+func LintFile(path string) ([]manifest.Issue, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
 	if err != nil {
 		return nil, err
@@ -138,10 +140,10 @@ func lintExtensionsFile(raw []byte) []manifest.Issue {
 	if len(doc.Extensions) == 0 {
 		return nil
 	}
-	registered := RegisteredExtensionNames()
+	registered := extnames.List()
 	var out []manifest.Issue
 	for name := range doc.Extensions {
-		if LookupExtensionDecoder(name) == nil {
+		if !extnames.Has(name) {
 			out = append(out, manifest.Issue{
 				Severity: manifest.SeverityWarning,
 				Code:     manifest.ErrCode("RUNTIME_UNKNOWN_EXTENSION"),
@@ -156,7 +158,7 @@ func lintExtensionsFile(raw []byte) []manifest.Issue {
 // lintRuntimeBlock is the pure-function core of LintRuntimeFile,
 // separated so unit tests can drive it with synthesized blocks
 // without writing TOML to disk.
-func lintRuntimeBlock(b RuntimeConfigBlock) []manifest.Issue {
+func lintRuntimeBlock(b runtimeBlock) []manifest.Issue {
 	var out []manifest.Issue
 
 	// Server.Addr — empty is OK (framework default), but if set
@@ -293,4 +295,12 @@ func validateListenerScope(s string) error {
 		return nil
 	}
 	return fmt.Errorf("scope %q must be \"public\", \"admin\", or \"internal\"", strings.TrimSpace(s))
+}
+
+// extensionsDoc is the minimal TOML shape for parsing just
+// the [extensions.*] table without claiming the rest of
+// nexus.toml. Sibling tables ([runtime], [environments], etc.)
+// get parsed by their own loaders.
+type extensionsDoc struct {
+	Extensions map[string]map[string]any `toml:"extensions"`
 }

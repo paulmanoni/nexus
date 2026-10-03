@@ -1,6 +1,9 @@
 package storage
 
-import "github.com/paulmanoni/nexus/v2"
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+)
 
 // BindFromConfig binds a marker type T to the [storage.<name>] block in
 // nexus.toml — the storage counterpart to db.BindFromConfig, so local-in-dev
@@ -34,15 +37,15 @@ func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 func configFromTOML(name string) Config {
 	p := "storage." + name + "."
 	return Config{
-		Driver:        nexus.Get(p+"driver", ""),
-		Root:          nexus.Get(p+"root", ""),
-		Bucket:        nexus.Get(p+"bucket", ""),
-		Region:        nexus.Get(p+"region", ""),
-		Endpoint:      nexus.Get(p+"endpoint", ""),
-		PathStyle:     nexus.Get(p+"path_style", false),
-		AccessKey:     nexus.Get(p+"access_key", ""),
-		SecretKey:     nexus.Get(p+"secret_key", ""),
-		SessionToken:  nexus.Get(p+"session_token", ""),
-		PublicBaseURL: nexus.Get(p+"public_base_url", ""),
+		Driver:        config.Get(p+"driver", ""),
+		Root:          config.Get(p+"root", ""),
+		Bucket:        config.Get(p+"bucket", ""),
+		Region:        config.Get(p+"region", ""),
+		Endpoint:      config.Get(p+"endpoint", ""),
+		PathStyle:     config.Get(p+"path_style", false),
+		AccessKey:     config.Get(p+"access_key", ""),
+		SecretKey:     config.Get(p+"secret_key", ""),
+		SessionToken:  config.Get(p+"session_token", ""),
+		PublicBaseURL: config.Get(p+"public_base_url", ""),
 	}
 }

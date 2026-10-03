@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestDevAutoMountClientSDK covers the dev-only client SDK fallback:
@@ -16,7 +17,7 @@ import (
 func TestDevAutoMountClientSDK(t *testing.T) {
 	t.Run("dev mounts when nothing else did", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "1")
-		a := New(Config{})
+		a := New(config.Runtime{})
 		if a.ClientHandler() != nil {
 			t.Fatal("precondition: handler should be nil before the late invoke")
 		}
@@ -29,7 +30,7 @@ func TestDevAutoMountClientSDK(t *testing.T) {
 	t.Run("no mount when not in dev", func(t *testing.T) {
 		// NEXUS_DEV explicitly empty for this subtest.
 		t.Setenv(NexusDevEnv, "")
-		a := New(Config{})
+		a := New(config.Runtime{})
 		devAutoMountClientSDK(a)
 		if a.ClientHandler() != nil {
 			t.Error("client SDK must NOT auto-mount outside dev")
@@ -38,7 +39,7 @@ func TestDevAutoMountClientSDK(t *testing.T) {
 
 	t.Run("DevDisabled opts out even in dev", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "1")
-		a := New(Config{Client: client.Config{DevDisabled: true}})
+		a := New(config.Runtime{Client: client.Config{DevDisabled: true}})
 		devAutoMountClientSDK(a)
 		if a.ClientHandler() != nil {
 			t.Error("DevDisabled should keep the SDK closed in dev")
@@ -47,7 +48,7 @@ func TestDevAutoMountClientSDK(t *testing.T) {
 
 	t.Run("does not replace an explicit mount", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "1")
-		a := New(Config{Client: client.Config{Enabled: true}})
+		a := New(config.Runtime{Client: client.Config{Enabled: true}})
 		first := a.ClientHandler()
 		if first == nil {
 			t.Fatal("explicit Client.Enabled should have mounted in New()")
@@ -66,7 +67,7 @@ func TestDevAutoMountClientSDK(t *testing.T) {
 func TestSDKSwitch(t *testing.T) {
 	t.Run("mounts under dev", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "1")
-		a := New(Config{SDK: true})
+		a := New(config.Runtime{SDK: true})
 		if a.ClientHandler() == nil {
 			t.Error("SDK=true should mount the client SDK under NEXUS_DEV=1")
 		}
@@ -74,7 +75,7 @@ func TestSDKSwitch(t *testing.T) {
 
 	t.Run("mounts when introspection is on, even outside dev", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "")
-		a := New(Config{SDK: true, Introspection: true})
+		a := New(config.Runtime{SDK: true, Introspection: true})
 		if a.ClientHandler() == nil {
 			t.Error("SDK=true should mount when Introspection is true")
 		}
@@ -82,7 +83,7 @@ func TestSDKSwitch(t *testing.T) {
 
 	t.Run("mounts with introspection off, outside dev", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "")
-		a := New(Config{SDK: true}) // introspection off, not in dev
+		a := New(config.Runtime{SDK: true}) // introspection off, not in dev
 		if a.ClientHandler() == nil {
 			t.Error("SDK=true should mount regardless of Introspection")
 		}
@@ -90,7 +91,7 @@ func TestSDKSwitch(t *testing.T) {
 
 	t.Run("stays closed when unset", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "")
-		a := New(Config{})
+		a := New(config.Runtime{})
 		if a.ClientHandler() != nil {
 			t.Error("no SDK switch, no client mount")
 		}
@@ -101,7 +102,7 @@ func TestSDKSwitch(t *testing.T) {
 	// for a browser is indistinguishable from not mounting at all.
 	t.Run("routes answer an anonymous request with introspection off", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "")
-		a := New(Config{SDK: true})
+		a := New(config.Runtime{SDK: true})
 		for _, path := range []string{
 			"/__nexus/client/client.js",
 			"/__nexus/client/manifest.json",

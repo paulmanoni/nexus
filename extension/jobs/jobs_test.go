@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
@@ -91,7 +92,7 @@ func boot(t *testing.T, svc *ReportService, opts ...nexus.Option) (*jobs.Manager
 		nexus.Supply(svc),
 		nexus.Invoke(func(mgr *jobs.Manager) { m = mgr }),
 	}, opts...)
-	_, stop, err := nexus.InProcess(nexus.Config{}, all...)
+	_, stop, err := nexus.InProcess(config.Runtime{}, all...)
 	if err != nil {
 		t.Fatalf("boot: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestUniqueAndDelay(t *testing.T) {
 func TestShutdownRequeuesRunningJobs(t *testing.T) {
 	svc := &ReportService{block: make(chan struct{})}
 	var m *jobs.Manager
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		jobs.Module(jobs.Config{ShutdownGrace: time.Millisecond}),
 		nexus.Supply(svc), generate,
 		nexus.Invoke(func(mgr *jobs.Manager) { m = mgr }),
@@ -271,7 +272,7 @@ func TestBootErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stop, err := nexus.InProcess(nexus.Config{}, tc.opts...)
+			_, stop, err := nexus.InProcess(config.Runtime{}, tc.opts...)
 			if stop != nil {
 				defer func() { _ = stop(context.Background()) }()
 			}
@@ -339,7 +340,7 @@ func TestSchedule(t *testing.T) {
 }
 
 func TestBadSchedule(t *testing.T) {
-	_, stop, err := nexus.InProcess(nexus.Config{}, jobs.Module(jobs.Config{}), nexus.Supply(&ReportService{}),
+	_, stop, err := nexus.InProcess(config.Runtime{}, jobs.Module(jobs.Config{}), nexus.Supply(&ReportService{}),
 		tick.Schedule("every tuesday-ish", ReportArgs{}))
 	if stop != nil {
 		defer func() { _ = stop(context.Background()) }()

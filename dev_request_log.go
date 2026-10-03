@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -24,7 +25,7 @@ func devRequestLogEnabled() bool {
 	if os.Getenv("NEXUS_DEV") != "1" {
 		return false
 	}
-	return Get("runtime.logging.requests", true)
+	return config.Get("runtime.logging.requests", true)
 }
 
 // devRequestLogger is a whole-mux middleware that emits one structured

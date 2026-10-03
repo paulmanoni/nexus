@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // AppMailer is the user-style typed handle for the e2e Bind test.
@@ -15,7 +16,7 @@ type AppMailer struct{ *Manager }
 // the injected handle sends and registers a dashboard resource.
 func TestBindEndToEnd(t *testing.T) {
 	var got *AppMailer
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		Bind[AppMailer]("smtp", func() Config {
 			return Config{Driver: "log", FromAddress: "no-reply@x.com", FromName: "X"}
 		}, WithDefault(), WithDescription("test mailer")),

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // nexus.Arg: scalar-taking service methods register without a wrapper — the
@@ -35,7 +37,7 @@ func (s *argSvc) MoveUser(ctx context.Context, id uint, target string, note *str
 }
 
 func TestArgGraphQL(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&argSvc{}),
 		AsQuery((*argSvc).FetchUser, Arg("id")),                     // derived name: fetchUser
 		AsMutation((*argSvc).DropUser, Arg("id"), Op("removeUser")), // Op override + ctx shape
@@ -69,7 +71,7 @@ func TestArgGraphQL(t *testing.T) {
 }
 
 func TestArgRestPathAndQuery(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&argSvc{}),
 		AsRest("GET", "/users/:id", (*argSvc).FetchUser, Arg("id")),
 		AsRest("POST", "/drop", (*argSvc).DropUser, Arg("id")),
@@ -96,7 +98,7 @@ func TestArgRestPathAndQuery(t *testing.T) {
 
 // Repeated Arg options append, equivalent to one variadic call.
 func TestArgOptionsAppend(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&argSvc{}),
 		AsQuery((*argSvc).FetchUser, Arg("id")),
 		AsMutation((*argSvc).MoveUser, Arg("id"), Arg("target"), Arg("note"), Op("relocate")),
@@ -124,7 +126,7 @@ func TestArgBootErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stop, err := InProcess(Config{}, Supply(&argSvc{}), Supply(&probeSvc{}), tc.opt)
+			_, stop, err := InProcess(config.Runtime{}, Supply(&argSvc{}), Supply(&probeSvc{}), tc.opt)
 			if stop != nil {
 				defer func() { _ = stop(context.Background()) }()
 			}

@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
@@ -25,7 +26,7 @@ type pokeArgs struct {
 // that only claims the id (?userId=, the authenticate message) gets nothing.
 func TestWebSocketIdentityComesFromAuth(t *testing.T) {
 	tokens := map[string]string{"tok-alice": "alice", "tok-bob": "bob"}
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Single(func(_ context.Context, tok string) (*auth.Identity, error) {
 			if id, ok := tokens[tok]; ok {
 				return &auth.Identity{ID: id}, nil
@@ -121,7 +122,7 @@ func (wsAuthBackend) Authorize(id *auth.Identity, required []string) bool {
 // A WS handler's context carries the upgrade request's identity and auth
 // state, so auth.IdentityFrom and auth.Can work there as in REST handlers.
 func TestWebSocketHandlerContextCarriesAuth(t *testing.T) {
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Module(auth.Config{
 			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
 			Backend:        auth.StaticBackend(wsAuthBackend{}),

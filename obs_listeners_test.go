@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
@@ -25,7 +26,7 @@ import (
 // scope matches want. The scope table is keyed by port (so dual-stack
 // IPv6/IPv4 binds resolve correctly at request time); tests rebuild
 // the dial-able address by gluing the loopback host to that port.
-func listenerBoundAddr(app *App, want ListenerScope) string {
+func listenerBoundAddr(app *App, want config.ListenerScope) string {
 	app.listenerScopes.mu.RLock()
 	defer app.listenerScopes.mu.RUnlock()
 	for port, s := range app.listenerScopes.m {
@@ -54,15 +55,15 @@ func httpGetStatus(t *testing.T, addr, path string) int {
 func TestListeners_ScopeFilter(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{
-			Dashboard:     DashboardConfig{Enabled: true},
+		fxBootOptions(config.Runtime{
+			Dashboard:     config.Dashboard{Enabled: true},
 			Introspection: true, // test exercises gated routes; opt in
 			TraceCapacity: 100,
-			Server: ServerConfig{
-				Listeners: map[string]Listener{
-					"public":   {Addr: "127.0.0.1:0", Scope: ScopePublic},
-					"internal": {Addr: "127.0.0.1:0", Scope: ScopeInternal},
-					"admin":    {Addr: "127.0.0.1:0", Scope: ScopeAdmin},
+			Server: config.Server{
+				Listeners: map[string]config.Listener{
+					"public":   {Addr: "127.0.0.1:0", Scope: config.ScopePublic},
+					"internal": {Addr: "127.0.0.1:0", Scope: config.ScopeInternal},
+					"admin":    {Addr: "127.0.0.1:0", Scope: config.ScopeAdmin},
 				},
 			},
 		}),
@@ -71,8 +72,8 @@ func TestListeners_ScopeFilter(t *testing.T) {
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
 
-	publicAddr := listenerBoundAddr(app, ScopePublic)
-	adminAddr := listenerBoundAddr(app, ScopeAdmin)
+	publicAddr := listenerBoundAddr(app, config.ScopePublic)
+	adminAddr := listenerBoundAddr(app, config.ScopeAdmin)
 	if publicAddr == "" || adminAddr == "" {
 		t.Fatalf("listeners not bound: public=%q admin=%q", publicAddr, adminAddr)
 	}
@@ -122,16 +123,16 @@ func TestListeners_ScopeFilter(t *testing.T) {
 func TestListeners_DualStackBindResolves(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{
-			Dashboard:     DashboardConfig{Enabled: true},
+		fxBootOptions(config.Runtime{
+			Dashboard:     config.Dashboard{Enabled: true},
 			Introspection: true, // test exercises gated routes; opt in
 			TraceCapacity: 100,
-			Server: ServerConfig{
-				Listeners: map[string]Listener{
+			Server: config.Server{
+				Listeners: map[string]config.Listener{
 					// Bare host elides → dual-stack. ln.Addr()
 					// comes back as "[::]:<port>"; request
 					// LocalAddr arrives as "127.0.0.1:<port>".
-					"public": {Addr: ":0", Scope: ScopePublic},
+					"public": {Addr: ":0", Scope: config.ScopePublic},
 				},
 			},
 		}),
@@ -140,7 +141,7 @@ func TestListeners_DualStackBindResolves(t *testing.T) {
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
 
-	publicAddr := listenerBoundAddr(app, ScopePublic)
+	publicAddr := listenerBoundAddr(app, config.ScopePublic)
 	if publicAddr == "" {
 		t.Fatal("public listener not registered")
 	}
@@ -155,11 +156,11 @@ func TestListeners_DualStackBindResolves(t *testing.T) {
 // per-binary main.go — the manifest's per-deployment port flows
 // into the public listener and admin = public + offset.
 func TestFillListenerAddrs(t *testing.T) {
-	in := map[string]Listener{
+	in := map[string]config.Listener{
 		"public":   {},
-		"admin":    {Scope: ScopeAdmin},
-		"internal": {Scope: ScopeInternal},
-		"explicit": {Addr: "127.0.0.1:5555", Scope: ScopeAdmin},
+		"admin":    {Scope: config.ScopeAdmin},
+		"internal": {Scope: config.ScopeInternal},
+		"explicit": {Addr: "127.0.0.1:5555", Scope: config.ScopeAdmin},
 	}
 	out := fillListenerAddrs(in, ":8081")
 
@@ -180,9 +181,9 @@ func TestFillListenerAddrs(t *testing.T) {
 // TestFillListenerAddrs_DefaultsWhenEmpty verifies the framework's
 // :8080 fallback kicks in for plain `go run` (no manifest defaults).
 func TestFillListenerAddrs_DefaultsWhenEmpty(t *testing.T) {
-	in := map[string]Listener{
+	in := map[string]config.Listener{
 		"public": {},
-		"admin":  {Scope: ScopeAdmin},
+		"admin":  {Scope: config.ScopeAdmin},
 	}
 	out := fillListenerAddrs(in, "")
 	if out["public"].Addr != ":8080" {
@@ -243,14 +244,14 @@ func TestListeners_TLS(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{
-			Dashboard:     DashboardConfig{Enabled: true},
+		fxBootOptions(config.Runtime{
+			Dashboard:     config.Dashboard{Enabled: true},
 			Introspection: true,
 			TraceCapacity: 100,
-			Server: ServerConfig{
-				Listeners: map[string]Listener{
-					"public": {Addr: "127.0.0.1:0", Scope: ScopePublic},
-					"admin":  {Addr: "127.0.0.1:0", Scope: ScopeAdmin, TLS: tlsCfg},
+			Server: config.Server{
+				Listeners: map[string]config.Listener{
+					"public": {Addr: "127.0.0.1:0", Scope: config.ScopePublic},
+					"admin":  {Addr: "127.0.0.1:0", Scope: config.ScopeAdmin, TLS: tlsCfg},
 				},
 			},
 		}),
@@ -259,7 +260,7 @@ func TestListeners_TLS(t *testing.T) {
 	fxApp.RequireStart()
 	defer fxApp.RequireStop()
 
-	adminAddr := listenerBoundAddr(app, ScopeAdmin)
+	adminAddr := listenerBoundAddr(app, config.ScopeAdmin)
 	if adminAddr == "" {
 		t.Fatal("admin listener not bound")
 	}
@@ -308,9 +309,9 @@ func TestListeners_TLS(t *testing.T) {
 func TestListeners_BackCompat_NoConfig(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{
-			Server:        ServerConfig{Addr: "127.0.0.1:0"},
-			Dashboard:     DashboardConfig{Enabled: true},
+		fxBootOptions(config.Runtime{
+			Server:        config.Server{Addr: "127.0.0.1:0"},
+			Dashboard:     config.Dashboard{Enabled: true},
 			Introspection: true, // test exercises gated routes; opt in
 			TraceCapacity: 100,
 		}),

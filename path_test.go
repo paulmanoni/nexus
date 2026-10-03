@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestPath_RegistersForServiceLookup verifies the round-trip:
@@ -29,7 +31,7 @@ func TestPath_RegistersForServiceLookup(t *testing.T) {
 
 	// app.Service("uaa") should now produce a Service rooted at
 	// /oats-uaa/graphql, not the framework default /graphql.
-	app := New(Config{})
+	app := New(config.Runtime{})
 	svc := app.Service("uaa")
 	if svc.GraphQLPath() != "/oats-uaa/graphql" {
 		t.Fatalf("Service.GraphQLPath: got %q, want %q",
@@ -80,7 +82,7 @@ func TestPath_AtGraphQLOverrides(t *testing.T) {
 	resetPublicPathRegistryForTest(t)
 	_ = Module("uaa", Path("/oats-uaa"))
 
-	app := New(Config{})
+	app := New(config.Runtime{})
 	svc := app.Service("uaa").AtGraphQL("/custom/graphql")
 	if svc.GraphQLPath() != "/custom/graphql" {
 		t.Fatalf("AtGraphQL override: got %q, want %q",
@@ -123,7 +125,7 @@ func TestPath_MultiServiceModuleAllMountUnderPath(t *testing.T) {
 		AsQuery(newGetUser),
 	)
 
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -151,7 +153,7 @@ func TestPath_MultiServiceModuleAllMountUnderPath(t *testing.T) {
 // late option ordering — so AsRest/AsQuery/AsMutation/AsWS mount for real — on an
 // ephemeral port, and exposes Stop(). Used to drive the full mount path
 // in-process and inspect the resulting route table / registry.
-func newApp(cfg Config, opts ...Option) (*testApp, error) {
+func newApp(cfg config.Runtime, opts ...Option) (*testApp, error) {
 	app, stop, err := InProcess(cfg, opts...)
 	if err != nil {
 		return nil, err

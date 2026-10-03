@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"os"
@@ -13,26 +13,26 @@ import (
 // runtime block produces zero issues. Locks in the "lint stays
 // quiet when there's nothing to complain about" contract.
 func TestLintRuntimeBlock_CleanConfigNoIssues(t *testing.T) {
-	b := RuntimeConfigBlock{
-		Server: ServerConfigBlock{
+	b := runtimeBlock{
+		Server: serverBlock{
 			Addr: ":8080",
-			Listeners: map[string]ListenerConfigBlock{
+			Listeners: map[string]listenerBlock{
 				"admin": {Addr: "127.0.0.1:7000", Scope: "admin"},
 			},
 		},
-		Dashboard: DashboardConfigBlock{Enabled: true, Name: "Test App"},
+		Dashboard: dashboardBlock{Enabled: true, Name: "Test App"},
 		IntrospectionNetworks: []string{
 			"127.0.0.0/8",
 			"10.0.0.0/8",
 		},
-		Middleware: MiddlewareConfigBlock{
-			CORS: &CORSConfigBlock{
+		Middleware: middlewareBlock{
+			CORS: &corsBlock{
 				AllowOrigins: []string{"https://app.example.com"},
 				MaxAge:       "12h",
 			},
-			RateLimit: &RateLimitConfigBlock{RPM: 600, Burst: 50},
+			RateLimit: &rateLimitBlock{RPM: 600, Burst: 50},
 		},
-		GraphQL: GraphQLConfigBlock{DocumentCacheSize: 1024},
+		GraphQL: graphQLBlock{DocumentCacheSize: 1024},
 	}
 	issues := lintRuntimeBlock(b)
 	if len(issues) != 0 {
@@ -44,8 +44,8 @@ func TestLintRuntimeBlock_CleanConfigNoIssues(t *testing.T) {
 // with the field path in the message so operators know where
 // to look.
 func TestLintRuntimeBlock_BadAddr(t *testing.T) {
-	b := RuntimeConfigBlock{
-		Server: ServerConfigBlock{Addr: "not-a-host-port"},
+	b := runtimeBlock{
+		Server: serverBlock{Addr: "not-a-host-port"},
 	}
 	issues := lintRuntimeBlock(b)
 	if len(issues) == 0 {
@@ -59,9 +59,9 @@ func TestLintRuntimeBlock_BadAddr(t *testing.T) {
 // TestLintRuntimeBlock_BadListenerScope: unknown listener scope
 // names get a clear actionable message.
 func TestLintRuntimeBlock_BadListenerScope(t *testing.T) {
-	b := RuntimeConfigBlock{
-		Server: ServerConfigBlock{
-			Listeners: map[string]ListenerConfigBlock{
+	b := runtimeBlock{
+		Server: serverBlock{
+			Listeners: map[string]listenerBlock{
 				"weird": {Addr: ":1234", Scope: "private"},
 			},
 		},
@@ -79,7 +79,7 @@ func TestLintRuntimeBlock_BadListenerScope(t *testing.T) {
 // IntrospectionNetworks is caught at lint time so it doesn't
 // crash the framework at boot.
 func TestLintRuntimeBlock_BadCIDR(t *testing.T) {
-	b := RuntimeConfigBlock{
+	b := runtimeBlock{
 		IntrospectionNetworks: []string{"127.0.0.0/8", "garbage"},
 	}
 	issues := lintRuntimeBlock(b)
@@ -93,9 +93,9 @@ func TestLintRuntimeBlock_BadCIDR(t *testing.T) {
 
 // TestLintRuntimeBlock_BadMaxAge: bad duration string is caught.
 func TestLintRuntimeBlock_BadMaxAge(t *testing.T) {
-	b := RuntimeConfigBlock{
-		Middleware: MiddlewareConfigBlock{
-			CORS: &CORSConfigBlock{MaxAge: "not-a-duration"},
+	b := runtimeBlock{
+		Middleware: middlewareBlock{
+			CORS: &corsBlock{MaxAge: "not-a-duration"},
 		},
 	}
 	issues := lintRuntimeBlock(b)
@@ -112,9 +112,9 @@ func TestLintRuntimeBlock_BadMaxAge(t *testing.T) {
 // surfaces as a WARNING — not an error, since the framework
 // auto-downgrades, but the operator should know about it.
 func TestLintRuntimeBlock_CORSWildcardWithCredentialsWarns(t *testing.T) {
-	b := RuntimeConfigBlock{
-		Middleware: MiddlewareConfigBlock{
-			CORS: &CORSConfigBlock{
+	b := runtimeBlock{
+		Middleware: middlewareBlock{
+			CORS: &corsBlock{
 				AllowOrigins:     []string{"*"},
 				AllowCredentials: true,
 			},
@@ -132,9 +132,9 @@ func TestLintRuntimeBlock_CORSWildcardWithCredentialsWarns(t *testing.T) {
 // TestLintRuntimeBlock_NegativeRateLimit: rpm or burst < 0 are
 // operator errors (the framework treats them as garbage).
 func TestLintRuntimeBlock_NegativeRateLimit(t *testing.T) {
-	b := RuntimeConfigBlock{
-		Middleware: MiddlewareConfigBlock{
-			RateLimit: &RateLimitConfigBlock{RPM: -10, Burst: 5},
+	b := runtimeBlock{
+		Middleware: middlewareBlock{
+			RateLimit: &rateLimitBlock{RPM: -10, Burst: 5},
 		},
 	}
 	issues := lintRuntimeBlock(b)
@@ -159,7 +159,7 @@ scope = "private"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	issues, err := LintRuntimeFile(path)
+	issues, err := LintFile(path)
 	if err != nil {
 		t.Fatalf("LintRuntimeFile: %v", err)
 	}
@@ -182,7 +182,7 @@ description = "Prod"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	issues, err := LintRuntimeFile(path)
+	issues, err := LintFile(path)
 	if err != nil {
 		t.Fatalf("LintRuntimeFile: %v", err)
 	}
@@ -204,7 +204,7 @@ addr = ":9001"
 [runtime.server]
 adress = ":8099"
 `)
-	issues, err := LintRuntimeFile(path)
+	issues, err := LintFile(path)
 	if err != nil {
 		t.Fatalf("LintRuntimeFile: %v", err)
 	}
@@ -259,7 +259,7 @@ id = "myapp-web"
 [app]
 name = "demo"
 `)
-	issues, err := LintRuntimeFile(path)
+	issues, err := LintFile(path)
 	if err != nil {
 		t.Fatalf("LintRuntimeFile: %v", err)
 	}

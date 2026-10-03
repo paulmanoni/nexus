@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -45,7 +46,7 @@ func bootWithManager(t *testing.T, addr string, cfg auth.Config, extra ...nexus.
 		nexus.Invoke(func(m *auth.Manager) { mgrCh <- m }),
 	}, extra...)
 	go func() {
-		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10}, opts...)
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10}, opts...)
 	}()
 	select {
 	case m := <-mgrCh:

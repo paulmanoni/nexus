@@ -4,15 +4,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestConfigFromTOML reads a [mail.<name>] block into a Config, including the
 // int port and duration timeout conversions.
 func TestConfigFromTOML(t *testing.T) {
-	nexus.ClearConfigStoreForTest()
-	t.Cleanup(nexus.ClearConfigStoreForTest)
-	nexus.InstallConfigStore(map[string]any{
+	config.ResetForTest()
+	t.Cleanup(config.ResetForTest)
+	config.InstallStore(map[string]any{
 		"mail": map[string]any{
 			"smtp": map[string]any{
 				"driver":       "smtp",

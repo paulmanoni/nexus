@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // likes is shared server state several live pages show.
@@ -71,7 +72,7 @@ func (p *likesLive) Render() templ.Component {
 
 func bootLikes(t *testing.T) *httptest.Server {
 	t.Helper()
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Supply(&likes{}),
 		Live[*likesLive]("/likes/:room").Provide(func() *likesLive { return &likesLive{} }),
 	)

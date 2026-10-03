@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestDashboard_GraphQLCacheEndpoint exercises the full wiring path:
@@ -27,9 +29,9 @@ func TestDashboard_GraphQLCacheEndpoint(t *testing.T) {
 	// Introspection: true lifts the dashboard group's gate so
 	// /__nexus/* is reachable from any client. Without it the
 	// gate 404s every dashboard route by default.
-	app, err := newApp(Config{
-		Server:        ServerConfig{Addr: "127.0.0.1:0"},
-		Dashboard:     DashboardConfig{Enabled: true, Name: "T"},
+	app, err := newApp(config.Runtime{
+		Server:        config.Server{Addr: "127.0.0.1:0"},
+		Dashboard:     config.Dashboard{Enabled: true, Name: "T"},
 		Introspection: true,
 	}, mod)
 	if err != nil {

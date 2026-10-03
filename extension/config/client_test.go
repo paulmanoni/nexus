@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // fakeServer is a minimal stand-in for config.Server's HTTP
@@ -127,10 +127,10 @@ func TestClient_FetchVerifyInstall(t *testing.T) {
 		t.Fatalf("initClient: %v", err)
 	}
 
-	if got := nexus.Get[string]("api.timeout"); got != "5s" {
+	if got := config.Get[string]("api.timeout"); got != "5s" {
 		t.Errorf("api.timeout = %q, want 5s", got)
 	}
-	if got := nexus.Get[bool]("flag"); !got {
+	if got := config.Get[bool]("flag"); !got {
 		t.Errorf("flag = false, want true")
 	}
 	// Cache file must exist and be sealed (NXCS magic).
@@ -166,14 +166,14 @@ func TestClient_BootsFromSealedCacheWhenServerDown(t *testing.T) {
 	srv.Close()
 
 	// Reset the store; simulate a process restart.
-	nexus.ClearConfigStoreForTest()
+	config.ResetForTest()
 
 	// Boot 2: same cache, server unreachable.
 	h2 := buildTestClient(t, srv, keyPath, cachePath) // srv.URL is dead now
 	if err := initClient(h2); err != nil {
 		t.Fatalf("offline boot should succeed via cache: %v", err)
 	}
-	if got := nexus.Get[string]("baked_in"); got != "from-cache" {
+	if got := config.Get[string]("baked_in"); got != "from-cache" {
 		t.Errorf("cached value = %q, want from-cache", got)
 	}
 }
@@ -213,7 +213,7 @@ func TestClient_UseDefaultsPolicy(t *testing.T) {
 	if err := initClient(h); err != nil {
 		t.Fatalf("UseDefaults should succeed: %v", err)
 	}
-	if got := nexus.Get[string]("floor"); got != "value" {
+	if got := config.Get[string]("floor"); got != "value" {
 		t.Errorf("default value not installed: got %q", got)
 	}
 }
@@ -245,7 +245,7 @@ func TestClient_RejectsTamperedCacheFile(t *testing.T) {
 	// Reset and reboot — the tampered cache should be rejected
 	// (loud log) but the client falls back to the live server
 	// fetch and succeeds.
-	nexus.ClearConfigStoreForTest()
+	config.ResetForTest()
 	h2 := buildTestClient(t, srv, keyPath, cachePath)
 	if err := initClient(h2); err != nil {
 		t.Fatalf("reboot with tampered cache should succeed via server: %v", err)

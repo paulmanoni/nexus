@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"bufio"
@@ -6,17 +6,15 @@ import (
 	"log"
 	"os"
 	"strings"
-
-	"github.com/paulmanoni/nexus/v2/di"
 )
 
-// DotenvDefaultPath is the file LoadDotenvIfPresent reads when no
+// DotenvDefaultPath is the file LoadDotenv reads when no
 // explicit path is supplied. Matches the .env convention every Go,
 // Node, Python, and Ruby developer already knows from
 // dotenv / direnv / docker-compose.
 const DotenvDefaultPath = ".env"
 
-// LoadDotenvIfPresent reads `./.env` (or the supplied path) and
+// LoadDotenv reads `./.env` (or the supplied path) and
 // populates os.Environ for any key NOT already set in the process
 // environment. Use it in main() so ${VAR} placeholders in nexus.toml
 // — and any other code calling os.Getenv at boot — resolve from the
@@ -24,7 +22,7 @@ const DotenvDefaultPath = ".env"
 //
 //	func main() {
 //	    nexus.Run(nexus.Config{...},
-//	        nexus.LoadDotenvIfPresent(),   // ← reads .env if present
+//	        nexus.LoadDotenv(),   // ← reads .env if present
 //	        appModule,
 //	    )
 //	}
@@ -60,7 +58,7 @@ const DotenvDefaultPath = ".env"
 // Operators wanting those features should source the .env in a
 // real shell before launching the binary — the framework's job is
 // to consume what the environment already has, not to be a shell.
-func LoadDotenvIfPresent(path ...string) Option {
+func LoadDotenv(path ...string) error {
 	p := DotenvDefaultPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]
@@ -68,28 +66,28 @@ func LoadDotenvIfPresent(path ...string) Option {
 	if err := loadDotenvFile(p); err != nil {
 		// Errors other than "file missing" should stop boot — a
 		// malformed .env is an operator bug worth surfacing loudly.
-		return Raw(di.Error(fmt.Errorf("nexus.LoadDotenvIfPresent: %w", err)))
+		return fmt.Errorf("config.LoadDotenv: %w", err)
 	}
-	return Options()
+	return nil
 }
 
-// MustLoadDotenv is the strict variant: a missing file fails boot
+// RequireDotenv is the strict variant: a missing file fails boot
 // instead of being a no-op. Use it when the .env contents are
 // required (you've intentionally committed a stub for dev and want
 // to catch "forgot to copy it" mistakes before they become silent
 // `${VAR}` lookup failures).
-func MustLoadDotenv(path ...string) Option {
+func RequireDotenv(path ...string) error {
 	p := DotenvDefaultPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]
 	}
 	if _, err := os.Stat(p); err != nil {
-		return Raw(di.Error(fmt.Errorf("nexus.MustLoadDotenv: %s: %w", p, err)))
+		return fmt.Errorf("config.RequireDotenv: %s: %w", p, err)
 	}
 	if err := loadDotenvFile(p); err != nil {
-		return Raw(di.Error(fmt.Errorf("nexus.MustLoadDotenv: %w", err)))
+		return fmt.Errorf("config.RequireDotenv: %w", err)
 	}
-	return Options()
+	return nil
 }
 
 // loadDotenvFile reads the file and applies each KEY=value pair to

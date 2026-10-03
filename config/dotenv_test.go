@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 
 // withDotenv writes contents to a temp .env, returns the path. The
 // caller passes the path into loadDotenvFile (or one of the public
-// LoadDotenvIfPresent / MustLoadDotenv constructors).
+// LoadDotenv / RequireDotenv).
 func withDotenv(t *testing.T, contents string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -170,17 +170,13 @@ func TestLoadDotenvFile_UnterminatedQuoteRejected(t *testing.T) {
 	}
 }
 
-// TestMustLoadDotenv_MissingFileFailsBoot is the strict-variant
-// guarantee: missing file produces a non-nil option that fx will
-// surface at Run time.
-func TestMustLoadDotenv_MissingFileFailsBoot(t *testing.T) {
-	opt := MustLoadDotenv("/no/such/.env")
-	// Round-trip through unwrap to inspect — the option chain
-	// embeds the error inside fx.Error which surfaces at Run.
-	// Easier check: invoke the path via loadDotenvFile to mirror
-	// what MustLoadDotenv does and verify we get the same shape.
-	if opt == nil {
-		t.Fatal("MustLoadDotenv should return a non-nil Option")
+// A missing file is an error for RequireDotenv and a no-op for LoadDotenv.
+func TestRequireDotenv_MissingFileIsAnError(t *testing.T) {
+	if err := RequireDotenv("/no/such/.env"); err == nil {
+		t.Fatal("RequireDotenv should fail on a missing file")
+	}
+	if err := LoadDotenv("/no/such/.env"); err != nil {
+		t.Fatalf("LoadDotenv should skip a missing file, got %v", err)
 	}
 }
 

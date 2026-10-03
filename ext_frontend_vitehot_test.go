@@ -14,6 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
@@ -46,7 +47,7 @@ func newViteDevFixture(t *testing.T, index string, opts ...FrontendOption) *vite
 	for _, o := range opts {
 		o.applyToFrontend(cfg)
 	}
-	app := New(Config{})
+	app := New(config.Runtime{})
 	app.setFrontendSource(os.DirFS(dir), "web/dist")
 	sub, err := fs.Sub(os.DirFS(dir), "web/dist")
 	if err != nil {
@@ -449,7 +450,7 @@ func TestServeFrontend_NeverServesHotFile(t *testing.T) {
 			".vite/nexus-hot.json.4242.tmp": {Data: b},
 		}
 		for _, mount := range []string{"", "/admin"} {
-			app := New(Config{})
+			app := New(config.Runtime{})
 			if err := mountFrontend(app, fsys, &frontendConfig{mountPath: mount}); err != nil {
 				t.Fatal(err)
 			}
@@ -474,7 +475,7 @@ func TestServeFrontend_SSRBundleNeverServed(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv(NexusDevEnv, "")
 	get := func(fsys fstest.MapFS, p string) int {
-		app := New(Config{})
+		app := New(config.Runtime{})
 		if err := mountFrontend(app, fsys, &frontendConfig{}); err != nil {
 			t.Fatal(err)
 		}

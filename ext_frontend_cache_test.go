@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
@@ -44,7 +45,7 @@ func viteBundle() fstest.MapFS {
 
 func TestServeFrontend_ManifestCachePolicy(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	app := New(Config{})
+	app := New(config.Runtime{})
 	if err := mountFrontend(app, viteBundle(), noFrontendCfg); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestServeFrontend_ManifestCachePolicy(t *testing.T) {
 
 func TestServeFrontend_ETagRevalidation(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	app := New(Config{})
+	app := New(config.Runtime{})
 	if err := mountFrontend(app, viteBundle(), noFrontendCfg); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestServeFrontend_ETagRevalidation(t *testing.T) {
 
 func TestServeFrontend_ShellIsRevalidatedNotUnstored(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	app := New(Config{})
+	app := New(config.Runtime{})
 	if err := mountFrontend(app, viteBundle(), noFrontendCfg); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestServeFrontend_ShellIsRevalidatedNotUnstored(t *testing.T) {
 // the build happened, so it must boot; there is just no shell to fall back to.
 func TestServeFrontend_ShellLessBuildBoots(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	app := New(Config{})
+	app := New(config.Runtime{})
 	fsys := fstest.MapFS{
 		".vite/manifest.json":     {Data: []byte(`{"src/main.ts":{"file":"assets/main-DfUgamcr.js","isEntry":true}}`)},
 		"assets/main-DfUgamcr.js": {Data: []byte("app()")},
@@ -135,7 +136,7 @@ func TestServeFrontend_ShellLessBuildBoots(t *testing.T) {
 
 func TestServeFrontend_UnbuiltBundleStillFailsFast(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	err := mountFrontend(New(Config{}), fstest.MapFS{"assets/x.js": {Data: []byte("x")}}, noFrontendCfg)
+	err := mountFrontend(New(config.Runtime{}), fstest.MapFS{"assets/x.js": {Data: []byte("x")}}, noFrontendCfg)
 	if err == nil || !strings.Contains(err.Error(), "neither index.html nor a Vite manifest") {
 		t.Fatalf("a bundle with no shell and no manifest was never built; want a boot error, got %v", err)
 	}
@@ -164,7 +165,7 @@ func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 
 	t.Run("environment alone fails fast", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "")
-		app := New(Config{Environment: "development"})
+		app := New(config.Runtime{Environment: "development"})
 		err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg)
 		if err == nil || !strings.Contains(err.Error(), "neither index.html nor a Vite manifest") {
 			t.Fatalf("a deployment shipping environment = development must still fail fast, got %v", err)
@@ -174,7 +175,7 @@ func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 	t.Run("nexus dev boots to the placeholder", func(t *testing.T) {
 		t.Setenv(NexusDevEnv, "1")
 		t.Setenv(NexusDevRootEnv, t.TempDir())
-		app := New(Config{})
+		app := New(config.Runtime{})
 		if err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg); err != nil {
 			t.Fatalf("nexus dev must not fail fast on an unbuilt bundle: %v", err)
 		}
@@ -219,7 +220,7 @@ func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 			}
 			writeHotFile(t, dist, vitehot.Hot{Version: 1, Origin: origin, Base: "/", Entries: []string{"index.html"}, PID: pid})
 			t.Chdir(dir)
-			app := New(Config{Environment: "development"})
+			app := New(config.Runtime{Environment: "development"})
 			app.setFrontendSource(fstest.MapFS{}, "web/dist")
 			err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg)
 			if !tc.live {
@@ -257,7 +258,7 @@ func writeHotFile(t *testing.T, dist string, h vitehot.Hot) {
 // output but not content-addressed, so they must revalidate.
 func TestServeFrontend_UnhashedKebabNamesRevalidate(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	app := New(Config{})
+	app := New(config.Runtime{})
 	fsys := fstest.MapFS{
 		"index.html":                  {Data: []byte("<html></html>")},
 		".vite/manifest.json":         {Data: []byte(`{"index.html":{"file":"assets/my-component-name.js","isEntry":true,"css":["assets/admin-dashboard.css"],"assets":["assets/font-awesome.woff2","assets/inter-variable.woff2"]},"src/x.ts":{"file":"assets/x-DXv-ZbW9.js"}}`)},

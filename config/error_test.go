@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"errors"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/internal/bootui"
 )
 
 // TestConfigError_MissingEnvVar walks the real load path: a nexus.toml
@@ -22,11 +24,11 @@ password = "${DEFINITELY_NOT_SET_VAR}"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadConfig(p)
+	_, err := Load(p)
 	if err == nil {
 		t.Fatal("want error for unset env var")
 	}
-	var ce *ConfigError
+	var ce *Error
 	if !errors.As(err, &ce) {
 		t.Fatalf("want *ConfigError, got %T: %v", err, err)
 	}
@@ -51,8 +53,8 @@ func TestConfigError_ParseError(t *testing.T) {
 	if err := os.WriteFile(p, []byte("[runtime]\naddr = :8080\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadConfig(p)
-	var ce *ConfigError
+	_, err := Load(p)
+	var ce *Error
 	if !errors.As(err, &ce) {
 		t.Fatalf("want *ConfigError, got %T: %v", err, err)
 	}
@@ -68,7 +70,7 @@ func TestConfigError_ParseError(t *testing.T) {
 // line, aligned file/error/fix rows, no goroutine dump — and ANSI codes
 // only when color is on.
 func TestRenderBootError_Layout(t *testing.T) {
-	ce := &ConfigError{
+	ce := &Error{
 		Source: "/app/nexus.toml",
 		Stage:  "expand env vars",
 		Line:   139,
@@ -77,7 +79,7 @@ func TestRenderBootError_Layout(t *testing.T) {
 	}
 
 	var plain strings.Builder
-	renderBootError(&plain, ce, false)
+	bootui.Render(&plain, ce, false)
 	out := plain.String()
 	for _, want := range []string{
 		"✗ nexus: cannot load config",
@@ -100,14 +102,14 @@ func TestRenderBootError_Layout(t *testing.T) {
 	}
 
 	var colored strings.Builder
-	renderBootError(&colored, ce, true)
+	bootui.Render(&colored, ce, true)
 	if !strings.Contains(colored.String(), "\x1b[31m") {
 		t.Fatalf("colored output missing red ANSI code:\n%q", colored.String())
 	}
 
 	// Non-config errors get the generic block, not a crash dump.
 	var generic strings.Builder
-	renderBootError(&generic, errors.New("listen tcp :8080: address already in use"), false)
+	bootui.Render(&generic, errors.New("listen tcp :8080: address already in use"), false)
 	if !strings.Contains(generic.String(), "✗ nexus: failed to start") {
 		t.Fatalf("generic block missing title:\n%s", generic.String())
 	}

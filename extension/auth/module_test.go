@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
@@ -102,7 +103,7 @@ func startTestApp(t *testing.T, cfg auth.Config) string {
 
 	go func() {
 		nexus.Run(
-			nexus.Config{Server: nexus.ServerConfig{Addr: "127.0.0.1:8799"}, TraceCapacity: 10},
+			config.Runtime{Server: config.Server{Addr: "127.0.0.1:8799"}, TraceCapacity: 10},
 			auth.Module(cfg),
 			nexus.AsRest("GET", "/whoami", whoamiHandler),
 		)

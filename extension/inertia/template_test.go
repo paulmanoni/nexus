@@ -13,6 +13,7 @@ import (
 	"testing/fstest"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
@@ -250,15 +251,15 @@ func TestTemplateRootView(t *testing.T) {
 func TestModuleOnlyBuildMount(t *testing.T) {
 	cases := []struct {
 		name   string
-		config nexus.Config
+		config config.Runtime
 		fopts  []nexus.FrontendOption
 		page   string
 		prefix string
 	}{
-		{"root", nexus.Config{}, nil, "/p", ""},
-		{"route prefix", nexus.Config{Server: nexus.ServerConfig{RoutePrefix: "/api"}}, nil, "/api/p", "/api"},
-		{"FrontendAt", nexus.Config{}, []nexus.FrontendOption{nexus.FrontendAt("/admin")}, "/p", "/admin"},
-		{"both", nexus.Config{Server: nexus.ServerConfig{RoutePrefix: "/api"}}, []nexus.FrontendOption{nexus.FrontendAt("/admin")}, "/api/p", "/api/admin"},
+		{"root", config.Runtime{}, nil, "/p", ""},
+		{"route prefix", config.Runtime{Server: config.Server{RoutePrefix: "/api"}}, nil, "/api/p", "/api"},
+		{"FrontendAt", config.Runtime{}, []nexus.FrontendOption{nexus.FrontendAt("/admin")}, "/p", "/admin"},
+		{"both", config.Runtime{Server: config.Server{RoutePrefix: "/api"}}, []nexus.FrontendOption{nexus.FrontendAt("/admin")}, "/api/p", "/api/admin"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -337,7 +338,7 @@ func TestTemplateSSRNonceLoaderInMount(t *testing.T) {
 func TestConfigFrontendIgnoresServeFrontendDocument(t *testing.T) {
 	spa := fstest.MapFS{"dist/index.html": {Data: []byte(`<!doctype html><html><head><script type="module" src="/admin/assets/spa-11111111.js"></script></head><body><div id="app"></div></body></html>`)}}
 	pages := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
-	app, _ := bootAssets(t, nexus.Config{Environment: "production"}, spa,
+	app, _ := bootAssets(t, config.Runtime{Environment: "production"}, spa,
 		inertia.Config{Frontend: pages, Root: "dist"}, nexus.FrontendAt("/admin"))
 	body := fullLoad(app).AssertOK().String()
 	mustContain(t, body, `src="/assets/main-abc123.js"`)

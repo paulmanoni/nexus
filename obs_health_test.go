@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 )
 
@@ -14,7 +15,7 @@ import (
 func TestHealth_AliveFlagsToggle(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		di.Populate(&app),
 	)
 	fxApp.RequireStart()
@@ -38,7 +39,7 @@ func TestHealth_AliveFlagsToggle(t *testing.T) {
 func TestReady_MonolithReadyImmediately(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		di.Populate(&app),
 	)
 	fxApp.RequireStart()

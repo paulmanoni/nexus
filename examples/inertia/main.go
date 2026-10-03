@@ -22,6 +22,7 @@ import (
 	"embed"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 )
 
@@ -37,10 +38,10 @@ func main() {
 	// it and renders pages into its index.html (Vite's in dev, the built one
 	// in production), reading the manifest for the asset version.
 	nexus.Run(
-		nexus.Config{
+		config.Runtime{
 			Introspection: true,
-			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Inertia"},
-			Server:        nexus.ServerConfig{Addr: ":8080"},
+			Dashboard:     config.Dashboard{Enabled: true, Name: "Inertia"},
+			Server:        config.Server{Addr: ":8080"},
 		},
 		nexus.ServeFrontend(webFS, "web/dist"),
 		inertia.Module(inertia.Config{}),

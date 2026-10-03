@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
@@ -14,7 +15,7 @@ import (
 // stub handler. Tests inspect the response headers + status to verify
 // the middleware behavior end-to-end (handler reach + preflight
 // short-circuit are both observable from outside).
-func newCORSEngine(cfg CORSConfig) httpx.Router {
+func newCORSEngine(cfg config.CORS) httpx.Router {
 	e := stdrouter.New()
 	e.Use(corsMiddleware(cfg))
 	e.Any("/x", func(c *httpx.Ctx) { c.String(http.StatusOK, "ok") })
@@ -25,7 +26,7 @@ func newCORSEngine(cfg CORSConfig) httpx.Router {
 // Origin header skip CORS entirely — same-origin browsers and curl
 // scripts shouldn't be affected.
 func TestCORS_NoOriginPassesThrough(t *testing.T) {
-	e := newCORSEngine(CORSConfig{AllowOrigins: []string{"https://app.example"}})
+	e := newCORSEngine(config.CORS{AllowOrigins: []string{"https://app.example"}})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/x", nil)
 	e.ServeHTTP(w, req)
@@ -41,7 +42,7 @@ func TestCORS_NoOriginPassesThrough(t *testing.T) {
 // AllowOrigins is "*". Wildcard with credentials is a CORS-spec
 // pitfall — the matcher echoes Origin so it stays compatible.
 func TestCORS_WildcardAllowsAnyOrigin(t *testing.T) {
-	e := newCORSEngine(CORSConfig{}) // empty AllowOrigins → "*"
+	e := newCORSEngine(config.CORS{}) // empty AllowOrigins → "*"
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/x", nil)
 	req.Header.Set("Origin", "https://random.example")
@@ -55,7 +56,7 @@ func TestCORS_WildcardAllowsAnyOrigin(t *testing.T) {
 // passes others through without setting the ACAO header — the browser
 // blocks the response, the framework doesn't 403.
 func TestCORS_AllowlistMatchesExact(t *testing.T) {
-	e := newCORSEngine(CORSConfig{AllowOrigins: []string{"https://app.example"}})
+	e := newCORSEngine(config.CORS{AllowOrigins: []string{"https://app.example"}})
 
 	for _, c := range []struct {
 		origin     string
@@ -79,7 +80,7 @@ func TestCORS_AllowlistMatchesExact(t *testing.T) {
 // reaching the actual handler. The test handler returns "ok" — we
 // verify the body is empty (handler skipped).
 func TestCORS_PreflightShortCircuits(t *testing.T) {
-	e := newCORSEngine(CORSConfig{
+	e := newCORSEngine(config.CORS{
 		AllowOrigins:     []string{"*"},
 		AllowCredentials: true,
 		MaxAge:           5 * time.Minute,

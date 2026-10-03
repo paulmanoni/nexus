@@ -11,9 +11,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/paulmanoni/nexus/v2"
-	"github.com/paulmanoni/nexus/v2/extension/jobs"
 	"github.com/paulmanoni/nexus/extension/jobs/jobsredis/v2"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
 var bg = context.Background()
@@ -155,7 +156,7 @@ func bootProcess(t *testing.T, srv *miniredis.Miniredis, svc *Svc, cfg jobs.Conf
 	t.Helper()
 	store := newStore(t, srv, "")
 	var m *jobs.Manager
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Provide(func() jobs.Store { return store }),
 		jobs.Module(cfg),
 		nexus.Supply(svc), work,
@@ -255,7 +256,7 @@ func TestBindSelectsTheRedisDriver(t *testing.T) {
 	srv := server(t)
 	var m *jobs.Manager
 	var app *nexus.App
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		jobsredis.Bind(jobsredis.Config{URL: "redis://" + srv.Addr()}),
 		jobs.Module(jobs.Config{PollInterval: 10 * time.Millisecond}),
 		nexus.Supply(&Svc{}), work,
@@ -278,7 +279,7 @@ func TestBindSelectsTheRedisDriver(t *testing.T) {
 }
 
 func TestBindRejectsABadURL(t *testing.T) {
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		jobsredis.Bind(jobsredis.Config{URL: "not a url"}),
 		jobs.Module(jobs.Config{}), work, nexus.Supply(&Svc{}),
 	)

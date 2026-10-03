@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // nexus.Form: source-unified raw reads (JSON / multipart / urlencoded /
@@ -25,7 +27,7 @@ type formEcho struct {
 
 func formApp(t *testing.T) (*App, func()) {
 	t.Helper()
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		AsRest("POST", "/echo", func(ctx context.Context, fm *Form) (*formEcho, error) {
 			out := &formEcho{
 				Title: fm.Get("title"),
@@ -177,7 +179,7 @@ func TestErrorsAccumulator(t *testing.T) {
 // A *Form param on a non-REST transport must be a typed nil whose methods
 // no-op rather than panic.
 func TestFormNilOnGraphQL(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		AsQuery(func(ctx context.Context, fm *Form) (*formEcho, error) {
 			if fm != nil {
 				return nil, NewErrors().Global("form must be nil off REST")

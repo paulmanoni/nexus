@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	nexusmanifest "github.com/paulmanoni/nexus/v2/manifest"
 )
 
@@ -166,7 +166,7 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 	// binary-print modes are JSON-only so they don't carry
 	// the runtime block.
 	if opts.filePath != "" && opts.filePath != "-" && format == "toml" {
-		runtimeIssues, rerr := nexus.LintRuntimeFile(opts.filePath)
+		runtimeIssues, rerr := config.LintFile(opts.filePath)
 		if rerr != nil && !os.IsNotExist(rerr) {
 			fmt.Fprintf(stderr, "nexus lint: runtime block check: %v\n", rerr)
 		}

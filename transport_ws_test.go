@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/middleware"
@@ -46,7 +47,7 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/events", "chat.send", sendHandler, Use(testUserMiddleware())).nexusOption(),
 		AsWS("/events", "chat.typing", typingHandler).nexusOption(),
 		di.Populate(&app),
@@ -146,7 +147,7 @@ func TestAsWS_HandlerErrorSendsErrorEvent(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		AsWS("/bad", "thing", badHandler).nexusOption(),
 		di.Populate(&app),
 	)
@@ -208,7 +209,7 @@ func TestAsWS_FrameEmitsRequestStartEnd(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/events", "chat.send", okHandler).nexusOption(),
 		di.Populate(&app),
 	)
@@ -286,7 +287,7 @@ func TestAsWS_HandlerErrorEmitsRequestEnd500(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/bad", "thing", badHandler).nexusOption(),
 		di.Populate(&app),
 	)
@@ -377,7 +378,7 @@ func TestAsWS_IdentityAndRoomsAreServerSide(t *testing.T) {
 	}
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		AsWS("/live", "notify", notify, Use(testUserMiddleware()),
 			ClientRooms(func(userID, room string) bool { return room == "lobby" && userID != "" })).nexusOption(),
 		di.Populate(&app),
@@ -491,7 +492,7 @@ func TestAsWS_IdentityAndRoomsAreServerSide(t *testing.T) {
 // A handler on a built-in message type would never run: refused at boot.
 func TestAsWS_RejectsBuiltinTypes(t *testing.T) {
 	for _, typ := range []string{"ping", "authenticate", "subscribe", "unsubscribe"} {
-		_, stop, err := InProcess(Config{}, AsWS("/x", typ, func() error { return nil }))
+		_, stop, err := InProcess(config.Runtime{}, AsWS("/x", typ, func() error { return nil }))
 		if err == nil {
 			stop(context.Background())
 			t.Errorf("AsWS(%q) booted; want an error", typ)
@@ -508,7 +509,7 @@ func TestAsWS_HandlerContextFromCarriers(t *testing.T) {
 	got := make(chan seen, 2)
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		AsWS("/ctx", "look", func(p Params[chatPayload]) error {
 			u, _ := p.Context.Value(testUserKey{}).(string)
 			r, _ := p.Context.Value(testRequestOnlyKey{}).(string)

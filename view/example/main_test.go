@@ -12,11 +12,12 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 func boot(t *testing.T) http.Handler {
 	t.Helper()
-	h, stop, err := nexus.InProcess(nexus.Config{}, app()...)
+	h, stop, err := nexus.InProcess(config.Runtime{}, app()...)
 	if err != nil {
 		t.Fatal(err)
 	}

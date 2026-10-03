@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/metrics"
 	"github.com/paulmanoni/nexus/v2/graph"
 	"github.com/paulmanoni/nexus/v2/registry"
@@ -19,7 +20,7 @@ import (
 // an In-struct, so both the builtin and fx backends wire it identically.
 type autoMountIn struct {
 	App    *App
-	Cfg    Config
+	Cfg    config.Runtime
 	Fields []GqlField
 }
 
@@ -27,7 +28,7 @@ type autoMountIn struct {
 // constructor has resolved. Collapsing everything into a single function
 // means users write no mount ceremony — service wrapper + AsQuery/AsMutation
 // is all they need. fields is the collected "nexus.graph.fields" group.
-func autoMountGraphQL(app *App, cfg Config, fields []GqlField) error {
+func autoMountGraphQL(app *App, cfg config.Runtime, fields []GqlField) error {
 	in := autoMountIn{App: app, Cfg: cfg, Fields: fields}
 	if len(in.Fields) == 0 {
 		return nil

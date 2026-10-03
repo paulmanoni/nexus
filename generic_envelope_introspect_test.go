@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // genIsRow is a stand-in for entities.InterviewSession — a named
@@ -52,8 +54,8 @@ func TestGenericEnvelope_IntrospectionExposesInnerNamedType(t *testing.T) {
 	mod := Module("generic_envelope_introspect",
 		AsQuery(NewListGenIs, Op("listGenIs")),
 	)
-	app, err := newApp(Config{
-		Server:        ServerConfig{Addr: "127.0.0.1:0"},
+	app, err := newApp(config.Runtime{
+		Server:        config.Server{Addr: "127.0.0.1:0"},
 		Introspection: true,
 	}, mod)
 	if err != nil {

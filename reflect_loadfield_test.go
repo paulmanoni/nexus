@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/dataloader"
 	"github.com/paulmanoni/nexus/v2/graph"
 )
@@ -50,7 +51,7 @@ func TestLoadField_BatchesNListChildrenIntoOneCall(t *testing.T) {
 		),
 	)
 
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestLoadField_FactoryInjectsFxDeps(t *testing.T) {
 		),
 	)
 
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -261,7 +262,7 @@ func TestLoadField_InlineDepsForm(t *testing.T) {
 		),
 	)
 
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +363,7 @@ func TestLoadField1_TypedDep(t *testing.T) {
 		),
 	)
 
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatal(err)
 	}

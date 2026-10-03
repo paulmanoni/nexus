@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
@@ -24,7 +25,7 @@ func TestPageTypes(t *testing.T) {
 	gates := nexus.NewScoped[map[string]bool](func() nexus.Compute[map[string]bool] {
 		return func(ctx context.Context) (map[string]bool, error) { return map[string]bool{"saveUser": true}, nil }
 	})
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		inertia.Page("GET", "/widgets", "Widgets/Index", NewWidgets),
 		inertia.Page("GET,POST", "/auth", "Auth", NewAuthForm),
 		gates,

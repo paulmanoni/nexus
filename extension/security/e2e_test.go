@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 type echoArgs struct {
@@ -21,12 +22,12 @@ func newEcho(p nexus.Params[echoArgs]) (string, error) { return "hi " + p.Args.N
 // applied by default, and enabling CSRF enforces it — a token-less POST
 // is rejected while a seeded token passes.
 func TestCoreSecurityEndToEnd(t *testing.T) {
-	app, stop, err := nexus.InProcess(nexus.Config{
-		Middleware: nexus.MiddlewareConfig{
+	app, stop, err := nexus.InProcess(config.Runtime{
+		Middleware: config.Middleware{
 			// CSRF is opt-in (it matters only for cookie/session auth);
 			// enable it explicitly for this end-to-end check. Headers
 			// are on by default with no config at all.
-			Security: &nexus.SecurityConfig{EnableCSRF: true},
+			Security: &config.Security{EnableCSRF: true},
 		},
 	},
 		nexus.AsRest("GET", "/thing", newEcho),
@@ -81,7 +82,7 @@ func TestCoreSecurityEndToEnd(t *testing.T) {
 // TestHeadersOnByDefault confirms an app with NO security config still
 // gets the safe headers — secure by default.
 func TestHeadersOnByDefault(t *testing.T) {
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.AsRest("GET", "/thing", newEcho),
 	)
 	if err != nil {

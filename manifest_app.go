@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 
 	"github.com/paulmanoni/nexus/v2/manifest"
@@ -557,7 +558,7 @@ func routeFromEndpoint(e registry.Endpoint) (manifest.Route, bool) {
 // config's declared port. Random-port listeners (`:0`) are filtered
 // out: a port that won't be the same across restarts isn't useful in
 // a manifest.
-func collectPorts(ls map[string]Listener) []manifest.Port {
+func collectPorts(ls map[string]config.Listener) []manifest.Port {
 	if len(ls) == 0 {
 		return nil
 	}

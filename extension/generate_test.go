@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestValidate_Generate exercises the Generate slot's validation rules.
@@ -81,7 +82,7 @@ func TestUse_Generate_RecordsHasGenerate(t *testing.T) {
 			},
 		}
 	}
-	app, stop, err := nexus.InProcess(nexus.Config{}, Use(gen("fe")), Use(gen("fe2")))
+	app, stop, err := nexus.InProcess(config.Runtime{}, Use(gen("fe")), Use(gen("fe2")))
 	if err != nil {
 		t.Fatalf("InProcess: %v", err)
 	}

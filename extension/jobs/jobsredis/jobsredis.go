@@ -26,6 +26,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
@@ -42,7 +43,7 @@ func Bind(cfg Config) nexus.Option {
 	return nexus.Provide(func(lc nexus.Lifecycle) (jobs.Store, error) {
 		url := cfg.URL
 		if url == "" {
-			url = nexus.Get("jobs.redis.url", os.Getenv("REDIS_URL"))
+			url = config.Get("jobs.redis.url", os.Getenv("REDIS_URL"))
 		}
 		if url == "" {
 			url = "redis://127.0.0.1:6379"
@@ -55,7 +56,7 @@ func Bind(cfg Config) nexus.Option {
 		lc.Append(nexus.Hook{OnStop: func(context.Context) error { return client.Close() }})
 		prefix := cfg.Prefix
 		if prefix == "" {
-			prefix = nexus.Get("jobs.redis.prefix", "")
+			prefix = config.Get("jobs.redis.prefix", "")
 		}
 		return New(client, prefix), nil
 	})

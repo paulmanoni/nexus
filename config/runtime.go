@@ -1,7 +1,9 @@
-package nexus
+package config
 
 import (
 	"time"
+
+	"github.com/paulmanoni/nexus/v2/resource"
 
 	"github.com/paulmanoni/nexus/v2/client"
 	"github.com/paulmanoni/nexus/v2/extension/metrics"
@@ -10,10 +12,10 @@ import (
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
-// Config drives how nexus.Run builds the app. Supply it as the first
+// Runtime drives how nexus.Run builds the app. Supply it as the first
 // argument to nexus.Run; users never construct a *App directly when using
 // the top-level builder.
-type Config struct {
+type Runtime struct {
 	// Server bundles every network-binding knob: the single-listener
 	// fallback Addr, and the explicit Listeners map for multi-scope
 	// deployments. Both fields are optional; the framework supplies a
@@ -27,12 +29,12 @@ type Config struct {
 	//	        },
 	//	    },
 	//	}
-	Server ServerConfig
+	Server Server
 
 	// WebSocket governs the upgrade origin policy for every transport that
 	// speaks WebSocket — AsWS endpoints, GraphQL subscriptions, and the
 	// dashboard streams. The default is same-origin; see WebSocketConfig.
-	WebSocket WebSocketConfig
+	WebSocket WebSocket
 
 	// Router selects the HTTP router backend. Nil means the default
 	// stdlib net/http.ServeMux (zero third-party deps). Set it to an
@@ -49,7 +51,7 @@ type Config struct {
 	//	nexus.Config{
 	//	    Dashboard: nexus.DashboardConfig{Enabled: true, Name: "MyApp"},
 	//	}
-	Dashboard DashboardConfig
+	Dashboard Dashboard
 
 	// Client bundles the auto-generated JS/TS client SDK knobs —
 	// whether the SDK routes mount at all, what URL prefix they
@@ -110,7 +112,7 @@ type Config struct {
 	// DevReload tunes the dev-mode live-reload file watcher, which
 	// runs only under NEXUS_DEV=1. Production builds never start the
 	// watcher, so this field is inert there.
-	DevReload DevReloadConfig
+	DevReload DevReload
 
 	// GraphQL bundles every environment-level GraphQL knob that
 	// applies across all services' mounted schemas. Set once on the
@@ -122,7 +124,7 @@ type Config struct {
 	//	        Pretty: true,
 	//	    },
 	//	}
-	GraphQL GraphQLConfig
+	GraphQL GraphQL
 
 	// Middleware bundles every middleware-related knob: engine-root
 	// stacks, dashboard gating, and the built-in global rate limit.
@@ -134,7 +136,7 @@ type Config struct {
 	//	        RateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
 	//	    },
 	//	}
-	Middleware MiddlewareConfig
+	Middleware Middleware
 
 	// Stores groups the framework's pluggable backends for state
 	// nexus needs to keep around — rate-limit counters, metrics
@@ -149,7 +151,7 @@ type Config struct {
 	//	        Cache:     myCacheManager,
 	//	    },
 	//	}
-	Stores StoreConfig
+	Stores Stores
 
 	// Environment is the named target the binary is booting into —
 	// "production", "staging", "preview", etc. Distinct from
@@ -222,10 +224,10 @@ type Config struct {
 	IntrospectionNetworks []string
 }
 
-// DashboardConfig groups the /__nexus surface knobs. Both fields
+// Dashboard groups the /__nexus surface knobs. Both fields
 // are optional: leave the struct zero-valued and the dashboard
 // stays unmounted (default).
-type DashboardConfig struct {
+type Dashboard struct {
 	// Enabled mounts /__nexus/* on the engine when true. Pulls in
 	// the Architecture / Endpoints / Crons / Rate-limits / Traces
 	// tabs and the JSON API the dashboard reads from.
@@ -238,12 +240,12 @@ type DashboardConfig struct {
 	Name string
 }
 
-// DevReloadConfig tunes the NEXUS_DEV=1 live-reload watcher. The
+// DevReload tunes the NEXUS_DEV=1 live-reload watcher. The
 // watcher already ignores hidden files, sourcemaps, and runtime data
 // artifacts (SQLite databases + their -wal/-shm/-journal sidecars,
 // .log files) out of the box; Exclude adds app-specific patterns on
 // top of those built-ins.
-type DevReloadConfig struct {
+type DevReload struct {
 	// Exclude lists glob patterns whose matches never trigger a
 	// browser reload. Each changed file is tested (via filepath.Match)
 	// three ways, and a match on any one excludes it:
@@ -258,7 +260,7 @@ type DevReloadConfig struct {
 	Exclude []string
 }
 
-// ServerConfig groups the network-binding knobs. Addr is the
+// Server groups the network-binding knobs. Addr is the
 // single-listener fallback (used when Listeners is empty);
 // Listeners declares one or more named listeners with explicit
 // scopes. Both optional — leaving both zero binds a single
@@ -268,7 +270,7 @@ type DevReloadConfig struct {
 // listener binds. The framework installs a scope-filter middleware
 // that 404s out-of-scope routes per listener (e.g. requests to
 // /__nexus/* on the public listener).
-type ServerConfig struct {
+type Server struct {
 	// Addr is the HTTP listen address used in single-listener
 	// mode (default ":8080"). Ignored when Listeners is non-empty.
 	// Manifest-driven defaults via DeploymentDefaults.Addr fill
@@ -372,9 +374,9 @@ type ServerConfig struct {
 	MaxBodyBytes int64
 }
 
-// WebSocketConfig governs WebSocket upgrades across every transport: user
+// WebSocket governs WebSocket upgrades across every transport: user
 // AsWS endpoints, GraphQL subscriptions, and the dashboard's own streams.
-type WebSocketConfig struct {
+type WebSocket struct {
 	// AllowedOrigins extends the default same-origin upgrade policy.
 	//
 	// WebSocket handshakes are NOT covered by CORS or the same-origin
@@ -406,11 +408,11 @@ type WebSocketConfig struct {
 	Workers int
 }
 
-// MiddlewareConfig groups every middleware-related knob the
+// Middleware groups every middleware-related knob the
 // framework recognizes. All fields are optional — leave the struct
 // zero-valued for "no extra middleware" and the framework runs with
 // its built-in stack alone.
-type MiddlewareConfig struct {
+type Middleware struct {
 	// Global stacks on the Gin engine root, so every REST endpoint,
 	// GraphQL POST, WebSocket upgrade, and dashboard request flows
 	// through it in registration order. Use for cross-cutting
@@ -449,7 +451,7 @@ type MiddlewareConfig struct {
 	//
 	// For finer control (per-route CORS, dynamic origin checks),
 	// install your own gin middleware via Global instead.
-	CORS *CORSConfig
+	CORS *CORS
 
 	// Security configures the built-in web-security middleware:
 	// response headers (on by default) and CSRF (off by default).
@@ -462,11 +464,11 @@ type MiddlewareConfig struct {
 	// For the dashboard "Security" tab or per-route bundles, load the
 	// extension/security plugin — the global enforcement here and that
 	// plugin's per-route surface share one implementation.
-	Security *SecurityConfig
+	Security *Security
 }
 
-// SecurityConfig declares the framework's built-in security middleware.
-// The zero value (and a nil *SecurityConfig) yields the secure default:
+// Security declares the framework's built-in security middleware.
+// The zero value (and a nil *Security) yields the secure default:
 // the three safe response headers on, CSRF off.
 //
 // CSRF is off by default on purpose. A nexus app is usually a
@@ -475,7 +477,7 @@ type MiddlewareConfig struct {
 // token cross-site. Enable it (EnableCSRF, or `csrf = true`) when you
 // serve cookie/session-authenticated, server-rendered HTML forms (a
 // template engine, or Inertia backed by session cookies).
-type SecurityConfig struct {
+type Security struct {
 	// DisableHeaders turns off the security response headers. They are
 	// on by default: X-Frame-Options: DENY, X-Content-Type-Options:
 	// nosniff, Referrer-Policy: strict-origin-when-cross-origin.
@@ -505,10 +507,10 @@ type SecurityConfig struct {
 	CSRFCookieSecure *bool
 }
 
-// CORSConfig declares the framework's built-in CORS policy. All
+// CORS declares the framework's built-in CORS policy. All
 // fields are optional; reasonable defaults fill in for the common
 // "allow my SPA's origin to hit my API" case.
-type CORSConfig struct {
+type CORS struct {
 	// AllowOrigins lists allowed Origin header values verbatim.
 	// Use "*" for "any origin" — note that AllowCredentials cannot
 	// be true with "*" per the CORS spec; the middleware will
@@ -543,12 +545,12 @@ type CORSConfig struct {
 	MaxAge time.Duration
 }
 
-// StoreConfig groups the framework's pluggable backends. All fields
+// Stores groups the framework's pluggable backends. All fields
 // are optional — leave them nil and the framework supplies in-
 // memory / cache-backed defaults. Set explicitly to share state
 // across replicas, push to a monitoring stack, or hand the
 // framework an existing cache tier.
-type StoreConfig struct {
+type Stores struct {
 	// RateLimit replaces the default in-memory rate-limit store.
 	// Set when you want to share the store between the app and
 	// externally-built middleware bundles (ratelimit.NewMiddleware
@@ -574,14 +576,14 @@ type StoreConfig struct {
 	//
 	// Typed as the root Cache interface so the core stays decoupled
 	// from extension/cache; *cache.Manager satisfies it.
-	Cache Cache
+	Cache resource.Cache
 }
 
-// GraphQLConfig groups the framework's environment-level GraphQL
+// GraphQL groups the framework's environment-level GraphQL
 // knobs. Per-service paths via (*Service).AtGraphQL still win over
 // these defaults — these only apply to services that don't carry an
 // explicit AtGraphQL call.
-type GraphQLConfig struct {
+type GraphQL struct {
 	// Path overrides the default mount path for auto-generated
 	// GraphQL services. Empty falls back to DefaultGraphQLPath
 	// ("/graphql").

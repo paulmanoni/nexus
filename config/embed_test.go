@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"encoding/base64"
@@ -33,12 +33,12 @@ func TestEmbeddedConfig_DecodeRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAutoLoad_FallsBackToEmbedded: when no nexus.toml exists on disk,
-// Boot's autoLoad uses the build-time embedded copy — so a single
+// TestRead_FallsBackToEmbedded: when no nexus.toml exists on disk,
+// config.Read (Boot's loader) uses the build-time embedded copy — so a single
 // self-contained binary binds its configured addr instead of :8080.
-func TestAutoLoad_FallsBackToEmbedded(t *testing.T) {
-	ClearConfigStoreForTest()
-	t.Cleanup(ClearConfigStoreForTest)
+func TestRead_FallsBackToEmbedded(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
 
 	orig := embeddedConfigB64
 	t.Cleanup(func() { embeddedConfigB64 = orig })
@@ -52,7 +52,11 @@ name = "embedded-demo"
 
 	// Point at a path that does not exist so the disk read misses and the
 	// embedded copy takes over.
-	cfg, _ := autoLoad(filepath.Join(t.TempDir(), "absent.toml"))
+	f, err := Read(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil || f == nil {
+		t.Fatalf("Read: %v (file %v)", err, f)
+	}
+	cfg := f.Runtime
 	if cfg.Server.Addr != ":9797" {
 		t.Errorf("embedded fallback Config.Server.Addr = %q, want :9797", cfg.Server.Addr)
 	}
@@ -61,12 +65,12 @@ name = "embedded-demo"
 	}
 }
 
-// TestAutoLoad_DiskWinsOverEmbedded: an on-disk nexus.toml overrides the
+// TestRead_DiskWinsOverEmbedded: an on-disk nexus.toml overrides the
 // embedded copy, so operators can re-tune a deployed binary without a
 // rebuild.
-func TestAutoLoad_DiskWinsOverEmbedded(t *testing.T) {
-	ClearConfigStoreForTest()
-	t.Cleanup(ClearConfigStoreForTest)
+func TestRead_DiskWinsOverEmbedded(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
 
 	orig := embeddedConfigB64
 	t.Cleanup(func() { embeddedConfigB64 = orig })
@@ -76,7 +80,11 @@ func TestAutoLoad_DiskWinsOverEmbedded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nexus.toml")
 	mustWriteTOML(t, path, "[runtime.server]\naddr = \":1234\"\n")
 
-	cfg, _ := autoLoad(path)
+	f, err := Read(path)
+	if err != nil || f == nil {
+		t.Fatalf("Read: %v (file %v)", err, f)
+	}
+	cfg := f.Runtime
 	if cfg.Server.Addr != ":1234" {
 		t.Errorf("disk config should win: Config.Server.Addr = %q, want :1234", cfg.Server.Addr)
 	}

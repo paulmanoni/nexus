@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"encoding/json"
@@ -67,7 +67,7 @@ var (
 	pendingConfigListeners = map[string][]func(any){}
 )
 
-// InstallConfigStore installs the process-wide config store with
+// InstallStore installs the process-wide config store with
 // the given initial values. Called once by extension/config at
 // boot. Multiple installations in one process is a configuration
 // error caught here (the second installer panics with a clear
@@ -76,7 +76,7 @@ var (
 // Public so extension/config can call it across package boundaries.
 // User code does NOT call this directly — the extension's
 // Server/Client/Local entrypoints drive it.
-func InstallConfigStore(values map[string]any, version string) {
+func InstallStore(values map[string]any, version string) {
 	s := &configStore{listeners: map[string][]func(any){}}
 	s.snap.Store(&configSnap{
 		values:    values,
@@ -97,17 +97,17 @@ func InstallConfigStore(values map[string]any, version string) {
 	pendingConfigMu.Unlock()
 }
 
-// UpdateConfigStore swaps in a new value tree + version,
+// UpdateStore swaps in a new value tree + version,
 // triggering OnConfigChange callbacks for keys whose values
 // changed. Called by config.Client on every successful refresh
 // and by config.Local's reload path (phase 2).
-func UpdateConfigStore(values map[string]any, version string) {
+func UpdateStore(values map[string]any, version string) {
 	s := activeConfigStore.Load()
 	if s == nil {
 		// Caller hasn't installed yet — race during boot.
 		// Fall through to install instead so the first update
 		// lands as the initial snapshot.
-		InstallConfigStore(values, version)
+		InstallStore(values, version)
 		return
 	}
 	prev := s.snap.Load()
@@ -139,9 +139,9 @@ func UpdateConfigStore(values map[string]any, version string) {
 	}
 }
 
-// ClearConfigStoreForTest unwinds InstallConfigStore. Test-only
+// ResetForTest unwinds InstallConfigStore. Test-only
 // escape hatch — production never calls this.
-func ClearConfigStoreForTest() {
+func ResetForTest() {
 	activeConfigStore.Store(nil)
 	baseConfigStore.Store(nil)
 	pendingConfigMu.Lock()
@@ -149,10 +149,10 @@ func ClearConfigStoreForTest() {
 	pendingConfigMu.Unlock()
 }
 
-// ConfigVersion returns the version stamp of the current
+// Version returns the version stamp of the current
 // snapshot, or "" when no store is installed. Useful for log
 // breadcrumbs ("starting on config version X").
-func ConfigVersion() string {
+func Version() string {
 	s := activeConfigStore.Load()
 	if s == nil {
 		return ""

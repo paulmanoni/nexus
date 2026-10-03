@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
@@ -33,7 +34,7 @@ func (b *diBackend) Login(_ context.Context, cred auth.Credentials) (*auth.Ident
 // Manager.Login — the "seamless with Config" path, no globals.
 func TestConfigBackend_DIWiring(t *testing.T) {
 	var mgr *auth.Manager
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Provide(func() *dep { return &dep{prefix: "u:"} }),
 		auth.Module(auth.Config{
 			Authentication: auth.Authentication{
@@ -69,7 +70,7 @@ func TestConfigBackend_DIWiring(t *testing.T) {
 // (default bearer scheme provided by the backend).
 func TestConfigBackend_StaticValue(t *testing.T) {
 	var mgr *auth.Manager
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Module(auth.Config{
 			Backend: auth.StaticBackend(&diBackend{d: &dep{prefix: "s:"}}),
 		}),

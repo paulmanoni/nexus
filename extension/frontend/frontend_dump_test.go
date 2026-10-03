@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestPlugin_DumpFollowsRuntimeSDK boots a real app in development with a
@@ -41,7 +42,7 @@ func TestPlugin_DumpFollowsRuntimeSDK(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				_, stop, err := nexus.InProcess(nexus.Config{Environment: m.env},
+				_, stop, err := nexus.InProcess(config.Runtime{Environment: m.env},
 					Plugin(Config{Root: "web", FS: minimalFS(), RuntimeSDK: runtimeSDK}))
 				if err != nil {
 					t.Fatalf("InProcess: %v", err)

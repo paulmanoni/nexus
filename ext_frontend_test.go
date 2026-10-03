@@ -9,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -34,7 +35,7 @@ func TestServeFrontend(t *testing.T) {
 		"assets/nested/deep.css":  {Data: []byte(".x{}")},
 	}
 
-	app := New(Config{})
+	app := New(config.Runtime{})
 	app.engine.GET("/api/ping", func(c *httpx.Ctx) { c.String(http.StatusOK, "pong") })
 
 	if err := mountFrontend(app, fsys, noFrontendCfg); err != nil {
@@ -102,7 +103,7 @@ func TestServeFrontend_DevModeNoCacheOnAssets(t *testing.T) {
 		"assets/hashed-a.js": {Data: []byte("// hashed")},
 	}
 
-	app := New(Config{})
+	app := New(config.Runtime{})
 	if err := mountFrontend(app, fsys, noFrontendCfg); err != nil {
 		t.Fatalf("mountFrontend: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestServeFrontend_DevModeNoCacheOnAssets(t *testing.T) {
 // unbuilt bundle surfaces at compile/start time, not at first
 // request.
 func TestServeFrontendMissingIndex(t *testing.T) {
-	app := New(Config{})
+	app := New(config.Runtime{})
 	fsys := fstest.MapFS{"assets/main.js": {Data: []byte("x")}}
 	err := mountFrontend(app, fsys, noFrontendCfg)
 	if err == nil {
@@ -167,7 +168,7 @@ func TestServeFrontendMissingIndex(t *testing.T) {
 // under a sub-path while leaving sibling paths free for other
 // handlers — the standard "REST at /api, SPA at /admin" shape.
 func TestServeFrontendAtSubPath(t *testing.T) {
-	app := New(Config{})
+	app := New(config.Runtime{})
 	app.engine.GET("/api/ping", func(c *httpx.Ctx) { c.String(http.StatusOK, "pong") })
 
 	fsys := fstest.MapFS{
@@ -236,7 +237,7 @@ func TestServeFrontendNormalizesMountPath(t *testing.T) {
 // requests when a prefix is set — otherwise the SPA would swallow
 // requests destined for a different mount sharing the listener.
 func TestServeFrontendWithRoutePrefix(t *testing.T) {
-	app := New(Config{Server: ServerConfig{RoutePrefix: "/v1/api"}})
+	app := New(config.Runtime{Server: config.Server{RoutePrefix: "/v1/api"}})
 	fsys := fstest.MapFS{
 		"index.html":     {Data: []byte("<html>app</html>")},
 		"assets/main.js": {Data: []byte("x=1")},
@@ -304,7 +305,7 @@ func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sub: %v", err)
 	}
-	app := New(Config{})
+	app := New(config.Runtime{})
 	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
 		t.Fatalf("mount: %v", err)
 	}
@@ -350,7 +351,7 @@ func TestServeFrontend_ProductionCachesIndexHTML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := New(Config{})
+	app := New(config.Runtime{})
 	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +405,7 @@ func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sub: %v", err)
 	}
-	app := New(Config{})
+	app := New(config.Runtime{})
 	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
 		t.Fatalf("mount: %v", err)
 	}

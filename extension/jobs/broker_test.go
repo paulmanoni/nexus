@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
@@ -152,7 +153,7 @@ func bootBroker(t *testing.T, b *fakeBroker, svc *BrokerSvc, cfg jobs.Config, op
 		nexus.Supply(svc), brokerRun, brokerBroken,
 		nexus.Invoke(func(mm *jobs.Manager) { m = mm }),
 	}, opts...)
-	_, stop, err := nexus.InProcess(nexus.Config{}, all...)
+	_, stop, err := nexus.InProcess(config.Runtime{}, all...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestBrokerBootRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stop, err := nexus.InProcess(nexus.Config{}, tc.opts...)
+			_, stop, err := nexus.InProcess(config.Runtime{}, tc.opts...)
 			if stop != nil {
 				defer func() { _ = stop(context.Background()) }()
 			}

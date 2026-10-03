@@ -1,6 +1,7 @@
 package nexus
 
 import (
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/middleware/secure"
 )
@@ -15,7 +16,7 @@ const securityStatusKey = "nexus.security.status"
 // Config.Middleware.Security. Headers are on unless explicitly disabled
 // (so a nil config still hardens the app); CSRF is opt-in. It records a
 // status map for the dashboard either way.
-func (a *App) installSecurity(sc *SecurityConfig) {
+func (a *App) installSecurity(sc *config.Security) {
 	headersOn := sc == nil || !sc.DisableHeaders
 	csrfOn := sc != nil && sc.EnableCSRF
 

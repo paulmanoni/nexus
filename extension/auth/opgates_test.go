@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
@@ -19,7 +20,7 @@ func openHandler(ctx context.Context) (*gateOut, error) { return &gateOut{OK: tr
 
 func gatesApp(t *testing.T) (*nexus.App, func()) {
 	t.Helper()
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.AsQuery(listGated, Requires("view_user")),
 		nexus.AsQuery(showGated, Requires("view_user")),
 		nexus.AsMutation(addGated, Requires("add_user", "change_user")),
@@ -113,7 +114,7 @@ func TestOpGatesTableCachedAndGrouped(t *testing.T) {
 }
 
 func BenchmarkOpGates(b *testing.B) {
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.AsQuery(listGated, Requires("view_user")),
 		nexus.AsQuery(showGated, Requires("view_user")),
 		nexus.AsMutation(addGated, Requires("add_user", "change_user")),

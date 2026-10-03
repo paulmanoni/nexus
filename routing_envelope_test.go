@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // nexus.Envelope: handlers return plain (T, error); the app-supplied wrap
@@ -34,7 +36,7 @@ func (s *envSvc) FindUser(ctx context.Context, a probeArgs) (*probeOut, error) {
 }
 
 func TestEnvelopeGraphQL(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&envSvc{}),
 		AsQuery((*envSvc).FindUser, Envelope(envWrap[*probeOut])),
 	)
@@ -58,7 +60,7 @@ func TestEnvelopeGraphQL(t *testing.T) {
 }
 
 func TestEnvelopeRest(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&envSvc{}),
 		AsRest("GET", "/find", (*envSvc).FindUser, Envelope(envWrap[*probeOut])),
 	)
@@ -83,7 +85,7 @@ func TestEnvelopeRest(t *testing.T) {
 // A wrap whose input type doesn't match the handler's return must fail at
 // boot, naming both types.
 func TestEnvelopeTypeMismatchFailsBoot(t *testing.T) {
-	_, stop, err := InProcess(Config{},
+	_, stop, err := InProcess(config.Runtime{},
 		Supply(&envSvc{}),
 		AsQuery((*envSvc).FindUser, Envelope(envWrap[[]string])),
 	)

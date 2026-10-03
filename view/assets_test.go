@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 func TestAssets(t *testing.T) {
@@ -15,7 +16,7 @@ func TestAssets(t *testing.T) {
 	lib.HandleFunc("GET /lib/js/{file}", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "script "+r.PathValue("file"))
 	})
-	app, stop, err := nexus.InProcess(nexus.Config{}, Assets("/lib/js/", lib))
+	app, stop, err := nexus.InProcess(config.Runtime{}, Assets("/lib/js/", lib))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
@@ -143,7 +144,7 @@ func TestRejectEvent_FiresOnUnauthenticated(t *testing.T) {
 	appCh := make(chan *nexus.App, 1)
 	go func() {
 		nexus.Run(
-			nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 100},
+			config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 100},
 			auth.Single(resolver),
 			nexus.Invoke(func(app *nexus.App) { appCh <- app }),
 			nexus.AsRest("GET", "/gated", func(ctx context.Context) (map[string]string, error) {

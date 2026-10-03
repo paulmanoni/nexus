@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 	"github.com/paulmanoni/nexus/v2/extension/frontend"
 )
@@ -99,9 +100,9 @@ func me(ctx context.Context) (User, error) {
 
 func main() {
 	nexus.Run(
-		nexus.Config{
-			Server:        nexus.ServerConfig{Addr: ":8080"},
-			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Petstore SPA"},
+		config.Runtime{
+			Server:        config.Server{Addr: ":8080"},
+			Dashboard:     config.Dashboard{Enabled: true, Name: "Petstore SPA"},
 			TraceCapacity: 200,
 		},
 		auth.Single(resolveToken),

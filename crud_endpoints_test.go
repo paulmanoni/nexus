@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/resource"
 )
 
@@ -51,7 +52,7 @@ func TestAsCRUD_RestEndpoints(t *testing.T) {
 		Provide(func(app *App) *Service { return app.Service("notes-test") }),
 		AsCRUD[AscrudNote](MemoryResolver[AscrudNote](nil, nil)),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestAsCRUD_FxInjectedResolverAttachesResources(t *testing.T) {
 			WithGraphQL(),
 		),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -184,7 +185,7 @@ func TestAsCRUD_TagsEndpointsWithModule(t *testing.T) {
 		Provide(func(app *App) *Service { return app.Service("notes-tagged") }),
 		AsCRUD[AscrudNote](MemoryResolver[AscrudNote](nil, nil), WithGraphQL()),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestAsCRUD_DefaultIsRestOnly(t *testing.T) {
 		Provide(func(app *App) *Service { return app.Service("notes-default") }),
 		AsCRUD[AscrudNote](MemoryResolver[AscrudNote](nil, nil)),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -231,7 +232,7 @@ func TestAsCRUD_GraphQL(t *testing.T) {
 		Provide(func(app *App) *Service { return app.Service("notes-gql") }),
 		AsCRUD[AscrudNote](MemoryResolver[AscrudNote](nil, nil), WithGraphQL()),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}

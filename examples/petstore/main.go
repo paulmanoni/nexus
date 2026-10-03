@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -14,8 +15,8 @@ import (
 )
 
 func main() {
-	app := nexus.New(nexus.Config{
-		Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Petstore"},
+	app := nexus.New(config.Runtime{
+		Dashboard:     config.Dashboard{Enabled: true, Name: "Petstore"},
 		TraceCapacity: 1000,
 	})
 

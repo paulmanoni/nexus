@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // nexus.NewScoped: request-scoped derived values — computed at most once
@@ -25,7 +27,7 @@ func TestScopedMemoizesPerRequest(t *testing.T) {
 			return scopeFact{N: int(computes.Add(1))}, nil
 		}
 	})
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		fact,
 		AsRest("GET", "/twice", func(ctx context.Context) (*scopeFact, error) {
 			a, err := fact.Get(ctx)
@@ -70,7 +72,7 @@ func TestScopedConcurrentSingleflight(t *testing.T) {
 			return scopeFact{N: int(computes.Add(1))}, nil
 		}
 	})
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		fact,
 		AsRest("GET", "/fan", func(ctx context.Context) (*scopeFact, error) {
 			var wg sync.WaitGroup
@@ -112,7 +114,7 @@ func TestScopedErrorMemoized(t *testing.T) {
 			return scopeFact{}, boom
 		}
 	})
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		fact,
 		AsRest("GET", "/err", func(ctx context.Context) (*scopeFact, error) {
 			if _, err := fact.Get(ctx); err == nil {
@@ -145,7 +147,7 @@ func TestScopedTwoHandlesSameType(t *testing.T) {
 	b := NewScoped[scopeFact](func() Compute[scopeFact] {
 		return func(ctx context.Context) (scopeFact, error) { return scopeFact{N: 2}, nil }
 	}).NoProvide()
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		a, b,
 		AsRest("GET", "/pair", func(ctx context.Context) (*scopeFact, error) {
 			av, _ := a.Get(ctx)
@@ -169,7 +171,7 @@ func TestScopedGraphQLContext(t *testing.T) {
 	fact := NewScoped[scopeFact](func() Compute[scopeFact] {
 		return func(ctx context.Context) (scopeFact, error) { return scopeFact{N: 9}, nil }
 	})
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		fact,
 		AsQuery(func(ctx context.Context) (*scopeFact, error) {
 			v, err := fact.Get(ctx)
@@ -205,7 +207,7 @@ func TestScopedTestInjection(t *testing.T) {
 
 func TestScopedBadCtorFailsBoot(t *testing.T) {
 	bad := NewScoped[scopeFact](func() int { return 0 })
-	_, stop, err := InProcess(Config{}, bad)
+	_, stop, err := InProcess(config.Runtime{}, bad)
 	if stop != nil {
 		defer func() { _ = stop(context.Background()) }()
 	}
@@ -220,7 +222,7 @@ func BenchmarkScopedGet(b *testing.B) {
 	fact := NewScoped[scopeFact](func() Compute[scopeFact] {
 		return func(ctx context.Context) (scopeFact, error) { return scopeFact{N: 7}, nil }
 	})
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		fact,
 		AsRest("GET", "/s", func(ctx context.Context) (*scopeFact, error) {
 			v, err := fact.Get(ctx)
@@ -253,7 +255,7 @@ func TestScopedInjectable(t *testing.T) {
 	fb := NewScoped[scopeFactB](func() Compute[scopeFactB] {
 		return func(ctx context.Context) (scopeFactB, error) { return scopeFactB{M: 4}, nil }
 	})
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		fa, fb,
 		AsRest("GET", "/inj", func(a *Scoped[scopeFact], b *Scoped[scopeFactB], ctx context.Context) (*scopeFact, error) {
 			av, err := a.Get(ctx)
@@ -288,7 +290,7 @@ func TestScopedDuplicateTypeBootError(t *testing.T) {
 	b := NewScoped[scopeFact](func() Compute[scopeFact] {
 		return func(ctx context.Context) (scopeFact, error) { return scopeFact{}, nil }
 	})
-	_, stop, err := InProcess(Config{}, a, b)
+	_, stop, err := InProcess(config.Runtime{}, a, b)
 	if stop != nil {
 		defer func() { _ = stop(context.Background()) }()
 	}

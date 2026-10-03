@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // Store persists session data by ID. Implementations must be safe for
@@ -154,11 +154,11 @@ func (m *MemoryStore) RestoreDev(data []byte) error {
 //	session.Module(session.Config{Store: session.CacheStore(mgr)})
 //
 // Or hand it the app's default cache: session.CacheStore(app.Cache()).
-func CacheStore(c nexus.Cache) Store {
+func CacheStore(c resource.Cache) Store {
 	return &cacheStore{c: c}
 }
 
-type cacheStore struct{ c nexus.Cache }
+type cacheStore struct{ c resource.Cache }
 
 const cacheKeyPrefix = "session:"
 

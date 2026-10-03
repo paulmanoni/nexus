@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
 
@@ -75,7 +76,7 @@ func maskTestApp(t *testing.T, seen *maskSeen) *httptest.Server {
 			return []maskItem{{ID: 41, OwnerID: p.Args.OwnerID}}, nil
 		}),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestMaskID_GraphQLScalarRoundTrip(t *testing.T) {
 		Provide(func(app *App) *Service { return app.Service("gqlitems") }),
 		AsQuery(NewGetItem),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
@@ -300,7 +301,7 @@ func TestMaskID_GraphQLHonoursTheTypeScope(t *testing.T) {
 		AsQuery(NewGetScoped),
 		AsQuery(NewGetUnscoped),
 	)
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}, mod)
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}, mod)
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}

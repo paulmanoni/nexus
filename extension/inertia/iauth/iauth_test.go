@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/extension/inertia/iauth"
@@ -42,7 +43,7 @@ func TestErrorHandler_BranchesByRequestKind(t *testing.T) {
 	fsys := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
 	ready := make(chan struct{})
 	go func() {
-		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 5},
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 5},
 			inertia.Module(inertia.Config{Frontend: fsys, Root: "dist"}),
 			auth.Module(auth.Config{
 				Authentication: auth.Authentication{Schemes: []auth.Scheme{{Resolve: resolver}}},

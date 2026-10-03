@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
@@ -18,7 +19,7 @@ func TestTag_CrossTransport(t *testing.T) {
 	newSearch := func(p Params[args]) (string, error) { return "ok", nil }
 	newSend := func(sess *WSSession, p Params[args]) error { return nil }
 
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}},
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}},
 		AsRest("GET", "/items/:id", newGet, Tag("x.kind", "rest"), Tag("", "ignored")),
 		AsQuery(newSearch, Tag("x.kind", "gql")),
 		AsWS("/events", "item.send", newSend, Tag("x.kind", "ws")),
@@ -58,7 +59,7 @@ func TestRegisterSharedProp(t *testing.T) {
 	type Viewer struct {
 		Name string `json:"name"`
 	}
-	app := New(Config{})
+	app := New(config.Runtime{})
 	app.RegisterSharedProp("can", reflect.TypeOf(map[string]bool{}))
 	app.RegisterSharedProp("viewer", reflect.TypeOf(&Viewer{}))
 	app.RegisterSharedProp("", reflect.TypeOf(""))

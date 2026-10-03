@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
 	"github.com/paulmanoni/nexus/v2/graph"
@@ -74,7 +75,7 @@ func TestCheckBundleTransportsMessage(t *testing.T) {
 // route via an internal rewrite at the App boundary — no redirect, bodies
 // intact, identical on every router backend.
 func TestStripTrailingSlash(t *testing.T) {
-	app, stop, err := InProcess(Config{Server: ServerConfig{StripTrailingSlash: true}},
+	app, stop, err := InProcess(config.Runtime{Server: config.Server{StripTrailingSlash: true}},
 		AsRestHandler("GET", "/users", func() httpx.HandlerFunc {
 			return func(c *httpx.Ctx) { c.String(200, "list") }
 		}),
@@ -93,7 +94,7 @@ func TestStripTrailingSlash(t *testing.T) {
 	}
 
 	// Off by default: the trailing-slash spelling stays a 404.
-	app2, stop2, err := InProcess(Config{},
+	app2, stop2, err := InProcess(config.Runtime{},
 		AsRestHandler("GET", "/users", func() httpx.HandlerFunc {
 			return func(c *httpx.Ctx) { c.String(200, "list") }
 		}),

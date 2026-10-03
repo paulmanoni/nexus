@@ -17,9 +17,10 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/paulmanoni/nexus/v2"
-	"github.com/paulmanoni/nexus/v2/extension/jobs"
 	"github.com/paulmanoni/nexus/extension/jobs/jobsamqp/v2"
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
 var bg = context.Background()
@@ -90,7 +91,7 @@ var (
 func boot(t *testing.T, rawURL, p string, svc *Svc) *jobs.Manager {
 	t.Helper()
 	var m *jobs.Manager
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		jobsamqp.Bind(jobsamqp.Config{URL: rawURL, Prefix: p}),
 		jobs.Module(jobs.Config{Queues: map[string]int{"default": 3}}),
 		nexus.Supply(svc), work, broken,
@@ -287,7 +288,7 @@ func TestShutdownHandsTheJobOn(t *testing.T) {
 	p := prefix(t, u)
 	svc := &LongSvc{started: make(chan int, 4)}
 	bootLong := func() func() {
-		_, stop, err := nexus.InProcess(nexus.Config{},
+		_, stop, err := nexus.InProcess(config.Runtime{},
 			jobsamqp.Bind(jobsamqp.Config{URL: u, Prefix: p}),
 			jobs.Module(jobs.Config{ShutdownGrace: time.Millisecond}),
 			nexus.Supply(svc), long,

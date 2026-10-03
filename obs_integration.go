@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
@@ -42,7 +43,7 @@ const DefaultIdleTimeout = 120 * time.Second
 
 // idleTimeout resolves the keep-alive window. A negative configured value is
 // the explicit "use Go's default" opt-out.
-func idleTimeout(cfg Config) time.Duration {
+func idleTimeout(cfg config.Runtime) time.Duration {
 	switch {
 	case cfg.Server.IdleTimeout > 0:
 		return cfg.Server.IdleTimeout
@@ -57,7 +58,7 @@ func idleTimeout(cfg Config) time.Duration {
 // one: nexus can't know whether an app streams large uploads, and silently
 // rejecting them at some framework-chosen ceiling would be a worse failure
 // than the exhaustion risk it guards against.
-func maxBodyBytes(cfg Config) int64 {
+func maxBodyBytes(cfg config.Runtime) int64 {
 	if cfg.Server.MaxBodyBytes > 0 {
 		return cfg.Server.MaxBodyBytes
 	}
@@ -66,7 +67,7 @@ func maxBodyBytes(cfg Config) int64 {
 
 // shutdownTimeout resolves the drain window: explicit config wins, then the
 // dev/production default.
-func shutdownTimeout(cfg Config) time.Duration {
+func shutdownTimeout(cfg config.Runtime) time.Duration {
 	if cfg.Server.ShutdownTimeout > 0 {
 		return cfg.Server.ShutdownTimeout
 	}
@@ -85,7 +86,7 @@ func shutdownTimeout(cfg Config) time.Duration {
 // listener binds to cfg.Addr (or :8080 default) with ScopePublic but
 // no scope filtering — the back-compat path with no behavioral
 // change for callers who haven't declared Listeners.
-func registerLifecycle(lc di.Lifecycle, app *App, cfg Config) {
+func registerLifecycle(lc di.Lifecycle, app *App, cfg config.Runtime) {
 	listeners := resolveListeners(app.listeners, cfg.Server.Addr)
 	// Every in-flight request's context descends from reqCtx via BaseContext,
 	// so cancelReqs unblocks handlers that select on their context — an SSE
@@ -295,7 +296,7 @@ func (a *App) autoDumpClientSDK() {
 type resolvedListener struct {
 	name  string
 	Addr  string
-	Scope ListenerScope
+	Scope config.ListenerScope
 	TLS   *tls.Config
 }
 
@@ -306,13 +307,13 @@ type resolvedListener struct {
 //
 // Names are sorted for stable startup logs and predictable bind
 // ordering across restarts.
-func resolveListeners(ls map[string]Listener, fallbackAddr string) []resolvedListener {
+func resolveListeners(ls map[string]config.Listener, fallbackAddr string) []resolvedListener {
 	if len(ls) == 0 {
 		addr := fallbackAddr
 		if addr == "" {
 			addr = ":8080"
 		}
-		return []resolvedListener{{name: "default", Addr: addr, Scope: ScopePublic}}
+		return []resolvedListener{{name: "default", Addr: addr, Scope: config.ScopePublic}}
 	}
 	names := make([]string, 0, len(ls))
 	for n := range ls {
@@ -328,7 +329,7 @@ func resolveListeners(ls map[string]Listener, fallbackAddr string) []resolvedLis
 
 // fxEarlyOptions runs BEFORE user options in nexus.Run.
 // Supplies Config, provides *App, registers lifecycle.
-func fxEarlyOptions(cfg Config) di.Option {
+func fxEarlyOptions(cfg config.Runtime) di.Option {
 	return di.Options(
 		di.Supply(cfg),
 		di.Provide(New),

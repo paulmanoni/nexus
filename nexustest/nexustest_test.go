@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/nexustest"
 )
 
@@ -36,7 +37,7 @@ var module = nexus.Module("users",
 )
 
 func TestREST(t *testing.T) {
-	app := nexustest.New(t, nexus.Config{}, module)
+	app := nexustest.New(t, config.Runtime{}, module)
 
 	res := app.GET("/users/42").AssertOK()
 	var u User
@@ -47,7 +48,7 @@ func TestREST(t *testing.T) {
 }
 
 func TestGraphQL(t *testing.T) {
-	app := nexustest.New(t, nexus.Config{}, module)
+	app := nexustest.New(t, config.Runtime{}, module)
 
 	data := app.GraphQL(`query($q:String!){ searchUsers(q:$q){ id name } }`,
 		map[string]any{"q": "alice"})

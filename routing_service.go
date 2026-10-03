@@ -5,6 +5,7 @@ import (
 
 	"github.com/graphql-go/graphql"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/resource"
 	"github.com/paulmanoni/nexus/v2/transport/gql"
@@ -97,7 +98,7 @@ func (s *Service) Auth(fn UserDetailsFn) *Service { s.graphqlUserDetFn = fn; ret
 // graphqlOptions returns the gql.Option slice representing this service's
 // current flags combined with the app-wide knobs in cfg. Called by the
 // auto-mount.
-func (s *Service) graphqlOptions(cfg Config) []gql.Option {
+func (s *Service) graphqlOptions(cfg config.Runtime) []gql.Option {
 	var out []gql.Option
 	if !cfg.GraphQL.DisablePlayground {
 		out = append(out, gql.WithPlayground(true))

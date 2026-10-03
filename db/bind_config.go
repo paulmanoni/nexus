@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // The fixed config-key suffixes read under a database's key_prefix. Chosen
@@ -35,7 +36,7 @@ const (
 // never at request time.
 func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 	build := func() Config {
-		return configFor(resolveSpec(name), func(k string) string { return nexus.Get[string](k) })
+		return configFor(resolveSpec(name), func(k string) string { return config.Get[string](k) })
 	}
 
 	// Spec-derived options first so explicit caller opts can override.
@@ -63,8 +64,8 @@ func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 // spec registry and validates its driver, panicking with a clear message
 // on a missing block or an unsupported driver. Called lazily (from the fx
 // constructor / register invoke) so the spec need only exist by boot.
-func resolveSpec(name string) nexus.DatabaseSpec {
-	spec, ok := nexus.DatabaseSpecFor(name)
+func resolveSpec(name string) config.DatabaseSpec {
+	spec, ok := config.DatabaseSpecFor(name)
 	if !ok {
 		panic(fmt.Sprintf("db.BindFromConfig[%q]: no [databases.%s] block found — "+
 			"declare it in nexus.toml (loaded by nexus.Boot or nexus.MustLoadConfig)", name, name))
@@ -86,7 +87,7 @@ func resolveSpec(name string) nexus.DatabaseSpec {
 // <key_prefix>.<suffix> via get (the config server). Split out from the
 // build closure so the resolution is unit-testable without a live config
 // server (the closure passes nexus.Get as get).
-func configFor(spec nexus.DatabaseSpec, get func(string) string) Config {
+func configFor(spec config.DatabaseSpec, get func(string) string) Config {
 	field := func(inline, suffix string) string {
 		if inline != "" {
 			return inline

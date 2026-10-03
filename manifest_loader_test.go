@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/manifest"
 )
 
@@ -29,9 +30,9 @@ env_scoped = true
 		t.Fatal(err)
 	}
 
-	app := New(Config{
+	app := New(config.Runtime{
 		Environment: "production",
-		Server:      ServerConfig{Addr: "127.0.0.1:0"},
+		Server:      config.Server{Addr: "127.0.0.1:0"},
 	})
 	if err := app.LoadDeployManifest(path); err != nil {
 		t.Fatalf("LoadDeployManifest: %v", err)
@@ -50,9 +51,9 @@ env_scoped = true
 }
 
 func TestLoadDeployManifest_MissingFile(t *testing.T) {
-	app := New(Config{
+	app := New(config.Runtime{
 		Environment: "production",
-		Server:      ServerConfig{Addr: "127.0.0.1:0"},
+		Server:      config.Server{Addr: "127.0.0.1:0"},
 	})
 	if err := app.LoadDeployManifest("/does/not/exist.toml"); err == nil {
 		t.Fatal("expected error on missing file")
@@ -72,9 +73,9 @@ env = { LOG_LEVEL = "warn" }
 		t.Fatal(err)
 	}
 
-	app := New(Config{
+	app := New(config.Runtime{
 		Environment: "production",
-		Server:      ServerConfig{Addr: "127.0.0.1:0"},
+		Server:      config.Server{Addr: "127.0.0.1:0"},
 	})
 	// Realistic flow: Go declares the schema, TOML supplies the per-
 	// env values. The override should turn LOG_LEVEL's default from
@@ -123,9 +124,9 @@ build = ["go build ./..."]
 	}
 
 	t.Setenv("JWT_SIGNING_KEY", "x") // pass the required check
-	app := New(Config{
+	app := New(config.Runtime{
 		Environment: "production",
-		Server:      ServerConfig{Addr: "127.0.0.1:0"},
+		Server:      config.Server{Addr: "127.0.0.1:0"},
 	})
 	if err := app.LoadDeployManifest(path); err != nil {
 		t.Fatalf("LoadDeployManifest: %v", err)

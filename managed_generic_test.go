@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"go.uber.org/zap"
 
@@ -30,7 +31,7 @@ type fakeHandle struct {
 }
 
 func TestManaged_LifecycleAndInjectionAndResource(t *testing.T) {
-	app := New(Config{})
+	app := New(config.Runtime{})
 
 	var got *fakeHandle
 	opt := Managed("fake",
@@ -80,7 +81,7 @@ type closerMgr struct{ closed atomic.Bool }
 func (m *closerMgr) Close() error { m.closed.Store(true); return nil }
 
 func TestManaged_ClosePathAndNilResource(t *testing.T) {
-	app := New(Config{})
+	app := New(config.Runtime{})
 	type h struct{ *closerMgr }
 	var got *h
 	opt := Managed("closer",

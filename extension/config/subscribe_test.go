@@ -17,7 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // fakeWSServer extends fakeServer with the /__config/subscribe
@@ -122,7 +122,7 @@ func TestSubscribe_ReceivesInitialAndUpdates(t *testing.T) {
 	if err := initClient(h); err != nil {
 		t.Fatalf("initClient: %v", err)
 	}
-	if got := nexus.Get[bool]("flag"); got {
+	if got := config.Get[bool]("flag"); got {
 		t.Errorf("flag = true before push, want false")
 	}
 
@@ -143,9 +143,9 @@ func TestSubscribe_ReceivesInitialAndUpdates(t *testing.T) {
 
 	// The client should refresh + install the new value.
 	waitFor(t, 2*time.Second, func() bool {
-		return nexus.Get[bool]("flag")
+		return config.Get[bool]("flag")
 	})
-	if got := nexus.Get[bool]("flag"); !got {
+	if got := config.Get[bool]("flag"); !got {
 		t.Errorf("flag = false after push, want true")
 	}
 }
@@ -189,8 +189,8 @@ func TestSubscribe_AutoReconnects(t *testing.T) {
 
 	// Push an update; client should still receive.
 	ws.pushUpdate(t, map[string]any{"flag": true}, "v2")
-	waitFor(t, 2*time.Second, func() bool { return nexus.Get[bool]("flag") })
-	if !nexus.Get[bool]("flag") {
+	waitFor(t, 2*time.Second, func() bool { return config.Get[bool]("flag") })
+	if !config.Get[bool]("flag") {
 		t.Errorf("flag = false after reconnect push, want true")
 	}
 }

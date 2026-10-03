@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
 func newLogoutApp(t *testing.T, opts ...auth.LogoutOption) (*nexus.App, func(context.Context) error) {
 	t.Helper()
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Module(auth.Config{
 			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
 			Backend:        auth.StaticBackend(loginBackend{}),

@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"os"
@@ -57,7 +57,7 @@ rpm = 600
 burst = 50
 `)
 
-	cfg, err := LoadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestLoadConfig_MinimalDocument(t *testing.T) {
 [runtime]
 environment = "development"
 `)
-	cfg, err := LoadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -179,7 +179,7 @@ addr = ":${ADMIN_PORT}"
 [runtime.dashboard]
 name = "${APP_NAME}"
 `)
-	cfg, err := LoadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -196,7 +196,7 @@ name = "${APP_NAME}"
 // fail loudly with their own message.
 func TestLoadConfig_MissingFile(t *testing.T) {
 	tmp := t.TempDir()
-	_, err := LoadConfig(filepath.Join(tmp, "does-not-exist.toml"))
+	_, err := Load(filepath.Join(tmp, "does-not-exist.toml"))
 	if !os.IsNotExist(err) {
 		t.Errorf("expected os.IsNotExist, got: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestLoadConfig_InvalidScope(t *testing.T) {
 addr = ":1234"
 scope = "private"
 `)
-	_, err := LoadConfig(path)
+	_, err := Load(path)
 	if err == nil {
 		t.Fatal("expected error for invalid scope")
 	}
@@ -231,7 +231,7 @@ func TestLoadConfig_InvalidMaxAge(t *testing.T) {
 [runtime.middleware.cors]
 max_age = "not-a-duration"
 `)
-	_, err := LoadConfig(path)
+	_, err := Load(path)
 	if err == nil {
 		t.Fatal("expected duration parse error")
 	}
@@ -250,7 +250,7 @@ func TestLoadConfig_GoOverrideAfterLoad(t *testing.T) {
 [runtime]
 version = "from-toml"
 `)
-	cfg, err := LoadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ addr = ":9001"
 adress = ":8099"
 addr = ":8085"
 `)
-	cfg, err := LoadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("unknown keys must not fail the load: %v", err)
 	}

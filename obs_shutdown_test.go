@@ -7,20 +7,22 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 func TestShutdownTimeoutResolution(t *testing.T) {
 	t.Setenv("NEXUS_DEV", "")
-	if got := shutdownTimeout(Config{}); got != DefaultShutdownTimeout {
+	if got := shutdownTimeout(config.Runtime{}); got != DefaultShutdownTimeout {
 		t.Fatalf("production default = %s, want %s", got, DefaultShutdownTimeout)
 	}
-	cfg := Config{Server: ServerConfig{ShutdownTimeout: 2 * time.Second}}
+	cfg := config.Runtime{Server: config.Server{ShutdownTimeout: 2 * time.Second}}
 	if got := shutdownTimeout(cfg); got != 2*time.Second {
 		t.Fatalf("explicit config = %s, want 2s", got)
 	}
 
 	t.Setenv("NEXUS_DEV", "1")
-	if got := shutdownTimeout(Config{}); got != DevShutdownTimeout {
+	if got := shutdownTimeout(config.Runtime{}); got != DevShutdownTimeout {
 		t.Fatalf("dev default = %s, want %s", got, DevShutdownTimeout)
 	}
 	// Explicit config still wins in dev — an operator who asked for a drain
@@ -31,7 +33,7 @@ func TestShutdownTimeoutResolution(t *testing.T) {
 }
 
 func TestShutdownTimeoutFromTOML(t *testing.T) {
-	cfg, err := configFromTOML([]byte("[runtime.server]\naddr = \":9999\"\nshutdown_timeout = \"3s\"\n"), "test")
+	cfg, err := config.Parse([]byte("[runtime.server]\naddr = \":9999\"\nshutdown_timeout = \"3s\"\n"), "test")
 	if err != nil {
 		t.Fatalf("configFromTOML: %v", err)
 	}
@@ -40,7 +42,7 @@ func TestShutdownTimeoutFromTOML(t *testing.T) {
 	}
 	// A malformed duration degrades to the default rather than refusing to
 	// boot — shutdown timing is a tuning knob, not a correctness one.
-	cfg, err = configFromTOML([]byte("[runtime.server]\nshutdown_timeout = \"soon\"\n"), "test")
+	cfg, err = config.Parse([]byte("[runtime.server]\nshutdown_timeout = \"soon\"\n"), "test")
 	if err != nil {
 		t.Fatalf("configFromTOML with a bad duration: %v", err)
 	}

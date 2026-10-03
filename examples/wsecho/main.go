@@ -11,6 +11,7 @@ package main
 
 import (
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // ChatService is a typed service wrapper so the dashboard's Architecture
@@ -48,9 +49,9 @@ func NewChatTyping(svc *ChatService, sess *nexus.WSSession, p nexus.Params[ChatP
 
 func main() {
 	nexus.Run(
-		nexus.Config{
-			Server:        nexus.ServerConfig{Addr: ":8080"},
-			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "WS Echo"},
+		config.Runtime{
+			Server:        config.Server{Addr: ":8080"},
+			Dashboard:     config.Dashboard{Enabled: true, Name: "WS Echo"},
 			TraceCapacity: 1000,
 		},
 		nexus.Module("chat",

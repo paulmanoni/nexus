@@ -19,6 +19,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -100,9 +101,9 @@ var auditModule = nexus.Module("audit",
 
 func main() {
 	nexus.Run(
-		nexus.Config{
-			Server:        nexus.ServerConfig{Addr: ":8080"},
-			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Pubsub Demo"},
+		config.Runtime{
+			Server:        config.Server{Addr: ":8080"},
+			Dashboard:     config.Dashboard{Enabled: true, Name: "Pubsub Demo"},
 			TraceCapacity: 500,
 		},
 		// Bind the in-memory transport to every registered topic.

@@ -31,6 +31,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -65,8 +66,8 @@ func main() {
 		addr         = envStr("BIGTOPO_ADDR", ":8080")
 	)
 
-	app := nexus.New(nexus.Config{
-		Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Big Topology"},
+	app := nexus.New(config.Runtime{
+		Dashboard:     config.Dashboard{Enabled: true, Name: "Big Topology"},
 		TraceCapacity: 2000,
 		// Open the introspection gate so /__nexus is reachable on the plain
 		// listener (it 404s by default — production-safe). This is a local

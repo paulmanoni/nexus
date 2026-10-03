@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/nexustest"
@@ -33,12 +34,12 @@ func assetApp(t *testing.T, env string, files fstest.MapFS, cfg inertia.Config) 
 	if _, ok := files["dist/index.html"]; !ok {
 		files["dist/index.html"] = &fstest.MapFile{Data: []byte("<!doctype html><div id=app></div>")}
 	}
-	return bootAssets(t, nexus.Config{Environment: env}, files, cfg)
+	return bootAssets(t, config.Runtime{Environment: env}, files, cfg)
 }
 
 // bootAssets is assetApp without the index.html default: files is the whole
 // bundle, and ServeFrontend takes fopts.
-func bootAssets(t *testing.T, config nexus.Config, files fstest.MapFS, cfg inertia.Config, fopts ...nexus.FrontendOption) (*nexustest.App, string) {
+func bootAssets(t *testing.T, config config.Runtime, files fstest.MapFS, cfg inertia.Config, fopts ...nexus.FrontendOption) (*nexustest.App, string) {
 	t.Helper()
 	t.Setenv(nexus.NexusDevEnv, "")
 	t.Setenv("NEXUS_VITE_DEV", os.Getenv("NEXUS_VITE_DEV")) // restored after the test

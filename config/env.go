@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"bytes"
@@ -105,7 +105,7 @@ func applyConfigEnv(vars map[string]string) {
 // unset variable is an error here; EnvVarsSkippingUnset leaves it out
 // instead.
 func EnvVars(path ...string) (map[string]string, error) {
-	p := DefaultConfigPath
+	p := DefaultPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]
 	}
@@ -138,7 +138,7 @@ type SkippedEnvVar struct {
 // TOML and malformed ${...} tokens are still errors.
 func EnvVarsSkippingUnset(path string) (vars map[string]string, skipped []SkippedEnvVar, err error) {
 	if path == "" {
-		path = DefaultConfigPath
+		path = DefaultPath
 	}
 	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path
 	if err != nil {

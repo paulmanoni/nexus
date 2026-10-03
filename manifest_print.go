@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/manifest"
 )
@@ -60,7 +61,7 @@ const printManifestEnv = manifest.EnvVarPrintAndExit
 // dial external systems should not register declarations from inside
 // themselves; declare at module level instead (see "Integration"
 // step 4 in manifest/manifest.go).
-func printManifestAndExitIfRequested(cfg Config, opts []Option) {
+func printManifestAndExitIfRequested(cfg config.Runtime, opts []Option) {
 	// Print mode must produce JSON-and-only-JSON on stdout — anything
 	// else breaks downstream parsers (`nexus reconcile`, `nexus build
 	// --emit-manifest`, the orchestrator's extractManifest). The default

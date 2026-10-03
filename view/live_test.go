@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 type greeter struct{ greeting string }
@@ -63,7 +64,7 @@ var counterTemplate = newCounterLive()
 
 func bootLive(t *testing.T) *httptest.Server {
 	t.Helper()
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Supply(&greeter{greeting: "hi"}),
 		Live[*counterLive]("/count/:name").Provide(func() *counterLive { return counterTemplate }),
 	)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
@@ -29,7 +30,7 @@ func TestDecoratedModulesFilter(t *testing.T) {
 	})
 
 	endpoints := func(opts ...Option) map[string]bool {
-		app, stop, err := InProcess(Config{}, opts...)
+		app, stop, err := InProcess(config.Runtime{}, opts...)
 		if err != nil {
 			t.Fatalf("InProcess: %v", err)
 		}

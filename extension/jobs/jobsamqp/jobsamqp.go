@@ -40,6 +40,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/jobs"
 )
 
@@ -65,19 +66,19 @@ type Config struct {
 
 func (c Config) resolve() Config {
 	if c.URL == "" {
-		c.URL = nexus.Get("jobs.rabbitmq.url", os.Getenv("RABBIT_URL"))
+		c.URL = config.Get("jobs.rabbitmq.url", os.Getenv("RABBIT_URL"))
 	}
 	if c.URL == "" {
 		c.URL = "amqp://guest:guest@localhost:5672/"
 	}
 	if c.Prefix == "" {
-		c.Prefix = nexus.Get("jobs.rabbitmq.prefix", "nexus.jobs.")
+		c.Prefix = config.Get("jobs.rabbitmq.prefix", "nexus.jobs.")
 	}
 	if c.ConsumerTimeout == 0 {
-		c.ConsumerTimeout = nexus.Get("jobs.rabbitmq.consumer_timeout", 8*time.Hour)
+		c.ConsumerTimeout = config.Get("jobs.rabbitmq.consumer_timeout", 8*time.Hour)
 	}
 	if c.DeliveryLimit == 0 {
-		c.DeliveryLimit = nexus.Get("jobs.rabbitmq.delivery_limit", 20)
+		c.DeliveryLimit = config.Get("jobs.rabbitmq.delivery_limit", 20)
 	}
 	return c
 }

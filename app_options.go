@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/bootui"
 )
 
 // Option composes a nexus app. Everything returned by Provide, Supply,
@@ -421,18 +423,18 @@ func resolveConfigPath() string {
 	if p := os.Getenv("NEXUS_CONFIG"); p != "" {
 		return p
 	}
-	if _, err := os.Stat(DefaultConfigPath); err == nil {
-		return DefaultConfigPath
+	if _, err := os.Stat(config.DefaultPath); err == nil {
+		return config.DefaultPath
 	}
 	if exe, err := os.Executable(); err == nil {
-		beside := filepath.Join(filepath.Dir(exe), DefaultConfigPath)
+		beside := filepath.Join(filepath.Dir(exe), config.DefaultPath)
 		if _, err := os.Stat(beside); err == nil {
 			return beside
 		}
 	}
 	// Nothing found anywhere — return the conventional path so autoLoad's
 	// ErrNotExist branch runs (and warns) with a familiar name.
-	return DefaultConfigPath
+	return config.DefaultPath
 }
 
 // autoLoad reads runtime Config + extension options for Boot. It
@@ -449,19 +451,12 @@ func resolveConfigPath() string {
 // A malformed config (disk or embedded) fails the boot with a structured
 // diagnostic (config_fatal.go) so misconfiguration surfaces loudly at
 // startup — as an operator-readable block, not a panic trace.
-func autoLoad(path string) (Config, []Option) {
-	raw, err := readFileIfExists(path)
+func autoLoad(path string) (config.Runtime, []Option) {
+	f, err := config.Read(path)
 	if err != nil {
-		// a real I/O error (perms, etc.) — not a soft miss
-		bootFatal(fmt.Errorf("nexus: failed to read config %q: %w", path, err))
+		bootui.Fatal(err)
 	}
-	source := path
-	if raw == nil {
-		if emb, ok := embeddedConfig(); ok {
-			raw, source = emb, "embedded nexus.toml"
-		}
-	}
-	if raw == nil {
+	if f == nil {
 		// No config anywhere. Tolerated so config-less apps still boot —
 		// but it silently drops every setting a file would carry (listen
 		// addr included, so the app falls back to :8080). That has bitten
@@ -472,27 +467,23 @@ func autoLoad(path string) (Config, []Option) {
 				"build-time embed); using framework defaults — listen addr falls "+
 				"back to :8080. Set NEXUS_CONFIG, run from the config's directory, "+
 				"or `nexus build` to embed it.\n",
-			DefaultConfigPath)
-		return Config{}, nil
+			config.DefaultPath)
+		return config.Runtime{}, nil
 	}
-	cfg, err := configFromTOML(raw, source)
+	extOpts, err := decodeExtensions(f.Raw)
 	if err != nil {
-		bootFatal(err)
-	}
-	extOpts, err := decodeExtensions(raw)
-	if err != nil {
-		bootFatal(newConfigError("decode [extensions.*]", source, err))
+		bootui.Fatal(config.NewError("decode [extensions.*]", f.Source, err))
 	}
 	// Dev boot self-check: run the same config lint `nexus lint` runs, but at
 	// boot in dev, so a bad CIDR / CORS combo / rate limit / unimported
 	// extension surfaces now instead of only when someone remembers to lint.
 	// Advisory (reported by runBootChecks, never aborts); prod pays nothing.
 	if IsDev() {
-		if issues, lerr := lintRuntimeBytes(raw, source); lerr == nil {
+		if issues, lerr := f.Lint(); lerr == nil {
 			addPendingBootIssues(issues)
 		}
 	}
-	return cfg, extOpts
+	return f.Runtime, extOpts
 }
 
 // Run starts an app from a Config you build in Go, plus the given options
@@ -505,7 +496,7 @@ func autoLoad(path string) (Config, []Option) {
 // router/container backend) or when you want explicit control over load order.
 // For tests, use InProcess (no listener). See the package doc for the full
 // entry-point rundown.
-func Run(cfg Config, opts ...Option) {
+func Run(cfg config.Runtime, opts ...Option) {
 	// Print-mode short-circuit. When NEXUS_PRINT_MANIFEST=1 is set,
 	// the orchestration platform is invoking us at build/upload time
 	// to extract the manifest. Build the fx graph, populate *App
@@ -585,7 +576,7 @@ func Run(cfg Config, opts ...Option) {
 	// either backend the same structured block, plus a fix line for the
 	// framework types a developer never asked for by name.
 	if err := inst.Err(); err != nil {
-		renderBootError(os.Stderr, &wiringError{err: err, hint: wiringHint(err)}, bootColorsEnabled())
+		bootui.Render(os.Stderr, &wiringError{err: err, hint: wiringHint(err)}, bootui.Colors())
 		os.Exit(1)
 	}
 	inst.Run()

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // Service-method handlers: AsQuery/AsMutation/AsRest accept a method
@@ -53,7 +55,7 @@ func jsonStr(s string) string {
 }
 
 func TestMethodExpressionHandlers(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&probeSvc{prefix: "hi "}),
 		AsQuery((*probeSvc).GreetUser),
 		AsQuery((*probeSvc).ListGreetings),
@@ -96,7 +98,7 @@ func TestMethodExpressionHandlers(t *testing.T) {
 // extraction strips the wrapper suffix.
 func TestBoundMethodValueHandler(t *testing.T) {
 	svc := &probeSvc{prefix: "yo "}
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		AsQuery(svc.GreetUser),
 	)
 	if err != nil {
@@ -116,7 +118,7 @@ func plainGreet(ctx context.Context, a probeArgs) (*probeOut, error) {
 }
 
 func TestPlainFuncHandler(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		AsQuery(plainGreet),
 	)
 	if err != nil {

@@ -3,6 +3,7 @@ package nexus
 import (
 	"context"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 )
 
@@ -16,7 +17,7 @@ import (
 // This is the supported building block for the nexustest package and for any
 // app that wants to exercise its own handlers in-process. Production code uses
 // Boot/Run; InProcess exists for tests.
-func InProcess(cfg Config, opts ...Option) (app *App, stop func(context.Context) error, err error) {
+func InProcess(cfg config.Runtime, opts ...Option) (app *App, stop func(context.Context) error, err error) {
 	// Quiet-boot: skip the listener bind, go-serve, and "listening on …"
 	// banner. Startup tasks, manifest resolution, the SDK dump, cron, and
 	// liveness still run, so the app behaves like a real boot minus the

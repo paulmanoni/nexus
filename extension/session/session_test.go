@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -16,7 +17,7 @@ import (
 // probe routes, returning the handler and stop func.
 func bootApp(t *testing.T, cfg Config) http.Handler {
 	t.Helper()
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		Module(cfg),
 		nexus.AsRestHandler("GET", "/read", func() httpx.HandlerFunc {
 			return func(c *httpx.Ctx) {

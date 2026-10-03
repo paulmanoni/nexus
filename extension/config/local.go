@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/pelletier/go-toml/v2"
 
@@ -93,7 +94,7 @@ func initLocal(cfg localConfig) error {
 	if err != nil {
 		return fmt.Errorf("config.Local: %w", err)
 	}
-	nexus.InstallConfigStore(values, "local")
+	config.InstallStore(values, "local")
 	return nil
 }
 

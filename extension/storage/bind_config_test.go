@@ -3,15 +3,15 @@ package storage
 import (
 	"testing"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestConfigFromTOML reads a [storage.<name>] block into a Config; unseeded
 // fields default to their zero value.
 func TestConfigFromTOML(t *testing.T) {
-	nexus.ClearConfigStoreForTest()
-	t.Cleanup(nexus.ClearConfigStoreForTest)
-	nexus.InstallConfigStore(map[string]any{
+	config.ResetForTest()
+	t.Cleanup(config.ResetForTest)
+	config.InstallStore(map[string]any{
 		"storage": map[string]any{
 			"uploads": map[string]any{
 				"driver":     "s3",

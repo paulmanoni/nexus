@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
@@ -243,7 +244,7 @@ func TestInertiaComponent(t *testing.T) {
 // AsPage names a page after its controller action, so outside one there is no
 // name to give and the boot fails.
 func TestAsPageNeedsAController(t *testing.T) {
-	_, _, err := nexus.InProcess(nexus.Config{},
+	_, _, err := nexus.InProcess(config.Runtime{},
 		nexus.AsRest("GET", "/x", func() (string, error) { return "", nil }, inertia.AsPage()))
 	if err == nil || !strings.Contains(err.Error(), "only valid on a controller action") {
 		t.Fatalf("err = %v, want the controller-only error", err)

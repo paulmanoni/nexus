@@ -7,6 +7,10 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/internal/bootui"
+	"github.com/paulmanoni/nexus/v2/internal/extnames"
+
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -74,6 +78,7 @@ func RegisterExtensionDecoder(name string, dec ExtensionDecoder) {
 	extensionRegistry.Lock()
 	extensionRegistry.m[name] = dec
 	extensionRegistry.Unlock()
+	extnames.Add(name)
 }
 
 // LookupExtensionDecoder returns the registered decoder for
@@ -139,7 +144,7 @@ func RegisteredExtensionNames() []string {
 // via Go code instead — TOML is for data, not graph
 // dependencies.
 func LoadExtensionOptions(path ...string) ([]Option, error) {
-	p := DefaultConfigPath
+	p := config.DefaultPath
 	if len(path) > 0 && path[0] != "" {
 		p = path[0]
 	}
@@ -160,7 +165,7 @@ func LoadExtensionOptions(path ...string) ([]Option, error) {
 func MustLoadExtensions(path ...string) []Option {
 	opts, err := LoadExtensionOptions(path...)
 	if err != nil {
-		bootFatal(err)
+		bootui.Fatal(err)
 	}
 	return opts
 }

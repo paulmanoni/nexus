@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
@@ -190,9 +191,9 @@ func TestIntrospectionGate_IgnoresXForwardedFor(t *testing.T) {
 func TestIntrospection_DashboardGated_End2End(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{
-			Server:                ServerConfig{Addr: "127.0.0.1:0"},
-			Dashboard:             DashboardConfig{Enabled: true, Name: "test"},
+		fxBootOptions(config.Runtime{
+			Server:                config.Server{Addr: "127.0.0.1:0"},
+			Dashboard:             config.Dashboard{Enabled: true, Name: "test"},
 			Introspection:         false,
 			IntrospectionNetworks: []string{"127.0.0.0/8"},
 		}),
@@ -241,8 +242,8 @@ func TestIntrospection_BadCIDRPanicsAtBoot(t *testing.T) {
 			t.Errorf("panic message should name the bad entry, got: %v", r)
 		}
 	}()
-	New(Config{
-		Dashboard:             DashboardConfig{Enabled: true},
+	New(config.Runtime{
+		Dashboard:             config.Dashboard{Enabled: true},
 		IntrospectionNetworks: []string{"127.0.0.0/8", "not-a-cidr"},
 	})
 }

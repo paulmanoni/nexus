@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestInProcess_NoListenerBindsNoSocket proves the quiet-boot seam: InProcess
@@ -13,13 +15,13 @@ import (
 func TestInProcess_NoListenerBindsNoSocket(t *testing.T) {
 	const addr = "127.0.0.1:8080" // a fixed, non-ephemeral port on purpose
 
-	a1, stop1, err := InProcess(Config{Server: ServerConfig{Addr: addr}})
+	a1, stop1, err := InProcess(config.Runtime{Server: config.Server{Addr: addr}})
 	if err != nil {
 		t.Fatalf("first InProcess: %v", err)
 	}
 	defer stop1(context.Background())
 
-	a2, stop2, err := InProcess(Config{Server: ServerConfig{Addr: addr}})
+	a2, stop2, err := InProcess(config.Runtime{Server: config.Server{Addr: addr}})
 	if err != nil {
 		t.Fatalf("second InProcess on the same addr: %v (a real bind would conflict)", err)
 	}
@@ -36,7 +38,7 @@ func TestInProcess_ServeHTTPStillRoutes(t *testing.T) {
 	type pingArgs struct{}
 	newPing := func(p Params[pingArgs]) (string, error) { return "pong", nil }
 
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		AsRest("GET", "/ping", newPing),
 	)
 	if err != nil {

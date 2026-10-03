@@ -4,15 +4,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // TestConfigFromTOML overlays a [cache.<name>] block onto NewConfig()'s
 // defaults: seeded keys win, unseeded keys keep their default.
 func TestConfigFromTOML(t *testing.T) {
-	nexus.ClearConfigStoreForTest()
-	t.Cleanup(nexus.ClearConfigStoreForTest)
-	nexus.InstallConfigStore(map[string]any{
+	config.ResetForTest()
+	t.Cleanup(config.ResetForTest)
+	config.InstallStore(map[string]any{
 		"cache": map[string]any{
 			"session": map[string]any{
 				"redis_host":     "redis.internal",

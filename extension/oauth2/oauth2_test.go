@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 	"github.com/paulmanoni/nexus/v2/extension/oauth2"
 )
@@ -158,7 +159,7 @@ func startApp(t *testing.T, addr string, cfg oauth2.Config) string {
 	t.Helper()
 	go func() {
 		nexus.Run(
-			nexus.Config{Server: nexus.ServerConfig{Addr: "127.0.0.1" + addr}, TraceCapacity: 10},
+			config.Runtime{Server: config.Server{Addr: "127.0.0.1" + addr}, TraceCapacity: 10},
 			oauth2.Module(cfg),
 			nexus.AsRest("GET", "/me", meHandler, auth.Required()),
 		)

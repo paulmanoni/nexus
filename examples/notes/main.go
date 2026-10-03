@@ -11,6 +11,7 @@ package main
 
 import (
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 type pingResp struct {
@@ -30,10 +31,10 @@ func main() {
 	// annotated packages in, and nexus.Run auto-drains their registrations.
 	// Introspection opens /__nexus; Dashboard.Enabled mounts the UI.
 	nexus.Run(
-		nexus.Config{
+		config.Runtime{
 			Introspection: true,
-			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Notes"},
-			Server:        nexus.ServerConfig{Addr: ":8080"},
+			Dashboard:     config.Dashboard{Enabled: true, Name: "Notes"},
+			Server:        config.Server{Addr: ":8080"},
 		},
 		nexus.Module("ops", nexus.AsRest("GET", "/ping", newPing)),
 	)

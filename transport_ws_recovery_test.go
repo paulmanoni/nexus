@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 )
 
@@ -33,7 +34,7 @@ func TestWSHandlerPanicRecovered(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}, TraceCapacity: 100}),
 		AsWS("/events", "boom", panicHandler).nexusOption(),
 		AsWS("/events", "chat.send", okHandler).nexusOption(),
 		di.Populate(&app),
@@ -142,7 +143,7 @@ func TestUserHandlerPanicsAreRecovered(t *testing.T) {
 	t.Run("rest", func(t *testing.T) {
 		boom := func(p Params[chatPayload]) (string, error) { panic("rest boom") }
 		ok := func(p Params[chatPayload]) (string, error) { return "ok", nil }
-		app, stop, err := InProcess(Config{},
+		app, stop, err := InProcess(config.Runtime{},
 			AsRest("GET", "/boom", boom),
 			AsRest("GET", "/ok", ok),
 		)
@@ -168,7 +169,7 @@ func TestUserHandlerPanicsAreRecovered(t *testing.T) {
 		boom := func(sess *WSSession, p Params[chatPayload]) error { panic("ws boom") }
 		var app *App
 		fxApp := newTestApp(t,
-			fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+			fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 			AsWS("/ws", "boom", boom).nexusOption(),
 			di.Populate(&app),
 		)

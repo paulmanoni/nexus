@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // dumpProject makes a temp project dir with a detectable frontend
@@ -37,7 +38,7 @@ func dumpProject(t *testing.T, nexusDev string) (string, []byte) {
 
 // bootOnce runs a full lifecycle start + stop (no listener), which is
 // where the SDK dump fires, and returns what the std logger printed.
-func bootOnce(t *testing.T, cfg Config) string {
+func bootOnce(t *testing.T, cfg config.Runtime) string {
 	t.Helper()
 	var buf bytes.Buffer
 	prev := log.Writer()
@@ -67,25 +68,25 @@ func TestAutoDumpClientSDK(t *testing.T) {
 	cases := []struct {
 		name      string
 		nexusDev  string
-		cfg       Config
+		cfg       config.Runtime
 		wantWrite bool
 	}{
-		{"production + SDK writes nothing", "", Config{Environment: "production", SDK: true}, false},
-		{"unset environment + SDK writes nothing", "", Config{SDK: true}, false},
+		{"production + SDK writes nothing", "", config.Runtime{Environment: "production", SDK: true}, false},
+		{"unset environment + SDK writes nothing", "", config.Runtime{SDK: true}, false},
 		{"production + explicit OutDir writes nothing", "",
-			Config{Environment: "production", Client: client.Config{Enabled: true, OutDir: "./web/sdk"}}, false},
-		{"staging + SDK writes nothing", "", Config{Environment: "staging", SDK: true}, false},
-		{"environment development + SDK writes web/sdk", "", Config{Environment: "development", SDK: true}, true},
-		{"NEXUS_DEV=1 + SDK writes web/sdk", "1", Config{Environment: "production", SDK: true}, true},
+			config.Runtime{Environment: "production", Client: client.Config{Enabled: true, OutDir: "./web/sdk"}}, false},
+		{"staging + SDK writes nothing", "", config.Runtime{Environment: "staging", SDK: true}, false},
+		{"environment development + SDK writes web/sdk", "", config.Runtime{Environment: "development", SDK: true}, true},
+		{"NEXUS_DEV=1 + SDK writes web/sdk", "1", config.Runtime{Environment: "production", SDK: true}, true},
 		{"environment development + Client.Enabled writes web/sdk", "",
-			Config{Environment: "development", Client: client.Config{Enabled: true}}, true},
-		{"NEXUS_DEV=1 implicit dev mount writes web/sdk", "1", Config{}, true},
-		{"NEXUS_DEV=1 implicit dev mount, DevDisabled", "1", Config{Client: client.Config{DevDisabled: true}}, false},
-		{"NEXUS_DEV=1 implicit dev mount, OutDir Off", "1", Config{Client: client.Config{OutDir: client.Off}}, false},
+			config.Runtime{Environment: "development", Client: client.Config{Enabled: true}}, true},
+		{"NEXUS_DEV=1 implicit dev mount writes web/sdk", "1", config.Runtime{}, true},
+		{"NEXUS_DEV=1 implicit dev mount, DevDisabled", "1", config.Runtime{Client: client.Config{DevDisabled: true}}, false},
+		{"NEXUS_DEV=1 implicit dev mount, OutDir Off", "1", config.Runtime{Client: client.Config{OutDir: client.Off}}, false},
 		{"environment development + OutDir Off", "",
-			Config{Environment: "development", Client: client.Config{Enabled: true, OutDir: client.Off}}, false},
-		{"NEXUS_DEV=1 + OutDir Off", "1", Config{Client: client.Config{Enabled: true, OutDir: client.Off}}, false},
-		{"environment development, no client mounted", "", Config{Environment: "development"}, false},
+			config.Runtime{Environment: "development", Client: client.Config{Enabled: true, OutDir: client.Off}}, false},
+		{"NEXUS_DEV=1 + OutDir Off", "1", config.Runtime{Client: client.Config{Enabled: true, OutDir: client.Off}}, false},
+		{"environment development, no client mounted", "", config.Runtime{Environment: "development"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,10 +114,10 @@ func TestAutoDumpClientSDK(t *testing.T) {
 func TestAutoDumpClientSDK_TSConfig(t *testing.T) {
 	for _, c := range []struct {
 		name string
-		cfg  Config
+		cfg  config.Runtime
 	}{
-		{"SDK switch", Config{SDK: true}},
-		{"implicit dev mount", Config{}},
+		{"SDK switch", config.Runtime{SDK: true}},
+		{"implicit dev mount", config.Runtime{}},
 	} {
 		t.Run(c.name+" merges tsconfig", func(t *testing.T) {
 			dir, orig := dumpProject(t, "1")
@@ -157,11 +158,11 @@ func TestAutoDumpClientSDK_TSConfig(t *testing.T) {
 // restart that changed nothing must print nothing.
 func TestAutoDumpClientSDK_QuietWhenUnchanged(t *testing.T) {
 	dir, _ := dumpProject(t, "1")
-	first := bootOnce(t, Config{SDK: true})
+	first := bootOnce(t, config.Runtime{SDK: true})
 	if !sdkWritten(dir) || !strings.Contains(first, "manifest.json") {
 		t.Fatalf("first boot should write and report the SDK files; log: %q", first)
 	}
-	if second := bootOnce(t, Config{SDK: true}); strings.Contains(second, "sdk") {
+	if second := bootOnce(t, config.Runtime{SDK: true}); strings.Contains(second, "sdk") {
 		t.Errorf("unchanged SDK re-dump printed output: %q", second)
 	}
 }
@@ -172,7 +173,7 @@ func TestAutoDumpClientSDK_QuietWhenUnchanged(t *testing.T) {
 func TestAutoDumpClientSDK_NexusEnvironmentOverrides(t *testing.T) {
 	dir, orig := dumpProject(t, "")
 	t.Setenv("NEXUS_ENVIRONMENT", "production")
-	bootOnce(t, Config{SDK: true, Environment: "development"})
+	bootOnce(t, config.Runtime{SDK: true, Environment: "development"})
 	if sdkWritten(dir) {
 		t.Error("NEXUS_ENVIRONMENT=production, yet web/sdk was written")
 	}
@@ -182,7 +183,7 @@ func TestAutoDumpClientSDK_NexusEnvironmentOverrides(t *testing.T) {
 
 	dir, _ = dumpProject(t, "")
 	t.Setenv("NEXUS_ENVIRONMENT", "development")
-	bootOnce(t, Config{SDK: true})
+	bootOnce(t, config.Runtime{SDK: true})
 	if !sdkWritten(dir) {
 		t.Error("NEXUS_ENVIRONMENT=development with no configured environment should dump")
 	}

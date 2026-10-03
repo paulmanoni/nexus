@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // BindFromConfig binds a marker type T to the [mail.<name>] block in
@@ -37,14 +38,14 @@ func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 func configFromTOML(name string) Config {
 	p := "mail." + name + "."
 	return Config{
-		Driver:      nexus.Get(p+"driver", ""),
-		Host:        nexus.Get(p+"host", ""),
-		Port:        nexus.Get(p+"port", 0),
-		Username:    nexus.Get(p+"username", ""),
-		Password:    nexus.Get(p+"password", ""),
-		Encryption:  nexus.Get(p+"encryption", ""),
-		FromAddress: nexus.Get(p+"from_address", ""),
-		FromName:    nexus.Get(p+"from_name", ""),
-		Timeout:     nexus.Get(p+"timeout", time.Duration(0)),
+		Driver:      config.Get(p+"driver", ""),
+		Host:        config.Get(p+"host", ""),
+		Port:        config.Get(p+"port", 0),
+		Username:    config.Get(p+"username", ""),
+		Password:    config.Get(p+"password", ""),
+		Encryption:  config.Get(p+"encryption", ""),
+		FromAddress: config.Get(p+"from_address", ""),
+		FromName:    config.Get(p+"from_name", ""),
+		Timeout:     config.Get(p+"timeout", time.Duration(0)),
 	}
 }

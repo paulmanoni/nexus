@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 
 	"github.com/paulmanoni/nexus/v2/registry"
@@ -27,7 +28,7 @@ func TestAsWorker_RunsUntilStopSignalsCtx(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		AsWorker("test-worker", worker).nexusOption(),
 		di.Populate(&app),
 	)
@@ -95,7 +96,7 @@ func TestAsWorker_ErrorReturnMarksFailed(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		AsWorker("bad-worker", worker).nexusOption(),
 		di.Populate(&app),
 	)
@@ -132,7 +133,7 @@ func TestAsWorker_CapturesDeps(t *testing.T) {
 	}
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
 		Provide(NewUsersService).nexusOption(),
 		AsWorker("cache-invalidation", worker).nexusOption(),

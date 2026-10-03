@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // resetStore wraps nexus.ClearConfigStoreForTest so each test
@@ -13,8 +13,8 @@ import (
 // "second installer panics" guard from a prior test's setup).
 func resetStore(t *testing.T) {
 	t.Helper()
-	nexus.ClearConfigStoreForTest()
-	t.Cleanup(nexus.ClearConfigStoreForTest)
+	config.ResetForTest()
+	t.Cleanup(config.ResetForTest)
 }
 
 // TestLocal_ReadsPlaintextAndPopulatesGet drives the headline
@@ -50,13 +50,13 @@ timeout = "5s"
 	}
 
 	// And nexus.Get works across types.
-	if got := nexus.Get[string]("app_name"); got != "test-app" {
+	if got := config.Get[string]("app_name"); got != "test-app" {
 		t.Errorf("Get[string](app_name) = %q, want test-app", got)
 	}
-	if got := nexus.Get[int]("port"); got != 8080 {
+	if got := config.Get[int]("port"); got != 8080 {
 		t.Errorf("Get[int](port) = %d, want 8080", got)
 	}
-	if got := nexus.Get[bool]("enabled"); !got {
+	if got := config.Get[bool]("enabled"); !got {
 		t.Errorf("Get[bool](enabled) = false, want true")
 	}
 }
@@ -83,11 +83,11 @@ new_path = true
 		t.Fatal(err)
 	}
 	// default value passes through unchanged
-	if got := nexus.Get[string]("timeout"); got != "5s" {
+	if got := config.Get[string]("timeout"); got != "5s" {
 		t.Errorf("timeout = %q, want 5s (from default)", got)
 	}
 	// prod overlay wins
-	if got := nexus.Get[bool]("features.new_path"); !got {
+	if got := config.Get[bool]("features.new_path"); !got {
 		t.Errorf("features.new_path = false, want true (prod overlay)")
 	}
 }
@@ -110,18 +110,18 @@ func TestLocal_MissingFile(t *testing.T) {
 // ness was from the store or from a typing conversion failure.
 func TestGet_WithDefault(t *testing.T) {
 	resetStore(t)
-	nexus.InstallConfigStore(map[string]any{"present": "value"}, "test")
+	config.InstallStore(map[string]any{"present": "value"}, "test")
 
 	// Missing key, with default
-	if got := nexus.Get[int]("missing", 99); got != 99 {
+	if got := config.Get[int]("missing", 99); got != 99 {
 		t.Errorf("missing with default = %d, want 99", got)
 	}
 	// Missing key, no default → zero
-	if got := nexus.Get[int]("missing"); got != 0 {
+	if got := config.Get[int]("missing"); got != 0 {
 		t.Errorf("missing no default = %d, want 0", got)
 	}
 	// Present key, default ignored
-	if got := nexus.Get[string]("present", "fallback"); got != "value" {
+	if got := config.Get[string]("present", "fallback"); got != "value" {
 		t.Errorf("present with default = %q, want value (default ignored)", got)
 	}
 }
@@ -131,11 +131,11 @@ func TestGet_WithDefault(t *testing.T) {
 // overrides the snapshot.
 func TestGet_EnvOverride(t *testing.T) {
 	resetStore(t)
-	nexus.InstallConfigStore(map[string]any{
+	config.InstallStore(map[string]any{
 		"api": map[string]any{"timeout": "5s"},
 	}, "test")
 	t.Setenv("API_TIMEOUT", "30s")
-	if got := nexus.Get[string]("api.timeout"); got != "30s" {
+	if got := config.Get[string]("api.timeout"); got != "30s" {
 		t.Errorf("with ENV override = %q, want 30s", got)
 	}
 }
@@ -145,14 +145,14 @@ func TestGet_EnvOverride(t *testing.T) {
 // condition; the panic is desired (loud, traceable).
 func TestMustGet_PanicsOnMissing(t *testing.T) {
 	resetStore(t)
-	nexus.InstallConfigStore(map[string]any{}, "test")
+	config.InstallStore(map[string]any{}, "test")
 
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("MustGet on missing key should panic")
 		}
 	}()
-	_ = nexus.MustGet[string]("never_set")
+	_ = config.MustGet[string]("never_set")
 }
 
 // TestBindConfig_PopulatesStruct proves the typed struct-bind
@@ -160,7 +160,7 @@ func TestMustGet_PanicsOnMissing(t *testing.T) {
 // Spring's @ConfigurationProperties.
 func TestBindConfig_PopulatesStruct(t *testing.T) {
 	resetStore(t)
-	nexus.InstallConfigStore(map[string]any{
+	config.InstallStore(map[string]any{
 		"payment": map[string]any{
 			"provider":    "stripe",
 			"max_retries": 3,
@@ -171,7 +171,7 @@ func TestBindConfig_PopulatesStruct(t *testing.T) {
 		MaxRetries int    `json:"max_retries"`
 	}
 	var pc PaymentConfig
-	if err := nexus.BindConfig("payment", &pc); err != nil {
+	if err := config.Bind("payment", &pc); err != nil {
 		t.Fatal(err)
 	}
 	if pc.Provider != "stripe" || pc.MaxRetries != 3 {
@@ -185,16 +185,16 @@ func TestBindConfig_PopulatesStruct(t *testing.T) {
 // value.
 func TestOnConfigChange_FiresOnChange(t *testing.T) {
 	resetStore(t)
-	nexus.InstallConfigStore(map[string]any{"flag": false}, "v1")
+	config.InstallStore(map[string]any{"flag": false}, "v1")
 
 	var got any
 	called := make(chan struct{}, 1)
-	nexus.OnConfigChange("flag", func(v any) {
+	config.OnChange("flag", func(v any) {
 		got = v
 		called <- struct{}{}
 	})
 
-	nexus.UpdateConfigStore(map[string]any{"flag": true}, "v2")
+	config.UpdateStore(map[string]any{"flag": true}, "v2")
 
 	<-called
 	if b, ok := got.(bool); !ok || !b {
@@ -222,10 +222,10 @@ timeout  = "${CFG_DSN_TIMEOUT:5s}"
 	if err := initLocal(localConfig{path: tomlPath, profile: "default"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := nexus.Get[string]("db.dsn"); got != "postgres://db.prod.example.com:5432/app" {
+	if got := config.Get[string]("db.dsn"); got != "postgres://db.prod.example.com:5432/app" {
 		t.Errorf("db.dsn: got %q", got)
 	}
-	if got := nexus.Get[string]("db.timeout"); got != "5s" {
+	if got := config.Get[string]("db.timeout"); got != "5s" {
 		t.Errorf("db.timeout default: got %q", got)
 	}
 }

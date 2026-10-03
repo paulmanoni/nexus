@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // End-to-end benchmarks. The micro-benchmarks in bench_test.go measure
@@ -92,8 +94,8 @@ func itoa(u uint64) string {
 // boots (BenchmarkE2E_Boot) is comparable across runs.
 func newBenchApp(b *testing.B, opts ...Option) *testApp {
 	b.Helper()
-	cfg := Config{
-		Server:        ServerConfig{Addr: "127.0.0.1:0"},
+	cfg := config.Runtime{
+		Server:        config.Server{Addr: "127.0.0.1:0"},
 		TraceCapacity: 0, // disable trace bus — measure the handler path, not telemetry
 	}
 	app, err := newApp(cfg, opts...)
@@ -215,10 +217,10 @@ func BenchmarkE2E_GraphQL_Query_NoCache(b *testing.B) {
 		AsQuery(benchGqlEcho),
 	)
 	// DocumentCacheSize: -1 disables; 0 would mean "default 1024".
-	cfg := Config{
-		Server:        ServerConfig{Addr: "127.0.0.1:0"},
+	cfg := config.Runtime{
+		Server:        config.Server{Addr: "127.0.0.1:0"},
 		TraceCapacity: 0,
-		GraphQL:       GraphQLConfig{DocumentCacheSize: -1},
+		GraphQL:       config.GraphQL{DocumentCacheSize: -1},
 	}
 	app, err := newApp(cfg, mod)
 	if err != nil {
@@ -338,8 +340,8 @@ func BenchmarkE2E_Boot(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		app, err := newApp(Config{
-			Server:        ServerConfig{Addr: "127.0.0.1:0"},
+		app, err := newApp(config.Runtime{
+			Server:        config.Server{Addr: "127.0.0.1:0"},
 			TraceCapacity: 0,
 		}, mod)
 		if err != nil {

@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 type ctlUser struct {
@@ -72,7 +74,7 @@ func ctlDo(t *testing.T, app *App, method, path, body string) (int, string) {
 
 func TestResourceConventions(t *testing.T) {
 	ctl := NewUsersController()
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Resource[*UsersController]("/users").
 			Supply(ctl).
 			Member("POST", "suspend", (*UsersController).Suspend).
@@ -129,7 +131,7 @@ func (c *CommentsController) Show(ctx context.Context, postID, id int64) (string
 func TestResourceNested(t *testing.T) {
 	posts := NewRouter("posts", "/posts/:postId")
 	posts.Include(Resource[*CommentsController]("/comments").Supply(&CommentsController{}).Router)
-	app, stop, err := InProcess(Config{}, posts)
+	app, stop, err := InProcess(config.Runtime{}, posts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +171,7 @@ func (c *GuardedController) Stats(ctx context.Context) (*ctlUser, error) {
 
 func TestControllerAuthorize(t *testing.T) {
 	ctl := &GuardedController{}
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Resource[*GuardedController]("/things").Supply(ctl).Query((*GuardedController).Stats),
 	)
 	if err != nil {
@@ -220,7 +222,7 @@ func TestControllerBootErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, stop, err := InProcess(Config{}, tc.opt)
+			_, stop, err := InProcess(config.Runtime{}, tc.opt)
 			if stop != nil {
 				defer func() { _ = stop(context.Background()) }()
 			}
@@ -252,7 +254,7 @@ func (s *argBodySvc) Rename(ctx context.Context, id int64, in userInput) (*ctlUs
 }
 
 func TestArgBodyModeGraphQL(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&argBodySvc{}, &argSvc{}),
 		AsQuery((*argSvc).FetchUser, Arg("id")),
 		AsMutation((*argBodySvc).Rename, Arg("id")),
@@ -282,7 +284,7 @@ func (c *ListingsController) ListingRows(ctx context.Context) (string, error) {
 // Inside a module, a controller stacks under the module's Path, and its
 // GraphQL serves on the module's endpoint rather than <prefix>/graphql.
 func TestControllerInsideModule(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Module("market", Path("/market"),
 			Controller[*ListingsController]("/listings").Supply(&ListingsController{}).
 				Get("", (*ListingsController).Index).
@@ -317,7 +319,7 @@ func (c *composeCtl) Index(ctx context.Context) (string, error) { return "i", ni
 
 // ActionDefaults calls add up instead of replacing each other.
 func TestActionDefaultsCompose(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Controller[*composeCtl]("/c").Supply(&composeCtl{}).
 			ActionDefaults(func(method, path, action string) []RestOption { return []RestOption{Tag("first", action)} }).
 			ActionDefaults(func(method, path, action string) []RestOption { return []RestOption{Tag("second", method)} }).
@@ -342,7 +344,7 @@ func (c *slashCtl) Show(ctx context.Context, id int64) (string, error) {
 }
 
 func TestControllerTrailingSlash(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Module("m", Path("/m"),
 			Controller[*slashCtl]("/things").Supply(&slashCtl{}).TrailingSlash().
 				Get("", (*slashCtl).Index).
@@ -388,7 +390,7 @@ func TestResourceTakesAnnotatedActions(t *testing.T) {
 		c.Query((*annotCtl).Stats)
 	}))
 	for build := 1; build <= 2; build++ { // the same module boots again (tests do)
-		app, stop, err := InProcess(Config{}, module, generated)
+		app, stop, err := InProcess(config.Runtime{}, module, generated)
 		if err != nil {
 			t.Fatalf("build %d: %v", build, err)
 		}
@@ -415,7 +417,7 @@ func (c *standaloneCtl) Ping(ctx context.Context) (string, error) { return "pong
 // With no controller for the type in the app, the actions register on their
 // own under the module they were generated into.
 func TestControllerActionsStandalone(t *testing.T) {
-	app, stop, err := InProcess(Config{},
+	app, stop, err := InProcess(config.Runtime{},
 		Supply(&standaloneCtl{}),
 		Module("tools", Path("/tools"), ControllerActions(func(c *ControllerRouter[*standaloneCtl]) {
 			c.Get("/ping", (*standaloneCtl).Ping)
@@ -437,7 +439,7 @@ func TestControllerActionsStandalone(t *testing.T) {
 
 func TestRouterMountedTwiceInOneApp(t *testing.T) {
 	r := NewRouter("dup", "/dup").Rest("GET", "", func() (string, error) { return "x", nil })
-	_, stop, err := InProcess(Config{}, r, r)
+	_, stop, err := InProcess(config.Runtime{}, r, r)
 	if stop != nil {
 		defer func() { _ = stop(context.Background()) }()
 	}

@@ -1,6 +1,10 @@
 package nexus
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
+)
 
 const tomlWithDatabases = `
 [runtime.server]
@@ -28,10 +32,10 @@ key_prefix = "db.ajira_db"
 // back via DatabaseSpecFor. The binders themselves moved to package db;
 // the core's job is just to parse and store the specs.
 func TestLoadConfig_ParsesDatabaseSpecs(t *testing.T) {
-	if _, err := LoadConfig(writeTOML(t, tomlWithDatabases)); err != nil {
+	if _, err := config.Load(writeTOML(t, tomlWithDatabases)); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	uaa, ok := DatabaseSpecFor("uaa")
+	uaa, ok := config.DatabaseSpecFor("uaa")
 	if !ok {
 		t.Fatal("uaa spec not registered")
 	}
@@ -39,10 +43,10 @@ func TestLoadConfig_ParsesDatabaseSpecs(t *testing.T) {
 		uaa.TimeZone != "Africa/Dar_es_Salaam" || uaa.Schema != "main" {
 		t.Errorf("uaa spec wrong: %+v", uaa)
 	}
-	if oats, _ := DatabaseSpecFor("oats"); !oats.Default {
+	if oats, _ := config.DatabaseSpecFor("oats"); !oats.Default {
 		t.Error("oats should be default")
 	}
-	if ajira, _ := DatabaseSpecFor("ajira"); ajira.Driver != "mysql" {
+	if ajira, _ := config.DatabaseSpecFor("ajira"); ajira.Driver != "mysql" {
 		t.Errorf("ajira driver = %q", ajira.Driver)
 	}
 }

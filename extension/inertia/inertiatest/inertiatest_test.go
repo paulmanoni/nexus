@@ -8,6 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/extension/inertia/inertiatest"
 	"github.com/paulmanoni/nexus/v2/httpx"
@@ -61,7 +62,7 @@ func newClient(t *testing.T, extra ...nexus.Option) *inertiatest.Client {
 		inertia.Share(func(ctx context.Context) (string, any) { return "csrf", "tok-123" }),
 		inertia.Page("GET", "/widgets", "Widgets/Index", NewWidgets),
 	}, extra...)
-	return inertiatest.New(t, nexus.Config{TraceCapacity: 10}, opts...)
+	return inertiatest.New(t, config.Runtime{TraceCapacity: 10}, opts...)
 }
 
 // TestXHRVisit covers the core page-object assertions on an XHR visit: component,

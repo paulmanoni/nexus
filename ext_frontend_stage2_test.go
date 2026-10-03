@@ -17,6 +17,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
@@ -310,7 +311,7 @@ func TestServeFrontend_ShellLessDevMatchesProduction(t *testing.T) {
 	t.Cleanup(vite.Close)
 	t.Setenv(NexusDevEnv, "1")
 	t.Setenv(NexusDevRootEnv, dir)
-	app := New(Config{})
+	app := New(config.Runtime{})
 	app.setFrontendSource(os.DirFS(dir), "web/dist")
 	sub, _ := fs.Sub(os.DirFS(dir), "web/dist")
 	if err := mountFrontend(app, sub, noFrontendCfg); err != nil {
@@ -388,7 +389,7 @@ func TestServeFrontend_DevIndexRefusesRedirects(t *testing.T) {
 func TestServeFrontend_NoDirectoryListings(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 	t.Setenv(NexusDevEnv, "")
-	app := New(Config{})
+	app := New(config.Runtime{})
 	fsys := fstest.MapFS{
 		"index.html":       {Data: []byte("<html>x</html>")},
 		"v1.2/notes.txt":   {Data: []byte("notes")},
@@ -427,7 +428,7 @@ func TestApp_FrontendDocument(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("no frontend registered", func(t *testing.T) {
-		if _, err := New(Config{}).FrontendDocument(ctx); !errors.Is(err, ErrNoFrontendDocument) {
+		if _, err := New(config.Runtime{}).FrontendDocument(ctx); !errors.Is(err, ErrNoFrontendDocument) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -435,7 +436,7 @@ func TestApp_FrontendDocument(t *testing.T) {
 	t.Run("built index.html", func(t *testing.T) {
 		t.Setenv("GIN_MODE", "test")
 		t.Setenv(NexusDevEnv, "")
-		app := New(Config{})
+		app := New(config.Runtime{})
 		if err := mountFrontend(app, viteBundle(), noFrontendCfg); err != nil {
 			t.Fatal(err)
 		}
@@ -448,7 +449,7 @@ func TestApp_FrontendDocument(t *testing.T) {
 	t.Run("module-only build", func(t *testing.T) {
 		t.Setenv("GIN_MODE", "test")
 		t.Setenv(NexusDevEnv, "")
-		app := New(Config{})
+		app := New(config.Runtime{})
 		fsys := fstest.MapFS{".vite/manifest.json": {Data: []byte(`{"src/main.ts":{"file":"assets/main-DfUgamcr.js","isEntry":true}}`)}}
 		if err := mountFrontend(app, fsys, noFrontendCfg); err != nil {
 			t.Fatal(err)
@@ -462,7 +463,7 @@ func TestApp_FrontendDocument(t *testing.T) {
 		t.Setenv("GIN_MODE", "test")
 		t.Setenv(NexusDevEnv, "1")
 		t.Setenv(NexusDevRootEnv, t.TempDir())
-		app := New(Config{})
+		app := New(config.Runtime{})
 		if err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg); err != nil {
 			t.Fatal(err)
 		}
@@ -541,7 +542,7 @@ func TestApp_FrontendMount(t *testing.T) {
 		{"/v1", "/admin", "/v1/admin"},
 	}
 	for _, c := range cases {
-		app := New(Config{Server: ServerConfig{RoutePrefix: c.prefix}})
+		app := New(config.Runtime{Server: config.Server{RoutePrefix: c.prefix}})
 		if got := app.FrontendMount(); got != "" {
 			t.Fatalf("before ServeFrontend: %q", got)
 		}

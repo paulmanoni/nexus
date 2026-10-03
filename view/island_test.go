@@ -19,6 +19,7 @@ import (
 	"github.com/a-h/templ"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
@@ -35,7 +36,7 @@ func chartPage() templ.Component {
 	})
 }
 
-func getPage(t *testing.T, cfg nexus.Config, opts ...nexus.Option) (int, string) {
+func getPage(t *testing.T, cfg config.Runtime, opts ...nexus.Option) (int, string) {
 	t.Helper()
 	app, stop, err := nexus.InProcess(cfg, append(opts, Page("GET", "/", chartPage))...)
 	if err != nil {
@@ -61,7 +62,7 @@ func TestIslandFromBuild(t *testing.T) {
   "virtual:nexus-island/Chart": {"file":"assets/Chart-B2xQ9fLk.js","name":"Chart","isDynamicEntry":true}
 }`)},
 	}
-	status, page := getPage(t, nexus.Config{Environment: "production"},
+	status, page := getPage(t, config.Runtime{Environment: "production"},
 		nexus.ServeFrontend(dist, "dist", nexus.FrontendAt("/static")))
 	want := `<nx-island data-c="Chart" data-l="/static/assets/nexus-islands-B2xQ9fLk.js" ` +
 		`data-p="{&#34;points&#34;:[1,2]}" data-when="visible"><p>loading</p></nx-island>`
@@ -82,7 +83,7 @@ func TestIslandFromDevServer(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "dist", ".vite", "nexus-hot.json"), []byte(hot), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	status, page := getPage(t, nexus.Config{Environment: "development"},
+	status, page := getPage(t, config.Runtime{Environment: "development"},
 		nexus.ServeFrontend(os.DirFS(dir), "dist"))
 	if status != 200 || !strings.Contains(page, `data-l="http://127.0.0.1:5173/@id/virtual:nexus-islands"`) {
 		t.Fatalf("status %d: %s", status, page)
@@ -92,13 +93,13 @@ func TestIslandFromDevServer(t *testing.T) {
 // Without islands to load, the page still renders: the fallback stays and
 // the element says why.
 func TestIslandWithoutAFrontend(t *testing.T) {
-	status, page := getPage(t, nexus.Config{Environment: "production"})
+	status, page := getPage(t, config.Runtime{Environment: "production"})
 	if status != 200 || !strings.Contains(page, `data-error="no frontend`) || !strings.Contains(page, "<p>loading</p>") ||
 		strings.Contains(page, "data-l=") {
 		t.Fatalf("no frontend: status %d: %s", status, page)
 	}
 	dist := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(`{"src/main.ts":{"file":"assets/main.js","isEntry":true}}`)}}
-	status, page = getPage(t, nexus.Config{Environment: "production"}, nexus.ServeFrontend(dist, "dist"))
+	status, page = getPage(t, config.Runtime{Environment: "production"}, nexus.ServeFrontend(dist, "dist"))
 	if status != 200 || !strings.Contains(page, "has no islands loader") {
 		t.Fatalf("a build without islands: status %d: %s", status, page)
 	}
@@ -117,7 +118,7 @@ func TestIslandMissingFromBuild(t *testing.T) {
 	dist := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(`{
   "nexus-islands": {"file":"assets/nexus-islands-B2xQ9fLk.js","name":"nexus-islands","isEntry":true}
 }`)}}
-	status, page := getPage(t, nexus.Config{Environment: "production"}, nexus.ServeFrontend(dist, "dist"))
+	status, page := getPage(t, config.Runtime{Environment: "production"}, nexus.ServeFrontend(dist, "dist"))
 	if status != 200 || !strings.Contains(page, "has no island Chart") {
 		t.Fatalf("status %d: %s", status, page)
 	}
@@ -193,7 +194,7 @@ func TestIslandSSR(t *testing.T) {
   "virtual:nexus-island/SSRChart": {"file":"assets/SSRChart-B2xQ9fLk.js","name":"SSRChart","isDynamicEntry":true}
 }`)}}
 	page := func(opts ...nexus.Option) string {
-		app, stop, err := nexus.InProcess(nexus.Config{Environment: "production"}, append(opts,
+		app, stop, err := nexus.InProcess(config.Runtime{Environment: "production"}, append(opts,
 			nexus.ServeFrontend(dist, "dist"),
 			Page("GET", "/", func() templ.Component {
 				return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {

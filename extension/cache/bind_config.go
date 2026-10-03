@@ -1,6 +1,9 @@
 package cache
 
-import "github.com/paulmanoni/nexus/v2"
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+)
 
 // BindFromConfig binds a marker type T to the [cache.<name>] block in
 // nexus.toml — the cache counterpart to db.BindFromConfig, so wiring a cache
@@ -46,16 +49,16 @@ func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 func configFromTOML(name string) *Config {
 	c := NewConfig()
 	p := "cache." + name + "."
-	c.Environment = nexus.Get(p+"environment", c.Environment)
-	c.Driver = nexus.Get(p+"driver", c.Driver)
-	c.RedisHost = nexus.Get(p+"redis_host", c.RedisHost)
-	c.RedisPort = nexus.Get(p+"redis_port", c.RedisPort)
-	c.RedisPassword = nexus.Get(p+"redis_password", c.RedisPassword)
-	c.RedisDB = nexus.Get(p+"redis_db", c.RedisDB)
-	c.DefaultExpiry = nexus.Get(p+"default_expiry", c.DefaultExpiry)
-	c.CleanupExpiry = nexus.Get(p+"cleanup_expiry", c.CleanupExpiry)
-	c.ConnectTimeout = nexus.Get(p+"connect_timeout", c.ConnectTimeout)
-	c.ReconnectInterval = nexus.Get(p+"reconnect_interval", c.ReconnectInterval)
-	c.PersistPath = nexus.Get(p+"persist_path", c.PersistPath)
+	c.Environment = config.Get(p+"environment", c.Environment)
+	c.Driver = config.Get(p+"driver", c.Driver)
+	c.RedisHost = config.Get(p+"redis_host", c.RedisHost)
+	c.RedisPort = config.Get(p+"redis_port", c.RedisPort)
+	c.RedisPassword = config.Get(p+"redis_password", c.RedisPassword)
+	c.RedisDB = config.Get(p+"redis_db", c.RedisDB)
+	c.DefaultExpiry = config.Get(p+"default_expiry", c.DefaultExpiry)
+	c.CleanupExpiry = config.Get(p+"cleanup_expiry", c.CleanupExpiry)
+	c.ConnectTimeout = config.Get(p+"connect_timeout", c.ConnectTimeout)
+	c.ReconnectInterval = config.Get(p+"reconnect_interval", c.ReconnectInterval)
+	c.PersistPath = config.Get(p+"persist_path", c.PersistPath)
 	return c
 }

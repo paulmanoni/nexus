@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"sync"

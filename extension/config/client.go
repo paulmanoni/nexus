@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
@@ -199,11 +200,11 @@ func (h *clientHolder) bootInstall() error {
 	case UseCacheOrFail:
 		return fmt.Errorf("config.Client: server unreachable AND no valid cache: %w", err)
 	case UseCacheAndWarn:
-		nexus.InstallConfigStore(map[string]any{}, "empty")
+		config.InstallStore(map[string]any{}, "empty")
 		fmt.Fprintf(os.Stderr, "config.Client: SEV1 — running on EMPTY config (server unreachable, no cache)\n")
 		return nil
 	case UseDefaults:
-		nexus.InstallConfigStore(h.cfg.defaults, "defaults")
+		config.InstallStore(h.cfg.defaults, "defaults")
 		fmt.Fprintf(os.Stderr, "config.Client: SEV1 — running on WithDefaults (server unreachable, no cache)\n")
 		return nil
 	}
@@ -216,9 +217,9 @@ func (h *clientHolder) bootInstall() error {
 // OnConfigChange callbacks).
 func (h *clientHolder) installSnapshot(snap *SignedSnapshot) {
 	if prev := h.currentVersion.Load(); prev == nil {
-		nexus.InstallConfigStore(snap.Snapshot.Values, snap.Snapshot.Version)
+		config.InstallStore(snap.Snapshot.Values, snap.Snapshot.Version)
 	} else {
-		nexus.UpdateConfigStore(snap.Snapshot.Values, snap.Snapshot.Version)
+		config.UpdateStore(snap.Snapshot.Values, snap.Snapshot.Version)
 	}
 	v := snap.Snapshot.Version
 	h.currentVersion.Store(&v)

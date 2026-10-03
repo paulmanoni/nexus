@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // Shared plumbing for driving a real Vite project from `nexus dev` and
@@ -138,7 +138,7 @@ func viteBinary(webDir string) (string, bool) {
 // than failing: a build machine without that secret still builds, and
 // the frontend sees the key as undefined.
 func frontendEnv(tomlPath string, warn io.Writer) ([]string, error) {
-	vars, skipped, err := nexus.EnvVarsSkippingUnset(tomlPath)
+	vars, skipped, err := config.EnvVarsSkippingUnset(tomlPath)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
@@ -44,7 +45,7 @@ func postJSON(t *testing.T, app *nexus.App, path, body string) (*httptest.Respon
 
 func newLoginApp(t *testing.T, opts ...auth.LoginOption) (*nexus.App, func(context.Context) error) {
 	t.Helper()
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Module(auth.Config{
 			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
 			Backend:        auth.StaticBackend(loginBackend{}),
@@ -113,7 +114,7 @@ func (s *tokenSvc) issue(id string) string { return s.prefix + id }
 // an app-owned AsRestHandler factory whose issuer closes over a DI-injected
 // service — the pattern for token servers that a static WithIssuer can't see.
 func TestLoginHandler_DIIssuer(t *testing.T) {
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Provide(func() *tokenSvc { return &tokenSvc{prefix: "tok:"} }),
 		auth.Module(auth.Config{
 			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},

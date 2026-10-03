@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/resource"
 )
@@ -98,7 +99,7 @@ func (c Config) resolve(store Store, broker Broker) (Config, Store, error) {
 		if bound != "" {
 			def = bound
 		}
-		c.Driver = nexus.Get("jobs.driver", def)
+		c.Driver = config.Get("jobs.driver", def)
 	}
 	switch {
 	case c.Driver == "memory":
@@ -110,7 +111,7 @@ func (c Config) resolve(store Store, broker Broker) (Config, Store, error) {
 	}
 	if c.Queues == nil {
 		c.Queues = map[string]int{}
-		for q, v := range nexus.Get[map[string]any]("jobs.queues") {
+		for q, v := range config.Get[map[string]any]("jobs.queues") {
 			n, err := toInt(v)
 			if err != nil || n < 1 {
 				return c, nil, fmt.Errorf("jobs: [jobs.queues] %s = %v — want a worker count of 1 or more", q, v)
@@ -122,20 +123,20 @@ func (c Config) resolve(store Store, broker Broker) (Config, Store, error) {
 		}
 	}
 	if !c.DisableWorkers {
-		c.DisableWorkers = !nexus.Get("jobs.run", true)
+		c.DisableWorkers = !config.Get("jobs.run", true)
 	}
 	if c.ShutdownGrace == 0 {
 		def := 10 * time.Second
 		if nexus.IsDev() {
 			def = 0
 		}
-		c.ShutdownGrace = nexus.Get("jobs.shutdown_grace", def)
+		c.ShutdownGrace = config.Get("jobs.shutdown_grace", def)
 	}
 	if c.Lease == 0 {
-		c.Lease = nexus.Get("jobs.lease", 30*time.Second)
+		c.Lease = config.Get("jobs.lease", 30*time.Second)
 	}
 	if c.PollInterval == 0 {
-		c.PollInterval = nexus.Get("jobs.poll", time.Second)
+		c.PollInterval = config.Get("jobs.poll", time.Second)
 	}
 	if c.Retention == 0 {
 		c.Retention = 24 * time.Hour

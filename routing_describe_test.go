@@ -3,6 +3,7 @@ package nexus
 import (
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
@@ -18,7 +19,7 @@ func TestDescribe_CrossTransport(t *testing.T) {
 	newSearch := func(p Params[args]) (string, error) { return "ok", nil }
 	newSend := func(sess *WSSession, p Params[args]) error { return nil }
 
-	app, err := newApp(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}},
+	app, err := newApp(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}},
 		AsRest("GET", "/items/:id", newGet, Describe("Fetch one item")),
 		AsQuery(newSearch, Describe("Search items")),
 		AsWS("/events", "item.send", newSend, Describe("Send an item event")),

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
@@ -21,9 +22,9 @@ import (
 func TestRun_StartsAndStops(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{
-			Server:        ServerConfig{Addr: "127.0.0.1:0"},
-			Dashboard:     DashboardConfig{Enabled: true, Name: "Test"},
+		fxBootOptions(config.Runtime{
+			Server:        config.Server{Addr: "127.0.0.1:0"},
+			Dashboard:     config.Dashboard{Enabled: true, Name: "Test"},
 			Introspection: true, // test starts the app + exercises mounts
 			TraceCapacity: 100,
 		}),
@@ -55,7 +56,7 @@ func TestRun_BindFailureAbortsStart(t *testing.T) {
 
 	fxApp := di.New(
 		di.Options(),
-		fxBootOptions(Config{Server: ServerConfig{Addr: busy.Addr().String()}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: busy.Addr().String()}}),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -69,7 +70,7 @@ func TestRun_BindFailureAbortsStart(t *testing.T) {
 func TestRun_TracingDisabledWhenZero(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}, TraceCapacity: 0}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}, TraceCapacity: 0}),
 		di.Populate(&app),
 	)
 	fxApp.RequireStart()
@@ -150,7 +151,7 @@ func TestAutoMount_StampsModuleName(t *testing.T) {
 		AsQuery(NewNoSvcQuery()),
 	)
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		mod.nexusOption(),
 		di.Populate(&app),
 	)
@@ -206,7 +207,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		Supply(ctrl).nexusOption(),
 		AsRestHandler("GET", "/ping",
 			func(c *testRestHandlerCtrl) httpx.HandlerFunc { return c.Ping },
@@ -243,7 +244,7 @@ func TestAsRestHandler_MountsFactoryHandler(t *testing.T) {
 func TestProvideService_RecordsConstructorDeps(t *testing.T) {
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		Provide(func() *fakeDB { return &fakeDB{} }).nexusOption(),
 		Provide(NewUsersService).nexusOption(),
 		Provide(NewAdvertsService).nexusOption(),
@@ -277,7 +278,7 @@ func TestAutoMount_ZeroServiceFallback(t *testing.T) {
 	// failing. Proves the minimal-app case boots.
 	var app *App
 	fxApp := newTestApp(t,
-		fxBootOptions(Config{Server: ServerConfig{Addr: "127.0.0.1:0"}}),
+		fxBootOptions(config.Runtime{Server: config.Server{Addr: "127.0.0.1:0"}}),
 		AsQuery(NewNoSvcQuery()).nexusOption(),
 		di.Populate(&app),
 	)

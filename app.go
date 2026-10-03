@@ -40,6 +40,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 
@@ -132,7 +133,7 @@ type App struct {
 	// memory-only config when the user doesn't supply one. Downstream
 	// stores (metrics, rate-limit overrides) can rely on it and Redis
 	// takes over automatically when env vars enable it.
-	cacheMgr      Cache
+	cacheMgr      resource.Cache
 	dashboardOn   bool
 	dashboardName string
 	// defaultGate, when non-nil, is a middleware the framework prepends to
@@ -189,7 +190,7 @@ type App struct {
 	// means single-listener back-compat mode bound to Config.Addr;
 	// non-empty triggers multi-listener binding in registerLifecycle
 	// and activates the scope filter middleware.
-	listeners map[string]Listener
+	listeners map[string]config.Listener
 	// listenerScopes is the runtime scope-lookup table: bound-address
 	// string → scope. Populated by registerLifecycle as each listener
 	// actually binds, read by scopeFilterMiddleware on every request.
@@ -249,7 +250,7 @@ type App struct {
 // The returned *App is fully constructed and safe to register
 // endpoints/services on, but listeners aren't bound until Run is
 // invoked (either nexus.Run or App.Run for direct callers).
-func New(cfg Config) *App {
+func New(cfg config.Runtime) *App {
 	traceCapacity := cfg.TraceCapacity
 	if traceCapacity == 0 && cfg.Dashboard.Enabled {
 		// 1024 events covers a few hundred requests in a typical dev
@@ -270,7 +271,7 @@ func New(cfg Config) *App {
 	// Resolve the listener map: explicit Listeners with empty Addrs
 	// auto-filled from cfg.Addr, otherwise nil (single-listener
 	// back-compat at cfg.Addr).
-	var listeners map[string]Listener
+	var listeners map[string]config.Listener
 	if len(cfg.Server.Listeners) > 0 {
 		listeners = fillListenerAddrs(cfg.Server.Listeners, cfg.Server.Addr)
 	}
@@ -782,7 +783,7 @@ func (a *App) Environment() string { return a.environment }
 // nexus.toml — the same rule App.Environment applies, so the two agree for
 // an app configured from the file.
 func ActiveEnvironment() string {
-	return resolveEnvironment(Get[string]("runtime.environment"))
+	return resolveEnvironment(config.Get[string]("runtime.environment"))
 }
 
 // resolveEnvironment applies NEXUS_ENVIRONMENT over the configured value.
@@ -802,7 +803,7 @@ func resolveEnvironment(configured string) string {
 func (a *App) Version() string { return a.version }
 
 func (a *App) Metrics() metrics.Store { return a.metricsStore }
-func (a *App) Cache() Cache           { return a.cacheMgr }
+func (a *App) Cache() resource.Cache  { return a.cacheMgr }
 
 // RoutePrefix returns the deployment-wide path prefix applied to
 // every user-mounted route (REST, GraphQL, WebSocket). Empty when

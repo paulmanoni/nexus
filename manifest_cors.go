@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -17,7 +18,7 @@ import (
 //
 // Nil CORSConfig is filtered out by the caller, so this always
 // receives a populated struct.
-func corsMiddleware(cfg CORSConfig) httpx.HandlerFunc {
+func corsMiddleware(cfg config.CORS) httpx.HandlerFunc {
 	allowed := buildOriginMatcher(cfg.AllowOrigins)
 	methods := strings.Join(defaultStrings(cfg.AllowMethods, defaultCORSMethods), ", ")
 	headers := strings.Join(defaultStrings(cfg.AllowHeaders, defaultCORSHeaders), ", ")

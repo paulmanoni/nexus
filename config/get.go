@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"encoding/json"
@@ -87,9 +87,9 @@ func MustGet[T any](key string) T {
 	return v
 }
 
-// HasConfig reports whether key resolves to a non-nil value in
+// Has reports whether key resolves to a non-nil value in
 // the current snapshot or as an ENV override.
-func HasConfig(key string) bool {
+func Has(key string) bool {
 	if _, ok := configEnvOverride(key); ok {
 		return true
 	}
@@ -97,7 +97,7 @@ func HasConfig(key string) bool {
 	return ok && raw != nil
 }
 
-// OnConfigChange registers a callback that fires when the value
+// OnChange registers a callback that fires when the value
 // at key changes between snapshots. The callback receives the
 // new value typed as any; cast to the concrete type at the
 // receiver. Callbacks run synchronously on the snapshot-apply
@@ -107,21 +107,21 @@ func HasConfig(key string) bool {
 // Registrations made before app start are queued and replayed
 // once the store installs.
 //
-//	nexus.OnConfigChange("config.api.timeout", func(v any) {
+//	nexus.OnChange("config.api.timeout", func(v any) {
 //	    if d, ok := v.(time.Duration); ok { srv.timeout.Store(d) }
 //	})
-func OnConfigChange(key string, fn func(value any)) {
+func OnChange(key string, fn func(value any)) {
 	subscribeConfig(key, fn)
 }
 
-// BindConfig decodes the snapshot subtree at prefix into dst via
+// Bind decodes the snapshot subtree at prefix into dst via
 // encoding/json (same shape rules as Unmarshal — tags,
 // omitempty, etc.). Returns an error when the subtree shape
 // doesn't match dst.
 //
 //	var payment PaymentConfig
-//	if err := nexus.BindConfig("config.payment", &payment); err != nil { ... }
-func BindConfig(prefix string, dst any) error {
+//	if err := nexus.Bind("config.payment", &payment); err != nil { ... }
+func Bind(prefix string, dst any) error {
 	raw, ok := configResolveKey(prefix)
 	if !ok || raw == nil {
 		return fmt.Errorf("nexus: config prefix %q not found", prefix)

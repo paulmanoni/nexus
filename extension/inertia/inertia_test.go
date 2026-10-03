@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
@@ -154,7 +155,7 @@ func bootInertiaWith(t *testing.T, addr string, tweak func(*inertia.Config), ext
 		nexus.Invoke(func() { close(ready) }),
 	}, extra...)
 	go func() {
-		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10}, opts...)
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10}, opts...)
 	}()
 	<-ready
 	deadline := time.Now().Add(3 * time.Second)
@@ -662,7 +663,7 @@ func TestFrontendAutoDiscovery(t *testing.T) {
 	}
 	ready := make(chan struct{})
 	go func() {
-		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10},
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10},
 			nexus.ServeFrontend(fsys, "dist"), // names + serves the bundle once
 			inertia.Module(inertia.Config{}),  // no Frontend → auto-discovered
 			inertia.Page("GET", "/p", "P", NewWidgets),
@@ -882,7 +883,7 @@ func TestHistoryEncryptDefault(t *testing.T) {
 	fsys := fstest.MapFS{"dist/.vite/manifest.json": {Data: []byte(manifestJSON)}}
 	ready := make(chan struct{})
 	go func() {
-		nexus.Run(nexus.Config{Server: nexus.ServerConfig{Addr: addr}, TraceCapacity: 10},
+		nexus.Run(config.Runtime{Server: config.Server{Addr: addr}, TraceCapacity: 10},
 			inertia.Module(inertia.Config{Frontend: fsys, Root: "dist", EncryptHistory: true}),
 			inertia.Page("GET", "/home", "Home", NewWidgets),
 			nexus.Invoke(func() { close(ready) }),

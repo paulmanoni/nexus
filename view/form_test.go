@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 type petForm struct {
@@ -66,7 +67,7 @@ func (s *shelterLive) Render() templ.Component {
 
 func bootShelter(t *testing.T) *httptest.Server {
 	t.Helper()
-	app, stop, err := nexus.InProcess(nexus.Config{}, Live[*shelterLive]("/shelter").Provide(func() *shelterLive { return &shelterLive{} }))
+	app, stop, err := nexus.InProcess(config.Runtime{}, Live[*shelterLive]("/shelter").Provide(func() *shelterLive { return &shelterLive{} }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +130,7 @@ func (p *panicky) Render() templ.Component {
 
 // A panicking event is reported to the page; the connection survives.
 func TestLivePanicIsAnError(t *testing.T) {
-	app, stop, err := nexus.InProcess(nexus.Config{}, Live[*panicky]("/p").Provide(func() *panicky { return &panicky{} }))
+	app, stop, err := nexus.InProcess(config.Runtime{}, Live[*panicky]("/p").Provide(func() *panicky { return &panicky{} }))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -14,7 +15,7 @@ import (
 // once a prior request stored state and handed out the cookie.
 func TestRequiredGate(t *testing.T) {
 	cfg := Config{Store: NewMemoryStore()}
-	app, stop, err := nexus.InProcess(nexus.Config{},
+	app, stop, err := nexus.InProcess(config.Runtime{},
 		Module(cfg),
 		nexus.AsRestHandler("POST", "/start", func() httpx.HandlerFunc {
 			return func(c *httpx.Ctx) {

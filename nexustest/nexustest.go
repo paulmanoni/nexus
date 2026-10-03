@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // App is a started, listener-less nexus app under test. It is an http.Handler.
@@ -44,7 +45,7 @@ type App struct {
 // New boots cfg+opts in-process and registers cleanup. It fails the test on any
 // build or start error. Introspection is left as cfg sets it; routing works
 // regardless.
-func New(tb testing.TB, cfg nexus.Config, opts ...nexus.Option) *App {
+func New(tb testing.TB, cfg config.Runtime, opts ...nexus.Option) *App {
 	tb.Helper()
 	app, stop, err := nexus.InProcess(cfg, opts...)
 	if err != nil {

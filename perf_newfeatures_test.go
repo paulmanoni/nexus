@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/paulmanoni/nexus/v2/config"
 )
 
 // Benchmarks for the v1.51–v1.54 handler features: what an op pays for
@@ -33,7 +35,7 @@ func perfEnv[T any](v T, err error) (*envResp[T], error) {
 
 func benchApp(b *testing.B, opts ...Option) *App {
 	b.Helper()
-	app, stop, err := InProcess(Config{}, append([]Option{Supply(&perfSvc{})}, opts...)...)
+	app, stop, err := InProcess(config.Runtime{}, append([]Option{Supply(&perfSvc{})}, opts...)...)
 	if err != nil {
 		b.Fatal(err)
 	}

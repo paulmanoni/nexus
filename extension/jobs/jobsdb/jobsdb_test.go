@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/db"
 	_ "github.com/paulmanoni/nexus/v2/db/sqlite"
 	"github.com/paulmanoni/nexus/v2/extension/jobs"
@@ -162,7 +163,7 @@ func bootProcess(t *testing.T, path string, svc *Svc, cfg jobs.Config) *jobs.Man
 	t.Helper()
 	store := newStore(t, path)
 	var m *jobs.Manager
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Provide(func() jobs.Store { return store }),
 		jobs.Module(cfg),
 		nexus.Supply(svc), work,
@@ -278,7 +279,7 @@ func TestBindSelectsTheDBDriver(t *testing.T) {
 	svc := &Svc{}
 	var m *jobs.Manager
 	var app *nexus.App
-	_, stop, err := nexus.InProcess(nexus.Config{},
+	_, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Supply(&TestDB{Manager: mgr}),
 		jobsdb.Bind[TestDB](),
 		jobs.Module(jobs.Config{PollInterval: 10 * time.Millisecond}),

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
@@ -41,7 +42,7 @@ func TestRouterNesting(t *testing.T) {
 	v1 := NewRouter("v1", "/api/v1", markMW("v1-shared", &log))
 	v1.Include(billing)
 
-	app, stop, err := InProcess(Config{}, v1)
+	app, stop, err := InProcess(config.Runtime{}, v1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestRouterNesting(t *testing.T) {
 func TestRouterIncludedGuard(t *testing.T) {
 	child := NewRouter("child", "/c")
 	NewRouter("root", "/r").Include(child)
-	_, _, err := InProcess(Config{}, child)
+	_, _, err := InProcess(config.Runtime{}, child)
 	if err == nil || !strings.Contains(err.Error(), "pass only the root") {
 		t.Fatalf("expected included-router error, got: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestRouterDeclAssembly(t *testing.T) {
 	RouterDecl("billing", "/billing", "v1", markMW("decl-shared", &log))
 	OnRouter("billing", AsRestHandler("GET", "/invoices", handler, markMW("per-op", &log)))
 
-	app, stop, err := InProcess(Config{})
+	app, stop, err := InProcess(config.Runtime{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestRouterDeclAssembly(t *testing.T) {
 // cycles fail the boot with clear messages.
 func TestRouterDeclErrors(t *testing.T) {
 	boot := func() error {
-		_, stop, err := InProcess(Config{})
+		_, stop, err := InProcess(config.Runtime{})
 		if err == nil {
 			_ = stop(context.Background())
 		}

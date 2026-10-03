@@ -1,4 +1,4 @@
-package nexus
+package config
 
 import (
 	"maps"
@@ -68,7 +68,7 @@ secret = "change-me-in-prod"
 `)
 	// Sanity: not set before.
 	_ = os.Unsetenv("client.id")
-	if _, err := LoadConfig(p); err != nil {
+	if _, err := Load(p); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	if got := os.Getenv("client.id"); got != "ajira_portal-web" {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -100,9 +101,9 @@ var resourceModule = nexus.Module("resources",
 
 func main() {
 	nexus.Run(
-		nexus.Config{
-			Server:        nexus.ServerConfig{Addr: ":8080"},
-			Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Fx Petstore"},
+		config.Runtime{
+			Server:        config.Server{Addr: ":8080"},
+			Dashboard:     config.Dashboard{Enabled: true, Name: "Fx Petstore"},
 			TraceCapacity: 1000,
 		},
 		petsModule,
