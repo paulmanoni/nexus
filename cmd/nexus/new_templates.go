@@ -561,12 +561,15 @@ func main() {
 
 const tmplModuleGo = `package main
 
-import "github.com/paulmanoni/nexus/v2"
+import (
+	"context"
+
+	"github.com/paulmanoni/nexus/v2"
+)
 
 // HelloService — typed wrapper around *nexus.Service so the DI
-// container can route by type. Every handler that declares
-// *HelloService as a dep grounds under the "hello" service on the
-// dashboard's Architecture view.
+// container can route by type. Its methods are the handlers, and they
+// group under the "hello" service on the dashboard's Architecture view.
 type HelloService struct{ *nexus.Service }
 
 func NewHelloService(app *nexus.App) *HelloService {
@@ -581,8 +584,10 @@ type HelloArgs struct {
 	Name string ` + "`graphql:\"name\" json:\"name\"`" + `
 }
 
-func NewHello(svc *HelloService, p nexus.Params[HelloArgs]) (*HelloResponse, error) {
-	name := p.Args.Name
+// Hello is a handler: a method taking the request context and its
+// arguments. Its op name comes from the method: "hello".
+func (s *HelloService) Hello(ctx context.Context, in HelloArgs) (*HelloResponse, error) {
+	name := in.Name
 	if name == "" {
 		name = "world"
 	}
@@ -591,7 +596,7 @@ func NewHello(svc *HelloService, p nexus.Params[HelloArgs]) (*HelloResponse, err
 
 var helloModule = nexus.Module("hello",
 	nexus.Provide(NewHelloService),
-	nexus.AsRest("GET", "/hello", NewHello),
+	nexus.AsRest("GET", "/hello", (*HelloService).Hello),
 )
 `
 

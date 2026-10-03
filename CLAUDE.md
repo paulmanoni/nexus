@@ -660,15 +660,25 @@ Attach resources: `svc.Using("main", "cache")` / `svc.UsingDefaults()` /
 
 ## 5. Reflective handlers
 
-Every transport uses the same shape:
+Every transport uses the same shape — a method on a service is the documented
+default:
 ```go
-func NewOp(svc *XService, deps..., p nexus.Params[ArgsStruct]) (*Response, error)
+func (s *UserService) CreateUser(ctx context.Context, in CreateUser) (*User, error)
+nexus.AsMutation((*UserService).CreateUser)        // op "createUser"
 ```
-- First `*Service`-wrapper dep grounds the op under that service (omit in
-  single-service apps, or pin with `nexus.OnService[*XService]()`).
-- Last param `nexus.Params[T]` exposes `.Context` and `.Args`.
-- Return `(T, error)` — `T` is the GraphQL type / REST JSON body.
-- `NewListPets` → op name `ListPets` (the `New` prefix is stripped).
+A free function works too, with DI deps as parameters and `nexus.Params[T]` last
+when it needs more than ctx + args:
+```go
+func ListPets(svc *PetService, db *DB, p nexus.Params[ListArgs]) ([]Pet, error)
+```
+- The receiver (or first `*Service`-wrapper dep) grounds the op under that service
+  (pin with `nexus.OnService[*XService]()`).
+- `nexus.Params[T]` exposes `.Context` and `.Args`.
+- Return `(T, error)` — `T` is the GraphQL type / REST JSON body. A raw handler takes
+  `*httpx.Ctx` (and its deps) and writes the response itself.
+- The op name is the method or function name, first letter lowered (`ListPets` →
+  `listPets`), or `nexus.Op("…")`. v1 dropped a `New` prefix; `nexus migrate v2`
+  adds `nexus.Op` to v1 `NewXxx` registrations so wire names stay put.
 - Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `path:"id"` for REST path params (also `query:"x"`, `header:"X"`, `form:"x"`, `json:"x"`).
 - `nexus.Describe("…")` sets an op's description (dashboard + GraphQL SDL) — a cross-transport per-op option (REST / GraphQL / WS), like `HideFromDashboard()` / `WithIcon()`. It supersedes the transport-specific `Desc` (GraphQL) and `Description` (REST), which are deprecated but still work.
 
@@ -771,11 +781,11 @@ nexus.AsRest("GET", "/users/:id", NewGet)
 
 ### GraphQL (auto-mounted on `/graphql`)
 ```go
-nexus.AsQuery(NewSearchUsers)
-nexus.AsMutation(NewCreateAdvert, auth.Required(), auth.Requires("ROLE_CREATE"))
+nexus.AsQuery((*UserService).SearchUsers)
+nexus.AsMutation((*OrderService).CreateOrder, auth.Required(), auth.Requires("ROLE_CREATE"))
 ```
-Field name = constructor name minus `New`, first letter lowercased
-(`NewSearchUsers` → `searchUsers`). Fields are partitioned by service; service-less
+Field name = the method or function name, first letter lowercased
+(`SearchUsers` → `searchUsers`). Fields are partitioned by service; service-less
 handlers mount on a default partition.
 
 **Related fields without N+1 — `LoadField`.** Add a batched (dataloader) field to a
@@ -1464,7 +1474,8 @@ no Dockerfile generator.
 - **Deploy with `NEXUS_ENVIRONMENT=production`** — scaffolds ship `environment =
   "development"` in nexus.toml, which turns on dev-only behaviour (the hot file; with
   `sdk = true`, the SDK dump into `web/sdk`).
-- **Handler constructors are `NewXxx`**; the `New` prefix is stripped for op names.
+- **Handlers are methods on services** (or plain functions); an op is named after the
+  method/function as written — no `New` prefix rule in v2.
 - Don't reference `nexus.DeployAs` / `nexus.IfDeployment` — not implemented.
 - `nexus docs <topic>` is the authoritative per-feature reference inside the installed
   binary; prefer it when unsure of an exact signature.

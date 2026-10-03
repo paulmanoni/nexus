@@ -45,24 +45,27 @@ Pass the method expression `(*UserService).CreateUser` as shown, or a bound meth
 works too. **Use pointer receivers**: with a zero-argument value-receiver method, the
 receiver itself would be read as the arguments struct.
 
-## Constructor handlers and `Params[T]`
+## Functions with dependencies, and `Params[T]`
 
-When a handler needs more than `ctx` and its arguments, write a constructor-style
-function. It lists its dependencies and ends with `nexus.Params[T]`:
+A handler can also be a plain function. It lists its dependencies — injected from
+DI on every call — and, when it needs more than `ctx` and its arguments, ends with
+`nexus.Params[T]`:
 
 ```go
-func NewListOrders(svc *OrderService, db *DB, p nexus.Params[ListArgs]) ([]Order, error) {
+func ListOrders(svc *OrderService, db *DB, p nexus.Params[ListArgs]) ([]Order, error) {
     return db.Orders(p.Context, p.Args.Status)
 }
 
-nexus.AsQuery(NewListOrders)
+nexus.AsQuery(ListOrders)
 ```
 
 - Every parameter before `Params[T]` is injected from the DI graph.
 - `p.Context` is the request context and `p.Args` holds the bound arguments.
   `Params[T]` also exposes the HTTP method and GraphQL resolve info.
 - The return value is `(T, error)`. `T` is the GraphQL type or the REST JSON body.
-- The `New` prefix is removed from the op name: `NewListOrders` becomes `listOrders`.
+- The op name is the function or method name with its first letter lowered
+  (`ListOrders` becomes `listOrders`), or `nexus.Op("…")`. v1 also dropped a `New`
+  prefix; `nexus migrate v2` pins those names with `nexus.Op`.
 - The first `*Service`-wrapper dependency decides which service the op belongs to on the
   dashboard. See [Modules & services](./modules).
 
