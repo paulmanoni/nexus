@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/a-h/parse"
 	"github.com/a-h/templ/generator"
 	"github.com/a-h/templ/parser/v2"
 
@@ -48,6 +49,12 @@ type Result struct {
 	Twins      map[string]string // compiled expressions by id
 	Components []*Component
 	Imports    map[string]string // the file's imports: selector → import line
+
+	// RawGo is the Go as templ's generator wrote it, before gofmt: what
+	// SourceMap indexes. An editor type-checks RawGo so a .templ position
+	// maps onto it, and back, through SourceMap.
+	RawGo     []byte
+	SourceMap *parser.SourceMap
 }
 
 // Component is what the package pass needs to know about one component.
@@ -96,6 +103,10 @@ func File(name, src string, pkg *Package) (*Result, error) {
 	}
 	tf, err := parser.ParseString(src)
 	if err != nil {
+		var pe parse.ParseError
+		if errors.As(err, &pe) {
+			return nil, &PositionError{File: filepath.ToSlash(name), Line: pe.Pos.Line + 1, Col: pe.Pos.Col + 1, Msg: pe.Msg}
+		}
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	tf.Filepath = name
@@ -124,7 +135,8 @@ func File(name, src string, pkg *Package) (*Result, error) {
 		return nil, errors.Join(f.errs...)
 	}
 	var buf bytes.Buffer
-	if _, err := generator.Generate(tf, &buf, generator.WithFileName(filepath.Base(name))); err != nil {
+	gen, err := generator.Generate(tf, &buf, generator.WithFileName(filepath.Base(name)))
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	out, err := format.Source(buf.Bytes())
@@ -134,6 +146,7 @@ func File(name, src string, pkg *Package) (*Result, error) {
 	return &Result{
 		Package: strings.TrimSpace(strings.TrimPrefix(tf.Package.Expression.Value, "package")),
 		Go:      out, Twins: f.twins, Components: f.components, Imports: f.imports,
+		RawGo: buf.Bytes(), SourceMap: gen.SourceMap,
 	}, nil
 }
 
