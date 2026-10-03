@@ -94,6 +94,7 @@ var migrateV2Symbols = []migrateSymbol{
 	// 1:1 replacements (docs/design/v2.md §9).
 	{From: "", Old: "UseVolume", To: "", New: "DeclareVolume"},
 	{From: "", Old: "ServeFrontend", To: "", New: "Frontend"},
+	{From: "", Old: "AsRestHandler", To: "", New: "AsRest"},
 	{From: "", Old: "ClientIPFromCtx", To: "", New: "ClientIP"},
 	{From: "extension/ratelimit", Old: "ClientIPFromCtx", To: "", New: "ClientIP"},
 	{From: "", Old: "WithClientIP",

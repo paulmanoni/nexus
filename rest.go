@@ -57,6 +57,9 @@ func AsRest(method, path string, fn any, opts ...RestOption) Option {
 	if err := checkBundleTransports(cfg.bundles, middleware.TransportREST, method+" "+path); err != nil {
 		return rawOption{o: di.Error(err)}
 	}
+	if isRestFactory(fn) {
+		return asRestFactory(method, path, cfg, fn)
+	}
 	sh, err := inspectHandlerArgs(fn, cfg.argNames, routePathParams(path)...)
 	if err != nil {
 		return rawOption{o: di.Error(err)}
@@ -497,3 +500,63 @@ func defaultSuccessStatus(method string) int {
 
 // Silence unused-import warnings if any method isn't reached yet.
 var _ = log.Printf
+
+var httpHandlerFuncType = reflect.TypeOf(httpx.HandlerFunc(nil))
+
+// isRestFactory reports whether fn builds a raw handler rather than being
+// one: it takes only DI dependencies and returns an httpx.HandlerFunc.
+//
+//	func NewUpload(store *Store) httpx.HandlerFunc { … }
+//	nexus.AsRest("POST", "/files", NewUpload)
+//
+// The factory runs once, at boot, so state it sets up is shared by every
+// request — unlike a raw handler taking *httpx.Ctx, whose parameters are
+// filled per call.
+func isRestFactory(fn any) bool {
+	t := reflect.TypeOf(fn)
+	if t == nil || t.Kind() != reflect.Func || t.NumOut() != 1 || t.Out(0) != httpHandlerFuncType {
+		return false
+	}
+	for i := 0; i < t.NumIn(); i++ {
+		if t.In(i) == ginContextType {
+			return false
+		}
+	}
+	return true
+}
+
+// asRestFactory mounts the handler a factory builds once its dependencies
+// resolve.
+func asRestFactory(method, path string, cfg *restConfig, factory any) Option {
+	rt := reflect.TypeOf(factory)
+	in := make([]reflect.Type, 0, rt.NumIn()+1)
+	in = append(in, reflect.TypeOf((*App)(nil)))
+	depTypes := make([]reflect.Type, rt.NumIn())
+	for i := 0; i < rt.NumIn(); i++ {
+		depTypes[i] = rt.In(i)
+		in = append(in, rt.In(i))
+	}
+	invoke := reflect.MakeFunc(reflect.FuncOf(in, nil, false), func(args []reflect.Value) []reflect.Value {
+		app := args[0].Interface().(*App)
+		deps := args[1:]
+		service := resolveEndpointService(cfg.service, cfg.module, deps, depTypes, app)
+		finalPath := app.PrefixPath(cfg.pathPrefix + path)
+		// REST ops are "<METHOD> <path>": unique per route even when one
+		// factory serves several.
+		opName := method + " " + finalPath
+		handler := reflect.ValueOf(factory).Call(deps)[0].Interface().(httpx.HandlerFunc)
+		chain, mwNames := buildEndpointChain(app, service, service+"."+opName, string(registry.REST), opName,
+			app.gateBundles(cfg.tags, cfg.bundles), handler)
+		app.engine.Handle(method, finalPath, chain...)
+		registerEndpoint(app, &cfg.baseEndpointConfig, service, registry.Endpoint{
+			Name:       opName,
+			Transport:  registry.REST,
+			Method:     method,
+			Path:       finalPath,
+			Middleware: mwNames,
+		})
+		recordEndpointDeps(app, service, opName, deps, depTypes)
+		return nil
+	})
+	return &restOption{o: di.Invoke(invoke.Interface()), cfg: cfg}
+}

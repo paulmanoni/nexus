@@ -275,3 +275,33 @@ func TestCSRFFollowsTheApp(t *testing.T) {
 		t.Errorf("forced on: %d, want 403", c)
 	}
 }
+
+// A factory — DI deps in, httpx.HandlerFunc out — is built once at boot
+// and its handler serves every request.
+func TestAsRestFactory(t *testing.T) {
+	type store struct{ name string }
+	built := 0
+	factory := func(s *store) httpx.HandlerFunc {
+		built++
+		return func(c *httpx.Ctx) { c.String(200, s.name) }
+	}
+	app, stop, err := InProcess(config.Runtime{},
+		Supply(&store{name: "pets"}),
+		AsRest("GET", "/a", factory),
+		AsRest("GET", "/b", factory),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	for _, p := range []string{"/a", "/b", "/a"} {
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
+		if rec.Body.String() != "pets" {
+			t.Fatalf("GET %s = %q", p, rec.Body.String())
+		}
+	}
+	if built != 2 {
+		t.Fatalf("factory ran %d times, want once per route", built)
+	}
+}

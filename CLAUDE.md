@@ -707,7 +707,8 @@ func ListPets(svc *PetService, db *DB, p nexus.Params[ListArgs]) ([]Pet, error)
   (pin with `nexus.OnService[*XService]()`).
 - `nexus.Params[T]` exposes `.Context` and `.Args`.
 - Return `(T, error)` — `T` is the GraphQL type / REST JSON body. A raw handler takes
-  `*httpx.Ctx` (and its deps) and writes the response itself.
+  `*httpx.Ctx` (and its deps) and writes the response itself; `AsRest` also takes a
+  factory — `func(deps…) httpx.HandlerFunc`, built once at boot (v1's `AsRestHandler`).
 - The op name is the method or function name, first letter lowered (`ListPets` →
   `listPets`), or `nexus.Op("…")`. v1 dropped a `New` prefix; `nexus migrate v2`
   adds `nexus.Op` to v1 `NewXxx` registrations so wire names stay put.
