@@ -416,13 +416,15 @@ func Tag(key, value string) TagOption {
 // reservedTags maps each tag key an option in this package owns to that
 // option, for Tag's refusal message.
 var reservedTags = map[string]string{
-	PublicTag:                "nexus.Public()",
-	AuthFlowTag:              "nexus.AuthRoute",
-	registry.AuthRequiresTag: "auth.Requires",
-	registry.HiddenTag:       "nexus.HideFromDashboard()",
-	registry.IconTag:         "nexus.WithIcon",
-	registry.EnvelopeTag:     "nexus.Envelope",
-	registry.ProxyTag:        "extension/proxy",
+	PublicTag:                   "nexus.Public()",
+	AuthFlowTag:                 "nexus.AuthRoute",
+	registry.AuthRequiresTag:    "auth.Requires",
+	registry.AuthRequiresAnyTag: "auth.RequiresAny",
+	registry.AuthKindTag:        "auth.Kind",
+	registry.HiddenTag:          "nexus.HideFromDashboard()",
+	registry.IconTag:            "nexus.WithIcon",
+	registry.EnvelopeTag:        "nexus.Envelope",
+	registry.ProxyTag:           "extension/proxy",
 }
 
 // TagOption is the cross-transport carrier returned by Tag — implements

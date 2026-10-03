@@ -1247,6 +1247,14 @@ Per-op gates (cross-transport):
 
 UI permission toggles (same rulebook as Requires):
 
+    auth.RequiresAny("orders.refund", "orders.admin")   // at least one
+    auth.Kind("staff")                                  // Identity.Kind
+
+Identity.Perms matches with wildcards ("orders.*", "*"); Roles and
+Scopes keep exact matching. auth.Current(ctx) is the identity (nil when
+anonymous); auth.ID[T](ctx) its ID parsed into T. Directives:
+//nexus:auth RequiresAny a b, //nexus:auth Kind staff.
+
     auth.Can(ctx, "add_user")                       // bool
     auth.Gates(ctx, "add_user", "delete_user")      // map[string]bool
         Both evaluate through the configured PermissionFn /

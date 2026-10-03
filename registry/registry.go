@@ -433,6 +433,15 @@ func (r *Registry) Endpoints() []Endpoint {
 // so frontend permission gates derive from the registration itself.
 const AuthRequiresTag = "auth.requires"
 
+// AuthRequiresAnyTag carries an auth.RequiresAny gate's permissions: each
+// gate is a comma-joined group, and stacked gates join with ";" — every
+// group needs at least one of its permissions.
+const AuthRequiresAnyTag = "auth.requires_any"
+
+// AuthKindTag carries an auth.Kind gate's user kinds, in the same
+// ";"-joined groups: the identity's kind must be in every group.
+const AuthKindTag = "auth.kind"
+
 // EnvelopeTag is the Endpoint.Tags key ("true") marking an op registered
 // with nexus.Envelope: its wire return is the app's envelope shape
 // ({status, message, data}-style). The client SDK manifest surfaces it so

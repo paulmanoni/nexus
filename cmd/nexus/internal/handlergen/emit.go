@@ -644,6 +644,8 @@ func renderOpts(mods []Annotation, authImport string) (exprs []string, imports [
 //
 //	//nexus:auth Required                → auth.Required()
 //	//nexus:auth Requires ADMIN HR       → auth.Requires("ADMIN", "HR")
+//	//nexus:auth RequiresAny A B         → auth.RequiresAny("A", "B")
+//	//nexus:auth Kind staff              → auth.Kind("staff")
 //	//nexus:auth Public                  → nexus.Public() (deny-by-default opt-out)
 //	//nexus:auth Requires("ADMIN", "HR") → unchanged (legacy call form)
 //
@@ -652,7 +654,7 @@ func renderOpts(mods []Annotation, authImport string) (exprs []string, imports [
 // needsAuthImport is false for Public, which lives in the nexus core.
 func renderAuthOption(m Annotation) (expr string, needsAuthImport bool, err error) {
 	if len(m.Args) == 0 {
-		return "", false, m.errf("//nexus:auth needs a capability: Required, Requires <PERM…>, or Public")
+		return "", false, m.errf("//nexus:auth needs a capability: Required, Requires <PERM…>, RequiresAny <PERM…>, Kind <KIND…>, or Public")
 	}
 	head := m.Args[0]
 
@@ -660,13 +662,13 @@ func renderAuthOption(m Annotation) (expr string, needsAuthImport bool, err erro
 	// capability, pass the expression through parse-checked.
 	if i := strings.IndexByte(head, '('); i >= 0 {
 		switch cap := head[:i]; cap {
-		case "Required", "Requires":
+		case "Required", "Requires", "RequiresAny", "Kind":
 			expr := "auth." + strings.Join(m.Args, " ")
 			return expr, true, checkExpr(m, expr)
 		case "Public":
 			return "nexus.Public()", false, nil
 		default:
-			return "", false, m.errf("unknown //nexus:auth capability %q — use Required, Requires <PERM…>, or Public%s",
+			return "", false, m.errf("unknown //nexus:auth capability %q — use Required, Requires <PERM…>, RequiresAny <PERM…>, Kind <KIND…>, or Public%s",
 				cap, authSuggestion(cap))
 		}
 	}
@@ -683,25 +685,32 @@ func renderAuthOption(m Annotation) (expr string, needsAuthImport bool, err erro
 			return "", false, m.errf("//nexus:auth Public takes no arguments (got %v)", m.Args[1:])
 		}
 		return "nexus.Public()", false, nil
-	case "requires":
-		perms := m.Args[1:]
-		if len(perms) == 0 {
-			return "", false, m.errf("//nexus:auth Requires needs at least one permission, e.g. //nexus:auth Requires ADMIN")
+	case "requires", "requiresany", "kind":
+		capName, what, example := "Requires", "permission", "ADMIN"
+		switch strings.ToLower(head) {
+		case "requiresany":
+			capName, example = "RequiresAny", "orders.edit orders.admin"
+		case "kind":
+			capName, what, example = "Kind", "user kind", "staff"
 		}
-		quoted := make([]string, len(perms))
-		for i, p := range perms {
+		args := m.Args[1:]
+		if len(args) == 0 {
+			return "", false, m.errf("//nexus:auth %s needs at least one %s, e.g. //nexus:auth %s %s", capName, what, capName, example)
+		}
+		quoted := make([]string, len(args))
+		for i, p := range args {
 			v, err := decoratorToken(&m, p)
 			if err != nil {
 				return "", false, err
 			}
 			if v == "" {
-				return "", false, m.errf("//nexus:auth Requires has an empty permission (got %v)", m.Args)
+				return "", false, m.errf("//nexus:auth %s has an empty %s (got %v)", capName, what, m.Args)
 			}
 			quoted[i] = strconv.Quote(v)
 		}
-		return "auth.Requires(" + strings.Join(quoted, ", ") + ")", true, nil
+		return "auth." + capName + "(" + strings.Join(quoted, ", ") + ")", true, nil
 	default:
-		return "", false, m.errf("unknown //nexus:auth capability %q — use Required, Requires <PERM…>, or Public%s",
+		return "", false, m.errf("unknown //nexus:auth capability %q — use Required, Requires <PERM…>, RequiresAny <PERM…>, Kind <KIND…>, or Public%s",
 			head, authSuggestion(head))
 	}
 }
@@ -772,7 +781,7 @@ func renderSessionOption(m Annotation) (string, error) {
 // authSuggestion returns a did-you-mean hint for a near-miss capability.
 func authSuggestion(got string) string {
 	lower := strings.ToLower(got)
-	for _, cap := range []string{"Required", "Requires", "Public"} {
+	for _, cap := range []string{"Required", "Requires", "RequiresAny", "Kind", "Public"} {
 		if d := editDistance(lower, strings.ToLower(cap)); d <= 2 {
 			return fmt.Sprintf(" (did you mean %s?)", cap)
 		}

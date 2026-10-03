@@ -70,19 +70,30 @@ import (
 	"github.com/paulmanoni/nexus/v2/trace"
 )
 
-// Identity is the resolved authenticated user. Roles and Scopes are the
-// two first-class permission buckets; Extra carries any backend-specific
-// payload the caller wants to thread through to resolvers.
+// Identity is the resolved authenticated user. Perms is its permission
+// set; Roles and Scopes are the v1 buckets, matched exactly and kept for
+// existing resolvers. Extra carries the app's user (auth.User[T]).
 type Identity struct {
 	ID     string
 	Roles  []string
 	Scopes []string
 	Extra  any
+	// Kind is the user's kind — "staff", "customer" — or "" when the app
+	// has one. auth.Kind gates on it.
+	Kind string
+	// Perms are the identity's permissions, matched with wildcards:
+	// "orders.*" grants "orders.view" and "orders.refunds.create", "*"
+	// grants everything. Prefer it to Roles/Scopes in new code.
+	Perms []string
 }
 
-// Has reports whether the identity carries the given permission in
-// either Roles or Scopes. Used by the default PermissionFn.
+// Has reports whether the identity carries the given permission: in Perms
+// (wildcards apply), or exactly in Roles or Scopes. Used by the default
+// PermissionFn.
 func (i *Identity) Has(perm string) bool {
+	if i.grants(perm) {
+		return true
+	}
 	for _, r := range i.Roles {
 		if r == perm {
 			return true

@@ -74,6 +74,7 @@ func (m MiddlewareOption) applyToGql(c *gqlConfig) {
 	}
 	c.bundles = append(c.bundles, m.mw)
 	stampRequiresTag(&c.baseEndpointConfig, m.mw.Requires)
+	stampTags(&c.baseEndpointConfig, m.mw.Tags)
 }
 
 // applyToRest wires this middleware into a REST registration. Same
@@ -82,6 +83,7 @@ func (m MiddlewareOption) applyToGql(c *gqlConfig) {
 func (m MiddlewareOption) applyToRest(c *restConfig) {
 	c.bundles = append(c.bundles, m.mw)
 	stampRequiresTag(&c.baseEndpointConfig, m.mw.Requires)
+	stampTags(&c.baseEndpointConfig, m.mw.Tags)
 }
 
 // applyToWS wires this middleware into an AsWS registration. Only the
@@ -91,6 +93,7 @@ func (m MiddlewareOption) applyToRest(c *restConfig) {
 func (m MiddlewareOption) applyToWS(c *wsConfig) {
 	c.bundles = append(c.bundles, m.mw)
 	stampRequiresTag(&c.baseEndpointConfig, m.mw.Requires)
+	stampTags(&c.baseEndpointConfig, m.mw.Tags)
 }
 
 // stampRequiresTag folds a bundle's Requires metadata into the endpoint's
@@ -106,6 +109,17 @@ func stampRequiresTag(b *baseEndpointConfig, perms []string) {
 		joined = existing + "," + joined
 	}
 	b.setTag(registry.AuthRequiresTag, joined)
+}
+
+// stampTags folds a bundle's declarative Tags into the endpoint's registry
+// tags; a key already stamped by another bundle joins with ";".
+func stampTags(b *baseEndpointConfig, tags map[string]string) {
+	for k, v := range tags {
+		if existing := b.tags[k]; existing != "" {
+			v = existing + ";" + v
+		}
+		b.setTag(k, v)
+	}
 }
 
 // checkBundleTransports enforces fail-closed attachment (redesign §5): a

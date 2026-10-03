@@ -1275,7 +1275,11 @@ auth.Module(auth.Config{
 })
 ```
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
-`auth.Requires("ROLE_X")` (403). UI toggles ride the same rulebook:
+`auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`
+(`Identity.Kind`); directives `//nexus:auth RequiresAny a b` / `Kind staff`. `Identity.Perms`
+matches with wildcards (`orders.*`, `*`; Roles/Scopes stay exact); `auth.Current(ctx)` /
+`auth.ID[T](ctx)` read the identity. Auth v2 lands additively in 2.x — docs/design/v2-auth.md
+"Shipping in 2.x". UI toggles ride the same rulebook:
 `auth.Can(ctx, "add_user")` and `auth.Gates(ctx, "add_user", "delete_user")
 map[string]bool` evaluate through the identical PermissionFn/Backend.Authorize
 the `Requires` gate consults, so a page's "can" props cannot drift from the

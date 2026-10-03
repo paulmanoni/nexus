@@ -1,6 +1,7 @@
 # nexus 2.0 — authentication
 
-Status: **proposed** (2026-10-03). Companion to [v2.md](v2.md); it follows the same
+Status: **building, additively in 2.x** (2026-10-04) — see
+[Shipping in 2.x](#shipping-in-2-x). Proposed 2026-10-03. Companion to [v2.md](v2.md); it follows the same
 principles (one way, same behaviour on every transport, stdlib at the edges, safe
 by default, migration is a command). Nothing here is built. Each section ends with
 its decision.
@@ -659,6 +660,30 @@ stage 2 (behaviour).
    throttle, client IP, `next`, audience gate, routed error handlers, session
    cutoffs, token store and token generator are deleted, leaving `Users`, a legacy
    hasher, a `jwt` scheme for its mobile tokens, and its login checks.
+
+## Shipping in 2.x
+
+v2.0.0 shipped with the v1 auth API, so this design lands **additively**: every
+new name arrives beside the one it replaces, the old one gets a `Deprecated:`
+comment once its replacement ships, and removals wait for v3. Where the design
+changes behaviour (deny-by-default, a bad credential is an error), the new
+behaviour belongs to the new configuration path only — an app on
+`auth.Module(auth.Config{Authentication: …})` behaves as it does in 2.0.
+
+`auth.Module(auth.Config{…})` stays the entry point (its signature can't change in
+2.x); the design's `auth.Module` value becomes `auth.Module(auth.Config{})` plus
+the `[auth]` table, and `Config.Users` names the app's `Users`.
+
+| Slice | New | Replaces (deprecated later) | Release |
+|---|---|---|---|
+| 1a | `Identity.Kind`, `Identity.Perms` (wildcards), `auth.Current`, `auth.ID`, `auth.RequiresAny`, `auth.Kind`, `//nexus:auth RequiresAny/Kind`, `OpGates` for both | `IdentityFrom`, `Subject`; `Roles`/`Scopes` stay | done (2.1) |
+| 1b | `auth.Users` (+ `PasswordSetter`, `LoginChecker`), `Config.Users: auth.UseUsers(ctor)` checked at boot, `Load` cache per id | `Resolver`, `Backend` capabilities, `UserStore`/`ModelBackend` | 2.1 |
+| 1c | `[auth.schemes.*]`: `session`, `bearer` (hashed token store), `apikey`; a present-but-invalid credential is `Unauthenticated` with a reason | `Scheme{Extract, Resolve}`, `Bearer()`/`Cookie()`/`APIKey()`/`Chain` | 2.1 |
+| 1d | `[auth] default = "signed-in"` on the new path, `auth.Public()`; WS/live identity re-checked per message (epoch) | `nexus.Public()` (kept), `Optional()` | 2.1 |
+| 2 | `auth.Login`/`SignIn`/`SignOut`, `[auth.passwords]`, throttle, `next`, areas, built-in endpoints | `Endpoints`, `LoginEndpoint`/`LogoutEndpoint`, `ErrorHandler` | 2.2 |
+| 3 | refresh, `[auth.sessions]`, `RevokeUser`/`Sessions`, API keys, `jwt`, OAuth2 grants | `Manager.*`, `extension/oauth2` server half | 2.3 |
+| 4 | impersonation, policies, job identities, dashboard tab, `nexus auth check`, `authtest` | `MemoryUserStore` | 2.4 |
+| 5 | `nexus migrate` rows for every deprecated name | — | with each slice |
 
 ## Open questions
 

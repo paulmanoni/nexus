@@ -114,6 +114,11 @@ type Middleware struct {
 	// metadata; attaching a bundle with Requires set enforces nothing
 	// by itself.
 	Requires []string
+	// Tags are declarative registry tags the framework stamps onto every
+	// endpoint the bundle is attached to; a tag a second bundle stamps again
+	// joins with ";". auth.RequiresAny and auth.Kind record their gates this
+	// way. Purely metadata, like Requires.
+	Tags map[string]string
 }
 
 // AsInfo returns the registry-side metadata for this bundle, defaulting

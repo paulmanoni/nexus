@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -83,7 +84,7 @@ func OpGates(ctx context.Context, app *nexus.App) map[string]bool {
 	id, authed := IdentityFrom(ctx)
 	for i := range t.groups {
 		g := &t.groups[i]
-		allowed := authed && checkPermissions(ctx, id, g.perms)
+		allowed := authed && g.allows(ctx, id)
 		for _, op := range g.ops {
 			out[op] = allowed
 		}
@@ -91,9 +92,30 @@ func OpGates(ctx context.Context, app *nexus.App) map[string]bool {
 	return out
 }
 
+// gateGroup is the ops sharing one gate: every perm (Requires), at least
+// one of each anyOf group (RequiresAny), a kind in each kinds group (Kind).
 type gateGroup struct {
 	perms []string
+	anyOf [][]string
+	kinds [][]string
 	ops   []string
+}
+
+func (g *gateGroup) allows(ctx context.Context, id *Identity) bool {
+	if len(g.perms) > 0 && !checkPermissions(ctx, id, g.perms) {
+		return false
+	}
+	for _, any := range g.anyOf {
+		if !anyPermission(ctx, id, any) {
+			return false
+		}
+	}
+	for _, kinds := range g.kinds {
+		if !slices.Contains(kinds, id.Kind) {
+			return false
+		}
+	}
+	return true
 }
 
 type gateTable struct {
@@ -134,26 +156,47 @@ func buildGateTable(reg *registry.Registry, version uint64) *gateTable {
 			names = append(names, e.Tags[registry.ViewComponentTag])
 		}
 		tag := e.Tags[registry.AuthRequiresTag]
+		anyTag, kindTag := e.Tags[registry.AuthRequiresAnyTag], e.Tags[registry.AuthKindTag]
+		key := tag
+		if anyTag != "" || kindTag != "" {
+			key = tag + "|" + anyTag + "|" + kindTag
+		}
 		for _, name := range names {
 			if name == "" || seen[name] {
 				continue
 			}
 			seen[name] = true
 			t.total++
-			if tag == "" {
+			if key == "" {
 				t.open = append(t.open, name)
 				continue
 			}
-			idx, ok := groups[tag]
+			idx, ok := groups[key]
 			if !ok {
 				idx = len(t.groups)
-				groups[tag] = idx
-				t.groups = append(t.groups, gateGroup{perms: splitPerms(tag)})
+				groups[key] = idx
+				g := gateGroup{anyOf: splitGroups(anyTag), kinds: splitGroups(kindTag)}
+				if tag != "" {
+					g.perms = splitPerms(tag)
+				}
+				t.groups = append(t.groups, g)
 			}
 			t.groups[idx].ops = append(t.groups[idx].ops, name)
 		}
 	}
 	return t
+}
+
+// splitGroups parses a ";"-joined list of comma-joined groups.
+func splitGroups(tag string) [][]string {
+	if tag == "" {
+		return nil
+	}
+	var out [][]string
+	for _, g := range strings.Split(tag, ";") {
+		out = append(out, splitPerms(g))
+	}
+	return out
 }
 
 // splitPerms parses the comma-joined AuthRequiresTag value, dropping

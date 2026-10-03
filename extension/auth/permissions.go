@@ -22,6 +22,11 @@ func AnyOf(perms ...string) PermissionFn {
 		if id == nil {
 			return false
 		}
+		for _, p := range perms {
+			if id.grants(p) {
+				return true
+			}
+		}
 		for _, r := range id.Roles {
 			if _, ok := set[r]; ok {
 				return true

@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Auth: permissions with wildcards, user kinds, any-of gates.** The first slice
+  of the v2 auth design, shipped additively (docs/design/v2-auth.md, "Shipping in
+  2.x"):
+  - `Identity.Perms`, matched with wildcards (`orders.*` grants `orders.view`,
+    `*` grants everything); `Roles` and `Scopes` keep exact matching.
+  - `Identity.Kind` and the `auth.Kind("staff")` gate; `auth.RequiresAny(…)`
+    passes with any one permission. Both imply sign-in, combine with `Requires`,
+    and count in `auth.OpGates`. Directives: `//nexus:auth Kind staff`,
+    `//nexus:auth RequiresAny a b`.
+  - `auth.Current(ctx)` and `auth.ID[T](ctx)`, the new spellings of
+    `IdentityFrom` and `Subject`.
+  - `middleware.Middleware.Tags`: registry tags a bundle stamps on every
+    endpoint it is attached to.
+
 ## [2.0.1] - 2026-10-04
 
 ### Fixed

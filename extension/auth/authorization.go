@@ -98,9 +98,13 @@ func (a Authorization) permissionFn() PermissionFn {
 	}
 }
 
-// identitySatisfies reports whether any of the identity's roles or scopes
-// satisfies the required permission under the given Authority.
+// identitySatisfies reports whether the identity's Perms grant the
+// required permission, or any of its roles or scopes satisfies it under
+// the given Authority.
 func identitySatisfies(id *Identity, required string, authority Authority) bool {
+	if id.grants(required) {
+		return true
+	}
 	for _, g := range id.Roles {
 		if authority(g, required) {
 			return true

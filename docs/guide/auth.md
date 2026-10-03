@@ -61,8 +61,23 @@ nexus.AsMutation(NewCreateOrder,
   nexus.AsRest("GET", "/health", NewHealth, nexus.Public())
   ```
 
-- **Wildcard permissions.** `auth.Authorization{Authority: auth.Wildcard()}` lets
-  `orders:*` grant `orders:read`.
+- **Permissions and kinds on the identity.** `Identity.Perms` is matched with
+  wildcards — `orders.*` grants `orders.view` and `orders.refunds.create`, `*` grants
+  everything — and `Identity.Kind` says which kind of user it is ("staff",
+  "customer"). Roles and Scopes still match exactly, as before; for wildcards there
+  too, set `auth.Authorization{Authority: auth.Wildcard()}`.
+
+- **At least one, and user kinds.** `auth.RequiresAny` passes with any one of its
+  permissions; `auth.Kind` gates on the identity's kind. Both imply sign-in and
+  combine with `Requires` — `Kind` covers what a path prefix can't, such as one
+  `/graphql` mount serving staff and customers:
+
+  ```go
+  nexus.AsMutation((*Orders).Refund,
+      auth.Kind("staff"),
+      auth.RequiresAny("orders.refund", "orders.admin"),
+  )
+  ```
 
 - **Decorator form.** The same gates attach as `//nexus:auth` modifiers — bare tokens,
   capability case-insensitive:
@@ -71,6 +86,11 @@ nexus.AsMutation(NewCreateOrder,
   //nexus:mutation
   //nexus:auth Requires orders:create
   func NewCreateOrder(...) (...)
+
+  //nexus:mutation
+  //nexus:auth Kind staff
+  //nexus:auth RequiresAny orders.refund orders.admin
+  func (o *Orders) Refund(...) (...)
 
   //nexus:rest GET /health
   //nexus:auth Public
@@ -82,9 +102,13 @@ nexus.AsMutation(NewCreateOrder,
 ## Who is calling
 
 ```go
+me := auth.Current(ctx)                // *Identity, nil when anonymous
 user, ok := auth.User[MyUser](ctx)     // the Identity's Extra payload, typed
-uid, ok  := auth.Subject[uint](ctx)    // Identity.ID parsed into T
+uid, ok  := auth.ID[uint](ctx)         // Identity.ID parsed into T
 ```
+
+`auth.IdentityFrom` and `auth.Subject` are the older spellings of `Current` and
+`ID`, and still work.
 
 ## UI permissions that can't drift
 
@@ -99,7 +123,8 @@ inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
 })
 ```
 
-The gate table is compiled once and grouped by permission set. It costs about 4µs for
+`OpGates` evaluates `RequiresAny` and `Kind` gates too. The gate table is compiled
+once and grouped by permission set. It costs about 4µs for
 200 ops, so it is safe on every render.
 
 ## One backend for everything

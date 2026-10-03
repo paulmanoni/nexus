@@ -268,6 +268,8 @@ func TestEmit_AuthGrammar(t *testing.T) {
 	ok([]string{"Public"}, "nexus.Public()", false)
 	ok([]string{"Required()"}, "auth.Required()", true)                    // legacy call form
 	ok([]string{`Requires("A",`, `"B")`}, `auth.Requires("A", "B")`, true) // legacy multi-role
+	ok([]string{"RequiresAny", "orders.edit", "orders.admin"}, `auth.RequiresAny("orders.edit", "orders.admin")`, true)
+	ok([]string{"kind", "staff"}, `auth.Kind("staff")`, true)
 
 	bad := func(authArgs []string, want string) {
 		t.Helper()
@@ -286,6 +288,8 @@ func TestEmit_AuthGrammar(t *testing.T) {
 	bad([]string{"Required", "ADMIN"}, "//nexus:auth Requires ADMIN") // steers to the right spelling
 	bad([]string{"Requeired"}, "did you mean Required?")
 	bad([]string{"Admin"}, "unknown //nexus:auth capability")
+	bad([]string{"Kind"}, "needs at least one user kind")
+	bad([]string{"RequireAny", "x"}, "did you mean RequiresAny?")
 }
 
 // TestEmit_SessionGrammar: the //nexus:session modifier — bare or call-form
