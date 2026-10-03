@@ -86,6 +86,9 @@ var migrateV2Rules = []migrateRule{
 	{Name: "nexus.toml", Applies: isNexusTOML, Apply: migrateNexusTOMLKeys},
 	{Name: "assembly", Applies: isGoSource, Apply: migrateGoAssembly},
 	{Name: "op names", Applies: isGoSource, Apply: migrateGoOpNames},
+	{Name: "fields", Applies: isGoSource, Apply: migrateGoFields},
+	{Name: "spreads", Applies: isGoSource, Apply: migrateGoSpreads},
+	{Name: "sections", Applies: isGoSource, Apply: migrateGoSections},
 }
 
 func isGoSource(rel string) bool    { return strings.HasSuffix(rel, ".go") }
@@ -231,6 +234,8 @@ func orDropped(s string) string {
 // migrateTree runs rules over every file under root and returns the files
 // that changed, sorted by path. Nothing is written.
 func migrateTree(root string, rules []migrateRule) ([]migrateFileResult, error) {
+	migrateRoot = root
+	sectionsDeclared = map[string]map[string]bool{}
 	var results []migrateFileResult
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

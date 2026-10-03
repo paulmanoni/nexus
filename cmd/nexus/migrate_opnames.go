@@ -16,12 +16,13 @@ import (
 // keeps every v1 wire name: a registration whose handler is NewXxx gets
 // nexus.Op("xxx"), and an annotated NewXxx gets //nexus:use nexus.Op("xxx").
 // Registrations that already name their op are left alone.
+// Only GraphQL ops are named after their handler: a REST op is its method
+// and path, a WebSocket op its message type.
 var registrationHandlerArg = map[string]int{
 	"AsQuery": 0, "AsMutation": 0, "AsSubscription": 0,
-	"AsRest": 2, "AsWS": 2,
 }
 
-var opDirective = regexp.MustCompile(`^//nexus:(rest|query|mutation|subscription|ws)\b`)
+var opDirective = regexp.MustCompile(`^//nexus:(query|mutation|subscription)\b`)
 
 func migrateGoOpNames(_ string, src []byte) ([]byte, []migrateChange, error) {
 	if !strings.Contains(string(src), "New") {

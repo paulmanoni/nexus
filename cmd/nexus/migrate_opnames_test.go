@@ -32,7 +32,7 @@ var Module = nx.Module("users",
 	got := string(out)
 	for _, want := range []string{
 		`nx.AsQuery(NewListUsers, nx.Op("listUsers"))`,
-		`nx.AsRest("GET", "/users/:id", NewGetUser, nx.Op("getUser"), nx.Describe("one"))`,
+		`nx.AsRest("GET", "/users/:id", NewGetUser, nx.Describe("one"))`,
 		`nx.AsQuery(NewNamed, nx.Op("named"))`,
 		`nx.AsQuery(ListPets)`,
 		"//nexus:query\n//nexus:use nexus.Op(\"searchUsers\")",
@@ -44,8 +44,8 @@ var Module = nx.Module("users",
 	if strings.Contains(got, `Op("createUser")`) {
 		t.Error("a handler that already names its op was given another")
 	}
-	if len(changes) != 3 {
-		t.Errorf("changes = %d, want 3", len(changes))
+	if len(changes) != 2 {
+		t.Errorf("changes = %d, want 2", len(changes))
 	}
 	if again, more, _ := migrateGoOpNames("users.go", out); len(more) != 0 || string(again) != got {
 		t.Errorf("second run changed the file: %v", more)

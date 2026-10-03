@@ -45,8 +45,10 @@ type SectionHandle[T any] struct {
 // decoded at boot.
 //
 // Section panics when name is empty, contains a dot, or is already declared
-// (by nexus, an extension, or another Section call) — a declaration is a
-// package-level fact, so a clash is a programming error caught at init.
+// with a different type (by nexus, an extension, or another Section call) —
+// a declaration is a package-level fact, so a clash is a programming error
+// caught at init. Declaring the same table with the same type again (from
+// another package that reads it) shares the declaration.
 func Section[T any](name string, defaults ...T) *SectionHandle[T] {
 	h := &SectionHandle[T]{name: name}
 	if len(defaults) > 0 {
@@ -167,8 +169,20 @@ func declare(d *sectionDecl) {
 	}
 	sectionsMu.Lock()
 	defer sectionsMu.Unlock()
-	if _, dup := sections[d.name]; dup {
-		panic(fmt.Sprintf("config.Section: [%s] is already declared — a table has one owner; read it with config.Get instead", d.name))
+	if prev, dup := sections[d.name]; dup {
+		// Several packages may declare the same table with the same type —
+		// each reading it gets its own handle; a different type is a clash.
+		if prev.typ != d.typ || prev.set == nil || d.set == nil {
+			panic(fmt.Sprintf("config.Section: [%s] is already declared as %s — a table has one shape; read it with config.Get instead", d.name, prev.typ))
+		}
+		first, next := prev.set, d.set
+		prev.set = func(v reflect.Value, present bool) error {
+			if err := first(v, present); err != nil {
+				return err
+			}
+			return next(v, present)
+		}
+		return
 	}
 	sectionSeq++
 	d.order = sectionSeq
