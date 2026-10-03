@@ -18,6 +18,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
+	"github.com/paulmanoni/nexus/v2/notify"
 )
 
 // ratelimitGlobalKey is the store key for the app-wide bucket. Re-declared
@@ -340,7 +341,7 @@ func fxEarlyOptions(cfg config.Runtime) di.Option {
 		// don't have to wire it explicitly; constructor is
 		// trivially cheap and the value is unused if no one
 		// depends on it.
-		di.Provide(NewNotifier),
+		di.Provide(notify.New),
 		// Stash any extension-supplied default endpoint gate on the app
 		// BEFORE the per-endpoint invokes run, so deny-by-default applies
 		// uniformly regardless of where the supplying extension sits in

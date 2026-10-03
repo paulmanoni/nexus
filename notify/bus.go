@@ -1,4 +1,4 @@
-package nexus
+package notify
 
 import (
 	"fmt"

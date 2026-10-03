@@ -1,4 +1,4 @@
-package nexus
+package notify
 
 import (
 	"sync"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestNotify_FanOut(t *testing.T) {
-	n := NewNotifier()
+	n := New()
 	chA, cancelA := n.Subscribe()
 	chB, cancelB := n.Subscribe()
 	defer cancelA()
@@ -27,7 +27,7 @@ func TestNotify_FanOut(t *testing.T) {
 }
 
 func TestNotify_Coalesces(t *testing.T) {
-	n := NewNotifier()
+	n := New()
 	ch, cancel := n.Subscribe()
 	defer cancel()
 
@@ -54,7 +54,7 @@ func TestNotify_Coalesces(t *testing.T) {
 }
 
 func TestNotify_NonBlocking(t *testing.T) {
-	n := NewNotifier()
+	n := New()
 	// Subscribe but never read. Notify must not block even if the
 	// channel buffer is full.
 	_, cancel := n.Subscribe()
@@ -75,7 +75,7 @@ func TestNotify_NonBlocking(t *testing.T) {
 }
 
 func TestSubscribe_CancelRemovesListener(t *testing.T) {
-	n := NewNotifier()
+	n := New()
 	ch, cancel := n.Subscribe()
 
 	cancel()
@@ -95,7 +95,7 @@ func TestSubscribe_CancelRemovesListener(t *testing.T) {
 }
 
 func TestSubscribe_CancelIdempotent(t *testing.T) {
-	n := NewNotifier()
+	n := New()
 	_, cancel := n.Subscribe()
 	cancel()
 	cancel() // second call must not panic / double-close
@@ -109,7 +109,7 @@ func TestNotify_NilNotifier(t *testing.T) {
 }
 
 func TestConcurrent_NotifyAndSubscribe(t *testing.T) {
-	n := NewNotifier()
+	n := New()
 	var wg sync.WaitGroup
 	var notifies int64
 	stop := time.After(200 * time.Millisecond)

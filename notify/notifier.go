@@ -1,4 +1,4 @@
-package nexus
+package notify
 
 // Notifier carries the "something changed" signal between nexus's
 // mutating subsystems (registry, cron scheduler, rate-limit store)
@@ -40,14 +40,14 @@ type Notifier struct {
 	bus       Bus                        // optional cross-process fan-out (AttachBus)
 }
 
-// NewNotifier returns a fresh Notifier. Typically created once at
+// New returns a fresh Notifier. Typically created once at
 // app boot and threaded into each mutating subsystem via
 // SetChangeHook (or the equivalent setter on each package).
 //
 // Production apps don't need to call this directly — nexus.Run
 // wires a singleton into the fx graph; constructors that need a
 // notifier just take a *Notifier param.
-func NewNotifier() *Notifier {
+func New() *Notifier {
 	return &Notifier{
 		topics: make(map[string][]chan struct{}),
 	}
