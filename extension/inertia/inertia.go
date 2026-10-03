@@ -22,11 +22,11 @@ package inertia
 import (
 	"io/fs"
 	"log"
-	"strings"
 	"sync"
 
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/appctx"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/extension"
@@ -36,12 +36,6 @@ import (
 // version from a hash of the build manifest. Set Config.Version to a fixed
 // string to pin it instead.
 const AutoVersion = ""
-
-// devURLEnv is set by `nexus dev` to the viteless/Vite dev server URL so the
-// shell can reference the HMR client. It is the fallback for toolchains that
-// don't write nexus-vite-plugin's hot file (the viteless engine); a hot file,
-// when present, wins.
-const devURLEnv = "NEXUS_VITE_DEV"
 
 // engineKeyT keys the per-app Inertia engine in App.SetValue/Value. A private
 // type avoids any collision with other extensions' keys.
@@ -84,9 +78,8 @@ type Config struct {
 	EncryptHistory bool
 	// Entry is the dev-server module the shell loads in dev when the dev
 	// server doesn't declare one. nexus-vite-plugin's hot file names the entry
-	// itself, so this only matters for a hot file without one and for the
-	// NEXUS_VITE_DEV fallback. Defaults to "src/main.ts"; set "src/main.tsx"
-	// for a React app. Ignored in production, where the entry comes from the
+	// itself, so this only matters for a hot file without one. Defaults to
+	// "src/main.ts"; set "src/main.tsx" for a React app. Ignored in production, where the entry comes from the
 	// build manifest.
 	Entry string
 	// React emits the Vite React Fast Refresh preamble before the dev client so
@@ -154,16 +147,12 @@ type Engine struct {
 	cfgRoot     string
 	versionPin  string                  // Config.Version; AutoVersion ("") = derive from manifest
 	devEntry    string                  // dev-server entry module (Config.Entry)
-	react       bool                    // emit the React Fast Refresh preamble in dev
 	nonceFn     func(*httpx.Ctx) string // per-request CSP nonce (Config.Nonce)
 	ssr         SSRRenderer             // server-side renderer (Config.SSR); nil = client-only
 	onSSRError  func(error)             // Config.OnSSRError
 	ssrStrict   bool                    // Config.SSRStrict
 	errorPage   string                  // Config.ErrorPage
 	reactForced bool                    // Config.React, applied to a hot-file entry too
-
-	envOnce sync.Once
-	envDev  string // NEXUS_VITE_DEV, read on first render
 
 	manMu    sync.Mutex
 	man      manifest // build manifest, cached once found
@@ -202,8 +191,8 @@ func Module(cfg Config) nexus.Option {
 				return newEngine(cfg, in.Shared, app)
 			})),
 			// Stash the engine on the app at boot. The page renderer pulls it
-			// back via AppFromGin(c) → App.Value at request time — independent
-			// of gin-middleware install ordering, which di.Module route
+			// back via the appctx request key → App.Value at request time —
+			// independent of gin-middleware install ordering, which di.Module route
 			// registration can (and does) run ahead of. A plain engine.Use()
 			// here would miss any inertia.Page declared inside a nexus.Module.
 			nexus.Invoke(func(app *nexus.App, eng *Engine) {
@@ -233,23 +222,22 @@ func newEngine(cfg Config, shared []SharedProvider, app *nexus.App) *Engine {
 		cfgRoot:         cfg.Root,
 		versionPin:      cfg.Version,
 		devEntry:        entry,
-		// Auto-detect React from a JSX entry; Config.React forces it on.
-		react:       cfg.React || strings.HasSuffix(entry, ".tsx") || strings.HasSuffix(entry, ".jsx"),
-		nonceFn:     cfg.Nonce,
-		ssr:         cfg.SSR,
-		onSSRError:  cfg.OnSSRError,
-		ssrStrict:   cfg.SSRStrict,
-		errorPage:   cfg.ErrorPage,
-		reactForced: cfg.React,
-		logf:        log.Printf,
+		nonceFn:         cfg.Nonce,
+		ssr:             cfg.SSR,
+		onSSRError:      cfg.OnSSRError,
+		ssrStrict:       cfg.SSRStrict,
+		errorPage:       cfg.ErrorPage,
+		reactForced:     cfg.React,
+		logf:            log.Printf,
 	}
 }
 
 // engineFromGin retrieves the per-app engine a page renderer needs, pulling it
 // from the app stashed on the request context by the framework.
 func engineFromGin(c *httpx.Ctx) (*Engine, bool) {
-	app, ok := nexus.AppFromGin(c)
-	if !ok {
+	a, _ := c.Get(appctx.Key)
+	app, ok := a.(*nexus.App)
+	if !ok || app == nil {
 		return nil, false
 	}
 	v, ok := app.Value(engineKeyT{})

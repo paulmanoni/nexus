@@ -117,7 +117,7 @@ func TestStampNonce(t *testing.T) {
 	}
 }
 
-// TestDevTagsEscaping: hot-file and NEXUS_VITE_DEV URLs are escaped for where
+// TestDevTagsEscaping: hot-file URLs are escaped for where
 // they land: an attribute value, and a JS string in the React preamble.
 func TestDevTagsEscaping(t *testing.T) {
 	const evil = `http://x/"'></script><script>alert(1)//`

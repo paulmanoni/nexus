@@ -56,12 +56,10 @@ func (p *assetProblem) Error() string {
 //  2. A hot file that is present but unusable (malformed, unknown version,
 //     invalid origin) is reported, not skipped: falling through to the
 //     manifest would serve stale assets while the developer edits sources.
-//  3. NEXUS_VITE_DEV — the fallback for dev servers that don't write a hot
-//     file (the viteless engine). Always a synthesised document.
-//  4. The build manifest. A full load renders into the built index.html;
+//  3. The build manifest. A full load renders into the built index.html;
 //     a module-only build (nexus({ input }), no index.html) gets a
 //     synthesised document with the manifest's tags under App.FrontendMount.
-//  5. Nothing: a problem — an error page in development, a logged error in
+//  4. Nothing: a problem — an error page in development, a logged error in
 //     production — unless Config.Head loads a module script itself.
 //
 // The version is empty whenever a dev server supplies the assets, and the
@@ -79,11 +77,6 @@ func (e *Engine) assets() pageAssets {
 	if hotErr != nil {
 		// Current only reports errors when the reader is enabled, i.e. in dev.
 		return pageAssets{problem: hotProblem(reader, hotErr)}
-	}
-
-	e.envOnce.Do(func() { e.envDev = strings.TrimRight(os.Getenv(devURLEnv), "/") })
-	if e.envDev != "" {
-		return pageAssets{head: devHeadTags(e.envDev, e.devEntry, e.react)}
 	}
 
 	man, manErr, sourced := e.manifest()

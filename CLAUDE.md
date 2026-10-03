@@ -17,10 +17,9 @@ embedded, and runs without Node (an Inertia SSR server is the one opt-in excepti
 
 nexus drives the project's **own Vite** (`web/node_modules/.bin/vite`) and embeds its
 output: `nexus build` runs `vite build` into `web/dist`, and `go build` embeds it via
-`//go:embed`. Any framework, Vite plugin or npm library works. **viteless** (the former
-zero-Node engine) is retired: a `web/` with `viteless.config.*`/`viteless-env.d.ts` and no
-`package.json` gets a migration hint (a warning in `nexus dev`, an error in `nexus build`);
-`nexus init --frontend vue --force` adds the Vite files and keeps the sources.
+`//go:embed`. Any framework, Vite plugin or npm library works. A `web/` without a
+`package.json` is served as-is; `nexus init --frontend vue --force` adds the Vite files
+and keeps the sources.
 
 ### Layout
 ```
@@ -91,8 +90,7 @@ title/meta/stylesheets live in `index.html`, not in `inertia.Config.Head`; only 
 module-only build (`input`, no `index.html`) gets a synthesised document. `nexus({ pages
 })` (default `src/Pages`) warns in dev and fails `vite build` for a registered page with
 no component. Under `nexus dev` the reload shim reloads when a new server process is
-serving, never for files Vite hot-updates. `NEXUS_VITE_DEV` survives only as a fallback
-origin when no hot file is readable (`nexus dev` no longer sets it). Design:
+serving, never for files Vite hot-updates. Design:
 `docs/design/frontend-seam.md`.
 
 **`[env]` → the bundle.** `nexus dev`/`nexus build` pass nexus.toml's `[env]` table to
@@ -127,7 +125,6 @@ clear error when the tool isn't on PATH; Yarn Plug'n'Play is refused — set
 - On exit Vite gets SIGTERM, then SIGKILL after 2s, and `nexus dev` waits, so the plugin
   removes its hot file. There is no Inertia "mode" any more (no `go list -deps` scan, no
   `[runtime.inertia] enabled`): SPA and Inertia apps share one dev topology.
-  `--frontend-cmd` is deprecated and ignored.
 In production the embedded `web/dist` is served at the app port via `ServeFrontend`.
 
 **Go restarts are build-then-swap.** On a save the next binary compiles while the
@@ -142,9 +139,6 @@ longer grows with build time. Three consequences worth knowing:
 - The freshly built binary is **pre-executed once** (aborted inside the Go runtime,
   before any package init or `main`) so the OS pays its first-exec cost — ~450ms of
   code-signature validation on macOS — while the old process is still answering.
-
-`--go-run` restores the legacy loop (`go run`, app killed before every rebuild) if
-the new one ever misbehaves.
 
 **The link is the rebuild.** Compilation is cached per package; the one step no
 cache makes incremental is the link, and it dominates (~all of a warm rebuild).
@@ -257,7 +251,7 @@ nexus new myapp --inertia [--ssr]   # Inertia (Vue) pages + pages.go; --ssr adds
 nexus init --frontend vue           # add web/ to an EXISTING project (patches main.go); --force keeps sources
 ```
 After scaffolding: `go mod tidy && nexus dev` — it installs the deps on first run and
-prints the app's URL. `--tooling` is deprecated (ignored). Scaffolds write
+prints the app's URL. Scaffolds write
 `environment = "development"` to nexus.toml; **deployments set
 `NEXUS_ENVIRONMENT=production`**, which overrides it. SSR: `ssr.ts` uses
 `@inertiajs/vue3/server`; `nexus build` writes `web/dist/ssr/ssr.js` with its deps bundled
@@ -640,7 +634,7 @@ func NewOp(svc *XService, deps..., p nexus.Params[ArgsStruct]) (*Response, error
 - Last param `nexus.Params[T]` exposes `.Context` and `.Args`.
 - Return `(T, error)` — `T` is the GraphQL type / REST JSON body.
 - `NewListPets` → op name `ListPets` (the `New` prefix is stripped).
-- Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `path:"id"` for REST path params (legacy `uri:"id"` still works) (also `query:"x"`, `header:"X"`, `form:"x"`, `json:"x"`).
+- Struct tags drive schema + validation: `graphql:"title,required" validate:"required,len=3|120"`, `path:"id"` for REST path params (also `query:"x"`, `header:"X"`, `form:"x"`, `json:"x"`).
 - `nexus.Describe("…")` sets an op's description (dashboard + GraphQL SDL) — a cross-transport per-op option (REST / GraphQL / WS), like `HideFromDashboard()` / `WithIcon()`. It supersedes the transport-specific `Desc` (GraphQL) and `Description` (REST), which are deprecated but still work.
 
 **Service methods register directly — no wrapper.** A method (or free function)
@@ -720,7 +714,7 @@ and validation failures are never enveloped. REST + GraphQL.
 
 ### REST
 ```go
-type GetArgs struct { ID string `path:"id"` }   // path param `:id` binds via the `path` tag (legacy `uri` also works)
+type GetArgs struct { ID string `path:"id"` }   // path param `:id` binds via the `path` tag
 nexus.AsRest("GET", "/users/:id", NewGet)
 ```
 
@@ -1226,8 +1220,7 @@ auth.Endpoints{Login: "/api/auth/login", Logout: "/api/auth/logout", Token:
 set; all are Public. `Login` runs `Backend.Login` then `Backend.Issue`; `Logout`
 /`Revoke` do `Manager.Invalidate` + `Backend.RevokeToken` (token via
 `Endpoints.LogoutExtract`, default `Bearer()`); `Token` serves
-`Backend.TokenHandler`. This supersedes the now-deprecated `auth.LoginEndpoint`
-/`auth.LogoutEndpoint` (still work as thin wrappers). For a full OAuth2 server,
+`Backend.TokenHandler`. For a full OAuth2 server,
 `oauth2.Backend(oauth2.Config{...})` returns a ready `auth.BackendOption`
 implementing every capability — drop it into `Config.Backend` (`oauth2.Module`
 is now a thin wrapper over exactly this, holder-free). `nexus docs auth`.
@@ -1369,10 +1362,10 @@ directly instead.
 ```
 nexus new <dir>      Scaffold an app + nexus.toml. --frontend vue|react (a Vite project
                      under web/), --inertia [--ssr], --db, --cache, --auth,
-                     --module <path>, --yes (no prompts). --tooling: deprecated, ignored.
+                     --module <path>, --yes (no prompts).
 nexus init [dir]     Add a Vite frontend (web/) to an existing project and patch main.go.
                      --frontend (req). --force: add the project files to an existing
-                     web/, keeping index.html and src/ (the viteless → Vite migration).
+                     web/, keeping index.html and src/.
 nexus dev [dir]      Live dev: the app + dashboard on its own origin, and — when the
                      frontend dir has a package.json — its Vite beside it (deps
                      installed on first run; open the app URL it prints, never Vite's).
@@ -1382,8 +1375,7 @@ nexus dev [dir]      Live dev: the app + dashboard on its own origin, and — wh
                      the dev binary (--debug / --no-embed-stub opt back in).
                      --dist keeps web/dist rebuilt (vite build) in the background so
                      go build always embeds the current frontend. --frontend <dir>
-                     overrides the detected dir. --go-run = legacy loop.
-                     --frontend-cmd: deprecated, ignored.
+                     overrides the detected dir.
 nexus build          install (if needed) → vite build [→ vite build --ssr] → web/dist,
                      then go build embeds it. ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.

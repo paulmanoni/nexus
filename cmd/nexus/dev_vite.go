@@ -37,9 +37,9 @@ type devFrontend struct {
 }
 
 // startDevFrontend resolves the frontend for the package in pkgDir (see
-// resolveFrontendDir) and starts its Vite when it is a Vite project. A
-// viteless-era directory gets the migration hint, once, and no dev server —
-// nexus dev carries on with the Go app. cfg supplies everything but the
+// resolveFrontendDir) and starts its Vite when it is a Vite project
+// (package.json); otherwise nexus dev carries on with the Go app alone.
+// cfg supplies everything but the
 // directories: WebDir comes from the resolution, ServedDist is the
 // ServeFrontend root under pkgDir ("" when unknown).
 func startDevFrontend(ctx context.Context, pkgDir, flag, servedDist string, cfg devViteConfig) devFrontend {
@@ -51,10 +51,7 @@ func startDevFrontend(ctx context.Context, pkgDir, flag, servedDist string, cfg 
 	if cfg.Verbose {
 		fmt.Fprintf(cfg.Out, "%s●%s frontend %s (%s)\n", ansiCyan, ansiReset, dir, source)
 	}
-	switch {
-	case f.Project.Legacy != "":
-		fmt.Fprintf(cfg.Notes, "%s●%s %s Running without a frontend dev server.\n", ansiYellow, ansiReset, f.Project.legacyHint())
-	case f.Project.PackageJSON:
+	if f.Project.PackageJSON {
 		cfg.WebDir = f.Project.Dir
 		cfg.ServedDist = servedDist
 		f.Vite = startDevVite(ctx, cfg)

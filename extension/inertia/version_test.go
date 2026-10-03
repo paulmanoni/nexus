@@ -6,11 +6,14 @@ import (
 	"testing/fstest"
 )
 
-// TestDevHeadTags verifies the dev preamble is framework-aware and the entry is
-// configurable: Vue gets client+entry with no React preamble; React gets the
-// Fast Refresh preamble before the client; the entry path is honored.
-func TestDevHeadTags(t *testing.T) {
+// TestDevTags verifies the dev preamble is framework-aware: Vue gets
+// client+entry with no React preamble; React gets the Fast Refresh preamble
+// before the client.
+func TestDevTags(t *testing.T) {
 	const dev = "http://localhost:5173"
+	devHeadTags := func(dev, entry string, react bool) string {
+		return devTags(dev+"/@vite/client", dev+"/"+entry, dev+"/@react-refresh", react, true)
+	}
 
 	// Vue (default-style entry): no React preamble, configured entry present.
 	vue := devHeadTags(dev, "src/main.ts", false)
@@ -34,12 +37,6 @@ func TestDevHeadTags(t *testing.T) {
 	}
 	if !(pre < client && client < entry) {
 		t.Errorf("order must be preamble < @vite/client < entry (got %d,%d,%d)\n%s", pre, client, entry, react)
-	}
-
-	// Configurable entry path is honored (leading slash tolerated).
-	custom := devHeadTags(dev, "/app/entry.ts", false)
-	if !strings.Contains(custom, `src="`+dev+`/app/entry.ts"`) {
-		t.Errorf("custom entry not honored: %s", custom)
 	}
 }
 

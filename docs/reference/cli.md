@@ -42,7 +42,6 @@ Builds and runs the app, rebuilds on save, and runs the frontend's Vite beside i
 | `--verbose` | Show all of Vite's output |
 | `--log-format`, `--log-pattern`, `--raw-logs` | Log formatting |
 | `--tui` | Terminal UI |
-| `--go-run` | Legacy loop: `go run`, stopping the app before each rebuild |
 
 ## `nexus build [pkg]`
 

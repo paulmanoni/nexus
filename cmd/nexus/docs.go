@@ -1356,10 +1356,9 @@ implements every capability, so a token server folds into auth.Module:
     })
     // oauth2.Module(cfg) is now a thin wrapper over exactly this.
 
-Deprecated: auth.LoginEndpoint / auth.LogoutEndpoint (standalone options) —
-use Config.Endpoints instead. They still work as thin wrappers. When you can't
-use a ready backend, the exported auth.LoginHandler / auth.LogoutHandler let you
-wire the same handlers in your own AsRestHandler factory (DI deps injected there).
+When you can't use a ready backend, the exported auth.LoginHandler /
+auth.LogoutHandler let you wire the same handlers in your own AsRestHandler
+factory (DI deps injected there).
 `,
 
 	"security": `
@@ -1522,8 +1521,7 @@ The handler is reflective:
 
     func NewGet(svc *UserService, db *MainDB, p nexus.Params[GetArgs]) (*User, error)
 
-Path params bind to fields on the args struct via ` + "`" + `path:"id"` + "`" + `
-(the legacy ` + "`" + `uri:"id"` + "`" + ` spelling still works):
+Path params bind to fields on the args struct via ` + "`" + `path:"id"` + "`" + `:
 
     type GetArgs struct {
         ID string ` + "`" + `path:"id"` + "`" + `
@@ -1696,11 +1694,9 @@ Which dir (nexus dev and nexus build alike): --frontend (relative to the
 working directory) > NEXUS_FRONTEND_DIR (relative to the project) > the
 dir main.go's ServeFrontend call names > web/ when it has a
 package.json. A dir without package.json is
-served as-is and never built; a viteless-era one (viteless.config.ts and
-no package.json, or a package.json but no vite.config) gets a migration
-hint — "nexus init --frontend vue --force" adds the Vite files, keeps the
-sources, and saves a package.json/vite.config.ts/tsconfig.json it
-replaces as <file>.orig.
+served as-is and never built; "nexus init --frontend vue --force" turns it
+into a Vite project — it adds the Vite files, keeps the sources, and saves
+a package.json/vite.config.ts/tsconfig.json it replaces as <file>.orig.
 
 Deploy with NEXUS_ENVIRONMENT=production: it overrides the
 environment = "development" that scaffolds ship in nexus.toml.
@@ -1838,7 +1834,6 @@ CLI CHEATSHEET
                              --db / --cache / --auth   wire resources
                              --module <path>       override go.mod path
                              --yes                 take defaults (no prompts)
-                             --tooling             deprecated, ignored
 
   nexus init [dir]           Add a Vite frontend (web/) to an EXISTING
                              project and patch main.go to embed web/dist
@@ -1846,8 +1841,7 @@ CLI CHEATSHEET
                              --frontend vue|react  (required)
                              --force               add the project files to
                                                    an existing web/, keeping
-                                                   index.html and src/ (moves
-                                                   a viteless-era web/ over);
+                                                   index.html and src/;
                                                    replaced config files are
                                                    saved as <file>.orig
 
@@ -1898,7 +1892,6 @@ CLI CHEATSHEET
                              --dist             keep web/dist rebuilt with
                                                 vite build (+ the SSR build)
                                                 in the background
-                             --frontend-cmd     deprecated, ignored
                              --open             open a browser once the port
                                                 responds (off by default)
                              --debug            keep DWARF in the dev binary so
@@ -1915,17 +1908,13 @@ CLI CHEATSHEET
                                                 embedded copy is dead weight
                                                 relinked on every save. Scoped
                                                 to the ServeFrontend tree only.
-                             --go-run           legacy loop: launch via
-                                                "go run", killing the app
-                                                before every rebuild
 
   nexus build                Build one binary. With a frontend package.json:
                              deps installed when needed (npm ci, pnpm/yarn/
                              bun with a frozen lockfile), vite build (and
                              vite build --ssr src/ssr.ts → dist/ssr when
                              src/ssr.ts exists), then go build embeds
-                             web/dist via //go:embed. A viteless-era web/
-                             fails with a migration hint.
+                             web/dist via //go:embed.
     --out / -o <path>        path to write the binary to (default: go's own naming).
     nexus build ./cmd/server pick the main package positionally.
 

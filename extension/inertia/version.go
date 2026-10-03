@@ -133,17 +133,9 @@ func (m manifest) headTags(mount string) string {
 	return b.String()
 }
 
-// devHeadTags renders the dev-server tags for the NEXUS_VITE_DEV fallback: a
-// dev server URL with no hot file describing it. entry is the client app's dev
-// module (e.g. "src/main.ts" / "src/main.tsx"); react adds the Vite React Fast
-// Refresh preamble that must run before the dev client.
-func devHeadTags(devURL, entry string, react bool) string {
-	return devTags(devURL+"/@vite/client", devURL+"/"+strings.TrimPrefix(entry, "/"), devURL+"/@react-refresh", react, true)
-}
-
 // devTags renders the dev-server <head> tags from resolved URLs: the Vite
 // client, the entry module, and (for React) the Fast Refresh runtime. The URLs
-// are raw — they come from the hot file or NEXUS_VITE_DEV, not from the app's
+// are raw — they come from the hot file, not from the app's
 // code — and are escaped here for where each lands: an attribute, or a JS
 // string in the React preamble.
 func devTags(clientURL, entryURL, refreshURL string, react, reloadShim bool) string {

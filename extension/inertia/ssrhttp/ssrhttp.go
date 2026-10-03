@@ -9,9 +9,8 @@
 // serves SSR through the Vite dev server, so while the engine follows one —
 // the dev server named by nexus-vite-plugin's hot file (App.ViteHot, handed
 // to Render as inertia.DevServer) — the renderer targets that instead, and
-// `nexus dev` starts no separate Node process. NEXUS_VITE_DEV, when set,
-// names a dev server for setups without the hot file. On any transport
-// error the engine falls back to client-side rendering.
+// `nexus dev` starts no separate Node process. On any transport error the
+// engine falls back to client-side rendering.
 package ssrhttp
 
 import (
@@ -19,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -28,10 +26,6 @@ import (
 
 // DefaultURL is the conventional @inertiajs/server production port.
 const DefaultURL = "http://127.0.0.1:13714"
-
-// devURLEnv mirrors inertia's: a dev server URL set by hand, the fallback
-// when no hot file names one. `nexus dev` no longer sets it.
-const devURLEnv = "NEXUS_VITE_DEV"
 
 // devSSRPath is the SSR endpoint the Vite dev server exposes.
 const devSSRPath = "/__inertia_ssr"
@@ -86,13 +80,10 @@ func (r *Renderer) Render(ctx context.Context, page []byte) (inertia.SSRResult, 
 }
 
 // url picks the endpoint: the dev server the engine follows (its hot file),
-// else NEXUS_VITE_DEV, else the production SSR server.
+// else the production SSR server.
 func (r *Renderer) url(ctx context.Context) string {
 	if dev := inertia.DevServer(ctx); dev != "" {
 		return strings.TrimRight(dev, "/") + devSSRPath
-	}
-	if dev := strings.TrimRight(os.Getenv(devURLEnv), "/"); dev != "" {
-		return dev + devSSRPath
 	}
 	return r.prodURL + "/render"
 }

@@ -146,4 +146,3 @@ out of sight.
 | `--debug` | Keeps DWARF for delve |
 | `--no-embed-stub` | Embeds the real frontend bundle |
 | `--log-format`, `--log-pattern`, `--raw-logs` | Controls log formatting |
-| `--go-run` | Uses the legacy `go run` loop |

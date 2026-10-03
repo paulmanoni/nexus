@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os/signal"
@@ -36,18 +35,13 @@ const ssrEntry = "src/ssr.ts"
 //
 // Vite's output streams to stdout/stderr, so a failing build shows why.
 // A directory without a package.json is not built: a pure-Go app has
-// none, and a static or hand-written dist is embedded as it is. A
-// viteless-era directory is an error with the migration hint, since
-// building the binary without its frontend would ship a stale bundle.
+// none, and a static or hand-written dist is embedded as it is.
 func frontendBuild(ctx context.Context, mainDir, flag string, stdout, stderr io.Writer) error {
 	dir, _ := resolveFrontendDir(mainDir, flag)
 	if dir == "" {
 		return nil
 	}
 	p := inspectFrontend(dir)
-	if p.Legacy != "" {
-		return errors.New(p.legacyHint())
-	}
 	if !p.PackageJSON {
 		return nil
 	}

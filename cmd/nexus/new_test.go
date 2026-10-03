@@ -701,32 +701,6 @@ func TestCobra_UnknownCommand(t *testing.T) {
 	}
 }
 
-// TestNewCmd_ToolingDeprecated keeps old scripts working: --tooling is
-// accepted, reported as deprecated, and ignored — the scaffold is the
-// Vite project whatever value it carries.
-func TestNewCmd_ToolingDeprecated(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "vt")
-	var stdout, stderr bytes.Buffer
-	root := newRootCmd(&stdout, &stderr)
-	root.SetOut(&stdout)
-	root.SetErr(&stderr)
-	root.SetArgs([]string{"new", dir, "--frontend", "vue", "--tooling", "viteless", "--yes"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-	}
-	if !strings.Contains(stdout.String()+stderr.String(), "deprecated") {
-		t.Errorf("--tooling should be reported as deprecated; out=%q err=%q", stdout.String(), stderr.String())
-	}
-	for _, p := range []string{"web/vite.config.ts", "web/package.json"} {
-		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
-			t.Errorf("missing %s: %v", p, err)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dir, "web/viteless.config.ts")); err == nil {
-		t.Error("--tooling viteless must not bring back viteless.config.ts")
-	}
-}
-
 type scaffoldPackage struct {
 	Name            string            `json:"name"`
 	Private         bool              `json:"private"`

@@ -43,12 +43,10 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		tui         bool
 		noWatch     bool
 		frontendDir string
-		frontendCmd string // deprecated, ignored
 		verbose     bool
 		fast        bool
 		debugBuild  bool
 		noEmbedStub bool
-		legacyGoRun bool
 		distWatch   bool
 		rawLogs     bool
 		timeBuild   bool
@@ -89,7 +87,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, frontendDir, verbose, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, legacyGoRun, distWatch, rawLogs, timeBuild, logFormat, logPattern, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, distWatch, rawLogs, timeBuild, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -104,8 +102,6 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"disable file-watch auto-rebuild (single-process mode only)")
 	cmd.Flags().StringVar(&frontendDir, "frontend", "",
 		"frontend project dir (default: found from the app's ServeFrontend call, or NEXUS_FRONTEND_DIR); with a package.json, its Vite runs alongside the app, logging under [web]")
-	cmd.Flags().StringVar(&frontendCmd, "frontend-cmd", "", "ignored")
-	_ = cmd.Flags().MarkDeprecated("frontend-cmd", "it is ignored: nexus dev runs the frontend's own Vite (node_modules/.bin/vite)")
 	cmd.Flags().BoolVar(&verbose, "verbose", false,
 		"keep [Fx] graph chatter, [GIN-debug] route-registration, and Vite's full startup banner (all suppressed by default in dev)")
 	cmd.Flags().BoolVar(&fast, "fast", true,
@@ -119,8 +115,6 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"embed the real frontend bundle in the dev binary instead of stubbing it out (dev serves the bundle from disk, so the embedded copy is normally dead weight)")
 	cmd.Flags().BoolVar(&timeBuild, "time-build", false,
 		"print a per-rebuild timing breakdown (codegen · build · prewarm) so slow rebuilds can be diagnosed")
-	cmd.Flags().BoolVar(&legacyGoRun, "go-run", false,
-		"legacy dev loop: launch via `go run`, killing the app before every rebuild (default: build-then-swap — the old binary keeps serving while the next one compiles)")
 	cmd.Flags().BoolVar(&distWatch, "dist", false,
 		"also keep web/dist rebuilt in the background (debounced `vite build`) so go build / the production embed always matches the live frontend")
 	cmd.Flags().BoolVar(&rawLogs, "raw-logs", false,
@@ -232,10 +226,8 @@ func (e *userError) Error() string { return e.msg }
 //
 // Rebuilds are build-then-swap: the next binary compiles while the
 // current one keeps serving, and the swap happens only once the build
-// is green (see devBuilder). legacyGoRun restores the old `go run`
-// loop, which kills the app first and leaves it down for the whole
-// compile.
-func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, legacyGoRun, distWatch, rawLogs, timeBuild bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
+// is green (see devBuilder).
+func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir string, verbose, fast, embedStub, distWatch, rawLogs, timeBuild bool, logFormat, logPattern string, stdout, stderr io.Writer) error {
 	printDevBanner(stdout, target)
 
 	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
@@ -356,7 +348,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	// the current source. Opt-in — it runs a full `vite build` on each
 	// debounced change. The plugin keeps the dev server's hot file across
 	// the build's emptyOutDir, so the app keeps serving HMR throughout.
-	if distWatch && fp.PackageJSON && fp.Legacy == "" {
+	if distWatch && fp.PackageJSON {
 		stopDist, err := watchDistBuild(ctx, fp.Dir, nexusTOMLPath(target), vite, userIgnore, stdout, stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s●%s dist watch disabled: %v\n", ansiYellow, ansiReset, err)
@@ -411,17 +403,12 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		fmt.Fprintf(stderr, "%s●%s dev-state disabled: %v\n", ansiYellow, ansiReset, err)
 	}
 
-	// The compiler for the build-then-swap path. Nil in legacy --go-run
-	// mode, where `go run` still owns compilation.
-	var builder *devBuilder
-	if !legacyGoRun {
-		b, err := newDevBuilder(fast)
-		if err != nil {
-			return fmt.Errorf("dev build dir: %w", err)
-		}
-		builder = b
-		defer builder.close()
+	// The compiler for the build-then-swap path.
+	builder, err := newDevBuilder(fast)
+	if err != nil {
+		return fmt.Errorf("dev build dir: %w", err)
 	}
+	defer builder.close()
 
 	// First boot announces the dashboard URL via waitAndOpen. Subsequent
 	// restarts skip the open-browser branch (user already has the tab).
@@ -501,61 +488,59 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 
 		// Build-then-swap. The child from the previous iteration is still
 		// serving here — nothing is torn down until the build is green.
-		binPath := ""
-		if builder != nil {
-			start := time.Now()
-			bin, buildErr := builder.build(ctx, target, overlayPath, stderr)
-			if ctx.Err() != nil {
+		start := time.Now()
+		bin, buildErr := builder.build(ctx, target, overlayPath, stderr)
+		if ctx.Err() != nil {
+			return exitErr
+		}
+		if buildErr != nil {
+			// Compile error. With a watcher up, the running app (if
+			// any) stays up and the user fixes the code; without one,
+			// there's nothing to wait for.
+			if restartCh == nil {
+				return fmt.Errorf("build failed: %w", buildErr)
+			}
+			if running {
+				fmt.Fprintf(stderr, "%s●%s build failed · still serving the previous build\n", ansiYellow, ansiReset)
+			} else {
+				fmt.Fprintf(stderr, "%s●%s build failed · waiting for changes\n", ansiYellow, ansiReset)
+			}
+			if !waitForChange() {
 				return exitErr
 			}
-			if buildErr != nil {
-				// Compile error. With a watcher up, the running app (if
-				// any) stays up and the user fixes the code; without one,
-				// there's nothing to wait for.
-				if restartCh == nil {
-					return fmt.Errorf("build failed: %w", buildErr)
-				}
-				if running {
-					fmt.Fprintf(stderr, "%s●%s build failed · still serving the previous build\n", ansiYellow, ansiReset)
-				} else {
-					fmt.Fprintf(stderr, "%s●%s build failed · waiting for changes\n", ansiYellow, ansiReset)
-				}
-				if !waitForChange() {
-					return exitErr
-				}
-				continue
-			}
-			buildDur := time.Since(start)
-			fmt.Fprintf(stdout, "  %s● built in %s%s\n", ansiDim, buildDur.Round(time.Millisecond), ansiReset)
+			continue
+		}
+		buildDur := time.Since(start)
+		fmt.Fprintf(stdout, "  %s● built in %s%s\n", ansiDim, buildDur.Round(time.Millisecond), ansiReset)
 
-			// Identical bytes mean the running process already IS this
-			// build — the save didn't reach the app's build graph (a
-			// _test.go edit, an unchanged buffer, another package's
-			// files). Restarting would only cost the user their app state.
-			h, herr := fileHash(bin)
-			if running && herr == nil && h == lastHash {
-				_ = os.Remove(bin)
-				fmt.Fprintf(stdout, "  %s● binary unchanged · kept the running process%s\n", ansiDim, ansiReset)
-				if !waitForChange() {
-					return exitErr
-				}
-				continue
+		// Identical bytes mean the running process already IS this
+		// build — the save didn't reach the app's build graph (a
+		// _test.go edit, an unchanged buffer, another package's
+		// files). Restarting would only cost the user their app state.
+		h, herr := fileHash(bin)
+		if running && herr == nil && h == lastHash {
+			_ = os.Remove(bin)
+			fmt.Fprintf(stdout, "  %s● binary unchanged · kept the running process%s\n", ansiDim, ansiReset)
+			if !waitForChange() {
+				return exitErr
 			}
-			if prevBin != "" {
-				_ = os.Remove(prevBin)
-			}
-			binPath, prevBin, lastHash = bin, bin, h
+			continue
+		}
+		if prevBin != "" {
+			_ = os.Remove(prevBin)
+		}
+		binPath := bin
+		prevBin, lastHash = bin, h
 
-			// Pay the OS's first-exec cost (code-signature validation)
-			// now, while the outgoing child is still answering requests.
-			prewarmStart := time.Now()
-			builder.prewarm(ctx, binPath)
-			if timeBuild {
-				fmt.Fprintf(stdout, "  %s⏱ codegen %s · build %s · prewarm %s%s\n", ansiDim,
-					codegenDur.Round(time.Millisecond),
-					buildDur.Round(time.Millisecond),
-					time.Since(prewarmStart).Round(time.Millisecond), ansiReset)
-			}
+		// Pay the OS's first-exec cost (code-signature validation)
+		// now, while the outgoing child is still answering requests.
+		prewarmStart := time.Now()
+		builder.prewarm(ctx, binPath)
+		if timeBuild {
+			fmt.Fprintf(stdout, "  %s⏱ codegen %s · build %s · prewarm %s%s\n", ansiDim,
+				codegenDur.Round(time.Millisecond),
+				buildDur.Round(time.Millisecond),
+				time.Since(prewarmStart).Round(time.Millisecond), ansiReset)
 		}
 
 		// The port is single-occupancy, so the outgoing child dies only
@@ -572,7 +557,7 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 		if first && vite != nil {
 			viteSettled = vite.settledCh()
 		}
-		ex, kill, err := startDevChild(ctx, binPath, target, addr, overlayPath, devStatePath, openOnReady && first, openDash, verbose, fast, prettyLogs, logFmt, strip, viteSettled, stdout, stderr)
+		ex, kill, err := startDevChild(ctx, binPath, target, addr, devStatePath, openOnReady && first, openDash, verbose, prettyLogs, logFmt, strip, viteSettled, stdout, stderr)
 		if err != nil {
 			return err
 		}
@@ -601,36 +586,14 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 // binPath names a binary devBuilder already compiled — the default
 // build-then-swap path, which execs it directly (no resident `go run`
 // supervisor, and the compile happened while the previous child was
-// still serving). When binPath is empty (--go-run) we fall back to
-// `go run`, which compiles here and so keeps the app down for the
-// duration; overlayPath is then passed as `go run -overlay=...` so the
-// decorator-form registrations still reach the build.
+// still serving).
 //
-// The child inherits the CLI's working directory in both modes, so
-// nexus.Boot resolves nexus.toml from the same place either way.
+// The child inherits the CLI's working directory, so nexus.Boot
+// resolves nexus.toml from the same place `go run .` would.
 //
 // Carved out of runDev so the watcher loop's select can stay readable.
-func startDevChild(ctx context.Context, binPath, target, addr, overlayPath, devStatePath string, openOnReady, openDash, verbose, fast, prettyLogs bool, logFmt logFormatter, strip *statusStrip, viteSettled <-chan struct{}, stdout, stderr io.Writer) (<-chan error, func(), error) {
+func startDevChild(ctx context.Context, binPath, target, addr, devStatePath string, openOnReady, openDash, verbose, prettyLogs bool, logFmt logFormatter, strip *statusStrip, viteSettled <-chan struct{}, stdout, stderr io.Writer) (<-chan error, func(), error) {
 	cmd := exec.Command(binPath)
-	if binPath == "" {
-		// Legacy --go-run path. The flags mirror devBuilder.build:
-		// -gcflags=all=-N -l skips the optimizer for the whole graph
-		// (markedly faster compiles, and dev binaries are never
-		// perf-sensitive), while --fast additionally strips DWARF so the
-		// linker — the step no cache makes incremental — emits less. The
-		// tradeoff there is that delve can't attach and panic traces lose
-		// detail, which is why it stays opt-in.
-		args := []string{"run"}
-		if overlayPath != "" {
-			args = append(args, "-overlay="+overlayPath)
-		}
-		args = append(args, "-gcflags=all=-N -l")
-		if fast {
-			args = append(args, "-ldflags=-w -s")
-		}
-		args = append(args, target)
-		cmd = exec.Command("go", args...)
-	}
 	// Tee stdout/stderr through addrFinder so we can detect the
 	// actual bind address from gin's "Listening and serving HTTP on
 	// :PORT" line. The user's own Config.Addr trumps our --addr flag

@@ -30,7 +30,6 @@ func newNewCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		modulePath string
 		frontend   string
-		tooling    string
 		db         string
 		cache      string
 		auth       string
@@ -122,10 +121,6 @@ own origin; the dashboard is at /__nexus/.`,
 		"go.mod module path (default: derived from <dir>'s basename)")
 	cmd.Flags().StringVar(&frontend, "frontend", "",
 		"frontend stack: "+strings.Join(frontendChoices, " | ")+" (default: prompt)")
-	// --tooling chose between viteless and Vite; Vite is the only engine
-	// now. Kept so existing scripts still run, ignored with a warning.
-	cmd.Flags().StringVar(&tooling, "tooling", "", "ignored: Vite is the only frontend engine")
-	_ = cmd.Flags().MarkDeprecated("tooling", "Vite is the only frontend engine now; the flag is ignored")
 	cmd.Flags().StringVar(&db, "db", "",
 		"database driver: "+strings.Join(dbChoices, " | ")+" (default: prompt)")
 	cmd.Flags().StringVar(&cache, "cache", "",

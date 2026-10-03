@@ -288,7 +288,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 			if h, _ := app.ViteHot().Current(); h != nil {
 				return h.Origin
 			}
-			return os.Getenv("NEXUS_VITE_DEV")
+			return ""
 		})
 	}
 

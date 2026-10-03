@@ -27,30 +27,6 @@ func TestRender_Prod(t *testing.T) {
 	}
 }
 
-// TestRender_DevURL asserts that when NEXUS_VITE_DEV is set the renderer targets
-// the dev server's /__inertia_ssr endpoint instead of the production URL.
-func TestRender_DevURL(t *testing.T) {
-	var hitPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hitPath = r.URL.Path
-		_, _ = w.Write([]byte(`{"head":[],"body":"<div/>"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("NEXUS_VITE_DEV", srv.URL)
-
-	// prodURL points nowhere; the dev URL must win.
-	res, err := New("http://127.0.0.1:1").Render(context.Background(), []byte(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hitPath != devSSRPath {
-		t.Fatalf("dev SSR path = %q, want %q", hitPath, devSSRPath)
-	}
-	if res.Body != "<div/>" {
-		t.Fatalf("dev SSR result = %+v", res)
-	}
-}
-
 // TestRender_TransportError surfaces a connection failure as an error so the
 // engine can fall back to client rendering.
 func TestRender_TransportError(t *testing.T) {

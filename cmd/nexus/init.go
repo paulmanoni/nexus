@@ -31,8 +31,7 @@ dependencies on its first run (npm; Node.js 20+).
 Refuses an existing web/ unless --force. With --force the project files
 (package.json, vite.config.ts, tsconfig.json, sdk/) are rewritten — an
 existing one that differs is saved first as <file>.orig — and the app's
-own files (index.html, src/, the dist stub) are kept where they exist:
-the way to move a viteless-era web/ onto Vite.`,
+own files (index.html, src/, the dist stub) are kept where they exist.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			target := dir
