@@ -4,6 +4,68 @@
   "additionalProperties": false,
   "description": "nexus runtime configuration. Every table is declared by nexus, an extension or the app (config.Section); unknown keys fail boot.",
   "properties": {
+    "auth": {
+      "additionalProperties": false,
+      "properties": {
+        "cache": {
+          "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+          "type": "string"
+        },
+        "default": {
+          "type": "string"
+        },
+        "passwords": {
+          "additionalProperties": false,
+          "properties": {
+            "common": {
+              "type": "boolean"
+            },
+            "hashers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "min_length": {
+              "type": "integer"
+            },
+            "numeric": {
+              "type": "boolean"
+            },
+            "similar": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "schemes": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "cookie": {
+                "type": "string"
+              },
+              "header": {
+                "type": "string"
+              },
+              "secure": {
+                "type": "boolean"
+              },
+              "ttl": {
+                "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "cache": {
       "additionalProperties": {
         "additionalProperties": false,

@@ -1,0 +1,241 @@
+package auth
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/dev"
+	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/extension/session"
+	"github.com/paulmanoni/nexus/v2/middleware"
+)
+
+// The config-driven path: Config.Users names the app's accounts, [auth]
+// (or Config.Settings) declares the schemes, and nexus issues and checks
+// the credentials — sessions, bearer tokens, API keys.
+
+// sessionUserKey is where a session scheme keeps the signed-in user's id.
+const sessionUserKey = "_auth_user_id"
+
+// configPath is the state the config-driven path adds to moduleState.
+type configPath struct {
+	users    Users
+	tokens   TokenStore
+	settings *resolvedSettings
+	loads    *loadCache
+}
+
+// credentialError is a credential that arrived but didn't authenticate.
+type credentialError struct {
+	scheme, reason string
+}
+
+func (e *credentialError) Error() string { return "auth: " + e.scheme + ": " + e.reason }
+
+// install reads the settings and builds the schemes. It runs in the
+// module's invoke, after nexus.toml is loaded and before the middleware.
+func (st *moduleState) installConfigPath(app *nexus.App) error {
+	s := settingsSection.Get()
+	if st.cfg.Settings != nil {
+		s = *st.cfg.Settings
+	}
+	rs, err := resolveSettings(s)
+	if err != nil {
+		return err
+	}
+	cp := &st.config
+	cp.settings = rs
+	if rs.cache > 0 {
+		cp.loads = &loadCache{ttl: rs.cache, m: map[string]loadEntry{}}
+	}
+	if cp.tokens == nil {
+		ms := NewMemoryTokenStore()
+		dev.Preserve("auth.tokens", ms)
+		cp.tokens = ms
+	}
+	st.schemes = nil
+	for _, sc := range rs.schemes {
+		switch sc.Type {
+		case SchemeSession:
+			session.Install(app, session.Config{CookieName: sc.Cookie, TTL: sc.TTL, Secure: sc.Secure})
+			app.RequireCSRF("auth session scheme " + sc.name)
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: sessionExtractor{}, resolve: st.sessionResolve(sc.name)})
+		case SchemeBearer:
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: Bearer(), resolve: st.tokenResolve(sc.name)})
+		case SchemeAPIKey:
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: APIKey(sc.Header), resolve: st.tokenResolve(sc.name)})
+		}
+	}
+	return nil
+}
+
+// sessionExtractor finds the signed-in user's id in the request's session.
+type sessionExtractor struct{}
+
+func (sessionExtractor) Extract(r *http.Request) (string, bool) {
+	if !session.Present(r.Context()) {
+		return "", false
+	}
+	id := session.Get(r.Context()).GetString(sessionUserKey)
+	return id, id != ""
+}
+
+func (st *moduleState) sessionResolve(name string) Resolver {
+	return func(ctx context.Context, userID string) (*Identity, error) {
+		return st.loadAs(ctx, name, userID)
+	}
+}
+
+func (st *moduleState) tokenResolve(name string) Resolver {
+	return func(ctx context.Context, tok string) (*Identity, error) {
+		t, err := st.config.tokens.Load(ctx, hashToken(tok))
+		if err != nil {
+			return nil, err
+		}
+		if t == nil || t.Scheme != name {
+			return nil, &credentialError{name, "unknown, expired or revoked token"}
+		}
+		return st.loadAs(ctx, name, t.UserID)
+	}
+}
+
+// loadAs loads userID through the per-id cache and stamps the scheme on a
+// copy, so a cached identity is never shared mutably.
+func (st *moduleState) loadAs(ctx context.Context, scheme, userID string) (*Identity, error) {
+	id, err := st.load(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if id == nil {
+		return nil, &credentialError{scheme, "the account no longer exists"}
+	}
+	cp := *id
+	cp.Scheme = scheme
+	return &cp, nil
+}
+
+func (st *moduleState) load(ctx context.Context, userID string) (*Identity, error) {
+	if st.config.users == nil {
+		return nil, errors.New("auth: Config.Users was not constructed")
+	}
+	if c := st.config.loads; c != nil {
+		if id, ok := c.get(userID); ok {
+			return id, nil
+		}
+	}
+	id, err := st.config.users.Load(ctx, userID)
+	if err != nil || id == nil {
+		return id, err
+	}
+	if c := st.config.loads; c != nil {
+		c.put(userID, id)
+	}
+	return id, nil
+}
+
+// loadCache keeps Users.Load results per user id: one user with five
+// sessions costs one load, and no token is held in memory.
+type loadCache struct {
+	ttl time.Duration
+	mu  sync.Mutex
+	m   map[string]loadEntry
+}
+
+type loadEntry struct {
+	id      *Identity
+	expires time.Time
+}
+
+func (c *loadCache) get(userID string) (*Identity, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[userID]
+	if !ok || time.Now().After(e.expires) {
+		delete(c.m, userID)
+		return nil, false
+	}
+	return e.id, true
+}
+
+func (c *loadCache) put(userID string, id *Identity) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[userID] = loadEntry{id, time.Now().Add(c.ttl)}
+}
+
+func (c *loadCache) drop(userID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, userID)
+}
+
+// --- why a request is anonymous ---------------------------------------
+
+type ctxCredential int
+
+const (
+	ctxCredentialErr ctxCredential = iota
+	ctxCredentialTok
+)
+
+type presented struct {
+	scheme, token string
+}
+
+// unauthenticated is the error a gate rejects an anonymous request with.
+// When a credential arrived and failed, the reason is part of it under
+// nexus dev; the trace carries it always.
+func unauthenticated(ctx context.Context) error {
+	ce, ok := ctx.Value(ctxCredentialErr).(*credentialError)
+	if !ok || !dev.Enabled() {
+		return ErrUnauthenticated
+	}
+	return &nexus.Error{Code: nexus.Unauthenticated, Message: fmt.Sprintf("auth: unauthenticated — %s: %s", ce.scheme, ce.reason), Cause: ErrUnauthenticated}
+}
+
+// credentialReason is the failed credential's reason, for the trace.
+func credentialReason(ctx context.Context) string {
+	if ce, ok := ctx.Value(ctxCredentialErr).(*credentialError); ok {
+		return ce.scheme + ": " + ce.reason
+	}
+	return ""
+}
+
+// defaultGate is the config path's deny-by-default gate: every endpoint
+// needs an identity unless it is Public, or [auth] default = "public".
+func (st *moduleState) defaultGate() middleware.Middleware {
+	return builtin("auth:required",
+		"Requires an authenticated identity on ctx ([auth] default)",
+		func(rc *middleware.RequestCtx, next middleware.Next) error {
+			if st.config.settings != nil && st.config.settings.public {
+				return next(rc)
+			}
+			if _, ok := IdentityFrom(rc.Context); !ok {
+				return rejectAuth(rc, unauthenticated(rc.Context))
+			}
+			return next(rc)
+		})
+}
+
+// configModule is Module for the config-driven path.
+func configModule(cfg Config) nexus.Option {
+	if len(cfg.Authentication.Schemes) > 0 || cfg.Backend.set {
+		return nexus.Raw(di.Error(errors.New("auth: Config.Users replaces Authentication.Schemes and Backend — declare schemes in [auth.schemes.*] instead")))
+	}
+	// The [auth] default decides sign-in requirements; its gate is supplied
+	// here, not through Authorization.Default.
+	cfg.Authorization.Default = Permit()
+	return wireModule(cfg, nil, nil, func(st *moduleState) ([]nexus.Option, error) {
+		st.config.tokens = cfg.Tokens
+		users, err := usersOption(st, cfg.Users)
+		if err != nil {
+			return nil, err
+		}
+		return []nexus.Option{users, nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: st.defaultGate()}))}, nil
+	})
+}

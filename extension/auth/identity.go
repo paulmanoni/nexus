@@ -50,7 +50,7 @@ func RequiresAny(perms ...string) nexus.MiddlewareOption {
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
 			id, ok := IdentityFrom(rc.Context)
 			if !ok {
-				return rejectAuth(rc, ErrUnauthenticated)
+				return rejectAuth(rc, unauthenticated(rc.Context))
 			}
 			if !anyPermission(rc.Context, id, perms) {
 				return rejectAuth(rc, ErrForbidden)
@@ -72,7 +72,7 @@ func Kind(kinds ...string) nexus.MiddlewareOption {
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
 			id, ok := IdentityFrom(rc.Context)
 			if !ok {
-				return rejectAuth(rc, ErrUnauthenticated)
+				return rejectAuth(rc, unauthenticated(rc.Context))
 			}
 			if !slices.Contains(kinds, id.Kind) {
 				return rejectAuth(rc, ErrForbidden)

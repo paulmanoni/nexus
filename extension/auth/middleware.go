@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
@@ -25,8 +26,16 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		ctx := withState(c.Request.Context(), state)
 
-		id, token, err := state.authenticate(ctx, c.Request)
+		id, scheme, token, err := state.authenticateScheme(ctx, c.Request)
+		if scheme != "" && state.config.settings != nil {
+			// SignOut ends the credential the request came with.
+			ctx = context.WithValue(ctx, ctxCredentialTok, presented{scheme, token})
+		}
 		if err != nil {
+			var ce *credentialError
+			if errors.As(err, &ce) {
+				ctx = context.WithValue(ctx, ctxCredentialErr, ce)
+			}
 			if state.cfg.OnFail != nil {
 				state.cfg.OnFail(ctx, token, err)
 			}
@@ -60,7 +69,7 @@ func requiredMiddleware() middleware.Middleware {
 		"Requires an authenticated identity on ctx",
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
 			if _, ok := IdentityFrom(rc.Context); !ok {
-				return rejectAuth(rc, ErrUnauthenticated)
+				return rejectAuth(rc, unauthenticated(rc.Context))
 			}
 			return next(rc)
 		})
@@ -83,7 +92,7 @@ func Requires(perms ...string) nexus.MiddlewareOption {
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
 			id, ok := IdentityFrom(rc.Context)
 			if !ok {
-				return rejectAuth(rc, ErrUnauthenticated)
+				return rejectAuth(rc, unauthenticated(rc.Context))
 			}
 			if !checkPermissions(rc.Context, id, perms) {
 				return rejectAuth(rc, ErrForbidden)
@@ -126,7 +135,7 @@ func builtin(name, desc string, fn func(*middleware.RequestCtx, middleware.Next)
 // Status follows the sentinel: ErrForbidden → 403, otherwise 401.
 func rejectAuth(rc *middleware.RequestCtx, err error) error {
 	eh := errorHandlerFrom(rc.Context)
-	if err == ErrForbidden {
+	if errors.Is(err, ErrForbidden) {
 		emitReject(rc.Context, "forbidden", http.StatusForbidden, err)
 		return eh.Forbidden(rc, err)
 	}
@@ -175,6 +184,9 @@ func emitReject(ctx context.Context, reason string, status int, err error) {
 		ev.Error = err.Error()
 	}
 	meta := map[string]any{"reason": reason}
+	if cr := credentialReason(ctx); cr != "" {
+		meta["credential"] = cr
+	}
 	if id, ok := IdentityFrom(ctx); ok && id != nil {
 		// When we reject an authenticated identity (403), include its
 		// ID so admins can tie dashboard rows back to a real user.

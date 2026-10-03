@@ -21,6 +21,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `IdentityFrom` and `Subject`.
   - `middleware.Middleware.Tags`: registry tags a bundle stamps on every
     endpoint it is attached to.
+- **Auth: accounts and sign-in (`Config.Users`).** The config-driven path of
+  the v2 auth design, beside the resolver path, which is unchanged:
+  - The app implements `auth.Users` (`FindLogin`, `Load`; optional
+    `SetPassword`, `CheckLogin`) and passes `auth.UseUsers(NewUsers)`; a type
+    that doesn't implement it fails boot naming the method.
+  - Schemes come from `[auth.schemes.*]`: `session` (the default; installs
+    `extension/session` and turns CSRF on), `bearer` (opaque 256-bit tokens,
+    stored as SHA-256) and `apikey`. `Config.Tokens` stores them — memory by
+    default, `auth.CacheTokens(cache)` for Redis.
+  - `auth.Login`, `auth.SignIn` (`auth.Using(scheme)`), `auth.SignOut`,
+    `auth.SetPassword`, `auth.Refresh`, `auth.Public`, `[auth.passwords]`.
+  - Every endpoint requires a sign-in unless it is `auth.Public()`;
+    `[auth] default = "public"` turns that off. `Users.Load` is cached per user
+    id (`[auth] cache`, 5 minutes).
+  - A credential that arrives but fails leaves the request anonymous; the 401
+    names the reason under `nexus dev`, and the trace carries it.
+  - `Identity.Scheme` names the scheme that authenticated the request.
+- `session.Install(app, cfg)` and `session.Present(ctx)`; a second
+  `session.Module` is a no-op with a warning instead of a second middleware.
 
 ## [2.0.1] - 2026-10-04
 

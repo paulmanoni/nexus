@@ -13,9 +13,10 @@ import (
 	nexusmanifest "github.com/paulmanoni/nexus/v2/manifest"
 
 	// The framework packages that declare nexus.toml tables, linked so the
-	// CLI checks [cache.*] / [storage.*] / [mail.*] / [jobs] like the app
+	// CLI checks [auth] / [cache.*] / [storage.*] / [mail.*] / [jobs] like the app
 	// does. (extension/config's [extensions.config] comes in through
 	// extensions_for_lint.go.)
+	_ "github.com/paulmanoni/nexus/v2/extension/auth"
 	_ "github.com/paulmanoni/nexus/v2/extension/cache"
 	_ "github.com/paulmanoni/nexus/v2/extension/jobs"
 	_ "github.com/paulmanoni/nexus/v2/extension/mail"

@@ -105,17 +105,12 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// Module enables sessions for the app. Install once, anywhere in the
-// option list.
+// Module enables sessions for the app, anywhere in the option list. The
+// first Module an app installs wins: a later one (an auth session scheme
+// brings its own) is a no-op, so the app's own Config takes precedence
+// when it comes first.
 func Module(cfg Config) nexus.Option {
 	cfg = cfg.withDefaults()
-
-	// The default memory store survives `nexus dev` rebuilds the same
-	// way auth.MemoryUserStore does. No-op outside nexus dev, and for
-	// custom stores (which own their durability story).
-	if ms, ok := cfg.Store.(*MemoryStore); ok {
-		dev.Preserve("session.store", ms)
-	}
 
 	plugin := extension.Use(extension.Plugin{
 		Name:    "session",
@@ -123,12 +118,46 @@ func Module(cfg Config) nexus.Option {
 		Icon:    "cookie",
 		Options: []nexus.Option{
 			nexus.Invoke(func(app *nexus.App) {
-				app.Router().Use(middleware(cfg))
+				if !Install(app, cfg) {
+					app.Logger().Warn("session.Module: sessions are already installed (an auth session scheme installs them) — put session.Module before auth.Module for this Config to apply")
+				}
 			}),
 		},
 	})
 	return nexus.Options(plugin, nexus.Invoke(func(a *nexus.App) { a.RequireCSRF("cookie sessions (extension/session)") }))
 }
+
+// Install puts the session middleware on app's router with cfg, unless
+// sessions are installed already; it reports whether it did. Module calls
+// it; so does extension/auth for a session scheme.
+func Install(app *nexus.App, cfg Config) bool {
+	if _, done := app.Value(installedKey{}); done {
+		return false
+	}
+	app.SetValue(installedKey{}, true)
+	cfg = cfg.withDefaults()
+	// The default memory store survives `nexus dev` rebuilds the same way
+	// auth.MemoryUserStore does. No-op outside nexus dev, and for custom
+	// stores (which own their durability story).
+	if ms, ok := cfg.Store.(*MemoryStore); ok {
+		dev.Preserve("session.store", ms)
+	}
+	app.Router().Use(middleware(cfg))
+	return true
+}
+
+// Present reports whether ctx belongs to a request the session middleware
+// handled — whether Get(ctx) can read and write.
+func Present(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	_, ok := ctx.Value(ctxKey{}).(*Session)
+	return ok
+}
+
+// installedKey marks an app whose session middleware is installed.
+type installedKey struct{}
 
 // ctxKey carries the *Session on the request context so both
 // httpx-based handlers and ctx-only code (GraphQL resolvers) reach

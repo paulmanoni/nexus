@@ -205,6 +205,7 @@ func declaredSections() []*sectionDecl {
 // app whose file has [cache.x] but which never imports extension/cache is
 // told what to import rather than to declare the table itself.
 var sectionOwners = map[string]string{
+	"auth":    "github.com/paulmanoni/nexus/v2/extension/auth",
 	"cache":   "github.com/paulmanoni/nexus/v2/extension/cache",
 	"storage": "github.com/paulmanoni/nexus/v2/extension/storage",
 	"mail":    "github.com/paulmanoni/nexus/v2/extension/mail",

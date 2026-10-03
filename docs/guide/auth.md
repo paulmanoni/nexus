@@ -7,6 +7,104 @@
 3. enforce per-op gates
 4. report 401s and 403s to the dashboard
 
+There are two ways to set it up. **Accounts and sign-in** (new in 2.1) is the one to
+start with: you write one `Users` type, and nexus issues and checks sessions, tokens
+and API keys itself. **Resolve a token** plugs in a resolver you write, for apps that
+verify credentials someone else issues.
+
+## Accounts and sign-in
+
+Implement `auth.Users` — find an account by its login, load it by id — and hand its
+constructor to `auth.Module`:
+
+```go
+type Users struct{ db *DB }
+
+func NewUsers(db *DB) *Users { return &Users{db: db} }
+
+// FindLogin returns the account a sign-in names and its encoded password.
+func (u *Users) FindLogin(ctx context.Context, login string) (*auth.Identity, string, error) {
+    var row User
+    if err := u.db.Where("email = ?", login).First(&row).Error; err != nil {
+        return nil, "", ignoreNotFound(err)
+    }
+    return u.identity(row), row.Password, nil
+}
+
+// Load rebuilds the identity of a signed-in user, by id.
+func (u *Users) Load(ctx context.Context, id string) (*auth.Identity, error) {
+    var row User
+    if err := u.db.First(&row, "id = ?", id).Error; err != nil {
+        return nil, ignoreNotFound(err)
+    }
+    return u.identity(row), nil
+}
+
+func (u *Users) identity(row User) *auth.Identity {
+    return &auth.Identity{ID: strconv.FormatInt(row.ID, 10), Kind: row.Kind, Perms: row.Perms, Extra: &row}
+}
+
+nexus.Boot(auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}), …)
+```
+
+A type that doesn't implement `Users` fails boot, naming the missing method. Two
+optional methods add to it: `SetPassword(ctx, id, encoded string) error` stores
+passwords (`auth.SetPassword`, and a rehash when a stored hash is outdated), and
+`CheckLogin(ctx, id *auth.Identity) error` refuses a sign-in, such as a disabled
+account.
+
+Sign-in is two calls in any handler:
+
+```go
+func (s *AccountService) SignIn(ctx context.Context, in SignInForm) (*auth.Credential, error) {
+    id, err := auth.Login(ctx, auth.Password{Username: in.Email, Password: in.Password})
+    if err != nil {
+        return nil, err // "invalid login or password" (422), or CheckLogin's error
+    }
+    return auth.SignIn(ctx, id)
+}
+
+nexus.AsRest("POST", "/sign-in", (*AccountService).SignIn, auth.Public())
+```
+
+- **`auth.Login`** finds the account, checks the password with the `[auth.passwords]`
+  hashers, rehashes it when it was stored with an older algorithm, and runs
+  `CheckLogin`. A wrong password and an unknown account give the same error in the
+  same time.
+- **`auth.SignIn`** issues the credential. With a session scheme it cycles the session
+  id and stores the user's id in it. With `auth.Using("api")` it issues a bearer token
+  (or an API key, for an `apikey` scheme) and returns it once, as
+  `{"access_token", "token_type", "expires_in"}`. Only the token's SHA-256 is stored.
+- **`auth.SignOut(ctx)`** ends the credential the request came with: it destroys the
+  session, or revokes the token.
+- **`auth.SetPassword(ctx, id, plain)`** checks the `[auth.passwords]` rules, then
+  hashes and stores the password. **`auth.Refresh(ctx, userID)`** drops the cached
+  `Load` after you change a user's roles.
+
+Schemes are declared in nexus.toml. Without any, one session scheme named `web` is
+used:
+
+```toml
+[auth.schemes.web]
+type = "session"
+
+[auth.schemes.api]
+type = "bearer"
+ttl  = "12h"
+```
+
+A session scheme brings `extension/session` with it, and turns CSRF protection on. To
+use your own session store, put `session.Module` before `auth.Module`. Tokens are kept
+in memory by default, which loses them on restart. In production set
+`Config.Tokens: auth.CacheTokens(cache)` (Redis through `extension/cache`), or your own
+`auth.TokenStore`.
+
+**Every endpoint needs a sign-in** on this path unless it is marked `auth.Public()`;
+`[auth] default = "public"` turns that off. `Users.Load` results are cached per user
+id for `[auth] cache` (5 minutes by default). When a credential arrives but doesn't
+work — an expired or revoked token, a deleted account — the request is anonymous, and
+under `nexus dev` the 401 says why. All keys: [`[auth]`](/reference/nexus-toml#auth).
+
 ## Resolve a token
 
 ```go

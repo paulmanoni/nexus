@@ -177,6 +177,40 @@ consumer_timeout = "8h"    # keep above your longest jobs.Timeout
 delivery_limit   = 20
 ```
 
+## `[auth]`
+
+Read by `auth.Module` when `Config.Users` is set (the config-driven path). See
+[Accounts and sign-in](/guide/auth#accounts-and-sign-in).
+
+```toml
+[auth]
+default = "signed-in"      # every endpoint needs a sign-in unless Public; "public" opts out
+cache   = "5m"             # Users.Load kept per user id; a negative value turns it off
+
+[auth.schemes.web]         # tried apikey → bearer → session, by name within a type
+type   = "session"         # cookie → server-side session (extension/session) → user id
+cookie = "nexus_session"   # the session cookie (default nexus_session)
+ttl    = "336h"            # the session's lifetime (default 14 days)
+secure = true              # mark the cookie Secure behind TLS
+
+[auth.schemes.api]
+type = "bearer"            # opaque tokens auth.SignIn issues, stored as SHA-256
+ttl  = "12h"               # default 12h
+
+[auth.schemes.partners]
+type   = "apikey"          # never expire; revoked by signing out with them
+header = "X-API-Key"       # default X-API-Key
+
+[auth.passwords]
+hashers    = ["bcrypt", "argon2id", "pbkdf2"]   # the first hashes new passwords; all verify
+min_length = 8             # auth.SetPassword's shortest password
+common     = true          # refuse common passwords
+numeric    = true          # refuse all-digit passwords
+similar    = true          # refuse passwords like the user's id or login
+```
+
+Without `[auth.schemes.*]`, one session scheme named `web` is used.
+
 ## `[env.*]`
 
 Top-level. Each key becomes a process environment variable, and it can be referenced

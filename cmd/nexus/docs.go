@@ -1212,7 +1212,36 @@ carries it so the errors surface on the re-render:
 	"auth": `
 AUTH
 
+  auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)})   // accounts + sign-in (2.1)
   auth.Single(resolve)   //  or auth.Module(auth.Config{Authentication: ...})
+
+ACCOUNTS AND SIGN-IN (Config.Users). The app implements auth.Users:
+
+    FindLogin(ctx, login string) (*auth.Identity, encodedPassword string, error)
+    Load(ctx, id string) (*auth.Identity, error)
+    // optional: SetPassword(ctx, id, encoded string) error
+    //           CheckLogin(ctx, id *auth.Identity) error   (refuse a sign-in)
+
+nexus checks the type at boot, then authenticates every request from the
+[auth.schemes.*] in nexus.toml (session by default; bearer; apikey) and
+requires a sign-in on every endpoint not marked auth.Public() ([auth]
+default = "public" opts out). Handlers sign in with two calls:
+
+    id, err := auth.Login(ctx, auth.Password{Username: in.Email, Password: in.Password})
+    cred, err := auth.SignIn(ctx, id)                    // session: cycles the id
+    cred, err := auth.SignIn(ctx, id, auth.Using("api"))  // bearer: {access_token,…}
+    auth.SignOut(ctx)               // destroys the session / revokes the token
+    auth.SetPassword(ctx, id, plain)   // [auth.passwords] rules, hash, store
+    auth.Refresh(ctx, userID)          // drop the cached Load
+
+Tokens are stored as SHA-256 in Config.Tokens (memory by default; use
+auth.CacheTokens(cache) in production). Load is cached per user id ([auth]
+cache, 5m). A credential that arrives but fails leaves the request
+anonymous; under nexus dev the 401 names the reason. [auth] keys:
+nexus docs nexustoml, docs/reference/nexus-toml.md.
+
+RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued
+elsewhere:
 
 Wires the framework's auth surface: credential extraction → cached
 identity resolution → per-op enforcement → trace events.
@@ -1821,8 +1850,8 @@ defaults apply. 'nexus new' scaffolds this block.
 
 THE FILE IS STRICT. Every table is declared by its owner — nexus ([runtime],
 [databases], [env], [extensions], [decorators], deploy tables), a framework
-extension the app imports ([cache] extension/cache, [storage], [mail],
-[jobs]), an extension decoder ([extensions.<name>]), or the app
+extension the app imports ([auth] extension/auth, [cache] extension/cache,
+[storage], [mail], [jobs]), an extension decoder ([extensions.<name>]), or the app
 (config.Section). Boot fails, in dev and production, with file:line and a
 did-you-mean on: a key at the top level (environment -> [runtime]
 environment), an unknown key or sub-table of a declared table (a typo under

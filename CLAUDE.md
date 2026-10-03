@@ -1274,6 +1274,16 @@ auth.Module(auth.Config{
     Cache: auth.CacheFor(15 * time.Minute),
 })
 ```
+**Accounts and sign-in (config path, 2.1):** `auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)})`
+— the app implements `auth.Users` (`FindLogin(ctx, login) (*Identity, encoded, error)`, `Load(ctx, id)`;
+optional `SetPassword`, `CheckLogin`), checked at boot. nexus authenticates from `[auth.schemes.*]`
+(`session` default — brings extension/session + CSRF; `bearer`; `apikey`), requires sign-in on every
+endpoint not `auth.Public()` (`[auth] default = "public"` opts out), caches `Load` per user id (`[auth]
+cache`). Handlers: `auth.Login(ctx, auth.Password{…})` → `auth.SignIn(ctx, id[, auth.Using("api")])`
+(session cycled / token returned once, stored hashed in `Config.Tokens`, default memory —
+`auth.CacheTokens(cache)` in prod), `auth.SignOut`, `auth.SetPassword`, `auth.Refresh`. A failing
+credential = anonymous, reason in the 401 under nexus dev. `Config.Settings` is `[auth]` in Go.
+
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`
 (`Identity.Kind`); directives `//nexus:auth RequiresAny a b` / `Kind staff`. `Identity.Perms`

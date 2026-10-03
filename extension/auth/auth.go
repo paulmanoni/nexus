@@ -85,6 +85,9 @@ type Identity struct {
 	// "orders.*" grants "orders.view" and "orders.refunds.create", "*"
 	// grants everything. Prefer it to Roles/Scopes in new code.
 	Perms []string
+	// Scheme names the [auth.schemes] entry that authenticated the
+	// request; nexus sets it on the config-driven path.
+	Scheme string
 }
 
 // Has reports whether the identity carries the given permission: in Perms
@@ -206,6 +209,22 @@ type Config struct {
 	// value mounts nothing. See Endpoints.
 	Endpoints Endpoints
 
+	// Users is the app's account lookup — the config-driven path. With it,
+	// nexus authenticates requests itself from the [auth] schemes (session,
+	// bearer, apikey), issues credentials with SignIn, and requires a
+	// sign-in on every endpoint that isn't Public. It replaces
+	// Authentication.Schemes and Backend, which must be left unset.
+	Users UsersOption
+
+	// Settings is [auth] in Go; nil reads nexus.toml's [auth] table.
+	// Config-driven path only.
+	Settings *Settings
+
+	// Tokens stores issued bearer tokens and API keys (hashed). Nil keeps
+	// them in memory — lost on restart, not shared between replicas; set
+	// CacheTokens(cache) in production. Config-driven path only.
+	Tokens TokenStore
+
 	// OnResolve fires after every successful resolution — good for
 	// audit logging or per-user metrics.
 	OnResolve func(ctx context.Context, id *Identity)
@@ -281,6 +300,7 @@ var ErrForbidden error = nexus.Err(nexus.Forbidden, "auth: forbidden")
 // nexus apps in one process safe.
 type moduleState struct {
 	cfg          Config
+	config       configPath    // the config-driven path (Config.Users)
 	schemes      []boundScheme // normalized schemes, tried in order
 	permissions  PermissionFn
 	errorHandler ErrorHandler   // renders 401/403 denials; never nil after Module
@@ -424,6 +444,9 @@ func (m *Manager) Login(ctx context.Context, cred Credentials) (*Identity, error
 // UserDetailsFn hook continue to work alongside; migration is a
 // per-resolver switch to auth.User[T].
 func Module(cfg Config) nexus.Option {
+	if cfg.Users.set {
+		return configModule(cfg)
+	}
 	// A backend can supply the resolver, so schemes may omit Resolve — and
 	// a backend with no schemes at all gets a default bearer scheme.
 	schemesIn := cfg.Authentication.Schemes
@@ -434,6 +457,12 @@ func Module(cfg Config) nexus.Option {
 	if err != nil {
 		return nexus.Raw(di.Error(fmt.Errorf("auth: %w", err)))
 	}
+	return wireModule(cfg, schemes, schemesIn, nil)
+}
+
+// wireModule builds the module around its state. cp is the config-driven
+// path's setup (nil for the scheme/backend path).
+func wireModule(cfg Config, schemes []boundScheme, schemesIn []Scheme, cp func(*moduleState) ([]nexus.Option, error)) nexus.Option {
 	eh := cfg.OnError
 	if eh == nil {
 		eh = defaultErrorHandler{}
@@ -466,10 +495,23 @@ func Module(cfg Config) nexus.Option {
 		// capture the trace bus. Runs before the Dashboard slot
 		// mounts /__nexus/auth, so those routes inherit the
 		// middleware.
-		nexus.Invoke(func(app *nexus.App) {
+		nexus.Invoke(func(app *nexus.App) error {
 			state.bus = app.Bus()
+			if cp != nil {
+				if err := state.installConfigPath(app); err != nil {
+					return fmt.Errorf("auth: %w", err)
+				}
+			}
 			app.Router().Use(authMiddleware(state))
+			return nil
 		}),
+	}
+	if cp != nil {
+		extra, err := cp(state)
+		if err != nil {
+			return nexus.Raw(di.Error(fmt.Errorf("auth: %w", err)))
+		}
+		pluginOpts = append(extra, pluginOpts...)
 	}
 	// Deny-by-default: supply the "require identity" gate as the
 	// framework's default EndpointGate. The framework prepends it to every
@@ -703,15 +745,22 @@ func (g *resolveFlights) do(ctx context.Context, key string, fn func() (*Identit
 // which failure to report). Returns (nil, "", nil) for an anonymous
 // request (no scheme found a credential).
 func (st *moduleState) authenticate(ctx context.Context, r *http.Request) (*Identity, string, error) {
+	id, _, tok, err := st.authenticateScheme(ctx, r)
+	return id, tok, err
+}
+
+// authenticateScheme is authenticate that also names the scheme whose
+// credential the request carried ("" when none).
+func (st *moduleState) authenticateScheme(ctx context.Context, r *http.Request) (*Identity, string, string, error) {
 	for i := range st.schemes {
 		tok, ok := st.schemes[i].extract.Extract(r)
 		if !ok {
 			continue
 		}
 		id, err := st.resolveVia(ctx, st.schemes[i], tok)
-		return id, tok, err
+		return id, st.schemes[i].name, tok, err
 	}
-	return nil, "", nil
+	return nil, "", "", nil
 }
 
 // toClientExtractor adapts auth.ExtractorInfo (canonical) to

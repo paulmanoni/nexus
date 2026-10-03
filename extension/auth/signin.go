@@ -1,0 +1,204 @@
+package auth
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/extension/session"
+)
+
+// errNoConfigPath is returned by the sign-in functions in an app without
+// Config.Users.
+var errNoConfigPath = errors.New("auth: SignIn, SignOut, Login and SetPassword need auth.Module(auth.Config{Users: …}) and a request it handled")
+
+func configState(ctx context.Context) (*moduleState, error) {
+	st, ok := stateFrom(ctx)
+	if !ok || st.config.settings == nil {
+		return nil, errNoConfigPath
+	}
+	return st, nil
+}
+
+// Login checks a sign-in: Users.FindLogin, the password against
+// [auth.passwords] hashers (rehashing an outdated hash through
+// PasswordSetter), then LoginChecker. It doesn't sign in — pass the
+// identity to SignIn. A wrong login or password is one InvalidInput error
+// ("invalid login or password", errors.Is ErrInvalidCredentials), the same
+// for an unknown account, in the same time.
+//
+//	id, err := auth.Login(ctx, auth.Password{Username: in.Email, Password: in.Password})
+//	if err != nil { return nil, err }
+//	return auth.SignIn(ctx, id)
+func Login(ctx context.Context, cred Password) (*Identity, error) {
+	st, err := configState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hashers := st.config.settings.hashers
+	id, encoded, err := st.config.users.FindLogin(ctx, cred.Username)
+	if err != nil {
+		return nil, err
+	}
+	if id == nil || encoded == "" {
+		_, _ = hashers.Hash(cred.Password) // the time a verify would take
+		return nil, invalidLogin()
+	}
+	ok, upgrade, verr := hashers.Verify(cred.Password, encoded)
+	if verr != nil || !ok {
+		return nil, invalidLogin()
+	}
+	if upgrade {
+		if ps, isSetter := st.config.users.(PasswordSetter); isSetter {
+			if fresh, herr := hashers.Hash(cred.Password); herr == nil {
+				_ = ps.SetPassword(ctx, id.ID, fresh) // best-effort; the login stands
+			}
+		}
+	}
+	if lc, isChecker := st.config.users.(LoginChecker); isChecker {
+		if err := lc.CheckLogin(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	return id, nil
+}
+
+func invalidLogin() error {
+	e := nexus.Invalid().Global("invalid login or password")
+	e.Cause = ErrInvalidCredentials
+	return e
+}
+
+// Credential is what SignIn issued. A session sign-in sets the cookie and
+// carries no token; a bearer or API-key sign-in returns the token, once —
+// only its hash is stored. Its JSON is the OAuth2 token response shape.
+type Credential struct {
+	Scheme      string `json:"-"`
+	AccessToken string `json:"access_token,omitempty"`
+	TokenType   string `json:"token_type,omitempty"`
+	ExpiresIn   int    `json:"expires_in,omitempty"` // seconds; 0 = no expiry
+}
+
+// SignInOption adjusts SignIn.
+type SignInOption func(*signIn)
+
+type signIn struct{ scheme string }
+
+// Using signs in through the named scheme ([auth.schemes.<name>]) instead
+// of the default — the first session scheme, else the first bearer one.
+func Using(scheme string) SignInOption { return func(s *signIn) { s.scheme = scheme } }
+
+// SignIn issues id a credential: a session (its id cycled, so a session
+// fixed before sign-in is useless) or a bearer token / API key.
+func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credential, error) {
+	st, err := configState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if id == nil || id.ID == "" {
+		return nil, errors.New("auth.SignIn: an identity with an ID")
+	}
+	var o signIn
+	for _, opt := range opts {
+		opt(&o)
+	}
+	rs := st.config.settings
+	sc, ok := rs.scheme(o.scheme)
+	if o.scheme == "" {
+		if sc, ok = rs.firstOf(SchemeSession); !ok {
+			sc, ok = rs.firstOf(SchemeBearer)
+		}
+	}
+	if !ok {
+		if o.scheme != "" {
+			return nil, errors.New("auth.SignIn: no scheme [auth.schemes." + o.scheme + "]")
+		}
+		return nil, errors.New("auth.SignIn: no session or bearer scheme — name one with auth.Using")
+	}
+	if sc.Type == SchemeSession {
+		if !session.Present(ctx) {
+			return nil, errors.New("auth.SignIn: no session on this request")
+		}
+		s := session.Get(ctx)
+		s.Cycle()
+		s.Set(sessionUserKey, id.ID)
+		return &Credential{Scheme: sc.name}, nil
+	}
+	tok := newToken()
+	t := StoredToken{UserID: id.ID, Scheme: sc.name}
+	ttl := time.Duration(0)
+	if sc.Type == SchemeBearer {
+		ttl = sc.TTL
+		t.Expires = time.Now().Add(ttl)
+	}
+	if err := st.config.tokens.Save(ctx, hashToken(tok), t, ttl); err != nil {
+		return nil, err
+	}
+	c := &Credential{Scheme: sc.name, AccessToken: tok, ExpiresIn: int(ttl / time.Second)}
+	if sc.Type == SchemeBearer {
+		c.TokenType = "Bearer"
+	}
+	return c, nil
+}
+
+// SignOut ends the credential this request came with: the session is
+// destroyed, the token or key revoked. Anonymous requests are a no-op.
+func SignOut(ctx context.Context) error {
+	st, err := configState(ctx)
+	if err != nil {
+		return err
+	}
+	p, ok := ctx.Value(ctxCredentialTok).(presented)
+	if !ok {
+		return nil
+	}
+	sc, ok := st.config.settings.scheme(p.scheme)
+	if !ok {
+		return nil
+	}
+	if sc.Type == SchemeSession {
+		session.Get(ctx).Destroy()
+		return nil
+	}
+	return st.config.tokens.Delete(ctx, hashToken(p.token))
+}
+
+// SetPassword validates plain against [auth.passwords], hashes it and
+// stores it through Users' SetPassword. A refused password is an
+// InvalidInput error on the "password" field.
+func SetPassword(ctx context.Context, id *Identity, plain string) error {
+	st, err := configState(ctx)
+	if err != nil {
+		return err
+	}
+	ps, ok := st.config.users.(PasswordSetter)
+	if !ok {
+		return errors.New("auth.SetPassword: Users has no SetPassword(ctx, id, encoded string) error method")
+	}
+	if err := ValidatePassword(ctx, plain, id, st.config.settings.validator...); err != nil {
+		return nexus.Invalid().Field("password", err.Error())
+	}
+	encoded, err := st.config.settings.hashers.Hash(plain)
+	if err != nil {
+		return err
+	}
+	if err := ps.SetPassword(ctx, id.ID, encoded); err != nil {
+		return err
+	}
+	Refresh(ctx, id.ID)
+	return nil
+}
+
+// Refresh drops the cached Users.Load result for userID, so the next
+// request loads it again — call it after changing what Load returns
+// (roles, a disabled flag) outside SetPassword.
+func Refresh(ctx context.Context, userID string) {
+	if st, ok := stateFrom(ctx); ok && st.config.loads != nil {
+		st.config.loads.drop(userID)
+	}
+}
+
+// Public opts an endpoint out of the sign-in [auth] default requires — the
+// same option as nexus.Public().
+func Public() nexus.PublicOption { return nexus.Public() }

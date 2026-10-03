@@ -670,6 +670,11 @@ changes behaviour (deny-by-default, a bad credential is an error), the new
 behaviour belongs to the new configuration path only — an app on
 `auth.Module(auth.Config{Authentication: …})` behaves as it does in 2.0.
 
+One change from §4 as built: a credential that arrives but fails leaves the request
+**anonymous** — with the reason recorded, shown in the 401 under nexus dev and in the
+trace — rather than failing it outright, so a public page (the login page itself)
+still loads with a stale cookie or token. Gated endpoints refuse it as before.
+
 `auth.Module(auth.Config{…})` stays the entry point (its signature can't change in
 2.x); the design's `auth.Module` value becomes `auth.Module(auth.Config{})` plus
 the `[auth]` table, and `Config.Users` names the app's `Users`.
@@ -677,11 +682,9 @@ the `[auth]` table, and `Config.Users` names the app's `Users`.
 | Slice | New | Replaces (deprecated later) | Release |
 |---|---|---|---|
 | 1a | `Identity.Kind`, `Identity.Perms` (wildcards), `auth.Current`, `auth.ID`, `auth.RequiresAny`, `auth.Kind`, `//nexus:auth RequiresAny/Kind`, `OpGates` for both | `IdentityFrom`, `Subject`; `Roles`/`Scopes` stay | done (2.1) |
-| 1b | `auth.Users` (+ `PasswordSetter`, `LoginChecker`), `Config.Users: auth.UseUsers(ctor)` checked at boot, `Load` cache per id | `Resolver`, `Backend` capabilities, `UserStore`/`ModelBackend` | 2.1 |
-| 1c | `[auth.schemes.*]`: `session`, `bearer` (hashed token store), `apikey`; a present-but-invalid credential is `Unauthenticated` with a reason | `Scheme{Extract, Resolve}`, `Bearer()`/`Cookie()`/`APIKey()`/`Chain` | 2.1 |
-| 1d | `[auth] default = "signed-in"` on the new path, `auth.Public()`; WS/live identity re-checked per message (epoch) | `nexus.Public()` (kept), `Optional()` | 2.1 |
+| 1b–1d | `auth.Users` (+ `PasswordSetter`, `LoginChecker`) via `Config.Users: auth.UseUsers(ctor)`, checked at boot; `Load` cached per id; `[auth.schemes.*]` `session`/`bearer`/`apikey` with a hashed `TokenStore`; `auth.Login`/`SignIn`/`SignOut`/`SetPassword`/`Refresh`, `[auth.passwords]`; `[auth] default = "signed-in"` + `auth.Public()`; a failing credential is anonymous with its reason in the 401 (dev) and the trace | `Resolver`, `Backend` capabilities, `UserStore`/`ModelBackend`, `Scheme{Extract, Resolve}`, extractors, `Optional()` | done (2.1) |
 | 2 | `auth.Login`/`SignIn`/`SignOut`, `[auth.passwords]`, throttle, `next`, areas, built-in endpoints | `Endpoints`, `LoginEndpoint`/`LogoutEndpoint`, `ErrorHandler` | 2.2 |
-| 3 | refresh, `[auth.sessions]`, `RevokeUser`/`Sessions`, API keys, `jwt`, OAuth2 grants | `Manager.*`, `extension/oauth2` server half | 2.3 |
+| 3 | refresh, `[auth.sessions]`, `RevokeUser`/`Sessions` (per-user epoch, also re-checked per WS/live message), `auth.Keys`, `jwt`, OAuth2 grants | `Manager.*`, `extension/oauth2` server half | 2.3 |
 | 4 | impersonation, policies, job identities, dashboard tab, `nexus auth check`, `authtest` | `MemoryUserStore` | 2.4 |
 | 5 | `nexus migrate` rows for every deprecated name | — | with each slice |
 
