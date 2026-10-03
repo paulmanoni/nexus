@@ -1,0 +1,51 @@
+package ui
+
+// Crumb is one step of a PageHeader's breadcrumbs.
+type Crumb struct {
+	Label string
+	Href  string // the current page's crumb has none
+}
+
+// PageHeaderProps configures a PageHeader.
+type PageHeaderProps struct {
+	Title       string
+	Description string
+	Crumbs      []Crumb
+	Class       string
+}
+
+// PageHeader is a page's title row: breadcrumbs (in-app links), the title
+// and description, and actions — its children — on the right.
+templ PageHeader(p PageHeaderProps) {
+	<header class={ join("ui-page-header flex flex-col gap-3 pb-4 sm:flex-row sm:items-end sm:justify-between", p.Class) }>
+		<div class="min-w-0 space-y-1">
+			if len(p.Crumbs) > 0 {
+				<nav aria-label="Breadcrumb">
+					<ol class="flex flex-wrap items-center gap-1 text-sm text-[color:var(--ui-muted-fg)]">
+						for i, c := range p.Crumbs {
+							if i > 0 {
+								<li aria-hidden="true">
+									@Icon("chevron-right", "size-3.5")
+								</li>
+							}
+							<li>
+								if c.Href != "" {
+									<a href={ templ.SafeURL(c.Href) } data-nx-nav class="hover:text-[color:var(--ui-fg)]">{ c.Label }</a>
+								} else {
+									<span aria-current="page" class="text-[color:var(--ui-fg)]">{ c.Label }</span>
+								}
+							</li>
+						}
+					</ol>
+				</nav>
+			}
+			<h1 class="truncate text-2xl font-semibold tracking-tight text-[color:var(--ui-fg)]">{ p.Title }</h1>
+			if p.Description != "" {
+				<p class="text-sm text-[color:var(--ui-muted-fg)]">{ p.Description }</p>
+			}
+		</div>
+		<div class="flex flex-wrap items-center gap-2">
+			{ children... }
+		</div>
+	</header>
+}

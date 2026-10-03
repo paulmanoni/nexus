@@ -1,0 +1,130 @@
+package ui
+
+// MenuItem is one entry of a Dropdown or RowActions menu: a link (Href),
+// a copy-link entry (Copy), a button running OnClick, or a Separator.
+type MenuItem struct {
+	ID        string
+	Label     string
+	Icon      templ.Component
+	Href      string
+	Nav       bool   // Href is an in-app link
+	Copy      string // copies this path (as an absolute URL) or text
+	OnClick   templ.ComponentScript
+	Danger    bool
+	Disabled  bool
+	Separator bool
+	Attrs     templ.Attributes
+}
+
+func menuItemClass(it MenuItem) string {
+	c := "flex w-full items-center gap-2 rounded-[calc(var(--ui-radius)-2px)] px-2 py-1.5 text-left text-sm cursor-pointer outline-none hover:bg-[color:var(--ui-accent)] focus-visible:bg-[color:var(--ui-accent)] disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50"
+	if it.Danger {
+		return join(c, "text-[color:var(--ui-danger)]")
+	}
+	return join(c, "text-[color:var(--ui-fg)]")
+}
+
+func (it MenuItem) attrs() templ.Attributes {
+	a := templ.Attributes{}
+	if it.ID != "" {
+		a["id"] = it.ID
+	}
+	if it.Copy != "" {
+		a["data-ui-copy"] = it.Copy
+	}
+	return merge(a, it.Attrs)
+}
+
+// menu is the floating list a trigger opens; ui.js places it at the
+// trigger, keeps it there while the page scrolls, and closes it on an
+// outside click, Esc, or a chosen item.
+templ menu(items []MenuItem) {
+	<div role="menu" data-ui-menu hidden class="ui-menu fixed z-50 min-w-48 overflow-y-auto rounded-[var(--ui-radius)] border border-[color:var(--ui-border)] bg-[color:var(--ui-popover)] p-1 text-[color:var(--ui-popover-fg)] shadow-lg">
+		for _, it := range items {
+			if it.Separator {
+				<div role="separator" class="-mx-1 my-1 h-px bg-[color:var(--ui-border)]"></div>
+			} else if it.Href != "" {
+				<a
+					role="menuitem"
+					href={ templ.SafeURL(it.Href) }
+					class={ menuItemClass(it) }
+					if it.Nav {
+						data-nx-nav
+					}
+					if it.Disabled {
+						aria-disabled="true"
+					}
+					if hasScript(it.OnClick) {
+						onclick={ it.OnClick }
+					}
+					{ it.attrs()... }
+				>
+					@menuItemInner(it)
+				</a>
+			} else {
+				<button
+					type="button"
+					role="menuitem"
+					class={ menuItemClass(it) }
+					disabled?={ it.Disabled }
+					if hasScript(it.OnClick) {
+						onclick={ it.OnClick }
+					}
+					{ it.attrs()... }
+				>
+					@menuItemInner(it)
+				</button>
+			}
+		}
+	</div>
+}
+
+templ menuItemInner(it MenuItem) {
+	if it.Icon != nil {
+		<span class="inline-flex opacity-70">
+			@it.Icon
+		</span>
+	}
+	<span>{ it.Label }</span>
+}
+
+// Dropdown is a labelled button (its children are the label) that opens a
+// menu of items.
+templ Dropdown(p ButtonProps, items ...MenuItem) {
+	{{ p.Attrs = merge(templ.Attributes{"data-ui-menu-trigger": true, "aria-haspopup": "menu", "aria-expanded": "false"}, p.Attrs) }}
+	if p.Variant == "" {
+		{{ p.Variant = Outline }}
+	}
+	<div class="ui-dropdown relative inline-block" data-ui-menu-root>
+		@Button(p) {
+			{ children... }
+			@Icon("chevron-down", "size-4 opacity-60")
+		}
+		@menu(items)
+	</div>
+}
+
+// MenuButton is an icon-only trigger (label is its accessible name) that
+// opens a menu of items.
+templ MenuButton(icon templ.Component, label string, items ...MenuItem) {
+	<div class="ui-row-actions relative inline-block" data-ui-menu-root>
+		<button
+			type="button"
+			class="inline-flex size-8 items-center justify-center rounded-[var(--ui-radius)] text-[color:var(--ui-muted-fg)] cursor-pointer hover:bg-[color:var(--ui-accent)] hover:text-[color:var(--ui-fg)] aria-expanded:bg-[color:var(--ui-accent)] aria-expanded:text-[color:var(--ui-fg)]"
+			title={ label }
+			aria-label={ label }
+			aria-haspopup="menu"
+			aria-expanded="false"
+			data-ui-menu-trigger
+		>
+			@icon
+		</button>
+		@menu(items)
+	</div>
+}
+
+// RowActions is a table row's actions: a "more" trigger that opens a menu.
+// A row click (TableRow's Href) never fires from inside it.
+templ RowActions(items ...MenuItem) {
+	@MenuButton(Icon("more-vertical"), "Actions", items...)
+}

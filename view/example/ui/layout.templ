@@ -4,6 +4,7 @@ import (
 	"github.com/templui/templui/components/dialog"
 
 	"github.com/paulmanoni/nexus/v2/view"
+	kit "github.com/paulmanoni/nexus/v2/view/ui"
 )
 
 templ Layout(title string) {
@@ -15,6 +16,7 @@ templ Layout(title string) {
 			<title>{ title }</title>
 			<link rel="stylesheet" href="/assets/css/output.css"/>
 			@view.Script()
+			@kit.Script()
 			@dialog.Script()
 		</head>
 		<body class="mx-auto max-w-2xl p-6 space-y-4">
@@ -24,6 +26,9 @@ templ Layout(title string) {
 				}
 				@view.Link("/board", templ.Attributes{"id": "nav-board", "class": "underline"}) {
 					Adoption board
+				}
+				@view.Link("/registry", templ.Attributes{"id": "nav-registry", "class": "underline"}) {
+					Registry
 				}
 			</nav>
 			{ children... }

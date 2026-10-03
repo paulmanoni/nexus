@@ -100,8 +100,11 @@ func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error 
 	return nil
 }
 
-// Module mounts the live board, declared like a nexus.Resource.
+// Module mounts the live board and the registry, declared like a
+// nexus.Resource.
 var Module = nexus.Module("pets",
 	view.Live[*Board]("/board").
 		Provide(NewBoard),
+	view.Live[*Registry]("/registry").
+		Provide(NewRegistry),
 )

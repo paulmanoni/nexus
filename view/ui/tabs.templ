@@ -1,0 +1,117 @@
+package ui
+
+// Tab is one tab of a Tabs strip. It does one of three things:
+//
+//   - OnSelect: a live event the server answers by rendering the tab's
+//     content (view.Send(x.SetTab, "open")); the tab shows as selected at
+//     once, before the reply.
+//   - Href: a link (Nav for in-app navigation).
+//   - Panel: the id of a TabPanel switched in the browser.
+type Tab struct {
+	ID       string
+	Label    string
+	Count    string // a count shown beside the label ("12"); none when empty
+	Active   bool
+	Disabled bool
+	OnSelect templ.ComponentScript
+	Href     string
+	Nav      bool
+	Panel    string
+}
+
+// TabsProps configures a Tabs strip.
+type TabsProps struct {
+	ID    string
+	Tabs  []Tab
+	Pills bool // pills instead of an underlined strip
+	Class string
+}
+
+func tabsClass(p TabsProps) string {
+	if p.Pills {
+		return join("ui-tabs inline-flex flex-wrap items-center gap-1 rounded-[var(--ui-radius)] bg-[color:var(--ui-muted)] p-1", p.Class)
+	}
+	return join("ui-tabs flex flex-wrap items-end gap-1 border-b border-[color:var(--ui-border)]", p.Class)
+}
+
+func tabClass(pills bool) string {
+	if pills {
+		return "inline-flex items-center gap-1.5 rounded-[calc(var(--ui-radius)-2px)] px-3 py-1 text-sm font-medium text-[color:var(--ui-muted-fg)] transition-colors cursor-pointer hover:text-[color:var(--ui-fg)] aria-selected:bg-[color:var(--ui-bg)] aria-selected:text-[color:var(--ui-fg)] aria-selected:shadow-sm disabled:opacity-50 disabled:pointer-events-none"
+	}
+	return "-mb-px inline-flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-[color:var(--ui-muted-fg)] transition-colors cursor-pointer hover:text-[color:var(--ui-fg)] aria-selected:border-[color:var(--ui-primary)] aria-selected:text-[color:var(--ui-fg)] disabled:opacity-50 disabled:pointer-events-none"
+}
+
+func tabSelected(t Tab) string {
+	if t.Active {
+		return "true"
+	}
+	return "false"
+}
+
+// Tabs is a strip of tabs (role=tablist). Selecting one marks it at once;
+// what it shows comes from its OnSelect event, its link, or its Panel.
+templ Tabs(p TabsProps) {
+	<div
+		role="tablist"
+		class={ tabsClass(p) }
+		data-ui-tabs
+		if p.ID != "" {
+			id={ p.ID }
+		}
+	>
+		for _, t := range p.Tabs {
+			if t.Href != "" {
+				<a
+					role="tab"
+					href={ templ.SafeURL(t.Href) }
+					class={ tabClass(p.Pills) }
+					aria-selected={ tabSelected(t) }
+					data-ui-tab
+					if t.ID != "" {
+						id={ t.ID }
+					}
+					if t.Nav {
+						data-nx-nav
+					}
+				>
+					@tabLabel(t)
+				</a>
+			} else {
+				<button
+					type="button"
+					role="tab"
+					class={ tabClass(p.Pills) }
+					aria-selected={ tabSelected(t) }
+					data-ui-tab
+					if t.ID != "" {
+						id={ t.ID }
+					}
+					if t.Panel != "" {
+						aria-controls={ t.Panel }
+					}
+					disabled?={ t.Disabled }
+					if hasScript(t.OnSelect) {
+						onclick={ t.OnSelect }
+					}
+				>
+					@tabLabel(t)
+				</button>
+			}
+		}
+	</div>
+}
+
+templ tabLabel(t Tab) {
+	{ t.Label }
+	if t.Count != "" {
+		<span class="rounded-full bg-[color:var(--ui-muted)] px-1.5 text-xs tabular-nums text-[color:var(--ui-muted-fg)]">{ t.Count }</span>
+	}
+}
+
+// TabPanel is the content of a browser-switched tab: the Tab whose Panel is
+// id shows it. Active is the one shown first.
+templ TabPanel(id string, active bool) {
+	<div id={ id } role="tabpanel" data-ui-panel hidden?={ !active }>
+		{ children... }
+	</div>
+}

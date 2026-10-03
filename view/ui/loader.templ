@@ -1,0 +1,40 @@
+package ui
+
+// LoaderProps configures a Loader.
+type LoaderProps struct {
+	Label string // shown beside the spinner, and read by screen readers
+	// Overlay covers the nearest positioned ancestor (give it "relative")
+	// with a veil and the spinner, instead of sitting inline.
+	Overlay bool
+	Class   string
+}
+
+// Loader is a spinner with an optional label. For a loader over content
+// while an event works, wrap the event in ui.Loading instead.
+templ Loader(p LoaderProps) {
+	if p.Overlay {
+		<div class={ join("ui-loader-overlay absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-[inherit] bg-[color:var(--ui-bg)]/60 text-sm text-[color:var(--ui-muted-fg)]", p.Class) } role="status" aria-live="polite">
+			@Icon("spinner", "size-6 text-[color:var(--ui-primary)]")
+			@loaderLabel(p.Label)
+		</div>
+	} else {
+		<span class={ join("inline-flex items-center gap-2 text-sm text-[color:var(--ui-muted-fg)]", p.Class) } role="status" aria-live="polite">
+			@Icon("spinner")
+			@loaderLabel(p.Label)
+		</span>
+	}
+}
+
+templ loaderLabel(label string) {
+	if label != "" {
+		<span>{ label }</span>
+	} else {
+		<span class="sr-only">Loading</span>
+	}
+}
+
+// Skeleton is a pulsing placeholder block, sized by its class
+// ("h-4 w-32").
+templ Skeleton(class string) {
+	<div class={ join("animate-pulse rounded-[var(--ui-radius)] bg-[color:var(--ui-muted)]", class) }></div>
+}

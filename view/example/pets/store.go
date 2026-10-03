@@ -90,6 +90,20 @@ func (s *Store) ClearAdoptions() {
 	s.adopted = map[string]bool{}
 }
 
+// Remove takes a pet off the store.
+func (s *Store) Remove(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, p := range s.pets {
+		if p.Name == name {
+			s.pets = append(s.pets[:i:i], s.pets[i+1:]...)
+			delete(s.adopted, name)
+			return true
+		}
+	}
+	return false
+}
+
 // Adopted is a copy of who is adopted.
 func (s *Store) Adopted() map[string]bool {
 	s.mu.Lock()
