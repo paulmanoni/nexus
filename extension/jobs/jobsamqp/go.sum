@@ -20,8 +20,8 @@ github.com/graphql-go/graphql v0.8.1 h1:p7/Ou/WpmulocJeEx7wjQy611rtXGQaAcXGqanuM
 github.com/graphql-go/graphql v0.8.1/go.mod h1:nKiHzRM0qopJEwCITUuIsxk9PlVlwIiiI8pnJEhordQ=
 github.com/graphql-go/handler v0.2.4 h1:gz9q11TUHPNUpqzV8LMa+rkqM5NUuH/nkE3oF2LS3rI=
 github.com/graphql-go/handler v0.2.4/go.mod h1:gsQlb4gDvURR0bgN8vWQEh+s5vJALM2lYL3n3cf6OxQ=
-github.com/paulmanoni/nexus/v2 v2.1.0 h1:BPAmu1XJ8z/97CiyEn+CIahGkISvOaCaQH6i3Hcj1ec=
-github.com/paulmanoni/nexus/v2 v2.1.0/go.mod h1:5YbdBIJ5y3LCIFjUs1HQ536b/rGjJfPMnOh97whcZNQ=
+github.com/paulmanoni/nexus/v2 v2.2.0 h1:dIyn5ZRVs/mtatQHdcILmIEsKFB/i8bx3qyj9lbhXhE=
+github.com/paulmanoni/nexus/v2 v2.2.0/go.mod h1:5YbdBIJ5y3LCIFjUs1HQ536b/rGjJfPMnOh97whcZNQ=
 github.com/pelletier/go-toml/v2 v2.3.1 h1:MYEvvGnQjeNkRF1qUuGolNtNExTDwct51yp7olPtrEc=
 github.com/pelletier/go-toml/v2 v2.3.1/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
