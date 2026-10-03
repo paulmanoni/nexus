@@ -1,4 +1,4 @@
-package nexus
+package dev
 
 import (
 	"encoding/json"
@@ -75,13 +75,13 @@ func TestPreserveDevCarriesStateAcrossRestart(t *testing.T) {
 	restart := devSession(t)
 
 	before := newCounterStore()
-	PreserveDev("counters", before)
+	Preserve("counters", before)
 	before.add("visits", 3)
 
 	restart()
 
 	after := newCounterStore()
-	PreserveDev("counters", after)
+	Preserve("counters", after)
 	if got := after.get("visits"); got != 3 {
 		t.Errorf("visits = %d after restart, want 3", got)
 	}
@@ -90,7 +90,7 @@ func TestPreserveDevCarriesStateAcrossRestart(t *testing.T) {
 	after.add("visits", 1)
 	restart()
 	third := newCounterStore()
-	PreserveDev("counters", third)
+	Preserve("counters", third)
 	if got := third.get("visits"); got != 4 {
 		t.Errorf("visits = %d after second restart, want 4", got)
 	}
@@ -99,16 +99,16 @@ func TestPreserveDevCarriesStateAcrossRestart(t *testing.T) {
 func TestPreserveDevIsolatesNames(t *testing.T) {
 	restart := devSession(t)
 	a, b := newCounterStore(), newCounterStore()
-	PreserveDev("a", a)
-	PreserveDev("b", b)
+	Preserve("a", a)
+	Preserve("b", b)
 	a.add("x", 1)
 	b.add("x", 9)
 
 	restart()
 
 	a2, b2 := newCounterStore(), newCounterStore()
-	PreserveDev("a", a2)
-	PreserveDev("b", b2)
+	Preserve("a", a2)
+	Preserve("b", b2)
 	if a2.get("x") != 1 || b2.get("x") != 9 {
 		t.Errorf("state crossed names: a=%d b=%d, want 1 and 9", a2.get("x"), b2.get("x"))
 	}
@@ -117,7 +117,7 @@ func TestPreserveDevIsolatesNames(t *testing.T) {
 	// not upset the ones that are.
 	restart()
 	a3 := newCounterStore()
-	PreserveDev("a", a3)
+	Preserve("a", a3)
 	if a3.get("x") != 1 {
 		t.Errorf("a = %d, want 1", a3.get("x"))
 	}
@@ -133,7 +133,7 @@ func TestPreserveDevNoopOutsideDev(t *testing.T) {
 
 	s := newCounterStore()
 	s.add("x", 1)
-	PreserveDev("counters", s)
+	Preserve("counters", s)
 	if len(devStates.current) != 0 {
 		t.Errorf("registered %d values with no dev-state file", len(devStates.current))
 	}
@@ -147,14 +147,14 @@ func TestPreserveDevNoopOutsideDev(t *testing.T) {
 func TestPreserveDevSurvivesBadState(t *testing.T) {
 	restart := devSession(t)
 	first := newCounterStore()
-	PreserveDev("counters", first)
+	Preserve("counters", first)
 	first.add("x", 5)
 	restart()
 
 	second := newCounterStore()
 	second.failOn = "restore"
 	second.add("fresh", 1)
-	PreserveDev("counters", second) // restore fails, reported, ignored
+	Preserve("counters", second) // restore fails, reported, ignored
 	if second.get("fresh") != 1 {
 		t.Error("a failed restore clobbered the store's own state")
 	}
@@ -163,14 +163,14 @@ func TestPreserveDevSurvivesBadState(t *testing.T) {
 	// still make it into the file.
 	third := newCounterStore()
 	third.failOn = "snapshot"
-	PreserveDev("broken", third)
+	Preserve("broken", third)
 	ok := newCounterStore()
-	PreserveDev("ok", ok)
+	Preserve("ok", ok)
 	ok.add("y", 2)
 	restart()
 
 	revived := newCounterStore()
-	PreserveDev("ok", revived)
+	Preserve("ok", revived)
 	if revived.get("y") != 2 {
 		t.Errorf("y = %d, want 2 (one bad snapshot must not lose the others)", revived.get("y"))
 	}
@@ -180,13 +180,13 @@ func TestPreserveDevJSON(t *testing.T) {
 	restart := devSession(t)
 
 	state := map[string]int{"a": 1}
-	PreserveDevJSON("m", func() map[string]int { return state }, func(v map[string]int) { state = v })
+	PreserveJSON("m", func() map[string]int { return state }, func(v map[string]int) { state = v })
 	state["b"] = 2
 
 	restart()
 
 	var restored map[string]int
-	PreserveDevJSON("m", func() map[string]int { return restored }, func(v map[string]int) { restored = v })
+	PreserveJSON("m", func() map[string]int { return restored }, func(v map[string]int) { restored = v })
 	if restored["a"] != 1 || restored["b"] != 2 {
 		t.Errorf("restored = %v, want {a:1 b:2}", restored)
 	}
@@ -197,7 +197,7 @@ func TestPreserveDevJSON(t *testing.T) {
 func TestDevStateFileShape(t *testing.T) {
 	restart := devSession(t)
 	s := newCounterStore()
-	PreserveDev("counters", s)
+	Preserve("counters", s)
 	s.add("x", 1)
 	restart()
 

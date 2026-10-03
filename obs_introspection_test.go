@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
@@ -83,7 +84,7 @@ func TestParseIntrospectionNetworks_EmptyIsNil(t *testing.T) {
 // stay reachable for the operator running `nexus dev`. Production
 // binaries never see NEXUS_DEV=1, so strict-mode stays strict.
 func TestIntrospectionGate_OpenInDevMode(t *testing.T) {
-	t.Setenv(NexusDevEnv, "1")
+	t.Setenv(dev.Env, "1")
 	if gate := introspectionGate(false, nil); gate != nil {
 		t.Fatal("gate should be nil under NEXUS_DEV=1")
 	}

@@ -1,4 +1,4 @@
-package nexus
+package dev
 
 import (
 	"bytes"
@@ -54,11 +54,11 @@ func TestDurString(t *testing.T) {
 
 func TestDevRequestLogEnabledGating(t *testing.T) {
 	t.Setenv("NEXUS_DEV", "")
-	if devRequestLogEnabled() {
+	if RequestLogEnabled() {
 		t.Error("should be disabled outside nexus dev (NEXUS_DEV unset)")
 	}
 	t.Setenv("NEXUS_DEV", "1")
-	if !devRequestLogEnabled() {
+	if !RequestLogEnabled() {
 		t.Error("should be enabled by default under nexus dev")
 	}
 }

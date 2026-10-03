@@ -15,6 +15,7 @@ import (
 	"github.com/go-oauth2/oauth2/v4/server"
 	"github.com/go-oauth2/oauth2/v4/store"
 	"github.com/google/uuid"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -401,7 +402,7 @@ func (c *Config) applyDefaults() {
 // and so always get the memory store; setting Config.TokenStore opts out
 // either way.
 func defaultTokenStore() oauth2lib.TokenStore {
-	if dir := nexus.DevStateDir(); dir != "" {
+	if dir := dev.StateDir(); dir != "" {
 		ts, err := store.NewFileTokenStore(filepath.Join(dir, "oauth2-tokens.db"))
 		if err == nil {
 			return ts

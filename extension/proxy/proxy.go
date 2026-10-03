@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/extension"
 	"github.com/paulmanoni/nexus/v2/extension/dashboard"
 	"github.com/paulmanoni/nexus/v2/httpx"
@@ -141,7 +142,7 @@ type pluginState struct {
 func (s *pluginState) boot(_ context.Context, app *nexus.App) error {
 	// Launch the upstream first so it's starting up while we mount routes.
 	if s.cfg.Command != nil {
-		dev := nexus.IsDev()
+		dev := dev.Enabled()
 		proc, err := startProcess(s.cfg.Command, dev)
 		if err != nil {
 			return err

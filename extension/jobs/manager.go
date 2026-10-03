@@ -18,6 +18,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/resource"
 )
@@ -127,7 +128,7 @@ func (c Config) resolve(store Store, broker Broker) (Config, Store, error) {
 	}
 	if c.ShutdownGrace == 0 {
 		def := 10 * time.Second
-		if nexus.IsDev() {
+		if dev.Enabled() {
 			def = 0
 		}
 		c.ShutdownGrace = config.Get("jobs.shutdown_grace", def)
@@ -242,7 +243,7 @@ func newManager(cfg Config, store Store) *Manager {
 		stopping:   make(chan struct{}),
 	}
 	if ms, ok := store.(*memoryStore); ok {
-		nexus.PreserveDev("jobs", ms)
+		dev.Preserve("jobs", ms)
 	}
 	return m
 }

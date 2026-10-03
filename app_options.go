@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/internal/bootui"
@@ -478,7 +479,7 @@ func autoLoad(path string) (config.Runtime, []Option) {
 	// boot in dev, so a bad CIDR / CORS combo / rate limit / unimported
 	// extension surfaces now instead of only when someone remembers to lint.
 	// Advisory (reported by runBootChecks, never aborts); prod pays nothing.
-	if IsDev() {
+	if dev.Enabled() {
 		if issues, lerr := f.Lint(); lerr == nil {
 			addPendingBootIssues(issues)
 		}
@@ -557,14 +558,14 @@ func Run(cfg config.Runtime, opts ...Option) {
 	// and every other wiring invoke — so live-topology checks (e.g. "topic has
 	// no transport bound") see the finalized graph. Dev-only: no invoke, no
 	// cost in production.
-	if IsDev() {
+	if dev.Enabled() {
 		all = append(all, Invoke(func() { runBootChecks() }).nexusOption())
 		// Snapshot preserved in-memory state on the way out, so the binary
 		// `nexus dev` is about to swap in can pick it up (see devstate.go).
 		// Registered last => runs first on shutdown, before resources close.
 		all = append(all, Invoke(func(lc Lifecycle) {
 			lc.Append(Hook{OnStop: func(context.Context) error {
-				return devStates.writeDevState()
+				return dev.SaveState()
 			}})
 		}).nexusOption())
 	}

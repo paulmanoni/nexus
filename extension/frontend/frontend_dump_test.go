@@ -8,6 +8,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 )
 
 // TestPlugin_DumpFollowsRuntimeSDK boots a real app in development with a
@@ -31,8 +32,8 @@ func TestPlugin_DumpFollowsRuntimeSDK(t *testing.T) {
 				name = m.name + "/RuntimeSDK=true"
 			}
 			t.Run(name, func(t *testing.T) {
-				t.Setenv(nexus.NexusDevEnv, m.nexusDev)
-				t.Setenv(nexus.NexusDevRootEnv, "")
+				t.Setenv(dev.Env, m.nexusDev)
+				t.Setenv(dev.RootEnv, "")
 				dir := t.TempDir()
 				t.Chdir(dir)
 				if err := os.MkdirAll(filepath.Join(dir, "web"), 0o755); err != nil {

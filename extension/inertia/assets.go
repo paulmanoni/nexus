@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
@@ -204,7 +205,7 @@ func (e *Engine) hotHeadTags(h *vitehot.Hot) string {
 		entry = e.devEntry
 	}
 	react := e.reactForced || isJSXEntry(entry)
-	return devTags(h.ClientURL(), h.URL(entry), h.URL("@react-refresh"), react, nexus.IsDev())
+	return devTags(h.ClientURL(), h.URL(entry), h.URL("@react-refresh"), react, dev.Enabled())
 }
 
 func isJSXEntry(entry string) bool {
@@ -253,7 +254,7 @@ func (e *Engine) devMode() bool {
 	if e.app != nil {
 		env = e.app.Environment()
 	}
-	return vitehot.Enabled(nexus.IsDev(), env)
+	return vitehot.Enabled(dev.Enabled(), env)
 }
 
 // missingAssets builds the report for a render with neither a dev server nor

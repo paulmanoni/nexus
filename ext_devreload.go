@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -570,7 +571,7 @@ func devReloadScript() httpx.HandlerFunc {
 // SSE-only". That gracefully degrades to a manual-reload
 // experience instead of crashing the boot.
 func devReloadWatchDir() string {
-	root := os.Getenv(NexusDevRootEnv)
+	root := os.Getenv(dev.RootEnv)
 	if root == "" {
 		root = "."
 	}

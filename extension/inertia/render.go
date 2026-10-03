@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
@@ -206,7 +206,7 @@ func (e *Engine) renderStatus(c *httpx.Ctx, component string, result any, status
 // more would load the app twice.
 func (e *Engine) templateHead(t *pageTemplate, ssr SSRResult) string {
 	head := e.customHead
-	if nexus.IsDev() && !t.hasShim {
+	if dev.Enabled() && !t.hasShim {
 		head += `<script src="` + devReloadScript + `"></script>`
 	}
 	return head + strings.Join(ssr.Head, "")

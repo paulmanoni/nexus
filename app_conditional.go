@@ -1,6 +1,6 @@
 package nexus
 
-import "os"
+import "github.com/paulmanoni/nexus/v2/dev"
 
 // Environment / mode gating for the option chain. These helpers
 // let an app's main() declare options that should ONLY apply in
@@ -28,23 +28,6 @@ import "os"
 // keeps production startup strict (TLS needs a domain) and dev
 // startup fast (everything skipped, local config substituted).
 
-// NexusDevEnv is the env-var name `nexus dev` sets on its child
-// process to opt into dev-mode behaviors framework-wide. Declared
-// in ext_frontend.go; the constant is reused here as the source
-// of truth for IfDev / IfNotDev so a future rename only touches
-// one site.
-
-// IsDev reports whether the current process is running under
-// `nexus dev` (or anywhere else that set NEXUS_DEV=1). Public so
-// operator code can branch the same way without re-checking the
-// env var by hand.
-//
-// Production binaries never see NEXUS_DEV=1 — `nexus build`
-// strips it from the codegen output and operator-launched
-// systemd / docker / k8s units don't set it. Treating it as the
-// dev-mode signal is a one-direction guarantee.
-func IsDev() bool { return os.Getenv(NexusDevEnv) == "1" }
-
 // IfDev applies the supplied options ONLY when running under
 // `nexus dev` (NEXUS_DEV=1). In production the wrapped block is
 // a no-op — useful for dev-only stubs (config.Local, in-memory
@@ -54,7 +37,7 @@ func IsDev() bool { return os.Getenv(NexusDevEnv) == "1" }
 // surrounding nexus.Options(...) call. Empty input is a no-op
 // regardless of mode.
 func IfDev(opts ...Option) Option {
-	if !IsDev() {
+	if !dev.Enabled() {
 		return Options() // no-op
 	}
 	return Options(opts...)
@@ -74,7 +57,7 @@ func IfDev(opts ...Option) Option {
 //
 // `nexus dev` skips both; `./bin/app` wires them normally.
 func IfNotDev(opts ...Option) Option {
-	if IsDev() {
+	if dev.Enabled() {
 		return Options() // no-op
 	}
 	return Options(opts...)

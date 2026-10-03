@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2/client"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 )
 
 // dumpProject makes a temp project dir with a detectable frontend
@@ -19,8 +20,8 @@ import (
 // tsconfig's original bytes.
 func dumpProject(t *testing.T, nexusDev string) (string, []byte) {
 	t.Helper()
-	t.Setenv(NexusDevEnv, nexusDev)
-	t.Setenv(NexusDevRootEnv, "")
+	t.Setenv(dev.Env, nexusDev)
+	t.Setenv(dev.RootEnv, "")
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.MkdirAll(filepath.Join(dir, "web"), 0o755); err != nil {

@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -94,7 +95,7 @@ func TestServeFrontend(t *testing.T) {
 // triggers location.reload(). Heuristic caching otherwise serves
 // the previous bytes and the operator never sees their edits.
 func TestServeFrontend_DevModeNoCacheOnAssets(t *testing.T) {
-	t.Setenv(NexusDevEnv, "1")
+	t.Setenv(dev.Env, "1")
 	t.Setenv("GIN_MODE", "test")
 	fsys := fstest.MapFS{
 		"index.html":         {Data: []byte("<html>app</html>")},
@@ -297,8 +298,8 @@ func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv(NexusDevEnv, "1")
-	t.Setenv(NexusDevRootEnv, dir)
+	t.Setenv(dev.Env, "1")
+	t.Setenv(dev.RootEnv, dir)
 
 	fsys := os.DirFS(dir)
 	sub, err := fs.Sub(fsys, "web/dist")
@@ -335,7 +336,7 @@ func TestServeFrontend_DevModeRefreshesIndexHTML(t *testing.T) {
 // content-hashed; re-reading per request is wasted I/O).
 func TestServeFrontend_ProductionCachesIndexHTML(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	t.Setenv(NexusDevEnv, "")
+	t.Setenv(dev.Env, "")
 	dir := t.TempDir()
 	distDir := dir + "/web/dist"
 	if err := os.MkdirAll(distDir, 0o755); err != nil {
@@ -391,15 +392,15 @@ func TestServeFrontend_DevModeReadsFromDisk(t *testing.T) {
 		"web/dist/assets/main.js": {Data: []byte("STALE-JS")},
 	}
 
-	t.Setenv(NexusDevEnv, "1")
-	t.Setenv(NexusDevRootEnv, dir)
+	t.Setenv(dev.Env, "1")
+	t.Setenv(dev.RootEnv, dir)
 
 	// ServeFrontend's dev-mode swap fires inside the function before
 	// the fx Invoke captures the FS. Re-running its swap logic here
 	// matches what the runtime sees on app boot.
 	fsys := fs.FS(embedFS)
-	if os.Getenv(NexusDevEnv) == "1" {
-		fsys = os.DirFS(os.Getenv(NexusDevRootEnv))
+	if os.Getenv(dev.Env) == "1" {
+		fsys = os.DirFS(os.Getenv(dev.RootEnv))
 	}
 	sub, err := fs.Sub(fsys, "web/dist")
 	if err != nil {

@@ -41,6 +41,7 @@ import (
 	"sync"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 
@@ -601,8 +602,8 @@ func New(cfg config.Runtime) *App {
 	// log one line per HTTP request to stdout so navigations surface in the
 	// terminal — otherwise request activity only reaches the dashboard trace
 	// stream. No-op outside dev; opt out with [runtime.logging] requests=false.
-	if devRequestLogEnabled() {
-		a.engine.Use(devRequestLogger(os.Stdout))
+	if dev.RequestLogEnabled() {
+		a.engine.Use(dev.RequestLogger(os.Stdout))
 		a.registry.RegisterMiddleware(middleware.Info{
 			Name:        "dev-request-log",
 			Kind:        middleware.KindBuiltin,
@@ -714,7 +715,7 @@ func (a *App) ClientHandler() *client.Handler {
 // escape hatch — or keep the routes but skip the files with
 // Config.Client.OutDir = client.Off.
 func devAutoMountClientSDK(a *App) {
-	if !IsDev() || a.clientCfg.DevDisabled {
+	if !dev.Enabled() || a.clientCfg.DevDisabled {
 		return
 	}
 	if a.clientHandler != nil {

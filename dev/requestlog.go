@@ -1,4 +1,4 @@
-package nexus
+package dev
 
 import (
 	"io"
@@ -11,7 +11,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
-// devRequestLogEnabled reports whether the per-request dev console logger
+// RequestLogEnabled reports whether the per-request dev console logger
 // should be installed. It's a DEV-ONLY convenience: nexus dev sets NEXUS_DEV=1
 // on the child, and the app then logs one line per HTTP request to stdout so
 // navigations show up in the terminal (Django/Spring style) — by default they
@@ -21,14 +21,14 @@ import (
 //
 //	[runtime.logging]
 //	requests = false
-func devRequestLogEnabled() bool {
+func RequestLogEnabled() bool {
 	if os.Getenv("NEXUS_DEV") != "1" {
 		return false
 	}
 	return config.Get("runtime.logging.requests", true)
 }
 
-// devRequestLogger is a whole-mux middleware that emits one structured
+// RequestLogger is a whole-mux middleware that emits one structured
 // (zap-JSON) line per completed request to out. The JSON shape matches what
 // `nexus dev`'s Dev Server Logs view parses, so requests render in the same
 // columnar layout as the app's own logs:
@@ -38,7 +38,7 @@ func devRequestLogEnabled() bool {
 // Status drives the level — 5xx→error, 4xx→warn, else info — so failures stand
 // out in red/amber. Dashboard traffic (/__nexus*) is skipped: the dashboard is
 // WebSocket-driven and self-referential, so logging it would be noise.
-func devRequestLogger(out io.Writer) httpx.HandlerFunc {
+func RequestLogger(out io.Writer) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		start := time.Now()
 		c.Next()

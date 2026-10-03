@@ -14,6 +14,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
@@ -70,7 +71,7 @@ func TestTemplateNonce(t *testing.T) {
 		Head:  inertia.Head{Links: []inertia.Link{{Rel: "preconnect", Href: "https://fonts.example"}}, Raw: `<style>b{}</style>`},
 		Nonce: func(*httpx.Ctx) string { return "n0nce" },
 	})
-	t.Setenv(nexus.NexusDevEnv, "1") // the reload shim is injected too
+	t.Setenv(dev.Env, "1") // the reload shim is injected too
 	body := fullLoad(app).AssertOK().String()
 	mustContain(t, body,
 		`<link nonce="n0nce" rel="preconnect" href="https://fonts.example">`,
@@ -133,7 +134,7 @@ func TestTemplateFromDevServer(t *testing.T) {
 	app, dist := assetApp(t, "development", withBuild(builtIndex), inertia.Config{})
 	vite, _ := fakeVite(t, devServerIndex)
 	writeHot(t, dist, hotFor(vite, "/", "index.html"))
-	t.Setenv(nexus.NexusDevEnv, "1")
+	t.Setenv(dev.Env, "1")
 
 	res := fullLoad(app).AssertOK()
 	body := res.String()
@@ -160,7 +161,7 @@ func TestTemplateFromDevServer(t *testing.T) {
 func TestTemplateShimNotDuplicated(t *testing.T) {
 	index := strings.Replace(builtIndex, "</body>", `<script src="/__nexus/dev/script.js"></script></body>`, 1)
 	app, _ := assetApp(t, "development", withBuild(index), inertia.Config{})
-	t.Setenv(nexus.NexusDevEnv, "1")
+	t.Setenv(dev.Env, "1")
 	body := fullLoad(app).AssertOK().String()
 	if n := strings.Count(body, "__nexus/dev/script.js"); n != 1 {
 		t.Errorf("reload shim appears %d times, want 1:\n%s", n, body)

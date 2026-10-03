@@ -21,9 +21,10 @@ import (
 	"github.com/a-h/templ"
 
 	"github.com/paulmanoni/nexus/v2"
-	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/frontend/vitemanifest"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // IslandOption says when an island mounts, and whether the server renders it.
@@ -242,7 +243,7 @@ var islandsBuilds sync.Map // *nexus.App -> build, a production build's
 // islandsBuild reads the islands from the build manifest. Production caches
 // it; development reads again, as a build can land while the app runs.
 func islandsBuild(app *nexus.App, fsys fs.FS, root string) (build, error) {
-	dev := vitehot.Enabled(nexus.IsDev(), app.Environment())
+	dev := vitehot.Enabled(dev.Enabled(), app.Environment())
 	if !dev {
 		if b, ok := islandsBuilds.Load(app); ok {
 			return b.(build), nil

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/dev"
 )
 
 // Note is the REST JSON body and the GraphQL type (driven by the struct tags).
@@ -30,7 +30,7 @@ type Store struct {
 //nexus:provide
 func NewStore() *Store {
 	s := &Store{next: 1, notes: map[int]Note{}}
-	nexus.PreserveDev("notes", s)
+	dev.Preserve("notes", s)
 	return s
 }
 

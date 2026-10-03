@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/extension"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
@@ -113,7 +114,7 @@ func Module(cfg Config) nexus.Option {
 	// way auth.MemoryUserStore does. No-op outside nexus dev, and for
 	// custom stores (which own their durability story).
 	if ms, ok := cfg.Store.(*MemoryStore); ok {
-		nexus.PreserveDev("session.store", ms)
+		dev.Preserve("session.store", ms)
 	}
 
 	return extension.Use(extension.Plugin{

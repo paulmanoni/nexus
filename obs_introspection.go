@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -15,7 +16,7 @@ import (
 // work in dev. Production binaries never see NEXUS_DEV=1, so the
 // strict-by-default stance is preserved where it matters.
 func devModeBypass() bool {
-	return os.Getenv(NexusDevEnv) == "1"
+	return os.Getenv(dev.Env) == "1"
 }
 
 // parseIntrospectionNetworks compiles each CIDR string into a

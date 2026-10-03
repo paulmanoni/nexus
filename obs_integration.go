@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
@@ -71,7 +72,7 @@ func shutdownTimeout(cfg config.Runtime) time.Duration {
 	if cfg.Server.ShutdownTimeout > 0 {
 		return cfg.Server.ShutdownTimeout
 	}
-	if IsDev() {
+	if dev.Enabled() {
 		return DevShutdownTimeout
 	}
 	return DefaultShutdownTimeout
@@ -230,7 +231,7 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg config.Runtime) {
 			// In dev there is nothing worth draining — an unfinished request
 			// belongs to a process that's about to be replaced — so cut the
 			// handlers loose immediately and let Shutdown collect them.
-			if IsDev() {
+			if dev.Enabled() {
 				cancelReqs()
 			}
 			shutCtx, cancel := context.WithTimeout(ctx, drain)
@@ -273,7 +274,7 @@ func registerLifecycle(lc di.Lifecycle, app *App, cfg config.Runtime) {
 // tree is dev-tool friction, not a reason to refuse traffic. Files that
 // didn't change print nothing.
 func (a *App) autoDumpClientSDK() {
-	if !vitehot.Enabled(IsDev(), a.Environment()) {
+	if !vitehot.Enabled(dev.Enabled(), a.Environment()) {
 		return
 	}
 	h := a.ClientHandler()

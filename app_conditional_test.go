@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/di"
 )
 
@@ -11,15 +12,15 @@ import (
 // "1" the helper reports false; setting it to "1" flips both
 // IsDev and the IfDev / IfNotDev branch decision.
 func TestIsDev_FalseWhenUnset(t *testing.T) {
-	t.Setenv(NexusDevEnv, "")
-	if IsDev() {
+	t.Setenv(dev.Env, "")
+	if dev.Enabled() {
 		t.Error("IsDev should be false when NEXUS_DEV is unset")
 	}
 }
 
 func TestIsDev_TrueWhenOne(t *testing.T) {
-	t.Setenv(NexusDevEnv, "1")
-	if !IsDev() {
+	t.Setenv(dev.Env, "1")
+	if !dev.Enabled() {
 		t.Error("IsDev should be true when NEXUS_DEV=1")
 	}
 }
@@ -29,8 +30,8 @@ func TestIsDev_FalseForNon1Values(t *testing.T) {
 	// common "I set NEXUS_DEV=true and it didn't take" gotcha
 	// — better to be strict on the sentinel value than to
 	// silently flip semantics for typos.
-	t.Setenv(NexusDevEnv, "true")
-	if IsDev() {
+	t.Setenv(dev.Env, "true")
+	if dev.Enabled() {
 		t.Error("IsDev should treat NEXUS_DEV=true as NOT dev (only \"1\" counts)")
 	}
 }
@@ -43,7 +44,7 @@ func flagInvokeOption(flag *bool) Option {
 }
 
 func TestIfNotDev_AppliesInProduction(t *testing.T) {
-	t.Setenv(NexusDevEnv, "")
+	t.Setenv(dev.Env, "")
 	var fired bool
 	opt := IfNotDev(flagInvokeOption(&fired))
 
@@ -58,7 +59,7 @@ func TestIfNotDev_AppliesInProduction(t *testing.T) {
 }
 
 func TestIfNotDev_SkipsInDev(t *testing.T) {
-	t.Setenv(NexusDevEnv, "1")
+	t.Setenv(dev.Env, "1")
 	var fired bool
 	opt := IfNotDev(flagInvokeOption(&fired))
 
@@ -73,7 +74,7 @@ func TestIfNotDev_SkipsInDev(t *testing.T) {
 }
 
 func TestIfDev_AppliesInDev(t *testing.T) {
-	t.Setenv(NexusDevEnv, "1")
+	t.Setenv(dev.Env, "1")
 	var fired bool
 	opt := IfDev(flagInvokeOption(&fired))
 
@@ -88,7 +89,7 @@ func TestIfDev_AppliesInDev(t *testing.T) {
 }
 
 func TestIfDev_SkipsInProduction(t *testing.T) {
-	t.Setenv(NexusDevEnv, "")
+	t.Setenv(dev.Env, "")
 	var fired bool
 	opt := IfDev(flagInvokeOption(&fired))
 
@@ -107,7 +108,7 @@ func TestIfDev_SkipsInProduction(t *testing.T) {
 // works as documented (one wrapper, many real options) so
 // operators don't have to call Options(...) explicitly.
 func TestIfNotDev_VariadicComposesMultipleOptions(t *testing.T) {
-	t.Setenv(NexusDevEnv, "")
+	t.Setenv(dev.Env, "")
 	var a, b, c bool
 	opt := IfNotDev(
 		flagInvokeOption(&a),
@@ -129,7 +130,7 @@ func TestIfNotDev_VariadicComposesMultipleOptions(t *testing.T) {
 // caller passes no options. Must NOT crash; the resulting
 // option is a no-op.
 func TestIfNotDev_EmptyInputIsNoop(t *testing.T) {
-	t.Setenv(NexusDevEnv, "")
+	t.Setenv(dev.Env, "")
 	opt := IfNotDev()
 
 	app := di.New(di.Options(), unwrap([]Option{opt})[0])

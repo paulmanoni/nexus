@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
 )
 
@@ -383,8 +384,8 @@ func TestDevReloadStopsWithApp(t *testing.T) {
 	}
 	before := count()
 	dir := t.TempDir()
-	t.Setenv(NexusDevEnv, "1")
-	t.Setenv(NexusDevRootEnv, dir)
+	t.Setenv(dev.Env, "1")
+	t.Setenv(dev.RootEnv, dir)
 	for i := 0; i < 3; i++ {
 		fsys := fstest.MapFS{"web/dist/index.html": {Data: []byte("<html>x</html>")}}
 		_, stop, err := InProcess(config.Runtime{}, ServeFrontend(fsys, "web/dist"))

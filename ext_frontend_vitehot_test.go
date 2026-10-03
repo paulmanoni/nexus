@@ -15,6 +15,7 @@ import (
 	"testing/fstest"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
@@ -40,8 +41,8 @@ func newViteDevFixture(t *testing.T, index string, opts ...FrontendOption) *vite
 	if err := os.WriteFile(filepath.Join(dist, "assets", "app.js"), []byte("built-js"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(NexusDevEnv, "1")
-	t.Setenv(NexusDevRootEnv, dir)
+	t.Setenv(dev.Env, "1")
+	t.Setenv(dev.RootEnv, dir)
 
 	cfg := &frontendConfig{}
 	for _, o := range opts {
@@ -375,7 +376,7 @@ func TestServeFrontend_NoHotFileUnchanged(t *testing.T) {
 	t.Run("production ignores a hot file", func(t *testing.T) {
 		f := newViteDevFixture(t, index)
 		f.writeHot(t, vitehot.Hot{Version: 1, Origin: "http://127.0.0.1:1", PID: os.Getpid()})
-		t.Setenv(NexusDevEnv, "") // the reader consults Enabled per call
+		t.Setenv(dev.Env, "") // the reader consults Enabled per call
 		for _, p := range []string{"/", "/index.html", "/a/b"} {
 			if rec := f.get(t, p); rec.Code != 200 || noShim(rec.Body.String()) != index {
 				t.Errorf("GET %s: %d %q", p, rec.Code, rec.Body)
@@ -441,7 +442,7 @@ func TestServeFrontend_NeverServesHotFile(t *testing.T) {
 	// Production: a stale hot file baked into the embed by all:web/dist.
 	t.Run("production embed", func(t *testing.T) {
 		t.Setenv("GIN_MODE", "test")
-		t.Setenv(NexusDevEnv, "")
+		t.Setenv(dev.Env, "")
 		b, _ := json.Marshal(hot)
 		fsys := fstest.MapFS{
 			"index.html":                    {Data: []byte("<html>x</html>")},
@@ -473,7 +474,7 @@ func TestAbsolutizeDevHTML_LeavesAbsoluteURLs(t *testing.T) {
 // no SSR build is an ordinary directory.
 func TestServeFrontend_SSRBundleNeverServed(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
-	t.Setenv(NexusDevEnv, "")
+	t.Setenv(dev.Env, "")
 	get := func(fsys fstest.MapFS, p string) int {
 		app := New(config.Runtime{})
 		if err := mountFrontend(app, fsys, &frontendConfig{}); err != nil {

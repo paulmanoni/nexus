@@ -1,4 +1,4 @@
-package nexus
+package dev
 
 import (
 	"encoding/json"
@@ -49,37 +49,37 @@ import (
 // everywhere else, which is what makes this dev-only.
 const devStateEnv = "NEXUS_DEV_STATE"
 
-// DevState is implemented by values that can hand their in-memory contents to
+// State is implemented by values that can hand their in-memory contents to
 // the dev loop and take them back after a rebuild. Both halves speak opaque
 // bytes, so the value picks its own encoding (JSON, gob, protobuf, …).
-type DevState interface {
+type State interface {
 	SnapshotDev() ([]byte, error)
 	RestoreDev(data []byte) error
 }
 
-// PreserveDev registers v under name so `nexus dev` carries its state across
+// Preserve registers v under name so `nexus dev` carries its state across
 // rebuilds, and immediately restores the state a previous build left behind.
 //
 // Call it wherever the value is created — a constructor is the natural place.
 // Outside `nexus dev` it does nothing at all. Names are per-app identifiers;
 // registering the same name twice replaces the earlier value (the later one
 // wins, which is what a re-created singleton wants).
-func PreserveDev(name string, v DevState) {
+func Preserve(name string, v State) {
 	devStates.preserve(name, v)
 }
 
-// PreserveDevJSON is the zero-ceremony form for state you can marshal
+// PreserveJSON is the zero-ceremony form for state you can marshal
 // directly, without writing the DevState methods:
 //
-//	nexus.PreserveDevJSON("counters",
+//	nexus.PreserveJSON("counters",
 //	    func() map[string]int { return s.snapshot() },
 //	    func(m map[string]int) { s.load(m) })
 //
 // get is called on shutdown, set on startup when a snapshot exists. Both must
 // be safe to call from another goroutine — take the value's own lock inside
 // them, as the store's regular methods do.
-func PreserveDevJSON[T any](name string, get func() T, set func(T)) {
-	PreserveDev(name, jsonDevState[T]{get: get, set: set})
+func PreserveJSON[T any](name string, get func() T, set func(T)) {
+	Preserve(name, jsonDevState[T]{get: get, set: set})
 }
 
 type jsonDevState[T any] struct {
@@ -105,13 +105,13 @@ type devStateRegistry struct {
 	path     string
 	loaded   bool
 	previous map[string][]byte
-	current  map[string]DevState
+	current  map[string]State
 	order    []string
 }
 
 var devStates = &devStateRegistry{}
 
-func (r *devStateRegistry) preserve(name string, v DevState) {
+func (r *devStateRegistry) preserve(name string, v State) {
 	if v == nil {
 		return
 	}
@@ -124,7 +124,7 @@ func (r *devStateRegistry) preserve(name string, v DevState) {
 	if !r.loaded {
 		r.previous = readDevStateFile(path)
 		r.loaded = true
-		r.current = map[string]DevState{}
+		r.current = map[string]State{}
 	}
 	if _, dup := r.current[name]; !dup {
 		r.order = append(r.order, name)
@@ -150,7 +150,7 @@ func (r *devStateRegistry) writeDevState() error {
 	r.mu.Lock()
 	path := r.path
 	names := append([]string(nil), r.order...)
-	values := make(map[string]DevState, len(r.current))
+	values := make(map[string]State, len(r.current))
 	for k, v := range r.current {
 		values[k] = v
 	}
@@ -201,7 +201,7 @@ func readDevStateFile(path string) map[string][]byte {
 	return f.Entries
 }
 
-// DevStateDir returns the directory `nexus dev` set aside for state that
+// StateDir returns the directory `nexus dev` set aside for state that
 // should outlive a rebuild, or "" when the process isn't running under
 // `nexus dev`.
 //
@@ -211,7 +211,7 @@ func readDevStateFile(path string) map[string][]byte {
 // "my session dies on every save" is pointing it at a real path instead
 // of ":memory:". Same lifetime either way: the directory is per dev
 // session, so what you write survives rebuilds but not a Ctrl-C.
-func DevStateDir() string {
+func StateDir() string {
 	if os.Getenv(devStateEnv) == "" {
 		return ""
 	}
@@ -221,3 +221,8 @@ func DevStateDir() string {
 // devStateDir is where the CLI puts the file; exposed for tests and for the
 // error message when the directory is gone.
 func devStateDir() string { return filepath.Dir(os.Getenv(devStateEnv)) }
+
+// SaveState writes every preserved value to the file `nexus dev` hands
+// over to the next build. Boot calls it on a graceful shutdown; outside
+// nexus dev it does nothing.
+func SaveState() error { return devStates.writeDevState() }

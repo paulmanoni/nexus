@@ -7,8 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // SetValue stashes a key/value on the app. Extensions use it to record
@@ -27,12 +28,12 @@ func (a *App) setFrontendSource(fsys fs.FS, root string) {
 	// The hot file is read from disk, relative to the same dev root
 	// ServeFrontend serves from under `nexus dev`; "." otherwise, which is
 	// the project directory for a plain `go run .`.
-	devRoot := os.Getenv(NexusDevRootEnv)
+	devRoot := os.Getenv(dev.RootEnv)
 	if devRoot == "" {
 		devRoot = "."
 	}
 	a.viteHot = vitehot.NewReader(filepath.Join(devRoot, root), func() bool {
-		return vitehot.Enabled(IsDev(), a.Environment())
+		return vitehot.Enabled(dev.Enabled(), a.Environment())
 	})
 }
 

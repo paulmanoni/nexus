@@ -24,10 +24,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/di"
-	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/frontend/vitemanifest"
+	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
 // init seeds the MIME type registry with the modern-web baseline
@@ -63,19 +64,6 @@ func init() {
 		_ = mime.AddExtensionType(ext, ct)
 	}
 }
-
-// NexusDevEnv signals dev mode to the framework. When set to "1",
-// ServeFrontend reads files from disk (os.DirFS) instead of the
-// supplied embed.FS, so a watching frontend toolchain (vite build
-// --watch, esbuild --watch) can refresh the served bundle without
-// recompiling Go. nexus dev sets it on the spawned process env.
-const NexusDevEnv = "NEXUS_DEV"
-
-// NexusDevRootEnv overrides the disk root used in dev mode. Defaults
-// to "." (the binary's CWD), which matches how //go:embed paths are
-// declared. nexus dev sets it to the resolved target directory so
-// users running from a non-project CWD still resolve correctly.
-const NexusDevRootEnv = "NEXUS_DEV_ROOT"
 
 // ServeFrontend mounts a built single-page-app bundle from an
 // embedded filesystem. The classic shape:
@@ -147,8 +135,8 @@ func ServeFrontend(fsys fs.FS, root string, opts ...FrontendOption) Option {
 	// watching frontend toolchain (vite build --watch) refreshes
 	// the served bundle without recompiling Go. Same `root`
 	// semantics — fs.Sub still narrows to the dist directory.
-	if os.Getenv(NexusDevEnv) == "1" {
-		dvr := os.Getenv(NexusDevRootEnv)
+	if os.Getenv(dev.Env) == "1" {
+		dvr := os.Getenv(dev.RootEnv)
 		if dvr == "" {
 			dvr = "."
 		}
@@ -218,7 +206,7 @@ func FrontendAt(path string) FrontendOption {
 // at deleted assets. The dev path re-reads index.html per request
 // so a frontend rebuild becomes visible on the next refresh.
 func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
-	devMode := os.Getenv(NexusDevEnv) == "1"
+	devMode := os.Getenv(dev.Env) == "1"
 	// The Vite manifest drives cache policy, and proves a build happened
 	// even when that build produced no index.html: an app whose entry is a
 	// module — nexus({ input: 'src/main.ts' }) for an Inertia app — builds

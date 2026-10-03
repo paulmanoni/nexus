@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 )
 
@@ -164,7 +165,7 @@ func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 	t.Setenv("GIN_MODE", "test")
 
 	t.Run("environment alone fails fast", func(t *testing.T) {
-		t.Setenv(NexusDevEnv, "")
+		t.Setenv(dev.Env, "")
 		app := New(config.Runtime{Environment: "development"})
 		err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg)
 		if err == nil || !strings.Contains(err.Error(), "neither index.html nor a Vite manifest") {
@@ -173,8 +174,8 @@ func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 	})
 
 	t.Run("nexus dev boots to the placeholder", func(t *testing.T) {
-		t.Setenv(NexusDevEnv, "1")
-		t.Setenv(NexusDevRootEnv, t.TempDir())
+		t.Setenv(dev.Env, "1")
+		t.Setenv(dev.RootEnv, t.TempDir())
 		app := New(config.Runtime{})
 		if err := mountFrontend(app, fstest.MapFS{}, noFrontendCfg); err != nil {
 			t.Fatalf("nexus dev must not fail fast on an unbuilt bundle: %v", err)
@@ -191,8 +192,8 @@ func TestServeFrontend_UnbuiltBundleBootsInDevelopment(t *testing.T) {
 		live bool
 	}{{"live dev server boots", true}, {"stale hot file fails fast", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(NexusDevEnv, "")
-			t.Setenv(NexusDevRootEnv, "")
+			t.Setenv(dev.Env, "")
+			t.Setenv(dev.RootEnv, "")
 			dir := t.TempDir()
 			dist := filepath.Join(dir, "web", "dist")
 			var origin string

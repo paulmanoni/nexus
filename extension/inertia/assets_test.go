@@ -17,6 +17,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
+	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/extension/inertia"
 	"github.com/paulmanoni/nexus/v2/frontend/vitehot"
 	"github.com/paulmanoni/nexus/v2/nexustest"
@@ -41,10 +42,10 @@ func assetApp(t *testing.T, env string, files fstest.MapFS, cfg inertia.Config) 
 // bundle, and ServeFrontend takes fopts.
 func bootAssets(t *testing.T, config config.Runtime, files fstest.MapFS, cfg inertia.Config, fopts ...nexus.FrontendOption) (*nexustest.App, string) {
 	t.Helper()
-	t.Setenv(nexus.NexusDevEnv, "")
+	t.Setenv(dev.Env, "")
 	t.Setenv("NEXUS_VITE_DEV", os.Getenv("NEXUS_VITE_DEV")) // restored after the test
 	root := t.TempDir()
-	t.Setenv(nexus.NexusDevRootEnv, root)
+	t.Setenv(dev.RootEnv, root)
 	app := nexustest.New(t, config,
 		nexus.ServeFrontend(files, "dist", fopts...),
 		inertia.Module(cfg),
