@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 
@@ -86,6 +87,7 @@ type UnifiedResolver[T any] struct {
 	resolverMiddlewares    []FieldMiddleware // Middleware stack applied to the main resolver
 	middlewareInfos        []MiddlewareInfo  // parallel to resolverMiddlewares; "anonymous" for WithMiddleware
 	argValidators          map[string][]Validator
+	errorMapper            func(error) error
 	deprecated             bool
 	deprecationReason      string
 
@@ -790,6 +792,33 @@ func (r *UnifiedResolver[T]) WithArgValidator(argName string, validators ...Vali
 	return r
 }
 
+// WithErrorMapper sets a function every error leaving the field passes
+// through — validators, middleware and the resolver alike. nexus uses it to
+// render all of them through its error model.
+func (r *UnifiedResolver[T]) WithErrorMapper(fn func(error) error) *UnifiedResolver[T] {
+	r.errorMapper = fn
+	return r
+}
+
+// ArgErrors reports argument validators that failed: the messages per
+// argument name.
+type ArgErrors struct {
+	Fields map[string][]string
+}
+
+func (e *ArgErrors) Error() string {
+	keys := make([]string, 0, len(e.Fields))
+	for k := range e.Fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + ": " + strings.Join(e.Fields[k], ", ")
+	}
+	return strings.Join(parts, "; ")
+}
+
 // WithDeprecated marks this field deprecated. The reason propagates to the
 // generated *graphql.Field and to FieldInfo.DeprecationReason so both
 // GraphQL clients (via introspection) and tools see it.
@@ -1406,26 +1435,38 @@ func (r *UnifiedResolver[T]) Serve() *graphql.Field {
 	// Apply middleware stack to the resolver
 	resolver := r.resolver
 
-	// Apply arg validators as an outermost pre-resolve step. Failing any
-	// validator aborts with a user-facing error before the resolver runs.
+	// Apply arg validators as a pre-resolve step. Every failing argument is
+	// collected (first failure per argument) into one *ArgErrors before the
+	// resolver runs.
 	if len(r.argValidators) > 0 {
 		inner := resolver
 		validators := r.argValidators
 		resolver = func(p graphql.ResolveParams) (interface{}, error) {
+			var failed map[string][]string
 			for argName, vs := range validators {
 				val, exists := p.Args[argName]
 				for _, v := range vs {
+					var msg string
 					// Treat nil/missing as a "required" check opt-in.
 					if !exists || val == nil {
-						if v.Info.Kind == "required" {
-							return nil, fmt.Errorf("%s: %s", argName, v.Info.Message)
+						if v.Info.Kind != "required" {
+							continue
 						}
+						msg = v.Info.Message
+					} else if err := v.Fn(val); err != nil {
+						msg = err.Error()
+					} else {
 						continue
 					}
-					if err := v.Fn(val); err != nil {
-						return nil, fmt.Errorf("%s: %w", argName, err)
+					if failed == nil {
+						failed = map[string][]string{}
 					}
+					failed[argName] = append(failed[argName], msg)
+					break
 				}
+			}
+			if failed != nil {
+				return nil, &ArgErrors{Fields: failed}
 			}
 			return inner(p)
 		}
@@ -1441,6 +1482,19 @@ func (r *UnifiedResolver[T]) Serve() *graphql.Field {
 
 		// Convert back to graphql.FieldResolveFn
 		resolver = unwrapGraphQLResolver(wrappedResolver)
+	}
+
+	// The error mapper sits outside everything else, so validator,
+	// middleware and resolver errors all pass through it.
+	if mapErr := r.errorMapper; mapErr != nil {
+		inner := resolver
+		resolver = func(p graphql.ResolveParams) (interface{}, error) {
+			res, err := inner(p)
+			if err != nil {
+				return res, mapErr(err)
+			}
+			return res, nil
+		}
 	}
 
 	field := &graphql.Field{

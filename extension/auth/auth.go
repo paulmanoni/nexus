@@ -56,7 +56,6 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -208,8 +207,8 @@ type Config struct {
 	// OnError customizes how 401/403 denials render across every
 	// transport — one ErrorHandler replaces the old per-transport
 	// OnUnauthenticated / OnForbidden (REST) and GraphQLErrorWrap
-	// (GraphQL) fields. Nil uses the default ({"error": msg} on REST/WS,
-	// the sentinel error on GraphQL). See ErrorHandler.
+	// (GraphQL) fields. Nil uses the default: nexus's error model (401/403
+	// with {"code", "message"}, extensions.code on GraphQL). See ErrorHandler.
 	OnError ErrorHandler
 
 	// LoginTokenField names where the access token sits in a login
@@ -258,12 +257,12 @@ func CacheFor(ttl time.Duration) CacheOption {
 }
 
 // ErrUnauthenticated is returned by helpers when no identity is on ctx.
-// Middleware converts this to 401 / GraphQL error uniformly.
-var ErrUnauthenticated = errors.New("auth: unauthenticated")
+// It is a nexus.Unauthenticated error: 401 on REST, UNAUTHENTICATED on GraphQL.
+var ErrUnauthenticated error = nexus.Err(nexus.Unauthenticated, "auth: unauthenticated")
 
 // ErrForbidden is returned when an identity is present but lacks the
-// required permissions. Middleware converts this to 403.
-var ErrForbidden = errors.New("auth: forbidden")
+// required permissions. It is a nexus.Forbidden error: 403 / FORBIDDEN.
+var ErrForbidden error = nexus.Err(nexus.Forbidden, "auth: forbidden")
 
 // moduleState is the runtime state the global middleware and per-op
 // bundles share. Stashed on request context by the global middleware

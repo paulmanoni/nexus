@@ -58,7 +58,7 @@ const Icon = "app-window"
 
 func Page(method, path, component string, fn any, opts ...nexus.RestOption) nexus.Option {
 	if err := validatePage(method, path, component, fn); err != nil {
-		return nexus.Error(err)
+		return nexus.FailBoot(err)
 	}
 	full := make([]nexus.RestOption, 0, len(opts)+3)
 	full = append(full, nexus.WithRenderer(pageRenderer{component: component}))
@@ -178,18 +178,16 @@ func (p pageRenderer) RenderError(c *httpx.Ctx, err error) (bool, error) {
 	if errors.As(err, &rd) {
 		return true, rd.write(c)
 	}
-	// inertia.Invalid → flash the field errors and redirect back so the form
-	// re-renders with page.props.errors populated (the useForm convention).
-	var ve *validationError
-	if errors.As(err, &ve) {
-		return true, writeValidationRedirect(c, ve)
-	}
-	// nexus.Errors (the core accumulator, field + global) rides the same
-	// flash + 303 flow: first message per field, the global messages under
-	// errors._global — one object, the one useForm already watches.
-	var ne *nexus.Errors
-	if errors.As(err, &ne) {
-		return true, writeValidationRedirect(c, &validationError{fields: ne.First()})
+	// An InvalidInput error (nexus.Invalid(), inertia.Invalid) flashes its
+	// messages and redirects back so the form re-renders with
+	// page.props.errors populated (the useForm convention): first message
+	// per field, the global ones under errors._global.
+	if ne := nexus.ErrorOf(err); ne.Code == nexus.InvalidInput {
+		fields := ne.First()
+		if len(fields) == 0 {
+			fields = map[string]string{nexus.GlobalErrorKey: ne.Error()}
+		}
+		return true, writeValidationRedirect(c, fields)
 	}
 	// Anything else fails the request. With Config.ErrorPage set it still
 	// answers in the Inertia protocol.
@@ -205,12 +203,10 @@ func (p pageRenderer) RenderError(c *httpx.Ctx, err error) (bool, error) {
 // The error is recorded on the request's trace either way.
 func (e *Engine) renderError(c *httpx.Ctx, err error) error {
 	_ = c.Error(errtrace.Wrap(err))
+	ne := nexus.ErrorOf(err)
 	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
-		return writeValidationRedirect(c, &validationError{fields: map[string]string{nexus.GlobalErrorKey: err.Error()}})
+		return writeValidationRedirect(c, map[string]string{nexus.GlobalErrorKey: ne.Error()})
 	}
-	status := http.StatusInternalServerError
-	if mapped, ok := nexus.MapCRUDError(err); ok {
-		status = mapped
-	}
-	return e.renderStatus(c, e.errorPage, ErrorProps{Status: status, Message: err.Error()}, status)
+	status := ne.HTTPStatus()
+	return e.renderStatus(c, e.errorPage, ErrorProps{Status: status, Message: ne.Error()}, status)
 }

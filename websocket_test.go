@@ -142,7 +142,7 @@ func TestAsWS_TypedDispatch(t *testing.T) {
 // connection, and that the connection stays open.
 func TestAsWS_HandlerErrorSendsErrorEvent(t *testing.T) {
 	badHandler := func(sess *WSSession, p Params[chatPayload]) error {
-		return testErr{"boom"}
+		return Err(Conflict, "boom")
 	}
 
 	var app *App
@@ -180,13 +180,14 @@ func TestAsWS_HandlerErrorSendsErrorEvent(t *testing.T) {
 	var env struct {
 		Type string `json:"type"`
 		Data struct {
+			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Type != "error" || env.Data.Message != "boom" {
+	if env.Type != "error" || env.Data.Message != "boom" || env.Data.Code != "CONFLICT" {
 		t.Fatalf("unexpected error envelope: %+v", env)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -38,7 +39,7 @@ func LogoutHandler(m *Manager, extract Extractor, revoke LogoutRevoker) httpx.Ha
 			m.Invalidate(token) // drop the cached identity immediately
 			if revoke != nil {
 				if err := revoke(c.Request.Context(), token); err != nil {
-					c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
+					nexus.WriteError(c, err)
 					return
 				}
 			}

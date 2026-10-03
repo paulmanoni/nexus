@@ -63,7 +63,7 @@ func Live[T any](prefix string, gates ...nexus.MiddlewareOption) *LiveRouter[T] 
 	l := &LiveRouter[T]{Router: r}
 	def, err := newLiveDef(t, prefix)
 	if err != nil {
-		r.Register(nexus.Error(err))
+		r.Register(nexus.FailBoot(err))
 		return l
 	}
 	r.Rest("GET", "", def.pageHandler(), HTML())
@@ -276,7 +276,7 @@ type instance struct {
 	def  *liveDef
 	v    reflect.Value // *T
 	deps []reflect.Value
-	errs *nexus.Errors // the validation errors of the last event
+	errs *nexus.Error // the validation errors of the last event
 }
 
 func (d *liveDef) instance(template reflect.Value, deps []reflect.Value) *instance {
@@ -292,13 +292,13 @@ func (d *liveDef) instance(template reflect.Value, deps []reflect.Value) *instan
 func (in *instance) call(ctx context.Context, m *liveMethod, live *Socket, raw []json.RawMessage) error {
 	ft := m.fn.Type()
 	if len(raw) != len(m.args) {
-		return fmt.Errorf("takes %d argument(s), got %d", len(m.args), len(raw))
+		return nexus.Errf(nexus.InvalidInput, "takes %d argument(s), got %d", len(m.args), len(raw))
 	}
 	args := make([]reflect.Value, len(m.args))
 	for n, i := range m.args {
 		p := reflect.New(ft.In(i))
 		if err := json.Unmarshal(raw[n], p.Interface()); err != nil {
-			return fmt.Errorf("argument %d: %v", n+1, err)
+			return nexus.Errf(nexus.InvalidInput, "argument %d: %v", n+1, err)
 		}
 		args[n] = p.Elem()
 	}
@@ -435,7 +435,7 @@ type liveReply struct {
 	Patch   []any  `json:"patch,omitempty"` // or the change from the previous render (diff.go)
 	N       int    `json:"n,omitempty"`     // the patched render's token count, to check it
 	Error   string `json:"error,omitempty"`
-	Invalid bool   `json:"invalid,omitempty"` // the event returned nexus.Errors
+	Invalid bool   `json:"invalid,omitempty"` // the event returned an InvalidInput error
 }
 
 // upgraded is the renderer of the socket route: the handler already took
@@ -579,7 +579,7 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 }
 
 // event runs one browser event and returns its reply: the new render, or
-// an error. A nexus.Errors from the method is not a failure: the page
+// an error. An InvalidInput error (nexus.Invalid()) from the method is not a failure: the page
 // re-renders with it (view.Errors) and the reply is marked invalid.
 func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render func(int, bool) liveReply) liveReply {
 	m, known := d.events[ev.Event]
@@ -595,7 +595,11 @@ func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render 
 		if berr != nil {
 			return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: %v", ev.Event, berr)}
 		}
-		err = in.callValues(ctx, m, nil, []reflect.Value{arg})
+		// The form's validate: tags run before the event, as on every
+		// transport; a failure re-renders like an Invalid() the event returns.
+		if err = nexus.Validate(arg.Interface()); err == nil {
+			err = in.callValues(ctx, m, nil, []reflect.Value{arg})
+		}
 	} else {
 		err = in.call(ctx, m, nil, ev.Args)
 	}
@@ -604,10 +608,11 @@ func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render 
 		return render(ev.Ref, true)
 	}
 	if err != nil {
-		if errors.Is(err, nexus.ErrForbidden) {
+		ne := nexus.ErrorOf(err)
+		if ne.Code == nexus.Forbidden {
 			log.Printf("view: live %s: event %s refused: %v", d.t, ev.Event, err)
 		}
-		return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: %v", ev.Event, err)}
+		return liveReply{Ref: ev.Ref, Error: fmt.Sprintf("%s: %v", ev.Event, ne)}
 	}
 	in.errs = nil
 	return render(ev.Ref, false)

@@ -198,7 +198,7 @@ func TestControllerAuthorize(t *testing.T) {
 	if strings.Join(ctl.seen, ",") != strings.Join(want, ",") {
 		t.Fatalf("Authorize saw %v, want %v", ctl.seen, want)
 	}
-	if !errors.Is(forbiddenError{ErrCRUDNotFound}, ErrCRUDNotFound) {
+	if !errors.Is(forbiddenError(ErrCRUDNotFound), ErrCRUDNotFound) || CodeOf(forbiddenError(errors.New("no"))) != Forbidden {
 		t.Fatal("a refusal keeps the meaning of the error it wraps")
 	}
 }

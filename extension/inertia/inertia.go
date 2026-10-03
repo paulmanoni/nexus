@@ -111,8 +111,9 @@ type Config struct {
 	// ErrorPage is the component rendered when a page handler returns an
 	// error nothing else claims (not a Redirect/Location, not validation
 	// errors). A GET or HEAD visit renders it with ErrorProps{Status,
-	// Message} and the error's status code — the status is the one the REST
-	// error path would use (404/409/400 for the CRUD sentinels, else 500) —
+	// Message} and the status of the error's code (nexus.ErrorOf: 404 for
+	// nexus.NotFound, …, 500 for an error without one, its message hidden
+	// outside nexus dev) —
 	// so the browser shows the app's own page instead of Inertia's "invalid
 	// response" modal over raw JSON. Any other method (a form submit)
 	// redirects back with the message flashed under errors._global, which

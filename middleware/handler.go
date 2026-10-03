@@ -107,7 +107,7 @@ func (rc *RequestCtx) Get(key any) (any, bool) {
 
 // Reject short-circuits the chain. Returns the error so callers can write
 // `return rc.Reject(401, ErrUnauthenticated)`; the carrier renders the
-// transport-appropriate response (a default {"error": msg} body on
+// transport-appropriate response (the ErrorBody rendering on
 // REST/WS, the error surfaced on GraphQL).
 func (rc *RequestCtx) Reject(status int, err error) error {
 	return rc.carrier.reject(status, err)

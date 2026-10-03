@@ -78,6 +78,7 @@ var migrateV2Rules = []migrateRule{
 	{Name: "imports", Applies: isGoSource, Apply: migrateGoImports},
 	{Name: "imports", Applies: isTemplSource, Apply: migrateTemplImports},
 	{Name: "symbols", Applies: isGoSource, Apply: migrateGoSymbols},
+	{Name: "errors", Applies: isGoSource, Apply: migrateGoErrors},
 	{Name: "tags", Applies: isGoSource, Apply: migrateGoTags},
 	{Name: "go.mod", Applies: isGoMod, Apply: migrateGoMod},
 	{Name: "annotations", Applies: isGoSource, Apply: migrateGoAnnotations},
@@ -131,6 +132,10 @@ and hidden directories are skipped):
                A name with no mechanical replacement is dropped from the option
                list it sits in, with a // TODO(nexus v2): comment above its
                statement. App.UseVolume (a method) is not rewritten.
+  errors       the error model (docs/design/v2.md §2): nexus.Error(err), the
+               boot option, becomes nexus.FailBoot(err); the error rows of the
+               table below follow (nexus.Errors is nexus.Error, built with
+               nexus.Invalid(); Field, Global, Any and First are unchanged).
   tags         the retired uri:"x" struct tag becomes path:"x" in Go files that
                import nexus (a field that already has path: drops its uri:).
   go.mod       require lines for those modules move to the new paths at
@@ -145,7 +150,7 @@ Changed .go files are gofmt'ed. Re-running is a no-op. --dry-run prints
 every change without writing.
 
 Symbols:
-` + migrateSymbolTable(migrateV2Symbols),
+` + migrateSymbolTable(migrateV2Symbols) + migrateSymbolTable(migrateV2ErrorSymbols),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			root := "."

@@ -4,9 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 
+	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -21,23 +21,9 @@ const headerErrorBag = "X-Inertia-Error-Bag"
 // HttpOnly cookie that the next render consumes and clears.
 const errorsCookie = "nexus_inertia_errors"
 
-// validationError is the sentinel a page handler returns to signal a failed
-// validation. The framework's ErrorRenderer hook (pageRenderer.RenderError)
-// flashes the field messages and redirects back, the Inertia way.
-type validationError struct {
-	fields map[string]string
-}
-
-func (e *validationError) Error() string {
-	keys := make([]string, 0, len(e.fields))
-	for k := range e.fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return "inertia: validation failed: " + strings.Join(keys, ", ")
-}
-
-// Invalid returns from a page handler to report validation failures. The engine
+// Invalid returns from a page handler to report validation failures — a
+// nexus.Invalid() error with one message per field, for a handler that has
+// them in a map already. The engine
 // redirects back to the submitting page (303) and the messages surface in the
 // next render's `errors` prop — exactly what the Inertia client's useForm reads
 // to populate form.errors and fire onError:
@@ -54,7 +40,11 @@ func (e *validationError) Error() string {
 // X-Inertia-Error-Bag; the engine nests the messages under that bag
 // automatically.
 func Invalid(fields map[string]string) error {
-	return &validationError{fields: fields}
+	e := nexus.Invalid()
+	for k, v := range fields {
+		e.Field(k, v)
+	}
+	return e
 }
 
 // InvalidField is the single-field convenience for Invalid — handy when one
@@ -64,7 +54,7 @@ func Invalid(fields map[string]string) error {
 //	    return nil, inertia.InvalidField("email", "Enter a valid email")
 //	}
 func InvalidField(field, message string) error {
-	return &validationError{fields: map[string]string{field: message}}
+	return nexus.Invalid().Field(field, message)
 }
 
 // writeValidationRedirect flashes the errors into the one-shot cookie and
@@ -72,10 +62,10 @@ func InvalidField(field, message string) error {
 // messages under the bag name. The redirect is 303 See Other so the follow-up
 // is a GET (correct after a POST/PUT/PATCH/DELETE), which the Inertia client
 // follows transparently; the next render injects the flashed errors.
-func writeValidationRedirect(c *httpx.Ctx, ve *validationError) error {
-	var payload any = ve.fields
+func writeValidationRedirect(c *httpx.Ctx, fields map[string]string) error {
+	var payload any = fields
 	if bag := c.GetHeader(headerErrorBag); bag != "" {
-		payload = map[string]any{bag: ve.fields}
+		payload = map[string]any{bag: fields}
 	}
 	blob, err := json.Marshal(payload)
 	if err != nil {

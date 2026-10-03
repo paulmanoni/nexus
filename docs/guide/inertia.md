@@ -76,8 +76,9 @@ inertia.Page("GET,POST", "/login", "Auth/Login", NewLogin, nexus.Public())
 - **Redirects.** Return them as the handler's error:
   - `inertia.Redirect("/users")` sends a 303.
   - `inertia.Location(url)` sends a 409 with `X-Inertia-Location`, for external URLs.
-- **Validation.** Return [`nexus.Errors`](./forms#nexus-errors). The user is sent back
-  with an `errors` prop in `useForm` format.
+- **Validation.** Return [`nexus.Invalid()`](./forms#validation-errors-nexus-invalid),
+  or fail a `validate:` tag. The user is sent back with an `errors` prop in `useForm`
+  format.
 - **Login redirects.** To send page visits to a login page instead of a 401, set
   `OnError: iauth.ErrorHandler("/login", ...)` from `extension/inertia/iauth` in your
   `auth.Config`.
@@ -85,7 +86,7 @@ inertia.Page("GET,POST", "/login", "Auth/Login", NewLogin, nexus.Public())
 ## Error pages
 
 By default, a page handler that returns an ordinary error gets the plain REST error
-response, `{"error": "…"}`. So does a prop thunk (`Defer`, `Optional`) that fails. The
+response, `{"code": "…", "message": "…"}`. So does a prop thunk (`Defer`, `Optional`) that fails. The
 Inertia client treats that as an invalid response and shows its error modal over the raw
 JSON. Name a component to render instead:
 
@@ -107,9 +108,9 @@ defineProps<{ status: number; message: string }>()
 
 - **Page visits (GET).** The error page renders with `inertia.ErrorProps{Status,
   Message}` and the error's HTTP status. Shared props (your layout's user and so on) are
-  included, as on any page. The status is the one the REST path would use: 404, 409 or
-  400 for `nexus.ErrCRUDNotFound`, `ErrCRUDConflict` or `ErrCRUDValidation`, and 500
-  otherwise.
+  included, as on any page. The status is the one the REST path would use: that of the
+  error's [code](./handlers#errors), and 500 for an error without one, whose message is
+  hidden outside `nexus dev`.
 - **Form submits (POST/PUT/…).** They redirect back with the message in
   `errors._global`, which `useForm` already exposes. Rendering a page at the POST URL
   would lose the form.
@@ -223,7 +224,7 @@ inertia.Resource[*ArticlesController]("/articles", auth.Required()).
 - **Page actions return props.** Write actions return the record, or nothing.
   `Create` reads the new record's `ID` (or `json:"id"`) field to pick the page to
   redirect to, masked when [`extension/maskid`](./maskid) is on.
-- **Validation needs no extra code.** A write action that returns `nexus.Errors`
+- **Validation needs no extra code.** A write action that returns `nexus.Invalid()`
   sends the user back to the form with the field errors.
 - **Custom actions follow the same rules.** `Member`, `Collection` and the verb
   methods name the action after the method:

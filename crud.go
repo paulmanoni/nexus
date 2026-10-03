@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"reflect"
 	"sort"
 	"strings"
@@ -493,30 +492,6 @@ func readID[T any](item *T) string {
 	return f.String()
 }
 
-// MapCRUDError translates a sentinel error into the right HTTP
-// status. Handler return errors flow through Gin's standard JSON
-// error path, but a transport-level wrapper can use this to attach
-// the right code without each Store having to know about HTTP.
-//
-// Currently unused by AsRest's default 500 path; reserved for the
-// next pass when we wire the sentinel mapping into the framework's
-// error renderer.
-func MapCRUDError(err error) (status int, ok bool) {
-	switch {
-	case err == nil:
-		return http.StatusOK, false
-	case errors.Is(err, ErrCRUDNotFound):
-		return http.StatusNotFound, true
-	case errors.Is(err, ErrCRUDConflict):
-		return http.StatusConflict, true
-	case errors.Is(err, ErrCRUDValidation):
-		return http.StatusBadRequest, true
-	case errors.Is(err, ErrForbidden):
-		return http.StatusForbidden, true
-	}
-	return 0, false
-}
-
 // ─── Resolver binding (fx-injected deps) ───────────────────────────
 //
 // AsCRUD accepts the resolver as `any` so it can have fx-injected
@@ -791,18 +766,13 @@ type Page[T any] struct {
 	Offset int `json:"offset"`
 }
 
-// Sentinel errors that AsCRUD maps to HTTP status codes:
-//
-//	ErrCRUDNotFound   → 404
-//	ErrCRUDConflict   → 409
-//	ErrCRUDValidation → 400
-//
-// Stores wrap or return these so transport-level mapping stays in
-// one place. Anything else maps to 500.
+// Sentinel errors a Store returns (or wraps). They are nexus errors, so
+// every transport renders them by code — NotFound, Conflict, InvalidInput —
+// and errors.Is matches both the sentinel and its code.
 var (
-	ErrCRUDNotFound   = errors.New("crud: not found")
-	ErrCRUDConflict   = errors.New("crud: conflict")
-	ErrCRUDValidation = errors.New("crud: validation error")
+	ErrCRUDNotFound   = Err(NotFound, "crud: not found")
+	ErrCRUDConflict   = Err(Conflict, "crud: conflict")
+	ErrCRUDValidation = Err(InvalidInput, "crud: validation error")
 )
 
 // Store is the persistence contract AsCRUD operates against. A

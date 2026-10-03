@@ -61,17 +61,13 @@ type ControllerRouter[T any] struct {
 //
 // It runs after the router's gates (so the identity is resolved) and before
 // the action. A non-nil error ends the request through the action's normal
-// error path — a REST 403 (ErrForbidden), a GraphQL error, the Inertia
-// ErrorPage — unless it already maps elsewhere (a nexus.ErrCRUDNotFound stays
-// a 404; nexus.Errors stays a validation response).
+// error path as nexus.Forbidden with the error's message — a REST 403, a
+// GraphQL FORBIDDEN, the Inertia ErrorPage — unless it already carries a code
+// (nexus.Err(nexus.NotFound, …) stays a 404; nexus.Invalid() stays a
+// validation response).
 type ActionAuthorizer interface {
 	Authorize(ctx context.Context, action string) error
 }
-
-// ErrForbidden reports that the caller may not perform the request. Handlers
-// and ActionAuthorizer hooks return it (or wrap it); MapCRUDError maps it to
-// 403.
-var ErrForbidden = errors.New("forbidden")
 
 // Controller creates a ControllerRouter for controller type T (typically a
 // pointer to a struct) mounted at prefix. The dashboard module is named after
@@ -386,7 +382,7 @@ func (c *ControllerRouter[T]) rest(method, path string, action any, name string,
 			if !explicitArg {
 				arg, err := inferPathArgs(fn, name, method, full+path)
 				if err != nil {
-					return Error(err)
+					return FailBoot(err)
 				}
 				if arg != nil {
 					all = append(all, *arg)
@@ -481,7 +477,7 @@ func wrapAuthorize(fn reflect.Value, action string) (any, error) {
 				res[i] = reflect.Zero(t)
 			}
 			e := reflect.New(errType).Elem()
-			e.Set(reflect.ValueOf(error(forbiddenError{err})))
+			e.Set(reflect.ValueOf(forbiddenError(err)))
 			res[len(res)-1] = e
 			return res
 		}
@@ -493,13 +489,17 @@ func wrapAuthorize(fn reflect.Value, action string) (any, error) {
 	return wrapper.Interface(), nil
 }
 
-// forbiddenError carries an Authorize refusal: its message, and both the
-// original error and ErrForbidden for errors.Is/As — so a refusal that is
-// already a 404 or a validation error keeps that meaning.
-type forbiddenError struct{ err error }
-
-func (e forbiddenError) Error() string   { return e.err.Error() }
-func (e forbiddenError) Unwrap() []error { return []error{e.err, ErrForbidden} }
+// forbiddenError turns an Authorize refusal into a Forbidden error with its
+// message — unless it already carries a code (a nexus.NotFound, an
+// Invalid()), which it keeps.
+func forbiddenError(err error) error {
+	var e *Error
+	var c Code
+	if errors.As(err, &e) || errors.As(err, &c) {
+		return err
+	}
+	return &Error{Code: Forbidden, Message: err.Error(), Cause: err}
+}
 
 // inferPathArgs returns the nexus.Arg an action needs to bind its bare scalar
 // parameters from the route's path parameters, positionally. Nil when the

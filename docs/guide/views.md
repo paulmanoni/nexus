@@ -176,8 +176,9 @@ func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error 
 - **Forms.** `view.Submit(b.Add)` on a form's `onsubmit` sends its fields to an
   event whose last parameter is a struct, bound by `form:"name"` tags exactly
   as a REST form binds; `view.Change(b.Validate)` on `oninput`/`onchange` sends
-  them as the user types (debounced). An event that returns `nexus.Errors`
-  re-renders with them — read them with `view.Errors(ctx).Field("name")` — and
+  them as the user types (debounced). The struct's `validate:` tags are checked
+  first; an event that fails them, or returns `nexus.Invalid()`, re-renders with
+  the errors — read them with `view.Errors(ctx).Field("name")` — and
   the form keeps what was typed; on success the form resets to its
   server-rendered values. A field's value is overwritten only when the
   server's `value` attribute changes, and never while it has focus.
@@ -189,7 +190,7 @@ type PetInput struct {
 }
 
 func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
-	errs := nexus.NewErrors()
+	errs := nexus.Invalid()
 	if in.Name == "" {
 		errs.Field("name", "a name is required")
 	}

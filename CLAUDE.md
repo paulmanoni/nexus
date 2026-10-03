@@ -297,7 +297,7 @@ and patched in place (focus/typing kept; signals win over the server copy; an el
 in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(ctx, deps…, msg view.Message)
 error`, then re-render (in-process: a replica's own pages). Forms: `view.Submit(x.Add)` /
 `view.Change(x.Validate)` on a form send its fields to an event whose last param is a `form:`-tagged
-struct (httpx binder); returning `nexus.Errors` re-renders with `view.Errors(ctx).Field(name)`,
+struct (httpx binder); failing its `validate:` tags or returning `nexus.Invalid()` re-renders with `view.Errors(ctx).Field(name)`,
 success resets the form; a field's value changes only when the server's value attr changes. The first render
 is HTTP-only (a join id lets the socket skip resending it); updates travel as token patches (tokens at
 `<`/`>`/`"`/`&#34;`, Myers diff, `[p,n]` back-references, a per-connection dictionary `[id]`),
@@ -550,7 +550,7 @@ detail behind those helpers — like fx was before.
   constructor/invoke and `lc.Append(nexus.Hook{OnStart, OnStop})`. Resources
   (`db.Bind`, `cache.Bind`), workers, crons, and the HTTP listeners all register their
   start/stop this way. The fx adapter bridges `fx.Lifecycle` onto it transparently.
-- **`nexus.Error(err)`** surfaces an option-build error at boot (replaces the old
+- **`nexus.FailBoot(err)`** surfaces an option-build error at boot (replaces the old
   `nexus.Raw(fx.Error(err))` pattern). `nexus.Raw(di.Option)` remains the low-level
   escape hatch.
 - **Value groups / optional deps:** internal wiring (e.g. the GraphQL field group,
@@ -595,8 +595,8 @@ conventional actions T defines — Index `GET /`, Show `GET /:id`, Create `POST 
 `PUT`+`PATCH /:id`, Destroy `DELETE /:id` — plus `.Member(verb, name, …)` /
 `.Collection(…)`; nested prefixes bind every param (router builders get the full stacked
 prefix). `ActionAuthorizer` (`Authorize(ctx, action string) error`) runs before each action
-via a wrapper, so its error takes the action's normal path; `nexus.ErrForbidden` → 403
-(`MapCRUDError`), and the refusal still `errors.Is` its original error. GraphQL actions
+via a wrapper, so its error takes the action's normal path as `nexus.Forbidden` (403) unless
+it already carries a code, and the refusal still `errors.Is` its original error. GraphQL actions
 (`.Query/.Mutation`) keep the method-derived name and mount at `<prefix>/graphql` like any
 router. `.ActionDefaults(func(method, path, action string) []nexus.RestOption)` sets the
 options every REST action starts from (explicit options win; `nexus.NoActionDefaults()`
@@ -631,7 +631,7 @@ record's Show (its `ID`/`json:"id"` field, maskid-masked), Update `PUT`+`PATCH /
 Show, Destroy `DELETE /:id` → 303 to Index (fallbacks when those are missing). Custom
 `Member`/`Collection`/verb actions follow suit: GET → page `<Folder>/<Method>`, other verbs
 → 303 back (Referer, else one segment up); `nexus.NoActionDefaults()` keeps one JSON.
-`nexus.Errors` from a write flashes + goes back. Write routes are tagged
+`nexus.Invalid()` from a write flashes + goes back. Write routes are tagged
 `registry.PageActionTag` and leave the REST SDK; the frontend sends them with
 `pageAction('Articles/Update', { id })` from `nexus-client/pages`, which returns `[method,
 url]` (spread into `form.submit(...)`, or `router.visit(url, { method })`), typed by
@@ -704,10 +704,25 @@ derives from the method. **Body mode:** a trailing struct is the body and the na
 onto the scalars before it (`Update(ctx, id int64, in UserInput)` + `Arg("id")`); its
 exported fields merge into the synthesized args (unexported body types fine), and on REST a
 name that is a route segment binds from the path only (`json:"-"`), so a body can't
-override it. REST doesn't enforce `validate:` tags (GraphQL does). One or two scalars ride `Arg` well — three or more
+override it. `validate:` tags are enforced on every transport. One or two scalars ride `Arg` well — three or more
 deserve a dto. A struct-taking param is rejected with "register it directly".
 
-**Raw form input (`*nexus.Form`) + validation errors (`nexus.Errors`).** For
+**Errors (`nexus.Error`) — one model, one table per transport.** Return
+`nexus.Err(code, msg)` / `nexus.Errf(code, fmt, …)` (a `%w` sets Cause) /
+`nexus.Invalid().Field(name, msg).Global(msg)` / a bare code (`return nil, nexus.NotFound`).
+`nexus.Error{Code, Message, Fields, Cause}`; codes `InvalidInput` 422, `Unauthenticated` 401,
+`Forbidden` 403, `NotFound` 404, `Conflict` 409, `TooMany` 429, `Unavailable` 503, `Internal`
+500 (GraphQL `extensions.code` `INVALID_INPUT`, `UNAUTHENTICATED`, …, + `errors` field map).
+REST body `{"code","message","errors"}`; WS `error` event `{type,code,message,errors}`;
+Inertia: InvalidInput flashes + 303 back, other errors → `ErrorPage` at the code's status;
+views: `view.Errors(ctx)`. An error without a code is `Internal`, its message shown under
+`nexus dev` and "internal error" otherwise. `errors.Is(err, nexus.NotFound)` matches a code;
+`nexus.ErrorOf`/`CodeOf` map any error; `nexus.WriteError(c, err)` for raw handlers.
+`validate:` tags (`required`, `len=a|b`, `int=a|b`, `oneof=a|b`) run on every transport after
+binding → InvalidInput with per-field messages; auth gates/rate limits answer through the
+same table (`middleware.ErrorBody`). The boot-time option is `nexus.FailBoot(err)`.
+
+**Raw form input (`*nexus.Form`) + validation errors (`nexus.Invalid()`).** For
 genuinely dynamic input — file uploads, variable-key forms — declare a `*Form`
 param (framework-filled; also reachable below the handler via
 `nexus.FormFrom(ctx)`). Reads are source-unified: `Get/All/File` see the same
@@ -719,14 +734,14 @@ the default — schema/SDK/validation/maskid ride them, not `fm.Get`.
 func NewUploadCv(svc *Svc, ctx context.Context, fm *nexus.Form) (any, error) {
     cv, err := fm.File("cv")            // *FormFile: Name/Size/ContentType/Open (streams)
     ...
-    errs := nexus.NewErrors()
+    errs := nexus.Invalid()
     if taken { errs.Field("email", "already taken") }
     if down  { errs.Global("provider unreachable") }
     if errs.Any() { return nil, errs }
 ```
-`nexus.Errors` renders per transport: Inertia pages flash + 303 back (`errors`
+An InvalidInput renders per transport: Inertia pages flash + 303 back (`errors`
 prop, `useForm` convention, global under `errors._global`, error bags honored);
-REST answers 422 `{"message", "errors": {field: [msgs]}}`; GraphQL carries the
+REST answers 422 `{"code", "message", "errors": {field: [msgs]}}`; GraphQL carries the
 field map in the error's extensions. REST/Inertia only for `*Form` — on
 GraphQL/WS the param is a typed nil whose methods no-op.
 
@@ -743,7 +758,8 @@ func Wrap[T any](v T, err error) (*Response[T], error) {   // app-owned shape
 nexus.AsQuery((*UserService).ListUsers, nexus.Envelope(Wrap[[]UserRow]))
 ```
 The GraphQL schema (and generated SDK) declare the wrap's output type — the
-envelope is the contract. An error the wrap converts becomes a normal 200/data
+envelope is the contract. The wrap receives the mapped `*nexus.Error` (an uncoded
+error's message hidden outside dev). An error the wrap converts becomes a normal 200/data
 response; an error the wrap *returns* follows the standard error path. Binding
 and validation failures are never enveloped. REST + GraphQL.
 
@@ -1344,10 +1360,10 @@ const props = defineProps<NexusPageProps['Users/Index']>()
 is typed through the generated `inertia.d.ts`. Pages are not REST calls in the SDK.
 
 **Error pages (`inertia.Config.ErrorPage`).** Without it, a page handler error — or a
-failing `Defer`/`Optional` prop — falls through to the REST `{"error": …}` JSON and the
+failing `Defer`/`Optional` prop — falls through to the REST `{"code", "message"}` JSON and the
 Inertia client shows its "invalid response" modal. With `ErrorPage: "Error"`, GET visits
 render that component with `inertia.ErrorProps{Status, Message}` at the error's status
-(`nexus.MapCRUDError`, else 500; shared props included), and form submits 303 back with
+(the code's, else 500; shared props included), and form submits 303 back with
 the message under `errors._global`. Redirects/validation unchanged; the error is still
 traced.
 

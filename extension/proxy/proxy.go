@@ -114,7 +114,7 @@ type Config struct {
 // registry), so the auto-yield sees the current migration state.
 func Module(cfg Config) nexus.Option {
 	if cfg.Upstream == "" {
-		return nexus.Error(fmt.Errorf("proxy: Config.Upstream is required"))
+		return nexus.FailBoot(fmt.Errorf("proxy: Config.Upstream is required"))
 	}
 	if cfg.Group == "" {
 		cfg.Group = "Proxied"

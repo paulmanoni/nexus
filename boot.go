@@ -230,12 +230,12 @@ func Supply(values ...any) Option {
 	return rawOption{o: di.Supply(values...)}
 }
 
-// Error injects an error discovered while building options; it surfaces at boot
+// FailBoot injects an error discovered while building options; it surfaces at boot
 // instead of panicking at call time. Extensions use it to report bad config
 // without importing the DI backend.
 //
-//	if err := cfg.validate(); err != nil { return nexus.Error(err) }
-func Error(err error) Option { return rawOption{o: di.Error(err)} }
+//	if err := cfg.validate(); err != nil { return nexus.FailBoot(err) }
+func FailBoot(err error) Option { return rawOption{o: di.Error(err)} }
 
 // Invoke runs a function at startup, resolving its parameters from the
 // graph. Use for side-effects on boot — attaching resources, registering

@@ -195,7 +195,8 @@ func openInBrowser(url string, stdout io.Writer) error {
 var topicSummaries = map[string]string{
 	"quickstart":  "Minimal app: Run, Module, AsQuery",
 	"handlers":    "Reflective handler signature, Params[T], return shape",
-	"forms":       "nexus.Form raw input + nexus.Errors field/global validation",
+	"forms":       "nexus.Form raw input + nexus.Invalid() field/global validation",
+	"errors":      "nexus.Error — one error model: codes, per-transport table, validation",
 	"scoped":      "nexus.NewScoped — request-scoped derived values (lazy, memoized)",
 	"clientops":   "SDK nx.op envelope unwrapping, query batching, op composables",
 	"module":      "nexus.Module, Provide, ProvideService, route prefix",
@@ -531,9 +532,10 @@ tags, GraphQL schema, the typed SDK and maskid unmasking all ride the
 dto, and raw Get bypasses maskid. On GraphQL/WS the param is a typed
 nil whose methods no-op.
 
-nexus.Errors — accumulated field + global validation errors:
+nexus.Invalid() — accumulated field + global validation errors (an
+InvalidInput *nexus.Error; see nexus docs errors):
 
-    errs := nexus.NewErrors()
+    errs := nexus.Invalid()
     if taken { errs.Field("email", "already taken") }
     if down  { errs.Global("payment provider unreachable") }
     if errs.Any() { return nil, errs }
@@ -543,15 +545,53 @@ Rendering per transport:
                 first-message-per-field, global under errors._global
                 (the reserved nexus.GlobalErrorKey), X-Inertia-Error-Bag
                 honored — the useForm convention.
-  REST          422 {"message": "validation failed",
+  REST          422 {"code": "INVALID_INPUT", "message": …,
                      "errors": {field: [messages]}}
-  GraphQL       normal GraphQL error; extensions = {code: VALIDATION,
-                errors: {field: [messages]}}
+  GraphQL       extensions = {code: INVALID_INPUT, errors: {field: [messages]}}
+  WebSocket     error event {type, code, message, errors}
+  views         re-render; view.Errors(ctx).Field("email")
 
-Field keys should match the args struct's json tags so useForm binds
-messages onto the right inputs. inertia.Invalid / InvalidField remain
-as thin per-page alternatives; nexus.Errors is the transport-neutral
-form services can also build and return.
+validate: tags fail the same way before the handler runs. Field keys
+should match the args struct's json tags so useForm binds messages
+onto the right inputs. inertia.Invalid / InvalidField build the same
+error from a map.
+`,
+
+	"errors": `
+ONE ERROR MODEL (nexus.Error)
+
+    return nil, nexus.Err(nexus.NotFound, "user not found")
+    return nil, nexus.Errf(nexus.Conflict, "email %s taken: %w", e, err)
+    return nil, nexus.Invalid().Field("email", "taken").Global("…")
+    return nil, nexus.Forbidden          // a bare Code is an error
+
+nexus.Error{Code, Message, Fields, Cause}. errors.Is(err, nexus.NotFound)
+matches the code; errors.Is/As see through Cause. nexus.CodeOf(err),
+nexus.ErrorOf(err) (the mapped *Error), nexus.WriteError(c, err) for
+raw *httpx.Ctx handlers.
+
+  code             REST  GraphQL extensions.code
+  InvalidInput     422   INVALID_INPUT (+ errors: {field: [msgs]})
+  Unauthenticated  401   UNAUTHENTICATED
+  Forbidden        403   FORBIDDEN
+  NotFound         404   NOT_FOUND
+  Conflict         409   CONFLICT
+  TooMany          429   TOO_MANY_REQUESTS
+  Unavailable      503   UNAVAILABLE
+  Internal         500   INTERNAL
+
+REST body {"code", "message", "errors"}; WebSocket error event
+{type, code, message, errors}; Inertia: InvalidInput flashes + 303
+back, anything else renders Config.ErrorPage with the code's status;
+views: view.Errors(ctx) reads an InvalidInput's fields.
+
+An error with no code is Internal: its message is shown under nexus dev
+and replaced by "internal error" otherwise (the trace keeps it).
+validate: tags (required, len=min|max, int=min|max, oneof=a|b) run on
+every transport after binding; binding failures and tag failures are
+InvalidInput. auth.Required/Requires answer Unauthenticated/Forbidden,
+rate limits TooMany — the same table. An Envelope wrap receives the
+mapped *nexus.Error.
 `,
 
 	"scoped": `
@@ -684,7 +724,8 @@ CONTROLLERS — a struct whose methods are actions, one dashboard module:
   for whichever methods exist; nested prefixes (/posts/:postId/comments)
   bind every param. A controller implementing
   Authorize(ctx, action string) error has it run before each action — its
-  error takes the action's normal error path (403 via nexus.ErrForbidden).
+  error takes the action's normal error path (nexus.Forbidden → 403, unless
+  the error already carries a code).
   .ActionDefaults(func(method, path, action string) []nexus.RestOption) sets
   the options every action starts from (explicit options win;
   nexus.NoActionDefaults() skips them; calls add up) — how inertia.Resource
@@ -791,7 +832,8 @@ data) from anywhere runs every subscribed page's optional
 Info(ctx, deps…, msg view.Message) error, then re-renders it.
 Forms: <form onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }>
 sends the fields to an event whose last parameter is a form-tagged struct;
-returning nexus.Errors re-renders with view.Errors(ctx).Field("name"), and a
+failing its validate: tags or returning nexus.Invalid() re-renders with
+view.Errors(ctx).Field("name"), and a
 successful submit resets the form.
 Navigation: @view.Link("/board") { Board } fetches and patches the page in
 place (no reload; live sockets follow; back/forward work). The first render
@@ -890,10 +932,10 @@ route to ONE handler that branches on nexus.Params[T].Method:
 
 Error pages — inertia.Config{ErrorPage: "Error"} renders that component when a
 page handler (or a Defer/Optional prop) returns an error nothing else claims,
-instead of the plain {"error": …} JSON that makes the Inertia client show its
-"invalid response" modal. GET visits get the page with
-inertia.ErrorProps{Status, Message} and the error's status (404/409/400 for
-the CRUD sentinels, else 500), shared props included; form submits redirect
+instead of the plain {"code", "message"} JSON that makes the Inertia client
+show its "invalid response" modal. GET visits get the page with
+inertia.ErrorProps{Status, Message} and the status of the error's code (500
+for an error without one), shared props included; form submits redirect
 back with the message under errors._global. Off by default.
 
 Resources — a controller whose actions are pages and forms:
@@ -907,7 +949,7 @@ Resources — a controller whose actions are pages and forms:
   (Articles/<Method>); Create POST / → 303 to the new Show, Update PUT+PATCH
   /:id → 303 to Show, Destroy DELETE /:id → 303 to Index. Custom actions: a
   GET is the page <Folder>/<Method>, other verbs 303 back (Referer, else one
-  segment up); nexus.NoActionDefaults() keeps one as JSON. nexus.Errors from a
+  segment up); nexus.NoActionDefaults() keeps one as JSON. nexus.Invalid() from a
   write goes back to the form. ResourceAs[T]("Admin/Articles", prefix) names
   the folder. Frontend:
 

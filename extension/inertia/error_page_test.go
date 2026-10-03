@@ -3,7 +3,6 @@ package inertia_test
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -17,7 +16,7 @@ import (
 
 func failingPages() nexus.Option {
 	boom := func(p nexus.Params[struct{}]) (any, error) {
-		return nil, errors.New("qualifications could not be loaded")
+		return nil, nexus.Err(nexus.Internal, "qualifications could not be loaded")
 	}
 	missing := func(p nexus.Params[struct{}]) (any, error) {
 		return nil, fmt.Errorf("user 9: %w", nexus.ErrCRUDNotFound)
@@ -30,7 +29,7 @@ func failingPages() nexus.Option {
 	}
 	deferred := func(p nexus.Params[struct{}]) (listProps, error) {
 		return listProps{Items: inertia.Defer(func() ([]string, error) {
-			return nil, errors.New("items could not be loaded")
+			return nil, nexus.Err(nexus.Internal, "items could not be loaded")
 		})}, nil
 	}
 	return nexus.Options(
@@ -147,7 +146,7 @@ func TestErrorPage_OffByDefault(t *testing.T) {
 
 	res, body := req(t, addr, "/boom", map[string]string{"X-Inertia": "true"})
 	if res.StatusCode != http.StatusInternalServerError || res.Header.Get("X-Inertia") != "" ||
-		!strings.Contains(body, `"error":"qualifications could not be loaded"`) {
+		!strings.Contains(body, `"message":"qualifications could not be loaded"`) {
 		t.Fatalf("status=%d x-inertia=%q body=%s", res.StatusCode, res.Header.Get("X-Inertia"), body)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
@@ -32,26 +33,26 @@ type LoginIssuer func(ctx context.Context, id *Identity) (any, error)
 //	    }, nexus.Public())
 //
 // It reads {username, password}, runs Manager.Login, and owns the status
-// codes: 400 on a bad body, 401 (uniform, no enumeration) on invalid
+// codes: 422 on a bad body, 401 (uniform, no enumeration) on invalid
 // credentials, 200 with the issuer's body (or {"identity": …} when issue is
 // nil) on success.
 func LoginHandler(m *Manager, issue LoginIssuer) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		var req LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, httpx.H{"error": "invalid request body"})
+			nexus.WriteError(c, nexus.Err(nexus.InvalidInput, "invalid request body"))
 			return
 		}
 		id, err := m.Login(c.Request.Context(), Password{Username: req.Username, Password: req.Password})
 		if err != nil || id == nil {
 			// Uniform 401 — never distinguish unknown user from bad password.
-			c.JSON(http.StatusUnauthorized, httpx.H{"error": "invalid credentials"})
+			nexus.WriteError(c, nexus.Err(nexus.Unauthenticated, "invalid credentials"))
 			return
 		}
 		if issue != nil {
 			body, ierr := issue(c.Request.Context(), id)
 			if ierr != nil {
-				c.JSON(http.StatusInternalServerError, httpx.H{"error": ierr.Error()})
+				nexus.WriteError(c, ierr)
 				return
 			}
 			c.JSON(http.StatusOK, body)
