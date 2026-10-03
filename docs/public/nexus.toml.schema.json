@@ -721,6 +721,13 @@
           },
           "type": "object"
         },
+        "dotenv": {
+          "description": ".env files loaded before ${VAR}s expand, relative to this file (default [\".env\"]; a leading ! makes a file required)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "environment": {
           "description": "development | staging | production; NEXUS_ENVIRONMENT overrides it",
           "type": "string"

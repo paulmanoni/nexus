@@ -13,7 +13,7 @@ func main() {
 }
 
 func dotenv() {
-	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; call config.RequireDotenv() before nexus.Boot and handle its error
+	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; nexus.toml loads .env itself — list a required file as [runtime] dotenv = ["!.env"]
 	opt := nexus.MustLoadDotenv()
 	_ = opt
 }

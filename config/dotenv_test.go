@@ -194,3 +194,34 @@ func TestLoadDotenvFile_FlowsIntoExpandEnvVars(t *testing.T) {
 		t.Fatalf("env not set: %q", got)
 	}
 }
+
+// [runtime] dotenv: .env beside nexus.toml loads by default, before the
+// ${VAR}s expand; a listed file with a leading ! must exist.
+func TestConfiguredDotenv(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
+	dir := t.TempDir()
+	t.Setenv("DOTENV_TEST_ADDR", "")
+	os.Unsetenv("DOTENV_TEST_ADDR")
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("DOTENV_TEST_ADDR=:7171\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "nexus.toml")
+	if err := os.WriteFile(path, []byte("[runtime.server]\naddr = \"${DOTENV_TEST_ADDR}\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.Server.Addr != ":7171" {
+		t.Fatalf("addr = %q, want the value .env supplies", rt.Server.Addr)
+	}
+
+	if err := os.WriteFile(path, []byte("[runtime]\ndotenv = [\"!secrets.env\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "secrets.env") {
+		t.Fatalf("missing required dotenv: %v", err)
+	}
+}

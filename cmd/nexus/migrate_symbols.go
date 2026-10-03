@@ -73,9 +73,9 @@ var migrateV2Symbols = []migrateSymbol{
 	{From: "", Old: "DatabaseSpecFor", To: "config", New: "DatabaseSpecFor"},
 	{From: "", Old: "Cache", To: "resource", New: "Cache"},
 	{From: "", Old: "MustLoadDotenv",
-		Todo: "nexus.MustLoadDotenv() is gone; call config.RequireDotenv() before nexus.Boot and handle its error"},
+		Todo: "nexus.MustLoadDotenv() is gone; nexus.toml loads .env itself — list a required file as [runtime] dotenv = [\"!.env\"]"},
 	{From: "", Old: "LoadDotenvIfPresent",
-		Todo: "nexus.LoadDotenvIfPresent() is gone; call config.LoadDotenv() before nexus.Boot and handle its error"},
+		Todo: "nexus.LoadDotenvIfPresent() is gone; nexus.toml loads .env beside it by default ([runtime] dotenv)"},
 
 	// The dev package (docs/design/v2.md §3).
 	{From: "", Old: "PreserveDev", To: "dev", New: "Preserve"},

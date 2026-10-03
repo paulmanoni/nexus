@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // DotenvDefaultPath is the file LoadDotenv reads when no
@@ -227,3 +230,42 @@ func isValidEnvKey(k string) bool {
 
 func isAlpha(c rune) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
 func isDigit(c rune) bool { return c >= '0' && c <= '9' }
+
+// loadConfiguredDotenv applies the .env files [runtime] dotenv names —
+// [".env"] when the key is absent — before the config's ${VAR}s expand.
+// Paths are relative to the config file (the working directory for the
+// embedded copy); a file is skipped when missing unless its name starts
+// with "!". Variables already in the environment win.
+func loadConfiguredDotenv(raw []byte, source string) error {
+	var doc struct {
+		Runtime struct {
+			Dotenv *[]string `toml:"dotenv"`
+		} `toml:"runtime"`
+	}
+	// Decoded before expansion: the list itself must not depend on ${VAR}s.
+	_ = toml.Unmarshal(raw, &doc)
+	files := []string{DotenvDefaultPath}
+	if doc.Runtime.Dotenv != nil {
+		files = *doc.Runtime.Dotenv
+	}
+	dir := "."
+	if source != "" && !strings.HasPrefix(source, "embedded") {
+		dir = filepath.Dir(source)
+	}
+	for _, f := range files {
+		required := strings.HasPrefix(f, "!")
+		f = strings.TrimPrefix(f, "!")
+		if !filepath.IsAbs(f) {
+			f = filepath.Join(dir, f)
+		}
+		if required {
+			if _, err := os.Stat(f); err != nil {
+				return fmt.Errorf("dotenv %s is required: %w", f, err)
+			}
+		}
+		if err := loadDotenvFile(f); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -206,24 +206,20 @@ Empty env vars count as "unset" (matches bash's `${X:-default}`) so an exported-
 
 Spring/12-factor convention: secrets and per-host values come in as OS environment variables. `.env` is just a dev convenience — your shell, docker-compose, or systemd sets the vars; the framework consumes them.
 
-For dev runs nexus ships an opt-in loader that populates `os.Environ` from a `.env` file. Call it before `Boot` so placeholders resolve:
+The config loader populates `os.Environ` from `.env` beside nexus.toml before it expands `${VAR}` placeholders — `Boot` needs no call. List other files, or mark one required with a leading `!`, under `[runtime]`:
 
-```go
-func main() {
-    if err := config.LoadDotenv(); err != nil { // reads ./.env if present; no-op otherwise
-        log.Fatal(err)
-    }
-    nexus.Boot(appModule)
-}
+```toml
+[runtime]
+dotenv = [".env", "!secrets.env"]   # default [".env"]; [] loads none
 ```
 
 Behavior:
 
-- Missing file is a silent no-op (production runs without `.env` boot normally).
+- A missing file is a silent no-op unless it is marked `!` (production runs without `.env` boot normally).
 - Real env vars always win: a `DB_PASSWORD` set by the platform beats whatever `.env` says.
 - Malformed file fails boot loud (a broken `.env` should not silently produce a partially-loaded environment).
 - Accepts `KEY=value`, `KEY="value"`, `KEY='literal'`, `export KEY=value`, `# comments`, blank lines. No shell expansion inside values — keep the parser predictable.
-- `config.RequireDotenv()` is the strict variant: a missing file is an error.
+- Outside the config loader, `config.LoadDotenv(path)` / `config.RequireDotenv(path)` load a file by hand (the latter errors when it is missing).
 
 Don't ship `.env` to production — that's what `nexus.toml`'s `[secrets]` declarations + your platform's secret injector are for. The scaffolder generates `.env.example` (commit) + `.env` in `.gitignore` (don't).
 

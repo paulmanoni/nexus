@@ -12,7 +12,7 @@ type GetArgs struct {
 	Page int    `query:"page"`
 }
 
-// TODO(nexus v2): nexus.LoadDotenvIfPresent() is gone; call config.LoadDotenv() before nexus.Boot and handle its error
+// TODO(nexus v2): nexus.LoadDotenvIfPresent() is gone; nexus.toml loads .env beside it by default ([runtime] dotenv)
 var defaults = []nexus.Option{
 	nexus.DeclareVolume(volume),
 }
@@ -22,13 +22,13 @@ func main() {
 	cfg.Server = config.Server{Addr: ":8080"}
 	_ = config.Get[string]("shop.currency")
 	_ = auth.InspectExtractor(auth.Bearer())
-	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; call config.RequireDotenv() before nexus.Boot and handle its error
+	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; nexus.toml loads .env itself — list a required file as [runtime] dotenv = ["!.env"]
 	nexus.Run(cfg,
 		nexus.Module("orders"),
 	)
 }
 
 func only() {
-	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; call config.RequireDotenv() before nexus.Boot and handle its error
+	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; nexus.toml loads .env itself — list a required file as [runtime] dotenv = ["!.env"]
 	nexus.Boot()
 }

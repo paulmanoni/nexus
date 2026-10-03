@@ -368,6 +368,8 @@ introspection  = true                   # opens /__nexus (OFF by default → 404
 introspection_networks = ["10.0.0.0/8"] # allowed even when introspection is off
 trace_capacity = 1000                    # request-trace ring buffer (0 = off)
 sdk            = true                    # one switch: generate+serve the typed client SDK
+# dotenv       = [".env", "!secrets.env"] # loaded before ${VAR}s expand (default [".env"];
+                                          # ! = required; real env vars win)
 
 [runtime.server]
 addr = ":8080"

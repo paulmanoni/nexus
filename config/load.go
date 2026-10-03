@@ -92,6 +92,10 @@ func Load(path ...string) (Runtime, error) {
 // Config. `source` names the origin for error messages (a file path, or
 // "embedded nexus.toml").
 func configFromTOML(raw []byte, source string) (Runtime, error) {
+	// The .env files come first: ${VAR}s below may name what they define.
+	if err := loadConfiguredDotenv(raw, source); err != nil {
+		return Runtime{}, newConfigError("load dotenv", source, err)
+	}
 	// Reuse manifest's ${VAR} expansion so the schema is
 	// consistent with the rest of nexus.toml. The embedded copy keeps
 	// ${VAR} placeholders intact at build time, so secrets resolve from
@@ -220,6 +224,7 @@ type runtimeBlock struct {
 	Introspection         bool            `toml:"introspection" doc:"open the /__nexus dashboard and JSON APIs (off by default)"`
 	IntrospectionNetworks []string        `toml:"introspection_networks" doc:"CIDRs allowed to reach /__nexus even when introspection is off"`
 	TraceCapacity         int             `toml:"trace_capacity" doc:"request-trace ring buffer size (0 = off)"`
+	Dotenv                []string        `toml:"dotenv" doc:".env files loaded before ${VAR}s expand, relative to this file (default [\".env\"]; a leading ! makes a file required)"`
 	SDK                   bool            `toml:"sdk" doc:"generate and serve the typed client SDK"`
 }
 
