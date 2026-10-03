@@ -102,8 +102,8 @@ func newController[T any](name, prefix string, shared ...MiddlewareOption) *Cont
 }
 
 // ControllerActions records actions for controller type T — what the
-// //@page, //@rest, //@query and //@mutation annotations on T's methods
-// generate when T carries no //@controller:
+// //nexus:page, //nexus:rest, //nexus:query and //nexus:mutation annotations on T's methods
+// generate when T carries no //nexus:controller:
 //
 //	nexus.ControllerActions(func(c *nexus.ControllerRouter[*AdminController]) {
 //	    c.Rest("GET", "/", (*AdminController).Dashboard, inertia.Component("Admin/Dashboard"))

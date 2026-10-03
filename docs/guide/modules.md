@@ -119,8 +119,8 @@ options. Each router appears as its own dashboard module. Passing an included
 router (rather than the root) to `Boot` is a boot error, as is mounting the
 same router twice.
 
-The decorator form (`//@router` + `//@on`) builds on the same machinery — see
-[`//@` decorators](./decorators#routers-fastapi-style).
+The decorator form (`//nexus:router` + `//nexus:on`) builds on the same machinery — see
+[`//nexus:` decorators](./decorators#routers-fastapi-style).
 
 ## Controllers
 

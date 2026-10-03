@@ -40,7 +40,7 @@ the main package; its //go:embed of <frontend>/dist ships the bundle
 inside the binary.
 A failing Vite build stops the build with Vite's output shown.
 
-Handlers written with //@ annotations are registered for this build
+Handlers written with //nexus: annotations are registered for this build
 without writing anything into your source tree. Run
 'nexus generate handlers' to commit those registrations instead, which
 is what a plain 'go build' / 'go install' / 'go test' needs.

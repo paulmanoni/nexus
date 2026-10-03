@@ -202,6 +202,7 @@ explains itself with --help.`,
 		newGenerateCmd(stdout, stderr),
 		newClientCmd(stdout, stderr),
 		newAPIDocsCmd(stdout, stderr),
+		newMigrateCmd(stdout, stderr),
 	)
 	add(groupInspect,
 		newDocsCmd(stdout, stderr),

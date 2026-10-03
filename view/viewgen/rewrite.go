@@ -8,7 +8,7 @@
 //	if count.Get() >= 5 { … }                         if on a signal: the browser shows the branch
 //	{{ pets := search(ctx, q.Get()) }}                server code reading a signal: the component is a shard
 //
-// Directives above a component — //@page METHOD PATH, //@auth …, //@use … —
+// Directives above a component — //nexus:page METHOD PATH, //nexus:auth …, //nexus:use … —
 // register it; see package.go.
 //
 // The pass parses a file with templ's parser, finds the signals of each
@@ -56,9 +56,9 @@ type Component struct {
 	Name     string
 	At       *PositionError // where it is declared (Msg empty)
 	Params   int
-	Method   string // from //@page; empty when not a page
+	Method   string // from //nexus:page; empty when not a page
 	Path     string
-	Gates    []string // Go options from //@auth and //@use
+	Gates    []string // Go options from //nexus:auth and //nexus:use
 	HasGates bool
 	Calls    []string // IDs of the components it renders
 	Shard    bool
@@ -107,13 +107,14 @@ func File(name, src string, pkg *Package) (*Result, error) {
 		imports:    map[string]string{},
 	}
 	var doc string
+	var docAt parser.Position
 	for _, n := range tf.Nodes {
 		switch n := n.(type) {
 		case *parser.TemplateFileGoExpression:
 			f.collectImports(n.Expression.Value)
-			doc = n.Expression.Value
+			doc, docAt = n.Expression.Value, n.Expression.Range.From
 		case *parser.HTMLTemplate:
-			f.template(n, doc)
+			f.template(n, doc, docAt)
 			doc = ""
 		default:
 			doc = ""
@@ -208,7 +209,7 @@ type component struct {
 	method   bool            // a method component (a live page's Render)
 }
 
-func (f *fileRewriter) template(t *parser.HTMLTemplate, doc string) {
+func (f *fileRewriter) template(t *parser.HTMLTemplate, doc string, docAt parser.Position) {
 	c := &component{fileRewriter: f, signals: map[string]bool{}, topLevel: map[string]bool{}, paths: jsgen.Paths{}}
 	if !c.signature(t) {
 		return
@@ -235,7 +236,7 @@ func (f *fileRewriter) template(t *parser.HTMLTemplate, doc string) {
 	})
 	info := &Component{ID: qualify(f.pkg.ImportPath, c.name), Name: c.name, Params: len(c.params), Imports: f.imports,
 		At: &PositionError{File: f.file, Line: int(t.Range.From.Line) + 1, Col: int(t.Range.From.Col) + 1}}
-	if !f.directives(info, doc, t.Range.From) {
+	if !f.directives(info, doc, docAt, t.Range.From) {
 		return
 	}
 	info.Uses = usedTypes(t)

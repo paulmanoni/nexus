@@ -69,8 +69,22 @@ nexus client --out ./web/sdk --tsconfig ./web/tsconfig.json   # merge path mappi
 
 | Command | |
 |---|---|
-| `nexus generate handlers [./...]` | Write the registrations for [`//@` decorators](/guide/decorators). `--check` is a CI drift gate. |
+| `nexus generate handlers [./...]` | Write the registrations for [`//nexus:` decorators](/guide/decorators). `--check` is a CI drift gate. |
 | `nexus generate frontend` | Generate a typed TypeScript source tree from a manifest. `--check` is a drift gate. |
+
+## `nexus migrate v2 [dir]`
+
+Rewrites a nexus v1 project for v2, in place. Re-running it is a no-op, and
+`--dry-run` lists every change without writing.
+
+| Rule | Rewrites |
+|---|---|
+| imports | Go and templ import paths: `github.com/paulmanoni/nexus[/p]` → `…/nexus/v2[/p]` (`view` included); the separate modules — `cmd/nexus`, `di/fxcontainer`, `extension/cache/redis`, `extension/jobs/jobsamqp`, `extension/jobs/jobsredis`, `httpx/ginrouter` — take `/v2` on their own path. Only import specs change. |
+| go.mod | `require`/`replace` lines for those modules move to the new paths at `v2.0.0`; a `…/nexus/view` requirement is dropped. Run `go mod tidy` afterwards. |
+| annotations | `//@x` and `// @x` nexus annotations in `.go` and `.templ` files become [`//nexus:x` directives](/guide/decorators); other tools' `@`-annotations are left alone. |
+
+Changed `.go` files are gofmt'ed. `vendor`, `node_modules`, `testdata` and hidden
+directories are skipped.
 
 ## `nexus docs [topic]`
 

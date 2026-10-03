@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// handlerKeywords is the //@ directive set `nexus generate handlers` consumes.
+// handlerKeywords is the //nexus: directive set `nexus generate handlers` consumes.
 // Anything outside this set is left for other tools (or ignored).
 var handlerKeywords = []string{
 	"provide", "rest", "query", "mutation", "subscription", "ws", "worker", "auth", "session", "use",
@@ -21,7 +21,7 @@ type handlersOptions struct {
 	Check bool
 }
 
-// newGenerateHandlersCmd builds `nexus generate handlers`: scan //@ annotations
+// newGenerateHandlersCmd builds `nexus generate handlers`: scan //nexus: annotations
 // across a package tree and (re)write one decorator-form registration file per
 // package. The committed output is what plain `go build`/`go install` compile,
 // keeping annotated apps installable without the nexus toolchain.
@@ -29,40 +29,43 @@ func newGenerateHandlersCmd(stdout, stderr io.Writer) *cobra.Command {
 	opts := handlersOptions{Root: ".", Out: handlerGenFileName}
 	cmd := &cobra.Command{
 		Use:   "handlers [dir]",
-		Short: "Generate decorator-form handler registration from //@ annotations",
-		Long: `Scan //@ annotations on handler/constructor functions and write one
+		Short: "Generate decorator-form handler registration from //nexus: annotations",
+		Long: `Scan //nexus: annotations on handler/constructor functions and write one
 ` + "`nexus_handlers_gen.go`" + ` per package containing the matching decorate.*
-registrations (decorate.Rest/Query/Provide/WS/Worker, with //@auth as options).
+registrations (decorate.Rest/Query/Provide/WS/Worker, with //nexus:auth as options).
 
 The generated file is ordinary committed Go, so a plain go build / go install
 sees every route — the annotations are sugar, not a required build step.
 
+Annotations are Go directives (//nexus:rest, no space after the slashes). The
+v1 spelling (//@rest, // @rest) is an error — run ` + "`nexus migrate v2`" + `.
+
 Annotations:
-    //@provide                        -> decorate.Provide(fn)
-    //@rest <METHOD> <PATH>           -> decorate.Rest(method, path, fn, opts…)
-    //@query / //@mutation            -> decorate.Query/Mutation(fn, opts…)
-    //@subscription                   -> decorate.Subscription(fn, opts…)
-    //@ws <PATH> <TYPE>               -> decorate.WS(path, type, fn, opts…)
-    //@worker <NAME>                  -> decorate.Worker(name, fn)
-    //@auth Required                  -> auth.Required() option
-    //@auth Requires <PERM> [<PERM>…] -> auth.Requires("PERM", …) (bare or quoted)
-    //@auth Public                    -> nexus.Public() (deny-by-default opt-out)
-    //@session Required               -> session.Required() option (flow continuity)
+    //nexus:provide                        -> decorate.Provide(fn)
+    //nexus:rest <METHOD> <PATH>           -> decorate.Rest(method, path, fn, opts…)
+    //nexus:query / //nexus:mutation       -> decorate.Query/Mutation(fn, opts…)
+    //nexus:subscription                   -> decorate.Subscription(fn, opts…)
+    //nexus:ws <PATH> <TYPE>               -> decorate.WS(path, type, fn, opts…)
+    //nexus:worker <NAME>                  -> decorate.Worker(name, fn)
+    //nexus:auth Required                  -> auth.Required() option
+    //nexus:auth Requires <PERM> [<PERM>…] -> auth.Requires("PERM", …) (bare or quoted)
+    //nexus:auth Public                    -> nexus.Public() (deny-by-default opt-out)
+    //nexus:session Required               -> session.Required() option (flow continuity)
 
 Package doc directives (on the comment above the package clause):
-    //@module <name>                  -> names the nexus.Module group (default: package name)
-    //@path <prefix>                  -> nexus.Path(prefix): REST+GraphQL module prefix
-    //@routeprefix <prefix>           -> nexus.RoutePrefix(prefix): REST-only prefix
-    //@router <prefix> [parent=…] [auth=…]
-                                      -> package-named router: takes the package name
-                                         and the package's ops join it automatically
-    //@router <name> <prefix> [parent=<name>] [auth=Required|Requires(P1,P2)]
-                                      -> named router: prefixes stack under parent,
-                                         auth applies to every member op
+    //nexus:module <name>                  -> names the nexus.Module group (default: package name)
+    //nexus:path <prefix>                  -> nexus.Path(prefix): REST+GraphQL module prefix
+    //nexus:routeprefix <prefix>           -> nexus.RoutePrefix(prefix): REST-only prefix
+    //nexus:router <prefix> [parent=…] [auth=…]
+                                           -> package-named router: takes the package name
+                                              and the package's ops join it automatically
+    //nexus:router <name> <prefix> [parent=<name>] [auth=Required|Requires(P1,P2)]
+                                           -> named router: prefixes stack under parent,
+                                              auth applies to every member op
 
 Router membership (on a handler, with any primary):
-    //@on <name>                      -> register this op on the named router instead
-                                         of the package module (works cross-package)
+    //nexus:on <name>                      -> register this op on the named router instead
+                                              of the package module (works cross-package)
 
 Examples:
     nexus generate handlers ./...        # scan from cwd

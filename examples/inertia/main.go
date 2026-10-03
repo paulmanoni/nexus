@@ -1,5 +1,5 @@
 // Command inertia is a small, runnable Inertia app: a Vue client under web/
-// driven by Go page handlers registered with the //@inertia.Page custom
+// driven by Go page handlers registered with the //nexus:inertia.Page custom
 // decorator (see ./pages). It shows an extension shipping its own decorator
 // that reuses its existing Option-returning registrar (inertia.Page), with its
 // pages branded by the inertia icon on the dashboard.
@@ -32,7 +32,7 @@ var webFS embed.FS
 func main() {
 	// No pages import, no decorate.Module: `nexus generate handlers` writes a
 	// blank-import aggregator that pulls in the pages package, and nexus.Run
-	// auto-drains its //@inertia.Page registrations.
+	// auto-drains its //nexus:inertia.Page registrations.
 	//
 	// ServeFrontend names + serves the bundle once; inertia.Module auto-discovers
 	// it and renders pages into its index.html (Vite's in dev, the built one

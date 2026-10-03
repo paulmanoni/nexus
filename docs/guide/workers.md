@@ -20,7 +20,7 @@ nexus.AsWorker("order-events",
     })
 ```
 
-With decorators, `//@worker order-events` registers the same thing.
+With decorators, `//nexus:worker order-events` registers the same thing.
 
 ## Crons
 

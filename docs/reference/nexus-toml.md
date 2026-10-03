@@ -178,7 +178,7 @@ poll_interval = "30s"
 
 ## `[decorators.imports]`
 
-Import hints for [`//@` decorators](/guide/decorators). Usually unnecessary.
+Import hints for [`//nexus:` decorators](/guide/decorators). Usually unnecessary.
 
 ```toml
 [decorators.imports]

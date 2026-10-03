@@ -137,19 +137,19 @@ func (s *lockedBuffer) String() string {
 	return s.b.String()
 }
 
-// A view's //@page, copied by templ into its generated *_templ.go, is not a
+// A view's //nexus:page, copied by templ into its generated *_templ.go, is not a
 // handler annotation: handler codegen ignores it.
 func TestHandlerScanSkipsTemplOutput(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/app\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(dir, "pages", "home_templ.go"), `package pages
 
-//@page GET /
+//nexus:page GET /
 func Home() {}
 `)
 	results, err := scanHandlerSites(dir, handlerGenFileName)
 	if err != nil {
-		t.Fatalf("a view's //@page broke handler codegen: %v", err)
+		t.Fatalf("a view's //nexus:page broke handler codegen: %v", err)
 	}
 	if len(results) != 0 {
 		t.Fatalf("got %d generated files, want none", len(results))

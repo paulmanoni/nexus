@@ -4,7 +4,7 @@ import "github.com/paulmanoni/nexus/v2/di"
 
 // deferredOptionSources are functions that yield Options at Boot/Run time —
 // AFTER every package init() has run. This is the seam that lets nexus/decorate
-// auto-wire //@-annotated registrations without the app writing an explicit
+// auto-wire //nexus:-annotated registrations without the app writing an explicit
 // drain call: decorate registers its drain here from its own init(), and Run
 // folds the result into the option tree. nexus never imports decorate, so the
 // dependency points the safe way (decorate → nexus).
@@ -32,7 +32,7 @@ func collectDeferredOptions() []Option {
 	return out
 }
 
-// DecoratedModules limits which //@-annotated (decorate-registered) modules
+// DecoratedModules limits which //nexus:-annotated (decorate-registered) modules
 // this boot accepts: of the registrations the deferred sources drain, only
 // top-level modules whose name is listed participate; everything else drained
 // is dropped. Hand-written options are never affected, and without this
@@ -44,7 +44,7 @@ func collectDeferredOptions() []Option {
 // the other packages' providers. Scope the boot instead:
 //
 //	nexus.InProcess(nexus.Config{},
-//	    nexus.DecoratedModules("adverts"),   // only adverts' //@ registrations
+//	    nexus.DecoratedModules("adverts"),   // only adverts' //nexus: registrations
 //	    adverts.Module, ...)
 //
 // With no names, every decorated registration is dropped — a boot fully

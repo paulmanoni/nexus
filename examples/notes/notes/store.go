@@ -27,7 +27,7 @@ type Store struct {
 // so a save doesn't send you back to an empty list. It does nothing outside
 // nexus dev.
 //
-// @provide
+//nexus:provide
 func NewStore() *Store {
 	s := &Store{next: 1, notes: map[int]Note{}}
 	nexus.PreserveDev("notes", s)

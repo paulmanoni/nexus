@@ -79,7 +79,7 @@ but only at development and build time: the binary you ship runs without it.
 - **[Handlers](https://paulmanoni.github.io/nexus/guide/handlers).** One reflective handler
   shape for REST, GraphQL and WebSocket. Struct tags drive binding, validation and the
   schema. You can also annotate handlers with
-  **[`//@` decorators](https://paulmanoni.github.io/nexus/guide/decorators)** instead of
+  **[`//nexus:` decorators](https://paulmanoni.github.io/nexus/guide/decorators)** instead of
   wiring them by hand.
 - **[Dependency injection](https://paulmanoni.github.io/nexus/guide/modules).** A built-in
   container with no dependencies (fx is optional). Modules group everything on the

@@ -99,7 +99,7 @@ func TestRouterDeclAssembly(t *testing.T) {
 	}
 }
 
-// TestRouterDeclErrors: unknown parents, unknown //@on names, and parent
+// TestRouterDeclErrors: unknown parents, unknown //nexus:on names, and parent
 // cycles fail the boot with clear messages.
 func TestRouterDeclErrors(t *testing.T) {
 	boot := func() error {

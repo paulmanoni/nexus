@@ -16,8 +16,8 @@ import (
 	"github.com/paulmanoni/nexus/v2/view"
 )
 
-//@page GET /
-//@auth Required
+//nexus:page GET /
+//nexus:auth Required
 templ Home() {
 	@Counter()
 	@Search()
@@ -153,17 +153,17 @@ func registrationErr(t *testing.T, src string) *PositionError {
 func TestShardGatesMustBeKnown(t *testing.T) {
 	orphan := strings.Replace(page, "\t@Search()\n", "", 1)
 	pe := registrationErr(t, orphan)
-	if !strings.Contains(pe.Msg, "Results is a shard") || !strings.Contains(pe.Msg, "no //@page") {
+	if !strings.Contains(pe.Msg, "Results is a shard") || !strings.Contains(pe.Msg, "no //nexus:page") {
 		t.Fatalf("%d: %s", pe.Line, pe.Msg)
 	}
 
-	twoPages := page + "\n//@page GET /public\ntempl Public() {\n\t@Results()\n}\n"
+	twoPages := page + "\n//nexus:page GET /public\ntempl Public() {\n\t@Results()\n}\n"
 	pe = registrationErr(t, twoPages)
 	if !strings.Contains(pe.Msg, "different gates (Home, Public)") {
 		t.Fatal(pe.Msg)
 	}
 
-	own := strings.Replace(twoPages, "templ Results() {", "//@auth Requires view_pets\ntempl Results() {", 1)
+	own := strings.Replace(twoPages, "templ Results() {", "//nexus:auth Requires view_pets\ntempl Results() {", 1)
 	res, err := File("app/page.templ", own, pkg)
 	if err != nil {
 		t.Fatal(err)
@@ -176,18 +176,34 @@ func TestShardGatesMustBeKnown(t *testing.T) {
 
 func TestDirectiveErrors(t *testing.T) {
 	for src, want := range map[string]string{
-		strings.Replace(page, "//@page GET /\n", "//@page GET\n", 1):                            "//@page takes a method and a path",
-		strings.Replace(page, "//@auth Required\n", "//@cache 5m\n", 1):                         "unknown directive //@cache",
-		strings.Replace(page, "templ Counter() {", "//@page GET /c\ntempl Counter(n int) {", 1): "takes no parameters",
+		strings.Replace(page, "//nexus:page GET /\n", "//nexus:page GET\n", 1):                       "//nexus:page takes a method and a path",
+		strings.Replace(page, "//nexus:auth Required\n", "//nexus:cache 5m\n", 1):                    "unknown directive //nexus:cache",
+		strings.Replace(page, "templ Counter() {", "//nexus:page GET /c\ntempl Counter(n int) {", 1): "takes no parameters",
 	} {
 		_, err := File("app/page.templ", src, pkg)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want %q", err, want)
 		}
 	}
-	pe := registrationErr(t, strings.Replace(page, "templ Counter() {", "//@auth Required\ntempl Counter() {", 1))
+	pe := registrationErr(t, strings.Replace(page, "templ Counter() {", "//nexus:auth Required\ntempl Counter() {", 1))
 	if !strings.Contains(pe.Msg, "Counter is neither") {
 		t.Fatal(pe.Msg)
+	}
+}
+
+// The v1 spelling (//@auth, gofmt's // @auth) is an error at its own line
+// that points at the codemod.
+func TestLegacyDirectiveSpelling(t *testing.T) {
+	for _, legacy := range []string{"//@auth Required\n", "// @auth Required\n"} {
+		_, err := File("app/page.templ", strings.Replace(page, "//nexus:auth Required\n", legacy, 1), pkg)
+		var pe *PositionError
+		if !errors.As(err, &pe) {
+			t.Fatalf("%q: err = %v, want a PositionError", legacy, err)
+		}
+		if pe.Line != 10 || !strings.Contains(pe.Msg, "//@auth is the nexus v1 annotation spelling — write //nexus:auth") ||
+			!strings.Contains(pe.Msg, "nexus migrate v2") {
+			t.Errorf("%q: %s:%d: %s", legacy, pe.File, pe.Line, pe.Msg)
+		}
 	}
 }
 
@@ -219,7 +235,7 @@ var items []int
 // A page in one file and the shard it renders in another: the package pass
 // sees both, so the shard still inherits the page's gates.
 func TestShardAcrossFiles(t *testing.T) {
-	home := "package app\n\n//@page GET /\n//@auth Requires view_pets\ntempl Home() {\n\t@Results()\n}\n"
+	home := "package app\n\n//nexus:page GET /\n//nexus:auth Requires view_pets\ntempl Home() {\n\t@Results()\n}\n"
 	results := "package app\n\nimport \"github.com/paulmanoni/nexus/v2/view\"\n\ntempl Results() {\n\t{{ q := view.Use[*SearchState](ctx).Query }}\n\t{{ rows := find(q.Get()) }}\n\tfor _, r := range rows {\n\t\t<li>{ r }</li>\n\t}\n}\n"
 	a, err := File("app/home.templ", home, pkg)
 	if err != nil {

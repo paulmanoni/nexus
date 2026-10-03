@@ -32,7 +32,7 @@ import (
 //   - a lookup misses, which is what a newly created package dir looks
 //     like: the index reloads once and retries before giving up.
 //
-// The module graph behind qualified //@pkg.Func decorators (`go list -deps
+// The module graph behind qualified //nexus:pkg.Func decorators (`go list -deps
 // -json`, the expensive one) is cached the same way and stays lazy: it is
 // only built when a selector can't be resolved from the annotated file's
 // own imports.

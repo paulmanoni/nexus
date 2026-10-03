@@ -9,7 +9,7 @@ import (
 // TestEmit_Golden snapshots the FULL generated _gen.go for a broad annotation
 // catalog: every primary keyword (provide/rest/query/mutation/subscription/ws/
 // worker), auth + use modifiers (with collected imports), and a custom qualified
-// //@pkg.Func decorator with and without a trailing modifier. The exact-string
+// //nexus:pkg.Func decorator with and without a trailing modifier. The exact-string
 // tests in emit_test.go cover individual branches; this pins the whole emitted
 // file (header, import block ordering, gofmt result) so any drift is a diff.
 // Regenerate with: UPDATE_GOLDEN=1 go test ./internal/handlergen/...

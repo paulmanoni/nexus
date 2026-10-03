@@ -542,7 +542,7 @@ func Run(cfg config.Runtime, opts ...Option) {
 		fxEarlyOptions(cfg),
 		autoManifestOptions(),
 	}, unwrap(opts)...)
-	// Deferred sources (e.g. nexus/decorate's //@-annotation drain) contribute
+	// Deferred sources (e.g. nexus/decorate's //nexus:-annotation drain) contribute
 	// AFTER the app's own options and BEFORE autoMountGraphQL, so their
 	// endpoints take part in schema assembly like any hand-written module.
 	all = append(all, unwrap(filterDeferredOptions(opts, collectDeferredOptions()))...)

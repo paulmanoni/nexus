@@ -20,19 +20,19 @@ type Site struct {
 	Keyword string
 	Args    []string
 	Line    int
-	Imports []string // import lines a //@use expression needs (resolved by the caller)
+	Imports []string // import lines a //nexus:use expression needs (resolved by the caller)
 
 	// Recv and Method are set when the annotated function is a method: Recv
 	// is the receiver's type name, Method the method's, and Func the method
 	// expression the generated code calls, e.g. "(*UsersController).Show".
 	Recv, Method string
 
-	// TypeLevel marks a directive on a type's doc comment — //@controller and
-	// its //@auth//@session//@use modifiers. Func is then the type's name.
+	// TypeLevel marks a directive on a type's doc comment — //nexus:controller and
+	// its //nexus:auth, //nexus:session, //nexus:use modifiers. Func is then the type's name.
 	TypeLevel bool
 
 	// PackageLevel marks a directive found on the package doc comment
-	// (//@module, //@path, //@routeprefix) — it configures the generated
+	// (//nexus:module, //nexus:path, //nexus:routeprefix) — it configures the generated
 	// module instead of registering a function.
 	PackageLevel bool
 }
@@ -70,7 +70,7 @@ func Generate(sites []Site, outName string) ([]Result, error) {
 		}
 		pkgOf[s.Dir] = s.Pkg
 	}
-	// A package holding only //@router declarations still emits a file.
+	// A package holding only //nexus:router declarations still emits a file.
 	for dir, decls := range declsByDir {
 		if _, seen := byDir[dir]; !seen {
 			dirs = append(dirs, dir)
@@ -90,7 +90,7 @@ func Generate(sites []Site, outName string) ([]Result, error) {
 			cfg.RouterDecls = append(cfg.RouterDecls, d.RouterDecl)
 			if d.autoJoin {
 				if cfg.Module != "" || cfg.Path != "" || cfg.RoutePrefix != "" {
-					return nil, d.site.errf("//@router %s (package-named) already groups and prefixes this package — drop the //@module///@path///@routeprefix directives", d.Name)
+					return nil, d.site.errf("//nexus:router %s (package-named) already groups and prefixes this package — drop the //nexus:module///@path///@routeprefix directives", d.Name)
 				}
 				cfg.AutoRouter = d.Name
 			}
@@ -113,15 +113,15 @@ type declWithPos struct {
 	RouterDecl
 	pkg  string
 	site Site
-	// autoJoin marks the package-named form (//@router <prefix> …, no name):
+	// autoJoin marks the package-named form (//nexus:router <prefix> …, no name):
 	// the router takes the package's name and every op in the declaring
-	// package registers on it without needing //@on.
+	// package registers on it without needing //nexus:on.
 	autoJoin bool
 }
 
-// collectRouterDecls peels //@router declarations out of the site list —
+// collectRouterDecls peels //nexus:router declarations out of the site list —
 // they are scan-wide, not per-package: a router declared in one package can
-// be joined (//@on) from any other. Validates placement, argument shape,
+// be joined (//nexus:on) from any other. Validates placement, argument shape,
 // duplicate and conflicting names, unknown parents and parent cycles, all
 // with positioned errors.
 func collectRouterDecls(sites []Site) (byDir map[string][]declWithPos, known map[string]bool, rest []Site, err error) {
@@ -136,7 +136,7 @@ func collectRouterDecls(sites []Site) (byDir map[string][]declWithPos, known map
 		}
 		a := Annotation{Func: s.Func, Keyword: s.Keyword, Args: s.Args, File: s.File, Line: s.Line}
 		if !s.PackageLevel {
-			return nil, nil, nil, a.errf("//@router is package-level — put it on the package doc comment, above `package %s`", s.Pkg)
+			return nil, nil, nil, a.errf("//nexus:router is package-level — put it on the package doc comment, above `package %s`", s.Pkg)
 		}
 		d, err := parseRouterDecl(a, s.Pkg)
 		if err != nil {
@@ -146,7 +146,7 @@ func collectRouterDecls(sites []Site) (byDir map[string][]declWithPos, known map
 			if prev.RouterDecl == d.RouterDecl {
 				continue // the same declaration repeated is harmless
 			}
-			return nil, nil, nil, a.errf("//@router %s conflicts with its declaration at %s:%d — declare a router once",
+			return nil, nil, nil, a.errf("//nexus:router %s conflicts with its declaration at %s:%d — declare a router once",
 				d.Name, prev.site.File, prev.site.Line)
 		}
 		dw := declWithPos{RouterDecl: d.RouterDecl, pkg: s.Pkg, site: s, autoJoin: d.autoJoin}
@@ -160,12 +160,12 @@ func collectRouterDecls(sites []Site) (byDir map[string][]declWithPos, known map
 			continue
 		}
 		if _, ok := decls[d.Parent]; !ok {
-			return nil, nil, nil, d.site.errf("//@router %s names unknown parent %q", name, d.Parent)
+			return nil, nil, nil, d.site.errf("//nexus:router %s names unknown parent %q", name, d.Parent)
 		}
 		seen := map[string]bool{name: true}
 		for p := d.Parent; p != ""; p = decls[p].Parent {
 			if seen[p] {
-				return nil, nil, nil, d.site.errf("//@router %s: parent chain forms a cycle through %q", name, p)
+				return nil, nil, nil, d.site.errf("//nexus:router %s: parent chain forms a cycle through %q", name, p)
 			}
 			seen[p] = true
 		}
@@ -178,10 +178,10 @@ func (s Site) errf(format string, args ...any) error {
 	return Annotation{Func: s.Func, File: s.File, Line: s.Line}.errf(format, args...)
 }
 
-// parseRouterDecl parses the two //@router forms:
+// parseRouterDecl parses the two //nexus:router forms:
 //
-//	//@router <name> <prefix> [parent=…] [auth=…]   // explicit, cross-package
-//	//@router <prefix> [parent=…] [auth=…]          // package-named: the router
+//	//nexus:router <name> <prefix> [parent=…] [auth=…]   // explicit, cross-package
+//	//nexus:router <prefix> [parent=…] [auth=…]          // package-named: the router
 //	                                                // takes the package's name and
 //	                                                // the package's ops auto-join
 //
@@ -189,12 +189,12 @@ func (s Site) errf(format string, args ...any) error {
 // prefix (package-named form), anything else is the router's name.
 func parseRouterDecl(a Annotation, pkg string) (declWithPos, error) {
 	if len(a.Args) < 1 {
-		return declWithPos{}, a.errf("//@router needs a <prefix> (package-named) or <name> <prefix>, e.g. //@router /billing (got %v)", a.Args)
+		return declWithPos{}, a.errf("//nexus:router needs a <prefix> (package-named) or <name> <prefix>, e.g. //nexus:router /billing (got %v)", a.Args)
 	}
 	var d RouterDecl
 	var rest []string
 	if strings.HasPrefix(a.Args[0], "/") {
-		// Package-named form: the same default //@module uses.
+		// Package-named form: the same default //nexus:module uses.
 		name := pkg
 		if name == "" || name == "main" {
 			name = DefaultModule
@@ -203,21 +203,21 @@ func parseRouterDecl(a Annotation, pkg string) (declWithPos, error) {
 		rest = a.Args[1:]
 	} else {
 		if len(a.Args) < 2 {
-			return declWithPos{}, a.errf("//@router %s needs a <prefix>, e.g. //@router %s /billing (got %v)", a.Args[0], a.Args[0], a.Args)
+			return declWithPos{}, a.errf("//nexus:router %s needs a <prefix>, e.g. //nexus:router %s /billing (got %v)", a.Args[0], a.Args[0], a.Args)
 		}
 		d = RouterDecl{Name: a.Args[0], Prefix: a.Args[1]}
 		rest = a.Args[2:]
 	}
 	if d.Name == "" || strings.ContainsRune(d.Name, '=') {
-		return declWithPos{}, a.errf("//@router needs a name or a /-prefix first, e.g. //@router billing /billing (got %v)", a.Args)
+		return declWithPos{}, a.errf("//nexus:router needs a name or a /-prefix first, e.g. //nexus:router billing /billing (got %v)", a.Args)
 	}
 	if !strings.HasPrefix(d.Prefix, "/") {
-		return declWithPos{}, a.errf("//@router %s prefix %q must start with \"/\"", d.Name, d.Prefix)
+		return declWithPos{}, a.errf("//nexus:router %s prefix %q must start with \"/\"", d.Name, d.Prefix)
 	}
 	for _, kv := range rest {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok || v == "" {
-			return declWithPos{}, a.errf("//@router %s: %q is not a key=value option (parent=<name>, auth=<Required|Requires(P1,P2)>)", d.Name, kv)
+			return declWithPos{}, a.errf("//nexus:router %s: %q is not a key=value option (parent=<name>, auth=<Required|Requires(P1,P2)>)", d.Name, kv)
 		}
 		switch k {
 		case "parent":
@@ -229,13 +229,13 @@ func parseRouterDecl(a Annotation, pkg string) (declWithPos, error) {
 			}
 			d.AuthExpr = expr
 		default:
-			return declWithPos{}, a.errf("//@router %s: unknown option %q (parent, auth)", d.Name, k)
+			return declWithPos{}, a.errf("//nexus:router %s: unknown option %q (parent, auth)", d.Name, k)
 		}
 	}
 	return declWithPos{RouterDecl: d, autoJoin: strings.HasPrefix(a.Args[0], "/")}, nil
 }
 
-// routerAuthExpr renders a //@router auth= value: Required, or
+// routerAuthExpr renders a //nexus:router auth= value: Required, or
 // Requires(P1,P2) with bare or quoted permissions.
 func routerAuthExpr(a Annotation, val string) (string, error) {
 	if val == "Required" || val == "Required()" {
@@ -246,19 +246,19 @@ func routerAuthExpr(a Annotation, val string) (string, error) {
 		for _, p := range strings.Split(strings.TrimSuffix(inner, ")"), ",") {
 			p = strings.Trim(strings.TrimSpace(p), `"`)
 			if p == "" {
-				return "", a.errf("//@router auth=%s has an empty permission", val)
+				return "", a.errf("//nexus:router auth=%s has an empty permission", val)
 			}
 			quoted = append(quoted, fmt.Sprintf("%q", p))
 		}
 		if len(quoted) == 0 {
-			return "", a.errf("//@router auth=Requires(...) needs at least one permission")
+			return "", a.errf("//nexus:router auth=Requires(...) needs at least one permission")
 		}
 		return "auth.Requires(" + strings.Join(quoted, ", ") + ")", nil
 	}
-	return "", a.errf("//@router auth=%s is not Required or Requires(P1,P2)", val)
+	return "", a.errf("//nexus:router auth=%s is not Required or Requires(P1,P2)", val)
 }
 
-// splitPackageDirectives peels a package's //@module//@path//@routeprefix
+// splitPackageDirectives peels a package's //nexus:module, //nexus:path, //nexus:routeprefix
 // directives (package doc comment) into the Config and returns the remaining
 // function annotations. It enforces scope both ways — a package directive on
 // a function, or a function directive on the package doc, is a positioned
@@ -275,13 +275,13 @@ func splitPackageDirectives(cfg Config, group []Site) (Config, []Annotation, err
 			Recv: s.Recv, Method: s.Method, TypeLevel: s.TypeLevel}
 		if !packageDirectiveKeywords[s.Keyword] {
 			if s.PackageLevel {
-				return cfg, nil, a.errf("//@%s is not a package-level directive — annotate a function instead", s.Keyword)
+				return cfg, nil, a.errf("//nexus:%s is not a package-level directive — annotate a function instead", s.Keyword)
 			}
 			anns = append(anns, a)
 			continue
 		}
 		if !s.PackageLevel {
-			return cfg, nil, a.errf("//@%s is package-level — put it on the package doc comment, above `package %s`", s.Keyword, s.Pkg)
+			return cfg, nil, a.errf("//nexus:%s is package-level — put it on the package doc comment, above `package %s`", s.Keyword, s.Pkg)
 		}
 		val, err := packageDirectiveValue(a)
 		if err != nil {
@@ -291,7 +291,7 @@ func splitPackageDirectives(cfg Config, group []Site) (Config, []Annotation, err
 			if prev.val == val {
 				continue // the same declaration repeated across files is harmless
 			}
-			return cfg, nil, a.errf("//@%s %s conflicts with //@%s %s at %s:%d — a package declares each once",
+			return cfg, nil, a.errf("//nexus:%s %s conflicts with //nexus:%s %s at %s:%d — a package declares each once",
 				s.Keyword, val, s.Keyword, prev.val, prev.site.File, prev.site.Line)
 		}
 		seen[s.Keyword] = first{val: val, site: s}
@@ -308,18 +308,18 @@ func splitPackageDirectives(cfg Config, group []Site) (Config, []Annotation, err
 }
 
 // packageDirectiveValue validates a package directive's single argument:
-// //@module needs a name, //@path//@routeprefix a "/"-prefixed prefix.
+// //nexus:module needs a name, //nexus:path or //nexus:routeprefix a "/"-prefixed prefix.
 func packageDirectiveValue(a Annotation) (string, error) {
 	if len(a.Args) != 1 || a.Args[0] == "" {
-		what := "a module name, e.g. //@module billing"
+		what := "a module name, e.g. //nexus:module billing"
 		if a.Keyword != "module" {
-			what = fmt.Sprintf("a route prefix, e.g. //@%s /billing", a.Keyword)
+			what = fmt.Sprintf("a route prefix, e.g. //nexus:%s /billing", a.Keyword)
 		}
-		return "", a.errf("//@%s needs exactly %s (got %v)", a.Keyword, what, a.Args)
+		return "", a.errf("//nexus:%s needs exactly %s (got %v)", a.Keyword, what, a.Args)
 	}
 	val := a.Args[0]
 	if a.Keyword != "module" && !strings.HasPrefix(val, "/") {
-		return "", a.errf("//@%s prefix %q must start with \"/\"", a.Keyword, val)
+		return "", a.errf("//nexus:%s prefix %q must start with \"/\"", a.Keyword, val)
 	}
 	return val, nil
 }

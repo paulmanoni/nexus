@@ -90,7 +90,7 @@ jobs:
       - name: Enforce coverage floor
         run: make cover-check
 
-  # Drift gate: committed //@ handler codegen (*_gen.go) must match a fresh
+  # Drift gate: committed //nexus: handler codegen (*_gen.go) must match a fresh
   # regeneration. Catches a handler whose annotations changed without re-running
   # `nexus generate handlers`.
   codegen-drift:

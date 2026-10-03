@@ -5,7 +5,7 @@ from nexus and keeps them reactive — with no JavaScript build and no Node. You
 write plain templ; what is reactive follows from what the template reads.
 
 ```templ
-//@page GET /
+//nexus:page GET /
 templ Home() {
 	@Layout("Pets") {
 		@Counter()
@@ -65,14 +65,14 @@ the shard, and keeps them current as you save.
 | `onclick={ view.Do(func(e view.Event) { … }) }` | an action that reads the event or takes several steps |
 | `if x.Get() … { } else { }` | every branch rendered; the browser shows the one that holds |
 | `{{ … x.Get() … }}`, `for … x.Get()`, `@C(x.Get())` | server code reads the signal: the component is a **shard**, re-rendered on the server when `x` changes |
-| `//@page GET /path` above a component | registers it as a page |
-| `//@auth Required`, `//@auth Requires p…`, `//@auth Public`, `//@use expr` | its gates |
+| `//nexus:page GET /path` above a component | registers it as a page |
+| `//nexus:auth Required`, `//nexus:auth Requires p…`, `//nexus:auth Public`, `//nexus:use expr` | its gates |
 
 :::
 
 - Signals have two methods, `Get` and `Set`. In markup, `Set` *describes* what an
   event does; it changes nothing on the server.
-- **Shards are nexus ops.** A shard takes its own `//@auth`/`//@use`, or inherits
+- **Shards are nexus ops.** A shard takes its own `//nexus:auth`/`//nexus:use`, or inherits
   the gates of the pages that render it — across packages — which must agree. A
   shard no page reaches, or one reached by pages with different gates, must name
   its own, so a shard endpoint is never less guarded than its page. Its

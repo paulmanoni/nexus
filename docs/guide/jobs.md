@@ -46,7 +46,7 @@ nexus.Boot(jobs.Module(jobs.Config{}), ExportReport /* , … */)
 Or annotate the method and let the generator register it:
 
 ```go
-//@job low timeout=2h retry=3
+//nexus:job low timeout=2h retry=3
 func (s *ReportService) Export(ctx context.Context, run *jobs.Run, a ExportArgs) error
 ```
 

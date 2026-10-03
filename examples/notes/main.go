@@ -1,5 +1,5 @@
 // Command notes is a small, real app showing decorator-form registration
-// (//@provide / //@rest / //@query in the notes package) coexisting with an
+// (//nexus:provide / //nexus:rest / //nexus:query in the notes package) coexisting with an
 // explicit hand-written endpoint — all on one DI container and one dashboard.
 //
 //	nexus generate handlers ./examples/notes   # writes notes/nexus_handlers_gen.go

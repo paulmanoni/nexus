@@ -298,11 +298,11 @@ render on the client.
 ## Decorator form
 
 ```go
-//@auth Required
-//@inertia.Page GET /users Users/Index
+//nexus:auth Required
+//nexus:inertia.Page GET /users Users/Index
 func NewListUsers(svc *UserService, p nexus.Params[ListArgs]) (UsersProps, error)
 
-//@inertia.Page get,post /login Login
+//nexus:inertia.Page get,post /login Login
 func NewLogin(...) (any, error)
 ```
 

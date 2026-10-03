@@ -278,7 +278,7 @@ browser), and server code reading a signal (`{{ }}`, `for`, component args) make
 component a **shard** re-rendered on the server (a nexus op). Shared page state is DI:
 a struct of `*view.Signal` fields (`view.Initial(v)` defaults), read with
 `view.Use[*T](ctx).Field` — each page gets its own copy; services come back as is.
-`//@page GET /` / `//@auth` / `//@use` above a component register it; a shard inherits
+`//nexus:page GET /` / `//nexus:auth` / `//nexus:use` above a component register it; a shard inherits
 its pages' gates (module-wide render graph; they must agree) or names its own. Zero
 wiring: the generator emits `view_gen.go` per package (pages, shards, `view.Expose` for
 every `view.Use[T]`) and `view_imports_gen.go` in main. **`nexus dev`** generates on start
@@ -577,20 +577,22 @@ mounts under `/x`; a controller's prefix is REST-only, so its GraphQL actions se
 enclosing module's endpoint (or the app's `/graphql`), never `<prefix>/graphql` (plain
 routers keep `<prefix>/graphql`). `.TrailingSlash()` registers each action at `/p` and `/p/`.
 `inertia.Component("Admin/Page")` renders any action as that page (built on
-`nexus.RestOptions`, which bundles REST options). **Decorator form:** `//@controller <prefix>
-[trailing-slash]` on a type (+ type-level `//@auth`/`//@session`/`//@use` shared by every
+`nexus.RestOptions`, which bundles REST options). **Decorator form:** `//nexus:controller <prefix>
+[trailing-slash]` on a type (+ type-level `//nexus:auth`/`//nexus:session`/`//nexus:use` shared by every
 action) makes its annotated methods one `nexus.Controller[*T]` chain; methods take
-`//@page METHOD PATH [Component]` (component defaults to `<Folder>/<Method>`; `//@inertia.Page`
-reads the same), `//@rest`, `//@query`, `//@mutation`; paths are relative (`/` = the prefix);
-an action may repeat `//@page`/`//@rest`; the constructor still needs `//@provide`. Annotated
-pointer-receiver methods on types without `//@controller` are collected per type
+`//nexus:page METHOD PATH [Component]` (component defaults to `<Folder>/<Method>`; `//nexus:inertia.Page`
+reads the same), `//nexus:rest`, `//nexus:query`, `//nexus:mutation`; paths are relative (`/` = the prefix);
+an action may repeat `//nexus:page`/`//nexus:rest`; the constructor still needs `//nexus:provide`. Annotated
+pointer-receiver methods on types without `//nexus:controller` are collected per type
 (`nexus.ControllerActions`, paths as written) and served by the `nexus.Controller`/`Resource`
 declared for that type in Go — so `nexus.Module("admin", nexus.Path("/admin"),
 nexus.Resource[*T]("/").Provide(NewT))` takes the annotated routes, with path and gates in
 code; undeclared, they register on their own under the package's module.
-`inertia.AsPage()` (built on `nexus.ActionOption`) is the Go form of a component-less `//@page`.
+`inertia.AsPage()` (built on `nexus.ActionOption`) is the Go form of a component-less `//nexus:page`.
 Every annotation has a Go equivalent (table in docs/guide/controllers.md).
-gofmt's `// @x` form is read like `//@x` (type directives included).
+Directives are Go directive comments: gofmt leaves `//nexus:x` unspaced and moves it
+below the doc prose (the scanner reads every line, so placement is free); go/doc hides it.
+The v1 `//@x` / `// @x` spelling is a file:line error — run `nexus migrate v2`.
 
 **Inertia resources (`inertia.Resource[T](prefix)`).** A controller whose actions are
 pages and forms: Index `GET /`, New `GET /new`, Show `GET /:id`, Edit `GET /:id/edit`
@@ -776,47 +778,48 @@ identity and auth state from the upgrade request (captured once per connection),
 values with `nexus.RegisterWSCarrier` — only ones that may outlive the request (never a
 `Scoped` memo or a session handle).
 
-### Decorator-form registration (`//@` annotations) — optional
+### Decorator-form registration (`//nexus:` annotations) — optional
 
 Instead of listing every handler in a `nexus.Module(...)`, annotate the handler
-functions with `//@` doc comments and let codegen do the wiring. **Purely
+functions with `//nexus:` doc comments and let codegen do the wiring. **Purely
 additive** — it produces the same options as `AsRest`/`AsQuery`/`Provide`, so
 annotated and hand-written registrations coexist. Needs the `decorate` package
 (`github.com/paulmanoni/nexus/v2/decorate`); the codegen scanner lives in the
 `nexus` CLI only, so the app binary links no extra deps.
 
 ```go
-//@provide
+//nexus:provide
 func NewUserService(app *nexus.App) *UserService { ... }
 
-//@rest GET /users/:id
+//nexus:rest GET /users/:id
 func NewGetUser(s *UserService, p nexus.Params[GetArgs]) (*User, error) { ... }
 
-//@mutation
-//@auth Requires ADMIN
+//nexus:mutation
+//nexus:auth Requires ADMIN
 func NewCreateUser(s *UserService, p nexus.Params[NewUser]) (*User, error) { ... }
 ```
 
 Annotation catalog (one PRIMARY per func, plus optional modifiers):
 ```
-//@provide                        //@rest <METHOD> <PATH>      //@query / //@mutation
-//@subscription                   //@ws <PATH> <TYPE>          //@worker <NAME>
-//@auth Required | Requires PERM… | Public  (modifier)                   //@use <expr>  (modifier, per-op middleware)
-//@session Required  (modifier — session.Required(), the 428 flow-continuity gate)
-//@router [<name>] <prefix> [parent=<n>] [auth=…] + //@on <name>  (FastAPI-style routers:
-                                  name defaults to the package (ops auto-join);
-                                  stacked prefixes, shared gates, cross-package membership;
-                                  Go API: nexus.NewRouter/Include — pass the root to Boot)
-//@module <name> | //@path <prefix> | //@routeprefix <prefix>  (PACKAGE doc comment —
-                                  name the module group / prefix its routes)
-//@page <METHOD> <PATH> [Component]  inertia page (component optional on a controller method)
-//@job [queue] [timeout=D] [retry=N] [unique=D] [name=X]  background job (extension/jobs)
-//@controller <prefix> [trailing-slash]  (TYPE doc comment — its annotated methods become
-                                  one nexus.Controller chain; see Controllers above)
-//@<pkg>.<Func> args…             custom extension decorator — emits pkg.Func(args…, fn);
-                                  the registrar returns a nexus.Option (e.g. inertia.Page,
-                                  reusing its existing signature). pkg is imported from the
-                                  annotated file. Args are whitespace-separated; no spaces inside one.
+//nexus:provide              //nexus:rest <METHOD> <PATH>     //nexus:query / //nexus:mutation
+//nexus:subscription         //nexus:ws <PATH> <TYPE>         //nexus:worker <NAME>
+//nexus:auth Required | Requires PERM… | Public  (modifier)
+//nexus:use <expr>           (modifier, per-op middleware)
+//nexus:session Required     (modifier — session.Required(), the 428 flow-continuity gate)
+//nexus:router [<name>] <prefix> [parent=<n>] [auth=…] + //nexus:on <name>
+                             (FastAPI-style routers: name defaults to the package (ops
+                             auto-join); stacked prefixes, shared gates, cross-package
+                             membership; Go API: nexus.NewRouter/Include — pass the root to Boot)
+//nexus:module <name> | //nexus:path <prefix> | //nexus:routeprefix <prefix>
+                             (PACKAGE doc comment — name the module group / prefix its routes)
+//nexus:page <METHOD> <PATH> [Component]  inertia page (component optional on a controller method)
+//nexus:job [queue] [timeout=D] [retry=N] [unique=D] [name=X]  background job (extension/jobs)
+//nexus:controller <prefix> [trailing-slash]  (TYPE doc comment — its annotated methods
+                             become one nexus.Controller chain; see Controllers above)
+//nexus:<pkg>.<Func> args…   custom extension decorator — emits pkg.Func(args…, fn); the
+                             registrar returns a nexus.Option (e.g. inertia.Page, reusing its
+                             existing signature). pkg is imported from the annotated file.
+                             Args are whitespace-separated; no spaces inside one.
 ```
 
 **The app needs no wiring** — `main` is just `nexus.Boot()` / `nexus.Run(cfg, …)`:
@@ -840,12 +843,12 @@ Annotation catalog (one PRIMARY per func, plus optional modifiers):
   one binary all see them; no names = drop all decorated registrations).
   (`nexus build` fails fast if codegen can't resolve a decorator; `nexus dev`
   warns and lets `go run` surface the underlying error.)
-- A qualified custom decorator (`//@pkg.Func`, e.g. `//@inertia.Page`) needs the
+- A qualified custom decorator (`//nexus:pkg.Func`, e.g. `//nexus:inertia.Page`) needs the
   `pkg` import resolved for the generated file. The codegen resolves it
   automatically: from the annotated file's imports → its sibling files in the
   same package → a `nexus.toml` `[decorators.imports]` hint → the module import
   graph (`go list`), where the main module's own packages outrank dependency
-  packages sharing the name. Package selectors inside `//@use` expressions
+  packages sharing the name. Package selectors inside `//nexus:use` expressions
   resolve through the same cascade. So you usually need no import in the
   annotated file; if a selector is ambiguous (inside the module, or between
   foreign packages with no local candidate) or not a dependency, add
@@ -1125,7 +1128,7 @@ DI, args JSON): `var X = jobs.Define((*Svc).M, jobs.Queue("low"), jobs.Timeout(d
 jobs.Retry(n), jobs.Backoff(fn), jobs.Unique(ttl), jobs.Name("…"))` — the handle is a
 `nexus.Option` (pass to Boot with `jobs.Module(jobs.Config{})`) and `X.Enqueue(ctx, args,
 jobs.Delay(d)|jobs.At(t))`; `jobs.DefineFunc` for plain funcs (closures need `jobs.Name`).
-Decorator: `//@job [queue] [timeout=2h] [retry=3] [unique=10m] [name=x]` on a method or func;
+Decorator: `//nexus:job [queue] [timeout=2h] [retry=3] [unique=10m] [name=x]` on a method or func;
 enqueue annotated jobs with `jobs.Enqueue(ctx, (*Svc).M, args)` (ambiguous if a method is
 defined twice). `*jobs.Run`: `Progress(done,total,msg)` (returns ctx.Err() once it should
 stop), `SetResult`, `Checkpoint`/`Resume`, `ID/Attempt/Actor` (enqueuer via
@@ -1385,10 +1388,13 @@ nexus build          install (if needed) → vite build [→ vite build --ssr] �
                      then go build embeds it. ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
 nexus generate frontend    Typed TS source tree from a manifest (--check = drift gate).
-nexus generate handlers [./...]  Wire //@-annotated handlers: write nexus_handlers_gen.go
+nexus generate handlers [./...]  Wire //nexus:-annotated handlers: write nexus_handlers_gen.go
                      per package + a main-package import aggregator. --check = CI drift gate.
                      (Run automatically by nexus dev/build; see §5.)
 nexus docs [topic]   Inline reference. --web opens the docs site (paulmanoni.github.io/nexus).
+nexus migrate v2 [dir]  Codemod a v1 project for v2: /v2 import paths (Go + templ), go.mod
+                     requires at v2.0.0 (view dropped — it's in the root module), //@x →
+                     //nexus:x annotations; gofmt'ed, idempotent. --dry-run lists every edit.
 nexus pki ...        Generate mTLS certs for the peer mesh.
 ```
 `nexus build` produces ONE binary (frontend + Go). There is no deployment-split CLI and

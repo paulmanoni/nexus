@@ -116,7 +116,7 @@ func TestEmit_CustomQualifiedDecorator(t *testing.T) {
 }
 
 func TestEmit_CustomDecoratorAppendsModifiers(t *testing.T) {
-	// A modifier on a custom //@pkg.Func decorator is appended as a trailing
+	// A modifier on a custom //nexus:pkg.Func decorator is appended as a trailing
 	// option: inertia.Page(args…, fn, auth.Required()). The registrar must accept
 	// the option type (inertia.Page takes ...nexus.RestOption).
 	got, err := Emit(Config{Package: "h"}, []Annotation{
@@ -186,7 +186,7 @@ func TestEmit_MultiRoleAuth(t *testing.T) {
 	}
 }
 
-// TestEmit_InertiaPageNormalization: //@inertia.Page takes bare tokens (or
+// TestEmit_InertiaPageNormalization: //nexus:inertia.Page takes bare tokens (or
 // quoted ones), case-normalises the verbs, and rejects malformed values at
 // the annotation — instead of emitting invalid Go into the generated file.
 func TestEmit_InertiaPageNormalization(t *testing.T) {
@@ -237,7 +237,7 @@ func TestEmit_InertiaPageNormalization(t *testing.T) {
 	}
 }
 
-// TestEmit_AuthGrammar: the //@auth modifier reads naturally — bare tokens,
+// TestEmit_AuthGrammar: the //nexus:auth modifier reads naturally — bare tokens,
 // case-insensitive capability, unquoted permissions, a Public marking — while
 // the legacy call form keeps working; typos fail at the annotation with a
 // suggestion instead of an undefined identifier in the generated file.
@@ -283,12 +283,12 @@ func TestEmit_AuthGrammar(t *testing.T) {
 	}
 	bad(nil, "needs a capability")
 	bad([]string{"Requires"}, "needs at least one permission")
-	bad([]string{"Required", "ADMIN"}, "//@auth Requires ADMIN") // steers to the right spelling
+	bad([]string{"Required", "ADMIN"}, "//nexus:auth Requires ADMIN") // steers to the right spelling
 	bad([]string{"Requeired"}, "did you mean Required?")
-	bad([]string{"Admin"}, "unknown //@auth capability")
+	bad([]string{"Admin"}, "unknown //nexus:auth capability")
 }
 
-// TestEmit_SessionGrammar: the //@session modifier — bare or call-form
+// TestEmit_SessionGrammar: the //nexus:session modifier — bare or call-form
 // Required, case-insensitive, with positioned errors and a did-you-mean.
 func TestEmit_SessionGrammar(t *testing.T) {
 	rest := Annotation{Func: "NewX", Keyword: "rest", Args: []string{"GET", "/x"}, Line: 1}
@@ -317,7 +317,7 @@ func TestEmit_SessionGrammar(t *testing.T) {
 	bad(nil, "needs a capability")
 	bad([]string{"Required", "extra"}, "takes no arguments")
 	bad([]string{"Requierd"}, "did you mean Required?")
-	bad([]string{"Fresh"}, "unknown //@session capability")
+	bad([]string{"Fresh"}, "unknown //nexus:session capability")
 }
 
 func TestEmit_Errors(t *testing.T) {

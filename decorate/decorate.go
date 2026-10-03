@@ -1,6 +1,6 @@
-// Package decorate is the runtime side of nexus's //@-annotation system. The
+// Package decorate is the runtime side of nexus's //nexus:-annotation system. The
 // codegen (`nexus generate handlers`, run by `nexus dev`/`build`) scans handler
-// functions for //@ directives and emits, per package, an init() that calls
+// functions for //nexus: directives and emits, per package, an init() that calls
 // Register with that package's registrations:
 //
 //	// generated, in package "users":
