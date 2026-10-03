@@ -159,8 +159,8 @@ func bodyLimitMiddleware(limit int64) httpx.HandlerFunc {
 		// first; this covers the case where a handler swallowed the read
 		// error and returned without writing anything at all.
 		if !c.Writer.Written() && bodyLimitExceeded(c) {
-			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge,
-				httpx.H{"error": "request body too large"})
+			c.AbortWithStatusJSON(middleware.ErrorBody(http.StatusRequestEntityTooLarge,
+				errors.New("request body too large")))
 		}
 	}
 }
