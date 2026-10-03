@@ -1488,6 +1488,14 @@ nexus migrate v2 [dir]  Codemod a v1 project for v2: /v2 import paths (Go + temp
                      symbols (nexus.Config → config.Runtime, nexus.Get → config.Get, …;
                      table in --help), uri: → path: tags, //@x → //nexus:x annotations;
                      gofmt'ed, idempotent. --dry-run lists every edit.
+nexus doctor         Check the project (Go vs go.mod, nexus v2, nexus.toml, Node/package
+                     manager/Vite, Tailwind CLI, generated views) — each problem with its
+                     fix — then audit nexus.toml's manifest. `nexus doctor <file|->` audits
+                     a manifest only.
+nexus release vX.Y.Z Release the repo's modules: checks (CHANGELOG section, clean tree, no
+                     go.work replace outside the repo), root tag + push, submodules moved
+                     onto it (GOPROXY=direct) + tagged + pushed, CLI install check. Prints
+                     the plan; --yes runs it.
 nexus pki ...        Generate mTLS certs for the peer mesh.
 ```
 `nexus build` produces ONE binary (frontend + Go). There is no deployment-split CLI and
