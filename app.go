@@ -864,15 +864,14 @@ func (a *App) Register(r resource.Resource) {
 }
 
 // UseReporter is satisfied by any type that exposes an OnUse hook with this
-// exact signature. multi.Registry and anything embedding it fit — including
-// the project's own DBManager wrapper. This is a structural interface so
-// nexus doesn't need to import nexus/multi directly.
+// exact signature — typically a registry routing several named instances
+// (databases, clients) that reports which one each call used.
 type UseReporter interface {
 	OnUse(func(ctx context.Context, name string))
 }
 
 // OnResourceUse installs an auto-attach hook onto any UseReporter (typically
-// a *multi.Registry or a user wrapper around one). Whenever code calls
+// a registry of named instances). Whenever code calls
 // target.UsingCtx(ctx, "resource-name") during a request, the hook:
 //
 //  1. reads the current trace.Span from ctx so we know which service made the call
