@@ -311,6 +311,169 @@ nexus.Boot(
 templUI's scripts initialize content that appears later, so its widgets keep
 working inside re-rendered shards.
 
+## Component kit
+
+`github.com/paulmanoni/nexus/v2/view/ui` is a small kit of components shaped
+for live pages: the pieces admin screens keep rebuilding — buttons, fields,
+tabs, dialogs, menus, data tables, toasts, loaders, page headers and badges.
+They are plain templ, styled with Tailwind utilities over CSS variables, and
+their events are ordinary `view.Send` / `view.Change` / `view.Submit` scripts.
+
+Load the kit's stylesheet and behaviour in the document head. Importing the
+package serves them at `/_view/ui/ui.css` and `/_view/ui/ui.js`:
+
+```templ
+import (
+	"github.com/paulmanoni/nexus/v2/view"
+	"github.com/paulmanoni/nexus/v2/view/ui"
+)
+
+templ Layout(title string) {
+	<head>
+		<link rel="stylesheet" href="/assets/css/output.css"/>
+		@view.Script()
+		@ui.Script()
+	</head>
+	…
+}
+```
+
+The components' classes are Tailwind utilities: `nexus dev` and `nexus build`
+add the kit's templates to your Tailwind sources (`sources.generated.css`),
+so your stylesheet carries them. Colors come from `--ui-*` tokens defined in
+`ui.css`, light and dark (`prefers-color-scheme` or a `.dark` class). Each
+token falls back to the shadcn/templUI token of the same role (`--primary`,
+`--border`, `--muted`, …), so an app themed for templUI is matched as is;
+set `--ui-primary` and friends to theme the kit alone.
+
+### A table on a live page
+
+```go
+type Orders struct {
+	Rows                []Order
+	Total, Page, Size   int
+	Query, Sort         string
+	Desc                bool
+}
+
+type OrderQuery struct {
+	Q    string `form:"q"`
+	Size int    `form:"size"`
+}
+
+func (o *Orders) Search(ctx context.Context, db *DB, in OrderQuery) error { … }
+func (o *Orders) SetPage(ctx context.Context, db *DB, page int) error   { … }
+func (o *Orders) SortBy(ctx context.Context, db *DB, key string) error  { … }
+
+func (o *Orders) table() ui.TableProps {
+	return ui.TableProps{
+		ID:      "orders",
+		Columns: []ui.Column{{Key: "number", Label: "Number", Sortable: true}, {Key: "total", Label: "Total", Align: "right", Sortable: true}},
+		Rows:    len(o.Rows), Total: o.Total, Page: o.Page, PageSize: o.Size, PageSizes: []int{10, 25, 50},
+		Sort:    o.Sort, Desc: o.Desc, Query: o.Query,
+		OnSearch: view.Change(o.Search),
+		OnSort:   func(k string) templ.ComponentScript { return ui.Loading(view.Send(o.SortBy, k), "orders") },
+		OnPage:   func(n int) templ.ComponentScript { return ui.Loading(view.Send(o.SetPage, n), "orders") },
+		Actions:  true,
+	}
+}
+```
+
+```templ
+templ (o *Orders) Render() {
+	@ui.PageHeader(ui.PageHeaderProps{Title: "Orders", Crumbs: []ui.Crumb{{Label: "Home", Href: "/"}, {Label: "Orders"}}}) {
+		@ui.Button(ui.ButtonProps{Icon: ui.Icon("plus"), Href: "/orders/new", Nav: true, Hotkey: "mod+n"}) {
+			New order
+		}
+	}
+	@ui.DataTable(o.table()) {
+		for _, r := range o.Rows {
+			@ui.TableRow(ui.RowProps{ID: "order-" + r.ID, Href: "/orders/" + r.ID, Actions: []ui.MenuItem{
+				{Label: "Copy link", Icon: ui.Icon("link"), Copy: "/orders/" + r.ID},
+				{Label: "Cancel", Danger: true, OnClick: view.Send(o.AskCancel, r.ID)},
+			}}) {
+				<td>{ r.Number }</td>
+				<td class="text-right">{ r.Total }</td>
+			}
+		}
+	}
+}
+```
+
+The table shows the state it is given and sends events; the live page
+re-renders it. The search form sends the fields `q` and `size` to
+`OnSearch`; a row with `Href` opens as an in-app link when clicked anywhere
+but on its own links, buttons and fields (Ctrl/Cmd-click opens a new tab).
+
+### Components
+
+| Component | What it is |
+| --- | --- |
+| `Button(ButtonProps)` | variants (`Primary`, `Secondary`, `Outline`, `Ghost`, `Danger`, `Success`, `Warning`, `Info`, `LinkStyle`), sizes (`Sm`, `Md`, `Lg`), `Icon`, `IconOnly`, `Loading`, `Disabled`, `Href` (+`Nav`), `Hotkey`, `OnClick` |
+| `Field(FieldProps)` + `Input`, `Select`, `Textarea`, `Checkbox` | a label, the control, help text and the error — taken from `view.Errors(ctx)` for the field's `Name`, which also marks the control `aria-invalid` |
+| `Tabs(TabsProps)`, `TabPanel(id, active)` | a tab is a live event (`OnSelect`), a link (`Href`) or a browser-switched panel (`Panel`); the clicked tab shows selected at once |
+| `Dialog(DialogProps)` | server-owned (`OnClose`: render it while open, close it in the event) or browser-side (`ID`, opened with `ui.OpenDialog(id)`); Esc and the backdrop close it unless `Persistent` |
+| `Dropdown(ButtonProps, items…)`, `MenuButton`, `RowActions(items…)` | menus of `MenuItem`s: links, `Copy` entries, `OnClick` events, separators; placed at the trigger, closed by an outside click, Esc or a choice |
+| `DataTable(TableProps)`, `TableRow(RowProps)`, `EmptyState`, `SearchInput` | toolbar, sortable headers, rows, empty state, counts, page size and pager |
+| `Toast(ToastProps)` | rendered after an event; the browser shows each `ID` once |
+| `Loader(LoaderProps)`, `Skeleton(class)` | an inline or overlay spinner; a pulsing placeholder |
+| `PageHeader(PageHeaderProps)` | breadcrumbs, title, description, actions (its children) |
+| `Badge(variant)`, `Icon(name)` | a status label; the kit's icons |
+
+### Loading
+
+`ui.Loading` wraps an event so a loader covers part of the page until the
+live page answers:
+
+```templ
+<button onclick={ ui.Loading(view.Send(x.Run), "preview") }>Run</button>
+```
+
+It is the kit's spelling of `view.Send(x.Run).Loading("preview")`: it
+prefixes the script, so it wraps `view.Send`, `view.Submit` and `view.Change`
+alike, and needs nothing from the view runtime — the reply is seen as the
+live root dropping its `aria-busy`. With no ids it covers the live region
+that sent the event; a kit `Button` that triggers it also shows its spinner.
+Where the script can't be wrapped (a library's `templ.Attributes`), the
+attribute does the same on click or submit:
+
+```templ
+<button onclick={ view.Send(x.Run) } { ui.LoadingAttr("preview")... }>Run</button>
+```
+
+### In the browser
+
+`ui.js` works by attributes and event delegation, so markup that live
+updates, shards and navigation bring in needs no setup:
+
+| Attribute / call | Behaviour |
+| --- | --- |
+| `data-ui-hotkey="mod+s"` (`ui.Hotkey`, `ButtonProps.Hotkey`) | the combination clicks the element (`mod` is Cmd on a Mac, Ctrl elsewhere); combinations without a modifier don't fire while typing; an open dialog owns the keyboard |
+| `data-ui-copy="/orders/7"` (`ui.CopyLink`, `MenuItem.Copy`) | copies the link (a path becomes an absolute URL) and confirms with a toast |
+| `data-ui-open="id"`, `data-ui-close` | open and close a browser-side dialog |
+| `data-ui-href` on a row | in-app navigation on click |
+| `nxui.toast(text, {variant, title, duration})` | a toast from your own scripts |
+| `nxui.loading(el, ids)`, `nxui.copy(text)`, `nxui.dialog.open(id)` | the same behaviour from code |
+
+### Owning a component
+
+```sh
+nexus add ui table            # DataTable and what it renders, into ./ui
+nexus add ui button dialog --dir internal/kit
+nexus add ui all --package kit
+```
+
+`nexus add ui` copies a component's template, the components it renders and
+the kit's shared pieces (`base.go`, `ui.go`, `icon.templ`, `ui.js`, `ui.css`)
+into your project as your own package, rewriting the package clause. The
+copy serves its assets under `/_ui/<package>/`; load them with its
+`Script()` instead of the kit's. Existing files are kept unless `--force`.
+
+Limits: browser-switched tabs (`Panel`) and open menus follow the server
+again when a live page re-renders; a browser-side dialog keeps its content
+as first rendered (`data-nx-ignore`) — use a server-owned dialog for
+content that changes.
+
 ## Islands
 
 Some widgets are better written with a JavaScript framework: a rich text
@@ -496,4 +659,5 @@ the templ extensions for VS Code, GoLand, Zed, Neovim, Helix and Emacs.
 
 See `view/example` for a multi-package app built on templUI, with two Vue
 islands in `view/example/web`: a server-rendered chart bound to the page's
-search signal, and a meter on the live board.
+search signal, and a meter on the live board. Its `/registry` page is built
+from the component kit.

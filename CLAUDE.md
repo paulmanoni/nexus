@@ -322,7 +322,16 @@ loader; a name missing from the build → `data-error`). Live re-renders update 
 remount); `view.Link`/shards unmount islands that leave. No loader (a Go test) → children stay +
 `data-error`. `/_view/import.js` (a module script `view.Script` loads first) gives the classic runtime
 `import()`. `_setup.ts` default export: Vue app hook / React wrapper.
-`nexus docs views`, docs/guide/views.md, example `view/example` (+ `web/`).
+**Component kit (`view/ui`)**: Button, Field/Input/Select/Textarea/Checkbox (errors from `view.Errors`), Tabs,
+Dialog (server-owned via `OnClose`, or browser-side by `ID` + `ui.OpenDialog`), Dropdown/RowActions menus,
+DataTable/TableRow (server paging/search/sort: `OnSearch` = `view.Change` with `form:"q"`/`"size"`, `OnSort`/
+`OnPage` funcs returning `view.Send`; row `Href` click-navigates; `Actions` menu), Toast (each `ID` once),
+Loader, PageHeader, Badge, Icon — templ + Tailwind utilities over `--ui-*` tokens (fall back to shadcn tokens;
+light/dark). `@ui.Script()` after `@view.Script()` loads `/_view/ui/ui.{css,js}` (served on import). ui.js
+(attributes + delegation, never edits runtime.js): `ui.Loading(view.Send(x.Run), "preview")` covers ids until
+the live root drops `aria-busy` (attr form `ui.LoadingAttr`), `data-ui-hotkey`, `data-ui-copy`, menus, dialogs,
+tabs, row clicks, `nxui.toast`. `nexus add ui <component|all> [--dir ui] [--package p]` vendors a component.
+`nexus docs views`, docs/guide/views.md, example `view/example` (+ `web/`; `/registry` uses the kit).
 
 ## 2. App entry & config (`nexus.toml`)
 
@@ -1440,6 +1449,7 @@ nexus dev [dir]      Live dev: the app + dashboard on its own origin, and — wh
 nexus build          install (if needed) → vite build [→ vite build --ssr] → web/dist,
                      then go build embeds it. ONE binary (frontend + Go). -o <path>.
 nexus client [--out dir]   Write the embedded JS/TS client SDK to disk.
+nexus add ui <component>  Copy view/ui components (+ ui.js/ui.css) into the app to own them.
 nexus generate frontend    Typed TS source tree from a manifest (--check = drift gate).
 nexus generate handlers [./...]  Wire //nexus:-annotated handlers: write nexus_handlers_gen.go
                      per package + a main-package import aggregator. --check = CI drift gate.
