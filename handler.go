@@ -11,7 +11,9 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/v2/di"
+	"github.com/paulmanoni/nexus/v2/gql"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/graph"
 )
 
 // callInput is the per-invocation environment callHandler consults to fill
@@ -393,7 +395,9 @@ type Params[T any] struct {
 	Context context.Context
 	Args    T
 	Source  any
-	Info    graphql.ResolveInfo
+	// Info describes the GraphQL field being resolved (field name, parent
+	// type, operation). Zero on other transports.
+	Info gql.Info
 	// Method is the HTTP verb for REST handlers ("GET", "POST", …). It lets
 	// one handler registered for several methods (e.g. an Inertia page
 	// mounted for GET+POST) branch on the verb. Empty for GraphQL / WS.
@@ -458,7 +462,7 @@ func getParamsIndices(t reflect.Type) paramsIndices {
 }
 
 // buildParamsValue constructs a Params[T] reflect.Value with the supplied
-// Context/Args/Source/Info. Used by as_graph and as_rest before calling a
+// Context/Args/Source/Info (converted to gql.Info). Used by as_graph and as_rest before calling a
 // handler that takes a Params[T] parameter.
 func buildParamsValue(paramsType reflect.Type, ctx context.Context, args reflect.Value, source any, info graphql.ResolveInfo, method string) reflect.Value {
 	p := reflect.New(paramsType).Elem()
@@ -479,7 +483,7 @@ func buildParamsValue(paramsType reflect.Type, ctx context.Context, args reflect
 		p.Field(idx.source).Set(reflect.ValueOf(source))
 	}
 	if idx.info >= 0 {
-		p.Field(idx.info).Set(reflect.ValueOf(info))
+		p.Field(idx.info).Set(reflect.ValueOf(graph.InfoOf(info)))
 	}
 	return p
 }

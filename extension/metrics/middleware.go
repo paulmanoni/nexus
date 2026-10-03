@@ -9,7 +9,7 @@ import (
 	"braces.dev/errtrace"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/trace"
 )
@@ -27,7 +27,7 @@ func NewMiddleware(store Store, key string) middleware.Middleware {
 		Name:        "metrics",
 		Description: "Request + error counts per endpoint",
 		Kind:        middleware.KindBuiltin,
-		HTTP:         ginRecorder(store, key),
+		HTTP:        ginRecorder(store, key),
 		Graph:       graphRecorder(store, key),
 	}
 }
@@ -103,12 +103,12 @@ func ginRecorder(store Store, key string) httpx.HandlerFunc {
 	}
 }
 
-// graphRecorder wraps a go-graph resolver with the same record-on-exit
-// pattern. IP comes from middleware.ClientIPFromCtx — the graphql-go
+// graphRecorder wraps a GraphQL resolver with the same record-on-exit
+// pattern. IP comes from middleware.ClientIPFromCtx — the GraphQL
 // adapter stashes it there pre-resolve.
-func graphRecorder(store Store, key string) graph.FieldMiddleware {
-	return func(next graph.FieldResolveFn) graph.FieldResolveFn {
-		return func(p graph.ResolveParams) (any, error) {
+func graphRecorder(store Store, key string) gql.Middleware {
+	return func(next gql.Resolver) gql.Resolver {
+		return func(p gql.Field) (any, error) {
 			res, err := next(p)
 			ip := clientIPFromGraphCtx(p)
 			recErr := err
@@ -203,7 +203,7 @@ func splitKey(key string) (service, op string) {
 // if a transport layer stashed one. Reads the canonical key in the
 // middleware package — the single ctx-value key now shared across every
 // middleware that needs the IP (ratelimit, the RequestCtx carriers, here).
-func clientIPFromGraphCtx(p graph.ResolveParams) string {
+func clientIPFromGraphCtx(p gql.Field) string {
 	return middleware.ClientIPFromCtx(p.Context)
 }
 

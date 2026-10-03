@@ -11,8 +11,8 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/v2/config"
-	"github.com/paulmanoni/nexus/v2/graph"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/graph"
 )
 
 // These table tests pin the reflective handler core — inspectHandler's slot

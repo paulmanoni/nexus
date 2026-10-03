@@ -12,38 +12,37 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
+	"github.com/paulmanoni/nexus/v2/internal/graph"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
-// AsQuery registers a GraphQL query from a plain Go handler. The handler's
-// signature is inspected reflectively:
+// AsQuery registers a GraphQL query from a plain Go handler — usually a
+// method expression. The handler's signature is inspected reflectively:
 //
-//   - First param should be the service wrapper (e.g. *OrdersService).
-//     Its type is used as the fx value-group key so MountGraphQL[*OrdersService]
-//     picks up this query.
-//   - Subsequent params are fx-injected deps.
-//   - Optional last param is an args struct. Field tags drive arg config:
-//     graphql:"name"                 — arg name (defaults to lowercased field name)
+//   - A *Service-wrapper parameter (e.g. *OrdersService, or the receiver)
+//     grounds the op under that service and its GraphQL endpoint.
+//   - Other parameters are DI-injected deps.
+//   - The last parameter may be an args struct (or Params[T]). Field tags
+//     drive the arguments:
+//     graphql:"name"                 — arg name (defaults to the json name, then the lowercased field name)
 //     graphql:"name,required"        — NonNull
-//     validate:"required"            — graph.Required()
-//     validate:"len=3|120"           — graph.StringLength(3, 120)
-//     validate:"int=1|100"           — graph.Int(1, 100)
-//     validate:"oneof=a|b|c"         — graph.OneOf("a","b","c")
+//     graphql:"name,type=Status"     — a type declared with RegisterGqlType
+//     validate:"required"            — required
+//     validate:"len=3|120"           — string length 3..120
+//     validate:"int=1|100"           — integer range 1..100
+//     validate:"oneof=a|b|c"         — one of the listed values
 //     Chain multiple rules with commas.
-//   - Return type must be (T, error). T is the resolver's return; pointer
-//     and slice wrappers are honored.
+//   - Return type must be (T, error). T is the field's type; pointer and
+//     slice wrappers are honored.
 //
-// Op name defaults to the handler's func name, stripping a leading "New"
-// and lowercasing the first rune ("NewListOrders" → "listOrders").
-// Override with nexus.Op("explicit").
+// The op name is the method's (or function's) name with its first rune
+// lowercased ("ListOrders" → "listOrders"); override with nexus.Op.
 //
-//	di.Provide(
-//	    nexus.AsQuery(NewListOrders),
-//	    nexus.AsMutation(NewCreateOrder,
-//	        nexus.GraphMiddleware("auth", "Bearer token", AuthMw)),
-//	)
+//	nexus.AsQuery((*OrderService).ListOrders)
+//	nexus.AsMutation((*OrderService).CreateOrder,
+//	    nexus.GraphMiddleware("audit", "logs every resolve", Audit))
 func AsQuery(fn any, opts ...GqlOption) Option {
 	return asGqlField(fn, graph.FieldKindQuery, opts)
 }
@@ -53,13 +52,11 @@ func AsMutation(fn any, opts ...GqlOption) Option {
 	return asGqlField(fn, graph.FieldKindMutation, opts)
 }
 
-// AsSubscription is reserved for a follow-up: subscriptions use a separate
-// builder (SubscriptionResolver[T] with PubSub + channel plumbing) that we
-// haven't taught the reflective path yet. Use graph.NewSubscriptionResolver
-// directly for now; once the reflective SubscriptionResolverFromType exists
-// this helper will mirror AsQuery/AsMutation.
+// AsSubscription is reserved: reflective GraphQL subscriptions are not
+// implemented yet, and registering one fails boot. Push live updates over
+// AsWS until they are.
 func AsSubscription(fn any, opts ...GqlOption) Option {
-	return rawOption{o: di.Error(fmt.Errorf("nexus: AsSubscription not yet implemented — use graph.NewSubscriptionResolver directly"))}
+	return rawOption{o: di.Error(fmt.Errorf("nexus: AsSubscription is not implemented yet — push updates with AsWS"))}
 }
 
 // GqlOption tunes a GraphQL registration. An interface (not a func type)
@@ -80,7 +77,6 @@ type gqlConfig struct {
 	middlewares       []namedMw
 	deprecated        bool
 	deprecationReason string
-	argValidators     map[string][]graph.Validator // extra, keyed by arg name
 	// serviceType, when set, overrides the dep-scan for routing this op
 	// onto a specific *Service wrapper. Use nexus.OnService[S]() on
 	// handlers whose signature intentionally omits the service wrapper.
@@ -107,7 +103,7 @@ func (g *gqlFieldOption) setModule(name string)  { g.cfg.module = name }
 
 type namedMw struct {
 	name, description string
-	mw                graph.FieldMiddleware
+	mw                gql.Middleware
 }
 
 // Op overrides the inferred op name.
@@ -115,14 +111,20 @@ func Op(name string) GqlOption {
 	return gqlOptionFn(func(c *gqlConfig) { c.opName = name })
 }
 
-// GraphMiddleware attaches a named graph-only middleware to the resolver.
-// Equivalent to go-graph's WithNamedMiddleware — the name appears in
-// FieldInfo.Middlewares for dashboard rendering (and "auth", "cors", etc.
-// get labelled "builtin" via nexus/middleware.Builtins).
+// GraphMiddleware attaches a named GraphQL-only middleware to the field.
+// The name appears in the endpoint's middleware list on the dashboard (and
+// "auth", "cors", etc. get labelled "builtin" via nexus/middleware.Builtins).
+//
+//	nexus.AsQuery((*UserService).ListUsers,
+//	    nexus.GraphMiddleware("audit", "logs every resolve", Audit))
+//
+//	func Audit(next gql.Resolver) gql.Resolver {
+//	    return func(f gql.Field) (any, error) { return next(f) }
+//	}
 //
 // For cross-transport middleware, prefer nexus.Use(middleware.Middleware{...})
 // — it accepts the same bundle on REST and GraphQL alike.
-func GraphMiddleware(name, description string, mw graph.FieldMiddleware) GqlOption {
+func GraphMiddleware(name, description string, mw gql.Middleware) GqlOption {
 	return gqlOptionFn(func(c *gqlConfig) {
 		c.middlewares = append(c.middlewares, namedMw{name, description, mw})
 	})
@@ -170,25 +172,6 @@ func OnService[S any]() GqlOption {
 		t = reflect.TypeOf((*S)(nil)).Elem()
 	}
 	return gqlOptionFn(func(c *gqlConfig) { c.serviceType = t })
-}
-
-// WithArgValidator adds one or more validators to a named arg, beyond what
-// the struct tags declare. Useful for project-specific rules (graph.Custom
-// validators that call into other code).
-func WithArgValidator(arg string, vs ...graph.Validator) GqlOption {
-	return gqlOptionFn(func(c *gqlConfig) {
-		if c.argValidators == nil {
-			c.argValidators = map[string][]graph.Validator{}
-		}
-		c.argValidators[arg] = append(c.argValidators[arg], vs...)
-	})
-}
-
-// argsProvider is an optional interface a handler's args struct may
-// implement to supply validators that tag vocabulary can't express.
-// See graphapp example — `func (X) NexusValidators() map[string][]graph.Validator`.
-type argsProvider interface {
-	NexusValidators() map[string][]graph.Validator
 }
 
 // asGqlField is the shared body: reflect → synthesize constructor → di.Provide.
@@ -249,7 +232,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		}
 	}
 
-	// The synthesized constructor returns a GqlField carrying everything
+	// The synthesized constructor returns a gqlField carrying everything
 	// the auto-mount Invoke needs: kind, service instance, the assembled
 	// field, and the dep type list so resources can be auto-attached.
 	//
@@ -268,7 +251,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 	// *App via a trailing slot so the middleware has the store handle.
 	appInjectedIdx := len(ctorInTypes)
 	ctorInTypes = append(ctorInTypes, reflect.TypeOf((*App)(nil)))
-	outType := reflect.TypeOf(GqlField{})
+	outType := reflect.TypeOf(gqlField{})
 	fnType := reflect.FuncOf(ctorInTypes, []reflect.Type{outType}, false)
 
 	ctor := reflect.MakeFunc(fnType, func(allDeps []reflect.Value) []reflect.Value {
@@ -287,21 +270,13 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		if cfg.description != "" {
 			r.WithDescription(cfg.description)
 		}
-		// Args from struct tags + runtime NexusValidators() method.
-		// inputFieldName is non-empty when applyArgsFromStruct detected the
-		// single-input-object shape; the resolver closure then reads
-		// p.Args[name] as a nested map rather than flat fields.
+		// Args from struct tags. inputFieldName is non-empty when
+		// applyArgsFromStruct detected the single-input-object shape; the
+		// resolver closure then reads p.Args[name] as a nested map rather
+		// than flat fields.
 		var inputFieldName string
 		if sh.hasArgs {
 			inputFieldName = applyArgsFromStruct(r, sh.argsType)
-			if provider, ok := reflect.New(sh.argsType).Elem().Interface().(argsProvider); ok {
-				for arg, vs := range provider.NexusValidators() {
-					r.WithArgValidator(arg, vs...)
-				}
-			}
-		}
-		for arg, vs := range cfg.argValidators {
-			r.WithArgValidator(arg, vs...)
 		}
 		r.WithErrorMapper(graphqlError)
 		// Deny-by-default gate (if an extension installed one and this
@@ -309,11 +284,11 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 		// so the identity check precedes any permission check.
 		if gateApp := allDeps[appInjectedIdx].Interface().(*App); gateApp != nil {
 			if gate := gateApp.defaultGraphGate(cfg.tags); gate != nil {
-				r.WithNamedMiddleware(gate.Name, gate.AsInfo().Description, gate.Graph)
+				r.WithNamedMiddleware(gate.Name, gate.AsInfo().Description, graph.Adapt(gate.Graph))
 			}
 		}
 		for _, m := range cfg.middlewares {
-			r.WithNamedMiddleware(m.name, m.description, m.mw)
+			r.WithNamedMiddleware(m.name, m.description, graph.Adapt(m.mw))
 		}
 		// Unwrap service so we have its name for metrics keying + any
 		// downstream logic that needs it. May be nil when the handler
@@ -388,7 +363,7 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 			}
 			attachRateLimitMiddleware(r, app, svcName, cfg.opName, *cfg.rateLimit)
 		}
-		entry := GqlField{
+		entry := gqlField{
 			Kind:        kind,
 			ServiceType: svcType,
 			Service:     svc,
@@ -406,16 +381,16 @@ func asGqlField(fn any, kind graph.FieldKind, opts []GqlOption) Option {
 
 	return &gqlFieldOption{
 		o: di.Provide(
-			di.Annotate(ctor.Interface(), di.ResultTags(`group:"`+GqlFieldGroup+`"`)),
+			di.Annotate(ctor.Interface(), di.ResultTags(`group:"`+gqlFieldGroup+`"`)),
 		),
 		cfg: cfg,
 	}
 }
 
-// GqlField is the shared-group payload that AsQuery / AsMutation produce and
+// gqlField is the shared-group payload that AsQuery / AsMutation produce and
 // fxmod's auto-mount Invoke consumes. Exported so consumers building their
 // own mount logic can see what's in the graph, but most users never touch it.
-type GqlField struct {
+type gqlField struct {
 	Kind        graph.FieldKind
 	ServiceType reflect.Type
 	Service     *Service        // nil if dep[0] didn't unwrap (misuse)
@@ -447,10 +422,10 @@ type GqlField struct {
 	Tags map[string]string
 }
 
-// GqlFieldGroup is the single fx value-group name every reflective GraphQL
+// gqlFieldGroup is the single fx value-group name every reflective GraphQL
 // registration feeds. fxmod's auto-mount Invoke reads this group, partitions
 // entries by ServiceType, and mounts one schema per service.
-const GqlFieldGroup = "nexus.graph.fields"
+const gqlFieldGroup = "nexus.graph.fields"
 
 // findAppInDeps returns the *App reflectively injected at idx, or nil
 // when the slot doesn't exist (defensive for paths that skip the App
@@ -734,20 +709,55 @@ func parseGraphQLTagType(f reflect.StructField) string {
 	return ""
 }
 
-// namedTypeRegistry stores opt-in custom GraphQL types (enums, scalars,
-// pre-built input objects) so args can reference them by name via a
+// namedTypeRegistry stores opt-in named GraphQL input types (enums, input
+// objects) so args can reference them by name via a
 // `graphql:"...,type=Foo"` struct tag.
 var namedTypeRegistry sync.Map // map[string]graphql.Input
 
-// RegisterGqlType makes a named GraphQL input type available to flat-args
-// resolvers. Call this once at startup (typically inside a module's init or
-// the app's bootstrap). Re-registering the same name overwrites the previous
-// entry — useful in tests but otherwise a smell.
-func RegisterGqlType(name string, t graphql.Input) {
-	if name == "" || t == nil {
+// RegisterGqlType declares Go type T as the GraphQL input type name, which
+// an args field opts into with a `graphql:"field,type=Name"` tag.
+//
+// With values, T must be a string or integer type and becomes an enum whose
+// members are the values (each member is named fmt.Sprint(v), and binds
+// back to v):
+//
+//	type Status string
+//	nexus.RegisterGqlType("Status", Status("active"), Status("archived"))
+//
+//	type ListArgs struct {
+//	    Status Status `graphql:"status,type=Status"`
+//	}
+//
+// Without values, T must be a struct and becomes an input object named
+// name, its fields mapped like an args struct's. Call it once at startup;
+// re-registering a name replaces the earlier type. It panics when T can't
+// be represented.
+func RegisterGqlType[T any](name string, values ...T) {
+	if name == "" {
+		panic("nexus.RegisterGqlType: empty name")
+	}
+	t := reflect.TypeFor[T]()
+	if len(values) > 0 {
+		switch t.Kind() {
+		case reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		default:
+			panic(fmt.Sprintf("nexus.RegisterGqlType(%q): enum values need a string or integer type, got %s", name, t))
+		}
+		members := graphql.EnumValueConfigMap{}
+		for _, v := range values {
+			members[fmt.Sprint(v)] = &graphql.EnumValueConfig{Value: v}
+		}
+		namedTypeRegistry.Store(name, graphql.NewEnum(graphql.EnumConfig{Name: name, Values: members}))
 		return
 	}
-	namedTypeRegistry.Store(name, t)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("nexus.RegisterGqlType(%q): %s is not a struct; pass enum values for a scalar type", name, t))
+	}
+	namedTypeRegistry.Store(name, buildInputObject(t, name, nil))
 }
 
 func lookupNamedType(name string) (graphql.Input, bool) {
@@ -818,8 +828,8 @@ func buildValidator(rule string) *graph.Validator {
 		return &v
 	}
 	// Unknown rules fall through silently so adding new rules in graph
-	// doesn't break builds here. graph.Custom-based rules go through
-	// NexusValidators() or nexus.WithArgValidator instead.
+	// doesn't break builds here. Checks a tag can't express belong in the
+	// handler, returning nexus.Invalid().
 	return nil
 }
 
@@ -879,8 +889,7 @@ func goTypeToGraphQL(t reflect.Type) graphql.Input {
 		// like `searchDataDto: SearchDataDto` would be silently dropped.
 		return buildInputObjectForType(t)
 	}
-	// Maps, interfaces, chans — not handled yet; users can use
-	// WithArgValidator + a custom converter if needed.
+	// Maps, interfaces, chans — not mapped; such fields are skipped.
 	return nil
 }
 
@@ -908,12 +917,20 @@ func buildInputObjectForType(t reflect.Type) graphql.Input {
 	if !strings.HasSuffix(name, "Input") {
 		name += "Input"
 	}
-	// Pre-register a stub so recursive self-references resolve.
+	return buildInputObject(t, name, func(stub *graphql.InputObject) { inputObjectRegistry.Store(t, stub) })
+}
+
+// buildInputObject builds struct type t as an input object named name.
+// register receives the empty object before its fields are built, so a
+// field referring back to t resolves to it.
+func buildInputObject(t reflect.Type, name string, register func(*graphql.InputObject)) *graphql.InputObject {
 	stub := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name:   name,
 		Fields: graphql.InputObjectConfigFieldMap{},
 	})
-	inputObjectRegistry.Store(t, stub)
+	if register != nil {
+		register(stub)
+	}
 
 	fields := graphql.InputObjectConfigFieldMap{}
 	for i := 0; i < t.NumField(); i++ {

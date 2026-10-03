@@ -1,58 +1,52 @@
 package main
 
-import "github.com/graphql-go/graphql"
+import (
+	"context"
 
-var petType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "Pet",
-	Fields: graphql.Fields{
-		"name":    &graphql.Field{Type: graphql.String},
-		"species": &graphql.Field{Type: graphql.String},
-	},
-})
+	"github.com/paulmanoni/nexus/v2"
+)
 
-func buildSchema() *graphql.Schema {
-	query := graphql.NewObject(graphql.ObjectConfig{
-		Name: "Query",
-		Fields: graphql.Fields{
-			"pet": &graphql.Field{
-				Type:        petType,
-				Description: "Fetch a pet by name",
-				Args: graphql.FieldConfigArgument{
-					"name": &graphql.ArgumentConfig{
-						Type:        graphql.NewNonNull(graphql.String),
-						Description: "Name of the pet",
-					},
-				},
-				Resolve: func(p graphql.ResolveParams) (any, error) {
-					return map[string]any{"name": p.Args["name"], "species": "dog"}, nil
-				},
-			},
-			"ping": &graphql.Field{
-				Type:        graphql.String,
-				Description: "Health check",
-				Resolve:     func(graphql.ResolveParams) (any, error) { return "pong", nil },
-			},
-		},
-	})
-	mutation := graphql.NewObject(graphql.ObjectConfig{
-		Name: "Mutation",
-		Fields: graphql.Fields{
-			"renamePet": &graphql.Field{
-				Type:        petType,
-				Description: "Rename a pet",
-				Args: graphql.FieldConfigArgument{
-					"oldName": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
-					"newName": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
-				},
-				Resolve: func(p graphql.ResolveParams) (any, error) {
-					return map[string]any{"name": p.Args["newName"], "species": "dog"}, nil
-				},
-			},
-		},
-	})
-	s, err := graphql.NewSchema(graphql.SchemaConfig{Query: query, Mutation: mutation})
-	if err != nil {
-		panic(err)
-	}
-	return &s
+// GraphService serves the GraphQL demo; its handlers are plain methods and
+// the schema is derived from their argument and result types.
+type GraphService struct{ *nexus.Service }
+
+func NewGraphService(app *nexus.App) *GraphService {
+	return &GraphService{app.Service("graph").Describe("GraphQL demo")}
 }
+
+type Pet struct {
+	Name    string `json:"name"`
+	Species string `json:"species"`
+}
+
+type Health struct {
+	OK bool `json:"ok"`
+}
+
+type PetArgs struct {
+	Name string `graphql:"name,required"`
+}
+
+type RenamePetArgs struct {
+	OldName string `graphql:"oldName,required"`
+	NewName string `graphql:"newName,required"`
+}
+
+func (s *GraphService) Pet(ctx context.Context, in PetArgs) (*Pet, error) {
+	return &Pet{Name: in.Name, Species: "dog"}, nil
+}
+
+func (s *GraphService) Ping(ctx context.Context) (*Health, error) {
+	return &Health{OK: true}, nil
+}
+
+func (s *GraphService) RenamePet(ctx context.Context, in RenamePetArgs) (*Pet, error) {
+	return &Pet{Name: in.NewName, Species: "dog"}, nil
+}
+
+var graphModule = nexus.Module("graph",
+	nexus.Provide(NewGraphService),
+	nexus.AsQuery((*GraphService).Pet, nexus.Describe("Fetch a pet by name")),
+	nexus.AsQuery((*GraphService).Ping, nexus.Describe("Health check")),
+	nexus.AsMutation((*GraphService).RenamePet, nexus.Describe("Rename a pet")),
+)

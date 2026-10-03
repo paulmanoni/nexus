@@ -7,7 +7,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 )
 
 // fakeCarrier is an in-package carrier so tests can build a RequestCtx without
@@ -103,15 +103,15 @@ func TestLegacyBundleTransports(t *testing.T) {
 		t.Fatalf("gin-only Transports = %s, want {REST, WebSocket}", got)
 	}
 
-	graphOnly := AsHandler(Middleware{Name: "q", Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next }})
+	graphOnly := AsHandler(Middleware{Name: "q", Graph: func(next gql.Resolver) gql.Resolver { return next }})
 	if got := graphOnly.Transports(); got != Transports(TransportGraphQL) {
 		t.Fatalf("graph-only Transports = %s, want {GraphQL}", got)
 	}
 
 	both := AsHandler(Middleware{
 		Name:  "b",
-		HTTP:   func(*httpx.Ctx) {},
-		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
+		HTTP:  func(*httpx.Ctx) {},
+		Graph: func(next gql.Resolver) gql.Resolver { return next },
 	})
 	if got := both.Transports(); got != Transports(TransportREST, TransportWebSocket, TransportGraphQL) {
 		t.Fatalf("both Transports = %s, want {REST, GraphQL, WebSocket}", got)

@@ -23,7 +23,7 @@ package middleware
 import (
 	"github.com/paulmanoni/nexus/v2/httpx"
 
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 )
 
 type Kind string
@@ -102,7 +102,7 @@ type Middleware struct {
 	Description string
 	Kind        Kind              // defaults to KindCustom when unset by factories
 	HTTP        httpx.HandlerFunc // REST + WS upgrade path
-	Graph       graph.FieldMiddleware
+	Graph       gql.Middleware    // GraphQL field resolution
 	// Stage places an app-wide middleware (nexus.Middleware) in the
 	// request pipeline; per-endpoint bundles ignore it. Zero is App.
 	Stage Stage

@@ -1,4 +1,4 @@
-package gql
+package gqlhttp
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/paulmanoni/nexus/v2/httpx"
 
-	graph "github.com/paulmanoni/nexus/v2/graph"
+	graph "github.com/paulmanoni/nexus/v2/internal/graph"
 	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 )
 

@@ -19,10 +19,10 @@ import (
 	"github.com/paulmanoni/nexus/v2/extension/metrics"
 	"github.com/paulmanoni/nexus/v2/extension/ratelimit"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/gqlhttp"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/trace"
-	"github.com/paulmanoni/nexus/v2/transport/gql"
 )
 
 // The console is the dashboard's server-rendered shell: templ pages built
@@ -42,7 +42,7 @@ type consoleSources struct {
 	sched *cron.Scheduler
 	rl    ratelimit.Store
 	ms    metrics.Store
-	gql   *gql.StatsRegistry
+	gql   *gqlhttp.StatsRegistry
 }
 
 // tab is one entry in the console's top bar.
@@ -63,7 +63,7 @@ type consoleState struct {
 	Limits      map[string]ratelimit.Record
 	Middlewares []middleware.Info
 	Global      []string
-	GraphQL     []gql.MountCacheStats
+	GraphQL     []gqlhttp.MountCacheStats
 	Plugins     []PluginInfo
 	Auth        *authSummary
 	Refs        map[string]registry.NamedType

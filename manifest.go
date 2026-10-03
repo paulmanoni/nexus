@@ -938,7 +938,7 @@ func printManifestAndExitIfRequested(cfg config.Runtime, opts []Option) {
 	// release mode in ginrouter.New.
 
 	// Build the same option chain Run uses, INCLUDING fxLateOptions
-	// because autoMountGraphQL is what walks the GqlField group and
+	// because autoMountGraphQL is what walks the gqlField group and
 	// registers GraphQL endpoints into the registry. Without it,
 	// nexus.AsQuery / nexus.AsMutation declarations stay invisible to
 	// the manifest's Routes section — the user sees REST endpoints

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2/config"
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
@@ -22,7 +22,7 @@ func ginOnlyBundle(name string) middleware.Middleware {
 func graphOnlyBundle(name string) middleware.Middleware {
 	return middleware.Middleware{
 		Name:  name,
-		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
+		Graph: func(next gql.Resolver) gql.Resolver { return next },
 	}
 }
 
@@ -30,7 +30,7 @@ func bothBundle(name string) middleware.Middleware {
 	return middleware.Middleware{
 		Name:  name,
 		HTTP:  func(*httpx.Ctx) {},
-		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
+		Graph: func(next gql.Resolver) gql.Resolver { return next },
 	}
 }
 

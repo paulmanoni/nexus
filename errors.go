@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2/dev"
-	"github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/internal/graph"
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
 

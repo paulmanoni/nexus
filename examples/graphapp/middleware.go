@@ -3,31 +3,29 @@ package main
 import (
 	"errors"
 
-	graph "github.com/paulmanoni/nexus/v2/graph"
+	"github.com/paulmanoni/nexus/v2/gql"
 )
 
-// AuthMiddleware is the shape every resolver attaches. In oats it validates a
-// bearer token against the API_GATEWAY and caches the principal for 30 min.
-// Here we only demonstrate the signature.
-func AuthMiddleware(next graph.FieldResolveFn) graph.FieldResolveFn {
-	return func(p graph.ResolveParams) (any, error) {
-		// real code: tok := p.Context.Value("token"); validate; attach principal
-		return next(p)
+// AuthMiddleware shows the shape of a GraphQL-only middleware: it wraps the
+// field's resolver and decides whether to call it. A real one would
+// validate a bearer token and put the principal on f.Context.
+func AuthMiddleware(next gql.Resolver) gql.Resolver {
+	return func(f gql.Field) (any, error) {
+		return next(f)
 	}
 }
 
-// PermissionMiddleware enforces that the current principal holds at least one
-// of the given roles. Same shape as oats's `middlewares.PermissionMiddleware`.
-func PermissionMiddleware(perms []string) graph.FieldMiddleware {
-	return func(next graph.FieldResolveFn) graph.FieldResolveFn {
-		return func(p graph.ResolveParams) (any, error) {
+// PermissionMiddleware enforces that the current principal holds at least
+// one of the given roles.
+func PermissionMiddleware(perms []string) gql.Middleware {
+	return func(next gql.Resolver) gql.Resolver {
+		return func(f gql.Field) (any, error) {
 			if len(perms) == 0 {
 				return nil, errors.New("no permissions configured")
 			}
-			// real code: principal := p.Context.Value("principal").(*Principal)
-			// for _, want := range perms { if principal.HasRole(want) return next(p) }
-			// return nil, nexus.Forbidden
-			return next(p)
+			// real code: read the principal from f.Context, check perms,
+			// return nil, nexus.Forbidden when none match.
+			return next(f)
 		}
 	}
 }
