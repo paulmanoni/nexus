@@ -49,6 +49,25 @@ func formScript(kind, name string) templ.ComponentScript {
 	return templ.ComponentScript{Call: htmlAttr("__nx.live." + kind + "(event,this," + jsonString(name) + ")")}
 }
 
+// Value marks a form field server-owned and gives it v as its value: when it
+// hasn't focus, the field shows the server's value after every render, even
+// one that didn't change it — by default a field keeps what the user typed
+// until the server's value changes. Spread it on an input, a select (the
+// option whose value is v is chosen) or a textarea (v is its text):
+//
+//	<input name="title" { view.Value(b.Title)... }/>
+//	<select name="sort" { view.Value(b.Sort)... }> … </select>
+//	<textarea name="notes" { view.Value(b.Notes)... }></textarea>
+//
+// A nil v is "".
+func Value(v any) templ.Attributes {
+	s := ""
+	if v != nil {
+		s = fmt.Sprint(v)
+	}
+	return templ.Attributes{"value": s, "data-nx-value": true}
+}
+
 // FormErrors are the validation errors of the event that last ran, for
 // Render to show beside the fields.
 type FormErrors struct{ errs *nexus.Error }

@@ -180,8 +180,8 @@ func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error 
   first; an event that fails them, or returns `nexus.Invalid()`, re-renders with
   the errors — read them with `view.Errors(ctx).Field("name")` — and
   the form keeps what was typed; on success the form resets to its
-  server-rendered values. A field's value is overwritten only when the
-  server's `value` attribute changes, and never while it has focus.
+  server-rendered values. How fields and re-renders meet is set out under
+  [Form fields](#form-fields).
 
 ```go
 type PetInput struct {
@@ -215,6 +215,47 @@ func (b *Board) Add(ctx context.Context, store *Store, in PetInput) error {
 - `view.Send`, `view.Submit` and `view.Change` also work in a component
   library's `Props.Attributes`
   (`templ.Attributes{"onclick": view.Send(b.Adopt, p.Name)}`).
+
+### Form fields
+
+A live page re-renders after every event, and the browser patches the page
+while the user may be typing into it. Fields follow these rules — guarantees,
+tested against the runtime:
+
+1. **A field's value belongs to the user until the server's value changes.**
+   After the user types, a re-render that renders the same `value` leaves what
+   they typed; one that renders a different `value` replaces it.
+2. **A focused field is never overwritten** — not its value, its checked state
+   or its selection, whatever the server renders. (A browser on its own lets a
+   changed `value` or `selected` attribute through to a field the user hasn't
+   edited yet; the runtime puts back what was shown.)
+3. **A `<select>` follows the server's chosen option** the same way: when the
+   options the server marks `selected` change, the select shows them; when
+   they don't, the user's choice stands. No option marked means the first.
+4. **A `<textarea>` follows the server's value** — its text — like an input's
+   `value` attribute.
+5. **A checkbox or radio** follows its `checked` attribute by the same rules.
+6. **A form resets after a successful submit** (`view.Submit`) to the values
+   the new render gives it; after an invalid one (validation errors) it keeps
+   what was typed.
+
+`view.Value(v)` marks a field **server-owned**: unless it has focus, it shows
+the server's value after every render, even one that left the value alone —
+for a field the server corrects or clears (a normalised amount, a search box
+an event empties). Spread it into the field; on a select it chooses the
+option with that value, on a textarea it is the text:
+
+```templ
+<input name="amount" { view.Value(b.Amount)... }/>
+<select name="sort" { view.Value(b.Sort)... }>
+	<option value="name">Name</option>
+	<option value="date">Date</option>
+</select>
+<textarea name="notes" { view.Value(b.Notes)... }></textarea>
+```
+
+A field bound to a signal (`value={ q.Get() }`) follows the signal: browser
+state is newer than the server's copy.
 
 ## Navigation
 
