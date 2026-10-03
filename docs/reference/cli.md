@@ -42,7 +42,6 @@ Builds and runs the app, rebuilds on save, and runs the frontend's Vite beside i
 | `--verbose` | Show all of Vite's output |
 | `--log-format`, `--log-pattern`, `--raw-logs` | Log formatting |
 | `--tui` | Terminal UI |
-| `--go-run` | Legacy loop: `go run`, stopping the app before each rebuild |
 
 ## `nexus build [pkg]`
 
@@ -80,6 +79,8 @@ Rewrites a nexus v1 project for v2, in place. Re-running it is a no-op, and
 | Rule | Rewrites |
 |---|---|
 | imports | Go and templ import paths: `github.com/paulmanoni/nexus[/p]` → `…/nexus/v2[/p]` (`view` included); the separate modules — `cmd/nexus`, `di/fxcontainer`, `extension/cache/redis`, `extension/jobs/jobsamqp`, `extension/jobs/jobsredis`, `httpx/ginrouter` — take `/v2` on their own path. Only import specs change. |
+| symbols | Moved and renamed names, on selectors of a nexus import (aliases followed, shadowing locals left alone): `nexus.Config` → `config.Runtime`, `nexus.ServerConfig` → `config.Server`, `nexus.Get` → `config.Get`, `nexus.MustLoadConfig` → `config.MustLoad` and every other config name, `nexus.Cache` → `resource.Cache`, `nexus.UseVolume` → `nexus.DeclareVolume`, `auth.Describe` → `auth.InspectExtractor`. The target package is imported (as `nexusconfig` when `config` is taken in the file) and an import left unused is dropped. `nexus.MustLoadDotenv()` / `nexus.LoadDotenvIfPresent()` are dropped from their option list with a `// TODO(nexus v2):` comment naming `config.RequireDotenv` / `config.LoadDotenv`. `nexus migrate v2 --help` lists the whole table. |
+| tags | The retired `uri:"x"` struct tag becomes `path:"x"` in Go files that import nexus. |
 | go.mod | `require`/`replace` lines for those modules move to the new paths at `v2.0.0`; a `…/nexus/view` requirement is dropped. Run `go mod tidy` afterwards. |
 | annotations | `//@x` and `// @x` nexus annotations in `.go` and `.templ` files become [`//nexus:x` directives](/guide/decorators); other tools' `@`-annotations are left alone. |
 

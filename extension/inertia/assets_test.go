@@ -43,7 +43,6 @@ func assetApp(t *testing.T, env string, files fstest.MapFS, cfg inertia.Config) 
 func bootAssets(t *testing.T, config config.Runtime, files fstest.MapFS, cfg inertia.Config, fopts ...nexus.FrontendOption) (*nexustest.App, string) {
 	t.Helper()
 	t.Setenv(dev.Env, "")
-	t.Setenv("NEXUS_VITE_DEV", os.Getenv("NEXUS_VITE_DEV")) // restored after the test
 	root := t.TempDir()
 	t.Setenv(dev.RootEnv, root)
 	app := nexustest.New(t, config,
@@ -257,22 +256,6 @@ func TestHotFileIgnoredInProduction(t *testing.T) {
 	if n := hits.Load(); n != 0 {
 		t.Errorf("production asked the dev server for its page %d times", n)
 	}
-}
-
-// TestHotFileAbsentUsesEnvFallback: with no hot file, NEXUS_VITE_DEV keeps
-// working exactly as before — a synthesised document, even when the bundle
-// has a built index.html (the viteless engine is not templated).
-func TestHotFileAbsentUsesEnvFallback(t *testing.T) {
-	app, _ := assetApp(t, "development", withBuild(builtIndex), inertia.Config{})
-	t.Setenv("NEXUS_VITE_DEV", "http://localhost:5199/")
-	body := fullLoad(app).AssertOK().String()
-	mustContain(t, body,
-		"<!doctype html>\n<html>\n<head>\n",
-		`<script src="/__nexus/dev/script.js"></script>`,
-		`<script type="module" src="http://localhost:5199/@vite/client"></script>`,
-		`<script type="module" src="http://localhost:5199/src/main.ts"></script>`,
-	)
-	mustNotContain(t, body, "/assets/main-abc123.js", "Widgets Inc")
 }
 
 // TestNoAssetsDevErrorPage: no dev server and no manifest in development is

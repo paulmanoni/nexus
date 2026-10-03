@@ -600,13 +600,13 @@ func middlewareNames(ms []graph.MiddlewareInfo) []string {
 	return out
 }
 
-// corsMiddleware builds a httpx.HandlerFunc from a CORSConfig. The
+// corsMiddleware builds a httpx.HandlerFunc from a config.CORS. The
 // implementation is deliberately compact — it covers the cases
 // browsers actually exercise (origin allowlist, preflight cache,
 // credentials, custom headers) without bringing in the
 // gin-contrib/cors dep.
 //
-// Nil CORSConfig is filtered out by the caller, so this always
+// Nil config.CORS is filtered out by the caller, so this always
 // receives a populated struct.
 func corsMiddleware(cfg config.CORS) httpx.HandlerFunc {
 	allowed := buildOriginMatcher(cfg.AllowOrigins)

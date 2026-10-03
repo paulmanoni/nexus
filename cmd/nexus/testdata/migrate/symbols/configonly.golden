@@ -1,0 +1,22 @@
+package settings
+
+import (
+	"time"
+
+	"github.com/paulmanoni/nexus/v2/config"
+)
+
+// TTL reads the cache TTL; the root import is used only for config, so it
+// goes away, and the config import that is already there is reused.
+func TTL() time.Duration {
+	if !config.Has("cache.ttl") {
+		return config.MustGet[time.Duration]("cache.default_ttl")
+	}
+	return config.Get[time.Duration]("cache.ttl", 5*time.Minute)
+}
+
+func Watch(fn func(any)) {
+	config.OnChange("cache.ttl", fn)
+}
+
+func Reset() { config.ResetForTest() }

@@ -21,11 +21,11 @@ type Runtime struct {
 	// deployments. Both fields are optional; the framework supplies a
 	// :8080 default when both are empty.
 	//
-	//	nexus.Config{
-	//	    Server: nexus.ServerConfig{
-	//	        Listeners: map[string]nexus.Listener{
+	//	config.Runtime{
+	//	    Server: config.Server{
+	//	        Listeners: map[string]config.Listener{
 	//	            "public": {Addr: ":8080"},
-	//	            "admin":  {Addr: "127.0.0.1:7000", Scope: nexus.ScopeAdmin},
+	//	            "admin":  {Addr: "127.0.0.1:7000", Scope: config.ScopeAdmin},
 	//	        },
 	//	    },
 	//	}
@@ -33,7 +33,7 @@ type Runtime struct {
 
 	// WebSocket governs the upgrade origin policy for every transport that
 	// speaks WebSocket — AsWS endpoints, GraphQL subscriptions, and the
-	// dashboard streams. The default is same-origin; see WebSocketConfig.
+	// dashboard streams. The default is same-origin; see WebSocket.
 	WebSocket WebSocket
 
 	// Router selects the HTTP router backend. Nil means the default
@@ -48,8 +48,8 @@ type Runtime struct {
 	// dashboard lives under Middleware.Dashboard so all middleware
 	// configuration stays in one place.
 	//
-	//	nexus.Config{
-	//	    Dashboard: nexus.DashboardConfig{Enabled: true, Name: "MyApp"},
+	//	config.Runtime{
+	//	    Dashboard: config.Dashboard{Enabled: true, Name: "MyApp"},
 	//	}
 	Dashboard Dashboard
 
@@ -118,8 +118,8 @@ type Runtime struct {
 	// applies across all services' mounted schemas. Set once on the
 	// app, not per-service.
 	//
-	//	nexus.Config{
-	//	    GraphQL: nexus.GraphQLConfig{
+	//	config.Runtime{
+	//	    GraphQL: config.GraphQL{
 	//	        Path:   "/api/graphql",
 	//	        Pretty: true,
 	//	    },
@@ -129,8 +129,8 @@ type Runtime struct {
 	// Middleware bundles every middleware-related knob: engine-root
 	// stacks, dashboard gating, and the built-in global rate limit.
 	//
-	//	nexus.Config{
-	//	    Middleware: nexus.MiddlewareConfig{
+	//	config.Runtime{
+	//	    Middleware: config.Middleware{
 	//	        Global:    []middleware.Middleware{requestID, logger, cors},
 	//	        Dashboard: []middleware.Middleware{bearerAuth, requireAdminRole},
 	//	        RateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
@@ -145,8 +145,8 @@ type Runtime struct {
 	// fields are zero. Set explicitly to swap in Redis-backed,
 	// Prometheus-backed, or other implementations.
 	//
-	//	nexus.Config{
-	//	    Stores: nexus.StoreConfig{
+	//	config.Runtime{
+	//	    Stores: config.Stores{
 	//	        RateLimit: ratelimit.NewRedisStore(rdb),
 	//	        Cache:     myCacheManager,
 	//	    },
@@ -176,7 +176,7 @@ type Runtime struct {
 	// "dev" when unset. Stamp via -ldflags at release:
 	//
 	//    go build -ldflags "-X main.version=$GIT_SHA"
-	//    nexus.Config{Version: version}
+	//    config.Runtime{Version: version}
 	Version string
 
 	// Introspection is the master gate over developer-facing
@@ -208,7 +208,7 @@ type Runtime struct {
 	// fails fast with a clear error so misconfiguration surfaces
 	// at boot, not at the first dashboard request.
 	//
-	//	nexus.Config{
+	//	config.Runtime{
 	//	    Introspection: false,
 	//	    IntrospectionNetworks: []string{
 	//	        "127.0.0.0/8",     // loopback
@@ -459,7 +459,7 @@ type Middleware struct {
 	// (X-Frame-Options, X-Content-Type-Options, Referrer-Policy) are
 	// still applied. Set a struct to tune headers, enable HSTS/CSP, or
 	// turn on CSRF. Populated from [runtime.middleware.security] in
-	// nexus.toml. See SecurityConfig.
+	// nexus.toml. See Security.
 	//
 	// For the dashboard "Security" tab or per-route bundles, load the
 	// extension/security plugin — the global enforcement here and that

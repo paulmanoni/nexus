@@ -72,7 +72,7 @@ func init() {
 //	//go:embed all:web/dist
 //	var webFS embed.FS
 //
-//	nexus.Run(nexus.Config{...},
+//	nexus.Run(config.Runtime{...},
 //	    nexus.ServeFrontend(webFS, "web/dist"),
 //	    uaa.Module,
 //	    interview.Module,
@@ -277,7 +277,7 @@ func mountFrontend(app *App, fsys fs.FS, cfg *frontendConfig) error {
 			if h, _ := app.ViteHot().Current(); h != nil {
 				return h.Origin
 			}
-			return os.Getenv("NEXUS_VITE_DEV")
+			return ""
 		})
 	}
 

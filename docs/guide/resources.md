@@ -80,7 +80,7 @@ driver = "memory"    # never Redis, even in production with the backend imported
 - **In code** set `cache.Config{Driver: cache.DriverMemory}`.
 - **From the environment**, `CACHE_DRIVER` sets the default for every cache built from
   `NewConfig`. A per-cache key such as `CACHE_SESSION_DRIVER=memory` overrides it through
-  `nexus.Get`.
+  `config.Get`.
 - **On the dashboard,** the cache resource shows its driver, for example
   `memory (redis disabled)`.
 - **An unknown driver fails the boot.** So does `redis` without the backend import.

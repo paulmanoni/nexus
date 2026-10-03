@@ -126,7 +126,7 @@ func writeTOML(t *testing.T, body string) string {
 }
 
 // TestBindFromConfig_Panics drives the spec registry through the public
-// loader (nexus.LoadConfig registers [databases.*] specs), then checks
+// loader (config.Load registers [databases.*] specs), then checks
 // that resolution fails fast at boot for a missing block or a bad driver —
 // while construction itself never panics (the lookup is deferred so the
 // option works under nexus.Boot, which builds args before loading config).
@@ -141,7 +141,7 @@ driver     = "mongo"
 key_prefix = "db.x"
 `
 	if _, err := config.Load(writeTOML(t, toml)); err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 	type H struct{ *Manager }
 
@@ -175,7 +175,7 @@ default    = true
 schema     = "main"
 `
 	if _, err := config.Load(writeTOML(t, toml)); err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 	type H struct{ *Manager }
 	if BindFromConfig[H]("good") == nil {

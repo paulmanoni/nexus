@@ -39,7 +39,7 @@ import (
 const DefaultPath = "/__nexus/client"
 
 // Config tunes the embedded SDK auto-mount. Zero value Enabled=false
-// so omitting Config.Client from nexus.Config is safe — apps that
+// so omitting Config.Client from config.Runtime is safe — apps that
 // don't ship an SDK don't pay the embed cost.
 type Config struct {
 	// Enabled gates the entire mount. Default false.
@@ -95,7 +95,7 @@ type Config struct {
 	// public-facing deployments; flip to true only on internal
 	// admin/dev builds.
 	//
-	// Auto-derived from nexus.Config.Introspection: when
+	// Auto-derived from config.Runtime.Introspection: when
 	// Introspection is true, Public is forced true at Mount time.
 	// The two flags are the same "schema visibility" lever at
 	// different layers — gating one without the other was security

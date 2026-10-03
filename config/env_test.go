@@ -69,7 +69,7 @@ secret = "change-me-in-prod"
 	// Sanity: not set before.
 	_ = os.Unsetenv("client.id")
 	if _, err := Load(p); err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if got := os.Getenv("client.id"); got != "ajira_portal-web" {
 		t.Errorf("os.Getenv(client.id) = %q, want ajira_portal-web", got)

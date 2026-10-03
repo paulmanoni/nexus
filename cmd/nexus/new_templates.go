@@ -519,7 +519,7 @@ var webFS embed.FS
 func main() {
 	// nexus.Boot loads nexus.toml automatically — runtime config (server
 	// addr, dashboard, introspection, environment, …), every [extensions.*]
-	// block, and the nexus.Get value store — then runs the app. Edit
+	// block, and the config.Get value store — then runs the app. Edit
 	// nexus.toml to change settings without touching code; absent fields
 	// fall back to framework defaults. (Use nexus.Run if you'd rather build
 	// Config in Go.)
@@ -918,10 +918,10 @@ func StubAuthenticator(ctx context.Context, clientID, username, password string)
 const tmplDeployTOML = `# nexus.toml — runtime config for this app.
 #
 # nexus.Boot() in main.go loads this file automatically: the [runtime]
-# table, any [extensions.*] blocks, and the nexus.Get value store. Edit
+# table, any [extensions.*] blocks, and the config.Get value store. Edit
 # settings here, not in code; absent fields fall back to framework
 # defaults. Every runtime key lives UNDER [runtime] (or a [runtime.<sub>]
-# table). Read any value in code with nexus.Get[T]("section.key").
+# table). Read any value in code with config.Get[T]("section.key").
 
 [runtime]
 # "development" turns on dev-only behaviour for a plain "go run ." (nexus
@@ -980,7 +980,7 @@ csrf = true
 # name     = "{{.Name}}"
 # sslmode  = "disable"
 
-# Config server (optional) — read secrets/flags via nexus.Get[T]("key").
+# Config server (optional) — read secrets/flags via config.Get[T]("key").
 # [extensions.config]
 # endpoint = "http://localhost:8078"
 # identity = "{{.Name}}"

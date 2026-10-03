@@ -20,13 +20,16 @@ func TestInitFrontend_OnGoOnlyProject(t *testing.T) {
 	// (no --frontend) produces.
 	mainGo := `package main
 
-import "github.com/paulmanoni/nexus/v2"
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+)
 
 func main() {
 	nexus.Run(
-		nexus.Config{
-			Server:    nexus.ServerConfig{Addr: ":8080"},
-			Dashboard: nexus.DashboardConfig{Enabled: true, Name: "myapp"},
+		config.Runtime{
+			Server:    config.Server{Addr: ":8080"},
+			Dashboard: config.Dashboard{Enabled: true, Name: "myapp"},
 		},
 		helloModule,
 	)
@@ -57,10 +60,7 @@ func main() {
 			t.Errorf("missing %s: %v", p, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "web/viteless.config.ts")); err == nil {
-		t.Error("nexus init must not write viteless.config.ts")
-	}
-	if p := inspectFrontend(filepath.Join(dir, "web")); !p.PackageJSON || p.Legacy != "" {
+	if p := inspectFrontend(filepath.Join(dir, "web")); !p.PackageJSON {
 		t.Errorf("web/ should read as a Vite project: %+v", p)
 	}
 	if !strings.Contains(out.String(), "nexus dev") {
@@ -134,11 +134,14 @@ func TestInitFrontend_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	mainGo := `package main
 
-import "github.com/paulmanoni/nexus/v2"
+import (
+	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/config"
+)
 
 func main() {
 	nexus.Run(
-		nexus.Config{Server: nexus.ServerConfig{Addr: ":8080"}},
+		config.Runtime{Server: config.Server{Addr: ":8080"}},
 		helloModule,
 	)
 }
@@ -306,28 +309,25 @@ func TestInitFrontend_BadFrontendValue(t *testing.T) {
 	}
 }
 
-// TestInitFrontend_ForceMigratesLegacyWeb is the path the viteless
-// migration hint names: a viteless-era web/ (sources, viteless.config.ts,
-// no package.json) plus --force becomes a Vite project. The project files
-// are written, the app's own sources are kept, and the stale viteless
-// config is pointed out rather than deleted.
-func TestInitFrontend_ForceMigratesLegacyWeb(t *testing.T) {
+// TestInitFrontend_ForceKeepsSources: an existing web/ (sources, no
+// package.json) plus --force becomes a Vite project. The project files are
+// written and the app's own sources are kept.
+func TestInitFrontend_ForceKeepsSources(t *testing.T) {
 	dir := t.TempDir()
 	mainGo := "package main\n\nimport \"github.com/paulmanoni/nexus/v2\"\n\nfunc main() {\n\tnexus.Boot()\n}\n"
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainGo), 0o644)
 	web := filepath.Join(dir, "web")
 	_ = os.MkdirAll(filepath.Join(web, "src"), 0o755)
 	legacy := map[string]string{
-		"viteless.config.ts": "import { defineConfig } from 'viteless'\nexport default defineConfig({})\n",
-		"index.html":         "<!doctype html><title>mine</title><div id=\"app\"></div>\n",
-		"src/App.vue":        "<template>mine</template>\n",
-		"tsconfig.json":      `{"include": ["src", "viteless-env.d.ts"]}`,
+		"index.html":    "<!doctype html><title>mine</title><div id=\"app\"></div>\n",
+		"src/App.vue":   "<template>mine</template>\n",
+		"tsconfig.json": `{"include": ["src", "old-env.d.ts"]}`,
 	}
 	for rel, body := range legacy {
 		_ = os.WriteFile(filepath.Join(web, rel), []byte(body), 0o644)
 	}
-	if p := inspectFrontend(web); p.Legacy == "" {
-		t.Fatalf("fixture should read as a legacy viteless dir: %+v", p)
+	if p := inspectFrontend(web); p.PackageJSON {
+		t.Fatalf("fixture should not read as a Vite project yet: %+v", p)
 	}
 
 	var out bytes.Buffer
@@ -339,7 +339,7 @@ func TestInitFrontend_ForceMigratesLegacyWeb(t *testing.T) {
 			t.Errorf("web/%s was overwritten: %s", rel, b)
 		}
 	}
-	if ts, _ := os.ReadFile(filepath.Join(web, "tsconfig.json")); strings.Contains(string(ts), "viteless") {
+	if ts, _ := os.ReadFile(filepath.Join(web, "tsconfig.json")); strings.Contains(string(ts), "old-env.d.ts") {
 		t.Errorf("tsconfig.json should be replaced: %s", ts)
 	}
 	for _, rel := range []string{"package.json", "vite.config.ts", "sdk/nexus-vite-plugin.js", "src/main.ts"} {
@@ -347,10 +347,10 @@ func TestInitFrontend_ForceMigratesLegacyWeb(t *testing.T) {
 			t.Errorf("missing web/%s: %v", rel, err)
 		}
 	}
-	if p := inspectFrontend(web); !p.PackageJSON || p.Legacy != "" {
+	if p := inspectFrontend(web); !p.PackageJSON {
 		t.Errorf("web/ should now read as a Vite project: %+v", p)
 	}
-	for _, want := range []string{"kept  web/index.html", "kept  web/src/App.vue", "web/viteless.config.ts is no longer read"} {
+	for _, want := range []string{"kept  web/index.html", "kept  web/src/App.vue"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
 		}

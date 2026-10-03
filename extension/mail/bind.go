@@ -13,7 +13,7 @@ import (
 // Config declares a mailer. Driver selects the backend; the remaining
 // fields are read per-driver (log uses only From*; smtp uses the whole
 // connection set). Build it inline in Bind, typically pulling secrets from
-// nexus.Get so they resolve from the environment / nexus.toml at boot.
+// config.Get so they resolve from the environment / nexus.toml at boot.
 type Config struct {
 	// Driver is "smtp" or "log". Empty defaults to "log" — the safe dev
 	// default that prints messages instead of sending them.
@@ -83,15 +83,15 @@ func buildMailer(cfg Config) (Mailer, error) {
 //	nexus.Run(cfg, mail.Bind[Mailer]("smtp", func() mail.Config {
 //	    return mail.Config{
 //	        Driver:      "smtp",
-//	        Host:        nexus.Get[string]("mail.host"),
-//	        Port:        nexus.Get[int]("mail.port", 587),
-//	        Username:    nexus.Get[string]("mail.username"),
-//	        Password:    nexus.Get[string]("mail.password"),
+//	        Host:        config.Get[string]("mail.host"),
+//	        Port:        config.Get[int]("mail.port", 587),
+//	        Username:    config.Get[string]("mail.username"),
+//	        Password:    config.Get[string]("mail.password"),
 //	        FromAddress: "no-reply@example.com",
 //	    }
 //	}, mail.WithDefault()))
 //
-// build() runs in the DI constructor (so nexus.Get resolves), and the
+// build() runs in the DI constructor (so config.Get resolves), and the
 // mailer is registered as a dashboard resource. Handlers inject *Mailer
 // and call Send on it directly. A bad Config fails fast at boot.
 func Bind[T any](name string, build func() Config, opts ...BindOption) nexus.Option {

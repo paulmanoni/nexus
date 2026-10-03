@@ -40,6 +40,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/appctx"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/registry"
@@ -84,17 +85,6 @@ type Plugin struct {
 	// Optional.
 	Client *Client
 
-	// Generate marks the plugin as a codegen driver.
-	//
-	// Deprecated: nothing ever consumed an in-process Generate driver —
-	// `nexus generate frontend` and the nexus dev auto-codegen call
-	// frontend.Render directly and fetch plugin output over
-	// <client path>/contributions.json. Use no longer registers one; a
-	// set Generate is still validated and flags the plugin as
-	// HasGenerate on the dashboard, nothing more. Ship per-plugin
-	// codegen through Contributor.
-	Generate *Generate
-
 	// Contributor adds plugin-specific files to the frontend codegen
 	// tree. Many per app: auth might publish auth/index.ts, oauth2
 	// might publish oauth2/index.ts, and both ride alongside the
@@ -105,9 +95,9 @@ type Plugin struct {
 	Contributor ClientContributor
 }
 
-// File is one generated artifact a driver (or a contributor) emits.
-// Path is forward-slash relative to the driver's OutDir; Body is the
-// raw bytes. Mirrors nexus.GeneratedFile so we can route values across
+// File is one generated artifact a contributor emits. Path is
+// forward-slash relative to the codegen tree root; Body is the raw
+// bytes. Mirrors nexus.GeneratedFile so we can route values across
 // the package boundary without an import cycle, but the user-facing
 // type lives here so plugin authors never touch the nexus internals.
 type File struct {
@@ -115,7 +105,7 @@ type File struct {
 	Body []byte
 }
 
-// GenerateContext is the input handed to a driver's Render callback.
+// GenerateContext is the input handed to a contributor.
 // Mirrors nexus.GenerateContext so plugin authors import only the
 // extension package.
 type GenerateContext struct {
@@ -172,17 +162,6 @@ type staticContributor []File
 // contributor's output.
 func (s staticContributor) NexusContribute(GenerateContext) ([]File, error) {
 	return []File(s), nil
-}
-
-// Generate declares a codegen driver. OutDir resolves the absolute
-// directory the driver wants files written to; Render produces the
-// file tree. Both are required when the slot is set.
-//
-// Deprecated: see Plugin.Generate — Use no longer registers the driver,
-// because nothing ever read it back.
-type Generate struct {
-	OutDir func(app *nexus.App) (string, error)
-	Render func(ctx GenerateContext) ([]File, error)
 }
 
 // Lifecycle hooks tied to the fx app lifecycle. OnBoot and OnReady
@@ -275,7 +254,6 @@ func Use(p Plugin) nexus.Option {
 		Icon:         pluginIcon(p),
 		HasDashboard: p.Dashboard != nil,
 		HasClient:    p.Client != nil,
-		HasGenerate:  p.Generate != nil,
 		Namespace:    namespace(p),
 		Tab:          tabRecord(p.Dashboard),
 		LiveEvents:   liveEvents(p.Dashboard),
@@ -349,14 +327,6 @@ func validate(p Plugin) error {
 			}
 		}
 	}
-	if p.Generate != nil {
-		if p.Generate.OutDir == nil {
-			return fmt.Errorf("extension: Plugin %q Generate.OutDir is required", p.Name)
-		}
-		if p.Generate.Render == nil {
-			return fmt.Errorf("extension: Plugin %q Generate.Render is required", p.Name)
-		}
-	}
 	return nil
 }
 
@@ -427,7 +397,11 @@ func dashboardRoutesOption(name string, routes []Route) nexus.Option {
 		base := "/__nexus/" + name
 		for _, r := range routes {
 			path := base + r.Path
-			app.Router().Handle(r.Method, path, r.Handler)
+			h := r.Handler
+			app.Router().Handle(r.Method, path, func(c *httpx.Ctx) {
+				c.Set(appctx.Key, app)
+				h(c)
+			})
 		}
 	})
 }

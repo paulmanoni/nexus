@@ -97,5 +97,5 @@ nexus client --out ./web/sdk
 ```
 
 For finer control (a custom path, route middleware, per-deployment gating), set
-`Config.Client` or `nexus.ClientUse(client.Config{...})` instead. See
+`config.Runtime.Client` or `nexus.ClientUse(client.Config{...})` instead. See
 `nexus docs client`.

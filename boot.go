@@ -222,7 +222,7 @@ func Provide(fns ...any) Option {
 // Supply puts concrete values into the graph (no constructor). Useful for
 // config structs or pre-built instances created outside the fx graph.
 //
-//	nexus.Supply(nexus.Config{Server: ServerConfig{Addr: ":8080"}})   // rare — Run takes Config directly
+//	nexus.Supply(config.Runtime{Server: config.Server{Addr: ":8080"}})   // rare — Run takes config.Runtime directly
 //	nexus.Supply(myAlreadyBuiltClient)          // typical
 func Supply(values ...any) Option {
 	return rawOption{o: di.Supply(values...)}
@@ -373,10 +373,10 @@ func Raw(opt di.Option) Option {
 }
 
 // Boot loads nexus.toml automatically — the [runtime] Config, every
-// [extensions.*] block, the [env] bridge, and the nexus.Get base
+// [extensions.*] block, the [env] bridge, and the config.Get base
 // layer — then runs the app. It's the zero-boilerplate form of:
 //
-//	cfg  := nexus.MustLoadConfig()
+//	cfg  := config.MustLoad()
 //	opts := nexus.MustLoadExtensions()
 //	nexus.Run(cfg, append(opts, userOpts...)...)
 //
@@ -411,7 +411,7 @@ func BootFrom(path string, opts ...Option) {
 // resolveConfigPath picks the nexus.toml path in priority order:
 //
 //  1. NEXUS_CONFIG env override — always wins when set.
-//  2. DefaultConfigPath ("nexus.toml") in the current working directory —
+//  2. config.DefaultPath ("nexus.toml") in the current working directory —
 //     the dev-time convention (cwd == project root).
 //  3. nexus.toml sitting next to the executable — the deploy convention.
 //     A binary shipped with its config beside it (./myapp +
@@ -587,7 +587,7 @@ func Run(cfg config.Runtime, opts ...Option) {
 
 // wiringError carries a remediation hint alongside a wiring failure so
 // renderBootError can print a "fix" row for something that is not a
-// ConfigError.
+// config.Error.
 type wiringError struct {
 	err  error
 	hint string
@@ -670,7 +670,7 @@ func collectDeferredOptions() []Option {
 // package any test file links — booting one module in isolation then fails on
 // the other packages' providers. Scope the boot instead:
 //
-//	nexus.InProcess(nexus.Config{},
+//	nexus.InProcess(config.Runtime{},
 //	    nexus.DecoratedModules("adverts"),   // only adverts' //nexus: registrations
 //	    adverts.Module, ...)
 //
@@ -794,7 +794,7 @@ func reportBootIssues(issues []manifest.Issue) {
 // supplied secrets / certs / config-server endpoints. Wrapping
 // the real options:
 //
-//	nexus.Run(nexus.Config{...},
+//	nexus.Run(config.Runtime{...},
 //	    nexus.IfNotDev(
 //	        tls.Module(tls.Config{Domains: []string{"app.example.com"}}),
 //	        oauth2.Module(...),

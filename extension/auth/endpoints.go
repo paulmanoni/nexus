@@ -21,8 +21,7 @@ import (
 //   - Revoke → Manager.Invalidate + Backend.RevokeToken.
 //
 // All four are Public — you can't require a token to obtain or drop one.
-// The zero value mounts nothing, so existing configs are unaffected. This
-// supersedes the standalone LoginEndpoint / LogoutEndpoint options.
+// The zero value mounts nothing.
 type Endpoints struct {
 	// Login mounts a Public POST that reads {username, password}, runs
 	// Backend.Login, and returns Backend.Issue's body (or {"identity": …}).
@@ -56,7 +55,7 @@ type issueCapable interface {
 
 // revokeCapable is a backend that can invalidate a raw token in its own
 // store (an OAuth2 access token, a DB session row). Powers Endpoints.Logout
-// and Endpoints.Revoke; also available to LogoutEndpoint via Manager.
+// and Endpoints.Revoke.
 type revokeCapable interface {
 	RevokeToken(ctx context.Context, token string) error
 }

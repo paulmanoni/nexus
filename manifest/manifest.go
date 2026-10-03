@@ -236,7 +236,7 @@ type Manifest struct {
 type Port struct {
 	Name  string `json:"name"`            // e.g. "http", "admin"
 	Port  int    `json:"port"`            // numeric only — Addr ":9390" → 9390
-	Scope string `json:"scope,omitempty"` // matches nexus.ListenerScope strings
+	Scope string `json:"scope,omitempty"` // matches config.ListenerScope strings
 }
 
 // Health is the probe map. Each path is rooted at the app's external
@@ -602,7 +602,7 @@ type Inputs struct {
 	StartupTasks     []StartupTask
 
 	// Direct registrations bypass the provider walk — used by
-	// app.UseVolume(...) and any future app.DeclareEnv(...) calls
+	// app.DeclareVolume(...) and any future app.DeclareEnv(...) calls
 	// that don't go through an interface.
 	DirectEnv      []EnvVar
 	DirectServices []ServiceNeed
@@ -1288,7 +1288,7 @@ func bytesIndex(haystack, needle []byte) int {
 //      func (a *App) DeclareEnvProvider(EnvProvider)
 //      func (a *App) DeclareService(ServiceNeed)
 //      func (a *App) DeclareServiceProvider(ServiceDependencyProvider)
-//      func (a *App) UseVolume(Volume)
+//      func (a *App) DeclareVolume(Volume)
 //      func (a *App) AddStartupTask(StartupTask)
 //
 //    plus an unexported manifestInputs() method that gathers

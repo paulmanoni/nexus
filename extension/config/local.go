@@ -15,7 +15,7 @@ import (
 
 // Local registers a no-server config entrypoint: a single
 // plaintext TOML at path that the framework reads + populates
-// the package-level store from. Same nexus.Get(key) facade as
+// the package-level store from. Same config.Get(key) facade as
 // the server-backed Client.
 //
 // The file stays human-readable on disk — operators edit it
@@ -34,7 +34,7 @@ func Local(path string, opts ...LocalOption) nexus.Option {
 	}
 	// EAGER install — same parity as config.Client. The TOML
 	// is read + parsed + installed BEFORE returning the Option,
-	// so nexus.Get works from every constructor and invoke that
+	// so config.Get works from every constructor and invoke that
 	// follows. Failures surface via di.Error so Run() boot
 	// stops cleanly with a real error message.
 	if err := initLocal(cfg); err != nil {

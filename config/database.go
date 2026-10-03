@@ -9,7 +9,7 @@ import (
 // inline-first, then via the config server:
 //
 //   - if the inline field is set, it's used (supports ${ENV} expansion,
-//     applied by LoadConfig) — works with NO config server;
+//     applied by Load) — works with NO config server;
 //   - else, if KeyPrefix is set, the value is read from the config
 //     server at boot as <KeyPrefix>.{hostname,port,username,password,name}
 //     — keeping secrets out of nexus.toml.
@@ -55,7 +55,7 @@ type DatabaseSpec struct {
 
 	// Inline values (optional). Each, when set, takes precedence over
 	// the config-server lookup for that field. ${ENV} placeholders are
-	// expanded by LoadConfig.
+	// expanded by Load.
 	Host     string `toml:"host"`
 	Port     string `toml:"port"`
 	User     string `toml:"user"`
@@ -69,7 +69,7 @@ var (
 )
 
 // registerDatabaseSpecs stores the [databases.*] blocks parsed from
-// nexus.toml so db.BindFromConfig can resolve them. Called by LoadConfig;
+// nexus.toml so db.BindFromConfig can resolve them. Called by Load;
 // replaces any previously-registered set.
 func registerDatabaseSpecs(m map[string]DatabaseSpec) {
 	dbSpecsMu.Lock()

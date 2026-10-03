@@ -152,40 +152,12 @@ func TestResolveFrontendDir(t *testing.T) {
 			t.Fatalf("dir = %q, want web", dir)
 		}
 	})
-	t.Run("a viteless-era web/ is found, so it gets the migration hint", func(t *testing.T) {
-		pkg := t.TempDir()
-		writeFile(t, filepath.Join(pkg, "main.go"), "package main\nfunc main() {}\n")
-		writeFile(t, filepath.Join(pkg, "web", "viteless.config.ts"), "")
-		if dir, _ := resolveFrontendDir(pkg, ""); dir != filepath.Join(pkg, "web") {
-			t.Fatalf("dir = %q, want web", dir)
-		}
-	})
 }
 
 func TestStartDevFrontend_NoViteWithoutPackageJSON(t *testing.T) {
 	t.Setenv("NEXUS_FRONTEND_DIR", "")
 	ctx := context.Background()
 
-	t.Run("legacy viteless dir: hint, no dev server", func(t *testing.T) {
-		pkg := t.TempDir()
-		writeFile(t, filepath.Join(pkg, "main.go"), serveFrontendMain)
-		writeFile(t, filepath.Join(pkg, "client", "viteless.config.ts"), "export default {}")
-		var out, notes bytes.Buffer
-		f := startDevFrontend(ctx, pkg, "", "", devViteConfig{Out: &out, Notes: &notes})
-		if f.Vite != nil {
-			f.Vite.stop()
-			t.Fatal("started a dev server for a viteless-era dir")
-		}
-		if f.Dir != filepath.Join(pkg, "client") || f.Project.Legacy == "" {
-			t.Fatalf("frontend = %+v", f)
-		}
-		if !strings.Contains(notes.String(), "viteless.config.ts") || !strings.Contains(notes.String(), "package.json") {
-			t.Errorf("no migration hint: %q", notes.String())
-		}
-		if strings.Count(notes.String(), "\n") != 1 {
-			t.Errorf("hint should be one line: %q", notes.String())
-		}
-	})
 	t.Run("static bundle: silent, no dev server", func(t *testing.T) {
 		pkg := t.TempDir()
 		writeFile(t, filepath.Join(pkg, "main.go"), serveFrontendMain)

@@ -188,7 +188,7 @@ inertia = "github.com/paulmanoni/nexus/v2/extension/inertia"
 
 ## Your own sections
 
-Any other table is readable with `nexus.Get`:
+Any other table is readable with `config.Get`:
 
 ```toml
 [shop]
@@ -196,5 +196,5 @@ currency = "EUR"
 ```
 
 ```go
-nexus.Get[string]("shop.currency")
+config.Get[string]("shop.currency")
 ```

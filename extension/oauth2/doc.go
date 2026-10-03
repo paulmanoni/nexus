@@ -5,7 +5,7 @@
 // Minimum config — password grant against a user store:
 //
 //	nexus.Run(
-//	    nexus.Config{Server: nexus.ServerConfig{Addr: ":8080"}},
+//	    config.Runtime{Server: config.Server{Addr: ":8080"}},
 //	    oauth2.Module(oauth2.Config{
 //	        Authenticator: func(ctx context.Context, clientID, username, password string) (string, error) {
 //	            user, err := users.Authenticate(ctx, username, password)

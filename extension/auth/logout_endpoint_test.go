@@ -11,14 +11,28 @@ import (
 	"github.com/paulmanoni/nexus/v2/extension/auth"
 )
 
-func newLogoutApp(t *testing.T, opts ...auth.LogoutOption) (*nexus.App, func(context.Context) error) {
+// revokingBackend adds the RevokeToken capability the logout endpoint calls.
+type revokingBackend struct {
+	loginBackend
+	revoke func(ctx context.Context, token string) error
+}
+
+func (b revokingBackend) RevokeToken(ctx context.Context, token string) error {
+	return b.revoke(ctx, token)
+}
+
+func newLogoutApp(t *testing.T, path string, revoke func(context.Context, string) error) (*nexus.App, func(context.Context) error) {
 	t.Helper()
+	var backend any = loginBackend{}
+	if revoke != nil {
+		backend = revokingBackend{revoke: revoke}
+	}
 	app, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Module(auth.Config{
 			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
-			Backend:        auth.StaticBackend(loginBackend{}),
+			Backend:        auth.StaticBackend(backend),
+			Endpoints:      auth.Endpoints{Logout: path},
 		}),
-		auth.LogoutEndpoint(opts...),
 	)
 	if err != nil {
 		t.Fatalf("InProcess: %v", err)
@@ -39,10 +53,10 @@ func postBearer(t *testing.T, app *nexus.App, path, token string) *httptest.Resp
 
 func TestLogoutEndpoint_RevokesToken(t *testing.T) {
 	var revoked string
-	app, stop := newLogoutApp(t, auth.WithRevoker(func(_ context.Context, tok string) error {
+	app, stop := newLogoutApp(t, "/auth/logout", func(_ context.Context, tok string) error {
 		revoked = tok
 		return nil
-	}))
+	})
 	defer stop(context.Background())
 
 	rec := postBearer(t, app, "/auth/logout", "tok-abc")
@@ -56,10 +70,10 @@ func TestLogoutEndpoint_RevokesToken(t *testing.T) {
 
 func TestLogoutEndpoint_Idempotent_NoToken(t *testing.T) {
 	called := false
-	app, stop := newLogoutApp(t, auth.WithRevoker(func(_ context.Context, _ string) error {
+	app, stop := newLogoutApp(t, "/auth/logout", func(_ context.Context, _ string) error {
 		called = true
 		return nil
-	}))
+	})
 	defer stop(context.Background())
 
 	// No Authorization header — still 200, revoker not called.
@@ -73,7 +87,7 @@ func TestLogoutEndpoint_Idempotent_NoToken(t *testing.T) {
 }
 
 func TestLogoutEndpoint_CustomPath(t *testing.T) {
-	app, stop := newLogoutApp(t, auth.LogoutAt("/signout"))
+	app, stop := newLogoutApp(t, "/signout", nil)
 	defer stop(context.Background())
 
 	if rec := postBearer(t, app, "/signout", "x"); rec.Code != http.StatusOK {

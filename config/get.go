@@ -11,27 +11,27 @@ import (
 // is missing or the conversion fails. With a default, returns
 // the default in those cases. At most one default is consulted.
 //
-//	addr := nexus.Get[string]("config.server.addr")
-//	port := nexus.Get[int]("config.server.port", 8080)
-//	ttl  := nexus.Get[time.Duration]("config.cache.ttl", 5*time.Minute)
+//	addr := config.Get[string]("config.server.addr")
+//	port := config.Get[int]("config.server.port", 8080)
+//	ttl  := config.Get[time.Duration]("config.cache.ttl", 5*time.Minute)
 //
 // Resolution priority, highest first:
 //
 //  1. Environment variable (CONFIG_SERVER_PORT for "config.server.port")
 //  2. Config-extension snapshot (config.Server / .Client / .Local)
-//  3. nexus.toml base layer (seeded by LoadConfig/Boot)
+//  3. nexus.toml base layer (seeded by Load/Boot)
 //  4. The default arg (or T's zero value)
 //
 // Layers 2 and 3 resolve per-key: a key absent from the extension
 // snapshot falls through to the nexus.toml layer rather than
-// returning the default. So nexus.Get reads any key declared in
+// returning the default. So config.Get reads any key declared in
 // nexus.toml — the dotted key mirrors the TOML table path, e.g.
 // [runtime.storage] url → Get("runtime.storage.url") — with NO
 // config extension wired. The extension snapshot (when installed)
 // overrides nexus.toml for keys it carries, since it's
 // runtime-managed and hot-reloadable.
 //
-// The nexus.toml layer lands when MustLoadConfig/LoadConfig/Boot
+// The nexus.toml layer lands when MustLoad/Load/Boot
 // runs (typically the first line of main); the extension snapshot
 // lands a little later, at app start. Calls before either is
 // installed return the default (or zero).
@@ -67,7 +67,7 @@ func Get[T any](key string, defaults ...T) T {
 // missing or can't be converted to T. Use when absence is a
 // boot-time bug, not a runtime condition.
 //
-//	signKey := nexus.MustGet[string]("config.signing.key")
+//	signKey := config.MustGet[string]("config.signing.key")
 func MustGet[T any](key string) T {
 	if raw, ok := configEnvOverride(key); ok {
 		v, err := configConvertString[T](raw)

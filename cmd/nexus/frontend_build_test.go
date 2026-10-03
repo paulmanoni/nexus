@@ -259,31 +259,6 @@ func TestFrontendBuild_Skips(t *testing.T) {
 	}
 }
 
-func TestFrontendBuild_LegacyVitelessDirIsAnError(t *testing.T) {
-	t.Setenv("NEXUS_FRONTEND_DIR", "")
-	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "web", "viteless.config.ts"), "export default {}")
-	writeTestFile(t, filepath.Join(root, "web", "src", "main.ts"), "")
-	err := frontendBuild(context.Background(), root, "", &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "viteless.config.ts but no package.json") {
-		t.Fatalf("err = %v, want the legacy hint", err)
-	}
-}
-
-// A viteless project that has a package.json gets the migration hint, not
-// an npm install and a Vite run that would fail on the missing config.
-func TestFrontendBuild_LegacyVitelessDirWithPackageJSON(t *testing.T) {
-	t.Setenv("NEXUS_FRONTEND_DIR", "")
-	t.Setenv("PATH", t.TempDir()) // nothing may be installed or run
-	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "web", "package.json"), `{"dependencies":{"vue":"^3.5.0"}}`)
-	writeTestFile(t, filepath.Join(root, "web", "viteless.config.ts"), "export default {}")
-	err := frontendBuild(context.Background(), root, "", &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "viteless.config.ts and no vite.config") {
-		t.Fatalf("err = %v, want the legacy hint", err)
-	}
-}
-
 func TestFrontendBuild_NoNpm(t *testing.T) {
 	t.Setenv("NEXUS_FRONTEND_DIR", "")
 	root := t.TempDir()

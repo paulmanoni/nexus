@@ -65,7 +65,6 @@ function onKey(e) {
           <span class="badges">
             <span class="badge" v-if="p.hasDashboard" title="contributes dashboard routes">dash</span>
             <span class="badge" v-if="p.hasClient" title="contributes client SDK">sdk</span>
-            <span class="badge" v-if="p.hasGenerate" title="contributes codegen driver">gen</span>
             <span class="badge" v-if="p.namespace" :title="`SDK namespace: nx.${p.namespace}`">nx.{{ p.namespace }}</span>
           </span>
         </li>

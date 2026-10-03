@@ -160,7 +160,7 @@ func runLint(stdout, stderr io.Writer, opts lintOptions) error {
 	issues := nexusmanifest.Lint(m)
 
 	// When the input is a TOML file on disk, ALSO lint the
-	// [runtime] block via nexus.LintRuntimeFile. Catches
+	// [runtime] block via config.LintFile. Catches
 	// listener/scope/CORS/CIDR misconfiguration that
 	// manifest.Lint can't see (different shape). Stdin +
 	// binary-print modes are JSON-only so they don't carry

@@ -11,7 +11,7 @@ import (
 )
 
 // TestConfigError_MissingEnvVar walks the real load path: a nexus.toml
-// referencing an unset ${VAR} must classify into a ConfigError carrying
+// referencing an unset ${VAR} must classify into an Error carrying
 // the file, the 1-based line, the variable, and a suggested fix.
 func TestConfigError_MissingEnvVar(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "nexus.toml")
@@ -30,7 +30,7 @@ password = "${DEFINITELY_NOT_SET_VAR}"
 	}
 	var ce *Error
 	if !errors.As(err, &ce) {
-		t.Fatalf("want *ConfigError, got %T: %v", err, err)
+		t.Fatalf("want *Error, got %T: %v", err, err)
 	}
 	if ce.Source != p {
 		t.Fatalf("Source = %q, want %q", ce.Source, p)
@@ -56,7 +56,7 @@ func TestConfigError_ParseError(t *testing.T) {
 	_, err := Load(p)
 	var ce *Error
 	if !errors.As(err, &ce) {
-		t.Fatalf("want *ConfigError, got %T: %v", err, err)
+		t.Fatalf("want *Error, got %T: %v", err, err)
 	}
 	if ce.Line != 2 {
 		t.Fatalf("Line = %d, want 2", ce.Line)

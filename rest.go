@@ -11,6 +11,7 @@ import (
 	"braces.dev/errtrace"
 	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/appctx"
 	"github.com/paulmanoni/nexus/v2/internal/maskhook"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/registry"
@@ -25,7 +26,7 @@ import (
 //     endpoint in a service node on the dashboard.
 //   - The optional last param is an "args" struct whose tags direct gin on
 //     how to bind from the request:
-//     uri:"id"     → ShouldBindUri
+//     path:"id"    → ShouldBindUri
 //     query:"x"    → ShouldBindQuery
 //     header:"x"   → ShouldBindHeader
 //     form:"x"     → ShouldBind (multipart/url-encoded)
@@ -385,11 +386,11 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 	endpointName := method + " " + path
 	return func(c *httpx.Ctx) {
 		// Expose the app to a custom renderer (e.g. Inertia) so it can pull
-		// per-app state via AppFromGin — order-independent, unlike global
+		// per-app state via the appctx key — order-independent, unlike global
 		// middleware. Only when a renderer is attached, so ordinary JSON
 		// endpoints pay nothing.
 		if renderer != nil {
-			c.Set(ginAppKey, app)
+			c.Set(appctx.Key, app)
 		}
 		// Tracing mirrors what transport/rest does: a request.start/end pair
 		// bracketing the handler. We do it inline because AsRest bypasses the
@@ -521,7 +522,7 @@ func buildGinHandler(method string, sh handlerShape, deps []reflect.Value, bus *
 // bindArgs binds a request into the args struct using gin's existing
 // ShouldBindUri / ShouldBindQuery / ShouldBindHeader / ShouldBindJSON based
 // on the tags present on the struct. Multiple tag families may coexist —
-// e.g. uri:"id" alongside json:"payload" — and each binder runs against its
+// e.g. path:"id" alongside json:"payload" — and each binder runs against its
 // own fields.
 func bindArgs(c *httpx.Ctx, ptr any) error {
 	t := reflect.TypeOf(ptr).Elem()
@@ -530,7 +531,7 @@ func bindArgs(c *httpx.Ctx, ptr any) error {
 
 	if hasURI {
 		if err := c.ShouldBindUri(ptr); err != nil {
-			return fmt.Errorf("bind uri: %w", err)
+			return fmt.Errorf("bind path: %w", err)
 		}
 	}
 	if hasQuery {
@@ -582,14 +583,11 @@ func surveyFor(t reflect.Type) tagSurveyResult {
 // tagSurvey walks one level of struct fields checking which binder families
 // apply. If none are present we still try JSON on methods with bodies — the
 // tag vocabulary is a hint, not a wall. Path params are recognized via the
-// preferred `path` tag or the legacy `uri` tag (the returned uri bool covers
-// both).
+// `path` tag.
 func tagSurvey(t reflect.Type) (uri, query, header, form, json bool) {
 	for i := 0; i < t.NumField(); i++ {
 		tag := t.Field(i).Tag
 		if _, ok := tag.Lookup("path"); ok {
-			uri = true
-		} else if _, ok := tag.Lookup("uri"); ok {
 			uri = true
 		}
 		if _, ok := tag.Lookup("query"); ok || tag.Get("form") != "" {

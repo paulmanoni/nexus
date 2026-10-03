@@ -317,7 +317,7 @@ func (c Config) defaults() Config {
 // by fx, then returns a closure HTTP handlers call on each
 // contributions.json request.
 //
-// Idempotent: if nexus.Config.Client.Enabled already mounted the SDK
+// Idempotent: if config.Runtime.Client.Enabled already mounted the SDK
 // (back-compat path), ClientUseWithContributions's existing handler
 // check short-circuits. Apps that want the contributions route MUST
 // drop Config.Client.Enabled in favor of frontend.Plugin — the

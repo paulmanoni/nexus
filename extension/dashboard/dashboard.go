@@ -79,7 +79,6 @@ type PluginInfo struct {
 	Namespace    string   `json:"namespace,omitempty"`
 	HasDashboard bool     `json:"hasDashboard,omitempty"`
 	HasClient    bool     `json:"hasClient,omitempty"`
-	HasGenerate  bool     `json:"hasGenerate,omitempty"`
 	Tab          *TabInfo `json:"tab,omitempty"`
 	LiveEvents   []string `json:"liveEvents,omitempty"`
 }

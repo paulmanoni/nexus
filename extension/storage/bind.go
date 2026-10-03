@@ -12,7 +12,7 @@ import (
 // Config declares a disk. Driver selects the backend; the remaining
 // fields are read per-driver (Local uses Root/PublicBaseURL, S3 uses the
 // bucket/credential set). Build it inline in Bind, typically pulling
-// secrets from nexus.Get.
+// secrets from config.Get.
 type Config struct {
 	// Driver is "local" or "s3". Empty defaults to "local".
 	Driver string
@@ -75,7 +75,7 @@ func buildDisk(cfg Config) (Disk, error) {
 //	    return storage.Config{Driver: "local", Root: "./var/uploads"}
 //	}, storage.WithDefault()))
 //
-// build() runs in the DI constructor (so nexus.Get resolves), and the
+// build() runs in the DI constructor (so config.Get resolves), and the
 // disk is registered as a dashboard resource. Handlers inject *Uploads
 // and call Put/Get/URL on it directly. A bad Config fails fast at boot.
 func Bind[T any](name string, build func() Config, opts ...BindOption) nexus.Option {

@@ -29,7 +29,7 @@ var candidateFrontendDirs = []string{"web", "frontend", "client", "app"}
 const Off = "-"
 
 // ApplyFrontendDefaults is the exported entry to applyFrontendDefaults,
-// for the nexus.Config.SDK one-switch path which builds a Config outside
+// for the config.Runtime.SDK one-switch path which builds a Config outside
 // this package and needs the same OutDir/TSConfig/ViteConfig auto-detection.
 func ApplyFrontendDefaults(cfg Config) Config { return applyFrontendDefaults(cfg) }
 
@@ -45,14 +45,14 @@ func ApplyFrontendDefaults(cfg Config) Config { return applyFrontendDefaults(cfg
 // an explicit "none" that stays Off. OutDir = Off stops the fill for all
 // three — with no dump there is nothing for a tsconfig mapping or a vite
 // config to point at. Idempotent, so Mount re-applying it over a Config
-// the caller already defaulted (nexus.Config.SDK) changes nothing.
+// the caller already defaulted (config.Runtime.SDK) changes nothing.
 //
 // Whether a dump actually happens is decided at boot, not here: the
 // OnStart hook in nexus writes only in development (`nexus dev` or
 // environment = "development"), whatever OutDir holds.
 //
 // Returns cfg by value so the caller's local copy gets the
-// defaults; the original Config that was passed into nexus.Config
+// defaults; the original Config that was passed into config.Runtime
 // is unaffected.
 func applyFrontendDefaults(cfg Config) Config {
 	if cfg.OutDir == Off {

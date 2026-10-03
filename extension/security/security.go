@@ -3,7 +3,7 @@
 //
 // GLOBAL enforcement does NOT live here. The framework applies security
 // headers by default and enables CSRF from [runtime.middleware.security]
-// in nexus.toml (see nexus.Config's Middleware.Security field) — no Go
+// in nexus.toml (see config.Runtime's Middleware.Security field) — no Go
 // required, and no risk of the middleware being installed twice. This
 // package adds the two things the core path can't:
 //
@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
+	"github.com/paulmanoni/nexus/v2/internal/appctx"
 	"github.com/paulmanoni/nexus/v2/middleware"
 	"github.com/paulmanoni/nexus/v2/middleware/secure"
 
@@ -110,7 +111,8 @@ func NewCSRFMiddleware(cfg CSRFConfig) middleware.Middleware {
 // (headers on, CSRF off) when the app predates the stash.
 func handleStatus(c *httpx.Ctx) {
 	status := map[string]any{"headers": true, "csrf": false}
-	if app, ok := nexus.AppFromGin(c); ok && app != nil {
+	v, _ := c.Get(appctx.Key)
+	if app, ok := v.(*nexus.App); ok && app != nil {
 		if v, ok := app.Value(securityStatusKey); ok {
 			if m, ok := v.(map[string]any); ok {
 				status = m

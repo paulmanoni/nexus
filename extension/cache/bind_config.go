@@ -8,7 +8,7 @@ import (
 // BindFromConfig binds a marker type T to the [cache.<name>] block in
 // nexus.toml — the cache counterpart to db.BindFromConfig, so wiring a cache
 // from config no longer means hand-writing a build closure full of
-// nexus.Get calls. T must embed *Manager, exactly as with Bind. The
+// config.Get calls. T must embed *Manager, exactly as with Bind. The
 // framework manages lifecycle + dashboard registration identically; only
 // the config source differs.
 //
@@ -37,7 +37,7 @@ import (
 // with only redis_host/redis_port set is enough. Lifecycle options
 // (WithDefault, WithDescription) stay explicit in code rather than being
 // read from the block — the block describes the connection, code describes
-// its role. The build runs at boot (nexus.Get resolves the toml base layer,
+// its role. The build runs at boot (config.Get resolves the toml base layer,
 // any config extension, and ENV overrides), so this works under nexus.Boot.
 func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 	return Bind[T](name, func() *Config { return configFromTOML(name) }, opts...)
@@ -45,7 +45,7 @@ func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {
 
 // configFromTOML overlays the [cache.<name>] block onto NewConfig()'s
 // defaults: each field keeps its default unless the block overrides it.
-// Durations accept toml strings ("15m"), matching nexus.Get's conversion.
+// Durations accept toml strings ("15m"), matching config.Get's conversion.
 func configFromTOML(name string) *Config {
 	c := NewConfig()
 	p := "cache." + name + "."

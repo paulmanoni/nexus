@@ -82,7 +82,7 @@ type UpdateOrderArgs struct {
 
 | Tag | Source |
 |---|---|
-| `path:"id"` | REST path parameter (`/orders/:id`). The legacy `uri:"id"` also works. |
+| `path:"id"` | REST path parameter (`/orders/:id`). |
 | `query:"x"` | URL query string |
 | `header:"X"` | Request header |
 | `form:"x"` | Form field |

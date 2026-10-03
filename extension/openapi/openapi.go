@@ -11,8 +11,8 @@
 //	import "github.com/paulmanoni/nexus/v2/extension/openapi"
 //
 //	nexus.Run(
-//	    nexus.Config{
-//	        Server: nexus.ServerConfig{Addr: ":8080"},
+//	    config.Runtime{
+//	        Server: config.Server{Addr: ":8080"},
 //	        Client: client.Config{Enabled: true}, // the plugin reads from here
 //	    },
 //	    openapi.Plugin(openapi.Config{

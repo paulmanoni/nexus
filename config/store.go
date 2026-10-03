@@ -13,7 +13,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/internal/dotpath"
 )
 
-// configStore is the process-wide config singleton. nexus.Get
+// configStore is the process-wide config singleton. config.Get
 // reads from it via the activeConfigStore pointer installed by
 // the config extension's Server / Client / Local entrypoints at
 // boot. Reads are lock-free via atomic.Pointer; writes
@@ -35,21 +35,21 @@ type configSnap struct {
 	updatedAt time.Time
 }
 
-// activeConfigStore is the package-level handle nexus.Get
+// activeConfigStore is the package-level handle config.Get
 // reaches into. Set once by the config extension at boot.
 var activeConfigStore atomic.Pointer[configStore]
 
 // baseConfigStore is the lowest-priority config layer, seeded from
-// the full nexus.toml document by LoadConfig at startup. It lets
-// nexus.Get resolve any key declared in nexus.toml even when no
+// the full nexus.toml document by Load at startup. It lets
+// config.Get resolve any key declared in nexus.toml even when no
 // config extension is wired. The extension store (when installed)
 // and ENV overrides both win over it — see configResolveKey.
 var baseConfigStore atomic.Pointer[configSnap]
 
 // installBaseConfig seeds the nexus.toml base layer with the full
-// document tree. Called by LoadConfig at startup. Unlike the
+// document tree. Called by Load at startup. Unlike the
 // extension store there's no install-once guard or listeners: it's a
-// static boot-time snapshot and the last LoadConfig call wins (a
+// static boot-time snapshot and the last Load call wins (a
 // process reads a single nexus.toml).
 func installBaseConfig(values map[string]any) {
 	baseConfigStore.Store(&configSnap{
@@ -59,9 +59,9 @@ func installBaseConfig(values map[string]any) {
 	})
 }
 
-// pendingConfigListeners holds OnConfigChange callbacks
+// pendingConfigListeners holds OnChange callbacks
 // registered before any config entrypoint installed the store.
-// InstallConfigStore replays them once it lands.
+// InstallStore replays them once it lands.
 var (
 	pendingConfigMu        sync.Mutex
 	pendingConfigListeners = map[string][]func(any){}
@@ -86,7 +86,7 @@ func InstallStore(values map[string]any, version string) {
 	if !activeConfigStore.CompareAndSwap(nil, s) {
 		panic("nexus: multiple config.Server/Client/Local entrypoints in one process — pick one")
 	}
-	// Replay any pre-boot OnConfigChange callbacks.
+	// Replay any pre-boot OnChange callbacks.
 	pendingConfigMu.Lock()
 	for key, cbs := range pendingConfigListeners {
 		s.mu.Lock()
@@ -98,7 +98,7 @@ func InstallStore(values map[string]any, version string) {
 }
 
 // UpdateStore swaps in a new value tree + version,
-// triggering OnConfigChange callbacks for keys whose values
+// triggering OnChange callbacks for keys whose values
 // changed. Called by config.Client on every successful refresh
 // and by config.Local's reload path (phase 2).
 func UpdateStore(values map[string]any, version string) {
@@ -139,7 +139,7 @@ func UpdateStore(values map[string]any, version string) {
 	}
 }
 
-// ResetForTest unwinds InstallConfigStore. Test-only
+// ResetForTest unwinds InstallStore. Test-only
 // escape hatch — production never calls this.
 func ResetForTest() {
 	activeConfigStore.Store(nil)
@@ -183,7 +183,7 @@ func configResolveKey(key string) (any, bool) {
 			}
 		}
 	}
-	// nexus.toml base layer (lowest priority), seeded by LoadConfig.
+	// nexus.toml base layer (lowest priority), seeded by Load.
 	if b := baseConfigStore.Load(); b != nil {
 		if v, ok := configResolvePath(b.values, key); ok {
 			return v, true
@@ -282,7 +282,7 @@ func configKeyToEnv(key string) string {
 // the OS-level environment.
 var configLookupEnv = os.LookupEnv
 
-// subscribeConfig registers an OnConfigChange callback. Used by
+// subscribeConfig registers an OnChange callback. Used by
 // the public OnChange function in get.go.
 func subscribeConfig(key string, fn func(any)) {
 	s := activeConfigStore.Load()

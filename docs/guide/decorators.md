@@ -247,7 +247,7 @@ of one module then fails on the other packages' missing providers.
 Scope the boot instead:
 
 ```go
-app, stop, err := nexus.InProcess(nexus.Config{},
+app, stop, err := nexus.InProcess(config.Runtime{},
     nexus.DecoratedModules("adverts"),   // only adverts' //nexus: registrations
     adverts.Module,
     /* the module's own deps */)

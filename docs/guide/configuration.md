@@ -13,27 +13,28 @@ func main() {
 `nexus.Boot(opts...)` loads `nexus.toml` from the working directory, then runs the app.
 It reads:
 
-- the `[runtime]` tables, which become the runtime `nexus.Config`
+- the `[runtime]` tables, which become the runtime `config.Runtime`
 - every `[extensions.*]` block
 - the `[env]` bridge
-- the value store behind `nexus.Get`
+- the value store behind `config.Get`
 
 A missing `nexus.toml` is fine, and defaults apply. A malformed one panics at boot.
 Point at a different file with the `NEXUS_CONFIG` environment variable, or call
 `nexus.BootFrom(path, opts...)`.
 
-If you prefer to build the config in Go, use `nexus.Run`:
+If you prefer to build the config in Go, use `nexus.Run` with a `config.Runtime`
+from the `config` package (`github.com/paulmanoni/nexus/v2/config`):
 
 ```go
-nexus.Run(nexus.Config{
-    Server:        nexus.ServerConfig{Addr: ":8080"},
-    Dashboard:     nexus.DashboardConfig{Enabled: true, Name: "Shop"},
+nexus.Run(config.Runtime{
+    Server:        config.Server{Addr: ":8080"},
+    Dashboard:     config.Dashboard{Enabled: true, Name: "Shop"},
     Introspection: true,
 }, usersModule)
 ```
 
 `Boot` is shorthand for
-`nexus.Run(nexus.MustLoadConfig(), append(nexus.MustLoadExtensions(), opts...)...)`.
+`nexus.Run(config.MustLoad(), append(nexus.MustLoadExtensions(), opts...)...)`.
 
 ::: warning Runtime keys live under `[runtime]`
 Every runtime key belongs in `[runtime]` or a `[runtime.<sub>]` table. A runtime key at
@@ -80,9 +81,10 @@ Deployments set **`NEXUS_ENVIRONMENT=production`**, which overrides the file, so
 never edit `nexus.toml` to ship. Go code can read the resolved value with
 `nexus.ActiveEnvironment()`.
 
-## Reading values: `nexus.Get`
+## Reading values: `config.Get`
 
-Any value in `nexus.toml`, including your own sections, is readable by its dotted path:
+Any value in `nexus.toml`, including your own sections, is readable by its dotted path
+through package `config` (`github.com/paulmanoni/nexus/v2/config`):
 
 ```toml
 [shop]
@@ -91,9 +93,9 @@ page_size = 50
 ```
 
 ```go
-currency := nexus.Get[string]("shop.currency")
-size     := nexus.Get[int]("shop.page_size", 20)          // second arg is the default
-ttl      := nexus.Get[time.Duration]("cache.ttl", 5*time.Minute)
+currency := config.Get[string]("shop.currency")
+size     := config.Get[int]("shop.page_size", 20)          // second arg is the default
+ttl      := config.Get[time.Duration]("cache.ttl", 5*time.Minute)
 ```
 
 Values resolve per key, highest priority first:

@@ -144,7 +144,7 @@ func (m *MemoryStore) RestoreDev(data []byte) error {
 
 // ── cache store ─────────────────────────────────────────────────────
 
-// CacheStore rides any nexus.Cache — with the Redis backend imported
+// CacheStore rides any resource.Cache — with the Redis backend imported
 // (extension/cache/redis) sessions survive restarts and are visible
 // to every replica, the production shape. Keys are prefixed
 // "session:" so they coexist with the app's own cache traffic.
@@ -166,7 +166,7 @@ func (s *cacheStore) Load(ctx context.Context, id string) (map[string]any, error
 	var data map[string]any
 	err := s.c.Get(ctx, cacheKeyPrefix+id, &data)
 	if err != nil {
-		// Cache misses surface as errors from nexus.Cache; a fresh
+		// Cache misses surface as errors from resource.Cache; a fresh
 		// session is the correct outcome either way.
 		return nil, nil //nolint:nilerr
 	}

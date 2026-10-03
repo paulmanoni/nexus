@@ -121,8 +121,7 @@ func (h *devReloadHub) broadcast() {
 // coalesces the bursts esbuild typically emits (one .js + one
 // .css + their .map siblings all land within milliseconds) into
 // a single reload signal. devServer (the origin of a live Vite dev
-// server named by the hot file, or NEXUS_VITE_DEV's value; "" when
-// there is none) is consulted when the debounce fires, and polled for
+// server named by the hot file; "" when there is none) is consulted when the debounce fires, and polled for
 // changes of owner; see devReloadGate.
 //
 // Errors from the watcher are logged and swallowed; the dev

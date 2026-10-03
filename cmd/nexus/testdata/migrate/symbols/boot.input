@@ -1,0 +1,34 @@
+package main
+
+import (
+	"github.com/paulmanoni/nexus"
+	"github.com/paulmanoni/nexus/extension/auth"
+)
+
+type GetArgs struct {
+	ID   string `uri:"id" json:"id"`
+	Slug string `path:"slug" uri:"slug"`
+	Page int    `query:"page"`
+}
+
+var defaults = []nexus.Option{
+	nexus.LoadDotenvIfPresent(),
+	nexus.UseVolume(volume),
+}
+
+func main() {
+	cfg := nexus.MustLoadConfig()
+	cfg.Server = nexus.ServerConfig{Addr: ":8080"}
+	_ = nexus.Get[string]("shop.currency")
+	_ = auth.Describe(auth.Bearer())
+	nexus.Run(cfg,
+		nexus.MustLoadDotenv(),
+		nexus.Module("orders"),
+	)
+}
+
+func only() {
+	nexus.Boot(
+		nexus.MustLoadDotenv(),
+	)
+}

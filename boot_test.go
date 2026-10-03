@@ -196,9 +196,9 @@ func TestRegisterBootCheck_NilIgnored(t *testing.T) {
 	}
 }
 
-// TestGet_ReadsNexusToml: LoadConfig seeds the nexus.Get base layer
+// TestGet_ReadsNexusToml: config.Load seeds the config.Get base layer
 // from the full document, so a key declared in nexus.toml resolves
-// via nexus.Get even with no config extension wired. This is the
+// via config.Get even with no config extension wired. This is the
 // headline of the "nexus.toml is fully automatic" change — the dotted
 // key mirrors the TOML table path.
 func TestGet_ReadsNexusToml(t *testing.T) {
@@ -215,7 +215,7 @@ url = "/media"
 quota = 42
 `)
 	if _, err := config.Load(path); err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 
 	if got := config.Get[string]("runtime.storage.url"); got != "/media" {
@@ -249,7 +249,7 @@ flag = "from-toml"
 only_in_toml = "base"
 `)
 	if _, err := config.Load(path); err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 	// Extension store carries "feature.flag" but NOT "feature.only_in_toml".
 	config.InstallStore(map[string]any{
@@ -276,7 +276,7 @@ func TestGet_EnvOverridesToml(t *testing.T) {
 url = "/from-toml"
 `)
 	if _, err := config.Load(path); err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("config.Load: %v", err)
 	}
 	t.Setenv("STORAGE_URL", "/from-env")
 
@@ -341,7 +341,7 @@ func TestResolveConfigPath_Precedence(t *testing.T) {
 
 // TestAutoLoad_ReadsRuntimeAndSeedsBase: the happy path used by Boot —
 // autoLoad populates Config from [runtime] and seeds the base layer so
-// nexus.Get works immediately afterward.
+// config.Get works immediately afterward.
 func TestAutoLoad_ReadsRuntimeAndSeedsBase(t *testing.T) {
 	config.ResetForTest()
 	t.Cleanup(config.ResetForTest)

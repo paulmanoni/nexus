@@ -27,7 +27,7 @@ import (
 //	session_token   = ""
 //	public_base_url = "https://cdn.example.com"
 //
-// The build runs at boot (nexus.Get resolves the toml base layer, any config
+// The build runs at boot (config.Get resolves the toml base layer, any config
 // extension, and ENV overrides), so this works under nexus.Boot. Required
 // fields for the chosen driver are still validated at boot by buildDisk.
 func BindFromConfig[T any](name string, opts ...BindOption) nexus.Option {

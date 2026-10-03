@@ -20,7 +20,7 @@
 //
 //	nexus.Run(cfg, storage.Bind[Uploads]("uploads", func() storage.Config {
 //	    return storage.Config{Driver: "s3", Bucket: "my-app", Region: "us-east-1",
-//	        AccessKey: nexus.Get[string]("s3.key"), SecretKey: nexus.Get[string]("s3.secret")}
+//	        AccessKey: config.Get[string]("s3.key"), SecretKey: config.Get[string]("s3.secret")}
 //	}, storage.WithDefault()))
 //
 // A handler then injects *Uploads and calls Put/Get/Delete/URL directly

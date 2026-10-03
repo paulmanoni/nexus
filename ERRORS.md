@@ -16,7 +16,7 @@ Contract:
   (e.g. *"no [databases.uaa] block found — declare it in nexus.toml"*).
 - Deferred build errors go through `nexus.Raw(di.Error(...))` / `nexus.Error(err)`
   so they surface at boot with the same prefix.
-- `MustLoadConfig` / `MustLoadExtensions` panic by documented contract.
+- `config.MustLoad` / `MustLoadExtensions` panic by documented contract.
 
 Rule when adding one: wrap with context — `panic(fmt.Errorf("nexus: <what> %q: %w", x, err))`.
 A bare `panic(err)` that drops a junior into a raw toml/parse stack with no

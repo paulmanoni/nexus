@@ -24,10 +24,10 @@
 //	nexus.Run(cfg, mail.Bind[Mailer]("smtp", func() mail.Config {
 //	    return mail.Config{
 //	        Driver:      "smtp",
-//	        Host:        nexus.Get[string]("mail.host"),
-//	        Port:        nexus.Get[int]("mail.port", 587),
-//	        Username:    nexus.Get[string]("mail.username"),
-//	        Password:    nexus.Get[string]("mail.password"),
+//	        Host:        config.Get[string]("mail.host"),
+//	        Port:        config.Get[int]("mail.port", 587),
+//	        Username:    config.Get[string]("mail.username"),
+//	        Password:    config.Get[string]("mail.password"),
 //	        Encryption:  "starttls",
 //	        FromAddress: "no-reply@example.com",
 //	        FromName:    "Example",

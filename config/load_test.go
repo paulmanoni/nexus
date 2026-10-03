@@ -59,7 +59,7 @@ burst = 50
 
 	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 
 	// Spot-check scalars.
@@ -148,7 +148,7 @@ environment = "development"
 `)
 	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Environment != "development" {
 		t.Errorf("Environment = %q", cfg.Environment)
@@ -181,7 +181,7 @@ name = "${APP_NAME}"
 `)
 	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Server.Addr != ":9000" {
 		t.Errorf("Server.Addr = %q, want :9000", cfg.Server.Addr)
@@ -367,7 +367,7 @@ csrf = true
 // TestUnknownConfigKeys_UnownedSectionsSilent: the noise floor. Tables owned
 // by another loader (the deploy-manifest surface, sibling BindFromConfig
 // blocks, extension blocks this binary may not even link) and an app's own
-// nexus.Get sections — at the top level or under [runtime] — are all
+// config.Get sections — at the top level or under [runtime] — are all
 // legitimate and must stay quiet.
 func TestUnknownConfigKeys_UnownedSectionsSilent(t *testing.T) {
 	keys := unknownConfigKeys([]byte(`
@@ -394,7 +394,7 @@ addr = "10.0.0.1:7777"
 [environments.staging]
 domain = "staging.example.com"
 
-# App-owned sections, readable via nexus.Get — a table is never "unknown".
+# App-owned sections, readable via config.Get — a table is never "unknown".
 [app]
 name = "demo"
 

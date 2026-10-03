@@ -13,7 +13,7 @@
 // from:
 //
 //   - Boot(opts...) — the default. Loads nexus.toml (runtime Config, every
-//     [extensions.*] block, the [env] bridge, the nexus.Get store), then runs.
+//     [extensions.*] block, the [env] bridge, the config.Get store), then runs.
 //     Use BootFrom(path, opts...) for an explicit config path. This is what
 //     scaffolded apps use; settings live in the file, not in code.
 //   - Run(cfg, opts...) — when you build Config in Go (a shared Store value, a
@@ -24,8 +24,8 @@
 //     package wraps this.
 //
 // Everything else is a building block Boot composes for you and you rarely call
-// directly: New(cfg) (construct an *App without running), LoadConfig /
-// MustLoadConfig (read Config from TOML), and LoadExtensionOptions /
+// directly: New(cfg) (construct an *App without running), config.Load /
+// config.MustLoad (read config.Runtime from TOML), and LoadExtensionOptions /
 // MustLoadExtensions (read [extensions.*] options from TOML).
 package nexus
 
@@ -91,7 +91,7 @@ type App struct {
 	// boot-time state they must read at request time without relying on
 	// gin-middleware install ordering (which fx.Module route registration
 	// can run ahead of). The Inertia engine lives here; the page renderer
-	// pulls it via AppFromGin(c) → App.Value(...). See SetValue/Value.
+	// pulls it via the appctx request key → App.Value(...). See SetValue/Value.
 	extValues    sync.Map
 	registry     *registry.Registry
 	bus          *trace.Bus
@@ -507,7 +507,6 @@ func New(cfg config.Runtime) *App {
 						Namespace:    r.Namespace,
 						HasDashboard: r.HasDashboard,
 						HasClient:    r.HasClient,
-						HasGenerate:  r.HasGenerate,
 						LiveEvents:   r.LiveEvents,
 					}
 					if r.Tab != nil {
@@ -643,7 +642,7 @@ func (a *App) Bus() *trace.Bus              { return a.bus }
 // the catch-all collides with framework routes (the /__nexus
 // dashboard, your API, the SPA fallback) and takes the whole app
 // down. A blank/root prefix is exactly what an unset config value
-// yields — e.g. nexus.Get on a key that isn't in the config store
+// yields — e.g. config.Get on a key that isn't in the config store
 // returns "" — so the failure is easy to hit by accident.
 //
 // Static refuses to crash for it: a blank, root, or /__nexus-shadowing
@@ -978,25 +977,6 @@ func (a *App) FrontendFS() (fsys fs.FS, root string, ok bool) {
 		return nil, "", false
 	}
 	return a.frontendFS, a.frontendRoot, true
-}
-
-// ginAppKey is the gin.Context key under which buildGinHandler stashes the
-// *App for renderers (see WithRenderer). A package-private string keeps it off
-// the public surface while remaining accessible to AppFromGin.
-const ginAppKey = "nexus.app"
-
-// AppFromGin returns the *App associated with the current request, set by the
-// framework before a ResponseRenderer runs. It lets a renderer reach per-app
-// state (e.g. App.Value) that can't be threaded through the
-// Render(c, result) signature. Returns (nil, false) outside a renderer-bearing
-// request.
-func AppFromGin(c *httpx.Ctx) (*App, bool) {
-	v, ok := c.Get(ginAppKey)
-	if !ok {
-		return nil, false
-	}
-	app, ok := v.(*App)
-	return app, ok
 }
 
 // FrontendDocument is the HTML document a server-rendered page is built from:

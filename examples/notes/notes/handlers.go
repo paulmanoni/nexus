@@ -10,7 +10,7 @@ import (
 type listArgs struct{}
 
 type getArgs struct {
-	ID int `uri:"id"` // path param `:id` binds via the `uri` tag
+	ID int `path:"id"` // path param `:id` binds via the `path` tag
 }
 
 type createArgs struct {

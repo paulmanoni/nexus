@@ -28,7 +28,7 @@ import (
 // Client registers the server-backed config-client side. Fetches
 // signed snapshots from the named config server, verifies
 // against pinned signer keys, caches the result sealed on disk,
-// installs into the root-package store that nexus.Get reads.
+// installs into the root-package store that config.Get reads.
 //
 // Boot-time state machine:
 //
@@ -60,7 +60,7 @@ func Client(serverURL string, opts ...ClientOption) nexus.Option {
 	holder := &clientHolder{cfg: cfg}
 
 	// EAGER boot — fetch + install the snapshot synchronously,
-	// before returning the Option. nexus.Get(...) becomes
+	// before returning the Option. config.Get(...) becomes
 	// callable from every Provide constructor, Invoke, handler,
 	// and any code between Client(...) and Run(...). Without
 	// this, an unlucky fx ordering can run user-side
@@ -139,7 +139,7 @@ func initClient(h *clientHolder) error { return h.bootInstall() }
 
 // bootInstall is the synchronous boot state machine. Runs from
 // Client(...) so the snapshot is installed BEFORE di.New/Start
-// even begin — making nexus.Get callable from every constructor
+// even begin — making config.Get callable from every constructor
 // and invoke in the rest of the app. Fails (returns non-nil
 // error) only when the OnUnreachable policy says to fail;
 // otherwise installs the best-available snapshot and lets the
@@ -212,9 +212,9 @@ func (h *clientHolder) bootInstall() error {
 }
 
 // installSnapshot installs the verified snapshot into the root
-// store. On first call, uses InstallConfigStore (creates the
-// store); subsequent calls use UpdateConfigStore (swaps + fires
-// OnConfigChange callbacks).
+// store. On first call, uses config.InstallStore (creates the
+// store); subsequent calls use config.UpdateStore (swaps + fires
+// config.OnChange callbacks).
 func (h *clientHolder) installSnapshot(snap *SignedSnapshot) {
 	if prev := h.currentVersion.Load(); prev == nil {
 		config.InstallStore(snap.Snapshot.Values, snap.Snapshot.Version)

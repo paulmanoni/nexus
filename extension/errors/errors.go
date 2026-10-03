@@ -13,7 +13,7 @@
 //	import "github.com/paulmanoni/nexus/v2/extension/errors"
 //
 //	nexus.Run(
-//	    nexus.Config{Server: nexus.ServerConfig{Addr: ":8080"}},
+//	    config.Runtime{Server: config.Server{Addr: ":8080"}},
 //
 //	    errors.Plugin(errors.Config{
 //	        Environment: "production",

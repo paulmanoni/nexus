@@ -8,7 +8,7 @@ import (
 	"github.com/paulmanoni/nexus/v2/config"
 )
 
-// resetStore wraps nexus.ClearConfigStoreForTest so each test
+// resetStore wraps config.ResetForTest so each test
 // starts from a clean slate (and tests don't observe the
 // "second installer panics" guard from a prior test's setup).
 func resetStore(t *testing.T) {
@@ -19,7 +19,7 @@ func resetStore(t *testing.T) {
 
 // TestLocal_ReadsPlaintextAndPopulatesGet drives the headline
 // path: a plaintext TOML on disk → values reachable via
-// nexus.Get. config.Local leaves the file alone — operators
+// config.Get. config.Local leaves the file alone — operators
 // expect their TOML to stay readable + editable.
 func TestLocal_ReadsPlaintextAndPopulatesGet(t *testing.T) {
 	resetStore(t)
@@ -49,7 +49,7 @@ timeout = "5s"
 		t.Errorf("toml file was modified by initLocal:\n  want: %q\n   got: %q", plaintext, string(body))
 	}
 
-	// And nexus.Get works across types.
+	// And config.Get works across types.
 	if got := config.Get[string]("app_name"); got != "test-app" {
 		t.Errorf("Get[string](app_name) = %q, want test-app", got)
 	}
@@ -95,7 +95,7 @@ new_path = true
 // TestLocal_MissingFile proves the error path: a config.Local
 // pointed at a nonexistent path fails boot loudly. Catches the
 // canonical "I forgot to copy the file" deploy mistake at
-// startup rather than at first nexus.Get call site.
+// startup rather than at first config.Get call site.
 func TestLocal_MissingFile(t *testing.T) {
 	resetStore(t)
 	err := initLocal(localConfig{path: "/nonexistent/nexus.config.toml", profile: "default"})
@@ -175,13 +175,13 @@ func TestBindConfig_PopulatesStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 	if pc.Provider != "stripe" || pc.MaxRetries != 3 {
-		t.Errorf("BindConfig = %+v, want {stripe, 3}", pc)
+		t.Errorf("config.Bind = %+v, want {stripe, 3}", pc)
 	}
 }
 
 // TestOnConfigChange_FiresOnChange proves the hot-reload
 // callback path. Subscribe; trigger a snapshot update via
-// UpdateConfigStore; assert the callback fired with the new
+// config.UpdateStore; assert the callback fired with the new
 // value.
 func TestOnConfigChange_FiresOnChange(t *testing.T) {
 	resetStore(t)
@@ -198,7 +198,7 @@ func TestOnConfigChange_FiresOnChange(t *testing.T) {
 
 	<-called
 	if b, ok := got.(bool); !ok || !b {
-		t.Errorf("OnConfigChange got %v, want true", got)
+		t.Errorf("config.OnChange got %v, want true", got)
 	}
 }
 

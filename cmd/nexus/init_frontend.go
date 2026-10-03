@@ -28,8 +28,8 @@ import (
 // files (package.json, vite.config.ts, tsconfig.json, web/sdk) are
 // rewritten — an existing one that differs is first saved as <file>.orig
 // — while the app's own files (index.html, src/, the dist stub) are
-// written only where missing. That is how a viteless-era web/ becomes a
-// Vite project without losing its sources or its settings.
+// written only where missing, so an existing web/ becomes a Vite project
+// without losing its sources or its settings.
 //
 // The main.go patch is AST-based — we parse the file with
 // go/parser, insert the missing import + embed decl + ServeFrontend
@@ -95,11 +95,6 @@ func runInitFrontend(target, frontend string, force bool, stdout io.Writer) erro
 			return fmt.Errorf("write %s: %w", full, err)
 		}
 		fmt.Fprintf(stdout, "wrote %s\n", path)
-	}
-	for _, name := range []string{"viteless.config.ts", "viteless.config.js", "viteless.config.mjs", "viteless-env.d.ts"} {
-		if _, err := os.Stat(filepath.Join(webDir, name)); err == nil {
-			fmt.Fprintf(stdout, "note  web/%s is no longer read — move any settings into web/vite.config.ts and delete it\n", name)
-		}
 	}
 
 	// 2. Keep web/node_modules and web/dist out of version control, as

@@ -71,7 +71,7 @@ func TestVerify_RejectsTamperedValues(t *testing.T) {
 
 // TestSnapshot_ResolveDottedPath proves the dotted-path walker
 // climbs nested maps cleanly. Same logic the root-package
-// nexus.Get uses; tested here to keep the snapshot type's
+// config.Get uses; tested here to keep the snapshot type's
 // contract self-contained.
 func TestSnapshot_ResolveDottedPath(t *testing.T) {
 	s := Snapshot{Values: map[string]any{
