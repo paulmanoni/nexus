@@ -298,7 +298,10 @@ in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(c
 error`, then re-render (in-process: a replica's own pages). Forms: `view.Submit(x.Add)` /
 `view.Change(x.Validate)` on a form send its fields to an event whose last param is a `form:`-tagged
 struct (httpx binder); failing its `validate:` tags or returning `nexus.Invalid()` re-renders with `view.Errors(ctx).Field(name)`,
-success resets the form; a field's value changes only when the server's value attr changes. The first render
+success resets the form. Field rules (docs/guide/views.md "Form fields"): a field keeps what the user typed until
+the server's value (input `value`, textarea text, select's `selected` options, `checked`) changes; a focused field
+is never overwritten; `view.Value(v)` (spread: `<input { view.Value(x.V)... }/>`, also select/textarea) makes a field
+take the server's value on every render. The first render
 is HTTP-only (a join id lets the socket skip resending it); updates travel as token patches (tokens at
 `<`/`>`/`"`/`&#34;`, Myers diff, `[p,n]` back-references, a per-connection dictionary `[id]`),
 compressed; reconnect = jittered backoff + queued events + fresh mount.
@@ -322,6 +325,12 @@ loader; a name missing from the build → `data-error`). Live re-renders update 
 remount); `view.Link`/shards unmount islands that leave. No loader (a Go test) → children stay +
 `data-error`. `/_view/import.js` (a module script `view.Script` loads first) gives the classic runtime
 `import()`. `_setup.ts` default export: Vue app hook / React wrapper.
+**Testing**: `view/viewtest` — `p := viewtest.Mount[*T](t, app, viewtest.As(token))` (live page found by its
+`view.LiveTag` route tag; `viewtest.At(path)` for params) or `viewtest.Get(t, app, path)`; the real runtime.js +
+twins run in goja on a small Go/JS DOM (`view/internal/browser`, x/net/html parsing, virtual timers) against an
+httptest server and the real socket. `Fill/Select/Check/Click/Submit/Press` (settle first), `Wait`,
+`Text/Attr/Value/Exists`, `Expect(loc).Text/Value/Enabled/Disabled/Visible/Absent/…` (retrying). Locator = field
+name, else CSS selector. No layout/CSS, no islands, no third-party scripts.
 `nexus docs views`, docs/guide/views.md, example `view/example` (+ `web/`).
 
 ## 2. App entry & config (`nexus.toml`)
