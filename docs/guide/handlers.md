@@ -198,7 +198,12 @@ dashboard. For REST routes, add rate limiting as middleware with
 
 Other useful options:
 
-- `nexus.Use(mw)` adds middleware.
+- `nexus.Use(mw)` adds middleware to one endpoint. App-wide middleware is
+  `nexus.Middleware(...)` (see [modules](./modules)).
+- `nexus.MaxBody(n)` moves the request-body cap (32MB by default) for one endpoint;
+  `nexus.Timeout(d)` bounds it with a deadline.
+- `nexus.ClientIP(ctx)` is the caller's address on every transport, honouring
+  `[runtime.server] trusted_proxies`.
 - `nexus.Public()` exempts an op from a deny-by-default auth policy.
 - `nexus.HideFromDashboard()` keeps an internal endpoint off the dashboard.
 - `nexus.WithIcon(name)` sets the op's dashboard icon.

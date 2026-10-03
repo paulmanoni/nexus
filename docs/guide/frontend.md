@@ -52,6 +52,9 @@ func main() {
 - A path without an extension falls back to `index.html`.
 - REST, GraphQL and WebSocket routes win on conflict.
 - `nexus.FrontendAt("/admin")` mounts the app under a sub-path.
+- It provides `*nexus.Document` into DI: the page shell — the built `index.html` in
+  production, Vite's live one under `nexus dev`. Middleware and renderers take it as a
+  parameter (`doc.Get(ctx)`) instead of reading the embed, which would be stale in dev.
 
 **Caching follows the build.** A file is served `immutable` only when the Vite manifest
 lists it and its name carries a content hash. Everything else, including `index.html`,

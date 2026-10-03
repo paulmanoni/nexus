@@ -25,6 +25,7 @@ introspection  = true            # open /__nexus (off by default → 404)
 introspection_networks = ["10.0.0.0/8"]  # allowed even when introspection is off
 trace_capacity = 1000            # request-trace ring buffer (0 = off)
 sdk            = true            # generate and serve the typed client SDK
+dotenv         = [".env"]        # loaded before ${VAR}s expand (the default); "!.env" = required
 ```
 
 ## `[runtime.server]`
@@ -34,12 +35,13 @@ sdk            = true            # generate and serve the typed client SDK
 addr                 = ":8080"
 route_prefix         = ""        # prepended to every REST, GraphQL and WS route
 strip_trailing_slash = true      # "/users/" routes as "/users" (off by default)
-max_body_bytes       = 33554432  # off by default; over the limit → 413
+max_body_bytes       = 33554432  # default 32MB; -1 = no cap; over the limit → 413
 max_header_bytes     = 1048576
 idle_timeout         = "120s"    # keep-alive cap; "-1s" uses Go's default
 read_timeout         = "0s"      # off by default (would cut large uploads)
 write_timeout        = "0s"      # off by default (would cut SSE and downloads)
 shutdown_timeout     = "10s"     # graceful drain; 250ms under nexus dev
+trusted_proxies      = ["10.0.0.0/8"]  # peers whose X-Forwarded-For nexus.ClientIP honours
 
 [runtime.server.listeners.admin] # optional extra listeners
 addr  = "127.0.0.1:7000"
@@ -81,7 +83,7 @@ frame_options   = "SAMEORIGIN"   # "-" omits X-Frame-Options
 referrer_policy = "no-referrer"
 csp             = "default-src 'self'"
 hsts_max_age    = 31536000
-csrf            = true           # double-submit CSRF (off by default)
+csrf            = true           # force double-submit CSRF on (false: off); unset follows the app
 ```
 
 ## `[runtime.logging]`
@@ -94,6 +96,20 @@ level    = "info"                # debug | info | warn | error (App.Logger's def
 format   = "pretty"              # pretty | logfmt | pattern | raw
 pattern  = "%time  %-5level  %caller  %msg  %fields"
 requests = true                  # dev-only per-request console lines
+```
+
+## `[runtime.telemetry]`
+
+Exports traces to an OpenTelemetry collector over OTLP/HTTP. Off unless
+`otlp_endpoint` is set.
+
+```toml
+[runtime.telemetry]
+otlp_endpoint = "http://localhost:4318"   # spans POST to /v1/traces
+service_name  = "orders"                  # default: the dashboard name
+
+[runtime.telemetry.otlp_headers]
+authorization = "Bearer ${OTLP_TOKEN}"
 ```
 
 ## `[databases.<name>]`

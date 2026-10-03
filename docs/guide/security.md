@@ -24,7 +24,7 @@ csp             = "default-src 'self'" # opt-in Content-Security-Policy
 hsts_max_age    = 31536000            # opt-in HSTS, once you serve https
 ```
 
-## CSRF: opt in
+## CSRF
 
 ```toml
 [runtime.middleware.security]
@@ -63,8 +63,8 @@ config.Runtime{Middleware: config.Middleware{
   [Origins](./transports#origins).
 - **The dashboard** returns 404 unless introspection is open. See
   [Dashboard](./dashboard#in-production).
-- **Request bodies:** set `max_body_bytes` in `[runtime.server]`. Otherwise every JSON
-  handler accepts an unbounded body. Over-limit requests get a 413.
+- **Request bodies** are capped at 32MB (`max_body_bytes` in `[runtime.server]`; `-1`
+  turns it off, `nexus.MaxBody(n)` moves it per endpoint). Over-limit requests get a 413.
 - **CORS:** `[runtime.middleware.cors] allow_origins`.
 - **Rate limits:** `[runtime.middleware.ratelimit]` sets an app-wide limit.
   `nexus.RateLimit(...)` sets one per op.

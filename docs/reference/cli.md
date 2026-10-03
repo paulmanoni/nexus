@@ -39,6 +39,7 @@ Builds and runs the app, rebuilds on save, and runs the frontend's Vite beside i
 | `--dist` | Keep `web/dist` rebuilt with `vite build` in the background |
 | `--debug` | Keep DWARF debug info (for delve) |
 | `--no-embed-stub` | Embed the real frontend bundle in the dev binary |
+| `--view-files` | Write the compiled views (`*_templ.go`, `view_gen.go`, `view_imports_gen.go`) to disk, for an editor on plain gopls; by default they are compiled in memory |
 | `--verbose` | Show all of Vite's output |
 | `--log-format`, `--log-pattern`, `--raw-logs` | Log formatting |
 | `--tui` | Terminal UI |
@@ -74,18 +75,44 @@ nexus client --out ./web/sdk --tsconfig ./web/tsconfig.json   # merge path mappi
 ## `nexus migrate v2 [dir]`
 
 Rewrites a nexus v1 project for v2, in place. Re-running it is a no-op, and
-`--dry-run` lists every change without writing.
+`--dry-run` lists every change without writing. What it can't rewrite gets a
+`// TODO(nexus v2): …` comment naming the replacement. Step by step:
+[Migrating to v2](/guide/migrating-to-v2).
 
 | Rule | Rewrites |
 |---|---|
 | imports | Go and templ import paths: `github.com/paulmanoni/nexus[/p]` → `…/nexus/v2[/p]` (`view` included); the separate modules — `cmd/nexus`, `di/fxcontainer`, `extension/cache/redis`, `extension/jobs/jobsamqp`, `extension/jobs/jobsredis`, `httpx/ginrouter` — take `/v2` on their own path. Only import specs change. |
-| symbols | Moved and renamed names, on selectors of a nexus import (aliases followed, shadowing locals left alone): `nexus.Config` → `config.Runtime`, `nexus.ServerConfig` → `config.Server`, `nexus.Get` → `config.Get`, `nexus.MustLoadConfig` → `config.MustLoad` and every other config name, `nexus.Cache` → `resource.Cache`, `nexus.UseVolume` → `nexus.DeclareVolume`, `auth.Describe` → `auth.InspectExtractor`. The target package is imported (as `nexusconfig` when `config` is taken in the file) and an import left unused is dropped. `nexus.MustLoadDotenv()` / `nexus.LoadDotenvIfPresent()` are dropped from their option list with a `// TODO(nexus v2):` comment naming `config.RequireDotenv` / `config.LoadDotenv`. `nexus migrate v2 --help` lists the whole table. |
+| symbols | Moved and renamed names, on selectors of a nexus import (aliases followed, shadowing locals left alone): `nexus.Config` → `config.Runtime`, `nexus.ServerConfig` → `config.Server`, `nexus.Get` → `config.Get`, `nexus.MustLoadConfig` → `config.MustLoad` and every other config name, `nexus.Cache` → `resource.Cache`, `graph.FieldMiddleware`/`FieldResolveFn`/`ResolveParams` → `gql.Middleware`/`Resolver`/`Field`, `PreserveDev`/`IsDev`/… → the `dev` package, `NewNotifier`/`Notifier`/`Bus` → the `notify` package, `ServeFrontend` → `Frontend`, `ClientIPFromCtx` → `ClientIP`, `AsRestHandler` → `AsRest`, `nexus.UseVolume` → `nexus.DeclareVolume`, `auth.Describe` → `auth.InspectExtractor`. The target package is imported (as `nexusconfig` when `config` is taken in the file) and an import left unused is dropped. `MustLoadDotenv()`, `LoadDotenvIfPresent()` and `WithClientIP` are dropped from their option list with a TODO. `nexus migrate v2 --help` lists the whole table. |
+| errors | `nexus.NewErrors()` → `nexus.Invalid()`, `nexus.Errors` → `nexus.Error`, `nexus.ErrForbidden` → `nexus.Forbidden`, the boot option `nexus.Error(err)` → `nexus.FailBoot(err)`; a TODO on each `MapCRUDError`. |
 | tags | The retired `uri:"x"` struct tag becomes `path:"x"` in Go files that import nexus. |
 | go.mod | `require`/`replace` lines for those modules move to the new paths at `v2.0.0`; a `…/nexus/view` requirement is dropped. Run `go mod tidy` afterwards. |
 | annotations | `//@x` and `// @x` nexus annotations in `.go` and `.templ` files become [`//nexus:x` directives](/guide/decorators); other tools' `@`-annotations are left alone. |
+| nexus.toml | Keys in the wrong table (a top-level `environment`, an `addr` under `[runtime]`) move to the one table the strict check pins them to. Typos and undeclared sections are left for `nexus config check`. |
+| assembly | A TODO on `Middleware.Global` (→ `nexus.Middleware`), `AsCRUD` (→ `nexus.Resource`), and `nexus.Invoke` of `Ensure*`/`Migrate*`/`Seed*`/`Backfill*` functions (→ `nexus.Setup`). |
+| op names | v1 dropped a `New` prefix from op names; `AsQuery`/`AsMutation`/`AsSubscription` registrations of `NewXxx` handlers get `nexus.Op("xxx")` and `NewXxx` functions annotated `//nexus:query`/`mutation`/`subscription` get `//nexus:use nexus.Op("xxx")`, so GraphQL field names don't move. |
+| fields | `middleware.Middleware{Gin: …}` literals become `{HTTP: …}`. |
+| spreads | `nexus.MustLoadExtensions()...` loses its spread (it returns one Option). |
+| sections | Every top-level `nexus.toml` section nothing declares is declared free-form, `config.Section[map[string]any]("name")`, in `main.go` and in each package that reads it, with a TODO to give it a struct. |
 
 Changed `.go` files are gofmt'ed. `vendor`, `node_modules`, `testdata` and hidden
 directories are skipped.
+
+## `nexus config`
+
+| Command | |
+|---|---|
+| `nexus config check [path]` | Validate a `nexus.toml` with the boot rules — unknown keys, misplaced keys, undeclared sections — and exit 1 on a problem. `--json` for CI. Reads the app's `config.Section` declarations from its source. |
+| `nexus config schema` | Print the JSON schema for `nexus.toml` (`--framework`: nexus's tables only). |
+
+## Tooling
+
+| Command | |
+|---|---|
+| `nexus lsp` | A language server for editors: proxies gopls and opens the generated Go (compiled views, `//nexus:` registrations) as editor buffers. See [views](/guide/views). |
+| `nexus test [packages]` / `nexus vet [packages]` | `go test` / `go vet` through the same overlay `nexus build` uses, so no generated file is needed on disk. |
+| `nexus doctor` | Check the project: Go against `go.mod`, the module on nexus v2, `nexus.toml`, Node / the package manager / Vite, the Tailwind CLI, generated view files. `nexus doctor -` audits a deployment manifest on stdin. |
+| `nexus add ui <component>...` | Vendor [`view/ui`](/guide/views) components into the app (`--dir`, default `./ui`). |
+| `nexus release <version>` | Release a multi-module repository: CHANGELOG and tree checks, tags in dependency order, push, CLI install check. Prints the plan; `--yes` runs it. |
 
 ## `nexus docs [topic]`
 

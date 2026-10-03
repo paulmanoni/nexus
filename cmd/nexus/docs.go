@@ -199,7 +199,7 @@ var topicSummaries = map[string]string{
 	"errors":      "nexus.Error — one error model: codes, per-transport table, validation",
 	"scoped":      "nexus.NewScoped — request-scoped derived values (lazy, memoized)",
 	"clientops":   "SDK nx.op envelope unwrapping, query batching, op composables",
-	"module":      "nexus.Module, Provide, ProvideService, route prefix",
+	"module":      "nexus.Module, Provide, Setup, route prefix",
 	"auth":        "auth.Module setup, Required, Requires, User[T]",
 	"oauth2":      "oauth2.Module — go-oauth2 server + auth bridge",
 	"security":    "Built-in security headers (on) + CSRF (on with cookie auth/forms)",
@@ -220,7 +220,7 @@ var topicSummaries = map[string]string{
 	"session":     "extension/session — Django-style server-side sessions (cookie + store)",
 	"maskid":      "extension/maskid — opaque IDs on the wire, no handler changes",
 	"cli":         "Subcommand cheatsheet (new / init / dev / build / client / generate)",
-	"devstate":    "PreserveDev — carry in-memory state across a nexus dev rebuild",
+	"devstate":    "dev.Preserve — carry in-memory state across a nexus dev rebuild",
 	"dashboard":   "/__nexus tabs, gating, HTTP surface",
 	"client":      "Embedded JS/TS SDK — connect a browser to your app",
 	"autoselect":  "nexus-vite-plugin: auto-select, and what else the plugin does",
@@ -236,38 +236,38 @@ DEV STATE (carrying in-memory state across a rebuild)
 
 A rebuild replaces the process, and Go has no code hot-swap, so anything
 living in a map dies with the old binary: the users you seeded, the rows
-you POSTed, the fixtures you set up by hand. PreserveDev hands that state
+you POSTed, the fixtures you set up by hand. dev.Preserve hands that state
 to the dev loop on the way out and takes it back on the way in.
 
     func NewStore() *Store {
         s := &Store{notes: map[int]Note{}}
-        nexus.PreserveDev("notes", s)     // no-op outside nexus dev
+        dev.Preserve("notes", s)     // no-op outside nexus dev
         return s
     }
 
     func (s *Store) SnapshotDev() ([]byte, error) { return json.Marshal(s.notes) }
     func (s *Store) RestoreDev(b []byte) error    { return json.Unmarshal(b, &s.notes) }
 
-Restore happens inside PreserveDev, so it does not matter when the DI
+Restore happens inside dev.Preserve, so it does not matter when the DI
 container gets around to constructing the value. The snapshot is written on
 graceful shutdown — exactly what nexus dev triggers before swapping in the
 new binary.
 
 No methods to write? Use the JSON form:
 
-    nexus.PreserveDevJSON("counters",
+    dev.PreserveJSON("counters",
         func() map[string]int { return s.snapshot() },
         func(m map[string]int) { s.load(m) })
 
 Both callbacks run on another goroutine — take the store's own lock inside
 them, like its regular methods do.
 
-Built in: auth.MemoryUserStore implements DevState, so dev users survive a
+Built in: auth.MemoryUserStore implements dev.State, so dev users survive a
 rebuild once you register it:
 
     store := auth.NewMemoryUserStore()
     store.CreateUser("alice", "s3cret-pw", "ADMIN")
-    nexus.PreserveDev("auth.users", store)
+    dev.Preserve("auth.users", store)
 
 A user the new process seeds itself wins over the snapshot, so changing the
 seed in code does what you expect.
@@ -288,16 +288,16 @@ and restoring typed values through an any-shaped store is unsound.
 
 STATE THAT ALREADY HAS AN ON-DISK FORMAT
 
-PreserveDev is for state you can hand over as bytes. When the value is an
+dev.Preserve is for state you can hand over as bytes. When the value is an
 embedded key/value store or a SQLite handle, the simpler fix is to point it
 at a real path instead of ":memory:":
 
-    if dir := nexus.DevStateDir(); dir != "" {
+    if dir := dev.StateDir(); dir != "" {
         db, err = open(filepath.Join(dir, "sessions.db"))
     }
 
-DevStateDir returns "" outside nexus dev, so the production path is
-untouched. Same lifetime as PreserveDev: per dev session, surviving
+dev.StateDir returns "" outside nexus dev, so the production path is
+untouched. Same lifetime as dev.Preserve: per dev session, surviving
 rebuilds but not a Ctrl-C.
 
 extension/oauth2 does exactly this for its default token store, so an
@@ -385,10 +385,12 @@ Args struct tags drive schema + validators:
         EmployerName string ` + "`" + `graphql:"employerName,required" validate:"required,len=2|200"` + "`" + `
     }
 
-Constructor naming convention:
-  - func NewListPets(...) → OpName "ListPets" (the "New" prefix
-    is stripped for the dashboard / GraphQL field name).
-  - Plain handler funcs without "New" keep their name as-is.
+Op naming:
+  - An op is named after its function or method as written, first
+    letter lowered: func ListPets(...) → "listPets", and
+    func NewListPets(...) → "newListPets" (v2 no longer strips a
+    "New" prefix). nexus.Op("listPets") names it explicitly;
+    nexus migrate v2 adds that to v1 NewXxx registrations.
 
 SERVICE METHODS AS HANDLERS (no wrapper needed)
 
@@ -671,21 +673,24 @@ MODULE / PROVIDE
     Use nexus.Path("/x") or nexus.RoutePrefix("/x") among the opts.
 
   nexus.Provide(fns...)
-    Constructor(s) into the dep graph (fx-backed).
-
-  nexus.ProvideService(fn)
-    Provide + introspect: the framework reads the constructor's
-    params and draws Architecture-tab edges (service → service,
-    service → resource) automatically.
-
-  nexus.ProvideResources(fns...)
-    Provide + auto-register resources via NexusResourceProvider.
+    Constructor(s) into the dep graph. A service constructor's params
+    become Architecture-tab edges (service → service, service →
+    resource); a NexusResourceProvider is registered automatically.
 
   nexus.Supply(vals...)
     Ready-made values into the dep graph.
 
+  nexus.Setup(fns...)
+    Pre-serve work (migrations, indexes, seeds): deps via fn params,
+    run after resources start and before listeners open, in order;
+    an error stops boot.
+
+  nexus.Middleware(entries...)
+    App-wide middleware — values or DI constructors — placed by
+    middleware.Stage (Edge, Session, Auth, App).
+
   nexus.Invoke(fn)
-    Side-effect at startup; deps come via fn params.
+    Eager side-effect at startup; deps come via fn params.
 
   nexus.Options(opts...)
     Bundles N Options into 1. Useful for conditional gates that
@@ -1438,16 +1443,16 @@ Tune or extend them in nexus.toml:
     csp            = "default-src 'self'"  # opt-in Content-Security-Policy
     hsts_max_age   = 31536000              # opt-in HSTS (seconds)
 
-CSRF — OFF BY DEFAULT, opt in:
+CSRF — FOLLOWS WHAT THE APP USES:
 
     [runtime.middleware.security]
-    csrf = true
+    csrf = true     # force on; false forces off; unset follows the app
 
-Why off by default: a nexus app is usually a token-authenticated API
-(bearer / the typed client SDK) where CSRF is moot — a browser never
-auto-attaches a bearer token cross-site. Turn it on when you serve
-cookie/session-authenticated, server-rendered HTML forms (a template
-engine, or Inertia backed by session cookies).
+Unset (the default), CSRF turns on once the app uses something a browser
+authenticates on its own — extension/session, an auth scheme reading a
+cookie, Inertia (each calls App.RequireCSRF). A token-authenticated API
+stays without it: a browser never auto-attaches a bearer token
+cross-site.
 
 How it works (double-submit cookie): safe methods (GET/HEAD) mint a
 random token in a non-HttpOnly "csrftoken" cookie; unsafe methods must
@@ -1823,6 +1828,12 @@ isn't imported.
     environment   = "development"   # development | staging | production
     version       = "1.0.0"         # shown on /__nexus/config
     trace_capacity = 1000           # request-trace ring buffer (0 = off)
+    dotenv        = [".env"]        # loaded before ${VAR}s expand (the
+                                    # default); "!x.env" = must exist
+
+    [runtime.telemetry]             # trace export over OTLP/HTTP (off unless set)
+    otlp_endpoint = "http://localhost:4318"
+    service_name  = "orders"        # default: the dashboard name
 
     # Introspection opens /__nexus (dashboard + JSON APIs). OFF by
     # default — the surface 404s — so a prod binary is locked down.
@@ -1843,8 +1854,10 @@ isn't imported.
     # read_timeout     = "0s"     # OFF by default — would cut large uploads
     # write_timeout    = "0s"     # OFF by default — would cut SSE / downloads
     # max_header_bytes = 1048576
-    # max_body_bytes   = 33554432 # OFF by default; set it — every JSON handler
-                                  # is otherwise an unbounded memory sink
+    # max_body_bytes   = 33554432 # default 32MB; -1 = no cap; over it → 413
+                                  # (per endpoint: nexus.MaxBody(n))
+    # trusted_proxies  = ["10.0.0.0/8"]  # peers whose forwarded headers
+                                  # nexus.ClientIP honours
 
     [runtime.websocket]
     # WebSocket upgrades bypass CORS and carry cookies, so nexus defaults to
@@ -1872,11 +1885,11 @@ isn't imported.
     rpm = 600
     burst = 50
 
-    [runtime.middleware.security]   # headers ON by default; CSRF opt-in
+    [runtime.middleware.security]   # headers ON by default; CSRF follows the app
     headers = true                  # X-Frame-Options / nosniff / Referrer-Policy
     csp     = "default-src 'self'"  # opt-in Content-Security-Policy
     hsts_max_age = 31536000         # opt-in HSTS
-    csrf    = true                  # enable double-submit CSRF (see: nexus docs security)
+    csrf    = true                  # force CSRF on/off; unset follows the app (nexus docs security)
 
 DATABASES live at the TOP level (not under [runtime]). Wire each in code
 with db.BindFromConfig[YourType]("name") (YourType embeds *db.Manager).
@@ -1903,8 +1916,8 @@ YOUR OWN SECTIONS are declared with config.Section, which decodes the table
 into a typed struct and checks its keys (time.Duration reads "30s"):
 
     type ShopConfig struct {
-        Currency string        `+"`"+`toml:"currency"`+"`"+`
-        Timeout  time.Duration `+"`"+`toml:"timeout"`+"`"+`
+        Currency string        ` + "`" + `toml:"currency"` + "`" + `
+        Timeout  time.Duration ` + "`" + `toml:"timeout"` + "`" + `
     }
     var Shop = config.Section[ShopConfig]("shop", ShopConfig{Currency: "USD"})
     Shop.Get().Currency            // file values over the default
@@ -2024,6 +2037,10 @@ CLI CHEATSHEET
                                                 embedded copy is dead weight
                                                 relinked on every save. Scoped
                                                 to the nexus.Frontend tree only.
+                             --view-files       write the compiled views to
+                                                disk (for an editor on plain
+                                                gopls); by default they are
+                                                compiled in memory
 
   nexus build                Build one binary. With a frontend package.json:
                              deps installed when needed (npm ci, pnpm/yarn/
@@ -2043,9 +2060,23 @@ CLI CHEATSHEET
   nexus migrate v2 [dir]     Rewrite a v1 project for v2: /v2 import paths,
                              go.mod requirements, moved symbols
                              (nexus.Config → config.Runtime, nexus.Get →
-                             config.Get, …), uri: → path: tags,
-                             //@x → //nexus:x annotations.
+                             config.Get, …), the error model, uri: → path:
+                             tags, //@x → //nexus:x annotations, misplaced
+                             nexus.toml keys, nexus.Op for v1 NewXxx op
+                             names; a // TODO(nexus v2) comment where a
+                             step needs a person.
                              --dry-run lists every change; re-running is a no-op.
+
+  nexus config check [path]  Validate nexus.toml with the boot rules (--json).
+  nexus config schema        Print nexus.toml's JSON schema.
+
+  nexus lsp                  Editor language server: gopls plus the generated
+                             Go (views, //nexus: registrations) as buffers.
+  nexus test / nexus vet     go test / go vet through the build overlay.
+  nexus doctor               Check the project (Go, nexus v2, nexus.toml,
+                             Node/Vite, Tailwind); nexus doctor - reads a
+                             deployment manifest on stdin.
+  nexus release <version>    Multi-module release (plan; --yes runs it).
 
   nexus docs [topic]         This help. --web opens the documentation site.
 
