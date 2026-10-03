@@ -6,6 +6,194 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0] - unreleased
+
+nexus 2.0 collects every breaking change in one major version. Most of the
+move is mechanical: `nexus migrate v2` rewrites imports, renamed symbols,
+annotations, tags and misplaced nexus.toml keys, and leaves a
+`// TODO(nexus v2): …` comment where a step needs a person. Step-by-step
+notes: [Migrating to v2](docs/guide/migrating-to-v2.md). Design and
+decisions: [docs/design/v2.md](docs/design/v2.md).
+
+### Breaking
+
+- **Module path `github.com/paulmanoni/nexus/v2`.** Every import moves to
+  `/v2`; the separate modules (`cmd/nexus`, `di/fxcontainer`,
+  `httpx/ginrouter`, `extension/cache/redis`, `extension/jobs/jobsredis`,
+  `extension/jobs/jobsamqp`) take `/v2` at the end of their own path. `view`
+  is now a package of the root module (`…/nexus/v2/view`), no longer a module
+  of its own. *Codemod: imports and go.mod.*
+- **Annotations are Go directives: `//nexus:x`.** `//@rest`, `//@query`,
+  `//@auth`, `//@controller`, `//@page`, custom `//@pkg.Func` and the rest are
+  spelled `//nexus:rest`, …; the grammar after the prefix is unchanged. The v1
+  spelling (`//@x`, gofmt's `// @x`) is a `file:line` error, and an unknown
+  `//nexus:` keyword is always an error. *Codemod: `.go` and `.templ`.*
+- **An op is named after its handler as written.** v1 dropped a `New` prefix
+  (`NewListPets` → `listPets`); v2 uses the method or function name
+  (`newListPets`), or `nexus.Op("…")`. *Codemod: adds `nexus.Op("xxx")` to
+  registrations of `NewXxx` handlers (and `//nexus:use nexus.Op("xxx")` to
+  annotated ones) so wire names don't move.*
+- **The config package.** Runtime config types, the nexus.toml loader,
+  `Get` and its store, dotenv and env bridging leave the root:
+  `nexus.Config` → `config.Runtime`, `ServerConfig` → `config.Server` (and the
+  other `*Config` types), `MustLoadConfig`/`LoadConfig` → `config.MustLoad` /
+  `config.Load`, `nexus.Get`/`MustGet` → `config.Get`/`config.MustGet`,
+  `HasConfig` → `config.Has`, `OnConfigChange` → `config.OnChange`,
+  `BindConfig` → `config.Bind`, `ConfigVersion` → `config.Version`,
+  `ConfigError` → `config.Error`, `LintRuntimeFile` → `config.LintFile`,
+  `nexus.Cache` → `resource.Cache`. *Codemod: symbols (full table in
+  `nexus migrate v2 --help`).*
+- **The dev and notify packages.** `PreserveDev` → `dev.Preserve`,
+  `PreserveDevJSON` → `dev.PreserveJSON`, `DevStateDir` → `dev.StateDir`,
+  `DevState` → `dev.State`, `IsDev` → `dev.Enabled`, `NexusDevEnv` /
+  `NexusDevRootEnv` → `dev.Env` / `dev.RootEnv`; `Notifier` / `NewNotifier` /
+  `Bus` → `notify.Notifier` / `notify.New` / `notify.Bus`. *Codemod: symbols.*
+- **nexus.toml is strict.** An unknown key, a key in the wrong table (a
+  top-level `environment`, an `addr` under `[runtime]`), a section nobody
+  declared, or an `[extensions.x]` block without a registered decoder fails
+  boot with its line and a did-you-mean. v1 warned and ignored them. App
+  sections are declared with `config.Section[T]`. *Codemod: moves keys the
+  check pins to one table; typos and undeclared sections are left for
+  `nexus config check`.*
+- **One error model.** `nexus.Error{Code, Message, Fields, Cause}` with eight
+  codes (`InvalidInput`, `Unauthenticated`, `Forbidden`, `NotFound`,
+  `Conflict`, `TooMany`, `Unavailable`, `Internal`), built with
+  `nexus.Err` / `nexus.Errf` / `nexus.Invalid()`. Every transport renders an
+  error through one table: REST answers the code's status with
+  `{code, message, errors}`, GraphQL carries `extensions.code`, WebSocket
+  sends `{type, code, message, errors}`, Inertia flashes or renders its error
+  page. An uncoded error is `Internal`, its message hidden outside
+  `nexus dev`. `nexus.Errors`/`NewErrors` → `nexus.Error`/`nexus.Invalid()`,
+  `ErrForbidden` → `nexus.Forbidden`, `MapCRUDError` removed; the boot option
+  `nexus.Error(err)` is `nexus.FailBoot(err)`; `ErrCRUDValidation` is a 422.
+  *Codemod: renames; `MapCRUDError` call sites get a TODO.*
+- **`validate:` tags run on every transport**, REST included; a failure is an
+  `InvalidInput` error with per-field messages, and so is a binding failure.
+- **App-wide middleware is `nexus.Middleware(…)`.** `Config.Middleware.Global`
+  is gone; `nexus.Middleware` takes middleware values or DI constructors, placed
+  by `middleware.Stage` (`Edge`, `Session`, `Auth`, `App`) and declaration
+  order. *Codemod: a TODO on each `Middleware.Global` line.*
+- **`middleware.Middleware.Gin` is `HTTP`.**
+- **`ServeFrontend` is `nexus.Frontend`**, which also provides `*nexus.Document`
+  (the page shell; Vite's live one under `nexus dev`) into DI. The CLI finds
+  the frontend dir from a `nexus.Frontend(...)` call. *Codemod: symbols.*
+- **Logging is `log/slog`.** `App.Logger()` returns `*slog.Logger` and the
+  framework provides it into DI; `nexus.Managed`'s build func takes
+  `*slog.Logger`; `db.WithLogger`/`Provide`/binders and `extension/cache`'s
+  `NewManager`/`Provide`/`Bind`/`Manager.Logger()` use `*slog.Logger`;
+  `resource/connlog`'s `Transition.Fail`/`OK` return `[]slog.Attr`. Replace
+  the logger with `nexus.WithLogger(l)`; providing a second `*slog.Logger` by
+  hand fails boot. nexus links no zap.
+- **`MustLoadExtensions` returns one `nexus.Option`**, and
+  `LoadExtensionOptions` is `LoadExtensions`, returning `(Option, error)`.
+- **Request bodies are capped at 32MB by default** (`max_body_bytes`; `-1`
+  turns it off). An over-limit JSON body is a 413, not a 400.
+- **CSRF follows what the app uses.** `[runtime.middleware.security] csrf` is
+  tri-state: unset turns CSRF on once extension/session, a cookie-reading
+  auth scheme, Inertia or view forms ask for it (`App.RequireCSRF`), and
+  leaves a token-only API without it; `true`/`false` force it.
+- **`AsCRUD` is removed** — a resource is a controller:
+  `nexus.Resource[*PetsController]("/pets")` registers the same routes
+  `nx.crud` calls. *Codemod: a TODO on each call.*
+- **Client IP is built in.** `nexus.ClientIP(ctx)` reads the caller's address
+  (honouring `trusted_proxies`) on REST, GraphQL and WebSocket;
+  `ClientIPFromCtx` → `nexus.ClientIP`, and `WithClientIP` (root and
+  `extension/ratelimit`) is removed. *Codemod: symbols; a TODO for
+  `WithClientIP`.*
+- **Dotenv is loaded by nexus.toml.** `MustLoadDotenv` / `LoadDotenvIfPresent`
+  options are gone: the loader applies `.env` beside nexus.toml, or the files
+  `[runtime] dotenv` lists (`!` marks one required), before `${VAR}`s expand.
+  `config.LoadDotenv` / `config.RequireDotenv` return errors. *Codemod: drops
+  the option with a TODO.*
+- **Listeners start last and stop first**, after every resource and worker
+  has started; `manifest.StartupTask.Run` takes the boot context.
+- **`uri:"x"` struct tags are no longer read**; use `path:"x"`. *Codemod: tags.*
+
+### Added
+
+- **`AsRest` takes a handler factory**: a function taking only DI deps and
+  returning `httpx.HandlerFunc` is built once at boot and mounted — what
+  `AsRestHandler` did. *Codemod: `AsRestHandler` → `AsRest`.*
+- **`nexus.Setup(fns…)`** — pre-serve work (migrations, roles, indexes,
+  seeds) with DI parameters and the boot context, run after resources start
+  and before the listeners open; the first error stops boot. *Codemod: a TODO
+  on `nexus.Invoke` of `Ensure*`/`Migrate*`/`Seed*`/`Backfill*` functions.*
+- **`nexus.MaxBody(n)` and `nexus.Timeout(d)`** — per-endpoint body cap and
+  deadline.
+- **Error helpers:** `nexus.ErrorOf`, `nexus.CodeOf`, `nexus.WriteError` (a raw
+  `*httpx.Ctx`), `nexus.Validate`, `middleware.ErrorBody` and
+  `middleware.Rejection`.
+- **`config.Section[T](name, default…)`** declares and decodes an app's own
+  nexus.toml table.
+- **`nexus config check`** (CI; `--json`) and **`nexus config schema`**; the
+  framework's JSON schema is published as `nexus.toml.schema.json` and
+  scaffolds carry a `#:schema` line. `config.Check`, `config.JSONSchema` and
+  `config.DeclareSchema` for tools.
+- **`nexus migrate v2`** — the v1 → v2 codemod (`--dry-run` prints every
+  change; re-running is a no-op).
+- **OpenTelemetry export** — `[runtime.telemetry] otlp_endpoint` posts
+  finished spans to a collector as OTLP/HTTP JSON (package `trace/otlp`),
+  without linking the OpenTelemetry SDK.
+- **`nexus lsp`** — proxies gopls and opens the generated Go (compiled views,
+  `//nexus:` registrations) as editor buffers, with `.templ` diagnostics,
+  definition, hover, completion and references mapped through templ's source
+  map.
+- **`nexus test` / `nexus vet`** run `go test` / `go vet` through the build
+  overlay, so no generated file is needed on disk.
+- **`nexus doctor`** with no argument checks the project: Go against go.mod,
+  the module on nexus v2, strict nexus.toml, Node / the package manager / Vite,
+  the Tailwind CLI and generated view files (a manifest on stdin is
+  `nexus doctor -`).
+- **`nexus release`** — the multi-module release: version and CHANGELOG
+  checks, root tag, every dependent module moved, tagged and pushed in order,
+  then the CLI install check (plan only without `--yes`).
+- **`nexus/view/ui`** — a component kit for views (Button, Field and inputs,
+  Tabs, Dialog, Dropdown/RowActions, DataTable with server paging/search/sort,
+  Toast, Loader, PageHeader, Badge), and **`nexus add ui <component>`** to
+  vendor one into the app.
+- **`view/viewtest`** — drive view pages end to end in a Go test without a
+  browser (`viewtest.Mount[*T]`, `viewtest.Get`; Fill/Select/Check/Click/
+  Submit; retrying `Expect`).
+- **`view.Value(v)`** marks a form field server-owned.
+- **Pages and live events on the dashboard** — pages, live pages and shards
+  are listed (PAGE / LIVE / SHARD) with a live page's events; each live event
+  is its own trace. `auth.OpGates` keys a page under its component too.
+- `viewgen.GenerateWith` reads editor buffers and keeps source maps; a templ
+  syntax error is a `PositionError`.
+
+### Changed
+
+- **`nexus dev` compiles views in memory** and overlays them into the dev
+  build; `*_templ.go`, `view_gen.go` and `view_imports_gen.go` are no longer
+  written (`--view-files` keeps the old behaviour for an editor on plain
+  gopls).
+- **View form fields follow documented rules**: a textarea follows the
+  server's value like an input; a focused field keeps what it shows; a
+  checked checkbox without a value binds as `true`.
+- **The dev log view reads slog JSON** (and zap's shape, for apps that still
+  log with zap).
+- The Vite hot-file and manifest readers are public as `frontend/vitehot` and
+  `frontend/vitemanifest`; the connection-state logger is `resource/connlog`.
+- The root package is consolidated into files named by topic.
+- Scaffolds write handlers as methods and take the framework's
+  `*slog.Logger`.
+
+### Removed
+
+- `auth.LoginEndpoint` / `auth.LogoutEndpoint` — use `auth.Config.Endpoints`
+  (`auth.LoginHandler` / `LogoutHandler` stay exported).
+- `auth.Describe` — `auth.InspectExtractor`. *Codemod: symbols.*
+- `nexus.UseVolume` / `App.UseVolume` — `nexus.DeclareVolume`. *Codemod: the
+  function form.*
+- `AppFromGin`; the `extension.Plugin.Generate` driver slot,
+  `extension.Generate`, `App.RegisterGenerateDriver` / `GenerateDrivers` and
+  `PluginRecord.HasGenerate` (nothing read them).
+- The `crud` marker package, its `MemoryResolver`/store adapters and
+  `storage/gorm`; the unused `multi` package.
+- `nexus dev --go-run` (the legacy loop), `nexus dev --frontend-cmd`,
+  `nexus new --tooling`, the viteless migration hints and the
+  `NEXUS_VITE_DEV` fallback.
+
 ## [1.78.2] - 2026-10-02
 
 ### Added
