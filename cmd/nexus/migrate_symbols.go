@@ -77,6 +77,20 @@ var migrateV2Symbols = []migrateSymbol{
 	{From: "", Old: "LoadDotenvIfPresent",
 		Todo: "nexus.LoadDotenvIfPresent() is gone; call config.LoadDotenv() before nexus.Boot and handle its error"},
 
+	// The dev package (docs/design/v2.md §3).
+	{From: "", Old: "PreserveDev", To: "dev", New: "Preserve"},
+	{From: "", Old: "PreserveDevJSON", To: "dev", New: "PreserveJSON"},
+	{From: "", Old: "DevStateDir", To: "dev", New: "StateDir"},
+	{From: "", Old: "DevState", To: "dev", New: "State"},
+	{From: "", Old: "IsDev", To: "dev", New: "Enabled"},
+	{From: "", Old: "NexusDevEnv", To: "dev", New: "Env"},
+	{From: "", Old: "NexusDevRootEnv", To: "dev", New: "RootEnv"},
+
+	// The notify package.
+	{From: "", Old: "Notifier", To: "notify", New: "Notifier"},
+	{From: "", Old: "NewNotifier", To: "notify", New: "New"},
+	{From: "", Old: "Bus", To: "notify", New: "Bus"},
+
 	// 1:1 replacements (docs/design/v2.md §9).
 	{From: "", Old: "UseVolume", To: "", New: "DeclareVolume"},
 	{From: "extension/auth", Old: "Describe", To: "extension/auth", New: "InspectExtractor"},
