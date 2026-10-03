@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"runtime/debug"
+	"sort"
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2/config"
@@ -285,4 +287,91 @@ func (a *App) installSecurity(sc *config.Security) {
 		"headers": headersOn,
 		"csrf":    csrfOn,
 	})
+}
+
+// Middleware registers app-wide middleware: it runs on every request —
+// REST, GraphQL, WebSocket upgrades, unmatched paths — ahead of any
+// endpoint's own. Each entry is a middleware.Middleware, or a constructor
+// returning one (optionally with an error) whose parameters come from DI
+// like a provider's, so a middleware can depend on services:
+//
+//	var Middleware = nexus.Middleware(
+//	    edge.Compress,      // middleware.Middleware with Stage: middleware.Edge
+//	    admin.ThemeHead,    // func(doc *nexus.Document) middleware.Middleware
+//	    auth.RequestedTarget,
+//	)
+//
+// Order comes from each middleware's Stage (Edge, Session, Auth, App),
+// then from declaration order across the whole app — never from where a
+// module happens to sit in Boot's list.
+func Middleware(entries ...any) Option {
+	opts := make([]Option, 0, len(entries))
+	for _, e := range entries {
+		if m, ok := e.(middleware.Middleware); ok {
+			opts = append(opts, Invoke(func(a *App) { a.addAppMiddleware(m) }))
+			continue
+		}
+		opts = append(opts, middlewareConstructor(e))
+	}
+	return Options(opts...)
+}
+
+var (
+	middlewareType = reflect.TypeOf(middleware.Middleware{})
+	errorType      = reflect.TypeOf((*error)(nil)).Elem()
+	appPtrType     = reflect.TypeOf((*App)(nil))
+)
+
+// middlewareConstructor invokes fn with its parameters from DI and adds the
+// middleware it returns.
+func middlewareConstructor(fn any) Option {
+	v := reflect.ValueOf(fn)
+	t := v.Type()
+	if t.Kind() != reflect.Func || t.IsVariadic() || t.NumOut() == 0 || t.NumOut() > 2 ||
+		t.Out(0) != middlewareType || (t.NumOut() == 2 && t.Out(1) != errorType) {
+		return rawOption{di.Error(fmt.Errorf("nexus.Middleware: %T is neither a middleware.Middleware nor a func(deps…) middleware.Middleware [, error]", fn))}
+	}
+	in := []reflect.Type{appPtrType}
+	for i := 0; i < t.NumIn(); i++ {
+		in = append(in, t.In(i))
+	}
+	invoke := reflect.MakeFunc(reflect.FuncOf(in, []reflect.Type{errorType}, false), func(args []reflect.Value) []reflect.Value {
+		out := v.Call(args[1:])
+		if len(out) == 2 && !out[1].IsNil() {
+			return []reflect.Value{out[1]}
+		}
+		args[0].Interface().(*App).addAppMiddleware(out[0].Interface().(middleware.Middleware))
+		return []reflect.Value{reflect.Zero(errorType)}
+	})
+	return Invoke(invoke.Interface())
+}
+
+func (a *App) addAppMiddleware(m middleware.Middleware) {
+	if a.appMiddlewareInstalled {
+		a.installMiddleware(m)
+		return
+	}
+	a.appMiddleware = append(a.appMiddleware, m)
+}
+
+// installAppMiddleware puts the declared app-wide middleware on the router
+// in stage order. It runs once, after every option (fxLateOptions).
+func (a *App) installAppMiddleware() {
+	sort.SliceStable(a.appMiddleware, func(i, j int) bool {
+		return a.appMiddleware[i].Stage.Rank() < a.appMiddleware[j].Stage.Rank()
+	})
+	for _, m := range a.appMiddleware {
+		a.installMiddleware(m)
+	}
+	a.appMiddlewareInstalled = true
+}
+
+func (a *App) installMiddleware(m middleware.Middleware) {
+	if m.HTTP != nil {
+		a.engine.Use(m.HTTP)
+	}
+	info := m.AsInfo()
+	info.Stage = m.Stage.String()
+	a.registry.RegisterMiddleware(info)
+	a.registry.RegisterGlobalMiddleware(m.Name)
 }

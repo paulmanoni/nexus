@@ -3,6 +3,7 @@ package nexus
 import (
 	"context"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func graphOnlyBundle(name string) middleware.Middleware {
 func bothBundle(name string) middleware.Middleware {
 	return middleware.Middleware{
 		Name:  name,
-		HTTP:   func(*httpx.Ctx) {},
+		HTTP:  func(*httpx.Ctx) {},
 		Graph: func(next graph.FieldResolveFn) graph.FieldResolveFn { return next },
 	}
 }
@@ -106,5 +107,48 @@ func TestStripTrailingSlash(t *testing.T) {
 	app2.ServeHTTP(w, httptest.NewRequest("GET", "/users/", nil))
 	if w.Code == 200 {
 		t.Fatal("strip must be opt-in")
+	}
+}
+
+// App-wide middleware runs in stage order (Edge, Session, Auth, App), then
+// declaration order, and a constructor gets its parameters from DI.
+func TestAppMiddlewareStagesAndConstructors(t *testing.T) {
+	type greeting struct{ text string }
+	var order []string
+	mark := func(name string, stage middleware.Stage) middleware.Middleware {
+		return middleware.Middleware{Name: name, Stage: stage, HTTP: func(c *httpx.Ctx) {
+			order = append(order, name)
+			c.Next()
+		}}
+	}
+	app, stop, err := InProcess(config.Runtime{},
+		Supply(&greeting{text: "hello"}),
+		Middleware(mark("app-1", middleware.App), mark("auth", middleware.Auth)),
+		Middleware(func(g *greeting) middleware.Middleware {
+			return middleware.Middleware{Name: "ctor", HTTP: func(c *httpx.Ctx) {
+				order = append(order, "ctor:"+g.text)
+				c.Next()
+			}}
+		}),
+		Middleware(mark("edge", middleware.Edge), mark("session", middleware.Session)),
+		AsRest("GET", "/ping", func() (string, error) { return "pong", nil }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, httptest.NewRequest("GET", "/ping", nil))
+	want := []string{"edge", "session", "auth", "app-1", "ctor:hello"}
+	if !slices.Equal(order, want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+}
+
+func TestAppMiddlewareRejectsOtherValues(t *testing.T) {
+	_, _, err := InProcess(config.Runtime{}, Middleware(42))
+	if err == nil || !strings.Contains(err.Error(), "neither a middleware.Middleware") {
+		t.Fatalf("err = %v", err)
 	}
 }

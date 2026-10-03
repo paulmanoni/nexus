@@ -33,6 +33,49 @@ const (
 	KindCustom  Kind = "custom"
 )
 
+// Stage is where an app-wide middleware runs, outermost first:
+// Edge, then the framework's own (CORS, security headers, rate limit),
+// then Session, Auth and App. Within a stage, declaration order holds,
+// across modules. Declaring the stage, not a position, is what keeps
+// "compression wraps everything" true wherever a module registers it.
+type Stage int
+
+const (
+	// App is the default: application middleware, innermost.
+	App Stage = iota
+	// Edge is outermost: compression, client IP, request IDs.
+	Edge
+	// Session runs once the request passed the framework's edge checks.
+	Session
+	// Auth runs after sessions are loaded, before application middleware.
+	Auth
+)
+
+// Rank orders stages outermost first.
+func (s Stage) Rank() int {
+	switch s {
+	case Edge:
+		return 0
+	case Session:
+		return 1
+	case Auth:
+		return 2
+	}
+	return 3
+}
+
+func (s Stage) String() string {
+	switch s {
+	case Edge:
+		return "edge"
+	case Session:
+		return "session"
+	case Auth:
+		return "auth"
+	}
+	return "app"
+}
+
 // Info is the registry entry shown in the dashboard — pure metadata,
 // no execution. Every Middleware bundle carries an Info so its name is
 // self-describing when attached.
@@ -40,10 +83,13 @@ type Info struct {
 	Name        string `json:"name"`
 	Kind        Kind   `json:"kind"`
 	Description string `json:"description,omitempty"`
+	// Stage is set for app-wide middleware (nexus.Middleware): where in
+	// the pipeline it runs.
+	Stage string `json:"stage,omitempty"`
 }
 
 // Middleware is an executable bundle with per-transport realizations. A
-// single definition serves REST (Gin), GraphQL (Graph), and WebSocket
+// single definition serves REST (HTTP), GraphQL (Graph), and WebSocket
 // (WS — runs at upgrade time; per-frame hooks are out of scope for v1).
 // Leave a field nil when the middleware doesn't make sense for that
 // transport (e.g. graphql-specific auth might only set Graph).
@@ -55,8 +101,11 @@ type Middleware struct {
 	Name        string
 	Description string
 	Kind        Kind              // defaults to KindCustom when unset by factories
-	HTTP         httpx.HandlerFunc // REST + WS upgrade path
+	HTTP        httpx.HandlerFunc // REST + WS upgrade path
 	Graph       graph.FieldMiddleware
+	// Stage places an app-wide middleware (nexus.Middleware) in the
+	// request pipeline; per-endpoint bundles ignore it. Zero is App.
+	Stage Stage
 	// Requires is declarative metadata: the permission codenames this
 	// bundle enforces (set by auth.Requires). The framework stamps them
 	// onto the endpoint's registry entry (registry.AuthRequiresTag) so

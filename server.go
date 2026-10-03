@@ -375,6 +375,9 @@ func fxLateOptions() di.Option {
 		// so `nexus dev` can read it to auto-sync the vite proxy's
 		// module prefixes. Runs after user opts → explicit mounts win.
 		di.Invoke(devAutoMountClientSDK),
+		// App-wide middleware (nexus.Middleware) goes on in stage order
+		// once every user option has declared its own.
+		di.Invoke(func(a *App) { a.installAppMiddleware() }),
 	)
 }
 

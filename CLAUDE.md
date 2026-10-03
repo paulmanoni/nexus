@@ -482,8 +482,11 @@ and `chirouter` ship inside the main module (chi has no transitive deps).
 Chain execution (the `c.Next()` / `c.Abort()` flow, recovery, error accumulation)
 lives in `httpx.Ctx`, not the router — so every middleware runs identically on any
 backend, and the router only matches paths + returns params. App-level middleware
-(`config.Runtime.Middleware.Global`, etc.) wraps the whole mux so it runs even on 404/405
-(CORS preflight relies on this); per-op middleware runs inside the matched route.
+(`nexus.Middleware(...)`, plus the built-in CORS/security/rate limit) wraps the whole mux
+so it runs even on 404/405 (CORS preflight relies on this); per-op middleware runs inside
+the matched route. `nexus.Middleware` takes `middleware.Middleware` values or DI
+constructors returning one, ordered by `Stage` (`middleware.Edge` → the built-ins →
+`Session` → `Auth` → `App`, the default) and then declaration order.
 
 `App.Router() httpx.Router` exposes the live router (replaces the old
 `App.Engine() *gin.Engine`). Low-level handlers that need raw HTTP take an

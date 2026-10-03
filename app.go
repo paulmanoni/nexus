@@ -168,6 +168,11 @@ type App struct {
 	// populate it; Mount applies them to the route group.
 	dashboardMw []httpx.HandlerFunc
 
+	// appMiddleware is the app-wide middleware nexus.Middleware declared,
+	// installed in stage order once every option has run.
+	appMiddleware          []middleware.Middleware
+	appMiddlewareInstalled bool
+
 	// introspect + introspectionNets are the parsed Config knobs used
 	// to gate GraphQL __schema queries (in addition to the dashboard).
 	// True / non-empty network = bypass; the GraphQL adapter calls
@@ -594,15 +599,6 @@ func New(cfg config.Runtime) *App {
 			Description: "Global rate limit (per-app bucket)",
 		})
 		a.registry.RegisterGlobalMiddleware("rate-limit")
-	}
-
-	// User-supplied global middlewares in registration order.
-	for _, m := range cfg.Middleware.Global {
-		if m.HTTP != nil {
-			a.engine.Use(m.HTTP)
-		}
-		a.registry.RegisterMiddleware(m.AsInfo())
-		a.registry.RegisterGlobalMiddleware(m.Name)
 	}
 
 	// Dev-only per-request console logger: under `nexus dev` (NEXUS_DEV=1),

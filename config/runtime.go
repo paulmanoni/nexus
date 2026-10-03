@@ -126,12 +126,12 @@ type Runtime struct {
 	//	}
 	GraphQL GraphQL
 
-	// Middleware bundles every middleware-related knob: engine-root
-	// stacks, dashboard gating, and the built-in global rate limit.
+	// Middleware bundles the framework's middleware knobs: dashboard
+	// gating, CORS, security headers and the built-in global rate limit.
+	// App-wide middleware of your own is an option: nexus.Middleware.
 	//
 	//	config.Runtime{
 	//	    Middleware: config.Middleware{
-	//	        Global:    []middleware.Middleware{requestID, logger, cors},
 	//	        Dashboard: []middleware.Middleware{bearerAuth, requireAdminRole},
 	//	        RateLimit: ratelimit.Limit{RPM: 600, Burst: 50},
 	//	    },
@@ -413,18 +413,9 @@ type WebSocket struct {
 // zero-valued for "no extra middleware" and the framework runs with
 // its built-in stack alone.
 type Middleware struct {
-	// Global stacks on the Gin engine root, so every REST endpoint,
-	// GraphQL POST, WebSocket upgrade, and dashboard request flows
-	// through it in registration order. Use for cross-cutting
-	// concerns (request-id, logger, CORS, auth pre-gate, etc.).
-	// Each bundle's HTTP field runs; nil HTTP realizations are
-	// skipped silently. Per-op middleware (via nexus.Use on a
-	// registration) layers on top.
-	Global []middleware.Middleware
-
 	// Dashboard gates the /__nexus surface behind user-supplied
 	// middleware — typically auth + permission checks. Each
-	// bundle's Gin realization runs in registration order on the
+	// bundle's HTTP realization runs in registration order on the
 	// /__nexus route group BEFORE any dashboard handler, covering
 	// the JSON API, WebSocket events, and the embedded Vue UI in
 	// one pass.
