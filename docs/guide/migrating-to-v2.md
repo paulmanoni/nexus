@@ -21,6 +21,10 @@ the design and its decisions are in [docs/design/v2.md](https://github.com/paulm
   nexus version
   ```
 
+- **Optionally, v1.80 first.** nexus v1.80 is the bridge release: under `nexus dev` it
+  lists at boot every v1 API your app uses that 2.0 removes or renames, with the file:line
+  and the replacement, and `nexus lint --v2` reports the same from source. It also reads
+  the `//nexus:x` annotation spelling, so you can switch annotations while still on v1.
 - **A clean working tree.** The codemod rewrites files in place. Commit first so the
   diff is the migration and nothing else.
 

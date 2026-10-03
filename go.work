@@ -18,8 +18,4 @@ use (
 // v2 is unreleased: required v2.0.0 versions resolve to the checkouts.
 replace (
 	github.com/paulmanoni/nexus/v2 v2.0.0 => ./
-
-	// Unreleased deco: ScanWith prefixes for //nexus: directives. Drop once
-	// a deco release with ScanOptions is tagged and required by cmd/nexus.
-	github.com/paulmanoni/deco => /Users/amtz/Documents/personal/deco
 )

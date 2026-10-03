@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [2.0.0] - unreleased
+## [2.0.0] - 2026-10-04
 
 nexus 2.0 collects every breaking change in one major version. Most of the
 move is mechanical: `nexus migrate v2` rewrites imports, renamed symbols,
@@ -208,6 +208,48 @@ decisions: [docs/design/v2.md](docs/design/v2.md).
 - `nexus dev --go-run` (the legacy loop), `nexus dev --frontend-cmd`,
   `nexus new --tooling`, the viteless migration hints and the
   `NEXUS_VITE_DEV` fallback.
+
+## [1.80.0] - 2026-10-04
+
+The bridge release to 2.0: nothing changes behaviour; the app tells you,
+while still on v1, everything nexus 2.0 removes, renames or changes, so
+`nexus migrate v2` holds no surprises. See
+[Preparing for 2.0](docs/guide/v2.md).
+
+### Added
+
+- **v2 notices at boot under `nexus dev`.** Every v1 API that 2.0 removes or
+  renames records its use where the app reaches it, and the dev boot prints
+  one block: the API, the file:line that called it, and the 2.0 replacement.
+  Covered: `nexus.Config` via `Run`, `LoadConfig`/`MustLoadConfig`,
+  `Get`/`MustGet`, `ServeFrontend`, `AsCRUD`, `AsRestHandler`,
+  `NewErrors`, `MapCRUDError`, `ErrForbidden`, `Config.Middleware.Global`,
+  `IsDev`, `PreserveDev`/`PreserveDevJSON`, `DevStateDir`, `NewNotifier`,
+  `MustLoadDotenv`/`LoadDotenvIfPresent`, `UseVolume`, the `nexus.Error`
+  boot option, `RegisterGenerateDriver`, `AppFromGin`,
+  `WithClientIP`/`ClientIPFromCtx`, `auth.Describe`,
+  `auth.LoginEndpoint`/`LogoutEndpoint`, `uri:` tags, a `*zap.Logger` in
+  the DI graph, unknown nexus.toml keys and an unset `max_body_bytes` — and
+  each GraphQL op named from a `NewXxx` handler without `nexus.Op`, with the
+  name 2.0 gives it and the `nexus.Op` that keeps the wire name. Reported
+  once per process; calls from nexus's own packages don't count; production
+  binaries record nothing. `NEXUS_V2_NOTICES=0` silences them.
+- **`nexus lint --v2 [dir]`**: the same list found statically, by file:line —
+  root symbols moving to `config`/`dev`/`notify`, removed APIs, `//@`
+  annotations in `.go` and `.templ` files, `uri:` tags, `NewXxx` op names,
+  `middleware.Middleware{Gin: …}`, zap imports, and the nexus.toml keys and
+  undeclared sections 2.0's strict config rejects. Advisory (exit 0);
+  `--json` for tooling.
+- **`//nexus:x` annotations.** Every annotation also reads in Go's directive
+  form — `//nexus:rest GET /users/:id`, `//nexus:controller`,
+  `//nexus:module`, `//nexus:inertia.Page`, `//nexus:page` in `.templ` — the
+  only spelling 2.0 reads. `//@x` keeps working and is reported once per
+  `nexus dev` / `nexus build` / `nexus generate handlers` run. An unknown
+  `//nexus:` keyword, or a spaced `// nexus:rest`, is an error.
+
+### Changed
+
+- `cmd/nexus` requires deco v0.20.0 (`transpiler.ScanWith`).
 
 ## [1.78.2] - 2026-10-02
 
