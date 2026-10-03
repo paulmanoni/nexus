@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -45,7 +47,7 @@ func newDoctorCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "doctor [manifest]",
 		SilenceErrors: true,
-		Short:         "Audit a nexus manifest for configuration-coherence problems",
+		Short:         "Check the toolchain and project, and audit the deployment manifest",
 		Long: `Run configuration coherence checks against a nexus manifest.
 
 Unlike ` + "`nexus lint`" + ` (which validates SHAPE — types, enum constraints,
@@ -61,10 +63,17 @@ Checks include:
   - Override block targets undeclared environment
   - Override keys not declared in the base manifest
 
+With no argument it checks the project in the working
+directory first: the Go toolchain against go.mod, that the module is on nexus
+v2, nexus.toml under the strict rules, Node 20+ / the package manager / Vite
+when there is a frontend, the Tailwind CLI when a stylesheet imports it, and
+whether the generated view files are current — then audits nexus.toml as
+below. Each problem comes with what to do about it.
+
 Input sources:
   nexus doctor <manifest.json>  JSON manifest file
   nexus doctor <nexus.toml>     TOML inputs surface (auto-detected by extension)
-  nexus doctor -                read from stdin (default JSON; use --toml for TOML)
+  nexus doctor -                a manifest on stdin (default JSON; use --toml for TOML)
   nexus doctor --binary=PATH    an already-built app binary (asks it for its
                                 own manifest via NEXUS_PRINT_MANIFEST=1)`,
 		Args: cobra.MaximumNArgs(1),
@@ -96,6 +105,11 @@ Input sources:
 // the two commands stay in lockstep — a manifest doctor accepts
 // is one lint accepts and vice versa.
 func runDoctor(stdout, stderr io.Writer, opts doctorOptions) error {
+	// No manifest named: check the project in the working directory
+	// (a manifest on stdin is "nexus doctor -").
+	if opts.filePath == "" && opts.binaryPath == "" {
+		return runProjectDoctor(stdout, stderr, opts)
+	}
 	if opts.filePath != "" && opts.binaryPath != "" {
 		return errors.New("nexus doctor: cannot combine a manifest path with --binary")
 	}
@@ -225,4 +239,24 @@ func remapLintErrorTag(err error, tool string) error {
 		return fmt.Errorf("nexus %s:%s", tool, msg[len(prefix):])
 	}
 	return err
+}
+
+// runProjectDoctor checks the toolchain and project in the working
+// directory, then audits its nexus.toml's deployment manifest.
+func runProjectDoctor(stdout, stderr io.Writer, opts doctorOptions) error {
+	dir, _ := os.Getwd()
+	fmt.Fprintln(stdout, "project")
+	failed := emitProjectChecks(stdout, projectChecks(dir))
+	if _, err := os.Stat(filepath.Join(dir, "nexus.toml")); err == nil {
+		fmt.Fprintln(stdout, "\nmanifest (nexus.toml)")
+		mopts := opts
+		mopts.filePath = filepath.Join(dir, "nexus.toml")
+		if err := runDoctor(stdout, stderr, mopts); err != nil {
+			failed = true
+		}
+	}
+	if failed {
+		return errExitNonZero
+	}
+	return nil
 }
