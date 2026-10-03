@@ -36,19 +36,34 @@ func Login(ctx context.Context, cred Password) (*Identity, error) {
 	if err != nil {
 		return nil, err
 	}
-	hashers := st.config.settings.hashers
+	rs, th := st.config.settings, st.config.throttle
+	if err := th.check(ctx, cred.Username); err != nil {
+		return nil, err
+	}
+	failed := func() (*Identity, error) {
+		th.fail(ctx, cred.Username)
+		return nil, invalidLogin()
+	}
 	id, encoded, err := st.config.users.FindLogin(ctx, cred.Username)
 	if err != nil {
 		return nil, err
 	}
 	if id == nil || encoded == "" {
-		_, _ = hashers.Hash(cred.Password) // the time a verify would take
-		return nil, invalidLogin()
+		_, _ = rs.hashers.Hash(cred.Password) // the time a verify would take
+		return failed()
 	}
-	ok, upgrade, verr := hashers.Verify(cred.Password, encoded)
+	ok, upgrade, verr := rs.hashers.Verify(cred.Password, encoded)
 	if verr != nil || !ok {
-		return nil, invalidLogin()
+		return failed()
 	}
+	// Signing in under an area admits only its kinds — told apart from a
+	// wrong password by no one.
+	info, _ := ctx.Value(ctxRequestInfo).(requestInfo)
+	if a := rs.area(info.path); a != nil && !kindIn(id.Kind, a.Kinds) {
+		return failed()
+	}
+	th.succeed(cred.Username)
+	hashers := rs.hashers
 	if upgrade {
 		if ps, isSetter := st.config.users.(PasswordSetter); isSetter {
 			if fresh, herr := hashers.Hash(cred.Password); herr == nil {
@@ -66,6 +81,7 @@ func Login(ctx context.Context, cred Password) (*Identity, error) {
 
 func invalidLogin() error {
 	e := nexus.Invalid().Global("invalid login or password")
+	e.Message = "invalid login or password"
 	e.Cause = ErrInvalidCredentials
 	return e
 }
@@ -78,12 +94,20 @@ type Credential struct {
 	AccessToken string `json:"access_token,omitempty"`
 	TokenType   string `json:"token_type,omitempty"`
 	ExpiresIn   int    `json:"expires_in,omitempty"` // seconds; 0 = no expiry
+	// Next is where the signed-in user goes: a valid next (ReturnTo, else
+	// the request's ?next=) inside an area their kind may enter, else the
+	// home of the area they signed in under, else [auth] home.
+	Next string `json:"next,omitempty"`
 }
 
 // SignInOption adjusts SignIn.
 type SignInOption func(*signIn)
 
-type signIn struct{ scheme string }
+type signIn struct{ scheme, next string }
+
+// ReturnTo names the page to land on after signing in — the next a login
+// form posted. It is validated like ?next=; an unsafe one is ignored.
+func ReturnTo(next string) SignInOption { return func(s *signIn) { s.next = next } }
 
 // Using signs in through the named scheme ([auth.schemes.<name>]) instead
 // of the default — the first session scheme, else the first bearer one.
@@ -104,6 +128,13 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		opt(&o)
 	}
 	rs := st.config.settings
+	landing := func() string {
+		next := o.next
+		if safeNext(next) == "" {
+			next = Next(ctx)
+		}
+		return rs.landing(ctx, id, next)
+	}
 	sc, ok := rs.scheme(o.scheme)
 	if o.scheme == "" {
 		if sc, ok = rs.firstOf(SchemeSession); !ok {
@@ -123,7 +154,7 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		s := session.Get(ctx)
 		s.Cycle()
 		s.Set(sessionUserKey, id.ID)
-		return &Credential{Scheme: sc.name}, nil
+		return &Credential{Scheme: sc.name, Next: landing()}, nil
 	}
 	tok := newToken()
 	t := StoredToken{UserID: id.ID, Scheme: sc.name}
@@ -135,7 +166,7 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 	if err := st.config.tokens.Save(ctx, hashToken(tok), t, ttl); err != nil {
 		return nil, err
 	}
-	c := &Credential{Scheme: sc.name, AccessToken: tok, ExpiresIn: int(ttl / time.Second)}
+	c := &Credential{Scheme: sc.name, AccessToken: tok, ExpiresIn: int(ttl / time.Second), Next: landing()}
 	if sc.Type == SchemeBearer {
 		c.TokenType = "Bearer"
 	}

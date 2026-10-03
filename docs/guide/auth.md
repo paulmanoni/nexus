@@ -105,6 +105,68 @@ id for `[auth] cache` (5 minutes by default). When a credential arrives but does
 work — an expired or revoked token, a deleted account — the request is anonymous, and
 under `nexus dev` the 401 says why. All keys: [`[auth]`](/reference/nexus-toml#auth).
 
+### Areas, `next` and the sign-in page
+
+An area is a path prefix that belongs to some kinds of user, with its own sign-in
+page:
+
+```toml
+[auth]
+login = "/login"             # the sign-in page outside every area
+
+[auth.areas.admin]
+prefix = "/admin"
+kinds  = ["staff"]           # empty: any signed-in user
+login  = "/admin/login"
+home   = "/admin"            # default: the prefix
+```
+
+- **Every endpoint under the prefix needs a sign-in of one of its kinds** — a
+  customer's session on `/admin/orders` is refused with 403 — except `Public` ones,
+  such as the area's own sign-in page.
+- **An unauthenticated page visit goes to the sign-in page** with `?next=` back to
+  it: a document load gets a 302, an Inertia visit a 409 with `X-Inertia-Location`.
+  API, GraphQL and WebSocket callers get the 401.
+- **Signing in under an area admits only its kinds.** A customer posting to
+  `/admin/login` gets the same "invalid login or password" as a wrong password.
+- **`Credential.Next` is where to go after signing in:** the request's `?next=` (or
+  `auth.ReturnTo(next)`), when it is a same-site path in an area the user may
+  enter, else the area's `home`, else `[auth] home`. The check refuses `//host`,
+  backslashes, schemes and control characters, as given and after each round of URL
+  decoding, so `next` can't send anyone off-site. `auth.Next(ctx)` reads it for
+  your own flows.
+
+### Throttling sign-ins
+
+`auth.Login` counts failures — per account, and per client IP (`nexus.ClientIP`,
+which honours trusted proxies) — and answers 429 "too many failed sign-ins" past
+the limit:
+
+```toml
+[auth.throttle]
+account = "5/15m"            # failures per account in a window; "off" disables
+ip      = "50/15m"           # failures per client IP
+lockout = "15m"              # how long an account stays locked at its limit
+```
+
+The counters live in the process, so each replica counts on its own.
+
+### Built-in endpoints
+
+```toml
+[auth.endpoints]
+login  = "/api/auth/login"   # POST {login, password, next?, scheme?} → Credential
+logout = "/api/auth/logout"  # POST
+me     = "/api/auth/me"      # GET {user, can}
+```
+
+Each is mounted only when its path is set, and they're tagged for the client SDK's
+`nx.auth.login/logout/me`. `me` answers for anonymous visitors too (`"user": null`).
+`user` is what an optional `Public(id *auth.Identity) any` method on your `Users`
+returns — `{id, kind}` without one, so `Extra` is never sent by accident. `can` is
+`auth.OpGates`; on this path it is false for any op the visitor couldn't call,
+signed in or not.
+
 ## Resolve a token
 
 ```go

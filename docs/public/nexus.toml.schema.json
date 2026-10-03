@@ -7,11 +7,59 @@
     "auth": {
       "additionalProperties": false,
       "properties": {
+        "areas": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "home": {
+                "type": "string"
+              },
+              "kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "login": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
         "cache": {
           "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
           "type": "string"
         },
         "default": {
+          "type": "string"
+        },
+        "endpoints": {
+          "additionalProperties": false,
+          "properties": {
+            "login": {
+              "type": "string"
+            },
+            "logout": {
+              "type": "string"
+            },
+            "me": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "home": {
+          "type": "string"
+        },
+        "login": {
+          "type": "string"
+        },
+        "next_param": {
           "type": "string"
         },
         "passwords": {
@@ -60,6 +108,22 @@
               }
             },
             "type": "object"
+          },
+          "type": "object"
+        },
+        "throttle": {
+          "additionalProperties": false,
+          "properties": {
+            "account": {
+              "type": "string"
+            },
+            "ip": {
+              "type": "string"
+            },
+            "lockout": {
+              "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+              "type": "string"
+            }
           },
           "type": "object"
         }

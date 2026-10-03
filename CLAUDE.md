@@ -1282,7 +1282,12 @@ endpoint not `auth.Public()` (`[auth] default = "public"` opts out), caches `Loa
 cache`). Handlers: `auth.Login(ctx, auth.Password{…})` → `auth.SignIn(ctx, id[, auth.Using("api")])`
 (session cycled / token returned once, stored hashed in `Config.Tokens`, default memory —
 `auth.CacheTokens(cache)` in prod), `auth.SignOut`, `auth.SetPassword`, `auth.Refresh`. A failing
-credential = anonymous, reason in the 401 under nexus dev. `Config.Settings` is `[auth]` in Go.
+credential = anonymous, reason in the 401 under nexus dev. `Config.Settings` is `[auth]` in Go. 2.2:
+`[auth.areas.<n>]` (prefix, kinds, login, home — kind-gated, page visits 302/409 to the area login
+with `?next=`, Login refuses other kinds), `[auth] login/home/next_param`, safe `next` (`auth.Next`,
+`auth.ReturnTo`, `Credential.Next`), `[auth.throttle]` (account/ip "5/15m", lockout; per process),
+`[auth.endpoints]` login/logout/me (me = `{user: Users.Public(id) | {id,kind}, can: OpGates}`).
+`nexus.Defer(func() Option)` builds an option at boot (after nexus.toml loads).
 
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`

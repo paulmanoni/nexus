@@ -89,7 +89,27 @@ func OpGates(ctx context.Context, app *nexus.App) map[string]bool {
 			out[op] = allowed
 		}
 	}
+	// On the config-driven path every op that isn't Public needs a sign-in,
+	// and one under an area a kind it admits.
+	if st, ok := stateFrom(ctx); ok && st.config.settings != nil {
+		rs := st.config.settings
+		for _, m := range t.meta {
+			if m.public || !out[m.name] {
+				continue
+			}
+			a := rs.area(m.path)
+			if !authed && (a != nil || !rs.public) || authed && a != nil && !kindIn(id.Kind, a.Kinds) {
+				out[m.name] = false
+			}
+		}
+	}
 	return out
+}
+
+// opMeta is what OpGates needs of an op beyond its gates.
+type opMeta struct {
+	name, path string
+	public     bool
 }
 
 // gateGroup is the ops sharing one gate: every perm (Requires), at least
@@ -120,6 +140,7 @@ func (g *gateGroup) allows(ctx context.Context, id *Identity) bool {
 
 type gateTable struct {
 	version uint64
+	meta    []opMeta
 	open    []string // ops with no Requires declaration — always true
 	groups  []gateGroup
 	total   int
@@ -167,6 +188,7 @@ func buildGateTable(reg *registry.Registry, version uint64) *gateTable {
 			}
 			seen[name] = true
 			t.total++
+			t.meta = append(t.meta, opMeta{name: name, path: e.Path, public: e.Tags[nexus.PublicTag] != ""})
 			if key == "" {
 				t.open = append(t.open, name)
 				continue

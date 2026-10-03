@@ -168,6 +168,24 @@ func Options(opts ...Option) Option {
 	return rawOption{o: di.Options(unwrap(opts)...)}
 }
 
+// Defer builds an Option at boot, when the option tree is collected —
+// after nexus.toml is loaded and every package init has run — instead of
+// when the option list is written. An extension whose routes come from its
+// nexus.toml table returns them from fn. A nil result is a no-op.
+//
+//	nexus.Defer(func() nexus.Option {
+//	    return nexus.AsRest("POST", mySection.Get().Path, handler)
+//	})
+func Defer(fn func() Option) Option {
+	return rawOption{o: di.Defer(func() di.Option {
+		opt := fn()
+		if opt == nil {
+			return nil
+		}
+		return opt.nexusOption()
+	})}
+}
+
 // moduleAnnotator is implemented by options that participate in the
 // nexus.Module grouping — specifically AsQuery/AsMutation/AsRest. The
 // Module() function walks its direct children and calls setModule on

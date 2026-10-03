@@ -26,6 +26,14 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		ctx := withState(c.Request.Context(), state)
 
+		if rs := state.config.settings; rs != nil {
+			r := c.Request
+			ctx = context.WithValue(ctx, ctxRequestInfo, requestInfo{
+				method: r.Method, path: r.URL.Path, uri: r.URL.RequestURI(),
+				accept: r.Header.Get("Accept"), inertia: r.Header.Get("X-Inertia"),
+				next: safeNext(r.URL.Query().Get(rs.nextParam)),
+			})
+		}
 		id, scheme, token, err := state.authenticateScheme(ctx, c.Request)
 		if scheme != "" && state.config.settings != nil {
 			// SignOut ends the credential the request came with.

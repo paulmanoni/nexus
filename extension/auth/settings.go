@@ -3,6 +3,7 @@ package auth
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/paulmanoni/nexus/v2/config"
@@ -30,6 +31,43 @@ type Settings struct {
 	Cache     time.Duration             `toml:"cache"`
 	Schemes   map[string]SchemeSettings `toml:"schemes"`
 	Passwords PasswordSettings          `toml:"passwords"`
+	// Login is the sign-in page an unauthenticated page visit outside every
+	// area is sent to, with ?next=; empty answers 401 instead.
+	Login string `toml:"login"`
+	// Home is where a sign-in lands without a next, outside every area
+	// (default "/").
+	Home string `toml:"home"`
+	// NextParam names the query and form field carrying next (default "next").
+	NextParam string                  `toml:"next_param"`
+	Areas     map[string]AreaSettings `toml:"areas"`
+	Throttle  ThrottleSettings        `toml:"throttle"`
+	Endpoints EndpointSettings        `toml:"endpoints"`
+}
+
+// AreaSettings is one [auth.areas.<name>] table: a path prefix that belongs
+// to some user kinds, with its own login and landing pages.
+type AreaSettings struct {
+	Prefix string   `toml:"prefix"`
+	Kinds  []string `toml:"kinds"` // empty: any signed-in user
+	Login  string   `toml:"login"`
+	Home   string   `toml:"home"`
+}
+
+// ThrottleSettings is [auth.throttle]: failed sign-ins allowed per account
+// and per client IP in a window ("5/15m"), and how long an account stays
+// locked after its limit. Empty keys use the defaults; "off" disables one.
+type ThrottleSettings struct {
+	Account string        `toml:"account"` // default "5/15m"
+	IP      string        `toml:"ip"`      // default "50/15m"
+	Lockout time.Duration `toml:"lockout"` // default 15m
+}
+
+// EndpointSettings is [auth.endpoints]: the built-in JSON endpoints, each
+// mounted only when its path is set.
+type EndpointSettings struct {
+	Login  string `toml:"login"`  // POST {login, password, next?, scheme?}
+	Logout string `toml:"logout"` // POST
+	Me     string `toml:"me"`     // GET
 }
 
 // SchemeSettings is one [auth.schemes.<name>] table.
@@ -81,6 +119,17 @@ type resolvedSettings struct {
 	schemes   []namedScheme // in the order they are tried
 	hashers   Hashers
 	validator []PasswordValidator
+	login     string
+	home      string
+	nextParam string
+	areas     []namedArea // longest prefix first
+	throttle  throttleRules
+	endpoints EndpointSettings
+}
+
+type namedArea struct {
+	name string
+	AreaSettings
 }
 
 type namedScheme struct {
@@ -89,6 +138,7 @@ type namedScheme struct {
 }
 
 func resolveSettings(s Settings) (*resolvedSettings, error) {
+	var err error
 	r := &resolvedSettings{cache: s.Cache}
 	if r.cache == 0 {
 		r.cache = defaultCacheTTL
@@ -158,7 +208,39 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 	if on(s.Passwords.Similar) {
 		r.validator = append(r.validator, NotSimilarToUser())
 	}
+	r.login, r.home, r.nextParam, r.endpoints = s.Login, s.Home, s.NextParam, s.Endpoints
+	if r.home == "" {
+		r.home = "/"
+	}
+	if r.nextParam == "" {
+		r.nextParam = "next"
+	}
+	for name, a := range s.Areas {
+		if a.Prefix == "" || a.Prefix[0] != '/' {
+			return nil, fmt.Errorf(`[auth.areas.%s] prefix = %q: want a path starting with "/"`, name, a.Prefix)
+		}
+		if a.Home == "" {
+			a.Home = a.Prefix
+		}
+		r.areas = append(r.areas, namedArea{name, a})
+	}
+	sort.Slice(r.areas, func(i, j int) bool { return len(r.areas[i].Prefix) > len(r.areas[j].Prefix) })
+	if r.throttle, err = resolveThrottle(s.Throttle); err != nil {
+		return nil, err
+	}
 	return r, nil
+}
+
+// area returns the area path belongs to: the longest prefix that is the
+// path or a parent of it.
+func (r *resolvedSettings) area(path string) *namedArea {
+	for i := range r.areas {
+		p := strings.TrimSuffix(r.areas[i].Prefix, "/")
+		if path == p || strings.HasPrefix(path, p+"/") || p == "" {
+			return &r.areas[i]
+		}
+	}
+	return nil
 }
 
 func (r *resolvedSettings) scheme(name string) (namedScheme, bool) {

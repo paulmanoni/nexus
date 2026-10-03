@@ -186,6 +186,25 @@ Read by `auth.Module` when `Config.Users` is set (the config-driven path). See
 [auth]
 default = "signed-in"      # every endpoint needs a sign-in unless Public; "public" opts out
 cache   = "5m"             # Users.Load kept per user id; a negative value turns it off
+login   = "/login"         # sign-in page for page visits outside areas (unset: 401)
+home    = "/"              # landing after sign-in without a next
+next_param = "next"        # the query/form field carrying next
+
+[auth.areas.admin]
+prefix = "/admin"          # these paths need a sign-in of one of kinds
+kinds  = ["staff"]         # empty: any signed-in user
+login  = "/admin/login"    # this area's sign-in page
+home   = "/admin"          # landing after sign-in here (default: prefix)
+
+[auth.throttle]
+account = "5/15m"          # failed sign-ins per account per window; "off" disables
+ip      = "50/15m"         # per client IP
+lockout = "15m"            # an account's lock at its limit
+
+[auth.endpoints]           # each mounted only when set
+login  = "/api/auth/login"
+logout = "/api/auth/logout"
+me     = "/api/auth/me"
 
 [auth.schemes.web]         # tried apikey → bearer → session, by name within a type
 type   = "session"         # cookie → server-side session (extension/session) → user id

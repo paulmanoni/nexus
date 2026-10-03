@@ -28,6 +28,7 @@ type configPath struct {
 	tokens   TokenStore
 	settings *resolvedSettings
 	loads    *loadCache
+	throttle *throttle
 }
 
 // credentialError is a credential that arrived but didn't authenticate.
@@ -39,7 +40,10 @@ func (e *credentialError) Error() string { return "auth: " + e.scheme + ": " + e
 
 // install reads the settings and builds the schemes. It runs in the
 // module's invoke, after nexus.toml is loaded and before the middleware.
-func (st *moduleState) installConfigPath(app *nexus.App) error {
+func (st *moduleState) resolveConfig() error {
+	if st.config.settings != nil {
+		return nil
+	}
 	s := settingsSection.Get()
 	if st.cfg.Settings != nil {
 		s = *st.cfg.Settings
@@ -53,10 +57,24 @@ func (st *moduleState) installConfigPath(app *nexus.App) error {
 	if rs.cache > 0 {
 		cp.loads = &loadCache{ttl: rs.cache, m: map[string]loadEntry{}}
 	}
+	cp.throttle = newThrottle(rs.throttle)
+	return nil
+}
+
+func (st *moduleState) installConfigPath(app *nexus.App) error {
+	if err := st.resolveConfig(); err != nil {
+		return err
+	}
+	rs, cp := st.config.settings, &st.config
 	if cp.tokens == nil {
 		ms := NewMemoryTokenStore()
 		dev.Preserve("auth.tokens", ms)
 		cp.tokens = ms
+		_, bearer := rs.firstOf(SchemeBearer)
+		_, apikey := rs.firstOf(SchemeAPIKey)
+		if (bearer || apikey) && app.Environment() == "production" {
+			app.Logger().Warn("auth: bearer tokens and API keys are kept in memory — every one is lost on restart and unknown to other replicas; set auth.Config.Tokens (auth.CacheTokens(cache)) in production")
+		}
 	}
 	st.schemes = nil
 	for _, sc := range rs.schemes {
@@ -207,16 +225,27 @@ func credentialReason(ctx context.Context) string {
 }
 
 // defaultGate is the config path's deny-by-default gate: every endpoint
-// needs an identity unless it is Public, or [auth] default = "public".
+// needs an identity unless it is Public, or [auth] default = "public"; one
+// under an area also needs a kind the area admits.
 func (st *moduleState) defaultGate() middleware.Middleware {
 	return builtin("auth:required",
 		"Requires an authenticated identity on ctx ([auth] default)",
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
-			if st.config.settings != nil && st.config.settings.public {
+			rs := st.config.settings
+			info, _ := rc.Context.Value(ctxRequestInfo).(requestInfo)
+			var area *namedArea
+			if rs != nil {
+				area = rs.area(info.path)
+			}
+			if area == nil && rs != nil && rs.public {
 				return next(rc)
 			}
-			if _, ok := IdentityFrom(rc.Context); !ok {
+			id, ok := IdentityFrom(rc.Context)
+			if !ok {
 				return rejectAuth(rc, unauthenticated(rc.Context))
+			}
+			if area != nil && !kindIn(id.Kind, area.Kinds) {
+				return rejectAuth(rc, ErrForbidden)
 			}
 			return next(rc)
 		})
@@ -236,6 +265,18 @@ func configModule(cfg Config) nexus.Option {
 		if err != nil {
 			return nil, err
 		}
-		return []nexus.Option{users, nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: st.defaultGate()}))}, nil
+		if cfg.OnError == nil {
+			st.errorHandler = pageErrors{st}
+		}
+		return []nexus.Option{
+			users,
+			nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: st.defaultGate()})),
+			nexus.Defer(func() nexus.Option {
+				if err := st.resolveConfig(); err != nil {
+					return nexus.FailBoot(fmt.Errorf("auth: %w", err))
+				}
+				return st.endpointOptions()
+			}),
+		}, nil
 	})
 }

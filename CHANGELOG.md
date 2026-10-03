@@ -6,6 +6,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-04
+
+### Added
+
+- **Auth stage 2 (sign-in flows)** on the `Config.Users` path:
+  - **Areas** — `[auth.areas.<name>]` with `prefix`, `kinds`, `login`, `home`:
+    endpoints under the prefix need a sign-in of one of the kinds; an
+    unauthenticated page visit goes to the area's sign-in page with `?next=`
+    (302, or 409 + `X-Inertia-Location` for Inertia), outside areas to
+    `[auth] login`; signing in under an area refuses other kinds.
+  - **`next`** — one validator (no `//host`, backslash, scheme or control
+    character, as given and after each decoding round); `Credential.Next`,
+    `auth.Next(ctx)`, `auth.ReturnTo(next)`, `[auth] home` and `next_param`.
+  - **Login throttling** — `[auth.throttle]` per account and per client IP,
+    with a lockout; 429 past the limit.
+  - **Built-in endpoints** — `[auth.endpoints]` `login`, `logout`, `me`; `me`
+    answers `{user, can}`, the user from an optional `Users.Public` method.
+  - `auth.OpGates` reports ops the visitor can't call (not signed in, wrong
+    area kind) as false on this path.
+- `nexus.Defer(fn)`: an option built at boot, after nexus.toml is loaded.
+
+### Fixed
+
+- A failed `auth.Login` answers "invalid login or password" as the message,
+  not only under `errors._global`.
+- A production app keeping bearer tokens or API keys in memory gets a boot
+  warning.
+
 ## [2.1.0] - 2026-10-04
 
 ### Added

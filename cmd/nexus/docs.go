@@ -1237,8 +1237,18 @@ default = "public" opts out). Handlers sign in with two calls:
 Tokens are stored as SHA-256 in Config.Tokens (memory by default; use
 auth.CacheTokens(cache) in production). Load is cached per user id ([auth]
 cache, 5m). A credential that arrives but fails leaves the request
-anonymous; under nexus dev the 401 names the reason. [auth] keys:
-nexus docs nexustoml, docs/reference/nexus-toml.md.
+anonymous; under nexus dev the 401 names the reason.
+
+Areas — [auth.areas.admin] prefix = "/admin", kinds = ["staff"],
+login = "/admin/login", home: endpoints under the prefix need one of the
+kinds (403 otherwise); a page visit without a sign-in goes to the login
+with ?next= (302; 409 + X-Inertia-Location for Inertia); signing in there
+refuses other kinds. Outside areas: [auth] login / home. Credential.Next is
+the validated next (auth.Next(ctx), auth.ReturnTo(next)) or the home.
+[auth.throttle] account = "5/15m", ip = "50/15m", lockout = "15m" → 429.
+[auth.endpoints] login / logout / me mount JSON endpoints for nx.auth.*;
+me = {user, can} (user from an optional Users.Public(id) any).
+[auth] keys: docs/reference/nexus-toml.md.
 
 RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued
 elsewhere:
