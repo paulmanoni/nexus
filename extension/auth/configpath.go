@@ -76,16 +76,20 @@ func (st *moduleState) installConfigPath(app *nexus.App) error {
 		_, bearer := rs.firstOf(SchemeBearer)
 		_, apikey := rs.firstOf(SchemeAPIKey)
 		if (bearer || apikey) && app.Environment() == "production" {
-			app.Logger().Warn("auth: bearer tokens and API keys are kept in memory — every one is lost on restart and unknown to other replicas; set auth.Config.Tokens (auth.CacheTokens(cache)) in production")
+			app.Logger().Warn("auth: bearer tokens and API keys are kept in memory — every one is lost on restart and unknown to other replicas; use authdb.Bind[DB]() or auth.Config{Tokens: auth.CacheTokens(cache)} in production")
 		}
 	}
 	st.schemes = nil
 	for _, sc := range rs.schemes {
 		switch sc.Type {
 		case SchemeSession:
-			session.Install(app, session.Config{CookieName: sc.Cookie, TTL: sc.TTL, Secure: sc.Secure})
 			app.RequireCSRF("auth session scheme " + sc.name)
-			st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: sessionExtractor{}, resolve: st.sessionResolve(sc.name)})
+			if rs.isAreaSession(sc.name) {
+				st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: areaSessionExtractor{rs, sc.name, areaCookie(sc)}, resolve: st.tokenResolve(sc.name)})
+				continue
+			}
+			session.Install(app, session.Config{CookieName: sc.Cookie, TTL: sc.TTL, Secure: sc.Secure})
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: sessionExtractor{rs}, resolve: st.sessionResolve(sc.name)})
 		case SchemeBearer:
 			st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: bearerShaped(false), resolve: st.tokenResolve(sc.name)})
 		case SchemeJWT:
@@ -101,15 +105,45 @@ func (st *moduleState) installConfigPath(app *nexus.App) error {
 	return nil
 }
 
-// sessionExtractor finds the signed-in user's id in the request's session.
-type sessionExtractor struct{}
+// sessionExtractor finds the signed-in user's id in the request's session,
+// outside the areas that keep their own.
+type sessionExtractor struct{ rs *resolvedSettings }
 
-func (sessionExtractor) extract(r *http.Request) (string, bool) {
+func (e sessionExtractor) extract(r *http.Request) (string, bool) {
+	if a := e.rs.area(r.URL.Path); a != nil && a.Session != "" {
+		return "", false
+	}
 	if !session.Present(r.Context()) {
 		return "", false
 	}
 	id := session.Get(r.Context()).GetString(sessionUserKey)
 	return id, id != ""
+}
+
+// areaSessionExtractor reads an area's own session cookie, inside that
+// area only: the cookie holds a stored token (Use "session").
+type areaSessionExtractor struct {
+	rs           *resolvedSettings
+	name, cookie string
+}
+
+func (e areaSessionExtractor) extract(r *http.Request) (string, bool) {
+	if a := e.rs.area(r.URL.Path); a == nil || a.Session != e.name {
+		return "", false
+	}
+	ck, err := r.Cookie(e.cookie)
+	if err != nil || ck.Value == "" {
+		return "", false
+	}
+	return ck.Value, true
+}
+
+// areaCookie is the cookie an area's session scheme uses.
+func areaCookie(sc namedScheme) string {
+	if sc.Cookie != "" {
+		return sc.Cookie
+	}
+	return "nexus_" + sc.name + "_session"
 }
 
 func (st *moduleState) sessionResolve(name string) resolver {
@@ -289,7 +323,11 @@ type ctxCredential int
 const (
 	ctxCredentialErr ctxCredential = iota
 	ctxCredentialTok
+	ctxCookies = ctxCredential(102)
 )
+
+// setCookie writes a cookie on the response of the request ctx belongs to.
+type setCookie func(*http.Cookie)
 
 type presented struct {
 	scheme, token string

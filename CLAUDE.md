@@ -1279,15 +1279,18 @@ func (u *Users) Load(ctx, id string) (*auth.Identity, error)
 ```
 - **Identity** `{ID, Kind, Perms, User, Actor, Scheme}` — Perms match with wildcards (`orders.*`, `*`);
   Kind ("staff") gates areas/`auth.Kind`; User is the app's user (`auth.User[T]`); set Kind in FindLogin.
-  Read with `auth.Current(ctx)` (nil = anonymous), `auth.ID[T](ctx)`, `auth.User[T](ctx)`.
+  Read with `auth.Current(ctx)` (nil = anonymous), `auth.ID[T](ctx)`, `auth.User[T](ctx)`, or as a
+  handler param: `*auth.Identity` (nil = anonymous) / `auth.Identity` (401 without a sign-in) —
+  built on `nexus.RequestParam[T](fill)`.
 - **Schemes** `[auth.schemes.<name>]`, tried apikey → jwt → bearer → session (default: one session
   "web"): `session` (extension/session; turns CSRF on), `bearer` (opaque 256-bit tokens stored as
   SHA-256; `ttl`, `refresh = "720h"` — Go durations, never "30d"), `apikey` (`header`), `jwt` (verify
   tokens issued elsewhere: `secret` HS256 | `public_key` PEM RS256/ES256 | `jwks` URL; issuer, audience,
   subject, leeway; alg pinned to the key; shares Authorization with bearer by token shape). A failing
   credential = anonymous, reason in the 401 under nexus dev + trace. `Users.Load` cached per id
-  (`[auth] cache`, default 5m, negative = off). `Config.Tokens` (memory default — `auth.CacheTokens(cache)`
-  in prod), `Config.Throttle` (`auth.CacheThrottle`), `Config.Clients`, `Config.Settings` ([auth] in Go).
+  (`[auth] cache`, default 5m, negative = off). `Config.Tokens` (memory default, warned in prod + `nexus doctor` —
+  `authdb.Bind[DB]()` from `extension/auth/authdb` (table `nexus_auth_tokens`) or `auth.CacheTokens(cache)`
+  in prod; a DI `auth.TokenStore` is picked up), `Config.Throttle` (`auth.CacheThrottle`), `Config.Clients`, `Config.Settings` ([auth] in Go).
 - **Sign-in**: `auth.Login(ctx, auth.Password{Login, Password})` (throttle `[auth.throttle]` → FindLogin →
   `[auth.passwords]` hashers, rehash when stale → area kinds → CheckLogin; wrong pw = unknown login =
   422 "invalid login or password") → `auth.SignIn(ctx, id[, auth.Using("api"), auth.ReturnTo(next)])`
@@ -1303,7 +1306,9 @@ func (u *Users) Load(ctx, id string) (*auth.Identity, error)
 - **Areas** `[auth.areas.<n>]` prefix, kinds, login, home, forbidden: kind-gated; page visit without a
   sign-in → area login `?next=` (302 / 409 + X-Inertia-Location); refused page visit → forbidden path;
   `[auth] login / home / forbidden / next_param` outside areas. `next` validated (no //host, \, scheme,
-  control chars, through decoding rounds); `auth.Next(ctx)`.
+  control chars, through decoding rounds); `auth.Next(ctx)`. `session = "<scheme>"` on an area: that
+  session scheme holds the area's sign-in alone (stored token in its own cookie, Path = prefix; SignIn under
+  the area uses it; idle doesn't apply) — else areas share the app session.
 - **Endpoints** `[auth.endpoints]` login / logout / me (`nx.auth.*`; me = `{user, can, actor?}`) / token
   (OAuth2 password, refresh_token, client_credentials; CSRF-exempt via `App.ExemptCSRF`) / revoke (RFC
   7009). OAuth2 clients `[auth.oauth2.clients.<id>]` (secret | secret_hash, grants, perms, kind) or

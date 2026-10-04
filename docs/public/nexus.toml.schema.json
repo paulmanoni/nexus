@@ -28,6 +28,9 @@
               },
               "prefix": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string"
               }
             },
             "type": "object"

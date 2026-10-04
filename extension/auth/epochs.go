@@ -122,7 +122,7 @@ func (st *moduleState) restamp(ctx context.Context, userID string, n int64) {
 		return
 	}
 	h := hashToken(p.token)
-	if sc.Type == SchemeSession {
+	if st.config.settings.cookieSession(sc) {
 		s := session.Get(ctx)
 		s.Set(sessionEpochKey, strconv.FormatInt(n, 10))
 		if s.GetString(sessionRecKey) == "" {

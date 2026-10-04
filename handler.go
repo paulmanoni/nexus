@@ -70,6 +70,9 @@ const (
 	paramGinCtx // filled from callInput.GinCtx (REST transport only)
 	paramWS     // filled from callInput.WS (AsWS transport only)
 	paramForm   // *Form built from callInput.GinCtx (REST only; typed nil elsewhere)
+	// paramRequest is a type registered with RequestParam (auth's
+	// *auth.Identity), filled from the call's context.
+	paramRequest
 	// paramArgField is a bare scalar parameter fed from field depPos of the
 	// bound args struct — the nexus.Arg path. The synthesized struct exists
 	// only for binding and schema; the ORIGINAL method is called directly,
@@ -147,7 +150,7 @@ func inspectHandler(fn any) (handlerShape, error) {
 
 	// Legacy flat-args detection only fires when no Params[T] is present.
 	argsEnd := numIn
-	if paramsIdx < 0 && numIn > 0 && sh.funcType.In(numIn-1).Kind() == reflect.Struct {
+	if paramsIdx < 0 && numIn > 0 && sh.funcType.In(numIn-1).Kind() == reflect.Struct && requestParamFor(sh.funcType.In(numIn-1)) == nil {
 		sh.hasArgs = true
 		sh.argsType = sh.funcType.In(numIn - 1)
 		argsEnd = numIn - 1
@@ -177,6 +180,8 @@ func inspectHandler(fn any) (handlerShape, error) {
 			// nil so the handler can guard with `if s == nil`; all
 			// WSSession methods already nil-check the receiver.
 			sh.slots[i] = paramSlot{kind: paramWS}
+		case requestParamFor(sh.funcType.In(i)) != nil:
+			sh.slots[i] = paramSlot{kind: paramRequest}
 		case sh.funcType.In(i) == formType:
 			// *Form — REST only (Inertia pages included). GraphQL/WS
 			// pass a typed nil; every Form method nil-checks the
@@ -296,6 +301,16 @@ func (sh handlerShape) callHandler(ci callInput, deps []reflect.Value, args refl
 			} else {
 				in[i] = reflect.ValueOf(formVal)
 			}
+		case paramRequest:
+			ctx := ci.Ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			v, err := requestParamFor(sh.funcType.In(i))(ctx)
+			if err != nil {
+				return nil, err
+			}
+			in[i] = v
 		case paramArgField:
 			in[i] = args.Field(slot.depPos)
 		case paramArgBody:
@@ -645,4 +660,31 @@ func runtimeFuncForPC(pc uintptr) string {
 		return ""
 	}
 	return f.Name()
+}
+
+// requestParams are the parameter types handlers may declare to receive a
+// per-request value (RequestParam).
+var requestParams sync.Map // reflect.Type → func(context.Context) (reflect.Value, error)
+
+// RequestParam lets every handler — REST, GraphQL, WebSocket, pages —
+// declare a parameter of type T, filled from the request's context on each
+// call; an error answers the request instead of calling the handler.
+// extension/auth registers *auth.Identity (the caller, nil when anonymous)
+// and auth.Identity (the caller, or Unauthenticated). Call it from package
+// init, before handlers are registered.
+func RequestParam[T any](fill func(ctx context.Context) (T, error)) {
+	requestParams.Store(reflect.TypeFor[T](), func(ctx context.Context) (reflect.Value, error) {
+		v, err := fill(ctx)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		return reflect.ValueOf(&v).Elem(), nil
+	})
+}
+
+func requestParamFor(t reflect.Type) func(context.Context) (reflect.Value, error) {
+	if f, ok := requestParams.Load(t); ok {
+		return f.(func(context.Context) (reflect.Value, error))
+	}
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/version"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,7 +141,56 @@ func projectChecks(dir string) []doctorCheck {
 			add(doctorCheck{Name: "views", Detail: "generated files up to date"})
 		}
 	}
+
+	// auth: where issued tokens and session records live.
+	if uses, store := authTokenStore(dir); uses {
+		if store == "" {
+			add(doctorCheck{Name: "auth tokens", Level: checkWarn,
+				Detail: "kept in memory — lost on restart and unknown to other replicas",
+				Fix:    "authdb.Bind[DB]() (extension/auth/authdb), or auth.Config{Tokens: auth.CacheTokens(cache)}"})
+		} else {
+			add(doctorCheck{Name: "auth tokens", Detail: store})
+		}
+	}
 	return out
+}
+
+// authTokenStore reports whether the app's Go source uses extension/auth,
+// and which durable token store it wires ("" for none: the memory store).
+func authTokenStore(dir string) (uses bool, store string) {
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if p != dir && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" || name == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		src := string(b)
+		if strings.Contains(src, `nexus/v2/extension/auth"`) || strings.Contains(src, `nexus/v2/extension/auth/authdb"`) {
+			uses = true
+		}
+		switch {
+		case strings.Contains(src, "authdb.Bind"):
+			store = "authdb (SQL database)"
+		case strings.Contains(src, "CacheTokens("):
+			store = "auth.CacheTokens (cache)"
+		case store == "" && strings.Contains(src, "Tokens:"):
+			store = "a custom auth.TokenStore"
+		}
+		return nil
+	})
+	return uses, store
 }
 
 func orDefault(s, def string) string {

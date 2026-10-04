@@ -95,9 +95,18 @@ ttl  = "12h"
 
 A session scheme brings `extension/session` with it, and turns CSRF protection on. To
 use your own session store, put `session.Module` before `auth.Module`. Tokens are kept
-in memory by default, which loses them on restart. In production set
-`Config.Tokens: auth.CacheTokens(cache)` (Redis through `extension/cache`), or your own
-`auth.TokenStore`.
+in memory by default, which loses them on restart (production logs a warning, and
+`nexus doctor` flags it). In production keep them in your database —
+
+```go
+import "github.com/paulmanoni/nexus/v2/extension/auth/authdb"
+
+nexus.Boot(db.BindFromConfig[DB]("main"), authdb.Bind[DB](), auth.Module(…))
+```
+
+(`authdb` creates its `nexus_auth_tokens` table on boot; `authdb.NoMigrate()` leaves
+that to you, `authdb.Migrate` runs it) — or in Redis with
+`Config.Tokens: auth.CacheTokens(cache)`, or in your own `auth.TokenStore`.
 
 **Every endpoint needs a sign-in** on this path unless it is marked `auth.Public()`;
 `[auth] default = "public"` turns that off. `Users.Load` results are cached per user
@@ -139,6 +148,31 @@ home   = "/admin"            # default: the prefix
 A refused page visit — a customer opening `/admin/orders` — goes to the area's
 `forbidden` page when it has one (`forbidden = "/admin/forbidden"`, a page your app
 serves), else `[auth] forbidden`; API calls get the 403.
+
+**An area can keep its own sign-in.** By default every area shares the app's session,
+so a browser is one user everywhere. Name a session scheme on the area and it holds
+that area's sign-in alone, under its own cookie scoped to the prefix — a staff member
+can be signed in to `/admin` and, in the same browser, to the shop as a customer:
+
+```toml
+[auth.schemes.web]
+type = "session"             # the app's session
+
+[auth.schemes.admin]
+type = "session"             # /admin's own: cookie nexus_admin_session, Path=/admin
+
+[auth.areas.admin]
+prefix  = "/admin"
+kinds   = ["staff"]
+session = "admin"
+```
+
+`auth.SignIn` under `/admin` signs in through it (no `auth.Using` needed), `SignOut`
+there ends only it, and impersonating there acts there only. It is a stored token in
+an HttpOnly cookie, so `RevokeUser`, `Sessions`/`RevokeSession` and the token store
+cover it like any other credential. Requests outside the prefix never see it — keep
+the area's API under the prefix too (`nexus.Module("admin", nexus.Path("/admin"), …)`).
+`[auth.sessions] idle` applies to the app's session only.
 
 ### On every page
 
@@ -476,6 +510,15 @@ me := auth.Current(ctx)                // *Identity, nil when anonymous
 user, ok := auth.User[MyUser](ctx)     // Identity.User, typed
 uid, ok  := auth.ID[uint](ctx)         // Identity.ID parsed into T
 ```
+
+Or declare it as a handler parameter — `*auth.Identity` is the caller (nil when
+anonymous), `auth.Identity` requires a sign-in (401 without one):
+
+```go
+func (s *Orders) Refund(ctx context.Context, me auth.Identity, in RefundIn) (*Order, error)
+```
+
+Any package can add such a parameter type with `nexus.RequestParam[T](fill)`.
 
 ## UI permissions that can't drift
 

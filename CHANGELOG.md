@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Auth: **an area can keep its own sign-in** — `[auth.areas.<n>] session = "<scheme>"`
+  names a `session` scheme holding only that area's sign-in, in its own cookie scoped
+  to the prefix, so one browser can be signed in to `/admin` and the app as different
+  users. `SignIn` under the area uses it by default.
+- Auth: **the identity as a handler parameter** — `*auth.Identity` (nil when
+  anonymous) or `auth.Identity` (401 without a sign-in), on every transport.
+  `nexus.RequestParam[T](fill)` lets any package add such a parameter type.
+- `extension/auth/authdb`: tokens, keys and session records in your database
+  (`authdb.Bind[DB]()`, table `nexus_auth_tokens`) — they survive restarts and are
+  shared by replicas. `auth.Module` takes a `TokenStore` from DI.
+- `nexus doctor` warns when an app with auth keeps its tokens in memory.
+
 - Auth: **"Sign in with …"** — an `oidc` scheme (OpenID Connect
   authorization code + PKCE; discovery, ID token verified via JWKS, `state` and
   `nonce`); the account comes from `Users.FindLogin` by email, or the optional

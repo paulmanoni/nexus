@@ -69,6 +69,23 @@ nexus.AsQuery(ListOrders)
 - The first `*Service`-wrapper dependency decides which service the op belongs to on the
   dashboard. See [Modules & services](./modules).
 
+### Request parameters
+
+Some parameter types are filled from the request rather than from DI — the caller's
+identity is one (`*auth.Identity`, or `auth.Identity` to require a sign-in; see
+[Auth](./auth#who-is-calling)). A package registers such a type once:
+
+```go
+nexus.RequestParam(func(ctx context.Context) (Tenant, error) {
+    return tenantFrom(ctx)
+})
+
+func (s *Orders) List(ctx context.Context, t Tenant, in ListArgs) ([]Order, error)
+```
+
+An error from `fill` is the request's error; the handler doesn't run. A registered type
+is never taken for the arguments struct.
+
 ## Arguments and struct tags
 
 Struct tags drive binding, validation and the GraphQL schema:

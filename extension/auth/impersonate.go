@@ -75,7 +75,11 @@ func (st *moduleState) setActing(ctx context.Context, target string) error {
 	if !ok {
 		return ErrUnauthenticated
 	}
-	switch sc.Type {
+	typ := sc.Type
+	if st.config.settings.isAreaSession(sc.name) {
+		typ = SchemeBearer // a stored token, like a bearer one
+	}
+	switch typ {
 	case SchemeSession:
 		s := session.Get(ctx)
 		if target == "" {

@@ -105,6 +105,15 @@ func init() {
 		}
 		return id.ID, true
 	})
+	// Handlers may take the caller as a parameter: *Identity (nil when
+	// anonymous) or Identity (Unauthenticated when anonymous).
+	nexus.RequestParam(func(ctx context.Context) (*Identity, error) { return Current(ctx), nil })
+	nexus.RequestParam(func(ctx context.Context) (Identity, error) {
+		if id := Current(ctx); id != nil {
+			return *id, nil
+		}
+		return Identity{}, unauthenticated(ctx)
+	})
 	nexus.RegisterRequestImpersonator(func(ctx context.Context) (string, bool) {
 		if id := Current(ctx); id != nil && id.Actor != nil {
 			return id.Actor.ID, true

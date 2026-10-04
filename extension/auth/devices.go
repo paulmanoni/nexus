@@ -193,7 +193,7 @@ func currentHash(ctx context.Context) string {
 	if !ok || !sok || st.config.settings == nil {
 		return ""
 	}
-	if sc, ok := st.config.settings.scheme(p.scheme); ok && sc.Type == SchemeSession {
+	if sc, ok := st.config.settings.scheme(p.scheme); ok && st.config.settings.cookieSession(sc) {
 		return hashToken(session.Get(ctx).ID())
 	}
 	return hashToken(p.token)

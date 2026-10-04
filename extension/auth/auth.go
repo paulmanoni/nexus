@@ -77,8 +77,9 @@ type Config struct {
 	Settings *Settings
 
 	// Tokens stores issued bearer tokens, API keys and session records
-	// (hashed). Nil keeps them in memory — lost on restart, not shared
-	// between replicas; set CacheTokens(cache) in production.
+	// (hashed). Nil takes a TokenStore from DI (authdb.Bind provides one),
+	// else keeps them in memory — lost on restart, not shared between
+	// replicas; set CacheTokens(cache) or authdb.Bind in production.
 	Tokens TokenStore
 
 	// Clients finds OAuth2 clients the token endpoint authenticates (a
@@ -142,7 +143,10 @@ func Module(cfg Config) nexus.Option {
 				}
 				return state.endpointOptions()
 			}),
-			nexus.Invoke(func(app *nexus.App) error {
+			nexus.Raw(di.Invoke(di.Annotate(func(app *nexus.App, tokens TokenStore) error {
+				if state.config.tokens == nil && tokens != nil {
+					state.config.tokens = tokens // a TokenStore from DI (authdb.Bind, say)
+				}
 				state.bus, state.app = app.Bus(), app
 				app.SetValue(stateKey{}, state)
 				if err := state.installConfigPath(app); err != nil {
@@ -154,7 +158,7 @@ func Module(cfg Config) nexus.Option {
 				}
 				app.Router().Use(authMiddleware(state))
 				return nil
-			}),
+			}, di.ParamTags("", `optional:"true"`)))),
 			// Once every route is registered: a sign-in or forbidden page that
 			// no route serves sends visitors to a 404.
 			nexus.Setup(func(app *nexus.App) error {

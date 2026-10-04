@@ -31,3 +31,24 @@ func TestProjectChecks(t *testing.T) {
 		t.Error("node checked for a project without a frontend")
 	}
 }
+
+func TestDoctorAuthTokenStore(t *testing.T) {
+	dir := t.TempDir()
+	write := func(src string) {
+		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("package main\n\nimport \"github.com/paulmanoni/nexus/v2/extension/auth\"\n\nvar _ = auth.Module\n")
+	if uses, store := authTokenStore(dir); !uses || store != "" {
+		t.Fatalf("memory store: %v %q", uses, store)
+	}
+	write("package main\n\nimport (\n\t\"github.com/paulmanoni/nexus/v2/extension/auth\"\n\t\"github.com/paulmanoni/nexus/v2/extension/auth/authdb\"\n)\n\nvar _ = auth.Module\nvar _ = authdb.Bind[int]\n")
+	if _, store := authTokenStore(dir); store != "authdb (SQL database)" {
+		t.Fatalf("authdb: %q", store)
+	}
+	write("package main\n")
+	if uses, _ := authTokenStore(dir); uses {
+		t.Fatal("no auth, no check")
+	}
+}

@@ -213,8 +213,7 @@ func (st *moduleState) oidcCallback(p *oidcProvider) httpx.HandlerFunc {
 			fail(err.Error())
 			return
 		}
-		session, _ := st.config.settings.firstOf(SchemeSession)
-		cred, err := SignIn(ctx, id, Using(session.name), ReturnTo(f.Next))
+		cred, err := SignIn(ctx, id, ReturnTo(f.Next))
 		if err != nil {
 			fail(err.Error())
 			return

@@ -34,6 +34,8 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 				next:  safeNext(r.URL.Query().Get(rs.nextParam)),
 				agent: r.UserAgent(),
 			})
+			w := c.Writer
+			ctx = context.WithValue(ctx, ctxCookies, setCookie(func(ck *http.Cookie) { http.SetCookie(w, ck) }))
 		}
 		if id, ok := state.testIdentity(ctx, c.Request); ok {
 			c.Request = c.Request.WithContext(WithIdentity(ctx, id))

@@ -73,6 +73,11 @@ type AreaSettings struct {
 	// Forbidden is the page a refused page visit here is sent to (a page
 	// your app serves, e.g. "/admin/forbidden"); empty answers 403.
 	Forbidden string `toml:"forbidden"`
+	// Session names a session scheme that holds this area's sign-in alone,
+	// under its own cookie scoped to the prefix — so one browser can be
+	// signed in here and elsewhere as different users. Empty: the area
+	// shares the app's session.
+	Session string `toml:"session"`
 }
 
 // SessionRules is [auth.sessions]: what ends a user's sessions and tokens.
@@ -82,7 +87,8 @@ type SessionRules struct {
 	// EndOnPasswordChange: auth.SetPassword ends every other session and
 	// token of the user (the one changing it stays). Default true.
 	EndOnPasswordChange *bool `toml:"end_on_password_change"`
-	// Idle ends a session unused this long (sessions only; 0 = never).
+	// Idle ends a session unused this long (the app's session only, not an
+	// area's own; 0 = never).
 	Idle time.Duration `toml:"idle"`
 }
 
@@ -149,7 +155,8 @@ type SchemeSettings struct {
 	// TTL is a bearer token's lifetime (default 12h), or the session's
 	// (default extension/session's 14 days). API keys don't expire.
 	TTL time.Duration `toml:"ttl"`
-	// Cookie names the session cookie (default extension/session's).
+	// Cookie names the session cookie (default extension/session's; for an
+	// area's own session, "nexus_<scheme>_session").
 	Cookie string `toml:"cookie"`
 	// Secure marks the session cookie Secure; set it behind TLS.
 	Secure bool `toml:"secure"`
@@ -240,6 +247,7 @@ type resolvedSettings struct {
 	impersonation ImpersonationSettings
 	oauth2        OAuth2Settings
 	roles         map[string][]string
+	areaSessions  map[string]string // session scheme → the area prefix it belongs to
 	perms         []string
 	areas         []namedArea // longest prefix first
 	throttle      throttleRules
@@ -328,9 +336,23 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 		return a.name < b.name
 	})
 
+	r.areaSessions = map[string]string{}
+	for name, a := range s.Areas {
+		if a.Session == "" {
+			continue
+		}
+		sc, ok := s.Schemes[a.Session]
+		if !ok || sc.Type != SchemeSession {
+			return nil, fmt.Errorf(`[auth.areas.%s] session = %q: want the name of an [auth.schemes] entry with type = "session"`, name, a.Session)
+		}
+		if _, taken := r.areaSessions[a.Session]; taken {
+			return nil, fmt.Errorf(`[auth.areas.%s] session = %q: another area uses that scheme`, name, a.Session)
+		}
+		r.areaSessions[a.Session] = strings.TrimSuffix(a.Prefix, "/")
+	}
 	if _, oidc := r.firstOf(SchemeOIDC); oidc {
-		if _, session := r.firstOf(SchemeSession); !session {
-			return nil, fmt.Errorf(`an oidc scheme signs people in with a session: add a scheme with type = "session"`)
+		if _, session := r.sessionFor(""); !session {
+			return nil, fmt.Errorf(`an oidc scheme keeps its sign-in flow in the app's session: add a scheme with type = "session" that no area names`)
 		}
 	}
 
@@ -420,6 +442,34 @@ func (r *resolvedSettings) scheme(name string) (namedScheme, bool) {
 		}
 	}
 	return namedScheme{}, false
+}
+
+// sessionFor is the session scheme a sign-in at path uses: the area's own
+// (AreaSettings.Session) when path lies in one, else the first session
+// scheme no area owns.
+func (r *resolvedSettings) sessionFor(path string) (namedScheme, bool) {
+	if a := r.area(path); a != nil && a.Session != "" {
+		return r.scheme(a.Session)
+	}
+	for _, sc := range r.schemes {
+		if sc.Type == SchemeSession && r.areaSessions[sc.name] == "" {
+			return sc, true
+		}
+	}
+	return namedScheme{}, false
+}
+
+// isAreaSession reports whether scheme is an area's own session (a cookie
+// holding a stored token) rather than the app's extension/session one.
+func (r *resolvedSettings) isAreaSession(scheme string) bool {
+	_, ok := r.areaSessions[scheme]
+	return ok
+}
+
+// cookieSession reports whether sc keeps its sign-in in extension/session
+// (the app's session), as opposed to a token or an area's own cookie.
+func (r *resolvedSettings) cookieSession(sc namedScheme) bool {
+	return sc.Type == SchemeSession && !r.isAreaSession(sc.name)
 }
 
 // firstOf returns the first scheme of type t.

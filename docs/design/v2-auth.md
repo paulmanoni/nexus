@@ -706,9 +706,21 @@ throttle locks and a sign-out-everywhere form.
 **Decided (2026-10-04) and built:** OIDC sign-in as a scheme type (`type =
 "oidc"`); an optional permission catalogue (`[auth] perms`, checked at boot); roles as
 a config table (`[auth.roles]`, `Identity.Roles` expanded into `Perms`); JWT
-revocation opt-in per scheme (`revocable = true`). Still open below: one session per
-area, the identity as a handler parameter, a production token store without a
-cache, and `extension/session`'s placement.
+revocation opt-in per scheme (`revocable = true`).
+
+**Decided (2026-10-04) and built, second round:**
+- *One session per area* — opt-in per area: `[auth.areas.admin] session = "admin"`
+  names a `session` scheme that holds that area's sign-in alone, as a stored token in
+  its own HttpOnly cookie scoped to the prefix (RevokeUser, Sessions and the token
+  store cover it). Areas without it share the app's session.
+- *Identity as a handler parameter* — `*auth.Identity` (nil when anonymous) and
+  `auth.Identity` (401 without a sign-in), through a general root hook,
+  `nexus.RequestParam[T](fill)`.
+- *Production token store* — `extension/auth/authdb` (`authdb.Bind[DB]()`, a GORM
+  table) beside `CacheTokens`; memory stays the default with a production warning
+  and a `nexus doctor` check, not a boot error.
+- *`extension/session`* stays a separate package: apps use sessions without auth,
+  and the `session` scheme installs it when it isn't already.
 
 ## Open questions
 
@@ -734,3 +746,6 @@ cache, and `extension/session`'s placement.
 - **`extension/session` placement.** It becomes a hard dependency of the `session`
   scheme — fold it into `auth`, or keep it separate for apps that use sessions
   without auth?
+
+(All of the above except the denial escape hatch are decided — see "Decided" in the
+section before.)

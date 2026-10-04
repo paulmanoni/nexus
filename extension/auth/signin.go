@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -126,7 +127,9 @@ type signIn struct{ scheme, next string }
 func ReturnTo(next string) SignInOption { return func(s *signIn) { s.next = next } }
 
 // Using signs in through the named scheme ([auth.schemes.<name>]) instead
-// of the default — the first session scheme, else the first bearer one.
+// of the default — the session of the area the request is in (its own, when
+// [auth.areas.<name>] session names one, else the app's), else the first
+// bearer scheme.
 func Using(scheme string) SignInOption { return func(s *signIn) { s.scheme = scheme } }
 
 // SignIn issues id a credential: a session (its id cycled, so a session
@@ -153,7 +156,8 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 	}
 	sc, ok := rs.scheme(o.scheme)
 	if o.scheme == "" {
-		if sc, ok = rs.firstOf(SchemeSession); !ok {
+		info, _ := ctx.Value(ctxRequestInfo).(requestInfo)
+		if sc, ok = rs.sessionFor(info.path); !ok {
 			sc, ok = rs.firstOf(SchemeBearer)
 		}
 	}
@@ -170,6 +174,12 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 	if err != nil {
 		return nil, err
 	}
+	if rs.isAreaSession(sc.name) {
+		if err := st.signInArea(ctx, sc, id.ID, epoch); err != nil {
+			return nil, err
+		}
+		return &Credential{Scheme: sc.name, Next: landing()}, nil
+	}
 	if sc.Type == SchemeSession {
 		if !session.Present(ctx) {
 			return nil, errors.New("auth.SignIn: no session on this request")
@@ -181,10 +191,7 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		s.Set(sessionSeenKey, strconv.FormatInt(time.Now().UnixMilli(), 10))
 		// A record of the session in the token store, so Sessions lists it
 		// and RevokeSession can end it.
-		ttl := sc.TTL
-		if ttl <= 0 {
-			ttl = 14 * 24 * time.Hour
-		}
+		ttl := sessionTTL(sc)
 		rec := st.stamp(ctx, StoredToken{UserID: id.ID, Scheme: sc.name, Epoch: epoch, Use: useSession, Expires: time.Now().Add(ttl)})
 		if err := st.config.tokens.Save(ctx, hashToken(s.ID()), rec, ttl); err != nil {
 			return nil, err
@@ -202,6 +209,46 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 	}
 	c.Next = landing()
 	return c, nil
+}
+
+func sessionTTL(sc namedScheme) time.Duration {
+	if sc.TTL > 0 {
+		return sc.TTL
+	}
+	return 14 * 24 * time.Hour
+}
+
+// signInArea signs userID in to an area that keeps its own session: a
+// stored token in the area's cookie, scoped to the area's path. The
+// browser's earlier sign-in there, if any, ends.
+func (st *moduleState) signInArea(ctx context.Context, sc namedScheme, userID string, epoch int64) error {
+	set, _ := ctx.Value(ctxCookies).(setCookie)
+	if set == nil {
+		return errors.New("auth.SignIn: no HTTP response to set the " + sc.name + " session cookie on")
+	}
+	if p, ok := ctx.Value(ctxCredentialTok).(presented); ok && p.scheme == sc.name {
+		_ = st.config.tokens.Delete(ctx, hashToken(p.token))
+	}
+	ttl := sessionTTL(sc)
+	tok := newToken()
+	rec := st.stamp(ctx, StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch, Use: useSession, Expires: time.Now().Add(ttl)})
+	if err := st.config.tokens.Save(ctx, hashToken(tok), rec, ttl); err != nil {
+		return err
+	}
+	set(st.areaCookie(sc, tok, int(ttl/time.Second)))
+	secure.RotateCSRF(ctx)
+	return nil
+}
+
+// areaCookie is an area session's cookie carrying tok (maxAge < 0 expires
+// it).
+func (st *moduleState) areaCookie(sc namedScheme, tok string, maxAge int) *http.Cookie {
+	path := st.config.settings.areaSessions[sc.name]
+	if path == "" {
+		path = "/"
+	}
+	return &http.Cookie{Name: areaCookie(sc), Value: tok, Path: path, MaxAge: maxAge,
+		HttpOnly: true, Secure: sc.Secure, SameSite: http.SameSiteLaxMode}
 }
 
 // issue stores and returns a new token (and, for a bearer scheme with
@@ -294,6 +341,13 @@ func SignOut(ctx context.Context) error {
 	sc, ok := st.config.settings.scheme(p.scheme)
 	if !ok {
 		return nil
+	}
+	if st.config.settings.isAreaSession(sc.name) {
+		if set, _ := ctx.Value(ctxCookies).(setCookie); set != nil {
+			set(st.areaCookie(sc, "", -1))
+		}
+		secure.RotateCSRF(ctx)
+		return st.config.tokens.Delete(ctx, hashToken(p.token))
 	}
 	if sc.Type == SchemeSession {
 		s := session.Get(ctx)

@@ -1239,7 +1239,8 @@ SCHEMES — [auth.schemes.<name>], tried apikey → jwt → bearer → session
 
 A credential that arrives but fails leaves the request anonymous; under
 nexus dev the 401 says why. Users.Load is cached per id ([auth] cache).
-Tokens live in Config.Tokens (memory default; auth.CacheTokens(cache)).
+Tokens live in Config.Tokens (memory default; authdb.Bind[DB]() from
+extension/auth/authdb, or auth.CacheTokens(cache), in production).
 
 SIGNING IN — any handler:
 
@@ -1270,7 +1271,12 @@ AREAS — [auth.areas.<n>] prefix, kinds, login, home, forbidden: endpoints
 under the prefix need one of the kinds; a page visit without a sign-in
 goes to the area login with ?next= (302, or 409 + X-Inertia-Location);
 a refused page visit goes to forbidden. Outside areas: [auth] login,
-home, forbidden.
+home, forbidden. session = "<scheme>" gives the area its own sign-in (a
+session scheme, own cookie scoped to the prefix); otherwise it shares the
+app's session.
+
+HANDLER PARAM — func (s *Svc) X(ctx, me auth.Identity, in T): auth.Identity
+requires a sign-in (401); *auth.Identity is nil when anonymous.
 
 ENDPOINTS — [auth.endpoints] login, logout, me (nx.auth.*), token
 (OAuth2 password, refresh_token, client_credentials; CSRF-exempt), revoke.

@@ -199,6 +199,8 @@ kinds  = ["staff"]         # empty: any signed-in user
 login  = "/admin/login"    # this area's sign-in page
 home   = "/admin"          # landing after sign-in here (default: prefix)
 forbidden = "/admin/forbidden"  # page a refused page visit here goes to
+session = "admin"          # a session scheme holding this area's sign-in alone
+                           # (own cookie, Path = prefix); default: the app's session
 
 [auth.sessions]
 single                 = false   # signing in ends the user's other sessions
