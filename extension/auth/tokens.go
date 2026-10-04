@@ -20,6 +20,11 @@ type StoredToken struct {
 	UserID  string    `json:"user_id"`
 	Scheme  string    `json:"scheme"`
 	Expires time.Time `json:"expires,omitzero"`
+	// Epoch is the user's sign-out epoch when the token was issued; a
+	// token from before auth.RevokeUser (or a password change) no longer
+	// works. The store also keeps each user's current epoch, as a record
+	// with only UserID and Epoch.
+	Epoch int64 `json:"epoch,omitempty"`
 }
 
 // TokenStore keeps issued tokens by hash. Config.Tokens sets it; the

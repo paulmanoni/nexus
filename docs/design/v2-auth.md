@@ -685,8 +685,9 @@ the `[auth]` table, and `Config.Users` names the app's `Users`.
 | 1b–1d | `auth.Users` (+ `PasswordSetter`, `LoginChecker`) via `Config.Users: auth.UseUsers(ctor)`, checked at boot; `Load` cached per id; `[auth.schemes.*]` `session`/`bearer`/`apikey` with a hashed `TokenStore`; `auth.Login`/`SignIn`/`SignOut`/`SetPassword`/`Refresh`, `[auth.passwords]`; `[auth] default = "signed-in"` + `auth.Public()`; a failing credential is anonymous with its reason in the 401 (dev) and the trace | `Resolver`, `Backend` capabilities, `UserStore`/`ModelBackend`, `Scheme{Extract, Resolve}`, extractors, `Optional()` | done (2.1) |
 | 2 | areas (kind gates, login redirects with `next`, kinds checked in `Login`), the `next` validator, throttle (per process), `[auth.endpoints]` login/logout/me (`Users.Public`), `OpGates` follows sign-in and areas | `Endpoints`, `LoginEndpoint`/`LogoutEndpoint`, `ErrorHandler` | done (2.2) |
 | 2b | CSRF token rotation on `SignIn`/`SignOut`; the automatic Inertia `auth` prop `{user, can}`; the area `forbidden` page (a path page visits are redirected to, not a component — auth renders no pages itself); a shared (cache-backed) throttle | — | done (2.3) |
-| 3 | refresh, `[auth.sessions]`, `RevokeUser`/`Sessions` (per-user epoch, also re-checked per WS/live message), `auth.Keys`, `jwt`, OAuth2 grants | `Manager.*`, `extension/oauth2` server half | 2.3 |
-| 4 | impersonation, policies, job identities, dashboard tab, `nexus auth check`, `authtest` | `MemoryUserStore` | 2.4 |
+| 3a | per-user epoch in the `TokenStore`; `RevokeUser`, `Revoke`; `[auth.sessions]` single / end_on_password_change / idle; WS and live-view connections re-checked per message (`nexus.RegisterConnectionCheck`) | `Manager.Invalidate*` | done (2.4) |
+| 3b | refresh tokens, the OAuth2 token/revoke endpoints (password and refresh_token grants), `jwt`, `auth.Keys`, `Sessions` (needs a per-user index in the store) | `Manager.*`, `extension/oauth2` server half | 2.5 |
+| 4 | impersonation, policies, job identities, dashboard tab, `nexus auth check`, `authtest` | `MemoryUserStore` | 2.6 |
 | 5 | `nexus migrate` rows for every deprecated name | — | with each slice |
 
 ## Open questions

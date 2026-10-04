@@ -120,6 +120,22 @@
           },
           "type": "object"
         },
+        "sessions": {
+          "additionalProperties": false,
+          "properties": {
+            "end_on_password_change": {
+              "type": "boolean"
+            },
+            "idle": {
+              "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+              "type": "string"
+            },
+            "single": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "throttle": {
           "additionalProperties": false,
           "properties": {

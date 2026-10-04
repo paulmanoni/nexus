@@ -578,6 +578,11 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 			if !open {
 				return
 			}
+			if err := nexus.CheckConnection(ctx); err != nil {
+				// The page's credential no longer holds: answer, then close.
+				send(liveReply{Ref: ev.Ref, Error: nexus.ErrorOf(err).Error()})
+				return
+			}
 			if ev.Event == "__resync" { // the browser lost track: send the whole render
 				patches.forget()
 				if !send(render(ev.Ref, in.errs != nil)) {

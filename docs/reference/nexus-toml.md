@@ -199,6 +199,11 @@ login  = "/admin/login"    # this area's sign-in page
 home   = "/admin"          # landing after sign-in here (default: prefix)
 forbidden = "/admin/forbidden"  # page a refused page visit here goes to
 
+[auth.sessions]
+single                 = false   # signing in ends the user's other sessions
+end_on_password_change = true    # auth.SetPassword ends the user's other sessions and tokens
+idle                   = "2h"    # end a session unused this long (default: never)
+
 [auth.throttle]
 account = "5/15m"          # failed sign-ins per account per window; "off" disables
 ip      = "50/15m"         # per client IP

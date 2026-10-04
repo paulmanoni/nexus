@@ -1252,6 +1252,10 @@ Inertia pages get that {user, can} as the "auth" prop ([auth] page_prop;
 "-" off). SignIn/SignOut rotate the CSRF token. forbidden = "/path" (per
 area or [auth]) is where a refused page visit goes. Config.Throttle =
 auth.CacheThrottle(cache) shares the throttle between replicas.
+auth.RevokeUser(ctx, userID) signs a user out everywhere (sessions, tokens,
+and open WebSocket / live-view connections at their next message);
+auth.Revoke(ctx, token) ends one token. [auth.sessions] single = true,
+end_on_password_change = true (default), idle = "2h".
 [auth] keys: docs/reference/nexus-toml.md.
 
 RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued

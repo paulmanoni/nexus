@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type configPath struct {
 	tokens   TokenStore
 	settings *resolvedSettings
 	loads    *loadCache
+	epochs   *epochCache
 	throttle *throttle
 }
 
@@ -56,6 +58,7 @@ func (st *moduleState) resolveConfig() error {
 	cp.settings = rs
 	if rs.cache > 0 {
 		cp.loads = &loadCache{ttl: rs.cache, m: map[string]loadEntry{}}
+		cp.epochs = &epochCache{ttl: rs.cache, m: map[string]epochEntry{}}
 	}
 	cp.throttle = newThrottle(rs.throttle, st.cfg.Throttle)
 	return nil
@@ -105,8 +108,35 @@ func (sessionExtractor) Extract(r *http.Request) (string, bool) {
 
 func (st *moduleState) sessionResolve(name string) Resolver {
 	return func(ctx context.Context, userID string) (*Identity, error) {
+		s := session.Get(ctx)
+		cur, err := st.epoch(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if s.GetString(sessionEpochKey) != epochString(cur) {
+			return nil, &credentialError{name, revokedReason}
+		}
+		if idle := st.config.settings.sessions.Idle; idle > 0 {
+			now := time.Now()
+			seen, _ := strconv.ParseInt(s.GetString(sessionSeenKey), 10, 64)
+			if seen > 0 && now.Sub(time.UnixMilli(seen)) > idle {
+				return nil, &credentialError{name, idleReasonPrefix + idle.String()}
+			}
+			if now.Sub(time.UnixMilli(seen)) > idle/4 {
+				s.Set(sessionSeenKey, strconv.FormatInt(now.UnixMilli(), 10))
+			}
+		}
 		return st.loadAs(ctx, name, userID)
 	}
+}
+
+// epochString is how a session stores an epoch: "" for none, so a session
+// from before any revocation still matches.
+func epochString(n int64) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.FormatInt(n, 10)
 }
 
 func (st *moduleState) tokenResolve(name string) Resolver {
@@ -117,6 +147,13 @@ func (st *moduleState) tokenResolve(name string) Resolver {
 		}
 		if t == nil || t.Scheme != name {
 			return nil, &credentialError{name, "unknown, expired or revoked token"}
+		}
+		cur, err := st.epoch(ctx, t.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if t.Epoch != cur {
+			return nil, &credentialError{name, revokedReason}
 		}
 		return st.loadAs(ctx, name, t.UserID)
 	}

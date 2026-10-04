@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -148,6 +149,13 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		}
 		return nil, errors.New("auth.SignIn: no session or bearer scheme — name one with auth.Using")
 	}
+	epoch, err := st.epoch(ctx, id.ID)
+	if rs.sessions.Single {
+		epoch, err = st.bumpEpoch(ctx, id.ID) // ends the user's other sessions
+	}
+	if err != nil {
+		return nil, err
+	}
 	if sc.Type == SchemeSession {
 		if !session.Present(ctx) {
 			return nil, errors.New("auth.SignIn: no session on this request")
@@ -155,11 +163,13 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		s := session.Get(ctx)
 		s.Cycle()
 		s.Set(sessionUserKey, id.ID)
+		s.Set(sessionEpochKey, epochString(epoch))
+		s.Set(sessionSeenKey, strconv.FormatInt(time.Now().UnixMilli(), 10))
 		secure.RotateCSRF(ctx)
 		return &Credential{Scheme: sc.name, Next: landing()}, nil
 	}
 	tok := newToken()
-	t := StoredToken{UserID: id.ID, Scheme: sc.name}
+	t := StoredToken{UserID: id.ID, Scheme: sc.name, Epoch: epoch}
 	ttl := time.Duration(0)
 	if sc.Type == SchemeBearer {
 		ttl = sc.TTL
@@ -221,6 +231,13 @@ func SetPassword(ctx context.Context, id *Identity, plain string) error {
 		return err
 	}
 	Refresh(ctx, id.ID)
+	if st.config.settings.endOnPw {
+		n, err := st.bumpEpoch(ctx, id.ID)
+		if err != nil {
+			return err
+		}
+		st.restamp(ctx, id.ID, n) // this session stays signed in
+	}
 	return nil
 }
 

@@ -1290,7 +1290,11 @@ with `?next=`, Login refuses other kinds), `[auth] login/home/next_param`, safe 
 `nexus.Defer(func() Option)` builds an option at boot (after nexus.toml loads). 2.3: Inertia pages
 get an `auth` prop `{user, can}` (`[auth] page_prop`, "-" off; via `nexus.RegisterSharedPageProp`, app
 props win); `SignIn`/`SignOut` rotate CSRF (`secure.RotateCSRF(ctx)`); area/[auth] `forbidden` page
-path for refused page visits; `Config.Throttle: auth.CacheThrottle(cache)` shares the throttle.
+path for refused page visits; `Config.Throttle: auth.CacheThrottle(cache)` shares the throttle. 2.4:
+per-user epoch (stored in the TokenStore) → `auth.RevokeUser(ctx, id)` (sign out everywhere),
+`auth.Revoke(ctx, token)`, `[auth.sessions] single / end_on_password_change (default true) / idle`;
+AsWS and live-view connections run `nexus.RegisterConnectionCheck` checks per message and close when
+the epoch moves.
 
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`

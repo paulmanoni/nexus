@@ -46,6 +46,7 @@ type Settings struct {
 	// "auth"); "-" turns it off.
 	PageProp  string                  `toml:"page_prop"`
 	Areas     map[string]AreaSettings `toml:"areas"`
+	Sessions  SessionRules            `toml:"sessions"`
 	Throttle  ThrottleSettings        `toml:"throttle"`
 	Endpoints EndpointSettings        `toml:"endpoints"`
 }
@@ -60,6 +61,17 @@ type AreaSettings struct {
 	// Forbidden is the page a refused page visit here is sent to (a page
 	// your app serves, e.g. "/admin/forbidden"); empty answers 403.
 	Forbidden string `toml:"forbidden"`
+}
+
+// SessionRules is [auth.sessions]: what ends a user's sessions and tokens.
+type SessionRules struct {
+	// Single: signing in ends the user's other sessions and tokens.
+	Single bool `toml:"single"`
+	// EndOnPasswordChange: auth.SetPassword ends every other session and
+	// token of the user (the one changing it stays). Default true.
+	EndOnPasswordChange *bool `toml:"end_on_password_change"`
+	// Idle ends a session unused this long (sessions only; 0 = never).
+	Idle time.Duration `toml:"idle"`
 }
 
 // ThrottleSettings is [auth.throttle]: failed sign-ins allowed per account
@@ -132,7 +144,9 @@ type resolvedSettings struct {
 	home      string
 	nextParam string
 	forbidden string
-	pageProp  string      // "" when off
+	pageProp  string // "" when off
+	sessions  SessionRules
+	endOnPw   bool
 	areas     []namedArea // longest prefix first
 	throttle  throttleRules
 	endpoints EndpointSettings
@@ -221,6 +235,8 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 	}
 	r.login, r.home, r.nextParam, r.endpoints = s.Login, s.Home, s.NextParam, s.Endpoints
 	r.forbidden = s.Forbidden
+	r.sessions = s.Sessions
+	r.endOnPw = s.Sessions.EndOnPasswordChange == nil || *s.Sessions.EndOnPasswordChange
 	switch s.PageProp {
 	case "":
 		r.pageProp = "auth"

@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-04
+
+### Added
+
+- **Auth stage 3a: ending sessions** on the `Config.Users` path:
+  - A per-user epoch, kept in the `TokenStore`: every session and token
+    records the one it was issued under (`StoredToken.Epoch`).
+  - `auth.RevokeUser(ctx, userID)` — sign out everywhere; `auth.Revoke(ctx,
+    token)` — end one token or API key.
+  - `[auth.sessions]`: `single` (a sign-in ends the user's other sessions),
+    `end_on_password_change` (default true; the session changing it stays),
+    `idle`.
+  - WebSocket (`AsWS`) and live-view connections check before each message
+    and close with `Unauthenticated` once the user's epoch moves.
+- `nexus.RegisterConnectionCheck` / `nexus.CheckConnection`: checks run
+  before each message on long-lived connections.
+
 ## [2.3.0] - 2026-10-04
 
 ### Added

@@ -152,6 +152,25 @@ off, and an app prop with the same key wins.
 `auth.SignIn` and `auth.SignOut` give the browser a new CSRF token, so a token planted
 before a sign-in is worthless after it.
 
+### Signing out everywhere
+
+```go
+auth.RevokeUser(ctx, userID)   // ends every session and token the user holds
+auth.Revoke(ctx, token)        // ends one bearer token or API key
+```
+
+Each user has an epoch — when their credentials were last ended — and every session and
+token records the one it was issued under, so ending them all is one write. Open
+WebSocket and live-page connections check it before each message and close with
+`Unauthenticated` once it moves. Other replicas notice within `[auth] cache`.
+
+```toml
+[auth.sessions]
+single                 = false   # true: signing in ends the user's other sessions
+end_on_password_change = true    # auth.SetPassword ends every other session and token
+idle                   = "2h"    # end a session unused this long (0 = never)
+```
+
 ### Throttling sign-ins
 
 `auth.Login` counts failures — per account, and per client IP (`nexus.ClientIP`,

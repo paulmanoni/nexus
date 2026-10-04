@@ -49,6 +49,11 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 			}
 		} else if id != nil {
 			ctx = WithIdentity(ctx, id)
+			if state.config.settings != nil {
+				if n, err := state.epoch(ctx, id.ID); err == nil {
+					ctx = context.WithValue(ctx, ctxAuthEpoch, authEpoch{id.ID, n})
+				}
+			}
 			if state.cfg.OnResolve != nil {
 				state.cfg.OnResolve(ctx, id)
 			}

@@ -203,6 +203,12 @@ func (a *App) wsEndpointFor(path, service string) (*wsEndpoint, bool) {
 func mountWSEndpoint(app *App, lc di.Lifecycle, ep *wsEndpoint, cfg *wsConfig, firstMsgType string) {
 	hub := ep.hub
 	hub.OnMessage(func(conn *ws.Connection, _ int, data []byte) error {
+		if err := CheckConnection(conn.Context()); err != nil {
+			// The connection's credential no longer holds (signed out
+			// everywhere, password changed): tell the client, then close.
+			_ = (&WSSession{conn: conn, hub: hub, ctx: conn.Context()}).Send("error", wsErrorEvent("", ErrorOf(err)))
+			return err
+		}
 		dispatchWSMessage(app, ep, conn, data)
 		return nil
 	})
@@ -597,6 +603,43 @@ var (
 	requestIdentityMu    sync.RWMutex
 	requestIdentityFuncs []RequestIdentityFunc
 )
+
+// ConnectionCheck decides whether a long-lived connection (an AsWS socket,
+// a live view page) may go on: it runs before each message with the
+// connection's context, and an error closes the connection with it.
+// extension/auth registers one that ends connections whose credential was
+// revoked.
+type ConnectionCheck func(ctx context.Context) error
+
+var (
+	connectionChecksMu sync.RWMutex
+	connectionChecks   []ConnectionCheck
+)
+
+// RegisterConnectionCheck adds a ConnectionCheck. Safe to call from
+// package init.
+func RegisterConnectionCheck(fn ConnectionCheck) {
+	if fn == nil {
+		return
+	}
+	connectionChecksMu.Lock()
+	connectionChecks = append(connectionChecks, fn)
+	connectionChecksMu.Unlock()
+}
+
+// CheckConnection runs the registered ConnectionChecks; the first error
+// wins. Transports with their own sockets (view's live pages) call it per
+// message.
+func CheckConnection(ctx context.Context) error {
+	connectionChecksMu.RLock()
+	defer connectionChecksMu.RUnlock()
+	for _, fn := range connectionChecks {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // SharedPagePropFunc contributes one prop to every server-rendered page —
 // key "" to skip this request.
