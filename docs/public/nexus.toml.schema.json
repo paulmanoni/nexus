@@ -86,6 +86,45 @@
         "next_param": {
           "type": "string"
         },
+        "oauth2": {
+          "additionalProperties": false,
+          "properties": {
+            "clients": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "grants": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "perms": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "secret": {
+                    "type": "string"
+                  },
+                  "secret_hash": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "require_client": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "page_prop": {
           "type": "string"
         },

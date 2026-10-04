@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-10-04
+
+### Added
+
+- **Auth: OAuth2 clients** at the token endpoint:
+  - `[auth.oauth2.clients.<id>]` (`secret` or `secret_hash`, `grants`,
+    `perms`, `kind`), or `Config.Clients` (`auth.Clients`) for clients in a
+    database.
+  - Client authentication by HTTP Basic or `client_id`/`client_secret`;
+    `invalid_client` / `unauthorized_client` per RFC 6749.
+  - The `client_credentials` grant: a token for the client itself (identity
+    `client:<id>`, its perms and kind, no refresh token).
+  - `[auth.oauth2] require_client`: the password and refresh_token grants
+    need a known client too.
+
 ## [2.7.0] - 2026-10-04
 
 ### Added

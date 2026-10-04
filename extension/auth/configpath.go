@@ -178,6 +178,9 @@ func (st *moduleState) tokenResolve(name string) Resolver {
 		if t.Epoch != cur {
 			return nil, &credentialError{name, revokedReason}
 		}
+		if strings.HasPrefix(t.UserID, clientPrefix) {
+			return st.clientIdentity(ctx, name, t.UserID)
+		}
 		real, err := st.loadAs(ctx, name, t.UserID)
 		if err != nil {
 			return nil, err

@@ -229,6 +229,11 @@ type Config struct {
 	// CacheTokens(cache) in production. Config-driven path only.
 	Tokens TokenStore
 
+	// Clients finds OAuth2 clients the token endpoint authenticates (a
+	// database, say); [auth.oauth2.clients.*] are consulted after it.
+	// Config-driven path only.
+	Clients Clients
+
 	// Throttle keeps the [auth.throttle] failure counts. Nil counts in the
 	// process (each replica on its own); CacheThrottle(cache) shares them.
 	// Config-driven path only.

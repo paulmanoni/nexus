@@ -48,6 +48,7 @@ type Settings struct {
 	Areas         map[string]AreaSettings `toml:"areas"`
 	Sessions      SessionRules            `toml:"sessions"`
 	Impersonation ImpersonationSettings   `toml:"impersonation"`
+	OAuth2        OAuth2Settings          `toml:"oauth2"`
 	Throttle      ThrottleSettings        `toml:"throttle"`
 	Endpoints     EndpointSettings        `toml:"endpoints"`
 }
@@ -73,6 +74,30 @@ type SessionRules struct {
 	EndOnPasswordChange *bool `toml:"end_on_password_change"`
 	// Idle ends a session unused this long (sessions only; 0 = never).
 	Idle time.Duration `toml:"idle"`
+}
+
+// OAuth2Settings is [auth.oauth2]: the clients the token endpoint knows.
+type OAuth2Settings struct {
+	// RequireClient makes the password and refresh_token grants need a
+	// known client too (client_credentials always does).
+	RequireClient bool                      `toml:"require_client"`
+	Clients       map[string]ClientSettings `toml:"clients"`
+}
+
+// ClientSettings is one [auth.oauth2.clients.<id>] table.
+type ClientSettings struct {
+	// Secret or SecretHash (an encoded hash, as auth.Hashers writes) is
+	// what the client authenticates with; neither: a public client, which
+	// can't use client_credentials.
+	Secret     string `toml:"secret"`
+	SecretHash string `toml:"secret_hash"`
+	// Grants it may use: password, refresh_token, client_credentials
+	// (empty: all three).
+	Grants []string `toml:"grants"`
+	// Perms and Kind (default "client") are the identity a
+	// client_credentials token carries.
+	Perms []string `toml:"perms"`
+	Kind  string   `toml:"kind"`
 }
 
 // ImpersonationSettings is [auth.impersonation].
@@ -184,6 +209,7 @@ type resolvedSettings struct {
 	sessions      SessionRules
 	endOnPw       bool
 	impersonation ImpersonationSettings
+	oauth2        OAuth2Settings
 	areas         []namedArea // longest prefix first
 	throttle      throttleRules
 	endpoints     EndpointSettings
@@ -288,6 +314,7 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 	}
 	r.login, r.home, r.nextParam, r.endpoints = s.Login, s.Home, s.NextParam, s.Endpoints
 	r.forbidden = s.Forbidden
+	r.oauth2 = s.OAuth2
 	r.impersonation = s.Impersonation
 	if r.impersonation.Permission == "" {
 		r.impersonation.Permission = "auth.impersonate"

@@ -688,7 +688,7 @@ the `[auth]` table, and `Config.Users` names the app's `Users`.
 | 3a | per-user epoch in the `TokenStore`; `RevokeUser`, `Revoke`; `[auth.sessions]` single / end_on_password_change / idle; WS and live-view connections re-checked per message (`nexus.RegisterConnectionCheck`) | `Manager.Invalidate*` | done (2.4) |
 | 3b | refresh tokens (rotating), `[auth.endpoints]` token (OAuth2 password + refresh_token grants) and revoke, CSRF-exempt via `App.ExemptCSRF`; `jwt` (secret / PEM / JWKS, alg pinned to the key) | `Manager.*`, `extension/oauth2` server half | done (2.5) |
 | 3c | `auth.Sessions`/`RevokeSession` (sessions recorded in the token store), `auth.Keys` (named API keys), through an optional `TokenLister` | — | done (2.6) |
-| 3d | OAuth2 clients (`client_credentials`, `[auth.oauth2.clients]`) | `extension/oauth2` clients | later |
+| 3d | OAuth2 clients: `[auth.oauth2.clients]` or `auth.Clients`, Basic/body client auth, `client_credentials` (identity `client:<id>`), `require_client` | `extension/oauth2` clients | done (2.8) |
 | 4 | impersonation (the credential stays the actor's; a session/token records the target), `auth.Policy`/`Check`/`Allowed`, jobs run as their enqueuer (`nexus.RegisterIdentityRestorer`), `nexus auth check`, `authtest` (`As`/`AsUser`, test-binary-only) | `MemoryUserStore` | done (2.7) |
 | 4b | the dashboard Auth tab (schemes, areas, gate matrix, sessions, throttle locks, impersonations) | — | later |
 | 5 | `nexus migrate` rows for every deprecated name | — | with each slice |

@@ -208,6 +208,15 @@ idle                   = "2h"    # end a session unused this long (default: neve
 permission = "auth.impersonate"   # who may impersonate (default)
 endpoint   = "/admin/impersonate" # POST {user_id} starts, DELETE stops
 
+[auth.oauth2]
+require_client = false     # password/refresh_token grants need a known client
+
+[auth.oauth2.clients.billing]
+secret = "${BILLING_SECRET}"   # or secret_hash; neither = public client
+grants = ["client_credentials"] # empty: password, refresh_token, client_credentials
+perms  = ["reports.view"]       # its client_credentials identity
+kind   = "service"              # default "client"
+
 [auth.throttle]
 account = "5/15m"          # failed sign-ins per account per window; "off" disables
 ip      = "50/15m"         # per client IP

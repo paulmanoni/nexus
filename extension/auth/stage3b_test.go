@@ -124,7 +124,7 @@ func TestTokenEndpoint(t *testing.T) {
 	if code, m := postForm(t, srv, "/oauth/token", url.Values{"grant_type": {"password"}, "username": {"ana"}, "password": {"nope"}}); code != 400 || m["error"] != "invalid_grant" {
 		t.Fatalf("a wrong password = %d %v", code, m)
 	}
-	if code, m := postForm(t, srv, "/oauth/token", url.Values{"grant_type": {"client_credentials"}}); code != 400 || m["error"] != "unsupported_grant_type" {
+	if code, m := postForm(t, srv, "/oauth/token", url.Values{"grant_type": {"authorization_code"}}); code != 400 || m["error"] != "unsupported_grant_type" {
 		t.Fatalf("an unsupported grant = %d %v", code, m)
 	}
 	code, m = postForm(t, srv, "/oauth/token", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}})

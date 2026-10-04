@@ -1272,6 +1272,10 @@ auth.Check(ctx, perm, obj) / auth.Allowed apply perm then the policy.
 Jobs run as the user who enqueued them. nexus auth check prints the
 effective [auth] setup. Tests: extension/auth/authtest — authtest.As(id),
 authtest.AsUser("7"), authtest.Users; app.With(header) in nexustest.
+OAuth2 clients: [auth.oauth2.clients.<id>] secret | secret_hash, grants,
+perms, kind (or Config.Clients for a database); the token endpoint takes
+client_credentials (identity "client:<id>") and, with require_client,
+needs a client for every grant.
 [auth] keys: docs/reference/nexus-toml.md.
 
 RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued

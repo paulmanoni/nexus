@@ -229,27 +229,71 @@ func oauthError(c *httpx.Ctx, status int, code, desc string) {
 func (st *moduleState) tokenEndpoint(c *httpx.Ctx) {
 	ctx := c.Request.Context()
 	p := oauthParams(c)
-	var cred *Credential
-	var err error
-	switch p["grant_type"] {
-	case "password":
-		sc, ok := st.config.settings.firstOf(SchemeBearer)
-		if !ok {
-			oauthError(c, http.StatusBadRequest, "unsupported_grant_type", "no bearer scheme issues tokens")
-			return
-		}
-		var id *Identity
-		if id, err = Login(ctx, Password{Username: p["username"], Password: p["password"]}); err == nil {
-			cred, err = SignIn(ctx, id, Using(sc.name))
-		}
-	case "refresh_token":
-		cred, err = RefreshToken(ctx, p["refresh_token"])
+	grant := p["grant_type"]
+	switch grant {
+	case "password", "refresh_token", "client_credentials":
 	case "":
 		oauthError(c, http.StatusBadRequest, "invalid_request", "grant_type is required")
 		return
 	default:
-		oauthError(c, http.StatusBadRequest, "unsupported_grant_type", "supported: password, refresh_token")
+		oauthError(c, http.StatusBadRequest, "unsupported_grant_type", "supported: password, refresh_token, client_credentials")
 		return
+	}
+
+	// The client: HTTP Basic, else client_id / client_secret in the body.
+	id, secret, basic := c.Request.BasicAuth()
+	if !basic {
+		id, secret = p["client_id"], p["client_secret"]
+	}
+	var cl *Client
+	if id != "" {
+		found, err := st.client(ctx, id)
+		if err != nil {
+			nexus.WriteError(c, err)
+			return
+		}
+		if found == nil || !st.clientSecretOK(found, secret) {
+			if basic {
+				c.Header("WWW-Authenticate", `Basic realm="token"`)
+			}
+			oauthError(c, http.StatusUnauthorized, "invalid_client", "unknown client or wrong secret")
+			return
+		}
+		cl = found
+	}
+	if cl == nil && (grant == "client_credentials" || st.config.settings.oauth2.RequireClient) {
+		oauthError(c, http.StatusUnauthorized, "invalid_client", "this grant needs client authentication")
+		return
+	}
+	if cl != nil && !cl.may(grant) {
+		oauthError(c, http.StatusBadRequest, "unauthorized_client", "the client may not use "+grant)
+		return
+	}
+	sc, ok := st.config.settings.firstOf(SchemeBearer)
+	if !ok {
+		oauthError(c, http.StatusBadRequest, "unsupported_grant_type", "no bearer scheme issues tokens")
+		return
+	}
+
+	var cred *Credential
+	var err error
+	switch grant {
+	case "password":
+		var who *Identity
+		if who, err = Login(ctx, Password{Username: p["username"], Password: p["password"]}); err == nil {
+			cred, err = SignIn(ctx, who, Using(sc.name))
+		}
+	case "refresh_token":
+		cred, err = RefreshToken(ctx, p["refresh_token"])
+	case "client_credentials":
+		if !cl.confidential() {
+			oauthError(c, http.StatusUnauthorized, "invalid_client", "a public client can't use client_credentials")
+			return
+		}
+		var epoch int64
+		if epoch, err = st.epoch(ctx, clientPrefix+cl.ID); err == nil {
+			cred, err = st.issueTokens(ctx, sc, clientPrefix+cl.ID, epoch, false)
+		}
 	}
 	if err != nil {
 		ne := nexus.ErrorOf(err)

@@ -214,6 +214,27 @@ The token endpoint takes form-encoded or JSON bodies, answers errors as
 sets no cookie and answers only the caller, which is also what
 `app.ExemptCSRF(path)` is for.
 
+**OAuth2 clients.** The token endpoint also knows clients — services and apps that call
+it — from nexus.toml, or from your database through `Config.Clients` (an
+`auth.Clients`, consulted first):
+
+```toml
+[auth.oauth2]
+require_client = false                 # true: password and refresh_token need a known client too
+
+[auth.oauth2.clients.billing]
+secret = "${BILLING_CLIENT_SECRET}"    # or secret_hash, as auth.Hashers encodes; neither: a public client
+grants = ["client_credentials"]        # empty: all of password, refresh_token, client_credentials
+perms  = ["reports.view"]              # what its client_credentials tokens may do
+kind   = "service"                     # their identity's Kind (default "client")
+```
+
+A client authenticates with HTTP Basic or `client_id`/`client_secret` in the body;
+a wrong secret is `invalid_client` (401). With `client_credentials` a confidential
+client gets a token as itself — identity `client:<id>`, its `perms` and `kind`, no
+refresh token — which every gate, area and `RevokeUser("client:<id>")` treats like
+a user's.
+
 A `jwt` scheme verifies tokens another service issued — nexus never issues them — and
 loads the user named by the subject claim:
 

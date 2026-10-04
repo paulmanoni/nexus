@@ -1307,7 +1307,9 @@ credential stays the actor's); `auth.Policy[T](rule)` (an Option) + `auth.Check(
 `auth.Allowed`; jobs run as their enqueuer (`nexus.RegisterIdentityRestorer` → `Users.Load`); `nexus auth
 check [nexus.toml]` (`auth.Explain`/`ExplainTOML`, `config.DecodeTable`); `authtest.As(&Identity)` /
 `authtest.AsUser(id)` headers (honoured only in test binaries) + `authtest.Users`; `nexustest` `App.With(h)`.
-Durations: Go syntax — "720h", never "30d".
+Durations: Go syntax — "720h", never "30d". 2.8: OAuth2 clients — `[auth.oauth2.clients.<id>]` (secret |
+secret_hash, grants, perms, kind) or `Config.Clients` (`auth.Clients`); token endpoint authenticates them
+(Basic or body), `client_credentials` → identity `client:<id>` (no refresh), `[auth.oauth2] require_client`.
 
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`

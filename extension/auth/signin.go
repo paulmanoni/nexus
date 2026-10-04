@@ -196,6 +196,10 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 // issue stores and returns a new token (and, for a bearer scheme with
 // refresh, a refresh token) for userID under epoch.
 func (st *moduleState) issue(ctx context.Context, sc namedScheme, userID string, epoch int64) (*Credential, error) {
+	return st.issueTokens(ctx, sc, userID, epoch, true)
+}
+
+func (st *moduleState) issueTokens(ctx context.Context, sc namedScheme, userID string, epoch int64, refresh bool) (*Credential, error) {
 	tok := newToken()
 	t := st.stamp(ctx, StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch})
 	ttl := time.Duration(0)
@@ -211,7 +215,7 @@ func (st *moduleState) issue(ctx context.Context, sc namedScheme, userID string,
 		return c, nil
 	}
 	c.TokenType = "Bearer"
-	if sc.Refresh > 0 {
+	if sc.Refresh > 0 && refresh {
 		rt := newToken()
 		r := st.stamp(ctx, StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch, Use: "refresh", Expires: time.Now().Add(sc.Refresh)})
 		if err := st.config.tokens.Save(ctx, hashToken(rt), r, sc.Refresh); err != nil {
