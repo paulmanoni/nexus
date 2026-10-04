@@ -41,9 +41,10 @@ func newResumeToken() string {
 
 // park keeps a page's state under token until ResumeGrace runs out.
 func park(token string, p *parkedPage) {
-	p.expires = time.Now().Add(ResumeGrace)
 	parking.Lock()
 	defer parking.Unlock()
+	grace := ResumeGrace
+	p.expires = time.Now().Add(grace)
 	sweepLocked(time.Now())
 	for len(parking.m) >= resumeMax {
 		var oldest string
@@ -56,7 +57,7 @@ func park(token string, p *parkedPage) {
 		delete(parking.m, oldest)
 	}
 	parking.m[token] = p
-	time.AfterFunc(ResumeGrace+time.Second, func() {
+	time.AfterFunc(grace+time.Second, func() {
 		parking.Lock()
 		defer parking.Unlock()
 		sweepLocked(time.Now())
@@ -103,5 +104,18 @@ func dropParked() {
 	for k, p := range parking.m {
 		p.sock.close()
 		delete(parking.m, k)
+	}
+}
+
+// setGrace sets ResumeGrace for a test, under the lock park reads it with.
+func setGrace(d time.Duration) (restore func()) {
+	parking.Lock()
+	defer parking.Unlock()
+	old := ResumeGrace
+	ResumeGrace = d
+	return func() {
+		parking.Lock()
+		defer parking.Unlock()
+		ResumeGrace = old
 	}
 }

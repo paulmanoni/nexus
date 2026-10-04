@@ -101,9 +101,7 @@ func expectNoReply(t *testing.T, conn *websocket.Conn) {
 }
 
 func TestLiveBroadcast(t *testing.T) {
-	grace := ResumeGrace
-	ResumeGrace = 100 * time.Millisecond
-	t.Cleanup(func() { ResumeGrace = grace })
+	t.Cleanup(setGrace(100 * time.Millisecond))
 	srv := bootLikes(t)
 	if _, err := http.Get(srv.URL + "/likes/lobby"); err != nil {
 		t.Fatal(err)

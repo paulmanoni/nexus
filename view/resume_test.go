@@ -60,9 +60,7 @@ func TestLiveResume(t *testing.T) {
 }
 
 func TestLiveResumeGrace(t *testing.T) {
-	grace := ResumeGrace
-	ResumeGrace = 50 * time.Millisecond
-	t.Cleanup(func() { ResumeGrace = grace })
+	t.Cleanup(setGrace(50 * time.Millisecond))
 	srv := bootLive(t)
 	a := dialLive(t, srv, "/count/ana/_live")
 	token := firstToken(t, a)

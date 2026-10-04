@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- view: parking a page reads `view.ResumeGrace` under the parking lock, so
+  changing it while pages disconnect is not a data race (CI's `-race` run of
+  the view tests failed since 2.12.0).
+
 ## [2.13.2] - 2026-10-04
 
 ### Changed
