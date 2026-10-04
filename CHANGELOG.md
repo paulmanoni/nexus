@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-10-04
+
 ### Changed
 
 - view: navigating to another live page sends the change from the page the
