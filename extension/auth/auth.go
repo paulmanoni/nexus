@@ -88,6 +88,10 @@ type Identity struct {
 	// Scheme names the [auth.schemes] entry that authenticated the
 	// request; nexus sets it on the config-driven path.
 	Scheme string
+	// Actor is the real user while they impersonate this one
+	// (auth.Impersonate); nil otherwise. Gates evaluate the identity, not
+	// the actor.
+	Actor *Identity
 }
 
 // Has reports whether the identity carries the given permission: in Perms
@@ -504,6 +508,7 @@ func wireModule(cfg Config, schemes []boundScheme, schemesIn []Scheme, cp func(*
 		nexus.Invoke(func(app *nexus.App) error {
 			state.bus = app.Bus()
 			state.app = app
+			app.SetValue(stateKey{}, state)
 			if cp != nil {
 				if err := state.installConfigPath(app); err != nil {
 					return fmt.Errorf("auth: %w", err)

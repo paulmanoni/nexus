@@ -202,7 +202,7 @@ user's last `RevokeUser` is refused.
 [auth.schemes.api]
 type    = "bearer"
 ttl     = "1h"
-refresh = "30d"
+refresh = "720h"
 
 [auth.endpoints]
 token  = "/oauth/token"     # RFC 6749: grant_type=password and refresh_token
@@ -232,6 +232,80 @@ for a public key), so a token can't pick `none`, or HS256 against an RSA key. JW
 keys are cached for an hour and fetched again for an unknown `kid`. A jwt scheme and
 a bearer scheme share the `Authorization` header: a JWT has three dot-separated
 parts, a nexus token none.
+
+### Impersonation
+
+```go
+err := auth.Impersonate(ctx, targetID)   // the rest of this session acts as targetID
+err = auth.StopImpersonating(ctx)
+```
+
+```toml
+[auth.impersonation]
+permission = "auth.impersonate"     # who may (default)
+endpoint   = "/admin/impersonate"   # POST {user_id} starts, DELETE stops
+```
+
+While impersonating, `auth.Current(ctx)` is the target and `.Actor` the real user;
+gates evaluate the target, and `auth.reject` trace events carry both ids. Nobody can
+take on a user holding a permission they lack, impersonations don't nest, and the
+credential stays the real user's — signing them out (or `RevokeUser` on them) ends
+it. Works on sessions, bearer tokens and API keys. The `me` endpoint and the Inertia
+`auth` prop add `actor`, for a "you are acting as …" banner.
+
+### Per-object rules
+
+```go
+var OrderPolicy = auth.Policy(func(ctx context.Context, me *auth.Identity, perm string, o *Order) bool {
+    return o.CustomerID == me.ID || me.Has("orders.*")
+})
+
+nexus.Boot(OrderPolicy, …)
+
+if err := auth.Check(ctx, "orders.cancel", order); err != nil {   // perm, then the *Order policy
+    return nil, err                                               // Unauthenticated or Forbidden
+}
+auth.Allowed(ctx, "orders.cancel", order)                         // the bool, for UI toggles
+```
+
+A policy is registered per type — `*Order` and `Order` are different — and a type
+without one is checked on the permission alone; `perm` may be `""` to check only the
+policy.
+
+### Background jobs
+
+A job enqueued from a request records who enqueued it, and runs as that user: their
+identity is loaded through `Users.Load` when the job starts, so `auth.Current(ctx)`,
+`auth.Can` and `auth.Check` work inside it with the permissions they have *then*. A
+job whose user no longer exists fails without retrying.
+
+### Checking the setup
+
+`nexus auth check [nexus.toml]` validates `[auth]` the way boot does — an unknown key,
+a scheme type nexus doesn't have, a jwt scheme without a key, a duration like `"30d"`
+(Go durations stop at hours: write `"720h"`) — and prints the effective setup:
+schemes in the order they are tried, the default gate, pages and areas, endpoints,
+and the session, throttle and password rules.
+
+### Testing
+
+```go
+import "github.com/paulmanoni/nexus/v2/extension/auth/authtest"
+
+users := authtest.NewUsers().
+    Add(auth.Identity{ID: "7", Kind: "staff", Perms: []string{"orders.*"}}, "ana@example.com", "a long password")
+app := nexustest.New(t, config.Runtime{}, auth.Module(auth.Config{Users: auth.StaticUsers(users)}), orders.Module)
+
+app.GET("/admin/orders").AssertStatus(401)
+app.With(authtest.As(&auth.Identity{ID: "1", Kind: "staff", Perms: []string{"orders.view"}})).
+    GET("/admin/orders").AssertOK()
+app.With(authtest.AsUser("7")).GET("/admin/orders").AssertOK()   // loaded through Users
+```
+
+`authtest.As` and `AsUser` return a header the auth middleware honours **only in a
+test binary**, so every gate, area rule and policy runs as for a real sign-in.
+`authtest.Users` is an in-memory `Users` (with `SetPassword`) for tests and
+examples. `nexustest`'s `App.With(header)` sends any header with every request.
 
 ### Throttling sign-ins
 

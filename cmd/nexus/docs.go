@@ -1256,7 +1256,7 @@ auth.RevokeUser(ctx, userID) signs a user out everywhere (sessions, tokens,
 and open WebSocket / live-view connections at their next message);
 auth.Revoke(ctx, token) ends one token. [auth.sessions] single = true,
 end_on_password_change = true (default), idle = "2h".
-Bearer refresh = "30d" adds refresh tokens (auth.RefreshToken rotates
+Bearer refresh = "720h" adds refresh tokens (auth.RefreshToken rotates
 them); [auth.endpoints] token = "/oauth/token" (password, refresh_token
 grants) and revoke = "/oauth/revoke" skip CSRF. A jwt scheme verifies
 tokens issued elsewhere: secret | public_key | jwks, issuer, audience,
@@ -1265,6 +1265,13 @@ auth.Sessions(ctx, uid) lists where a user is signed in (sessions, tokens);
 auth.RevokeSession(ctx, uid, id) ends one. auth.Keys.Create(ctx, uid,
 scheme, name) / List / Revoke manage named API keys. Both need a
 TokenStore implementing auth.TokenLister (memory and CacheTokens do).
+auth.Impersonate(ctx, id) / StopImpersonating(ctx): Current is the target,
+.Actor the real user ([auth.impersonation] permission, endpoint).
+auth.Policy(func(ctx, me, perm string, o *Order) bool) is an Option;
+auth.Check(ctx, perm, obj) / auth.Allowed apply perm then the policy.
+Jobs run as the user who enqueued them. nexus auth check prints the
+effective [auth] setup. Tests: extension/auth/authtest — authtest.As(id),
+authtest.AsUser("7"), authtest.Users; app.With(header) in nexustest.
 [auth] keys: docs/reference/nexus-toml.md.
 
 RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued

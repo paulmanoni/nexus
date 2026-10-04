@@ -142,7 +142,11 @@ func (st *moduleState) sessionResolve(name string) Resolver {
 				s.Set(sessionSeenKey, strconv.FormatInt(now.UnixMilli(), 10))
 			}
 		}
-		return st.loadAs(ctx, name, userID)
+		real, err := st.loadAs(ctx, name, userID)
+		if err != nil {
+			return nil, err
+		}
+		return st.acting(ctx, real, s.GetString(sessionActingKey))
 	}
 }
 
@@ -174,7 +178,11 @@ func (st *moduleState) tokenResolve(name string) Resolver {
 		if t.Epoch != cur {
 			return nil, &credentialError{name, revokedReason}
 		}
-		return st.loadAs(ctx, name, t.UserID)
+		real, err := st.loadAs(ctx, name, t.UserID)
+		if err != nil {
+			return nil, err
+		}
+		return st.acting(ctx, real, t.Impersonating)
 	}
 }
 

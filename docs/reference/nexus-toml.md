@@ -204,6 +204,10 @@ single                 = false   # signing in ends the user's other sessions
 end_on_password_change = true    # auth.SetPassword ends the user's other sessions and tokens
 idle                   = "2h"    # end a session unused this long (default: never)
 
+[auth.impersonation]
+permission = "auth.impersonate"   # who may impersonate (default)
+endpoint   = "/admin/impersonate" # POST {user_id} starts, DELETE stops
+
 [auth.throttle]
 account = "5/15m"          # failed sign-ins per account per window; "off" disables
 ip      = "50/15m"         # per client IP
@@ -225,7 +229,7 @@ secure = true              # mark the cookie Secure behind TLS
 [auth.schemes.api]
 type    = "bearer"         # opaque tokens auth.SignIn issues, stored as SHA-256
 ttl     = "12h"            # default 12h
-refresh = "30d"            # also issue refresh tokens (default: none)
+refresh = "720h"           # also issue refresh tokens (default: none); Go durations: no "d"
 
 [auth.schemes.mobile]
 type     = "jwt"           # verify tokens another service issued

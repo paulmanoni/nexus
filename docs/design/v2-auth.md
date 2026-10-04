@@ -239,7 +239,7 @@ cookie = "sid"
 [auth.schemes.api]
 type    = "bearer"          # opaque tokens issued by nexus
 ttl     = "2h"
-refresh = "30d"
+refresh = "720h"
 
 [auth.schemes.partners]
 type   = "apikey"
@@ -689,7 +689,8 @@ the `[auth]` table, and `Config.Users` names the app's `Users`.
 | 3b | refresh tokens (rotating), `[auth.endpoints]` token (OAuth2 password + refresh_token grants) and revoke, CSRF-exempt via `App.ExemptCSRF`; `jwt` (secret / PEM / JWKS, alg pinned to the key) | `Manager.*`, `extension/oauth2` server half | done (2.5) |
 | 3c | `auth.Sessions`/`RevokeSession` (sessions recorded in the token store), `auth.Keys` (named API keys), through an optional `TokenLister` | — | done (2.6) |
 | 3d | OAuth2 clients (`client_credentials`, `[auth.oauth2.clients]`) | `extension/oauth2` clients | later |
-| 4 | impersonation, policies, job identities, dashboard tab, `nexus auth check`, `authtest` | `MemoryUserStore` | 2.7 |
+| 4 | impersonation (the credential stays the actor's; a session/token records the target), `auth.Policy`/`Check`/`Allowed`, jobs run as their enqueuer (`nexus.RegisterIdentityRestorer`), `nexus auth check`, `authtest` (`As`/`AsUser`, test-binary-only) | `MemoryUserStore` | done (2.7) |
+| 4b | the dashboard Auth tab (schemes, areas, gate matrix, sessions, throttle locks, impersonations) | — | later |
 | 5 | `nexus migrate` rows for every deprecated name | — | with each slice |
 
 ## Open questions

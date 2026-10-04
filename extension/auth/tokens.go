@@ -31,10 +31,12 @@ type StoredToken struct {
 	Use string `json:"use,omitempty"`
 	// Name is an API key's name; Created, Agent and IP record when, to
 	// what User-Agent and from where it was issued (auth.Sessions).
-	Name    string    `json:"name,omitempty"`
-	Created time.Time `json:"created,omitzero"`
-	Agent   string    `json:"agent,omitempty"`
-	IP      string    `json:"ip,omitempty"`
+	// Impersonating is the user this token's owner (UserID) acts as.
+	Impersonating string    `json:"impersonating,omitempty"`
+	Name          string    `json:"name,omitempty"`
+	Created       time.Time `json:"created,omitzero"`
+	Agent         string    `json:"agent,omitempty"`
+	IP            string    `json:"ip,omitempty"`
 }
 
 // TokenStore keeps issued tokens by hash. Config.Tokens sets it; the

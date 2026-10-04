@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-10-04
+
+### Added
+
+- **Auth stage 4** on the `Config.Users` path:
+  - Impersonation: `auth.Impersonate` / `auth.StopImpersonating`,
+    `Identity.Actor`, `[auth.impersonation]` (`permission`, `endpoint`). No
+    escalation past the actor's permissions, no nesting; the credential stays
+    the actor's. `me` and the Inertia `auth` prop carry `actor`.
+  - Per-object rules: `auth.Policy[T]`, `auth.Check(ctx, perm, obj)`,
+    `auth.Allowed`.
+  - Jobs run as the user who enqueued them, loaded through `Users.Load` at
+    start; a job whose user is gone fails without retrying.
+  - `nexus auth check [nexus.toml]`, from `auth.Explain` / `auth.ExplainTOML`.
+  - `extension/auth/authtest`: `As`, `AsUser` (a test-binary-only credential)
+    and an in-memory `Users`.
+- `nexustest`: `App.With(header)`.
+- `config.DecodeTable`: one nexus.toml table decoded as a `Section` would.
+- `nexus.RegisterIdentityRestorer` / `nexus.RestoreIdentity`.
+
+### Fixed
+
+- The docs gave refresh lifetimes as `"30d"`, which Go durations don't parse;
+  they read `"720h"`.
+
 ## [2.6.0] - 2026-10-04
 
 ### Added

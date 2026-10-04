@@ -39,8 +39,9 @@ import (
 // App is a started, listener-less nexus app under test. It is an http.Handler.
 type App struct {
 	*nexus.App
-	tb   testing.TB
-	gqls string // resolved GraphQL mount path
+	tb     testing.TB
+	gqls   string      // resolved GraphQL mount path
+	header http.Header // added to every request (With)
 }
 
 // New boots cfg+opts in-process and registers cleanup. It fails the test on any
@@ -75,10 +76,32 @@ func New(tb testing.TB, cfg config.Runtime, opts ...nexus.Option) *App {
 // pages run. To see the check reject a request, drive App.ServeHTTP directly.
 func (a *App) Do(req *http.Request) *Response {
 	a.tb.Helper()
+	for k, vs := range a.header {
+		if req.Header.Get(k) == "" {
+			req.Header[k] = vs
+		}
+	}
 	withCSRFToken(req)
 	rec := httptest.NewRecorder()
 	a.ServeHTTP(rec, req)
 	return &Response{tb: a.tb, rec: rec, Code: rec.Code}
+}
+
+// With returns the app sending h with every request — a credential, a
+// locale. The original is unchanged; calls stack.
+//
+//	staff := app.With(authtest.As(&auth.Identity{ID: "7", Kind: "staff"}))
+//	staff.GET("/admin/orders").AssertOK()
+func (a *App) With(h http.Header) *App {
+	cp := *a
+	cp.header = a.header.Clone()
+	if cp.header == nil {
+		cp.header = http.Header{}
+	}
+	for k, vs := range h {
+		cp.header[k] = vs
+	}
+	return &cp
 }
 
 // REST builds a request with an optional JSON body and runs it. body may be nil,

@@ -44,11 +44,12 @@ type Settings struct {
 	Forbidden string `toml:"forbidden"`
 	// PageProp names the prop Inertia pages get {user, can} under (default
 	// "auth"); "-" turns it off.
-	PageProp  string                  `toml:"page_prop"`
-	Areas     map[string]AreaSettings `toml:"areas"`
-	Sessions  SessionRules            `toml:"sessions"`
-	Throttle  ThrottleSettings        `toml:"throttle"`
-	Endpoints EndpointSettings        `toml:"endpoints"`
+	PageProp      string                  `toml:"page_prop"`
+	Areas         map[string]AreaSettings `toml:"areas"`
+	Sessions      SessionRules            `toml:"sessions"`
+	Impersonation ImpersonationSettings   `toml:"impersonation"`
+	Throttle      ThrottleSettings        `toml:"throttle"`
+	Endpoints     EndpointSettings        `toml:"endpoints"`
 }
 
 // AreaSettings is one [auth.areas.<name>] table: a path prefix that belongs
@@ -72,6 +73,15 @@ type SessionRules struct {
 	EndOnPasswordChange *bool `toml:"end_on_password_change"`
 	// Idle ends a session unused this long (sessions only; 0 = never).
 	Idle time.Duration `toml:"idle"`
+}
+
+// ImpersonationSettings is [auth.impersonation].
+type ImpersonationSettings struct {
+	// Permission is what a user needs to impersonate another (default
+	// "auth.impersonate").
+	Permission string `toml:"permission"`
+	// Endpoint mounts POST {user_id} (start) and DELETE (stop) when set.
+	Endpoint string `toml:"endpoint"`
 }
 
 // ThrottleSettings is [auth.throttle]: failed sign-ins allowed per account
@@ -161,21 +171,22 @@ var settingsSection = config.Section[Settings]("auth", Settings{Default: "signed
 
 // resolvedSettings is Settings checked and filled with defaults.
 type resolvedSettings struct {
-	public    bool
-	cache     time.Duration
-	schemes   []namedScheme // in the order they are tried
-	hashers   Hashers
-	validator []PasswordValidator
-	login     string
-	home      string
-	nextParam string
-	forbidden string
-	pageProp  string // "" when off
-	sessions  SessionRules
-	endOnPw   bool
-	areas     []namedArea // longest prefix first
-	throttle  throttleRules
-	endpoints EndpointSettings
+	public        bool
+	cache         time.Duration
+	schemes       []namedScheme // in the order they are tried
+	hashers       Hashers
+	validator     []PasswordValidator
+	login         string
+	home          string
+	nextParam     string
+	forbidden     string
+	pageProp      string // "" when off
+	sessions      SessionRules
+	endOnPw       bool
+	impersonation ImpersonationSettings
+	areas         []namedArea // longest prefix first
+	throttle      throttleRules
+	endpoints     EndpointSettings
 }
 
 type namedArea struct {
@@ -277,6 +288,10 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 	}
 	r.login, r.home, r.nextParam, r.endpoints = s.Login, s.Home, s.NextParam, s.Endpoints
 	r.forbidden = s.Forbidden
+	r.impersonation = s.Impersonation
+	if r.impersonation.Permission == "" {
+		r.impersonation.Permission = "auth.impersonate"
+	}
 	r.sessions = s.Sessions
 	r.endOnPw = s.Sessions.EndOnPasswordChange == nil || *s.Sessions.EndOnPasswordChange
 	switch s.PageProp {

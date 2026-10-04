@@ -35,6 +35,11 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 				agent: r.UserAgent(),
 			})
 		}
+		if id, ok := state.testIdentity(ctx, c.Request); ok {
+			c.Request = c.Request.WithContext(WithIdentity(ctx, id))
+			c.Next()
+			return
+		}
 		id, scheme, token, err := state.authenticateScheme(ctx, c.Request)
 		if scheme != "" && state.config.settings != nil {
 			// SignOut ends the credential the request came with.
@@ -51,8 +56,12 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 		} else if id != nil {
 			ctx = WithIdentity(ctx, id)
 			if state.config.settings != nil {
-				if n, err := state.epoch(ctx, id.ID); err == nil {
-					ctx = context.WithValue(ctx, ctxAuthEpoch, authEpoch{id.ID, n})
+				owner := id.ID // the credential's owner: the real user while impersonating
+				if id.Actor != nil {
+					owner = id.Actor.ID
+				}
+				if n, err := state.epoch(ctx, owner); err == nil {
+					ctx = context.WithValue(ctx, ctxAuthEpoch, authEpoch{owner, n})
 				}
 			}
 			if state.cfg.OnResolve != nil {
@@ -206,6 +215,9 @@ func emitReject(ctx context.Context, reason string, status int, err error) {
 		// ID so admins can tie dashboard rows back to a real user.
 		// Unauthenticated rejects have no identity — meta stays lean.
 		meta["identity"] = id.ID
+		if id.Actor != nil {
+			meta["actor"] = id.Actor.ID
+		}
 	}
 	ev.Meta = meta
 	bus.Publish(ev)

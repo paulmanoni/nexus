@@ -214,6 +214,7 @@ explains itself with --help.`,
 		newRoutesCmd(stdout, stderr),
 		newLintCmd(stdout, stderr),
 		newConfigCmd(stdout, stderr),
+		newAuthCmd(stdout, stderr),
 		newLSPCmd(stdout, stderr),
 		newDoctorCmd(stdout, stderr),
 	)

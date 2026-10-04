@@ -183,13 +183,14 @@ func Module(cfg Config) nexus.Option {
 	}
 	return nexus.Options(
 		nexus.Raw(di.Provide(di.Annotate(ctor, di.ParamTags("", `optional:"true"`, `optional:"true"`)))),
-		nexus.Invoke(func(app *nexus.App, m *Manager) { app.Register(m.asResource()) }),
+		nexus.Invoke(func(app *nexus.App, m *Manager) { m.app = app; app.Register(m.asResource()) }),
 	)
 }
 
 // Manager runs and tracks jobs. Inject *jobs.Manager to look a job up or
 // cancel it.
 type Manager struct {
+	app    *nexus.App
 	cfg    Config
 	store  Store  // nil with a broker
 	broker Broker // a message-broker driver, or nil
@@ -482,6 +483,14 @@ func (m *Manager) call(call callFunc, ctx context.Context, run *Run, args json.R
 			err = Permanent(fmt.Errorf("panic: %v\n%s", p, debug.Stack()))
 		}
 	}()
+	if run.actor != "" && m.app != nil {
+		// The job runs as the user who enqueued it, as they are now.
+		rctx, rerr := nexus.RestoreIdentity(ctx, m.app, run.actor)
+		if rerr != nil {
+			return Permanent(fmt.Errorf("jobs: running as %s: %w", run.actor, rerr))
+		}
+		ctx, run.ctx = rctx, rctx
+	}
 	return call(ctx, run, args)
 }
 

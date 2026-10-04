@@ -110,6 +110,8 @@ type SignInRequest struct {
 type MeResponse struct {
 	User any             `json:"user"`
 	Can  map[string]bool `json:"can"`
+	// Actor is the real user while User is being impersonated.
+	Actor any `json:"actor,omitempty"`
 }
 
 // PublicUser is an optional Users method: what the me endpoint (and other
@@ -146,13 +148,20 @@ func (st *moduleState) meEndpoint(app *nexus.App, p nexus.Params[struct{}]) (*Me
 func (st *moduleState) me(ctx context.Context, app *nexus.App) *MeResponse {
 	out := &MeResponse{Can: OpGates(ctx, app)}
 	if id := Current(ctx); id != nil {
-		if pu, ok := st.config.users.(PublicUser); ok {
-			out.User = pu.Public(id)
-		} else {
-			out.User = map[string]string{"id": id.ID, "kind": id.Kind}
+		out.User = st.public(id)
+		if id.Actor != nil {
+			out.Actor = st.public(id.Actor)
 		}
 	}
 	return out
+}
+
+// public is what may be shown of id: Users.Public's view, else {id, kind}.
+func (st *moduleState) public(id *Identity) any {
+	if pu, ok := st.config.users.(PublicUser); ok {
+		return pu.Public(id)
+	}
+	return map[string]string{"id": id.ID, "kind": id.Kind}
 }
 
 // endpointOptions mounts the [auth.endpoints] that have a path.
@@ -170,6 +179,11 @@ func (st *moduleState) endpointOptions() nexus.Option {
 	if ep.Me != "" {
 		opts = append(opts, nexus.AsRest("GET", ep.Me, st.meEndpoint,
 			Public(), nexus.AuthRoute("me"), nexus.Describe("The signed-in user and what they may do")))
+	}
+	if imp := st.config.settings.impersonation.Endpoint; imp != "" {
+		opts = append(opts,
+			nexus.AsRest("POST", imp, impersonateEndpoint, nexus.Describe("Start impersonating a user")),
+			nexus.AsRest("DELETE", imp, stopImpersonatingEndpoint, nexus.Describe("Stop impersonating")))
 	}
 	if ep.Token != "" {
 		opts = append(opts, nexus.AsRest("POST", ep.Token, st.tokenEndpoint,

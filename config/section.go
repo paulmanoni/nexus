@@ -1,12 +1,16 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
 // SectionHandle is a declared top-level table of nexus.toml, decoded into T.
@@ -215,3 +219,45 @@ var sectionOwners = map[string]string{
 // SectionOwner returns the import path of the framework package that declares
 // [name], or "" when nexus has no such table.
 func SectionOwner(name string) string { return sectionOwners[name] }
+
+// DecodeTable decodes table [name] of the TOML document raw into a T over
+// def, as a Section of T would at boot — durations written "30s" — and
+// reports unknown keys. It declares nothing and reads no other table: it
+// is for tools that inspect one table outside the app (nexus auth check).
+func DecodeTable[T any](raw []byte, name string, def T) (T, error) {
+	var doc map[string]any
+	if err := toml.Unmarshal(raw, &doc); err != nil {
+		return def, err
+	}
+	sub, ok := doc[name]
+	if !ok {
+		return def, nil
+	}
+	b, err := toml.Marshal(sub)
+	if err != nil {
+		return def, err
+	}
+	shadow, _ := shadowType(reflect.TypeFor[T]())
+	sv := reflect.New(shadow)
+	if err := convertShadow(sv.Elem(), reflect.ValueOf(&def).Elem(), nil, false); err != nil {
+		return def, err
+	}
+	dec := toml.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(sv.Interface()); err != nil {
+		var sm *toml.StrictMissingError
+		if errors.As(err, &sm) && len(sm.Errors) > 0 {
+			keys := make([]string, len(sm.Errors))
+			for i, e := range sm.Errors {
+				keys[i] = name + "." + strings.Join(e.Key(), ".")
+			}
+			return def, fmt.Errorf("unknown key %s", strings.Join(keys, ", "))
+		}
+		return def, fmt.Errorf("[%s]: %w", name, err)
+	}
+	var out T
+	if err := convertShadow(reflect.ValueOf(&out).Elem(), sv.Elem(), []string{name}, true); err != nil {
+		return def, err
+	}
+	return out, nil
+}

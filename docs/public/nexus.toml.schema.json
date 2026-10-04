@@ -68,6 +68,18 @@
         "home": {
           "type": "string"
         },
+        "impersonation": {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string"
+            },
+            "permission": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "login": {
           "type": "string"
         },

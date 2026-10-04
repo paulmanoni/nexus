@@ -103,6 +103,7 @@ directories are skipped.
 |---|---|
 | `nexus config check [path]` | Validate a `nexus.toml` with the boot rules — unknown keys, misplaced keys, undeclared sections — and exit 1 on a problem. `--json` for CI. Reads the app's `config.Section` declarations from its source. |
 | `nexus config schema` | Print the JSON schema for `nexus.toml` (`--framework`: nexus's tables only). |
+| `nexus auth check [path]` | Validate `nexus.toml`'s `[auth]` table as boot does and print the effective setup: schemes in order, default gate, pages and areas, endpoints, session/throttle/password rules. Exit 1 on a problem. |
 
 ## Tooling
 

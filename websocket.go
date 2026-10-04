@@ -604,6 +604,44 @@ var (
 	requestIdentityFuncs []RequestIdentityFunc
 )
 
+// IdentityRestorer rebuilds, for work that runs outside the request that
+// started it (a background job), the context a request by user id would
+// have had: who they are, as of now. extension/auth registers one.
+type IdentityRestorer func(ctx context.Context, app *App, id string) (context.Context, error)
+
+var (
+	identityRestorersMu sync.RWMutex
+	identityRestorers   []IdentityRestorer
+)
+
+// RegisterIdentityRestorer adds an IdentityRestorer. Safe from package init.
+func RegisterIdentityRestorer(fn IdentityRestorer) {
+	if fn == nil {
+		return
+	}
+	identityRestorersMu.Lock()
+	identityRestorers = append(identityRestorers, fn)
+	identityRestorersMu.Unlock()
+}
+
+// RestoreIdentity runs the registered IdentityRestorers over ctx for user
+// id; extension/jobs calls it before running a job someone enqueued. An
+// error (the account is gone) means the work must not run as them.
+func RestoreIdentity(ctx context.Context, app *App, id string) (context.Context, error) {
+	identityRestorersMu.RLock()
+	defer identityRestorersMu.RUnlock()
+	for _, fn := range identityRestorers {
+		next, err := fn(ctx, app, id)
+		if err != nil {
+			return ctx, err
+		}
+		if next != nil {
+			ctx = next
+		}
+	}
+	return ctx, nil
+}
+
 // ConnectionCheck decides whether a long-lived connection (an AsWS socket,
 // a live view page) may go on: it runs before each message with the
 // connection's context, and an error closes the connection with it.
