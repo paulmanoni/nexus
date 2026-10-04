@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-10-04
+
 ### Added
 
 - Auth: a `Users` optional method with the wrong signature (`SetPassword`,
