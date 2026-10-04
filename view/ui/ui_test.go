@@ -5,6 +5,8 @@ import (
 	"html"
 	"io"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -325,5 +327,20 @@ func TestJS(t *testing.T) {
 	// Loading twice keeps the first copy.
 	if _, err := vm.RunString(`var first = nxui;` + uiJS + `;if (nxui !== first) throw new Error("replaced")`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The kit's generated components record live render trees (make view-ui
+// after templ generate).
+func TestKitIsInstrumented(t *testing.T) {
+	files, _ := filepath.Glob("*_templ.go")
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), "templ_nx_view.Record(") {
+			t.Errorf("%s is not instrumented: run make view-ui", f)
+		}
 	}
 }

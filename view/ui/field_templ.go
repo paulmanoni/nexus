@@ -4,7 +4,10 @@ package ui
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
+import (
+	"github.com/a-h/templ"
+	templ_nx_view "github.com/paulmanoni/nexus/v2/view"
+)
 import templruntime "github.com/a-h/templ/runtime"
 
 import (
@@ -55,6 +58,8 @@ func Field(p FieldProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var1 == nil {
 			templ_7745c5c3_Var1 = templ.NopComponent
@@ -67,7 +72,7 @@ func Field(p FieldProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 1, "<div class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -80,12 +85,13 @@ func Field(p FieldProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\">")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 2, "\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Label != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<label for=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 3, "<label for=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -98,7 +104,7 @@ func Field(p FieldProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" class=\"text-sm font-medium leading-none text-[color:var(--ui-fg)]\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 4, "\" class=\"text-sm font-medium leading-none text-[color:var(--ui-fg)]\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -111,27 +117,33 @@ func Field(p FieldProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, " ")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 5, " ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if p.Required {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<span class=\"text-[color:var(--ui-danger)]\" aria-hidden=\"true\">*</span>")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 6, "<span class=\"text-[color:var(--ui-danger)]\" aria-hidden=\"true\">*</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</label>")
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 7, "</label>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = templ_7745c5c3_Var1.Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Help != "" && msg == "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<p id=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 8, "<p id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -144,7 +156,7 @@ func Field(p FieldProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" class=\"text-xs text-[color:var(--ui-muted-fg)]\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 9, "\" class=\"text-xs text-[color:var(--ui-muted-fg)]\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -157,12 +169,13 @@ func Field(p FieldProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</p>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 10, "</p>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<p id=\"")
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 11, "<p id=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -175,17 +188,19 @@ func Field(p FieldProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\" class=\"ui-field-error text-xs font-medium text-[color:var(--ui-danger)]\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 12, "\" class=\"ui-field-error text-xs font-medium text-[color:var(--ui-danger)]\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if msg == "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, " hidden")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 13, " hidden")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, ">")
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 14, ">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -198,7 +213,7 @@ func Field(p FieldProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</p></div>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 15, "</p></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -258,6 +273,8 @@ func Input(p InputProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var10 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var10 == nil {
 			templ_7745c5c3_Var10 = templ.NopComponent
@@ -269,7 +286,7 @@ func Input(p InputProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<input type=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 16, "<input type=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -282,7 +299,7 @@ func Input(p InputProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\" class=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 17, "\" class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -295,7 +312,7 @@ func Input(p InputProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" value=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 18, "\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -308,12 +325,13 @@ func Input(p InputProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 19, "\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Placeholder != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, " placeholder=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 20, " placeholder=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -326,34 +344,41 @@ func Input(p InputProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 21, "\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Required {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, " required")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 22, " required")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Disabled {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, " disabled")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 23, " disabled")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.ReadOnly {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, " readonly")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 24, " readonly")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, controlAttrs(ctx, p.Name, p.ID, p.Invalid, p.Attrs))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, ">")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 25, ">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -392,6 +417,8 @@ func Textarea(p TextareaProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var16 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var16 == nil {
 			templ_7745c5c3_Var16 = templ.NopComponent
@@ -403,7 +430,7 @@ func Textarea(p TextareaProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<textarea class=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 26, "<textarea class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -416,7 +443,7 @@ func Textarea(p TextareaProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\" rows=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 27, "\" rows=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -429,12 +456,13 @@ func Textarea(p TextareaProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 28, "\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Placeholder != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, " placeholder=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 29, " placeholder=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -447,28 +475,33 @@ func Textarea(p TextareaProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 30, "\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Required {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, " required")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 31, " required")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Disabled {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, " disabled")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 32, " disabled")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, controlAttrs(ctx, p.Name, p.ID, p.Invalid, p.Attrs))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, ">")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 33, ">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -481,7 +514,7 @@ func Textarea(p TextareaProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "</textarea>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 34, "</textarea>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -535,6 +568,8 @@ func Select(p SelectProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var22 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var22 == nil {
 			templ_7745c5c3_Var22 = templ.NopComponent
@@ -546,7 +581,7 @@ func Select(p SelectProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "<select class=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 35, "<select class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -559,42 +594,49 @@ func Select(p SelectProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 36, "\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Required {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, " required")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 37, " required")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Disabled {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, " disabled")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 38, " disabled")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, controlAttrs(ctx, p.Name, p.ID, p.Invalid, p.Attrs))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, ">")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 39, ">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Placeholder != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<option value=\"\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 40, "<option value=\"\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if p.Value == "" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, " selected")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 41, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, ">")
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 42, ">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -607,13 +649,16 @@ func Select(p SelectProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "</option> ")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 43, "</option> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.ForStart(templ_7745c5c3_Buffer)
 		for _, o := range p.Options {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "<option value=\"")
+			templ_7745c5c3_Rec.Item(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 44, "<option value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -626,23 +671,27 @@ func Select(p SelectProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 45, "\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if o.Value == p.Value {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, " selected")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 46, " selected")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if o.Disabled {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, " disabled")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 47, " disabled")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, ">")
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 48, ">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -655,12 +704,13 @@ func Select(p SelectProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "</option>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 49, "</option>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "</select>")
+		templ_7745c5c3_Rec.ForEnd(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 50, "</select>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -697,6 +747,8 @@ func Checkbox(p CheckboxProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var28 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var28 == nil {
 			templ_7745c5c3_Var28 = templ.NopComponent
@@ -708,7 +760,7 @@ func Checkbox(p CheckboxProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "<label class=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 51, "<label class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -721,7 +773,7 @@ func Checkbox(p CheckboxProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "\"><input type=\"checkbox\" class=\"size-4 rounded border-[color:var(--ui-input)] accent-[color:var(--ui-primary)]\" value=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 52, "\"><input type=\"checkbox\" class=\"size-4 rounded border-[color:var(--ui-input)] accent-[color:var(--ui-primary)]\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -734,32 +786,37 @@ func Checkbox(p CheckboxProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 53, "\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Checked {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, " checked")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 54, " checked")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Disabled {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, " disabled")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 55, " disabled")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, controlAttrs(ctx, p.Name, p.ID, false, p.Attrs))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "> ")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 56, "> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Label != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<span>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 57, "<span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -772,12 +829,13 @@ func Checkbox(p CheckboxProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "</span>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 58, "</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</label>")
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 59, "</label>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

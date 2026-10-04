@@ -50,7 +50,8 @@ type Result struct {
 	Components []*Component
 	Imports    map[string]string // the file's imports: selector → import line
 
-	// RawGo is the Go as templ's generator wrote it, before gofmt: what
+	// RawGo is the Go as templ's generator wrote it, before gofmt and the
+	// live render's recorder calls (Instrument): what
 	// SourceMap indexes. An editor type-checks RawGo so a .templ position
 	// maps onto it, and back, through SourceMap.
 	RawGo     []byte
@@ -83,6 +84,10 @@ type Package struct {
 	// Lookup returns the signal fields of state type typ in another package.
 	Lookup  func(importPath, typ string) []string
 	Exposed map[string]bool // types exposed in Go with view.Expose
+	// Live has the generated Go record a live page's render tree
+	// (Instrument): set for a module that depends on nexus, whose view
+	// package the recorder calls.
+	Live bool
 }
 
 // PositionError is a compile error at a line and column of a .templ file.
@@ -142,6 +147,11 @@ func File(name, src string, pkg *Package) (*Result, error) {
 	out, err := format.Source(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("%s: generated Go does not parse: %w", name, err)
+	}
+	if pkg.Live && pkg.ImportPath != ViewImport {
+		if out, err = Instrument(out); err != nil {
+			return nil, fmt.Errorf("%s: instrumenting the generated Go: %w", name, err)
+		}
 	}
 	return &Result{
 		Package: strings.TrimSpace(strings.TrimPrefix(tf.Package.Expression.Value, "package")),

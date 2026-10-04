@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- view: live pages update as a **render tree**, as Phoenix LiveView does. The
+  view compiler has templ's generated Go record statics, dynamics, loops,
+  branches and component renders (`viewgen.Instrument`, `view.Record`); a
+  connection is sent each template's statics once and then only the dynamics
+  that changed, loop items are kept, inserted or changed in place, and long
+  markup shown again travels by reference. Plain `templ generate` output takes
+  the same recorder with `go run …/view/viewgen/cmd/instrument <dir>`; the
+  `view/ui` kit has it (`make view-ui`).
+- view: a live page **resumes** after a dropped connection: the server keeps
+  its state and subscriptions for `view.ResumeGrace` (30s) and a reconnect from
+  the same page and user carries on with them. When the state is gone, the
+  browser re-sends its `view.Change` forms before anything queued and holds the
+  fresh render until they are answered (form recovery).
+
+### Changed
+
+- view: the live socket's replies are trees (`tree`, `full`, `reset`) instead of
+  HTML or token patches; each connection starts with a `resume` token. The trace
+  attribute `live.render` is `diff` or `full`.
+
 ## [2.11.1] - 2026-10-04
 
 ### Fixed

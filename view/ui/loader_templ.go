@@ -4,7 +4,10 @@ package ui
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
+import (
+	"github.com/a-h/templ"
+	templ_nx_view "github.com/paulmanoni/nexus/v2/view"
+)
 import templruntime "github.com/a-h/templ/runtime"
 
 // LoaderProps configures a Loader.
@@ -34,18 +37,21 @@ func Loader(p LoaderProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var1 == nil {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Overlay {
 			var templ_7745c5c3_Var2 = []any{join("ui-loader-overlay absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-[inherit] bg-[color:var(--ui-bg)]/60 text-sm text-[color:var(--ui-muted-fg)]", p.Class)}
 			templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var2...)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 1, "<div class=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -58,19 +64,23 @@ func Loader(p LoaderProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" role=\"status\" aria-live=\"polite\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 2, "\" role=\"status\" aria-live=\"polite\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = Icon("spinner", "size-6 text-[color:var(--ui-primary)]").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = loaderLabel(p.Label).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</div>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 3, "</div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -80,7 +90,7 @@ func Loader(p LoaderProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<span class=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 4, "<span class=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -93,23 +103,28 @@ func Loader(p LoaderProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\" role=\"status\" aria-live=\"polite\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 5, "\" role=\"status\" aria-live=\"polite\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = Icon("spinner").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = loaderLabel(p.Label).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</span>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 6, "</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		return nil
 	})
 }
@@ -130,13 +145,16 @@ func loaderLabel(label string) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var6 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var6 == nil {
 			templ_7745c5c3_Var6 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if label != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<span>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 7, "<span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -149,22 +167,25 @@ func loaderLabel(label string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</span>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 8, "</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<span class=\"sr-only\">Loading</span>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 9, "<span class=\"sr-only\">Loading</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(
+
+			// Skeleton is a pulsing placeholder block, sized by its class
+			// ("h-4 w-32").
+			templ_7745c5c3_Buffer)
 		return nil
 	})
 }
 
-// Skeleton is a pulsing placeholder block, sized by its class
-// ("h-4 w-32").
 func Skeleton(class string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -181,6 +202,8 @@ func Skeleton(class string) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var8 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var8 == nil {
 			templ_7745c5c3_Var8 = templ.NopComponent
@@ -191,7 +214,7 @@ func Skeleton(class string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<div class=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 10, "<div class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -204,7 +227,7 @@ func Skeleton(class string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\"></div>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 11, "\"></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

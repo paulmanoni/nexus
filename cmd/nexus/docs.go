@@ -846,9 +846,12 @@ view.Errors(ctx).Field("name"), and a
 successful submit resets the form.
 Navigation: @view.Link("/board") { Board } fetches and patches the page in
 place (no reload; live sockets follow; back/forward work). The first render
-comes over HTTP only; updates travel as compressed token patches (values,
-reused markup, a per-connection dictionary). A dropped socket reconnects with
-backoff, queues events meanwhile, and gets a fresh mount.
+comes over HTTP only; updates travel as a LiveView-style render tree: each
+template's statics once per connection, then only the dynamics that changed
+(loop items kept or changed in place, long markup by reference). A dropped
+socket reconnects with backoff, queues events meanwhile, and resumes the
+page's server state within view.ResumeGrace (30s); past that it mounts afresh
+and the browser re-sends its view.Change forms first (form recovery).
 
 Islands mount a component of the Vite frontend (the one nexus.Frontend
 serves) into a templ page. Each file under web/src/islands is one, named by

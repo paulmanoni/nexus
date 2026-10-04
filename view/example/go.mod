@@ -4,6 +4,7 @@ go 1.26.2
 
 require (
 	github.com/a-h/templ v0.3.1020
+	github.com/gorilla/websocket v1.5.3
 	github.com/paulmanoni/nexus/v2 v2.11.1
 	github.com/templui/templui v1.13.2
 )
@@ -18,7 +19,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/graphql-go/graphql v0.8.1 // indirect
 	github.com/graphql-go/handler v0.2.4 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect

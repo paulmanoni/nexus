@@ -4,7 +4,10 @@ package ui
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
+import (
+	"github.com/a-h/templ"
+	templ_nx_view "github.com/paulmanoni/nexus/v2/view"
+)
 import templruntime "github.com/a-h/templ/runtime"
 
 // iconPaths are the kit's own icons: 24×24, stroked, drawn with
@@ -51,18 +54,21 @@ func Icon(name string, class ...string) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var1 == nil {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if d, ok := iconPaths[name]; ok {
 			var templ_7745c5c3_Var2 = []any{iconClass(name, class)}
 			templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var2...)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" class=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 1, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" class=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -75,19 +81,22 @@ func Icon(name string, class ...string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 2, "\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = templ.Raw(d).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</svg>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 3, "</svg>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		return nil
 	})
 }

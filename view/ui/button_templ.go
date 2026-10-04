@@ -4,7 +4,10 @@ package ui
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
+import (
+	"github.com/a-h/templ"
+	templ_nx_view "github.com/paulmanoni/nexus/v2/view"
+)
 import templruntime "github.com/a-h/templ/runtime"
 
 // ButtonProps configures a Button. A button with Href is a link; Nav makes
@@ -123,11 +126,14 @@ func Button(p ButtonProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var1 == nil {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Href != "" {
 			var templ_7745c5c3_Var2 = []any{buttonClass(p)}
 			templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var2...)
@@ -138,7 +144,7 @@ func Button(p ButtonProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<a href=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 1, "<a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -151,7 +157,7 @@ func Button(p ButtonProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" class=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 2, "\" class=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -164,24 +170,29 @@ func Button(p ButtonProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 3, "\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if p.Nav {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, " data-nx-nav")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 4, " data-nx-nav")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if p.Disabled || p.Loading {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, " aria-disabled=\"true\" tabindex=\"-1\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 5, " aria-disabled=\"true\" tabindex=\"-1\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if hasScript(p.OnClick) {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, " onclick=\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 6, " onclick=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -190,16 +201,17 @@ func Button(p ButtonProps) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 7, "\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, p.attrs())
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, ">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 8, ">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -215,17 +227,23 @@ func Button(p ButtonProps) templ.Component {
 					}()
 				}
 				ctx = templ.InitializeContext(ctx)
+				templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+				_ = templ_7745c5c3_Rec
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				templ_7745c5c3_Err = templ_7745c5c3_Var1.Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				return nil
 			})
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = buttonInner(p).Render(templ.WithChildren(ctx, templ_7745c5c3_Var6), templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</a>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 9, "</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -239,7 +257,7 @@ func Button(p ButtonProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<button type=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 10, "<button type=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -252,7 +270,7 @@ func Button(p ButtonProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" class=\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 11, "\" class=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -265,18 +283,21 @@ func Button(p ButtonProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\"")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 12, "\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if p.Disabled || p.Loading {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, " disabled")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 13, " disabled")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if hasScript(p.OnClick) {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, " onclick=\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 14, " onclick=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -285,16 +306,17 @@ func Button(p ButtonProps) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 15, "\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, p.attrs())
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, ">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 16, ">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -310,21 +332,28 @@ func Button(p ButtonProps) templ.Component {
 					}()
 				}
 				ctx = templ.InitializeContext(ctx)
+				templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+				_ = templ_7745c5c3_Rec
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				templ_7745c5c3_Err = templ_7745c5c3_Var1.Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				return nil
 			})
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = buttonInner(p).Render(templ.WithChildren(ctx, templ_7745c5c3_Var11), templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</button>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 17, "</button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		return nil
 	})
 }
@@ -345,39 +374,48 @@ func buttonInner(p ButtonProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var12 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var12 == nil {
 			templ_7745c5c3_Var12 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<span class=\"ui-btn-spinner hidden\">")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 18, "<span class=\"ui-btn-spinner hidden\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = Icon("spinner").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</span> ")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 19, "</span> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.Icon != nil {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<span class=\"ui-btn-icon inline-flex\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 20, "<span class=\"ui-btn-icon inline-flex\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = p.Icon.Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</span> ")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 21, "</span> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if p.IconOnly {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<span class=\"sr-only\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 22, "<span class=\"sr-only\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -390,12 +428,15 @@ func buttonInner(p ButtonProps) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</span>")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 23, "</span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = templ_7745c5c3_Var12.Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

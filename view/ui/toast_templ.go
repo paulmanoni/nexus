@@ -4,7 +4,10 @@ package ui
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
+import (
+	"github.com/a-h/templ"
+	templ_nx_view "github.com/paulmanoni/nexus/v2/view"
+)
 import templruntime "github.com/a-h/templ/runtime"
 
 import "strconv"
@@ -59,12 +62,14 @@ func Toast(p ToastProps) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var1 == nil {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div hidden data-ui-toast=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 1, "<div hidden data-ui-toast=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -77,7 +82,7 @@ func Toast(p ToastProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" data-ui-variant=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 2, "\" data-ui-variant=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -90,7 +95,7 @@ func Toast(p ToastProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\" data-ui-title=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 3, "\" data-ui-title=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -103,7 +108,7 @@ func Toast(p ToastProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" data-ui-duration=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 4, "\" data-ui-duration=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -116,7 +121,7 @@ func Toast(p ToastProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\">")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 5, "\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -129,7 +134,7 @@ func Toast(p ToastProps) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</div>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 6, "</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

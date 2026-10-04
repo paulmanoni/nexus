@@ -44,7 +44,7 @@ func TestLiveConnectionCheck(t *testing.T) {
 	}
 	_ = a.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var r liveReply
-	if err := a.ReadJSON(&r); err == nil {
+	if err := a.ReadJSON(&r); err == nil && (r.Tree != nil || r.Error != "") {
 		t.Fatalf("the socket stays open: %+v", r)
 	} else if errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("the socket did not close")

@@ -68,6 +68,8 @@ func (s *shelterLive) Render() templ.Component {
 
 func bootShelter(t *testing.T) *httptest.Server {
 	t.Helper()
+	dropParked()
+	t.Cleanup(dropParked)
 	app, stop, err := nexus.InProcess(config.Runtime{}, Live[*shelterLive]("/shelter").Provide(func() *shelterLive { return &shelterLive{} }))
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +91,7 @@ func TestLiveForms(t *testing.T) {
 			t.Fatalf("render lacks %s:\n%s", want, first.HTML)
 		}
 	}
-	submit := func(conn *websocket.Conn, ref int, event string, form map[string][]string) liveReply {
+	submit := func(conn *websocket.Conn, ref int, event string, form map[string][]string) got {
 		if err := conn.WriteJSON(liveEvent{Ref: ref, Event: event, Form: form}); err != nil {
 			t.Fatal(err)
 		}

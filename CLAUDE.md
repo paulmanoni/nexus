@@ -311,9 +311,17 @@ success resets the form. With CSRF on, the runtime sends `X-XSRF-TOKEN` on shard
 the server's value (input `value`, textarea text, select's `selected` options, `checked`) changes; a focused field
 is never overwritten; `view.Value(v)` (spread: `<input { view.Value(x.V)... }/>`, also select/textarea) makes a field
 take the server's value on every render. The first render
-is HTTP-only (a join id lets the socket skip resending it); updates travel as token patches (tokens at
-`<`/`>`/`"`/`&#34;`, Myers diff, `[p,n]` back-references, a per-connection dictionary `[id]`),
-compressed; reconnect = jittered backoff + queued events + fresh mount.
+is HTTP-only (a join id lets the socket skip resending it); updates travel as a LiveView-style render
+tree: viewgen post-processes templ's Go (`viewgen.Instrument`; `view.Record`/`Rec` S/Open/Close/ForStart/
+Item/ForEnd) so a render records statics vs dynamics, loops as item frames, branches/component renders as
+frames; statics sent once per connection by fingerprint id, then only changed dynamics (`{"u":{i:…}}`,
+loop steps `{"k":[…]}`, long markup by ref `{"r":id}`, opaque markup as a token patch `{"p":…}`) — rdiff.go,
+mirrored by runtime.js; uninstrumented code (hand-written components, plain `templ generate`) is one
+dynamic (`go run …/view/viewgen/cmd/instrument <dir>`; `make view-ui` for the kit); only modules that
+require nexus/v2 are instrumented. Reconnect = jittered backoff + queued events + **resume**: the server
+parks the page (state + subscriptions) for `view.ResumeGrace` (30s) under a token; same page + same identity
+carries on; otherwise a fresh mount, and the browser first re-sends each `view.Change` form (LiveView form
+recovery) before queued events, holding the fresh render until those replies arrive.
 `@view.Link(href, attrs…) { … }` is in-app navigation: fetch + patch the body, head assets merged,
 live sockets follow, history/back work. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 **Islands**: `var Chart = view.NewIsland[ChartProps]("Chart")` declares one (props type → registry

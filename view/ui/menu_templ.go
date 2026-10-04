@@ -4,7 +4,10 @@ package ui
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
+import (
+	"github.com/a-h/templ"
+	templ_nx_view "github.com/paulmanoni/nexus/v2/view"
+)
 import templruntime "github.com/a-h/templ/runtime"
 
 // MenuItem is one entry of a Dropdown or RowActions menu: a link (Href),
@@ -61,18 +64,23 @@ func menu(items []MenuItem) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var1 == nil {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div role=\"menu\" data-ui-menu hidden class=\"ui-menu fixed z-50 min-w-48 overflow-y-auto rounded-[var(--ui-radius)] border border-[color:var(--ui-border)] bg-[color:var(--ui-popover)] p-1 text-[color:var(--ui-popover-fg)] shadow-lg\">")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 1, "<div role=\"menu\" data-ui-menu hidden class=\"ui-menu fixed z-50 min-w-48 overflow-y-auto rounded-[var(--ui-radius)] border border-[color:var(--ui-border)] bg-[color:var(--ui-popover)] p-1 text-[color:var(--ui-popover-fg)] shadow-lg\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.ForStart(templ_7745c5c3_Buffer)
 		for _, it := range items {
+			templ_7745c5c3_Rec.Item(templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			if it.Separator {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div role=\"separator\" class=\"-mx-1 my-1 h-px bg-[color:var(--ui-border)]\"></div>")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 2, "<div role=\"separator\" class=\"-mx-1 my-1 h-px bg-[color:var(--ui-border)]\"></div>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -86,7 +94,7 @@ func menu(items []MenuItem) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<a role=\"menuitem\" href=\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 3, "<a role=\"menuitem\" href=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -99,7 +107,7 @@ func menu(items []MenuItem) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" class=\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 4, "\" class=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -112,24 +120,29 @@ func menu(items []MenuItem) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 5, "\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				if it.Nav {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, " data-nx-nav")
+					templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 6, " data-nx-nav")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				if it.Disabled {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, " aria-disabled=\"true\"")
+					templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 7, " aria-disabled=\"true\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				if hasScript(it.OnClick) {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, " onclick=\"")
+					templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 8, " onclick=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -138,24 +151,27 @@ func menu(items []MenuItem) templ.Component {
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\"")
+					templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 9, "\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 				templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, it.attrs())
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, ">")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 10, ">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				templ_7745c5c3_Err = menuItemInner(it).Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</a>")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 11, "</a>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -169,7 +185,7 @@ func menu(items []MenuItem) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<button type=\"button\" role=\"menuitem\" class=\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 12, "<button type=\"button\" role=\"menuitem\" class=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -182,18 +198,21 @@ func menu(items []MenuItem) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\"")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 13, "\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				if it.Disabled {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, " disabled")
+					templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 14, " disabled")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				if hasScript(it.OnClick) {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, " onclick=\"")
+					templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 15, " onclick=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -202,30 +221,35 @@ func menu(items []MenuItem) templ.Component {
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\"")
+					templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 16, "\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 				templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, it.attrs())
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, ">")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 17, ">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
+				templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 				templ_7745c5c3_Err = menuItemInner(it).Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</button>")
+				templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 18, "</button>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</div>")
+		templ_7745c5c3_Rec.ForEnd(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 19, "</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -249,26 +273,32 @@ func menuItemInner(it MenuItem) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var9 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var9 == nil {
 			templ_7745c5c3_Var9 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		if it.Icon != nil {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<span class=\"inline-flex opacity-70\">")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 20, "<span class=\"inline-flex opacity-70\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = it.Icon.Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</span> ")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 21, "</span> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<span>")
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 22, "<span>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -281,7 +311,7 @@ func menuItemInner(it MenuItem) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</span>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 23, "</span>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -307,6 +337,8 @@ func Dropdown(p ButtonProps, items ...MenuItem) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var11 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var11 == nil {
 			templ_7745c5c3_Var11 = templ.NopComponent
@@ -316,7 +348,7 @@ func Dropdown(p ButtonProps, items ...MenuItem) templ.Component {
 		if p.Variant == "" {
 			p.Variant = Outline
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<div class=\"ui-dropdown relative inline-block\" data-ui-menu-root>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 24, "<div class=\"ui-dropdown relative inline-block\" data-ui-menu-root>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -332,29 +364,39 @@ func Dropdown(p ButtonProps, items ...MenuItem) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
+			templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+			_ = templ_7745c5c3_Rec
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = templ_7745c5c3_Var11.Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, " ")
+			templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 25, " ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 			templ_7745c5c3_Err = Icon("chevron-down", "size-4 opacity-60").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			return nil
 		})
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = Button(p).Render(templ.WithChildren(ctx, templ_7745c5c3_Var12), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = menu(items).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</div>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 26, "</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -380,12 +422,14 @@ func MenuButton(icon templ.Component, label string, items ...MenuItem) templ.Com
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var13 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var13 == nil {
 			templ_7745c5c3_Var13 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<div class=\"ui-row-actions relative inline-block\" data-ui-menu-root><button type=\"button\" class=\"inline-flex size-8 items-center justify-center rounded-[var(--ui-radius)] text-[color:var(--ui-muted-fg)] cursor-pointer hover:bg-[color:var(--ui-accent)] hover:text-[color:var(--ui-fg)] aria-expanded:bg-[color:var(--ui-accent)] aria-expanded:text-[color:var(--ui-fg)]\" title=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 27, "<div class=\"ui-row-actions relative inline-block\" data-ui-menu-root><button type=\"button\" class=\"inline-flex size-8 items-center justify-center rounded-[var(--ui-radius)] text-[color:var(--ui-muted-fg)] cursor-pointer hover:bg-[color:var(--ui-accent)] hover:text-[color:var(--ui-fg)] aria-expanded:bg-[color:var(--ui-accent)] aria-expanded:text-[color:var(--ui-fg)]\" title=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -398,7 +442,7 @@ func MenuButton(icon templ.Component, label string, items ...MenuItem) templ.Com
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\" aria-label=\"")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 28, "\" aria-label=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -411,23 +455,27 @@ func MenuButton(icon templ.Component, label string, items ...MenuItem) templ.Com
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "\" aria-haspopup=\"menu\" aria-expanded=\"false\" data-ui-menu-trigger>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 29, "\" aria-haspopup=\"menu\" aria-expanded=\"false\" data-ui-menu-trigger>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = icon.Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</button>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 30, "</button>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = menu(items).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "</div>")
+		templ_7745c5c3_Err = templ_7745c5c3_Rec.S(templ_7745c5c3_Buffer, 31, "</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -453,12 +501,16 @@ func RowActions(items ...MenuItem) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Rec := templ_nx_view.Record(ctx, templ_7745c5c3_Buffer)
+		_ = templ_7745c5c3_Rec
 		templ_7745c5c3_Var16 := templ.GetChildren(ctx)
 		if templ_7745c5c3_Var16 == nil {
 			templ_7745c5c3_Var16 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Rec.Open(templ_7745c5c3_Buffer)
 		templ_7745c5c3_Err = MenuButton(Icon("more-vertical"), "Actions", items...).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Rec.Close(templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

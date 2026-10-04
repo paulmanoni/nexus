@@ -72,6 +72,8 @@ func (p *likesLive) Render() templ.Component {
 
 func bootLikes(t *testing.T) *httptest.Server {
 	t.Helper()
+	dropParked()
+	t.Cleanup(dropParked)
 	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Supply(&likes{}),
 		Live[*likesLive]("/likes/:room").Provide(func() *likesLive { return &likesLive{} }),
@@ -87,13 +89,21 @@ func bootLikes(t *testing.T) *httptest.Server {
 func expectNoReply(t *testing.T, conn *websocket.Conn) {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	var r liveReply
-	if err := conn.ReadJSON(&r); err == nil {
-		t.Fatalf("unexpected reply %+v", r)
+	for {
+		var r liveReply
+		if err := conn.ReadJSON(&r); err != nil {
+			return
+		}
+		if r.Tree != nil || r.Error != "" || r.Ref != 0 {
+			t.Fatalf("unexpected reply %+v", r)
+		}
 	}
 }
 
 func TestLiveBroadcast(t *testing.T) {
+	grace := ResumeGrace
+	ResumeGrace = 100 * time.Millisecond
+	t.Cleanup(func() { ResumeGrace = grace })
 	srv := bootLikes(t)
 	if _, err := http.Get(srv.URL + "/likes/lobby"); err != nil {
 		t.Fatal(err)
@@ -119,7 +129,7 @@ func TestLiveBroadcast(t *testing.T) {
 	}
 	// a renders for its event and again for the broadcast it also receives;
 	// b renders for the broadcast; q is not subscribed.
-	var last liveReply
+	var last got
 	for i := 0; i < 2; i++ {
 		last = reply(t, a)
 	}
@@ -152,6 +162,7 @@ func TestLiveBroadcast(t *testing.T) {
 		}
 	}
 
+	// Closed pages wait for their connection to come back, then leave.
 	a.Close()
 	b.Close()
 	deadline := time.Now().Add(3 * time.Second)

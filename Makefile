@@ -16,6 +16,7 @@
 #   make cover-check    # fail if main-module coverage drops below COVER_MIN
 #   make generate-check # CI drift gate for committed //nexus: handler codegen
 #   make view-example   # generate the nexus/view example's views, then vet + test it
+#   make view-ui        # regenerate the view/ui kit (templ generate) and instrument it
 #   make golden-update  # regenerate golden files after an intentional change
 #   make dashboard      # regenerate the /__nexus console (templ + Tailwind CSS)
 #   make ci             # everything CI runs
@@ -34,7 +35,7 @@ COVER_MIN ?= 45
 # gin prints router debug noise unless told it's in release mode.
 export GIN_MODE := release
 
-.PHONY: test vet fmt fmt-check lint cover cover-check generate-check view-example golden-update dashboard ci tidy
+.PHONY: test vet fmt fmt-check lint cover cover-check generate-check view-example view-ui golden-update dashboard ci tidy
 
 test:
 	@for m in $(MODULES); do \
@@ -93,6 +94,12 @@ generate-check:
 
 # The nexus/view example keeps its generated views out of git (nexus dev and
 # nexus build produce them), so generate them with the CLI before vet + test.
+# The view/ui kit is plain templ: its generated components get the live
+# render tree's recorder calls the view compiler adds to an app's.
+view-ui:
+	cd view/ui && go run github.com/a-h/templ/cmd/templ generate
+	go run ./view/viewgen/cmd/instrument view/ui
+
 view-example:
 	go build -o bin/nexus ./cmd/nexus
 	./bin/nexus generate views view/example

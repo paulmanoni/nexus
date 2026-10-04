@@ -63,6 +63,8 @@ var counterTemplate = newCounterLive()
 
 func bootLive(t *testing.T) *httptest.Server {
 	t.Helper()
+	dropParked()
+	t.Cleanup(dropParked)
 	app, stop, err := nexus.InProcess(config.Runtime{},
 		nexus.Supply(&greeter{greeting: "hi"}),
 		Live[*counterLive]("/count/:name").Provide(func() *counterLive { return counterTemplate }),
@@ -87,36 +89,45 @@ func dialLive(t *testing.T, srv *httptest.Server, path string) *websocket.Conn {
 
 var (
 	pagesMu sync.Mutex
-	pages   = map[*websocket.Conn]*mirror{} // what each test connection's browser holds
+	pages   = map[*websocket.Conn]*treeMirror{} // what each test connection's browser holds
 )
 
-// reply reads the next reply and, like the browser, rebuilds a patch into
-// the full render in r.HTML.
-func reply(t *testing.T, conn *websocket.Conn) liveReply {
+// got is a reply with the page's markup after it, as the browser builds it.
+type got struct {
+	liveReply
+	HTML string
+}
+
+// reply reads the next reply that carries a render or answers an event and,
+// like the browser, rebuilds the page's markup into HTML.
+func reply(t *testing.T, conn *websocket.Conn) got {
 	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var r liveReply
-	if err := conn.ReadJSON(&r); err != nil {
-		t.Fatal(err)
-	}
-	pagesMu.Lock()
-	defer pagesMu.Unlock()
-	m := pages[conn]
-	if m == nil {
-		m = &mirror{}
-		pages[conn] = m
-	}
-	switch {
-	case r.Patch != nil:
-		html, ok := m.apply(jsonSteps(r.Patch), r.N)
-		if !ok {
-			t.Fatalf("a patch that does not apply: %+v", r)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		var r liveReply
+		if err := conn.ReadJSON(&r); err != nil {
+			t.Fatal(err)
 		}
-		r.HTML = html
-	case r.HTML != "":
-		m.full(r.HTML)
+		if r.Tree == nil && r.Error == "" && r.Ref == 0 {
+			continue // the connection's resume token alone
+		}
+		g := got{liveReply: r}
+		if r.Tree != nil {
+			pagesMu.Lock()
+			m := pages[conn]
+			if m == nil {
+				m = &treeMirror{}
+				pages[conn] = m
+			}
+			html, err := m.apply(r.Tree, r.Full, r.Reset)
+			pagesMu.Unlock()
+			if err != nil {
+				t.Fatalf("a reply that does not apply: %v: %+v", err, r)
+			}
+			g.HTML = html
+		}
+		return g
 	}
-	return r
 }
 
 // jsonSteps turns decoded JSON patch steps (float64 numbers) back into ints.
@@ -168,7 +179,7 @@ func TestLiveEvents(t *testing.T) {
 	if r := reply(t, a); !strings.Contains(r.HTML, `<p id="m">live</p>`) || !strings.Contains(r.HTML, `<p id="n">10</p>`) {
 		t.Fatalf("first render = %+v", r)
 	}
-	send := func(conn *websocket.Conn, event string, args ...any) liveReply {
+	send := func(conn *websocket.Conn, event string, args ...any) got {
 		raw := make([]json.RawMessage, len(args))
 		for i, a := range args {
 			raw[i], _ = json.Marshal(a)

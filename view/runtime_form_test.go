@@ -80,7 +80,9 @@ func (p *livePage) settle() {
 // render delivers a server render of body, answering event ref.
 func (p *livePage) render(ref int, invalid bool, body string) {
 	p.t.Helper()
-	msg, _ := json.Marshal(map[string]any{"ref": ref, "invalid": invalid, "html": "<!DOCTYPE html><html><head></head><body>" + body + "</body></html>"})
+	html := "<!DOCTYPE html><html><head></head><body>" + body + "</body></html>"
+	tree := map[string]any{"t": 0, "s": []string{"", ""}, "d": []string{html}}
+	msg, _ := json.Marshal(map[string]any{"ref": ref, "invalid": invalid, "tree": tree, "full": true, "reset": true})
 	p.recv(string(msg))
 	p.settle()
 }

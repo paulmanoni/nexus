@@ -2,7 +2,6 @@ package view
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -59,13 +58,9 @@ func (d *liveDef) observedEvent(ctx context.Context, in *instance, ev liveEvent,
 	start := time.Now()
 	reply := d.event(ctx, in, ev, render)
 	span.Set("live.duration_ms", time.Since(start).Milliseconds())
-	switch {
-	case reply.HTML != "":
-		span.Set("live.render", "full")
-		span.Set("live.bytes", len(reply.HTML))
-	case reply.Patch != nil:
-		b, _ := json.Marshal(reply.Patch)
-		span.Set("live.render", "patch")
+	if reply.Tree != nil {
+		b, _ := marshal(reply.Tree)
+		span.Set("live.render", map[bool]string{true: "full", false: "diff"}[reply.Full])
 		span.Set("live.bytes", len(b))
 	}
 	status := 200

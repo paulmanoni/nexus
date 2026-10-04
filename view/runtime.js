@@ -592,11 +592,113 @@
     };
   };
 
-  // live connects each live root to its socket: the server sends the
-  // rendered page after mounting and after every event; the browser patches
-  // it in place. A dropped connection reconnects, and the server mounts
-  // again.
+  // A live page's replies carry its render tree, or the change to it
+  // (rdiff.go): frames of statics (sent once per connection, by id) with the
+  // dynamics between them - markup, nested frames, loops of item frames.
+  // The browser keeps the tree, applies each change, and renders it back to
+  // markup to morph the page with, as Phoenix LiveView does.
+  function treeFrame(obj, statics) {
+    if (obj.s) statics.set(obj.t, obj.s);
+    return { t: obj.t, d: obj.d.map(function (v) { return treeDyn(v, statics); }) };
+  }
+
+  // Long markup the connection keeps: {r: id, v: markup} the first time,
+  // {r: id} after that. Kept beside the statics, under negative keys.
+  function treeDyn(v, statics) {
+    if (typeof v === "string") return v;
+    if (v.r !== undefined) {
+      if (v.v !== undefined) statics.set(-1 - v.r, v.v);
+      var kept = statics.get(-1 - v.r);
+      if (kept === undefined) throw new Error("no string " + v.r);
+      return kept;
+    }
+    if (v.c) return { c: v.c.map(function (f) { return treeFrame(f, statics); }) };
+    return treeFrame(v, statics);
+  }
+
+  function treeUpdate(frame, obj, statics) {
+    Object.keys(obj.u).forEach(function (k) {
+      var i = +k;
+      if (!(i < frame.d.length)) throw new Error("no dynamic " + k);
+      frame.d[i] = treeChange(frame.d[i], obj.u[k], statics);
+    });
+  }
+
+  function treeChange(old, change, statics) {
+    if (typeof change === "string") return change;
+    if (change.u) {
+      if (!old || !old.d) throw new Error("an update of a non-frame");
+      treeUpdate(old, change, statics);
+      return old;
+    }
+    if (change.k) {
+      if (!old || !old.c) throw new Error("item steps on a non-loop");
+      var out = [], i = 0;
+      change.k.forEach(function (step) {
+        if (typeof step === "number") {
+          if (step > 0) {
+            if (i + step > old.c.length) throw new Error("past the items");
+            for (var n = 0; n < step; n++) out.push(old.c[i++]);
+          } else {
+            i -= step;
+          }
+        } else if (step.u) {
+          if (i >= old.c.length) throw new Error("past the items");
+          treeUpdate(old.c[i], step, statics);
+          out.push(old.c[i++]);
+        } else {
+          out.push(treeFrame(step, statics));
+        }
+      });
+      return { c: out };
+    }
+    if (change.p) {
+      if (typeof old !== "string") throw new Error("a patch of a non-string");
+      return applyPatch(tokenize(old), change.p, newDict()).join("");
+    }
+    return treeDyn(change, statics);
+  }
+
+  function treeHTML(frame, statics) {
+    var s = statics.get(frame.t);
+    if (!s || s.length !== frame.d.length + 1) throw new Error("no statics " + frame.t);
+    var out = s[0];
+    for (var i = 0; i < frame.d.length; i++) {
+      var d = frame.d[i];
+      if (typeof d === "string") out += d;
+      else if (d.c) d.c.forEach(function (f) { out += treeHTML(f, statics); });
+      else out += treeHTML(d, statics);
+      out += s[i + 1];
+    }
+    return out;
+  }
+
+  // applyTree applies a reply's tree to what the connection holds and
+  // returns the page's markup.
+  function applyTree(state, msg) {
+    if (msg.reset || !state.statics) state.statics = new Map();
+    if (msg.full) state.tree = treeFrame(msg.tree, state.statics);
+    else if (!state.tree) throw new Error("a change with no tree");
+    else treeUpdate(state.tree, msg.tree, state.statics);
+    return treeHTML(state.tree, state.statics);
+  }
+
+  // _tree is the browser side of a connection's trees, for tests.
+  nx._tree = function () {
+    var state = {};
+    return {
+      apply: function (msgJSON) { return applyTree(state, JSON.parse(msgJSON)); },
+    };
+  };
+
+  // live connects each live root to its socket: the server sends the page's
+  // tree after mounting and the change after every event; the browser
+  // patches the page in place. A dropped connection reconnects and carries
+  // on with the page's state on the server (resume.go); when that state is
+  // gone the page mounts afresh, and the browser first sends its forms back
+  // so what the user typed survives.
   var liveRoots = new Map(); // root element -> { ws }
+  var changeEvents = new WeakMap(); // form -> the view.Change event it sends
 
   // The page's first render came over HTTP: the first connection names it
   // (data-nx-live-join) so the server sends nothing it already has. A
@@ -605,54 +707,54 @@
   function connectLive(root) {
     var path = root.getAttribute("data-nx-live");
     var join = root.getAttribute("data-nx-live-join");
-    var state = { ws: null, delay: 500, timer: null, ref: 0, submits: {}, queue: [], path: path, closed: false };
+    var state = { ws: null, delay: 500, timer: null, ref: 0, submits: {}, queue: [], path: path, closed: false,
+      statics: null, tree: null, resume: "", recovering: new Set(), opened: false };
     liveRoots.set(root, state);
     function open() {
       clearTimeout(state.timer);
       state.timer = null;
       var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path;
       if (join) url += "?join=" + encodeURIComponent(join);
+      else if (state.resume) url += "?resume=" + encodeURIComponent(state.resume);
       join = null; // a join is good for the first connection only
       var ws = new WebSocket(url);
       state.ws = ws;
       ws.onopen = function () {
         state.delay = 500;
         root.setAttribute("data-nx-live-state", "connected");
+        if (state.opened) recover(state, root, ws);
+        state.opened = true;
         var queued = state.queue;
         state.queue = [];
         queued.forEach(function (msg) { ws.send(JSON.stringify(msg)); });
       };
       ws.onmessage = function (m) {
         var msg = JSON.parse(m.data);
+        if (msg.resume) state.resume = msg.resume;
+        var recovered = msg.ref && state.recovering.delete(msg.ref);
+        if (!msg.tree && !msg.error && !msg.ref) return; // the resume token alone
         root.removeAttribute("aria-busy");
         var submitted = msg.ref ? state.submits[msg.ref] : null;
         if (msg.ref) delete state.submits[msg.ref];
         if (submitted) submitted.removeAttribute("aria-busy");
-        if (msg.error) {
+        if (msg.error && !recovered) {
           console.error("nexus view: live:", msg.error);
           root.setAttribute("data-nx-live-error", msg.error);
           return;
         }
-        root.removeAttribute("data-nx-live-error");
+        if (!msg.error) root.removeAttribute("data-nx-live-error");
         var html;
-        if (msg.patch) {
-          var tokens = applyPatch(state.last || [], msg.patch, state.dict);
-          if (tokens.length !== msg.n || tokens.indexOf(undefined) >= 0) {
-            // Out of step with the server: ask for the whole render.
-            ws.send(JSON.stringify({ event: "__resync" }));
-            return;
-          }
-          state.last = tokens;
-          observe(state.dict, tokens);
-          html = tokens.join("");
-        } else if (typeof msg.html === "string") {
-          state.last = tokenize(msg.html);
-          state.dict = newDict();
-          observe(state.dict, state.last);
-          html = msg.html;
-        } else {
+        try {
+          html = msg.tree ? applyTree(state, msg) : state.tree && treeHTML(state.tree, state.statics);
+        } catch (err) {
+          // Out of step with the server: ask for the whole tree.
+          state.tree = null;
+          ws.send(JSON.stringify({ event: "__resync" }));
           return;
         }
+        // While forms are being sent back after a fresh mount, hold the page
+        // as it is: the fresh render would close what they reopen.
+        if (state.recovering.size > 0 || !html) return;
         var next;
         if (root.tagName === "BODY") {
           next = new DOMParser().parseFromString(html, "text/html").body;
@@ -676,7 +778,6 @@
       ws.onclose = function () {
         if (state.closed) return; // navigated away: stay closed
         root.setAttribute("data-nx-live-state", "disconnected");
-        state.last = null; // the reconnect sends a full render
         // Back off with jitter, so a restarted server is not hit by every
         // page at once.
         state.timer = setTimeout(open, state.delay * (0.75 + Math.random() / 2));
@@ -996,6 +1097,19 @@
 
   var changeTimers = new WeakMap();
 
+  // recover sends, on a reconnect, each form that validates as the user
+  // types (view.Change) to its event with what it holds - before anything
+  // queued - so a page that mounted afresh has the form back.
+  function recover(state, root, ws) {
+    Array.from(root.querySelectorAll("form")).forEach(function (form) {
+      var event = changeEvents.get(form);
+      if (!event) return;
+      var ref = ++state.ref;
+      state.recovering.add(ref);
+      ws.send(JSON.stringify({ ref: ref, event: event, form: formFields(form) }));
+    });
+  }
+
   nx.live = {
     // send is what view.Send renders into an on* attribute.
     send: function (el, event, args) {
@@ -1014,6 +1128,7 @@
     // change is what view.Change renders into a form's oninput/onchange:
     // the fields go to the server after typing pauses.
     change: function (e, form, event) {
+      changeEvents.set(form, event);
       clearTimeout(changeTimers.get(form));
       changeTimers.set(form, setTimeout(function () {
         var live = liveState(form, event);

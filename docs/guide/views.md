@@ -146,7 +146,8 @@ templ (b *Board) Render() {
   whose data changed) replaces it.
 - The first request renders the page on the server; the page then connects
   (`<path>/_live`), mounts again with `Connected()` true, and reconnects if the
-  socket drops. Gates on `view.Live` apply to both.
+  socket drops, resuming its state (see [What travels](#what-travels)). Gates
+  on `view.Live` apply to both.
 - **Server push.** `sock.Subscribe(topics…)` in `Mount` (it only takes effect on
   the live connection) makes the page hear `view.Broadcast(ctx, topic, data)`
   — sent from an event, a handler, a job, anywhere. The page's optional
@@ -288,27 +289,39 @@ plain link.
   nothing is sent; different (a `Mount` that does more once `Connected()`),
   and the page is corrected. The first change carries the render the browser
   patches against from then on.
-- **Updates send what changed.** Renders are cut into tokens — each text node,
-  attribute value and `view.Send` argument its own token — and diffed. A patch
-  copies unchanged runs, sends changed values, reuses markup already on the
-  page (a new list item sends only its values), and names markup the
-  connection has seen before by a dictionary index, so it never travels
-  twice. On a 100-row board (37 KB rendered):
+- **Updates send what changed, as a render tree** — Phoenix LiveView's model.
+  The view compiler has the code templ generates record each render as a tree:
+  the markup a template always writes (its *statics*) apart from what it fills
+  in (its *dynamics*), each `for` loop as a list of item frames, each `if` /
+  `switch` branch and each component a template renders as a frame of its own.
+  A connection is sent a frame's statics once, under an id, and from then on
+  only the dynamics that changed: `{"u": {"3": "4"}}` is "the fourth dynamic is
+  now 4". A loop's change keeps the items that stayed, inserts the new ones and
+  changes the rest in place; a long piece of markup the page shows again (a
+  button whose classes a component computed) travels once and is then named
+  by an id. On the example board, adopting a pet the second time sends about
+  170 B. Markup written by code the compiler didn't see — a hand-written
+  `templ.ComponentFunc`, a library compiled by plain `templ generate` — is one
+  dynamic, sent as a token patch when it is long and changed a little; run
+  `go run github.com/paulmanoni/nexus/v2/view/viewgen/cmd/instrument <dir>` on
+  such `_templ.go` files to give them statics too (the `view/ui` kit is).
 
-  | Change | Sent |
-  | --- | --- |
-  | a count | 15 B |
-  | a new row | 92 B |
-  | adopting a row (first time / after) | 283 B / 112 B |
-
-  Messages are compressed (`permessage-deflate`); a full render, when one is
-  needed, is about 1.5 KB. A patch that would not be clearly smaller than the
-  render is sent as the render; a browser that loses track asks for one.
-- **Reconnects.** A dropped socket retries with jittered backoff (at once when
-  the network returns or the tab is looked at again); the page shows
-  `data-nx-live-state="disconnected"` meanwhile — style it. Events sent while
-  disconnected are queued and delivered once connected. The server mounts
-  afresh and sends the full render; browser-side signals keep their values.
+  Messages are compressed (`permessage-deflate`). The browser keeps the tree,
+  applies each change, renders it back to markup and morphs the page; one that
+  loses track asks for the whole tree.
+- **Reconnects resume.** A dropped socket retries with jittered backoff (at
+  once when the network returns or the tab is looked at again); the page shows
+  `data-nx-live-state="disconnected"` meanwhile — style it. The server keeps
+  the page — its state and its subscriptions — for `view.ResumeGrace` (30s)
+  under a token the browser holds; a reconnect for the same page and the same
+  signed-in user carries on with it, and events sent while disconnected are
+  queued and delivered then. When the state is gone (the grace ran out, the
+  server restarted), the page mounts afresh — and the browser first sends each
+  form that validates as it is typed into (`view.Change`) back to its event,
+  before anything queued, holding the page as it is until those replies
+  arrive: an event that reopens what the form belongs to from its fields (a
+  hidden id) gets back what the user typed, as LiveView's form recovery does.
+  Browser-side signals keep their values throughout.
 
 ## The toolchain
 
@@ -832,7 +845,7 @@ them as such: the endpoint list marks them PAGE, LIVE or SHARD (filter with
 their argument types — `Add(pets.PetInput)`, `Clear()`. Every live event is its
 own trace, named `Type.Event` (`pets.Board.Adopt`), carrying how long the event
 and its render took (`live.duration_ms`) and what travelled back (`live.render`:
-`patch` or `full`, `live.bytes`).
+`diff` or `full`, `live.bytes`).
 
 A page's gates feed `auth.OpGates` under its route (`GET /board`) and under its
 component (`pets.Board`), so navigation can ask whether the user may open a page

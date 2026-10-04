@@ -40,16 +40,16 @@ func TestLiveJoinSendsNothingFirst(t *testing.T) {
 	// Like changes the page through the broadcast (Info), so its own reply
 	// is the unchanged render — in full, the base for later patches.
 	first := reply(t, c)
-	if first.Ref != 1 || first.Patch != nil || !strings.Contains(first.HTML, `<p id="likes">0</p>`) {
+	if first.Ref != 1 || !first.Full || !strings.Contains(first.HTML, `<p id="likes">0</p>`) {
 		t.Fatalf("the first reply must carry the full render: %+v", first)
 	}
-	if second := reply(t, c); second.Patch == nil || !strings.Contains(second.HTML, `<p id="likes">1</p>`) || !strings.Contains(second.HTML, "likes/liked") {
-		t.Fatalf("later changes travel as patches: %+v", second)
+	if second := reply(t, c); second.Full || !strings.Contains(second.HTML, `<p id="likes">1</p>`) || !strings.Contains(second.HTML, "likes/liked") {
+		t.Fatalf("later changes travel as tree changes: %+v", second)
 	}
 
 	// A join is good once: a second connection naming it gets a full render.
 	again := dialLive(t, srv, "/likes/lobby/_live?join="+join)
-	if r := reply(t, again); r.HTML == "" || r.Patch != nil {
+	if r := reply(t, again); r.HTML == "" || !r.Full {
 		t.Fatalf("a used join = %+v", r)
 	}
 }

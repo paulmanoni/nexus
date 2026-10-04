@@ -136,6 +136,8 @@ func GenerateWith(root string, opts Options) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	gomod, _ := os.ReadFile(filepath.Join(modDir, "go.mod"))
+	live := bytes.Contains(gomod, []byte(strings.TrimSuffix(ViewImport, "/view")))
 	importPath := func(dir string) string {
 		rel, err := filepath.Rel(modDir, dir)
 		if err != nil || rel == "." {
@@ -160,7 +162,7 @@ func GenerateWith(root string, opts Options) (*Plan, error) {
 		if err != nil {
 			p = &Package{}
 		}
-		p.ImportPath, p.Lookup = importPath(dir), lookup
+		p.ImportPath, p.Lookup, p.Live = importPath(dir), lookup, live
 		scanned[dir] = p
 		return p
 	}

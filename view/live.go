@@ -368,9 +368,10 @@ func (in *instance) mount(ctx context.Context, c *httpx.Ctx, sock *Socket) error
 	return nil
 }
 
-// render renders the instance: its Render() component into HTML. A panic
-// becomes an error.
-func (in *instance) render(ctx context.Context) (_ []byte, err error) {
+// render renders the instance: its Render() component into HTML, and — for
+// the live connection (tree true) — into its render tree. A panic becomes an
+// error.
+func (in *instance) render(ctx context.Context, tree bool) (_ []byte, _ *rframe, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("Render panicked: %v", r)
@@ -378,14 +379,23 @@ func (in *instance) render(ctx context.Context) (_ []byte, err error) {
 	}()
 	comp, _ := in.v.MethodByName("Render").Call(nil)[0].Interface().(templ.Component)
 	if comp == nil {
-		return nil, errors.New("Render returned nil")
+		return nil, nil, errors.New("Render returned nil")
 	}
 	var buf bytes.Buffer
 	ctx = context.WithValue(ctx, formErrorsKey{}, in.errs)
-	if err := comp.Render(withRender(ctx, &render{}), &buf); err != nil {
-		return nil, err
+	if !tree {
+		if err := comp.Render(withRender(ctx, &render{}), &buf); err != nil {
+			return nil, nil, err
+		}
+		return buf.Bytes(), nil, nil
 	}
-	return buf.Bytes(), nil
+	ctx, rec := withRecorder(ctx, &buf)
+	if err := comp.Render(withRender(ctx, &render{}), rec.w); err != nil {
+		rec.tree()
+		return nil, nil, err
+	}
+	root := rec.tree()
+	return buf.Bytes(), root, nil
 }
 
 // handlerType builds func(ctx, *httpx.Ctx, T, deps…) (out, error) — a
@@ -413,7 +423,7 @@ func (d *liveDef) pageHandler() any {
 		}
 		socket := strings.TrimSuffix(c.Request.URL.Path, "/") + "/_live"
 		comp := templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
-			body, err := in.render(ctx)
+			body, _, err := in.render(ctx, false)
 			if err != nil {
 				return err
 			}
@@ -444,12 +454,16 @@ type liveEvent struct {
 }
 
 type liveReply struct {
-	Ref     int    `json:"ref,omitempty"` // the event this reply answers; 0 for a push
-	HTML    string `json:"html,omitempty"`
-	Patch   []any  `json:"patch,omitempty"` // or the change from the previous render (diff.go)
-	N       int    `json:"n,omitempty"`     // the patched render's token count, to check it
+	Ref     int    `json:"ref,omitempty"`   // the event this reply answers; 0 for a push
+	Tree    any    `json:"tree,omitempty"`  // the render tree, or its change (rdiff.go)
+	Full    bool   `json:"full,omitempty"`  // Tree is the whole tree
+	Reset   bool   `json:"reset,omitempty"` // forget the statics held so far
 	Error   string `json:"error,omitempty"`
 	Invalid bool   `json:"invalid,omitempty"` // the event returned an InvalidInput error
+	// Resume is the token a reconnect presents to carry on with this page's
+	// state (resume.go); Resumed says a reconnect did.
+	Resume  string `json:"resume,omitempty"`
+	Resumed bool   `json:"resumed,omitempty"`
 }
 
 // upgraded is the renderer of the socket route: the handler already took
@@ -484,26 +498,31 @@ func (d *liveDef) socketHandler() any {
 			return ok // Upgrade has answered the request
 		}
 		defer conn.Close()
-		in := d.instance(args[2], args[3:])
-		d.serve(context.WithValue(withApp(ctx, c), socketKey{}, true), c, conn, in)
+		owner, _ := nexus.RequestIdentity(ctx)
+		path := c.Request.URL.Path
+		var in *instance
+		var sock *Socket
+		if p := unpark(c.Request.URL.Query().Get("resume"), path, owner); p != nil {
+			in, sock = p.in, p.sock
+		} else {
+			in = d.instance(args[2], args[3:])
+		}
+		d.serve(context.WithValue(withApp(ctx, c), socketKey{}, true), c, conn, in, sock, path, owner)
 		return ok
 	}).Interface()
 }
 
-func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn, in *instance) {
-	// patches holds the render the browser has and the dictionary it
-	// shares, so the next render travels as a patch against them.
-	var patches differ
+func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn, in *instance, sock *Socket, path, owner string) {
+	// tree holds the render tree the browser has and the statics it was
+	// sent, so the next render travels as the change to it.
+	var tree treeDiffer
 	render := func(ref int, invalid bool) liveReply {
-		body, err := in.render(ctx)
+		_, root, err := in.render(ctx, true)
 		if err != nil {
 			return liveReply{Ref: ref, Error: err.Error()}
 		}
-		html := string(body)
-		if patch, n, full := patches.next(html); !full {
-			return liveReply{Ref: ref, Patch: patch, N: n, Invalid: invalid}
-		}
-		return liveReply{Ref: ref, HTML: html, Invalid: invalid}
+		msg, full := tree.next(root)
+		return liveReply{Ref: ref, Tree: msg, Full: full, Invalid: invalid}
 	}
 	send := func(r liveReply) bool {
 		b, err := marshal(r)
@@ -514,26 +533,53 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 		return conn.WriteMessage(websocket.TextMessage, b) == nil
 	}
 	sendRender := func() bool { return send(render(0, false)) }
-	sock := &Socket{connected: true, inbox: make(chan Message, liveInbox)}
-	defer sock.close()
-	if err := in.mount(ctx, c, sock); err != nil {
-		send(liveReply{Error: err.Error()})
-		return
+	resumed := sock != nil
+	if !resumed {
+		sock = &Socket{connected: true, inbox: make(chan Message, liveInbox)}
 	}
-	// The page arrived over HTTP: when this connection renders the same,
-	// send nothing — the first change carries the render the browser will
-	// patch against. Otherwise (Mount did more once connected, or there is
-	// no HTTP render to compare with: a reconnect) send the render now.
-	body, err := in.render(ctx)
-	if err != nil {
-		send(liveReply{Error: err.Error()})
-		return
-	}
-	if joined, ok := takeJoin(c.Request.URL.Query().Get("join")); !ok || joined != string(body) {
-		if !sendRender() {
+	// A connection that ends while the page is open leaves its state for a
+	// reconnect (resume.go); one the server ends (a refused credential, a
+	// failed Mount, shutdown) takes it along.
+	token := newResumeToken()
+	keep := false
+	defer func() {
+		if keep && ctx.Err() == nil {
+			park(token, &parkedPage{in: in, sock: sock, path: path, owner: owner})
+			return
+		}
+		sock.close()
+	}()
+	if resumed {
+		reply := render(0, in.errs != nil)
+		reply.Resume, reply.Resumed, reply.Reset = token, true, true
+		if !send(reply) {
+			keep = true
+			return
+		}
+	} else {
+		if err := in.mount(ctx, c, sock); err != nil {
+			send(liveReply{Error: err.Error()})
+			return
+		}
+		// The page arrived over HTTP: when this connection renders the same,
+		// send no markup — the first change carries the tree the browser
+		// will patch. Otherwise (Mount did more once connected, or there is
+		// no HTTP render to compare with: a reconnect) send the tree now.
+		body, root, err := in.render(ctx, true)
+		if err != nil {
+			send(liveReply{Error: err.Error()})
+			return
+		}
+		reply := liveReply{Resume: token}
+		if joined, ok := takeJoin(c.Request.URL.Query().Get("join")); !ok || joined != string(body) {
+			msg, _ := tree.next(root)
+			reply.Tree, reply.Full, reply.Reset = msg, true, true
+		}
+		if !send(reply) {
 			return
 		}
 	}
+	keep = true
 
 	_ = conn.SetReadDeadline(time.Now().Add(livePongWait))
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(livePongWait)) })
@@ -580,12 +626,15 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 			}
 			if err := nexus.CheckConnection(ctx); err != nil {
 				// The page's credential no longer holds: answer, then close.
+				keep = false
 				send(liveReply{Ref: ev.Ref, Error: nexus.ErrorOf(err).Error()})
 				return
 			}
-			if ev.Event == "__resync" { // the browser lost track: send the whole render
-				patches.forget()
-				if !send(render(ev.Ref, in.errs != nil)) {
+			if ev.Event == "__resync" { // the browser lost track: send the whole tree
+				tree.reset()
+				reply := render(ev.Ref, in.errs != nil)
+				reply.Reset = true
+				if !send(reply) {
 					return
 				}
 				continue
