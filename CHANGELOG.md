@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-10-04
+
 ### Added
 
 - view: live pages update as a **render tree**, as Phoenix LiveView does. The
