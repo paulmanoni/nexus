@@ -845,7 +845,12 @@ failing its validate: tags or returning nexus.Invalid() re-renders with
 view.Errors(ctx).Field("name"), and a
 successful submit resets the form.
 Navigation: @view.Link("/board") { Board } fetches and patches the page in
-place (no reload; live sockets follow; back/forward work). The first render
+place (no reload; live sockets follow; back/forward work). From a live page
+it goes over the socket: the same path with another query is a patch (the
+page's Params(ctx, deps…, u *url.URL) error runs — also after Mount — and the
+tree diff travels); another live page opens on the same connection through
+its route's gates; anything else loads over HTTP. view.PushPatch /
+view.PushNavigate do the same from an event. The first render
 comes over HTTP only; updates travel as a LiveView-style render tree: each
 template's statics once per connection, then only the dynamics that changed
 (loop items kept or changed in place, long markup by reference). A dropped

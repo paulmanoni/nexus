@@ -323,7 +323,11 @@ parks the page (state + subscriptions) for `view.ResumeGrace` (30s) under a toke
 carries on; otherwise a fresh mount, and the browser first re-sends each `view.Change` form (LiveView form
 recovery) before queued events, holding the fresh render until those replies arrive.
 `@view.Link(href, attrs…) { … }` is in-app navigation: fetch + patch the body, head assets merged,
-live sockets follow, history/back work. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+live sockets follow, history/back work. From a live page it goes over the socket (LiveView patch/navigate):
+same path → *patch* (optional `Params(ctx, deps…, u *url.URL) error`, also run after Mount; tree diff);
+another live page → the connection is handed to its `_live` route through the app router (gates/DI/params
+as a page load) and it sends its tree against the connection's statics; else `{"redirect"}` → HTTP load.
+`view.PushPatch(ctx, href)` / `view.PushNavigate(ctx, href)` from events; `nx:navigate` fires on window. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 **Islands**: `var Chart = view.NewIsland[ChartProps]("Chart")` declares one (props type → registry
 `SetIsland` → manifest `islands` → `NexusIslandProps` in client.d.ts; `*view.Signal[T]` types as `T` via
 `registry.SchemaAs`); `@Chart(props, view.Visible(), view.SSR()) { fallback }` places it. It mounts a

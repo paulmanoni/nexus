@@ -70,7 +70,7 @@ func TestRuntimeRecoversFormsOnReconnect(t *testing.T) {
 	sent = nil
 	closed()
 	settle(t, b)
-	if len(urls) != 2 || !strings.HasSuffix(urls[1], "?resume=tok1") {
+	if len(urls) != 2 || !strings.HasSuffix(urls[1], "&resume=tok1") {
 		t.Fatalf("reconnected to %v", urls)
 	}
 	if len(sent) != 1 || sent[0]["event"] != "Validate" || sent[0]["ref"] == nil {

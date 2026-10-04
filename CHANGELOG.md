@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- view: **live navigation**, as Phoenix LiveView's patch and navigate. From a
+  live page, `view.Link` (and back/forward) moves over the page's socket: the
+  same page with another query runs its new optional `Params(ctx, deps…, u
+  *url.URL) error` and sends the tree's change; another live page is opened on
+  the same connection through its route (gates, DI, path parameters) and sends
+  its tree against the statics the connection holds; anything else loads over
+  HTTP. `view.PushPatch` / `view.PushNavigate` from events; `Params` also runs
+  after `Mount`; the runtime fires `nx:navigate` on `window` after navigating.
+
 ## [2.12.0] - 2026-10-04
 
 ### Added

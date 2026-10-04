@@ -282,6 +282,34 @@ plain link.
 }
 ```
 
+From a live page, a link moves over the page's socket, as Phoenix LiveView's
+`patch` and `navigate` do — no HTTP request:
+
+- **The same page with another query** (`/orders?page=2`) is a *patch*: the
+  page's optional `Params(ctx, deps…, u *url.URL) error` runs with the new URL
+  and the page sends the change to its tree. `Params` also runs after `Mount`,
+  so a page reads its query in one place:
+
+  ```go
+  func (o *Orders) Params(ctx context.Context, u *url.URL) error {
+      o.Page, _ = strconv.Atoi(u.Query().Get("page"))
+      return o.load(ctx)
+  }
+  ```
+
+- **Another live page** is opened on the same connection: the old page ends,
+  the new one is mounted through its own route — its gates, DI and path
+  parameters as for a page load — and sends its tree. The connection already
+  holds the statics of what both pages share (a layout's), so those are not
+  sent again; the title and new stylesheets/scripts are merged in.
+- **Anything else** — a page that isn't live, or one whose gates refuse — the
+  browser loads as above.
+
+An event moves the browser the same way with `view.PushPatch(ctx, href)` or
+`view.PushNavigate(ctx, href)`. The back and forward buttons go over the
+socket too. After every navigation the runtime fires `nx:navigate` on
+`window`, for a page's own scripts (a menu marking the current page).
+
 ### What travels
 
 - **The first render comes over HTTP, once.** The socket that connects next

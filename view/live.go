@@ -9,6 +9,7 @@ import (
 	"html"
 	"io"
 	"log"
+	"net/url"
 	"reflect"
 	"regexp"
 	"runtime"
@@ -38,6 +39,7 @@ import (
 //
 //	Mount(ctx, [*view.Socket], deps…, pathParams…) error fills the state
 //	Render() templ.Component                              renders it (a templ method component)
+//	Params(ctx, deps…, u *url.URL) error                  optional: runs after Mount and on each patch (the page's URL)
 //	Info(ctx, deps…, msg view.Message) error              optional: runs on a broadcast to a topic Mount subscribed to
 //	Cancel(ctx, deps…, args…) error                       an event: any other exported method of this shape
 //
@@ -193,6 +195,7 @@ var (
 	liveType    = reflect.TypeFor[*Socket]()
 	compType    = reflect.TypeFor[templ.Component]()
 	httpCtxType = reflect.TypeFor[*httpx.Ctx]()
+	urlType     = reflect.TypeFor[*url.URL]()
 )
 
 // liveMethod is Mount or an event: which parameters are dependencies, which
@@ -209,6 +212,7 @@ type liveDef struct {
 	params   []string     // the prefix's path parameter names, in order
 	mount    *liveMethod
 	info     *liveMethod
+	urlParam *liveMethod // Params: the page's URL
 	events   map[string]*liveMethod
 	depTypes []reflect.Type // every dependency type any method takes
 	depIndex map[reflect.Type]int
@@ -239,6 +243,13 @@ func newLiveDef(t reflect.Type, prefix string) (*liveDef, error) {
 				return nil, fmt.Errorf("view.Live[%s]: Mount must be func(ctx context.Context, [*view.Socket,] deps…, pathParams…) error, got %s", t, m.Type)
 			}
 			continue // not an event: a helper method
+		}
+		if m.Name == "Params" {
+			if len(lm.args) != 1 || m.Type.In(lm.args[0]) != urlType {
+				return nil, fmt.Errorf("view.Live[%s]: Params must be func(ctx context.Context, deps…, u *url.URL) error, got %s", t, m.Type)
+			}
+			d.urlParam = lm
+			continue
 		}
 		if m.Name == "Info" {
 			if len(lm.args) != 1 || m.Type.In(lm.args[0]) != reflect.TypeFor[Message]() {
@@ -272,6 +283,8 @@ func (d *liveDef) method(m reflect.Method) (*liveMethod, bool) {
 		switch {
 		case p == liveType:
 			lm.live = i
+		case p == urlType:
+			lm.args = append(lm.args, i) // Params' page URL: not a dependency
 		case (p.Kind() == reflect.Pointer || p.Kind() == reflect.Interface) && len(lm.args) == 0:
 			lm.deps = append(lm.deps, i)
 			if _, seen := d.depIndex[p]; !seen {
@@ -368,6 +381,17 @@ func (in *instance) mount(ctx context.Context, c *httpx.Ctx, sock *Socket) error
 	return nil
 }
 
+// params runs Params with the page's URL, when the page has it.
+func (in *instance) params(ctx context.Context, sock *Socket, u *url.URL) error {
+	if in.def.urlParam == nil {
+		return nil
+	}
+	if err := in.callValues(ctx, in.def.urlParam, sock, []reflect.Value{reflect.ValueOf(u)}); err != nil {
+		return fmt.Errorf("Params: %w", err)
+	}
+	return nil
+}
+
 // render renders the instance: its Render() component into HTML, and — for
 // the live connection (tree true) — into its render tree. A panic becomes an
 // error.
@@ -421,6 +445,9 @@ func (d *liveDef) pageHandler() any {
 		if err := in.mount(ctx, c, &Socket{}); err != nil {
 			return fail(err)
 		}
+		if err := in.params(ctx, &Socket{}, c.Request.URL); err != nil {
+			return fail(err)
+		}
 		socket := strings.TrimSuffix(c.Request.URL.Path, "/") + "/_live"
 		comp := templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
 			body, _, err := in.render(ctx, false)
@@ -451,6 +478,7 @@ type liveEvent struct {
 	Event string              `json:"event"`
 	Args  []json.RawMessage   `json:"args,omitempty"`
 	Form  map[string][]string `json:"form,omitempty"` // a form event's fields
+	URL   string              `json:"url,omitempty"`  // __nav: the URL the browser moves to
 }
 
 type liveReply struct {
@@ -464,6 +492,13 @@ type liveReply struct {
 	// state (resume.go); Resumed says a reconnect did.
 	Resume  string `json:"resume,omitempty"`
 	Resumed bool   `json:"resumed,omitempty"`
+	// Navigation (navigate.go): Patch is the URL a patched page now shows;
+	// Nav the URL of the page that took the connection, Live its socket;
+	// Redirect a URL the browser loads itself.
+	Patch    string `json:"patch,omitempty"`
+	Nav      string `json:"nav,omitempty"`
+	Live     string `json:"live,omitempty"`
+	Redirect string `json:"redirect,omitempty"`
 }
 
 // upgraded is the renderer of the socket route: the handler already took
@@ -493,13 +528,21 @@ func (d *liveDef) socketHandler() any {
 		ok := []reflect.Value{done, reflect.Zero(errType)}
 		ctx := args[0].Interface().(context.Context)
 		c := args[1].Interface().(*httpx.Ctx)
+		owner, _ := nexus.RequestIdentity(ctx)
+		path := c.Request.URL.Path
+		live := context.WithValue(withApp(ctx, c), socketKey{}, true)
+		if lc, handed := ctx.Value(liveConnKey{}).(*liveConn); handed {
+			// Another page hands its connection over (navigate.go).
+			lc.claimed = true
+			d.serve(live, c, lc, d.instance(args[2], args[3:]), nil, path, owner)
+			return ok
+		}
 		conn, err := liveUpgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			return ok // Upgrade has answered the request
 		}
 		defer conn.Close()
-		owner, _ := nexus.RequestIdentity(ctx)
-		path := c.Request.URL.Path
+		lc := newLiveConn(conn, c.Request)
 		var in *instance
 		var sock *Socket
 		if p := unpark(c.Request.URL.Query().Get("resume"), path, owner); p != nil {
@@ -507,21 +550,33 @@ func (d *liveDef) socketHandler() any {
 		} else {
 			in = d.instance(args[2], args[3:])
 		}
-		d.serve(context.WithValue(withApp(ctx, c), socketKey{}, true), c, conn, in, sock, path, owner)
+		d.serve(live, c, lc, in, sock, path, owner)
+		// Each page that navigates away hands the connection to the next.
+		for lc.next != "" {
+			target := lc.next
+			lc.next = ""
+			if !lc.handoff(c.Request.Context(), appFrom(live), target) {
+				b, _ := marshal(liveReply{Redirect: target})
+				_ = conn.SetWriteDeadline(time.Now().Add(liveWriteWait))
+				_ = conn.WriteMessage(websocket.TextMessage, b)
+				break
+			}
+		}
 		return ok
 	}).Interface()
 }
 
-func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn, in *instance, sock *Socket, path, owner string) {
-	// tree holds the render tree the browser has and the statics it was
-	// sent, so the next render travels as the change to it.
-	var tree treeDiffer
+func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, lc *liveConn, in *instance, sock *Socket, path, owner string) {
+	conn := lc.conn
+	page := strings.TrimSuffix(path, "/_live")
+	navigated := lc.target
+	lc.target = ""
 	render := func(ref int, invalid bool) liveReply {
 		_, root, err := in.render(ctx, true)
 		if err != nil {
 			return liveReply{Ref: ref, Error: err.Error()}
 		}
-		msg, full := tree.next(root)
+		msg, full := lc.tree.next(root)
 		return liveReply{Ref: ref, Tree: msg, Full: full, Invalid: invalid}
 	}
 	send := func(r liveReply) bool {
@@ -539,7 +594,7 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 	}
 	// A connection that ends while the page is open leaves its state for a
 	// reconnect (resume.go); one the server ends (a refused credential, a
-	// failed Mount, shutdown) takes it along.
+	// failed Mount, shutdown) or that moves to another page takes it along.
 	token := newResumeToken()
 	keep := false
 	defer func() {
@@ -550,6 +605,7 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 		sock.close()
 	}()
 	if resumed {
+		lc.tree.reset()
 		reply := render(0, in.errs != nil)
 		reply.Resume, reply.Resumed, reply.Reset = token, true, true
 		if !send(reply) {
@@ -561,19 +617,37 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 			send(liveReply{Error: err.Error()})
 			return
 		}
-		// The page arrived over HTTP: when this connection renders the same,
-		// send no markup — the first change carries the tree the browser
-		// will patch. Otherwise (Mount did more once connected, or there is
-		// no HTTP render to compare with: a reconnect) send the tree now.
+		shown := pageURL(page, c.Request.URL.Query().Get("url"))
+		if navigated != "" {
+			shown = pageURL(page, navigated)
+		}
+		if err := in.params(ctx, sock, shown); err != nil {
+			send(liveReply{Error: err.Error()})
+			return
+		}
 		body, root, err := in.render(ctx, true)
 		if err != nil {
 			send(liveReply{Error: err.Error()})
 			return
 		}
 		reply := liveReply{Resume: token}
-		if joined, ok := takeJoin(c.Request.URL.Query().Get("join")); !ok || joined != string(body) {
-			msg, _ := tree.next(root)
-			reply.Tree, reply.Full, reply.Reset = msg, true, true
+		if navigated != "" {
+			// A page another one handed over to: its whole tree, against the
+			// statics the connection already holds.
+			lc.tree.prev = nil
+			msg, _ := lc.tree.next(root)
+			reply.Tree, reply.Full, reply.Nav, reply.Live = msg, true, shown.RequestURI(), path
+		} else {
+			// The page arrived over HTTP: when this connection renders the
+			// same, send no markup — the first change carries the tree the
+			// browser will patch. Otherwise (Mount did more once connected, or
+			// there is no HTTP render to compare with: a reconnect) send the
+			// tree now.
+			lc.tree.reset()
+			if joined, ok := takeJoin(c.Request.URL.Query().Get("join")); !ok || joined != string(body) {
+				msg, _ := lc.tree.next(root)
+				reply.Tree, reply.Full, reply.Reset = msg, true, true
+			}
 		}
 		if !send(reply) {
 			return
@@ -581,20 +655,27 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 	}
 	keep = true
 
+	// nav moves the browser to target: a patch of this page, or a hand-off
+	// to another (serve returns, and the connection's owner opens it).
+	nav := func(ref int, target string) (moved, ok bool) {
+		u, err := url.Parse(target)
+		if err != nil {
+			return false, send(liveReply{Ref: ref, Error: "navigate: " + err.Error()})
+		}
+		if u.IsAbs() || strings.TrimSuffix(u.Path, "/") != strings.TrimSuffix(page, "/") {
+			lc.next, keep = target, false
+			return true, true
+		}
+		if err := in.params(ctx, sock, u); err != nil {
+			return false, send(liveReply{Ref: ref, Error: err.Error()})
+		}
+		reply := render(ref, in.errs != nil)
+		reply.Patch = u.RequestURI()
+		return false, send(reply)
+	}
+
 	_ = conn.SetReadDeadline(time.Now().Add(livePongWait))
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(livePongWait)) })
-	events := make(chan liveEvent)
-	go func() {
-		defer close(events)
-		for {
-			var ev liveEvent
-			if err := conn.ReadJSON(&ev); err != nil {
-				return
-			}
-			_ = conn.SetReadDeadline(time.Now().Add(livePongWait))
-			events <- ev
-		}
-	}()
 	ping := time.NewTicker(livePingPeriod)
 	defer ping.Stop()
 	for {
@@ -620,7 +701,7 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 			if failed || !sendRender() {
 				return
 			}
-		case ev, open := <-events:
+		case ev, open := <-lc.events:
 			if !open {
 				return
 			}
@@ -630,17 +711,29 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, conn *websocket.Conn,
 				send(liveReply{Ref: ev.Ref, Error: nexus.ErrorOf(err).Error()})
 				return
 			}
-			if ev.Event == "__resync" { // the browser lost track: send the whole tree
-				tree.reset()
+			switch ev.Event {
+			case "__resync": // the browser lost track: send the whole tree
+				lc.tree.reset()
 				reply := render(ev.Ref, in.errs != nil)
 				reply.Reset = true
 				if !send(reply) {
 					return
 				}
 				continue
+			case "__nav":
+				if moved, ok := nav(ev.Ref, ev.URL); moved || !ok {
+					return
+				}
+				continue
 			}
-			if !send(d.observedEvent(ctx, in, ev, render)) {
+			var target string
+			if !send(d.observedEvent(context.WithValue(ctx, navKey{}, &target), in, ev, render)) {
 				return
+			}
+			if target != "" {
+				if moved, ok := nav(0, target); moved || !ok {
+					return
+				}
 			}
 		}
 	}

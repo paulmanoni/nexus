@@ -713,9 +713,10 @@
     function open() {
       clearTimeout(state.timer);
       state.timer = null;
-      var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path;
-      if (join) url += "?join=" + encodeURIComponent(join);
-      else if (state.resume) url += "?resume=" + encodeURIComponent(state.resume);
+      var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + state.path +
+        "?url=" + encodeURIComponent(location.pathname + location.search);
+      if (join) url += "&join=" + encodeURIComponent(join);
+      else if (state.resume) url += "&resume=" + encodeURIComponent(state.resume);
       join = null; // a join is good for the first connection only
       var ws = new WebSocket(url);
       state.ws = ws;
@@ -731,6 +732,21 @@
       ws.onmessage = function (m) {
         var msg = JSON.parse(m.data);
         if (msg.resume) state.resume = msg.resume;
+        if (msg.redirect) {
+          // Not a live page this connection can open: load it.
+          state.closed = true;
+          ws.close();
+          liveRoots.delete(root);
+          navigate(msg.redirect, state.navPush !== false);
+          return;
+        }
+        var push = state.navPush !== false;
+        if (msg.patch || msg.nav) state.navPush = undefined;
+        if (msg.nav) {
+          // Another live page took the connection: it is this root's now.
+          state.path = msg.live;
+          root.setAttribute("data-nx-live", msg.live);
+        }
         var recovered = msg.ref && state.recovering.delete(msg.ref);
         if (!msg.tree && !msg.error && !msg.ref) return; // the resume token alone
         root.removeAttribute("aria-busy");
@@ -757,8 +773,10 @@
         if (state.recovering.size > 0 || !html) return;
         var next;
         if (root.tagName === "BODY") {
-          next = new DOMParser().parseFromString(html, "text/html").body;
-          next.setAttribute("data-nx-live", path);
+          var doc = new DOMParser().parseFromString(html, "text/html");
+          if (msg.nav) mergeHead(doc.head);
+          next = doc.body;
+          next.setAttribute("data-nx-live", state.path);
           next.setAttribute("data-nx-live-state", "connected");
         } else {
           next = root.cloneNode(false);
@@ -774,6 +792,10 @@
           submitted.reset();
           ownFields(submitted);
         }
+        var moved = msg.patch || msg.nav;
+        if (moved && push && moved !== location.pathname + location.search) history.pushState({ nx: true }, "", moved);
+        if (msg.nav && push) window.scrollTo(0, 0);
+        if (moved) navigated();
       };
       ws.onclose = function () {
         if (state.closed) return; // navigated away: stay closed
@@ -1031,6 +1053,7 @@
         syncLive();
         sweepIslands();
         if (push) window.scrollTo(0, 0);
+        navigated();
       })
       .catch(function () {
         if (push) location.assign(target);
@@ -1054,6 +1077,27 @@
     });
   }
 
+  // navigated tells the page's own scripts it moved (a menu marking the
+  // current page): an nx:navigate event on window.
+  function navigated() {
+    window.dispatchEvent(new Event("nx:navigate"));
+  }
+
+  // liveNavigate moves to url over the socket of the page's live root, when
+  // there is one and it is connected: the server patches the page or opens
+  // the other live page on the connection (navigate.go). It reports whether
+  // it did.
+  function liveNavigate(url, push) {
+    var root = document.body && document.body.hasAttribute("data-nx-live") ? document.body : null;
+    var state = root && liveRoots.get(root);
+    if (!state || !state.ws || state.ws.readyState !== 1) return false;
+    var u = new URL(url, location.href);
+    if (u.origin !== location.origin) return false;
+    state.navPush = push;
+    liveSend({ root: root, state: state }, { event: "__nav", url: u.pathname + u.search });
+    return true;
+  }
+
   function onNavClick(e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target.closest && e.target.closest("a[data-nx-nav]");
@@ -1062,7 +1106,7 @@
     if (url.origin !== location.origin) return;
     if (url.pathname === location.pathname && url.search === location.search && url.hash) return; // same page anchor
     e.preventDefault();
-    navigate(url.href, true);
+    if (!liveNavigate(url.href, true)) navigate(url.href, true);
   }
 
   function liveState(el, event) {
@@ -1193,7 +1237,7 @@
       mark();
       window.addEventListener("hashchange", mark);
       window.addEventListener("popstate", function (e) {
-        if (e.state && e.state.nx) navigate(location.href, false);
+        if (e.state && e.state.nx && !liveNavigate(location.href, false)) navigate(location.href, false);
       });
     };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
