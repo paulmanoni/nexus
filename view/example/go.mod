@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/a-h/templ v0.3.1020
-	github.com/paulmanoni/nexus/v2 v2.10.0
+	github.com/paulmanoni/nexus/v2 v2.11.0
 	github.com/templui/templui v1.13.2
 )
 
