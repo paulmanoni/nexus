@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.3] - 2026-10-04
+
 ### Fixed
 
 - view: parking a page reads `view.ResumeGrace` under the parking lock, so
