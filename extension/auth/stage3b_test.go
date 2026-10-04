@@ -231,3 +231,31 @@ func TestJWTScheme(t *testing.T) {
 		t.Fatalf("the JWT goes to the jwt scheme: %+v", m)
 	}
 }
+
+func TestRevocableJWT(t *testing.T) {
+	t.Setenv("NEXUS_DEV", "1")
+	srv := tokensApp(t, map[string]auth.SchemeSettings{
+		"hs": {Type: auth.SchemeJWT, Secret: "s3cret", Revocable: true},
+	})
+	old := claims("1", time.Hour)
+	old["iat"] = time.Now().Add(-time.Minute).Unix()
+	tok := jwtSign(t, "HS256", "", old, hs256("s3cret"))
+	b := bearerAs(t, srv, tok)
+	if b.me().ID != "1" {
+		t.Fatal("a token before any revocation works")
+	}
+	if code, _ := b.do("POST", "/revoke-me", ""); code != 201 {
+		t.Fatalf("revoke = %d", code)
+	}
+	if code, body := meCode(b); code != 401 || !strings.Contains(body, "signed out everywhere") {
+		t.Fatalf("a token issued before RevokeUser = %d %s", code, body)
+	}
+	fresh := claims("1", time.Hour)
+	fresh["iat"] = time.Now().Add(2 * time.Second).Unix()
+	if bearerAs(t, srv, jwtSign(t, "HS256", "", fresh, hs256("s3cret"))).me().ID != "1" {
+		t.Fatal("a token issued after it works")
+	}
+	if code, body := meCode(bearerAs(t, srv, jwtSign(t, "HS256", "", claims("1", time.Hour), hs256("s3cret")))); code != 401 || !strings.Contains(body, "iat") {
+		t.Fatalf("a revocable scheme refuses a token without iat: %d %s", code, body)
+	}
+}

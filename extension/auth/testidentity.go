@@ -34,7 +34,7 @@ func (st *moduleState) testIdentity(ctx context.Context, r *http.Request) (*Iden
 	}
 	if key := r.Header.Get(TestIdentityHeader); key != "" {
 		if v, ok := testIdentities.Load(key); ok {
-			return v.(*Identity), true
+			return st.expandRoles(v.(*Identity)), true
 		}
 	}
 	if uid := r.Header.Get(TestUserHeader); uid != "" && st.config.users != nil {

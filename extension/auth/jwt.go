@@ -60,50 +60,62 @@ type jwtHeader struct {
 	Kid string `json:"kid"`
 }
 
-// verify returns the token's subject, or why it isn't accepted.
-func (v *jwtVerifier) verify(ctx context.Context, tok string) (string, string) {
-	parts := strings.Split(tok, ".")
-	if len(parts) != 3 {
-		return "", "malformed token"
+// verify returns the token's subject and issue time (zero without iat),
+// or why it isn't accepted.
+func (v *jwtVerifier) verify(ctx context.Context, tok string) (string, time.Time, string) {
+	claims, reason := v.claims(ctx, tok)
+	if reason != "" {
+		return "", time.Time{}, reason
 	}
-	var h jwtHeader
-	if !decodeSegment(parts[0], &h) {
-		return "", "malformed token"
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return "", "malformed token"
-	}
-	signed := []byte(parts[0] + "." + parts[1])
-	if reason := v.checkSignature(ctx, h, signed, sig); reason != "" {
-		return "", reason
-	}
-	var claims map[string]any
-	if !decodeSegment(parts[1], &claims) {
-		return "", "malformed token"
-	}
-	now := time.Now()
-	if exp, ok := numericClaim(claims, "exp"); ok && now.After(exp.Add(v.sc.Leeway)) {
-		return "", "token expired"
-	}
-	if nbf, ok := numericClaim(claims, "nbf"); ok && now.Add(v.sc.Leeway).Before(nbf) {
-		return "", "token not valid yet"
-	}
-	if v.sc.Issuer != "" && claims["iss"] != v.sc.Issuer {
-		return "", "wrong issuer"
-	}
-	if v.sc.Audience != "" && !hasAudience(claims["aud"], v.sc.Audience) {
-		return "", "wrong audience"
-	}
+	iat, _ := numericClaim(claims, "iat")
 	switch sub := claims[v.sc.Subject].(type) {
 	case string:
 		if sub != "" {
-			return sub, ""
+			return sub, iat, ""
 		}
 	case float64:
-		return strconv.FormatFloat(sub, 'f', -1, 64), ""
+		return strconv.FormatFloat(sub, 'f', -1, 64), iat, ""
 	}
-	return "", "no " + v.sc.Subject + " claim"
+	return "", time.Time{}, "no " + v.sc.Subject + " claim"
+}
+
+// claims verifies the token and returns its claims, or why it isn't
+// accepted.
+func (v *jwtVerifier) claims(ctx context.Context, tok string) (map[string]any, string) {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		return nil, "malformed token"
+	}
+	var h jwtHeader
+	if !decodeSegment(parts[0], &h) {
+		return nil, "malformed token"
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, "malformed token"
+	}
+	signed := []byte(parts[0] + "." + parts[1])
+	if reason := v.checkSignature(ctx, h, signed, sig); reason != "" {
+		return nil, reason
+	}
+	var claims map[string]any
+	if !decodeSegment(parts[1], &claims) {
+		return nil, "malformed token"
+	}
+	now := time.Now()
+	if exp, ok := numericClaim(claims, "exp"); ok && now.After(exp.Add(v.sc.Leeway)) {
+		return nil, "token expired"
+	}
+	if nbf, ok := numericClaim(claims, "nbf"); ok && now.Add(v.sc.Leeway).Before(nbf) {
+		return nil, "token not valid yet"
+	}
+	if v.sc.Issuer != "" && claims["iss"] != v.sc.Issuer {
+		return nil, "wrong issuer"
+	}
+	if v.sc.Audience != "" && !hasAudience(claims["aud"], v.sc.Audience) {
+		return nil, "wrong audience"
+	}
+	return claims, ""
 }
 
 // checkSignature accepts only the algorithms the configured key is for, so

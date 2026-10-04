@@ -363,6 +363,18 @@ templ authPage(st *consoleState, rejects []rejectRow, traced bool, us *userSessi
 						}
 					}
 				}
+				if len(su.Roles) > 0 || len(su.Catalogue) > 0 {
+					@section("Roles and permissions") {
+						<div class="flex flex-col gap-2 px-3 py-2 text-[12.5px]">
+							for _, r := range su.Roles {
+								<div class="flex flex-wrap items-center gap-1"><span class="font-medium w-28">{ r.Name }</span>@chips(r.Perms, badge.VariantInfo)</div>
+							}
+							if len(su.Catalogue) > 0 {
+								<div class="flex flex-wrap items-center gap-1"><span class="text-muted-foreground w-28">declared</span>@chips(su.Catalogue, badge.VariantOutline)</div>
+							}
+						</div>
+					}
+				}
 				if len(su.Policies) > 0 {
 					@section("Policies") {
 						<p class="px-3 py-2 text-[12.5px]">auth.Check applies a policy to objects of: <span class="font-mono">{ strings.Join(su.Policies, ", ") }</span></p>

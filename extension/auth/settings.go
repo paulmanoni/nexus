@@ -49,8 +49,18 @@ type Settings struct {
 	Sessions      SessionRules            `toml:"sessions"`
 	Impersonation ImpersonationSettings   `toml:"impersonation"`
 	OAuth2        OAuth2Settings          `toml:"oauth2"`
-	Throttle      ThrottleSettings        `toml:"throttle"`
-	Endpoints     EndpointSettings        `toml:"endpoints"`
+	// Roles maps a role name to its permissions:
+	//   [auth.roles]
+	//   admin = ["*"]
+	//   clerk = ["orders.view", "orders.refund"]
+	// An identity's Roles add those permissions to its Perms.
+	Roles map[string][]string `toml:"roles"`
+	// Perms is the optional permission catalogue. When set, every
+	// permission a gate (Requires, RequiresAny) or a role names must be in
+	// it — a misspelling fails boot — and the dashboard lists it.
+	Perms     []string         `toml:"perms"`
+	Throttle  ThrottleSettings `toml:"throttle"`
+	Endpoints EndpointSettings `toml:"endpoints"`
 }
 
 // AreaSettings is one [auth.areas.<name>] table: a path prefix that belongs
@@ -164,6 +174,10 @@ type SchemeSettings struct {
 	Subject string `toml:"subject"`
 	// Leeway is the clock skew allowed on exp and nbf (default 1m).
 	Leeway time.Duration `toml:"leeway"`
+	// Revocable makes auth.RevokeUser reach this jwt scheme's tokens: one
+	// issued (iat) before the user's last revocation is refused. Costs one
+	// cached lookup per request; tokens then need an iat claim.
+	Revocable bool `toml:"revocable"`
 }
 
 // PasswordSettings is [auth.passwords]: how auth.Login verifies and
@@ -210,6 +224,8 @@ type resolvedSettings struct {
 	endOnPw       bool
 	impersonation ImpersonationSettings
 	oauth2        OAuth2Settings
+	roles         map[string][]string
+	perms         []string
 	areas         []namedArea // longest prefix first
 	throttle      throttleRules
 	endpoints     EndpointSettings
@@ -315,6 +331,7 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 	r.login, r.home, r.nextParam, r.endpoints = s.Login, s.Home, s.NextParam, s.Endpoints
 	r.forbidden = s.Forbidden
 	r.oauth2 = s.OAuth2
+	r.roles, r.perms = s.Roles, s.Perms
 	r.impersonation = s.Impersonation
 	if r.impersonation.Permission == "" {
 		r.impersonation.Permission = "auth.impersonate"

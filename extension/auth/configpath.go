@@ -190,9 +190,22 @@ func (st *moduleState) tokenResolve(name string) resolver {
 
 func (st *moduleState) jwtResolve(name string, v *jwtVerifier) resolver {
 	return func(ctx context.Context, tok string) (*Identity, error) {
-		sub, reason := v.verify(ctx, tok)
+		sub, iat, reason := v.verify(ctx, tok)
 		if reason != "" {
 			return nil, &credentialError{name, reason}
+		}
+		if v.sc.Revocable {
+			// A token issued before the user's last RevokeUser is refused.
+			if iat.IsZero() {
+				return nil, &credentialError{name, "no iat claim (a revocable scheme needs one)"}
+			}
+			epoch, err := st.epoch(ctx, sub)
+			if err != nil {
+				return nil, err
+			}
+			if epoch > 0 && iat.Before(time.Unix(0, epoch).Truncate(time.Second)) {
+				return nil, &credentialError{name, revokedReason}
+			}
 		}
 		return st.loadAs(ctx, name, sub)
 	}
@@ -226,6 +239,7 @@ func (st *moduleState) load(ctx context.Context, userID string) (*Identity, erro
 	if err != nil || id == nil {
 		return id, err
 	}
+	id = st.expandRoles(id)
 	if c := st.config.loads; c != nil {
 		c.put(userID, id)
 	}
@@ -325,4 +339,31 @@ func (st *moduleState) defaultGate() middleware.Middleware {
 			}
 			return next(rc)
 		})
+}
+
+// expandRoles returns id with its Roles' permissions ([auth.roles]) added
+// to Perms — a copy, so the app's value is left as it was.
+func (st *moduleState) expandRoles(id *Identity) *Identity {
+	rs := st.config.settings
+	if id == nil || len(id.Roles) == 0 || rs == nil || len(rs.roles) == 0 {
+		return id
+	}
+	cp := *id
+	seen := map[string]bool{}
+	cp.Perms = nil
+	for _, p := range id.Perms {
+		if !seen[p] {
+			seen[p] = true
+			cp.Perms = append(cp.Perms, p)
+		}
+	}
+	for _, role := range id.Roles {
+		for _, p := range rs.roles[role] {
+			if !seen[p] {
+				seen[p] = true
+				cp.Perms = append(cp.Perms, p)
+			}
+		}
+	}
+	return &cp
 }

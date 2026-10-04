@@ -169,6 +169,9 @@ func Policy[T any](rule func(ctx context.Context, me *Identity, perm string, obj
 // not "") through the same rule as Requires, and the Policy registered for
 // obj's type, if any. Unauthenticated or Forbidden otherwise.
 func Check(ctx context.Context, perm string, obj any) error {
+	if st, ok := stateFrom(ctx); ok {
+		noteUndeclared(st, perm)
+	}
 	me := Current(ctx)
 	if me == nil {
 		return unauthenticated(ctx)

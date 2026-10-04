@@ -42,6 +42,9 @@ type Identity struct {
 	// "orders.*" grants "orders.view" and "orders.refunds.create", "*"
 	// grants everything. Roles are an app concept: Users.Load expands them.
 	Perms []string
+	// Roles are role names [auth.roles] defines; nexus adds their
+	// permissions to Perms when it loads the identity.
+	Roles []string
 	// User is the app's user, read with auth.User[T]. It is never sent to
 	// a browser unless Users' Public method puts it there.
 	User any
@@ -154,7 +157,10 @@ func Module(cfg Config) nexus.Option {
 			}),
 			// Once every route is registered: a sign-in or forbidden page that
 			// no route serves sends visitors to a 404.
-			nexus.Setup(func(app *nexus.App) { state.warnMissingPages(app) }),
+			nexus.Setup(func(app *nexus.App) error {
+				state.warnMissingPages(app)
+				return state.checkCatalogue(app)
+			}),
 		},
 		Dashboard: &extension.Dashboard{
 			Tab: &extension.Tab{ID: "auth", Label: "Auth"},

@@ -91,6 +91,11 @@ type authSetup struct {
 	}
 	LocksKnown bool
 	Policies   []string
+	Roles      []struct {
+		Name  string
+		Perms []string
+	}
+	Catalogue []string
 }
 
 // userSessions is the Auth page's lookup of one user's sessions, from the

@@ -23,6 +23,13 @@ type dashSetup struct {
 	Locks      []dashLock     `json:"locks"`
 	LocksKnown bool           `json:"locksKnown"` // false: the throttle store can't list
 	Policies   []string       `json:"policies"`
+	Roles      []dashRole     `json:"roles"`
+	Catalogue  []string       `json:"catalogue"`
+}
+
+type dashRole struct {
+	Name  string
+	Perms []string
 }
 
 type dashScheme struct {
@@ -82,6 +89,11 @@ func (st *moduleState) dashboardSetup() *dashSetup {
 		"throttle: account " + limitString(rs.throttle.account) + ", ip " + limitString(rs.throttle.ip) + ", lockout " + rs.throttle.lockout.String(),
 		"impersonation needs " + rs.impersonation.Permission,
 	}
+	for name, perms := range rs.roles {
+		d.Roles = append(d.Roles, dashRole{name, perms})
+	}
+	sort.Slice(d.Roles, func(i, j int) bool { return d.Roles[i].Name < d.Roles[j].Name })
+	d.Catalogue = rs.perms
 	if st.app != nil {
 		if v, ok := st.app.Value(policyListKey{}); ok {
 			d.Policies = append(d.Policies, v.([]string)...)

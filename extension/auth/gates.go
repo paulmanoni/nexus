@@ -14,6 +14,9 @@ import (
 // Requires() endpoint gate consults, so UI toggles and endpoint gates
 // share one rulebook and cannot drift. Anonymous requests are false.
 func Can(ctx context.Context, permission string) bool {
+	if st, ok := stateFrom(ctx); ok {
+		noteUndeclared(st, permission)
+	}
 	id, ok := identityFrom(ctx)
 	if !ok {
 		return false
@@ -30,6 +33,11 @@ func Can(ctx context.Context, permission string) bool {
 // Every requested permission appears as a key; for anonymous requests all
 // values are false.
 func Gates(ctx context.Context, permissions ...string) map[string]bool {
+	if st, ok := stateFrom(ctx); ok {
+		for _, p := range permissions {
+			noteUndeclared(st, p)
+		}
+	}
 	out := make(map[string]bool, len(permissions))
 	id, ok := identityFrom(ctx)
 	for _, p := range permissions {
