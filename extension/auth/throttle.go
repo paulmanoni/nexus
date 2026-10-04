@@ -213,5 +213,7 @@ func tooMany(wait time.Duration) error {
 	if wait < time.Second {
 		wait = time.Second
 	}
-	return nexus.Errf(nexus.TooMany, "too many failed sign-ins — try again in %s", wait)
+	e := nexus.Errf(nexus.TooMany, "too many failed sign-ins — try again in %s", wait)
+	e.RetryAfter = wait
+	return e
 }

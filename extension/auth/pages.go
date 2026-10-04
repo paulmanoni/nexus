@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2"
@@ -299,6 +300,9 @@ func (st *moduleState) tokenEndpoint(c *httpx.Ctx) {
 		ne := nexus.ErrorOf(err)
 		switch ne.Code {
 		case nexus.TooMany:
+			if ne.RetryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(int(ne.RetryAfter.Seconds())))
+			}
 			oauthError(c, http.StatusTooManyRequests, "invalid_grant", ne.Error())
 		case nexus.InvalidInput, nexus.Unauthenticated, nexus.Forbidden:
 			oauthError(c, http.StatusBadRequest, "invalid_grant", ne.Error())
@@ -319,4 +323,39 @@ func revokeEndpoint(c *httpx.Ctx) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, map[string]any{})
+}
+
+// warnMissingPages logs each [auth] / area login or forbidden path no GET
+// route serves. An app with a frontend (an SPA may route it) isn't checked.
+func (st *moduleState) warnMissingPages(app *nexus.App) {
+	rs := st.config.settings
+	if rs == nil {
+		return
+	}
+	if _, _, ok := app.FrontendFS(); ok {
+		return
+	}
+	served := map[string]bool{}
+	for _, e := range app.Registry().Endpoints() {
+		if strings.Contains(e.Method, "GET") {
+			served[e.Path] = true
+		}
+	}
+	check := func(key, path string) {
+		if path == "" {
+			return
+		}
+		if u, err := url.Parse(path); err == nil {
+			path = u.Path
+		}
+		if !served[path] {
+			app.Logger().Warn("auth: no GET route serves " + key + " " + path + " — visitors sent there get a 404")
+		}
+	}
+	check("[auth] login", rs.login)
+	check("[auth] forbidden", rs.forbidden)
+	for _, a := range rs.areas {
+		check("[auth.areas."+a.name+"] login", a.Login)
+		check("[auth.areas."+a.name+"] forbidden", a.Forbidden)
+	}
 }

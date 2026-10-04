@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/internal/graph"
@@ -147,6 +148,9 @@ type Error struct {
 	Message string              // shown to the client; the code's default when empty
 	Fields  map[string][]string // per-field messages (InvalidInput); global ones under GlobalErrorKey
 	Cause   error
+	// RetryAfter, when set (TooMany, Unavailable), is sent on REST as the
+	// Retry-After header, in whole seconds.
+	RetryAfter time.Duration `json:"-"`
 }
 
 // Err returns an error with the given code and message.

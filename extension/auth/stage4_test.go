@@ -70,8 +70,22 @@ var recordJob = jobs.DefineFunc(func(ctx context.Context, run *jobs.Run, _ struc
 	return nil
 }, jobs.Name("auth-test-record"))
 
+var systemJob = jobs.DefineFunc(func(ctx context.Context, run *jobs.Run, _ struct{}) error {
+	ranAsMu.Lock()
+	defer ranAsMu.Unlock()
+	who := "system"
+	if me := auth.Current(ctx); me != nil {
+		who = me.ID
+	}
+	ranAs = append(ranAs, "sys:"+who)
+	return nil
+}, jobs.Name("auth-test-system"), jobs.AsSystem())
+
 func enqueue(ctx context.Context) (*me, error) {
 	_, err := recordJob.Enqueue(ctx, struct{}{})
+	if err == nil {
+		_, err = systemJob.Enqueue(ctx, struct{}{})
+	}
 	return &me{}, err
 }
 
@@ -82,7 +96,7 @@ func stage4App(t *testing.T) *httptest.Server {
 	s.Endpoints = auth.EndpointSettings{Me: "/auth/me"}
 	app, stop, err := nexus.InProcess(config.Runtime{},
 		auth.Module(auth.Config{Users: auth.StaticUsers(newStage4Users()), Settings: &s}),
-		jobs.Module(jobs.Config{}), recordJob, orderPolicy,
+		jobs.Module(jobs.Config{}), recordJob, systemJob, orderPolicy,
 		nexus.AsRest("POST", "/login", signIn, auth.Public()),
 		nexus.AsRest("GET", "/who", whoActs),
 		nexus.AsRest("GET", "/order", viewOrder),
@@ -188,15 +202,15 @@ func TestJobsRunAsTheirEnqueuer(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		ranAsMu.Lock()
-		got := append([]string(nil), ranAs...)
+		got := strings.Join(ranAs, ",")
 		ranAsMu.Unlock()
-		if len(got) > 0 {
-			if got[0] != "1:staff" {
-				t.Fatalf("the job ran as %v, want 1:staff", got)
-			}
+		if strings.Contains(got, "1:staff") && strings.Contains(got, "sys:system") {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	ranAsMu.Lock()
+	t.Logf("ran: %v", ranAs)
+	ranAsMu.Unlock()
 	t.Fatal("the job did not run")
 }

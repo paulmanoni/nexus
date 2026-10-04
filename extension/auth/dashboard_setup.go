@@ -22,6 +22,7 @@ type dashSetup struct {
 	Rules      []string       `json:"rules"`
 	Locks      []dashLock     `json:"locks"`
 	LocksKnown bool           `json:"locksKnown"` // false: the throttle store can't list
+	Policies   []string       `json:"policies"`
 }
 
 type dashScheme struct {
@@ -80,6 +81,11 @@ func (st *moduleState) dashboardSetup() *dashSetup {
 		"sessions: single " + yesNo(rs.sessions.Single) + ", end on password change " + yesNo(rs.endOnPw) + ", idle " + orNever(rs.sessions.Idle),
 		"throttle: account " + limitString(rs.throttle.account) + ", ip " + limitString(rs.throttle.ip) + ", lockout " + rs.throttle.lockout.String(),
 		"impersonation needs " + rs.impersonation.Permission,
+	}
+	if st.app != nil {
+		if v, ok := st.app.Value(policyListKey{}); ok {
+			d.Policies = append(d.Policies, v.([]string)...)
+		}
 	}
 	if th := st.config.throttle; th != nil {
 		if mem, ok := th.store.(*memoryThrottle); ok {
@@ -162,5 +168,55 @@ func dashboardRevokeUserHandler(st *moduleState) httpx.HandlerFunc {
 			st.config.loads.drop(body.ID)
 		}
 		c.JSON(http.StatusOK, httpx.H{"revoked": body.ID})
+	}
+}
+
+// dashboardSessions answers the Auth page's "a user's sessions" lookup
+// (?user=…): where they are signed in, from the token store.
+func (st *moduleState) dashboardSessions(r *http.Request) any {
+	uid := strings.TrimSpace(r.URL.Query().Get("user"))
+	if uid == "" || st.config.settings == nil {
+		return nil
+	}
+	out := map[string]any{"User": uid}
+	ts, err := userTokens(r.Context(), st, uid, func(t StoredToken) bool { return t.Use != "refresh" })
+	if err != nil {
+		out["Error"] = err.Error()
+		return out
+	}
+	devices := make([]Device, 0, len(ts))
+	for h, t := range ts {
+		devices = append(devices, device(h, t, ""))
+	}
+	sort.Slice(devices, func(i, j int) bool { return devices[i].Created.After(devices[j].Created) })
+	out["Devices"] = devices
+	return out
+}
+
+// dashboardRevokeSessionHandler ends one of a user's sessions, tokens or
+// keys: POST {"user": …, "id": …}.
+func dashboardRevokeSessionHandler(st *moduleState) httpx.HandlerFunc {
+	return func(c *httpx.Ctx) {
+		var body struct {
+			User string `json:"user"`
+			ID   string `json:"id"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || body.User == "" || body.ID == "" {
+			c.JSON(http.StatusBadRequest, httpx.H{"error": "user and id required"})
+			return
+		}
+		ts, err := userTokens(c.Request.Context(), st, body.User, func(StoredToken) bool { return true })
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, httpx.H{"error": err.Error()})
+			return
+		}
+		for h := range ts {
+			if len(body.ID) == 32 && h[:32] == body.ID {
+				_ = st.config.tokens.Delete(c.Request.Context(), h)
+				c.JSON(http.StatusOK, httpx.H{"revoked": body.ID})
+				return
+			}
+		}
+		c.JSON(http.StatusNotFound, httpx.H{"error": "no such session"})
 	}
 }

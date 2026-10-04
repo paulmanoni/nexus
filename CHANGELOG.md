@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Auth: a `Users` optional method with the wrong signature (`SetPassword`,
+  `CheckLogin`, `Public`) fails boot; a sign-in or forbidden page no route
+  serves is logged at boot.
+- `nexus.Error.RetryAfter`, sent as `Retry-After` on REST; the sign-in
+  throttle and the OAuth2 token endpoint set it.
+- `jobs.AsSystem()`: a job that runs without its enqueuer's identity.
+- The Inertia `auth` prop is typed in `client.d.ts` (`NexusSharedProps["auth"]`).
+- Dashboard Auth tab: a user's sessions and keys with Revoke, the registered
+  policies; `dashboard.RegisterPageData` for plugins' per-request page data.
+  The canvas's inspector and auth drawer show the setup.
+- `nexus lint` warns about `[auth] default = "public"`.
+- A production app keeping sessions in memory gets a boot warning.
+
 ## [2.9.0] - 2026-10-04
 
 nexus 2 has no users yet, so extension/auth's v1 API is removed now rather than

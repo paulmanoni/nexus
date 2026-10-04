@@ -1965,7 +1965,7 @@ const authSummary = computed(() => {
   const snap = latestSnapshot.value
   const a = snap && snap.extra && snap.extra.auth
   if (!a) return null
-  return { identities: a.identities || [], cachingEnabled: !!a.cachingEnabled }
+  return { setup: a.setup || null }
 })
 provide('nexus.authSummary', authSummary)
 

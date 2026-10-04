@@ -433,7 +433,7 @@ func (m *Manager) execute(rec Record) {
 		m.markCancelled(exec)
 	}
 
-	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, worker: rec.Worker, actor: rec.Actor, ctx: ctx, exec: exec}
+	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, worker: rec.Worker, actor: rec.Actor, system: d.system, ctx: ctx, exec: exec}
 	err := m.call(call, ctx, run, rec.Args)
 
 	m.mu.Lock()
@@ -483,7 +483,7 @@ func (m *Manager) call(call callFunc, ctx context.Context, run *Run, args json.R
 			err = Permanent(fmt.Errorf("panic: %v\n%s", p, debug.Stack()))
 		}
 	}()
-	if run.actor != "" && m.app != nil {
+	if run.actor != "" && !run.system && m.app != nil {
 		// The job runs as the user who enqueued it, as they are now.
 		rctx, rerr := nexus.RestoreIdentity(ctx, m.app, run.actor)
 		if rerr != nil {

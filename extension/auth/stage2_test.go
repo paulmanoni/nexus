@@ -124,6 +124,12 @@ func TestThrottle(t *testing.T) {
 	if code, body := login("ana", "correct horse"); code != 429 || !strings.Contains(body, "too many failed sign-ins") {
 		t.Fatalf("a locked account = %d %s", code, body)
 	}
+	req, _ := http.NewRequest("POST", b.srv.URL+"/auth/login", strings.NewReader(`{"login":"ana","password":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRFToken", b.cookie("csrftoken"))
+	if res, err := b.client.Do(req); err != nil || res.Header.Get("Retry-After") == "" {
+		t.Fatalf("a 429 carries Retry-After: %v %v", err, res.Header)
+	}
 	if code, _ := login("bo", "old format pw"); code != 201 {
 		t.Fatalf("another account = %d", code)
 	}

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"strings"
 
 	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/badge"
 	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/button"
@@ -177,7 +178,7 @@ templ tracePage(id string, spans []*trace.SpanNode) {
 }
 
 // ---- Auth ----
-templ authPage(st *consoleState, rejects []rejectRow, traced bool) {
+templ authPage(st *consoleState, rejects []rejectRow, traced bool, us *userSessions) {
 	<div data-events="auth.reject">
 		if su := st.Auth.Setup; su != nil {
 			@pageHead("Auth", len(su.Schemes)) {
@@ -362,11 +363,91 @@ templ authPage(st *consoleState, rejects []rejectRow, traced bool) {
 						}
 					}
 				}
+				if len(su.Policies) > 0 {
+					@section("Policies") {
+						<p class="px-3 py-2 text-[12.5px]">auth.Check applies a policy to objects of: <span class="font-mono">{ strings.Join(su.Policies, ", ") }</span></p>
+					}
+				}
+				@section("A user's sessions") {
+					<form method="get" action={ templ.SafeURL(Prefix + "/ui/auth") } class="flex flex-wrap items-end gap-2 p-3">
+						<label class="flex w-64 flex-col gap-1">
+							@fieldLabel("User ID")
+							@input.Input(input.Props{Name: "user", Placeholder: "list where they are signed in", Value: userOf(us)})
+						</label>
+						@button.Button(button.Props{Type: button.TypeSubmit, Variant: button.VariantSecondary}) {
+							@icon.Icon("search")
+							Show
+						}
+					</form>
+					if us != nil {
+						if us.Error != "" {
+							<p class="px-3 pb-3 text-[12.5px] text-destructive">{ us.Error }</p>
+						} else {
+							@table.Table() {
+								@table.Header() {
+									@table.Row() {
+										@table.Head() {
+											Kind
+										}
+										@table.Head() {
+											Scheme
+										}
+										@table.Head() {
+											Device
+										}
+										@table.Head() {
+											Created
+										}
+										@table.Head(table.HeadProps{Class: "text-right"}) {
+											Actions
+										}
+									}
+								}
+								@table.Body() {
+									for _, d := range us.Devices {
+										@table.Row() {
+											@table.Cell() {
+												@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+													{ d.Kind }
+												}
+												if d.Name != "" {
+													<span class="ml-1">{ d.Name }</span>
+												}
+											}
+											@table.Cell(table.CellProps{Class: "font-mono text-[12px]"}) {
+												{ d.Scheme }
+											}
+											@table.Cell(table.CellProps{Class: "max-w-0 w-[40%] truncate text-[12px] text-muted-foreground"}) {
+												{ d.Agent } · { d.IP }
+											}
+											@table.Cell(table.CellProps{Class: "text-muted-foreground whitespace-nowrap"}) {
+												<span title={ stamp(d.Created) }>{ clock(d.Created) }</span>
+											}
+											@table.Cell(table.CellProps{Class: "text-right"}) {
+												@button.Button(button.Props{Variant: button.VariantGhost, Size: button.SizeSm, Attributes: templ.Attributes{
+													"data-post":    Prefix + "/auth/revoke-session",
+													"data-body":    `{"user":` + jsonString(us.User) + `,"id":` + jsonString(d.ID) + `}`,
+													"data-success": "Signed out",
+												}}) {
+													@icon.Icon("log-out", "size-3")
+													Revoke
+												}
+											}
+										}
+									}
+									if len(us.Devices) == 0 {
+										@emptyRow(5, "Not signed in anywhere.")
+									}
+								}
+							}
+						}
+					}
+				}
 				@section("Sign a user out everywhere") {
 					<form data-json-form data-method="POST" data-action={ Prefix + "/auth/revoke-user" } data-success="Signed out" class="flex flex-wrap items-end gap-2 p-3">
 						<label class="flex w-64 flex-col gap-1">
 							@fieldLabel("User ID")
-							@input.Input(input.Props{Name: "id", Placeholder: "ends every session and token"})
+							@input.Input(input.Props{Name: "id", Placeholder: "ends every session and token", Value: userOf(us)})
 						</label>
 						@button.Button(button.Props{Type: button.TypeSubmit, Variant: button.VariantDestructive}) {
 							@icon.Icon("log-out")

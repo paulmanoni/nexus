@@ -158,3 +158,16 @@ func TestCacheThrottleIsShared(t *testing.T) {
 		t.Fatalf("two replicas sharing a cache count together: %d, want 429", code)
 	}
 }
+
+func TestAuthPropIsTyped(t *testing.T) {
+	app, stop, err := nexus.InProcess(config.Runtime{},
+		auth.Module(auth.Config{Users: auth.StaticUsers(newTestUsers()), Settings: &auth.Settings{}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	m := app.Registry().SharedProps()
+	if _, ok := m["auth"]; !ok {
+		t.Fatalf("shared props = %v; want auth typed for client.d.ts", m)
+	}
+}

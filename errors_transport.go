@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/middleware"
@@ -77,6 +79,9 @@ func codeForStatus(status int) Code {
 // themselves.
 func WriteError(c *httpx.Ctx, err error) {
 	e := ErrorOf(err)
+	if e.RetryAfter > 0 {
+		c.Header("Retry-After", strconv.Itoa(int((e.RetryAfter+time.Second-1)/time.Second)))
+	}
 	c.AbortWithStatusJSON(e.HTTPStatus(), e)
 }
 

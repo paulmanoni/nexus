@@ -1314,8 +1314,11 @@ func (u *Users) Load(ctx, id string) (*auth.Identity, error)
   (`nexus.RegisterIdentityRestorer` → Users.Load).
 - **Tests**: `extension/auth/authtest` — `app.With(authtest.As(&auth.Identity{…}))`, `authtest.AsUser("7")`
   (a header honoured only in test binaries), `authtest.Users` (in memory); `viewtest.As(&identity)`.
-- **Tools**: `nexus auth check [nexus.toml]`; dashboard Auth tab (schemes, areas, every endpoint's gate
-  with Public flagged, throttle locks + unlock, sign a user out everywhere, recent 401/403s).
+- **Tools**: `nexus auth check [nexus.toml]`; `nexus lint` warns on `[auth] default = "public"`; dashboard
+  Auth tab (schemes, areas, every endpoint's gate with Public flagged, policies, throttle locks + unlock, a
+  user's sessions/keys with revoke, sign out everywhere, recent 401/403s). Boot fails on a wrong-signature
+  optional Users method; a 429 carries Retry-After (`nexus.Error.RetryAfter`); `jobs.AsSystem()` runs a job
+  without an identity; the `auth` prop is typed (`NexusSharedProps["auth"]`).
 - The v1 API (resolvers, `Backend`, extractors, `Manager`, `Endpoints`, `ErrorHandler`, `IdentityFrom`,
   `Roles`/`Scopes`/`Extra`, `extension/oauth2`, `inertia/iauth`) was removed in 2.9; `nexus migrate v2`
   renames Subject→ID, Optional→Public and flags the rest.

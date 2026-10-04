@@ -141,6 +141,9 @@ func Install(app *nexus.App, cfg Config) bool {
 	// stores (which own their durability story).
 	if ms, ok := cfg.Store.(*MemoryStore); ok {
 		dev.Preserve("session.store", ms)
+		if app.Environment() == "production" {
+			app.Logger().Warn("session: sessions are kept in memory — every one is lost on restart and unknown to other replicas; set session.Config.Store (session.CacheStore(cache)) in production")
+		}
 	}
 	app.Router().Use(middleware(cfg))
 	return true

@@ -43,3 +43,12 @@ type = "session"
 		}
 	}
 }
+
+func TestLintAuthPublicDefault(t *testing.T) {
+	if got := lintAuth([]byte("[auth]\ndefault = \"public\"\n")); len(got) != 1 || got[0].Code != "auth-public-default" {
+		t.Fatalf("lintAuth = %+v", got)
+	}
+	if got := lintAuth([]byte("[auth.schemes.web]\ntype = \"session\"\n")); len(got) != 0 {
+		t.Fatalf("a signed-in default is fine: %+v", got)
+	}
+}

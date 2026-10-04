@@ -101,7 +101,7 @@ func (m *Manager) handleDelivery(d Delivery) {
 
 	m.counts.running.Add(1)
 	local := rec
-	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, actor: rec.Actor, ctx: ctx, local: &local}
+	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, actor: rec.Actor, system: def.system, ctx: ctx, local: &local}
 	err := m.call(call, ctx, run, rec.Args)
 	m.counts.running.Add(-1)
 	m.invalidateStats()

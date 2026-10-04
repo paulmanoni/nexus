@@ -137,6 +137,7 @@ type Run struct {
 	attempt int
 	worker  string
 	actor   string
+	system  bool // AsSystem: runs without the enqueuer's identity
 	ctx     context.Context
 	exec    *execution
 	local   *Record // broker driver: the delivered job, changed in place

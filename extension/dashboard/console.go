@@ -90,6 +90,19 @@ type authSetup struct {
 		Until     time.Time
 	}
 	LocksKnown bool
+	Policies   []string
+}
+
+// userSessions is the Auth page's lookup of one user's sessions, from the
+// "auth" page data extension/auth registers.
+type userSessions struct {
+	User    string
+	Error   string
+	Devices []struct {
+		ID, Kind, Scheme, Name, Agent, IP string
+		Created, Expires                  time.Time
+		Current                           bool
+	}
 }
 
 func (s *consoleSources) state(r *http.Request) *consoleState {
@@ -335,7 +348,14 @@ func mountConsole(g httpx.Group, s *consoleSources) {
 		if st.Auth == nil {
 			return notFound("Auth is not wired", "Add auth.Module to the app to see its schemes, areas and gates here."), false
 		}
-		return page{Tab: "auth", Title: "Auth", Body: authPage(st, recentRejects(s.bus), s.bus != nil)}, true
+		var us *userSessions
+		if raw := pageDataFor("auth", c.Request); raw != nil {
+			if b, err := json.Marshal(raw); err == nil {
+				us = &userSessions{}
+				_ = json.Unmarshal(b, us)
+			}
+		}
+		return page{Tab: "auth", Title: "Auth", Body: authPage(st, recentRejects(s.bus), s.bus != nil, us)}, true
 	}))
 	if s.bus != nil {
 		g.GET("/ui/traces", s.serve(func(c *httpx.Ctx, st *consoleState) (page, bool) {

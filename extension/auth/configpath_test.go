@@ -308,3 +308,17 @@ func TestUseUsersChecksTheType(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+type wrongChecker struct{ notUsers }
+
+func (wrongChecker) Load(ctx context.Context, id string) (*auth.Identity, error) { return nil, nil }
+
+// CheckLogin with the wrong parameter: nexus would never call it.
+func (wrongChecker) CheckLogin(ctx context.Context, id string) error { return nil }
+
+func TestOptionalMethodSignaturesChecked(t *testing.T) {
+	_, _, err := nexus.InProcess(config.Runtime{}, auth.Module(auth.Config{Users: auth.StaticUsers(wrongChecker{})}))
+	if err == nil || !strings.Contains(err.Error(), "CheckLogin") {
+		t.Fatalf("err = %v", err)
+	}
+}

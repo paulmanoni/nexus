@@ -63,6 +63,9 @@ var usersType = reflect.TypeFor[Users]()
 // DI invoke for a constructor, either way before the first request.
 func usersOption(state *moduleState, o UsersOption) (nexus.Option, error) {
 	if o.value != nil {
+		if err := checkOptionalMethods(reflect.TypeOf(o.value)); err != nil {
+			return nil, err
+		}
 		state.config.users = o.value
 		return nexus.Options(), nil
 	}
@@ -74,11 +77,33 @@ func usersOption(state *moduleState, o UsersOption) (nexus.Option, error) {
 	if !ut.Implements(usersType) {
 		return nil, fmt.Errorf("UseUsers: %s does not implement auth.Users: %s", ut, missingMethods(ut, usersType))
 	}
+	if err := checkOptionalMethods(ut); err != nil {
+		return nil, err
+	}
 	invoke := reflect.MakeFunc(reflect.FuncOf([]reflect.Type{ut}, nil, false), func(args []reflect.Value) []reflect.Value {
 		state.config.users = args[0].Interface().(Users)
 		return nil
 	})
 	return nexus.Options(nexus.Provide(o.ctor), nexus.Invoke(invoke.Interface())), nil
+}
+
+// optionalMethods are the Users methods nexus uses when present.
+var optionalMethods = []reflect.Type{
+	reflect.TypeFor[PasswordSetter](),
+	reflect.TypeFor[LoginChecker](),
+	reflect.TypeFor[PublicUser](),
+}
+
+// checkOptionalMethods fails boot for an optional method spelled right but
+// with another signature — nexus would otherwise skip it without a word.
+func checkOptionalMethods(t reflect.Type) error {
+	for _, iface := range optionalMethods {
+		m := iface.Method(0)
+		if _, has := t.MethodByName(m.Name); has && !t.Implements(iface) {
+			return fmt.Errorf("%s has a %s method nexus can't use: %s", t, m.Name, missingMethods(t, iface))
+		}
+	}
+	return nil
 }
 
 // missingMethods names the methods of iface that t lacks or has with

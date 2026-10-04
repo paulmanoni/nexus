@@ -153,6 +153,12 @@ func Backoff(fn func(attempt int) time.Duration) Option {
 // ttl) returns the earlier job's ID instead of queuing another.
 func Unique(ttl time.Duration) Option { return func(d *definition) { d.unique = ttl } }
 
+// AsSystem runs the job without the identity of whoever enqueued it: no
+// auth.Current inside it, and it runs even when their account is gone.
+// Without it, a job runs as its enqueuer (extension/auth loads them through
+// Users when it starts) and fails once the account no longer exists.
+func AsSystem() Option { return func(d *definition) { d.system = true } }
+
 // EnqueueOption configures one Enqueue call.
 type EnqueueOption func(*enqueueConfig)
 
@@ -195,6 +201,7 @@ type definition struct {
 	maxAttempts int
 	backoff     func(attempt int) time.Duration
 	unique      time.Duration
+	system      bool
 
 	fnPtr    uintptr
 	argsType reflect.Type

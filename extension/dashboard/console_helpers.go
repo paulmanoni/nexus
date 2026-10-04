@@ -817,3 +817,10 @@ func orDash(s string) string {
 	}
 	return s
 }
+
+func userOf(us *userSessions) string {
+	if us == nil {
+		return ""
+	}
+	return us.User
+}

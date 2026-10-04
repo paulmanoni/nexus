@@ -42,8 +42,10 @@ func (u *Users) identity(row User) *auth.Identity {
 nexus.Boot(auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}), …)
 ```
 
-A type that doesn't implement `Users` fails boot, naming the missing method;
-`Config.Users` is the one setting `auth.Module` requires.
+A type that doesn't implement `Users` fails boot, naming the missing method, and so
+does an optional method spelled right with the wrong signature (a `CheckLogin` taking
+a string would otherwise be skipped silently). `Config.Users` is the one setting
+`auth.Module` requires.
 `FindLogin`'s identity needs the user's `Kind` when you use areas: signing in under an
 area, and the `next` a sign-in returns to, are checked against it. Two
 optional methods add to it: `SetPassword(ctx, id, encoded string) error` stores
@@ -294,9 +296,18 @@ policy.
 A job enqueued from a request records who enqueued it, and runs as that user: their
 identity is loaded through `Users.Load` when the job starts, so `auth.Current(ctx)`,
 `auth.Can` and `auth.Check` work inside it with the permissions they have *then*. A
-job whose user no longer exists fails without retrying.
+job whose user no longer exists fails without retrying. Define a job with
+`jobs.AsSystem()` to run it without anyone's identity — it runs whoever enqueued it.
 
 ### Checking the setup
+
+`nexus lint nexus.toml` warns about `[auth] default = "public"`. At boot, a sign-in or
+forbidden page path no route serves is logged (apps with a frontend aren't checked —
+the SPA may route it).
+
+The dashboard's Auth tab shows the setup — schemes, areas, every endpoint's gate
+(`Public` ones flagged), registered policies, throttle locks with Unlock — and looks
+up a user's sessions and keys, each with a Revoke button.
 
 `nexus auth check [nexus.toml]` validates `[auth]` the way boot does — an unknown key,
 a scheme type nexus doesn't have, a jwt scheme without a key, a duration like `"30d"`
@@ -338,7 +349,8 @@ lockout = "15m"              # how long an account stays locked at its limit
 ```
 
 The counters live in the process, so each replica counts on its own; set
-`Config.Throttle: auth.CacheThrottle(cache)` to share them through Redis.
+`Config.Throttle: auth.CacheThrottle(cache)` to share them through Redis. A 429 carries
+`Retry-After`.
 
 ### Built-in endpoints
 

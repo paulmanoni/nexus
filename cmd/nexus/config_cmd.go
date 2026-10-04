@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -16,7 +17,7 @@ import (
 	// CLI checks [auth] / [cache.*] / [storage.*] / [mail.*] / [jobs] like the app
 	// does. (extension/config's [extensions.config] comes in through
 	// extensions_for_lint.go.)
-	_ "github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth"
 	_ "github.com/paulmanoni/nexus/v2/extension/cache"
 	_ "github.com/paulmanoni/nexus/v2/extension/jobs"
 	_ "github.com/paulmanoni/nexus/v2/extension/mail"
@@ -176,5 +177,26 @@ Point an editor at it with a first line in nexus.toml (Taplo / Even Better TOML)
 // app's sections declared from its source first.
 func lintConfigIssues(path string) ([]nexusmanifest.Issue, error) {
 	declareProjectConfig(projectRootFor(path))
-	return config.LintFile(path)
+	issues, err := config.LintFile(path)
+	if raw, rerr := os.ReadFile(path); rerr == nil {
+		issues = append(issues, lintAuth(raw)...)
+	}
+	return issues, err
+}
+
+// lintAuth reports [auth] settings that are valid but risky in production.
+func lintAuth(raw []byte) []nexusmanifest.Issue {
+	if !bytes.Contains(raw, []byte("[auth")) {
+		return nil
+	}
+	s, err := config.DecodeTable(raw, "auth", auth.Settings{})
+	if err != nil {
+		return nil // nexus config check / nexus auth check report it
+	}
+	var out []nexusmanifest.Issue
+	if s.Default == "public" {
+		out = append(out, nexusmanifest.Issue{Severity: nexusmanifest.SeverityWarning, Code: "auth-public-default", Path: "auth.default",
+			Message: `[auth] default = "public": every endpoint without a gate is open — mark the public ones auth.Public() and drop this`})
+	}
+	return out
 }

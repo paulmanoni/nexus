@@ -262,7 +262,7 @@ func TestAuthRejectionsFromTraceBuffer(t *testing.T) {
 		{Name: "GET /health", Transport: registry.REST, Method: "GET", Path: "/health", Tags: map[string]string{"auth.public": "true"}},
 		{Name: "listPets", Transport: registry.GraphQL, Path: "/graphql", Tags: map[string]string{registry.AuthKindTag: "staff"}},
 	}}
-	if err := authPage(st, rows, true).Render(context.Background(), &buf); err != nil {
+	if err := authPage(st, rows, true, nil).Render(context.Background(), &buf); err != nil {
 		t.Fatal(err)
 	}
 	html := buf.String()

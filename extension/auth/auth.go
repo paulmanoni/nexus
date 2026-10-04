@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/client"
@@ -122,6 +123,7 @@ func Module(cfg Config) nexus.Option {
 	dashboard.RegisterSnapshotExtra("auth", func() any {
 		return map[string]any{"setup": state.dashboardSetup()}
 	})
+	dashboard.RegisterPageData("auth", state.dashboardSessions)
 
 	return extension.Use(extension.Plugin{
 		Name:    "auth",
@@ -143,15 +145,23 @@ func Module(cfg Config) nexus.Option {
 				if err := state.installConfigPath(app); err != nil {
 					return fmt.Errorf("auth: %w", err)
 				}
+				if p := state.config.settings.pageProp; p != "" {
+					// client.d.ts types the prop: NexusSharedProps["auth"].
+					app.RegisterSharedProp(p, reflect.TypeFor[MeResponse]())
+				}
 				app.Router().Use(authMiddleware(state))
 				return nil
 			}),
+			// Once every route is registered: a sign-in or forbidden page that
+			// no route serves sends visitors to a 404.
+			nexus.Setup(func(app *nexus.App) { state.warnMissingPages(app) }),
 		},
 		Dashboard: &extension.Dashboard{
 			Tab: &extension.Tab{ID: "auth", Label: "Auth"},
 			Routes: []extension.Route{
 				{Method: "POST", Path: "/unlock", Handler: dashboardUnlockHandler(state)},
 				{Method: "POST", Path: "/revoke-user", Handler: dashboardRevokeUserHandler(state)},
+				{Method: "POST", Path: "/revoke-session", Handler: dashboardRevokeSessionHandler(state)},
 			},
 			LiveEvents: []string{"auth.reject"},
 		},

@@ -138,6 +138,10 @@ func stopImpersonatingEndpoint(ctx context.Context, _ struct{}) (*impersonating,
 
 type policyKey struct{ t reflect.Type }
 
+// policyListKey holds the names of the types with a policy, for the
+// dashboard.
+type policyListKey struct{}
+
 type policyFunc func(ctx context.Context, me *Identity, perm string, obj any) bool
 
 // Policy registers a per-object rule for objects of type T, which Check
@@ -155,6 +159,9 @@ func Policy[T any](rule func(ctx context.Context, me *Identity, perm string, obj
 		app.SetValue(policyKey{t}, policyFunc(func(ctx context.Context, me *Identity, perm string, obj any) bool {
 			return rule(ctx, me, perm, obj.(T))
 		}))
+		names, _ := app.Value(policyListKey{})
+		list, _ := names.([]string)
+		app.SetValue(policyListKey{}, append(list, t.String()))
 	})
 }
 
