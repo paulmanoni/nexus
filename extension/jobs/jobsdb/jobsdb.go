@@ -121,6 +121,7 @@ type jobRow struct {
 	Result          string    `gorm:"size:16777216"`
 	Checkpoint      string    `gorm:"size:16777216"`
 	Actor           string    `gorm:"size:200;index:idx_nexus_jobs_actor"`
+	Impersonator    string    `gorm:"size:200"`
 	UniqueKey       string    `gorm:"size:64"`
 	UniqueUntil     *time.Time
 	Worker          string `gorm:"size:128"`
@@ -163,7 +164,7 @@ func toRow(r jobs.Record) jobRow {
 		ID: string(r.ID), Name: r.Name, Queue: r.Queue, State: string(r.State), RunAt: r.RunAt.UTC(),
 		Args: string(r.Args), Attempt: r.Attempt, MaxAttempts: r.MaxAttempts,
 		ProgressDone: r.Progress.Done, ProgressTotal: r.Progress.Total, ProgressMessage: r.Progress.Message,
-		Error: r.Error, Result: string(r.Result), Checkpoint: string(r.Checkpoint), Actor: r.Actor,
+		Error: r.Error, Result: string(r.Result), Checkpoint: string(r.Checkpoint), Actor: r.Actor, Impersonator: r.Impersonator,
 		UniqueKey: r.UniqueKey, UniqueUntil: timePtr(r.UniqueUntil), Worker: r.Worker,
 		LeaseUntil: timePtr(r.LeaseUntil), CancelRequested: r.CancelRequested, CreatedAt: r.CreatedAt.UTC(),
 		StartedAt: timePtr(r.StartedAt), FinishedAt: timePtr(r.FinishedAt),
@@ -182,7 +183,7 @@ func toRecord(r jobRow) jobs.Record {
 		ID: jobs.ID(r.ID), Name: r.Name, Queue: r.Queue, State: jobs.State(r.State), RunAt: r.RunAt,
 		Args: raw(r.Args), Attempt: r.Attempt, MaxAttempts: r.MaxAttempts,
 		Progress: jobs.Progress{Done: r.ProgressDone, Total: r.ProgressTotal, Message: r.ProgressMessage},
-		Error:    r.Error, Result: raw(r.Result), Checkpoint: raw(r.Checkpoint), Actor: r.Actor,
+		Error:    r.Error, Result: raw(r.Result), Checkpoint: raw(r.Checkpoint), Actor: r.Actor, Impersonator: r.Impersonator,
 		UniqueKey: r.UniqueKey, UniqueUntil: timeVal(r.UniqueUntil), Worker: r.Worker,
 		LeaseUntil: timeVal(r.LeaseUntil), CancelRequested: r.CancelRequested, CreatedAt: r.CreatedAt,
 		StartedAt: timeVal(r.StartedAt), FinishedAt: timeVal(r.FinishedAt),

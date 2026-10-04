@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Jobs enqueued while impersonating record the real user beside the
+  impersonated one: `Record.Impersonator`, `Run.Impersonator()` (a jobsdb
+  column, added by its migration). `nexus.RegisterRequestImpersonator` /
+  `nexus.RequestImpersonator`, which extension/auth implements.
+
 ## [2.10.0] - 2026-10-04
 
 ### Added

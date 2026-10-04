@@ -298,6 +298,8 @@ identity is loaded through `Users.Load` when the job starts, so `auth.Current(ct
 `auth.Can` and `auth.Check` work inside it with the permissions they have *then*. A
 job whose user no longer exists fails without retrying. Define a job with
 `jobs.AsSystem()` to run it without anyone's identity — it runs whoever enqueued it.
+A job enqueued while impersonating runs as the impersonated user, and its record
+keeps the real one too (`Record.Impersonator`, `run.Impersonator()`).
 
 ### Checking the setup
 

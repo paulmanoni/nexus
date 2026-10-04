@@ -729,6 +729,40 @@ func RegisterRequestIdentity(fn RequestIdentityFunc) {
 // job, for instance.
 func RequestIdentity(ctx context.Context) (id string, ok bool) { return requestIdentity(ctx) }
 
+// RequestImpersonatorFunc reports the real user behind a request that acts
+// as another one (an impersonation).
+type RequestImpersonatorFunc func(ctx context.Context) (string, bool)
+
+var (
+	impersonatorMu    sync.RWMutex
+	impersonatorFuncs []RequestImpersonatorFunc
+)
+
+// RegisterRequestImpersonator adds a source of the real user behind an
+// impersonated request; extension/auth registers one. Safe from package init.
+func RegisterRequestImpersonator(fn RequestImpersonatorFunc) {
+	if fn == nil {
+		return
+	}
+	impersonatorMu.Lock()
+	impersonatorFuncs = append(impersonatorFuncs, fn)
+	impersonatorMu.Unlock()
+}
+
+// RequestImpersonator reports the real user behind a request that acts as
+// RequestIdentity's user — what extensions record beside it (a job's
+// Impersonator). False when the request isn't an impersonation.
+func RequestImpersonator(ctx context.Context) (string, bool) {
+	impersonatorMu.RLock()
+	defer impersonatorMu.RUnlock()
+	for _, fn := range impersonatorFuncs {
+		if id, ok := fn(ctx); ok && id != "" {
+			return id, true
+		}
+	}
+	return "", false
+}
+
 // requestIdentity asks each registered source, in order.
 func requestIdentity(ctx context.Context) (string, bool) {
 	requestIdentityMu.RLock()

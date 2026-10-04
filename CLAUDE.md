@@ -1315,7 +1315,8 @@ func (u *Users) Load(ctx, id string) (*auth.Identity, error)
   `auth.TokenLister`), `[auth.sessions] single / end_on_password_change (default true) / idle`.
 - **Impersonation** `auth.Impersonate(ctx, id)` / `StopImpersonating` (`.Actor` = real user;
   `[auth.impersonation] permission, endpoint`; no escalation/nesting). **Jobs** run as their enqueuer
-  (`nexus.RegisterIdentityRestorer` → Users.Load).
+  (`nexus.RegisterIdentityRestorer` → Users.Load); enqueued while impersonating, the record keeps the real
+  user (`Record.Impersonator`, via `nexus.RequestImpersonator`).
 - **Tests**: `extension/auth/authtest` — `app.With(authtest.As(&auth.Identity{…}))`, `authtest.AsUser("7")`
   (a header honoured only in test binaries), `authtest.Users` (in memory); `viewtest.As(&identity)`.
 - **Tools**: `nexus auth check [nexus.toml]`; `nexus lint` warns on `[auth] default = "public"`; dashboard

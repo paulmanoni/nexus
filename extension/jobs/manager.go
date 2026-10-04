@@ -433,7 +433,7 @@ func (m *Manager) execute(rec Record) {
 		m.markCancelled(exec)
 	}
 
-	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, worker: rec.Worker, actor: rec.Actor, system: d.system, ctx: ctx, exec: exec}
+	run := &Run{m: m, id: rec.ID, attempt: rec.Attempt, worker: rec.Worker, actor: rec.Actor, impersonator: rec.Impersonator, system: d.system, ctx: ctx, exec: exec}
 	err := m.call(call, ctx, run, rec.Args)
 
 	m.mu.Lock()
@@ -621,6 +621,9 @@ func (m *Manager) enqueue(ctx context.Context, d *definition, args json.RawMessa
 	}
 	if !ec.runAt.IsZero() {
 		rec.RunAt = ec.runAt
+	}
+	if real, ok := nexus.RequestImpersonator(ctx); ok {
+		rec.Impersonator = real
 	}
 	if actor, ok := nexus.RequestIdentity(ctx); ok {
 		rec.Actor = actor

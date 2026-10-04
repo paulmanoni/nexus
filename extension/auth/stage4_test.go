@@ -214,3 +214,57 @@ func TestJobsRunAsTheirEnqueuer(t *testing.T) {
 	ranAsMu.Unlock()
 	t.Fatal("the job did not run")
 }
+
+type jobOut struct {
+	ID string `json:"id"`
+}
+
+func enqueueOne(ctx context.Context) (*jobOut, error) {
+	id, err := recordJob.Enqueue(ctx, struct{}{})
+	return &jobOut{ID: string(id)}, err
+}
+
+type jobRec struct {
+	Actor, Impersonator string
+}
+
+func jobRecord(m *jobs.Manager, p nexus.Params[struct {
+	ID string `query:"id"`
+}]) (*jobRec, error) {
+	r, _, err := m.Get(p.Context, jobs.ID(p.Args.ID))
+	if err != nil {
+		return nil, err
+	}
+	return &jobRec{r.Actor, r.Impersonator}, nil
+}
+
+func TestJobsRecordTheImpersonator(t *testing.T) {
+	s := testSettings
+	s.Impersonation = auth.ImpersonationSettings{Endpoint: "/impersonate"}
+	app, stop, err := nexus.InProcess(config.Runtime{},
+		auth.Module(auth.Config{Users: auth.StaticUsers(newStage4Users()), Settings: &s}),
+		jobs.Module(jobs.Config{}), recordJob,
+		nexus.AsRest("POST", "/login", signIn, auth.Public()),
+		nexus.AsRest("POST", "/enqueue-one", enqueueOne),
+		nexus.AsRest("GET", "/job", jobRecord),
+		nexus.AsRest("GET", "/health", health, auth.Public()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop(context.Background())
+	srv := httptest.NewServer(app)
+	defer srv.Close()
+
+	root := signedInAs(t, srv, "root", "admin pass", "")
+	root.do("POST", "/impersonate", `{"user_id":"1"}`)
+	_, body := root.do("POST", "/enqueue-one", "")
+	var j jobOut
+	_ = json.Unmarshal([]byte(body), &j)
+	_, body = root.do("GET", "/job?id="+j.ID, "")
+	var r jobRec
+	_ = json.Unmarshal([]byte(body), &r)
+	if r.Actor != "1" || r.Impersonator != "4" {
+		t.Fatalf("job record = %+v (%s), want actor 1 impersonated by 4", r, body)
+	}
+}

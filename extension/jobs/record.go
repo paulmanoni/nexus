@@ -40,6 +40,7 @@ type Record struct {
 	Result          json.RawMessage `json:"result,omitempty"`
 	Checkpoint      json.RawMessage `json:"checkpoint,omitempty"`
 	Actor           string          `json:"actor,omitempty"`
+	Impersonator    string          `json:"impersonator,omitempty"` // the real user, when Actor was impersonated
 	UniqueKey       string          `json:"uniqueKey,omitempty"`
 	UniqueUntil     time.Time       `json:"uniqueUntil,omitzero"`
 	Worker          string          `json:"worker,omitempty"`    // the process running the current attempt
@@ -132,15 +133,16 @@ var ErrLostOwnership = errors.New("jobs: this attempt no longer owns the job")
 // Run is the running attempt's handle, passed to every job: progress,
 // result, checkpoints, and who enqueued it.
 type Run struct {
-	m       *Manager
-	id      ID
-	attempt int
-	worker  string
-	actor   string
-	system  bool // AsSystem: runs without the enqueuer's identity
-	ctx     context.Context
-	exec    *execution
-	local   *Record // broker driver: the delivered job, changed in place
+	m            *Manager
+	id           ID
+	attempt      int
+	worker       string
+	actor        string
+	impersonator string
+	system       bool // AsSystem: runs without the enqueuer's identity
+	ctx          context.Context
+	exec         *execution
+	local        *Record // broker driver: the delivered job, changed in place
 
 	mu           sync.Mutex
 	lastProgress time.Time
@@ -155,6 +157,10 @@ func (r *Run) Attempt() int { return r.attempt }
 // Actor is the user that enqueued the job, as nexus.RequestIdentity saw the
 // enqueuing request ("" when there was none).
 func (r *Run) Actor() string { return r.actor }
+
+// Impersonator is the real user behind Actor when the job was enqueued
+// while impersonating them ("" otherwise). The job runs as Actor.
+func (r *Run) Impersonator() string { return r.impersonator }
 
 // progressEvery bounds how often Progress writes to the store.
 const progressEvery = 250 * time.Millisecond

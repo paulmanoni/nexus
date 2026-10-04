@@ -105,6 +105,12 @@ func init() {
 		}
 		return id.ID, true
 	})
+	nexus.RegisterRequestImpersonator(func(ctx context.Context) (string, bool) {
+		if id := Current(ctx); id != nil && id.Actor != nil {
+			return id.Actor.ID, true
+		}
+		return "", false
+	})
 	nexus.RegisterWSCarrier(func(upgrade, conn context.Context) context.Context {
 		if st, ok := stateFrom(upgrade); ok {
 			conn = withState(conn, st)
