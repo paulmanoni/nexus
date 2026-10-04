@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-10-04
+
 ### Fixed
 
 - `nexus generate handlers` (and the `nexus dev`/`nexus build` overlay): a
