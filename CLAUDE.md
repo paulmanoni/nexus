@@ -304,7 +304,9 @@ pathParams…) error`, `templ (x *T) Render()`, events = exported `func(ctx, dep
 and patched in place (focus/typing kept; signals win over the server copy; an element with an `id` and
 `data-nx-ignore` is left as the browser has it until its id changes — script-drawn charts, app shells). Push: `sock.Subscribe(topics…)`
 in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(ctx, deps…, msg view.Message)
-error`, then re-render (in-process: a replica's own pages). Forms: `view.Submit(x.Add)` /
+error`, then re-render; across replicas with `view.UseRelay(r)` (`view.Relay`: Publish/Subscribe bytes;
+Redis pub/sub `extension/cache/redis/viewrelay.New(Config{URL})`, `view.NewMemoryRelay()`), data as JSON —
+read with `msg.Decode(&v)`. Forms: `view.Submit(x.Add)` /
 `view.Change(x.Validate)` on a form send its fields to an event whose last param is a `form:`-tagged
 struct (httpx binder); failing its `validate:` tags or returning `nexus.Invalid()` re-renders with `view.Errors(ctx).Field(name)`,
 success resets the form. With CSRF on, the runtime sends `X-XSRF-TOKEN` on shard re-renders and adds a `csrf_token` field to same-origin POST forms as they submit. Field rules (docs/guide/views.md "Form fields"): a field keeps what the user typed until

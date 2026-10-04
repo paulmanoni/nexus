@@ -838,7 +838,10 @@ an element with an id and data-nx-ignore stays as the browser has it until a
 render gives it another id (a chart a script drew, an app shell's menus).
 Server push: sock.Subscribe("topic") in Mount; view.Broadcast(ctx, "topic",
 data) from anywhere runs every subscribed page's optional
-Info(ctx, deps…, msg view.Message) error, then re-renders it.
+Info(ctx, deps…, msg view.Message) error, then re-renders it. Across
+replicas: view.UseRelay(viewrelay.New(viewrelay.Config{URL: redisURL}))
+(extension/cache/redis/viewrelay); data travels as JSON, read it with
+msg.Decode(&v).
 Forms: <form onsubmit={ view.Submit(b.Add) } oninput={ view.Change(b.Validate) }>
 sends the fields to an event whose last parameter is a form-tagged struct;
 failing its validate: tags or returning nexus.Invalid() re-renders with

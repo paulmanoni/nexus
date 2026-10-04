@@ -154,6 +154,19 @@ templ (b *Board) Render() {
   `Info(ctx, deps…, msg view.Message) error` runs, then it re-renders; with
   several messages waiting it handles them all and renders once. `Info` is
   never callable from the browser.
+- **Several replicas.** A broadcast reaches the pages on the replica that sent
+  it; give the replicas a relay and it reaches all of them:
+
+  ```go
+  import "github.com/paulmanoni/nexus/extension/cache/redis/v2/viewrelay"
+
+  nexus.Boot(view.UseRelay(viewrelay.New(viewrelay.Config{URL: os.Getenv("REDIS_URL")})), …)
+  ```
+
+  Data crosses replicas as JSON: read it in `Info` with `msg.Decode(&v)`, which
+  gives the publisher's value on its own replica and the decoded JSON on the
+  others. Use sticky sessions so a reconnect resumes on the replica that holds
+  the page.
 
 ```go
 func (b *Board) Mount(ctx context.Context, sock *view.Socket, store *Store) error {

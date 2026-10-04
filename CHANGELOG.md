@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- view: **cross-replica broadcasts.** `view.UseRelay(r)` makes
+  `view.Broadcast` reach the live pages of every replica: each broadcast is
+  delivered locally as before and published, as JSON, through a `view.Relay`;
+  every replica delivers the others'. `extension/cache/redis/viewrelay` is a
+  Redis pub/sub relay (`viewrelay.New(viewrelay.Config{URL})`);
+  `view.NewMemoryRelay()` works within a process. `view.Message.Decode(&v)`
+  reads a message's data the same whether it came from this replica or another.
+
 ## [2.14.0] - 2026-10-04
 
 ### Changed

@@ -55,9 +55,16 @@ func (s *Socket) close() {
 
 // Broadcast sends data to every live page subscribed to topic — from an
 // event, a handler, a job, anywhere. Each page runs its Info and re-renders.
-// It reports how many pages it reached. Delivery is in-process: pages
-// connected to another replica do not receive it.
+// It reports how many pages on this replica it reached; with a Relay
+// (UseRelay) the pages of the other replicas get it too.
 func Broadcast(ctx context.Context, topic string, data any) int {
+	n := deliver(topic, data)
+	relay(topic, data)
+	return n
+}
+
+// deliver hands data to the pages on this replica subscribed to topic.
+func deliver(topic string, data any) int {
 	hub.Lock()
 	targets := make([]*Socket, 0, len(hub.subs[topic]))
 	for s := range hub.subs[topic] {
