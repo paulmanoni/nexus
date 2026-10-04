@@ -878,6 +878,12 @@ load from (a Go test) the children stay and data-error says why.
 
 Browser values (shard arguments, restored signals, event arguments) are user
 input: validate them. Example: view/example (/ and /board, two Vue islands).
+
+Testing: view/viewtest. viewtest.Mount[*T](t, app, viewtest.As(&identity)) /
+viewtest.Get(t, app, path) run the real runtime in an in-process DOM (fast, no
+layout). viewtest.Browser(t, app, path, opts…) opens the page in headless
+Chrome — real clicks, layout (Box, Visible), Eval, Viewport, Screenshot;
+skipped without Chrome (NEXUS_CHROME). docs/guide/views.md "Testing views".
 `,
 	"inertia": `
 INERTIA

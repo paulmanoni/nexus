@@ -20,6 +20,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The canvas's inspector and auth drawer show the setup.
 - `nexus lint` warns about `[auth] default = "public"`.
 - A production app keeping sessions in memory gets a boot warning.
+- `viewtest.Browser`: a view page in headless Chrome (a built-in DevTools
+  protocol client, no new dependency) — real clicks, typing, `Box`/`Visible`,
+  `Eval`, `Viewport`, `Screenshot`, retrying `Expect`. Skips without Chrome
+  (`NEXUS_CHROME`).
 
 ## [2.9.0] - 2026-10-04
 

@@ -334,12 +334,16 @@ loader; a name missing from the build → `data-error`). Live re-renders update 
 remount); `view.Link`/shards unmount islands that leave. No loader (a Go test) → children stay +
 `data-error`. `/_view/import.js` (a module script `view.Script` loads first) gives the classic runtime
 `import()`. `_setup.ts` default export: Vue app hook / React wrapper.
-**Testing**: `view/viewtest` — `p := viewtest.Mount[*T](t, app, viewtest.As(token))` (live page found by its
+**Testing**: `view/viewtest` — `p := viewtest.Mount[*T](t, app, viewtest.As(&auth.Identity{ID: "7"}))` (live page found by its
 `view.LiveTag` route tag; `viewtest.At(path)` for params) or `viewtest.Get(t, app, path)`; the real runtime.js +
 twins run in goja on a small Go/JS DOM (`view/internal/browser`, x/net/html parsing, virtual timers) against an
 httptest server and the real socket. `Fill/Select/Check/Click/Submit/Press` (settle first), `Wait`,
 `Text/Attr/Value/Exists`, `Expect(loc).Text/Value/Enabled/Disabled/Visible/Absent/…` (retrying). Locator = field
-name, else CSS selector. No layout/CSS, no islands, no third-party scripts.
+name, else CSS selector. No layout/CSS, no islands, no third-party scripts — for those,
+`viewtest.Browser(t, app, path, opts…)` opens the page in headless Chrome over CDP (own small client, no
+chromedp): `Click` (real mouse at the element's box), `Fill`, `Text`, `Box`, `Visible`, `Eval`, `Viewport`,
+`Screenshot`, `ExpectURL`, `Expect(loc).Text/ContainsText/Visible/Hidden`; skips without Chrome
+(`NEXUS_CHROME`). `viewtest.As(&auth.Identity{…})` = authtest's test credential.
 **Component kit (`view/ui`)**: Button, Field/Input/Select/Textarea/Checkbox (errors from `view.Errors`), Tabs,
 Dialog (server-owned via `OnClose`, or browser-side by `ID` + `ui.OpenDialog`), Dropdown/RowActions menus,
 DataTable/TableRow (server paging/search/sort: `OnSearch` = `view.Change` with `form:"q"`/`"size"`, `OnSort`/

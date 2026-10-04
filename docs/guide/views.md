@@ -699,7 +699,7 @@ are the ones the browser runs.
 ```go
 func TestBuilder(t *testing.T) {
 	app := nexustest.New(t, config.Runtime{}, appOptions()...)
-	p := viewtest.Mount[*reports.Builder](t, app, viewtest.As("staff-token"))
+	p := viewtest.Mount[*reports.Builder](t, app, viewtest.As(&auth.Identity{ID: "7", Kind: "staff"}))
 
 	p.Fill("title", "Sales").Select("ds_keys", "main.id").Click("#run")
 	p.Expect("#save").Enabled()
@@ -720,10 +720,11 @@ func TestHome(t *testing.T) {
   for a prefix with parameters) and waits for its socket to join.
   `viewtest.Get(t, app, path, opts…)` opens any page; `p.Status()` is its HTTP
   status (a gate's 401, say). `app` is the `*nexus.App` or `nexustest.App`.
-- **Who.** `viewtest.As(token)` sends `Authorization: Bearer token` on every
-  request and on the socket — the identity the app's auth resolves the token
-  to. `viewtest.Header(k, v)` and `viewtest.Cookie(c)` cover other schemes;
-  cookies the app sets are kept.
+- **Who.** `viewtest.As(&auth.Identity{…})` makes every request and the socket act
+  as that identity (extension/auth's test credential, honoured only in test
+  binaries), so gates, areas and policies run as for a real sign-in.
+  `viewtest.Header(k, v)` and `viewtest.Cookie(c)` add anything else; cookies the
+  app sets are kept.
 - **Locators** are a form field's `name`, else a CSS selector (`#id`, `.class`,
   `tag`, `[attr=v]`, `:checked`, `:not(…)`, descendant and `>` combinators).
 - **Actions** — `Fill`, `Select` (one value, or several on a multiple select),
@@ -744,7 +745,26 @@ func TestHome(t *testing.T) {
   inline ones), islands don't mount (there is no Vite build to load them
   from), and file inputs are not supported. Page time is virtual: debounces and
   reconnect backoffs run without waiting. Checking layout, or behaviour that
-  depends on a real browser's quirks, needs a real browser — not covered yet.
+  depends on a real browser's quirks, needs a real browser:
+
+### In a real browser
+
+```go
+p := viewtest.Browser(t, app, "/", viewtest.As(staff))   // headless Chrome
+p.Click("#to-report").ExpectURL("/report")
+p.Click("#run").Expect("#ran").Text("1")
+if !p.Visible("#save") { t.Fatal("the save button is off screen") }
+p.Viewport(390, 700).Screenshot("report.png")
+```
+
+`viewtest.Browser` opens the page in a headless Chrome over the DevTools protocol (no
+third-party driver): layout and CSS apply, every script runs, islands mount from the
+built bundle, and `Click` presses the mouse where the element really is — a covered
+button isn't clicked. `Box(loc)` is an element's rect, `Visible` checks size, CSS and
+the viewport, `Eval(js)` runs script, `Viewport(w, h)` resizes, `Screenshot(path)`
+writes a PNG; `Expect(loc)` retries `Text`, `ContainsText`, `Visible`, `Hidden`. It
+takes the same options as `Get`/`Mount`. The test is skipped when no Chrome is
+installed — set `NEXUS_CHROME` to its binary when it lives elsewhere.
 
 ## Editor support
 
