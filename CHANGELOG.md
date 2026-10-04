@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-10-04
+
 ### Added
 
 - Auth: **an area can keep its own sign-in** — `[auth.areas.<n>] session = "<scheme>"`
