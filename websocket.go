@@ -598,6 +598,35 @@ var (
 	requestIdentityFuncs []RequestIdentityFunc
 )
 
+// SharedPagePropFunc contributes one prop to every server-rendered page —
+// key "" to skip this request.
+type SharedPagePropFunc func(ctx context.Context) (key string, value any)
+
+var (
+	sharedPagePropsMu sync.RWMutex
+	sharedPageProps   []SharedPagePropFunc
+)
+
+// RegisterSharedPageProp adds a prop every page renderer (extension/inertia)
+// shares with every page, before the app's own shared props — so an app's
+// prop of the same key wins. extension/auth shares "auth" this way. Safe
+// to call from package init.
+func RegisterSharedPageProp(fn SharedPagePropFunc) {
+	if fn == nil {
+		return
+	}
+	sharedPagePropsMu.Lock()
+	sharedPageProps = append(sharedPageProps, fn)
+	sharedPagePropsMu.Unlock()
+}
+
+// SharedPageProps returns the registered shared page props, for renderers.
+func SharedPageProps() []SharedPagePropFunc {
+	sharedPagePropsMu.RLock()
+	defer sharedPagePropsMu.RUnlock()
+	return append([]SharedPagePropFunc(nil), sharedPageProps...)
+}
+
 // RegisterRequestIdentity adds a source of request identity. WebSocket
 // endpoints (AsWS) use it to know which user a connection belongs to, which
 // is what EmitToUser addresses — so it must read what the server

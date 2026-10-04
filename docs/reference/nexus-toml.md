@@ -189,12 +189,15 @@ cache   = "5m"             # Users.Load kept per user id; a negative value turns
 login   = "/login"         # sign-in page for page visits outside areas (unset: 401)
 home    = "/"              # landing after sign-in without a next
 next_param = "next"        # the query/form field carrying next
+forbidden = "/forbidden"   # page a refused page visit outside areas goes to (unset: 403)
+page_prop  = "auth"        # Inertia prop {user, can}; "-" turns it off
 
 [auth.areas.admin]
 prefix = "/admin"          # these paths need a sign-in of one of kinds
 kinds  = ["staff"]         # empty: any signed-in user
 login  = "/admin/login"    # this area's sign-in page
 home   = "/admin"          # landing after sign-in here (default: prefix)
+forbidden = "/admin/forbidden"  # page a refused page visit here goes to
 
 [auth.throttle]
 account = "5/15m"          # failed sign-ins per account per window; "off" disables

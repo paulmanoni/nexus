@@ -225,6 +225,11 @@ type Config struct {
 	// CacheTokens(cache) in production. Config-driven path only.
 	Tokens TokenStore
 
+	// Throttle keeps the [auth.throttle] failure counts. Nil counts in the
+	// process (each replica on its own); CacheThrottle(cache) shares them.
+	// Config-driven path only.
+	Throttle ThrottleStore
+
 	// OnResolve fires after every successful resolution — good for
 	// audit logging or per-user metrics.
 	OnResolve func(ctx context.Context, id *Identity)
@@ -300,7 +305,8 @@ var ErrForbidden error = nexus.Err(nexus.Forbidden, "auth: forbidden")
 // nexus apps in one process safe.
 type moduleState struct {
 	cfg          Config
-	config       configPath    // the config-driven path (Config.Users)
+	config       configPath // the config-driven path (Config.Users)
+	app          *nexus.App
 	schemes      []boundScheme // normalized schemes, tried in order
 	permissions  PermissionFn
 	errorHandler ErrorHandler   // renders 401/403 denials; never nil after Module
@@ -497,6 +503,7 @@ func wireModule(cfg Config, schemes []boundScheme, schemesIn []Scheme, cp func(*
 		// middleware.
 		nexus.Invoke(func(app *nexus.App) error {
 			state.bus = app.Bus()
+			state.app = app
 			if cp != nil {
 				if err := state.installConfigPath(app); err != nil {
 					return fmt.Errorf("auth: %w", err)

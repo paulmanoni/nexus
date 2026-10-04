@@ -138,6 +138,20 @@ home   = "/admin"            # default: the prefix
   decoding, so `next` can't send anyone off-site. `auth.Next(ctx)` reads it for
   your own flows.
 
+A refused page visit — a customer opening `/admin/orders` — goes to the area's
+`forbidden` page when it has one (`forbidden = "/admin/forbidden"`, a page your app
+serves), else `[auth] forbidden`; API calls get the 403.
+
+### On every page
+
+Inertia pages get an `auth` prop on every render — `{user, can}`, the same shape as
+the built-in `me` endpoint — so a layout can show the user and hide what they can't
+do without a shared prop of your own. `[auth] page_prop` renames it, `"-"` turns it
+off, and an app prop with the same key wins.
+
+`auth.SignIn` and `auth.SignOut` give the browser a new CSRF token, so a token planted
+before a sign-in is worthless after it.
+
 ### Throttling sign-ins
 
 `auth.Login` counts failures — per account, and per client IP (`nexus.ClientIP`,
@@ -151,7 +165,8 @@ ip      = "50/15m"           # failures per client IP
 lockout = "15m"              # how long an account stays locked at its limit
 ```
 
-The counters live in the process, so each replica counts on its own.
+The counters live in the process, so each replica counts on its own; set
+`Config.Throttle: auth.CacheThrottle(cache)` to share them through Redis.
 
 ### Built-in endpoints
 

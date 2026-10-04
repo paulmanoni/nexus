@@ -1248,6 +1248,10 @@ the validated next (auth.Next(ctx), auth.ReturnTo(next)) or the home.
 [auth.throttle] account = "5/15m", ip = "50/15m", lockout = "15m" → 429.
 [auth.endpoints] login / logout / me mount JSON endpoints for nx.auth.*;
 me = {user, can} (user from an optional Users.Public(id) any).
+Inertia pages get that {user, can} as the "auth" prop ([auth] page_prop;
+"-" off). SignIn/SignOut rotate the CSRF token. forbidden = "/path" (per
+area or [auth]) is where a refused page visit goes. Config.Throttle =
+auth.CacheThrottle(cache) shares the throttle between replicas.
 [auth] keys: docs/reference/nexus-toml.md.
 
 RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued

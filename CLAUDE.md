@@ -1287,7 +1287,10 @@ credential = anonymous, reason in the 401 under nexus dev. `Config.Settings` is 
 with `?next=`, Login refuses other kinds), `[auth] login/home/next_param`, safe `next` (`auth.Next`,
 `auth.ReturnTo`, `Credential.Next`), `[auth.throttle]` (account/ip "5/15m", lockout; per process),
 `[auth.endpoints]` login/logout/me (me = `{user: Users.Public(id) | {id,kind}, can: OpGates}`).
-`nexus.Defer(func() Option)` builds an option at boot (after nexus.toml loads).
+`nexus.Defer(func() Option)` builds an option at boot (after nexus.toml loads). 2.3: Inertia pages
+get an `auth` prop `{user, can}` (`[auth] page_prop`, "-" off; via `nexus.RegisterSharedPageProp`, app
+props win); `SignIn`/`SignOut` rotate CSRF (`secure.RotateCSRF(ctx)`); area/[auth] `forbidden` page
+path for refused page visits; `Config.Throttle: auth.CacheThrottle(cache)` shares the throttle.
 
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`

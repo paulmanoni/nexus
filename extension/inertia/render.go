@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/dev"
 	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/internal/maskhook"
@@ -279,8 +280,16 @@ func (e *Engine) resolveProps(c *httpx.Ctx, component string, result any) (map[s
 	out := make(map[string]any)
 	var meta propsMeta
 
-	// Shared props participate as plain props.
+	// Shared props participate as plain props: the framework's first
+	// (auth's "auth"), then the app's, which win on a shared key.
 	ctx := c.Request.Context()
+	for _, sp := range nexus.SharedPageProps() {
+		key, val := sp(ctx)
+		if key == "" || !include(key, kindPlain) {
+			continue
+		}
+		out[key] = val
+	}
 	for _, sp := range e.shared {
 		key, val := sp(ctx)
 		if key == "" || !include(key, kindPlain) {

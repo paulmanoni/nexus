@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/resource"
 )
 
 // throttleRules is [auth.throttle] parsed: a zero limit is off.
@@ -55,34 +56,105 @@ func parseLimit(key, v, def string) (limit, error) {
 	return limit{count, window}, nil
 }
 
-// throttle counts failed sign-ins per account and per client IP, in this
-// process. Successes don't count; a success clears its account's count.
+// Failures is what a ThrottleStore keeps per account or client IP.
+type Failures struct {
+	N      int       `json:"n"`
+	Since  time.Time `json:"since"`           // the window's start
+	Locked time.Time `json:"locked,omitzero"` // account only: refused until then
+}
+
+// ThrottleStore keeps sign-in failure counts. Config.Throttle sets it; the
+// default counts in the process, so each replica counts on its own —
+// CacheThrottle shares the counts through a cache (Redis).
+type ThrottleStore interface {
+	// Get returns the counts for key, nil when there are none.
+	Get(ctx context.Context, key string) (*Failures, error)
+	Put(ctx context.Context, key string, f Failures, ttl time.Duration) error
+	Delete(ctx context.Context, key string) error
+}
+
+// CacheThrottle keeps the counts in a cache, shared by every replica.
+// Updates are read-modify-write, so concurrent failures across replicas
+// may undercount by a few — the limit still holds within that margin.
+func CacheThrottle(c resource.Cache) ThrottleStore { return cacheThrottle{c} }
+
+type cacheThrottle struct{ c resource.Cache }
+
+const throttleKeyPrefix = "auth:throttle:"
+
+func (s cacheThrottle) Get(ctx context.Context, key string) (*Failures, error) {
+	var f Failures
+	if err := s.c.Get(ctx, throttleKeyPrefix+key, &f); err != nil {
+		return nil, nil //nolint:nilerr // a miss is an error to resource.Cache
+	}
+	return &f, nil
+}
+
+func (s cacheThrottle) Put(ctx context.Context, key string, f Failures, ttl time.Duration) error {
+	return s.c.Set(ctx, throttleKeyPrefix+key, f, ttl)
+}
+
+func (s cacheThrottle) Delete(ctx context.Context, key string) error {
+	return s.c.Delete(ctx, throttleKeyPrefix+key)
+}
+
+type memoryThrottle struct {
+	mu sync.Mutex
+	m  map[string]Failures
+}
+
+func (s *memoryThrottle) Get(_ context.Context, key string) (*Failures, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, ok := s.m[key]
+	if !ok {
+		return nil, nil
+	}
+	return &f, nil
+}
+
+func (s *memoryThrottle) Put(_ context.Context, key string, f Failures, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[key] = f
+	return nil
+}
+
+func (s *memoryThrottle) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, key)
+	return nil
+}
+
+// throttle counts failed sign-ins per account and per client IP.
+// Successes don't count; a success clears its account's count. A store
+// error never blocks a sign-in.
 type throttle struct {
 	rules throttleRules
-	mu    sync.Mutex
-	m     map[string]*failures
+	store ThrottleStore
+	mu    sync.Mutex // serialises this process's read-modify-writes
 }
 
-type failures struct {
-	n      int
-	since  time.Time
-	locked time.Time // account only: refused until then
+func newThrottle(r throttleRules, store ThrottleStore) *throttle {
+	if store == nil {
+		store = &memoryThrottle{m: map[string]Failures{}}
+	}
+	return &throttle{rules: r, store: store}
 }
-
-func newThrottle(r throttleRules) *throttle { return &throttle{rules: r, m: map[string]*failures{}} }
 
 // check refuses a sign-in while its account is locked or its IP is over
 // its limit.
 func (t *throttle) check(ctx context.Context, login string) error {
 	now := time.Now()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if f := t.m[accountKey(login)]; f != nil && now.Before(f.locked) {
-		return tooMany(f.locked.Sub(now))
+	if t.rules.account.n > 0 {
+		if f := t.current(ctx, accountKey(login), t.rules.account, now); f != nil && now.Before(f.Locked) {
+			return tooMany(f.Locked.Sub(now))
+		}
 	}
 	if t.rules.ip.n > 0 {
-		if f := t.current(ipKey(ctx), t.rules.ip, now); f != nil && f.n >= t.rules.ip.n {
-			return tooMany(f.since.Add(t.rules.ip.window).Sub(now))
+		if f := t.current(ctx, ipKey(ctx), t.rules.ip, now); f != nil && f.N >= t.rules.ip.n {
+			return tooMany(f.Since.Add(t.rules.ip.window).Sub(now))
 		}
 	}
 	return nil
@@ -93,41 +165,42 @@ func (t *throttle) fail(ctx context.Context, login string) {
 	now := time.Now()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.rules.account.n > 0 {
-		f := t.bump(accountKey(login), t.rules.account, now)
-		if f.n >= t.rules.account.n {
-			f.locked = now.Add(t.rules.lockout)
-			f.n, f.since = 0, now
+	if l := t.rules.account; l.n > 0 {
+		key := accountKey(login)
+		f := t.bumped(ctx, key, l, now)
+		if f.N >= l.n {
+			f = Failures{Since: now, Locked: now.Add(t.rules.lockout)}
 		}
+		_ = t.store.Put(ctx, key, f, max(l.window, t.rules.lockout))
 	}
-	if t.rules.ip.n > 0 {
-		t.bump(ipKey(ctx), t.rules.ip, now)
+	if l := t.rules.ip; l.n > 0 {
+		key := ipKey(ctx)
+		_ = t.store.Put(ctx, key, t.bumped(ctx, key, l, now), l.window)
 	}
 }
 
-func (t *throttle) succeed(login string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.m, accountKey(login))
+func (t *throttle) succeed(ctx context.Context, login string) {
+	if t.rules.account.n > 0 {
+		_ = t.store.Delete(ctx, accountKey(login))
+	}
 }
 
-// current returns key's failures in its window, dropping an expired one.
-func (t *throttle) current(key string, l limit, now time.Time) *failures {
-	f := t.m[key]
-	if f != nil && now.Sub(f.since) > l.window && now.After(f.locked) {
-		delete(t.m, key)
+// current returns key's failures, nil once both its window and any lock
+// have passed.
+func (t *throttle) current(ctx context.Context, key string, l limit, now time.Time) *Failures {
+	f, err := t.store.Get(ctx, key)
+	if err != nil || f == nil || now.Sub(f.Since) > l.window && !now.Before(f.Locked) {
 		return nil
 	}
 	return f
 }
 
-func (t *throttle) bump(key string, l limit, now time.Time) *failures {
-	f := t.current(key, l, now)
-	if f == nil {
-		f = &failures{since: now}
-		t.m[key] = f
+func (t *throttle) bumped(ctx context.Context, key string, l limit, now time.Time) Failures {
+	f := Failures{Since: now}
+	if cur := t.current(ctx, key, l, now); cur != nil && now.Before(cur.Since.Add(l.window)) {
+		f = *cur
 	}
-	f.n++
+	f.N++
 	return f
 }
 

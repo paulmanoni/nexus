@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-04
+
+### Added
+
+- **Auth stage 2b** on the `Config.Users` path:
+  - Inertia pages get an `auth` prop, `{user, can}` — the `me` endpoint's
+    shape — on every render; `[auth] page_prop` renames it, `"-"` turns it off.
+  - `auth.SignIn` and `auth.SignOut` rotate the CSRF token.
+  - `forbidden` (per area, or in `[auth]`): the page a refused page visit is
+    sent to; API calls still get 403.
+  - `Config.Throttle` with `auth.CacheThrottle(cache)`: the sign-in throttle
+    shared between replicas.
+- `nexus.RegisterSharedPageProp`: a prop every page renderer shares; the
+  app's own shared prop of the same key wins. extension/inertia applies them.
+- `secure.RotateCSRF(ctx)`: a new CSRF token with this response.
+
 ## [2.2.0] - 2026-10-04
 
 ### Added

@@ -1,6 +1,7 @@
 package secure
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -39,6 +40,7 @@ func CSRFHandler(cfg *CSRFConfig) httpx.HandlerFunc {
 		skip = DefaultSkip
 	}
 	return func(c *httpx.Ctx) {
+		c.SetRequestContext(context.WithValue(c.Request.Context(), rotateKey{}, func() { rotate(c, cfg) }))
 		if safeMethods[c.Request.Method] {
 			ensureToken(c, cfg)
 			c.Next()
@@ -101,6 +103,26 @@ func ensureToken(c *httpx.Ctx, cfg *CSRFConfig) {
 		return
 	}
 	if mirror, err := c.Cookie(AxiosCSRFCookie); err != nil || mirror != token {
+		setTokenCookie(c, cfg, AxiosCSRFCookie, token)
+	}
+}
+
+// RotateCSRF gives the browser a new CSRF token with this request's
+// response — auth.SignIn and SignOut call it, so a token planted before a
+// sign-in is worthless after it. A no-op when CSRF is off. Call it before
+// the response body is written.
+func RotateCSRF(ctx context.Context) {
+	if f, ok := ctx.Value(rotateKey{}).(func()); ok {
+		f()
+	}
+}
+
+type rotateKey struct{}
+
+func rotate(c *httpx.Ctx, cfg *CSRFConfig) {
+	token := GenerateToken(cfg.TokenBytes)
+	setTokenCookie(c, cfg, cfg.CookieName, token)
+	if cfg.CookieName != AxiosCSRFCookie {
 		setTokenCookie(c, cfg, AxiosCSRFCookie, token)
 	}
 }

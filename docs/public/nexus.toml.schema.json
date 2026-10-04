@@ -11,6 +11,9 @@
           "additionalProperties": {
             "additionalProperties": false,
             "properties": {
+              "forbidden": {
+                "type": "string"
+              },
               "home": {
                 "type": "string"
               },
@@ -53,6 +56,9 @@
           },
           "type": "object"
         },
+        "forbidden": {
+          "type": "string"
+        },
         "home": {
           "type": "string"
         },
@@ -60,6 +66,9 @@
           "type": "string"
         },
         "next_param": {
+          "type": "string"
+        },
+        "page_prop": {
           "type": "string"
         },
         "passwords": {

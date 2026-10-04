@@ -25,8 +25,7 @@ func (h pageErrors) Unauthenticated(rc *middleware.RequestCtx, err error) error 
 	if a := rs.area(info.path); a != nil && a.Login != "" {
 		login = a.Login
 	}
-	visit := info.inertia != "" || info.method == http.MethodGet && strings.Contains(info.accept, "text/html")
-	if login == "" || !visit {
+	if login == "" || !isPageVisit(info) {
 		return defaultErrorHandler{}.Unauthenticated(rc, err)
 	}
 	to := login
@@ -37,8 +36,34 @@ func (h pageErrors) Unauthenticated(rc *middleware.RequestCtx, err error) error 
 		}
 		to += sep + rs.nextParam + "=" + url.QueryEscape(info.uri)
 	}
+	return redirectVisit(rc, info, to, err)
+}
+
+func (h pageErrors) Forbidden(rc *middleware.RequestCtx, err error) error {
+	rs := h.st.config.settings
+	info, _ := rc.Context.Value(ctxRequestInfo).(requestInfo)
+	if rs == nil || rc.Transport != middleware.TransportREST {
+		return defaultErrorHandler{}.Forbidden(rc, err)
+	}
+	to := rs.forbidden
+	if a := rs.area(info.path); a != nil && a.Forbidden != "" {
+		to = a.Forbidden
+	}
+	if to == "" || !isPageVisit(info) {
+		return defaultErrorHandler{}.Forbidden(rc, err)
+	}
+	return redirectVisit(rc, info, to, err)
+}
+
+// isPageVisit is an Inertia visit or a browser loading a document.
+func isPageVisit(info requestInfo) bool {
+	return info.inertia != "" || info.method == http.MethodGet && strings.Contains(info.accept, "text/html")
+}
+
+// redirectVisit sends a page visit to another page: Inertia's 409 with
+// X-Inertia-Location, else a 302.
+func redirectVisit(rc *middleware.RequestCtx, info requestInfo, to string, err error) error {
 	if info.inertia != "" {
-		// Inertia's protocol for "leave this app": a full visit to the URL.
 		rc.SetHeader("X-Inertia-Location", to)
 		return rc.Reject(http.StatusConflict, err)
 	}
@@ -46,8 +71,22 @@ func (h pageErrors) Unauthenticated(rc *middleware.RequestCtx, err error) error 
 	return rc.Reject(http.StatusFound, err)
 }
 
-func (pageErrors) Forbidden(rc *middleware.RequestCtx, err error) error {
-	return defaultErrorHandler{}.Forbidden(rc, err)
+// authProp is the page prop: who is signed in and what they may call.
+func (st *moduleState) authProp(ctx context.Context) (string, any) {
+	rs := st.config.settings
+	if rs == nil || rs.pageProp == "" || st.app == nil {
+		return "", nil
+	}
+	return rs.pageProp, st.me(ctx, st.app)
+}
+
+func init() {
+	nexus.RegisterSharedPageProp(func(ctx context.Context) (string, any) {
+		if st, ok := stateFrom(ctx); ok {
+			return st.authProp(ctx)
+		}
+		return "", nil
+	})
 }
 
 // --- [auth.endpoints] ----------------------------------------------------
@@ -98,15 +137,19 @@ func signOutEndpoint(ctx context.Context, _ struct{}) (*signedOut, error) {
 }
 
 func (st *moduleState) meEndpoint(app *nexus.App, p nexus.Params[struct{}]) (*MeResponse, error) {
-	out := &MeResponse{Can: OpGates(p.Context, app)}
-	if id := Current(p.Context); id != nil {
+	return st.me(p.Context, app), nil
+}
+
+func (st *moduleState) me(ctx context.Context, app *nexus.App) *MeResponse {
+	out := &MeResponse{Can: OpGates(ctx, app)}
+	if id := Current(ctx); id != nil {
 		if pu, ok := st.config.users.(PublicUser); ok {
 			out.User = pu.Public(id)
 		} else {
 			out.User = map[string]string{"id": id.ID, "kind": id.Kind}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // endpointOptions mounts the [auth.endpoints] that have a path.

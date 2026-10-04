@@ -7,6 +7,7 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/extension/session"
+	"github.com/paulmanoni/nexus/v2/middleware/secure"
 )
 
 // errNoConfigPath is returned by the sign-in functions in an app without
@@ -62,7 +63,7 @@ func Login(ctx context.Context, cred Password) (*Identity, error) {
 	if a := rs.area(info.path); a != nil && !kindIn(id.Kind, a.Kinds) {
 		return failed()
 	}
-	th.succeed(cred.Username)
+	th.succeed(ctx, cred.Username)
 	hashers := rs.hashers
 	if upgrade {
 		if ps, isSetter := st.config.users.(PasswordSetter); isSetter {
@@ -154,6 +155,7 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		s := session.Get(ctx)
 		s.Cycle()
 		s.Set(sessionUserKey, id.ID)
+		secure.RotateCSRF(ctx)
 		return &Credential{Scheme: sc.name, Next: landing()}, nil
 	}
 	tok := newToken()
@@ -190,6 +192,7 @@ func SignOut(ctx context.Context) error {
 	}
 	if sc.Type == SchemeSession {
 		session.Get(ctx).Destroy()
+		secure.RotateCSRF(ctx)
 		return nil
 	}
 	return st.config.tokens.Delete(ctx, hashToken(p.token))

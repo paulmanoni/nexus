@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -1013,3 +1014,41 @@ func TestShareScoped(t *testing.T) {
 // requests: Inertia apps get it on by default, and the double-submit check
 // is covered on its own.
 var testNoCSRF = config.Middleware{Security: &config.Security{CSRF: new(false)}}
+
+// Props registered with nexus.RegisterSharedPageProp reach every page, and
+// an app's own shared prop of the same key wins.
+var frameworkShare atomic.Bool
+
+func init() {
+	nexus.RegisterSharedPageProp(func(ctx context.Context) (string, any) {
+		if !frameworkShare.Load() {
+			return "", nil
+		}
+		return "fw", "framework"
+	})
+	nexus.RegisterSharedPageProp(func(ctx context.Context) (string, any) {
+		if !frameworkShare.Load() {
+			return "", nil
+		}
+		return "can", "framework"
+	})
+}
+
+func TestFrameworkSharedPageProps(t *testing.T) {
+	frameworkShare.Store(true)
+	defer frameworkShare.Store(false)
+	addr := "127.0.0.1:8857"
+	bootInertia(t, addr, inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
+		return func(ctx context.Context) (string, any) { return "can", "app" }
+	}))
+	_, body := req(t, addr, "/widgets", map[string]string{"X-Inertia": "true"})
+	var page struct {
+		Props map[string]any `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatalf("bad page JSON: %v — %s", err, body)
+	}
+	if page.Props["fw"] != "framework" || page.Props["can"] != "app" {
+		t.Fatalf("props = %v", page.Props)
+	}
+}

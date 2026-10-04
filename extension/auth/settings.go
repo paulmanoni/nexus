@@ -38,7 +38,13 @@ type Settings struct {
 	// (default "/").
 	Home string `toml:"home"`
 	// NextParam names the query and form field carrying next (default "next").
-	NextParam string                  `toml:"next_param"`
+	NextParam string `toml:"next_param"`
+	// Forbidden is the page a refused page visit outside every area is
+	// sent to; empty answers 403.
+	Forbidden string `toml:"forbidden"`
+	// PageProp names the prop Inertia pages get {user, can} under (default
+	// "auth"); "-" turns it off.
+	PageProp  string                  `toml:"page_prop"`
 	Areas     map[string]AreaSettings `toml:"areas"`
 	Throttle  ThrottleSettings        `toml:"throttle"`
 	Endpoints EndpointSettings        `toml:"endpoints"`
@@ -51,6 +57,9 @@ type AreaSettings struct {
 	Kinds  []string `toml:"kinds"` // empty: any signed-in user
 	Login  string   `toml:"login"`
 	Home   string   `toml:"home"`
+	// Forbidden is the page a refused page visit here is sent to (a page
+	// your app serves, e.g. "/admin/forbidden"); empty answers 403.
+	Forbidden string `toml:"forbidden"`
 }
 
 // ThrottleSettings is [auth.throttle]: failed sign-ins allowed per account
@@ -122,6 +131,8 @@ type resolvedSettings struct {
 	login     string
 	home      string
 	nextParam string
+	forbidden string
+	pageProp  string      // "" when off
 	areas     []namedArea // longest prefix first
 	throttle  throttleRules
 	endpoints EndpointSettings
@@ -209,6 +220,14 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 		r.validator = append(r.validator, NotSimilarToUser())
 	}
 	r.login, r.home, r.nextParam, r.endpoints = s.Login, s.Home, s.NextParam, s.Endpoints
+	r.forbidden = s.Forbidden
+	switch s.PageProp {
+	case "":
+		r.pageProp = "auth"
+	case "-":
+	default:
+		r.pageProp = s.PageProp
+	}
 	if r.home == "" {
 		r.home = "/"
 	}

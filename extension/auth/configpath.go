@@ -57,7 +57,7 @@ func (st *moduleState) resolveConfig() error {
 	if rs.cache > 0 {
 		cp.loads = &loadCache{ttl: rs.cache, m: map[string]loadEntry{}}
 	}
-	cp.throttle = newThrottle(rs.throttle)
+	cp.throttle = newThrottle(rs.throttle, st.cfg.Throttle)
 	return nil
 }
 
