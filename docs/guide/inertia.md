@@ -79,9 +79,9 @@ inertia.Page("GET,POST", "/login", "Auth/Login", NewLogin, nexus.Public())
 - **Validation.** Return [`nexus.Invalid()`](./forms#validation-errors-nexus-invalid),
   or fail a `validate:` tag. The user is sent back with an `errors` prop in `useForm`
   format.
-- **Login redirects.** To send page visits to a login page instead of a 401, set
-  `OnError: iauth.ErrorHandler("/login", ...)` from `extension/inertia/iauth` in your
-  `auth.Config`.
+- **Login redirects.** A page visit without a sign-in goes to the sign-in page —
+  `[auth] login`, or its area's — with `?next=` back to it; every page also gets an
+  `auth` prop, `{user, can}`. See [Auth](./auth#areas-next-and-the-sign-in-page).
 
 ## Error pages
 

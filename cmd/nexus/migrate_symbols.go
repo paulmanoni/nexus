@@ -101,7 +101,11 @@ var migrateV2Symbols = []migrateSymbol{
 		Todo: "nexus.WithClientIP is gone; the framework puts the caller's address on every request — read it with nexus.ClientIP(ctx)"},
 	{From: "extension/ratelimit", Old: "WithClientIP",
 		Todo: "ratelimit.WithClientIP is gone; the framework puts the caller's address on every request — read it with nexus.ClientIP(ctx)"},
-	{From: "extension/auth", Old: "Describe", To: "extension/auth", New: "InspectExtractor"},
+	// extension/auth's v1 API is gone (docs/design/v2-auth.md); the two
+	// names with a v2 equivalent are renamed, the rest flagged by the
+	// assembly rule.
+	{From: "extension/auth", Old: "Subject", To: "extension/auth", New: "ID"},
+	{From: "extension/auth", Old: "Optional", To: "extension/auth", New: "Public"},
 
 	// GraphQL behind a seam (docs/design/v2.md §5): graph and transport/gql
 	// are internal; middleware and resolve info are gql types.

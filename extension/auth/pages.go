@@ -122,7 +122,7 @@ type PublicUser interface {
 }
 
 func signInEndpoint(ctx context.Context, in SignInRequest) (*Credential, error) {
-	id, err := Login(ctx, Password{Username: in.Login, Password: in.Password})
+	id, err := Login(ctx, Password{Login: in.Login, Password: in.Password})
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +280,7 @@ func (st *moduleState) tokenEndpoint(c *httpx.Ctx) {
 	switch grant {
 	case "password":
 		var who *Identity
-		if who, err = Login(ctx, Password{Username: p["username"], Password: p["password"]}); err == nil {
+		if who, err = Login(ctx, Password{Login: p["username"], Password: p["password"]}); err == nil {
 			cred, err = SignIn(ctx, who, Using(sc.name))
 		}
 	case "refresh_token":

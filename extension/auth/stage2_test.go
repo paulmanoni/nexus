@@ -18,7 +18,7 @@ func adminOrders(ctx context.Context) (*me, error) { return whoAmI(ctx) }
 type publicUsers struct{ *testUsers }
 
 func (publicUsers) Public(id *auth.Identity) any {
-	return map[string]string{"name": id.Extra.(*account).login}
+	return map[string]string{"name": id.User.(*account).login}
 }
 
 func areaApp(t *testing.T, users auth.Users, throttle auth.ThrottleSettings) *httptest.Server {

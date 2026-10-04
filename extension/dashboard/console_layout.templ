@@ -132,8 +132,8 @@ templ statusBar(st *consoleState) {
 			<b class="font-semibold text-foreground">{ fmtNum(reqs) }</b> requests
 			<span class={ templ.KV("font-semibold text-err", errs > 0) }>· { fmtNum(errs) } errors</span>
 		</span>
-		if st.Auth != nil {
-			@statusItem("user", itoa(len(st.Auth.Identities)), "cached identities")
+		if st.Auth != nil && st.Auth.Setup != nil {
+			@statusItem("shield", itoa(len(st.Auth.Setup.Locks)), "sign-in locks")
 		}
 		<span class="flex-1"></span>
 	</div>

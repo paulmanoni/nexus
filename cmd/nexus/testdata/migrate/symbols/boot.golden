@@ -21,7 +21,8 @@ func main() {
 	cfg := config.MustLoad()
 	cfg.Server = config.Server{Addr: ":8080"}
 	_ = config.Get[string]("shop.currency")
-	_ = auth.InspectExtractor(auth.Bearer())
+	// TODO(nexus v2): extension/auth's v1 API is removed: implement auth.Users (FindLogin, Load) and use auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}); Identity.Roles/Scopes become Perms, Extra becomes User — docs/guide/migrating-to-v2.md (Auth)
+	_ = auth.Describe(auth.Bearer())
 	// TODO(nexus v2): nexus.MustLoadDotenv() is gone; nexus.toml loads .env itself — list a required file as [runtime] dotenv = ["!.env"]
 	nexus.Run(cfg,
 		nexus.Module("orders"),

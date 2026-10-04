@@ -26,7 +26,7 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 	return func(c *httpx.Ctx) {
 		ctx := withState(c.Request.Context(), state)
 
-		if rs := state.config.settings; rs != nil {
+		if rs := state.config.settings; rs != nil { // nil only before boot finishes
 			r := c.Request
 			ctx = context.WithValue(ctx, ctxRequestInfo, requestInfo{
 				method: r.Method, path: r.URL.Path, uri: r.URL.RequestURI(),
@@ -50,9 +50,6 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 			if errors.As(err, &ce) {
 				ctx = context.WithValue(ctx, ctxCredentialErr, ce)
 			}
-			if state.cfg.OnFail != nil {
-				state.cfg.OnFail(ctx, token, err)
-			}
 		} else if id != nil {
 			ctx = WithIdentity(ctx, id)
 			if state.config.settings != nil {
@@ -63,9 +60,6 @@ func authMiddleware(state *moduleState) httpx.HandlerFunc {
 				if n, err := state.epoch(ctx, owner); err == nil {
 					ctx = context.WithValue(ctx, ctxAuthEpoch, authEpoch{owner, n})
 				}
-			}
-			if state.cfg.OnResolve != nil {
-				state.cfg.OnResolve(ctx, id)
 			}
 		}
 
@@ -91,7 +85,7 @@ func requiredMiddleware() middleware.Middleware {
 	return builtin("auth:required",
 		"Requires an authenticated identity on ctx",
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
-			if _, ok := IdentityFrom(rc.Context); !ok {
+			if _, ok := identityFrom(rc.Context); !ok {
 				return rejectAuth(rc, unauthenticated(rc.Context))
 			}
 			return next(rc)
@@ -113,7 +107,7 @@ func Requires(perms ...string) nexus.MiddlewareOption {
 	mw := builtin(name,
 		"Requires one or more permissions on the identity",
 		func(rc *middleware.RequestCtx, next middleware.Next) error {
-			id, ok := IdentityFrom(rc.Context)
+			id, ok := identityFrom(rc.Context)
 			if !ok {
 				return rejectAuth(rc, unauthenticated(rc.Context))
 			}
@@ -166,12 +160,17 @@ func rejectAuth(rc *middleware.RequestCtx, err error) error {
 	return eh.Unauthenticated(rc, err)
 }
 
-// errorHandlerFrom returns the module's ErrorHandler from ctx, or the
-// default when auth.Module isn't wired (so unit tests that skip the global
-// middleware still render a sensible denial).
-func errorHandlerFrom(ctx context.Context) ErrorHandler {
-	if s, ok := stateFrom(ctx); ok && s.errorHandler != nil {
-		return s.errorHandler
+// errorHandler renders a denial: the module's page-aware one, or the
+// plain one when auth.Module isn't wired (a unit test attaching gates to
+// an app without it).
+type errorHandler interface {
+	Unauthenticated(rc *middleware.RequestCtx, err error) error
+	Forbidden(rc *middleware.RequestCtx, err error) error
+}
+
+func errorHandlerFrom(ctx context.Context) errorHandler {
+	if s, ok := stateFrom(ctx); ok {
+		return pageErrors{s}
 	}
 	return defaultErrorHandler{}
 }
@@ -210,7 +209,7 @@ func emitReject(ctx context.Context, reason string, status int, err error) {
 	if cr := credentialReason(ctx); cr != "" {
 		meta["credential"] = cr
 	}
-	if id, ok := IdentityFrom(ctx); ok && id != nil {
+	if id, ok := identityFrom(ctx); ok && id != nil {
 		// When we reject an authenticated identity (403), include its
 		// ID so admins can tie dashboard rows back to a real user.
 		// Unauthenticated rejects have no identity — meta stays lean.
@@ -223,14 +222,14 @@ func emitReject(ctx context.Context, reason string, status int, err error) {
 	bus.Publish(ev)
 }
 
-// checkPermissions runs the configured PermissionFn if the moduleState
-// is on ctx, otherwise falls back to the package default. The ctx
-// fallback keeps unit tests that skip auth.Module useful.
-func checkPermissions(ctx context.Context, id *Identity, perms []string) bool {
-	if s, ok := stateFrom(ctx); ok && s.permissions != nil {
-		return s.permissions(id, perms)
+// checkPermissions reports whether id holds every one of perms.
+func checkPermissions(_ context.Context, id *Identity, perms []string) bool {
+	for _, p := range perms {
+		if !id.Has(p) {
+			return false
+		}
 	}
-	return DefaultPermissions(id, perms)
+	return true
 }
 
 func joinPerms(perms []string) string {

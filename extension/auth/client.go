@@ -372,6 +372,7 @@ func writeTokenExtractHelpers(b *strings.Builder) {
 // "" when no recognised field is present.
 function extractToken(r: any): string {
   if (!r || typeof r !== 'object') return ''
+  if (typeof r.access_token === 'string' && r.access_token) return r.access_token
   if (typeof r.token === 'string' && r.token) return r.token
   if (typeof r.accessToken === 'string' && r.accessToken) return r.accessToken
   if (r.data && typeof r.data === 'object') {

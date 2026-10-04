@@ -581,33 +581,62 @@ nexus.Boot(nexus.WithLogger(slog.New(myHandler)), …)   // to replace the defau
 
 Not rewritten — the compiler points at each `*zap.Logger`.
 
+## Auth
+
+`extension/auth` was rebuilt around one interface you write, `auth.Users`, and the
+whole v1 surface — resolvers, `Backend`, extractors, `Manager`, `Endpoints`,
+`ErrorHandler`, `extension/oauth2`, `extension/inertia/iauth` — is gone. nexus now
+issues and checks the credentials itself. The codemod renames what maps one to one and
+puts a `// TODO(nexus v2)` on every other use.
+
+```go
+// v1
+auth.Single(func(ctx context.Context, tok string) (*auth.Identity, error) {
+    u, err := tokens.Validate(ctx, tok)
+    if err != nil { return nil, err }
+    return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
+})
+
+// v2
+type Users struct{ db *DB }
+
+func (u *Users) FindLogin(ctx context.Context, login string) (*auth.Identity, string, error) { … } // + encoded password
+func (u *Users) Load(ctx context.Context, id string) (*auth.Identity, error)                   { … } // Perms from roles
+
+auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)})
+```
+
+| v1 | v2 | Codemod |
+|---|---|---|
+| `auth.Single`, `auth.Module(auth.Config{Authentication, Backend, …})` | `auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)})` + `[auth.schemes.*]` | flagged |
+| `Scheme.Resolve`, `Resolver`, `Backend`, `UseBackend`, `UserStore`, `ModelBackend`, `MemoryUserStore` | `auth.Users` (+ `SetPassword`, `CheckLogin`, `Public`); `authtest.Users` for tests | flagged |
+| `auth.Bearer()`, `Cookie`, `APIKey`, `Chain`, `SessionCookie` | `[auth.schemes.*] type = "bearer" \| "session" \| "apikey" \| "jwt"` | flagged |
+| tokens you issue yourself, `oauth2.Module` | `auth.SignIn` / `[auth.endpoints] token` (password, refresh_token, client_credentials) | flagged |
+| `Identity{Roles, Scopes, Extra}` | `Identity{Perms, Kind, User}` — roles expand into `Perms` in `Load` | flagged |
+| `Authorization{Default: Authenticated()}` | the default; `[auth] default = "public"` for the old behaviour | flagged |
+| `Authority: Wildcard()`, `AnyOf`, `AllOf`, `PermissionFn` | `Perms` match with wildcards; `auth.RequiresAny`; `auth.Policy` | flagged |
+| `auth.IdentityFrom(ctx)` | `auth.Current(ctx)` (nil when anonymous) | flagged |
+| `auth.Subject[T]` | `auth.ID[T]` | yes |
+| `auth.Optional()` | `auth.Public()` | yes |
+| `nexus.Public()` | `auth.Public()` (the same option) | — |
+| `Endpoints`, `LoginEndpoint`, `LogoutEndpoint`, `LoginHandler` | `[auth.endpoints]` login / logout / me / token / revoke | flagged |
+| `Manager.Invalidate*` | `auth.SignOut`, `auth.Revoke`, `auth.RevokeUser` | flagged |
+| `ErrorHandler`, `OnError`, `iauth.ErrorHandler` | `[auth.areas.*]` login / forbidden redirects; `nexus.Envelope` for JSON shapes | flagged |
+| `CacheFor` | `[auth] cache` (per user id) | flagged |
+
+Read the [auth guide](./auth) for the new flows, and run `nexus auth check` on your
+nexus.toml once `[auth]` is written.
+
 ## Removed APIs
 
 | v1 | v2 | Codemod |
 |---|---|---|
-| `auth.LoginEndpoint`, `auth.LogoutEndpoint` | `auth.Config.Endpoints{Login: "/auth/login", Logout: "/auth/logout"}` (issuer and revoker come from the Backend's `Issue` / `RevokeToken`) | no |
-| `auth.Describe` | `auth.InspectExtractor` | yes |
 | `nexus.UseVolume` / `App.UseVolume` | `nexus.DeclareVolume` | the function form |
 | `uri:"id"` tag | `path:"id"` | yes |
 | `AppFromGin` | removed | no |
 | `extension.Plugin.Generate`, `extension.Generate`, `App.RegisterGenerateDriver` | removed (nothing read them) | no |
 | the `crud` package, `storage/gorm`, `multi` | removed | no |
 | `nexus dev --go-run`, `--frontend-cmd`; `nexus new --tooling`; `NEXUS_VITE_DEV` | removed | — |
-
-```go
-// v1
-auth.Module(auth.Config{Backend: auth.UseBackend(NewAuthBackend)}),
-auth.LoginEndpoint(auth.LoginAt("/auth/login")),
-
-// v2
-auth.Module(auth.Config{
-    Backend:   auth.UseBackend(NewAuthBackend),
-    Endpoints: auth.Endpoints{Login: "/auth/login", Logout: "/auth/logout"},
-}),
-```
-
-`auth.LoginHandler` and `auth.LogoutHandler` stay exported for an app that mounts them
-itself with `nexus.AsRest`.
 
 ## Views and the editor
 

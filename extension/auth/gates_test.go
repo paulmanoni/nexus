@@ -6,7 +6,7 @@ import (
 )
 
 func TestCanAndGates(t *testing.T) {
-	id := &Identity{ID: "u1", Roles: []string{"add_user", "view_user"}}
+	id := &Identity{ID: "u1", Perms: []string{"add_user", "view_user"}}
 	ctx := WithIdentity(context.Background(), id)
 
 	if !Can(ctx, "add_user") {
@@ -30,19 +30,5 @@ func TestCanAndGates(t *testing.T) {
 	anon := Gates(context.Background(), "add_user")
 	if anon["add_user"] {
 		t.Fatalf("anonymous gates must be false: %v", anon)
-	}
-}
-
-// Gates must consult the same PermissionFn Requires() uses — a custom
-// authorizer changes both, so UI toggles cannot drift from endpoint gates.
-func TestGatesUseConfiguredPermissionFn(t *testing.T) {
-	st := &moduleState{permissions: func(id *Identity, perms []string) bool {
-		return perms[0] == "granted_by_custom_fn"
-	}}
-	ctx := WithIdentity(withState(context.Background(), st), &Identity{ID: "u2"})
-
-	g := Gates(ctx, "granted_by_custom_fn", "add_user")
-	if !g["granted_by_custom_fn"] || g["add_user"] {
-		t.Fatalf("gates must ride the configured PermissionFn: %v", g)
 	}
 }

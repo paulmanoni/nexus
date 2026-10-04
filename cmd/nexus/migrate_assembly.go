@@ -18,6 +18,8 @@ var migrateAssemblyFlags = []struct {
 		"Config.Middleware.Global is gone; register app-wide middleware with nexus.Middleware(...) — set middleware.Middleware.Stage for its place"},
 	{regexp.MustCompile(`\bAsCRUD\[`),
 		"AsCRUD is gone; write the resource as a controller — nexus.Resource[*PetsController](\"/pets\") registers Index/Show/Create/Update/Destroy on the same routes"},
+	{regexp.MustCompile(`\bauth\.(Single|Authentication|Authorization|UseBackend|StaticBackend|Scheme\{|Bearer|Cookie|APIKey|Chain|CacheFor|IdentityFrom|SubjectPtr|Describe|LoginEndpoint|LogoutEndpoint|LoginHandler|LogoutHandler|Endpoints|Manager|MemoryUserStore|NewMemoryUserStore|NewModelBackend|ModelBackend|Authenticate|ErrorHandler|Wildcard|AnyOf|AllOf|Authenticated|Permit|SessionCookie|Backend|PermissionFn|Resolver|Principal|DefaultPermissions)\b|\b(oauth2|iauth)\.[A-Z]|auth\.Identity\{[^}]*\b(Roles|Scopes|Extra):`),
+		"extension/auth's v1 API is removed: implement auth.Users (FindLogin, Load) and use auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}); Identity.Roles/Scopes become Perms, Extra becomes User — docs/guide/migrating-to-v2.md (Auth)"},
 	{regexp.MustCompile(`\bnexus\.Invoke\(\s*\w+\.Ensure\w*|\bnexus\.Invoke\(\s*\w*(Migrate|Seed|Backfill)\w*`),
 		"pre-serve work belongs in nexus.Setup(...): it runs after resources start and before the listeners open"},
 }

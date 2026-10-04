@@ -23,7 +23,7 @@ type loginIn struct {
 }
 
 func login(ctx context.Context, in loginIn) (*out, error) {
-	id, err := auth.Login(ctx, auth.Password{Username: in.Login, Password: in.Password})
+	id, err := auth.Login(ctx, auth.Password{Login: in.Login, Password: in.Password})
 	if err != nil {
 		return nil, err
 	}

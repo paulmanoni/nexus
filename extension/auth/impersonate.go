@@ -44,11 +44,9 @@ func Impersonate(ctx context.Context, targetID string) error {
 	if target == nil || target.ID == me.ID {
 		return nexus.Err(nexus.NotFound, "no such user to impersonate")
 	}
-	for _, perms := range [][]string{target.Perms, target.Roles, target.Scopes} {
-		for _, p := range perms {
-			if !me.Has(p) {
-				return nexus.Errf(nexus.Forbidden, "you can't impersonate a user holding %q, which you lack", p)
-			}
+	for _, p := range target.Perms {
+		if !me.Has(p) {
+			return nexus.Errf(nexus.Forbidden, "you can't impersonate a user holding %q, which you lack", p)
 		}
 	}
 	return st.setActing(ctx, targetID)

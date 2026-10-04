@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-10-04
+
+nexus 2 has no users yet, so extension/auth's v1 API is removed now rather than
+deprecated until v3: `auth.Module(auth.Config{Users: …})` is the only way to set
+up auth. See [Migrating to v2 — Auth](docs/guide/migrating-to-v2.md#auth).
+
+### Removed
+
+- From `extension/auth`: `Single`, `Config.Authentication` / `Authorization` /
+  `Backend` / `Endpoints` / `OnResolve` / `OnFail` / `OnError` /
+  `LoginTokenField` / `CSRFCookie` / `CSRFHeader`, `Scheme`, `Resolver`,
+  `Authentication`, `Authorization`, `Authority`, `Wildcard`, `Decision`,
+  `Permit`, `Authenticated`, `PermissionFn`, `AnyOf`, `AllOf`,
+  `DefaultPermissions`, `ExactAuthority`, `Backend`, `BackendOption`,
+  `UseBackend`, `StaticBackend`, `Credentials`, `Authenticate`, `UserStore`,
+  `ModelBackend`, `MemoryUserStore`, the extractors (`Bearer`, `Cookie`,
+  `APIKey`, `Chain`, `Extractor`, `ExtractorFunc`, `ExtractorInfo`,
+  `InspectExtractor`, `Describable`), `SessionCookie`, `CacheFor`,
+  `CacheOption`, `CachedIdentity`, `Manager`, `Endpoints`, `LoginHandler`,
+  `LogoutHandler`, `LoginIssuer`, `LogoutRevoker`, `LoginRequest`,
+  `ErrorHandler`, `Optional`, `IdentityFrom`, `Subject`, `SubjectPtr`,
+  `SubjectID`, `Principal`, and `Identity.Roles` / `Scopes` / `Extra`.
+- `extension/oauth2` (the token endpoint and OAuth2 clients are in
+  extension/auth) and `extension/inertia/iauth` (areas redirect page visits).
+  The root module no longer depends on go-oauth2.
+
+### Changed
+
+- `Identity.Extra` is `Identity.User`; `Password.Username` is `Password.Login`.
+- `viewtest.As` takes an `*auth.Identity`.
+- `nexus new --auth` scaffolds a `Users` stand-in with `[auth]` (session + bearer
+  + endpoints) instead of an oauth2 server.
+- The dashboard's Auth tab shows the setup: schemes, areas, every endpoint's
+  gate (Public ones flagged), throttle locks with unlock, and a sign-out-everywhere
+  form.
+- `nexus migrate v2` renames `auth.Subject` → `auth.ID` and `auth.Optional` →
+  `auth.Public`, and flags every other use of the removed API.
+
 ## [2.8.0] - 2026-10-04
 
 ### Added

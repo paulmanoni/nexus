@@ -57,7 +57,7 @@ func TestOpGates(t *testing.T) {
 	app, done := gatesApp(t)
 	defer done()
 
-	viewer := WithIdentity(context.Background(), &Identity{ID: "u1", Roles: []string{"view_user"}})
+	viewer := WithIdentity(context.Background(), &Identity{ID: "u1", Perms: []string{"view_user"}})
 	g := OpGates(viewer, app)
 	if !g["listGated"] || !g["showGated"] {
 		t.Fatalf("viewer must pass view_user ops: %v", g)
@@ -77,7 +77,7 @@ func TestOpGates(t *testing.T) {
 		t.Fatalf("ungated op stays true for anonymous: %v", anon)
 	}
 
-	admin := WithIdentity(context.Background(), &Identity{ID: "u2", Roles: []string{"view_user", "add_user", "change_user"}})
+	admin := WithIdentity(context.Background(), &Identity{ID: "u2", Perms: []string{"view_user", "add_user", "change_user"}})
 	g = OpGates(admin, app)
 	if !g["listGated"] || !g["addGated"] {
 		t.Fatalf("admin must pass everything: %v", g)
@@ -131,7 +131,7 @@ func BenchmarkOpGates(b *testing.B) {
 			Tags: map[string]string{registry.AuthRequiresTag: "perm_" + string(rune('a'+i%20))},
 		})
 	}
-	ctx := WithIdentity(context.Background(), &Identity{ID: "u1", Roles: []string{"view_user", "perm_a", "perm_b"}})
+	ctx := WithIdentity(context.Background(), &Identity{ID: "u1", Perms: []string{"view_user", "perm_a", "perm_b"}})
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
@@ -151,7 +151,7 @@ func TestOpGatesKnowPagesByComponent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stop(context.Background())
-	adopter := WithIdentity(context.Background(), &Identity{ID: "u", Roles: []string{"pets.adopt"}})
+	adopter := WithIdentity(context.Background(), &Identity{ID: "u", Perms: []string{"pets.adopt"}})
 	if g := OpGates(adopter, app); !g["pets.Board"] || !g["GET /board"] {
 		t.Fatalf("adopter: %v", g)
 	}

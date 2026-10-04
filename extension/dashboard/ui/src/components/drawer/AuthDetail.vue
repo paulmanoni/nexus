@@ -1,21 +1,18 @@
 <script setup>
 import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
-import { ShieldOff, Trash2, AlertCircle } from 'lucide-vue-next'
-import { invalidateAuth, subscribeEvents } from '../../lib/api.js'
+import { ShieldOff, AlertCircle } from 'lucide-vue-next'
+import { subscribeEvents } from '../../lib/api.js'
 import { formatRelative } from '../../lib/time.js'
 
-// AuthDetail — cached identities + live 401/403 rejections, both
-// WebSocket-driven (no polling). Identities ride the /__nexus/live
-// snapshot: the auth plugin contributes them via RegisterSnapshotExtra,
-// and Architecture surfaces that here as the injected `nexus.authSummary`
-// (null when auth.Module isn't wired). Rejections stream from
-// /__nexus/events. Cache-TTL expirations show up on the next live frame
-// (≤5s heartbeat) without a manual refresh or a poll loop.
+// AuthDetail — the auth setup (schemes, default gate) from the live
+// snapshot, plus live 401/403 rejections from /__nexus/events. The full
+// view — areas, every endpoint's gate, throttle locks — is the console's
+// Auth tab.
 const authSummary = inject('nexus.authSummary', { value: null })
 
 const state = computed(() => ({ kind: authSummary.value == null ? 'not-configured' : 'configured' }))
-const identities = computed(() => (authSummary.value && authSummary.value.identities) || [])
-const cachingEnabled = computed(() => !!(authSummary.value && authSummary.value.cachingEnabled))
+const setup = computed(() => (authSummary.value && authSummary.value.setup) || null)
+const schemes = computed(() => (setup.value && setup.value.schemes) || [])
 
 const rejects = ref([])
 const REJECT_CAP = 50
@@ -37,69 +34,18 @@ onMounted(() => {
   }, null, 0)
 })
 onUnmounted(() => { if (traceSub) traceSub.close() })
-
-const invalidating = ref('')
-async function forceLogout(id) {
-  if (!id || invalidating.value) return
-  invalidating.value = id
-  try {
-    const res = await invalidateAuth({ id })
-    rejects.value.unshift({
-      at: new Date().toISOString(), service: '', endpoint: '',
-      reason: 'admin-invalidate', identity: id,
-      error: `dropped ${res.dropped} session(s)`, status: 200,
-    })
-  } catch (err) {
-    console.error('[nexus] invalidate failed:', err)
-  } finally {
-    invalidating.value = ''
-  }
-}
-
-const invalidatingAll = ref(false)
-async function invalidateAllSessions() {
-  if (invalidatingAll.value) return
-  // No server "invalidate all" endpoint — sweep the visible snapshot.
-  invalidatingAll.value = true
-  let dropped = 0
-  for (const row of identities.value) {
-    if (!row.Identity?.ID) continue
-    try {
-      const res = await invalidateAuth({ id: row.Identity.ID })
-      dropped += res.dropped || 0
-    } catch { /* keep going */ }
-  }
-  rejects.value.unshift({
-    at: new Date().toISOString(), service: '', endpoint: '',
-    reason: 'admin-invalidate', identity: '<all>',
-    error: `dropped ${dropped} session(s)`, status: 200,
-  })
-  invalidatingAll.value = false
-}
 </script>
 
 <template>
   <div class="auth-detail">
-    <!-- Header strip: cache pill + refresh + invalidate-all -->
+    <!-- Header strip: the default gate, and the console's Auth tab -->
     <section class="section">
       <div class="hdr-row">
-        <span
-          v-if="state.kind === 'configured'"
-          class="cache-pill"
-          :class="{ off: !cachingEnabled }"
-        >
-          <span class="dot" :class="{ on: cachingEnabled }" />
-          cache {{ cachingEnabled ? 'enabled' : 'disabled' }}
+        <span v-if="setup" class="cache-pill" :class="{ off: setup.default === 'public' }">
+          <span class="dot" :class="{ on: setup.default !== 'public' }" />
+          default {{ setup.default }}
         </span>
-        <button
-          v-if="state.kind === 'configured' && identities.length > 0"
-          class="action danger"
-          :disabled="invalidatingAll"
-          @click="invalidateAllSessions"
-        >
-          <Trash2 :size="13" :stroke-width="2" />
-          {{ invalidatingAll ? 'Invalidating…' : 'Invalidate all' }}
-        </button>
+        <a class="action" href="/__nexus/ui/auth">Open the Auth tab</a>
       </div>
     </section>
 
@@ -112,9 +58,8 @@ async function invalidateAllSessions() {
         <ShieldOff :size="22" :stroke-width="1.6" />
         <p>
           <strong>auth.Module is not wired in this app.</strong><br>
-          Add <code>auth.Module(auth.Config{Resolve: …})</code> to your
-          <code>nexus.Run</code> options to unlock per-identity cache
-          inspection and live reject monitoring.
+          Add <code>auth.Module(auth.Config{Users: …})</code> to the app
+          to see its schemes, gates and live rejections.
         </p>
       </div>
     </section>
@@ -126,40 +71,20 @@ async function invalidateAllSessions() {
     </section>
 
     <template v-else>
-      <!-- Cached identities -->
+      <!-- Schemes, in the order they are tried -->
       <section class="section">
         <h3>
-          Cached identities
-          <span class="count">{{ identities.length }}</span>
+          Schemes
+          <span class="count">{{ schemes.length }}</span>
         </h3>
-        <div v-if="!cachingEnabled" class="placeholder">
-          Cache is disabled — identities are re-resolved on every
-          request. Enable with <code>auth.CacheFor(ttl)</code> to
-          populate this list.
-        </div>
-        <div v-else-if="identities.length === 0" class="placeholder">
-          No cached identities. Entries appear as authenticated
-          requests come in; they expire per <code>Cache.TTL</code>.
-        </div>
+        <div v-if="schemes.length === 0" class="placeholder">Starting…</div>
         <div v-else class="identities">
-          <div v-for="(row, i) in identities" :key="i" class="identity">
+          <div v-for="(sc, i) in schemes" :key="i" class="identity">
             <div class="identity-head">
-              <code class="token">{{ row.TokenPrefix || '—' }}</code>
-              <span class="expires">{{ formatRelative(row.ExpiresAt) }}</span>
-              <button
-                class="kill"
-                :disabled="!row.Identity?.ID || invalidating === row.Identity?.ID"
-                :title="row.Identity?.ID ? 'Invalidate every cached session for this identity' : 'No identity ID; cannot sweep'"
-                @click="forceLogout(row.Identity?.ID)"
-              >
-                <Trash2 :size="12" :stroke-width="2" />
-              </button>
+              <code class="token">{{ sc.Type }}</code>
             </div>
-            <div class="identity-id">{{ row.Identity?.ID || '—' }}</div>
-            <div v-if="(row.Identity?.Roles || []).length || (row.Identity?.Scopes || []).length" class="identity-tags">
-              <code v-for="r in row.Identity?.Roles || []" :key="'r:' + r" class="tag tag-role">{{ r }}</code>
-              <code v-for="s in row.Identity?.Scopes || []" :key="'s:' + s" class="tag tag-scope">{{ s }}</code>
-            </div>
+            <div class="identity-id">{{ sc.Name }}</div>
+            <div class="identity-tags"><code class="tag tag-scope">{{ sc.Reads }}</code></div>
           </div>
         </div>
       </section>
@@ -175,7 +100,7 @@ async function invalidateAllSessions() {
           <code>auth.reject</code> events arrive.
         </div>
         <div v-else class="rejects">
-          <div v-for="(r, i) in rejects" :key="i" class="reject" :class="{ admin: r.reason === 'admin-invalidate' }">
+          <div v-for="(r, i) in rejects" :key="i" class="reject" >
             <div class="reject-head">
               <span class="when">{{ formatRelative(r.at) }}</span>
               <span class="reason" :class="r.reason">{{ r.reason }}</span>

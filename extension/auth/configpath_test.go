@@ -44,7 +44,7 @@ func newTestUsers() *testUsers {
 }
 
 func (u *testUsers) identity(a *account) *auth.Identity {
-	return &auth.Identity{ID: a.id, Kind: a.kind, Perms: a.perms, Extra: a}
+	return &auth.Identity{ID: a.id, Kind: a.kind, Perms: a.perms, User: a}
 }
 
 func (u *testUsers) FindLogin(ctx context.Context, login string) (*auth.Identity, string, error) {
@@ -77,7 +77,7 @@ func (u *testUsers) SetPassword(ctx context.Context, id, encoded string) error {
 }
 
 func (u *testUsers) CheckLogin(ctx context.Context, id *auth.Identity) error {
-	if id.Extra.(*account).disabled {
+	if id.User.(*account).disabled {
 		return nexus.Err(nexus.Forbidden, "this account is disabled")
 	}
 	return nil
@@ -96,7 +96,7 @@ type me struct {
 }
 
 func signIn(ctx context.Context, in loginIn) (*auth.Credential, error) {
-	id, err := auth.Login(ctx, auth.Password{Username: in.Login, Password: in.Password})
+	id, err := auth.Login(ctx, auth.Password{Login: in.Login, Password: in.Password})
 	if err != nil {
 		return nil, err
 	}

@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"strings"
 
 	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/badge"
 	"github.com/paulmanoni/nexus/v2/extension/dashboard/internal/ui/button"
@@ -180,100 +179,211 @@ templ tracePage(id string, spans []*trace.SpanNode) {
 // ---- Auth ----
 templ authPage(st *consoleState, rejects []rejectRow, traced bool) {
 	<div data-events="auth.reject">
-		@pageHead("Auth", len(st.Auth.Identities)) {
-			if st.Auth.CachingEnabled {
-				@badge.Badge(badge.Props{Variant: badge.VariantOK}) {
-					identity cache on
+		if su := st.Auth.Setup; su != nil {
+			@pageHead("Auth", len(su.Schemes)) {
+				@badge.Badge(badge.Props{Variant: badge.VariantInfo}) {
+					default { su.Default }
 				}
-			} else {
 				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
-					identity cache off
+					load cache { su.Cache }
 				}
+				@filterBox("#gates", "Filter endpoints…")
 			}
-			@filterBox("#identities", "Filter identities…")
-		}
-		<div class="flex flex-col gap-4 p-4">
-			@section("Invalidate") {
-				<form data-json-form data-method="POST" data-action={ Prefix + "/auth/invalidate" } data-success="Invalidated" class="flex flex-wrap items-end gap-2 p-3">
-					<label class="flex w-64 flex-col gap-1">
-						@fieldLabel("Identity ID")
-						@input.Input(input.Props{Name: "id", Placeholder: "user id — drops every cached token"})
-					</label>
-					<span class="pb-1.5 text-[12px] text-muted-foreground">or</span>
-					<label class="flex w-72 flex-col gap-1">
-						@fieldLabel("Token")
-						@input.Input(input.Props{Name: "token", Placeholder: "a full bearer token"})
-					</label>
-					@button.Button(button.Props{Type: button.TypeSubmit, Variant: button.VariantDestructive}) {
-						@icon.Icon("trash")
-						Invalidate
-					}
-				</form>
-			}
-			@section("Cached identities") {
-				@table.Table(table.Props{ID: "identities"}) {
-					@table.Header() {
-						@table.Row() {
-							@table.Head() {
-								Identity
+			<div class="flex flex-col gap-4 p-4">
+				@section("Schemes — tried in this order") {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Name
+								}
+								@table.Head() {
+									Type
+								}
+								@table.Head() {
+									Reads
+								}
 							}
-							@table.Head() {
-								Roles
-							}
-							@table.Head() {
-								Scopes
-							}
-							@table.Head() {
-								Token
-							}
-							@table.Head() {
-								Expires
-							}
-							@table.Head(table.HeadProps{Class: "text-right"}) {
-								Actions
+						}
+						@table.Body() {
+							for _, sc := range su.Schemes {
+								@table.Row() {
+									@table.Cell(table.CellProps{Class: "font-medium"}) {
+										{ sc.Name }
+									}
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											{ sc.Type }
+										}
+									}
+									@table.Cell(table.CellProps{Class: "font-mono text-[12px] text-muted-foreground"}) {
+										{ sc.Reads }
+									}
+								}
 							}
 						}
 					}
-					@table.Body() {
-						for _, id := range st.Auth.Identities {
-							if id.Identity != nil {
-								@table.Row(table.RowProps{Attributes: templ.Attributes{"data-search": searchText(id.Identity.ID, strings.Join(id.Identity.Roles, " "), strings.Join(id.Identity.Scopes, " "))}}) {
-									@table.Cell(table.CellProps{Class: "font-medium"}) {
-										{ id.Identity.ID }
+				}
+				if len(su.Areas) > 0 {
+					@section("Areas") {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() {
+										Area
 									}
-									@table.Cell() {
-										@chips(id.Identity.Roles, badge.VariantInfo)
+									@table.Head() {
+										Prefix
 									}
-									@table.Cell() {
-										@chips(id.Identity.Scopes, badge.VariantOutline)
+									@table.Head() {
+										Kinds
 									}
-									@table.Cell(table.CellProps{Class: "font-mono text-[12px] text-muted-foreground"}) {
-										{ id.TokenPrefix }…
+									@table.Head() {
+										Login
 									}
-									@table.Cell(table.CellProps{Class: "text-muted-foreground whitespace-nowrap"}) {
-										@timeUntil(id.ExpiresAt)
+									@table.Head() {
+										Home
 									}
-									@table.Cell(table.CellProps{Class: "text-right"}) {
-										@button.Button(button.Props{Variant: button.VariantGhost, Size: button.SizeSm, Attributes: templ.Attributes{
-											"data-post":    Prefix + "/auth/invalidate",
-											"data-body":    `{"id":` + jsonString(id.Identity.ID) + `}`,
-											"data-success": "Invalidated " + id.Identity.ID,
-										}}) {
-											@icon.Icon("trash", "size-3")
-											Drop
+								}
+							}
+							@table.Body() {
+								for _, a := range su.Areas {
+									@table.Row() {
+										@table.Cell(table.CellProps{Class: "font-medium"}) {
+											{ a.Name }
+										}
+										@table.Cell(table.CellProps{Class: "font-mono text-[12px]"}) {
+											{ a.Prefix }
+										}
+										@table.Cell() {
+											if len(a.Kinds) == 0 {
+												<span class="text-muted-foreground">any signed-in user</span>
+											} else {
+												@chips(a.Kinds, badge.VariantInfo)
+											}
+										}
+										@table.Cell(table.CellProps{Class: "font-mono text-[12px] text-muted-foreground"}) {
+											{ orDash(a.Login) }
+										}
+										@table.Cell(table.CellProps{Class: "font-mono text-[12px] text-muted-foreground"}) {
+											{ a.Home }
 										}
 									}
 								}
 							}
 						}
-						if len(st.Auth.Identities) == 0 {
-							@emptyRow(6, "No identities cached.")
+					}
+				}
+				@section("Gates") {
+					@table.Table(table.Props{ID: "gates"}) {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Endpoint
+								}
+								@table.Head() {
+									Gate
+								}
+							}
+						}
+						@table.Body() {
+							for _, g := range authGates(st) {
+								@table.Row(table.RowProps{Attributes: templ.Attributes{"data-search": searchText(g.Endpoint, g.Gate)}}) {
+									@table.Cell(table.CellProps{Class: "font-mono text-[12px]"}) {
+										{ g.Endpoint }
+									}
+									@table.Cell() {
+										if g.Public {
+											@badge.Badge(badge.Props{Variant: badge.VariantWarn}) {
+												public
+											}
+										} else {
+											<span class="text-[12.5px]">{ g.Gate }</span>
+										}
+									}
+								}
+							}
 						}
 					}
 				}
+				@section("Rules") {
+					<ul class="flex flex-col gap-1 px-3 py-2 text-[12.5px]">
+						for _, r := range su.Rules {
+							<li>{ r }</li>
+						}
+						for _, e := range su.Endpoints {
+							<li><span class="font-mono">{ e.Method } { e.Path }</span> — { e.What }</li>
+						}
+					</ul>
+				}
+				@section("Throttle locks") {
+					if !su.LocksKnown {
+						<p class="px-3 py-4 text-[12.5px] text-muted-foreground">The throttle store is shared (CacheThrottle); its locks aren't listed here.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() {
+										Locked
+									}
+									@table.Head() {
+										Until
+									}
+									@table.Head(table.HeadProps{Class: "text-right"}) {
+										Actions
+									}
+								}
+							}
+							@table.Body() {
+								for _, l := range su.Locks {
+									@table.Row() {
+										@table.Cell(table.CellProps{Class: "font-medium"}) {
+											{ l.What }
+										}
+										@table.Cell(table.CellProps{Class: "text-muted-foreground whitespace-nowrap"}) {
+											@timeUntil(l.Until)
+										}
+										@table.Cell(table.CellProps{Class: "text-right"}) {
+											@button.Button(button.Props{Variant: button.VariantGhost, Size: button.SizeSm, Attributes: templ.Attributes{
+												"data-post":    Prefix + "/auth/unlock",
+												"data-body":    `{"key":` + jsonString(l.Key) + `}`,
+												"data-success": "Unlocked " + l.What,
+											}}) {
+												@icon.Icon("lock-open", "size-3")
+												Unlock
+											}
+										}
+									}
+								}
+								if len(su.Locks) == 0 {
+									@emptyRow(3, "No account or client IP is locked.")
+								}
+							}
+						}
+					}
+				}
+				@section("Sign a user out everywhere") {
+					<form data-json-form data-method="POST" data-action={ Prefix + "/auth/revoke-user" } data-success="Signed out" class="flex flex-wrap items-end gap-2 p-3">
+						<label class="flex w-64 flex-col gap-1">
+							@fieldLabel("User ID")
+							@input.Input(input.Props{Name: "id", Placeholder: "ends every session and token"})
+						</label>
+						@button.Button(button.Props{Type: button.TypeSubmit, Variant: button.VariantDestructive}) {
+							@icon.Icon("log-out")
+							Sign out everywhere
+						}
+					</form>
+				}
+				@rejectsSection(rejects, traced)
+			</div>
+		} else {
+			@pageHead("Auth", 0) {
 			}
-			@rejectsSection(rejects, traced)
-		</div>
+			<div class="flex flex-col gap-4 p-4">
+				<p class="text-[12.5px] text-muted-foreground">auth.Module is starting.</p>
+				@rejectsSection(rejects, traced)
+			</div>
+		}
 	</div>
 }
 

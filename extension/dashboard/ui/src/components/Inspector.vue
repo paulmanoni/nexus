@@ -339,7 +339,7 @@ function workerState(s) {
       <template v-if="authSummary">
         <div class="grp-head"><span>Auth</span></div>
         <div class="insp-pad">
-          <div class="ov-hint"><ShieldCheck :size="15" :stroke-width="2" />{{ authSummary.identities.length }} cached {{ authSummary.identities.length === 1 ? 'identity' : 'identities' }} · caching {{ authSummary.cachingEnabled ? 'on' : 'off' }}.</div>
+          <div class="ov-hint" v-if="authSummary.setup"><ShieldCheck :size="15" :stroke-width="2" />{{ authSummary.setup.schemes.length }} {{ authSummary.setup.schemes.length === 1 ? 'scheme' : 'schemes' }} · default {{ authSummary.setup.default }} · {{ (authSummary.setup.locks || []).length }} sign-in locks.</div>
         </div>
       </template>
     </div>

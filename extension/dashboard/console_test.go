@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmanoni/nexus/v2/extension/metrics"
 	"github.com/paulmanoni/nexus/v2/httpx/stdrouter"
@@ -246,7 +247,21 @@ func TestAuthRejectionsFromTraceBuffer(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	st := &consoleState{Auth: &authSummary{CachingEnabled: true}}
+	setup := &authSetup{Default: "signed-in", Cache: "5m0s", LocksKnown: true,
+		Schemes: []struct{ Name, Type, Reads string }{{"web", "session", "session cookie"}},
+		Areas: []struct {
+			Name, Prefix, Login, Home string
+			Kinds                     []string
+		}{{Name: "admin", Prefix: "/admin", Kinds: []string{"staff"}, Home: "/admin"}},
+		Locks: []struct {
+			Key, What string
+			Until     time.Time
+		}{{Key: "a:ana", What: "account ana", Until: time.Now().Add(time.Minute)}}}
+	st := &consoleState{Auth: &authSummary{Setup: setup}, Endpoints: []registry.Endpoint{
+		{Name: "GET /admin/users", Transport: registry.REST, Method: "GET", Path: "/admin/users", Tags: map[string]string{registry.AuthRequiresTag: "users.view"}},
+		{Name: "GET /health", Transport: registry.REST, Method: "GET", Path: "/health", Tags: map[string]string{"auth.public": "true"}},
+		{Name: "listPets", Transport: registry.GraphQL, Path: "/graphql", Tags: map[string]string{registry.AuthKindTag: "staff"}},
+	}}
 	if err := authPage(st, rows, true).Render(context.Background(), &buf); err != nil {
 		t.Fatal(err)
 	}
@@ -255,6 +270,12 @@ func TestAuthRejectionsFromTraceBuffer(t *testing.T) {
 		`data-events="auth.reject"`, // re-renders as rejections arrive
 		"Recent rejections", ">bob<", "anonymous", ">permission<", "missing token",
 		`data-href="/__nexus/ui/traces/t-bob"`, // each row opens its trace
+		"Schemes — tried in this order", ">session cookie<",
+		"area admin (staff) · requires users.view", // the area's kinds, then the endpoint's own gate
+		"signed in · kind staff",
+		">public<",                             // Public endpoints flagged
+		"account ana", "a:ana", "/auth/unlock", // a lock, with its unlock button
+		"/auth/revoke-user",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("auth page missing %q", want)

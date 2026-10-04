@@ -12,7 +12,6 @@ import (
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/dev"
-	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/extension/session"
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
@@ -86,17 +85,17 @@ func (st *moduleState) installConfigPath(app *nexus.App) error {
 		case SchemeSession:
 			session.Install(app, session.Config{CookieName: sc.Cookie, TTL: sc.TTL, Secure: sc.Secure})
 			app.RequireCSRF("auth session scheme " + sc.name)
-			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: sessionExtractor{}, resolve: st.sessionResolve(sc.name)})
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: sessionExtractor{}, resolve: st.sessionResolve(sc.name)})
 		case SchemeBearer:
-			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: bearerShaped(false), resolve: st.tokenResolve(sc.name)})
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: bearerShaped(false), resolve: st.tokenResolve(sc.name)})
 		case SchemeJWT:
 			v, err := newJWTVerifier(sc.SchemeSettings)
 			if err != nil {
 				return fmt.Errorf("[auth.schemes.%s]: %w", sc.name, err)
 			}
-			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: bearerShaped(true), resolve: st.jwtResolve(sc.name, v)})
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: bearerShaped(true), resolve: st.jwtResolve(sc.name, v)})
 		case SchemeAPIKey:
-			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: APIKey(sc.Header), resolve: st.tokenResolve(sc.name)})
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, typ: sc.Type, extract: apiKey(sc.Header), resolve: st.tokenResolve(sc.name)})
 		}
 	}
 	return nil
@@ -105,7 +104,7 @@ func (st *moduleState) installConfigPath(app *nexus.App) error {
 // sessionExtractor finds the signed-in user's id in the request's session.
 type sessionExtractor struct{}
 
-func (sessionExtractor) Extract(r *http.Request) (string, bool) {
+func (sessionExtractor) extract(r *http.Request) (string, bool) {
 	if !session.Present(r.Context()) {
 		return "", false
 	}
@@ -113,7 +112,7 @@ func (sessionExtractor) Extract(r *http.Request) (string, bool) {
 	return id, id != ""
 }
 
-func (st *moduleState) sessionResolve(name string) Resolver {
+func (st *moduleState) sessionResolve(name string) resolver {
 	return func(ctx context.Context, userID string) (*Identity, error) {
 		s := session.Get(ctx)
 		cur, err := st.epoch(ctx, userID)
@@ -159,7 +158,7 @@ func epochString(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
-func (st *moduleState) tokenResolve(name string) Resolver {
+func (st *moduleState) tokenResolve(name string) resolver {
 	return func(ctx context.Context, tok string) (*Identity, error) {
 		t, err := st.config.tokens.Load(ctx, hashToken(tok))
 		if err != nil {
@@ -189,22 +188,7 @@ func (st *moduleState) tokenResolve(name string) Resolver {
 	}
 }
 
-// bearerShaped is Bearer() for one token shape: a JWT (three dot-separated
-// parts) for a jwt scheme, an opaque nexus token (no dot) for a bearer one —
-// so the two schemes share the Authorization header without claiming each
-// other's tokens.
-func bearerShaped(jwt bool) Extractor {
-	b := Bearer()
-	return bearerExtractor{Extractor: ExtractorFunc(func(r *http.Request) (string, bool) {
-		tok, ok := b.Extract(r)
-		if !ok || (strings.Count(tok, ".") == 2) != jwt {
-			return "", false
-		}
-		return tok, true
-	})}
-}
-
-func (st *moduleState) jwtResolve(name string, v *jwtVerifier) Resolver {
+func (st *moduleState) jwtResolve(name string, v *jwtVerifier) resolver {
 	return func(ctx context.Context, tok string) (*Identity, error) {
 		sub, reason := v.verify(ctx, tok)
 		if reason != "" {
@@ -332,7 +316,7 @@ func (st *moduleState) defaultGate() middleware.Middleware {
 			if area == nil && rs != nil && rs.public {
 				return next(rc)
 			}
-			id, ok := IdentityFrom(rc.Context)
+			id, ok := identityFrom(rc.Context)
 			if !ok {
 				return rejectAuth(rc, unauthenticated(rc.Context))
 			}
@@ -341,34 +325,4 @@ func (st *moduleState) defaultGate() middleware.Middleware {
 			}
 			return next(rc)
 		})
-}
-
-// configModule is Module for the config-driven path.
-func configModule(cfg Config) nexus.Option {
-	if len(cfg.Authentication.Schemes) > 0 || cfg.Backend.set {
-		return nexus.Raw(di.Error(errors.New("auth: Config.Users replaces Authentication.Schemes and Backend — declare schemes in [auth.schemes.*] instead")))
-	}
-	// The [auth] default decides sign-in requirements; its gate is supplied
-	// here, not through Authorization.Default.
-	cfg.Authorization.Default = Permit()
-	return wireModule(cfg, nil, nil, func(st *moduleState) ([]nexus.Option, error) {
-		st.config.tokens = cfg.Tokens
-		users, err := usersOption(st, cfg.Users)
-		if err != nil {
-			return nil, err
-		}
-		if cfg.OnError == nil {
-			st.errorHandler = pageErrors{st}
-		}
-		return []nexus.Option{
-			users,
-			nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: st.defaultGate()})),
-			nexus.Defer(func() nexus.Option {
-				if err := st.resolveConfig(); err != nil {
-					return nexus.FailBoot(fmt.Errorf("auth: %w", err))
-				}
-				return st.endpointOptions()
-			}),
-		}, nil
-	})
 }

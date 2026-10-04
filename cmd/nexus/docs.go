@@ -200,8 +200,7 @@ var topicSummaries = map[string]string{
 	"scoped":      "nexus.NewScoped — request-scoped derived values (lazy, memoized)",
 	"clientops":   "SDK nx.op envelope unwrapping, query batching, op composables",
 	"module":      "nexus.Module, Provide, Setup, route prefix",
-	"auth":        "auth.Module setup, Required, Requires, User[T]",
-	"oauth2":      "oauth2.Module — go-oauth2 server + auth bridge",
+	"auth":        "auth.Module: Users, schemes, sign-in, gates, areas, tokens, OAuth2",
 	"security":    "Built-in security headers (on) + CSRF (on with cookie auth/forms)",
 	"rest":        "AsRest — REST endpoints with reflective handlers",
 	"graphql":     "AsQuery / AsMutation — auto-mounted GraphQL fields",
@@ -262,15 +261,8 @@ No methods to write? Use the JSON form:
 Both callbacks run on another goroutine — take the store's own lock inside
 them, like its regular methods do.
 
-Built in: auth.MemoryUserStore implements dev.State, so dev users survive a
-rebuild once you register it:
-
-    store := auth.NewMemoryUserStore()
-    store.CreateUser("alice", "s3cret-pw", "ADMIN")
-    dev.Preserve("auth.users", store)
-
-A user the new process seeds itself wins over the snapshot, so changing the
-seed in code does what you expect.
+Built in: extension/auth's memory token store and extension/session's
+memory store are preserved this way, so a sign-in survives a rebuild.
 
 Scope, on purpose:
 
@@ -978,12 +970,10 @@ Redirects — return as the handler's error:
     return nil, inertia.Redirect("/users")              // 303 See Other
     return nil, inertia.Location("https://ext/login")   // 409 + X-Inertia-Location
 
-Auth gates compose normally (auth.Required, deny-by-default, nexus.Public).
-For login-redirect-instead-of-401 on Inertia visits, use the auth bridge:
-
-    import "github.com/paulmanoni/nexus/v2/extension/inertia/iauth"
-    // page nav → /login redirect; GraphQL → error; API → your envelope:
-    auth.Module(auth.Config{ ..., OnError: iauth.ErrorHandler("/login", apiErrors{}) })
+Auth gates compose normally (every page needs a sign-in unless
+auth.Public()). An Inertia visit without one goes to the sign-in page of its
+area ([auth.areas.*] login, else [auth] login) with ?next= — a 409 with
+X-Inertia-Location — and every page gets the "auth" prop {user, can}.
 
 Pages render into index.html — Vite's transformed page in dev, the built one
 in production: the engine sets data-page on the mount element and keeps the
@@ -1210,292 +1200,94 @@ carries it so the errors surface on the re-render:
 `,
 
 	"auth": `
-AUTH
+AUTH — extension/auth
 
-  auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)})   // accounts + sign-in (2.1)
-  auth.Single(resolve)   //  or auth.Module(auth.Config{Authentication: ...})
+  nexus.Boot(auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}), …)
 
-ACCOUNTS AND SIGN-IN (Config.Users). The app implements auth.Users:
+The app implements auth.Users; nexus checks the type at boot, issues and
+checks credentials, and requires a sign-in on every endpoint that isn't
+auth.Public().
 
-    FindLogin(ctx, login string) (*auth.Identity, encodedPassword string, error)
-    Load(ctx, id string) (*auth.Identity, error)
+    type Users interface {
+        FindLogin(ctx, login string) (*auth.Identity, encodedPassword string, error)
+        Load(ctx, id string) (*auth.Identity, error)
+    }
     // optional: SetPassword(ctx, id, encoded string) error
     //           CheckLogin(ctx, id *auth.Identity) error   (refuse a sign-in)
+    //           Public(id *auth.Identity) any              (what me / the page prop show)
 
-nexus checks the type at boot, then authenticates every request from the
-[auth.schemes.*] in nexus.toml (session by default; bearer; apikey) and
-requires a sign-in on every endpoint not marked auth.Public() ([auth]
-default = "public" opts out). Handlers sign in with two calls:
+    auth.Identity{ID, Kind, Perms, User, Actor, Scheme}
+    // Perms match with wildcards: "orders.*", "*". Kind: "staff", "customer".
+    // User: your user, read with auth.User[T](ctx). Set Kind in FindLogin too.
 
-    id, err := auth.Login(ctx, auth.Password{Username: in.Email, Password: in.Password})
-    cred, err := auth.SignIn(ctx, id)                    // session: cycles the id
-    cred, err := auth.SignIn(ctx, id, auth.Using("api"))  // bearer: {access_token,…}
-    auth.SignOut(ctx)               // destroys the session / revokes the token
-    auth.SetPassword(ctx, id, plain)   // [auth.passwords] rules, hash, store
-    auth.Refresh(ctx, userID)          // drop the cached Load
+SCHEMES — [auth.schemes.<name>], tried apikey → jwt → bearer → session
+(default: one session scheme "web"):
 
-Tokens are stored as SHA-256 in Config.Tokens (memory by default; use
-auth.CacheTokens(cache) in production). Load is cached per user id ([auth]
-cache, 5m). A credential that arrives but fails leaves the request
-anonymous; under nexus dev the 401 names the reason.
+    type = "session"   cookie → extension/session → user id (turns CSRF on)
+    type = "bearer"    opaque tokens SignIn issues, stored as SHA-256; ttl,
+                       refresh = "720h" (Go durations: no "d")
+    type = "apikey"    header = "X-API-Key"; keys from auth.Keys
+    type = "jwt"       verify tokens issued elsewhere: secret (HS256) |
+                       public_key (PEM RS256/ES256) | jwks URL; issuer,
+                       audience, subject ("sub"), leeway
 
-Areas — [auth.areas.admin] prefix = "/admin", kinds = ["staff"],
-login = "/admin/login", home: endpoints under the prefix need one of the
-kinds (403 otherwise); a page visit without a sign-in goes to the login
-with ?next= (302; 409 + X-Inertia-Location for Inertia); signing in there
-refuses other kinds. Outside areas: [auth] login / home. Credential.Next is
-the validated next (auth.Next(ctx), auth.ReturnTo(next)) or the home.
-[auth.throttle] account = "5/15m", ip = "50/15m", lockout = "15m" → 429.
-[auth.endpoints] login / logout / me mount JSON endpoints for nx.auth.*;
-me = {user, can} (user from an optional Users.Public(id) any).
-Inertia pages get that {user, can} as the "auth" prop ([auth] page_prop;
-"-" off). SignIn/SignOut rotate the CSRF token. forbidden = "/path" (per
-area or [auth]) is where a refused page visit goes. Config.Throttle =
-auth.CacheThrottle(cache) shares the throttle between replicas.
-auth.RevokeUser(ctx, userID) signs a user out everywhere (sessions, tokens,
-and open WebSocket / live-view connections at their next message);
-auth.Revoke(ctx, token) ends one token. [auth.sessions] single = true,
-end_on_password_change = true (default), idle = "2h".
-Bearer refresh = "720h" adds refresh tokens (auth.RefreshToken rotates
-them); [auth.endpoints] token = "/oauth/token" (password, refresh_token
-grants) and revoke = "/oauth/revoke" skip CSRF. A jwt scheme verifies
-tokens issued elsewhere: secret | public_key | jwks, issuer, audience,
-subject ("sub"), leeway.
-auth.Sessions(ctx, uid) lists where a user is signed in (sessions, tokens);
-auth.RevokeSession(ctx, uid, id) ends one. auth.Keys.Create(ctx, uid,
-scheme, name) / List / Revoke manage named API keys. Both need a
-TokenStore implementing auth.TokenLister (memory and CacheTokens do).
-auth.Impersonate(ctx, id) / StopImpersonating(ctx): Current is the target,
-.Actor the real user ([auth.impersonation] permission, endpoint).
-auth.Policy(func(ctx, me, perm string, o *Order) bool) is an Option;
-auth.Check(ctx, perm, obj) / auth.Allowed apply perm then the policy.
-Jobs run as the user who enqueued them. nexus auth check prints the
-effective [auth] setup. Tests: extension/auth/authtest — authtest.As(id),
-authtest.AsUser("7"), authtest.Users; app.With(header) in nexustest.
+A credential that arrives but fails leaves the request anonymous; under
+nexus dev the 401 says why. Users.Load is cached per id ([auth] cache).
+Tokens live in Config.Tokens (memory default; auth.CacheTokens(cache)).
+
+SIGNING IN — any handler:
+
+    id, err := auth.Login(ctx, auth.Password{Login: in.Email, Password: in.Password})
+    cred, err := auth.SignIn(ctx, id)                     // session (id cycled, CSRF rotated)
+    cred, err := auth.SignIn(ctx, id, auth.Using("api"))  // {access_token, refresh_token, expires_in}
+    auth.SignOut(ctx)                                     // this session / token
+    auth.SetPassword(ctx, id, plain)                      // [auth.passwords] rules
+    auth.RefreshToken(ctx, rt); auth.Refresh(ctx, userID) // rotate; drop the Load cache
+
+Login: throttle ([auth.throttle] account/ip "5/15m", lockout) → FindLogin →
+password ([auth.passwords] hashers, rehash when stale) → area kinds →
+CheckLogin. Wrong password and unknown login answer alike (422).
+Credential.Next is the validated ?next= (auth.Next, auth.ReturnTo) or a home.
+
+GATES — every endpoint needs a sign-in unless Public ([auth] default =
+"public" opts out):
+
+    auth.Public()  auth.Required()  auth.Requires("orders.view")
+    auth.RequiresAny("orders.refund", "orders.admin")  auth.Kind("staff")
+    //nexus:auth Public | Required | Requires p… | RequiresAny p… | Kind k…
+
+    auth.Can(ctx, "users.delete")  auth.Gates(ctx, perms…)  auth.OpGates(ctx, app)
+    auth.Policy(func(ctx, me *auth.Identity, perm string, o *Order) bool)  // an Option
+    auth.Check(ctx, "orders.cancel", order)  /  auth.Allowed(…)          // perm, then policy
+
+AREAS — [auth.areas.<n>] prefix, kinds, login, home, forbidden: endpoints
+under the prefix need one of the kinds; a page visit without a sign-in
+goes to the area login with ?next= (302, or 409 + X-Inertia-Location);
+a refused page visit goes to forbidden. Outside areas: [auth] login,
+home, forbidden.
+
+ENDPOINTS — [auth.endpoints] login, logout, me (nx.auth.*), token
+(OAuth2 password, refresh_token, client_credentials; CSRF-exempt), revoke.
 OAuth2 clients: [auth.oauth2.clients.<id>] secret | secret_hash, grants,
-perms, kind (or Config.Clients for a database); the token endpoint takes
-client_credentials (identity "client:<id>") and, with require_client,
-needs a client for every grant.
-[auth] keys: docs/reference/nexus-toml.md.
+perms, kind, or Config.Clients; [auth.oauth2] require_client.
+Inertia pages get {user, can, actor?} as the "auth" prop ([auth] page_prop).
 
-RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued
-elsewhere:
+ENDING SESSIONS — auth.RevokeUser(ctx, uid) (everywhere; open WebSocket and
+live-view connections close at their next message), auth.Revoke(ctx, token),
+auth.Sessions(ctx, uid) / auth.RevokeSession, auth.Keys.Create/List/Revoke.
+[auth.sessions] single, end_on_password_change (default true), idle.
 
-Wires the framework's auth surface: credential extraction → cached
-identity resolution → per-op enforcement → trace events.
+IMPERSONATION — auth.Impersonate(ctx, id) / StopImpersonating: Current is
+the target, .Actor the real user; [auth.impersonation] permission, endpoint.
 
-    import "github.com/paulmanoni/nexus/v2/extension/auth"
+JOBS run as the user who enqueued them (loaded through Users at start).
 
-    resolve := func(ctx context.Context, tok string) (*auth.Identity, error) {
-        u, err := myAPI.ValidateToken(ctx, tok)
-        if err != nil { return nil, err }
-        return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
-    }
+TESTS — extension/auth/authtest: app.With(authtest.As(&auth.Identity{…})),
+authtest.AsUser("7"), authtest.Users (in memory); viewtest.As(&identity).
 
-    // One bearer scheme — the common case:
-    auth.Single(resolve, auth.CacheFor(15 * time.Minute))
-
-    // Several schemes (bearer JWT + API key), tried in order:
-    auth.Module(auth.Config{
-        Authentication: auth.Authentication{
-            Schemes: []auth.Scheme{
-                {Resolve: resolve},                                    // defaults to Bearer()
-                {Name: "apikey", Extract: auth.APIKey("X-API-Key"), Resolve: resolveKey},
-            },
-            Cache: auth.CacheFor(15 * time.Minute),
-        },
-    })
-
-Per-op gates (cross-transport):
-
-    nexus.AsMutation(NewCreateAdvert,
-        auth.Required(),                       // 401 if missing
-        auth.Requires("ROLE_CREATE_ADVERT"),   // 403 if missing perm
-
-UI permission toggles (same rulebook as Requires):
-
-    auth.RequiresAny("orders.refund", "orders.admin")   // at least one
-    auth.Kind("staff")                                  // Identity.Kind
-
-Identity.Perms matches with wildcards ("orders.*", "*"); Roles and
-Scopes keep exact matching. auth.Current(ctx) is the identity (nil when
-anonymous); auth.ID[T](ctx) its ID parsed into T. Directives:
-//nexus:auth RequiresAny a b, //nexus:auth Kind staff.
-
-    auth.Can(ctx, "add_user")                       // bool
-    auth.Gates(ctx, "add_user", "delete_user")      // map[string]bool
-        Both evaluate through the configured PermissionFn /
-        Backend.Authorize — a page's "can" props cannot drift
-        from the endpoint gates. Anonymous → false.
-
-Op gates — declare permissions ONCE, on the registration:
-
-    auth.OpGates(ctx, app)                          // map[opName]bool
-
-        auth.Requires stamps its permission list onto the endpoint's
-        registry entry; OpGates evaluates every registered op's own
-        declaration for the current identity. The frontend keys on op
-        names it already calls (can.saveUser) — no permission string
-        exists outside the registration. Ops without Requires are
-        always true (permission gates, not authentication). App-wide
-        Inertia prop:
-
-            inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
-                return func(ctx context.Context) (string, any) {
-                    return "can", auth.OpGates(ctx, app)
-                }
-            })
-
-        Performance: compiled once per registry version, ops grouped
-        by unique permission set (one Authorize call per set, not per
-        op) — ~4µs / 4 allocs for 200 ops. Safe on every render.
-    )
-
-Token extractors:
-  auth.Bearer(), auth.Cookie(name), auth.APIKey(header), auth.Chain(...)
-
-Cookie sessions (for server-rendered navigations — e.g. Inertia pages — that
-carry no Authorization header). auth.SessionCookie owns the cookie name +
-attributes and yields a matching extractor so read and write can't drift:
-
-    var session = auth.SessionCookie{Name: "access_token", MaxAge: 7*24*time.Hour}
-    // scheme:  Extract: auth.Chain(auth.Bearer(), session.Extractor())
-    // login:   session.Set(c, token)     // HttpOnly cookie
-    // logout:  session.Clear(c)
-
-Authorization (how a required permission matches roles/scopes):
-    auth.Authorization{Authority: auth.Wildcard()}  // admin:* grants admin:read
-    auth.Authorization{Permissions: auth.AnyOf(...)} // full override
-
-Deny-by-default (every endpoint requires an identity unless opted out):
-    auth.Authorization{Default: auth.Authenticated()}  // secure by default
-    nexus.AsRest("GET", "/health", NewHealth, nexus.Public()) // opt out
-    // applies across REST/GraphQL/WS; AuthRoute("login") is auto-exempt
-
-Error rendering (one cross-transport handler replaces the old
-OnUnauthenticated / OnForbidden / GraphQLErrorWrap hooks):
-    Config{OnError: myHandler}   // implements auth.ErrorHandler
-    // REST/WS: rc.RejectJSON(status, envelope); GraphQL: return wrapped err
-
-Identity access (typed, generic):
-    user, ok := auth.User[MyUser](p.Context) // the resolved Extra payload
-    uid,  ok := auth.Subject[uint](ctx)      // Identity.ID parsed into T
-    actor := auth.SubjectPtr[uint](ctx)      // *uint, nil if anonymous
-
-Logout flows: take *auth.Manager via fx, call:
-    am.Invalidate(token)
-    am.InvalidateByIdentity(userID)
-
-Dashboard's Auth tab shows cached identities + live 401/403
-rejections + per-row "invalidate" buttons.
-
-AuthRoute (cross-transport): mark login/logout/me on REST or
-GraphQL ops. The client SDK auto-dispatches:
-
-    nexus.AsRest("POST", "/login",  NewLogin,  nexus.AuthRoute("login"))
-    nexus.AsMutation(NewLogin,                  nexus.AuthRoute("login"))
-    nexus.AsQuery(NewMe,                        nexus.AuthRoute("me"))
-
-The browser calls nx.auth.login(creds) / nx.auth.me() either
-way; the manifest's transport tag picks REST POST or GraphQL
-mutation/query under the hood.
-
-For full OAuth2 (password / client_credentials / refresh): see
-"nexus docs oauth2".
-
-──── Passwords & login backends (Django-style) ───────────────
-
-Everything below is a swappable backend with a shipped default —
-password hashing, password policy, and credential login.
-
-HASHING — auth.Hasher / auth.Hashers (like Django PASSWORD_HASHERS).
-Encoded hashes are self-describing ("<id>$<payload>"), so a set
-verifies any algorithm it knows and rehashes on login when stale:
-
-    h := auth.DefaultHashers()          // bcrypt default; argon2id+pbkdf2 verify
-    enc, _ := h.Hash("s3cret")          // "bcrypt$$2b$12$…"
-    ok, needsUpgrade, _ := h.Verify("s3cret", enc)
-
-    // pick a specific algorithm:
-    auth.BCrypt() | auth.Argon2id() | auth.PBKDF2()
-
-POLICY — auth.PasswordValidator (like AUTH_PASSWORD_VALIDATORS):
-
-    err := auth.ValidatePassword(ctx, pw, id, auth.DefaultValidators()...)
-    // MinLength(8), NotNumericOnly(), NotCommon(...), NotSimilarToUser()
-
-LOGIN — auth.Backend + auth.Authenticate (like AUTHENTICATION_BACKENDS).
-Backends are tried in order; ModelBackend checks a pluggable UserStore:
-
-    store := auth.NewMemoryUserStore()          // or your GORM/API store
-    store.CreateUser("alice", "s3cret-pw", "ADMIN")
-    backend := auth.NewModelBackend(store)
-
-    id, err := auth.Authenticate(ctx,
-        auth.Password{Username: "alice", Password: "s3cret-pw"}, backend)
-    // wrong password OR unknown user → auth.ErrInvalidCredentials (no enumeration)
-
-Implement auth.UserStore (ByUsername / ByID / SetPassword) to back login
-with your own user model. The token-Resolver/Scheme surface above is
-unchanged — these fill in the login half around it.
-
-BACKEND — one cohesive plug for resolve + login + authorize (Config.Backend).
-Instead of a static Scheme.Resolve (which can't see DI deps, forcing package
-globals + a backfill Invoke) plus a separate Authorization block, declare ONE
-backend, DI-constructed so it closes over app services:
-
-    Backend: auth.UseBackend(func(db *DB, srv *TokenServer) *AuthBackend {
-        return NewAuthBackend(db, srv)         // returns YOUR concrete type
-    }),                                        //  StaticBackend(v) for no deps
-
-The framework discovers capabilities by type assertion (implement any subset):
-
-    Resolve(ctx, token) (*Identity, error)     // fills schemes with nil Resolve
-    Login(ctx, Credentials) (*Identity, error) // powers Manager.Login + Endpoints.Login
-    Authorize(id, required) bool               // REPLACES Config.Authorization
-    Issue(ctx, *Identity) (any, error)         // login response body (token pair)
-    RevokeToken(ctx, token) error              // powers Endpoints.Logout/Revoke
-    TokenHandler() httpx.HandlerFunc           // raw grant endpoint (Endpoints.Token)
-
-So a Scheme can omit Resolve (inherited from the backend), Manager.Login
-delegates to the backend, and authorization lives WITH the backend. All
-additive: Config.Backend zero value = today's behavior; note UseBackend
-returns your concrete type, not the auth.Backend login interface above.
-
-ENDPOINTS — let auth.Module mount its own HTTP front doors from the backend's
-capabilities, so ONE auth.Module call owns the whole surface (no hand-wired
-AsRest lines next to it):
-
-    auth.Module(auth.Config{
-        Backend: auth.UseBackend(NewAuthBackend),   // implements Login/Issue/…
-        Endpoints: auth.Endpoints{
-            Token:  "/oauth/token",       // → Backend.TokenHandler
-            Login:  "/api/auth/login",    // → Backend.Login + Backend.Issue
-            Logout: "/api/auth/logout",   // → Manager.Invalidate + Backend.RevokeToken
-            Revoke: "/oauth/token/revoke",
-        },
-    })
-
-Each is off unless its path is set; all are Public (you can't require a token
-to get one). Login reads {"username","password"}, runs Backend.Login (401 on
-bad creds, no enumeration), and returns Backend.Issue's body (or {"identity":…}
-when the backend can't Issue). Logout/Revoke pull the token via
-Endpoints.LogoutExtract (default Bearer()) and are idempotent (200 {"ok":true}).
-
-FULL OAUTH2 IN ONE CONFIG — the oauth2 extension ships a ready backend that
-implements every capability, so a token server folds into auth.Module:
-
-    import "github.com/paulmanoni/nexus/v2/extension/oauth2"
-
-    auth.Module(auth.Config{
-        Backend:   oauth2.Backend(oauth2.Config{Authenticator: authFn, ClientStore: cs}),
-        Endpoints: auth.Endpoints{Token: "/oauth/token", Login: "/api/auth/login"},
-    })
-    // oauth2.Module(cfg) is now a thin wrapper over exactly this.
-
-When you can't use a ready backend, the exported auth.LoginHandler /
-auth.LogoutHandler let you call the same handlers from your own raw AsRest
-handler (func(m *auth.Manager, …deps, c *httpx.Ctx), DI deps injected).
+TOOLS — nexus auth check [nexus.toml]; the dashboard's Auth tab (schemes,
+areas, every endpoint's gate, throttle locks, sign a user out).
+docs/guide/auth.md, docs/reference/nexus-toml.md#auth.
 `,
 
 	"security": `
@@ -1549,106 +1341,6 @@ extension/security — the pieces the core path can't offer:
     security.Plugin()                       // a dashboard "Security" tab
     nexus.Use(security.NewCSRFMiddleware(security.CSRFConfig{}))     // per-route
     nexus.Use(security.NewHeadersMiddleware(security.HeadersConfig{}))
-`,
-
-	"oauth2": `
-OAUTH2
-
-  oauth2.Module(oauth2.Config{Authenticator: ...})
-
-Wraps go-oauth2/oauth2/v4 with sane defaults and bridges its
-access-token store to nexus.auth so handlers gate themselves
-with auth.Required() / auth.Requires(). Mounts POST /oauth/token
-out of the box.
-
-oauth2.Module is now a thin wrapper over auth.Module: it builds the
-server as an auth backend (oauth2.Backend, implementing Resolve + Login
-+ Issue + RevokeToken + TokenHandler) and declares auth.Endpoints for the
-token/revoke/login/logout paths — no more holder/atomic-pointer bridge.
-To fold OAuth2 into an existing auth.Module instead of a separate call:
-
-    auth.Module(auth.Config{
-        Backend:   oauth2.Backend(oauth2.Config{Authenticator: authFn}),
-        Endpoints: auth.Endpoints{Token: "/oauth/token", Login: "/api/auth/login"},
-    })
-
-Minimal app — password grant against your user store:
-
-    import "github.com/paulmanoni/nexus/v2/extension/oauth2"
-
-    nexus.Run(config.Runtime{...},
-        oauth2.Module(oauth2.Config{
-            Authenticator: func(ctx context.Context, _, username, password string) (string, error) {
-                u, err := users.Authenticate(ctx, username, password)
-                if err != nil { return "", oauth2.ErrInvalidCredentials }
-                return strconv.Itoa(int(u.ID)), nil
-            },
-        }),
-        // ...your modules
-    )
-
-Every field beyond Authenticator has a default. Production apps
-typically set:
-
-  ClientStore       — oauth2.NewLoaderClientStore(loadByID) or
-                      oauth2.NewStaticClientStore(clients...)
-  TokenStore        — oauth2.NewCacheTokenStore(cache, "app:oauth:")
-                      ('cache' is any 3-method Get/Set/Delete impl)
-  IdentityResolver  — populate Identity.Roles / .Extra from your
-                      user-profile lookup
-  ErrorMapper       — domain errs → OAuth2 responses (the bundled
-                      DefaultErrorMapper handles the four sentinels
-                      below)
-  TokenType         — "Bearer" (default) or "bearer" (Spring-compat)
-  IncludeJTI        — adds a unique jti to every issued token
-  RevokePath        — when set, mounts POST <path> for revocation
-  LoginPath         — when set, mounts a Public JSON login endpoint that
-                      authenticates + returns a token pair (needs LoginClientID)
-  LogoutPath        — when set, mounts a Public JSON logout endpoint
-  LoginClientID/    — the OAuth2 client LoginPath mints tokens for
-    LoginClientSecret
-
-Sentinel errors (return from Authenticator for free translation):
-
-  oauth2.ErrInvalidCredentials   → 400 invalid_grant
-  oauth2.ErrAccountDisabled      → 400 invalid_grant
-  oauth2.ErrAccountLocked        → 400 invalid_grant
-  oauth2.ErrServiceUnavailable   → 503 temporarily_unavailable
-
-Spring-compat / migration helpers:
-
-  oauth2.SoftenStockMessages       — friendlier descriptions for
-                                     OAuth2 invalid_request etc.
-  oauth2.VerifySpringPassword(s,p) — checks {bcrypt} / {noop} /
-                                     raw bcrypt / legacy salted-sha1
-  oauth2.VerifyBcrypt(hash, input) — pure bcrypt only
-
-Plugging your own stores: ClientStore wants oauth2lib.ClientStore;
-TokenStore wants oauth2lib.TokenStore. The package's Cache adapter
-+ NewLoaderClientStore generalize the common DB+cache shape
-without forcing a specific cache library on the framework.
-
-Escape hatches for advanced configurations:
-
-  Config.Manager           — supply your own *manage.Manager (skips
-                             ClientStore/TokenStore wiring above)
-  Config.ServerCustomizer  — runs after *server.Server is built but
-                             before Mount; use for custom user-
-                             authorization handler, scope handler,
-                             etc.
-
-Three-legged authorization-code flow isn't mounted by default —
-add it via ServerCustomizer + a custom AsRest route.
-
-Identity in handlers — same as plain auth.Module:
-
-    nexus.AsQuery(NewMe, auth.Required())   // 401 if no token
-
-    func NewMe(ctx context.Context) (*Profile, error) {
-        id, _ := auth.IdentityFrom(ctx)
-        // id.ID is the userID Authenticator returned
-        // id.Extra is *oauth2.Session by default {Token, Info}
-    }
 `,
 
 	"rest": `
@@ -1789,7 +1481,7 @@ context "user" with GetID() also works) — never a query param or
 an authenticate message. Rooms are joined server-side with
 JoinRoom; a client subscribe is refused unless the path opts in.
 Handler contexts carry the upgrade request's auth (identity and
-auth state, captured once per connection), so auth.IdentityFrom /
+auth state, captured once per connection), so auth.Current /
 auth.User / auth.Can work in WS handlers. Opting in to rooms:
 
     nexus.AsWS("/ws", "jobs.watch", NewWatch, auth.Required(),

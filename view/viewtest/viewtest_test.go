@@ -2,7 +2,6 @@ package viewtest_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth/authtest"
 	"github.com/paulmanoni/nexus/v2/nexustest"
 	"github.com/paulmanoni/nexus/v2/view"
 	"github.com/paulmanoni/nexus/v2/view/viewtest"
@@ -55,7 +55,7 @@ func (s *store) all() []string {
 }
 
 func (r *Report) Mount(ctx context.Context, sock *view.Socket, s *store) error {
-	if id, ok := auth.IdentityFrom(ctx); ok && id != nil {
+	if id := auth.Current(ctx); id != nil {
 		r.User = id.ID
 	}
 	r.Keys = []string{"main.id", "main.name", "main.email"}
@@ -155,21 +155,12 @@ func home() templ.Component {
 	})
 }
 
-type tokens struct{}
-
-func (tokens) Resolve(_ context.Context, tok string) (*auth.Identity, error) {
-	if tok == "staff" {
-		return &auth.Identity{ID: "ana"}, nil
-	}
-	return nil, errors.New("unknown token")
-}
+// staff is the identity the tests act as.
+var staff = &auth.Identity{ID: "ana", Kind: "staff"}
 
 func newApp(t *testing.T) *nexustest.App {
 	return nexustest.New(t, config.Runtime{},
-		auth.Module(auth.Config{
-			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
-			Backend:        auth.StaticBackend(tokens{}),
-		}),
+		auth.Module(auth.Config{Users: auth.StaticUsers(authtest.NewUsers())}),
 		nexus.Supply(&store{}),
 		view.Page("GET", "/", home, nexus.Public()),
 		view.Live[*Report]("/report", auth.Required()).Provide(func() *Report { return &Report{} }),
@@ -178,7 +169,7 @@ func newApp(t *testing.T) *nexustest.App {
 
 func TestLivePage(t *testing.T) {
 	app := newApp(t)
-	p := viewtest.Mount[*Report](t, app, viewtest.As("staff"))
+	p := viewtest.Mount[*Report](t, app, viewtest.As(staff))
 
 	p.Expect("#user").Text("ana")
 	p.Expect("#save").Disabled()
@@ -206,8 +197,8 @@ func TestLivePage(t *testing.T) {
 
 func TestServerPush(t *testing.T) {
 	app := newApp(t)
-	a := viewtest.Mount[*Report](t, app, viewtest.As("staff"))
-	b := viewtest.Mount[*Report](t, app, viewtest.As("staff"))
+	a := viewtest.Mount[*Report](t, app, viewtest.As(staff))
+	b := viewtest.Mount[*Report](t, app, viewtest.As(staff))
 	a.Click("#run").Fill("title", "Q3").Check("agree").Click("#save")
 	b.Expect("#saved li").Text("Q3:main.name") // broadcast to the other page
 }
@@ -218,7 +209,7 @@ func TestGatesAndNavigation(t *testing.T) {
 		t.Fatalf("anonymous /report = %d, want 401", p.Status())
 	}
 
-	p := viewtest.Get(t, app, "/", viewtest.As("staff"))
+	p := viewtest.Get(t, app, "/", viewtest.As(staff))
 	p.Expect("#h").Text("Home")
 	p.Click("#to-report") // view.Link: fetched and patched in, the live page connects
 	p.Expect("#user").Text("ana")

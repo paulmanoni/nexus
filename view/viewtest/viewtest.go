@@ -45,6 +45,8 @@ import (
 	"github.com/dop251/goja"
 	"github.com/gorilla/websocket"
 
+	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth/authtest"
 	"github.com/paulmanoni/nexus/v2/registry"
 	"github.com/paulmanoni/nexus/v2/view"
 	"github.com/paulmanoni/nexus/v2/view/internal/browser"
@@ -60,10 +62,18 @@ type settings struct {
 	timeout time.Duration
 }
 
-// As sends every request of the page — page loads, fetches and the live
-// socket — with Authorization: Bearer token, as auth.Bearer() reads it: the
-// page acts as the identity the app's auth resolves the token to.
-func As(token string) Option { return Header("Authorization", "Bearer "+token) }
+// As makes every request of the page — page loads, fetches and the live
+// socket — act as id, through extension/auth's test credential
+// (authtest.As): every gate, area and policy runs as for a real sign-in.
+func As(id *auth.Identity) Option {
+	return func(s *settings) {
+		for k, vs := range authtest.As(id) {
+			for _, v := range vs {
+				s.header.Add(k, v)
+			}
+		}
+	}
+}
 
 // Header adds a header to every request of the page.
 func Header(key, value string) Option {

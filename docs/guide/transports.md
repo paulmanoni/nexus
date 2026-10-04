@@ -129,7 +129,7 @@ stays open. Unknown types are dropped.
 
 - **Identity.** A connection's user is the identity the server authenticated for the
   upgrade request, never a query parameter or a client message. Handler contexts carry
-  that authentication, so `auth.User`, `auth.IdentityFrom` and `auth.Can` work inside
+  that authentication, so `auth.Current`, `auth.User` and `auth.Can` work inside
   WebSocket handlers.
 - **Rooms.** The server joins rooms with `JoinRoom`. A client `subscribe` message is
   refused unless the path opts in:

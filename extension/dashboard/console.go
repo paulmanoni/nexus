@@ -73,16 +73,23 @@ type consoleState struct {
 // authSummary mirrors the payload extension/auth contributes to the live
 // snapshot (RegisterSnapshotExtra "auth"), decoded without importing auth.
 type authSummary struct {
-	CachingEnabled bool `json:"cachingEnabled"`
-	Identities     []struct {
-		TokenPrefix string
-		ExpiresAt   time.Time
-		Identity    *struct {
-			ID     string
-			Roles  []string
-			Scopes []string
-		}
-	} `json:"identities"`
+	Setup *authSetup `json:"setup"`
+}
+
+type authSetup struct {
+	Default, Cache string
+	Schemes        []struct{ Name, Type, Reads string }
+	Areas          []struct {
+		Name, Prefix, Login, Home string
+		Kinds                     []string
+	}
+	Endpoints []struct{ Method, Path, What string }
+	Rules     []string
+	Locks     []struct {
+		Key, What string
+		Until     time.Time
+	}
+	LocksKnown bool
 }
 
 func (s *consoleSources) state(r *http.Request) *consoleState {
@@ -326,7 +333,7 @@ func mountConsole(g httpx.Group, s *consoleSources) {
 	}))
 	g.GET("/ui/auth", s.serve(func(c *httpx.Ctx, st *consoleState) (page, bool) {
 		if st.Auth == nil {
-			return notFound("Auth is not wired", "Add auth.Module to the app to see cached identities here."), false
+			return notFound("Auth is not wired", "Add auth.Module to the app to see its schemes, areas and gates here."), false
 		}
 		return page{Tab: "auth", Title: "Auth", Body: authPage(st, recentRejects(s.bus), s.bus != nil)}, true
 	}))

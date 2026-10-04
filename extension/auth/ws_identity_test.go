@@ -3,7 +3,6 @@ package auth_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth/authtest"
 )
 
 type pokeArgs struct {
@@ -25,14 +25,8 @@ type pokeArgs struct {
 // upgrade request, so EmitToUser reaches the token's owner — and a socket
 // that only claims the id (?userId=, the authenticate message) gets nothing.
 func TestWebSocketIdentityComesFromAuth(t *testing.T) {
-	tokens := map[string]string{"tok-alice": "alice", "tok-bob": "bob"}
 	app, stop, err := nexus.InProcess(config.Runtime{},
-		auth.Single(func(_ context.Context, tok string) (*auth.Identity, error) {
-			if id, ok := tokens[tok]; ok {
-				return &auth.Identity{ID: id}, nil
-			}
-			return nil, errors.New("unknown token")
-		}),
+		auth.Module(auth.Config{Users: auth.StaticUsers(authtest.NewUsers())}),
 		nexus.AsWS("/live", "poke", func(sess *nexus.WSSession, p nexus.Params[pokeArgs]) error {
 			sess.EmitToUser("private", map[string]string{"to": p.Args.To}, p.Args.To)
 			return nil
@@ -48,7 +42,7 @@ func TestWebSocketIdentityComesFromAuth(t *testing.T) {
 
 	dial := func(query, token string) *websocket.Conn {
 		t.Helper()
-		c, resp, err := websocket.DefaultDialer.Dial(base+query, http.Header{"Authorization": {"Bearer " + token}})
+		c, resp, err := websocket.DefaultDialer.Dial(base+query, wsHeader(token))
 		if err != nil {
 			code := 0
 			if resp != nil {
@@ -101,34 +95,26 @@ func TestWebSocketIdentityComesFromAuth(t *testing.T) {
 	}
 }
 
-// wsAuthBackend resolves tokens and grants "watch" by name, not by role —
-// so auth.Can only answers true when the module's state reached the handler.
-type wsAuthBackend struct{}
-
-func (wsAuthBackend) Resolve(_ context.Context, tok string) (*auth.Identity, error) {
-	switch tok {
+// wsHeader authenticates a test dial: tok-alice holds "watch", tok-bob
+// doesn't; anything else is anonymous.
+func wsHeader(token string) http.Header {
+	h := http.Header{}
+	switch token {
 	case "tok-alice":
-		return &auth.Identity{ID: "alice"}, nil
+		h = authtest.As(&auth.Identity{ID: "alice", Perms: []string{"watch"}})
 	case "tok-bob":
-		return &auth.Identity{ID: "bob"}, nil
+		h = authtest.As(&auth.Identity{ID: "bob"})
 	}
-	return nil, errors.New("unknown token")
-}
-
-func (wsAuthBackend) Authorize(id *auth.Identity, required []string) bool {
-	return id != nil && id.ID == "alice"
+	return h
 }
 
 // A WS handler's context carries the upgrade request's identity and auth
-// state, so auth.IdentityFrom and auth.Can work there as in REST handlers.
+// state, so auth.Current and auth.Can work there as in REST handlers.
 func TestWebSocketHandlerContextCarriesAuth(t *testing.T) {
 	app, stop, err := nexus.InProcess(config.Runtime{},
-		auth.Module(auth.Config{
-			Authentication: auth.Authentication{Schemes: []auth.Scheme{{Extract: auth.Bearer()}}},
-			Backend:        auth.StaticBackend(wsAuthBackend{}),
-		}),
+		auth.Module(auth.Config{Users: auth.StaticUsers(authtest.NewUsers())}),
 		nexus.AsWS("/live", "whoami", func(sess *nexus.WSSession, p nexus.Params[struct{}]) error {
-			id, _ := auth.IdentityFrom(p.Context)
+			id := auth.Current(p.Context)
 			who := ""
 			if id != nil {
 				who = id.ID
@@ -148,7 +134,7 @@ func TestWebSocketHandlerContextCarriesAuth(t *testing.T) {
 		token, id string
 		can       bool
 	}{{"tok-alice", "alice", true}, {"tok-bob", "bob", false}} {
-		conn, _, err := websocket.DefaultDialer.Dial(base, http.Header{"Authorization": {"Bearer " + c.token}})
+		conn, _, err := websocket.DefaultDialer.Dial(base, wsHeader(c.token))
 		if err != nil {
 			t.Fatalf("dial %s: %v", c.token, err)
 		}

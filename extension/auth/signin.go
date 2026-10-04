@@ -11,9 +11,20 @@ import (
 	"github.com/paulmanoni/nexus/v2/middleware/secure"
 )
 
-// errNoConfigPath is returned by the sign-in functions in an app without
-// Config.Users.
-var errNoConfigPath = errors.New("auth: SignIn, SignOut, Login and SetPassword need auth.Module(auth.Config{Users: …}) and a request it handled")
+// errNoConfigPath is returned by the functions that need auth.Module when
+// ctx isn't a request (or job) it handled.
+// ErrInvalidCredentials is the Cause of auth.Login's "invalid login or
+// password" error: errors.Is(err, auth.ErrInvalidCredentials).
+var ErrInvalidCredentials = errors.New("auth: invalid credentials")
+
+var errNoConfigPath = errors.New("auth: needs auth.Module and a request it handled")
+
+// Password is a sign-in with a login (a username or an email) and a
+// password, for auth.Login.
+type Password struct {
+	Login    string
+	Password string
+}
 
 func configState(ctx context.Context) (*moduleState, error) {
 	st, ok := stateFrom(ctx)
@@ -30,7 +41,7 @@ func configState(ctx context.Context) (*moduleState, error) {
 // ("invalid login or password", errors.Is ErrInvalidCredentials), the same
 // for an unknown account, in the same time.
 //
-//	id, err := auth.Login(ctx, auth.Password{Username: in.Email, Password: in.Password})
+//	id, err := auth.Login(ctx, auth.Password{Login: in.Email, Password: in.Password})
 //	if err != nil { return nil, err }
 //	return auth.SignIn(ctx, id)
 func Login(ctx context.Context, cred Password) (*Identity, error) {
@@ -39,14 +50,14 @@ func Login(ctx context.Context, cred Password) (*Identity, error) {
 		return nil, err
 	}
 	rs, th := st.config.settings, st.config.throttle
-	if err := th.check(ctx, cred.Username); err != nil {
+	if err := th.check(ctx, cred.Login); err != nil {
 		return nil, err
 	}
 	failed := func() (*Identity, error) {
-		th.fail(ctx, cred.Username)
+		th.fail(ctx, cred.Login)
 		return nil, invalidLogin()
 	}
-	id, encoded, err := st.config.users.FindLogin(ctx, cred.Username)
+	id, encoded, err := st.config.users.FindLogin(ctx, cred.Login)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +75,7 @@ func Login(ctx context.Context, cred Password) (*Identity, error) {
 	if a := rs.area(info.path); a != nil && !kindIn(id.Kind, a.Kinds) {
 		return failed()
 	}
-	th.succeed(ctx, cred.Username)
+	th.succeed(ctx, cred.Login)
 	hashers := rs.hashers
 	if upgrade {
 		if ps, isSetter := st.config.users.(PasswordSetter); isSetter {

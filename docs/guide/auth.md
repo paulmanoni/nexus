@@ -1,16 +1,11 @@
 # Auth
 
-`extension/auth` handles the whole auth path:
-
-1. extract a credential from the request
-2. resolve it to an identity, with caching
-3. enforce per-op gates
-4. report 401s and 403s to the dashboard
-
-There are two ways to set it up. **Accounts and sign-in** (new in 2.1) is the one to
-start with: you write one `Users` type, and nexus issues and checks sessions, tokens
-and API keys itself. **Resolve a token** plugs in a resolver you write, for apps that
-verify credentials someone else issues.
+`extension/auth` is accounts, credentials and gates in one module. You write one
+`Users` type — find an account by its login, load it by id — and nexus does the rest:
+it issues and checks sessions, bearer tokens and API keys (and verifies JWTs another
+service issued), runs the sign-in flows, and enforces gates the same way on REST,
+GraphQL, WebSocket, Inertia pages and views. Settings live in nexus.toml's `[auth]`
+table.
 
 ## Accounts and sign-in
 
@@ -41,13 +36,14 @@ func (u *Users) Load(ctx context.Context, id string) (*auth.Identity, error) {
 }
 
 func (u *Users) identity(row User) *auth.Identity {
-    return &auth.Identity{ID: strconv.FormatInt(row.ID, 10), Kind: row.Kind, Perms: row.Perms, Extra: &row}
+    return &auth.Identity{ID: strconv.FormatInt(row.ID, 10), Kind: row.Kind, Perms: row.Perms, User: &row}
 }
 
 nexus.Boot(auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}), …)
 ```
 
-A type that doesn't implement `Users` fails boot, naming the missing method.
+A type that doesn't implement `Users` fails boot, naming the missing method;
+`Config.Users` is the one setting `auth.Module` requires.
 `FindLogin`'s identity needs the user's `Kind` when you use areas: signing in under an
 area, and the `next` a sign-in returns to, are checked against it. Two
 optional methods add to it: `SetPassword(ctx, id, encoded string) error` stores
@@ -59,7 +55,7 @@ Sign-in is two calls in any handler:
 
 ```go
 func (s *AccountService) SignIn(ctx context.Context, in SignInForm) (*auth.Credential, error) {
-    id, err := auth.Login(ctx, auth.Password{Username: in.Email, Password: in.Password})
+    id, err := auth.Login(ctx, auth.Password{Login: in.Email, Password: in.Password})
     if err != nil {
         return nil, err // "invalid login or password" (422), or CheckLogin's error
     }
@@ -356,45 +352,9 @@ me     = "/api/auth/me"      # GET {user, can}
 Each is mounted only when its path is set, and they're tagged for the client SDK's
 `nx.auth.login/logout/me`. `me` answers for anonymous visitors too (`"user": null`).
 `user` is what an optional `Public(id *auth.Identity) any` method on your `Users`
-returns — `{id, kind}` without one, so `Extra` is never sent by accident. `can` is
+returns — `{id, kind}` without one, so `Identity.User` is never sent by accident. `can` is
 `auth.OpGates`; on this path it is false for any op the visitor couldn't call,
 signed in or not.
-
-## Resolve a token
-
-```go
-import "github.com/paulmanoni/nexus/v2/extension/auth"
-
-resolve := func(ctx context.Context, token string) (*auth.Identity, error) {
-    u, err := tokens.Validate(ctx, token)
-    if err != nil {
-        return nil, err
-    }
-    return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
-}
-
-nexus.Boot(
-    auth.Single(resolve, auth.CacheFor(15*time.Minute)), // one bearer scheme
-    ordersModule,
-)
-```
-
-For several schemes, tried in order:
-
-```go
-auth.Module(auth.Config{
-    Authentication: auth.Authentication{
-        Schemes: []auth.Scheme{
-            {Resolve: resolve}, // Bearer() by default
-            {Name: "apikey", Extract: auth.APIKey("X-API-Key"), Resolve: resolveKey},
-        },
-        Cache: auth.CacheFor(15 * time.Minute),
-    },
-})
-```
-
-The extractors are `auth.Bearer()`, `auth.Cookie(name)`, `auth.APIKey(header)` and
-`auth.Chain(...)`.
 
 ## Gates
 
@@ -407,18 +367,17 @@ nexus.AsMutation(NewCreateOrder,
 )
 ```
 
-- **Deny by default.** Every endpoint requires an identity unless it opts out:
+- **Deny by default.** Every endpoint, page, view and live page requires a sign-in
+  unless it opts out — `[auth] default = "public"` turns that around:
 
   ```go
-  auth.Authorization{Default: auth.Authenticated()}
-  nexus.AsRest("GET", "/health", NewHealth, nexus.Public())
+  nexus.AsRest("GET", "/health", NewHealth, auth.Public())
   ```
 
 - **Permissions and kinds on the identity.** `Identity.Perms` is matched with
   wildcards — `orders.*` grants `orders.view` and `orders.refunds.create`, `*` grants
   everything — and `Identity.Kind` says which kind of user it is ("staff",
-  "customer"). Roles and Scopes still match exactly, as before; for wildcards there
-  too, set `auth.Authorization{Authority: auth.Wildcard()}`.
+  "customer"). Roles are your concept: `Users.Load` expands them into `Perms`.
 
 - **At least one, and user kinds.** `auth.RequiresAny` passes with any one of its
   permissions; `auth.Kind` gates on the identity's kind. Both imply sign-in and
@@ -456,12 +415,9 @@ nexus.AsMutation(NewCreateOrder,
 
 ```go
 me := auth.Current(ctx)                // *Identity, nil when anonymous
-user, ok := auth.User[MyUser](ctx)     // the Identity's Extra payload, typed
+user, ok := auth.User[MyUser](ctx)     // Identity.User, typed
 uid, ok  := auth.ID[uint](ctx)         // Identity.ID parsed into T
 ```
-
-`auth.IdentityFrom` and `auth.Subject` are the older spellings of `Current` and
-`ID`, and still work.
 
 ## UI permissions that can't drift
 
@@ -480,62 +436,24 @@ inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
 once and grouped by permission set. It costs about 4µs for
 200 ops, so it is safe on every render.
 
-## One backend for everything
+## Passwords
 
-A static resolve function can't see DI dependencies. Declare a DI-constructed backend
-instead, and implement whichever capabilities you need:
+`auth.Login` checks passwords with the `[auth.passwords]` hashers, and
+`auth.SetPassword` hashes and stores new ones after checking the rules:
 
-```go
-auth.Module(auth.Config{
-    Backend: auth.UseBackend(func(db *DB) *AuthBackend { return NewAuthBackend(db) }),
-    Endpoints: auth.Endpoints{
-        Login:  "/api/auth/login",   // Backend.Login + Backend.Issue
-        Logout: "/api/auth/logout",  // Manager.Invalidate + Backend.RevokeToken
-        Token:  "/oauth/token",      // Backend.TokenHandler
-    },
-})
+```toml
+[auth.passwords]
+hashers    = ["bcrypt", "argon2id", "pbkdf2"]   # the first hashes new passwords; all verify
+min_length = 8
+common     = true    # refuse common passwords
+numeric    = true    # refuse all-digit passwords
+similar    = true    # refuse passwords like the user's id or login
 ```
 
-| Method | Powers |
-|---|---|
-| `Resolve(ctx, token) (*Identity, error)` | Token resolution for schemes without their own |
-| `Login(ctx, Credentials) (*Identity, error)` | `Manager.Login` and the Login endpoint |
-| `Authorize(id, required) bool` | Permission checks |
-| `Issue(ctx, *Identity) (any, error)` | The login response (for example, a token pair) |
-| `RevokeToken(ctx, token) error` | Logout and revoke |
-| `TokenHandler() httpx.HandlerFunc` | A raw grant endpoint |
-
-For a full OAuth2 server (password, client credentials and refresh grants), use
-`oauth2.Backend(oauth2.Config{...})` from `extension/oauth2` as the backend.
-
-## Passwords and login
-
-Django-style, with every piece swappable:
-
-```go
-store := auth.NewMemoryUserStore()                // or your own UserStore
-store.CreateUser("alice", "s3cret-pw", "ADMIN")
-
-id, err := auth.Authenticate(ctx,
-    auth.Password{Username: "alice", Password: "s3cret-pw"},
-    auth.NewModelBackend(store))
-// A wrong password or an unknown user → auth.ErrInvalidCredentials
-
-err = auth.ValidatePassword(ctx, pw, id, auth.DefaultValidators()...)
-```
-
-- **Hashers:** `auth.BCrypt()` (the default), `auth.Argon2id()` and `auth.PBKDF2()`.
-  Hashes describe their own algorithm, so a set of hashers verifies any of them and
-  rehashes stale hashes on login.
-- **Validators:** `MinLength`, `NotNumericOnly`, `NotCommon` and `NotSimilarToUser`.
-- **Backends:** tried in order. `auth.ModelBackend` checks a `UserStore` (`ByUsername`,
-  `ByID`, `SetPassword`). Timing is equalized, so responses don't reveal which users
-  exist.
-
-## Logout and invalidation
-
-Take `*auth.Manager` and call `Invalidate(token)` or `InvalidateByIdentity(id)`. The
-dashboard's Auth tab can do the same per row.
+Hashes describe their own algorithm (`bcrypt$…`), so a password stored with another
+listed hasher still verifies and is rehashed on its next sign-in (through
+`SetPassword` on your `Users`). `auth.Hashers`, `auth.BCrypt()`/`Argon2id()`/`PBKDF2()`
+and `auth.ValidatePassword` are there for code of your own, such as a seed script.
 
 See also: [Web security](./security) for CSRF and headers, and
 [Sessions](./sessions) for server-side sessions.

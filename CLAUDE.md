@@ -188,9 +188,9 @@ func (s *Store) RestoreDev(b []byte) error    { return json.Unmarshal(b, &s.note
 ```
 Restore happens inside `dev.Preserve`, so lazy DI construction is fine; the snapshot is
 written on the graceful shutdown `nexus dev` triggers before the swap. Without methods to
-write, use `dev.PreserveJSON(name, get, set)`. `auth.MemoryUserStore` implements
-`dev.State` already (register it as `dev.Preserve("auth.users", store)`); users the
-new process seeds itself win over the snapshot. Dev-only (gated on the state file
+write, use `dev.PreserveJSON(name, get, set)`. extension/auth's memory token store and
+extension/session's memory store are preserved this way, so a sign-in survives a
+rebuild. Dev-only (gated on the state file
 `nexus dev` passes), per-session (state survives rebuilds, not Ctrl-C), graceful exits
 only, and best-effort — a failed snapshot/restore is reported and skipped, never fatal.
 Caches are deliberately not preserved. `nexus docs devstate`.
@@ -877,7 +877,7 @@ param or `authenticate` message can claim an id. **Rooms are joined server-side*
 unless the path opts in with `nexus.ClientRooms(func(userID, room string) bool)`.
 **Handlers see the connection's auth**: `p.Context`/`sess.Context()` carry the
 identity and auth state from the upgrade request (captured once per connection), so
-`auth.IdentityFrom`, `auth.User[T]` and `auth.Can` work in WS handlers. Extensions add
+`auth.Current`, `auth.User[T]` and `auth.Can` work in WS handlers. Extensions add
 values with `nexus.RegisterWSCarrier` — only ones that may outlive the request (never a
 `Scoped` memo or a session handle).
 
@@ -1261,142 +1261,64 @@ two apps in one process don't share services.
 
 ---
 
-## 8. Auth & OAuth2
+## 8. Auth (`extension/auth`)
 
+One module; the app writes one interface. Design + history: docs/design/v2-auth.md; guide:
+docs/guide/auth.md; `nexus docs auth`.
 ```go
-import "github.com/paulmanoni/nexus/v2/extension/auth"
+nexus.Boot(auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}), …)   // Users is the one required setting
 
-auth.Module(auth.Config{
-    Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {
-        u, err := validate(ctx, tok); if err != nil { return nil, err }
-        return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
-    },
-    Cache: auth.CacheFor(15 * time.Minute),
-})
+type Users struct{ db *DB }   // implements auth.Users, checked at boot (missing method named)
+func (u *Users) FindLogin(ctx, login string) (*auth.Identity, string /*encoded pw*/, error)
+func (u *Users) Load(ctx, id string) (*auth.Identity, error)
+// optional: SetPassword(ctx, id, encoded) error · CheckLogin(ctx, *Identity) error · Public(*Identity) any
 ```
-**Accounts and sign-in (config path, 2.1):** `auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)})`
-— the app implements `auth.Users` (`FindLogin(ctx, login) (*Identity, encoded, error)`, `Load(ctx, id)`;
-optional `SetPassword`, `CheckLogin`), checked at boot. nexus authenticates from `[auth.schemes.*]`
-(`session` default — brings extension/session + CSRF; `bearer`; `apikey`), requires sign-in on every
-endpoint not `auth.Public()` (`[auth] default = "public"` opts out), caches `Load` per user id (`[auth]
-cache`). Handlers: `auth.Login(ctx, auth.Password{…})` → `auth.SignIn(ctx, id[, auth.Using("api")])`
-(session cycled / token returned once, stored hashed in `Config.Tokens`, default memory —
-`auth.CacheTokens(cache)` in prod), `auth.SignOut`, `auth.SetPassword`, `auth.Refresh`. A failing
-credential = anonymous, reason in the 401 under nexus dev. `Config.Settings` is `[auth]` in Go. 2.2:
-`[auth.areas.<n>]` (prefix, kinds, login, home — kind-gated, page visits 302/409 to the area login
-with `?next=`, Login refuses other kinds), `[auth] login/home/next_param`, safe `next` (`auth.Next`,
-`auth.ReturnTo`, `Credential.Next`), `[auth.throttle]` (account/ip "5/15m", lockout; per process),
-`[auth.endpoints]` login/logout/me (me = `{user: Users.Public(id) | {id,kind}, can: OpGates}`).
-`nexus.Defer(func() Option)` builds an option at boot (after nexus.toml loads). 2.3: Inertia pages
-get an `auth` prop `{user, can}` (`[auth] page_prop`, "-" off; via `nexus.RegisterSharedPageProp`, app
-props win); `SignIn`/`SignOut` rotate CSRF (`secure.RotateCSRF(ctx)`); area/[auth] `forbidden` page
-path for refused page visits; `Config.Throttle: auth.CacheThrottle(cache)` shares the throttle. 2.4:
-per-user epoch (stored in the TokenStore) → `auth.RevokeUser(ctx, id)` (sign out everywhere),
-`auth.Revoke(ctx, token)`, `[auth.sessions] single / end_on_password_change (default true) / idle`;
-AsWS and live-view connections run `nexus.RegisterConnectionCheck` checks per message and close when
-the epoch moves. 2.5: bearer `refresh = "720h"` → `Credential.RefreshToken`,
-`auth.RefreshToken(ctx, rt)` (rotating); `[auth.endpoints] token` (OAuth2 password + refresh_token grants)
-/ `revoke` (RFC 7009), both CSRF-exempt via `App.ExemptCSRF(path)`; `jwt` scheme (secret HS256 /
-public_key PEM RS256|ES256 / jwks URL; issuer, audience, subject, leeway; alg pinned to the key) — shares
-the Authorization header with bearer by token shape. 2.6: `auth.Sessions(ctx, uid)` / `auth.RevokeSession(ctx, uid,
-id)` (sessions get a token-store record) and `auth.Keys.Create/List/Revoke` (named API keys) — `[]auth.Device`
-{ID hash, Kind session|token|key, Scheme, Name, Created, Expires, Agent, IP, Current}; need the store to
-implement `auth.TokenLister` (memory + CacheTokens do). 2.7: `auth.Impersonate(ctx, id)` / `StopImpersonating`
-(`Identity.Actor` = real user; `[auth.impersonation] permission / endpoint`; no escalation, no nesting;
-credential stays the actor's); `auth.Policy[T](rule)` (an Option) + `auth.Check(ctx, perm, obj)` /
-`auth.Allowed`; jobs run as their enqueuer (`nexus.RegisterIdentityRestorer` → `Users.Load`); `nexus auth
-check [nexus.toml]` (`auth.Explain`/`ExplainTOML`, `config.DecodeTable`); `authtest.As(&Identity)` /
-`authtest.AsUser(id)` headers (honoured only in test binaries) + `authtest.Users`; `nexustest` `App.With(h)`.
-Durations: Go syntax — "720h", never "30d". 2.8: OAuth2 clients — `[auth.oauth2.clients.<id>]` (secret |
-secret_hash, grants, perms, kind) or `Config.Clients` (`auth.Clients`); token endpoint authenticates them
-(Basic or body), `client_credentials` → identity `client:<id>` (no refresh), `[auth.oauth2] require_client`.
-
-Per-op gates (cross-transport): `auth.Required()` (401 if missing),
-`auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`
-(`Identity.Kind`); directives `//nexus:auth RequiresAny a b` / `Kind staff`. `Identity.Perms`
-matches with wildcards (`orders.*`, `*`; Roles/Scopes stay exact); `auth.Current(ctx)` /
-`auth.ID[T](ctx)` read the identity. Auth v2 lands additively in 2.x — docs/design/v2-auth.md
-"Shipping in 2.x". UI toggles ride the same rulebook:
-`auth.Can(ctx, "add_user")` and `auth.Gates(ctx, "add_user", "delete_user")
-map[string]bool` evaluate through the identical PermissionFn/Backend.Authorize
-the `Requires` gate consults, so a page's "can" props cannot drift from the
-endpoint gates.
-
-**Op gates — permissions declared once, frontend asks by op name.**
-`auth.Requires` stamps its permission list onto the endpoint's registry entry,
-and `auth.OpGates(ctx, app)` answers `map[opName]bool` for every registered op
-— so the frontend keys on op names it already calls (`can.saveUser`) and no
-permission string exists outside the registration. Wire it app-wide as one
-Inertia shared prop:
-```go
-inertia.ShareProvide(func(app *nexus.App) inertia.SharedProvider {
-    return func(ctx context.Context) (string, any) { return "can", auth.OpGates(ctx, app) }
-})
-```
-Ops without `Requires` are always true (it reports permission gates, not
-authentication); evaluation is server-side through Backend.Authorize, and the
-registry is compiled once per version into a table grouped by unique
-permission set (~4µs for 200 ops), so it is safe on every page render.
-When handlers also need the gates, declare the fact ONCE as a Scoped and
-project it with `inertia.ShareScoped("can", CanGates)` — handlers call
-`CanGates.Get(ctx)`, pages read `props.can`, one compute per request serves
-both; the same bridge works for any named request fact (features, quota). A
-failed derivation omits the key from the render; handler Gets still error. Extractors: `auth.Bearer()`, `auth.Cookie(name)`,
-`auth.APIKey(header)`, `auth.Chain(...)`. Typed user in a handler:
-`u, ok := auth.User[MyUser](p.Context)`. Logout: take `*auth.Manager`, call
-`Invalidate(token)` / `InvalidateByIdentity(id)`. A full OAuth2 server is
-`oauth2.Module(oauth2.Config{...})` (`extension/oauth2`) — password grant →
-JWT access/refresh at `/oauth/token`.
-
-**Cohesive backend (`Config.Backend`).** Instead of a static `Scheme.Resolve`
-(which can't see DI deps — forcing package globals + a backfill `Invoke`) plus a
-separate `Authorization` block, declare ONE DI-constructed backend that owns
-resolve + login + authorize: `Backend: auth.UseBackend(func(db *DB, srv *Srv)
-*AuthBackend { return NewAuthBackend(db, srv) })` (or `auth.StaticBackend(v)` for
-no deps). The framework discovers capabilities by type assertion — implement any
-subset: `Resolve(ctx, token)` (fills schemes with a nil `Resolve`), `Login(ctx,
-Credentials)` (powers `Manager.Login`), `Authorize(id, required) bool` (replaces
-`Config.Authorization`), plus the token-server trio `Issue(ctx, *Identity) (any,
-error)` (login response / token pair), `RevokeToken(ctx, token) error` (logout),
-`TokenHandler() httpx.HandlerFunc` (raw grant endpoint). The ctor returns YOUR
-concrete type, not the `auth.Backend` login interface. Fully additive — the zero
-value keeps existing configs identical.
-
-**Endpoints (`Config.Endpoints`).** Let `auth.Module` mount its own HTTP front
-doors from the backend's capabilities, so one `auth.Module(auth.Config{...})`
-owns the whole surface (no hand-wired `AsRest` lines): `Endpoints:
-auth.Endpoints{Login: "/api/auth/login", Logout: "/api/auth/logout", Token:
-"/oauth/token", Revoke: "/oauth/token/revoke"}`. Each is off unless its path is
-set; all are Public. `Login` runs `Backend.Login` then `Backend.Issue`; `Logout`
-/`Revoke` do `Manager.Invalidate` + `Backend.RevokeToken` (token via
-`Endpoints.LogoutExtract`, default `Bearer()`); `Token` serves
-`Backend.TokenHandler`. For a full OAuth2 server,
-`oauth2.Backend(oauth2.Config{...})` returns a ready `auth.BackendOption`
-implementing every capability — drop it into `Config.Backend` (`oauth2.Module`
-is now a thin wrapper over exactly this, holder-free). `nexus docs auth`.
-
-**Passwords & credential login (Django-style, swappable).** `auth.Module`/`Resolve` above
-verifies an *existing* token; these fill in the *login* half, each a pluggable interface
-with a shipped default (no new deps — `x/crypto` + stdlib `crypto/pbkdf2`):
-- **Hashing** — `auth.Hasher` / `auth.Hashers` (≈ Django `PASSWORD_HASHERS`). Encoded
-  hashes self-describe (`<id>$<payload>`) so a set verifies any member algorithm and
-  **rehashes on login** when stale. `auth.BCrypt()` (default), `auth.Argon2id()`,
-  `auth.PBKDF2()`; `auth.DefaultHashers()`.
-- **Policy** — `auth.PasswordValidator` (≈ `AUTH_PASSWORD_VALIDATORS`): `MinLength`,
-  `NotNumericOnly`, `NotCommon`, `NotSimilarToUser`; run via `auth.ValidatePassword(...)` /
-  `auth.DefaultValidators()`.
-- **Login** — `auth.Backend` + `auth.Authenticate(ctx, cred, backends...)` (≈
-  `AUTHENTICATION_BACKENDS`, tried in order). `auth.ModelBackend` checks a pluggable
-  `auth.UserStore` (implement `ByUsername`/`ByID`/`SetPassword` for your model; ships
-  `auth.NewMemoryUserStore()` for dev). Wrong password *or* unknown user →
-  `auth.ErrInvalidCredentials` (no enumeration; timing equalized).
-```go
-store := auth.NewMemoryUserStore()
-store.CreateUser("alice", "s3cret-pw", "ADMIN")
-id, err := auth.Authenticate(ctx, auth.Password{Username: "alice", Password: "s3cret-pw"},
-    auth.NewModelBackend(store))
-```
-`nexus docs auth`.
+- **Identity** `{ID, Kind, Perms, User, Actor, Scheme}` — Perms match with wildcards (`orders.*`, `*`);
+  Kind ("staff") gates areas/`auth.Kind`; User is the app's user (`auth.User[T]`); set Kind in FindLogin.
+  Read with `auth.Current(ctx)` (nil = anonymous), `auth.ID[T](ctx)`, `auth.User[T](ctx)`.
+- **Schemes** `[auth.schemes.<name>]`, tried apikey → jwt → bearer → session (default: one session
+  "web"): `session` (extension/session; turns CSRF on), `bearer` (opaque 256-bit tokens stored as
+  SHA-256; `ttl`, `refresh = "720h"` — Go durations, never "30d"), `apikey` (`header`), `jwt` (verify
+  tokens issued elsewhere: `secret` HS256 | `public_key` PEM RS256/ES256 | `jwks` URL; issuer, audience,
+  subject, leeway; alg pinned to the key; shares Authorization with bearer by token shape). A failing
+  credential = anonymous, reason in the 401 under nexus dev + trace. `Users.Load` cached per id
+  (`[auth] cache`, default 5m, negative = off). `Config.Tokens` (memory default — `auth.CacheTokens(cache)`
+  in prod), `Config.Throttle` (`auth.CacheThrottle`), `Config.Clients`, `Config.Settings` ([auth] in Go).
+- **Sign-in**: `auth.Login(ctx, auth.Password{Login, Password})` (throttle `[auth.throttle]` → FindLogin →
+  `[auth.passwords]` hashers, rehash when stale → area kinds → CheckLogin; wrong pw = unknown login =
+  422 "invalid login or password") → `auth.SignIn(ctx, id[, auth.Using("api"), auth.ReturnTo(next)])`
+  (session cycled + CSRF rotated, or tokens returned once as `Credential{access_token, refresh_token,
+  expires_in, next}`); `auth.SignOut`, `auth.SetPassword(ctx, id, plain)`, `auth.RefreshToken`,
+  `auth.Refresh(ctx, uid)` (drop Load cache).
+- **Gates** (every transport): deny-by-default — every endpoint/page/view needs a sign-in unless
+  `auth.Public()` (`[auth] default = "public"` opts out); `auth.Required()`, `auth.Requires(p…)` (403),
+  `auth.RequiresAny(p…)`, `auth.Kind(k…)`; directives `//nexus:auth Public|Required|Requires p…|RequiresAny
+  p…|Kind k…`. UI: `auth.Can`, `auth.Gates`, `auth.OpGates(ctx, app)` (map[opName]bool from the
+  registrations; false for ops the visitor can't call). Per-object: `auth.Policy[T](rule)` (an Option) +
+  `auth.Check(ctx, perm, obj)` / `auth.Allowed`.
+- **Areas** `[auth.areas.<n>]` prefix, kinds, login, home, forbidden: kind-gated; page visit without a
+  sign-in → area login `?next=` (302 / 409 + X-Inertia-Location); refused page visit → forbidden path;
+  `[auth] login / home / forbidden / next_param` outside areas. `next` validated (no //host, \, scheme,
+  control chars, through decoding rounds); `auth.Next(ctx)`.
+- **Endpoints** `[auth.endpoints]` login / logout / me (`nx.auth.*`; me = `{user, can, actor?}`) / token
+  (OAuth2 password, refresh_token, client_credentials; CSRF-exempt via `App.ExemptCSRF`) / revoke (RFC
+  7009). OAuth2 clients `[auth.oauth2.clients.<id>]` (secret | secret_hash, grants, perms, kind) or
+  `auth.Clients`; client_credentials → identity `client:<id>`; `[auth.oauth2] require_client`.
+- **Pages**: Inertia gets an `auth` prop `{user, can}` (`[auth] page_prop`, "-" off; app props win).
+- **Ending sessions**: per-user epoch in the token store — `auth.RevokeUser(ctx, uid)` (everywhere; WS and
+  live-view connections close at their next message via `nexus.RegisterConnectionCheck`),
+  `auth.Revoke(ctx, token)`, `auth.Sessions`/`RevokeSession`, `auth.Keys.Create/List/Revoke` (need
+  `auth.TokenLister`), `[auth.sessions] single / end_on_password_change (default true) / idle`.
+- **Impersonation** `auth.Impersonate(ctx, id)` / `StopImpersonating` (`.Actor` = real user;
+  `[auth.impersonation] permission, endpoint`; no escalation/nesting). **Jobs** run as their enqueuer
+  (`nexus.RegisterIdentityRestorer` → Users.Load).
+- **Tests**: `extension/auth/authtest` — `app.With(authtest.As(&auth.Identity{…}))`, `authtest.AsUser("7")`
+  (a header honoured only in test binaries), `authtest.Users` (in memory); `viewtest.As(&identity)`.
+- **Tools**: `nexus auth check [nexus.toml]`; dashboard Auth tab (schemes, areas, every endpoint's gate
+  with Public flagged, throttle locks + unlock, sign a user out everywhere, recent 401/403s).
+- The v1 API (resolvers, `Backend`, extractors, `Manager`, `Endpoints`, `ErrorHandler`, `IdentityFrom`,
+  `Roles`/`Scopes`/`Extra`, `extension/oauth2`, `inertia/iauth`) was removed in 2.9; `nexus migrate v2`
+  renames Subject→ID, Optional→Public and flags the rest.
 
 **Built-in web security** (headers + CSRF) is separate from identity — it's the
 `[runtime.middleware.security]` block (§2) / `extension/security` plugin: safe response

@@ -1,7 +1,8 @@
 # nexus 2.0 — authentication
 
-Status: **building, additively in 2.x** (2026-10-04) — see
-[Shipping in 2.x](#shipping-in-2-x). Proposed 2026-10-03. Companion to [v2.md](v2.md); it follows the same
+Status: **built** (2.1–2.9, 2026-10-04). It first shipped additively — see
+[Shipping in 2.x](#shipping-in-2-x) — and in 2.9 the v1 API was removed, nothing
+depending on it yet. Proposed 2026-10-03. Companion to [v2.md](v2.md); it follows the same
 principles (one way, same behaviour on every transport, stdlib at the edges, safe
 by default, migration is a command). Nothing here is built. Each section ends with
 its decision.
@@ -692,6 +693,15 @@ the `[auth]` table, and `Config.Users` names the app's `Users`.
 | 4 | impersonation (the credential stays the actor's; a session/token records the target), `auth.Policy`/`Check`/`Allowed`, jobs run as their enqueuer (`nexus.RegisterIdentityRestorer`), `nexus auth check`, `authtest` (`As`/`AsUser`, test-binary-only) | `MemoryUserStore` | done (2.7) |
 | 4b | the dashboard Auth tab (schemes, areas, gate matrix, sessions, throttle locks, impersonations) | — | later |
 | 5 | `nexus migrate` rows for every deprecated name | — | with each slice |
+
+**2.9 — the v1 API removed.** With no app on v2 yet, the deprecation window was
+dropped: resolvers, `Backend`, extractors, `Manager`, `Endpoints`, `ErrorHandler`,
+`Optional`, `Subject`/`SubjectPtr`, `IdentityFrom`, `Principal`, `Roles`/`Scopes`/`Extra`,
+`MemoryUserStore`/`ModelBackend`/`Authenticate`, `extension/oauth2` and
+`extension/inertia/iauth` are gone; `auth.Module(auth.Config{Users: …})` is the only
+path. Identity's app user is `User` and `Password`'s login field `Login`, as §2 and §7
+proposed. The dashboard's Auth tab (4b) shows the setup, every endpoint's gate,
+throttle locks and a sign-out-everywhere form.
 
 ## Open questions
 

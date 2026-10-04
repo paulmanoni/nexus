@@ -751,3 +751,69 @@ func liveEvents(e registry.Endpoint) []string {
 	}
 	return strings.Split(v, "; ")
 }
+
+// gateRow is one endpoint's effective gate on the Auth page.
+type gateRow struct {
+	Endpoint, Gate string
+	Public         bool
+}
+
+// authGates describes what each endpoint requires, from its registry tags
+// and the [auth] setup: Public ones are flagged for review.
+func authGates(st *consoleState) []gateRow {
+	su := st.Auth.Setup
+	var out []gateRow
+	for _, e := range st.Endpoints {
+		name := e.Name
+		if e.Transport != registry.GraphQL && e.Path != "" && !strings.Contains(name, e.Path) {
+			name = e.Method + " " + e.Path
+		}
+		if e.Tags["auth.public"] != "" {
+			out = append(out, gateRow{Endpoint: name, Public: true})
+			continue
+		}
+		var parts []string
+		for _, a := range su.Areas {
+			p := strings.TrimSuffix(a.Prefix, "/")
+			if e.Path == p || strings.HasPrefix(e.Path, p+"/") {
+				kinds := "any kind"
+				if len(a.Kinds) > 0 {
+					kinds = strings.Join(a.Kinds, "|")
+				}
+				parts = append(parts, "area "+a.Name+" ("+kinds+")")
+				break
+			}
+		}
+		if len(parts) == 0 {
+			if su.Default == "public" {
+				parts = append(parts, "open")
+			} else {
+				parts = append(parts, "signed in")
+			}
+		}
+		if v := e.Tags[registry.AuthRequiresTag]; v != "" {
+			parts = append(parts, "requires "+v)
+		}
+		if v := e.Tags[registry.AuthRequiresAnyTag]; v != "" {
+			parts = append(parts, "any of "+strings.ReplaceAll(v, ";", " and any of "))
+		}
+		if v := e.Tags[registry.AuthKindTag]; v != "" {
+			parts = append(parts, "kind "+strings.ReplaceAll(v, ";", " and "))
+		}
+		out = append(out, gateRow{Endpoint: name, Gate: strings.Join(parts, " · ")})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Public != out[j].Public {
+			return out[i].Public
+		}
+		return out[i].Endpoint < out[j].Endpoint
+	})
+	return out
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}

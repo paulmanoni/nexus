@@ -5,12 +5,12 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
-	"errors"
 	"sync"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth/authtest"
 	"github.com/paulmanoni/nexus/v2/extension/frontend"
 )
 
@@ -30,79 +30,14 @@ type PetInput struct {
 	Age  int    `json:"age,omitempty"`
 }
 
-// Credentials is the login args body. Mirrors the shape useAuth's
-// login(creds) call sends from the browser side.
-type Credentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-type LoginResp struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
-}
-
-type User struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-var (
-	tokensMu sync.Mutex
-	tokens   = map[string]auth.Identity{}
-)
+// users is the demo's accounts: alice / hunter2-hunter2.
+var users = authtest.NewUsers().
+	Add(auth.Identity{ID: "alice", Perms: []string{"pets.*"}}, "alice", "hunter2-hunter2")
 
 func newToken() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
-}
-
-func resolveToken(_ context.Context, token string) (*auth.Identity, error) {
-	tokensMu.Lock()
-	defer tokensMu.Unlock()
-	if id, ok := tokens[token]; ok {
-		return &id, nil
-	}
-	return nil, errors.New("invalid token")
-}
-
-func login(_ context.Context, c Credentials) (LoginResp, error) {
-	if c.Username != "alice" || c.Password != "hunter2" {
-		return LoginResp{}, errors.New("invalid credentials")
-	}
-	tok := newToken()
-	tokensMu.Lock()
-	tokens[tok] = auth.Identity{ID: c.Username, Roles: []string{"user"}}
-	tokensMu.Unlock()
-	return LoginResp{
-		Token: tok,
-		User:  User{ID: c.Username, Name: "Alice"},
-	}, nil
-}
-
-func logout(ctx context.Context, mgr *auth.Manager) error {
-	id, ok := auth.IdentityFrom(ctx)
-	if !ok {
-		return nil
-	}
-	tokensMu.Lock()
-	for tok, identity := range tokens {
-		if identity.ID == id.ID {
-			delete(tokens, tok)
-		}
-	}
-	tokensMu.Unlock()
-	mgr.InvalidateByIdentity(id.ID)
-	return nil
-}
-
-func me(ctx context.Context) (User, error) {
-	id, ok := auth.IdentityFrom(ctx)
-	if !ok {
-		return User{}, errors.New("no identity")
-	}
-	return User{ID: id.ID, Name: id.ID}, nil
 }
 
 // PetsController is the pets resource: nexus.Resource registers its
@@ -169,10 +104,12 @@ func main() {
 			Dashboard:     config.Dashboard{Enabled: true, Name: "Petstore SPA"},
 			TraceCapacity: 200,
 		},
-		auth.Single(resolveToken),
-		nexus.AsRest("POST", "/login", login, nexus.AuthRoute("login")),
-		nexus.AsRest("POST", "/logout", logout, nexus.AuthRoute("logout"), auth.Required()),
-		nexus.AsRest("GET", "/me", me, nexus.AuthRoute("me"), auth.Required()),
+		// Bearer tokens for the SPA, with the built-in sign-in endpoints the
+		// SDK's nx.auth.login / logout / me call.
+		auth.Module(auth.Config{Users: auth.StaticUsers(users), Settings: &auth.Settings{
+			Schemes:   map[string]auth.SchemeSettings{"api": {Type: auth.SchemeBearer}},
+			Endpoints: auth.EndpointSettings{Login: "/login", Logout: "/logout", Me: "/me"},
+		}}),
 		nexus.Resource[*PetsController]("/pets", auth.Required()).Provide(NewPetsController),
 		frontend.Plugin(frontend.Config{
 			Root:       "web",

@@ -19,7 +19,7 @@ type scaffoldOpts struct {
 	Frontend   string // "none" | "vue" | "react"
 	DB         string // "none" | "postgres" | "mysql" | "sqlite"
 	Cache      string // "none" | "redis"
-	Auth       string // "none" | "oauth2"
+	Auth       string // "none" | "oauth2" (accounts + sign-in + an OAuth2 token endpoint)
 	Inertia    bool   // Inertia.js server-driven pages (Vue) on top of the frontend
 	SSR        bool   // Inertia server-side rendering (implies Inertia)
 }
@@ -856,63 +856,28 @@ func validChoice(value, label string, choices []string) error {
 
 // ── auth scaffold ───────────────────────────────────────────────────
 
-// tmplAuthGoTpl wires the framework's oauth2.Module with stubs for
-// the parts that need user-specific code: an Authenticator (verify
-// username + password against your user store) and an
-// IdentityResolver (return token-claim metadata for an
-// authenticated user). Both stubs return placeholder data so the
-// app boots — replace them with real implementations as soon as
-// you wire your user table.
-const tmplAuthGoTpl = `// Package auth wires nexus's built-in oauth2 server. It exposes a
-// /oauth/token endpoint that accepts grant_type=password and emits
-// JWT access + refresh tokens.
+// tmplAuthGoTpl wires extension/auth with a stand-in Users, a session for
+// pages and bearer tokens for API clients; [auth] in nexus.toml holds the
+// rest.
+const tmplAuthGoTpl = `// Package auth holds the app's accounts — the Users nexus signs people
+// in with. Settings (schemes, endpoints, rules) live in nexus.toml [auth].
 //
-// Replace StubAuthenticator with a real credential check against
-// your user store before shipping. Until then the server accepts
-// {username:"admin", password:"admin"} and returns user id "1" —
-// fine for the first dashboard click-through, dangerous in any
-// other context.
+// The users below are a stand-in: replace them with a type implementing
+// nxauth.Users over your database (FindLogin by email, Load by id) before
+// shipping. Until then admin@example.com / change-me-now signs in.
 package auth
 
 import (
-	"context"
-
-	"github.com/paulmanoni/nexus/v2/extension/oauth2"
+	nxauth "github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth/authtest"
 )
 
-// Default dev client. Real apps swap NewStaticClientStore for
-// oauth2.NewLoaderClientStore so client provisioning becomes a
-// runtime operation instead of a code change.
-const (
-	defaultClientID     = "{{.Name}}-web"
-	defaultClientSecret = "change-me-in-prod"
-)
+// Module turns auth on. nexus.Boot picks it up via main.go; every endpoint
+// then needs a sign-in unless it is marked nxauth.Public().
+var Module = nxauth.Module(nxauth.Config{Users: nxauth.StaticUsers(users)})
 
-// Module wires the oauth2 server. nexus.Run picks it up via main.go.
-// IdentityResolver is left at its default (echoes the userID from
-// the password grant); add one to Config when you need richer JWT
-// claims (roles, scopes, extra payload).
-var Module = oauth2.Module(oauth2.Config{
-	ClientStore: oauth2.NewStaticClientStore(
-		oauth2.StaticClient{
-			ID:     defaultClientID,
-			Secret: defaultClientSecret,
-			Domain: "*",
-		},
-	),
-	Authenticator: StubAuthenticator,
-})
-
-// StubAuthenticator accepts admin/admin only. The clientID arg lets
-// you scope credentials per OAuth2 client when you need it; the stub
-// ignores it. Return oauth2.ErrInvalidCredentials (or any error) to
-// fail the password grant.
-func StubAuthenticator(ctx context.Context, clientID, username, password string) (string, error) {
-	if username == "admin" && password == "admin" {
-		return "1", nil
-	}
-	return "", oauth2.ErrInvalidCredentials
-}
+var users = authtest.NewUsers().
+	Add(nxauth.Identity{ID: "1", Kind: "staff", Perms: []string{"*"}}, "admin@example.com", "change-me-now")
 `
 
 // ── nexus.toml (runtime config) ─────────────────────────────────────
@@ -974,6 +939,25 @@ name = "{{.Name}}"
 {{else}}
 # CSRF follows what the app uses: on with cookie sessions, a cookie auth
 # scheme or Inertia; off for a token-only API. Force it with csrf = true|false.
+{{end}}
+{{- if .HasAuth}}
+# Auth (auth/auth.go). Pages sign in with a session; API clients get bearer
+# tokens from the OAuth2 token endpoint. "nexus auth check" prints the setup.
+[auth.schemes.web]
+type = "session"
+
+[auth.schemes.api]
+type    = "bearer"
+ttl     = "1h"
+refresh = "720h"           # Go durations: hours, not days
+
+[auth.endpoints]
+login  = "/api/auth/login"
+logout = "/api/auth/logout"
+me     = "/api/auth/me"
+token  = "/oauth/token"
+revoke = "/oauth/revoke"
+
 {{end}}
 # Databases live at the TOP level (not under [runtime]); wire each with
 # db.BindFromConfig[YourType]("name") in code.

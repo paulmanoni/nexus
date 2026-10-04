@@ -1,944 +1,209 @@
-// Package auth is nexus's built-in authentication surface. It owns the
-// plumbing — token extraction, identity caching, per-op enforcement,
-// context propagation — while leaving the *resolution* step (token →
-// Identity) user-supplied. That keeps auth.Module unopinionated: works
-// with JWTs, opaque bearer tokens, API keys, session cookies, or any
-// custom scheme, as long as the caller can turn a raw token into an
-// *auth.Identity.
+// Package auth is nexus's authentication and authorization: accounts the app
+// describes with one interface, credentials nexus issues and checks
+// (sessions, bearer tokens, API keys, JWTs from elsewhere), sign-in flows,
+// and gates that work the same on REST, GraphQL, WebSocket, Inertia pages
+// and views.
 //
-// Minimal wiring — one bearer scheme via the auth.Single shortcut:
+//	nexus.Boot(auth.Module(auth.Config{Users: auth.UseUsers(NewUsers)}), …)
 //
-//	nexus.Run(config.Runtime{...},
-//	    auth.Single(func(ctx context.Context, tok string) (*auth.Identity, error) {
-//	        u, err := myAPI.ValidateToken(ctx, tok)
-//	        if err != nil { return nil, err }
-//	        return &auth.Identity{ID: u.ID, Roles: u.Roles, Extra: u}, nil
-//	    }, auth.CacheFor(15*time.Minute)),
-//	    advertsModule,
-//	)
+//	id, err := auth.Login(ctx, auth.Password{Login: in.Email, Password: in.Password})
+//	cred, err := auth.SignIn(ctx, id)
 //
-// Several schemes (e.g. a bearer JWT for users and an API key for
-// service-to-service traffic), tried in declaration order:
+//	nexus.AsMutation((*Orders).Refund, auth.Kind("staff"), auth.Requires("orders.refund"))
 //
-//	auth.Module(auth.Config{
-//	    Authentication: auth.Authentication{
-//	        Schemes: []auth.Scheme{
-//	            {Resolve: resolveJWT},                                   // defaults to Bearer()
-//	            {Name: "apikey", Extract: auth.APIKey("X-API-Key"), Resolve: resolveKey},
-//	        },
-//	        Cache: auth.CacheFor(15 * time.Minute),
-//	    },
-//	})
-//
-// Per-op enforcement (cross-transport — same bundle works on REST +
-// GraphQL via the existing nexus.Use attachment):
-//
-//	nexus.AsMutation(NewCreateAdvert,
-//	    auth.Required(),                       // 401 if no valid identity
-//	    auth.Requires("ROLE_CREATE_ADVERT"),   // 403 if missing permission
-//	)
-//
-// Resolver access from a handler:
-//
-//	func NewListAdverts(db *DB) func(ctx context.Context) ([]Advert, error) {
-//	    return func(ctx context.Context) ([]Advert, error) {
-//	        user, ok := auth.User[MyUser](ctx)
-//	        if !ok { /* Required() would have caught this earlier */ }
-//	        return db.ListFor(user.ID)
-//	    }
-//	}
-//
-// Coexistence with the existing (*Service).Auth API: auth.Module operates
-// at the app layer via a global middleware, so services that still call
-// (*Service).Auth(UserDetailsFn) keep working as before. Over time,
-// move resolvers onto auth.IdentityFrom/User.
+// Settings come from nexus.toml's [auth] table (Config.Settings in Go):
+// schemes, areas, endpoints, session and throttle rules. Every endpoint
+// needs a sign-in unless it is auth.Public(). `nexus docs auth`,
+// docs/guide/auth.md.
 package auth
 
 import (
 	"context"
 	"fmt"
 	"net/http"
-	"sync"
-	"time"
-
-	"github.com/paulmanoni/nexus/v2/di"
 
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/client"
+	"github.com/paulmanoni/nexus/v2/di"
 	"github.com/paulmanoni/nexus/v2/extension"
 	"github.com/paulmanoni/nexus/v2/extension/dashboard"
 	"github.com/paulmanoni/nexus/v2/trace"
 )
 
-// Identity is the resolved authenticated user. Perms is its permission
-// set; Roles and Scopes are the v1 buckets, matched exactly and kept for
-// existing resolvers. Extra carries the app's user (auth.User[T]).
+// Identity is who a request is: the same on every transport, read with
+// auth.Current(ctx).
 type Identity struct {
-	ID     string
-	Roles  []string
-	Scopes []string
-	Extra  any
+	ID string
 	// Kind is the user's kind — "staff", "customer" — or "" when the app
-	// has one. auth.Kind gates on it.
+	// has one. auth.Kind and areas gate on it.
 	Kind string
 	// Perms are the identity's permissions, matched with wildcards:
 	// "orders.*" grants "orders.view" and "orders.refunds.create", "*"
-	// grants everything. Prefer it to Roles/Scopes in new code.
+	// grants everything. Roles are an app concept: Users.Load expands them.
 	Perms []string
-	// Scheme names the [auth.schemes] entry that authenticated the
-	// request; nexus sets it on the config-driven path.
-	Scheme string
+	// User is the app's user, read with auth.User[T]. It is never sent to
+	// a browser unless Users' Public method puts it there.
+	User any
 	// Actor is the real user while they impersonate this one
 	// (auth.Impersonate); nil otherwise. Gates evaluate the identity, not
 	// the actor.
 	Actor *Identity
+	// Scheme names the [auth.schemes] entry that authenticated the
+	// request; nexus sets it.
+	Scheme string
 }
 
-// Has reports whether the identity carries the given permission: in Perms
-// (wildcards apply), or exactly in Roles or Scopes. Used by the default
-// PermissionFn.
-func (i *Identity) Has(perm string) bool {
-	if i.grants(perm) {
-		return true
-	}
-	for _, r := range i.Roles {
-		if r == perm {
-			return true
-		}
-	}
-	for _, s := range i.Scopes {
-		if s == perm {
-			return true
-		}
-	}
-	return false
-}
+// Has reports whether the identity holds perm, wildcards applied.
+func (i *Identity) Has(perm string) bool { return i != nil && i.grants(perm) }
 
-// Resolver turns a raw token into an Identity. Callers implement this
-// to plug their auth backend in — a DB lookup, a JWT verification, an
-// external API call, anything. Returning an error fails authentication
-// for this request (401 when Required() is attached).
-type Resolver func(ctx context.Context, token string) (*Identity, error)
+// ErrUnauthenticated is the error of a request that needs a sign-in.
+var ErrUnauthenticated error = nexus.Err(nexus.Unauthenticated, "auth: unauthenticated")
 
-// PermissionFn decides whether an identity satisfies a set of required
-// permissions. The built-in default (DefaultPermissions) requires the
-// identity to have every listed permission in Roles or Scopes.
-type PermissionFn func(id *Identity, required []string) bool
+// ErrForbidden is the error of a signed-in request a gate refuses.
+var ErrForbidden error = nexus.Err(nexus.Forbidden, "auth: forbidden")
 
-// DefaultPermissions is the built-in permission check: every required
-// permission must appear in the identity's Roles or Scopes.
-func DefaultPermissions(id *Identity, required []string) bool {
-	if id == nil {
-		return false
-	}
-	for _, p := range required {
-		if !id.Has(p) {
-			return false
-		}
-	}
-	return true
-}
-
-// Scheme is one way to authenticate a request: an Extractor that pulls a
-// credential off the request paired with a Resolver that turns that
-// credential into an Identity. A request is authenticated by the FIRST
-// scheme whose Extractor finds a credential — that scheme's Resolver then
-// runs. List several to accept, say, a bearer JWT for users and an API
-// key for service-to-service traffic on the same app.
-type Scheme struct {
-	// Name labels the scheme in traces and the dashboard. Defaults to the
-	// extractor's strategy ("bearer", "apikey", "cookie", "chain") when
-	// empty.
-	Name string
-
-	// Extract pulls the raw credential from the request. Defaults to
-	// Bearer() (Authorization: Bearer <token>) when nil.
-	Extract Extractor
-
-	// Resolve turns the extracted credential into an Identity. REQUIRED —
-	// it's the single plug each scheme supplies; the package owns
-	// extraction ordering, caching, and enforcement.
-	Resolve Resolver
-}
-
-// Authentication is the "who are you?" half of auth: the ordered list of
-// schemes tried per request plus the shared identity cache.
-type Authentication struct {
-	// Schemes are tried in declaration order; the first whose Extractor
-	// yields a credential owns the request. At least one is required.
-	Schemes []Scheme
-
-	// Cache memoizes resolved identities (keyed by credential) so a
-	// backend call fires at most once per TTL. Zero TTL disables it.
-	Cache CacheOption
-}
-
-// Config drives auth.Module. Authentication is required; everything else
-// has a sensible default.
+// Config wires auth.Module. Only Users is required; everything else has a
+// nexus.toml key or a default.
 type Config struct {
-	// Authentication declares how requests are authenticated — one or
-	// more schemes plus the identity cache. Required.
-	Authentication Authentication
-
-	// Authorization declares how a required permission is matched against
-	// an identity's roles/scopes — exact by default, or pluggable via
-	// Authority (e.g. Wildcard()) / a full Permissions override. The zero
-	// value is the exact-match roles+scopes check.
-	//
-	// When Backend implements Authorize(id, required) bool, the backend's
-	// check takes precedence over this field — authorization then lives
-	// with the backend. Authorization.Default (deny-by-default) is always
-	// honored regardless of the backend.
-	Authorization Authorization
-
-	// Backend is the app's cohesive auth backend — one DI-constructed type
-	// that supplies request resolution and, optionally, login and
-	// authorization (see BackendOption). Optional. When set:
-	//
-	//   - any Scheme with a nil Resolve inherits the backend's Resolve, so
-	//     the resolver can close over app services (a *DB, a token server)
-	//     without package globals or a backfill Invoke;
-	//   - Manager.Login delegates to the backend's Login when present;
-	//   - the backend's Authorize, when present, replaces the
-	//     Authorization check above.
-	//
-	// The zero value leaves every other Config field in sole charge, so
-	// existing configs behave identically.
-	Backend BackendOption
-
-	// Endpoints opts auth.Module into mounting its own HTTP front doors —
-	// login, logout, token, revoke — using the Backend's capabilities, so a
-	// single auth.Module call owns the whole auth surface instead of the app
-	// hand-wiring AsRest lines. Each is off unless its path is set; the zero
-	// value mounts nothing. See Endpoints.
-	Endpoints Endpoints
-
-	// Users is the app's account lookup — the config-driven path. With it,
-	// nexus authenticates requests itself from the [auth] schemes (session,
-	// bearer, apikey), issues credentials with SignIn, and requires a
-	// sign-in on every endpoint that isn't Public. It replaces
-	// Authentication.Schemes and Backend, which must be left unset.
+	// Users is the app's account lookup: auth.UseUsers(NewUsers) for a DI
+	// constructor, auth.StaticUsers(u) for a value.
 	Users UsersOption
 
 	// Settings is [auth] in Go; nil reads nexus.toml's [auth] table.
-	// Config-driven path only.
 	Settings *Settings
 
-	// Tokens stores issued bearer tokens and API keys (hashed). Nil keeps
-	// them in memory — lost on restart, not shared between replicas; set
-	// CacheTokens(cache) in production. Config-driven path only.
+	// Tokens stores issued bearer tokens, API keys and session records
+	// (hashed). Nil keeps them in memory — lost on restart, not shared
+	// between replicas; set CacheTokens(cache) in production.
 	Tokens TokenStore
 
 	// Clients finds OAuth2 clients the token endpoint authenticates (a
 	// database, say); [auth.oauth2.clients.*] are consulted after it.
-	// Config-driven path only.
 	Clients Clients
 
 	// Throttle keeps the [auth.throttle] failure counts. Nil counts in the
 	// process (each replica on its own); CacheThrottle(cache) shares them.
-	// Config-driven path only.
 	Throttle ThrottleStore
-
-	// OnResolve fires after every successful resolution — good for
-	// audit logging or per-user metrics.
-	OnResolve func(ctx context.Context, id *Identity)
-
-	// OnFail fires on extraction / resolution failure. The token is
-	// passed so handlers can log prefixes for diagnostics; do NOT log
-	// the full token in production.
-	OnFail func(ctx context.Context, token string, err error)
-
-	// OnError customizes how 401/403 denials render across every
-	// transport — one ErrorHandler replaces the old per-transport
-	// OnUnauthenticated / OnForbidden (REST) and GraphQLErrorWrap
-	// (GraphQL) fields. Nil uses the default: nexus's error model (401/403
-	// with {"code", "message"}, extensions.code on GraphQL). See ErrorHandler.
-	OnError ErrorHandler
-
-	// LoginTokenField names where the access token sits in a login
-	// response body, as a dotted path ("token", "accessToken",
-	// "data.token"). Bridged into the client SDK manifest so the
-	// generated client reads the token from the declared location.
-	// Empty → defaults to "data.token" (client.DefaultTokenField), the
-	// {status, data:{token}} envelope Go REST handlers typically ship;
-	// the SDK still falls back to its heuristic walk (bare/nested token
-	// + accessToken) when that path misses, so top-level {token}
-	// responses keep working.
-	LoginTokenField string
-
-	// CSRFCookie / CSRFHeader name the double-submit CSRF pair the client
-	// SDK uses under cookie-based auth strategies: it reads CSRFCookie (a
-	// non-HttpOnly cookie the server set) and echoes it in CSRFHeader on
-	// state-changing requests so a cross-site post — which rides cookies
-	// but can't read this cookie or set the header — is rejected. Empty →
-	// defaults to "csrftoken" / "X-CSRFToken" (client.DefaultCSRFCookie /
-	// DefaultCSRFHeader, the Django/Laravel convention). Set when your
-	// server emits a differently-named pair (e.g. Angular's "XSRF-TOKEN"
-	// / "X-XSRF-TOKEN").
-	CSRFCookie string
-	CSRFHeader string
 }
 
-// CacheOption configures how resolved identities are memoized in-memory.
-// The cache is process-local on purpose — auth state should be short-
-// lived (minutes), and a cross-process cache adds invalidation pain
-// that's rarely worth it. Callers that need cross-process cache can
-// handle it inside their Resolve function.
-type CacheOption struct {
-	// TTL is how long a resolved identity stays in cache. 0 disables.
-	TTL time.Duration
-
-	// MaxEntries bounds the cache so a misbehaving client can't OOM
-	// the app by sending many unique tokens. 0 means unbounded.
-	MaxEntries int
-}
-
-// CacheFor is a one-liner for the common case — time-only TTL.
-// Entries are bounded to 4096 by default so an attacker firing
-// endless distinct tokens can't trigger unbounded growth.
-func CacheFor(ttl time.Duration) CacheOption {
-	return CacheOption{TTL: ttl, MaxEntries: 4096}
-}
-
-// ErrUnauthenticated is returned by helpers when no identity is on ctx.
-// It is a nexus.Unauthenticated error: 401 on REST, UNAUTHENTICATED on GraphQL.
-var ErrUnauthenticated error = nexus.Err(nexus.Unauthenticated, "auth: unauthenticated")
-
-// ErrForbidden is returned when an identity is present but lacks the
-// required permissions. It is a nexus.Forbidden error: 403 / FORBIDDEN.
-var ErrForbidden error = nexus.Err(nexus.Forbidden, "auth: forbidden")
-
-// moduleState is the runtime state the global middleware and per-op
-// bundles share. Stashed on request context by the global middleware
-// so bundles can read it without a package singleton — keeps multiple
-// nexus apps in one process safe.
+// moduleState is one app's auth: its config, schemes and stores.
 type moduleState struct {
-	cfg          Config
-	config       configPath // the config-driven path (Config.Users)
-	app          *nexus.App
-	schemes      []boundScheme // normalized schemes, tried in order
-	permissions  PermissionFn
-	errorHandler ErrorHandler   // renders 401/403 denials; never nil after Module
-	cache        *identityCache // nil when Cache.TTL == 0
-	// flights coalesces concurrent resolves of the SAME token: with a
-	// cold cache, N simultaneous requests bearing one token stampeded
-	// the backend with N identical lookups. Only used when the cache
-	// is on — without a cache every request must resolve anyway.
-	flights resolveFlights
-	// backend is the resolved Config.Backend (nil when unset). Powers
-	// Manager.Login and, when it implements the capability interfaces,
-	// scheme resolution + authorization. Populated by finalizeBackend.
-	backend any
-	// bus is the app-level trace bus captured at Module wire time.
-	// We grab it here because the per-route trace.Middleware in AsRest
-	// runs AFTER auth bundles in the handler chain — so by the time
-	// Required/Requires reject a request, trace.BusFromCtx is still
-	// empty. Falling back to this field keeps reject events flowing.
-	bus *trace.Bus
+	cfg     Config
+	config  configPath
+	schemes []boundScheme // tried in order
+	bus     *trace.Bus
+	app     *nexus.App
 }
 
-// Manager is the runtime handle for auth state. di.Provide'd by Module
-// so application code can inject it wherever it needs to invalidate
-// cached identities (logout flows) or inspect current auth state
-// (admin dashboards).
-//
-//	func NewLogoutHandler(am *auth.Manager) func(ctx, p Params[Args]) (...) {
-//	    return func(ctx context.Context, p Params[Args]) (..., error) {
-//	        am.Invalidate(p.Args.Token)
-//	        return ok, nil
-//	    }
-//	}
-type Manager struct {
-	state *moduleState
+// boundScheme is one [auth.schemes] entry ready to run: where its
+// credential is read, and how it becomes an identity.
+type boundScheme struct {
+	name    string
+	typ     string
+	extract extractor
+	resolve resolver
 }
 
-// Invalidate drops the cached identity for the given token. The next
-// request bearing that token will re-run Resolve. No-op when the cache
-// is disabled.
-func (m *Manager) Invalidate(token string) {
-	if m.state.cache == nil {
-		return
-	}
-	m.state.cache.delete(token)
-}
+// resolver turns a scheme's credential into an identity.
+type resolver func(ctx context.Context, credential string) (*Identity, error)
 
-// InvalidateAll flushes the entire identity cache. Use sparingly —
-// every active session will pay a Resolve round-trip on its next
-// request. Intended for credential-schema migrations or incident
-// response.
-func (m *Manager) InvalidateAll() {
-	if m.state.cache == nil {
-		return
-	}
-	m.state.cache.clear()
-}
-
-// InvalidateByIdentity removes every cache entry whose Identity.ID
-// matches the argument. Use for "force-logout user X" flows when the
-// caller knows the stable identity but not the tokens (users may
-// have multiple active sessions). Returns the number of entries
-// dropped so the caller can distinguish "forced logout of 3 sessions"
-// from "no cached sessions to drop".
-func (m *Manager) InvalidateByIdentity(id string) int {
-	if m.state.cache == nil || id == "" {
-		return 0
-	}
-	return m.state.cache.deleteWhere(func(e cacheEntry) bool {
-		return e.id != nil && e.id.ID == id
-	})
-}
-
-// CachedIdentity is a redacted snapshot of a cache entry for dashboard
-// / admin display. TokenPrefix is the first 8 characters of the raw
-// token followed by "…"; the full token never leaves the cache.
-type CachedIdentity struct {
-	TokenPrefix string
-	Identity    *Identity
-	ExpiresAt   time.Time
-}
-
-// Identities returns a snapshot of every currently-cached identity.
-// Safe to call on a disabled cache (returns empty slice). Token
-// prefixes are truncated to 8 chars — never log or return the full
-// token back to clients.
-func (m *Manager) Identities() []CachedIdentity {
-	if m.state.cache == nil {
-		return nil
-	}
-	return m.state.cache.snapshot()
-}
-
-// Resolve is a direct synchronous resolution path for code that has a
-// token in hand outside the HTTP request cycle — background jobs,
-// WS message handlers, CLI tools bolted onto the same app. With no
-// request to extract from, it tries each scheme's resolver in order and
-// returns the first success. Honors the configured cache.
-func (m *Manager) Resolve(ctx context.Context, token string) (*Identity, error) {
-	st := m.state
-	var lastErr error
-	for i := range st.schemes {
-		id, err := st.resolveVia(ctx, st.schemes[i], token)
-		if err == nil {
-			return id, nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = ErrUnauthenticated
-	}
-	return nil, lastErr
-}
-
-// Login authenticates a credential through the configured Config.Backend —
-// the login counterpart to Resolve. It requires a backend that implements
-// Login(ctx, Credentials) (*Identity, error); without one it returns
-// ErrInvalidCredentials. Apps that log in via auth.Authenticate(ctx, cred,
-// backends...) directly don't need this.
-func (m *Manager) Login(ctx context.Context, cred Credentials) (*Identity, error) {
-	if lb, ok := m.state.backend.(loginCapable); ok {
-		return lb.Login(ctx, cred)
-	}
-	return nil, ErrInvalidCredentials
-}
-
-// Module wires auth into the nexus app. It builds an extension.Plugin
-// — the same shape custom plugins use — so auth participates in the
-// app's plugin registry alongside any other extensions.
-//
-//  1. Installs a global gin middleware that extracts + (optionally
-//     caches) resolves the identity per request, then stashes it on
-//     the request context (Options slot, runs first so subsequent
-//     route mounts see the middleware).
-//  2. Mounts /__nexus/auth and /__nexus/auth/invalidate via the
-//     Dashboard slot.
-//  3. Bridges the configured ExtractorInfo into the client SDK
-//     manifest via the Client.Apply slot — no-op when the SDK
-//     isn't mounted.
-//
-// Module does NOT touch (*Service).Auth. Services using the older
-// UserDetailsFn hook continue to work alongside; migration is a
-// per-resolver switch to auth.User[T].
+// Module enables auth for the app.
 func Module(cfg Config) nexus.Option {
-	if cfg.Users.set {
-		return configModule(cfg)
+	if !cfg.Users.set {
+		return nexus.Raw(di.Error(fmt.Errorf("auth: Config.Users is required — auth.UseUsers(NewUsers) or auth.StaticUsers(u)")))
 	}
-	// A backend can supply the resolver, so schemes may omit Resolve — and
-	// a backend with no schemes at all gets a default bearer scheme.
-	schemesIn := cfg.Authentication.Schemes
-	if cfg.Backend.set && len(schemesIn) == 0 {
-		schemesIn = []Scheme{{}} // Extract defaults to Bearer(); Resolve from the backend
-	}
-	schemes, err := bindSchemes(schemesIn, cfg.Backend.set)
+	state := &moduleState{cfg: cfg}
+	state.config.tokens = cfg.Tokens
+	users, err := usersOption(state, cfg.Users)
 	if err != nil {
 		return nexus.Raw(di.Error(fmt.Errorf("auth: %w", err)))
 	}
-	return wireModule(cfg, schemes, schemesIn, nil)
-}
 
-// wireModule builds the module around its state. cp is the config-driven
-// path's setup (nil for the scheme/backend path).
-func wireModule(cfg Config, schemes []boundScheme, schemesIn []Scheme, cp func(*moduleState) ([]nexus.Option, error)) nexus.Option {
-	eh := cfg.OnError
-	if eh == nil {
-		eh = defaultErrorHandler{}
-	}
-	state := &moduleState{
-		cfg:          cfg,
-		schemes:      schemes,
-		permissions:  cfg.Authorization.permissionFn(),
-		errorHandler: eh,
-	}
-	if cfg.Authentication.Cache.TTL > 0 {
-		state.cache = newIdentityCache(cfg.Authentication.Cache)
-	}
-	manager := &Manager{state: state}
-
-	// Stream the auth summary (cached identities + caching flag) over the
-	// dashboard's live WS instead of letting the frontend poll GET
-	// /__nexus/auth. Live rejection events already flow via the trace bus
-	// (LiveEvents: "auth.reject"), so this completes a poll-free auth panel.
 	dashboard.RegisterSnapshotExtra("auth", func() any {
-		return map[string]any{
-			"identities":     manager.Identities(),
-			"cachingEnabled": state.cache != nil,
-		}
+		return map[string]any{"setup": state.dashboardSetup()}
 	})
 
-	pluginOpts := []nexus.Option{
-		nexus.Raw(di.Supply(manager)),
-		// Install the global auth middleware on the gin engine and
-		// capture the trace bus. Runs before the Dashboard slot
-		// mounts /__nexus/auth, so those routes inherit the
-		// middleware.
-		nexus.Invoke(func(app *nexus.App) error {
-			state.bus = app.Bus()
-			state.app = app
-			app.SetValue(stateKey{}, state)
-			if cp != nil {
+	return extension.Use(extension.Plugin{
+		Name:    "auth",
+		Version: "2",
+		Options: []nexus.Option{
+			users,
+			// Every endpoint needs a sign-in unless it is Public (or
+			// [auth] default = "public"); one under an area, a kind it admits.
+			nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: state.defaultGate()})),
+			nexus.Defer(func() nexus.Option {
+				if err := state.resolveConfig(); err != nil {
+					return nexus.FailBoot(fmt.Errorf("auth: %w", err))
+				}
+				return state.endpointOptions()
+			}),
+			nexus.Invoke(func(app *nexus.App) error {
+				state.bus, state.app = app.Bus(), app
+				app.SetValue(stateKey{}, state)
 				if err := state.installConfigPath(app); err != nil {
 					return fmt.Errorf("auth: %w", err)
 				}
-			}
-			app.Router().Use(authMiddleware(state))
-			return nil
-		}),
-	}
-	if cp != nil {
-		extra, err := cp(state)
-		if err != nil {
-			return nexus.Raw(di.Error(fmt.Errorf("auth: %w", err)))
-		}
-		pluginOpts = append(extra, pluginOpts...)
-	}
-	// Deny-by-default: supply the "require identity" gate as the
-	// framework's default EndpointGate. The framework prepends it to every
-	// endpoint (REST/GraphQL/WS) unless the endpoint is nexus.Public().
-	if cfg.Authorization.Default.requireAuth {
-		pluginOpts = append(pluginOpts,
-			nexus.Raw(di.Supply(&nexus.EndpointGate{Middleware: requiredMiddleware()})))
-	}
-
-	// Config.Backend: attach the cohesive backend. A static value finalizes
-	// now; a UseBackend constructor is built in DI and finalized in an
-	// invoke (both before the first request). finalizeBackend fills any
-	// scheme missing a Resolve and, when the backend authorizes, overrides
-	// the permission check.
-	if cfg.Backend.set {
-		switch {
-		case cfg.Backend.value != nil:
-			if err := finalizeBackend(state, cfg.Backend.value); err != nil {
-				return raiseBackendError(err)
-			}
-		case cfg.Backend.ctor != nil:
-			opt, err := backendFinalizeOption(state, cfg.Backend.ctor)
-			if err != nil {
-				return raiseBackendError(err)
-			}
-			pluginOpts = append(pluginOpts, opt)
-		default:
-			return raiseBackendError(fmt.Errorf("Backend is set but has neither a value nor a constructor"))
-		}
-	}
-
-	// Config.Endpoints: auth mounts its own login/logout/token/revoke front
-	// doors, each backed by a Backend capability resolved at request time.
-	if cfg.Endpoints.any() {
-		pluginOpts = append(pluginOpts, endpointOptions(cfg.Endpoints)...)
-	}
-
-	plugin := extension.Use(extension.Plugin{
-		Name:    "auth",
-		Version: "1",
-		Options: pluginOpts,
+				app.Router().Use(authMiddleware(state))
+				return nil
+			}),
+		},
 		Dashboard: &extension.Dashboard{
 			Tab: &extension.Tab{ID: "auth", Label: "Auth"},
 			Routes: []extension.Route{
-				{Method: "GET", Path: "", Handler: dashboardListHandler(manager)},
-				{Method: "POST", Path: "/invalidate", Handler: dashboardInvalidateHandler(manager)},
+				{Method: "POST", Path: "/unlock", Handler: dashboardUnlockHandler(state)},
+				{Method: "POST", Path: "/revoke-user", Handler: dashboardRevokeUserHandler(state)},
 			},
 			LiveEvents: []string{"auth.reject"},
 		},
 		Client: &extension.Client{
 			Namespace: "auth",
 			Apply: func(app *nexus.App) error {
-				// Bridge the auth strategy into the client SDK manifest.
-				// SetClientAuthInfo short-circuits when the SDK isn't
-				// mounted (Config.Client.Enabled off, no nexus.ClientUse),
-				// so apps without the SDK pay nothing for this hook.
-				app.SetClientAuthInfo(func() client.ExtractorInfo {
-					return toClientExtractor(manager.Info())
-				})
-				// Overlay the auth-config hints (login-token location +
-				// CSRF names) onto the manifest's Auth section. Static —
-				// they come from cfg, not the registry — so a plain set
-				// (no closure) is enough. No-op fields keep the SDK's own
-				// defaults.
-				app.SetClientAuthMeta(client.AuthMeta{
-					TokenField: cfg.LoginTokenField,
-					CSRFCookie: cfg.CSRFCookie,
-					CSRFHeader: cfg.CSRFHeader,
-				}.WithDefaults())
+				// Where the SDK puts a credential, and where it finds the
+				// token in a sign-in response.
+				app.SetClientAuthInfo(state.clientInfo)
+				app.SetClientAuthMeta(client.AuthMeta{TokenField: "access_token"}.WithDefaults())
 				return nil
 			},
 		},
-		// Contributor emits framework-flavored TS that wraps the
-		// codegen'd login / logout / me typed functions in a stateful
-		// composable. Picked up by the frontend extension's Generate
-		// driver at render time; apps without a frontend driver pay
-		// nothing for this slot (no driver → no Render call → no
-		// NexusContribute invocation).
 		Contributor: authContributor{},
 	})
-	// A cookie credential is sent by the browser on its own, cross-site
-	// included: such an app needs CSRF protection.
-	for _, sc := range schemesIn {
-		if readsCookie(InspectExtractor(sc.Extract)) {
-			return nexus.Options(plugin, nexus.Invoke(func(a *nexus.App) { a.RequireCSRF("cookie authentication") }))
-		}
-	}
-	return plugin
 }
 
-func readsCookie(info ExtractorInfo) bool {
-	if info.Strategy == "cookie" {
-		return true
-	}
-	for _, c := range info.Chain {
-		if readsCookie(c) {
-			return true
-		}
-	}
-	return false
-}
-
-// Single wires auth with one bearer-token scheme — the overwhelmingly
-// common case. Equivalent to Module(Config{Authentication: Authentication{
-// Schemes: []Scheme{{Resolve: resolve}}}}) with an optional cache:
-//
-//	auth.Single(myResolve)
-//	auth.Single(myResolve, auth.CacheFor(15*time.Minute))
-func Single(resolve Resolver, cache ...CacheOption) nexus.Option {
-	a := Authentication{Schemes: []Scheme{{Resolve: resolve}}}
-	if len(cache) > 0 {
-		a.Cache = cache[0]
-	}
-	return Module(Config{Authentication: a})
-}
-
-// boundScheme is a Scheme with its defaults resolved — used internally by
-// the middleware and Manager so the per-request path never re-checks
-// nil Extract / derived Name.
-type boundScheme struct {
-	name    string
-	extract Extractor
-	resolve Resolver
-}
-
-// bindSchemes validates and normalizes the configured schemes: every
-// scheme needs a Resolver, a nil Extract defaults to Bearer(), and an
-// empty Name derives from the extractor's strategy.
-// allowNilResolve permits schemes without a Resolver — used when a
-// Config.Backend will supply it in finalizeBackend before the first request.
-func bindSchemes(in []Scheme, allowNilResolve bool) ([]boundScheme, error) {
-	if len(in) == 0 {
-		return nil, fmt.Errorf("Config.Authentication.Schemes must declare at least one scheme")
-	}
-	out := make([]boundScheme, 0, len(in))
-	for i, s := range in {
-		if s.Resolve == nil && !allowNilResolve {
-			return nil, fmt.Errorf("Config.Authentication.Schemes[%d]: Resolve is required (or set Config.Backend)", i)
-		}
-		ex := s.Extract
-		if ex == nil {
-			ex = Bearer()
-		}
-		name := s.Name
-		if name == "" {
-			name = InspectExtractor(ex).Strategy
-		}
-		out = append(out, boundScheme{name: name, extract: ex, resolve: s.Resolve})
-	}
-	return out, nil
-}
-
-// resolveVia runs a single scheme's resolver through the shared identity
-// cache (keyed by credential). The cache is shared across schemes because
-// the public Manager.Resolve has only a token in hand — keying by token
-// keeps that path and the request path consistent.
-func (st *moduleState) resolveVia(ctx context.Context, sc boundScheme, token string) (*Identity, error) {
-	if st.cache == nil {
-		id, err := sc.resolve(ctx, token)
-		if err != nil {
-			return nil, err
-		}
-		return id, nil
-	}
-	if id, ok := st.cache.get(token); ok {
-		return id, nil
-	}
-	// Single-flight: the first miss for a token resolves; concurrent
-	// misses for the same token wait for that result instead of each
-	// hitting the backend. The leader runs under ITS request context —
-	// if that request is cancelled mid-resolve, followers see the
-	// leader's error and the next request starts a fresh flight (the
-	// standard single-flight trade-off).
-	return st.flights.do(ctx, token, func() (*Identity, error) {
-		id, err := sc.resolve(ctx, token)
-		if err != nil {
-			return nil, err
-		}
-		if id != nil {
-			st.cache.set(token, id)
-		}
-		return id, nil
-	})
-}
-
-// resolveFlights is a minimal single-flight keyed by token. Inline
-// (rather than x/sync/singleflight) to keep the extension
-// dependency-free; the waiting side also honors its own context.
-type resolveFlights struct {
-	mu sync.Mutex
-	m  map[string]*resolveFlight
-}
-
-type resolveFlight struct {
-	done chan struct{}
-	id   *Identity
-	err  error
-}
-
-func (g *resolveFlights) do(ctx context.Context, key string, fn func() (*Identity, error)) (*Identity, error) {
-	g.mu.Lock()
-	if g.m == nil {
-		g.m = make(map[string]*resolveFlight)
-	}
-	if f, ok := g.m[key]; ok {
-		g.mu.Unlock()
-		select {
-		case <-f.done:
-			return f.id, f.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	f := &resolveFlight{done: make(chan struct{})}
-	g.m[key] = f
-	g.mu.Unlock()
-
-	f.id, f.err = fn()
-
-	g.mu.Lock()
-	delete(g.m, key)
-	g.mu.Unlock()
-	close(f.done)
-	return f.id, f.err
-}
-
-// authenticate walks the schemes in order and returns the Identity from
-// the first scheme whose Extractor finds a credential. That scheme owns
-// the request — a resolve error from it does NOT fall through to later
-// schemes (extractors rarely overlap, and falling through would muddy
-// which failure to report). Returns (nil, "", nil) for an anonymous
-// request (no scheme found a credential).
-func (st *moduleState) authenticate(ctx context.Context, r *http.Request) (*Identity, string, error) {
-	id, _, tok, err := st.authenticateScheme(ctx, r)
-	return id, tok, err
-}
-
-// authenticateScheme is authenticate that also names the scheme whose
-// credential the request carried ("" when none).
+// authenticateScheme runs the first scheme whose credential the request
+// carries; it names that scheme and the credential ("" when none).
 func (st *moduleState) authenticateScheme(ctx context.Context, r *http.Request) (*Identity, string, string, error) {
 	for i := range st.schemes {
-		tok, ok := st.schemes[i].extract.Extract(r)
+		tok, ok := st.schemes[i].extract.extract(r)
 		if !ok {
 			continue
 		}
-		id, err := st.resolveVia(ctx, st.schemes[i], tok)
+		id, err := st.schemes[i].resolve(ctx, tok)
 		return id, st.schemes[i].name, tok, err
 	}
 	return nil, "", "", nil
 }
 
-// toClientExtractor adapts auth.ExtractorInfo (canonical) to
-// client.ExtractorInfo (the duplicate that lives in client/ to
-// avoid a nexus → client → auth import cycle). Recurses on
-// chained extractors so multi-strategy apps surface the full
-// shape to SDK consumers.
-func toClientExtractor(a ExtractorInfo) client.ExtractorInfo {
-	out := client.ExtractorInfo{
-		Strategy:   a.Strategy,
-		HeaderName: a.HeaderName,
-		CookieName: a.CookieName,
-	}
-	for _, c := range a.Chain {
-		out.Chain = append(out.Chain, toClientExtractor(c))
-	}
-	return out
-}
-
-// --- in-memory identity cache -------------------------------------------
-
-// identityCache is a simple TTL + size-bounded map from token → identity.
-// Eviction on Set when over MaxEntries is an O(n) scan for the oldest —
-// acceptable for the small caps we expect (thousands); if anyone needs
-// more, swap in an LRU. Not exposed; users who want a different cache
-// tier plug it into their Resolve.
-//
-// Reads take the read lock: every authenticated request hits get(), and
-// an exclusive mutex here serialized the whole authenticated surface.
-type identityCache struct {
-	mu         sync.RWMutex
-	entries    map[string]cacheEntry
-	ttl        time.Duration
-	maxEntries int
-}
-
-// defaultCacheMaxEntries bounds a cache whose CacheOption left
-// MaxEntries zero. Tokens are client-supplied — an unbounded map keyed
-// by them is a memory sink under rotating JWTs (every token distinct,
-// none ever looked up twice). Matches CacheFor's default.
-const defaultCacheMaxEntries = 4096
-
-type cacheEntry struct {
-	id        *Identity
-	expiresAt time.Time
-}
-
-func newIdentityCache(opt CacheOption) *identityCache {
-	max := opt.MaxEntries
-	if max <= 0 {
-		max = defaultCacheMaxEntries
-	}
-	return &identityCache{
-		entries:    make(map[string]cacheEntry),
-		ttl:        opt.TTL,
-		maxEntries: max,
-	}
-}
-
-func (c *identityCache) get(token string) (*Identity, bool) {
-	c.mu.RLock()
-	e, ok := c.entries[token]
-	c.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	if time.Now().After(e.expiresAt) {
-		// Lazy expiry under the write lock; re-check so a concurrent
-		// set() of a fresh entry isn't deleted underneath its caller.
-		c.mu.Lock()
-		if cur, still := c.entries[token]; still && time.Now().After(cur.expiresAt) {
-			delete(c.entries, token)
-		}
-		c.mu.Unlock()
-		return nil, false
-	}
-	return e.id, true
-}
-
-func (c *identityCache) delete(token string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, token)
-}
-
-func (c *identityCache) clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]cacheEntry)
-}
-
-// deleteWhere removes every entry whose predicate returns true.
-// Returns the count of dropped entries. Locked for the whole sweep
-// so a concurrent set() can't reintroduce an entry we just decided
-// to drop.
-func (c *identityCache) deleteWhere(pred func(cacheEntry) bool) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	n := 0
-	for k, e := range c.entries {
-		if pred(e) {
-			delete(c.entries, k)
-			n++
-		}
-	}
-	return n
-}
-
-// snapshot returns redacted cache entries. Token keys are truncated
-// to an 8-char prefix + "…" so the result is safe to serialize onto
-// the dashboard without leaking credentials. Expired entries are
-// filtered out at read time to avoid reporting stale rows.
-func (c *identityCache) snapshot() []CachedIdentity {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	out := make([]CachedIdentity, 0, len(c.entries))
-	now := time.Now()
-	for tok, e := range c.entries {
-		if now.After(e.expiresAt) {
-			continue
-		}
-		prefix := tok
-		if len(prefix) > 8 {
-			prefix = prefix[:8] + "…"
-		}
-		out = append(out, CachedIdentity{
-			TokenPrefix: prefix,
-			Identity:    e.id,
-			ExpiresAt:   e.expiresAt,
-		})
-	}
-	return out
-}
-
-func (c *identityCache) set(token string, id *Identity) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.maxEntries > 0 && len(c.entries) >= c.maxEntries {
-		// Evict one expired entry if we can; otherwise drop the
-		// oldest. Kept simple because auth caches are typically in
-		// the hundreds / low thousands. now is hoisted — the old
-		// loop called time.Now() per entry while holding the lock.
-		now := time.Now()
-		var oldestKey string
-		var oldestAt time.Time
-		first := true
-		for k, e := range c.entries {
-			if now.After(e.expiresAt) {
-				delete(c.entries, k)
-				goto insert
-			}
-			if first || e.expiresAt.Before(oldestAt) {
-				oldestKey = k
-				oldestAt = e.expiresAt
-				first = false
+// clientInfo tells the client SDK where credentials go: the schemes, in
+// the order they are tried.
+func (st *moduleState) clientInfo() client.ExtractorInfo {
+	var chain []client.ExtractorInfo
+	for _, sc := range st.schemes {
+		switch sc.typ {
+		case SchemeSession:
+			chain = append(chain, client.ExtractorInfo{Strategy: "cookie"})
+		case SchemeBearer, SchemeJWT:
+			chain = append(chain, client.ExtractorInfo{Strategy: "bearer", HeaderName: "Authorization"})
+		case SchemeAPIKey:
+			if s, ok := st.config.settings.scheme(sc.name); ok {
+				chain = append(chain, client.ExtractorInfo{Strategy: "header", HeaderName: s.Header})
 			}
 		}
-		if oldestKey != "" {
-			delete(c.entries, oldestKey)
-		}
 	}
-insert:
-	c.entries[token] = cacheEntry{id: id, expiresAt: time.Now().Add(c.ttl)}
+	switch len(chain) {
+	case 0:
+		return client.ExtractorInfo{Strategy: "bearer", HeaderName: "Authorization"}
+	case 1:
+		return chain[0]
+	}
+	return client.ExtractorInfo{Strategy: "chain", Chain: chain}
 }

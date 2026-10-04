@@ -9,17 +9,17 @@ import (
 	"github.com/paulmanoni/nexus/v2"
 	"github.com/paulmanoni/nexus/v2/config"
 	"github.com/paulmanoni/nexus/v2/extension/auth"
+	"github.com/paulmanoni/nexus/v2/extension/auth/authtest"
 	"github.com/paulmanoni/nexus/v2/registry"
 )
 
 func TestPermsWildcards(t *testing.T) {
-	id := &auth.Identity{Perms: []string{"orders.*", "users.view"}, Roles: []string{"legacy"}}
+	id := &auth.Identity{Perms: []string{"orders.*", "users.view"}}
 	for perm, want := range map[string]bool{
 		"orders.view":           true,
 		"orders.refunds.create": true,
 		"users.view":            true,
 		"users.edit":            false,
-		"legacy":                true,
 		"ordersx":               false,
 	} {
 		if got := id.Has(perm); got != want {
@@ -32,9 +32,6 @@ func TestPermsWildcards(t *testing.T) {
 	ctx := auth.WithIdentity(context.Background(), id)
 	if !auth.Can(ctx, "orders.refund") || auth.Can(ctx, "users.edit") {
 		t.Fatal("Can follows Perms")
-	}
-	if !auth.AnyOf("users.edit", "orders.view")(id, nil) {
-		t.Fatal("AnyOf follows Perms")
 	}
 }
 
@@ -68,15 +65,8 @@ var people = map[string]*auth.Identity{
 func gateApp(t *testing.T) (*nexus.App, *httptest.Server) {
 	t.Helper()
 	app, stop, err := nexus.InProcess(config.Runtime{},
-		auth.Module(auth.Config{Authentication: auth.Authentication{Schemes: []auth.Scheme{{
-			Extract: auth.Bearer(),
-			Resolve: func(ctx context.Context, tok string) (*auth.Identity, error) {
-				if id, ok := people[tok]; ok {
-					return id, nil
-				}
-				return nil, auth.ErrUnauthenticated
-			},
-		}}}}),
+		auth.Module(auth.Config{Users: auth.StaticUsers(authtest.NewUsers()),
+			Settings: &auth.Settings{Schemes: map[string]auth.SchemeSettings{"api": {Type: auth.SchemeBearer}}}}),
 		nexus.AsRest("POST", "/refund", refund, auth.Kind("staff"), auth.RequiresAny("orders.refund", "orders.admin")),
 		nexus.AsRest("POST", "/archive", archive, auth.RequiresAny("orders.archive"), auth.RequiresAny("orders.view")),
 		nexus.AsQuery(staffQ, auth.Kind("staff")),
@@ -94,7 +84,9 @@ func TestKindAndRequiresAnyGates(t *testing.T) {
 	call := func(path, who string) int {
 		req, _ := http.NewRequest("POST", srv.URL+path, nil)
 		if who != "" {
-			req.Header.Set("Authorization", "Bearer "+who)
+			for k, v := range authtest.As(people[who]) {
+				req.Header[k] = v
+			}
 		}
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {

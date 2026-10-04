@@ -14,7 +14,7 @@ import (
 // Requires() endpoint gate consults, so UI toggles and endpoint gates
 // share one rulebook and cannot drift. Anonymous requests are false.
 func Can(ctx context.Context, permission string) bool {
-	id, ok := IdentityFrom(ctx)
+	id, ok := identityFrom(ctx)
 	if !ok {
 		return false
 	}
@@ -31,7 +31,7 @@ func Can(ctx context.Context, permission string) bool {
 // values are false.
 func Gates(ctx context.Context, permissions ...string) map[string]bool {
 	out := make(map[string]bool, len(permissions))
-	id, ok := IdentityFrom(ctx)
+	id, ok := identityFrom(ctx)
 	for _, p := range permissions {
 		out[p] = ok && checkPermissions(ctx, id, []string{p})
 	}
@@ -81,7 +81,7 @@ func OpGates(ctx context.Context, app *nexus.App) map[string]bool {
 	for _, op := range t.open {
 		out[op] = true
 	}
-	id, authed := IdentityFrom(ctx)
+	id, authed := identityFrom(ctx)
 	for i := range t.groups {
 		g := &t.groups[i]
 		allowed := authed && g.allows(ctx, id)

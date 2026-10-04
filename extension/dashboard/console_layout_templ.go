@@ -653,8 +653,8 @@ func statusBar(st *consoleState) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if st.Auth != nil {
-			templ_7745c5c3_Err = statusItem("user", itoa(len(st.Auth.Identities)), "cached identities").Render(ctx, templ_7745c5c3_Buffer)
+		if st.Auth != nil && st.Auth.Setup != nil {
+			templ_7745c5c3_Err = statusItem("shield", itoa(len(st.Auth.Setup.Locks)), "sign-in locks").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
