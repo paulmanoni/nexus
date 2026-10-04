@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/a-h/templ v0.3.1020
-	github.com/paulmanoni/nexus/v2 v2.8.0
+	github.com/paulmanoni/nexus/v2 v2.9.0
 	github.com/templui/templui v1.13.2
 )
 
@@ -23,6 +23,7 @@ require (
 	github.com/graphql-go/handler v0.2.4 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
