@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- view: a nested frame that only passes one dynamic through (a component or
+  branch with no markup of its own) or holds nothing is folded into its parent,
+  so changes travel without its nesting — a page change on a 10-row table is
+  about 14% smaller.
+
 ## [2.13.1] - 2026-10-04
 
 ### Changed

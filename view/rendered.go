@@ -208,7 +208,7 @@ func normalize(n *recNode) *rframe {
 			f.d = append(f.d, c)
 			f.s = append(f.s, "")
 		case p.node != nil:
-			f.d = append(f.d, normalize(p.node))
+			f.d = append(f.d, flatten(normalize(p.node)))
 			f.s = append(f.s, "")
 		default:
 			f.d = append(f.d, p.text)
@@ -216,6 +216,19 @@ func normalize(n *recNode) *rframe {
 		}
 	}
 	f.fp = fingerprint(f.s)
+	return f
+}
+
+// flatten replaces a nested frame that only passes something through — a
+// component or branch with no markup of its own around one dynamic, or
+// nothing at all — with what it holds, so changes don't travel through it.
+func flatten(f *rframe) any {
+	switch {
+	case len(f.d) == 0 && len(f.s) == 1:
+		return f.s[0]
+	case len(f.d) == 1 && f.s[0] == "" && f.s[1] == "":
+		return f.d[0]
+	}
 	return f
 }
 
