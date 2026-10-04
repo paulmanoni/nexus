@@ -748,7 +748,23 @@
           root.setAttribute("data-nx-live", msg.live);
         }
         var recovered = msg.ref && state.recovering.delete(msg.ref);
-        if (!msg.tree && !msg.error && !msg.ref) return; // the resume token alone
+        if (msg.ref && msg.ref === state.priming) {
+          // The tree of the page as it is (prime): kept, nothing to patch.
+          state.priming = 0;
+          try {
+            if (msg.tree) applyTree(state, msg);
+          } catch (err) {
+            state.tree = null;
+          }
+          return;
+        }
+        if (!msg.tree && !msg.error && !msg.ref) {
+          // The resume token alone: the page came over HTTP and the socket
+          // had nothing to send. Ask for its tree once things are quiet, so
+          // the first navigation can travel as a change too.
+          if (!state.tree) prime(state, ws);
+          return;
+        }
         root.removeAttribute("aria-busy");
         var submitted = msg.ref ? state.submits[msg.ref] : null;
         if (msg.ref) delete state.submits[msg.ref];
@@ -1140,6 +1156,16 @@
   }
 
   var changeTimers = new WeakMap();
+
+  // prime asks, after a short pause, for the tree of the page the browser
+  // already shows (__resync answered without patching).
+  function prime(state, ws) {
+    setTimeout(function () {
+      if (state.tree || state.ws !== ws || ws.readyState !== 1) return;
+      state.priming = ++state.ref;
+      ws.send(JSON.stringify({ ref: state.priming, event: "__resync" }));
+    }, 300);
+  }
 
   // recover sends, on a reconnect, each form that validates as the user
   // types (view.Change) to its event with what it holds - before anything

@@ -632,11 +632,12 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, lc *liveConn, in *ins
 		}
 		reply := liveReply{Resume: token}
 		if navigated != "" {
-			// A page another one handed over to: its whole tree, against the
-			// statics the connection already holds.
-			lc.tree.prev = nil
-			msg, _ := lc.tree.next(root)
-			reply.Tree, reply.Full, reply.Nav, reply.Live = msg, true, shown.RequestURI(), path
+			// A page another one handed over to: the change from the page the
+			// browser holds — two pages of one layout share its frames — or,
+			// when their roots differ, its tree against the statics the
+			// connection already holds.
+			msg, full := lc.tree.next(root)
+			reply.Tree, reply.Full, reply.Nav, reply.Live = msg, full, shown.RequestURI(), path
 		} else {
 			// The page arrived over HTTP: when this connection renders the
 			// same, send no markup — the first change carries the tree the

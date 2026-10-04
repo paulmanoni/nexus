@@ -110,7 +110,7 @@ func TestLiveNavigate(t *testing.T) {
 	reply(t, c)
 	nav(t, srv, c, 1, "/count/bo")
 	r := reply(t, c)
-	if r.Nav != "/count/bo" || r.Live != "/count/bo/_live" || !r.Full || !strings.Contains(r.HTML, "hi bo") || !strings.Contains(r.HTML, `<p id="m">live</p>`) {
+	if r.Nav != "/count/bo" || r.Live != "/count/bo/_live" || !strings.Contains(r.HTML, "hi bo") || !strings.Contains(r.HTML, `<p id="m">live</p>`) {
 		t.Fatalf("navigating = %+v", r)
 	}
 	// The new page answers on the same connection.

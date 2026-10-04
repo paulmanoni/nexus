@@ -55,6 +55,16 @@ func TestRuntimeLiveNavigation(t *testing.T) {
 	}
 	settle(t, b)
 	deliver(map[string]any{"resume": "tok"}, "")
+	// Joined over HTTP, the page asks for its tree when quiet, and keeps
+	// itself as it is when the tree comes.
+	if len(sent) != 1 || sent[0]["event"] != "__resync" {
+		t.Fatalf("priming sent %v", sent)
+	}
+	deliver(map[string]any{"ref": sent[0]["ref"], "reset": true}, doc("List", links+`<p id="page">primed</p>`))
+	if got := js(`document.querySelector("#page").textContent`); got != "1" {
+		t.Fatalf("the prime patched the page: %s", got)
+	}
+	sent = nil
 
 	js(`window.__moves = 0; window.addEventListener("nx:navigate", function () { window.__moves++; })`)
 	js(`document.querySelector("#p2").click()`)

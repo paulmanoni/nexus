@@ -61,6 +61,7 @@ func TestRuntimeRecoversFormsOnReconnect(t *testing.T) {
 	}
 	settle(t, b)
 	deliver(map[string]any{"resume": "tok1"}, "")
+	sent = nil // the tree it asks for when quiet
 	js(`__dom.fill(document.querySelector("#n"), "typed")`)
 	settle(t, b)
 	if len(sent) != 1 || sent[0]["event"] != "Validate" {

@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- view: navigating to another live page sends the change from the page the
+  browser holds — pages of one layout share its frames — instead of the new
+  page's whole tree; a page that joined over HTTP fetches its tree once the
+  socket is quiet (without patching), so its first navigation is a change too.
+
 ## [2.13.0] - 2026-10-04
 
 ### Added

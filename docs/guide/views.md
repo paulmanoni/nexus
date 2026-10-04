@@ -299,9 +299,12 @@ From a live page, a link moves over the page's socket, as Phoenix LiveView's
 
 - **Another live page** is opened on the same connection: the old page ends,
   the new one is mounted through its own route — its gates, DI and path
-  parameters as for a page load — and sends its tree. The connection already
-  holds the statics of what both pages share (a layout's), so those are not
-  sent again; the title and new stylesheets/scripts are merged in.
+  parameters as for a page load — and sends the change from the page the
+  browser holds. Two pages of one layout share its frames, so what travels is
+  what differs: the title, the content, a menu's current item. The title and
+  new stylesheets/scripts are merged in. (A page that came over HTTP fetches
+  its tree when its socket is first quiet, so its first navigation is a
+  change too.)
 - **Anything else** — a page that isn't live, or one whose gates refuse — the
   browser loads as above.
 
