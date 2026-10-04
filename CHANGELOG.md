@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-10-04
+
 ### Added
 
 - view: **live navigation**, as Phoenix LiveView's patch and navigate. From a
