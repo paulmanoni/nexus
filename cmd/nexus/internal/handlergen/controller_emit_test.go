@@ -200,3 +200,33 @@ func TestEmit_ImplicitActions(t *testing.T) {
 		t.Error("a relative path without //nexus:controller must be rejected")
 	}
 }
+
+// A //nexus:use naming the nexus package resolves to an aliased import of the
+// root module; it must not repeat the import every generated file has.
+func TestEmit_UseNexusSelector(t *testing.T) {
+	anns := []Annotation{
+		{Func: "Stats", Keyword: "query", Line: 1},
+		{Func: "Stats", Keyword: "use", Args: []string{`nexus.Op("adminStats")`}, Line: 2,
+			Imports: []string{`nexus "github.com/paulmanoni/nexus/v2"`}},
+	}
+	got, err := Emit(Config{Package: "admin"}, anns)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if n := strings.Count(string(got), `"github.com/paulmanoni/nexus/v2"`); n != 1 {
+		t.Fatalf("the nexus import appears %d times:\n%s", n, got)
+	}
+}
+
+func TestPlainImport(t *testing.T) {
+	for in, want := range map[string]string{
+		`nexus "github.com/paulmanoni/nexus/v2"`: `"github.com/paulmanoni/nexus/v2"`,
+		`auth "github.com/x/auth"`:               `"github.com/x/auth"`,
+		`nx "github.com/paulmanoni/nexus/v2"`:    `nx "github.com/paulmanoni/nexus/v2"`,
+		`"github.com/x/rl"`:                      `"github.com/x/rl"`,
+	} {
+		if got := plainImport(in); got != want {
+			t.Errorf("plainImport(%s) = %s, want %s", in, got, want)
+		}
+	}
+}

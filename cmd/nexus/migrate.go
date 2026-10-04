@@ -254,6 +254,7 @@ func orDropped(s string) string {
 func migrateTree(root string, rules []migrateRule) ([]migrateFileResult, error) {
 	migrateRoot = root
 	sectionsDeclared = map[string]map[string]bool{}
+	owners = nil
 	var results []migrateFileResult
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `nexus generate handlers` (and the `nexus dev`/`nexus build` overlay): a
+  `//nexus:use nexus.X(…)` no longer imports the nexus package twice.
+- `nexus migrate v2` declares each undeclared nexus.toml section once — in the
+  first package that reads it, or `main.go` when nothing does — instead of in
+  `main.go` and every reading package, which panicked at init.
+
 ## [2.11.0] - 2026-10-04
 
 ### Added

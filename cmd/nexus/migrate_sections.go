@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -40,21 +41,19 @@ func migrateGoSections(rel string, src []byte) ([]byte, []migrateChange, error) 
 	if len(undeclared) == 0 {
 		return src, nil, nil
 	}
-	// main declares every section, so the app boots; a package declares
-	// those it reads, so its own tests do too.
+	// Each section gets one owner, since a binary may declare it only
+	// once: the first package (by path) that reads it, so its own tests
+	// boot too; a section nothing reads goes to main.go.
+	pkg := path.Dir(rel)
+	owners := sectionOwners()
 	var want []string
-	if f.Name.Name == "main" && isMainGo(rel) {
-		want = undeclared
-	} else {
-		for _, re := range []*regexp.Regexp{sectionRead, sectionPrefix} {
-			for _, m := range re.FindAllSubmatch(src, -1) {
-				if name := string(m[1]); slices.Contains(undeclared, name) && !slices.Contains(want, name) {
-					want = append(want, name)
-				}
-			}
+	for _, name := range undeclared {
+		owner, read := owners[name]
+		if read && owner == pkg && slices.Contains(sectionsRead(src), name) ||
+			!read && f.Name.Name == "main" && isMainGo(rel) {
+			want = append(want, name)
 		}
 	}
-	pkg := path.Dir(rel)
 	if sectionsDeclared[pkg] == nil {
 		sectionsDeclared[pkg] = map[string]bool{}
 	}
@@ -88,13 +87,68 @@ func migrateGoSections(rel string, src []byte) ([]byte, []migrateChange, error) 
 }
 
 // sectionRead matches a config read with a literal key: config.Get[T]("shop.x").
-var sectionRead = regexp.MustCompile(`\bconfig\.(?:Get|MustGet|Has)(?:\[[^\]]*\])?\(\s*"([A-Za-z0-9_-]+)\.`)
+var sectionRead = regexp.MustCompile(`\b(?:config|nexus)\.(?:Get|MustGet|Has)(?:\[[^\]]*\])?\(\s*"([A-Za-z0-9_-]+)\.`)
 
 // sectionPrefix matches a key prefix kept in a constant: "shop."
 var sectionPrefix = regexp.MustCompile(`"([A-Za-z0-9_-]+)\."`)
 
 // sectionsDeclared records, per package dir, the sections this run declared.
 var sectionsDeclared = map[string]map[string]bool{}
+
+// owners maps each section the tree's code reads to the package dir that
+// declares it; nil until sectionOwners first walks the tree.
+var owners map[string]string
+
+// sectionsRead lists the sections src reads.
+func sectionsRead(src []byte) []string {
+	var out []string
+	for _, re := range []*regexp.Regexp{sectionRead, sectionPrefix} {
+		for _, m := range re.FindAllSubmatch(src, -1) {
+			if name := string(m[1]); !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+// sectionOwners walks migrateRoot's non-test Go files once and gives each
+// section read anywhere the first reading package dir, by path.
+func sectionOwners() map[string]string {
+	if owners != nil {
+		return owners
+	}
+	owners = map[string]string{}
+	_ = filepath.WalkDir(migrateRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if p != migrateRoot && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
+				name == "vendor" || name == "node_modules" || name == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(migrateRoot, p)
+		pkg := path.Dir(filepath.ToSlash(rel))
+		for _, s := range sectionsRead(src) {
+			if cur, ok := owners[s]; !ok || pkg < cur {
+				owners[s] = pkg
+			}
+		}
+		return nil
+	})
+	return owners
+}
 
 // undeclaredSections are the top-level tables of the project's nexus.toml
 // that nothing declares, sorted.

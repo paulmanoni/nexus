@@ -351,8 +351,13 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	sort.SliceStable(stmts, func(i, j int) bool { return stmts[i].line < stmts[j].line })
 
 	importLines := make([]string, 0, len(imports))
+	seen := map[string]bool{}
 	for imp := range imports {
-		importLines = append(importLines, imp)
+		imp = plainImport(imp)
+		if !seen[imp] {
+			seen[imp] = true
+			importLines = append(importLines, imp)
+		}
 	}
 	sort.Strings(importLines)
 
@@ -562,6 +567,29 @@ func decoratorToken(a *Annotation, tok string) (string, error) {
 		return "", a.errf("//nexus:%s argument %s is not a valid quoted string", a.Keyword, tok)
 	}
 	return v, nil
+}
+
+// plainImport drops an alias that only restates the name the package is
+// imported under anyway (`nexus "…/nexus/v2"`), so it can't duplicate the
+// unaliased line.
+func plainImport(line string) string {
+	alias, quoted, ok := strings.Cut(line, " ")
+	if !ok {
+		return line
+	}
+	path, err := strconv.Unquote(quoted)
+	if err != nil {
+		return line
+	}
+	parts := strings.Split(path, "/")
+	name := parts[len(parts)-1]
+	if len(parts) > 1 && len(name) > 1 && name[0] == 'v' && strings.Trim(name[1:], "0123456789") == "" {
+		name = parts[len(parts)-2]
+	}
+	if alias == name {
+		return quoted
+	}
+	return line
 }
 
 // importsHavePath reports whether any of the annotation's import lines

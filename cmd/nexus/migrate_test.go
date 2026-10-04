@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -346,5 +347,28 @@ func TestLegacyAnnotation(t *testing.T) {
 		if (want == "") == ok || kw != want {
 			t.Errorf("%q → %q (ok=%v), want %q", text, kw, ok, want)
 		}
+	}
+}
+
+// A binary may declare a section once: two packages reading [shop] and the
+// main package must not all declare it.
+func TestMigrateV2_SectionsHaveOneOwner(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"go.mod":      "module example.com/app\n\ngo 1.26\n\nrequire github.com/paulmanoni/nexus v1.80.0\n",
+		"nexus.toml":  "[shop]\nname = \"x\"\n\n[unused]\nk = 1\n",
+		"main.go":     "package main\n\nimport \"github.com/paulmanoni/nexus\"\n\nfunc main() { nexus.Run(nexus.Config{}) }\n",
+		"a/a.go":      "package a\n\nimport \"github.com/paulmanoni/nexus\"\n\nvar N = nexus.Get[string](\"shop.name\")\n",
+		"b/b.go":      "package b\n\nimport \"github.com/paulmanoni/nexus\"\n\nvar N = nexus.Get[string](\"shop.name\")\n",
+		"b/b_test.go": "package b\n",
+	})
+	runMigrateV2(t, root)
+	count := func(file, section string) int {
+		return strings.Count(readTree(t, root, file), "config.Section[map[string]any]("+strconv.Quote(section)+")")
+	}
+	if a, b, m := count("a/a.go", "shop"), count("b/b.go", "shop"), count("main.go", "shop"); a+b+m != 1 || a != 1 {
+		t.Errorf("[shop] declared a=%d b=%d main=%d, want once in a", a, b, m)
+	}
+	if count("main.go", "unused") != 1 {
+		t.Errorf("an unread section belongs to main.go:\n%s", readTree(t, root, "main.go"))
 	}
 }
