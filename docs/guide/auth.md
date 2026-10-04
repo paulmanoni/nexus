@@ -171,6 +171,48 @@ end_on_password_change = true    # auth.SetPassword ends every other session and
 idle                   = "2h"    # end a session unused this long (0 = never)
 ```
 
+### Refresh tokens, OAuth2 and tokens from elsewhere
+
+A bearer scheme with `refresh` set returns a refresh token with every sign-in;
+`auth.RefreshToken(ctx, refresh)` exchanges it for a new pair, and the old one stops
+working. A refresh token isn't accepted as an access token, and one from before the
+user's last `RevokeUser` is refused.
+
+```toml
+[auth.schemes.api]
+type    = "bearer"
+ttl     = "1h"
+refresh = "30d"
+
+[auth.endpoints]
+token  = "/oauth/token"     # RFC 6749: grant_type=password and refresh_token
+revoke = "/oauth/revoke"    # RFC 7009
+```
+
+The token endpoint takes form-encoded or JSON bodies, answers errors as
+`{"error": "invalid_grant", …}`, and skips CSRF even in an app with sessions — it
+sets no cookie and answers only the caller, which is also what
+`app.ExemptCSRF(path)` is for.
+
+A `jwt` scheme verifies tokens another service issued — nexus never issues them — and
+loads the user named by the subject claim:
+
+```toml
+[auth.schemes.mobile]
+type     = "jwt"
+jwks     = "https://id.example.com/.well-known/jwks.json"  # or secret (HS256), or public_key (PEM: RS256/ES256)
+issuer   = "https://id.example.com"
+audience = "orders-mobile"
+subject  = "sub"              # the claim holding the user id (default sub)
+leeway   = "1m"               # clock skew allowed on exp and nbf
+```
+
+Only the algorithms the key is for are accepted (HS256 for a secret, RS256 or ES256
+for a public key), so a token can't pick `none`, or HS256 against an RSA key. JWKS
+keys are cached for an hour and fetched again for an unknown `kid`. A jwt scheme and
+a bearer scheme share the `Authorization` header: a JWT has three dot-separated
+parts, a nexus token none.
+
 ### Throttling sign-ins
 
 `auth.Login` counts failures — per account, and per client IP (`nexus.ClientIP`,

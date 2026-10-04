@@ -89,6 +89,12 @@ type EndpointSettings struct {
 	Login  string `toml:"login"`  // POST {login, password, next?, scheme?}
 	Logout string `toml:"logout"` // POST
 	Me     string `toml:"me"`     // GET
+	// Token is an OAuth2 token endpoint (RFC 6749): grant_type=password
+	// and refresh_token, issuing the first bearer scheme's tokens. Revoke
+	// is its revocation endpoint (RFC 7009). Both skip CSRF — they set no
+	// cookie and answer only the caller.
+	Token  string `toml:"token"`
+	Revoke string `toml:"revoke"`
 }
 
 // SchemeSettings is one [auth.schemes.<name>] table.
@@ -104,6 +110,25 @@ type SchemeSettings struct {
 	Secure bool `toml:"secure"`
 	// Header is where an API key arrives (default "X-API-Key").
 	Header string `toml:"header"`
+	// Refresh is a bearer scheme's refresh-token lifetime: SignIn then also
+	// returns a refresh_token, exchanged at the token endpoint (or with
+	// auth.RefreshToken) for a new pair. 0: no refresh tokens.
+	Refresh time.Duration `toml:"refresh"`
+
+	// jwt: verify tokens another service issued. One key source: Secret
+	// (HS256), PublicKey (a PEM public key: RS256 or ES256) or JWKS (a
+	// URL serving the issuer's keys).
+	Secret    string `toml:"secret"`
+	PublicKey string `toml:"public_key"`
+	JWKS      string `toml:"jwks"`
+	// Issuer and Audience, when set, must match the iss and aud claims.
+	Issuer   string `toml:"issuer"`
+	Audience string `toml:"audience"`
+	// Subject names the claim holding the user id for Users.Load (default
+	// "sub").
+	Subject string `toml:"subject"`
+	// Leeway is the clock skew allowed on exp and nbf (default 1m).
+	Leeway time.Duration `toml:"leeway"`
 }
 
 // PasswordSettings is [auth.passwords]: how auth.Login verifies and
@@ -126,6 +151,7 @@ const (
 	SchemeSession = "session"
 	SchemeBearer  = "bearer"
 	SchemeAPIKey  = "apikey"
+	SchemeJWT     = "jwt"
 
 	defaultBearerTTL = 12 * time.Hour
 	defaultCacheTTL  = 5 * time.Minute
@@ -189,14 +215,30 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 			if sc.Header == "" {
 				sc.Header = "X-API-Key"
 			}
+		case SchemeJWT:
+			n := 0
+			for _, v := range []string{sc.Secret, sc.PublicKey, sc.JWKS} {
+				if v != "" {
+					n++
+				}
+			}
+			if n != 1 {
+				return nil, fmt.Errorf(`[auth.schemes.%s] type = "jwt" needs one of secret, public_key or jwks`, name)
+			}
+			if sc.Subject == "" {
+				sc.Subject = "sub"
+			}
+			if sc.Leeway <= 0 {
+				sc.Leeway = time.Minute
+			}
 		default:
-			return nil, fmt.Errorf(`[auth.schemes.%s] type = %q: want "session", "bearer" or "apikey"`, name, sc.Type)
+			return nil, fmt.Errorf(`[auth.schemes.%s] type = %q: want "session", "bearer", "apikey" or "jwt"`, name, sc.Type)
 		}
 		r.schemes = append(r.schemes, namedScheme{name, sc})
 	}
 	// Explicit credentials before the ambient cookie: an API key, then a
 	// bearer token, then the session; by name within a type.
-	rank := map[string]int{SchemeAPIKey: 0, SchemeBearer: 1, SchemeSession: 2}
+	rank := map[string]int{SchemeAPIKey: 0, SchemeJWT: 1, SchemeBearer: 2, SchemeSession: 3}
 	sort.Slice(r.schemes, func(i, j int) bool {
 		a, b := r.schemes[i], r.schemes[j]
 		if rank[a.Type] != rank[b.Type] {

@@ -686,8 +686,9 @@ the `[auth]` table, and `Config.Users` names the app's `Users`.
 | 2 | areas (kind gates, login redirects with `next`, kinds checked in `Login`), the `next` validator, throttle (per process), `[auth.endpoints]` login/logout/me (`Users.Public`), `OpGates` follows sign-in and areas | `Endpoints`, `LoginEndpoint`/`LogoutEndpoint`, `ErrorHandler` | done (2.2) |
 | 2b | CSRF token rotation on `SignIn`/`SignOut`; the automatic Inertia `auth` prop `{user, can}`; the area `forbidden` page (a path page visits are redirected to, not a component — auth renders no pages itself); a shared (cache-backed) throttle | — | done (2.3) |
 | 3a | per-user epoch in the `TokenStore`; `RevokeUser`, `Revoke`; `[auth.sessions]` single / end_on_password_change / idle; WS and live-view connections re-checked per message (`nexus.RegisterConnectionCheck`) | `Manager.Invalidate*` | done (2.4) |
-| 3b | refresh tokens, the OAuth2 token/revoke endpoints (password and refresh_token grants), `jwt`, `auth.Keys`, `Sessions` (needs a per-user index in the store) | `Manager.*`, `extension/oauth2` server half | 2.5 |
-| 4 | impersonation, policies, job identities, dashboard tab, `nexus auth check`, `authtest` | `MemoryUserStore` | 2.6 |
+| 3b | refresh tokens (rotating), `[auth.endpoints]` token (OAuth2 password + refresh_token grants) and revoke, CSRF-exempt via `App.ExemptCSRF`; `jwt` (secret / PEM / JWKS, alg pinned to the key) | `Manager.*`, `extension/oauth2` server half | done (2.5) |
+| 3c | `auth.Keys` (named API keys, listed) and `auth.Sessions` (a user's devices) — both need a per-user index in the token store; OAuth2 clients (`client_credentials`, `[auth.oauth2.clients]`) | `extension/oauth2` clients | 2.6 |
+| 4 | impersonation, policies, job identities, dashboard tab, `nexus auth check`, `authtest` | `MemoryUserStore` | 2.7 |
 | 5 | `nexus migrate` rows for every deprecated name | — | with each slice |
 
 ## Open questions

@@ -179,6 +179,8 @@ type App struct {
 	securityConfig                    *config.Security
 	csrfAuto, csrfLate, csrfInstalled bool
 	csrfReasons                       []string
+	csrfExemptMu                      sync.RWMutex
+	csrfExempt                        map[string]bool // ExemptCSRF paths
 
 	// introspect + introspectionNets are the parsed Config knobs used
 	// to gate GraphQL __schema queries (in addition to the dashboard).

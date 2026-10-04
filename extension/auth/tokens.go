@@ -25,6 +25,8 @@ type StoredToken struct {
 	// works. The store also keeps each user's current epoch, as a record
 	// with only UserID and Epoch.
 	Epoch int64 `json:"epoch,omitempty"`
+	// Use is "refresh" for a refresh token, "" for an access token or key.
+	Use string `json:"use,omitempty"`
 }
 
 // TokenStore keeps issued tokens by hash. Config.Tokens sets it; the

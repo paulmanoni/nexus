@@ -1256,6 +1256,11 @@ auth.RevokeUser(ctx, userID) signs a user out everywhere (sessions, tokens,
 and open WebSocket / live-view connections at their next message);
 auth.Revoke(ctx, token) ends one token. [auth.sessions] single = true,
 end_on_password_change = true (default), idle = "2h".
+Bearer refresh = "30d" adds refresh tokens (auth.RefreshToken rotates
+them); [auth.endpoints] token = "/oauth/token" (password, refresh_token
+grants) and revoke = "/oauth/revoke" skip CSRF. A jwt scheme verifies
+tokens issued elsewhere: secret | public_key | jwks, issuer, audience,
+subject ("sub"), leeway.
 [auth] keys: docs/reference/nexus-toml.md.
 
 RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued

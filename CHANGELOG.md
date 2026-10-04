@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-04
+
+### Added
+
+- **Auth stage 3b: tokens** on the `Config.Users` path:
+  - Refresh tokens: a bearer scheme's `refresh` lifetime; `Credential.RefreshToken`;
+    `auth.RefreshToken(ctx, rt)` rotates the pair. Refused as an access token,
+    and after `RevokeUser`.
+  - `[auth.endpoints] token` — an OAuth2 token endpoint (password and
+    refresh_token grants, RFC 6749 errors) — and `revoke` (RFC 7009). Both skip
+    CSRF.
+  - A `jwt` scheme verifying tokens issued elsewhere: `secret` (HS256),
+    `public_key` (PEM, RS256/ES256) or `jwks` (cached, refetched for an unknown
+    `kid`); `issuer`, `audience`, `subject`, `leeway`. The algorithm is pinned
+    to the key. It shares the Authorization header with a bearer scheme by token
+    shape.
+- `App.ExemptCSRF(path)`: exempt one endpoint that sets no cookie from CSRF.
+
 ## [2.4.0] - 2026-10-04
 
 ### Added

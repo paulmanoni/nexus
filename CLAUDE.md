@@ -1294,7 +1294,11 @@ path for refused page visits; `Config.Throttle: auth.CacheThrottle(cache)` share
 per-user epoch (stored in the TokenStore) → `auth.RevokeUser(ctx, id)` (sign out everywhere),
 `auth.Revoke(ctx, token)`, `[auth.sessions] single / end_on_password_change (default true) / idle`;
 AsWS and live-view connections run `nexus.RegisterConnectionCheck` checks per message and close when
-the epoch moves.
+the epoch moves. 2.5: bearer `refresh = "30d"` → `Credential.RefreshToken`,
+`auth.RefreshToken(ctx, rt)` (rotating); `[auth.endpoints] token` (OAuth2 password + refresh_token grants)
+/ `revoke` (RFC 7009), both CSRF-exempt via `App.ExemptCSRF(path)`; `jwt` scheme (secret HS256 /
+public_key PEM RS256|ES256 / jwks URL; issuer, audience, subject, leeway; alg pinned to the key) — shares
+the Authorization header with bearer by token shape.
 
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`

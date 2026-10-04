@@ -96,6 +96,9 @@ type Credential struct {
 	AccessToken string `json:"access_token,omitempty"`
 	TokenType   string `json:"token_type,omitempty"`
 	ExpiresIn   int    `json:"expires_in,omitempty"` // seconds; 0 = no expiry
+	// RefreshToken comes with a bearer scheme that has refresh set;
+	// auth.RefreshToken (or the token endpoint) exchanges it for a new pair.
+	RefreshToken string `json:"refresh_token,omitempty"`
 	// Next is where the signed-in user goes: a valid next (ReturnTo, else
 	// the request's ?next=) inside an area their kind may enter, else the
 	// home of the area they signed in under, else [auth] home.
@@ -168,8 +171,22 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		secure.RotateCSRF(ctx)
 		return &Credential{Scheme: sc.name, Next: landing()}, nil
 	}
+	if sc.Type == SchemeJWT {
+		return nil, errors.New("auth.SignIn: a jwt scheme only verifies tokens another service issued")
+	}
+	c, err := st.issue(ctx, sc, id.ID, epoch)
+	if err != nil {
+		return nil, err
+	}
+	c.Next = landing()
+	return c, nil
+}
+
+// issue stores and returns a new token (and, for a bearer scheme with
+// refresh, a refresh token) for userID under epoch.
+func (st *moduleState) issue(ctx context.Context, sc namedScheme, userID string, epoch int64) (*Credential, error) {
 	tok := newToken()
-	t := StoredToken{UserID: id.ID, Scheme: sc.name, Epoch: epoch}
+	t := StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch}
 	ttl := time.Duration(0)
 	if sc.Type == SchemeBearer {
 		ttl = sc.TTL
@@ -178,11 +195,63 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 	if err := st.config.tokens.Save(ctx, hashToken(tok), t, ttl); err != nil {
 		return nil, err
 	}
-	c := &Credential{Scheme: sc.name, AccessToken: tok, ExpiresIn: int(ttl / time.Second), Next: landing()}
-	if sc.Type == SchemeBearer {
-		c.TokenType = "Bearer"
+	c := &Credential{Scheme: sc.name, AccessToken: tok, ExpiresIn: int(ttl / time.Second)}
+	if sc.Type != SchemeBearer {
+		return c, nil
+	}
+	c.TokenType = "Bearer"
+	if sc.Refresh > 0 {
+		rt := newToken()
+		r := StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch, Use: "refresh", Expires: time.Now().Add(sc.Refresh)}
+		if err := st.config.tokens.Save(ctx, hashToken(rt), r, sc.Refresh); err != nil {
+			return nil, err
+		}
+		c.RefreshToken = rt
 	}
 	return c, nil
+}
+
+// RefreshToken exchanges a refresh token for a new access and refresh token
+// pair; the old refresh token stops working. One from before the user's
+// last RevokeUser, of a user Load no longer finds, or refused by
+// CheckLogin is an Unauthenticated error.
+func RefreshToken(ctx context.Context, refresh string) (*Credential, error) {
+	st, err := configState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	invalid := nexus.Err(nexus.Unauthenticated, "invalid or expired refresh token")
+	h := hashToken(refresh)
+	t, err := st.config.tokens.Load(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil || t.Use != "refresh" {
+		return nil, invalid
+	}
+	sc, ok := st.config.settings.scheme(t.Scheme)
+	if !ok {
+		return nil, invalid
+	}
+	if cur, err := st.epoch(ctx, t.UserID); err != nil || cur != t.Epoch {
+		return nil, invalid
+	}
+	if err := st.config.tokens.Delete(ctx, h); err != nil {
+		return nil, err
+	}
+	id, err := st.load(ctx, t.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if id == nil {
+		return nil, invalid
+	}
+	if lc, ok := st.config.users.(LoginChecker); ok {
+		if err := lc.CheckLogin(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	return st.issue(ctx, sc, t.UserID, t.Epoch)
 }
 
 // SignOut ends the credential this request came with: the session is

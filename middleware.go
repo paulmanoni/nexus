@@ -384,11 +384,31 @@ func (a *App) installAutoCSRF() {
 	}
 }
 
+// ExemptCSRF exempts one path (as registered; the route prefix is added)
+// from the CSRF check. Only for an endpoint a cross-site post can't abuse:
+// one that sets no cookie and answers only to the caller, such as an
+// OAuth2 token endpoint.
+func (a *App) ExemptCSRF(path string) {
+	a.csrfExemptMu.Lock()
+	defer a.csrfExemptMu.Unlock()
+	if a.csrfExempt == nil {
+		a.csrfExempt = map[string]bool{}
+	}
+	a.csrfExempt[a.PrefixPath(path)] = true
+}
+
+func (a *App) csrfExempted(path string) bool {
+	a.csrfExemptMu.RLock()
+	defer a.csrfExemptMu.RUnlock()
+	return a.csrfExempt[path]
+}
+
 func (a *App) installCSRF(reason string) {
 	cc := secure.CSRFConfig{}
 	if a.securityConfig != nil {
 		cc.CookieSecure = a.securityConfig.CSRFCookieSecure
 	}
+	cc.Skip = func(c *httpx.Ctx) bool { return secure.DefaultSkip(c) || a.csrfExempted(c.Request.URL.Path) }
 	secure.ApplyCSRFDefaults(&cc)
 	a.engine.Use(secure.CSRFHandler(&cc))
 	a.registry.RegisterMiddleware(middleware.Info{

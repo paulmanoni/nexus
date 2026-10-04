@@ -2,11 +2,14 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/paulmanoni/nexus/v2"
+	"github.com/paulmanoni/nexus/v2/httpx"
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
@@ -168,5 +171,94 @@ func (st *moduleState) endpointOptions() nexus.Option {
 		opts = append(opts, nexus.AsRest("GET", ep.Me, st.meEndpoint,
 			Public(), nexus.AuthRoute("me"), nexus.Describe("The signed-in user and what they may do")))
 	}
+	if ep.Token != "" {
+		opts = append(opts, nexus.AsRest("POST", ep.Token, st.tokenEndpoint,
+			Public(), nexus.Describe("OAuth2 token endpoint: password and refresh_token grants")),
+			nexus.Invoke(func(app *nexus.App) { app.ExemptCSRF(ep.Token) }))
+	}
+	if ep.Revoke != "" {
+		opts = append(opts, nexus.AsRest("POST", ep.Revoke, revokeEndpoint,
+			Public(), nexus.Describe("OAuth2 token revocation")),
+			nexus.Invoke(func(app *nexus.App) { app.ExemptCSRF(ep.Revoke) }))
+	}
 	return nexus.Options(opts...)
+}
+
+// oauthParams reads an OAuth2 request: form-encoded as RFC 6749 says, or
+// JSON, which many clients send.
+func oauthParams(c *httpx.Ctx) map[string]string {
+	out := map[string]string{}
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "application/json") {
+		var m map[string]any
+		if json.NewDecoder(io.LimitReader(c.Request.Body, 1<<16)).Decode(&m) == nil {
+			for k, v := range m {
+				if s, ok := v.(string); ok {
+					out[k] = s
+				}
+			}
+		}
+		return out
+	}
+	_ = c.Request.ParseForm()
+	for k := range c.Request.PostForm {
+		out[k] = c.Request.PostForm.Get(k)
+	}
+	return out
+}
+
+// oauthError answers in RFC 6749 §5.2's shape.
+func oauthError(c *httpx.Ctx, status int, code, desc string) {
+	c.Header("Cache-Control", "no-store")
+	c.JSON(status, map[string]string{"error": code, "error_description": desc})
+}
+
+func (st *moduleState) tokenEndpoint(c *httpx.Ctx) {
+	ctx := c.Request.Context()
+	p := oauthParams(c)
+	var cred *Credential
+	var err error
+	switch p["grant_type"] {
+	case "password":
+		sc, ok := st.config.settings.firstOf(SchemeBearer)
+		if !ok {
+			oauthError(c, http.StatusBadRequest, "unsupported_grant_type", "no bearer scheme issues tokens")
+			return
+		}
+		var id *Identity
+		if id, err = Login(ctx, Password{Username: p["username"], Password: p["password"]}); err == nil {
+			cred, err = SignIn(ctx, id, Using(sc.name))
+		}
+	case "refresh_token":
+		cred, err = RefreshToken(ctx, p["refresh_token"])
+	case "":
+		oauthError(c, http.StatusBadRequest, "invalid_request", "grant_type is required")
+		return
+	default:
+		oauthError(c, http.StatusBadRequest, "unsupported_grant_type", "supported: password, refresh_token")
+		return
+	}
+	if err != nil {
+		ne := nexus.ErrorOf(err)
+		switch ne.Code {
+		case nexus.TooMany:
+			oauthError(c, http.StatusTooManyRequests, "invalid_grant", ne.Error())
+		case nexus.InvalidInput, nexus.Unauthenticated, nexus.Forbidden:
+			oauthError(c, http.StatusBadRequest, "invalid_grant", ne.Error())
+		default:
+			nexus.WriteError(c, err)
+		}
+		return
+	}
+	cred.Next = ""
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, cred)
+}
+
+// revokeEndpoint ends a token (RFC 7009): 200 whether or not it was valid.
+func revokeEndpoint(c *httpx.Ctx) {
+	if tok := oauthParams(c)["token"]; tok != "" {
+		_ = Revoke(c.Request.Context(), tok)
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, map[string]any{})
 }

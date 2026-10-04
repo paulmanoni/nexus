@@ -213,6 +213,8 @@ lockout = "15m"            # an account's lock at its limit
 login  = "/api/auth/login"
 logout = "/api/auth/logout"
 me     = "/api/auth/me"
+token  = "/oauth/token"     # OAuth2 password + refresh_token grants; no CSRF
+revoke = "/oauth/revoke"    # RFC 7009
 
 [auth.schemes.web]         # tried apikey → bearer → session, by name within a type
 type   = "session"         # cookie → server-side session (extension/session) → user id
@@ -221,8 +223,17 @@ ttl    = "336h"            # the session's lifetime (default 14 days)
 secure = true              # mark the cookie Secure behind TLS
 
 [auth.schemes.api]
-type = "bearer"            # opaque tokens auth.SignIn issues, stored as SHA-256
-ttl  = "12h"               # default 12h
+type    = "bearer"         # opaque tokens auth.SignIn issues, stored as SHA-256
+ttl     = "12h"            # default 12h
+refresh = "30d"            # also issue refresh tokens (default: none)
+
+[auth.schemes.mobile]
+type     = "jwt"           # verify tokens another service issued
+jwks     = "https://id.example.com/.well-known/jwks.json"   # or secret (HS256) / public_key (PEM)
+issuer   = "https://id.example.com"
+audience = "orders-mobile"
+subject  = "sub"           # the claim holding the user id
+leeway   = "1m"            # clock skew on exp/nbf
 
 [auth.schemes.partners]
 type   = "apikey"          # never expire; revoked by signing out with them

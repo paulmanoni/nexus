@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -87,7 +88,13 @@ func (st *moduleState) installConfigPath(app *nexus.App) error {
 			app.RequireCSRF("auth session scheme " + sc.name)
 			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: sessionExtractor{}, resolve: st.sessionResolve(sc.name)})
 		case SchemeBearer:
-			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: Bearer(), resolve: st.tokenResolve(sc.name)})
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: bearerShaped(false), resolve: st.tokenResolve(sc.name)})
+		case SchemeJWT:
+			v, err := newJWTVerifier(sc.SchemeSettings)
+			if err != nil {
+				return fmt.Errorf("[auth.schemes.%s]: %w", sc.name, err)
+			}
+			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: bearerShaped(true), resolve: st.jwtResolve(sc.name, v)})
 		case SchemeAPIKey:
 			st.schemes = append(st.schemes, boundScheme{name: sc.name, extract: APIKey(sc.Header), resolve: st.tokenResolve(sc.name)})
 		}
@@ -148,6 +155,9 @@ func (st *moduleState) tokenResolve(name string) Resolver {
 		if t == nil || t.Scheme != name {
 			return nil, &credentialError{name, "unknown, expired or revoked token"}
 		}
+		if t.Use == "refresh" {
+			return nil, &credentialError{name, "a refresh token is not an access token"}
+		}
 		cur, err := st.epoch(ctx, t.UserID)
 		if err != nil {
 			return nil, err
@@ -156,6 +166,31 @@ func (st *moduleState) tokenResolve(name string) Resolver {
 			return nil, &credentialError{name, revokedReason}
 		}
 		return st.loadAs(ctx, name, t.UserID)
+	}
+}
+
+// bearerShaped is Bearer() for one token shape: a JWT (three dot-separated
+// parts) for a jwt scheme, an opaque nexus token (no dot) for a bearer one —
+// so the two schemes share the Authorization header without claiming each
+// other's tokens.
+func bearerShaped(jwt bool) Extractor {
+	b := Bearer()
+	return bearerExtractor{Extractor: ExtractorFunc(func(r *http.Request) (string, bool) {
+		tok, ok := b.Extract(r)
+		if !ok || (strings.Count(tok, ".") == 2) != jwt {
+			return "", false
+		}
+		return tok, true
+	})}
+}
+
+func (st *moduleState) jwtResolve(name string, v *jwtVerifier) Resolver {
+	return func(ctx context.Context, tok string) (*Identity, error) {
+		sub, reason := v.verify(ctx, tok)
+		if reason != "" {
+			return nil, &credentialError{name, reason}
+		}
+		return st.loadAs(ctx, name, sub)
 	}
 }
 

@@ -52,6 +52,12 @@
             },
             "me": {
               "type": "string"
+            },
+            "revoke": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
             }
           },
           "type": "object"
@@ -99,14 +105,40 @@
           "additionalProperties": {
             "additionalProperties": false,
             "properties": {
+              "audience": {
+                "type": "string"
+              },
               "cookie": {
                 "type": "string"
               },
               "header": {
                 "type": "string"
               },
+              "issuer": {
+                "type": "string"
+              },
+              "jwks": {
+                "type": "string"
+              },
+              "leeway": {
+                "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+                "type": "string"
+              },
+              "public_key": {
+                "type": "string"
+              },
+              "refresh": {
+                "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
+                "type": "string"
+              },
+              "secret": {
+                "type": "string"
+              },
               "secure": {
                 "type": "boolean"
+              },
+              "subject": {
+                "type": "string"
               },
               "ttl": {
                 "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
