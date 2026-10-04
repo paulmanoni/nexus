@@ -340,6 +340,14 @@ socket too. After every navigation the runtime fires `nx:navigate` on
   Messages are compressed (`permessage-deflate`). The browser keeps the tree,
   applies each change, renders it back to markup and morphs the page; one that
   loses track asks for the whole tree.
+- **What a page costs.** Each connected page runs on one goroutine (plus its
+  socket's reader) and keeps its state, a compact shadow of its last tree to
+  diff against, and its socket — about 60 KB in all; a page idle for
+  `view.LiveIdleTrim` (2 minutes) lets the shadow go and its next reply is the
+  whole tree. On one 10-core machine, 20,000 connected users each acting every
+  ~5 seconds saw p50 0.2 ms and p99 7 ms; 20,000 acting every ~2 seconds
+  (10,000 events/s) p99 34 ms. Set `GOMEMLIMIT` in production to keep the
+  heap's headroom bounded.
 - **Reconnects resume.** A dropped socket retries with jittered backoff (at
   once when the network returns or the tab is looked at again); the page shows
   `data-nx-live-state="disconnected"` meanwhile — style it. The server keeps

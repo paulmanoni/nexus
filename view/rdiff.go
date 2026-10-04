@@ -1,8 +1,7 @@
 package view
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
+	"hash/maphash"
 	"strconv"
 )
 
@@ -33,7 +32,7 @@ import (
 type treeDiffer struct {
 	prev *rframe
 	ids  map[string]int // fingerprint → the id the browser knows its statics by
-	strs map[string]int // long markup → the id the browser keeps it under
+	strs map[string]int // long markup's sig → the id the browser keeps it under
 }
 
 // Markup of at least refMinLen bytes is kept by the connection, up to
@@ -55,7 +54,7 @@ func (t *treeDiffer) next(root *rframe) (msg any, full bool) {
 		t.ids, t.strs = map[string]int{}, map[string]int{}
 	}
 	prev := t.prev
-	t.prev = root
+	defer func() { t.prev = shadow(root) }()
 	if prev == nil || prev.fp != root.fp {
 		return t.frame(root), true
 	}
@@ -105,14 +104,15 @@ func (t *treeDiffer) str(s string) any {
 	if len(s) < refMinLen {
 		return s
 	}
-	if id, ok := t.strs[s]; ok {
+	k := sig(s)
+	if id, ok := t.strs[k]; ok {
 		return map[string]any{"r": id}
 	}
 	if len(t.strs) >= refMax {
 		return s
 	}
 	id := len(t.strs)
-	t.strs[s] = id
+	t.strs[k] = id
 	return map[string]any{"r": id, "v": s}
 }
 
@@ -134,15 +134,16 @@ func (t *treeDiffer) frameChange(a, b *rframe) map[string]any {
 func (t *treeDiffer) dynChange(a, b any) (any, bool) {
 	switch b := b.(type) {
 	case string:
-		old, ok := a.(string)
+		old, ok := a.(strSig)
 		if !ok {
 			return t.str(b), true
 		}
-		if old == b {
+		k := sig(b)
+		if old.h == k {
 			return nil, false
 		}
-		if _, kept := t.strs[b]; !kept && len(b) > 256 {
-			if p, ok := stringPatch(old, b); ok {
+		if _, kept := t.strs[k]; !kept && old.long != "" && len(b) > longMarkup {
+			if p, ok := stringPatch(old.long, b); ok {
 				return map[string]any{"p": p}, true
 			}
 		}
@@ -222,13 +223,44 @@ func (t *treeDiffer) compChange(a, b *rcomp) (any, bool) {
 	return map[string]any{"k": steps}, true
 }
 
+// itemKeys identify a loop's items by their statics and dynamics: two items
+// with the same key render the same.
 func itemKeys(items []*rframe) []string {
 	out := make([]string, len(items))
+	var a, b maphash.Hash
+	a.SetSeed(fpSeeds[0])
+	b.SetSeed(fpSeeds[1])
 	for i, it := range items {
-		h := sha256.Sum256([]byte(it.fp + "\x00" + it.html()))
-		out[i] = base64.RawURLEncoding.EncodeToString(h[:12])
+		a.Reset()
+		b.Reset()
+		hashFrame(&a, it)
+		hashFrame(&b, it)
+		out[i] = sum128(&a, &b)
 	}
 	return out
+}
+
+func hashFrame(h *maphash.Hash, f *rframe) {
+	h.WriteString(f.fp)
+	for _, d := range f.d {
+		switch d := d.(type) {
+		case string:
+			h.WriteByte(1)
+			h.WriteString(sig(d))
+		case strSig:
+			h.WriteByte(1)
+			h.WriteString(d.h)
+		case *rframe:
+			h.WriteByte(2)
+			hashFrame(h, d)
+		case *rcomp:
+			h.WriteByte(3)
+			for _, it := range d.items {
+				hashFrame(h, it)
+			}
+			h.WriteByte(4)
+		}
+	}
 }
 
 // stringPatch is the token patch from old to new markup, when it is clearly
@@ -240,4 +272,49 @@ func stringPatch(old, new string) ([]any, bool) {
 		return nil, false
 	}
 	return p, true
+}
+
+// The tree a connection keeps for its next diff is a shadow of the last
+// render: frames and loops as they were, each dynamic string as its sig —
+// enough to tell what changed — and only long markup kept whole, for token
+// patches. A page holds a few bytes per dynamic, not a copy of its markup.
+
+const longMarkup = 1024
+
+type strSig struct {
+	h    string // sig of the markup
+	long string // the markup itself, when longer than longMarkup
+}
+
+// sig is a 128-bit maphash of s, as a string.
+func sig(s string) string {
+	var a, b maphash.Hash
+	a.SetSeed(fpSeeds[0])
+	b.SetSeed(fpSeeds[1])
+	a.WriteString(s)
+	b.WriteString(s)
+	return sum128(&a, &b)
+}
+
+func shadow(f *rframe) *rframe {
+	out := &rframe{fp: f.fp, d: make([]any, len(f.d))}
+	for i, d := range f.d {
+		switch d := d.(type) {
+		case string:
+			ss := strSig{h: sig(d)}
+			if len(d) > longMarkup {
+				ss.long = d
+			}
+			out.d[i] = ss
+		case *rframe:
+			out.d[i] = shadow(d)
+		case *rcomp:
+			c := &rcomp{items: make([]*rframe, len(d.items))}
+			for j, it := range d.items {
+				c.items[j] = shadow(it)
+			}
+			out.d[i] = c
+		}
+	}
+	return out
 }

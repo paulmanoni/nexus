@@ -119,3 +119,26 @@ func setGrace(d time.Duration) (restore func()) {
 		ResumeGrace = old
 	}
 }
+
+var livePingPeriod = defaultPingPeriod
+
+// liveTimings reads the ping period and LiveIdleTrim for a connection,
+// under the lock tests change them with.
+func liveTimings() (ping, trim time.Duration) {
+	parking.Lock()
+	defer parking.Unlock()
+	return livePingPeriod, LiveIdleTrim
+}
+
+// setLiveTimings changes them for a test.
+func setLiveTimings(ping, trim time.Duration) (restore func()) {
+	parking.Lock()
+	defer parking.Unlock()
+	oldPing, oldTrim := livePingPeriod, LiveIdleTrim
+	livePingPeriod, LiveIdleTrim = ping, trim
+	return func() {
+		parking.Lock()
+		defer parking.Unlock()
+		livePingPeriod, LiveIdleTrim = oldPing, oldTrim
+	}
+}

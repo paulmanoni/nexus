@@ -42,9 +42,10 @@ func options() []nexus.Option {
 		nexus.AsRest("GET", "/_view/runtime.js", serveJS(func() string { return runtimeJS }), nexus.HideFromDashboard()),
 		nexus.AsRest("GET", "/_view/import.js", serveJS(func() string { return importJS }), nexus.HideFromDashboard()),
 		nexus.AsRest("GET", "/_view/twins.js", serveJS(twinsJS), nexus.HideFromDashboard()),
-		nexus.Invoke(func(app *nexus.App) {
+		nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) {
 			lastApp.Store(app)
 			registerIslands(app)
+			lc.Append(nexus.Hook{OnStop: func(context.Context) error { closeLive(app); return nil }})
 		}),
 	}
 }

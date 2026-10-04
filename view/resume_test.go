@@ -83,3 +83,25 @@ func waitParked(t *testing.T, n int) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A page idle past LiveIdleTrim lets go of its tree; its next reply is the
+// whole tree again, telling the browser to start afresh.
+func TestLiveIdleTrim(t *testing.T) {
+	t.Cleanup(setLiveTimings(20*time.Millisecond, 10*time.Millisecond))
+	srv := bootLive(t)
+	a := dialLive(t, srv, "/count/ana/_live")
+	reply(t, a)
+	if err := a.WriteJSON(liveEvent{Ref: 1, Event: "Add", Args: []json.RawMessage{json.RawMessage("1")}}); err != nil {
+		t.Fatal(err)
+	}
+	if r := reply(t, a); r.Full {
+		t.Fatalf("an active page's reply is a change: %+v", r)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := a.WriteJSON(liveEvent{Ref: 2, Event: "Add", Args: []json.RawMessage{json.RawMessage("1")}}); err != nil {
+		t.Fatal(err)
+	}
+	if r := reply(t, a); !r.Full || !r.Reset || !strings.Contains(r.HTML, `<p id="n">12</p>`) {
+		t.Fatalf("after idling = %+v", r)
+	}
+}

@@ -3,8 +3,8 @@ package view
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
+	"encoding/binary"
+	"hash/maphash"
 	"io"
 	"strings"
 
@@ -232,9 +232,28 @@ func flatten(f *rframe) any {
 	return f
 }
 
+// fingerprint identifies a frame's statics within the process: 128 bits of
+// maphash, two seeds — fast, and never sent or compared across processes.
 func fingerprint(s []string) string {
-	h := sha256.Sum256([]byte(strings.Join(s, "\x00")))
-	return base64.RawURLEncoding.EncodeToString(h[:12])
+	var a, b maphash.Hash
+	a.SetSeed(fpSeeds[0])
+	b.SetSeed(fpSeeds[1])
+	for _, x := range s {
+		a.WriteString(x)
+		a.WriteByte(0)
+		b.WriteString(x)
+		b.WriteByte(0)
+	}
+	return sum128(&a, &b)
+}
+
+var fpSeeds = [2]maphash.Seed{maphash.MakeSeed(), maphash.MakeSeed()}
+
+func sum128(a, b *maphash.Hash) string {
+	var out [16]byte
+	binary.LittleEndian.PutUint64(out[:8], a.Sum64())
+	binary.LittleEndian.PutUint64(out[8:], b.Sum64())
+	return string(out[:])
 }
 
 // html renders a tree back into markup — what the browser does with it.

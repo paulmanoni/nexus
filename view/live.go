@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -358,13 +359,13 @@ func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket,
 	return err
 }
 
-func (in *instance) mount(ctx context.Context, c *httpx.Ctx, sock *Socket) error {
+func (in *instance) mount(ctx context.Context, param func(string) string, sock *Socket) error {
 	if in.def.mount == nil {
 		return nil
 	}
 	raw := make([]json.RawMessage, len(in.def.params))
 	for i, name := range in.def.params {
-		v := c.Param(name)
+		v := param(name)
 		// A path parameter is a string on the wire: quote it unless the
 		// parameter decodes from a number or a bool.
 		switch in.def.mount.fn.Type().In(in.def.mount.args[i]).Kind() {
@@ -442,7 +443,7 @@ func (d *liveDef) pageHandler() any {
 		ctx := args[0].Interface().(context.Context)
 		c := args[1].Interface().(*httpx.Ctx)
 		in := d.instance(args[2], args[3:])
-		if err := in.mount(ctx, c, &Socket{}); err != nil {
+		if err := in.mount(ctx, c.Param, &Socket{}); err != nil {
 			return fail(err)
 		}
 		if err := in.params(ctx, &Socket{}, c.Request.URL); err != nil {
@@ -509,12 +510,22 @@ func (upgraded) Render(*httpx.Ctx, any) error { return nil }
 
 // liveUpgrader compresses messages (permessage-deflate) when the browser
 // offers it, as every browser does: a full render shrinks several times over.
-var liveUpgrader = websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin, EnableCompression: true}
+// Its write buffers come from a pool, held only while a message is written:
+// an idle page keeps none.
+// Browsers send small messages, so the read buffer is small too.
+var liveUpgrader = websocket.Upgrader{CheckOrigin: httpx.CheckWebSocketOrigin, EnableCompression: true,
+	ReadBufferSize: 1024, WriteBufferPool: &sync.Pool{}}
+
+// LiveIdleTrim is how long a live page may sit without events or pushes
+// before the server lets go of the render tree it keeps for diffing; the
+// next reply then carries the whole tree. An idle tab costs its connection
+// and its state, not a copy of its page.
+var LiveIdleTrim = 2 * time.Minute
 
 const (
-	liveWriteWait  = 10 * time.Second
-	livePongWait   = 60 * time.Second
-	livePingPeriod = 50 * time.Second
+	liveWriteWait     = 10 * time.Second
+	livePongWait      = 60 * time.Second
+	defaultPingPeriod = 50 * time.Second
 )
 
 // socketHandler serves the live connection: mount a fresh instance, send
@@ -529,55 +540,103 @@ func (d *liveDef) socketHandler() any {
 		ctx := args[0].Interface().(context.Context)
 		c := args[1].Interface().(*httpx.Ctx)
 		owner, _ := nexus.RequestIdentity(ctx)
-		path := c.Request.URL.Path
+		rq := d.request(c)
 		live := context.WithValue(withApp(ctx, c), socketKey{}, true)
 		if lc, handed := ctx.Value(liveConnKey{}).(*liveConn); handed {
-			// Another page hands its connection over (navigate.go).
-			lc.claimed = true
-			d.serve(live, c, lc, d.instance(args[2], args[3:]), nil, path, owner)
+			// Another page hands its connection over (navigate.go): it runs
+			// on the connection's goroutine once this request is answered.
+			in := d.instance(args[2], args[3:])
+			lc.pending = func(base context.Context) {
+				d.serve(detached(base, live), rq, lc, in, nil, owner)
+			}
 			return ok
 		}
 		conn, err := liveUpgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			return ok // Upgrade has answered the request
 		}
-		defer conn.Close()
 		lc := newLiveConn(conn, c.Request)
 		var in *instance
 		var sock *Socket
-		if p := unpark(c.Request.URL.Query().Get("resume"), path, owner); p != nil {
+		if p := unpark(rq.url.Query().Get("resume"), rq.path, owner); p != nil {
 			in, sock = p.in, p.sock
 		} else {
 			in = d.instance(args[2], args[3:])
 		}
-		d.serve(live, c, lc, in, sock, path, owner)
-		// Each page that navigates away hands the connection to the next.
-		for lc.next != "" {
-			target := lc.next
-			lc.next = ""
-			if !lc.handoff(c.Request.Context(), appFrom(live), target) {
-				b, _ := marshal(liveReply{Redirect: target})
-				_ = conn.SetWriteDeadline(time.Now().Add(liveWriteWait))
-				_ = conn.WriteMessage(websocket.TextMessage, b)
-				break
+		// The page runs on a goroutine of its own and this request returns:
+		// the connection doesn't keep the request's deep stack and buffers
+		// for its whole life. The app's stop closes it (track).
+		app := appFrom(live)
+		base, stop := context.WithCancel(context.WithoutCancel(live))
+		untrack := track(app, conn, stop)
+		go func() {
+			defer untrack()
+			defer stop()
+			defer conn.Close()
+			d.serve(base, rq, lc, in, sock, owner)
+			// Each page that navigates away hands the connection to the next.
+			for lc.next != "" && base.Err() == nil {
+				target := lc.next
+				lc.next = ""
+				if !lc.handoff(base, app, target) {
+					b, _ := marshal(liveReply{Redirect: target})
+					_ = conn.SetWriteDeadline(time.Now().Add(liveWriteWait))
+					_ = conn.WriteMessage(websocket.TextMessage, b)
+					return
+				}
+				run := lc.pending
+				lc.pending = nil
+				run(base)
 			}
-		}
+		}()
 		return ok
 	}).Interface()
 }
 
-func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, lc *liveConn, in *instance, sock *Socket, path, owner string) {
+// liveRequest is what a page's socket needs from its request once the
+// request has been answered.
+type liveRequest struct {
+	path   string            // the socket's path
+	url    *url.URL          // the socket's URL (join, resume, url)
+	params map[string]string // the route's path parameters
+}
+
+func (d *liveDef) request(c *httpx.Ctx) liveRequest {
+	u := *c.Request.URL
+	rq := liveRequest{path: c.Request.URL.Path, url: &u, params: map[string]string{}}
+	for _, name := range d.params {
+		rq.params[name] = c.Param(name)
+	}
+	return rq
+}
+
+// detached is a handed-over page's context: the values of its own request,
+// cancelled with the connection.
+func detached(base, page context.Context) context.Context {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(page))
+	context.AfterFunc(base, cancel)
+	return ctx
+}
+
+func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *instance, sock *Socket, owner string) {
 	conn := lc.conn
+	path := rq.path
 	page := strings.TrimSuffix(path, "/_live")
 	navigated := lc.target
 	lc.target = ""
+	active := time.Now()
 	render := func(ref int, invalid bool) liveReply {
 		_, root, err := in.render(ctx, true)
 		if err != nil {
 			return liveReply{Ref: ref, Error: err.Error()}
 		}
 		msg, full := lc.tree.next(root)
-		return liveReply{Ref: ref, Tree: msg, Full: full, Invalid: invalid}
+		reply := liveReply{Ref: ref, Tree: msg, Full: full, Invalid: invalid}
+		if lc.trimmed {
+			reply.Reset, lc.trimmed = true, false
+		}
+		active = time.Now()
+		return reply
 	}
 	send := func(r liveReply) bool {
 		b, err := marshal(r)
@@ -613,11 +672,11 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, lc *liveConn, in *ins
 			return
 		}
 	} else {
-		if err := in.mount(ctx, c, sock); err != nil {
+		if err := in.mount(ctx, func(name string) string { return rq.params[name] }, sock); err != nil {
 			send(liveReply{Error: err.Error()})
 			return
 		}
-		shown := pageURL(page, c.Request.URL.Query().Get("url"))
+		shown := pageURL(page, rq.url.Query().Get("url"))
 		if navigated != "" {
 			shown = pageURL(page, navigated)
 		}
@@ -645,7 +704,7 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, lc *liveConn, in *ins
 			// there is no HTTP render to compare with: a reconnect) send the
 			// tree now.
 			lc.tree.reset()
-			if joined, ok := takeJoin(c.Request.URL.Query().Get("join")); !ok || joined != string(body) {
+			if joined, ok := takeJoin(rq.url.Query().Get("join")); !ok || joined != string(body) {
 				msg, _ := lc.tree.next(root)
 				reply.Tree, reply.Full, reply.Reset = msg, true, true
 			}
@@ -677,7 +736,8 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, lc *liveConn, in *ins
 
 	_ = conn.SetReadDeadline(time.Now().Add(livePongWait))
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(livePongWait)) })
-	ping := time.NewTicker(livePingPeriod)
+	pingEvery, idleTrim := liveTimings()
+	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 	for {
 		select {
@@ -687,6 +747,10 @@ func (d *liveDef) serve(ctx context.Context, c *httpx.Ctx, lc *liveConn, in *ins
 			_ = conn.SetWriteDeadline(time.Now().Add(liveWriteWait))
 			if conn.WriteMessage(websocket.PingMessage, nil) != nil {
 				return
+			}
+			if lc.tree.prev != nil && time.Since(active) > idleTrim {
+				lc.tree.reset()
+				lc.trimmed = true
 			}
 		case msg := <-sock.inbox:
 			// Handle every message already waiting, then render once.

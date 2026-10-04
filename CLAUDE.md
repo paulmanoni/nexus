@@ -321,7 +321,10 @@ dynamic (`go run …/view/viewgen/cmd/instrument <dir>`; `make view-ui` for the 
 require nexus/v2 are instrumented. Reconnect = jittered backoff + queued events + **resume**: the server
 parks the page (state + subscriptions) for `view.ResumeGrace` (30s) under a token; same page + same identity
 carries on; otherwise a fresh mount, and the browser first re-sends each `view.Change` form (LiveView form
-recovery) before queued events, holding the fresh render until those replies arrive.
+recovery) before queued events, holding the fresh render until those replies arrive. Scale: a page runs on its own goroutine after
+the upgrade (the request returns; app stop closes live conns), keeps a shadow tree (fp + maphash sigs; strings
+>1KB kept for token patches) released after `view.LiveIdleTrim` (2m) idle; ~60KB/page; 20k users @1 event/5s:
+p99 7ms on 10 cores.
 `@view.Link(href, attrs…) { … }` is in-app navigation: fetch + patch the body, head assets merged,
 live sockets follow, history/back work. From a live page it goes over the socket (LiveView patch/navigate):
 same path → *patch* (optional `Params(ctx, deps…, u *url.URL) error`, also run after Mount; tree diff);

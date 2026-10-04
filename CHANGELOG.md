@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- view: live pages handle much more traffic. Measured on one 10-core machine
+  with 20,000 connected users each clicking every ~5s: p99 latency from 880ms
+  to 7ms; idle memory per page from ~100KB to ~61KB; event throughput up ~55%
+  (about 30,000 events/s on a small page).
+  - A page runs on a goroutine of its own once its socket is upgraded: the
+    request that opened it returns, with its deep stack and buffers; the app's
+    stop closes its live connections.
+  - The tree a connection keeps for diffing is a shadow — fingerprints and
+    hashes of dynamics, long markup only when over 1KB — and is let go when the
+    page sits idle for `view.LiveIdleTrim` (2m).
+  - Write buffers come from a pool, the read buffer is 1KB.
+  - Fingerprints and loop-item keys hash with maphash (structurally, without
+    rendering items), and the runtime's asset versions and the twins script are
+    computed once instead of on every render.
+
 ## [2.13.3] - 2026-10-04
 
 ### Fixed

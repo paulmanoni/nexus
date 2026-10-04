@@ -30,6 +30,7 @@ import (
 	"html"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/a-h/templ"
 
@@ -86,9 +87,13 @@ func version(s string) string {
 //	@view.Script()
 //	@ui.Script()
 func Script() templ.Component {
-	return templ.Raw(`<link rel="stylesheet" href="` + Prefix + `ui.css?v=` + version(uiCSS) + `"/>` +
-		`<script src="` + Prefix + `ui.js?v=` + version(uiJS) + `" defer></script>`)
+	css, js := versions()
+	return templ.Raw(`<link rel="stylesheet" href="` + Prefix + `ui.css?v=` + css + `"/>` +
+		`<script src="` + Prefix + `ui.js?v=` + js + `" defer></script>`)
 }
+
+// versions are the kit's files' versions, hashed once.
+var versions = sync.OnceValues(func() (string, string) { return version(uiCSS), version(uiJS) })
 
 // Loading shows a loader over the elements with the given ids while the
 // event works: it covers them as the click (or submit) happens and lifts

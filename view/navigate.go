@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/paulmanoni/nexus/v2"
 )
 
 // Navigation between live pages happens on the page's socket, as Phoenix
@@ -29,17 +32,22 @@ type liveConn struct {
 	conn   *websocket.Conn
 	events chan liveEvent // what the browser sends, for the connection's life
 	tree   treeDiffer     // the tree the browser holds and the statics it has
-	req    *http.Request  // the upgrade request, to open the next page as
+	// trimmed: the tree was let go while idle (LiveIdleTrim); the next reply
+	// tells the browser to drop its statics too.
+	trimmed bool
+	req     *http.Request // the upgrade request, to open the next page as
 
-	next    string // the URL of a page to hand the connection to
-	target  string // the URL the page being opened was navigated to
-	claimed bool   // a page's socket route took the connection
+	next    string                     // the URL of a page to hand the connection to
+	target  string                     // the URL the page being opened was navigated to
+	pending func(base context.Context) // the page a hand-off opened, to run
 }
 
 type liveConnKey struct{}
 
 func newLiveConn(conn *websocket.Conn, r *http.Request) *liveConn {
-	lc := &liveConn{conn: conn, events: make(chan liveEvent), req: r}
+	// Only what a hand-off reuses is kept of the upgrade request.
+	kept := &http.Request{Header: r.Header.Clone(), RemoteAddr: r.RemoteAddr, Host: r.Host}
+	lc := &liveConn{conn: conn, events: make(chan liveEvent), req: kept}
 	go func() {
 		defer close(lc.events)
 		for {
@@ -70,9 +78,9 @@ func (lc *liveConn) handoff(ctx context.Context, h http.Handler, target string) 
 	req.Header.Del("Upgrade")
 	req.Header.Del("Connection")
 	req.RemoteAddr, req.Host = lc.req.RemoteAddr, lc.req.Host
-	lc.target, lc.claimed = u.RequestURI(), false
+	lc.target, lc.pending = u.RequestURI(), nil
 	h.ServeHTTP(discard{header: http.Header{}}, req)
-	return lc.claimed
+	return lc.pending != nil
 }
 
 // discard is the response of a hand-off a page refused: the browser loads
@@ -114,4 +122,40 @@ func pageURL(page, sent string) *url.URL {
 		return u
 	}
 	return &url.URL{Path: page}
+}
+
+// live tracks each app's open live connections, so the app's stop closes
+// them: a page outlives the request that opened it.
+var live = struct {
+	sync.Mutex
+	m map[*nexus.App]map[*websocket.Conn]context.CancelFunc
+}{m: map[*nexus.App]map[*websocket.Conn]context.CancelFunc{}}
+
+func track(app *nexus.App, conn *websocket.Conn, stop context.CancelFunc) (untrack func()) {
+	live.Lock()
+	defer live.Unlock()
+	if live.m[app] == nil {
+		live.m[app] = map[*websocket.Conn]context.CancelFunc{}
+	}
+	live.m[app][conn] = stop
+	return func() {
+		live.Lock()
+		defer live.Unlock()
+		delete(live.m[app], conn)
+		if len(live.m[app]) == 0 {
+			delete(live.m, app)
+		}
+	}
+}
+
+// closeLive ends every live connection of app.
+func closeLive(app *nexus.App) {
+	live.Lock()
+	conns := live.m[app]
+	delete(live.m, app)
+	live.Unlock()
+	for conn, stop := range conns {
+		stop()
+		_ = conn.Close()
+	}
 }
