@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.2] - 2026-10-04
+
 ### Changed
 
 - view: a nested frame that only passes one dynamic through (a component or
