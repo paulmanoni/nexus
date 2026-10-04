@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-10-04
+
 ### Added
 
 - view: **cross-replica broadcasts.** `view.UseRelay(r)` makes
