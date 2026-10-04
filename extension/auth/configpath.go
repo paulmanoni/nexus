@@ -123,6 +123,15 @@ func (st *moduleState) sessionResolve(name string) Resolver {
 		if s.GetString(sessionEpochKey) != epochString(cur) {
 			return nil, &credentialError{name, revokedReason}
 		}
+		if s.GetString(sessionRecKey) != "" {
+			rec, err := st.config.tokens.Load(ctx, hashToken(s.ID()))
+			if err != nil {
+				return nil, err
+			}
+			if rec == nil || rec.Use != useSession {
+				return nil, &credentialError{name, "this session was signed out (auth.RevokeSession)"}
+			}
+		}
 		if idle := st.config.settings.sessions.Idle; idle > 0 {
 			now := time.Now()
 			seen, _ := strconv.ParseInt(s.GetString(sessionSeenKey), 10, 64)

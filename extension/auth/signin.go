@@ -168,6 +168,17 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 		s.Set(sessionUserKey, id.ID)
 		s.Set(sessionEpochKey, epochString(epoch))
 		s.Set(sessionSeenKey, strconv.FormatInt(time.Now().UnixMilli(), 10))
+		// A record of the session in the token store, so Sessions lists it
+		// and RevokeSession can end it.
+		ttl := sc.TTL
+		if ttl <= 0 {
+			ttl = 14 * 24 * time.Hour
+		}
+		rec := st.stamp(ctx, StoredToken{UserID: id.ID, Scheme: sc.name, Epoch: epoch, Use: useSession, Expires: time.Now().Add(ttl)})
+		if err := st.config.tokens.Save(ctx, hashToken(s.ID()), rec, ttl); err != nil {
+			return nil, err
+		}
+		s.Set(sessionRecKey, "1")
 		secure.RotateCSRF(ctx)
 		return &Credential{Scheme: sc.name, Next: landing()}, nil
 	}
@@ -186,7 +197,7 @@ func SignIn(ctx context.Context, id *Identity, opts ...SignInOption) (*Credentia
 // refresh, a refresh token) for userID under epoch.
 func (st *moduleState) issue(ctx context.Context, sc namedScheme, userID string, epoch int64) (*Credential, error) {
 	tok := newToken()
-	t := StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch}
+	t := st.stamp(ctx, StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch})
 	ttl := time.Duration(0)
 	if sc.Type == SchemeBearer {
 		ttl = sc.TTL
@@ -202,7 +213,7 @@ func (st *moduleState) issue(ctx context.Context, sc namedScheme, userID string,
 	c.TokenType = "Bearer"
 	if sc.Refresh > 0 {
 		rt := newToken()
-		r := StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch, Use: "refresh", Expires: time.Now().Add(sc.Refresh)}
+		r := st.stamp(ctx, StoredToken{UserID: userID, Scheme: sc.name, Epoch: epoch, Use: "refresh", Expires: time.Now().Add(sc.Refresh)})
 		if err := st.config.tokens.Save(ctx, hashToken(rt), r, sc.Refresh); err != nil {
 			return nil, err
 		}
@@ -270,7 +281,11 @@ func SignOut(ctx context.Context) error {
 		return nil
 	}
 	if sc.Type == SchemeSession {
-		session.Get(ctx).Destroy()
+		s := session.Get(ctx)
+		if s.GetString(sessionRecKey) != "" {
+			_ = st.config.tokens.Delete(ctx, hashToken(s.ID()))
+		}
+		s.Destroy()
 		secure.RotateCSRF(ctx)
 		return nil
 	}

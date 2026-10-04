@@ -1261,6 +1261,10 @@ them); [auth.endpoints] token = "/oauth/token" (password, refresh_token
 grants) and revoke = "/oauth/revoke" skip CSRF. A jwt scheme verifies
 tokens issued elsewhere: secret | public_key | jwks, issuer, audience,
 subject ("sub"), leeway.
+auth.Sessions(ctx, uid) lists where a user is signed in (sessions, tokens);
+auth.RevokeSession(ctx, uid, id) ends one. auth.Keys.Create(ctx, uid,
+scheme, name) / List / Revoke manage named API keys. Both need a
+TokenStore implementing auth.TokenLister (memory and CacheTokens do).
 [auth] keys: docs/reference/nexus-toml.md.
 
 RESOLVE A TOKEN (Authentication.Schemes / Backend) — credentials issued

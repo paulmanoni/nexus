@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-04
+
+### Added
+
+- **Auth stage 3c: devices and API keys** on the `Config.Users` path:
+  - `auth.Sessions(ctx, userID)` lists where a user is signed in — sessions
+    and bearer tokens, with when, User-Agent, IP and which one is this
+    request's — and `auth.RevokeSession` ends one. Sessions signed in from
+    this version get a record in the token store for it.
+  - `auth.Keys.Create/List/Revoke`: named API keys for an apikey scheme.
+  - `auth.TokenLister`, an optional `TokenStore` method the memory store and
+    `CacheTokens` implement (the cache store keeps a per-user index);
+    `StoredToken` gains `Name`, `Created`, `Agent` and `IP`.
+
 ## [2.5.0] - 2026-10-04
 
 ### Added

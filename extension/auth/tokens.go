@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,8 +26,15 @@ type StoredToken struct {
 	// works. The store also keeps each user's current epoch, as a record
 	// with only UserID and Epoch.
 	Epoch int64 `json:"epoch,omitempty"`
-	// Use is "refresh" for a refresh token, "" for an access token or key.
+	// Use is "refresh" for a refresh token, "key" for an API key from
+	// auth.Keys, "session" for a session's record, "" for an access token.
 	Use string `json:"use,omitempty"`
+	// Name is an API key's name; Created, Agent and IP record when, to
+	// what User-Agent and from where it was issued (auth.Sessions).
+	Name    string    `json:"name,omitempty"`
+	Created time.Time `json:"created,omitzero"`
+	Agent   string    `json:"agent,omitempty"`
+	IP      string    `json:"ip,omitempty"`
 }
 
 // TokenStore keeps issued tokens by hash. Config.Tokens sets it; the
@@ -89,6 +97,19 @@ func (s *MemoryTokenStore) RestoreDev(b []byte) error {
 	return json.Unmarshal(b, &s.m)
 }
 
+// ListUser implements TokenLister.
+func (s *MemoryTokenStore) ListUser(_ context.Context, userID string) (map[string]StoredToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]StoredToken{}
+	for h, t := range s.m {
+		if t.UserID == userID && !strings.HasPrefix(h, epochKeyPrefix) {
+			out[h] = t
+		}
+	}
+	return out, nil
+}
+
 // CacheTokens keeps tokens in a cache — Redis when extension/cache links
 // it, so tokens survive restarts and are shared between replicas.
 func CacheTokens(c resource.Cache) TokenStore { return cacheTokens{c} }
@@ -98,7 +119,42 @@ type cacheTokens struct{ c resource.Cache }
 const tokenKeyPrefix = "auth:token:"
 
 func (s cacheTokens) Save(ctx context.Context, hash string, t StoredToken, ttl time.Duration) error {
-	return s.c.Set(ctx, tokenKeyPrefix+hash, t, ttl)
+	if err := s.c.Set(ctx, tokenKeyPrefix+hash, t, ttl); err != nil {
+		return err
+	}
+	if t.UserID == "" || strings.HasPrefix(hash, epochKeyPrefix) {
+		return nil
+	}
+	// The user's index: the hashes of their tokens, pruned as they lapse.
+	var idx []string
+	_ = s.c.Get(ctx, userIndexPrefix+t.UserID, &idx)
+	for _, h := range idx {
+		if h == hash {
+			return nil
+		}
+	}
+	return s.c.Set(ctx, userIndexPrefix+t.UserID, append(idx, hash), 0)
+}
+
+const userIndexPrefix = "auth:user-tokens:"
+
+// ListUser implements TokenLister through the user's index, dropping the
+// hashes whose tokens are gone.
+func (s cacheTokens) ListUser(ctx context.Context, userID string) (map[string]StoredToken, error) {
+	var idx []string
+	_ = s.c.Get(ctx, userIndexPrefix+userID, &idx)
+	out := map[string]StoredToken{}
+	live := idx[:0]
+	for _, h := range idx {
+		if t, _ := s.Load(ctx, h); t != nil {
+			out[h] = *t
+			live = append(live, h)
+		}
+	}
+	if len(live) != len(idx) {
+		_ = s.c.Set(ctx, userIndexPrefix+userID, live, 0)
+	}
+	return out, nil
 }
 
 func (s cacheTokens) Load(ctx context.Context, hash string) (*StoredToken, error) {

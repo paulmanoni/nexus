@@ -1298,7 +1298,10 @@ the epoch moves. 2.5: bearer `refresh = "30d"` → `Credential.RefreshToken`,
 `auth.RefreshToken(ctx, rt)` (rotating); `[auth.endpoints] token` (OAuth2 password + refresh_token grants)
 / `revoke` (RFC 7009), both CSRF-exempt via `App.ExemptCSRF(path)`; `jwt` scheme (secret HS256 /
 public_key PEM RS256|ES256 / jwks URL; issuer, audience, subject, leeway; alg pinned to the key) — shares
-the Authorization header with bearer by token shape.
+the Authorization header with bearer by token shape. 2.6: `auth.Sessions(ctx, uid)` / `auth.RevokeSession(ctx, uid,
+id)` (sessions get a token-store record) and `auth.Keys.Create/List/Revoke` (named API keys) — `[]auth.Device`
+{ID hash, Kind session|token|key, Scheme, Name, Created, Expires, Agent, IP, Current}; need the store to
+implement `auth.TokenLister` (memory + CacheTokens do).
 
 Per-op gates (cross-transport): `auth.Required()` (401 if missing),
 `auth.Requires("ROLE_X")` (403), `auth.RequiresAny(a, b)` (any one), `auth.Kind("staff")`

@@ -171,6 +171,26 @@ end_on_password_change = true    # auth.SetPassword ends every other session and
 idle                   = "2h"    # end a session unused this long (0 = never)
 ```
 
+### Devices and API keys
+
+```go
+list, err := auth.Sessions(ctx, userID)            // where the user is signed in, newest first
+err = auth.RevokeSession(ctx, userID, list[1].ID)   // end one of them
+
+key, dev, err := auth.Keys.Create(ctx, userID, "partners", "billing sync")  // an apikey scheme
+keys, err := auth.Keys.List(ctx, userID)
+err = auth.Keys.Revoke(ctx, userID, dev.ID)
+```
+
+Each `auth.Device` has a `Kind` ("session", "token" or "key"), its scheme, when it was
+created and expires, the User-Agent and IP it was issued to, and `Current` for the
+request's own credential — what a "your devices" page shows. `ID` is a hash, never the
+credential. A key is returned once, at `Create`; only its hash is stored.
+
+Listing needs the token store to list a user's tokens (`auth.TokenLister`); the memory
+store and `CacheTokens` do. Sessions signed in from 2.6 on are listed — each gets a
+record in the token store, which `RevokeSession` deletes.
+
 ### Refresh tokens, OAuth2 and tokens from elsewhere
 
 A bearer scheme with `refresh` set returns a refresh token with every sign-in;

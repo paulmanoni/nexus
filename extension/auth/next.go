@@ -55,7 +55,7 @@ func Next(ctx context.Context) string {
 // requestInfo is what the auth middleware records of the HTTP request, for
 // gates and sign-in code that only see a context.
 type requestInfo struct {
-	method, path, uri, accept, inertia, next string
+	method, path, uri, accept, inertia, next, agent string
 }
 
 const ctxRequestInfo ctxCredential = 100

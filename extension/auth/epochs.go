@@ -121,11 +121,15 @@ func (st *moduleState) restamp(ctx context.Context, userID string, n int64) {
 	if !ok {
 		return
 	}
-	if sc.Type == SchemeSession {
-		session.Get(ctx).Set(sessionEpochKey, strconv.FormatInt(n, 10))
-		return
-	}
 	h := hashToken(p.token)
+	if sc.Type == SchemeSession {
+		s := session.Get(ctx)
+		s.Set(sessionEpochKey, strconv.FormatInt(n, 10))
+		if s.GetString(sessionRecKey) == "" {
+			return
+		}
+		h = hashToken(s.ID())
+	}
 	t, err := st.config.tokens.Load(ctx, h)
 	if err != nil || t == nil {
 		return
