@@ -8,6 +8,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Auth: **"Sign in with …"** — an `oidc` scheme (OpenID Connect
+  authorization code + PKCE; discovery, ID token verified via JWKS, `state` and
+  `nonce`); the account comes from `Users.FindLogin` by email, or the optional
+  `Provisioner` (`Provision(ctx, scheme, claims)`) creates it.
+- Auth: **roles** — `[auth.roles]` and `Identity.Roles`, expanded into `Perms`.
+- Auth: an optional **permission catalogue** (`[auth] perms`): a gate or role
+  naming an undeclared permission fails boot; Can/Gates/Check log one.
+- Auth: `revocable = true` on a jwt scheme — `RevokeUser` reaches its tokens.
 - Jobs enqueued while impersonating record the real user beside the
   impersonated one: `Record.Impersonator`, `Run.Impersonator()` (a jobsdb
   column, added by its migration). `nexus.RegisterRequestImpersonator` /

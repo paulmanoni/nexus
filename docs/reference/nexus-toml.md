@@ -191,6 +191,7 @@ home    = "/"              # landing after sign-in without a next
 next_param = "next"        # the query/form field carrying next
 forbidden = "/forbidden"   # page a refused page visit outside areas goes to (unset: 403)
 page_prop  = "auth"        # Inertia prop {user, can}; "-" turns it off
+perms      = ["orders.view", "orders.refund"]   # optional catalogue: gates and roles checked at boot
 
 [auth.areas.admin]
 prefix = "/admin"          # these paths need a sign-in of one of kinds
@@ -216,6 +217,10 @@ secret = "${BILLING_SECRET}"   # or secret_hash; neither = public client
 grants = ["client_credentials"] # empty: password, refresh_token, client_credentials
 perms  = ["reports.view"]       # its client_credentials identity
 kind   = "service"              # default "client"
+
+[auth.roles]               # role → permissions; Identity.Roles expand into Perms
+admin = ["*"]
+clerk = ["orders.view", "orders.refund"]
 
 [auth.throttle]
 account = "5/15m"          # failed sign-ins per account per window; "off" disables
@@ -247,6 +252,17 @@ issuer   = "https://id.example.com"
 audience = "orders-mobile"
 subject  = "sub"           # the claim holding the user id
 leeway   = "1m"            # clock skew on exp/nbf
+revocable = false          # true: RevokeUser reaches these tokens (needs iat)
+
+[auth.schemes.google]
+type          = "oidc"     # sign in through an OpenID Connect provider
+issuer        = "https://accounts.google.com"
+client_id     = "${GOOGLE_CLIENT_ID}"
+client_secret = "${GOOGLE_CLIENT_SECRET}"
+login         = "/auth/google"            # starts the sign-in (?next= kept)
+redirect      = "/auth/google/callback"   # registered with the provider
+claim         = "email"                   # Users.FindLogin is asked with it
+scopes        = ["openid", "email", "profile"]
 
 [auth.schemes.partners]
 type   = "apikey"          # never expire; revoked by signing out with them

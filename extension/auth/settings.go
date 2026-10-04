@@ -174,6 +174,20 @@ type SchemeSettings struct {
 	Subject string `toml:"subject"`
 	// Leeway is the clock skew allowed on exp and nbf (default 1m).
 	Leeway time.Duration `toml:"leeway"`
+	// oidc: "Sign in with …" through an OpenID Connect provider (Google,
+	// Microsoft, Okta, Keycloak). Issuer (above) is discovered from
+	// <issuer>/.well-known/openid-configuration. Login is the path that
+	// starts a sign-in (?next= is kept), Redirect the callback path
+	// registered with the provider (or a full URL). Claim names the claim
+	// Users.FindLogin is asked with (default "email"); Scopes default to
+	// openid email profile.
+	ClientID     string   `toml:"client_id"`
+	ClientSecret string   `toml:"client_secret"`
+	Login        string   `toml:"login"`
+	Redirect     string   `toml:"redirect"`
+	Claim        string   `toml:"claim"`
+	Scopes       []string `toml:"scopes"`
+
 	// Revocable makes auth.RevokeUser reach this jwt scheme's tokens: one
 	// issued (iat) before the user's last revocation is refused. Costs one
 	// cached lookup per request; tokens then need an iat claim.
@@ -201,6 +215,7 @@ const (
 	SchemeBearer  = "bearer"
 	SchemeAPIKey  = "apikey"
 	SchemeJWT     = "jwt"
+	SchemeOIDC    = "oidc"
 
 	defaultBearerTTL = 12 * time.Hour
 	defaultCacheTTL  = 5 * time.Minute
@@ -284,14 +299,27 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 			if sc.Leeway <= 0 {
 				sc.Leeway = time.Minute
 			}
+		case SchemeOIDC:
+			if sc.Issuer == "" || sc.ClientID == "" || sc.Login == "" || sc.Redirect == "" {
+				return nil, fmt.Errorf(`[auth.schemes.%s] type = "oidc" needs issuer, client_id, login and redirect`, name)
+			}
+			if sc.Claim == "" {
+				sc.Claim = "email"
+			}
+			if len(sc.Scopes) == 0 {
+				sc.Scopes = []string{"openid", "email", "profile"}
+			}
+			if sc.Leeway <= 0 {
+				sc.Leeway = time.Minute
+			}
 		default:
-			return nil, fmt.Errorf(`[auth.schemes.%s] type = %q: want "session", "bearer", "apikey" or "jwt"`, name, sc.Type)
+			return nil, fmt.Errorf(`[auth.schemes.%s] type = %q: want "session", "bearer", "apikey", "jwt" or "oidc"`, name, sc.Type)
 		}
 		r.schemes = append(r.schemes, namedScheme{name, sc})
 	}
 	// Explicit credentials before the ambient cookie: an API key, then a
 	// bearer token, then the session; by name within a type.
-	rank := map[string]int{SchemeAPIKey: 0, SchemeJWT: 1, SchemeBearer: 2, SchemeSession: 3}
+	rank := map[string]int{SchemeAPIKey: 0, SchemeJWT: 1, SchemeBearer: 2, SchemeSession: 3, SchemeOIDC: 4}
 	sort.Slice(r.schemes, func(i, j int) bool {
 		a, b := r.schemes[i], r.schemes[j]
 		if rank[a.Type] != rank[b.Type] {
@@ -299,6 +327,12 @@ func resolveSettings(s Settings) (*resolvedSettings, error) {
 		}
 		return a.name < b.name
 	})
+
+	if _, oidc := r.firstOf(SchemeOIDC); oidc {
+		if _, session := r.firstOf(SchemeSession); !session {
+			return nil, fmt.Errorf(`an oidc scheme signs people in with a session: add a scheme with type = "session"`)
+		}
+	}
 
 	names := s.Passwords.Hashers
 	if len(names) == 0 {

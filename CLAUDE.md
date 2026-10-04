@@ -1308,6 +1308,12 @@ func (u *Users) Load(ctx, id string) (*auth.Identity, error)
   (OAuth2 password, refresh_token, client_credentials; CSRF-exempt via `App.ExemptCSRF`) / revoke (RFC
   7009). OAuth2 clients `[auth.oauth2.clients.<id>]` (secret | secret_hash, grants, perms, kind) or
   `auth.Clients`; client_credentials → identity `client:<id>`; `[auth.oauth2] require_client`.
+- **OIDC** `type = "oidc"` (issuer → discovery, client_id/secret, login + redirect paths, claim "email",
+  scopes): authorization code + PKCE + state/nonce, ID token verified via JWKS, account via
+  `Users.FindLogin(email)` or optional `Provision(ctx, scheme, claims)`; needs a session scheme.
+  **Roles** `[auth.roles] clerk = [perms…]` + `Identity.Roles` (expanded into Perms on load).
+  **Catalogue** `[auth] perms = […]` (optional): gates/roles naming an undeclared perm fail boot.
+  jwt `revocable = true`: RevokeUser reaches tokens issued (iat) before it.
 - **Pages**: Inertia gets an `auth` prop `{user, can}` (`[auth] page_prop`, "-" off; app props win).
 - **Ending sessions**: per-user epoch in the token store — `auth.RevokeUser(ctx, uid)` (everywhere; WS and
   live-view connections close at their next message via `nexus.RegisterConnectionCheck`),

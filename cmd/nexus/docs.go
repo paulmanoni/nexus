@@ -1283,6 +1283,14 @@ live-view connections close at their next message), auth.Revoke(ctx, token),
 auth.Sessions(ctx, uid) / auth.RevokeSession, auth.Keys.Create/List/Revoke.
 [auth.sessions] single, end_on_password_change (default true), idle.
 
+OIDC — [auth.schemes.google] type = "oidc", issuer, client_id, client_secret,
+login = "/auth/google", redirect = "/auth/google/callback" (claim "email"):
+code flow + PKCE; the account comes from Users.FindLogin(email) or an
+optional Provision(ctx, scheme, claims); needs a session scheme.
+ROLES — [auth.roles] clerk = ["orders.view"]; Identity.Roles expand into Perms.
+CATALOGUE — [auth] perms = [...]: gates and roles naming an undeclared
+permission fail boot. jwt revocable = true: RevokeUser reaches the tokens.
+
 IMPERSONATION — auth.Impersonate(ctx, id) / StopImpersonating: Current is
 the target, .Actor the real user; [auth.impersonation] permission, endpoint.
 

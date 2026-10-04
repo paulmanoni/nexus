@@ -244,13 +244,57 @@ issuer   = "https://id.example.com"
 audience = "orders-mobile"
 subject  = "sub"              # the claim holding the user id (default sub)
 leeway   = "1m"               # clock skew allowed on exp and nbf
+revocable = true              # auth.RevokeUser reaches these tokens (needs iat)
 ```
+
+With `revocable = true`, a token issued (`iat`) before the user's last `RevokeUser` is
+refused — one cached lookup per request, which is why it's opt-in.
 
 Only the algorithms the key is for are accepted (HS256 for a secret, RS256 or ES256
 for a public key), so a token can't pick `none`, or HS256 against an RSA key. JWKS
 keys are cached for an hour and fetched again for an unknown `kid`. A jwt scheme and
 a bearer scheme share the `Authorization` header: a JWT has three dot-separated
 parts, a nexus token none.
+
+### Sign in with Google, Microsoft, …
+
+An `oidc` scheme signs people in through an OpenID Connect provider:
+
+```toml
+[auth.schemes.google]
+type          = "oidc"
+issuer        = "https://accounts.google.com"   # endpoints come from its discovery document
+client_id     = "${GOOGLE_CLIENT_ID}"
+client_secret = "${GOOGLE_CLIENT_SECRET}"
+login         = "/auth/google"                  # link here (?next= is kept)
+redirect      = "/auth/google/callback"         # register this with the provider
+claim         = "email"                         # what Users.FindLogin is asked with (default)
+```
+
+nexus runs the authorization-code flow with PKCE, a `state` and a `nonce`, verifies the
+ID token with the provider's keys, and finds the account with `Users.FindLogin(email)`
+— an address the provider marks unverified is refused. No account: refused, unless
+your `Users` has `Provision(ctx, scheme, claims) (*auth.Identity, error)` to create
+one. `CheckLogin` applies, then the user is signed in with the app's session scheme
+(an `oidc` scheme needs one) and lands on `next`.
+
+### Roles and the permission catalogue
+
+```toml
+[auth]
+perms = ["orders.view", "orders.refund", "users.manage"]   # optional catalogue
+
+[auth.roles]
+admin = ["*"]
+clerk = ["orders.view", "orders.refund"]
+```
+
+An identity's `Roles` add their permissions to `Perms` when nexus loads it, so
+`Users.Load` can return `Roles: []string{"clerk"}` and let nexus expand it. With
+`perms` set, every permission a gate (`Requires`, `RequiresAny`) or a role names must
+be declared — `auth.Requires("ordres.view")` fails boot — and a `Can` / `Gates` /
+`Check` naming an undeclared one is logged. Roles and the catalogue show on the
+dashboard's Auth tab.
 
 ### Impersonation
 

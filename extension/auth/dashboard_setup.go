@@ -68,6 +68,7 @@ func (st *moduleState) dashboardSetup() *dashSetup {
 			SchemeBearer:  "Authorization: Bearer (opaque)",
 			SchemeAPIKey:  "header " + sc.Header,
 			SchemeJWT:     "Authorization: Bearer (JWT)",
+			SchemeOIDC:    "sign in at " + sc.Login + " (" + sc.Issuer + ")",
 		}[sc.Type]
 		d.Schemes = append(d.Schemes, dashScheme{sc.name, sc.Type, reads})
 	}

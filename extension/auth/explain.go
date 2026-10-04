@@ -45,6 +45,8 @@ func Explain(s Settings) (string, error) {
 			w("  %-12s bearer    Authorization: Bearer <opaque>, ttl %s, %s", sc.name, sc.TTL, refresh)
 		case SchemeAPIKey:
 			w("  %-12s apikey    header %s", sc.name, sc.Header)
+		case SchemeOIDC:
+			w("  %-12s oidc      sign in at %s with %s (callback %s), account by %q", sc.name, sc.Login, sc.Issuer, sc.Redirect, sc.Claim)
 		case SchemeJWT:
 			key := map[bool]string{true: "secret (HS256)", false: ""}[sc.Secret != ""]
 			if sc.PublicKey != "" {
@@ -90,6 +92,16 @@ func Explain(s Settings) (string, error) {
 	}
 	w("  passwords  hashers %s (new: %s)", strings.Join(ids, ", "), rs.hashers.Default.ID())
 	w("  impersonate with %q", rs.impersonation.Permission)
+	if len(rs.roles) > 0 {
+		names := make([]string, 0, len(rs.roles))
+		for r := range rs.roles {
+			names = append(names, r)
+		}
+		w("  roles      %s", strings.Join(names, ", "))
+	}
+	if len(rs.perms) > 0 {
+		w("  catalogue  %d declared permissions (gates and roles checked at boot)", len(rs.perms))
+	}
 	return b.String(), nil
 }
 

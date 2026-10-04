@@ -92,6 +92,7 @@ var optionalMethods = []reflect.Type{
 	reflect.TypeFor[PasswordSetter](),
 	reflect.TypeFor[LoginChecker](),
 	reflect.TypeFor[PublicUser](),
+	reflect.TypeFor[Provisioner](),
 }
 
 // checkOptionalMethods fails boot for an optional method spelled right but

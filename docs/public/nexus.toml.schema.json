@@ -152,11 +152,35 @@
           },
           "type": "object"
         },
+        "perms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "roles": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
         "schemes": {
           "additionalProperties": {
             "additionalProperties": false,
             "properties": {
               "audience": {
+                "type": "string"
+              },
+              "claim": {
+                "type": "string"
+              },
+              "client_id": {
+                "type": "string"
+              },
+              "client_secret": {
                 "type": "string"
               },
               "cookie": {
@@ -175,12 +199,27 @@
                 "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
                 "type": "string"
               },
+              "login": {
+                "type": "string"
+              },
               "public_key": {
+                "type": "string"
+              },
+              "redirect": {
                 "type": "string"
               },
               "refresh": {
                 "description": "Go duration, e.g. \"30s\" or \"1h30m\"",
                 "type": "string"
+              },
+              "revocable": {
+                "type": "boolean"
+              },
+              "scopes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               "secret": {
                 "type": "string"

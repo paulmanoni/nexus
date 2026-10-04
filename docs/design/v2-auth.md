@@ -703,6 +703,13 @@ path. Identity's app user is `User` and `Password`'s login field `Login`, as §2
 proposed. The dashboard's Auth tab (4b) shows the setup, every endpoint's gate,
 throttle locks and a sign-out-everywhere form.
 
+**Decided (2026-10-04) and built:** OIDC sign-in as a scheme type (`type =
+"oidc"`); an optional permission catalogue (`[auth] perms`, checked at boot); roles as
+a config table (`[auth.roles]`, `Identity.Roles` expanded into `Perms`); JWT
+revocation opt-in per scheme (`revocable = true`). Still open below: one session per
+area, the identity as a handler parameter, a production token store without a
+cache, and `extension/session`'s placement.
+
 ## Open questions
 
 - **Authorization-code / OIDC.** "Sign in with an external provider" as a scheme

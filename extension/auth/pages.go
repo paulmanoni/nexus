@@ -186,6 +186,19 @@ func (st *moduleState) endpointOptions() nexus.Option {
 			nexus.AsRest("POST", imp, impersonateEndpoint, nexus.Describe("Start impersonating a user")),
 			nexus.AsRest("DELETE", imp, stopImpersonatingEndpoint, nexus.Describe("Stop impersonating")))
 	}
+	for _, sc := range st.config.settings.schemes {
+		if sc.Type != SchemeOIDC {
+			continue
+		}
+		p := &oidcProvider{name: sc.name, sc: sc.SchemeSettings}
+		callback := sc.Redirect
+		if u, err := url.Parse(callback); err == nil && u.IsAbs() {
+			callback = u.Path
+		}
+		opts = append(opts,
+			nexus.AsRest("GET", sc.Login, st.oidcStart(p), Public(), nexus.Describe("Sign in with "+sc.name)),
+			nexus.AsRest("GET", callback, st.oidcCallback(p), Public(), nexus.Describe("Sign-in callback from "+sc.name)))
+	}
 	if ep.Token != "" {
 		opts = append(opts, nexus.AsRest("POST", ep.Token, st.tokenEndpoint,
 			Public(), nexus.Describe("OAuth2 token endpoint: password and refresh_token grants")),
