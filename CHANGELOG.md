@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-10-04
+
 ### Changed
 
 - view: live pages handle much more traffic. Measured on one 10-core machine
