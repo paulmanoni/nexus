@@ -19,11 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "github.com/paulmanoni/nexus/cmd/nexus/v2/internal/termui"
 )
 
-// runDevTUI is the bubble-tea-backed alternative to runDev. Same
+// runDevTUI is the full-screen alternative to runDev (internal/termui). Same
 // process-management contract (build child, kill on Ctrl-C, port
 // probe), but streams output into a fixed-layout terminal UI:
 // header on top with the dashboard URL + ready state, log pane
@@ -45,7 +44,7 @@ import (
 // survives `r`: only the Go child restarts.
 func runDevTUI(target, addr string, openDash bool, frontendFlag string, verbose bool, stdout, stderr io.Writer) error {
 	model := newTUIModel(target, addr, openDash)
-	prog := tea.NewProgram(model, tea.WithAltScreen())
+	prog := tea.NewProgram(model)
 	model.prog = prog
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -91,9 +90,10 @@ func runDevTUI(target, addr string, openDash bool, frontendFlag string, verbose 
 
 // quitOnStopSignal ends the TUI through its normal quit path — which kills
 // the app's process group and stops Vite — on any of stopSignals, until ctx
-// ends. Bubble Tea catches SIGINT and SIGTERM only while its event loop
-// runs, and never SIGHUP, whose default action (the terminal closing)
-// would exit nexus dev on the spot and orphan both children: they run in
+// ends. The terminal is raw while the TUI runs, so ctrl-c reaches it as a
+// key, not SIGINT; SIGTERM and SIGHUP still arrive as signals, and SIGHUP's
+// default action (the terminal closing) would exit nexus dev on the spot
+// and orphan both children: they run in
 // process groups of their own, which the hangup does not reach. The
 // registration stays until ctx ends, so a second signal during the
 // teardown cannot cut it short.
@@ -286,7 +286,7 @@ func (m *tuiModel) View() string {
 	// pane. Stats height is the lesser of (top-N+2) and the actual
 	// number of lines we'd render — when there are no stats we
 	// don't reserve space at all.
-	statsLines := lipgloss.Height(stats)
+	statsLines := tea.Height(stats)
 	if stats == "" {
 		statsLines = 0
 	}
@@ -305,19 +305,19 @@ func (m *tuiModel) View() string {
 		parts = append(parts, stats, "")
 	}
 	parts = append(parts, logs, footer)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return strings.Join(parts, "\n")
 }
 
 // --- Renderers ---
 
 var (
-	styleTitle  = lipgloss.NewStyle().Bold(true)
-	styleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	styleCyan   = lipgloss.NewStyle().Foreground(lipgloss.Color("36"))
-	styleGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	styleYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	styleRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	stylePane   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("241")).Padding(0, 1)
+	styleTitle  = tea.NewStyle().Bold(true)
+	styleDim    = tea.NewStyle().Foreground(241)
+	styleCyan   = tea.NewStyle().Foreground(36)
+	styleGreen  = tea.NewStyle().Foreground(42)
+	styleYellow = tea.NewStyle().Foreground(214)
+	styleRed    = tea.NewStyle().Foreground(203)
+	stylePane   = tea.NewStyle().Border(241).Padding(1)
 )
 
 func (m *tuiModel) renderHeader() string {
@@ -327,7 +327,7 @@ func (m *tuiModel) renderHeader() string {
 	right := styleCyan.Render(m.dashURL())
 	row1 := strings.Join([]string{left, mid, right}, "  ")
 	row2 := state
-	return lipgloss.JoinVertical(lipgloss.Left, row1, row2)
+	return row1 + "\n" + row2
 }
 
 func (m *tuiModel) renderState() string {
@@ -361,23 +361,18 @@ func (m *tuiModel) renderLogs(height int) string {
 	}
 	visible := m.logs[start:]
 
-	// Truncate each line to the inner width. lipgloss handles
-	// terminal wrapping but truncation keeps the layout deterministic
-	// — child output occasionally has ANSI we can't safely re-wrap.
+	// Truncate each line to the inner width, keeping colour codes whole:
+	// a deterministic layout, whatever the child prints.
 	innerW := m.width - 4
 	if innerW < 10 {
 		innerW = 10
 	}
 	clipped := make([]string, 0, len(visible))
 	for _, l := range visible {
-		if lipgloss.Width(l) > innerW {
-			clipped = append(clipped, l[:innerW])
-		} else {
-			clipped = append(clipped, l)
-		}
+		clipped = append(clipped, tea.Truncate(l, innerW))
 	}
 	body := strings.Join(clipped, "\n")
-	return stylePane.Width(m.width - 2).Height(height).Render(body)
+	return stylePane.Width(m.width).Height(height).Render(body)
 }
 
 // renderStats renders the top-N busiest endpoints as a single pane.
@@ -418,7 +413,7 @@ func (m *tuiModel) renderStats() string {
 		))
 	}
 	body := strings.Join(rows, "\n")
-	return stylePane.Width(m.width - 2).Render(
+	return stylePane.Width(m.width).Render(
 		styleDim.Render("stats") + "\n" + body,
 	)
 }

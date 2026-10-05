@@ -18,7 +18,7 @@ import (
 	// does. (extension/config's [extensions.config] comes in through
 	// extensions_for_lint.go.)
 	"github.com/paulmanoni/nexus/v2/extension/auth"
-	_ "github.com/paulmanoni/nexus/v2/extension/cache"
+	_ "github.com/paulmanoni/nexus/v2/extension/cache/cacheconfig"
 	_ "github.com/paulmanoni/nexus/v2/extension/jobs"
 	_ "github.com/paulmanoni/nexus/v2/extension/mail"
 	_ "github.com/paulmanoni/nexus/v2/extension/storage"
