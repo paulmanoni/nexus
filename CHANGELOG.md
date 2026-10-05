@@ -6,6 +6,62 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-10-05
+
+### Added
+
+- view: **change tracking for live pages** (LiveView's assigns). A page whose
+  fields are `view.Assign[T]` (`Get`, `Set`, `Update`) renders only what
+  changed: the view compiler opens a spot (`Rec.Guard`) around each loop,
+  branch and component call that uses none of the template's own variables,
+  and a spot whose `Assign`s (and `view.Errors`) didn't change since the
+  browser's tree is not run; the reply carries no change for it. Pages with
+  other fields render everything, as before. Under `nexus dev` and in tests
+  each skipping render is checked against a full one; a spot that read
+  something untracked is logged and the full render sent
+  (`NEXUS_VIEW_VERIFY`). The example adoption board uses it.
+- view: the compiler warns where a live page that uses `view.Assign` isn't,
+  or can't be, tracked — a field that isn't an `Assign` (on the field, and on
+  each template read of it), and on a tracked page a service called from a
+  template (`view.Use` of a non-state type). `nexus lsp` shows them as editor
+  warnings; `nexus generate views`, `nexus dev` (when they change) and
+  `nexus doctor` print them. They never fail a build. `viewgen.Plan.Warnings`,
+  `viewgen.WriteModule`.
+- view: **live components** (LiveView's LiveComponents).
+  `view.LiveComponent[*T](ctors…)` registers one; `@view.Component[*T](id, props)`
+  places it on a live page, which keeps an instance per id while it renders it.
+  `Mount(ctx, deps…, props)` on the first render, `Update` (or `Mount` again)
+  when the props change, `view.UpdateComponent[*T](ctx, id, props)` from a page
+  event or `Info`. Its events — `view.Send(c.M)`, `Submit`, `Change` — reach the
+  instance they were sent from (Send names the method's component type; the
+  browser finds the nearest instance of it). With `view.Assign` fields a
+  component's event renders only the component and the spots around it, and a
+  component re-rendered with the same props is skipped. The example board has
+  one (`Cheer`).
+- view: a field tagged `view:"-"` — one `Render` doesn't read, or that doesn't
+  change once the page is mounted — leaves a page tracked (and unflagged by the
+  compiler); generic page types (`Page[R, I]`) get the compiler's warnings too.
+- view: **live uploads** (LiveView's `allow_upload`). A `view.Upload` field
+  (`Allow(view.UploadConfig{Accept, MaxEntries, MaxSize})` in Mount) is a file
+  input: `<input type="file" { p.Avatar.Input()... }/>`. Files are checked when
+  chosen, sent at once — one request each to the page's route, its gates
+  applying, bound to the user and good once — and streamed to temporary files
+  while `Entries()` show `Progress`/`Done`/`Err` and the page re-renders.
+  `Consume(fn)` hands finished files to an event and deletes them;
+  `view.CancelUpload(&u, ref)` stops one; what a page leaves is deleted when it
+  ends. Works in live components too.
+- docs: "Coming from Phoenix LiveView", a table of LiveView's API and nexus's.
+
+### Changed
+
+- view: a render tree records an empty dynamic between two statics where a
+  value rendered as nothing, so a frame's statics no longer depend on its
+  values (an empty `value=""` used to resend the whole frame).
+- view: less memory and CPU per live page. A connection's shadow tree keeps a
+  dynamic's 128-bit hash inline and shares one value for every empty dynamic
+  (−8% memory per page on a 200-row page); `view.Send`, `Submit` and `Change`
+  cache what they read from a method value, and `LiveKey` caches per type.
+
 ## [2.15.0] - 2026-10-04
 
 ### Added
