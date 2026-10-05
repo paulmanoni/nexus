@@ -3,7 +3,7 @@ module github.com/paulmanoni/nexus/di/fxcontainer/v2
 go 1.26.2
 
 require (
-	github.com/paulmanoni/nexus/v2 v2.15.0
+	github.com/paulmanoni/nexus/v2 v2.16.0
 	go.uber.org/fx v1.24.0
 )
 
