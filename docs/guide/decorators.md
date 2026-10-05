@@ -50,6 +50,7 @@ One primary annotation per function, plus optional modifiers:
 | `//nexus:job [queue] [timeout=D] [retry=N] [unique=D] [name=X]` | A [background job](./jobs) (`jobs.Define` on a method, `jobs.DefineFunc` on a function) |
 | `//nexus:page <METHOD> <PATH> [Component]` | An Inertia page (`inertia.Page`; on a controller method the component defaults to `<Folder>/<Method>`) |
 | `//nexus:controller <prefix> [trailing-slash]` | On a type: a [controller](./controllers) whose annotated methods are its actions |
+| `//nexus:live [<path>]` | On a type: a [live view](./views#live-views) (`view.Live`) routed at `<path>`, gated by the type's `//nexus:auth` / `//nexus:use`; with no path, registered to be embedded only |
 | `//nexus:auth Required` / `//nexus:auth Requires PERM…` / `//nexus:auth Public` | Modifier: an auth gate (bare tokens; legacy `Requires("X")` also accepted) |
 | `//nexus:session Required` | Modifier: flow-continuity gate — 428 unless the request arrived with an established session |
 | `//nexus:use <expr>` | Modifier: per-op middleware |
