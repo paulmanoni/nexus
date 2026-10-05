@@ -99,7 +99,16 @@ func declareProjectConfig(dir string) projectDecls {
 						scannedSections[name] = true
 						out.Sections = append(out.Sections, name)
 					}
-				case *ast.SelectorExpr: // nexus.RegisterExtensionDecoder("name", …)
+				case *ast.SelectorExpr: // config.Section("name", T{…}) — T inferred
+					if isSelector(fn, cfgName, "Section") && len(call.Args) > 1 && !config.IsDeclared(name) && validTableName(name) {
+						if lit, ok := call.Args[1].(*ast.CompositeLit); ok && lit.Type != nil {
+							t := (&typeResolver{types: types, seen: map[string]bool{}}).resolve(lit.Type)
+							config.DeclareSchema(name, t)
+							scannedSections[name] = true
+							out.Sections = append(out.Sections, name)
+						}
+					}
+					// nexus.RegisterExtensionDecoder("name", …)
 					if fn.Sel.Name == "RegisterExtensionDecoder" && nexus.LookupExtensionDecoder(name) == nil {
 						nexus.RegisterExtensionDecoder(name, func([]byte) ([]nexus.Option, error) { return nil, nil })
 						scannedExtensions[name] = true

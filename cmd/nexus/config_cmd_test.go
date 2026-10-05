@@ -52,6 +52,11 @@ type ShopConfig struct {
 
 var Shop = cfg.Section[ShopConfig]("shopcheck")
 var Flags = cfg.Section[map[string]bool]("flagscheck")
+var Mail = cfg.Section("mailcheck", MailConfig{From: "x"})
+
+type MailConfig struct {
+	From string ` + "`toml:\"from\"`" + `
+}
 
 func init() {
 	nexus.RegisterExtensionDecoder("customcheck", func([]byte) ([]nexus.Option, error) { return nil, nil })
@@ -78,6 +83,9 @@ provider = "card"
 
 [flagscheck]
 beta = true
+
+[mailcheck]
+from = "a"
 
 [cache.session]
 redis_host = "localhost"
@@ -128,6 +136,20 @@ daily = true
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// config.Section("name", T{…}) declares the section as config.Section[T] does.
+func TestConfigCheck_InferredSectionType(t *testing.T) {
+	dir := writeProject(t, map[string]string{
+		"go.mod":     "module example.com/shop\n\ngo 1.27\n",
+		"main.go":    strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(checkAppMain, "shopcheck", "shopcheck3"), "flagscheck", "flagscheck3"), "mailcheck", "mailcheck3"),
+		"nexus.toml": "[mailcheck3]\nfrm = \"a\"\n",
+	})
+	var out bytes.Buffer
+	err := runConfigCheck(&out, &out, configCheckOptions{path: filepath.Join(dir, "nexus.toml")})
+	if !errors.Is(err, errExitNonZero) || !strings.Contains(out.String(), "did you mean [mailcheck3] from?") {
+		t.Fatalf("err = %v\n%s", err, out.String())
 	}
 }
 
