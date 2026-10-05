@@ -654,7 +654,7 @@ nexus vet ./...      # go vet likewise
 ```
 
 If you committed the generated files, delete them (and keep them in `.gitignore`).
-An editor on plain gopls can keep the files on disk with `nexus dev --view-files`. See
+`nexus dev` writes them beside the `.templ` files, so keep them gitignored (`--no-view-files` keeps them in memory). See
 [views](./views).
 
 ### `viewtest`

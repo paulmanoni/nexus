@@ -736,7 +736,7 @@ func buildHandlerOverlay(root string) (overlayPath string, cleanup func(), err e
 // Only `nexus dev` passes a distStubRoot: `nexus build` produces the real
 // binary and must embed the real bundle.
 //
-// views adds the compiled .templ views (the default); nexus dev --view-files
+// views adds the compiled .templ views; nexus dev, by default,
 // writes them to disk instead, and leaves them out.
 func buildDevOverlay(root, distStubRoot string, views bool) (overlayPath string, cleanup func(), err error) {
 	return buildOverlay(root, distStubRoot, views)

@@ -752,17 +752,18 @@ above, within run-to-run noise.
 
 | Command | Views | Tailwind |
 | --- | --- | --- |
-| `nexus dev` | compiled on start and on every `.templ` save, in memory — the build overlays them; `--view-files` writes them to disk instead | `tailwindcss --watch` |
+| `nexus dev` | compiled on start and on every `.templ` save, written beside the `.templ` files; `--no-view-files` keeps them in memory, for the build overlay | `tailwindcss --watch` |
 | `nexus build` | compiled through the build overlay — nothing written | built once, minified |
 | `nexus test` / `nexus vet` | `go test` / `go vet` through the same overlay | — |
 | `nexus lsp` | handed to gopls as editor buffers (see [Editor support](#editor-support)) | — |
 | `nexus generate views [--check]` | written to disk / verified (CI) | — |
 
 The generated Go (`*_templ.go`, `view_gen.go`, `view_imports_gen.go`) never
-needs to be on disk: every nexus command compiles it through an overlay, and
-the editor gets it from `nexus lsp`. If you write it (`nexus generate views`,
-`nexus dev --view-files`) for a plain `go build`/`go test` or an editor on plain
-gopls, gitignore it. Generation errors point at the `.templ` line and column;
+needs to be committed: every nexus command compiles it through an overlay.
+`nexus dev` writes it beside the `.templ` files by default, so any editor and a
+plain `go build`/`go test` see it — gitignore it (`nexus new` does, and `nexus
+dev` says when a project doesn't). `nexus dev --no-view-files` keeps it in
+memory; the editor then gets it from `nexus lsp`. Generation errors point at the `.templ` line and column;
 `nexus dev` keeps the last good build serving until the template compiles again.
 
 **Tailwind:** a stylesheet that does `@import "tailwindcss"` (outside a Vite
@@ -1237,8 +1238,8 @@ Setup — point the editor's Go and templ language servers at `nexus lsp`
 - **Neovim / Helix / Emacs:** configure `nexus lsp` as the server for the `go`
   and `templ` filetypes, in place of gopls and `templ lsp`.
 
-An editor still on plain gopls needs the generated files on disk: run
-`nexus dev --view-files` (or `nexus generate views`). `templ fmt` works unchanged.
+An editor still on plain gopls reads the files `nexus dev` writes (or run
+`nexus generate views`). `templ fmt` works unchanged.
 
 ## Limits
 

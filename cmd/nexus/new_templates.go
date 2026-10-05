@@ -607,6 +607,10 @@ const tmplGitignoreTpl = `/bin/
 *.out
 .DS_Store
 .env
+# Compiled views: nexus dev writes them beside the .templ files.
+*_templ.go
+view_gen.go
+view_imports_gen.go
 {{if .HasFrontend}}` + gitignoreFrontend + `{{end}}`
 
 // gitignoreFrontend is the .gitignore block for web/: nexus new writes it

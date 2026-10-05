@@ -48,6 +48,7 @@ func newDevCmd(stdout, stderr io.Writer) *cobra.Command {
 		debugBuild  bool
 		noEmbedStub bool
 		viewFiles   bool
+		noViewFiles bool
 		distWatch   bool
 		rawLogs     bool
 		timeBuild   bool
@@ -88,7 +89,7 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 			if tui {
 				return runDevTUI(target, addr, openDash, frontendDir, verbose, stdout, stderr)
 			}
-			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, distWatch, rawLogs, timeBuild, viewFiles, logFormat, logPattern, stdout, stderr)
+			return runDev(target, addr, open, openDash, !noWatch, frontendDir, verbose, fast, !noEmbedStub, distWatch, rawLogs, timeBuild, !noViewFiles, logFormat, logPattern, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", defaultDevAddr,
@@ -114,8 +115,11 @@ compiled binary doesn't survive Ctrl-C as a zombie.`,
 		"debuggable dev binary: keep DWARF + symtab and compile unoptimized (-gcflags=all=-N -l) so delve attaches cleanly (slower build and link; the inverse of --fast)")
 	cmd.Flags().BoolVar(&noEmbedStub, "no-embed-stub", false,
 		"embed the real frontend bundle in the dev binary instead of stubbing it out (dev serves the bundle from disk, so the embedded copy is normally dead weight)")
-	cmd.Flags().BoolVar(&viewFiles, "view-files", false,
-		"write the compiled views (*_templ.go, view_gen.go, view_imports_gen.go) into the tree, for an editor on plain gopls; by default they compile in memory and the editor gets them from `nexus lsp`")
+	cmd.Flags().BoolVar(&noViewFiles, "no-view-files", false,
+		"keep the compiled views in memory instead of writing them (*_templ.go, view_gen.go, view_imports_gen.go) beside the .templ files; the editor then needs `nexus lsp` to see them")
+	// Writing them is the default now, so naming it does nothing.
+	cmd.Flags().BoolVar(&viewFiles, "view-files", false, "")
+	_ = cmd.Flags().MarkDeprecated("view-files", "it is the default; pass --no-view-files to keep them in memory")
 	cmd.Flags().BoolVar(&timeBuild, "time-build", false,
 		"print a per-rebuild timing breakdown (codegen · build · prewarm) so slow rebuilds can be diagnosed")
 	cmd.Flags().BoolVar(&distWatch, "dist", false,
@@ -366,9 +370,11 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 	// now — before the watcher starts, so its first output does not queue a
 	// second build — and again when a file it watches changes.
 	//
-	// Views compile in memory unless --view-files: the build overlays them
-	// (see buildDevOverlay) and the editor gets them from nexus lsp. A .templ
-	// save is not a Go build input, so the generator asks for the rebuild.
+	// Views are written beside their .templ files, so any editor and a
+	// plain go build see them. With --no-view-files they compile in memory:
+	// the build overlays them (see buildDevOverlay) and the editor gets them
+	// from nexus lsp. A .templ save is not a Go build input, so the
+	// generator then asks for the rebuild.
 	var restartCh chan struct{}
 	var rebuildViews func()
 	if !viewFiles {
@@ -380,6 +386,11 @@ func runDev(target, addr string, openOnReady, openDash, watch bool, frontendDir 
 			case restartCh <- struct{}{}:
 			default:
 			}
+		}
+	}
+	if viewFiles {
+		if hint := viewFilesIgnoreHint(projectRoot); hint != "" {
+			fmt.Fprintf(stderr, "%s●%s %s\n", ansiYellow, ansiReset, hint)
 		}
 	}
 	var onChange []func(string)

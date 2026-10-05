@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -71,6 +72,31 @@ func devGenerators(root string, rebuild func()) []devGenerator {
 	return out
 }
 
+// viewFilesIgnoreHint is a note for a git project whose .gitignore lets
+// the view files nexus dev writes into the tree be committed, else "".
+func viewFilesIgnoreHint(root string) string {
+	if !viewgen.HasTemplates(root) {
+		return ""
+	}
+	var missing []string
+	for _, name := range []string{"x_templ.go", "view_gen.go", "view_imports_gen.go"} {
+		err := exec.Command("git", "-C", root, "check-ignore", "-q", name).Run()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			continue // ignored, or not a git work tree
+		}
+		if name == "x_templ.go" {
+			name = "*_templ.go"
+		}
+		missing = append(missing, name)
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return "compiled views are written beside the .templ files: add " + strings.Join(missing, ", ") +
+		" to .gitignore (or run nexus dev --no-view-files)"
+}
+
 // viewsWatch is what the views generators react to: a .templ save, or a Go
 // edit that may declare what templates use (a state struct, a view.Shard
 // registration).
@@ -94,7 +120,7 @@ func viewsError(root string, err error) error {
 
 // viewsGenerator compiles the project's reactive templ views (package
 // github.com/paulmanoni/nexus/v2/view) and writes the generated Go to disk,
-// for editors on plain gopls (nexus dev --view-files).
+// so any editor and a plain go build see it (nexus dev, by default).
 func viewsGenerator(root string) devGenerator {
 	notes := &warningNotes{}
 	return devGenerator{
