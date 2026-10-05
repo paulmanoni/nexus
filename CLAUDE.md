@@ -285,7 +285,9 @@ files, so any editor sees it (gitignore `*_templ.go`, `view_gen.go`, `view_impor
 `nexus new` does; dev hints when git doesn't; `--no-view-files` keeps it in memory, the build
 overlaying it) and runs `tailwindcss --watch` for any
 stylesheet with `@import "tailwindcss"` (outside the Vite frontend; `input.css`→`output.css`,
-writing `sources.generated.css` with @source for the project + Go deps shipping .templ).
+writing `sources.generated.css` with @source for the project + Go deps shipping .templ, and an
+@import for each `[runtime.tailwind] imports` entry — `"<module>/<file>.css [layer(base)]"`, a component
+library's stylesheet resolved from its Go module).
 **`nexus build`**: views via the overlay, Tailwind minified. **`nexus test` / `nexus vet`**:
 go test/vet through the same overlay. `nexus generate views [--check]` writes/verifies on
 disk. **Editor: `nexus lsp`** for `.go` and `.templ` — it fronts gopls and opens the

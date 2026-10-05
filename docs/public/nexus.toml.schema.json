@@ -1206,6 +1206,19 @@
           },
           "type": "object"
         },
+        "tailwind": {
+          "additionalProperties": false,
+          "properties": {
+            "imports": {
+              "description": "stylesheets of Go modules imported into sources.generated.css, as \"\u003cmodule\u003e/\u003cfile\u003e.css\" and optional conditions (\"… layer(base)\"): a component library's styles",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "telemetry": {
           "additionalProperties": false,
           "properties": {

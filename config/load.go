@@ -220,6 +220,7 @@ type runtimeBlock struct {
 	DevReload             devReloadBlock  `toml:"devreload"`
 	Logging               loggingBlock    `toml:"logging"`
 	Telemetry             telemetryBlock  `toml:"telemetry"`
+	Tailwind              tailwindBlock   `toml:"tailwind"`
 	Environment           string          `toml:"environment" doc:"development | staging | production; NEXUS_ENVIRONMENT overrides it"`
 	Version               string          `toml:"version"`
 	Introspection         bool            `toml:"introspection" doc:"open the /__nexus dashboard and JSON APIs (off by default)"`
@@ -236,6 +237,12 @@ type loggingBlock struct {
 	Requests *bool  `toml:"requests"` // dev-only per-request console log (default true)
 	Format   string `toml:"format"`   // pretty | logfmt | pattern | raw | json
 	Pattern  string `toml:"pattern"`  // used when format = "pattern"
+}
+
+// tailwindBlock is [runtime.tailwind], read by nexus dev and nexus build
+// when they compile a stylesheet with the Tailwind CLI.
+type tailwindBlock struct {
+	Imports []string `toml:"imports" doc:"stylesheets of Go modules imported into sources.generated.css, as \"<module>/<file>.css\" and optional conditions (\"… layer(base)\"): a component library's styles"`
 }
 
 // telemetryBlock is [runtime.telemetry]: trace export to an OpenTelemetry

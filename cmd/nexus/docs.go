@@ -800,7 +800,9 @@ nexus dev: compiles views on start and on every .templ save, writing
 them; --no-view-files keeps them in memory, for the build overlay) — and runs the
 Tailwind standalone CLI for any stylesheet that does @import "tailwindcss"
 (input.css → output.css; sources.generated.css lists your templates plus
-every Go dependency shipping .templ files). nexus build: views via the
+every Go dependency shipping .templ files, and @imports the module
+stylesheets [runtime.tailwind] imports names: "<module>/<file>.css
+[layer(base)]"). nexus build: views via the
 overlay, Tailwind minified. nexus test / nexus vet: go test / go vet through
 the same overlay. nexus generate views [--check]: write / verify on disk.
 

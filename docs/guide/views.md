@@ -770,7 +770,17 @@ memory; the editor then gets it from `nexus lsp`. Generation errors point at the
 frontend) is compiled with the Tailwind standalone CLI: `input.css` → `output.css`.
 When it imports `./sources.generated.css`, nexus writes that file — an `@source`
 for your templates and for every Go dependency that ships `.templ` files — so a
-component library imported as a Go module contributes its classes.
+component library imported as a Go module contributes its classes. A library's
+own stylesheets are imported from its module too, wherever Go keeps it on this
+machine — list them, with optional conditions, in `nexus.toml`:
+
+```toml
+[runtime.tailwind]
+imports = [
+  "github.com/axadrn/shadcn-templ/v2/assets/css/shadcn-tailwind.css",
+  "github.com/axadrn/shadcn-templ/v2/assets/css/styles/style-nova.css layer(base)",
+]
+```
 
 ## Component libraries
 
