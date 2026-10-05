@@ -87,6 +87,7 @@ func startRelay(ctx context.Context, r Relay) {
 	relays.Lock()
 	relays.active = append(relays.active, a)
 	relays.Unlock()
+	go runPresence(ctx)
 	go func() {
 		for {
 			select {
@@ -107,6 +108,10 @@ func startRelay(ctx context.Context, r Relay) {
 			err := r.Subscribe(ctx, func(payload []byte) {
 				var env envelope
 				if json.Unmarshal(payload, &env) != nil || env.Origin == replica {
+					return
+				}
+				if env.Topic == presenceTopic {
+					onRemotePresence(env.Origin, env.Data)
 					return
 				}
 				deliver(env.Topic, env.Data)

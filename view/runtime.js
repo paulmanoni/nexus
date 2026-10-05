@@ -344,6 +344,10 @@
     // data-nx-ignore: the element is the browser's while its id holds (a
     // chart a script drew into, say); a new id replaces it.
     if (el.hasAttribute("data-nx-ignore") && el.id && el.id === next.id) return;
+    if (el.hasAttribute("data-nx-stream") && next.hasAttribute("data-nx-stream")) {
+      morphStream(el, next);
+      return;
+    }
     if (el.tagName === "NX-ISLAND" && islands.has(el)) {
       // A mounted island keeps its DOM: new props reach it through walk.
       // Another island in its place unmounts it, and the fallback returns.
@@ -375,6 +379,44 @@
     }
     if (focused) restoreField(el, seen);
     else if (el.hasAttribute("data-nx-value") || serverValue(el) !== before) takeServerValue(el);
+  }
+
+  // morphStream applies a view.Stream's change to its list once: the list
+  // keeps its rows, and the render carries only the rows that changed.
+  function morphStream(el, next) {
+    var applied = el.__nxStream !== undefined ? el.__nxStream : el.getAttribute("data-nx-stream-seq");
+    var seq = next.getAttribute("data-nx-stream-seq");
+    syncAttributes(el, next);
+    el.__nxStream = seq;
+    if (seq === applied) return;
+    var ops = {};
+    try {
+      ops = JSON.parse(next.getAttribute("data-nx-stream-ops") || "{}");
+    } catch (err) {}
+    var byId = function (id) {
+      for (var c = el.firstElementChild; c; c = c.nextElementSibling) if (c.id === id) return c;
+      return null;
+    };
+    if (ops.r) while (el.firstChild) el.removeChild(el.firstChild);
+    (ops.d || []).forEach(function (id) {
+      var c = byId(id);
+      if (c) el.removeChild(c);
+    });
+    var at = {};
+    (ops.i || []).forEach(function (p) { at[p[0]] = p[1]; });
+    Array.from(next.children).forEach(function (child) {
+      var old = child.id ? byId(child.id) : null;
+      if (old) {
+        morph(old, child);
+        return;
+      }
+      var pos = at[child.id];
+      var before = typeof pos === "number" && pos >= 0 ? el.children[pos] : null;
+      if (before) el.insertBefore(child, before);
+      else el.appendChild(child);
+    });
+    if (ops.l > 0) while (el.children.length > ops.l) el.removeChild(el.lastElementChild);
+    if (ops.l < 0) while (el.children.length > -ops.l) el.removeChild(el.firstElementChild);
   }
 
   function isField(el) {

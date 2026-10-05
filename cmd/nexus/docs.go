@@ -856,6 +856,12 @@ Uploads: a view.Upload field — p.Avatar.Allow(view.UploadConfig{Accept:
 { p.Avatar.Input()... }/>, p.Avatar.Entries() for progress, and
 p.Avatar.Consume(func(e view.UploadEntry, f *os.File) error {…}) in the
 submit event; view.CancelUpload(&p.Avatar, e.Ref) removes one.
+Streams: a view.Stream[T] field shows a list the server doesn't keep —
+c.Messages.Configure(idFn), Insert/Prepend/Delete/Reset/Limit; the template
+spreads { c.Messages.Attrs()... } on the list and renders c.Messages.Items()
+(the latest change) with c.Messages.ID(m).
+Presence: sock.Track(topic, key, meta) in Mount, view.Presences(topic), and
+view.PresenceDiff in Info; spans replicas with view.UseRelay.
 After each event the page is re-rendered and patched in place (focus kept);
 an element with an id and data-nx-ignore stays as the browser has it until a
 render gives it another id (a chart a script drew, an app shell's menus).

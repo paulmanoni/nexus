@@ -43,7 +43,6 @@ func (s *Socket) Subscribe(topics ...string) {
 // close unsubscribes the page from everything, when its connection ends.
 func (s *Socket) close() {
 	hub.Lock()
-	defer hub.Unlock()
 	for _, t := range s.topics {
 		delete(hub.subs[t], s)
 		if len(hub.subs[t]) == 0 {
@@ -51,10 +50,12 @@ func (s *Socket) close() {
 		}
 	}
 	s.topics = nil
+	hub.Unlock()
 	for _, u := range s.uploads {
 		u.clear()
 	}
 	s.uploads = nil
+	s.untrackAll()
 }
 
 // Broadcast sends data to every live page subscribed to topic — from an

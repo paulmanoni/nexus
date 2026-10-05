@@ -250,7 +250,7 @@ func structFields(fset *token.FileSet, src []byte, st *ast.StructType, view stri
 			}
 		}
 		switch {
-		case strings.HasPrefix(typ, view+".Assign["):
+		case strings.HasPrefix(typ, view+".Assign["), strings.HasPrefix(typ, view+".Stream["), typ == view+".Upload":
 			for _, name := range f.Names {
 				out.Assigns = append(out.Assigns, name.Name)
 			}

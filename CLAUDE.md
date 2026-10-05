@@ -331,7 +331,11 @@ the browser finds the nearest `<nx-c data-nx-ct>`); with Assigns a component eve
 Mount) leaves a page tracked. Split Render along what changes together (`@table(p.tableView())`…): a part is skipped whole.
 **Uploads**: a `view.Upload` field (`Allow(view.UploadConfig{Accept, MaxEntries, MaxSize})` in Mount), `<input type="file"
 { p.Avatar.Input()... }/>`, `Entries()` (Progress/Done/Err), `Busy()`, `Consume(func(e, *os.File) error)` in the submit event,
-`view.CancelUpload(&p.Avatar, ref)`; files POST to `<page>/_upload?t=` (gates, owner-bound, one-shot) into temp files. Reconnect = jittered backoff + queued events + **resume**: the server
+`view.CancelUpload(&p.Avatar, ref)`; files POST to `<page>/_upload?t=` (gates, owner-bound, one-shot) into temp files.
+**Streams**: a `view.Stream[T]` field — `Configure(idFn)`, `Insert/Prepend/InsertAt/Delete/DeleteID/Reset/Limit`; template
+`<ul { s.Attrs()... }>for _, x := range s.Items() { <li id={ s.ID(x) }> }` (Items = latest change only; the runtime applies each
+batch once by id). **Presence**: `sock.Track(topic, key, meta)` (connected only), `sock.Untrack`, `view.Presences(topic)`
+([]Presence{Key, Metas}), `view.PresenceDiff` via Info; across replicas over the relay (state every 10s, `view.PresenceTTL`). Reconnect = jittered backoff + queued events + **resume**: the server
 parks the page (state + subscriptions) for `view.ResumeGrace` (30s) under a token; same page + same identity
 carries on; otherwise a fresh mount, and the browser first re-sends each `view.Change` form (LiveView form
 recovery) before queued events, holding the fresh render until those replies arrive. Scale: a page runs on its own goroutine after

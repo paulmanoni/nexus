@@ -196,6 +196,13 @@ func (t *treeDiffer) dynChange(a, b any) (any, bool) {
 		u := t.frameChange(old, b)
 		return u, u != nil
 	case *rcomp:
+		if b.ephemeral {
+			// A stream's change: sent whole when it differs from the last.
+			if old, ok := a.(strSig); ok && old.h == dynSigArr(b) {
+				return nil, false
+			}
+			return t.dyn(b), true
+		}
 		old, ok := a.(*rcomp)
 		if !ok {
 			return t.dyn(b), true
@@ -312,6 +319,19 @@ func hashDyn(h *maphash.Hash, d any) {
 	}
 }
 
+// dynSigArr is dynSig as an array.
+func dynSigArr(d any) [16]byte {
+	var a, b maphash.Hash
+	a.SetSeed(fpSeeds[0])
+	b.SetSeed(fpSeeds[1])
+	hashDyn(&a, d)
+	hashDyn(&b, d)
+	var out [16]byte
+	binary.LittleEndian.PutUint64(out[:8], a.Sum64())
+	binary.LittleEndian.PutUint64(out[8:], b.Sum64())
+	return out
+}
+
 // dynSig is hashDyn's sum.
 func dynSig(d any) string {
 	var a, b maphash.Hash
@@ -398,6 +418,10 @@ func shadow(f *rframe, table *spotTable) *rframe {
 		case *rframe:
 			out.d[i] = shadow(d, table)
 		case *rcomp:
+			if d.ephemeral {
+				out.d[i] = strSig{h: dynSigArr(d)}
+				continue
+			}
 			c := &rcomp{items: make([]*rframe, len(d.items))}
 			for j, it := range d.items {
 				c.items[j] = shadow(it, table)

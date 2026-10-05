@@ -32,7 +32,9 @@ type Orders struct {
 }
 
 type Board struct {
-	Rows view.Assign[[]string]
+	Rows  view.Assign[[]string]
+	Feed  view.Stream[string]
+	Photo view.Upload
 }
 
 type Plain struct{ Count int }
@@ -96,7 +98,7 @@ templ (p *Plain) Render() {
 		"orders/orders.templ:12:22: o.Total is not a view.Assign",
 		"orders/orders.templ:16:20: Board calls *Store in Render",
 		"orders/orders.templ:26:22: l.Total is not a view.Assign: List renders in full",
-		"orders/orders.go:20:2: List.Total keeps the live page List rendering in full",
+		"orders/orders.go:22:2: List.Total keeps the live page List rendering in full",
 		"orders/orders.go:7:2: Orders.Total keeps the live page Orders rendering in full",
 	}
 	if len(got) != len(want) {

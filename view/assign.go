@@ -122,6 +122,8 @@ type tracker struct {
 	rec     *recorder // the tracked render under way, if any
 	off     string    // why the page isn't tracked; "" when it is
 	uploads map[string]*Upload
+	// flushers are the streams, which let go of a change once it is sent.
+	flushers []interface{ flush() }
 }
 
 func (t *tracker) bump() uint64 {
@@ -173,6 +175,9 @@ func trackAssigns(v reflect.Value) *tracker {
 			}
 			t.uploads[f.Name] = u
 			continue
+		}
+		if f, ok := ptr.Interface().(interface{ flush() }); ok {
+			t.flushers = append(t.flushers, f)
 		}
 		if ptr.Type().Implements(assignFieldType) {
 			a := ptr.Interface().(assignField)

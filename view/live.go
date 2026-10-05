@@ -110,6 +110,7 @@ type Socket struct {
 	topics    []string
 	wake      chan bool // an upload changed the page (upload.go)
 	uploads   []*Upload // the uploads the page took files for
+	presences []tracked // where the page is present (presence.go)
 }
 
 // Connected reports whether this Mount is for the live connection (true) or
@@ -537,8 +538,8 @@ func (in *instance) renderTree(ctx context.Context, prev *spotTable, again map[u
 		if prev != nil && prev.owner == in.tr {
 			rec.prev, rec.changed = prev, in.tr.changed(prev.epoch)
 		}
-		in.tr.rec = rec
 	}
+	in.tr.rec = rec
 	if err := comp.Render(withRender(ctx, &render{}), rec.w); err != nil {
 		rec.tree()
 		return nil, nil, nil, err
@@ -577,6 +578,7 @@ func (in *instance) diffRender(ctx context.Context, t *treeDiffer) (msg any, ful
 		}
 		msg, full, missing := t.nextSpots(root, table)
 		if missing == nil {
+			in.flushStreams()
 			return msg, full, nil
 		}
 		// The browser needs the markup of spots the render skipped.
@@ -585,6 +587,19 @@ func (in *instance) diffRender(ctx context.Context, t *treeDiffer) (msg any, ful
 		}
 		for _, k := range missing {
 			again[k] = true
+		}
+	}
+}
+
+// flushStreams lets the page's streams, and its components', go of the
+// change a render sent.
+func (in *instance) flushStreams() {
+	for _, f := range in.tr.flushers {
+		f.flush()
+	}
+	for _, c := range in.comps {
+		for _, f := range c.in.tr.flushers {
+			f.flush()
 		}
 	}
 }
@@ -885,6 +900,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 		if !send(reply) {
 			return
 		}
+		in.flushStreams()
 	}
 	keep = true
 

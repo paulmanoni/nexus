@@ -48,13 +48,16 @@ type recorder struct {
 	changed uint64
 	again   map[uint64]bool // spots to render although unchanged
 	gen     uint64          // the page render this is, for the components it keeps
+
+	streamNext bool // the next loop is a view.Stream's
 }
 
 // recNode is a frame (comp false) or a loop (comp true) being recorded.
 type recNode struct {
-	comp  bool
-	parts []recPart  // a frame's statics and dynamics, in order
-	items []*recNode // a loop's item frames
+	comp      bool
+	ephemeral bool       // a loop over a view.Stream's Items
+	parts     []recPart  // a frame's statics and dynamics, in order
+	items     []*recNode // a loop's item frames
 
 	key    uint64 // its place on the page: its parent's key and its own
 	kids   int    // the frames and loops opened in it so far
@@ -188,7 +191,18 @@ func (c Rec) ForStart(io.Writer) {
 		return
 	}
 	c.r.flush()
-	c.r.push(&recNode{comp: true}, 'f')
+	c.r.push(&recNode{comp: true, ephemeral: c.r.streamNext}, 'f')
+	c.r.streamNext = false
+}
+
+// streamLoop marks the loop being recorded — or, before it starts, the
+// next one — as a view.Stream's.
+func (r *recorder) streamLoop() {
+	if n := len(r.stack); n > 0 && r.stack[n-1].comp {
+		r.stack[n-1].ephemeral = true
+		return
+	}
+	r.streamNext = true
 }
 
 func (c Rec) Item(io.Writer) {
@@ -377,7 +391,12 @@ type keyAt struct {
 	key uint64
 }
 
-type rcomp struct{ items []*rframe }
+type rcomp struct {
+	items []*rframe
+	// ephemeral: a view.Stream's latest change — the browser keeps the rows,
+	// so the connection keeps only their hash (rdiff.go).
+	ephemeral bool
+}
 
 // kept is a spot a tracked render skipped: what it rendered before stands.
 type kept struct {
@@ -400,7 +419,7 @@ func normalize(n *recNode, keyed map[*rframe][]keyAt) *rframe {
 			f.s[len(f.s)-1] += p.text
 			continue
 		case p.node != nil && p.node.comp:
-			c := &rcomp{items: make([]*rframe, len(p.node.items))}
+			c := &rcomp{items: make([]*rframe, len(p.node.items)), ephemeral: p.node.ephemeral}
 			for i, it := range p.node.items {
 				c.items[i] = normalize(it, keyed)
 			}
