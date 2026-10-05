@@ -176,6 +176,16 @@ func RestOptions(opts ...RestOption) RestOption {
 	})
 }
 
+// restPath is where a route mounts: under the app's route prefix, and "/"
+// when it comes out empty — a router at "/" registering its own path
+// (view.Live[T]("/")).
+func restPath(app *App, p string) string {
+	if p = app.PrefixPath(p); p == "" {
+		return "/"
+	}
+	return p
+}
+
 // asRestInvoke builds a synthetic di.Invoke: the constructor fx sees takes
 // (*App, deps...) and registers the handler on the router + the registry.
 // We build its signature via reflect.FuncOf so any dep type the handler named
@@ -197,7 +207,7 @@ func asRestInvoke(method, path string, cfg *restConfig, sh handlerShape) Option 
 		// Resolve the final mounted path by prefixing — module-level
 		// or per-endpoint RoutePrefix stamped cfg.pathPrefix for us.
 		// app.PrefixPath wraps the deployment-wide prefix on top.
-		finalPath := app.PrefixPath(cfg.pathPrefix + path)
+		finalPath := restPath(app, cfg.pathPrefix+path)
 		// REST op identifier — "<METHOD> <path>" — unique per endpoint
 		// even when the same handler is reused across routes.
 		opName := method + " " + finalPath
@@ -540,7 +550,7 @@ func asRestFactory(method, path string, cfg *restConfig, factory any) Option {
 		app := args[0].Interface().(*App)
 		deps := args[1:]
 		service := resolveEndpointService(cfg.service, cfg.module, deps, depTypes, app)
-		finalPath := app.PrefixPath(cfg.pathPrefix + path)
+		finalPath := restPath(app, cfg.pathPrefix+path)
 		// REST ops are "<METHOD> <path>": unique per route even when one
 		// factory serves several.
 		opName := method + " " + finalPath

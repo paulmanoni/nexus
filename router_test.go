@@ -62,6 +62,26 @@ func TestRouterNesting(t *testing.T) {
 	}
 }
 
+// TestRouterAtRoot: a router at "/" registering its own path ("") serves
+// "/", alone and inside a module (view.Live[T]("/") does this).
+func TestRouterAtRoot(t *testing.T) {
+	handler := func() httpx.HandlerFunc {
+		return func(c *httpx.Ctx) { c.String(200, "home") }
+	}
+	home := NewRouter("home", "/")
+	home.Rest("GET", "", handler)
+
+	app, stop, err := InProcess(config.Runtime{}, Module("pages", home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stop(context.Background()) })
+
+	if w := routerGet(t, app, "/"); w.Code != 200 || w.Body.String() != "home" {
+		t.Fatalf("GET / = %d %q", w.Code, w.Body.String())
+	}
+}
+
 // TestRouterIncludedGuard: passing an included router (not the root) to the
 // app is a boot error, not a silent double mount.
 func TestRouterIncludedGuard(t *testing.T) {
