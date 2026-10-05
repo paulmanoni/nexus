@@ -39,9 +39,10 @@ func init() { nexus.RegisterDeferredOptions(options) }
 
 func options() []nexus.Option {
 	return []nexus.Option{
-		nexus.AsRest("GET", "/_view/runtime.js", serveJS(func() string { return runtimeJS }), nexus.HideFromDashboard()),
-		nexus.AsRest("GET", "/_view/import.js", serveJS(func() string { return importJS }), nexus.HideFromDashboard()),
-		nexus.AsRest("GET", "/_view/twins.js", serveJS(twinsJS), nexus.HideFromDashboard()),
+		// Every page loads the runtime, a sign-in page included.
+		nexus.AsRest("GET", "/_view/runtime.js", serveJS(func() string { return runtimeJS }), nexus.Public(), nexus.HideFromDashboard()),
+		nexus.AsRest("GET", "/_view/import.js", serveJS(func() string { return importJS }), nexus.Public(), nexus.HideFromDashboard()),
+		nexus.AsRest("GET", "/_view/twins.js", serveJS(twinsJS), nexus.Public(), nexus.HideFromDashboard()),
 		nexus.Invoke(func(app *nexus.App, lc nexus.Lifecycle) {
 			lastApp.Store(app)
 			registerIslands(app)
@@ -218,9 +219,15 @@ func clonePerPage(v any, t reflect.Type, r *render) any {
 //	view.Assets("/templui/js/", mux)
 //	view.Assets("/assets/", http.FileServerFS(assetsFS))
 //
-// The handler sees the request's full path.
-func Assets(prefix string, handler http.Handler) nexus.Option {
+// The handler sees the request's full path. Assets are public — a sign-in
+// page needs its stylesheet — so they skip auth's deny-by-default; gate one
+// that isn't with gates (auth.Required()).
+func Assets(prefix string, handler http.Handler, gates ...nexus.RestOption) nexus.Option {
 	route := strings.TrimSuffix(prefix, "/") + "/*path"
 	serve := func(c *httpx.Ctx) { handler.ServeHTTP(c.Writer, c.Request) }
-	return nexus.AsRest("GET", route, serve, nexus.HideFromDashboard())
+	opts := []nexus.RestOption{nexus.HideFromDashboard()}
+	if len(gates) == 0 {
+		opts = append(opts, nexus.Public())
+	}
+	return nexus.AsRest("GET", route, serve, append(opts, gates...)...)
 }
