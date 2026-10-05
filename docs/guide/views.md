@@ -695,12 +695,10 @@ socket too. After every navigation the runtime fires `nx:navigate` on
   loses track asks for the whole tree.
 - **What a page costs.** Each connected page runs on one goroutine (plus its
   socket's reader) and keeps its state, a compact shadow of its last tree to
-  diff against, and its socket — about 60 KB in all; a page idle for
-  `view.LiveIdleTrim` (2 minutes) lets the shadow go and its next reply is the
-  whole tree. On one 10-core machine, 20,000 connected users each acting every
-  ~5 seconds saw p50 0.2 ms and p99 7 ms; 20,000 acting every ~2 seconds
-  (10,000 events/s) p99 34 ms. Set `GOMEMLIMIT` in production to keep the
-  heap's headroom bounded.
+  diff against, and its socket; a page idle for `view.LiveIdleTrim` (2
+  minutes) lets the shadow go and its next reply is the whole tree. Set
+  `GOMEMLIMIT` in production to keep the heap's headroom bounded. Measured
+  numbers are under [Performance](#performance).
 - **Reconnects resume.** A dropped socket retries with jittered backoff (at
   once when the network returns or the tab is looked at again); the page shows
   `data-nx-live-state="disconnected"` meanwhile — style it. The server keeps
@@ -714,6 +712,41 @@ socket too. After every navigation the runtime fires `nx:navigate` on
   arrive: an event that reopens what the form belongs to from its fields (a
   hidden id) gets back what the user typed, as LiveView's form recovery does.
   Browser-side signals keep their values throughout.
+
+## Performance
+
+Measured on one 10-core machine (nexus v2.18.0), each page a live view over
+its own WebSocket, the load generator on the same machine. A page of a
+200-row table and a form:
+
+| | Plain fields | `view.Assign` | Table as an embedded view |
+|---|---|---|---|
+| Memory per open page | 232 KB | 229 KB | 249 KB |
+| Typing in the form, 200 pages at full speed | 6,100 events/s · p50 6 ms | **102,600 events/s · p50 1 ms** | **97,600 events/s · p50 1 ms** |
+| Changing the table, 200 pages at full speed | 6,060 events/s | 6,230 events/s | 5,370 events/s |
+| 10,000 users, one event every ~5 s | p99 13 ms · CPU ~300% | **p99 11 ms · CPU ~30%** | **p99 11 ms · CPU ~30%** |
+
+`view.Assign` doesn't make the page cheaper to hold; it makes an event that
+changes a small part cheap, because the rest isn't rendered. When the table
+itself changes, all three do the same work.
+
+A chat of 1,000 messages, as a plain list in an `Assign` and as a
+[stream](#streams):
+
+| | Plain list | `view.Stream` |
+|---|---|---|
+| Memory per open page | 911 KB | **143 KB** |
+| Posting, 200 pages at full speed | 2,160 events/s | **98,700 events/s** |
+| 5,000 users posting every ~5 s | saturated: p50 12 s | **p99 4.7 ms · CPU ~20%** |
+| One broadcast reaching 2,000 pages | 0.9 s | **23–34 ms** |
+
+[Presence](#presence): a join reaching every page in its room — 50 pages
+4 ms, 500 pages 65 ms, 2,000 pages 0.8 s. A room where every page lists every
+other is quadratic in its size (2,000 pages listing 2,000 names took 4 GB);
+show a count, or a page of the list, in a large one.
+
+v2.18.0 (one kind of live view) measures level with v2.17.0 on every test
+above, within run-to-run noise.
 
 ## The toolchain
 
