@@ -1561,5 +1561,9 @@ no Dockerfile generator.
 - **Handlers are methods on services** (or plain functions); an op is named after the
   method/function as written — no `New` prefix rule in v2.
 - Don't reference `nexus.DeployAs` / `nexus.IfDeployment` — not implemented.
+- **The CLI as a project tool**: `go get -tool github.com/paulmanoni/nexus/cmd/nexus/v2@latest`
+  pins it in go.mod; run `go tool nexus dev|build|test …`. Its deps join go.mod as indirect
+  requirements, never the shipped binary. A go.work pointing at a local nexus checkout must
+  also `use` its `cmd/nexus` module, or `go tool nexus` builds the published CLI.
 - `nexus docs <topic>` is the authoritative per-feature reference inside the installed
   binary; prefer it when unsure of an exact signature.

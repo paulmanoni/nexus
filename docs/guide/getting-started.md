@@ -10,6 +10,21 @@ The `nexus` CLI scaffolds projects, runs the dev loop and builds release binarie
 framework is an ordinary Go module, `github.com/paulmanoni/nexus/v2`, so you can also add it
 to an existing project with `go get`.
 
+### Or as a project tool
+
+Since Go 1.24 a project can pin its tools in `go.mod`. Pin the CLI there, and everyone
+working on the project — and CI — runs the same version, with nothing to install:
+
+```bash
+go get -tool github.com/paulmanoni/nexus/cmd/nexus/v2@latest
+go tool nexus dev
+```
+
+`go tool nexus` builds the pinned CLI on first use and caches it; every command works the
+same way (`go tool nexus build`, `go tool nexus test ./...`). Move to another version with
+`go get -tool github.com/paulmanoni/nexus/cmd/nexus/v2@vX.Y.Z`. The CLI's own dependencies
+are recorded in `go.mod` as indirect requirements; they never reach the binary you ship.
+
 ## Create an app
 
 ```bash

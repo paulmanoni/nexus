@@ -65,6 +65,8 @@ curl localhost:8080/hello   -H 'content-type: application/json' -d '{"name":"wor
 
 ```bash
 go install github.com/paulmanoni/nexus/cmd/nexus/v2@latest
+# or, pinned in a project's go.mod: go get -tool github.com/paulmanoni/nexus/cmd/nexus/v2@latest
+#                                   go tool nexus dev
 
 nexus new my-app      # --frontend vue|react, --inertia, --db, --auth …
 cd my-app && go mod tidy

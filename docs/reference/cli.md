@@ -4,6 +4,12 @@
 go install github.com/paulmanoni/nexus/cmd/nexus/v2@latest
 ```
 
+Or pin it in the project's `go.mod` as a tool, and run it with `go tool nexus …`:
+
+```bash
+go get -tool github.com/paulmanoni/nexus/cmd/nexus/v2@latest
+```
+
 ## `nexus new <dir>`
 
 Scaffolds a runnable app with a `nexus.toml`.
