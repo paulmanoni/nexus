@@ -207,6 +207,15 @@ func TestLegacyDirectiveSpelling(t *testing.T) {
 	}
 }
 
+// An @ line that names no component directive is prose: a code example
+// in a doc comment compiles.
+func TestDocCodeExampleIsNotADirective(t *testing.T) {
+	src := strings.Replace(page, "//nexus:auth Required\n", "//nexus:auth Required\n//\n//\t@button.Button(button.Props{Attributes: x}) { ... }\n", 1)
+	if _, err := File("app/page.templ", src, pkg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A browser expression outside the vocabulary is an error at its line and
 // column.
 func TestBrowserErrorPosition(t *testing.T) {

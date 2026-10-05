@@ -40,6 +40,9 @@ const (
 // Go reserves for tool directives — the handler scanner reads the same.
 const directivePrefix = "//nexus:"
 
+// componentDirective are the directives a component takes.
+var componentDirective = map[string]bool{"page": true, "auth": true, "use": true}
+
 // directives reads the //nexus: lines of a component's doc comment. docAt
 // is where the doc starts, so a directive error names its own line. The v1
 // spelling (//nexus:page, //nexus:page) is rejected with a pointer to the codemod.
@@ -51,8 +54,10 @@ func (f *fileRewriter) directives(info *Component, doc string, docAt, at parser.
 		if !strings.HasPrefix(line, "//") {
 			continue
 		}
+		// Only a component directive is a v1 annotation: any other @ line
+		// is prose or a code example (//	@button.Button(…) in a doc).
 		if legacy := strings.TrimSpace(strings.TrimPrefix(line, "//")); strings.HasPrefix(legacy, "@") {
-			if fields := strings.Fields(legacy[1:]); len(fields) > 0 {
+			if fields := strings.Fields(legacy[1:]); len(fields) > 0 && componentDirective[fields[0]] {
 				f.fail(lineAt, "//@%s is the nexus v1 annotation spelling — write //nexus:%s (run `nexus migrate v2`)", fields[0], fields[0])
 				ok = false
 			}
