@@ -20,16 +20,21 @@ import (
 
 // roomLive tracks itself in a room and lists who is there.
 type roomLive struct {
+	LiveView
 	Online Assign[[]string]
 	name   string `view:"-"`
 }
 
+type nameProps struct {
+	Name string `path:"name"`
+}
+
 type seen struct{ Name string }
 
-func (r *roomLive) Mount(ctx context.Context, sock *Socket, name string) error {
-	r.name = name
-	sock.Subscribe("room")
-	sock.Track("room", name, seen{Name: strings.ToUpper(name)})
+func (r *roomLive) Mount(ctx context.Context, p nameProps) error {
+	r.name = p.Name
+	r.Subscribe("room")
+	r.Track("room", p.Name, seen{Name: strings.ToUpper(p.Name)})
 	r.list()
 	return nil
 }
@@ -74,13 +79,44 @@ func bootRoom(t *testing.T, opts ...nexus.Option) *httptest.Server {
 
 func untilHTML(t *testing.T, c *websocket.Conn, want string) string {
 	t.Helper()
+	return untilHTMLFunc(t, c, func(html string) bool { return strings.Contains(html, want) }, want)
+}
+
+// untilHTMLFunc reads replies until the page's markup satisfies ok.
+func untilHTMLFunc(t *testing.T, c *websocket.Conn, ok func(string) bool, want string) string {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
+	var last string
 	for time.Now().Before(deadline) {
-		if r := reply(t, c); strings.Contains(r.HTML, want) {
-			return r.HTML
+		_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var r liveReply
+		if err := c.ReadJSON(&r); err != nil {
+			break
+		}
+		if r.Tree == nil && r.Error == "" && r.Ref == 0 {
+			continue
+		}
+		if r.Error != "" {
+			last = "error: " + r.Error
+			continue
+		}
+		pagesMu.Lock()
+		m := pages[c]
+		if m == nil {
+			m = &treeMirror{}
+			pages[c] = m
+		}
+		html, err := m.apply(r.Tree, r.Full, r.Reset)
+		pagesMu.Unlock()
+		if err != nil {
+			t.Fatalf("a reply that does not apply: %v", err)
+		}
+		last = html
+		if ok(html) {
+			return html
 		}
 	}
-	t.Fatalf("never got %q", want)
+	t.Fatalf("never got %q; last: %s", want, last)
 	return ""
 }
 

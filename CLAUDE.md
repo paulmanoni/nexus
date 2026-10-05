@@ -296,15 +296,21 @@ drop-in gopls (accepts `serve`/gopls flags, passes other subcommands through), s
 uses it via `go.alternateTools.gopls` and a wrapper script.
 Component libraries (templUI): reactive entries in a `templ.Attributes{…}` literal
 (Props.Attributes) compile like element attributes; `view.Assets(prefix, handler)` serves
-library/CSS files. **Live pages** (`view.Live[*T](prefix, gates…).Provide(NewT)`, declared
-like a Resource): server-owned state per connected page over a WebSocket; the DI instance is
-the template, each page/connection gets a copy; conventions `Mount(ctx, [*view.Socket], deps…,
-pathParams…) error`, `templ (x *T) Render()`, events = exported `func(ctx, deps…, args…) error`
+library/CSS files. **Live views** — three tiers as in Phoenix: templ components (stateless), live views,
+signals (browser). A live view is a struct embedding `view.LiveView` **by value** (helpers: `Connected`, `Subscribe`,
+`Track`/`Untrack`, `PushPatch`/`PushNavigate`, `PutFlash`/`Flash` (cleared by the page's next event), `ID`); the
+same type is a page when routed — `view.Live[*T](path, gates…)` (`.Provide(NewT)` optional: the DI instance, else
+the zero value, is the template) or `//nexus:live /path` on the type (+ type-level `//nexus:auth`/`//nexus:use`) —
+and a part of a page when embedded — `@view.Component[*T](id, props)` (no registration unless it takes deps:
+then `view.Live[*T]("")` / `//nexus:live` with no path). Server-owned state per place shown over a WebSocket;
+conventions `Mount(ctx, deps…, [props P]) error` (P a struct: routed → bound from `path:`/`query:` tags +
+`validate:`, 422 on failure; embedded → the parent's), optional `Update(ctx, deps…, props P)` (a URL patch or new
+props; else Mount again), `templ (x *T) Render()`, events = exported `func(ctx, deps…, args…) error`
 (deps are pointer/interface params) sent with `view.Send(x.Method, args…)`; the page is re-rendered
 and patched in place (focus/typing kept; signals win over the server copy; an element with an `id` and
-`data-nx-ignore` is left as the browser has it until its id changes — script-drawn charts, app shells). Push: `sock.Subscribe(topics…)`
-in Mount + `view.Broadcast(ctx, topic, data)` from anywhere → optional `Info(ctx, deps…, msg view.Message)
-error`, then re-render; across replicas with `view.UseRelay(r)` (`view.Relay`: Publish/Subscribe bytes;
+`data-nx-ignore` is left as the browser has it until its id changes — script-drawn charts, app shells). Push: `x.Subscribe(topics…)`
+in Mount (embedded views too) + `view.Broadcast(ctx, topic, data)` from anywhere → the subscribed views' optional
+`Info(ctx, deps…, msg view.Message) error`, then re-render; across replicas with `view.UseRelay(r)` (`view.Relay`: Publish/Subscribe bytes;
 Redis pub/sub `extension/cache/redis/viewrelay.New(Config{URL})`, `view.NewMemoryRelay()`), data as JSON —
 read with `msg.Decode(&v)`. Forms: `view.Submit(x.Add)` /
 `view.Change(x.Validate)` on a form send its fields to an event whose last param is a `form:`-tagged
@@ -324,17 +330,16 @@ require nexus/v2 are instrumented. **Change tracking:** a live page whose fields
 skips spots (`Rec.Guard`: loops/branches/component calls using no template locals) whose Assigns and `view.Errors`
 didn't change; checked against a full render under nexus dev/tests (`NEXUS_VIEW_VERIFY`); the compiler warns
 (lsp/generate views/dev/doctor, `viewgen.Plan.Warnings`) on a plain field of such a page and a `view.Use` service call in its Render.
-**Live components** (LiveComponents): `view.LiveComponent[*T](ctors…)` registers, `@view.Component[*T](id, props)`
-places (instance per id while rendered); `Mount(ctx, deps…, props)`, optional `Update` on new props,
-`view.UpdateComponent[*T](ctx, id, props)`; `view.Send(c.M)` reaches its own instance (Send names the component type,
-the browser finds the nearest `<nx-c data-nx-ct>`); with Assigns a component event renders only it + spots around it. A field tagged `view:"-"` (not read by Render, or fixed after
+**Embedded live views**: instance per id while rendered (dropped with its subscriptions/presence when not);
+`view.UpdateComponent[*T](ctx, id, props)`; `view.Send(c.M)` reaches its own instance (Send names an embedded
+type, the browser finds the nearest `<nx-c data-nx-ct>`); with Assigns its event renders only it + spots around it. A field tagged `view:"-"` (not read by Render, or fixed after
 Mount) leaves a page tracked. Split Render along what changes together (`@table(p.tableView())`…): a part is skipped whole.
 **Uploads**: a `view.Upload` field (`Allow(view.UploadConfig{Accept, MaxEntries, MaxSize})` in Mount), `<input type="file"
 { p.Avatar.Input()... }/>`, `Entries()` (Progress/Done/Err), `Busy()`, `Consume(func(e, *os.File) error)` in the submit event,
 `view.CancelUpload(&p.Avatar, ref)`; files POST to `<page>/_upload?t=` (gates, owner-bound, one-shot) into temp files.
 **Streams**: a `view.Stream[T]` field — `Configure(idFn)`, `Insert/Prepend/InsertAt/Delete/DeleteID/Reset/Limit`; template
 `<ul { s.Attrs()... }>for _, x := range s.Items() { <li id={ s.ID(x) }> }` (Items = latest change only; the runtime applies each
-batch once by id). **Presence**: `sock.Track(topic, key, meta)` (connected only), `sock.Untrack`, `view.Presences(topic)`
+batch once by id). **Presence**: `x.Track(topic, key, meta)` (connected only), `x.Untrack`, `view.Presences(topic)`
 ([]Presence{Key, Metas}), `view.PresenceDiff` via Info; across replicas over the relay (state every 10s, `view.PresenceTTL`). Reconnect = jittered backoff + queued events + **resume**: the server
 parks the page (state + subscriptions) for `view.ResumeGrace` (30s) under a token; same page + same identity
 carries on; otherwise a fresh mount, and the browser first re-sends each `view.Change` form (LiveView form
@@ -344,10 +349,10 @@ the upgrade (the request returns; app stop closes live conns), keeps a shadow tr
 p99 7ms on 10 cores.
 `@view.Link(href, attrs…) { … }` is in-app navigation: fetch + patch the body, head assets merged,
 live sockets follow, history/back work. From a live page it goes over the socket (LiveView patch/navigate):
-same path → *patch* (optional `Params(ctx, deps…, u *url.URL) error`, also run after Mount; tree diff);
+same path → *patch* (props re-bound from the URL → `Update`, else Mount; tree diff);
 another live page → the connection is handed to its `_live` route through the app router (gates/DI/params
 as a page load) and it sends its tree against the connection's statics; else `{"redirect"}` → HTTP load.
-`view.PushPatch(ctx, href)` / `view.PushNavigate(ctx, href)` from events; `nx:navigate` fires on window. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
+`x.PushPatch(href)` / `x.PushNavigate(href)` from events; `nx:navigate` fires on window. Generator: `view/viewgen` (+ `viewgen/jsgen`, coherence-tested in goja).
 **Islands**: `var Chart = view.NewIsland[ChartProps]("Chart")` declares one (props type → registry
 `SetIsland` → manifest `islands` → `NexusIslandProps` in client.d.ts; `*view.Signal[T]` types as `T` via
 `registry.SchemaAs`); `@Chart(props, view.Visible(), view.SSR()) { fallback }` places it. It mounts a

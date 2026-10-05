@@ -2,6 +2,7 @@ package view
 
 import (
 	"context"
+	"slices"
 	"sync"
 )
 
@@ -19,29 +20,70 @@ const liveInbox = 64
 
 var hub = struct {
 	sync.Mutex
-	subs map[string]map[*Socket]struct{}
-}{subs: map[string]map[*Socket]struct{}{}}
+	subs map[string]map[*socket]struct{}
+}{subs: map[string]map[*socket]struct{}{}}
 
-// Subscribe makes the connected page receive what is broadcast to the
-// topics: its Info runs, then it re-renders. Call it from Mount; on the
-// first, server-rendered load (Connected() false) it does nothing.
-func (s *Socket) Subscribe(topics ...string) {
+// subscribe makes in — the page, or a view it embeds — hear what is
+// broadcast to the topics: its Info runs, then the page re-renders. On the
+// first, server-rendered load it does nothing.
+func (s *socket) subscribe(in *instance, topics ...string) {
 	if s == nil || !s.connected {
 		return
+	}
+	if s.subs == nil {
+		s.subs = map[string][]*instance{}
 	}
 	hub.Lock()
 	defer hub.Unlock()
 	for _, t := range topics {
-		if hub.subs[t] == nil {
-			hub.subs[t] = map[*Socket]struct{}{}
+		if slices.Contains(s.subs[t], in) {
+			continue
 		}
-		hub.subs[t][s] = struct{}{}
-		s.topics = append(s.topics, t)
+		s.subs[t] = append(s.subs[t], in)
+		if hub.subs[t] == nil {
+			hub.subs[t] = map[*socket]struct{}{}
+		}
+		if _, ok := hub.subs[t][s]; !ok {
+			hub.subs[t][s] = struct{}{}
+			s.topics = append(s.topics, t)
+		}
 	}
 }
 
+// drop ends what in subscribed to and tracked: an embedded view the page
+// stopped rendering.
+func (s *socket) drop(in *instance) {
+	if s == nil {
+		return
+	}
+	hub.Lock()
+	for t, ins := range s.subs {
+		ins = slices.DeleteFunc(ins, func(x *instance) bool { return x == in })
+		if len(ins) > 0 {
+			s.subs[t] = ins
+			continue
+		}
+		delete(s.subs, t)
+		delete(hub.subs[t], s)
+		if len(hub.subs[t]) == 0 {
+			delete(hub.subs, t)
+		}
+		s.topics = slices.DeleteFunc(s.topics, func(x string) bool { return x == t })
+	}
+	hub.Unlock()
+	kept := s.presences[:0]
+	for _, p := range s.presences {
+		if p.in == in {
+			leave(p)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	s.presences = kept
+}
+
 // close unsubscribes the page from everything, when its connection ends.
-func (s *Socket) close() {
+func (s *socket) close() {
 	hub.Lock()
 	for _, t := range s.topics {
 		delete(hub.subs[t], s)
@@ -49,7 +91,7 @@ func (s *Socket) close() {
 			delete(hub.subs, t)
 		}
 	}
-	s.topics = nil
+	s.topics, s.subs = nil, nil
 	hub.Unlock()
 	for _, u := range s.uploads {
 		u.clear()
@@ -71,7 +113,7 @@ func Broadcast(ctx context.Context, topic string, data any) int {
 // deliver hands data to the pages on this replica subscribed to topic.
 func deliver(topic string, data any) int {
 	hub.Lock()
-	targets := make([]*Socket, 0, len(hub.subs[topic]))
+	targets := make([]*socket, 0, len(hub.subs[topic]))
 	for s := range hub.subs[topic] {
 		targets = append(targets, s)
 	}

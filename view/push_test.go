@@ -39,14 +39,19 @@ func (l *likes) get() int {
 }
 
 type likesLive struct {
+	LiveView
 	Likes int
 	Seen  []string
 }
 
-func (p *likesLive) Mount(ctx context.Context, sock *Socket, store *likes, room string) error {
+type roomProps struct {
+	Room string `path:"room"`
+}
+
+func (p *likesLive) Mount(ctx context.Context, store *likes, r roomProps) error {
 	p.Likes = store.get()
-	if room != "quiet" {
-		sock.Subscribe("likes")
+	if r.Room != "quiet" {
+		p.Subscribe("likes")
 	}
 	return nil
 }

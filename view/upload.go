@@ -512,7 +512,8 @@ func (u *Upload) changed() {
 
 // upload handles the browser's __upload (files chosen) and __cancel_upload
 // events for the page's — or one of its components' — upload.
-func (in *instance) upload(ev liveEvent, sock *Socket, owner, page string, render func(int, bool) liveReply) liveReply {
+func (in *instance) upload(ev liveEvent, owner, page string, render func(int, bool) liveReply) liveReply {
+	sock := in.sock
 	target := in
 	if ev.C != "" {
 		c := in.comps[ev.C]

@@ -6,9 +6,10 @@ import (
 	"github.com/paulmanoni/nexus/v2/view"
 )
 
-// Cheer is a live component: each board keeps its own count of cheers, and
-// a cheer renders only the component, not the board around it.
+// Cheer is a live view the board embeds: each board keeps its own count of
+// cheers, and a cheer renders only the cheer, not the board around it.
 type Cheer struct {
+	view.LiveView
 	Pets   view.Assign[int]
 	Cheers view.Assign[int]
 }

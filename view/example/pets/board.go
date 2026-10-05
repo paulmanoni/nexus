@@ -14,6 +14,7 @@ import (
 // open board refreshes. Its fields are view.Assigns, so an event renders
 // only the parts of the board whose fields changed.
 type Board struct {
+	view.LiveView
 	Pets    view.Assign[[]Pet]
 	Adopted view.Assign[map[string]bool]
 	Draft   view.Assign[PetInput] // the add form, as last validated
@@ -65,8 +66,8 @@ func NewBoard() *Board { return &Board{} }
 // adoptions is the topic every board listens on.
 const adoptions = "adoptions"
 
-func (b *Board) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
-	sock.Subscribe(adoptions)
+func (b *Board) Mount(ctx context.Context, store *Store) error {
+	b.Subscribe(adoptions)
 	b.Pets.Set(store.All())
 	b.Adopted.Set(store.Adopted())
 	return nil
@@ -104,7 +105,6 @@ func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error 
 // Module mounts the live board and the registry, declared like a
 // nexus.Resource.
 var Module = nexus.Module("pets",
-	view.LiveComponent[*Cheer](),
 	view.Live[*Board]("/board").
 		Provide(NewBoard),
 	view.Live[*Registry]("/registry").

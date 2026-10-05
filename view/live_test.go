@@ -22,17 +22,22 @@ import (
 type greeter struct{ greeting string }
 
 type counterLive struct {
+	LiveView
 	Count int
 	Owner string
 	Mode  string
 }
 
+type countProps struct {
+	Name string `path:"name"`
+}
+
 func newCounterLive() *counterLive { return &counterLive{Count: 10} }
 
-func (l *counterLive) Mount(ctx context.Context, sock *Socket, g *greeter, name string) error {
-	l.Owner = g.greeting + " " + name
+func (l *counterLive) Mount(ctx context.Context, g *greeter, p countProps) error {
+	l.Owner = g.greeting + " " + p.Name
 	l.Mode = "page"
-	if sock.Connected() {
+	if l.Connected() {
 		l.Mode = "live"
 	}
 	return nil

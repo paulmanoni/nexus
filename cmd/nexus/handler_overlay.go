@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -188,6 +190,11 @@ func scanHandlerSites(root, outName string) ([]handlergen.Result, error) {
 		}
 		sites = append(sites, site)
 	}
+	// A package whose only directives sit on types (//nexus:live, a
+	// //nexus:controller with no other annotations) has no hits to name it.
+	for dir := range typeDirectiveDirs(root) {
+		dirs[dir] = true
+	}
 	typeSites, err := decls.typeSites(dirs, res)
 	if err != nil {
 		return nil, err
@@ -265,10 +272,38 @@ func (d *declIndex) method(file, name string, line int) (*methodDecl, error) {
 	return nil, nil
 }
 
+// typeDirectiveDirs are the package directories under root whose Go files
+// carry a type directive (//nexus:live, //nexus:controller).
+func typeDirectiveDirs(root string) map[string]bool {
+	out := map[string]bool{}
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if path != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "vendor" || name == "node_modules" || name == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || strings.HasSuffix(name, "_gen.go") || strings.HasSuffix(name, "_templ.go") {
+			return nil
+		}
+		if dir := filepath.Dir(path); !out[dir] {
+			if b, err := os.ReadFile(path); err == nil && (bytes.Contains(b, []byte("//nexus:live")) || bytes.Contains(b, []byte("//nexus:controller"))) {
+				out[dir] = true
+			}
+		}
+		return nil
+	})
+	return out
+}
+
 // typeDirectiveKeywords are the //nexus: directives read from type doc comments:
 // //nexus:controller and the modifiers it shares with every action. Other nexus
 // keywords found there are passed on so the generator can reject them.
-var typeDirectiveKeywords = map[string]bool{"controller": true, "auth": true, "session": true, "use": true}
+var typeDirectiveKeywords = map[string]bool{"controller": true, "live": true, "auth": true, "session": true, "use": true}
 
 // typeSites returns the //nexus: directives on the type declarations of the given
 // package directories, as type-level sites.

@@ -94,20 +94,15 @@ func (p *basket) Render() templ.Component {
 func newBasket(t *testing.T) (context.Context, *liveDef, *instance) {
 	t.Helper()
 	app := new(nexus.App)
-	def, err := newComponentDef(reflect.TypeFor[*tally]())
-	if err != nil {
+	if _, err := defFor(reflect.TypeFor[*tally]()); err != nil {
 		t.Fatal(err)
 	}
-	componentTypes.Store(LiveKey(def.t), true)
-	components.Lock()
-	components.m[app] = map[reflect.Type]*componentSetup{def.t: {def: def, template: reflect.Zero(def.t)}}
-	components.Unlock()
 	t.Cleanup(func() {
-		components.Lock()
-		delete(components.m, app)
-		components.Unlock()
+		views.Lock()
+		delete(views.m, app)
+		views.Unlock()
 	})
-	page, err := newLiveDef(reflect.TypeFor[*basket](), "/basket")
+	page, err := newLiveDef(reflect.TypeFor[*basket]())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +234,7 @@ func TestComponentRandomEvents(t *testing.T) {
 // Send names the component type a method belongs to, so the browser finds
 // the instance; a page's method stays unnamed.
 func TestSendNamesTheComponent(t *testing.T) {
-	componentTypes.Store(LiveKey(reflect.TypeFor[*tally]()), true)
+	embedded.Store(LiveKey(reflect.TypeFor[*tally]()), true)
 	c := &tally{}
 	if call := ScriptAttr(Send(c.Inc)); !strings.Contains(call, `"`+LiveKey(reflect.TypeFor[*tally]())+`")`) {
 		t.Fatalf("a component's event = %s", call)
@@ -253,7 +248,7 @@ func TestSendNamesTheComponent(t *testing.T) {
 // A component definition is checked like a page's.
 func TestComponentDefErrors(t *testing.T) {
 	type noRender struct{}
-	if _, err := newComponentDef(reflect.TypeFor[*noRender]()); err == nil {
+	if _, err := newLiveDef(reflect.TypeFor[*noRender]()); err == nil {
 		t.Fatal("a component needs Render")
 	}
 }

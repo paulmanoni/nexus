@@ -403,13 +403,13 @@ func TestAssignRandomEvents(t *testing.T) {
 	}
 	jsApply, _ := goja.AssertFunction(tv.ToObject(vm).Get("apply"))
 
-	def, err := newLiveDef(reflect.TypeFor[*ordersLive](), "/orders")
+	def, err := newLiveDef(reflect.TypeFor[*ordersLive]())
 	if err != nil {
 		t.Fatal(err)
 	}
 	in := def.instance(reflect.ValueOf(&ordersLive{}), nil)
 	ctx := context.Background()
-	if err := in.mount(ctx, func(string) string { return "" }, &Socket{}); err != nil {
+	if err := in.mount(ctx, reflect.Value{}); err != nil {
 		t.Fatal(err)
 	}
 	var server treeDiffer
@@ -427,7 +427,7 @@ func TestAssignRandomEvents(t *testing.T) {
 			case "Add":
 				args = raws(strconv.Quote("r" + strconv.Itoa(i)))
 			}
-			err := in.call(ctx, def.events[ev], nil, args)
+			err := in.call(ctx, def.events[ev], args)
 			if errs, ok := validation(err); ok {
 				in.setErrs(errs)
 			} else if err != nil {

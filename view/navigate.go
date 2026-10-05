@@ -14,10 +14,11 @@ import (
 )
 
 // Navigation between live pages happens on the page's socket, as Phoenix
-// LiveView's does. A view.Link (or view.PushPatch / view.PushNavigate from an
+// LiveView's does. A view.Link (or LiveView.PushPatch / PushNavigate from an
 // event) sends the browser's new URL over the socket:
 //
-//	the same page, another query     a patch: the page's Params runs and the
+//	the same page, another query     a patch: the page's props are bound from
+//	                                 the new URL, its Update runs, and the
 //	                                 reply is the change to its tree
 //	another live page                the connection is handed to that page's
 //	                                 socket route — its gates, DI and path
@@ -90,30 +91,6 @@ type discard struct{ header http.Header }
 func (d discard) Header() http.Header       { return d.header }
 func (discard) Write(b []byte) (int, error) { return len(b), nil }
 func (discard) WriteHeader(int)             {}
-
-// navKey is where an event finds the navigation it may ask for.
-type navKey struct{}
-
-// PushPatch, from a live page's event, moves the browser to href once the
-// event's reply is sent: on the same page (another query), the page's Params
-// runs and the page is patched; another live page opens on the connection.
-// The browser's history gets the new URL.
-//
-//	func (p *Orders) Filter(ctx context.Context, status string) error {
-//	    view.PushPatch(ctx, "/orders?status="+url.QueryEscape(status))
-//	    return nil
-//	}
-func PushPatch(ctx context.Context, href string) { pushNav(ctx, href) }
-
-// PushNavigate, from a live page's event, opens the page at href — on the
-// connection when it is a live page, else with a page load.
-func PushNavigate(ctx context.Context, href string) { pushNav(ctx, href) }
-
-func pushNav(ctx context.Context, href string) {
-	if p, ok := ctx.Value(navKey{}).(*string); ok {
-		*p = href
-	}
-}
 
 // pageURL is the URL a page shows: the browser's, when it says so and it is
 // this page's.

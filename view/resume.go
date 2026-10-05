@@ -22,7 +22,6 @@ const resumeMax = 10000 // pages waiting at once; the oldest go first
 
 type parkedPage struct {
 	in      *instance
-	sock    *Socket
 	path    string
 	owner   string // the identity the page was opened by ("" when anonymous)
 	expires time.Time
@@ -53,7 +52,7 @@ func park(token string, p *parkedPage) {
 				oldest = k
 			}
 		}
-		parking.m[oldest].sock.close()
+		parking.m[oldest].in.sock.close()
 		delete(parking.m, oldest)
 	}
 	parking.m[token] = p
@@ -84,7 +83,7 @@ func unpark(token, path, owner string) *parkedPage {
 func sweepLocked(now time.Time) {
 	for k, p := range parking.m {
 		if now.After(p.expires) {
-			p.sock.close()
+			p.in.sock.close()
 			delete(parking.m, k)
 		}
 	}
@@ -102,7 +101,7 @@ func dropParked() {
 	parking.Lock()
 	defer parking.Unlock()
 	for k, p := range parking.m {
-		p.sock.close()
+		p.in.sock.close()
 		delete(parking.m, k)
 	}
 }

@@ -170,6 +170,8 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	groups := map[string]*group{}
 	controllers := map[string]*controllerDecl{}
 	var controllerOrder []string
+	lives := map[string]*liveDecl{}
+	var liveOrder []string
 	typeMods := map[string][]Annotation{}
 	for i := range anns {
 		a := anns[i]
@@ -185,10 +187,20 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 				}
 				controllers[a.Func] = &controllerDecl{typ: a.Func, prefix: prefix, slash: slash, decl: a}
 				controllerOrder = append(controllerOrder, a.Func)
+			case a.Keyword == "live":
+				if prev, dup := lives[a.Func]; dup {
+					return nil, a.errf("%s has two //nexus:live annotations (the other at line %d)", a.Func, prev.decl.Line)
+				}
+				prefix, err := livePrefix(a)
+				if err != nil {
+					return nil, err
+				}
+				lives[a.Func] = &liveDecl{typ: a.Func, prefix: prefix, decl: a}
+				liveOrder = append(liveOrder, a.Func)
 			case typeModifierKeywords[a.Keyword]:
 				typeMods[a.Func] = append(typeMods[a.Func], a)
 			default:
-				return nil, a.errf("//nexus:%s cannot annotate a type — a type takes //nexus:controller <prefix>, plus //nexus:auth, //nexus:session or //nexus:use for every action", a.Keyword)
+				return nil, a.errf("//nexus:%s cannot annotate a type — a type takes //nexus:controller <prefix> or //nexus:live [<path>], plus //nexus:auth, //nexus:session or //nexus:use", a.Keyword)
 			}
 			continue
 		}
@@ -224,11 +236,20 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 	}
 
 	for typ, mods := range typeMods {
+		if l, ok := lives[typ]; ok {
+			l.shared = mods
+			continue
+		}
 		c, ok := controllers[typ]
 		if !ok {
-			return nil, mods[0].errf("//nexus:%s on type %s needs //nexus:controller <prefix> on the same type", mods[0].Keyword, typ)
+			return nil, mods[0].errf("//nexus:%s on type %s needs //nexus:controller <prefix> or //nexus:live <path> on the same type", mods[0].Keyword, typ)
 		}
 		c.shared = mods
+	}
+	for typ, l := range lives {
+		if _, both := controllers[typ]; both {
+			return nil, l.decl.errf("%s has both //nexus:controller and //nexus:live — a type is one or the other", typ)
+		}
 	}
 
 	var stmts []stmt
@@ -337,6 +358,22 @@ func Emit(cfg Config, anns []Annotation) ([]byte, error) {
 			imports[imp] = true
 		}
 		stmts = append(stmts, stmt{file: c.decl.File, line: c.decl.Line, text: c.render(shared)})
+	}
+	for _, typ := range liveOrder {
+		l := lives[typ]
+		gates, gateImports, err := renderOpts(l.shared, cfg.AuthImport)
+		if err != nil {
+			return nil, err
+		}
+		for _, imp := range gateImports {
+			imports[imp] = true
+		}
+		imports[strconv.Quote(strings.TrimSuffix(cfg.NexusImport, "/")+"/view")] = true
+		args := strconv.Quote(l.prefix)
+		if len(gates) > 0 {
+			args += ", " + strings.Join(gates, ", ")
+		}
+		stmts = append(stmts, stmt{file: l.decl.File, line: l.decl.Line, text: fmt.Sprintf("view.Live[*%s](%s)", typ, args)})
 	}
 	for _, rd := range cfg.RouterDecls {
 		if rd.AuthExpr != "" {
@@ -929,6 +966,33 @@ func isImplicitAction(a Annotation) bool {
 // controllerPrefix reads //nexus:controller <prefix> [trailing-slash]: the prefix
 // is "/"-rooted, or "" / "/" for a controller whose actions carry their full
 // paths; trailing-slash registers every action at path and path+"/".
+// liveDecl is a //nexus:live type: a live view, routed at prefix — or, with
+// none, registered to be embedded.
+type liveDecl struct {
+	typ    string
+	prefix string
+	decl   Annotation
+	shared []Annotation // type-level //nexus:auth, //nexus:use: the view's gates
+}
+
+// livePrefix reads //nexus:live's optional path.
+func livePrefix(a Annotation) (string, error) {
+	switch len(a.Args) {
+	case 0:
+		return "", nil
+	case 1:
+		p, err := decoratorToken(&a, a.Args[0])
+		if err != nil {
+			return "", err
+		}
+		if !strings.HasPrefix(p, "/") {
+			return "", a.errf("//nexus:live path %q must start with \"/\"", p)
+		}
+		return p, nil
+	}
+	return "", a.errf("//nexus:live takes one <path> — or none, to embed the view only — e.g. //nexus:live /orders/:id (got %v)", a.Args)
+}
+
 func controllerPrefix(a Annotation) (prefix string, slash bool, err error) {
 	if len(a.Args) < 1 || len(a.Args) > 2 {
 		return "", false, a.errf("//nexus:controller needs a <prefix>, optionally followed by trailing-slash, e.g. //nexus:controller /users (got %v)", a.Args)

@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,50 +26,42 @@ import (
 	"github.com/paulmanoni/nexus/v2/httpx"
 )
 
-// LiveRouter is a live page: a component whose state lives on the server, per
-// connected page, and changes through events sent over a WebSocket.
+// LiveRouter is a live view's registration (liveview.go): routed at a
+// path, it is a page; any live view can also be embedded in another's
+// template with view.Component.
 //
 //	var Module = nexus.Module("orders",
 //	    nexus.Path("/admin"),
-//	    view.Live[*OrdersLive]("/orders", auth.Requires("view_orders")).
-//	        Provide(NewOrdersLive),
+//	    view.Live[*OrderDetail]("/orders/:id", auth.Requires("view_orders")).
+//	        Provide(NewOrderDetail),
 //	)
 //
-// T is a pointer to a struct, provided with DI. The DI instance is only the
-// template: each page render and each connection gets its own copy, filled by
-// Mount. T's methods follow conventions, like a Resource's:
-//
-//	Mount(ctx, [*view.Socket], deps…, pathParams…) error fills the state
-//	Render() templ.Component                              renders it (a templ method component)
-//	Params(ctx, deps…, u *url.URL) error                  optional: runs after Mount and on each patch (the page's URL)
-//	Info(ctx, deps…, msg view.Message) error              optional: runs on a broadcast to a topic Mount subscribed to
-//	Cancel(ctx, deps…, args…) error                       an event: any other exported method of this shape
-//
-// Dependencies are pointer or interface parameters, injected from DI; the
-// other parameters are a path parameter (Mount, in route order) or an event's
-// arguments (from view.Send, in order). Markup sends an event with
-//
-//	<button onclick={ view.Send(l.Cancel, o.ID) }>cancel</button>
-//
-// after which the server re-renders and the browser patches the page in place.
-// Event arguments are user input, and an event is reachable by any client that
-// can open the page: authorize and validate inside it.
+// T is a pointer to a struct. A DI instance of it — from Provide, when there
+// is one — is the template each page and each connection copies; without
+// one, T starts from its zero value.
 type LiveRouter[T any] struct {
 	*nexus.Router
 }
 
-// Live declares a live page at prefix, gated by gates — on the page and on its
-// socket. It is a nexus router, so it composes like one: inside nexus.Module
-// it mounts under the module's Path.
+// Live registers the live view T, routed at prefix and gated by gates — on
+// the page and on its socket — or, with prefix "", only for embedding
+// (view.Component), which a live view that takes dependencies needs. It is a
+// nexus router, so it composes like one: inside nexus.Module it mounts under
+// the module's Path.
 func Live[T any](prefix string, gates ...nexus.MiddlewareOption) *LiveRouter[T] {
 	t := reflect.TypeFor[T]()
 	r := nexus.NewRouter(liveName(t), prefix, gates...)
 	l := &LiveRouter[T]{Router: r}
-	def, err := newLiveDef(t, prefix)
+	def, err := defFor(t)
 	if err != nil {
 		r.Register(nexus.FailBoot(err))
 		return l
 	}
+	r.Register(register(def))
+	if prefix == "" {
+		return l
+	}
+	def.routed = true
 	r.Rest("GET", "", def.pageHandler(), append([]nexus.RestOption{HTML(), nexus.Tag(LiveTag, LiveKey(t))}, def.liveTags()...)...)
 	r.Rest("GET", "/_live", def.socketHandler(), nexus.WithRenderer(upgraded{}), nexus.HideFromDashboard())
 	r.Rest("POST", "/_upload", uploadHandler, nexus.MaxBody(0), nexus.HideFromDashboard())
@@ -103,20 +96,16 @@ func (l *LiveRouter[T]) Provide(fns ...any) *LiveRouter[T] {
 	return l
 }
 
-// Socket is what Mount can take to learn about the page it fills.
-type Socket struct {
+// socket is a page's connection, as its views see it.
+type socket struct {
 	connected bool
 	inbox     chan Message
-	topics    []string
-	wake      chan bool // an upload changed the page (upload.go)
-	uploads   []*Upload // the uploads the page took files for
-	presences []tracked // where the page is present (presence.go)
+	topics    []string               // what the page is subscribed to on the hub
+	subs      map[string][]*instance // by topic, the views whose Info hears it
+	wake      chan bool              // an upload changed the page (upload.go)
+	uploads   []*Upload              // the uploads the page took files for
+	presences []tracked              // where the page is present (presence.go)
 }
-
-// Connected reports whether this Mount is for the live connection (true) or
-// the first, server-rendered page load (false) — skip expensive work, or
-// start subscriptions, only when connected.
-func (s *Socket) Connected() bool { return s != nil && s.connected }
 
 // Send is an event for an on* attribute: it calls method — a method value of
 // the live page, such as l.Cancel — on the server with args.
@@ -250,10 +239,8 @@ func liveName(t reflect.Type) string {
 var (
 	ctxType     = reflect.TypeFor[context.Context]()
 	errType     = reflect.TypeFor[error]()
-	liveType    = reflect.TypeFor[*Socket]()
 	compType    = reflect.TypeFor[templ.Component]()
 	httpCtxType = reflect.TypeFor[*httpx.Ctx]()
-	urlType     = reflect.TypeFor[*url.URL]()
 )
 
 // liveMethod is Mount or an event: which parameters are dependencies, which
@@ -261,76 +248,86 @@ var (
 type liveMethod struct {
 	fn   reflect.Value // the method expression: receiver first
 	deps []int         // parameter indexes filled from DI
-	args []int         // parameter indexes filled from the path or the event
-	live int           // index of a *view.Socket parameter, or -1
+	args []int         // parameter indexes filled from props or the event
 }
 
 type liveDef struct {
 	t        reflect.Type // *T
-	params   []string     // the prefix's path parameter names, in order
 	mount    *liveMethod
-	update   *liveMethod  // a live component's Update
-	props    reflect.Type // a live component's props
+	update   *liveMethod
+	props    reflect.Type // what Mount and Update take, or nil
 	info     *liveMethod
-	urlParam *liveMethod // Params: the page's URL
 	events   map[string]*liveMethod
 	depTypes []reflect.Type // every dependency type any method takes
 	depIndex map[reflect.Type]int
+	routed   bool // view.Live gave it a path
 }
 
-var pathParam = regexp.MustCompile(`[:*]([A-Za-z_][A-Za-z0-9_]*)`)
-
-func newLiveDef(t reflect.Type, prefix string) (*liveDef, error) {
+func newLiveDef(t reflect.Type) (*liveDef, error) {
 	if t.Kind() != reflect.Pointer || t.Elem().Kind() != reflect.Struct {
 		return nil, fmt.Errorf("view.Live[%s]: want a pointer to a struct", t)
 	}
 	d := &liveDef{t: t, events: map[string]*liveMethod{}, depIndex: map[reflect.Type]int{}}
-	for _, m := range pathParam.FindAllStringSubmatch(prefix, -1) {
-		d.params = append(d.params, m[1])
-	}
 	render, ok := t.MethodByName("Render")
 	if !ok || render.Type.NumIn() != 1 || render.Type.NumOut() != 1 || render.Type.Out(0) != compType {
 		return nil, fmt.Errorf("view.Live[%s]: needs a Render() templ.Component method — a templ method component: templ (x %s) Render() { … }", t, t)
 	}
 	for i := 0; i < t.NumMethod(); i++ {
 		m := t.Method(i)
-		if m.Name == "Render" {
+		if m.Name == "Render" || promoted(t, m.Name) {
 			continue
 		}
 		lm, ok := d.method(m)
 		if !ok {
-			if m.Name == "Mount" {
-				return nil, fmt.Errorf("view.Live[%s]: Mount must be func(ctx context.Context, [*view.Socket,] deps…, pathParams…) error, got %s", t, m.Type)
+			switch m.Name {
+			case "Mount", "Update", "Info":
+				return nil, fmt.Errorf("view.Live[%s]: %s must take a context.Context first and return an error, got %s", t, m.Name, m.Type)
 			}
 			continue // not an event: a helper method
 		}
-		if m.Name == "Params" {
-			if len(lm.args) != 1 || m.Type.In(lm.args[0]) != urlType {
-				return nil, fmt.Errorf("view.Live[%s]: Params must be func(ctx context.Context, deps…, u *url.URL) error, got %s", t, m.Type)
-			}
-			d.urlParam = lm
-			continue
-		}
-		if m.Name == "Info" {
+		switch m.Name {
+		case "Info":
 			if len(lm.args) != 1 || m.Type.In(lm.args[0]) != reflect.TypeFor[Message]() {
 				return nil, fmt.Errorf("view.Live[%s]: Info must be func(ctx context.Context, deps…, msg view.Message) error, got %s", t, m.Type)
 			}
 			d.info = lm
-			continue
-		}
-		if m.Name == "Mount" {
-			if len(lm.args) != len(d.params) {
-				return nil, fmt.Errorf("view.Live[%s]: Mount takes %d path parameter(s), the prefix %q has %d", t, len(lm.args), prefix, len(d.params))
+		case "Mount", "Update":
+			if len(lm.args) > 1 {
+				return nil, fmt.Errorf("view.Live[%s]: %s takes ctx, dependencies and at most one props struct, got %s", t, m.Name, m.Type)
 			}
-			d.mount = lm
-			continue
+			if len(lm.args) == 1 {
+				p := m.Type.In(lm.args[0])
+				if p.Kind() != reflect.Struct {
+					return nil, fmt.Errorf("view.Live[%s]: %s's props must be a struct value (pointers are dependencies), got %s", t, m.Name, p)
+				}
+				if d.props != nil && d.props != p {
+					return nil, fmt.Errorf("view.Live[%s]: Mount and Update take different props (%s, %s)", t, d.props, p)
+				}
+				d.props = p
+			}
+			if m.Name == "Mount" {
+				d.mount = lm
+			} else {
+				d.update = lm
+				if len(lm.args) == 0 {
+					return nil, fmt.Errorf("view.Live[%s]: Update takes the props, got %s", t, m.Type)
+				}
+			}
+		default:
+			d.events[m.Name] = lm
 		}
-		d.events[m.Name] = lm
 	}
 	if tr := trackAssigns(reflect.New(t.Elem())); len(tr.fields) > 0 && tr.off != "" && verifyTracking {
 		log.Printf("nexus view: view.Live[%s] renders in full on every event: %s", t, tr.off)
 	}
 	return d, nil
+}
+
+// promoted reports whether t's method name comes from the embedded
+// LiveView — a helper, not an event.
+func promoted(t reflect.Type, name string) bool {
+	_, ok := reflect.PointerTo(liveViewType).MethodByName(name)
+	return ok
 }
 
 // method classifies m's parameters, or reports that m is not Mount or an
@@ -340,14 +337,10 @@ func (d *liveDef) method(m reflect.Method) (*liveMethod, bool) {
 	if ft.NumIn() < 2 || ft.In(1) != ctxType || ft.NumOut() != 1 || ft.Out(0) != errType {
 		return nil, false
 	}
-	lm := &liveMethod{fn: m.Func, live: -1}
+	lm := &liveMethod{fn: m.Func}
 	for i := 2; i < ft.NumIn(); i++ {
 		p := ft.In(i)
 		switch {
-		case p == liveType:
-			lm.live = i
-		case p == urlType:
-			lm.args = append(lm.args, i) // Params' page URL: not a dependency
 		case (p.Kind() == reflect.Pointer || p.Kind() == reflect.Interface) && len(lm.args) == 0:
 			lm.deps = append(lm.deps, i)
 			if _, seen := d.depIndex[p]; !seen {
@@ -369,9 +362,13 @@ type instance struct {
 	errs *nexus.Error // the validation errors of the last event
 	tr   *tracker     // its Assigns (assign.go)
 
-	page  *instance             // a live component's page; nil for a page
-	comps map[string]*component // the live components the page renders, by type and id
+	lv    *LiveView             // what it embeds, if anything
+	id    string                // its id where a page embeds it
+	page  *instance             // the page that embeds it; nil for a page
+	comps map[string]*component // the views the page embeds, by type and id
 	gen   uint64                // its renders so far
+	sock  *socket               // a page's connection
+	nav   *string               // a page's: where an event under way moves the browser
 }
 
 // root is the page an instance belongs to: itself, or a component's page.
@@ -384,10 +381,14 @@ func (in *instance) root() *instance {
 
 func (d *liveDef) instance(template reflect.Value, deps []reflect.Value) *instance {
 	v := reflect.New(d.t.Elem())
-	if !template.IsNil() {
+	if template.IsValid() && !template.IsNil() {
 		v.Elem().Set(template.Elem())
 	}
-	return &instance{def: d, v: v, deps: deps, tr: trackAssigns(v)}
+	in := &instance{def: d, v: v, deps: deps, tr: trackAssigns(v), sock: &socket{}}
+	if in.lv = liveViewOf(v); in.lv != nil {
+		*in.lv = LiveView{in: in, t: in.lv.t, bit: in.lv.bit}
+	}
+	return in
 }
 
 // setErrs records the validation errors of an event: Render's reads of
@@ -401,7 +402,7 @@ func (in *instance) setErrs(e *nexus.Error) {
 
 // call runs m on the instance with raw argument values (strings for path
 // parameters, JSON for event arguments).
-func (in *instance) call(ctx context.Context, m *liveMethod, live *Socket, raw []json.RawMessage) error {
+func (in *instance) call(ctx context.Context, m *liveMethod, raw []json.RawMessage) error {
 	ft := m.fn.Type()
 	if len(raw) != len(m.args) {
 		return nexus.Errf(nexus.InvalidInput, "takes %d argument(s), got %d", len(m.args), len(raw))
@@ -414,12 +415,12 @@ func (in *instance) call(ctx context.Context, m *liveMethod, live *Socket, raw [
 		}
 		args[n] = p.Elem()
 	}
-	return in.callValues(ctx, m, live, args)
+	return in.callValues(ctx, m, args)
 }
 
 // callValues runs m with its arguments as Go values. A panic becomes an
 // error, so a bug in one event does not drop the page's connection.
-func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket, args []reflect.Value) (err error) {
+func (in *instance) callValues(ctx context.Context, m *liveMethod, args []reflect.Value) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v", r)
@@ -430,9 +431,6 @@ func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket,
 	params := make([]reflect.Value, ft.NumIn())
 	params[0] = in.v
 	params[1] = reflect.ValueOf(&ctx).Elem()
-	if m.live >= 0 {
-		params[m.live] = reflect.ValueOf(live)
-	}
 	for _, i := range m.deps {
 		params[i] = in.deps[in.def.depIndex[ft.In(i)]]
 	}
@@ -444,38 +442,38 @@ func (in *instance) callValues(ctx context.Context, m *liveMethod, live *Socket,
 	return err
 }
 
-func (in *instance) mount(ctx context.Context, param func(string) string, sock *Socket) error {
+// mount runs Mount with props (a zero Value when it takes none).
+func (in *instance) mount(ctx context.Context, props reflect.Value) error {
 	if in.def.mount == nil {
 		return nil
 	}
-	raw := make([]json.RawMessage, len(in.def.params))
-	for i, name := range in.def.params {
-		v := param(name)
-		// A path parameter is a string on the wire: quote it unless the
-		// parameter decodes from a number or a bool.
-		switch in.def.mount.fn.Type().In(in.def.mount.args[i]).Kind() {
-		case reflect.String:
-			b, _ := json.Marshal(v)
-			raw[i] = b
-		default:
-			raw[i] = json.RawMessage(v)
-		}
+	var args []reflect.Value
+	if len(in.def.mount.args) == 1 {
+		args = []reflect.Value{props}
 	}
-	if err := in.call(ctx, in.def.mount, sock, raw); err != nil {
+	if err := in.callValues(ctx, in.def.mount, args); err != nil {
 		return fmt.Errorf("Mount: %w", err)
 	}
 	return nil
 }
 
-// params runs Params with the page's URL, when the page has it.
-func (in *instance) params(ctx context.Context, sock *Socket, u *url.URL) error {
-	if in.def.urlParam == nil {
-		return nil
+// update runs Update with new props — or Mount again, without one.
+func (in *instance) update(ctx context.Context, props reflect.Value) error {
+	if in.def.update == nil {
+		return in.mount(ctx, props)
 	}
-	if err := in.callValues(ctx, in.def.urlParam, sock, []reflect.Value{reflect.ValueOf(u)}); err != nil {
-		return fmt.Errorf("Params: %w", err)
+	if err := in.callValues(ctx, in.def.update, []reflect.Value{props}); err != nil {
+		return fmt.Errorf("Update: %w", err)
 	}
 	return nil
+}
+
+// routedProps binds a routed view's props from its path parameters and URL.
+func (in *instance) routedProps(param func(string) string, u *url.URL) (reflect.Value, error) {
+	if in.def.props == nil {
+		return reflect.Value{}, nil
+	}
+	return bindProps(in.def.props, param, u)
 }
 
 // render renders the instance: its Render() component into HTML, and — for
@@ -604,12 +602,9 @@ func (in *instance) flushStreams() {
 	}
 }
 
-// handlerType builds func(ctx, *httpx.Ctx, T, deps…) (out, error) — a
-// reflective nexus handler, so DI supplies the template and the dependencies
-// and the router's gates run first.
-func (d *liveDef) handlerType(out reflect.Type) reflect.Type {
-	in := append([]reflect.Type{ctxType, httpCtxType, d.t}, d.depTypes...)
-	return reflect.FuncOf(in, []reflect.Type{out, errType}, false)
+// setup is the view's setup in the app serving c.
+func (d *liveDef) setup(c *httpx.Ctx) (*viewSetup, error) {
+	return viewFor(appFrom(withApp(c.Request.Context(), c)), d.t)
 }
 
 var bodyTag = regexp.MustCompile(`(?i)<body\b`)
@@ -617,21 +612,21 @@ var bodyTag = regexp.MustCompile(`(?i)<body\b`)
 // pageHandler renders the page on first load: a fresh instance, mounted and
 // rendered, marked as a live root so the browser connects its socket.
 func (d *liveDef) pageHandler() any {
-	return reflect.MakeFunc(d.handlerType(compType), func(args []reflect.Value) []reflect.Value {
-		fail := func(err error) []reflect.Value {
-			return []reflect.Value{reflect.Zero(compType), reflect.ValueOf(&err).Elem()}
+	return func(ctx context.Context, c *httpx.Ctx) (templ.Component, error) {
+		vs, err := d.setup(c)
+		if err != nil {
+			return nil, err
 		}
-		ctx := args[0].Interface().(context.Context)
-		c := args[1].Interface().(*httpx.Ctx)
-		in := d.instance(args[2], args[3:])
-		if err := in.mount(ctx, c.Param, &Socket{}); err != nil {
-			return fail(err)
+		in := d.instance(vs.template, vs.deps)
+		props, err := in.routedProps(c.Param, c.Request.URL)
+		if err != nil {
+			return nil, err
 		}
-		if err := in.params(ctx, &Socket{}, c.Request.URL); err != nil {
-			return fail(err)
+		if err := in.mount(ctx, props); err != nil {
+			return nil, err
 		}
 		socket := strings.TrimSuffix(c.Request.URL.Path, "/") + "/_live"
-		comp := templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
 			body, _, err := in.render(ctx, false)
 			if err != nil {
 				return err
@@ -650,9 +645,8 @@ func (d *liveDef) pageHandler() any {
 			}
 			_, err = io.WriteString(w, "</nx-live>")
 			return err
-		})
-		return []reflect.Value{reflect.ValueOf(&comp).Elem(), reflect.Zero(errType)}
-	}).Interface()
+		}), nil
+	}
 }
 
 type liveEvent struct {
@@ -717,37 +711,37 @@ const (
 // socketHandler serves the live connection: mount a fresh instance, send
 // its render, then for each event call the method and send the new render.
 func (d *liveDef) socketHandler() any {
-	return reflect.MakeFunc(d.handlerType(reflect.TypeFor[any]()), func(args []reflect.Value) []reflect.Value {
+	return func(ctx context.Context, c *httpx.Ctx) (any, error) {
 		// A non-nil result, so nexus hands it to the upgraded renderer (which
 		// writes nothing) rather than writing an empty response itself.
-		done := reflect.New(reflect.TypeFor[any]()).Elem()
-		done.Set(reflect.ValueOf(struct{}{}))
-		ok := []reflect.Value{done, reflect.Zero(errType)}
-		ctx := args[0].Interface().(context.Context)
-		c := args[1].Interface().(*httpx.Ctx)
+		done := struct{}{}
+		vs, err := d.setup(c)
+		if err != nil {
+			return nil, err
+		}
 		owner, _ := nexus.RequestIdentity(ctx)
 		rq := d.request(c)
 		live := context.WithValue(withApp(ctx, c), socketKey{}, true)
 		if lc, handed := ctx.Value(liveConnKey{}).(*liveConn); handed {
 			// Another page hands its connection over (navigate.go): it runs
 			// on the connection's goroutine once this request is answered.
-			in := d.instance(args[2], args[3:])
+			in := d.instance(vs.template, vs.deps)
 			lc.pending = func(base context.Context) {
-				d.serve(detached(base, live), rq, lc, in, nil, owner)
+				d.serve(detached(base, live), rq, lc, in, false, owner)
 			}
-			return ok
+			return done, nil
 		}
 		conn, err := liveUpgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
-			return ok // Upgrade has answered the request
+			return done, nil // Upgrade has answered the request
 		}
 		lc := newLiveConn(conn, c.Request)
 		var in *instance
-		var sock *Socket
+		resumed := false
 		if p := unpark(rq.url.Query().Get("resume"), rq.path, owner); p != nil {
-			in, sock = p.in, p.sock
+			in, resumed = p.in, true
 		} else {
-			in = d.instance(args[2], args[3:])
+			in = d.instance(vs.template, vs.deps)
 		}
 		// The page runs on a goroutine of its own and this request returns:
 		// the connection doesn't keep the request's deep stack and buffers
@@ -759,7 +753,7 @@ func (d *liveDef) socketHandler() any {
 			defer untrack()
 			defer stop()
 			defer conn.Close()
-			d.serve(base, rq, lc, in, sock, owner)
+			d.serve(base, rq, lc, in, resumed, owner)
 			// Each page that navigates away hands the connection to the next.
 			for lc.next != "" && base.Err() == nil {
 				target := lc.next
@@ -775,8 +769,8 @@ func (d *liveDef) socketHandler() any {
 				run(base)
 			}
 		}()
-		return ok
-	}).Interface()
+		return done, nil
+	}
 }
 
 // liveRequest is what a page's socket needs from its request once the
@@ -790,10 +784,21 @@ type liveRequest struct {
 func (d *liveDef) request(c *httpx.Ctx) liveRequest {
 	u := *c.Request.URL
 	rq := liveRequest{path: c.Request.URL.Path, url: &u, params: map[string]string{}}
-	for _, name := range d.params {
+	for _, name := range pathParams(c.FullPath()) {
 		rq.params[name] = c.Param(name)
 	}
 	return rq
+}
+
+var pathParam = regexp.MustCompile(`[:*]([A-Za-z_][A-Za-z0-9_]*)`)
+
+// pathParams are the parameter names of a route pattern.
+func pathParams(route string) []string {
+	var out []string
+	for _, m := range pathParam.FindAllStringSubmatch(route, -1) {
+		out = append(out, m[1])
+	}
+	return out
 }
 
 // detached is a handed-over page's context: the values of its own request,
@@ -804,7 +809,7 @@ func detached(base, page context.Context) context.Context {
 	return ctx
 }
 
-func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *instance, sock *Socket, owner string) {
+func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *instance, resumed bool, owner string) {
 	conn := lc.conn
 	path := rq.path
 	page := strings.TrimSuffix(path, "/_live")
@@ -832,13 +837,14 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 		return conn.WriteMessage(websocket.TextMessage, b) == nil
 	}
 	sendRender := func() bool { return send(render(0, false)) }
-	resumed := sock != nil
 	if !resumed {
-		sock = &Socket{connected: true, inbox: make(chan Message, liveInbox)}
+		in.sock = &socket{connected: true, inbox: make(chan Message, liveInbox)}
 	}
+	sock := in.sock
 	if sock.wake == nil {
 		sock.wake = make(chan bool, 1)
 	}
+	param := func(name string) string { return rq.params[name] }
 	// A connection that ends while the page is open leaves its state for a
 	// reconnect (resume.go); one the server ends (a refused credential, a
 	// failed Mount, shutdown) or that moves to another page takes it along.
@@ -846,7 +852,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 	keep := false
 	defer func() {
 		if keep && ctx.Err() == nil {
-			park(token, &parkedPage{in: in, sock: sock, path: path, owner: owner})
+			park(token, &parkedPage{in: in, path: path, owner: owner})
 			return
 		}
 		sock.close()
@@ -860,15 +866,16 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			return
 		}
 	} else {
-		if err := in.mount(ctx, func(name string) string { return rq.params[name] }, sock); err != nil {
-			send(liveReply{Error: err.Error()})
-			return
-		}
 		shown := pageURL(page, rq.url.Query().Get("url"))
 		if navigated != "" {
 			shown = pageURL(page, navigated)
 		}
-		if err := in.params(ctx, sock, shown); err != nil {
+		props, err := in.routedProps(param, shown)
+		if err != nil {
+			send(liveReply{Error: nexus.ErrorOf(err).Error()})
+			return
+		}
+		if err := in.mount(ctx, props); err != nil {
 			send(liveReply{Error: err.Error()})
 			return
 		}
@@ -915,8 +922,12 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			lc.next, keep = target, false
 			return true, true
 		}
-		if err := in.params(ctx, sock, u); err != nil {
-			return false, send(liveReply{Ref: ref, Error: err.Error()})
+		props, err := in.routedProps(param, u)
+		if err == nil {
+			err = in.update(ctx, props)
+		}
+		if err != nil {
+			return false, send(liveReply{Ref: ref, Error: nexus.ErrorOf(err).Error()})
 		}
 		reply := render(ref, in.errs != nil)
 		reply.Patch = u.RequestURI()
@@ -943,11 +954,11 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 			}
 		case msg := <-sock.inbox:
 			// Handle every message already waiting, then render once.
-			failed := d.inform(ctx, in, sock, msg, send)
+			failed := in.inform(ctx, msg, send)
 			for drained := false; !drained && !failed; {
 				select {
 				case more := <-sock.inbox:
-					failed = d.inform(ctx, in, sock, more, send)
+					failed = in.inform(ctx, more, send)
 				default:
 					drained = true
 				}
@@ -985,13 +996,16 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 				}
 				continue
 			case "__upload", "__cancel_upload":
-				if !send(in.upload(ev, sock, owner, page, render)) {
+				if !send(in.upload(ev, owner, page, render)) {
 					return
 				}
 				continue
 			}
 			var target string
-			if !send(d.observedEvent(context.WithValue(ctx, navKey{}, &target), in, ev, render)) {
+			in.nav = &target
+			reply := d.observedEvent(ctx, in, ev, render)
+			in.nav = nil
+			if !send(reply) {
 				return
 			}
 			if target != "" {
@@ -1008,6 +1022,7 @@ func (d *liveDef) serve(ctx context.Context, rq liveRequest, lc *liveConn, in *i
 // re-renders with it (view.Errors) and the reply is marked invalid.
 func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render func(int, bool) liveReply) liveReply {
 	page := in
+	page.clearFlash()
 	if ev.C != "" {
 		// A live component's event: its own instance takes it.
 		c := in.comps[ev.C]
@@ -1032,10 +1047,10 @@ func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render 
 		// The form's validate: tags run before the event, as on every
 		// transport; a failure re-renders like an Invalid() the event returns.
 		if err = nexus.Validate(arg.Interface()); err == nil {
-			err = in.callValues(ctx, m, nil, []reflect.Value{arg})
+			err = in.callValues(ctx, m, []reflect.Value{arg})
 		}
 	} else {
-		err = in.call(ctx, m, nil, ev.Args)
+		err = in.call(ctx, m, ev.Args)
 	}
 	if errs, ok := validation(err); ok {
 		page.setErrs(errs)
@@ -1052,16 +1067,34 @@ func (d *liveDef) event(ctx context.Context, in *instance, ev liveEvent, render 
 	return render(ev.Ref, false)
 }
 
-// inform runs Info for msg; it reports whether the connection failed. An
-// Info error is sent to the page, which keeps its state.
-func (d *liveDef) inform(ctx context.Context, in *instance, sock *Socket, msg Message, send func(liveReply) bool) bool {
-	if d.info == nil {
-		return false
-	}
-	if err := in.callValues(ctx, d.info, sock, []reflect.Value{reflect.ValueOf(msg)}); err != nil {
-		return !send(liveReply{Error: "Info: " + err.Error()})
+// inform runs the Info of each view subscribed to msg's topic; it reports
+// whether the connection failed. An Info error is sent to the page, which
+// keeps its state.
+func (in *instance) inform(ctx context.Context, msg Message, send func(liveReply) bool) bool {
+	for _, v := range slices.Clone(in.sock.subs[msg.Topic]) {
+		if v.def.info == nil {
+			continue
+		}
+		if err := v.callValues(ctx, v.def.info, []reflect.Value{reflect.ValueOf(msg)}); err != nil {
+			if !send(liveReply{Error: "Info: " + err.Error()}) {
+				return true
+			}
+		}
 	}
 	return false
+}
+
+// clearFlash drops the flash messages of the page and the views it embeds:
+// an event starts.
+func (in *instance) clearFlash() {
+	if in.lv != nil {
+		in.lv.clearFlash()
+	}
+	for _, c := range in.comps {
+		if c.in.lv != nil {
+			c.in.lv.clearFlash()
+		}
+	}
 }
 
 func isExported(name string) bool {

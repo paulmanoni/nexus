@@ -824,19 +824,26 @@ and view.Assets serves the library's files:
     mux := http.NewServeMux(); utils.SetupScriptRoutes(mux, dev)
     view.Assets("/templui/js/", mux)
 
-Live pages keep state on the server, per connected page, over a WebSocket —
-declared like a Resource; the DI instance is the template:
+Live views keep state on the server, one copy per place shown, over a
+WebSocket. A live view embeds view.LiveView; routed it is a page, embedded
+(@view.Component[*T](id, props)) it is a part of one:
 
-    view.Live[*Board]("/board", auth.Required()).Provide(NewBoard)
+    type Board struct { view.LiveView; Pets view.Assign[[]Pet] }
+    type BoardProps struct { Kind string }  // routed: bound by path:"…" / query:"…" tags
 
-    func (b *Board) Mount(ctx context.Context, store *Store) error      // deps, then path params
-    func (b *Board) Adopt(ctx context.Context, name string) error      // an event: deps, then args
+    view.Live[*Board]("/board", auth.Required())          // or //nexus:live /board on the type
+    func (b *Board) Mount(ctx context.Context, store *Store, p BoardProps) error  // deps, then props
+    func (b *Board) Update(ctx context.Context, store *Store, p BoardProps) error // new props / URL patch
+    func (b *Board) Adopt(ctx context.Context, name string) error                 // an event: deps, then args
     templ (b *Board) Render() { <button onclick={ view.Send(b.Adopt, p.Name) }>adopt</button> }
+
+view.LiveView gives Connected, Subscribe, Track/Untrack, PushPatch/PushNavigate,
+PutFlash/Flash and ID.
 
 Keep the state in view.Assign fields and an event renders only what changed:
 
     type Board struct{ Pets view.Assign[[]Pet]; Filter view.Assign[string] }
-    b.Filter.Set(f)                 // in Mount, Params, Info or an event; Update(func(*T)) in place
+    b.Filter.Set(f)                 // in Mount, Update, Info or an event; Update(func(*T)) in place
     for _, p := range b.Pets.Get()  // in Render: Get notes what depends on it
 
 A page whose fields are all Assigns (signals may sit beside them) skips each
@@ -845,11 +852,10 @@ loop, branch and component call that uses no template locals when the Assigns
 nexus dev and in tests a skipping render is checked against a full one, and
 nexus lsp / generate views / doctor warn on a plain field or a service call in
 Render. A page with any other field renders everything.
-Live components have state and events of their own on a live page:
-view.LiveComponent[*Cart]() registers one, @view.Component[*Cart]("cart",
-CartProps{…}) places it (one instance per id while rendered). Mount(ctx,
-deps…, props) first, Update(ctx, deps…, props) on new props (or Mount again),
-view.UpdateComponent[*Cart](ctx, "cart", props) from a page event or Info;
+Embedding: @view.Component[*Cart]("cart", CartProps{…}) places a live view
+(one instance per id while rendered; one that takes dependencies is
+registered with view.Live[*Cart]("")). Update(ctx, deps…, props) on new
+props, view.UpdateComponent[*Cart](ctx, "cart", props) from an event or Info;
 view.Send(c.Toggle) in its template reaches its own instance.
 Uploads: a view.Upload field — p.Avatar.Allow(view.UploadConfig{Accept:
 []string{"image/*"}, MaxSize: 5 << 20}) in Mount, <input type="file"
@@ -860,13 +866,13 @@ Streams: a view.Stream[T] field shows a list the server doesn't keep —
 c.Messages.Configure(idFn), Insert/Prepend/Delete/Reset/Limit; the template
 spreads { c.Messages.Attrs()... } on the list and renders c.Messages.Items()
 (the latest change) with c.Messages.ID(m).
-Presence: sock.Track(topic, key, meta) in Mount, view.Presences(topic), and
+Presence: b.Track(topic, key, meta) in Mount, view.Presences(topic), and
 view.PresenceDiff in Info; spans replicas with view.UseRelay.
 After each event the page is re-rendered and patched in place (focus kept);
 an element with an id and data-nx-ignore stays as the browser has it until a
 render gives it another id (a chart a script drew, an app shell's menus).
-Server push: sock.Subscribe("topic") in Mount; view.Broadcast(ctx, "topic",
-data) from anywhere runs every subscribed page's optional
+Server push: b.Subscribe("topic") in Mount; view.Broadcast(ctx, "topic",
+data) from anywhere runs every subscribed view's optional
 Info(ctx, deps…, msg view.Message) error, then re-renders it. Across
 replicas: view.UseRelay(viewrelay.New(viewrelay.Config{URL: redisURL}))
 (extension/cache/redis/viewrelay); data travels as JSON, read it with
@@ -879,10 +885,10 @@ successful submit resets the form.
 Navigation: @view.Link("/board") { Board } fetches and patches the page in
 place (no reload; live sockets follow; back/forward work). From a live page
 it goes over the socket: the same path with another query is a patch (the
-page's Params(ctx, deps…, u *url.URL) error runs — also after Mount — and the
-tree diff travels); another live page opens on the same connection through
-its route's gates; anything else loads over HTTP. view.PushPatch /
-view.PushNavigate do the same from an event. The first render
+props are bound from the new URL and Update runs — and the tree diff
+travels); another live page opens on the same connection through its
+route's gates; anything else loads over HTTP. b.PushPatch / b.PushNavigate
+do the same from an event. The first render
 comes over HTTP only; updates travel as a LiveView-style render tree: each
 template's statics once per connection, then only the dynamics that changed
 (loop items kept or changed in place, long markup by reference). A dropped

@@ -93,7 +93,6 @@ func (p *shop) Render() templ.Component {
 func bootShop(t *testing.T) *nexus.App {
 	t.Helper()
 	app, stop, err := nexus.InProcess(config.Runtime{},
-		view.LiveComponent[*counter](),
 		view.Live[*shop]("/shop").Provide(func() *shop { return &shop{} }),
 	)
 	if err != nil {

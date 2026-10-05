@@ -15,14 +15,15 @@ import (
 // rows costs the server only the latest change.
 //
 //	type Chat struct {
+//	    view.LiveView
 //	    Messages view.Stream[Message]
 //	}
 //
-//	func (c *Chat) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
+//	func (c *Chat) Mount(ctx context.Context, store *Store) error {
 //	    c.Messages.Configure(func(m Message) string { return "msg-" + m.ID })
 //	    c.Messages.Limit(-200)            // the browser keeps the last 200
 //	    c.Messages.Reset(store.Recent(50)...)
-//	    sock.Subscribe("chat")
+//	    c.Subscribe("chat")
 //	    return nil
 //	}
 //

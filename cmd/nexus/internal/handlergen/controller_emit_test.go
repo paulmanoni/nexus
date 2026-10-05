@@ -230,3 +230,35 @@ func TestPlainImport(t *testing.T) {
 		}
 	}
 }
+
+// //nexus:live on a type registers it as a live view: routed at its path,
+// gated by the type's //nexus:auth / //nexus:use — or, without a path, for
+// embedding only.
+func TestEmit_Live(t *testing.T) {
+	anns := []Annotation{
+		{Func: "NewOrderDetail", Keyword: "provide", Line: 5},
+		{Func: "OrderDetail", Keyword: "live", Args: []string{"/orders/:id"}, Line: 10, TypeLevel: true},
+		{Func: "OrderDetail", Keyword: "auth", Args: []string{"Requires", "view_orders"}, Line: 11, TypeLevel: true},
+		{Func: "Cart", Keyword: "live", Line: 20, TypeLevel: true},
+	}
+	got, err := Emit(Config{Package: "orders"}, anns)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	for _, want := range []string{
+		`"github.com/paulmanoni/nexus/v2/view"`,
+		`nexus.Provide(NewOrderDetail),`,
+		`view.Live[*OrderDetail]("/orders/:id", auth.Requires("view_orders")),`,
+		`view.Live[*Cart](""),`,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("missing %s in:\n%s", want, got)
+		}
+	}
+	bad := []Annotation{
+		{Func: "X", Keyword: "live", Args: []string{"orders"}, Line: 1, TypeLevel: true},
+	}
+	if _, err := Emit(Config{Package: "orders"}, bad); err == nil || !strings.Contains(err.Error(), `must start with "/"`) {
+		t.Fatalf("a path without / = %v", err)
+	}
+}

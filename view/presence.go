@@ -16,13 +16,11 @@ import (
 // it is open, every page subscribed to the topic hears who joins and
 // leaves, and with a Relay (UseRelay) it spans the app's replicas.
 //
-//	func (r *Room) Mount(ctx context.Context, sock *view.Socket, name string) error {
+//	func (r *Room) Mount(ctx context.Context, p RoomProps) error {
 //	    me := auth.Current(ctx)
-//	    sock.Subscribe("room:" + name)
-//	    if sock.Connected() {
-//	        sock.Track("room:"+name, me.ID, Seen{Name: me.User.Name, At: time.Now()})
-//	    }
-//	    r.Online.Set(view.Presences("room:" + name))
+//	    r.Subscribe("room:" + p.Name)
+//	    r.Track("room:"+p.Name, me.ID, Seen{Name: me.User.(*User).Name, At: time.Now()})
+//	    r.Online.Set(view.Presences("room:" + p.Name))
 //	    return nil
 //	}
 //
@@ -110,14 +108,15 @@ type presenceMsg struct {
 	Entries entries         `json:"e,omitempty"` // state: the replica's every presence
 }
 
-type tracked struct{ topic, key, ref string }
+type tracked struct {
+	topic, key, ref string
+	in              *instance // the view that tracked it
+}
 
-// Track makes the page present on topic as key, with meta (JSON-encoded),
-// until it ends or Untrack. Pages subscribed to topic get a PresenceDiff.
-// It does nothing in the first, HTTP render's Mount: only a connected page
-// is present.
-func (s *Socket) Track(topic, key string, meta any) {
-	if !s.Connected() {
+// track makes the page present on topic as key for in. Only a connected
+// page is present.
+func (s *socket) track(in *instance, topic, key string, meta any) {
+	if s == nil || !s.connected {
 		return
 	}
 	raw, err := json.Marshal(meta)
@@ -131,16 +130,16 @@ func (s *Socket) Track(topic, key string, meta any) {
 	presence.Lock()
 	put(presence.local, topic, key, ref, raw)
 	presence.Unlock()
-	s.presences = append(s.presences, tracked{topic, key, ref})
+	s.presences = append(s.presences, tracked{topic, key, ref, in})
 	deliver(topic, PresenceDiff{Joins: []Presence{{Key: key, Metas: []PresenceMeta{{raw}}}}})
 	relayPresence(presenceMsg{Kind: "join", Topic: topic, Key: key, Ref: ref, Meta: raw})
 }
 
-// Untrack ends the page's presence as key on topic.
-func (s *Socket) Untrack(topic, key string) {
+// untrack ends in's presence as key on topic.
+func (s *socket) untrack(in *instance, topic, key string) {
 	kept := s.presences[:0]
 	for _, p := range s.presences {
-		if p.topic == topic && p.key == key {
+		if p.in == in && p.topic == topic && p.key == key {
 			leave(p)
 			continue
 		}
@@ -150,7 +149,7 @@ func (s *Socket) Untrack(topic, key string) {
 }
 
 // untrackAll ends the page's presences: it ended.
-func (s *Socket) untrackAll() {
+func (s *socket) untrackAll() {
 	for _, p := range s.presences {
 		leave(p)
 	}

@@ -18,27 +18,38 @@ import (
 	"github.com/paulmanoni/nexus/v2/middleware"
 )
 
-// listLive reads its page number from the URL (Params).
+// listLive reads its page number from the URL: its props' query field.
 type listLive struct {
+	LiveView
 	Page  string
 	Calls int
 }
 
-func (l *listLive) Params(ctx context.Context, u *url.URL) error {
-	l.Page = u.Query().Get("page")
+type listProps struct {
+	Page string `query:"page"`
+}
+
+func (l *listLive) Mount(ctx context.Context, p listProps) error {
+	l.Page = p.Page
+	l.Calls++
+	return nil
+}
+
+func (l *listLive) Update(ctx context.Context, p listProps) error {
+	l.Page = p.Page
 	l.Calls++
 	return nil
 }
 
 // Next moves to the next page from the server.
 func (l *listLive) Next(ctx context.Context) error {
-	PushPatch(ctx, "/list?page=next")
+	l.PushPatch("/list?page=next")
 	return nil
 }
 
 // Away opens another live page from the server.
 func (l *listLive) Away(ctx context.Context) error {
-	PushNavigate(ctx, "/count/bo")
+	l.PushNavigate("/count/bo")
 	return nil
 }
 

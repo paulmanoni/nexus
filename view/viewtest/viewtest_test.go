@@ -22,6 +22,7 @@ import (
 
 // Report is a live page: pick a source and key, run it, save it.
 type Report struct {
+	view.LiveView
 	User   string
 	Keys   []string
 	Ran    int
@@ -54,15 +55,15 @@ func (s *store) all() []string {
 	return append([]string(nil), s.saved...)
 }
 
-func (r *Report) Mount(ctx context.Context, sock *view.Socket, s *store) error {
+func (r *Report) Mount(ctx context.Context, s *store) error {
 	if id := auth.Current(ctx); id != nil {
 		r.User = id.ID
 	}
 	r.Keys = []string{"main.id", "main.name", "main.email"}
 	r.Key = "main.name"
 	r.Saved = s.all()
-	if sock.Connected() {
-		sock.Subscribe("reports")
+	if r.Connected() {
+		r.Subscribe("reports")
 	}
 	return nil
 }

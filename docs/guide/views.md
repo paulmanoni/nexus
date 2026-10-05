@@ -82,44 +82,48 @@ the shard, and keeps them current as you save.
 - Everything the directives do has a Go form — `view.Page(m, p, C, gates…)`,
   `view.Shard(C, gates…)`, `view.Expose[T]()` — and a Go registration wins.
 
-## Live pages
+## Live views
 
-A live page keeps its state **on the server**, one copy per connected page, and
-changes through events sent over a WebSocket — for pages whose state must not
-live in the browser or that change while you look (admin boards, dashboards).
-It is declared like a `nexus.Resource`:
+Views come in three kinds, as in Phoenix:
+
+| Kind | State | Use it for |
+|---|---|---|
+| **templ component** | none (arguments in, markup out) | almost everything: rows, cards, forms, layouts |
+| **live view** | on the server, one copy per place it is shown; events, `Info` | a page, or a widget with state and events of its own |
+| **signal** (`view.State`) | in the browser | browser-only state: a toggle, a note being typed |
+
+A live view keeps its state **on the server** and changes through events sent
+over a WebSocket — for pages whose state must not live in the browser or that
+change while you look (admin boards, dashboards). It embeds `view.LiveView`,
+and the same type is a **page** when it is routed and a **part of a page** when
+another live view embeds it.
 
 ```go
-var Module = nexus.Module("pets",
-	nexus.Path("/admin"),
-	view.Live[*Board]("/board", auth.Required()).
-		Provide(NewBoard),
-)
-
 type Board struct {
-	Pets    []Pet
-	Adopted map[string]bool
+	view.LiveView
+	Pets    view.Assign[[]Pet]
+	Adopted view.Assign[map[string]bool]
 }
 
-func NewBoard() *Board { return &Board{} }
-
-// Mount fills this page's copy: dependencies first, path parameters last.
+// Mount fills this copy: dependencies (pointer or interface parameters,
+// injected), then — optionally — its props.
 func (b *Board) Mount(ctx context.Context, store *Store) error {
-	b.Pets, b.Adopted = store.All(), map[string]bool{}
+	b.Pets.Set(store.All())
+	b.Adopted.Set(map[string]bool{})
 	return nil
 }
 
 // An event is an exported method: dependencies first, then its arguments.
 func (b *Board) Adopt(ctx context.Context, name string) error {
-	b.Adopted[name] = true
+	b.Adopted.Update(func(a *map[string]bool) { (*a)[name] = true })
 	return nil
 }
 ```
 
 ```templ
 templ (b *Board) Render() {
-	for _, p := range b.Pets {
-		if b.Adopted[p.Name] {
+	for _, p := range b.Pets.Get() {
+		if b.Adopted.Get()[p.Name] {
 			<span>{ p.Name } adopted</span>
 		} else {
 			<button onclick={ view.Send(b.Adopt, p.Name) }>adopt { p.Name }</button>
@@ -128,9 +132,52 @@ templ (b *Board) Render() {
 }
 ```
 
+Route it with `view.Live` — or put `//nexus:live <path>` on the type:
+
+```go
+var Module = nexus.Module("pets",
+	nexus.Path("/admin"),
+	view.Live[*Board]("/board", auth.Required()).Provide(NewBoard), // Provide is optional
+)
+```
+
+```go
+//nexus:live /board
+//nexus:auth Required
+type Board struct { … }
+```
+
+**Props.** A view's input is one struct, its props: routed, they are bound from
+the path and the query (`path:` and `query:` tags; `validate:` rules apply, a
+failure is a 422); embedded, the parent passes them. `Update` runs with new
+props — a patch of the page's URL, or a parent passing different ones — and
+without an `Update`, `Mount` runs again:
+
+```go
+type OrderProps struct {
+	ID  int64  `path:"id"`
+	Tab string `query:"tab"`
+}
+
+func (o *Order) Mount(ctx context.Context, svc *OrderService, p OrderProps) error { … }
+func (o *Order) Update(ctx context.Context, svc *OrderService, p OrderProps) error { … }
+```
+
+**What `view.LiveView` gives a view:**
+
+| | |
+|---|---|
+| `Connected()` | the live connection (true) or the first, HTTP render (false) |
+| `Subscribe(topics…)` | its `Info` hears `view.Broadcast` to them |
+| `Track(topic, key, meta)` / `Untrack` | [presence](#presence) |
+| `PushPatch(href)` / `PushNavigate(href)` | move the browser after an event ([navigation](#navigation)) |
+| `PutFlash(kind, msg)` / `Flash(kind)` | a message for the next render; the page's next event clears it |
+| `ID()` | its id where a page embeds it, `""` for the page itself |
+
 - **The DI instance is the template.** Each page render and each connection gets
-  its own copy; `Mount` fills it (`sock *view.Socket` tells it whether the page
-  is connected). `Render()` is a templ method component.
+  its own copy (embed `view.LiveView` by value, not as a pointer); `Mount`
+  fills it. Without a provider for the type, it starts from its zero value.
+  `Render()` is a templ method component.
 - **Events are methods** of the shape `func(ctx, deps…, args…) error`:
   dependencies are pointer or interface parameters, injected from DI; the rest
   are the arguments `view.Send(b.Adopt, p.Name)` passes. Any such exported method
@@ -148,12 +195,13 @@ templ (b *Board) Render() {
   (`<path>/_live`), mounts again with `Connected()` true, and reconnects if the
   socket drops, resuming its state (see [What travels](#what-travels)). Gates
   on `view.Live` apply to both.
-- **Server push.** `sock.Subscribe(topics…)` in `Mount` (it only takes effect on
-  the live connection) makes the page hear `view.Broadcast(ctx, topic, data)`
-  — sent from an event, a handler, a job, anywhere. The page's optional
-  `Info(ctx, deps…, msg view.Message) error` runs, then it re-renders; with
-  several messages waiting it handles them all and renders once. `Info` is
-  never callable from the browser.
+- **Server push.** `Subscribe(topics…)` in `Mount` (it only takes effect on
+  the live connection) makes the view hear `view.Broadcast(ctx, topic, data)`
+  — sent from an event, a handler, a job, anywhere. Its optional
+  `Info(ctx, deps…, msg view.Message) error` runs, then the page re-renders;
+  with several messages waiting it handles them all and renders once. An
+  embedded view subscribes on its own. `Info` is never callable from the
+  browser.
 - **Several replicas.** A broadcast reaches the pages on the replica that sent
   it; give the replicas a relay and it reaches all of them:
 
@@ -169,9 +217,9 @@ templ (b *Board) Render() {
   the page.
 
 ```go
-func (b *Board) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
-	sock.Subscribe("adoptions")
-	b.Adopted = store.Adopted()
+func (b *Board) Mount(ctx context.Context, store *Store) error {
+	b.Subscribe("adoptions")
+	b.Adopted.Set(store.Adopted())
 	return nil
 }
 
@@ -182,7 +230,7 @@ func (b *Board) Adopt(ctx context.Context, store *Store, name string) error {
 }
 
 func (b *Board) Info(ctx context.Context, store *Store, msg view.Message) error {
-	b.Adopted = store.Adopted()
+	b.Adopted.Set(store.Adopted())
 	return nil
 }
 ```
@@ -295,14 +343,14 @@ what it showed. `view.Errors(ctx)` is tracked the same way.
 - `Set` and `Update` belong to the page's own goroutine: `Mount`, `Params`,
   `Info` and events.
 
-### Live components
+### Embedding a live view
 
-A live component is a part of a live page with state and events of its own —
-Phoenix LiveView's LiveComponents. Its methods follow a page's conventions,
-with props in place of path parameters:
+Any live view can be placed in another's template, by an id unique among its
+type's there — Phoenix's LiveComponents and nested LiveViews in one:
 
 ```go
 type Cart struct {
+	view.LiveView
 	Items view.Assign[[]Item]
 	Open  view.Assign[bool]
 }
@@ -311,6 +359,7 @@ type CartProps struct{ User string }
 
 func (c *Cart) Mount(ctx context.Context, svc *CartService, p CartProps) error {
 	c.Items.Set(svc.Items(ctx, p.User))
+	c.Subscribe("cart:" + p.User) // an embedded view subscribes on its own
 	return nil
 }
 
@@ -321,36 +370,32 @@ func (c *Cart) Toggle(ctx context.Context) error {
 ```
 
 ```templ
-templ (c *Cart) Render() {
-	<button onclick={ view.Send(c.Toggle) }>Cart ({ strconv.Itoa(len(c.Items.Get())) })</button>
-	if c.Open.Get() { … }
-}
-```
-
-Register it once with `view.LiveComponent[*Cart]()` (pass constructors to
-give it a DI template, as `view.Live` does) and place it in any live page by
-an id unique among its type's on the page:
-
-```templ
 @view.Component[*Cart]("cart", CartProps{User: p.User.Get()})
 ```
 
+- **No registration** for a view that takes no dependencies. One that does
+  needs its dependencies hooked up once: `view.Live[*Cart]("")` (no path:
+  embed only) or `//nexus:live` with no path on the type.
 - **State per placement.** The page keeps one instance per id while its
-  template renders it and drops one it stops rendering; rendered again, it
-  mounts afresh.
-- **Props.** `Mount(ctx, deps…, props P)` runs on the first render. When the
-  page renders it with different props, `Update(ctx, deps…, props P)` runs —
-  or, without one, `Mount` again. A page event or `Info` can hand it new props
-  with `view.UpdateComponent[*Cart](ctx, "cart", props)`.
+  template renders it and drops one it stops rendering — its subscriptions and
+  presence with it; rendered again, it mounts afresh.
+- **Props.** `Mount` runs on the first render; when the page renders it with
+  different props, `Update` runs (or `Mount` again). A page event or `Info`
+  can hand it new props with `view.UpdateComponent[*Cart](ctx, "cart", props)`.
 - **Events reach their own instance.** `view.Send(c.Toggle)` (and `Submit`,
   `Change`) in its template goes to the instance it was clicked in — no target
-  to name. Its validation errors show through `view.Errors(ctx)` as a page's do.
-- **Only what changed renders.** With `Assign` fields, a component's event
-  runs the component's changed parts and the page spots it sits in; the rest
-  of the page, and the other components, are skipped. A component the page
-  re-renders with the same props is skipped as a whole.
+  to name. It runs behind the page's gates.
+- **Only what changed renders.** With `Assign` fields, its event runs its
+  changed parts and the page spots it sits in; the rest of the page, and the
+  other views, are skipped. One the page re-renders with the same props, and
+  nothing changed, is skipped as a whole.
 - It renders inside `<nx-c data-nx-c="id">` (laid out as if it weren't there).
-  A component has no `Params` or `Info`: the page passes it data.
+
+**When to embed a live view, and when not.** A templ component is the default
+— with `Assign` fields a page already re-renders only the parts that changed,
+so embedding buys no speed. Embed a live view when a part needs **its own
+state and events**, and appears more than once or on more than one page: a
+cart in every page's header, an editable row repeated fifty times.
 
 ### Uploads
 
@@ -415,14 +460,15 @@ changed; the browser keeps the rest.
 
 ```go
 type Chat struct {
+	view.LiveView
 	Messages view.Stream[Message]
 }
 
-func (c *Chat) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
+func (c *Chat) Mount(ctx context.Context, store *Store) error {
 	c.Messages.Configure(func(m Message) string { return "msg-" + m.ID })
 	c.Messages.Limit(-200) // the browser keeps the last 200
 	c.Messages.Reset(store.Recent(50)...)
-	sock.Subscribe("chat")
+	c.Subscribe("chat")
 	return nil
 }
 
@@ -461,11 +507,11 @@ Who is on a topic — the users on a page, the people in a room — as Phoenix
 Presence tracks it:
 
 ```go
-func (r *Room) Mount(ctx context.Context, sock *view.Socket, name string) error {
+func (r *Room) Mount(ctx context.Context, p RoomProps) error {
 	me := auth.Current(ctx)
-	sock.Subscribe("room:" + name)
-	sock.Track("room:"+name, me.ID, Seen{Name: me.User.(*User).Name})
-	r.Online.Set(view.Presences("room:" + name))
+	r.Subscribe("room:" + p.Name)
+	r.Track("room:"+p.Name, me.ID, Seen{Name: me.User.(*User).Name})
+	r.Online.Set(view.Presences("room:" + p.Name))
 	return nil
 }
 
@@ -477,10 +523,10 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 }
 ```
 
-- `sock.Track(topic, key, meta)` makes the page present as `key` while it is
-  open (from the connected `Mount` on; the first, HTTP render tracks nothing).
+- `Track(topic, key, meta)` makes the page present as `key` while the view is
+  shown (from the connected `Mount` on; the first, HTTP render tracks nothing).
   The same key can be present more than once — two tabs — each with its own
-  meta; `sock.Untrack(topic, key)` ends one early.
+  meta; `Untrack(topic, key)` ends one early.
 - `view.Presences(topic)` lists who is there: a `view.Presence{Key, Metas}`
   per key, sorted by key; `meta.Decode(&v)` reads a meta.
 - Pages subscribed to the topic get a `view.PresenceDiff{Joins, Leaves}`
@@ -497,11 +543,12 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 | LiveView | nexus |
 |---|---|
 | `defmodule MyAppWeb.OrdersLive` + `live "/orders", OrdersLive` | a struct + `view.Live[*Orders]("/orders", gates…)` |
-| `mount(params, session, socket)` | `Mount(ctx, [*view.Socket], deps…, pathParams…) error` |
-| `handle_params(params, uri, socket)` | `Params(ctx, deps…, u *url.URL) error` |
+| `use Phoenix.LiveView` | embed `view.LiveView` |
+| `mount(params, session, socket)` | `Mount(ctx, deps…, props) error`; props bound from `path:`/`query:` tags |
+| `handle_params(params, uri, socket)` | `Update(ctx, deps…, props) error` on a patch |
 | `handle_event("cancel", params, socket)` + `phx-click="cancel"` | `Cancel(ctx, deps…, args…) error` + `onclick={ view.Send(p.Cancel, id) }` |
 | `phx-submit` / `phx-change` | `view.Submit(p.Save)` / `view.Change(p.Validate)` with a `form:`-tagged struct |
-| `handle_info(msg, socket)` + `Phoenix.PubSub.subscribe` | `Info(ctx, deps…, msg view.Message) error` + `sock.Subscribe(topic)`, `view.Broadcast` |
+| `handle_info(msg, socket)` + `Phoenix.PubSub.subscribe` | `Info(ctx, deps…, msg view.Message) error` + `v.Subscribe(topic)`, `view.Broadcast` |
 | PubSub across nodes | `view.UseRelay(viewrelay.New(…))` (Redis) |
 | `assign(socket, :rows, rows)` / `socket.assigns.rows` | `p.Rows.Set(rows)` / `p.Rows.Get()` on a `view.Assign` field |
 | `update(socket, :count, &(&1 + 1))` | `p.Count.Update(func(n *int) { *n++ })` |
@@ -510,7 +557,8 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 | function components | templ components |
 | `live_component` + `phx-target={@myself}` | `@view.Component[*Cart](id, props)` — events reach their instance without a target |
 | `update(assigns, socket)` / `send_update` | `Update(ctx, deps…, props) error` / `view.UpdateComponent[*Cart](ctx, id, props)` |
-| `push_patch` / `push_navigate` / `<.link patch navigate>` | `view.PushPatch` / `view.PushNavigate` / `@view.Link(href)` |
+| `push_patch` / `push_navigate` / `<.link patch navigate>` | `v.PushPatch` / `v.PushNavigate` / `@view.Link(href)` |
+| `put_flash` / `@flash` | `v.PutFlash(kind, msg)` / `v.Flash(kind)` |
 | `phx-update="ignore"` | `data-nx-ignore` on an element with an `id` |
 | JS hooks | islands (Vue/React/TS components), `view.State` signals for browser-only state |
 | form recovery on reconnect | the same (`view.Change` forms are re-sent) |
@@ -518,7 +566,7 @@ func (r *Room) Info(ctx context.Context, msg view.Message) error {
 | `Phoenix.LiveViewTest` | `viewtest.Mount` (the real runtime in Go), `viewtest.Browser` (Chrome) |
 | `allow_upload` / `live_file_input` / `consume_uploaded_entries` | a `view.Upload` field / `{ p.Avatar.Input()... }` / `p.Avatar.Consume(fn)` |
 | `stream(socket, :messages, items)` / `phx-update="stream"` | a `view.Stream[T]` field: `Insert`/`Prepend`/`Delete`/`Reset`, `{ c.Messages.Attrs()... }` |
-| `Phoenix.Presence.track` / `list` / `presence_diff` | `sock.Track(topic, key, meta)` / `view.Presences(topic)` / `view.PresenceDiff` in `Info` |
+| `Phoenix.Presence.track` / `list` / `presence_diff` | `v.Track(topic, key, meta)` / `view.Presences(topic)` / `view.PresenceDiff` in `Info` |
 
 ### Form fields
 
@@ -589,14 +637,16 @@ From a live page, a link moves over the page's socket, as Phoenix LiveView's
 `patch` and `navigate` do — no HTTP request:
 
 - **The same page with another query** (`/orders?page=2`) is a *patch*: the
-  page's optional `Params(ctx, deps…, u *url.URL) error` runs with the new URL
-  and the page sends the change to its tree. `Params` also runs after `Mount`,
-  so a page reads its query in one place:
+  page's props are bound from the new URL, its `Update` runs with them (or
+  `Mount` again, without one), and the page sends the change to its tree:
 
   ```go
-  func (o *Orders) Params(ctx context.Context, u *url.URL) error {
-      o.Page, _ = strconv.Atoi(u.Query().Get("page"))
-      return o.load(ctx)
+  type OrdersProps struct {
+      Page int `query:"page"`
+  }
+
+  func (o *Orders) Update(ctx context.Context, svc *OrderService, p OrdersProps) error {
+      return o.load(ctx, svc, p.Page)
   }
   ```
 
@@ -611,8 +661,8 @@ From a live page, a link moves over the page's socket, as Phoenix LiveView's
 - **Anything else** — a page that isn't live, or one whose gates refuse — the
   browser loads as above.
 
-An event moves the browser the same way with `view.PushPatch(ctx, href)` or
-`view.PushNavigate(ctx, href)`. The back and forward buttons go over the
+An event moves the browser the same way with the view's `PushPatch(href)` or
+`PushNavigate(href)`. The back and forward buttons go over the
 socket too. After every navigation the runtime fires `nx:navigate` on
 `window`, for a page's own scripts (a menu marking the current page).
 
