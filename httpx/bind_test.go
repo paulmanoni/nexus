@@ -33,3 +33,26 @@ func TestShouldBindUri_PathTag(t *testing.T) {
 		t.Errorf("uri tag: Slug = %q, want it unbound (uri: is not read)", a.Slug)
 	}
 }
+
+// A repeated field (checkboxes of one name) binds to a slice of any scalar.
+func TestShouldBindQuery_Slices(t *testing.T) {
+	type args struct {
+		Names []string  `query:"name"`
+		IDs   []int64   `query:"id"`
+		On    []bool    `query:"on"`
+		Rates []float64 `query:"rate"`
+	}
+	c := &Ctx{Request: httptest.NewRequest("GET", "/?name=a&name=b&id=3&id=5&on=true&rate=1.5", nil)}
+	var a args
+	if err := c.ShouldBindQuery(&a); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Names) != 2 || a.Names[1] != "b" || len(a.IDs) != 2 || a.IDs[0] != 3 || a.IDs[1] != 5 ||
+		len(a.On) != 1 || !a.On[0] || len(a.Rates) != 1 || a.Rates[0] != 1.5 {
+		t.Errorf("bound %+v", a)
+	}
+	bad := &Ctx{Request: httptest.NewRequest("GET", "/?id=3&id=x", nil)}
+	if err := bad.ShouldBindQuery(&a); err == nil {
+		t.Error("a non-number in an []int64 binds")
+	}
+}

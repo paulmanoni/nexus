@@ -273,11 +273,16 @@ func setField(fv reflect.Value, vals []string) error {
 		}
 		fv.SetBool(b)
 	case reflect.Slice:
-		if fv.Type().Elem().Kind() == reflect.String {
-			fv.Set(reflect.ValueOf(vals))
-			return nil
+		// One element per value, each bound as a field of its own: a
+		// repeated field (checkboxes of one name) fills a []int64 as
+		// well as a []string.
+		out := reflect.MakeSlice(fv.Type(), len(vals), len(vals))
+		for i, v := range vals {
+			if err := setField(out.Index(i), []string{v}); err != nil {
+				return fmt.Errorf("element %d: %w", i, err)
+			}
 		}
-		return fmt.Errorf("unsupported slice element %s", fv.Type().Elem().Kind())
+		fv.Set(out)
 	default:
 		return fmt.Errorf("unsupported field kind %s", fv.Kind())
 	}
