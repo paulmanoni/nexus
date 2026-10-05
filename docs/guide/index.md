@@ -32,7 +32,9 @@ binary, with the frontend embedded in it.
   links and form actions generated from the Go routes.
 - **Reactive views.** Server-rendered templ components with signals that update in the
   browser without a JavaScript build, and LiveView-style live pages whose events run on the
-  server and travel back as small patches over a WebSocket.
+  server and travel back as small patches over a WebSocket. Pages that keep their state in
+  `view.Assign` fields re-render only what changed; live components and live uploads work as
+  they do in Phoenix LiveView.
 - **Client SDK.** A typed JS/TS client and Vue composables, generated from your
   registered endpoints and served by the binary.
 - **Background jobs.** Typed jobs with queues, retries, timeouts, progress, checkpoints

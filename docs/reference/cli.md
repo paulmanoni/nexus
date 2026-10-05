@@ -71,6 +71,7 @@ nexus client --out ./web/sdk --tsconfig ./web/tsconfig.json   # merge path mappi
 |---|---|
 | `nexus generate handlers [./...]` | Write the registrations for [`//nexus:` decorators](/guide/decorators). `--check` is a CI drift gate. |
 | `nexus generate frontend` | Generate a typed TypeScript source tree from a manifest. `--check` is a drift gate. |
+| `nexus generate views [dir]` | Compile the `.templ` views to Go on disk (`*_templ.go`, `view_gen.go`, `view_imports_gen.go`) for a plain `go build`; `nexus dev` and `nexus build` compile them in memory. Prints the compiler's warnings. `--check` is a drift gate. |
 
 ## `nexus migrate v2 [dir]`
 
@@ -109,9 +110,9 @@ directories are skipped.
 
 | Command | |
 |---|---|
-| `nexus lsp` | A language server for editors: proxies gopls and opens the generated Go (compiled views, `//nexus:` registrations) as editor buffers. See [views](/guide/views). |
+| `nexus lsp` | A language server for editors: proxies gopls and opens the generated Go (compiled views, `//nexus:` registrations) as editor buffers, and marks what keeps a live page from tracking its changes as warnings. See [views](/guide/views). |
 | `nexus test [packages]` / `nexus vet [packages]` | `go test` / `go vet` through the same overlay `nexus build` uses, so no generated file is needed on disk. |
-| `nexus doctor` | Check the project: Go against `go.mod`, the module on nexus v2, `nexus.toml`, Node / the package manager / Vite, the Tailwind CLI, generated view files. `nexus doctor -` audits a deployment manifest on stdin. |
+| `nexus doctor` | Check the project: Go against `go.mod`, the module on nexus v2, `nexus.toml`, Node / the package manager / Vite, the Tailwind CLI, generated view files, and live pages that can't track their changes. `nexus doctor -` audits a deployment manifest on stdin. |
 | `nexus add ui <component>...` | Vendor [`view/ui`](/guide/views) components into the app (`--dir`, default `./ui`). |
 | `nexus release <version>` | Release a multi-module repository: CHANGELOG and tree checks, tags in dependency order, push, CLI install check. Prints the plan; `--yes` runs it. |
 
