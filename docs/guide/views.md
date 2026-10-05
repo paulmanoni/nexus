@@ -407,6 +407,91 @@ func (p *Profile) Save(ctx context.Context, disk *Uploads, in ProfileForm) error
 - An `Upload` is page state like an `Assign`: it doesn't keep a page from
   tracking its changes, and only the parts that show its entries re-render.
 
+### Streams
+
+A `view.Stream[T]` field shows a list the server doesn't keep — a chat, a
+feed, a log of thousands of rows — LiveView's streams. The page sends what
+changed; the browser keeps the rest.
+
+```go
+type Chat struct {
+	Messages view.Stream[Message]
+}
+
+func (c *Chat) Mount(ctx context.Context, sock *view.Socket, store *Store) error {
+	c.Messages.Configure(func(m Message) string { return "msg-" + m.ID })
+	c.Messages.Limit(-200) // the browser keeps the last 200
+	c.Messages.Reset(store.Recent(50)...)
+	sock.Subscribe("chat")
+	return nil
+}
+
+func (c *Chat) Info(ctx context.Context, msg view.Message) error {
+	var m Message
+	if err := msg.Decode(&m); err != nil {
+		return err
+	}
+	c.Messages.Insert(m)
+	return nil
+}
+```
+
+```templ
+<ul { c.Messages.Attrs()... }>
+	for _, m := range c.Messages.Items() {
+		<li id={ c.Messages.ID(m) }>{ m.Text }</li>
+	}
+</ul>
+```
+
+- `Insert` adds at the end, `Prepend` at the start, `InsertAt(i, item)` at an
+  index; an item whose id is already shown is replaced in place. `Delete` /
+  `DeleteID` remove one, `Reset` empties the list and shows new items, and
+  `Limit(n)` bounds what the browser keeps (positive: the first n, negative:
+  the last -n).
+- `Items()` are the items of the latest change only — render each as a direct
+  child of the element `Attrs()` is spread on, with its `ID`. The server holds
+  that one change; the browser applies it once and keeps the rows it has.
+- A `Stream` is page state like an `Assign`: a tracked page skips the list
+  when it didn't change.
+
+### Presence
+
+Who is on a topic — the users on a page, the people in a room — as Phoenix
+Presence tracks it:
+
+```go
+func (r *Room) Mount(ctx context.Context, sock *view.Socket, name string) error {
+	me := auth.Current(ctx)
+	sock.Subscribe("room:" + name)
+	sock.Track("room:"+name, me.ID, Seen{Name: me.User.(*User).Name})
+	r.Online.Set(view.Presences("room:" + name))
+	return nil
+}
+
+func (r *Room) Info(ctx context.Context, msg view.Message) error {
+	if _, ok := msg.Data.(view.PresenceDiff); ok {
+		r.Online.Set(view.Presences(msg.Topic))
+	}
+	return nil
+}
+```
+
+- `sock.Track(topic, key, meta)` makes the page present as `key` while it is
+  open (from the connected `Mount` on; the first, HTTP render tracks nothing).
+  The same key can be present more than once — two tabs — each with its own
+  meta; `sock.Untrack(topic, key)` ends one early.
+- `view.Presences(topic)` lists who is there: a `view.Presence{Key, Metas}`
+  per key, sorted by key; `meta.Decode(&v)` reads a meta.
+- Pages subscribed to the topic get a `view.PresenceDiff{Joins, Leaves}`
+  through `Info` when keys join or leave.
+- A page leaves when it ends: its connection closes and the reconnect grace
+  (`view.ResumeGrace`) runs out, or it navigates away.
+- **Across replicas** with a relay (`view.UseRelay`): joins and leaves travel
+  to the other replicas, each restates its presences every 10 seconds (and to
+  a replica that starts), and a replica not heard from for `view.PresenceTTL`
+  (30s) is taken to have left with everyone it had.
+
 ### Coming from Phoenix LiveView
 
 | LiveView | nexus |
@@ -432,7 +517,8 @@ func (p *Profile) Save(ctx context.Context, disk *Uploads, in ProfileForm) error
 | — | **resume**: a reconnect within `view.ResumeGrace` keeps the page's state |
 | `Phoenix.LiveViewTest` | `viewtest.Mount` (the real runtime in Go), `viewtest.Browser` (Chrome) |
 | `allow_upload` / `live_file_input` / `consume_uploaded_entries` | a `view.Upload` field / `{ p.Avatar.Input()... }` / `p.Avatar.Consume(fn)` |
-| streams, presence | not yet |
+| `stream(socket, :messages, items)` / `phx-update="stream"` | a `view.Stream[T]` field: `Insert`/`Prepend`/`Delete`/`Reset`, `{ c.Messages.Attrs()... }` |
+| `Phoenix.Presence.track` / `list` / `presence_diff` | `sock.Track(topic, key, meta)` / `view.Presences(topic)` / `view.PresenceDiff` in `Info` |
 
 ### Form fields
 
