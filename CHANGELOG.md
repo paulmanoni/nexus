@@ -6,6 +6,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-10-05
+
+### Added
+
+- view: **a struct a live view embeds is part of it.** Pages that share state
+  and events embed one struct: its `view.Assign` fields are tracked, its
+  `view.LiveView` is the page's, and its methods are the page's events.
+- `[runtime.tailwind] imports`: stylesheets of Go modules, as
+  `"<module>/<file>.css [conditions]"`, which `nexus dev`/`nexus build` @import
+  into `sources.generated.css` from wherever Go keeps the module — a component
+  library imported as a package brings its styles, uncopied.
+- httpx: a repeated field (checkboxes of one name) binds to a slice of any
+  scalar — `[]int64`, `[]bool`, `[]float64` — not only `[]string`.
+- `view.Assets(prefix, handler, gates…)`: gates make an asset tree private.
+- The CLI installs as a project tool:
+  `go get -tool github.com/paulmanoni/nexus/cmd/nexus/v2@latest`, then
+  `go tool nexus …`.
+
+### Changed
+
+- `nexus dev` writes the compiled views (`*_templ.go`, `view_gen.go`,
+  `view_imports_gen.go`) beside the `.templ` files, so any editor sees them;
+  `--no-view-files` keeps them in memory. `nexus new` gitignores them, and
+  `nexus dev` says when a git project doesn't. `--view-files` is deprecated.
+- The CLI module is leaner: `nexus dev --tui` runs on a small built-in terminal
+  UI instead of bubbletea/lipgloss, and `nexus config check` reads `[cache]`
+  from `extension/cache/cacheconfig` without linking the cache. A project
+  adding the CLI as a tool gets 9 modules instead of 27.
+
+### Fixed
+
+- A router at `"/"` registering its own path — `view.Live[*T]("/")` — panicked
+  at boot ("host/path missing /"); it serves `"/"`.
+- view: assets (`view.Assets`) and the runtime's scripts answered 401 to a
+  signed-out visitor under auth's deny-by-default, so a sign-in page lost its
+  stylesheet; they are public.
+- viewgen: a code example in a doc comment (`//	@button.Button(…)`) failed
+  the build as a v1 annotation; only `page`, `auth` and `use` are.
+- `nexus config check`/`lint` missed a section declared with an inferred type,
+  `config.Section("name", T{…})`.
+
 ## [2.18.0] - 2026-10-05
 
 ### Changed (breaking)
