@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-10-05
+
+### Added
+
+- view: **streams** (LiveView's streams). A `view.Stream[T]` field shows a
+  list the server doesn't keep: `Configure(id)`, `Insert`, `Prepend`,
+  `InsertAt`, `Delete`/`DeleteID`, `Reset`, `Limit`; the template spreads
+  `Attrs()` on the list and renders `Items()` — the latest change only — each
+  with its `ID`. The browser applies each change once and keeps its rows.
+- view: **presence** (Phoenix Presence). `sock.Track(topic, key, meta)` makes
+  a live page present while it is open, `sock.Untrack` ends it early,
+  `view.Presences(topic)` lists who is there, and subscribed pages get
+  `view.PresenceDiff{Joins, Leaves}` through `Info`. With `view.UseRelay` it
+  spans replicas: joins and leaves travel, each replica restates its
+  presences every 10s, and one quiet for `view.PresenceTTL` (30s) is dropped.
+  `view.Presences` builds a topic's list once per change and every page shares
+  it.
+
+  Measured (5,000 users posting to a 1,000-message chat every ~5s): a stream
+  answers at p99 6 ms on ~25% of a CPU, where a plain list re-rendering its
+  rows saturates the machine; 153 KB per page against 942 KB; a broadcast
+  reaches 2,000 pages in 26 ms against 1 s. A join reaches a room of 500 in
+  66 ms.
+
 ## [2.16.0] - 2026-10-05
 
 ### Added
