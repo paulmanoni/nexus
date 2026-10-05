@@ -160,9 +160,19 @@ var (
 // trackAssigns binds the Assigns of v (*T) to a new tracker. The page is tracked
 // when it has Assigns and nothing else that could change: signals, which
 // the server never changes, and fields tagged view:"-" may sit beside them.
+// A struct the page embeds counts as part of it: pages that share state and
+// events embed one.
 func trackAssigns(v reflect.Value) *tracker {
 	t := &tracker{page: v.Interface()}
-	s := v.Elem()
+	t.walk(v.Elem())
+	if len(t.fields) == 0 && t.off == "" {
+		t.off = "it has no view.Assign fields"
+	}
+	return t
+}
+
+// walk binds the Assigns among the fields of s, a page or a struct it embeds.
+func (t *tracker) walk(s reflect.Value) {
 	st := s.Type()
 	for i := 0; i < st.NumField(); i++ {
 		f := st.Field(i)
@@ -188,14 +198,14 @@ func trackAssigns(v reflect.Value) *tracker {
 		if isSignal(f.Type) || f.Tag.Get("view") == "-" {
 			continue
 		}
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			t.walk(s.Field(i))
+			continue
+		}
 		if t.off == "" {
 			t.off = "field " + f.Name + " is not a view.Assign"
 		}
 	}
-	if len(t.fields) == 0 && t.off == "" {
-		t.off = "it has no view.Assign fields"
-	}
-	return t
 }
 
 func isSignal(t reflect.Type) bool {

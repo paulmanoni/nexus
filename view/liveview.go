@@ -180,13 +180,25 @@ func (v *LiveView) version() uint64                   { return v.ver }
 
 var liveViewType = reflect.TypeFor[LiveView]()
 
-// liveViewOf is the LiveView v (*T) embeds, or nil.
+// liveViewOf is the LiveView v (*T) embeds — itself, or in a struct it
+// embeds — or nil.
 func liveViewOf(v reflect.Value) *LiveView {
-	s := v.Elem()
+	return embeddedLiveView(v.Elem())
+}
+
+func embeddedLiveView(s reflect.Value) *LiveView {
 	for i := 0; i < s.NumField(); i++ {
 		f := s.Type().Field(i)
-		if f.Anonymous && f.Type == liveViewType {
+		if !f.Anonymous {
+			continue
+		}
+		if f.Type == liveViewType {
 			return (*LiveView)(unsafe.Pointer(s.Field(i).UnsafeAddr()))
+		}
+		if f.Type.Kind() == reflect.Struct {
+			if lv := embeddedLiveView(s.Field(i)); lv != nil {
+				return lv
+			}
 		}
 	}
 	return nil
